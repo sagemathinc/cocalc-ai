@@ -26,6 +26,7 @@ import { projectImageUrl } from "@cocalc/frontend/projects/image";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { ProjectsActions } from "@cocalc/frontend/todo-types";
 import { useBookmarkedProjects } from "@cocalc/frontend/projects/use-bookmarked-projects";
+import { useProjectCreated } from "../use-project-created";
 import {
   themeDraftFromTheme,
   type ThemeEditorDraft,
@@ -36,7 +37,6 @@ interface Props {
   project_id: string;
   name?: string;
   description: string;
-  created?: Date;
   actions: ProjectsActions;
   mode?: "project" | "flyout";
 }
@@ -47,7 +47,6 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
     project_title,
     project_id,
     description,
-    created,
     actions,
     mode = "project",
   } = props;
@@ -77,6 +76,7 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   const [appearanceSaving, setAppearanceSaving] = useState<boolean>(false);
   const [appearanceDraft, setAppearanceDraft] =
     useState<ThemeEditorDraft | null>(null);
+  const { created } = useProjectCreated(project_id);
 
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
 

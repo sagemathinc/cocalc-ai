@@ -77,7 +77,6 @@ Table({
           last_active: null,
           action_request: null, // last requested action -- {action:?, time:?, started:?, finished:?, err:?}
           course: null,
-          created: null,
           env: null,
           avatar_image_tiny: null,
           color: null,

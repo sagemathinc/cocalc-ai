@@ -12,6 +12,7 @@ import { useProjectContext } from "./context";
 import { NoInternetModal, useInternetWarningClosed } from "./no-internet-modal";
 import { useRunQuota } from "./settings/run-quota/hooks";
 import { TrialBanner } from "./trial-banner";
+import { useProjectCreated } from "./use-project-created";
 
 export const DOC_TRIAL = "https://doc.cocalc.com/trial.html";
 
@@ -24,6 +25,7 @@ export function ProjectWarningBanner() {
   const other_settings = useTypedRedux("account", "other_settings");
   const project_map = useTypedRedux("projects", "project_map");
   const projects_store = useStore("projects");
+  const { created: projectCreatedTS } = useProjectCreated(project_id);
 
   const runQuota = useRunQuota(project_id, null);
   const isPaidStudentPayProject = useMemo(
@@ -82,7 +84,7 @@ export function ProjectWarningBanner() {
     return (
       <TrialBanner
         project_id={project_id}
-        projectCreatedTS={project_map?.get(project_id)?.get("created")}
+        projectCreatedTS={projectCreatedTS}
         noMemberHosting={noMemberHosting}
         noInternet={noInternet}
         projectIsRunning={projectIsRunning}

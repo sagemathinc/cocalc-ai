@@ -211,7 +211,6 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
               project_id={project_id}
               project_title={project.get("title") ?? ""}
               description={project.get("description") ?? ""}
-              created={project.get("created")}
               name={project.get("name")}
               actions={redux.getActions("projects")}
             />

@@ -37,6 +37,7 @@ import { FIXED_PROJECT_TABS } from "@cocalc/frontend/project/page/file-tab";
 import { useStarredFilesManager } from "@cocalc/frontend/project/page/flyouts/store";
 import { RestartProject } from "@cocalc/frontend/project/settings/restart-project";
 import { StopProject } from "@cocalc/frontend/project/settings/stop-project";
+import { useProjectCreated } from "@cocalc/frontend/project/use-project-created";
 import { COLORS } from "@cocalc/util/theme";
 import { ProjectUsers } from "./project-users";
 import {
@@ -59,6 +60,7 @@ export function ProjectRowExpandedContent({ project_id }: Props) {
   const actions = useActions("projects");
   const project = useRedux(["projects", "project_map", project_id]);
   const project_log = useTypedRedux({ project_id }, "project_log");
+  const { created } = useProjectCreated(project_id);
 
   // Get recent files - always enabled since component only renders when expanded
   const recentFiles: OpenedFile[] = useRecentFiles(project_log, 100);
@@ -295,8 +297,8 @@ export function ProjectRowExpandedContent({ project_id }: Props) {
           />
         </Descriptions.Item>
         <Descriptions.Item label="Created">
-          {project.get("created") ? (
-            <TimeAgo date={project.get("created")} />
+          {created ? (
+            <TimeAgo date={created} />
           ) : (
             <span style={{ color: COLORS.GRAY }}>Unknown</span>
           )}

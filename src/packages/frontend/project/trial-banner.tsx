@@ -61,7 +61,7 @@ interface BannerProps {
   // noInternet = true means they do NOT have internet access (yes, this is backwards)
   noInternet: boolean;
   projectIsRunning: boolean;
-  projectCreatedTS?: Date;
+  projectCreatedTS?: Date | string | null;
 }
 
 // string and URLs
@@ -84,7 +84,9 @@ export const TrialBanner: React.FC<BannerProps> = React.memo(
 
     const projectAgeDays = useMemo(() => {
       // timestamp, when this project was created. won't change over time.
-      const projCreatedTS = projectCreatedTS ?? new Date(0);
+      const projCreatedTS = projectCreatedTS
+        ? new Date(projectCreatedTS)
+        : new Date(0);
       const age_ms: number = server_time().getTime() - projCreatedTS.getTime();
       return age_ms / (24 * 60 * 60 * 1000);
     }, [projectCreatedTS]);

@@ -97,7 +97,6 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
             project_id={id}
             project_title={project.get("title") ?? ""}
             description={project.get("description") ?? ""}
-            created={project.get("created")}
             name={project.get("name")}
             actions={redux.getActions("projects")}
           />

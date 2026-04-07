@@ -77,6 +77,7 @@ import type {
   ProjectStorageVisibleSummary,
   ProjectLauncherSettings,
   ProjectRegion,
+  ProjectCreated,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
 import {
@@ -796,6 +797,21 @@ export async function getProjectRegion({
     [project_id],
   );
   return rows[0]?.region ?? null;
+}
+
+export async function getProjectCreated({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectCreated> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ created: ProjectCreated }>(
+    "SELECT created FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.created ?? null;
 }
 
 export async function getStorageOverview({
