@@ -73,9 +73,6 @@ Table({
           region: null,
           settings: DEFAULT_QUOTAS,
           run_quota: null,
-          status: null,
-          // security model is anybody with access to the project should be allowed to know this token.
-          secret_token: null,
           state: null,
           last_edited: null,
           last_active: null,

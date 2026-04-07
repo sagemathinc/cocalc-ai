@@ -6,7 +6,12 @@
 import { Space } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 import BootLog from "../bootlog";
-import { React, redux, Rendered } from "@cocalc/frontend/app-framework";
+import {
+  React,
+  redux,
+  Rendered,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import {
   A,
   Icon,
@@ -48,6 +53,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
+  const projectStatus = useTypedRedux({ project_id }, "status");
   const hostId = project.get("host_id") as string | undefined;
   const hostInfo = useHostInfo(hostId);
   const hostOperational = React.useMemo(
@@ -185,7 +191,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
 
   function render_uptime() {
     // start_ts is a timestamp, e.g. 1508576664416
-    const start_ts = project.getIn(["status", "start_ts"]);
+    const start_ts = projectStatus?.get("start_ts");
     if (typeof start_ts !== "number") return;
     if (displayStateValue !== "running") {
       return;
@@ -211,7 +217,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }
 
   function render_cpu_usage() {
-    const cpu = project.getIn(["status", "cpu", "usage"]);
+    const cpu = projectStatus?.getIn(["cpu", "usage"]) as number | undefined;
     if (cpu == undefined) {
       return;
     }
