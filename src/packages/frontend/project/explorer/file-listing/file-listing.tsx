@@ -45,12 +45,15 @@ import { COLORS } from "@cocalc/util/theme";
 import { isBackupsPath, BACKUPS } from "@cocalc/util/consts/backups";
 import { isSnapshotsPath, SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import * as misc from "@cocalc/util/misc";
+import { useBackupsCacheVersion } from "@cocalc/frontend/project/listing/use-backups";
+import { useFilesCacheVersion } from "@cocalc/frontend/project/listing/use-files";
 
 import {
   useFileDrag,
   useFolderDrop,
 } from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
+import { getCachedDirectoryItemCount } from "./directory-item-count";
 
 import DirectoryPeek from "./directory-peek";
 import NoFiles from "./no-files";
@@ -424,6 +427,7 @@ export function FileListing({
   const openFilesOrder = useTypedRedux({ project_id }, "open_files_order");
   const hide_masked_files =
     useTypedRedux({ project_id }, "hide_masked_files") ?? false;
+  const showHidden = useTypedRedux({ project_id }, "show_hidden") ?? false;
   const type_filter = useTypedRedux({ project_id }, "type_filter") ?? null;
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);
@@ -451,6 +455,8 @@ export function FileListing({
   const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null);
   const containerWidth = useContainerWidth(containerEl);
   const isNarrow = containerWidth < NARROW_WIDTH_PX;
+  const filesCacheVersion = useFilesCacheVersion();
+  const backupsCacheVersion = useBackupsCacheVersion();
   const sortColumn = active_file_sort?.column_name;
   const sortDescending = active_file_sort?.is_descending;
   const typeFilterOptions = useMemo(() => {
@@ -521,6 +527,32 @@ export function FileListing({
     }
     return result;
   }, [baseDataSource, expandedDirs]);
+
+  const directoryItemCounts = useMemo(() => {
+    const counts = new Map<string, number | null>();
+    for (const entry of baseDataSource) {
+      if (!entry.isDir || entry.name === "..") continue;
+      counts.set(
+        entry.fullPath,
+        getCachedDirectoryItemCount({
+          project_id,
+          current_path,
+          dirName: entry.name,
+          showHidden,
+          hideMaskedFiles: hide_masked_files,
+        }),
+      );
+    }
+    return counts;
+  }, [
+    baseDataSource,
+    project_id,
+    current_path,
+    showHidden,
+    hide_masked_files,
+    filesCacheVersion,
+    backupsCacheVersion,
+  ]);
 
   const selectedRowKeys = useMemo(() => {
     const keys: string[] = [];
@@ -1113,9 +1145,15 @@ export function FileListing({
               >
                 {record.isDir ? (
                   <span style={{ color: COLORS.TAB, whiteSpace: "nowrap" }}>
-                    {record.size != null
-                      ? `${record.size} ${misc.plural(record.size, "item")}`
-                      : ""}
+                    {record.name === ".."
+                      ? "-"
+                      : (() => {
+                          const itemCount =
+                            directoryItemCounts.get(record.fullPath) ?? null;
+                          return itemCount == null
+                            ? "-"
+                            : `${itemCount} ${misc.plural(itemCount, "item")}`;
+                        })()}
                   </span>
                 ) : (
                   <Button
