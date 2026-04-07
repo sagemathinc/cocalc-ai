@@ -78,6 +78,7 @@ import type {
   ProjectLauncherSettings,
   ProjectRegion,
   ProjectCreated,
+  ProjectEnv,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
   ProjectRunQuota,
@@ -840,6 +841,41 @@ export async function getProjectCreated({
     [project_id],
   );
   return rows[0]?.created ?? null;
+}
+
+export async function getProjectEnv({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectEnv> {
+  await assertProjectReadAccessOrAdmin({ account_id, project_id });
+  const { rows } = await getPool().query<{ env: ProjectEnv }>(
+    "SELECT env FROM projects WHERE project_id = $1",
+    [project_id],
+  );
+  return rows[0]?.env ?? null;
+}
+
+export async function setProjectEnv({
+  account_id,
+  project_id,
+  env,
+}: {
+  account_id: string;
+  project_id: string;
+  env: ProjectEnv;
+}): Promise<void> {
+  await assertCollab({ account_id, project_id });
+  await getPool().query("UPDATE projects SET env = $2 WHERE project_id = $1", [
+    project_id,
+    env,
+  ]);
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["env"],
+  });
 }
 
 export async function getProjectSnapshotSchedule({

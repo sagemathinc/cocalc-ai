@@ -525,10 +525,9 @@ export class StudentProjectsActions {
       return;
     }
     const env =
-      redux
-        .getStore("projects")
-        .getIn(["project_map", store.get("course_project_id"), "env"])
-        ?.toJS() ?? {};
+      (await webapp_client.conat_client.hub.projects.getProjectEnv({
+        project_id: store.get("course_project_id"),
+      })) ?? {};
     const actions = redux.getProjectActions(student_project_id);
     await actions.set_environment(env);
   };

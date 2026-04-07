@@ -384,6 +384,7 @@ export interface ChatStoreDeleteResult {
 export type ProjectLauncherSettings = Record<string, any> | null;
 export type ProjectRegion = string | null;
 export type ProjectCreated = Date | string | null;
+export type ProjectEnv = Record<string, string> | null;
 export type ProjectSnapshotSchedule = SnapshotSchedule | null;
 export type ProjectBackupSchedule = SnapshotSchedule | null;
 export type ProjectRunQuota = Record<string, any> | null;
@@ -411,6 +412,8 @@ export const projects = {
   setProjectLauncher: authFirstRequireAccount,
   getProjectRegion: authFirstRequireAccount,
   getProjectCreated: authFirstRequireAccount,
+  getProjectEnv: authFirstRequireAccount,
+  setProjectEnv: authFirstRequireAccount,
   getProjectSnapshotSchedule: authFirstRequireAccount,
   getProjectBackupSchedule: authFirstRequireAccount,
   getProjectRunQuota: authFirstRequireAccount,
@@ -568,6 +571,17 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectCreated>;
+
+  getProjectEnv: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectEnv>;
+
+  setProjectEnv: (opts: {
+    account_id?: string;
+    project_id: string;
+    env: ProjectEnv;
+  }) => Promise<void>;
 
   getProjectRunQuota: (opts: {
     account_id?: string;

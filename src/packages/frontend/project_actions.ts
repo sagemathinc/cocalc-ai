@@ -24,7 +24,6 @@ import type { ChatState } from "@cocalc/frontend/chat/chat-indicator";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { local_storage } from "@cocalc/frontend/editor-local-storage";
-import { query as client_query } from "@cocalc/frontend/frame-editors/generic/client";
 import { set_url } from "@cocalc/frontend/history";
 import {
   download_file,
@@ -143,7 +142,10 @@ import {
   newestProjectLogCursor,
   oldestProjectLogCursor,
 } from "@cocalc/frontend/project/log-state";
-import { subscribeProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
+import {
+  publishProjectDetailInvalidation,
+  subscribeProjectDetailInvalidation,
+} from "@cocalc/frontend/project/use-project-field";
 
 const { defaults, required } = misc;
 
@@ -3214,20 +3216,21 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   };
 
-  async set_environment(env: object): Promise<void> {
-    if (typeof env != "object") {
+  async set_environment(env: Record<string, unknown>): Promise<void> {
+    if (typeof env != "object" || env == null || Array.isArray(env)) {
       throw Error("env must be an object");
     }
+    const nextEnv: Record<string, string> = {};
     for (const key in env) {
-      env[key] = `${env[key]}`;
+      nextEnv[key] = `${env[key]}`;
     }
-    await client_query({
-      query: {
-        projects: {
-          project_id: this.project_id,
-          env,
-        },
-      },
+    await webapp_client.conat_client.hub.projects.setProjectEnv({
+      project_id: this.project_id,
+      env: nextEnv,
+    });
+    publishProjectDetailInvalidation({
+      project_id: this.project_id,
+      fields: ["env"],
     });
   }
 

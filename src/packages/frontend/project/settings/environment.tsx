@@ -19,13 +19,14 @@ import { useIntl } from "react-intl";
 import {
   React,
   useActions,
+  useEffect,
   useIsMountedRef,
   useMemo,
-  useRedux,
   useState,
 } from "@cocalc/frontend/app-framework";
 import { ErrorDisplay, Gap, SettingBox } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
+import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
 
 export const ENV_VARS_ICON = "bars";
 interface Props {
@@ -56,16 +57,24 @@ export const Environment: React.FC<Props> = ({
   const isFlyout = mode === "flyout";
   const intl = useIntl();
   const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
-  const env = useRedux(["projects", "project_map", project_id, "env"]);
+  const { env, setEnv } = useProjectEnv(project_id);
   const [focused, set_focused] = useState<boolean>(false);
-  const [editing, set_editing] = useState<string>(to_json(env?.toJS()));
+  const envJson = useMemo(() => to_json(env), [env]);
+  const [editing, set_editing] = useState<string>(envJson);
   const [error, set_error] = useState<string>("");
   const actions = useActions({ project_id });
   const is_mounted_ref = useIsMountedRef();
   const [saving, set_saving] = useState<boolean>(false);
   const disabled = useMemo(() => {
-    return to_json(env?.toJS()) == editing;
-  }, [env, editing]);
+    return envJson == editing;
+  }, [envJson, editing]);
+
+  useEffect(() => {
+    if (focused || saving) {
+      return;
+    }
+    set_editing(envJson);
+  }, [envJson, focused, saving]);
 
   async function save(): Promise<void> {
     let new_env;
@@ -75,9 +84,11 @@ export const Environment: React.FC<Props> = ({
       set_error(err.toString());
       return;
     }
-    set_editing(to_json(process_env(new_env)));
+    const nextEnv = process_env(new_env) as Record<string, string>;
+    set_editing(to_json(nextEnv));
     set_saving(true);
     await actions?.set_environment(new_env);
+    setEnv(nextEnv);
     if (!is_mounted_ref.current) return;
     set_saving(false);
   }
@@ -118,10 +129,7 @@ export const Environment: React.FC<Props> = ({
           }}
         />
         <br />
-        <Button
-          disabled={disabled}
-          onClick={() => set_editing(to_json(env?.toJS()))}
-        >
+        <Button disabled={disabled} onClick={() => set_editing(envJson)}>
           {intl.formatMessage(labels.cancel)}
         </Button>
         <Gap />
