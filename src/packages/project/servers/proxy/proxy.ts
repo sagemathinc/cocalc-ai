@@ -1099,6 +1099,14 @@ ${entries}
       exposureMode: getExposureMode(req),
     });
     if (appTarget) {
+      if (appTarget.kind === "redirect") {
+        if (!res) {
+          throw Error("redirects do not support websocket upgrades");
+        }
+        res.writeHead(308, { Location: appTarget.location });
+        res.end();
+        return undefined;
+      }
       const metricsContext: AppMetricsContext = {
         app_id: appTarget.app_id,
         kind: appTarget.kind,

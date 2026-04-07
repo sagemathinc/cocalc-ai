@@ -167,6 +167,11 @@ export { resetAppMetricsForTests };
 export type AppProxyTarget =
   | {
       app_id: string;
+      kind: "redirect";
+      location: string;
+    }
+  | {
+      app_id: string;
       kind: "service";
       host: string;
       port: number;
@@ -1260,6 +1265,13 @@ export async function resolveAppProxyTarget({
     const fullPrefix = normalizePrefix(`${basePrefix}${localPrefix}`);
     if (!(pathname === fullPrefix || pathname.startsWith(`${fullPrefix}/`))) {
       continue;
+    }
+    if (pathname === fullPrefix && fullPrefix !== "/") {
+      return {
+        app_id: spec.id,
+        kind: "redirect",
+        location: `${ensureTrailingSlash(fullPrefix)}${parsed.search ?? ""}`,
+      };
     }
     const suffix =
       pathname.length > fullPrefix.length

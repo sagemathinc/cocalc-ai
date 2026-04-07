@@ -470,6 +470,10 @@ function buildPublicUrlFromExposure(
   return hostname ? `https://${hostname}` : undefined;
 }
 
+function ensureTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value : `${value}/`;
+}
+
 function shellQuoteCliArg(value: string): string {
   if (!value) return '""';
   return /^[A-Za-z0-9_./:=@-]+$/.test(value) ? value : JSON.stringify(value);
@@ -1654,12 +1658,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         : unmanagedBasePath
           ? `/${project_id}${unmanagedBasePath}`
           : undefined;
-      if (
-        status.lifecycle_mode === "unmanaged" &&
-        basePathLocal &&
-        !basePathLocal.endsWith("/")
-      ) {
-        basePathLocal = `${basePathLocal}/`;
+      if (basePathLocal) {
+        basePathLocal = ensureTrailingSlash(basePathLocal);
       }
       const serviceOpenMode: AppServiceOpenMode =
         spec?.kind === "service" && spec?.proxy?.open_mode === "port"

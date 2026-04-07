@@ -102,6 +102,13 @@ describe("app server agent workflows", () => {
     const before = await statusApp(id);
     expect(before.state).toBe("stopped");
 
+    const redirect = await resolveAppProxyTarget({
+      base: "/project-test",
+      url: `http://project.local/project-test/apps/${id}`,
+    });
+    expect(redirect?.kind).toBe("redirect");
+    expect((redirect as any)?.location).toBe(`/project-test/apps/${id}/`);
+
     const first = await resolveAppProxyTarget({
       base: "/project-test",
       url: `http://project.local/project-test/apps/${id}/healthz`,
