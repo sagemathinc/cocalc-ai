@@ -146,7 +146,7 @@ export function AgentActivityChip({
         lastActivityAtMs,
         now: Date.now(),
       }),
-    [generating, lastActivityAtMs],
+    [generating, lastActivityAtMs, durationLabel],
   );
   const lastActivityColor = lastActivityInfo.stale
     ? COLORS.ORANGE_WARN
