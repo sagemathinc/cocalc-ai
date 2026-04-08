@@ -398,12 +398,18 @@ export interface HostConnectionInfo {
   host_id: string;
   bay_id?: string | null;
   name?: string | null;
+  region?: string | null;
+  size?: string | null;
   ssh_server?: string | null;
   connect_url?: string | null;
   host_session_id?: string;
   local_proxy?: boolean;
   ready?: boolean;
   status?: HostStatus | null;
+  tier?: number | null;
+  pricing_model?: HostPricingModel;
+  interruption_restore_policy?: HostInterruptionRestorePolicy;
+  desired_state?: "running" | "stopped";
   last_seen?: string;
   online?: boolean;
   reason_unavailable?: string;

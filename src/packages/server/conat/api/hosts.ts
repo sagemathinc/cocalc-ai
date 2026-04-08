@@ -2664,6 +2664,12 @@ export async function resolveHostConnection({
   const availability = computeHostOperationalAvailability(row);
   const normalizedStatus =
     row.status === "active" ? "running" : (row.status ?? null);
+  const pricingModel =
+    normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand";
+  const interruptionRestorePolicy =
+    normalizeHostInterruptionRestorePolicy(
+      metadata.interruption_restore_policy,
+    ) ?? defaultInterruptionRestorePolicy(pricingModel);
   const lastSeenIso = row.last_seen
     ? new Date(row.last_seen).toISOString()
     : undefined;
@@ -2687,6 +2693,8 @@ export async function resolveHostConnection({
         ? row.bay_id.trim()
         : null,
     name: row.name ?? null,
+    region: row.region ?? null,
+    size: typeof metadata?.size === "string" ? metadata.size : null,
     ssh_server,
     connect_url,
     host_session_id:
@@ -2697,6 +2705,13 @@ export async function resolveHostConnection({
     local_proxy,
     ready,
     status: normalizedStatus,
+    tier: typeof row.tier === "number" ? row.tier : null,
+    pricing_model: pricingModel,
+    interruption_restore_policy: interruptionRestorePolicy,
+    desired_state: desiredHostState({
+      status: normalizedStatus ?? undefined,
+      metadata,
+    }),
     last_seen: lastSeenIso,
     online: availability.online,
     reason_unavailable: availability.operational
