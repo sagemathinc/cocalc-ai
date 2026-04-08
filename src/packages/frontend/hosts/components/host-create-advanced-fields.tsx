@@ -6,11 +6,13 @@ import type { HostFieldId } from "../providers/registry";
 
 type HostCreateAdvancedFieldsProps = {
   provider: HostCreateViewModel["provider"];
+  showSpotFields: boolean;
+  nebiusSpotSupported: boolean;
 };
 
 export const HostCreateAdvancedFields: React.FC<
   HostCreateAdvancedFieldsProps
-> = ({ provider }) => {
+> = ({ provider, showSpotFields, nebiusSpotSupported }) => {
   const { selectedProvider, fields, storage } = provider;
   const form = Form.useFormInstance();
   const diskTypeOptions = getDiskTypeOptions(selectedProvider);
@@ -65,6 +67,49 @@ export const HostCreateAdvancedFields: React.FC<
 
   return (
     <Row gutter={[12, 12]}>
+      {showSpotFields && (
+        <>
+          <Col span={24}>
+            <Form.Item
+              name="pricing_model"
+              label="Pricing model"
+              initialValue="on_demand"
+              extra={
+                selectedProvider === "nebius" && !nebiusSpotSupported
+                  ? "Spot is unavailable for the selected Nebius instance type."
+                  : undefined
+              }
+            >
+              <Select
+                options={[
+                  { value: "on_demand", label: "On-demand" },
+                  {
+                    value: "spot",
+                    label: "Spot / interruptible",
+                    disabled:
+                      selectedProvider === "nebius" && !nebiusSpotSupported,
+                  },
+                ]}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={24}>
+            <Form.Item
+              name="interruption_restore_policy"
+              label="Interruption restore"
+              initialValue="none"
+              tooltip="For spot hosts, immediately restoring the host is strongly preferred because users otherwise lose access until a backup restore or manual recovery."
+            >
+              <Select
+                options={[
+                  { value: "immediate", label: "Restore immediately" },
+                  { value: "none", label: "Do not auto-restore" },
+                ]}
+              />
+            </Form.Item>
+          </Col>
+        </>
+      )}
       {schema.advanced.map(renderField)}
       {selectedProvider !== "none" && (
         <Col span={24}>

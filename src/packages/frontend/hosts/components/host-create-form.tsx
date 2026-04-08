@@ -158,47 +158,6 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
               <Form.Item name="name" label="Name" initialValue="My host">
                 <Input placeholder="My host" />
               </Form.Item>
-              {showSpotFields && (
-                <>
-                  <Form.Item
-                    name="pricing_model"
-                    label="Pricing model"
-                    initialValue="on_demand"
-                    extra={
-                      provider.selectedProvider === "nebius" &&
-                      !nebiusSpotSupported
-                        ? "Spot is unavailable for the selected Nebius instance type."
-                        : undefined
-                    }
-                  >
-                    <Select
-                      options={[
-                        { value: "on_demand", label: "On-demand" },
-                        {
-                          value: "spot",
-                          label: "Spot / interruptible",
-                          disabled:
-                            provider.selectedProvider === "nebius" &&
-                            !nebiusSpotSupported,
-                        },
-                      ]}
-                    />
-                  </Form.Item>
-                  <Form.Item
-                    name="interruption_restore_policy"
-                    label="Interruption restore"
-                    initialValue="none"
-                    tooltip="For spot hosts, immediately restoring the host is strongly preferred because users otherwise lose access until a backup restore or manual recovery."
-                  >
-                    <Select
-                      options={[
-                        { value: "immediate", label: "Restore immediately" },
-                        { value: "none", label: "Do not auto-restore" },
-                      ]}
-                    />
-                  </Form.Item>
-                </>
-              )}
               <HostCreateProviderFields
                 provider={provider}
                 onProviderChange={onProviderChange}
@@ -209,7 +168,11 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
           {!hideAdvanced && (
             <Collapse ghost style={{ marginBottom: 8 }}>
               <Collapse.Panel header="Advanced options" key="adv">
-                <HostCreateAdvancedFields provider={provider} />
+                <HostCreateAdvancedFields
+                  provider={provider}
+                  showSpotFields={showSpotFields}
+                  nebiusSpotSupported={nebiusSpotSupported}
+                />
               </Collapse.Panel>
             </Collapse>
           )}
