@@ -330,6 +330,50 @@ function resolveHubPostgresConnection(statusInfo) {
   return undefined;
 }
 
+function resolveHubDataDir(statusInfo, opts = {}) {
+  const explicitDataDir =
+    `${opts.explicitDataDir ?? process.env.COCALC_DATA_DIR ?? ""}`.trim();
+  const explicitData = `${opts.explicitData ?? process.env.DATA ?? ""}`.trim();
+  const candidates = [];
+
+  const pgDataDir = `${statusInfo?.pgDataDir ?? ""}`.trim();
+  if (pgDataDir) {
+    candidates.push(path.dirname(pgDataDir));
+  }
+
+  const localEnvCandidates = [
+    path.join(ROOT, "data", "app", "postgres", "local-postgres.env"),
+    path.join(ROOT, "data", "postgres", "local-postgres.env"),
+  ];
+  if (pgDataDir) {
+    localEnvCandidates.push(
+      path.join(path.dirname(pgDataDir), "local-postgres.env"),
+    );
+  }
+  for (const file of localEnvCandidates) {
+    if (!file || !fs.existsSync(file)) continue;
+    const vars = parseKeyValueLines(fs.readFileSync(file, "utf8"));
+    const envDataDir = `${vars.COCALC_DATA_DIR ?? ""}`.trim();
+    const envData = `${vars.DATA ?? ""}`.trim();
+    if (envDataDir) candidates.push(envDataDir);
+    if (envData) candidates.push(envData);
+  }
+
+  const hubPassword = `${opts.hubPassword ?? ""}`.trim();
+  if (hubPassword && fs.existsSync(hubPassword)) {
+    candidates.push(path.dirname(path.dirname(hubPassword)));
+  }
+
+  if (explicitDataDir) candidates.push(explicitDataDir);
+  if (explicitData) candidates.push(explicitData);
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    return candidate;
+  }
+  return undefined;
+}
+
 function runPsqlQuery(connection, sql) {
   if (!connection?.pgHost) return undefined;
   const env = {
@@ -550,6 +594,14 @@ function main() {
   const hubDbContext =
     mode === "hub" ? resolveHubProjectAndAccount(hubStatusInfo) : {};
   const hubPassword = mode === "hub" ? resolveHubPassword(hubStatusInfo) : "";
+  const hubDataDir =
+    mode === "hub"
+      ? resolveHubDataDir(hubStatusInfo, {
+          hubPassword,
+          explicitDataDir: "",
+          explicitData: "",
+        })
+      : undefined;
   const auth = getAuthConfig();
   const profile = chooseProfileForApi(
     auth.profiles,
@@ -626,6 +678,12 @@ function main() {
   }
   if (mode === "hub" && hubPassword) {
     exportsMap.COCALC_HUB_PASSWORD = hubPassword;
+    if (hubDataDir) {
+      exportsMap.COCALC_DATA_DIR = hubDataDir;
+      exportsMap.DATA = hubDataDir;
+    }
+    exportsMap.COCALC_PRODUCT = "launchpad";
+    exportsMap.COCALC_LITE_CONNECTION_INFO = "";
     // Clear stale Lite/agent env so hub CLI commands do not silently
     // connect to the wrong local service.
     exportsMap.COCALC_AGENT_TOKEN = "";

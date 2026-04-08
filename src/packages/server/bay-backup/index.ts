@@ -38,6 +38,7 @@ import { execFile as execFile0 } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import {
+  cp,
   copyFile,
   mkdir,
   mkdtemp,
@@ -420,7 +421,9 @@ async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await ensureDir(dirname(path));
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  const tempPath = `${path}.tmp-${randomUUID()}`;
+  await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await rename(tempPath, path);
 }
 
 function defaultState({
@@ -952,6 +955,120 @@ async function exists(path: string | null | undefined): Promise<boolean> {
       return false;
     }
     throw err;
+  }
+}
+
+async function copyDirectoryContents({
+  sourceDir,
+  targetDir,
+}: {
+  sourceDir: string;
+  targetDir: string;
+}): Promise<void> {
+  await ensureDir(targetDir);
+  const entries = await readdir(sourceDir);
+  for (const entry of entries) {
+    await cp(join(sourceDir, entry), join(targetDir, entry), {
+      recursive: true,
+      force: true,
+    });
+  }
+}
+
+function rusticPathCandidatesForArtifact(name: string): string[] {
+  switch (name) {
+    case "base.tar.gz":
+      return ["postgres/base", name];
+    case "pg_wal.tar.gz":
+      return ["postgres/pg_wal", name];
+    case "cluster.sql.gz":
+      return ["cluster.sql", name];
+    case "sync.tar.gz":
+      return ["sync", name];
+    case "secrets.tar.gz":
+      return ["secrets", name];
+    default:
+      return [name];
+  }
+}
+
+function rusticRestoredPathCandidates({
+  artifactName,
+  destinationDir,
+  candidatePath,
+}: {
+  artifactName: string;
+  destinationDir: string;
+  candidatePath: string;
+}): string[] {
+  if (candidatePath === artifactName) {
+    return [join(destinationDir, artifactName)];
+  }
+  if (
+    artifactName === "base.tar.gz" ||
+    artifactName === "pg_wal.tar.gz" ||
+    artifactName === "sync.tar.gz" ||
+    artifactName === "secrets.tar.gz"
+  ) {
+    return [destinationDir, join(destinationDir, candidatePath)];
+  }
+  return Array.from(
+    new Set([
+      join(destinationDir, candidatePath),
+      join(destinationDir, basename(candidatePath)),
+    ]),
+  );
+}
+
+async function materializeRusticSnapshotTree({
+  archiveDir,
+  destinationDir,
+}: {
+  archiveDir: string;
+  destinationDir: string;
+}): Promise<void> {
+  await ensureDir(destinationDir);
+  for (const name of [
+    "manifest.json",
+    "restore-offline.sh",
+    "RESTORE-OFFLINE.txt",
+  ] as const) {
+    const sourcePath = join(archiveDir, name);
+    if (!(await exists(sourcePath))) continue;
+    await ensureDir(dirname(join(destinationDir, name)));
+    await copyFile(sourcePath, join(destinationDir, name));
+  }
+  const baseArchive = join(archiveDir, "base.tar.gz");
+  if (await exists(baseArchive)) {
+    await extractTarGz({
+      archivePath: baseArchive,
+      targetDir: join(destinationDir, "postgres", "base"),
+    });
+  }
+  const walArchive = join(archiveDir, "pg_wal.tar.gz");
+  if (await exists(walArchive)) {
+    await extractTarGz({
+      archivePath: walArchive,
+      targetDir: join(destinationDir, "postgres", "pg_wal"),
+    });
+  }
+  const sqlArchive = join(archiveDir, "cluster.sql.gz");
+  if (await exists(sqlArchive)) {
+    await gunzipFile(sqlArchive, join(destinationDir, "cluster.sql"));
+  }
+  const syncArchive = join(archiveDir, "sync.tar.gz");
+  if (await exists(syncArchive)) {
+    await extractTarGz({
+      archivePath: syncArchive,
+      targetDir: destinationDir,
+    });
+  }
+  const secretsArchive = join(archiveDir, "secrets.tar.gz");
+  if (await exists(secretsArchive)) {
+    await extractTarGz({
+      archivePath: secretsArchive,
+      targetDir: destinationDir,
+    });
   }
 }
 
@@ -1789,15 +1906,18 @@ async function resolveArtifactPath({
 }): Promise<{
   path: string;
   source_storage_backend: StorageBackend;
+  is_directory: boolean;
 }> {
   if (
     prefer_local &&
     artifact.local_path &&
     (await exists(artifact.local_path))
   ) {
+    const info = await stat(artifact.local_path);
     return {
       path: artifact.local_path,
       source_storage_backend: "local",
+      is_directory: info.isDirectory(),
     };
   }
   if (remote_snapshot_id && rusticRepoProfilePath) {
@@ -1806,17 +1926,46 @@ async function resolveArtifactPath({
         `artifact '${artifact.name}' requires rustic download but no download dir is available`,
       );
     }
-    const destinationDir = join(download_dir, "artifacts");
-    await restoreBayRusticPath({
-      repoProfilePath: rusticRepoProfilePath,
-      snapshot_id: remote_snapshot_id,
-      path: artifact.name,
-      destinationDir,
-    });
-    return {
-      path: join(destinationDir, artifact.name),
-      source_storage_backend: "rustic",
-    };
+    const candidates = rusticPathCandidatesForArtifact(artifact.name);
+    let lastError: unknown;
+    for (const [index, candidatePath] of candidates.entries()) {
+      const destinationDir = join(
+        download_dir,
+        "artifacts",
+        `${artifact.name.replace(/[\\/]/g, "_")}-${index}`,
+      );
+      try {
+        await restoreBayRusticPath({
+          repoProfilePath: rusticRepoProfilePath,
+          snapshot_id: remote_snapshot_id,
+          path: candidatePath,
+          destinationDir,
+        });
+        for (const restoredPath of rusticRestoredPathCandidates({
+          artifactName: artifact.name,
+          destinationDir,
+          candidatePath,
+        })) {
+          if (!(await exists(restoredPath))) continue;
+          const info = await stat(restoredPath);
+          return {
+            path: restoredPath,
+            source_storage_backend: "rustic",
+            is_directory: info.isDirectory(),
+          };
+        }
+        throw new Error(
+          `artifact '${artifact.name}' restored from rustic candidate '${candidatePath}' but no materialized path was found in '${destinationDir}'`,
+        );
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(
+          `artifact '${artifact.name}' is not available in rustic snapshot '${remote_snapshot_id}'`,
+        );
   }
   if (!artifact.object_key) {
     throw new Error(`artifact '${artifact.name}' is not available locally`);
@@ -1835,6 +1984,7 @@ async function resolveArtifactPath({
   return {
     path: destinationPath,
     source_storage_backend: "r2",
+    is_directory: false,
   };
 }
 
@@ -1980,32 +2130,44 @@ async function listArchivedWalFiles(
 
 function isWalPendingUpload({
   name,
+  wal_object_prefix,
+  remote_object_keys,
   last_uploaded_wal_segment,
 }: {
   name: string;
+  wal_object_prefix?: string | null;
+  remote_object_keys?: Set<string> | null;
   last_uploaded_wal_segment: string | null;
 }): boolean {
+  if (wal_object_prefix && remote_object_keys) {
+    return !remote_object_keys.has(`${wal_object_prefix}/${name}`);
+  }
   return !last_uploaded_wal_segment || name > last_uploaded_wal_segment;
 }
 
 async function getWalArchiveSnapshot({
   paths,
   state,
+  remote_object_keys = null,
 }: {
   paths: ReturnType<typeof getBayBackupPaths>;
   state: StoredBayBackupState;
+  remote_object_keys?: Set<string> | null;
 }): Promise<WalArchiveSnapshot> {
   const archived_files = await listArchivedWalFiles(paths.wal_archive_dir);
   const last = archived_files.at(-1);
+  const wal_object_prefix = walObjectPrefix(state.object_prefix_root);
   const pending_files = archived_files.filter((file) =>
     isWalPendingUpload({
       name: file.name,
+      wal_object_prefix,
+      remote_object_keys,
       last_uploaded_wal_segment: state.last_uploaded_wal_segment,
     }),
   );
   return {
     wal_archive_dir: paths.wal_archive_dir,
-    wal_object_prefix: walObjectPrefix(state.object_prefix_root),
+    wal_object_prefix,
     archived_files,
     archived_wal_count: archived_files.length,
     pending_files,
@@ -2019,13 +2181,19 @@ async function waitForWalArchiveAdvance({
   paths,
   state,
   previous_last_segment,
+  remote_object_keys = null,
 }: {
   paths: ReturnType<typeof getBayBackupPaths>;
   state: StoredBayBackupState;
   previous_last_segment: string | null;
+  remote_object_keys?: Set<string> | null;
 }): Promise<WalArchiveSnapshot> {
   const deadline = Date.now() + 5_000;
-  let snapshot = await getWalArchiveSnapshot({ paths, state });
+  let snapshot = await getWalArchiveSnapshot({
+    paths,
+    state,
+    remote_object_keys,
+  });
   while (Date.now() < deadline) {
     if (
       snapshot.last_archived_wal_segment &&
@@ -2034,7 +2202,11 @@ async function waitForWalArchiveAdvance({
       return snapshot;
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
-    snapshot = await getWalArchiveSnapshot({ paths, state });
+    snapshot = await getWalArchiveSnapshot({
+      paths,
+      state,
+      remote_object_keys,
+    });
   }
   return snapshot;
 }
@@ -2093,7 +2265,34 @@ async function syncBayWalArchive({
     last_restore_test_recovery_ready:
       stored.last_restore_test_recovery_ready ?? null,
   };
-  let snapshot = await getWalArchiveSnapshot({ paths, state });
+  const resolvedWalObjectPrefix = walObjectPrefix(
+    r2.object_prefix_root ?? state.object_prefix_root ?? null,
+  );
+  const remote_object_keys =
+    r2.configured &&
+    r2.bucket_name &&
+    r2.bucket_endpoint &&
+    r2.access_key &&
+    r2.secret_key &&
+    resolvedWalObjectPrefix
+      ? new Set(
+          await listRemoteWalObjectKeys({
+            r2,
+            wal_object_prefix: resolvedWalObjectPrefix,
+          }).catch((err) => {
+            logger.warn("failed to list remote WAL objects", {
+              bay_id: resolvedBayId,
+              err,
+            });
+            return [];
+          }),
+        )
+      : null;
+  let snapshot = await getWalArchiveSnapshot({
+    paths,
+    state,
+    remote_object_keys,
+  });
   const previous_last_segment = snapshot.last_archived_wal_segment;
   const walErrorPrefix = "wal archive:";
   if (forceSwitch) {
@@ -2103,6 +2302,7 @@ async function syncBayWalArchive({
         paths,
         state,
         previous_last_segment,
+        remote_object_keys,
       });
     } catch (err) {
       state = {
@@ -2132,7 +2332,9 @@ async function syncBayWalArchive({
       snapshot.pending_files.length > 0
     ) {
       await ensureR2Bucket(r2);
-      const object_prefix = walObjectPrefix(r2.object_prefix_root ?? null);
+      const object_prefix =
+        resolvedWalObjectPrefix ??
+        walObjectPrefix(r2.object_prefix_root ?? null);
       if (!object_prefix) {
         throw new Error("missing WAL object prefix");
       }
@@ -2609,7 +2811,28 @@ export async function getBayBackupStatus({
     last_restore_test_recovery_ready:
       stored.last_restore_test_recovery_ready ?? null,
   };
-  const wal = await getWalArchiveSnapshot({ paths, state });
+  const walPrefix = walObjectPrefix(
+    r2.object_prefix_root ?? state.object_prefix_root ?? null,
+  );
+  const remoteWalObjectKeys =
+    r2.configured &&
+    r2.bucket_name &&
+    r2.bucket_endpoint &&
+    r2.access_key &&
+    r2.secret_key &&
+    walPrefix
+      ? new Set(
+          await listRemoteWalObjectKeys({
+            r2,
+            wal_object_prefix: walPrefix,
+          }).catch(() => []),
+        )
+      : null;
+  const wal = await getWalArchiveSnapshot({
+    paths,
+    state,
+    remote_object_keys: remoteWalObjectKeys,
+  });
   return {
     postgres,
     bay_backup: mapStateToStatus({
@@ -2694,6 +2917,7 @@ export async function runBayBackup({
       join(paths.staging_dir, `${backup_set_id}-`),
     );
     let archive_dir: string | null = null;
+    let rustic_stage_dir: string | null = null;
     try {
       logger.info("starting bay postgres backup", {
         bay_id: resolvedBayId,
@@ -2751,12 +2975,19 @@ export async function runBayBackup({
       await writeJson(join(archive_dir, "manifest.json"), snapshotManifest);
       if (rusticRepoProfilePath) {
         try {
+          rustic_stage_dir = await mkdtemp(
+            join(paths.staging_dir, `${backup_set_id}-rustic-`),
+          );
+          await materializeRusticSnapshotTree({
+            archiveDir: archive_dir,
+            destinationDir: rustic_stage_dir,
+          });
           const remoteSnapshot = await backupToBayRusticRepo({
             repoProfilePath: rusticRepoProfilePath,
             snapshotHost: resolvedBayId,
             backup_set_id,
             format: actual_strategy,
-            sourceDir: archive_dir,
+            sourceDir: rustic_stage_dir,
           });
           latest_storage_backend = "rustic";
           latest_remote_snapshot_id = remoteSnapshot.id;
@@ -2894,6 +3125,11 @@ export async function runBayBackup({
     } finally {
       if (archive_dir == null) {
         await rm(staging_dir, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
+      }
+      if (rustic_stage_dir != null) {
+        await rm(rustic_stage_dir, { recursive: true, force: true }).catch(
           () => undefined,
         );
       }
@@ -3195,10 +3431,17 @@ export async function runBayRestore({
       });
       source_storage_backend = baseArtifactPath.source_storage_backend;
       await ensureDir(data_dir!, 0o700);
-      await extractTarGz({
-        archivePath: baseArtifactPath.path,
-        targetDir: data_dir!,
-      });
+      if (baseArtifactPath.is_directory) {
+        await copyDirectoryContents({
+          sourceDir: baseArtifactPath.path,
+          targetDir: data_dir!,
+        });
+      } else {
+        await extractTarGz({
+          archivePath: baseArtifactPath.path,
+          targetDir: data_dir!,
+        });
+      }
       const walArtifact = manifestInfo.manifest.artifacts.find(
         (artifact) => artifact.name === "pg_wal.tar.gz",
       );
@@ -3214,10 +3457,17 @@ export async function runBayRestore({
         if (walArtifactPath.source_storage_backend !== "local") {
           source_storage_backend = walArtifactPath.source_storage_backend;
         }
-        await extractTarGz({
-          archivePath: walArtifactPath.path,
-          targetDir: join(data_dir!, "pg_wal"),
-        });
+        if (walArtifactPath.is_directory) {
+          await copyDirectoryContents({
+            sourceDir: walArtifactPath.path,
+            targetDir: join(data_dir!, "pg_wal"),
+          });
+        } else {
+          await extractTarGz({
+            archivePath: walArtifactPath.path,
+            targetDir: join(data_dir!, "pg_wal"),
+          });
+        }
       }
       // pg_basebackup snapshots can contain an in-progress WAL segment in
       // pg_wal/. After the backup finishes, the archived copy of that same
@@ -3345,7 +3595,11 @@ export async function runBayRestore({
       });
       source_storage_backend = dumpArtifactPath.source_storage_backend;
       const sqlPath = join(resolvedTargetDir, "cluster.sql");
-      await gunzipFile(dumpArtifactPath.path, sqlPath);
+      if (dumpArtifactPath.path.endsWith(".gz")) {
+        await gunzipFile(dumpArtifactPath.path, sqlPath);
+      } else {
+        await copyFile(dumpArtifactPath.path, sqlPath);
+      }
       notes.push(`Restored SQL dump into ${sqlPath}.`);
       notes.push(
         "This backup was created via pg_dumpall; create a fresh Postgres cluster and import the SQL manually.",
@@ -3365,10 +3619,17 @@ export async function runBayRestore({
       if (syncArtifactPath.source_storage_backend !== "local") {
         source_storage_backend = syncArtifactPath.source_storage_backend;
       }
-      await extractTarGz({
-        archivePath: syncArtifactPath.path,
-        targetDir: resolvedTargetDir,
-      });
+      if (syncArtifactPath.is_directory) {
+        await copyDirectoryContents({
+          sourceDir: syncArtifactPath.path,
+          targetDir: sync_dir,
+        });
+      } else {
+        await extractTarGz({
+          archivePath: syncArtifactPath.path,
+          targetDir: resolvedTargetDir,
+        });
+      }
       notes.push(`Restored the Conat sync snapshot into ${sync_dir}.`);
     } else {
       notes.push("This backup does not include a Conat sync snapshot.");
@@ -3386,10 +3647,17 @@ export async function runBayRestore({
       if (secretsArtifactPath.source_storage_backend !== "local") {
         source_storage_backend = secretsArtifactPath.source_storage_backend;
       }
-      await extractTarGz({
-        archivePath: secretsArtifactPath.path,
-        targetDir: resolvedTargetDir,
-      });
+      if (secretsArtifactPath.is_directory) {
+        await copyDirectoryContents({
+          sourceDir: secretsArtifactPath.path,
+          targetDir: secrets_dir,
+        });
+      } else {
+        await extractTarGz({
+          archivePath: secretsArtifactPath.path,
+          targetDir: resolvedTargetDir,
+        });
+      }
       notes.push(`Restored the bay secrets snapshot into ${secrets_dir}.`);
     } else {
       notes.push("This backup does not include a secrets snapshot.");
