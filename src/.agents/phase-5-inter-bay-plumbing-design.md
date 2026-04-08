@@ -142,7 +142,27 @@ durable streams.
 Every host, project, browser control session, and account-home decision must
 have an unambiguous owning bay.
 
-### 5. Failure Should Degrade Inter-Bay Features First
+### 5. Separate Control Ownership From Execution Placement
+
+For Phase 5 and beyond, we should not assume that a project's execution host is
+co-located with the bay that owns the project's control-plane state.
+
+The intended default shape is:
+
+- accounts have a home bay
+- most projects should default to the same bay as their primary owner/account
+- project ownership remains a bay-level control-plane decision
+- project-host placement is an execution-resource decision that may be remote
+  from the project's owning bay
+
+This reflects the expected real product shape:
+
+- collaboration exists, but most projects are effectively single-owner
+- therefore keeping account and project on the same bay is usually the best UX
+- sparse regional project-host fleets should not force account/project control
+  ownership to fragment unnaturally across bays
+
+### 6. Failure Should Degrade Inter-Bay Features First
 
 If the inter-bay fabric has problems, local one-bay behavior should continue to
 work as much as possible.
@@ -285,7 +305,8 @@ is avoiding application code that directly depends on that placement.
 Initially:
 
 - project-scoped control RPC when the target project is owned by another bay
-- host-scoped control RPC when the host belongs to another bay
+- host-scoped control RPC when the relevant host must be reached outside the
+  current bay
 - replicated summary/update events needed for browser-visible projections
 
 Not initially:
@@ -343,13 +364,13 @@ Recommended order:
 
 1. Should the first directory implementation be a fabric service or a router
    extension? ANS: i think directory = fabric service makes the most sense.
-2. Should there be one bridge connection per bay or a small configurable pool?  ANS: I'm not sure -- Interesting -- a haven't implemented pooling yet, but it certainly makes sense as it should increase throughput and hopefully not add too much complexity (?).  
-3. Which first RPC path should be the canary?  ANS: project control: a clear e2e test is to have an account in bay 1 and a project in bay 2 and to start that project via the account.
+2. Should there be one bridge connection per bay or a small configurable pool? ANS: I'm not sure -- Interesting -- a haven't implemented pooling yet, but it certainly makes sense as it should increase throughput and hopefully not add too much complexity (?).
+3. Which first RPC path should be the canary? ANS: project control: a clear e2e test is to have an account in bay 1 and a project in bay 2 and to start that project via the account.
    - host control
    - project control
    - browser control
 4. What exact epoch/fencing mechanism should protect ownership changes during
-   replay and restore?  ANS: No idea.
+   replay and restore? ANS: No idea.
 
 ## Recommended Immediate Output
 
@@ -362,6 +383,22 @@ Before Phase 5 code starts, we should freeze:
 - first canary RPC path
 
 The following is the proposed frozen v1 contract.
+
+## Additional Frozen Phase 5 v1 Ownership Rules
+
+- `account_bay` and `project_bay` are separate concepts, but the default
+  placement goal is that a user's projects usually live in the same bay as that
+  user's account
+- `project_bay == host_bay` is not an architectural requirement
+- project-host execution reachability must be explicit in code, not inferred
+  from hidden one-bay assumptions
+- the representation of host reachability is intentionally not fully frozen
+  yet:
+  - it may remain `host_id -> bay_id` in the near term
+  - or it may evolve into a richer "host route" record if that proves cleaner
+    in implementation
+- Phase 5 code should therefore depend on an explicit host-routing interface,
+  not on broad assumptions that hosts and projects share a bay
 
 ## Frozen Phase 5 v1 Contract
 
@@ -442,7 +479,10 @@ interface InterBayBridge {
     data?: any;
   }): Promise<void>;
 
-  subscribe(subject: string, handler: (mesg: any) => Promise<any>): Promise<{
+  subscribe(
+    subject: string,
+    handler: (mesg: any) => Promise<any>,
+  ): Promise<{
     close: () => void;
   }>;
 }
@@ -485,10 +525,14 @@ interface InterBayDirectory {
 Rules:
 
 - `project_id -> bay_id` is authoritative for project-control routing
-- `host_id -> bay_id` is authoritative for host-control routing
+- `host_id -> bay_id` is only the current v1 reachability surface for
+  host-control routing; it should be treated as an implementation placeholder
+  for a more explicit host-route model if the code pushes us that way
 - every response includes an `epoch`
 - callers may cache responses briefly, but mutating operations should carry or
   check the epoch so stale ownership can be rejected explicitly
+- project control must not assume that the execution host lives in the same bay
+  as the project
 
 Deferred from v1:
 
@@ -518,6 +562,9 @@ Why this path first:
 - success/failure is unambiguous
 - it exercises directory lookup, inter-bay routing, destination-bay execution,
   and reply handling
+- it validates the desired common-case UX, where the user/account bay and the
+  project bay are usually aligned even though the execution host may not be
+  co-located there
 - it does not require browser session migration or project data-plane movement
 
 Non-goals for the first canary:

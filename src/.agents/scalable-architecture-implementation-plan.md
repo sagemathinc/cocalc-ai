@@ -24,7 +24,8 @@ The implementation is successful when:
   raw base-table Postgres changefeeds
 - all major bay/project/backup operations are available through `cocalc-cli`
 - account rehome between bays is a routine supported workflow
-- project hosts are attached to bays, not to one global hub
+- project hosts are reached through explicit bay/fabric control paths, not one
+  global hub
 - inter-bay replication is durable and replayable
 - load tests establish practical bay size targets and operating envelopes
 - scaling to more users is mainly a matter of adding bays and project hosts
@@ -88,7 +89,7 @@ These workstreams span multiple phases.
 
 ### 4. Host / Placement Control
 
-- host belongs to one bay
+- host reachability is explicit
 - project start/stop through owning bay
 - account move / rehome between bays
 - project move between bays
@@ -205,8 +206,8 @@ This is the first mandatory phase.
 - explicit written invariants for:
   - account home bay
   - project owning bay
-  - host belongs to one bay
-  - project runs on a host in its owning bay
+  - host reachability is explicit
+  - project execution host does not have to be in the project's owning bay
 - audit of implicit/global Conat client usage across browser and backend paths
 - coding rule: non-default Conat clients must be passed explicitly
 - observability baseline for:
@@ -425,6 +426,8 @@ Add the minimum cross-bay control-plane machinery.
 - durable inter-bay event streams
 - replicated projection consumers
 - fencing and replay support
+- explicit separation of project/account control ownership from host execution
+  placement
 - cross-bay observability:
   - lag
   - event backlog
@@ -447,24 +450,29 @@ Add the minimum cross-bay control-plane machinery.
 - replication lag measured under bursty update workloads
 - Conat subject/stream topology verified to remain bounded
 
-## Phase 6: Project Hosts Attached To Bays
+## Phase 6: Project Host Reachability And Placement
 
 ### Purpose
 
-Move host control fully under owning-bay authority.
+Make host reachability and placement explicit without forcing project ownership
+and execution placement to collapse onto the same bay.
 
 ### Deliverables
 
-- each host belongs to one bay
-- host heartbeats/metrics go to its bay
+- each host has an explicit control/reachability path
+- host heartbeats/metrics go to that explicit control path
 - project start/stop/restart flows route through owning bay
-- bay-local host pools and placement policy
+- bay-local account/project ownership remains separate from execution placement
+- host pools and placement policy can be optimized independently of
+  account/project sharding
 
 ### Exit Criteria
 
 - there is no hidden dependence on one global control hub for steady-state host
   operations
 - a project's controlling authority is its owning bay
+- project execution does not rely on a hidden assumption that the host shares
+  that bay
 
 ### Load Test Gate
 
