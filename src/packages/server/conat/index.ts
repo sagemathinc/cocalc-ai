@@ -35,6 +35,7 @@ import {
   startBayBackupMaintenance,
   startBayWalArchiveMaintenance,
 } from "@cocalc/server/bay-backup";
+import { initInterBayServices } from "@cocalc/server/inter-bay/service";
 
 export { loadConatConfiguration };
 
@@ -109,6 +110,9 @@ export async function initConatApi() {
   startAccountNotificationIndexProjectionMaintenance();
   startBayBackupMaintenance();
   startBayWalArchiveMaintenance();
+  initInterBayServices().catch((err) => {
+    logger.warn("failed to initialize inter-bay services", { err: `${err}` });
+  });
   initLLM();
   if (!isLaunchpadProduct()) {
     const { init: initProjectRunner } = lazyRequire("./project/run") as {

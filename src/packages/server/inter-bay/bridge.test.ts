@@ -5,23 +5,24 @@
 
 export {};
 
-const dispatchProjectControlRpcMock = jest.fn();
+const requestMock = jest.fn();
 
-jest.mock("@cocalc/server/inter-bay/project-control", () => ({
+jest.mock("@cocalc/backend/conat", () => ({
   __esModule: true,
-  dispatchProjectControlRpc: (...args: any[]) =>
-    dispatchProjectControlRpcMock(...args),
+  conat: jest.fn(() => ({
+    request: (...args: any[]) => requestMock(...args),
+  })),
 }));
 
 describe("inter-bay bridge", () => {
   beforeEach(() => {
     jest.resetModules();
-    dispatchProjectControlRpcMock.mockReset();
+    requestMock.mockReset();
     delete process.env.COCALC_BAY_ID;
   });
 
-  it("dispatches local requests through the local bridge handler", async () => {
-    dispatchProjectControlRpcMock.mockResolvedValue("ok");
+  it("dispatches local requests through conat request/reply", async () => {
+    requestMock.mockResolvedValue({ data: "ok" });
     const { getInterBayBridge } = await import("./bridge");
     const bridge = getInterBayBridge();
     await expect(
@@ -31,9 +32,10 @@ describe("inter-bay bridge", () => {
         data: { project_id: "p1" },
       }),
     ).resolves.toBe("ok");
-    expect(dispatchProjectControlRpcMock).toHaveBeenCalledWith(
+    expect(requestMock).toHaveBeenCalledWith(
       "bay.bay-0.rpc.project-control.start",
       { project_id: "p1" },
+      { timeout: undefined },
     );
   });
 
