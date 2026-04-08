@@ -7,7 +7,7 @@ import {
   createHostControlClient,
   type HostControlApi,
 } from "@cocalc/conat/project-host/api";
-import { getExplicitHostRoutedClient } from "@cocalc/server/conat/route-client";
+import { getExplicitHostControlClient } from "@cocalc/server/conat/route-client";
 
 export async function getRoutedHostControlClient({
   host_id,
@@ -20,7 +20,7 @@ export async function getRoutedHostControlClient({
 }): Promise<HostControlApi> {
   return createHostControlClient({
     host_id,
-    client: await getExplicitHostRoutedClient({ host_id, fresh }),
+    client: await getExplicitHostControlClient({ host_id, fresh }),
     timeout,
   });
 }

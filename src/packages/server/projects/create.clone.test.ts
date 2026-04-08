@@ -60,6 +60,8 @@ jest.mock("@cocalc/server/conat/route-client", () => ({
   __esModule: true,
   getExplicitHostRoutedClient: (...args: any[]) =>
     getExplicitHostRoutedClientMock(...args),
+  getExplicitHostControlClient: (...args: any[]) =>
+    getExplicitHostRoutedClientMock(...args),
 }));
 
 jest.mock("@cocalc/conat/project-host/api", () => ({

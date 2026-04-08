@@ -182,12 +182,9 @@ describe("server/conat route-client", () => {
     expect(routed1.close).toHaveBeenCalled();
   });
 
-  it("routes direct host subjects through explicit host routing", async () => {
+  it("does not reroute direct host subjects through the generic project router", async () => {
     const central = createFakeClient();
-    const routed = createFakeClient();
-    connectMock
-      .mockImplementationOnce(() => central)
-      .mockImplementationOnce(() => routed);
+    connectMock.mockImplementationOnce(() => central);
     routeHostSubjectMock.mockReturnValue({
       host_id: "host-2",
       address: "https://host-2.example",
@@ -200,7 +197,7 @@ describe("server/conat route-client", () => {
       "project-host.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.api",
     );
 
-    expect(routedResult?.client).toBe(routed);
+    expect(routedResult).toBeUndefined();
   });
 
   it("materializes explicit routed host clients", async () => {
@@ -216,5 +213,39 @@ describe("server/conat route-client", () => {
     await expect(
       getExplicitHostRoutedClient({ host_id: "host-3" }),
     ).resolves.toBe(routed);
+  });
+
+  it("issues bearer auth for explicit routed host clients during construction", async () => {
+    const routed = createFakeClient();
+    let authValue: any;
+    let authPromise: Promise<void> | undefined;
+    connectMock.mockImplementationOnce((opts) => {
+      authPromise = Promise.resolve(
+        opts.auth((value) => {
+          authValue = value;
+        }),
+      );
+      return routed;
+    });
+    materializeHostRouteTargetMock.mockResolvedValue({
+      host_id: "host-3",
+      address: "https://host-3.example",
+    });
+
+    const { getExplicitHostRoutedClient } = await import("./route-client");
+
+    await expect(
+      getExplicitHostRoutedClient({ host_id: "host-3" }),
+    ).resolves.toBe(routed);
+    await authPromise;
+
+    expect(authValue).toEqual({ bearer: "token-1" });
+    expect(connectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: "https://host-3.example",
+        noCache: true,
+        forceNew: true,
+      }),
+    );
   });
 });

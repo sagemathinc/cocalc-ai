@@ -15,7 +15,6 @@ import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token
 import {
   materializeHostRouteTarget,
   materializeProjectHostTarget,
-  routeHostSubject,
   routeProjectSubject,
   listenForUpdates as listenForProjectHostUpdates,
 } from "./route-project";
@@ -128,20 +127,30 @@ function getOrCreateRoutedHubClient({
   const state: RoutedHubClientState = {
     address,
     host_session_id,
-    client: connect({
-      address,
-      inboxPrefix: inboxPrefix({ hub_id: "hub" }),
-      auth: async (cb) => {
-        try {
-          const token = await getHubRouteToken(host_id, state);
-          cb({ bearer: token });
-        } catch {
-          cb({});
-        }
-      },
-      reconnection: false,
-    }),
+    client: undefined as unknown as Client,
   };
+  state.client = connect({
+    // Routed host clients already have explicit lifecycle via routedHubClients,
+    // so they must not share the global Conat cache or socket.io manager state.
+    noCache: true,
+    forceNew: true,
+    address,
+    inboxPrefix: inboxPrefix({ hub_id: "hub" }),
+    auth: async (cb) => {
+      try {
+        const token = await getHubRouteToken(host_id, state);
+        cb({ bearer: token });
+      } catch (err) {
+        log.debug("failed issuing routed hub token", {
+          host_id,
+          address,
+          err: `${err}`,
+        });
+        cb({});
+      }
+    },
+    reconnection: false,
+  });
   const reconnectRouted = () => {
     for (const delayMs of ROUTED_RECONNECT_DELAYS_MS) {
       setTimeout(() => {
@@ -236,6 +245,24 @@ export async function getExplicitHostRoutedClient({
   return routed.client;
 }
 
+export async function getExplicitHostControlClient({
+  host_id,
+  fresh = false,
+}: {
+  host_id: string;
+  fresh?: boolean;
+}): Promise<Client> {
+  const routed = await materializeHostRouteTarget(host_id, { fresh });
+  if (!routed?.host_id) {
+    throw new Error(`unable to route host ${host_id} to its owning bay`);
+  }
+  // The project-host control service currently lives on the owning bay hub
+  // cluster, not the host-local Conat server. Keep the route materialization
+  // explicit so callers fail fast on invalid ownership, but send the RPC over
+  // the bay hub client.
+  return conatWithProjectRouting();
+}
+
 export function conatWithProjectRouting(options?: ClientOptions): Client {
   if (!listenerStarted) {
     listenerStarted = true;
@@ -256,20 +283,12 @@ export function conatWithProjectRouting(options?: ClientOptions): Client {
   const combinedRoute =
     routeSubject == null
       ? (subject: string) => {
-          const hostRouted = routeTargetToClient(routeHostSubject(subject));
-          if (hostRouted) {
-            return hostRouted;
-          }
           const routed = routeProjectSubject(subject);
           return routeTargetToClient(routed);
         }
       : (subject: string) => {
           const custom = routeSubject(subject);
           if (custom) return custom;
-          const hostRouted = routeTargetToClient(routeHostSubject(subject));
-          if (hostRouted) {
-            return hostRouted;
-          }
           const routed = routeProjectSubject(subject);
           return routeTargetToClient(routed);
         };
