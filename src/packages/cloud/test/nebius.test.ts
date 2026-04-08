@@ -49,8 +49,8 @@ function buildSpec(overrides: Partial<HostSpec> = {}): HostSpec {
     disk_gb: 200,
     disk_type: "ssd",
     metadata: {
-      machine_type: "cpu-d3-standard-4",
-      platform: "cpu-d3",
+      machine_type: "spot-enabled-machine",
+      platform: "spot-platform",
       source_image: "image-1",
     },
     ...overrides,
