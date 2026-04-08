@@ -129,6 +129,8 @@ jest.mock("@cocalc/conat/persist/util", () => ({
 jest.mock("./util", () => ({
   __esModule: true,
   assertCollab: (...args: any[]) => assertCollabMock(...args),
+  assertCollabAllowRemoteProjectAccess: (...args: any[]) =>
+    assertCollabMock(...args),
 }));
 
 describe("projects.start", () => {

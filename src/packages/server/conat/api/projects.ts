@@ -52,7 +52,7 @@ import {
   offlineMoveConfirmationError,
 } from "@cocalc/server/projects/offline-move-confirmation";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
-import { assertCollab } from "./util";
+import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import type {
@@ -1328,7 +1328,7 @@ export async function start({
   service: string;
   stream_name: string;
 }> {
-  await assertCollab({ account_id, project_id });
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   const op = await createLro({
     kind: "project-start",
     scope_type: "project",

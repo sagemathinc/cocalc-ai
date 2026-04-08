@@ -4,7 +4,7 @@ import type {
   LroStatus,
   LroSummary,
 } from "@cocalc/conat/hub/api/lro";
-import { assertCollab } from "./util";
+import { assertCollabAllowRemoteProjectAccess } from "./util";
 import {
   dismissLro,
   getLro,
@@ -31,7 +31,10 @@ async function assertScopeAccess({
   scope_id: string;
 }) {
   if (scope_type === "project") {
-    await assertCollab({ account_id, project_id: scope_id });
+    await assertCollabAllowRemoteProjectAccess({
+      account_id,
+      project_id: scope_id,
+    });
     return;
   }
   if (!account_id) {
