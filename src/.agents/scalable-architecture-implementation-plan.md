@@ -412,6 +412,9 @@ Make Launchpad run the future architecture in one-bay mode.
 
 ## Phase 5: Inter-Bay Plumbing
 
+Detailed pre-code design note:
+[phase-5-inter-bay-plumbing-design.md](/home/wstein/build/cocalc-lite4/src/.agents/phase-5-inter-bay-plumbing-design.md)
+
 ### Purpose
 
 Add the minimum cross-bay control-plane machinery.
