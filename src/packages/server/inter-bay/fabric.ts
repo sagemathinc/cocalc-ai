@@ -8,6 +8,7 @@ import {
   conatServer as defaultAddress,
 } from "@cocalc/backend/data";
 import { HUB_PASSWORD_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
+import { getClusterConfig } from "@cocalc/server/cluster-config";
 import {
   connect,
   type Client,
@@ -26,10 +27,34 @@ function configuredEnv(name: string): string | undefined {
 }
 
 export function getInterBayFabricConfig(): InterBayFabricConfig {
+  const explicitAddress = configuredEnv("COCALC_INTER_BAY_CONAT_SERVER");
+  const explicitPassword = configuredEnv("COCALC_INTER_BAY_CONAT_PASSWORD");
+  if (explicitAddress || explicitPassword) {
+    return {
+      address: explicitAddress ?? defaultAddress,
+      password: explicitPassword ?? defaultPassword,
+    };
+  }
+  const cluster = getClusterConfig();
+  if (cluster.role === "attached") {
+    if (!cluster.seed_conat_server) {
+      throw new Error(
+        "attached bay requires COCALC_CLUSTER_SEED_CONAT_SERVER or COCALC_INTER_BAY_CONAT_SERVER",
+      );
+    }
+    if (!cluster.seed_conat_password) {
+      throw new Error(
+        "attached bay requires COCALC_CLUSTER_SEED_CONAT_PASSWORD or COCALC_INTER_BAY_CONAT_PASSWORD",
+      );
+    }
+    return {
+      address: cluster.seed_conat_server,
+      password: cluster.seed_conat_password,
+    };
+  }
   return {
-    address: configuredEnv("COCALC_INTER_BAY_CONAT_SERVER") ?? defaultAddress,
-    password:
-      configuredEnv("COCALC_INTER_BAY_CONAT_PASSWORD") ?? defaultPassword,
+    address: defaultAddress,
+    password: defaultPassword,
   };
 }
 

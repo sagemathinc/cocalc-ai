@@ -28,15 +28,18 @@ describe("bay-directory", () => {
   let prevBayId: string | undefined;
   let prevBayLabel: string | undefined;
   let prevBayRegion: string | undefined;
+  let prevClusterRole: string | undefined;
 
   beforeEach(() => {
     jest.resetModules();
     prevBayId = process.env.COCALC_BAY_ID;
     prevBayLabel = process.env.COCALC_BAY_LABEL;
     prevBayRegion = process.env.COCALC_BAY_REGION;
+    prevClusterRole = process.env.COCALC_CLUSTER_ROLE;
     delete process.env.COCALC_BAY_ID;
     delete process.env.COCALC_BAY_LABEL;
     delete process.env.COCALC_BAY_REGION;
+    delete process.env.COCALC_CLUSTER_ROLE;
 
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (sql.includes("FROM accounts")) {
@@ -93,6 +96,11 @@ describe("bay-directory", () => {
     } else {
       process.env.COCALC_BAY_REGION = prevBayRegion;
     }
+    if (prevClusterRole == null) {
+      delete process.env.COCALC_CLUSTER_ROLE;
+    } else {
+      process.env.COCALC_CLUSTER_ROLE = prevClusterRole;
+    }
   });
 
   it("returns the default one-bay configuration", async () => {
@@ -116,6 +124,20 @@ describe("bay-directory", () => {
         is_default: true,
       },
     ]);
+  });
+
+  it("reports a seed bay in multi-bay mode", async () => {
+    process.env.COCALC_BAY_ID = "bay-seed";
+    process.env.COCALC_CLUSTER_ROLE = "seed";
+    const { getSingleBayInfo } = await import("./bay-directory");
+    expect(getSingleBayInfo()).toEqual({
+      bay_id: "bay-seed",
+      label: "bay-seed",
+      region: null,
+      deployment_mode: "multi-bay",
+      role: "seed",
+      is_default: true,
+    });
   });
 
   it("allows resolving another account only for admins", async () => {

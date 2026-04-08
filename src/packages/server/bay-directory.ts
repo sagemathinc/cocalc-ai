@@ -16,6 +16,10 @@ import {
   getConfiguredBayLabel,
   getConfiguredBayRegion,
 } from "@cocalc/server/bay-config";
+import {
+  getConfiguredClusterRole,
+  isMultiBayCluster,
+} from "@cocalc/server/cluster-config";
 import { listHosts } from "@cocalc/server/conat/api/hosts";
 import { isValidUUID } from "@cocalc/util/misc";
 
@@ -26,12 +30,13 @@ function resolveStoredBayId(value: unknown): string | undefined {
 
 export function getSingleBayInfo(): BayInfo {
   const bay_id = getConfiguredBayId();
+  const clusterRole = getConfiguredClusterRole();
   return {
     bay_id,
     label: getConfiguredBayLabel(bay_id),
     region: getConfiguredBayRegion(),
-    deployment_mode: "single-bay",
-    role: "combined",
+    deployment_mode: isMultiBayCluster() ? "multi-bay" : "single-bay",
+    role: clusterRole === "standalone" ? "combined" : clusterRole,
     is_default: true,
   };
 }
