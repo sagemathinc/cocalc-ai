@@ -380,11 +380,24 @@ Make Launchpad run the future architecture in one-bay mode.
 ### 2026-04-07 Status Note
 
 - one-bay directory abstractions exist in code and schema
-- bay-aware CLI already includes `cocalc bay list` and `cocalc bay show`
-- the next missing CLI/operator items for this phase are `cocalc bay load` and
-  `cocalc bay backups`
-- the next architectural work for this phase is making one-bay routing and host
-  control fully explicit, not merely implicit defaults
+- bay-aware CLI now includes:
+  - `cocalc bay list`
+  - `cocalc bay show`
+  - `cocalc bay load`
+  - `cocalc bay backups`
+  - `cocalc bay backup`
+  - `cocalc bay restore`
+  - `cocalc bay restore-test`
+- the one-bay backup pipeline is implemented with:
+  - scheduled full snapshots
+  - regional rustic snapshot storage
+  - direct WAL archival to R2
+  - restore, remote-only restore, and PITR validation
+- one-bay host control routing is now explicit in server code, while
+  `project-host.<host_id>.api` remains intentionally served on the owning bay's
+  hub-side Conat cluster rather than a host-local Conat server
+- Phase 4 should now be treated as substantially complete for one-bay
+  Launchpad; the next major work is true multi-bay plumbing in Phase 5
 
 ### Exit Criteria
 
@@ -579,6 +592,9 @@ The CLI should evolve in lockstep with the platform.
 - `cocalc bay show`
 - `cocalc bay load`
 - `cocalc bay backups`
+- `cocalc bay backup`
+- `cocalc bay restore`
+- `cocalc bay restore-test`
 
 ### By End Of Phase 7
 
