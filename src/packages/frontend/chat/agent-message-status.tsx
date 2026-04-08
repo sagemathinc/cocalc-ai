@@ -5,6 +5,7 @@
 
 import { Button, Checkbox, Drawer, Tooltip } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
+import type { CSSProperties } from "react";
 import {
   useEffect,
   useMemo,
@@ -118,6 +119,126 @@ interface AgentMessageStatusProps {
   deleteLog?: () => Promise<void>;
 }
 
+interface AgentActivityChipProps {
+  generating: boolean;
+  durationLabel: string;
+  lastActivityAtMs?: number;
+  startedAtMs?: number;
+  date: number;
+  onOpen: () => void;
+  style?: CSSProperties;
+}
+
+export function AgentActivityChip({
+  generating,
+  durationLabel,
+  lastActivityAtMs,
+  startedAtMs,
+  date,
+  onOpen,
+  style,
+}: AgentActivityChipProps) {
+  const runStartMs = resolveLiveRunStartMs({ startedAtMs, date });
+  const lastActivityInfo = useMemo(
+    () =>
+      describeLastActivity({
+        generating,
+        lastActivityAtMs,
+        now: Date.now(),
+      }),
+    [generating, lastActivityAtMs],
+  );
+  const lastActivityColor = lastActivityInfo.stale
+    ? COLORS.ORANGE_WARN
+    : COLORS.GRAY_D;
+  const liveStatusTitle = useMemo(() => {
+    const parts: string[] = [];
+    if (Number.isFinite(runStartMs) && runStartMs > 0) {
+      parts.push(`Running since: ${formatTimestampTitle(runStartMs)}`);
+    }
+    if (
+      typeof lastActivityAtMs === "number" &&
+      Number.isFinite(lastActivityAtMs)
+    ) {
+      parts.push(`Last activity: ${formatTimestampTitle(lastActivityAtMs)}`);
+    } else if (generating) {
+      parts.push("Last activity: awaiting first event");
+    }
+    return parts.join("\n");
+  }, [runStartMs, lastActivityAtMs, generating]);
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      title={liveStatusTitle || "View Codex activity log"}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "4px 10px",
+        borderRadius: 999,
+        background: COLORS.GRAY_LLL,
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        lineHeight: 1.2,
+        cursor: "pointer",
+        ...style,
+      }}
+    >
+      {generating ? (
+        <LoadingOutlined spin style={{ fontSize: 12, color: COLORS.GRAY_D }} />
+      ) : null}
+      <span
+        style={{
+          color: COLORS.GRAY_D,
+          fontSize: 12,
+          fontWeight: 500,
+        }}
+      >
+        {generating
+          ? `Running ${durationLabel}`
+          : `Worked for ${durationLabel}`}
+      </span>
+      {generating && lastActivityInfo.label ? (
+        <Tooltip
+          title={
+            typeof lastActivityAtMs === "number" &&
+            Number.isFinite(lastActivityAtMs) ? (
+              <span>
+                Last backend activity{" "}
+                <TimeAgo date={new Date(lastActivityAtMs)} /> at{" "}
+                {formatTimestampTitle(lastActivityAtMs)}
+              </span>
+            ) : (
+              "The turn is running, but no Codex activity event has arrived yet."
+            )
+          }
+        >
+          <span style={{ color: lastActivityColor, fontSize: 12 }}>
+            {lastActivityInfo.label}
+          </span>
+        </Tooltip>
+      ) : null}
+      <span
+        style={{
+          color: COLORS.GRAY_D,
+          fontSize: 12,
+          textDecoration: "underline",
+        }}
+      >
+        Activity
+      </span>
+    </div>
+  );
+}
+
 export function AgentMessageStatus({
   show,
   generating,
@@ -161,33 +282,6 @@ export function AgentMessageStatus({
     if (!Number.isFinite(runStartMs) || runStartMs <= 0) return durationLabel;
     return formatElapsed(Date.now() - runStartMs);
   }, [runStartMs, durationLabel, generating, tick]);
-  const lastActivityInfo = useMemo(
-    () =>
-      describeLastActivity({
-        generating,
-        lastActivityAtMs,
-        now: Date.now(),
-      }),
-    [generating, lastActivityAtMs, tick],
-  );
-  const lastActivityColor = lastActivityInfo.stale
-    ? COLORS.ORANGE_WARN
-    : COLORS.GRAY_D;
-  const liveStatusTitle = useMemo(() => {
-    const parts: string[] = [];
-    if (Number.isFinite(runStartMs) && runStartMs > 0) {
-      parts.push(`Running since: ${formatTimestampTitle(runStartMs)}`);
-    }
-    if (
-      typeof lastActivityAtMs === "number" &&
-      Number.isFinite(lastActivityAtMs)
-    ) {
-      parts.push(`Last activity: ${formatTimestampTitle(lastActivityAtMs)}`);
-    } else if (generating) {
-      parts.push("Last activity: awaiting first event");
-    }
-    return parts.join("\n");
-  }, [runStartMs, lastActivityAtMs, generating]);
   const setActivitySize = (size: number) => {
     setActivitySize0(size);
     try {
@@ -317,76 +411,14 @@ export function AgentMessageStatus({
           flexWrap: "wrap",
         }}
       >
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={openActivity}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              openActivity();
-            }
-          }}
-          title={liveStatusTitle || "View Codex activity log"}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "4px 10px",
-            borderRadius: 999,
-            background: COLORS.GRAY_LLL,
-            border: `1px solid ${COLORS.GRAY_LL}`,
-            lineHeight: 1.2,
-            cursor: "pointer",
-          }}
-        >
-          {generating ? (
-            <LoadingOutlined
-              spin
-              style={{ fontSize: 12, color: COLORS.GRAY_D }}
-            />
-          ) : null}
-          <span
-            style={{
-              color: COLORS.GRAY_D,
-              fontSize: 12,
-              fontWeight: 500,
-            }}
-          >
-            {generating
-              ? `Running ${liveDurationLabel}`
-              : `Worked for ${liveDurationLabel}`}
-          </span>
-          {generating && lastActivityInfo.label ? (
-            <Tooltip
-              title={
-                typeof lastActivityAtMs === "number" &&
-                Number.isFinite(lastActivityAtMs) ? (
-                  <span>
-                    Last backend activity{" "}
-                    <TimeAgo date={new Date(lastActivityAtMs)} /> at{" "}
-                    {formatTimestampTitle(lastActivityAtMs)}
-                  </span>
-                ) : (
-                  "The turn is running, but no Codex activity event has arrived yet."
-                )
-              }
-            >
-              <span style={{ color: lastActivityColor, fontSize: 12 }}>
-                {lastActivityInfo.label}
-              </span>
-            </Tooltip>
-          ) : null}
-          <span
-            style={{
-              color: COLORS.GRAY_D,
-              fontSize: 12,
-              textDecoration: "underline",
-            }}
-          >
-            Activity
-          </span>
-        </div>
+        <AgentActivityChip
+          generating={generating}
+          durationLabel={liveDurationLabel}
+          lastActivityAtMs={lastActivityAtMs}
+          startedAtMs={startedAtMs}
+          date={date}
+          onOpen={openActivity}
+        />
         {generating && onNotifyOnTurnFinishChange ? (
           <Tooltip title="Show a modal in this browser tab when this Codex turn finishes.">
             <span
