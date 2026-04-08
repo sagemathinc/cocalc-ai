@@ -2080,8 +2080,8 @@ export class ChatStreamWriter {
             ? this.content
             : undefined;
         const candidate =
-          liveNonInterruptContent ??
           summaryText ??
+          liveNonInterruptContent ??
           latestNonInterruptMessage ??
           currentNonInterruptContent ??
           preservedContent ??
