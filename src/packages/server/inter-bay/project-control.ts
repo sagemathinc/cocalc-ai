@@ -4,13 +4,16 @@
  */
 
 import type {
+  GetProjectReferenceRequest,
+  ProjectReference,
   ProjectControlStartRequest,
   ProjectControlStopRequest,
 } from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import { resolveProjectBayDirect } from "@cocalc/server/inter-bay/directory";
 import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { getProject } from "@cocalc/server/projects/control";
+import { resolveVisibleProjectReferenceLocal } from "@cocalc/server/bay-directory";
 
 function staleRoutingError({
   project_id,
@@ -37,7 +40,7 @@ async function assertCurrentProjectOwnership({
   project_id: string;
   epoch?: number;
 }): Promise<void> {
-  const ownership = await resolveProjectBay(project_id);
+  const ownership = await resolveProjectBayDirect(project_id);
   if (ownership == null) {
     throw new Error(`project ${project_id} not found`);
   }
@@ -79,6 +82,25 @@ export async function handleProjectControlStop(
   });
   const project = await getProject(req.project_id);
   await project.stop();
+}
+
+export async function handleProjectReferenceGet(
+  req: GetProjectReferenceRequest,
+): Promise<ProjectReference | null> {
+  try {
+    const project = await resolveVisibleProjectReferenceLocal({
+      account_id: req.account_id,
+      project_id: req.project_id,
+    });
+    return {
+      project_id: project.project_id,
+      title: project.title,
+      host_id: project.host_id,
+      owning_bay_id: project.owning_bay_id,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function dispatchProjectControlRpc(

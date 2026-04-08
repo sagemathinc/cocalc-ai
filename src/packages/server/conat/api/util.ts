@@ -2,9 +2,10 @@ import { materializeProjectHost } from "../route-project";
 import {
   assertLocalProjectCollaborator,
   PROJECT_COLLABORATOR_REQUIRED_ERROR,
-  PROJECT_OWNED_BY_ANOTHER_BAY_ERROR,
 } from "../project-local-access";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 export async function assertCollab({ account_id, project_id }) {
   if (!account_id) {
@@ -33,12 +34,14 @@ export async function assertCollabAllowRemoteProjectAccess({
   try {
     await assertLocalProjectCollaborator({ account_id, project_id });
   } catch (err) {
-    if (
-      `${(err as Error)?.message ?? err}` !== PROJECT_OWNED_BY_ANOTHER_BAY_ERROR
-    ) {
+    const ownership = await resolveProjectBay(project_id);
+    if (!ownership || ownership.bay_id === getConfiguredBayId()) {
       throw err;
     }
-    if (!(await isCollaborator({ account_id, project_id }))) {
+    const remote = await getInterBayBridge()
+      .projectReference(ownership.bay_id)
+      .get({ account_id, project_id });
+    if (!remote) {
       throw Error(PROJECT_COLLABORATOR_REQUIRED_ERROR);
     }
     return;

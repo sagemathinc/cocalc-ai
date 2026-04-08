@@ -6,6 +6,8 @@
 export {
   type DirectoryMethod,
   directorySubject,
+  type ProjectReferenceMethod,
+  projectReferenceSubject,
   type ProjectControlMethod,
   projectControlSubject,
 } from "@cocalc/conat/inter-bay/api";

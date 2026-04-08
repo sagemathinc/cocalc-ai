@@ -6,7 +6,7 @@ Resolve a reproducible local CoCalc dev environment for CLI/browser automation.
 
 Usage:
   node scripts/dev/dev-env.js lite [--json] [--no-start] [--with-browser] [--shell]
-  node scripts/dev/dev-env.js hub  [--json] [--no-start] [--with-browser] [--shell]
+  node scripts/dev/dev-env.js hub  [--json] [--no-start] [--with-browser] [--shell] [--bay <bay-id>]
 
 Default output is shell exports suitable for:
   eval "$(pnpm dev:env:lite)"
@@ -43,9 +43,19 @@ const UUID_RE =
 function usageAndExit(message, code = 1) {
   if (message) console.error(message);
   console.error(
-    `Usage: dev-env.js <lite|hub> [--json] [--start|--no-start] [--with-browser] [--shell]`,
+    `Usage: dev-env.js <lite|hub> [--json] [--start|--no-start] [--with-browser] [--shell] [--bay <bay-id>]`,
   );
   process.exit(code);
+}
+
+function optionValue(args, name) {
+  const idx = args.indexOf(name);
+  if (idx === -1) return undefined;
+  const value = `${args[idx + 1] ?? ""}`.trim();
+  if (!value || value.startsWith("--")) {
+    usageAndExit(`missing value for ${name}`);
+  }
+  return value;
 }
 
 function run(cmd, args, opts = {}) {
@@ -143,6 +153,12 @@ function normalizeUrl(url) {
   } catch {
     return `${url ?? ""}`.trim().replace(/\/+$/, "");
   }
+}
+
+function localHubUrl(host, port) {
+  const rawHost = `${host ?? "localhost"}`.trim() || "localhost";
+  const bindHost = rawHost === "0.0.0.0" ? "127.0.0.1" : rawHost;
+  return normalizeUrl(`http://${bindHost}:${Number(port || 9100)}`);
 }
 
 function loadJsonIfExists(file) {
@@ -258,7 +274,77 @@ function getLiteEnvValues() {
   };
 }
 
-function getHubEnvValues() {
+function resolveHubTarget(daemonVars, requestedBay) {
+  const primaryBayId =
+    `${daemonVars.COCALC_BAY_ID ?? "bay-0"}`.trim() || "bay-0";
+  const secondBayEnabled =
+    `${daemonVars.HUB_ENABLE_SECOND_BAY ?? "0"}`.trim() === "1";
+  const secondBayId =
+    `${daemonVars.HUB_SECOND_BAY_ID ?? "bay-1"}`.trim() || "bay-1";
+  const requested =
+    `${requestedBay ?? process.env.COCALC_DEV_ENV_BAY ?? ""}`.trim();
+
+  if (
+    !requested ||
+    requested === primaryBayId ||
+    requested === "primary" ||
+    requested === "seed"
+  ) {
+    return {
+      bayId: primaryBayId,
+      apiUrl: localHubUrl(
+        daemonVars.HUB_BIND_HOST,
+        daemonVars.HUB_PORT || 9100,
+      ),
+      dataDir: undefined,
+      selectedEnv: {
+        COCALC_BAY_ID: primaryBayId,
+        COCALC_CLUSTER_ROLE:
+          `${daemonVars.COCALC_CLUSTER_ROLE ?? ""}`.trim() || "standalone",
+        COCALC_CLUSTER_SEED_BAY_ID:
+          `${daemonVars.COCALC_CLUSTER_SEED_BAY_ID ?? ""}`.trim(),
+        COCALC_CLUSTER_SEED_CONAT_SERVER:
+          `${daemonVars.COCALC_CLUSTER_SEED_CONAT_SERVER ?? ""}`.trim(),
+        COCALC_CLUSTER_SEED_CONAT_PASSWORD:
+          `${daemonVars.COCALC_CLUSTER_SEED_CONAT_PASSWORD ?? ""}`.trim(),
+      },
+    };
+  }
+
+  if (
+    secondBayEnabled &&
+    (requested === secondBayId ||
+      requested === "second" ||
+      requested === "attached")
+  ) {
+    const secondBayRoot =
+      `${daemonVars.HUB_SECOND_BAY_DATA_DIR ?? ""}`.trim() || undefined;
+    return {
+      bayId: secondBayId,
+      apiUrl: localHubUrl(
+        daemonVars.HUB_SECOND_BAY_BIND_HOST,
+        daemonVars.HUB_SECOND_BAY_PORT || 0,
+      ),
+      dataDir: secondBayRoot ? path.join(secondBayRoot, "postgres") : undefined,
+      selectedEnv: {
+        COCALC_BAY_ID: secondBayId,
+        COCALC_CLUSTER_ROLE: "attached",
+        COCALC_CLUSTER_SEED_BAY_ID:
+          `${daemonVars.COCALC_CLUSTER_SEED_BAY_ID ?? daemonVars.COCALC_BAY_ID ?? ""}`.trim(),
+        COCALC_CLUSTER_SEED_CONAT_SERVER: localHubUrl(
+          daemonVars.HUB_BIND_HOST,
+          daemonVars.HUB_PORT || 9100,
+        ),
+        COCALC_CLUSTER_SEED_CONAT_PASSWORD:
+          `${daemonVars.COCALC_CLUSTER_SEED_CONAT_PASSWORD ?? ""}`.trim(),
+      },
+    };
+  }
+
+  throw new Error(`unknown hub bay target: ${requested}`);
+}
+
+function getHubEnvValues(opts = {}) {
   const envOut = run("bash", [HUB_DAEMON, "env"]);
   if (envOut.status !== 0) {
     throw new Error(
@@ -266,13 +352,13 @@ function getHubEnvValues() {
     );
   }
   const vars = parseKeyValueLines(envOut.stdout);
-  const hostRaw = `${vars.HUB_BIND_HOST ?? "localhost"}`.trim() || "localhost";
-  const host = hostRaw === "0.0.0.0" ? "127.0.0.1" : hostRaw;
-  const port = Number(vars.HUB_PORT || 9100);
-  const protocol = "http";
+  const target = resolveHubTarget(vars, opts.targetBay);
   return {
     daemonVars: vars,
-    apiUrl: normalizeUrl(`${protocol}://${host}:${port}`),
+    selectedEnv: target.selectedEnv,
+    bayId: target.bayId,
+    dataDir: target.dataDir,
+    apiUrl: target.apiUrl,
   };
 }
 
@@ -303,7 +389,24 @@ function copyIfPresent(exportsMap, source, key) {
   exportsMap[key] = value;
 }
 
-function resolveHubPostgresConnection(statusInfo) {
+function localPostgresEnvCandidates(statusInfo, opts = {}) {
+  const selectedDataDir = `${opts.selectedDataDir ?? ""}`.trim();
+  const candidates = [];
+  if (selectedDataDir) {
+    candidates.push(path.join(selectedDataDir, "local-postgres.env"));
+  }
+  candidates.push(
+    path.join(ROOT, "data", "app", "postgres", "local-postgres.env"),
+  );
+  candidates.push(path.join(ROOT, "data", "postgres", "local-postgres.env"));
+  const pgDataDir = `${statusInfo?.pgDataDir ?? ""}`.trim();
+  if (pgDataDir) {
+    candidates.push(path.join(path.dirname(pgDataDir), "local-postgres.env"));
+  }
+  return candidates;
+}
+
+function resolveHubPostgresConnection(statusInfo, opts = {}) {
   const fromStatus = {
     pgHost: `${statusInfo?.pgHost ?? ""}`.trim(),
     pgUser: `${statusInfo?.pgUser ?? ""}`.trim() || "smc",
@@ -311,21 +414,7 @@ function resolveHubPostgresConnection(statusInfo) {
   };
   if (fromStatus.pgHost) return fromStatus;
 
-  const localEnvCandidates = [];
-  localEnvCandidates.push(
-    path.join(ROOT, "data", "app", "postgres", "local-postgres.env"),
-  );
-  localEnvCandidates.push(
-    path.join(ROOT, "data", "postgres", "local-postgres.env"),
-  );
-  const pgDataDir = `${statusInfo?.pgDataDir ?? ""}`.trim();
-  if (pgDataDir) {
-    localEnvCandidates.push(
-      path.join(path.dirname(pgDataDir), "local-postgres.env"),
-    );
-  }
-
-  for (const file of localEnvCandidates) {
+  for (const file of localPostgresEnvCandidates(statusInfo, opts)) {
     if (!file || !fs.existsSync(file)) continue;
     const vars = parseKeyValueLines(fs.readFileSync(file, "utf8"));
     const pgHost = `${vars.PGHOST ?? ""}`.trim();
@@ -341,22 +430,15 @@ function resolveHubDataDir(statusInfo, opts = {}) {
     `${opts.explicitDataDir ?? process.env.COCALC_DATA_DIR ?? ""}`.trim();
   const explicitData = `${opts.explicitData ?? process.env.DATA ?? ""}`.trim();
   const candidates = [];
+  const selectedDataDir = `${opts.selectedDataDir ?? ""}`.trim();
+  if (selectedDataDir) candidates.push(selectedDataDir);
 
   const pgDataDir = `${statusInfo?.pgDataDir ?? ""}`.trim();
   if (pgDataDir) {
     candidates.push(path.dirname(pgDataDir));
   }
 
-  const localEnvCandidates = [
-    path.join(ROOT, "data", "app", "postgres", "local-postgres.env"),
-    path.join(ROOT, "data", "postgres", "local-postgres.env"),
-  ];
-  if (pgDataDir) {
-    localEnvCandidates.push(
-      path.join(path.dirname(pgDataDir), "local-postgres.env"),
-    );
-  }
-  for (const file of localEnvCandidates) {
+  for (const file of localPostgresEnvCandidates(statusInfo, opts)) {
     if (!file || !fs.existsSync(file)) continue;
     const vars = parseKeyValueLines(fs.readFileSync(file, "utf8"));
     const envDataDir = `${vars.COCALC_DATA_DIR ?? ""}`.trim();
@@ -460,9 +542,13 @@ function hubPasswordCandidates(statusInfo, opts = {}) {
   const envSecretsDir = `${process.env.SECRETS ?? ""}`.trim();
   const secretsDir =
     opts.secretsDir ?? (envSecretsDir.length > 0 ? envSecretsDir : undefined);
+  const selectedDataDir = `${opts.selectedDataDir ?? ""}`.trim();
   const candidates = [];
   if (secretsDir) {
     candidates.push(path.join(secretsDir, "conat-password"));
+  }
+  if (selectedDataDir) {
+    candidates.push(path.join(selectedDataDir, "secrets", "conat-password"));
   }
   candidates.push(
     path.join(root, "data", "app", "postgres", "secrets", "conat-password"),
@@ -574,6 +660,7 @@ function main() {
   if (mode !== "lite" && mode !== "hub") {
     usageAndExit("missing mode");
   }
+  const requestedBay = optionValue(args, "--bay");
 
   const flags = new Set(args);
   const asJson = flags.has("--json");
@@ -592,17 +679,36 @@ function main() {
       `lite daemon is not running. Start it with: pnpm lite:daemon:start`,
     );
   }
-  const source = mode === "lite" ? getLiteEnvValues() : getHubEnvValues();
+  const source =
+    mode === "lite"
+      ? getLiteEnvValues()
+      : getHubEnvValues({ targetBay: requestedBay });
   const hubStatusInfo =
     mode === "hub" ? parseHubStatusInfo(daemon.statusText) : undefined;
   const hubPostgresConnection =
-    mode === "hub" ? resolveHubPostgresConnection(hubStatusInfo) : undefined;
+    mode === "hub"
+      ? resolveHubPostgresConnection(hubStatusInfo, {
+          selectedDataDir: source.dataDir,
+        })
+      : undefined;
   const hubDbContext =
-    mode === "hub" ? resolveHubProjectAndAccount(hubStatusInfo) : {};
-  const hubPassword = mode === "hub" ? resolveHubPassword(hubStatusInfo) : "";
+    mode === "hub"
+      ? resolveHubProjectAndAccount({
+          ...hubStatusInfo,
+          pgHost: hubPostgresConnection?.pgHost ?? hubStatusInfo?.pgHost,
+          pgUser: hubPostgresConnection?.pgUser ?? hubStatusInfo?.pgUser,
+        })
+      : {};
+  const hubPassword =
+    mode === "hub"
+      ? resolveHubPassword(hubStatusInfo, {
+          selectedDataDir: source.dataDir,
+        })
+      : "";
   const hubDataDir =
     mode === "hub"
       ? resolveHubDataDir(hubStatusInfo, {
+          selectedDataDir: source.dataDir,
           hubPassword,
           explicitDataDir: "",
           explicitData: "",
@@ -695,19 +801,19 @@ function main() {
     exportsMap.COCALC_AGENT_TOKEN = "";
     exportsMap.COCALC_CLI_AGENT_MODE = "";
     exportsMap.COCALC_PROJECT_INFO_SCOPE = "";
-    copyIfPresent(exportsMap, source.daemonVars, "COCALC_BAY_ID");
+    copyIfPresent(exportsMap, source.selectedEnv, "COCALC_BAY_ID");
     copyIfPresent(exportsMap, source.daemonVars, "COCALC_BAY_LABEL");
     copyIfPresent(exportsMap, source.daemonVars, "COCALC_BAY_REGION");
-    copyIfPresent(exportsMap, source.daemonVars, "COCALC_CLUSTER_ROLE");
-    copyIfPresent(exportsMap, source.daemonVars, "COCALC_CLUSTER_SEED_BAY_ID");
+    copyIfPresent(exportsMap, source.selectedEnv, "COCALC_CLUSTER_ROLE");
+    copyIfPresent(exportsMap, source.selectedEnv, "COCALC_CLUSTER_SEED_BAY_ID");
     copyIfPresent(
       exportsMap,
-      source.daemonVars,
+      source.selectedEnv,
       "COCALC_CLUSTER_SEED_CONAT_SERVER",
     );
     copyIfPresent(
       exportsMap,
-      source.daemonVars,
+      source.selectedEnv,
       "COCALC_CLUSTER_SEED_CONAT_PASSWORD",
     );
   }
@@ -766,4 +872,5 @@ module.exports = {
   resolveHubPostgresConnection,
   hubPasswordCandidates,
   resolveHubPassword,
+  resolveHubTarget,
 };

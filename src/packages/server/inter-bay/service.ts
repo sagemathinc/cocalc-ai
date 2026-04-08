@@ -6,13 +6,16 @@
 import {
   createInterBayDirectoryHandlers,
   createInterBayProjectControlHandler,
+  createInterBayProjectReferenceHandler,
   createInterBayProjectControlStopHandler,
   type InterBayDirectoryApi,
   type InterBayProjectControlApi,
+  type InterBayProjectReferenceApi,
 } from "@cocalc/conat/inter-bay/api";
 import type { ConatService } from "@cocalc/conat/service/typed";
 import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 import {
   resolveHostBayDirect,
   resolveProjectBayDirect,
@@ -20,6 +23,7 @@ import {
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
   handleProjectControlStart,
+  handleProjectReferenceGet,
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
 
@@ -36,6 +40,7 @@ export async function initInterBayServices(): Promise<void> {
   try {
     await startDirectoryService();
     await startProjectControlStartService();
+    await startProjectReferenceService();
   } catch (err) {
     serviceStarted = false;
     throw err;
@@ -43,6 +48,10 @@ export async function initInterBayServices(): Promise<void> {
 }
 
 async function startDirectoryService(): Promise<void> {
+  const role = getConfiguredClusterRole();
+  if (role === "attached") {
+    return;
+  }
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayDirectoryApi = {
     resolveProjectBay: async ({ project_id }) =>
@@ -84,6 +93,21 @@ async function startProjectControlStartService(): Promise<void> {
     createInterBayProjectControlStopHandler({
       client,
       bay_id,
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startProjectReferenceService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayProjectReferenceApi = {
+    get: async (opts) => await handleProjectReferenceGet(opts),
+  };
+  services.push(
+    createInterBayProjectReferenceHandler({
+      client,
+      bay_id: getConfiguredBayId(),
       parallel: true,
       impl,
     }),

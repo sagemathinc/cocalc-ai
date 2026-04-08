@@ -3,6 +3,8 @@ export {};
 let queryMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let listHostsMock: jest.Mock;
+let resolveProjectBayMock: jest.Mock;
+let projectReferenceGetMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -17,6 +19,20 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 jest.mock("@cocalc/server/conat/api/hosts", () => ({
   __esModule: true,
   listHosts: (...args: any[]) => listHostsMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/directory", () => ({
+  __esModule: true,
+  resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  __esModule: true,
+  getInterBayBridge: jest.fn(() => ({
+    projectReference: jest.fn(() => ({
+      get: (...args: any[]) => projectReferenceGetMock(...args),
+    })),
+  })),
 }));
 
 describe("bay-directory", () => {
@@ -78,6 +94,8 @@ describe("bay-directory", () => {
         name: "host-1",
       },
     ]);
+    resolveProjectBayMock = jest.fn(async () => null);
+    projectReferenceGetMock = jest.fn(async () => null);
   });
 
   afterEach(() => {
@@ -239,6 +257,39 @@ describe("bay-directory", () => {
       owning_bay_id: "bay-9",
       host_id: HOST_ID,
       title: "Project",
+      source: "project-row",
+    });
+  });
+
+  it("falls back to remote project reference when the project lives on another bay", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM projects")) {
+        throw new Error(`project '${PROJECT_ID}' not found`);
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-9",
+      epoch: 0,
+    }));
+    projectReferenceGetMock = jest.fn(async () => ({
+      project_id: PROJECT_ID,
+      title: "Remote Project",
+      host_id: HOST_ID,
+      owning_bay_id: "bay-9",
+    }));
+    const { resolveProjectOwningBay } = await import("./bay-directory");
+
+    await expect(
+      resolveProjectOwningBay({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      project_id: PROJECT_ID,
+      owning_bay_id: "bay-9",
+      host_id: HOST_ID,
+      title: "Remote Project",
       source: "project-row",
     });
   });

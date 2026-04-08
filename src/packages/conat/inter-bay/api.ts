@@ -16,6 +16,13 @@ export interface BayOwnership {
   epoch: number;
 }
 
+export interface ProjectReference {
+  project_id: string;
+  title: string;
+  host_id: string | null;
+  owning_bay_id: string;
+}
+
 export interface ResolveProjectBayRequest {
   project_id: string;
 }
@@ -36,8 +43,14 @@ export interface ProjectControlStopRequest {
   epoch?: number;
 }
 
+export interface GetProjectReferenceRequest {
+  project_id: string;
+  account_id: string;
+}
+
 export type ProjectControlMethod = "start" | "stop";
 export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
+export type ProjectReferenceMethod = "get";
 
 interface ResolveProjectBayApi {
   resolveProjectBay: (
@@ -59,6 +72,10 @@ export interface InterBayDirectoryApi {
 export interface InterBayProjectControlApi {
   start: (opts: ProjectControlStartRequest) => Promise<void>;
   stop: (opts: ProjectControlStopRequest) => Promise<void>;
+}
+
+export interface InterBayProjectReferenceApi {
+  get: (opts: GetProjectReferenceRequest) => Promise<ProjectReference | null>;
 }
 
 function serviceClientOptions({
@@ -83,6 +100,16 @@ export function projectControlSubject({
   method: ProjectControlMethod;
 }): string {
   return `bay.${dest_bay}.rpc.project-control.${method}`;
+}
+
+export function projectReferenceSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: ProjectReferenceMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.project-reference.${method}`;
 }
 
 export function directorySubject({
@@ -183,6 +210,44 @@ export function createInterBayProjectControlHandler({
     subject: projectControlSubject({ dest_bay: bay_id, method: "start" }),
     impl: {
       start: async (opts) => await impl.start(opts),
+    },
+  });
+}
+
+export function createInterBayProjectReferenceClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayProjectReferenceApi {
+  const refClient = createServiceClient<
+    Pick<InterBayProjectReferenceApi, "get">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectReferenceSubject({ dest_bay, method: "get" }),
+  });
+  return {
+    get: async (opts) => await refClient.get(opts),
+  };
+}
+
+export function createInterBayProjectReferenceHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectReferenceApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectReferenceApi, "get">>({
+    ...options,
+    service: "inter-bay-project-reference",
+    subject: projectReferenceSubject({ dest_bay: bay_id, method: "get" }),
+    impl: {
+      get: async (opts) => await impl.get(opts),
     },
   });
 }

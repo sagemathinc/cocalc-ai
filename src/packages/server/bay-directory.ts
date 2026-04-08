@@ -20,6 +20,8 @@ import {
   getConfiguredClusterRole,
   isMultiBayCluster,
 } from "@cocalc/server/cluster-config";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { listHosts } from "@cocalc/server/conat/api/hosts";
 import { isValidUUID } from "@cocalc/util/misc";
 
@@ -101,6 +103,27 @@ async function getVisibleProject({
   return row;
 }
 
+export async function resolveVisibleProjectReferenceLocal({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectBayLocation> {
+  const row = await getVisibleProject({
+    account_id,
+    project_id,
+  });
+  const owning_bay_id = resolveStoredBayId(row.owning_bay_id);
+  return {
+    project_id: row.project_id,
+    owning_bay_id: owning_bay_id ?? getConfiguredBayId(),
+    host_id: row.host_id ?? null,
+    title: row.title ?? "",
+    source: owning_bay_id ? "project-row" : "single-bay-default",
+  };
+}
+
 export async function resolveAccountHomeBay({
   account_id,
   user_account_id,
@@ -142,18 +165,33 @@ export async function resolveProjectOwningBay({
   if (!acting_account_id) {
     throw new Error("must be signed in");
   }
-  const row = await getVisibleProject({
-    account_id: acting_account_id,
-    project_id,
-  });
-  const owning_bay_id = resolveStoredBayId(row.owning_bay_id);
-  return {
-    project_id: row.project_id,
-    owning_bay_id: owning_bay_id ?? getConfiguredBayId(),
-    host_id: row.host_id ?? null,
-    title: row.title ?? "",
-    source: owning_bay_id ? "project-row" : "single-bay-default",
-  };
+  try {
+    return await resolveVisibleProjectReferenceLocal({
+      account_id: acting_account_id,
+      project_id,
+    });
+  } catch (err) {
+    const ownership = await resolveProjectBay(project_id);
+    if (!ownership || ownership.bay_id === getConfiguredBayId()) {
+      throw err;
+    }
+    const remote = await getInterBayBridge()
+      .projectReference(ownership.bay_id)
+      .get({
+        project_id,
+        account_id: acting_account_id,
+      });
+    if (!remote) {
+      throw err;
+    }
+    return {
+      project_id: remote.project_id,
+      owning_bay_id: remote.owning_bay_id,
+      host_id: remote.host_id,
+      title: remote.title,
+      source: "project-row",
+    };
+  }
 }
 
 export async function resolveHostBay({

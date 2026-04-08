@@ -59,4 +59,35 @@ describe("inter-bay bridge", () => {
       bridge.projectControl("bay-1").start({ project_id: "p1" } as any),
     ).resolves.toBeNull();
   });
+
+  it("dispatches typed project reference requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({
+      data: {
+        project_id: "p1",
+        title: "Project",
+        host_id: "h1",
+        owning_bay_id: "bay-0",
+      },
+    });
+    const { getInterBayBridge } = await import("./bridge");
+    const bridge = getInterBayBridge();
+    await expect(
+      bridge
+        .projectReference("bay-0")
+        .get({ project_id: "p1", account_id: "a1" } as any),
+    ).resolves.toEqual({
+      project_id: "p1",
+      title: "Project",
+      host_id: "h1",
+      owning_bay_id: "bay-0",
+    });
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-0.rpc.project-reference.get",
+      {
+        name: "get",
+        args: [{ project_id: "p1", account_id: "a1" }],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
 });
