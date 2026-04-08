@@ -297,6 +297,12 @@ function parseHubStatusInfo(statusText) {
   return { pgHost, pgUser, pgDataDir };
 }
 
+function copyIfPresent(exportsMap, source, key) {
+  const value = `${source?.[key] ?? ""}`.trim();
+  if (!value) return;
+  exportsMap[key] = value;
+}
+
 function resolveHubPostgresConnection(statusInfo) {
   const fromStatus = {
     pgHost: `${statusInfo?.pgHost ?? ""}`.trim(),
@@ -689,6 +695,21 @@ function main() {
     exportsMap.COCALC_AGENT_TOKEN = "";
     exportsMap.COCALC_CLI_AGENT_MODE = "";
     exportsMap.COCALC_PROJECT_INFO_SCOPE = "";
+    copyIfPresent(exportsMap, source.daemonVars, "COCALC_BAY_ID");
+    copyIfPresent(exportsMap, source.daemonVars, "COCALC_BAY_LABEL");
+    copyIfPresent(exportsMap, source.daemonVars, "COCALC_BAY_REGION");
+    copyIfPresent(exportsMap, source.daemonVars, "COCALC_CLUSTER_ROLE");
+    copyIfPresent(exportsMap, source.daemonVars, "COCALC_CLUSTER_SEED_BAY_ID");
+    copyIfPresent(
+      exportsMap,
+      source.daemonVars,
+      "COCALC_CLUSTER_SEED_CONAT_SERVER",
+    );
+    copyIfPresent(
+      exportsMap,
+      source.daemonVars,
+      "COCALC_CLUSTER_SEED_CONAT_PASSWORD",
+    );
   }
   if (mode === "hub" && hubPostgresConnection?.pgHost) {
     exportsMap.PGHOST = hubPostgresConnection.pgHost;
