@@ -36,6 +36,21 @@ describe("inter-bay bridge", () => {
     );
   });
 
+  it("dispatches typed project stop requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({ data: null });
+    const { getInterBayBridge } = await import("./bridge");
+    const bridge = getInterBayBridge();
+    await bridge.projectControl("bay-0").stop({ project_id: "p1" } as any);
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-0.rpc.project-control.stop",
+      {
+        name: "stop",
+        args: [{ project_id: "p1" }],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
+
   it("forwards remote-bay typed requests to the same fabric", async () => {
     requestMock.mockResolvedValue({ data: null });
     const { getInterBayBridge } = await import("./bridge");

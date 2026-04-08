@@ -14,7 +14,6 @@ export * from "@cocalc/server/conat/api/project-backups";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from "@cocalc/server/project-host/control";
-import { getProject } from "@cocalc/server/projects/control";
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
@@ -1471,10 +1470,16 @@ export async function stop({
   account_id: string;
   project_id: string;
 }): Promise<void> {
-  await assertCollab({ account_id, project_id });
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   log.debug("stop", { project_id });
-  const project = await getProject(project_id);
-  await project.stop();
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  await getInterBayBridge().projectControl(ownership.bay_id).stop({
+    project_id,
+    epoch: ownership.epoch,
+  });
 }
 
 export async function deleteProject({

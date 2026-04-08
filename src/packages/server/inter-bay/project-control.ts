@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { ProjectControlStartRequest } from "@cocalc/conat/inter-bay/api";
+import type {
+  ProjectControlStartRequest,
+  ProjectControlStopRequest,
+} from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
@@ -27,31 +30,55 @@ function staleRoutingError({
   );
 }
 
-export async function handleProjectControlStart(
-  req: ProjectControlStartRequest,
-): Promise<void> {
-  const ownership = await resolveProjectBay(req.project_id);
+async function assertCurrentProjectOwnership({
+  project_id,
+  epoch,
+}: {
+  project_id: string;
+  epoch?: number;
+}): Promise<void> {
+  const ownership = await resolveProjectBay(project_id);
   if (ownership == null) {
-    throw new Error(`project ${req.project_id} not found`);
+    throw new Error(`project ${project_id} not found`);
   }
   const currentBayId = getConfiguredBayId();
   if (
     ownership.bay_id !== currentBayId ||
-    (req.epoch != null && ownership.epoch !== req.epoch)
+    (epoch != null && ownership.epoch !== epoch)
   ) {
     throw staleRoutingError({
-      project_id: req.project_id,
-      expected_bay: req.epoch != null ? currentBayId : ownership.bay_id,
+      project_id,
+      expected_bay: epoch != null ? currentBayId : ownership.bay_id,
       actual_bay: ownership.bay_id,
-      expected_epoch: req.epoch,
+      expected_epoch: epoch,
       actual_epoch: ownership.epoch,
     });
   }
+}
+
+export async function handleProjectControlStart(
+  req: ProjectControlStartRequest,
+): Promise<void> {
+  await assertCurrentProjectOwnership({
+    project_id: req.project_id,
+    epoch: req.epoch,
+  });
   const project = await getProject(req.project_id);
   await project.start({
     account_id: req.account_id,
     lro_op_id: req.lro_op_id,
   });
+}
+
+export async function handleProjectControlStop(
+  req: ProjectControlStopRequest,
+): Promise<void> {
+  await assertCurrentProjectOwnership({
+    project_id: req.project_id,
+    epoch: req.epoch,
+  });
+  const project = await getProject(req.project_id);
+  await project.stop();
 }
 
 export async function dispatchProjectControlRpc(
@@ -64,6 +91,14 @@ export async function dispatchProjectControlRpc(
   });
   if (subject === expected) {
     await handleProjectControlStart(payload as ProjectControlStartRequest);
+    return null;
+  }
+  const stopExpected = projectControlSubject({
+    dest_bay: getConfiguredBayId(),
+    method: "stop",
+  });
+  if (subject === stopExpected) {
+    await handleProjectControlStop(payload as ProjectControlStopRequest);
     return null;
   }
   throw new Error(`unknown project-control subject: ${subject}`);

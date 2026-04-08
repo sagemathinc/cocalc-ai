@@ -68,9 +68,19 @@ describe("inter-bay fabric routing", () => {
       "bay.bay-1.rpc.project-control.start",
       { queue: "0" },
     );
-    const projectControlPromise = (async () => {
+    const projectStartPromise = (async () => {
       for await (const mesg of projectControlSub) {
         mesg.respond({ handled_by: "bay-1" }, { noThrow: true });
+        return mesg.data;
+      }
+    })();
+    const projectControlStopSub = await serviceClient.subscribe(
+      "bay.bay-1.rpc.project-control.stop",
+      { queue: "0" },
+    );
+    const projectStopPromise = (async () => {
+      for await (const mesg of projectControlStopSub) {
+        mesg.respond(null, { noThrow: true });
         return mesg.data;
       }
     })();
@@ -104,17 +114,25 @@ describe("inter-bay fabric routing", () => {
     await getInterBayBridge()
       .projectControl("bay-1")
       .start({ project_id: "proj-1", account_id: "acct-1" });
+    await getInterBayBridge()
+      .projectControl("bay-1")
+      .stop({ project_id: "proj-1" });
 
     await expect(directoryPromise).resolves.toEqual({
       name: "resolveProjectBay",
       args: [{ project_id: "proj-1" }],
     });
-    await expect(projectControlPromise).resolves.toEqual({
+    await expect(projectStartPromise).resolves.toEqual({
       name: "start",
       args: [{ project_id: "proj-1", account_id: "acct-1" }],
     });
+    await expect(projectStopPromise).resolves.toEqual({
+      name: "stop",
+      args: [{ project_id: "proj-1" }],
+    });
     getInterBayFabricClient().close();
     projectControlSub.close();
+    projectControlStopSub.close();
     directorySub.close();
   });
 });

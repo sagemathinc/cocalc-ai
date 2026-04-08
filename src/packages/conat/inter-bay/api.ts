@@ -31,7 +31,12 @@ export interface ProjectControlStartRequest {
   epoch?: number;
 }
 
-export type ProjectControlMethod = "start";
+export interface ProjectControlStopRequest {
+  project_id: string;
+  epoch?: number;
+}
+
+export type ProjectControlMethod = "start" | "stop";
 export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
 
 interface ResolveProjectBayApi {
@@ -53,6 +58,7 @@ export interface InterBayDirectoryApi {
 
 export interface InterBayProjectControlApi {
   start: (opts: ProjectControlStartRequest) => Promise<void>;
+  stop: (opts: ProjectControlStopRequest) => Promise<void>;
 }
 
 function serviceClientOptions({
@@ -145,10 +151,22 @@ export function createInterBayProjectControlClient({
   dest_bay: string;
   timeout?: number;
 }): InterBayProjectControlApi {
-  return createServiceClient<InterBayProjectControlApi>({
+  const startClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "start">
+  >({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "start" }),
   });
+  const stopClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "stop">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({ dest_bay, method: "stop" }),
+  });
+  return {
+    start: async (opts) => await startClient.start(opts),
+    stop: async (opts) => await stopClient.stop(opts),
+  };
 }
 
 export function createInterBayProjectControlHandler({
@@ -159,10 +177,30 @@ export function createInterBayProjectControlHandler({
   bay_id: string;
   impl: InterBayProjectControlApi;
 }): ConatService {
-  return createServiceHandler<InterBayProjectControlApi>({
+  return createServiceHandler<Pick<InterBayProjectControlApi, "start">>({
     ...options,
     service: "inter-bay-project-control",
     subject: projectControlSubject({ dest_bay: bay_id, method: "start" }),
-    impl,
+    impl: {
+      start: async (opts) => await impl.start(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlStopHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "stop">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({ dest_bay: bay_id, method: "stop" }),
+    impl: {
+      stop: async (opts) => await impl.stop(opts),
+    },
   });
 }
