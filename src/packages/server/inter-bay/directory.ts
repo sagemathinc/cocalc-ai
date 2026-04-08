@@ -4,7 +4,9 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { conat } from "@cocalc/backend/conat";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { directorySubject } from "@cocalc/server/inter-bay/subjects";
 
 export interface BayOwnership {
   bay_id: string;
@@ -14,6 +16,19 @@ export interface BayOwnership {
 const LOCAL_EPOCH = 0;
 
 export async function resolveProjectBay(
+  project_id: string,
+): Promise<BayOwnership | null> {
+  const resp = await conat().request(
+    directorySubject({ method: "resolve-project-bay" }),
+    { project_id },
+  );
+  if (resp.data?.error) {
+    throw new Error(`${resp.data.error}`);
+  }
+  return (resp.data ?? null) as BayOwnership | null;
+}
+
+export async function resolveProjectBayDirect(
   project_id: string,
 ): Promise<BayOwnership | null> {
   const defaultBayId = getConfiguredBayId();
@@ -35,6 +50,19 @@ export async function resolveProjectBay(
 }
 
 export async function resolveHostBay(
+  host_id: string,
+): Promise<BayOwnership | null> {
+  const resp = await conat().request(
+    directorySubject({ method: "resolve-host-bay" }),
+    { host_id },
+  );
+  if (resp.data?.error) {
+    throw new Error(`${resp.data.error}`);
+  }
+  return (resp.data ?? null) as BayOwnership | null;
+}
+
+export async function resolveHostBayDirect(
   host_id: string,
 ): Promise<BayOwnership | null> {
   const defaultBayId = getConfiguredBayId();
