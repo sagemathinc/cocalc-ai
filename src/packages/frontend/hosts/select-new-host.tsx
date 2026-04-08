@@ -9,6 +9,7 @@ import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { Icon } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import { HostPickerModal } from "@cocalc/frontend/hosts/pick-host";
+import { SpotHostTag } from "@cocalc/frontend/hosts/spot-ui";
 
 const { Paragraph } = Typography;
 
@@ -53,6 +54,7 @@ export function SelectNewHost({
                 {selectedHost ? (
                   <>
                     <span style={{ marginRight: 8 }}>{selectedHost.name}</span>
+                    {selectedHost.pricing_model === "spot" && <SpotHostTag />}
                     {selectedHost.region && (
                       <Tag color="blue" style={{ marginRight: 6 }}>
                         {selectedHost.region}

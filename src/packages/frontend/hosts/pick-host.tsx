@@ -23,6 +23,7 @@ import {
 } from "@cocalc/util/consts";
 
 import { getHostStatusTooltip } from "./constants";
+import { SpotHostTag } from "./spot-ui";
 
 const STATUS_COLOR = {
   stopped: "red",
@@ -384,6 +385,7 @@ export function HostPickerModal({
                       <Radio value={host.id} disabled={disabled}>
                         {host.name}
                       </Radio>
+                      {host.pricing_model === "spot" && <SpotHostTag />}
                       <Tooltip
                         title={getHostStatusTooltip(
                           host.status,
