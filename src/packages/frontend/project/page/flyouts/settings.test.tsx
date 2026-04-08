@@ -80,7 +80,12 @@ jest.mock("@cocalc/frontend/components", () => ({
 
 jest.mock("@cocalc/frontend/course", () => ({
   useStudentProjectFunctionality: () => ({ disableSSH: false }),
+<<<<<<< HEAD
   getStudentProjectFunctionality: () => ({ disableSSH: false }),
+||||||| ce99e94907
+  getStudentProjectFunctionality: () => ({ disableSSH: false }),
+=======
+>>>>>>> lite2
 }));
 
 jest.mock("@cocalc/frontend/i18n", () => ({

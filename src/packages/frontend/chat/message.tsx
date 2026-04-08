@@ -79,7 +79,7 @@ import {
   editingArray,
 } from "./access";
 import { SyncOutlined } from "@ant-design/icons";
-import { AgentMessageStatus } from "./agent-message-status";
+import { AgentActivityChip, AgentMessageStatus } from "./agent-message-status";
 import { useCodexLog } from "./use-codex-log";
 import { GitCommitDrawer } from "./git-commit-drawer";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
@@ -1744,7 +1744,16 @@ export default function Message({
         >
           <Icon name={interruptIcon} /> {interruptLabel}
         </Button>
-        {elapsedLabel ? (
+        {showCodexActivity && elapsedLabel ? (
+          <AgentActivityChip
+            generating={effectiveGenerating}
+            durationLabel={elapsedLabel}
+            lastActivityAtMs={lastCodexActivityAtMs}
+            startedAtMs={acpStartedAtMs}
+            date={date}
+            onOpen={() => setOpenActivityDrawerToken((n) => (n ?? 0) + 1)}
+          />
+        ) : elapsedLabel ? (
           <span style={{ fontSize: 12, display: "inline-flex", gap: "4px" }}>
             <Icon name="clock" /> {elapsedLabel}
           </span>

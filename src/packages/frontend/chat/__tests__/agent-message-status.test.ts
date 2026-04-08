@@ -3,6 +3,7 @@
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import {
+  AgentActivityChip,
   AgentMessageStatus,
   describeLastActivity,
   resolveLiveRunStartMs,
@@ -70,6 +71,27 @@ describe("describeLastActivity", () => {
 });
 
 describe("AgentMessageStatus", () => {
+  it("renders the shared activity chip and opens it on click", () => {
+    const onOpen = jest.fn();
+    render(
+      React.createElement(AgentActivityChip, {
+        generating: true,
+        durationLabel: "0:10",
+        lastActivityAtMs: 4000,
+        startedAtMs: 1000,
+        date: 1000,
+        onOpen,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByText(/Running 0:10/)).toBeTruthy();
+    expect(screen.getByText(/Last activity/)).toBeTruthy();
+    expect(screen.getByText("Activity")).toBeTruthy();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
   it("shows the notify toggle next to a running Codex status row", () => {
     const onNotifyOnTurnFinishChange = jest.fn();
     render(
