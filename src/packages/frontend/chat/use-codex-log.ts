@@ -275,13 +275,7 @@ export function useCodexLog({
       const pending = liveBufferRef.current;
       if (!pending.length) return;
       liveBufferRef.current = [];
-      setLiveLog((prev) => {
-        let next = prev ?? [];
-        for (const evt of pending) {
-          next = appendStreamMessage(next, evt);
-        }
-        return next;
-      });
+      setLiveLog((prev) => mergeLogs(prev ?? [], pending));
     };
     const scheduleBufferedFlush = (immediate: boolean = false) => {
       if (immediate) {
