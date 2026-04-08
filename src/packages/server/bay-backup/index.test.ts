@@ -3,7 +3,7 @@ export {};
 import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 let execFileMock: jest.Mock;
 let getPoolMock: jest.Mock;
@@ -89,6 +89,89 @@ describe("bay-backup runner", () => {
     tags: string[];
     files: Record<string, Buffer>;
   }>;
+
+  function collectSnapshotFiles(
+    root: string,
+    relative = "",
+  ): Record<string, Buffer> {
+    const out: Record<string, Buffer> = {};
+    for (const entry of require("node:fs").readdirSync(join(root, relative), {
+      withFileTypes: true,
+    })) {
+      const nextRelative = relative ? join(relative, entry.name) : entry.name;
+      const fullPath = join(root, nextRelative);
+      if (entry.isDirectory()) {
+        Object.assign(out, collectSnapshotFiles(root, nextRelative));
+      } else if (entry.isFile()) {
+        out[nextRelative] = readFileSync(fullPath);
+      }
+    }
+    return out;
+  }
+
+  function writeMockTarExtract(
+    archivePath: string,
+    targetDir: string,
+    walSegment = "segment",
+  ): boolean {
+    mkdirSync(targetDir, { recursive: true });
+    if (archivePath.endsWith("base.tar.gz")) {
+      mkdirSync(join(targetDir, "pg_wal"), { recursive: true });
+      writeFileSync(join(targetDir, "PG_VERSION"), "17\n");
+      return true;
+    }
+    if (archivePath.endsWith("pg_wal.tar.gz")) {
+      writeFileSync(join(targetDir, "0000000100000000000000E8"), walSegment);
+      return true;
+    }
+    if (archivePath.endsWith("sync.tar.gz")) {
+      mkdirSync(join(targetDir, "sync", "accounts", "test"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(targetDir, "sync", "accounts", "test", "seen-state.db"),
+        "sqlite",
+      );
+      return true;
+    }
+    if (archivePath.endsWith("secrets.tar.gz")) {
+      mkdirSync(join(targetDir, "secrets"), { recursive: true });
+      writeFileSync(join(targetDir, "secrets", "conat-password"), "secret\n");
+      return true;
+    }
+    return false;
+  }
+
+  function writeMockRusticRestore({
+    snapshot,
+    relativePath,
+    destinationDir,
+  }: {
+    snapshot: { files: Record<string, Buffer> };
+    relativePath: string;
+    destinationDir: string;
+  }): boolean {
+    const file = snapshot.files[relativePath];
+    if (file) {
+      const outputPath = join(destinationDir, relativePath.split("/").at(-1)!);
+      mkdirSync(dirname(outputPath), { recursive: true });
+      writeFileSync(outputPath, file);
+      return true;
+    }
+    const prefix = `${relativePath}/`;
+    const entries = Object.entries(snapshot.files).filter(([name]) =>
+      name.startsWith(prefix),
+    );
+    if (entries.length === 0) {
+      return false;
+    }
+    for (const [name, content] of entries) {
+      const outputPath = join(destinationDir, name.slice(prefix.length));
+      mkdirSync(dirname(outputPath), { recursive: true });
+      writeFileSync(outputPath, content);
+    }
+    return true;
+  }
 
   beforeEach(async () => {
     jest.resetModules();
@@ -202,24 +285,7 @@ describe("bay-backup runner", () => {
           if (args[0] === "-xzf") {
             const archivePath = args[1];
             const targetDir = args[3];
-            mkdirSync(targetDir, { recursive: true });
-            if (archivePath.endsWith("sync.tar.gz")) {
-              mkdirSync(join(targetDir, "sync", "accounts", "test"), {
-                recursive: true,
-              });
-              writeFileSync(
-                join(targetDir, "sync", "accounts", "test", "seen-state.db"),
-                "sqlite",
-              );
-              cb(null, { stdout: "", stderr: "" });
-              return;
-            }
-            if (archivePath.endsWith("secrets.tar.gz")) {
-              mkdirSync(join(targetDir, "secrets"), { recursive: true });
-              writeFileSync(
-                join(targetDir, "secrets", "conat-password"),
-                "secret\n",
-              );
+            if (writeMockTarExtract(archivePath, targetDir)) {
               cb(null, { stdout: "", stderr: "" });
               return;
             }
@@ -239,21 +305,7 @@ describe("bay-backup runner", () => {
                 args[i - 1] === "--tag" ? [arg] : ([] as string[]),
               )
               .filter(Boolean);
-            const files: Record<string, Buffer> = {};
-            for (const name of [
-              "base.tar.gz",
-              "pg_wal.tar.gz",
-              "cluster.sql.gz",
-              "sync.tar.gz",
-              "secrets.tar.gz",
-              "manifest.json",
-            ] as const) {
-              try {
-                files[name] = readFileSync(join(`${opts.cwd ?? ""}`, name));
-              } catch {
-                // ignore missing files
-              }
-            }
+            const files = collectSnapshotFiles(`${opts.cwd ?? ""}`);
             rusticSnapshots.push({
               id: `snap-${rusticSnapshots.length + 1}`,
               host,
@@ -298,8 +350,13 @@ describe("bay-backup runner", () => {
             }
             mkdirSync(destinationDir, { recursive: true });
             if (relativePath) {
-              const file = snapshot.files[relativePath];
-              if (!file) {
+              if (
+                !writeMockRusticRestore({
+                  snapshot,
+                  relativePath,
+                  destinationDir,
+                })
+              ) {
                 cb(
                   new Error(
                     `snapshot '${snapshotId}' is missing '${relativePath}'`,
@@ -307,7 +364,6 @@ describe("bay-backup runner", () => {
                 );
                 return;
               }
-              writeFileSync(join(destinationDir, relativePath), file);
               cb(null, { stdout: "", stderr: "" });
               return;
             }
@@ -694,27 +750,7 @@ describe("bay-backup runner", () => {
         }
         const archivePath = args[1];
         const targetDir = args[3];
-        mkdirSync(targetDir, { recursive: true });
-        if (archivePath.endsWith("base.tar.gz")) {
-          mkdirSync(join(targetDir, "pg_wal"), { recursive: true });
-          writeFileSync(join(targetDir, "PG_VERSION"), "17\n");
-        } else if (archivePath.endsWith("pg_wal.tar.gz")) {
-          writeFileSync(
-            join(targetDir, "0000000100000000000000E8"),
-            "stale-segment",
-          );
-        } else if (archivePath.endsWith("sync.tar.gz")) {
-          mkdirSync(join(targetDir, "sync", "accounts", "test"), {
-            recursive: true,
-          });
-          writeFileSync(
-            join(targetDir, "sync", "accounts", "test", "seen-state.db"),
-            "sqlite",
-          );
-        } else if (archivePath.endsWith("secrets.tar.gz")) {
-          mkdirSync(join(targetDir, "secrets"), { recursive: true });
-          writeFileSync(join(targetDir, "secrets", "conat-password"), "secret");
-        } else {
+        if (!writeMockTarExtract(archivePath, targetDir, "stale-segment")) {
           cb(new Error(`unexpected archive '${archivePath}'`));
           return;
         }
@@ -768,7 +804,7 @@ describe("bay-backup runner", () => {
     ).toBe("sqlite");
     expect(
       readFileSync(join(restoreTargetDir, "secrets", "conat-password"), "utf8"),
-    ).toBe("secret");
+    ).toBe("secret\n");
     expect(
       JSON.parse(
         readFileSync(join(restoreTargetDir, "restore-manifest.json"), "utf8"),
@@ -1052,30 +1088,7 @@ describe("bay-backup runner", () => {
         if (cmd === "tar") {
           const archivePath = args[1];
           const targetDir = args[3];
-          mkdirSync(targetDir, { recursive: true });
-          if (archivePath.endsWith("base.tar.gz")) {
-            mkdirSync(join(targetDir, "pg_wal"), { recursive: true });
-            writeFileSync(join(targetDir, "PG_VERSION"), "17\n");
-          } else if (archivePath.endsWith("pg_wal.tar.gz")) {
-            writeFileSync(
-              join(targetDir, "0000000100000000000000E8"),
-              "segment",
-            );
-          } else if (archivePath.endsWith("sync.tar.gz")) {
-            mkdirSync(join(targetDir, "sync", "accounts", "test"), {
-              recursive: true,
-            });
-            writeFileSync(
-              join(targetDir, "sync", "accounts", "test", "seen-state.db"),
-              "sqlite",
-            );
-          } else if (archivePath.endsWith("secrets.tar.gz")) {
-            mkdirSync(join(targetDir, "secrets"), { recursive: true });
-            writeFileSync(
-              join(targetDir, "secrets", "conat-password"),
-              "secret",
-            );
-          } else {
+          if (!writeMockTarExtract(archivePath, targetDir)) {
             cb(new Error(`unexpected archive '${archivePath}'`));
             return;
           }
@@ -1393,40 +1406,25 @@ describe("bay-backup runner", () => {
             return;
           }
           mkdirSync(destinationDir, { recursive: true });
-          writeFileSync(
-            join(destinationDir, relativePath),
-            snapshot.files[relativePath],
-          );
+          if (
+            !writeMockRusticRestore({
+              snapshot,
+              relativePath,
+              destinationDir,
+            })
+          ) {
+            cb(new Error(`unexpected rustic restore '${snapshotSpec}'`));
+            return;
+          }
           cb(null, { stdout: "", stderr: "" });
           return;
         }
         if (cmd === "tar") {
           const archivePath = args[1];
           const targetDir = args[3];
-          mkdirSync(targetDir, { recursive: true });
-          if (archivePath.endsWith("base.tar.gz")) {
-            mkdirSync(join(targetDir, "pg_wal"), { recursive: true });
-            writeFileSync(join(targetDir, "PG_VERSION"), "17\n");
-          } else if (archivePath.endsWith("pg_wal.tar.gz")) {
-            writeFileSync(
-              join(targetDir, "0000000100000000000000E8"),
-              "segment-from-base",
-            );
-          } else if (archivePath.endsWith("sync.tar.gz")) {
-            mkdirSync(join(targetDir, "sync", "accounts", "test"), {
-              recursive: true,
-            });
-            writeFileSync(
-              join(targetDir, "sync", "accounts", "test", "seen-state.db"),
-              "sqlite",
-            );
-          } else if (archivePath.endsWith("secrets.tar.gz")) {
-            mkdirSync(join(targetDir, "secrets"), { recursive: true });
-            writeFileSync(
-              join(targetDir, "secrets", "conat-password"),
-              "secret",
-            );
-          } else {
+          if (
+            !writeMockTarExtract(archivePath, targetDir, "segment-from-base")
+          ) {
             cb(new Error(`unexpected archive '${archivePath}'`));
             return;
           }
