@@ -3,6 +3,7 @@
 import {
   cancelQueuedAcpTurn,
   processAcpLLM,
+  resendCanceledAcpTurn,
   resetAcpApiStateForTests,
   sendQueuedAcpTurnImmediately,
 } from "../acp-api";
@@ -727,5 +728,41 @@ describe("queued ACP controls", () => {
     await expect(cancelQueuedAcpTurn({ actions, message })).resolves.toBe(true);
 
     expect(acpState.get("message:user-msg-queued")).toBe("not-sent");
+  });
+
+  it("updates local state after resending a not-sent turn", async () => {
+    mockControlAcp.mockResolvedValue({ ok: true });
+    const acpState = new FakeAcpState();
+    acpState.set("message:user-msg-queued", "not-sent");
+    const store: any = {
+      get: (key: string) => {
+        if (key === "project_id") return "proj";
+        if (key === "path") return "x.chat";
+        if (key === "acpState") return acpState;
+        return undefined;
+      },
+      setState: jest.fn(),
+    };
+    const actions: any = { store };
+    const message: any = {
+      message_id: "user-msg-queued",
+      thread_id: "thread-queued",
+    };
+
+    await expect(resendCanceledAcpTurn({ actions, message })).resolves.toBe(
+      true,
+    );
+
+    expect(mockControlAcp).toHaveBeenCalledWith({
+      project_id: "proj",
+      path: "x.chat",
+      thread_id: "thread-queued",
+      user_message_id: "user-msg-queued",
+      action: "resend",
+    });
+    expect(store.setState).toHaveBeenCalledWith({
+      acpState,
+    });
+    expect(acpState.get("message:user-msg-queued")).toBe("queue");
   });
 });
