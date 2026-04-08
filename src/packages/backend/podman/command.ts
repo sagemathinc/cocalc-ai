@@ -14,9 +14,10 @@ type PodmanOpts =
     };
 
 const DEFAULT_PODMAN_TIMEOUT_S = 30 * 60;
-const STALE_PODMAN_STATE_PATTERNS = [
-  "invalid internal status",
-  'try resetting the pause process with "podman system migrate"',
+const STALE_PODMAN_STATE_REQUIRED_PATTERNS = ["invalid internal status"];
+const STALE_PODMAN_STATE_HINT_PATTERNS = [
+  "pause process",
+  "podman system migrate",
   "could not find any running process",
 ];
 let migrateInFlight: Promise<void> | undefined;
@@ -99,8 +100,13 @@ function isStalePodmanStateResult(result: {
 }): boolean {
   const text = `${result.stderr ?? ""}\n${result.stdout ?? ""}`;
   const normalized = text.toLowerCase();
-  return STALE_PODMAN_STATE_PATTERNS.every((pattern) =>
-    normalized.includes(pattern),
+  return (
+    STALE_PODMAN_STATE_REQUIRED_PATTERNS.every((pattern) =>
+      normalized.includes(pattern),
+    ) &&
+    STALE_PODMAN_STATE_HINT_PATTERNS.some((pattern) =>
+      normalized.includes(pattern),
+    )
   );
 }
 

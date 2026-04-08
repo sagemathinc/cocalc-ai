@@ -27,6 +27,12 @@ const stalePodmanStderr = [
   'time="2026-04-08T15:48:28Z" level=error msg="invalid internal status, try resetting the pause process with "podman system migrate": could not find any running process: no such process"',
 ].join("\n");
 
+const stalePodmanShortStderr = [
+  'time="2026-04-08T16:14:33Z" level=warning msg="The cgroupv2 manager is set to systemd but there is no systemd user session available"',
+  'time="2026-04-08T16:14:33Z" level=warning msg="Falling back to --cgroup-manager=cgroupfs"',
+  'time="2026-04-08T16:14:33Z" level=error msg="invalid internal status, try resetting the pause process with "podman system migrate""',
+].join("\n");
+
 describe("podman command wrapper", () => {
   beforeEach(() => {
     executeCodeMock.mockReset();
@@ -77,6 +83,37 @@ describe("podman command wrapper", () => {
       command: "podman",
       args: ["run", "--rm", "example"],
       err_on_exit: false,
+    });
+  });
+
+  it("retries when podman emits the shorter stale pause-process signature", async () => {
+    executeCodeMock
+      .mockResolvedValueOnce({
+        stdout: "",
+        stderr: stalePodmanShortStderr,
+        exit_code: 1,
+      })
+      .mockResolvedValueOnce({
+        stdout: "",
+        stderr: "",
+        exit_code: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: "container-id\n",
+        stderr: "",
+        exit_code: 0,
+      });
+
+    const result = await podman(["run", "--rm", "example"], { timeout: 30 });
+
+    expect(result).toEqual({
+      stdout: "container-id\n",
+      stderr: "",
+      exit_code: 0,
+    });
+    expect(executeCodeMock.mock.calls[1][0]).toMatchObject({
+      command: "podman",
+      args: ["system", "migrate"],
     });
   });
 
