@@ -6,6 +6,8 @@ let callback2Mock: jest.Mock;
 let isAdminMock: jest.Mock;
 let dbMock: jest.Mock;
 let listProjectedMyCollaboratorsForAccountMock: jest.Mock;
+let getClusterAccountByIdMock: jest.Mock;
+let getClusterAccountsByIdsMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
@@ -37,6 +39,13 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 jest.mock("@cocalc/database", () => ({
   __esModule: true,
   db: (...args: any[]) => dbMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  __esModule: true,
+  getClusterAccountById: (...args: any[]) => getClusterAccountByIdMock(...args),
+  getClusterAccountsByIds: (...args: any[]) =>
+    getClusterAccountsByIdsMock(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -98,6 +107,16 @@ describe("project collaborators local bay access", () => {
     callback2Mock = jest.fn(async (fn, opts) => await fn(opts));
     isAdminMock = jest.fn(async () => false);
     listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => []);
+    getClusterAccountByIdMock = jest.fn(async (account_id: string) => ({
+      account_id,
+      home_bay_id: "bay-0",
+    }));
+    getClusterAccountsByIdsMock = jest.fn(async (account_ids: string[]) =>
+      account_ids.map((account_id) => ({
+        account_id,
+        home_bay_id: "bay-0",
+      })),
+    );
     removeCollaboratorFromProject.mockClear();
     accountCreationActions.mockClear();
     whenSentProjectInvite.mockClear();
@@ -155,8 +174,16 @@ describe("project collaborators local bay access", () => {
         project_id: PROJECT_ID,
       }),
     ).resolves.toEqual([
-      { account_id: ACCOUNT_ID, group: "owner", name: "Owner" },
-      { account_id: TARGET_ACCOUNT_ID, group: "collaborator", name: "Collab" },
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        group: "owner",
+        name: "Owner",
+      }),
+      expect.objectContaining({
+        account_id: TARGET_ACCOUNT_ID,
+        group: "collaborator",
+        name: "Collab",
+      }),
     ]);
     expect(assertLocalProjectCollaboratorMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,

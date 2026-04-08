@@ -35,6 +35,10 @@ import { project_has_network_access } from "@cocalc/database/postgres/project/qu
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import {
+  getClusterAccountById,
+  getClusterAccountsByIds,
+} from "@cocalc/server/inter-bay/accounts";
 
 const logger = getLogger("project:collaborators");
 const COLLAB_GROUPS = ["owner", "collaborator"] as const;
@@ -209,7 +213,188 @@ async function fetchInviteById(
      LIMIT 1`,
     [invite_id, includeEmail],
   );
-  return rows[0];
+  const [row] = rows;
+  if (!row) {
+    return undefined;
+  }
+  return (await hydrateInviteRows([row], includeEmail))[0];
+}
+
+function fillNameParts(target: any, entry?: any): void {
+  if (!entry) return;
+  if (!target.first_name && entry.first_name)
+    target.first_name = entry.first_name;
+  if (!target.last_name && entry.last_name) target.last_name = entry.last_name;
+  if (!target.name && entry.name) target.name = entry.name;
+  if (!target.email_address && entry.email_address) {
+    target.email_address = entry.email_address;
+  }
+}
+
+async function hydrateInviteRows(
+  rows: ProjectCollabInviteRow[],
+  includeEmail: boolean,
+): Promise<ProjectCollabInviteRow[]> {
+  if (rows.length === 0) {
+    return rows;
+  }
+  const accountIds = new Set<string>();
+  for (const row of rows) {
+    if (row.inviter_account_id) accountIds.add(row.inviter_account_id);
+    if (row.invitee_account_id) accountIds.add(row.invitee_account_id);
+  }
+  const entries = await getClusterAccountsByIds([...accountIds]);
+  const byId = new Map(entries.map((entry) => [entry.account_id, entry]));
+  return rows.map((row) => {
+    const inviter = {
+      name: row.inviter_name,
+      first_name: row.inviter_first_name,
+      last_name: row.inviter_last_name,
+      email_address: row.inviter_email_address,
+    };
+    fillNameParts(inviter, byId.get(row.inviter_account_id));
+    const invitee = {
+      name: row.invitee_name,
+      first_name: row.invitee_first_name,
+      last_name: row.invitee_last_name,
+      email_address: row.invitee_email_address,
+    };
+    fillNameParts(
+      invitee,
+      row.invitee_account_id ? byId.get(row.invitee_account_id) : undefined,
+    );
+    return {
+      ...row,
+      inviter_name: inviter.name,
+      inviter_first_name: inviter.first_name,
+      inviter_last_name: inviter.last_name,
+      inviter_email_address: includeEmail
+        ? (inviter.email_address ?? null)
+        : (row.inviter_email_address ?? null),
+      invitee_name: invitee.name,
+      invitee_first_name: invitee.first_name,
+      invitee_last_name: invitee.last_name,
+      invitee_email_address: includeEmail
+        ? (invitee.email_address ?? null)
+        : (row.invitee_email_address ?? null),
+    };
+  });
+}
+
+function fillLastActive(target: any, entry?: any): void {
+  if (!entry?.last_active || target.last_active != null) {
+    return;
+  }
+  target.last_active = new Date(entry.last_active);
+}
+
+function maybeHideEmail(entry: any, includeEmail: boolean): any {
+  if (!entry || includeEmail) {
+    return entry;
+  }
+  return { ...entry, email_address: undefined };
+}
+
+async function hydrateCollaboratorRows(
+  rows: ProjectCollaboratorRow[],
+  includeEmail: boolean,
+): Promise<ProjectCollaboratorRow[]> {
+  if (rows.length === 0) {
+    return rows;
+  }
+  const entries = await getClusterAccountsByIds(
+    rows.map((row) => row.account_id),
+  );
+  const byId = new Map(entries.map((entry) => [entry.account_id, entry]));
+  return rows.map((row) => {
+    const entry = byId.get(row.account_id);
+    const hydrated = {
+      ...row,
+      name: row.name,
+      first_name: row.first_name,
+      last_name: row.last_name,
+      email_address: row.email_address,
+      last_active: row.last_active,
+    };
+    fillNameParts(hydrated, maybeHideEmail(entry, includeEmail));
+    fillLastActive(hydrated, entry);
+    if (!includeEmail) {
+      hydrated.email_address = row.email_address ?? null;
+    }
+    return hydrated;
+  });
+}
+
+async function hydrateMyCollaboratorRows(
+  rows: MyCollaboratorRow[],
+  includeEmail: boolean,
+): Promise<MyCollaboratorRow[]> {
+  if (rows.length === 0) {
+    return rows;
+  }
+  const entries = await getClusterAccountsByIds(
+    rows.map((row) => row.account_id),
+  );
+  const byId = new Map(entries.map((entry) => [entry.account_id, entry]));
+  return rows.map((row) => {
+    const entry = byId.get(row.account_id);
+    const hydrated = {
+      ...row,
+      name: row.name,
+      first_name: row.first_name,
+      last_name: row.last_name,
+      email_address: row.email_address,
+      last_active: row.last_active,
+    };
+    fillNameParts(hydrated, maybeHideEmail(entry, includeEmail));
+    fillLastActive(hydrated, entry);
+    if (!includeEmail) {
+      hydrated.email_address = row.email_address ?? null;
+    }
+    return hydrated;
+  });
+}
+
+async function hydrateInviteBlockRows(
+  rows: ProjectCollabInviteBlockRow[],
+  includeEmail: boolean,
+): Promise<ProjectCollabInviteBlockRow[]> {
+  if (rows.length === 0) {
+    return rows;
+  }
+  const accountIds = new Set<string>();
+  for (const row of rows) {
+    if (row.blocker_account_id) accountIds.add(row.blocker_account_id);
+    if (row.blocked_account_id) accountIds.add(row.blocked_account_id);
+  }
+  const entries = await getClusterAccountsByIds([...accountIds]);
+  const byId = new Map(entries.map((entry) => [entry.account_id, entry]));
+  return rows.map((row) => {
+    const blocker = {
+      name: row.blocker_name,
+    };
+    fillNameParts(blocker, byId.get(row.blocker_account_id));
+    const blocked = {
+      name: row.blocked_name,
+      first_name: row.blocked_first_name,
+      last_name: row.blocked_last_name,
+      email_address: row.blocked_email_address,
+    };
+    fillNameParts(
+      blocked,
+      maybeHideEmail(byId.get(row.blocked_account_id), includeEmail),
+    );
+    return {
+      ...row,
+      blocker_name: blocker.name,
+      blocked_name: blocked.name,
+      blocked_first_name: blocked.first_name,
+      blocked_last_name: blocked.last_name,
+      blocked_email_address: includeEmail
+        ? (blocked.email_address ?? null)
+        : (row.blocked_email_address ?? null),
+    };
+  });
 }
 
 async function listEmailOnlyPendingCollabInvites({
@@ -316,7 +501,7 @@ async function listEmailOnlyPendingCollabInvites({
     ORDER BY a.expire DESC
     LIMIT $${params.length}`;
   const { rows } = await pool.query<ProjectCollabInviteRow>(sql, params);
-  return rows;
+  return await hydrateInviteRows(rows, includeEmail);
 }
 
 async function fetchEmailOnlyInviteByActionId({
@@ -458,11 +643,8 @@ export async function createCollabInvite({
     ? trimmedMessage.slice(0, 512)
     : null;
 
-  const { rows: accountRows } = await pool.query<{ account_id: string }>(
-    "SELECT account_id FROM accounts WHERE account_id=$1 LIMIT 1",
-    [invitee_account_id],
-  );
-  if (!accountRows[0]?.account_id) {
+  const inviteeAccount = await getClusterAccountById(invitee_account_id);
+  if (!inviteeAccount?.account_id) {
     throw new Error(`account '${invitee_account_id}' does not exist`);
   }
 
@@ -694,13 +876,16 @@ export async function listCollabInvites({
     limit: maxRows,
     includeEmail,
   });
-  return [...rows, ...emailOnlyRows]
-    .sort(
-      (a, b) =>
-        new Date(`${b.created ?? 0}`).valueOf() -
-        new Date(`${a.created ?? 0}`).valueOf(),
-    )
-    .slice(0, maxRows);
+  return await hydrateInviteRows(
+    [...rows, ...emailOnlyRows]
+      .sort(
+        (a, b) =>
+          new Date(`${b.created ?? 0}`).valueOf() -
+          new Date(`${a.created ?? 0}`).valueOf(),
+      )
+      .slice(0, maxRows),
+    includeEmail,
+  );
 }
 
 export async function respondCollabInvite({
@@ -881,10 +1066,10 @@ export async function listCollabInviteBlocks({
      LEFT JOIN accounts blocked ON blocked.account_id=b.blocked_account_id
      WHERE b.blocker_account_id=$1
      ORDER BY b.updated DESC
-     LIMIT $3`,
+    LIMIT $3`,
     [account_id, includeEmail, maxRows],
   );
-  return rows;
+  return await hydrateInviteBlockRows(rows, includeEmail);
 }
 
 export async function unblockCollabInviteSender({
@@ -931,7 +1116,7 @@ export async function listCollaborators({
   const pool = getPool();
   const { rows } = await pool.query<ProjectCollaboratorRow>(
     `SELECT
-       a.account_id,
+       u.account_id_text::uuid AS account_id,
        a.name,
        a.first_name,
        a.last_name,
@@ -940,17 +1125,20 @@ export async function listCollaborators({
        (u.info ->> 'group')::text AS "group"
      FROM projects p
      CROSS JOIN LATERAL jsonb_each(p.users) AS u(account_id_text, info)
-     JOIN accounts a ON a.account_id=u.account_id_text::uuid
+     LEFT JOIN accounts a ON a.account_id=u.account_id_text::uuid
      WHERE p.project_id=$1
        AND u.account_id_text ~* '^[0-9a-f-]{36}$'
        AND (u.info ->> 'group') IN ('owner','collaborator')
      ORDER BY
        CASE WHEN (u.info ->> 'group')='owner' THEN 0 ELSE 1 END,
        a.last_active DESC NULLS LAST,
-       a.account_id`,
+       u.account_id_text::uuid`,
     [project_id, includeEmail],
   );
-  return rows.filter((row) => COLLAB_GROUP_SET.has(row.group));
+  return await hydrateCollaboratorRows(
+    rows.filter((row) => COLLAB_GROUP_SET.has(row.group)),
+    includeEmail,
+  );
 }
 
 export async function listMyCollaborators({
@@ -994,27 +1182,26 @@ export async function listMyCollaborators({
        WHERE (p.users -> $1::text ->> 'group') IN ('owner','collaborator')
      )
      SELECT
-       a.account_id,
-       a.name,
-       a.first_name,
-       a.last_name,
-       CASE WHEN $2::boolean THEN a.email_address ELSE NULL END AS email_address,
-       a.last_active,
+       u.account_id_text::uuid AS account_id,
+       MAX(a.name) AS name,
+       MAX(a.first_name) AS first_name,
+       MAX(a.last_name) AS last_name,
+       CASE WHEN $2::boolean THEN MAX(a.email_address) ELSE NULL END AS email_address,
+       MAX(a.last_active) AS last_active,
        COUNT(DISTINCT mp.project_id)::int AS shared_projects
      FROM my_projects mp
      CROSS JOIN LATERAL jsonb_each(mp.users) AS u(account_id_text, info)
-     JOIN accounts a ON a.account_id=u.account_id_text::uuid
+     LEFT JOIN accounts a ON a.account_id=u.account_id_text::uuid
      WHERE u.account_id_text ~* '^[0-9a-f-]{36}$'
-       AND a.account_id <> $1::uuid
+       AND u.account_id_text::uuid <> $1::uuid
        AND (u.info ->> 'group') IN ('owner','collaborator')
      GROUP BY
-       a.account_id, a.name, a.first_name, a.last_name, a.last_active,
-       CASE WHEN $2::boolean THEN a.email_address ELSE NULL END
-     ORDER BY shared_projects DESC, a.last_active DESC NULLS LAST, a.account_id
+       u.account_id_text::uuid
+     ORDER BY shared_projects DESC, MAX(a.last_active) DESC NULLS LAST, u.account_id_text::uuid
      LIMIT $3`,
     [account_id, includeEmail, maxRows],
   );
-  return rows;
+  return await hydrateMyCollaboratorRows(rows, includeEmail);
 }
 
 async function allowUrlsInEmails({

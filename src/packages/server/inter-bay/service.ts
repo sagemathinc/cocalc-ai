@@ -4,6 +4,9 @@
  */
 
 import {
+  createInterBayAuthTokenHandlers,
+  createInterBayAccountDirectoryHandlers,
+  createInterBayAccountLocalHandler,
   createInterBayProjectControlAddressHandler,
   createInterBayProjectControlActiveOpHandler,
   createInterBayDirectoryHandlers,
@@ -13,6 +16,9 @@ import {
   createInterBayProjectLroHandler,
   createInterBayProjectReferenceHandler,
   createInterBayProjectControlStopHandler,
+  type InterBayAuthTokenApi,
+  type InterBayAccountDirectoryApi,
+  type InterBayAccountLocalApi,
   type InterBayDirectoryApi,
   type InterBayProjectControlApi,
   type InterBayProjectLroApi,
@@ -20,8 +26,21 @@ import {
 } from "@cocalc/conat/inter-bay/api";
 import type { ConatService } from "@cocalc/conat/service/typed";
 import getLogger from "@cocalc/backend/logger";
+import { getRequiresTokensDirect } from "@cocalc/server/auth/tokens/get-requires-token";
+import {
+  disableRegistrationTokenDirect,
+  redeemRegistrationTokenDirect,
+} from "@cocalc/server/auth/tokens/redeem";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
+import {
+  createClusterAccount,
+  getClusterAccountByEmail,
+  getClusterAccountById,
+  getClusterAccountsByIds,
+  provisionLocalClusterAccount,
+  searchClusterAccounts,
+} from "@cocalc/server/inter-bay/accounts";
 import {
   resolveHostBayDirect,
   resolveProjectBayDirect,
@@ -50,6 +69,9 @@ export async function initInterBayServices(): Promise<void> {
   serviceStarted = true;
   try {
     await startDirectoryService();
+    await startAuthTokenService();
+    await startAccountDirectoryService();
+    await startAccountLocalService();
     await startProjectControlStartService();
     await startProjectReferenceService();
     await startProjectLroService();
@@ -57,6 +79,29 @@ export async function initInterBayServices(): Promise<void> {
     serviceStarted = false;
     throw err;
   }
+}
+
+async function startAuthTokenService(): Promise<void> {
+  const role = getConfiguredClusterRole();
+  if (role === "attached") {
+    return;
+  }
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayAuthTokenApi = {
+    requiresToken: async () => await getRequiresTokensDirect(),
+    redeem: async ({ token }) =>
+      (await redeemRegistrationTokenDirect(token)) ?? null,
+    disable: async ({ token }) => {
+      await disableRegistrationTokenDirect(token);
+    },
+  };
+  services.push(
+    ...createInterBayAuthTokenHandlers({
+      client,
+      parallel: true,
+      impl,
+    }),
+  );
 }
 
 async function startDirectoryService(): Promise<void> {
@@ -74,6 +119,54 @@ async function startDirectoryService(): Promise<void> {
   services.push(
     ...createInterBayDirectoryHandlers({
       client,
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startAccountDirectoryService(): Promise<void> {
+  const role = getConfiguredClusterRole();
+  if (role === "attached") {
+    return;
+  }
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayAccountDirectoryApi = {
+    get: async ({ account_id }) =>
+      await getClusterAccountById(`${account_id ?? ""}`),
+    getByEmail: async ({ email_address }) =>
+      await getClusterAccountByEmail(`${email_address ?? ""}`),
+    getMany: async ({ account_ids }) =>
+      await getClusterAccountsByIds(
+        Array.isArray(account_ids) ? account_ids : [],
+      ),
+    search: async ({ query, limit, admin, only_email }) =>
+      await searchClusterAccounts({
+        query: `${query ?? ""}`,
+        limit,
+        admin,
+        only_email,
+      }),
+    create: async (opts) => await createClusterAccount(opts),
+  };
+  services.push(
+    ...createInterBayAccountDirectoryHandlers({
+      client,
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startAccountLocalService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayAccountLocalApi = {
+    create: async (opts) => await provisionLocalClusterAccount(opts),
+  };
+  services.push(
+    createInterBayAccountLocalHandler({
+      client,
+      bay_id: getConfiguredBayId(),
       parallel: true,
       impl,
     }),

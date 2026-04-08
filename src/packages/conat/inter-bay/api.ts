@@ -12,6 +12,7 @@ import type { ConatService } from "@cocalc/conat/service/typed";
 import type { Options, ServiceCall } from "@cocalc/conat/service/service";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 import type { ProjectActiveOperationSummary } from "@cocalc/conat/hub/api/projects";
+import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 
 export interface BayOwnership {
@@ -88,6 +89,61 @@ export interface ForwardProjectLroProgressRequest {
   event: Extract<LroEvent, { type: "progress" }>;
 }
 
+export interface AccountDirectoryGetRequest {
+  account_id: string;
+}
+
+export interface AccountDirectoryGetByEmailRequest {
+  email_address: string;
+}
+
+export interface AccountDirectoryGetManyRequest {
+  account_ids: string[];
+}
+
+export interface AccountDirectorySearchRequest {
+  query: string;
+  limit?: number;
+  admin?: boolean;
+  only_email?: boolean;
+}
+
+export interface AccountDirectoryEntry extends UserSearchResult {
+  email_address?: string;
+  home_bay_id?: string;
+}
+
+export interface AccountDirectoryCreateRequest {
+  email_address: string;
+  password: string;
+  first_name: string;
+  last_name: string;
+  home_bay_id: string;
+  account_id?: string;
+  owner_id?: string;
+  tags?: string[];
+  signup_reason?: string;
+  no_first_project?: boolean;
+  ephemeral?: number;
+  customize?: any;
+}
+
+export interface AuthTokenRequiresRequest {}
+
+export interface AuthTokenRedeemRequest {
+  token: string;
+}
+
+export interface AuthTokenDisableRequest {
+  token: string;
+}
+
+export interface RegistrationTokenInfoWire {
+  token: string;
+  ephemeral?: number;
+  customize?: any;
+}
+
 export type ProjectControlMethod =
   | "start"
   | "stop"
@@ -98,6 +154,14 @@ export type ProjectControlMethod =
 export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
 export type ProjectReferenceMethod = "get";
 export type ProjectLroMethod = "publish-progress";
+export type AccountDirectoryMethod =
+  | "get"
+  | "get-by-email"
+  | "get-many"
+  | "search"
+  | "create";
+export type AccountLocalMethod = "create";
+export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
 
 interface ResolveProjectBayApi {
   resolveProjectBay: (
@@ -133,6 +197,38 @@ export interface InterBayProjectReferenceApi {
 
 export interface InterBayProjectLroApi {
   publishProgress: (opts: ForwardProjectLroProgressRequest) => Promise<void>;
+}
+
+export interface InterBayAccountDirectoryApi {
+  get: (
+    opts: AccountDirectoryGetRequest,
+  ) => Promise<AccountDirectoryEntry | null>;
+  getByEmail: (
+    opts: AccountDirectoryGetByEmailRequest,
+  ) => Promise<AccountDirectoryEntry | null>;
+  getMany: (
+    opts: AccountDirectoryGetManyRequest,
+  ) => Promise<AccountDirectoryEntry[]>;
+  search: (
+    opts: AccountDirectorySearchRequest,
+  ) => Promise<AccountDirectoryEntry[]>;
+  create: (
+    opts: AccountDirectoryCreateRequest,
+  ) => Promise<AccountDirectoryEntry>;
+}
+
+export interface InterBayAccountLocalApi {
+  create: (
+    opts: AccountDirectoryCreateRequest,
+  ) => Promise<AccountDirectoryEntry>;
+}
+
+export interface InterBayAuthTokenApi {
+  requiresToken: (opts: AuthTokenRequiresRequest) => Promise<boolean>;
+  redeem: (
+    opts: AuthTokenRedeemRequest,
+  ) => Promise<RegistrationTokenInfoWire | null>;
+  disable: (opts: AuthTokenDisableRequest) => Promise<void>;
 }
 
 function serviceClientOptions({
@@ -185,6 +281,32 @@ export function projectLroSubject({
   method: ProjectLroMethod;
 }): string {
   return `bay.${dest_bay}.rpc.project-lro.${method}`;
+}
+
+export function accountDirectorySubject({
+  method,
+}: {
+  method: AccountDirectoryMethod;
+}): string {
+  return `global.account-directory.rpc.${method}`;
+}
+
+export function accountLocalSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: AccountLocalMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.account-local.${method}`;
+}
+
+export function authTokenSubject({
+  method,
+}: {
+  method: AuthTokenMethod;
+}): string {
+  return `global.auth-token.rpc.${method}`;
 }
 
 export function createInterBayDirectoryClient({
@@ -368,6 +490,205 @@ export function createInterBayProjectLroClient({
   return {
     publishProgress: async (opts) => await progressClient.publishProgress(opts),
   };
+}
+
+export function createInterBayAccountDirectoryClient({
+  client,
+  timeout,
+}: {
+  client: Client;
+  timeout?: number;
+}): InterBayAccountDirectoryApi {
+  const getClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "get">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "get" }),
+  });
+  const getByEmailClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "getByEmail">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "get-by-email" }),
+  });
+  const getManyClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "getMany">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "get-many" }),
+  });
+  const searchClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "search">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "search" }),
+  });
+  const createClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "create">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "create" }),
+  });
+  return {
+    get: async (opts) => await getClient.get(opts),
+    getByEmail: async (opts) => await getByEmailClient.getByEmail(opts),
+    getMany: async (opts) => await getManyClient.getMany(opts),
+    search: async (opts) => await searchClient.search(opts),
+    create: async (opts) => await createClient.create(opts),
+  };
+}
+
+export function createInterBayAccountDirectoryHandlers({
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  impl: InterBayAccountDirectoryApi;
+}): ConatService[] {
+  return [
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "get">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "get" }),
+      impl: {
+        get: async (opts) => await impl.get(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "getByEmail">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "get-by-email" }),
+      impl: {
+        getByEmail: async (opts) => await impl.getByEmail(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "getMany">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "get-many" }),
+      impl: {
+        getMany: async (opts) => await impl.getMany(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "search">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "search" }),
+      impl: {
+        search: async (opts) => await impl.search(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "create">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "create" }),
+      impl: {
+        create: async (opts) => await impl.create(opts),
+      },
+    }),
+  ];
+}
+
+export function createInterBayAccountLocalClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayAccountLocalApi {
+  const createClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "create">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "create" }),
+  });
+  return {
+    create: async (opts) => await createClient.create(opts),
+  };
+}
+
+export function createInterBayAccountLocalHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayAccountLocalApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayAccountLocalApi, "create">>({
+    ...options,
+    service: "inter-bay-account-local",
+    subject: accountLocalSubject({ dest_bay: bay_id, method: "create" }),
+    impl: {
+      create: async (opts) => await impl.create(opts),
+    },
+  });
+}
+
+export function createInterBayAuthTokenClient({
+  client,
+  timeout,
+}: {
+  client: Client;
+  timeout?: number;
+}): InterBayAuthTokenApi {
+  const requiresTokenClient = createServiceClient<
+    Pick<InterBayAuthTokenApi, "requiresToken">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: authTokenSubject({ method: "requires-token" }),
+  });
+  const redeemClient = createServiceClient<
+    Pick<InterBayAuthTokenApi, "redeem">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: authTokenSubject({ method: "redeem" }),
+  });
+  const disableClient = createServiceClient<
+    Pick<InterBayAuthTokenApi, "disable">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: authTokenSubject({ method: "disable" }),
+  });
+  return {
+    requiresToken: async (opts) =>
+      await requiresTokenClient.requiresToken(opts),
+    redeem: async (opts) => await redeemClient.redeem(opts),
+    disable: async (opts) => await disableClient.disable(opts),
+  };
+}
+
+export function createInterBayAuthTokenHandlers({
+  impl,
+  ...options
+}: ServiceHandlerOptions & { impl: InterBayAuthTokenApi }): ConatService[] {
+  return [
+    createServiceHandler<Pick<InterBayAuthTokenApi, "requiresToken">>({
+      ...options,
+      service: "inter-bay-auth-token",
+      subject: authTokenSubject({ method: "requires-token" }),
+      impl: {
+        requiresToken: async (opts) => await impl.requiresToken(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAuthTokenApi, "redeem">>({
+      ...options,
+      service: "inter-bay-auth-token",
+      subject: authTokenSubject({ method: "redeem" }),
+      impl: {
+        redeem: async (opts) => await impl.redeem(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAuthTokenApi, "disable">>({
+      ...options,
+      service: "inter-bay-auth-token",
+      subject: authTokenSubject({ method: "disable" }),
+      impl: {
+        disable: async (opts) => await impl.disable(opts),
+      },
+    }),
+  ];
 }
 
 export function createInterBayProjectLroHandler({

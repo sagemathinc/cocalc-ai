@@ -32,8 +32,10 @@ import manageApiKeys from "@cocalc/server/api/manage";
 export { manageApiKeys };
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import search from "@cocalc/server/accounts/search";
-import createAccount from "@cocalc/server/accounts/create-account";
+import {
+  createClusterAccount,
+  searchClusterAccounts,
+} from "@cocalc/server/inter-bay/accounts";
 export { getNames } from "@cocalc/server/accounts/get-name";
 import { callback2 } from "@cocalc/util/async-utils";
 import getLogger from "@cocalc/backend/logger";
@@ -1070,7 +1072,12 @@ export async function userSearch({
       limit = 50;
     }
   }
-  return await search({ query, limit, admin, only_email });
+  return await searchClusterAccounts({
+    query,
+    limit,
+    admin,
+    only_email,
+  });
 }
 
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
@@ -1158,37 +1165,35 @@ export async function adminCreateUser({
   const defaultName = defaultUserNameFromEmail(emailAddress);
   const firstName = `${first_name ?? ""}`.trim() || defaultName.first_name;
   const lastName = `${last_name ?? ""}`.trim() || defaultName.last_name;
-  const nextAccountId = uuid();
-
   try {
-    await createAccount({
-      email: emailAddress,
+    const created = await createClusterAccount({
+      account_id: uuid(),
+      email_address: emailAddress,
       password: finalPassword,
-      firstName,
-      lastName,
-      account_id: nextAccountId,
+      first_name: firstName,
+      last_name: lastName,
+      home_bay_id: getConfiguredBayId(),
       owner_id: account_id,
-      noFirstProject: !!no_first_project,
+      no_first_project: !!no_first_project,
       tags: Array.isArray(tags) && tags.length ? tags : undefined,
-      signupReason: "Admin created account",
+      signup_reason: "Admin created account",
     });
+    return {
+      account_id: created.account_id,
+      email_address: emailAddress,
+      first_name: firstName,
+      last_name: lastName,
+      created_by: account_id,
+      no_first_project: !!no_first_project,
+      password_generated: !!generatedPassword,
+      generated_password: generatedPassword,
+    };
   } catch (err: any) {
     if (err?.code === "23505") {
       throw Error(`an account with email '${emailAddress}' already exists`);
     }
     throw err;
   }
-
-  return {
-    account_id: nextAccountId,
-    email_address: emailAddress,
-    first_name: firstName,
-    last_name: lastName,
-    created_by: account_id,
-    no_first_project: !!no_first_project,
-    password_generated: !!generatedPassword,
-    generated_password: generatedPassword,
-  };
 }
 
 import sendEmailVerification0 from "@cocalc/server/accounts/send-email-verification";

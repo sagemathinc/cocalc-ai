@@ -24,6 +24,8 @@ import getParams from "@cocalc/http-api/lib/api/get-params";
 import { verify } from "password-hash";
 import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 
 export default async function signIn(req: Request, res: Response) {
   let { email, password } = getParams(req);
@@ -71,6 +73,9 @@ function getSignInErrorMessage(
   ) {
     return `Problem signing into account -- ${message}.`;
   }
+  if (message.startsWith("account home bay mismatch:")) {
+    return `Problem signing into account -- ${message.replace("account home bay mismatch:", "").trim()}.`;
+  }
   if (message.startsWith("The password must be shorter than")) {
     return message;
   }
@@ -81,28 +86,36 @@ export async function getAccount(
   email_address: string,
   password: string,
 ): Promise<string> {
+  const email = `${email_address ?? ""}`.trim().toLowerCase();
   if (password.length > MAX_PASSWORD_LENGTH) {
     throw new Error(
       `The password must be shorter than ${MAX_PASSWORD_LENGTH} characters.`,
     );
   }
 
+  const global = await getClusterAccountByEmail(email);
+  if (global?.home_bay_id && global.home_bay_id !== getConfiguredBayId()) {
+    throw Error(
+      `account home bay mismatch: '${email}' is homed on bay '${global.home_bay_id}'`,
+    );
+  }
+
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT account_id, password_hash, banned FROM accounts WHERE email_address=$1",
-    [email_address],
+    [email],
   );
   if (rows.length == 0) {
-    throw Error(`no account with email address '${email_address}'`);
+    throw Error(`no account with email address '${email}'`);
   }
   const { account_id, password_hash, banned } = rows[0];
   if (banned) {
     throw Error(
-      `'${email_address}' is banned -- if you think this is a mistake, please email help@cocalc.com and explain.`,
+      `'${email}' is banned -- if you think this is a mistake, please email help@cocalc.com and explain.`,
     );
   }
   if (!verify(password, password_hash)) {
-    throw Error(`password for '${email_address}' is incorrect`);
+    throw Error(`password for '${email}' is incorrect`);
   }
   return account_id;
 }

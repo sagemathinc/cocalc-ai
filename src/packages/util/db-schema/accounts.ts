@@ -976,6 +976,7 @@ export interface UserSearchResult {
   first_name?: string;
   last_name?: string;
   name?: string; // "vanity" username
+  home_bay_id?: string;
   last_active?: number; // ms since epoch -- when account was last active
   created?: number; // ms since epoch -- when account created
   banned?: boolean; // true if this user has been banned (only set for admin searches, obviously)
