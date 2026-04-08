@@ -97,7 +97,7 @@ export const HostCreateAdvancedFields: React.FC<
             <Form.Item
               name="interruption_restore_policy"
               label="Interruption restore"
-              initialValue="none"
+              initialValue="immediate"
               tooltip="For spot hosts, immediately restoring the host is strongly preferred because users otherwise lose access until a backup restore or manual recovery."
             >
               <Select
