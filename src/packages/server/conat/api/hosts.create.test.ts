@@ -61,6 +61,7 @@ describe("hosts.createHost", () => {
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[4]?.pricing_model).toBe("spot");
         expect(params[4]?.interruption_restore_policy).toBe("immediate");
+        expect(params[4]?.desired_state).toBe("running");
         expect(params[5]).toBeNull();
         expect(params[6]).toBe("bay-0");
         return { rowCount: 1 };
@@ -83,6 +84,7 @@ describe("hosts.createHost", () => {
                 gpu: false,
                 pricing_model: "spot",
                 interruption_restore_policy: "immediate",
+                desired_state: "running",
                 machine: { cloud: "gcp" },
               },
               last_seen: null,
@@ -109,6 +111,7 @@ describe("hosts.createHost", () => {
     expect(host.last_seen).toBeUndefined();
     expect(host.pricing_model).toBe("spot");
     expect(host.interruption_restore_policy).toBe("immediate");
+    expect(host.desired_state).toBe("running");
     expect(enqueueCloudVmWorkMock).toHaveBeenCalledWith(
       expect.objectContaining({
         vm_id: host.id,

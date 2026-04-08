@@ -18,6 +18,8 @@ import { enqueueCloudVmWorkOnce } from "./db";
 import { listServerProviders } from "./providers";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getNebiusRegionKeys } from "./nebius-credentials";
+import { shouldAutoRestoreInterruptedSpotHost } from "./spot-restore";
+export { shouldAutoRestoreInterruptedSpotHost } from "./spot-restore";
 
 const logger = getLogger("server:cloud:reconcile");
 const pool = () => getPool();
@@ -236,36 +238,6 @@ function parseLastActionAt(row: HostRow): Date | undefined {
   if (!value) return undefined;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
-}
-
-function pricingModel(row: HostRow): "on_demand" | "spot" {
-  return row.metadata?.pricing_model === "spot" ? "spot" : "on_demand";
-}
-
-function interruptionRestorePolicy(row: HostRow): "none" | "immediate" {
-  const explicit = row.metadata?.interruption_restore_policy;
-  if (explicit === "none") return "none";
-  if (explicit === "immediate") return "immediate";
-  return pricingModel(row) === "spot" ? "immediate" : "none";
-}
-
-export function shouldAutoRestoreInterruptedSpotHost(row: HostRow): boolean {
-  if (pricingModel(row) !== "spot") return false;
-  if (interruptionRestorePolicy(row) !== "immediate") return false;
-  if (row.status === "deprovisioned") return false;
-  const lastAction = `${row.metadata?.last_action ?? ""}`.trim().toLowerCase();
-  const lastActionStatus = `${row.metadata?.last_action_status ?? ""}`
-    .trim()
-    .toLowerCase();
-  if (
-    (lastAction === "stop" ||
-      lastAction === "delete" ||
-      lastAction === "deprovision") &&
-    lastActionStatus === "success"
-  ) {
-    return false;
-  }
-  return true;
 }
 
 function getMissingCount(runtime: Record<string, any> | undefined): number {

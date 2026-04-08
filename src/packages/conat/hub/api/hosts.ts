@@ -382,6 +382,7 @@ export interface Host {
   starred?: boolean;
   pricing_model?: HostPricingModel;
   interruption_restore_policy?: HostInterruptionRestorePolicy;
+  desired_state?: "running" | "stopped";
   last_action?: string;
   last_action_at?: string;
   last_action_status?: string;
