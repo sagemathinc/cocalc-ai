@@ -122,6 +122,9 @@ function needsTextBoundarySpace(
   ) {
     return false;
   }
+  if (shouldPreservePathLikeDotJoin(left, right)) {
+    return false;
+  }
   if (leftLast === "]" && rightFirst === "(") {
     return false;
   }
@@ -140,6 +143,27 @@ function endsWithMarkdownEmphasisOpener(text: string): boolean {
   const marker = match[1];
   const before = text.slice(0, -marker.length).slice(-1);
   return before === "" || /[\s([{'"`]/.test(before);
+}
+
+function shouldPreservePathLikeDotJoin(left: string, right: string): boolean {
+  if (!left.endsWith(".") || !/^[A-Za-z0-9_~/-]/.test(right)) {
+    return false;
+  }
+  const beforeDot = left.slice(-2, -1);
+  if (beforeDot === "" || /[\s([{/\\'"`]/.test(beforeDot)) {
+    return true;
+  }
+  const leftToken = left.match(/([^\s]+)\.$/)?.[1] ?? "";
+  if (!leftToken || leftToken.includes(".")) {
+    return false;
+  }
+  if (/[\/[`(_-]/.test(leftToken)) {
+    return true;
+  }
+  if (/[A-Z]/.test(leftToken)) {
+    return true;
+  }
+  return false;
 }
 
 export function extractEventText(event?: AcpStreamEvent): string | undefined {
