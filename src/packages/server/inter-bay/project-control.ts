@@ -7,9 +7,13 @@ import type {
   ForwardProjectLroProgressRequest,
   GetProjectReferenceRequest,
   ProjectReference,
+  ProjectControlAddressRequest,
+  ProjectControlRestartRequest,
   ProjectControlStartRequest,
+  ProjectControlStateRequest,
   ProjectControlStopRequest,
 } from "@cocalc/conat/inter-bay/api";
+import getPool from "@cocalc/database/pool";
 import { publishLroEvent } from "@cocalc/server/lro/stream";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveProjectBayDirect } from "@cocalc/server/inter-bay/directory";
@@ -17,6 +21,7 @@ import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { getProject } from "@cocalc/server/projects/control";
 import { resolveVisibleProjectReferenceLocal } from "@cocalc/server/bay-directory";
 import { forwardRemoteStartLroProgress } from "@cocalc/server/inter-bay/start-lro-forward";
+import type { ProjectState } from "@cocalc/util/db-schema/projects";
 
 function staleRoutingError({
   project_id,
@@ -96,6 +101,56 @@ export async function handleProjectControlStop(
   await project.stop();
 }
 
+export async function handleProjectControlRestart(
+  req: ProjectControlRestartRequest,
+): Promise<void> {
+  await assertCurrentProjectOwnership({
+    project_id: req.project_id,
+    epoch: req.epoch,
+  });
+  const project = await getProject(req.project_id);
+  const stopForward = await forwardRemoteStartLroProgress({
+    project_id: req.project_id,
+    op_id: req.lro_op_id,
+    source_bay_id: req.source_bay_id,
+  });
+  try {
+    await project.restart({
+      account_id: req.account_id,
+      lro_op_id: req.lro_op_id,
+    });
+  } finally {
+    await stopForward();
+  }
+}
+
+export async function handleProjectControlState(
+  req: ProjectControlStateRequest,
+) {
+  await assertCurrentProjectOwnership({
+    project_id: req.project_id,
+    epoch: req.epoch,
+  });
+  const { rows } = await getPool().query<{ state: ProjectState | null }>(
+    "SELECT state FROM projects WHERE project_id=$1 LIMIT 1",
+    [req.project_id],
+  );
+  return rows[0]?.state ?? {};
+}
+
+export async function handleProjectControlAddress(
+  req: ProjectControlAddressRequest,
+) {
+  await assertCurrentProjectOwnership({
+    project_id: req.project_id,
+    epoch: req.epoch,
+  });
+  const project = await getProject(req.project_id);
+  return await project.address({
+    account_id: req.account_id,
+  });
+}
+
 export async function handleProjectReferenceGet(
   req: GetProjectReferenceRequest,
 ): Promise<ProjectReference | null> {
@@ -145,6 +200,32 @@ export async function dispatchProjectControlRpc(
   if (subject === stopExpected) {
     await handleProjectControlStop(payload as ProjectControlStopRequest);
     return null;
+  }
+  const restartExpected = projectControlSubject({
+    dest_bay: getConfiguredBayId(),
+    method: "restart",
+  });
+  if (subject === restartExpected) {
+    await handleProjectControlRestart(payload as ProjectControlRestartRequest);
+    return null;
+  }
+  const stateExpected = projectControlSubject({
+    dest_bay: getConfiguredBayId(),
+    method: "state",
+  });
+  if (subject === stateExpected) {
+    return await handleProjectControlState(
+      payload as ProjectControlStateRequest,
+    );
+  }
+  const addressExpected = projectControlSubject({
+    dest_bay: getConfiguredBayId(),
+    method: "address",
+  });
+  if (subject === addressExpected) {
+    return await handleProjectControlAddress(
+      payload as ProjectControlAddressRequest,
+    );
   }
   throw new Error(`unknown project-control subject: ${subject}`);
 }

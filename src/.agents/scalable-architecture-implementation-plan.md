@@ -75,10 +75,14 @@ These workstreams span multiple phases.
 
 ### 2. Browser / Frontend Routing
 
-- home-bay bootstrap
-- project open via owning bay
-- explicit Conat client selection
-- removal of hidden global-client fallbacks
+- global bootstrap that resolves the account home bay
+- bay-scoped browser connection credentials issued after bootstrap/login
+- browser stays on one stable public URL and one control-plane bay
+- project open stays on the account bay; cross-bay project control is routed
+  through that bay instead of redirecting the browser between bay URLs
+- direct project-host runtime connections remain separate from bay control
+  - explicit Conat client selection
+  - removal of hidden global-client fallbacks
 
 ### 3. CLI / Operator Surface
 
@@ -428,6 +432,10 @@ Add the minimum cross-bay control-plane machinery.
 - fencing and replay support
 - explicit separation of project/account control ownership from host execution
   placement
+- browser bootstrap/session model that keeps one control-plane connection to
+  the account bay while hiding bay URLs from the user-facing browser URL
+- region-aware bay metadata, with bay regions aligned to the Cloudflare region
+  taxonomy used for account/project/project-host placement where practical
 - cross-bay observability:
   - lag
   - event backlog

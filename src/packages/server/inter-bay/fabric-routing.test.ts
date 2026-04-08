@@ -84,6 +84,43 @@ describe("inter-bay fabric routing", () => {
         return mesg.data;
       }
     })();
+    const projectControlRestartSub = await serviceClient.subscribe(
+      "bay.bay-1.rpc.project-control.restart",
+      { queue: "0" },
+    );
+    const projectRestartPromise = (async () => {
+      for await (const mesg of projectControlRestartSub) {
+        mesg.respond(null, { noThrow: true });
+        return mesg.data;
+      }
+    })();
+    const projectControlStateSub = await serviceClient.subscribe(
+      "bay.bay-1.rpc.project-control.state",
+      { queue: "0" },
+    );
+    const projectStatePromise = (async () => {
+      for await (const mesg of projectControlStateSub) {
+        mesg.respond({ state: "running", ip: "10.1.2.3" }, { noThrow: true });
+        return mesg.data;
+      }
+    })();
+    const projectControlAddressSub = await serviceClient.subscribe(
+      "bay.bay-1.rpc.project-control.address",
+      { queue: "0" },
+    );
+    const projectAddressPromise = (async () => {
+      for await (const mesg of projectControlAddressSub) {
+        mesg.respond(
+          {
+            host: "10.1.2.3",
+            port: 4242,
+            secret_token: "secret",
+          },
+          { noThrow: true },
+        );
+        return mesg.data;
+      }
+    })();
 
     const directorySub = await serviceClient.subscribe(
       "global.directory.rpc.resolve-project-bay",
@@ -128,6 +165,24 @@ describe("inter-bay fabric routing", () => {
       .projectControl("bay-1")
       .stop({ project_id: "proj-1" });
     await getInterBayBridge()
+      .projectControl("bay-1")
+      .restart({ project_id: "proj-1", account_id: "acct-1" });
+    await expect(
+      getInterBayBridge().projectControl("bay-1").state({
+        project_id: "proj-1",
+      }),
+    ).resolves.toEqual({ state: "running", ip: "10.1.2.3" });
+    await expect(
+      getInterBayBridge().projectControl("bay-1").address({
+        project_id: "proj-1",
+        account_id: "acct-1",
+      }),
+    ).resolves.toEqual({
+      host: "10.1.2.3",
+      port: 4242,
+      secret_token: "secret",
+    });
+    await getInterBayBridge()
       .projectLro("bay-1")
       .publishProgress({
         project_id: "proj-1",
@@ -153,6 +208,18 @@ describe("inter-bay fabric routing", () => {
       name: "stop",
       args: [{ project_id: "proj-1" }],
     });
+    await expect(projectRestartPromise).resolves.toEqual({
+      name: "restart",
+      args: [{ project_id: "proj-1", account_id: "acct-1" }],
+    });
+    await expect(projectStatePromise).resolves.toEqual({
+      name: "state",
+      args: [{ project_id: "proj-1" }],
+    });
+    await expect(projectAddressPromise).resolves.toEqual({
+      name: "address",
+      args: [{ project_id: "proj-1", account_id: "acct-1" }],
+    });
     await expect(projectLroPromise).resolves.toEqual({
       name: "publishProgress",
       args: [
@@ -172,6 +239,9 @@ describe("inter-bay fabric routing", () => {
     getInterBayFabricClient().close();
     projectControlSub.close();
     projectControlStopSub.close();
+    projectControlRestartSub.close();
+    projectControlStateSub.close();
+    projectControlAddressSub.close();
     projectLroSub.close();
     directorySub.close();
   });

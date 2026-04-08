@@ -294,10 +294,13 @@ export class BaseProject extends EventEmitter {
     await stopProjectOnHost(this.project_id);
   };
 
-  restart = async (): Promise<void> => {
+  restart = async (opts?: {
+    lro_op_id?: string;
+    account_id?: string;
+  }): Promise<void> => {
     this.dbg("restart")();
     await this.stop();
-    await this.start();
+    await this.start(opts);
   };
 
   wait = async (opts: {
@@ -324,7 +327,9 @@ export class BaseProject extends EventEmitter {
   // Everything the hub needs to know to connect to the project
   // via the TCP connection.  Raises error if anything can't be
   // determined.
-  address = async (): Promise<{
+  address = async (opts?: {
+    account_id?: string;
+  }): Promise<{
     host: string;
     port: number;
     secret_token: string;
@@ -332,7 +337,7 @@ export class BaseProject extends EventEmitter {
     await this.ensureLocalOwnership();
     const dbg = this.dbg("address");
     dbg("first ensure is running");
-    await this.start();
+    await this.start({ account_id: opts?.account_id });
     dbg("it is running");
     const status = await this.status();
     if (!status["hub-server.port"]) {

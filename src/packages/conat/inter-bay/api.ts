@@ -11,6 +11,7 @@ import {
 import type { ConatService } from "@cocalc/conat/service/typed";
 import type { Options, ServiceCall } from "@cocalc/conat/service/service";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
+import type { ProjectState } from "@cocalc/util/db-schema/projects";
 
 export interface BayOwnership {
   bay_id: string;
@@ -45,6 +46,31 @@ export interface ProjectControlStopRequest {
   epoch?: number;
 }
 
+export interface ProjectControlRestartRequest {
+  project_id: string;
+  account_id: string;
+  lro_op_id?: string;
+  source_bay_id?: string;
+  epoch?: number;
+}
+
+export interface ProjectControlStateRequest {
+  project_id: string;
+  epoch?: number;
+}
+
+export interface ProjectControlAddressRequest {
+  project_id: string;
+  account_id: string;
+  epoch?: number;
+}
+
+export interface ProjectAddress {
+  host: string;
+  port: number;
+  secret_token: string;
+}
+
 export interface GetProjectReferenceRequest {
   project_id: string;
   account_id: string;
@@ -56,7 +82,12 @@ export interface ForwardProjectLroProgressRequest {
   event: Extract<LroEvent, { type: "progress" }>;
 }
 
-export type ProjectControlMethod = "start" | "stop";
+export type ProjectControlMethod =
+  | "start"
+  | "stop"
+  | "restart"
+  | "state"
+  | "address";
 export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
 export type ProjectReferenceMethod = "get";
 export type ProjectLroMethod = "publish-progress";
@@ -81,6 +112,9 @@ export interface InterBayDirectoryApi {
 export interface InterBayProjectControlApi {
   start: (opts: ProjectControlStartRequest) => Promise<void>;
   stop: (opts: ProjectControlStopRequest) => Promise<void>;
+  restart: (opts: ProjectControlRestartRequest) => Promise<void>;
+  state: (opts: ProjectControlStateRequest) => Promise<ProjectState>;
+  address: (opts: ProjectControlAddressRequest) => Promise<ProjectAddress>;
 }
 
 export interface InterBayProjectReferenceApi {
@@ -213,9 +247,30 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "stop" }),
   });
+  const restartClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "restart">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({ dest_bay, method: "restart" }),
+  });
+  const stateClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "state">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({ dest_bay, method: "state" }),
+  });
+  const addressClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "address">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({ dest_bay, method: "address" }),
+  });
   return {
     start: async (opts) => await startClient.start(opts),
     stop: async (opts) => await stopClient.stop(opts),
+    restart: async (opts) => await restartClient.restart(opts),
+    state: async (opts) => await stateClient.state(opts),
+    address: async (opts) => await addressClient.address(opts),
   };
 }
 
@@ -333,6 +388,60 @@ export function createInterBayProjectControlStopHandler({
     subject: projectControlSubject({ dest_bay: bay_id, method: "stop" }),
     impl: {
       stop: async (opts) => await impl.stop(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlRestartHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "restart">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({ dest_bay: bay_id, method: "restart" }),
+    impl: {
+      restart: async (opts) => await impl.restart(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlStateHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "state">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({ dest_bay: bay_id, method: "state" }),
+    impl: {
+      state: async (opts) => await impl.state(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlAddressHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "address">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({ dest_bay: bay_id, method: "address" }),
+    impl: {
+      address: async (opts) => await impl.address(opts),
     },
   });
 }

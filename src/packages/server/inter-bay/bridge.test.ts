@@ -51,6 +51,65 @@ describe("inter-bay bridge", () => {
     );
   });
 
+  it("dispatches typed project restart requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({ data: null });
+    const { getInterBayBridge } = await import("./bridge");
+    const bridge = getInterBayBridge();
+    await bridge.projectControl("bay-0").restart({ project_id: "p1" } as any);
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-0.rpc.project-control.restart",
+      {
+        name: "restart",
+        args: [{ project_id: "p1" }],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
+
+  it("dispatches typed project state requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({
+      data: { state: "running", ip: "10.0.0.1" },
+    });
+    const { getInterBayBridge } = await import("./bridge");
+    const bridge = getInterBayBridge();
+    await expect(
+      bridge.projectControl("bay-0").state({ project_id: "p1" } as any),
+    ).resolves.toEqual({ state: "running", ip: "10.0.0.1" });
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-0.rpc.project-control.state",
+      {
+        name: "state",
+        args: [{ project_id: "p1" }],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
+
+  it("dispatches typed project address requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({
+      data: { host: "10.0.0.1", port: 443, secret_token: "secret" },
+    });
+    const { getInterBayBridge } = await import("./bridge");
+    const bridge = getInterBayBridge();
+    await expect(
+      bridge
+        .projectControl("bay-0")
+        .address({ project_id: "p1", account_id: "a1" } as any),
+    ).resolves.toEqual({
+      host: "10.0.0.1",
+      port: 443,
+      secret_token: "secret",
+    });
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-0.rpc.project-control.address",
+      {
+        name: "address",
+        args: [{ project_id: "p1", account_id: "a1" }],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
+
   it("forwards remote-bay typed requests to the same fabric", async () => {
     requestMock.mockResolvedValue({ data: null });
     const { getInterBayBridge } = await import("./bridge");

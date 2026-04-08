@@ -4,8 +4,11 @@
  */
 
 import {
+  createInterBayProjectControlAddressHandler,
   createInterBayDirectoryHandlers,
   createInterBayProjectControlHandler,
+  createInterBayProjectControlRestartHandler,
+  createInterBayProjectControlStateHandler,
   createInterBayProjectLroHandler,
   createInterBayProjectReferenceHandler,
   createInterBayProjectControlStopHandler,
@@ -24,7 +27,10 @@ import {
 } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
+  handleProjectControlAddress,
+  handleProjectControlRestart,
   handleProjectControlStart,
+  handleProjectControlState,
   handleProjectLroPublishProgress,
   handleProjectReferenceGet,
   handleProjectControlStop,
@@ -81,6 +87,11 @@ async function startProjectControlStartService(): Promise<void> {
     stop: async (opts) => {
       await handleProjectControlStop(opts);
     },
+    restart: async (opts) => {
+      await handleProjectControlRestart(opts);
+    },
+    state: async (opts) => await handleProjectControlState(opts),
+    address: async (opts) => await handleProjectControlAddress(opts),
   };
   const bay_id = getConfiguredBayId();
   logger.debug("starting inter-bay listener", {
@@ -95,6 +106,24 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlStopHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlRestartHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlStateHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlAddressHandler({
       client,
       bay_id,
       parallel: true,

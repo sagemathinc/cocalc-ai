@@ -70,6 +70,7 @@ import type {
   ProjectLogPage,
   ProjectLogCursor,
   ProjectRuntimeLog,
+  ProjectAddress,
   ProjectLogRow,
   ProjectStorageCountedSummary,
   ProjectStorageBreakdown,
@@ -1326,6 +1327,54 @@ export async function start({
   service: string;
   stream_name: string;
 }> {
+  return await runProjectStartLikeAction({
+    kind: "start",
+    account_id,
+    project_id,
+    wait,
+  });
+}
+
+export async function restart({
+  account_id,
+  project_id,
+  wait = true,
+}: {
+  account_id: string;
+  project_id: string;
+  wait?: boolean;
+}): Promise<{
+  op_id: string;
+  scope_type: "project";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}> {
+  return await runProjectStartLikeAction({
+    kind: "restart",
+    account_id,
+    project_id,
+    wait,
+  });
+}
+
+async function runProjectStartLikeAction({
+  kind,
+  account_id,
+  project_id,
+  wait = true,
+}: {
+  kind: "start" | "restart";
+  account_id: string;
+  project_id: string;
+  wait?: boolean;
+}): Promise<{
+  op_id: string;
+  scope_type: "project";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}> {
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   const op = await createLro({
     kind: "project-start",
@@ -1333,14 +1382,14 @@ export async function start({
     scope_id: project_id,
     created_by: account_id,
     routing: "hub",
-    input: { project_id },
+    input: { project_id, action: kind },
     status: "queued",
   });
   publishStartLroSummaryBestEffort({
     scope_type: op.scope_type,
     scope_id: op.scope_id,
     summary: op,
-    context: "start: initial",
+    context: `${kind}: initial`,
   });
   publishLroEvent({
     scope_type: op.scope_type,
@@ -1361,7 +1410,7 @@ export async function start({
     });
   });
 
-  log.debug("start", { project_id, op_id: op.op_id });
+  log.debug(kind, { project_id, op_id: op.op_id });
   const response = {
     op_id: op.op_id,
     scope_type: "project" as const,
@@ -1385,7 +1434,7 @@ export async function start({
         scope_type: running.scope_type,
         scope_id: running.scope_id,
         summary: running,
-        context: "start: running",
+        context: `${kind}: running`,
       });
     }
     const stopProgressMirror = await mirrorStartLroProgress({
@@ -1397,13 +1446,23 @@ export async function start({
       if (ownership == null) {
         throw new Error(`project ${project_id} not found`);
       }
-      await getInterBayBridge().projectControl(ownership.bay_id).start({
-        project_id,
-        account_id,
-        lro_op_id: op.op_id,
-        source_bay_id: getConfiguredBayId(),
-        epoch: ownership.epoch,
-      });
+      if (kind === "start") {
+        await getInterBayBridge().projectControl(ownership.bay_id).start({
+          project_id,
+          account_id,
+          lro_op_id: op.op_id,
+          source_bay_id: getConfiguredBayId(),
+          epoch: ownership.epoch,
+        });
+      } else {
+        await getInterBayBridge().projectControl(ownership.bay_id).restart({
+          project_id,
+          account_id,
+          lro_op_id: op.op_id,
+          source_bay_id: getConfiguredBayId(),
+          epoch: ownership.epoch,
+        });
+      }
       const phase_timings_ms = takeStartProjectPhaseTimings(op.op_id);
       const progress_summary = {
         done: 1,
@@ -1427,7 +1486,7 @@ export async function start({
           scope_type: updated.scope_type,
           scope_id: updated.scope_id,
           summary: updated,
-          context: "start: succeeded",
+          context: `${kind}: succeeded`,
         });
       }
       await supersedeOlderProjectStartLros({
@@ -1445,7 +1504,7 @@ export async function start({
           scope_type: updated.scope_type,
           scope_id: updated.scope_id,
           summary: updated,
-          context: "start: failed",
+          context: `${kind}: failed`,
         });
       }
       throw err;
@@ -1479,6 +1538,43 @@ export async function stop({
   }
   await getInterBayBridge().projectControl(ownership.bay_id).stop({
     project_id,
+    epoch: ownership.epoch,
+  });
+}
+
+export async function getProjectState({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}) {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  return await getInterBayBridge().projectControl(ownership.bay_id).state({
+    project_id,
+    epoch: ownership.epoch,
+  });
+}
+
+export async function getProjectAddress({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectAddress> {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  return await getInterBayBridge().projectControl(ownership.bay_id).address({
+    project_id,
+    account_id,
     epoch: ownership.epoch,
   });
 }

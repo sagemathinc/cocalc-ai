@@ -142,6 +142,24 @@ durable streams.
 Every host, project, browser control session, and account-home decision must
 have an unambiguous owning bay.
 
+### 4a. The Browser Has One Control-Plane Bay
+
+The browser should not be redirected between visible bay URLs during normal
+operation.
+
+The intended Phase 5 and later model is:
+
+- the user-facing browser URL remains stable
+- global bootstrap/login resolves the account home bay
+- bootstrap issues bay-scoped browser connection credentials
+- the browser then opens one long-lived control-plane connection to the account
+  bay
+- project control is routed through that account bay
+- direct project-host connections remain the separate runtime/compute path
+
+This keeps browser connection management bounded even for users who interact
+with many projects at once.
+
 ### 5. Separate Control Ownership From Execution Placement
 
 For Phase 5 and beyond, we should not assume that a project's execution host is
@@ -161,6 +179,23 @@ This reflects the expected real product shape:
 - therefore keeping account and project on the same bay is usually the best UX
 - sparse regional project-host fleets should not force account/project control
   ownership to fragment unnaturally across bays
+
+### 5a. Regions Matter
+
+Bay placement should be region-aware from the start.
+
+In particular:
+
+- account home-bay placement should strongly prefer the user's nearby region
+- project default placement should usually follow the account bay/region
+- project-host choice should continue to follow the existing region-aware host
+  placement model
+- bay region metadata should use the same Cloudflare-style regional taxonomy
+  that already influences project-host selection, so placement policy is
+  operating on one consistent notion of region
+
+The central auth/directory service must stay off the hot path so that a
+region-local bay can make the control-plane experience region-local too.
 
 ### 6. Failure Should Degrade Inter-Bay Features First
 
@@ -540,6 +575,13 @@ Deferred from v1:
 - browser session bay lookup
 - automatic placement decisions
 - migration / reassignment workflows
+
+The broader placement direction is still frozen, though:
+
+- bays already have explicit region metadata
+- new account and project placement should normally follow nearby Cloudflare
+  region information
+- the account bay is expected to be the browser's long-lived control-plane bay
 
 ### 5. First Canary RPC Path
 
