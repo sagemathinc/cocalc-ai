@@ -126,7 +126,7 @@ describe("resolveMountedCodexRenderedValue", () => {
     expect(
       resolveMountedCodexRenderedValue({
         renderedValue: "final summary",
-        mountedGeneratingValue: "streamed body still visible",
+        mountedGeneratingPrefixValue: "streamed body still visible",
         showCodexActivity: true,
         generating: false,
         interrupted: false,
@@ -134,23 +134,23 @@ describe("resolveMountedCodexRenderedValue", () => {
     ).toBe("streamed body still visible\n\nfinal summary");
   });
 
-  it("does not duplicate the final summary when the mounted body already ends with it", () => {
+  it("falls back to the durable summary when there is no preserved intermediate prefix", () => {
     expect(
       resolveMountedCodexRenderedValue({
         renderedValue: "final summary",
-        mountedGeneratingValue: "streamed body still visible\n\nfinal summary",
+        mountedGeneratingPrefixValue: undefined,
         showCodexActivity: true,
         generating: false,
         interrupted: false,
       }),
-    ).toBe("streamed body still visible\n\nfinal summary");
+    ).toBe("final summary");
   });
 
   it("does not override non-Codex rows", () => {
     expect(
       resolveMountedCodexRenderedValue({
         renderedValue: "final summary",
-        mountedGeneratingValue: "streamed body still visible",
+        mountedGeneratingPrefixValue: "streamed body still visible",
         showCodexActivity: false,
         generating: false,
         interrupted: false,
@@ -162,7 +162,7 @@ describe("resolveMountedCodexRenderedValue", () => {
     expect(
       resolveMountedCodexRenderedValue({
         renderedValue: "live body",
-        mountedGeneratingValue: "older streamed body",
+        mountedGeneratingPrefixValue: "older streamed body",
         showCodexActivity: true,
         generating: true,
         interrupted: false,

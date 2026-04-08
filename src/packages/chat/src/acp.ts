@@ -116,6 +116,12 @@ function needsTextBoundarySpace(
   }
   const leftLast = left[left.length - 1];
   const rightFirst = right[0];
+  if (
+    endsWithMarkdownEmphasisOpener(left) &&
+    /[A-Za-z0-9`"'([{]/.test(rightFirst)
+  ) {
+    return false;
+  }
   if (leftLast === "]" && rightFirst === "(") {
     return false;
   }
@@ -126,6 +132,14 @@ function needsTextBoundarySpace(
     return true;
   }
   return false;
+}
+
+function endsWithMarkdownEmphasisOpener(text: string): boolean {
+  const match = text.match(/(\*{1,2}|_{1,2})$/);
+  if (!match) return false;
+  const marker = match[1];
+  const before = text.slice(0, -marker.length).slice(-1);
+  return before === "" || /[\s([{'"`]/.test(before);
 }
 
 export function extractEventText(event?: AcpStreamEvent): string | undefined {
@@ -273,6 +287,18 @@ export function getLiveResponseMarkdown(
     return summary;
   }
   return getLatestEventLineText(events);
+}
+
+// After a Codex turn finishes, keep the mounted intermediate activity visible
+// without re-showing the final agent block, since the durable summary is
+// rendered separately in the chat row.
+export function getMountedIntermediateResponseMarkdown(
+  events: AcpStreamMessage[],
+): string | undefined {
+  const blocks = getAgentMessageTexts(events);
+  if (blocks.length <= 1) return undefined;
+  const content = blocks.slice(0, -1).join("\n\n").trim();
+  return content.length > 0 ? content : undefined;
 }
 
 export function getInterruptedResponseMarkdown(

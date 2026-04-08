@@ -6,6 +6,7 @@ import {
   getBestResponseText,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
+  getMountedIntermediateResponseMarkdown,
   getLatestEventLineText,
   getLatestMessageText,
   getLatestSummaryText,
@@ -100,6 +101,32 @@ describe("appendStreamMessage", () => {
 
     expect(merged).toHaveLength(1);
     expect((merged[0] as any).event.text).toBe("`src/.agents`");
+  });
+
+  test("does not insert a space after a single-star emphasis opener", () => {
+    const events = [textEvent("message", "with the *", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent("message", "original* stale host row", 2),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "with the *original* stale host row",
+    );
+  });
+
+  test("does not insert a space after a double-star emphasis opener", () => {
+    const events = [textEvent("message", "with the **", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent("message", "original** stale host row", 2),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "with the **original** stale host row",
+    );
   });
 
   test("inserts a paragraph break between large app-server chunks", () => {
@@ -308,6 +335,25 @@ describe("response text helpers", () => {
       } as AcpStreamMessage,
     ];
     expect(getLiveResponseMarkdown(events)).toBe("first\n\nsecond");
+  });
+
+  test("drops the last agent message from mounted intermediate markdown", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "first", 1),
+      textEvent("thinking", "reasoning", 2),
+      textEvent("message", "second", 3),
+      textEvent("message", "**final summary**", 4),
+    ];
+    expect(getMountedIntermediateResponseMarkdown(events)).toBe(
+      "first\n\nsecond",
+    );
+  });
+
+  test("returns nothing for mounted intermediate markdown when there is only one agent block", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "**final summary**", 1),
+    ];
+    expect(getMountedIntermediateResponseMarkdown(events)).toBeUndefined();
   });
 
   test("keeps the latest live agent block when the summary extends it", () => {
