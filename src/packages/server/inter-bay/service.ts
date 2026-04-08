@@ -7,6 +7,7 @@ import {
   createInterBayAuthTokenHandlers,
   createInterBayAccountDirectoryHandlers,
   createInterBayAccountLocalHandler,
+  createInterBayProjectCollabInviteHandlers,
   createInterBayProjectControlAddressHandler,
   createInterBayProjectControlActiveOpHandler,
   createInterBayDirectoryHandlers,
@@ -20,6 +21,7 @@ import {
   type InterBayAccountDirectoryApi,
   type InterBayAccountLocalApi,
   type InterBayDirectoryApi,
+  type InterBayProjectCollabInviteApi,
   type InterBayProjectControlApi,
   type InterBayProjectLroApi,
   type InterBayProjectReferenceApi,
@@ -56,6 +58,12 @@ import {
   handleProjectReferenceGet,
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
+import {
+  deleteProjectedCollabInviteDirect,
+  toWire as collabInviteToWire,
+  upsertProjectedCollabInviteDirect,
+} from "@cocalc/server/projects/collab-invite-inbox";
+import { respondCollabInviteCanonical } from "@cocalc/server/projects/collaborators";
 
 const logger = getLogger("server:inter-bay:service");
 
@@ -75,6 +83,7 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectControlStartService();
     await startProjectReferenceService();
     await startProjectLroService();
+    await startProjectCollabInviteService();
   } catch (err) {
     serviceStarted = false;
     throw err;
@@ -257,6 +266,35 @@ async function startProjectLroService(): Promise<void> {
   };
   services.push(
     createInterBayProjectLroHandler({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startProjectCollabInviteService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayProjectCollabInviteApi = {
+    upsertInbox: async ({ source_bay_id, invite }) => {
+      await upsertProjectedCollabInviteDirect({ source_bay_id, invite });
+    },
+    deleteInbox: async ({ invite_id }) => {
+      await deleteProjectedCollabInviteDirect(invite_id);
+    },
+    respond: async ({ account_id, invite_id, action, include_email }) =>
+      collabInviteToWire(
+        await respondCollabInviteCanonical({
+          account_id,
+          invite_id,
+          action,
+          includeEmail: !!include_email,
+        }),
+      ),
+  };
+  services.push(
+    ...createInterBayProjectCollabInviteHandlers({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

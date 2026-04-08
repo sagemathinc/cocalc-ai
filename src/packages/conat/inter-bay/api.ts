@@ -11,7 +11,11 @@ import {
 import type { ConatService } from "@cocalc/conat/service/typed";
 import type { Options, ServiceCall } from "@cocalc/conat/service/service";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
-import type { ProjectActiveOperationSummary } from "@cocalc/conat/hub/api/projects";
+import type {
+  ProjectActiveOperationSummary,
+  ProjectCollabInviteAction,
+  ProjectCollabInviteRow,
+} from "@cocalc/conat/hub/api/projects";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 
@@ -144,6 +148,32 @@ export interface RegistrationTokenInfoWire {
   customize?: any;
 }
 
+export interface ProjectCollabInviteWire extends Omit<
+  ProjectCollabInviteRow,
+  "created" | "updated" | "responded" | "expires"
+> {
+  created: string;
+  updated: string;
+  responded?: string | null;
+  expires?: string | null;
+}
+
+export interface ProjectCollabInviteInboxUpsertRequest {
+  source_bay_id: string;
+  invite: ProjectCollabInviteWire;
+}
+
+export interface ProjectCollabInviteInboxDeleteRequest {
+  invite_id: string;
+}
+
+export interface ProjectCollabInviteRespondRequest {
+  invite_id: string;
+  account_id: string;
+  action: ProjectCollabInviteAction;
+  include_email?: boolean;
+}
+
 export type ProjectControlMethod =
   | "start"
   | "stop"
@@ -162,6 +192,10 @@ export type AccountDirectoryMethod =
   | "create";
 export type AccountLocalMethod = "create";
 export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
+export type ProjectCollabInviteMethod =
+  | "upsert-inbox"
+  | "delete-inbox"
+  | "respond";
 
 interface ResolveProjectBayApi {
   resolveProjectBay: (
@@ -229,6 +263,14 @@ export interface InterBayAuthTokenApi {
     opts: AuthTokenRedeemRequest,
   ) => Promise<RegistrationTokenInfoWire | null>;
   disable: (opts: AuthTokenDisableRequest) => Promise<void>;
+}
+
+export interface InterBayProjectCollabInviteApi {
+  upsertInbox: (opts: ProjectCollabInviteInboxUpsertRequest) => Promise<void>;
+  deleteInbox: (opts: ProjectCollabInviteInboxDeleteRequest) => Promise<void>;
+  respond: (
+    opts: ProjectCollabInviteRespondRequest,
+  ) => Promise<ProjectCollabInviteWire>;
 }
 
 function serviceClientOptions({
@@ -307,6 +349,16 @@ export function authTokenSubject({
   method: AuthTokenMethod;
 }): string {
   return `global.auth-token.rpc.${method}`;
+}
+
+export function projectCollabInviteSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: ProjectCollabInviteMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.project-collab-invite.${method}`;
 }
 
 export function createInterBayDirectoryClient({
@@ -686,6 +738,85 @@ export function createInterBayAuthTokenHandlers({
       subject: authTokenSubject({ method: "disable" }),
       impl: {
         disable: async (opts) => await impl.disable(opts),
+      },
+    }),
+  ];
+}
+
+export function createInterBayProjectCollabInviteClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayProjectCollabInviteApi {
+  const upsertInboxClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "upsertInbox">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({ dest_bay, method: "upsert-inbox" }),
+  });
+  const deleteInboxClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "deleteInbox">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({ dest_bay, method: "delete-inbox" }),
+  });
+  const respondClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "respond">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({ dest_bay, method: "respond" }),
+  });
+  return {
+    upsertInbox: async (opts) => await upsertInboxClient.upsertInbox(opts),
+    deleteInbox: async (opts) => await deleteInboxClient.deleteInbox(opts),
+    respond: async (opts) => await respondClient.respond(opts),
+  };
+}
+
+export function createInterBayProjectCollabInviteHandlers({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectCollabInviteApi;
+}): ConatService[] {
+  return [
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "upsertInbox">>({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "upsert-inbox",
+      }),
+      impl: {
+        upsertInbox: async (opts) => await impl.upsertInbox(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "deleteInbox">>({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "delete-inbox",
+      }),
+      impl: {
+        deleteInbox: async (opts) => await impl.deleteInbox(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "respond">>({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "respond",
+      }),
+      impl: {
+        respond: async (opts) => await impl.respond(opts),
       },
     }),
   ];

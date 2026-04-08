@@ -35,10 +35,17 @@ import { project_has_network_access } from "@cocalc/database/postgres/project/qu
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getClusterAccountById,
   getClusterAccountsByIds,
 } from "@cocalc/server/inter-bay/accounts";
+import {
+  deleteProjectedInboundCollabInvite,
+  listProjectedInboundCollabInvites,
+  respondProjectedInboundCollabInvite,
+  syncProjectedInboundCollabInvite,
+} from "@cocalc/server/projects/collab-invite-inbox";
 
 const logger = getLogger("project:collaborators");
 const COLLAB_GROUPS = ["owner", "collaborator"] as const;
@@ -169,11 +176,23 @@ async function syncProjectUsersOnHostBestEffort(
 }
 
 async function expirePendingCollabInvites(pool: ReturnType<typeof getPool>) {
-  await pool.query(
+  const { rows } = await pool.query<{
+    invite_id: string;
+    invitee_account_id: string | null;
+  }>(
     `UPDATE project_collab_invites
        SET status='expired', responded=COALESCE(responded, NOW()), updated=NOW()
      WHERE status='pending'
-       AND created < NOW() - INTERVAL '${COLLAB_INVITE_EXPIRES_INTERVAL}'`,
+       AND created < NOW() - INTERVAL '${COLLAB_INVITE_EXPIRES_INTERVAL}'
+     RETURNING invite_id, invitee_account_id`,
+  );
+  await Promise.all(
+    rows.map(async (row) => {
+      await deleteProjectedInboundCollabInvite({
+        invite_id: row.invite_id,
+        invitee_account_id: row.invitee_account_id,
+      });
+    }),
   );
 }
 
@@ -730,6 +749,11 @@ export async function createCollabInvite({
     if (!invite) {
       throw new Error("failed to load existing pending invite");
     }
+    await syncProjectedInboundCollabInvite({
+      source_bay_id: getConfiguredBayId(),
+      invite,
+      invitee_home_bay_id: inviteeAccount.home_bay_id,
+    });
     return {
       created: false,
       invite,
@@ -748,6 +772,11 @@ export async function createCollabInvite({
   if (!invite) {
     throw new Error("failed to load created invite");
   }
+  await syncProjectedInboundCollabInvite({
+    source_bay_id: getConfiguredBayId(),
+    invite,
+    invitee_home_bay_id: inviteeAccount.home_bay_id,
+  });
   return {
     created: true,
     invite,
@@ -876,8 +905,17 @@ export async function listCollabInvites({
     limit: maxRows,
     includeEmail,
   });
+  const projectedRows =
+    normalizedDirection === "outbound"
+      ? []
+      : await listProjectedInboundCollabInvites({
+          account_id,
+          project_id,
+          status: normalizedStatus,
+          limit: maxRows,
+        });
   return await hydrateInviteRows(
-    [...rows, ...emailOnlyRows]
+    [...rows, ...emailOnlyRows, ...projectedRows]
       .sort(
         (a, b) =>
           new Date(`${b.created ?? 0}`).valueOf() -
@@ -888,60 +926,20 @@ export async function listCollabInvites({
   );
 }
 
-export async function respondCollabInvite({
-  account_id,
-  invite_id,
-  action,
-}: {
-  account_id?: string;
-  invite_id: string;
-  action: ProjectCollabInviteAction;
-}): Promise<ProjectCollabInviteRow> {
-  if (!account_id) {
-    throw new Error("user must be signed in");
-  }
-  const normalizedAction = normalizeInviteAction(action);
-  const includeEmail = await isAdmin(account_id);
-  if (isEmailOnlyInviteId(invite_id)) {
-    if (normalizedAction !== "revoke") {
-      throw new Error("email-only invites can only be revoked");
+async function getCanonicalCollabInvite(
+  pool: ReturnType<typeof getPool>,
+  invite_id: string,
+): Promise<
+  | {
+      invite_id: string;
+      project_id: string;
+      inviter_account_id: string;
+      invitee_account_id: string;
+      status: string;
     }
-    const action_id = parseEmailOnlyInviteId(invite_id);
-    const existing = await fetchEmailOnlyInviteByActionId({
-      account_id,
-      action_id,
-      includeEmail,
-    });
-    if (!existing) {
-      throw new Error(`invite '${invite_id}' not found`);
-    }
-    const pool = getPool();
-    const rawInviterAccountId = `${existing.inviter_account_id ?? ""}`.trim();
-    if (rawInviterAccountId !== account_id && !includeEmail) {
-      await assertLocalProjectCollaborator({
-        account_id,
-        project_id: existing.project_id,
-      });
-    }
-    await pool.query(
-      `DELETE FROM account_creation_actions
-       WHERE id = $1::uuid`,
-      [action_id],
-    );
-    const now = new Date();
-    return {
-      ...existing,
-      status: "canceled",
-      responder_action: "revoke",
-      responded: now,
-      updated: now,
-    };
-  }
-  ensureUuid(invite_id, "invite_id");
-  const pool = getPool();
-  await expirePendingCollabInvites(pool);
-
-  const { rows: existingRows } = await pool.query<{
+  | undefined
+> {
+  const { rows } = await pool.query<{
     invite_id: string;
     project_id: string;
     inviter_account_id: string;
@@ -954,7 +952,24 @@ export async function respondCollabInvite({
      LIMIT 1`,
     [invite_id],
   );
-  const invite = existingRows[0];
+  return rows[0];
+}
+
+export async function respondCollabInviteCanonical({
+  account_id,
+  invite_id,
+  action,
+  includeEmail,
+}: {
+  account_id: string;
+  invite_id: string;
+  action: ProjectCollabInviteAction;
+  includeEmail: boolean;
+}): Promise<ProjectCollabInviteRow> {
+  const normalizedAction = normalizeInviteAction(action);
+  const pool = getPool();
+  await expirePendingCollabInvites(pool);
+  const invite = await getCanonicalCollabInvite(pool, invite_id);
   if (!invite) {
     throw new Error(`invite '${invite_id}' not found`);
   }
@@ -973,6 +988,10 @@ export async function respondCollabInvite({
         WHERE invite_id=$1`,
       [invite_id, normalizedAction],
     );
+    await deleteProjectedInboundCollabInvite({
+      invite_id,
+      invitee_account_id: invite.invitee_account_id,
+    });
     const updated = await fetchInviteById(invite_id, includeEmail);
     if (!updated) {
       throw new Error("failed to load invite response");
@@ -1029,12 +1048,89 @@ export async function respondCollabInvite({
       WHERE invite_id=$1`,
     [invite_id, nextStatus, normalizedAction],
   );
-
+  await deleteProjectedInboundCollabInvite({
+    invite_id,
+    invitee_account_id: invite.invitee_account_id,
+  });
   const updated = await fetchInviteById(invite_id, includeEmail);
   if (!updated) {
     throw new Error("failed to load invite response");
   }
   return updated;
+}
+
+export async function respondCollabInvite({
+  account_id,
+  invite_id,
+  action,
+}: {
+  account_id?: string;
+  invite_id: string;
+  action: ProjectCollabInviteAction;
+}): Promise<ProjectCollabInviteRow> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  const normalizedAction = normalizeInviteAction(action);
+  const includeEmail = await isAdmin(account_id);
+  if (isEmailOnlyInviteId(invite_id)) {
+    if (normalizedAction !== "revoke") {
+      throw new Error("email-only invites can only be revoked");
+    }
+    const action_id = parseEmailOnlyInviteId(invite_id);
+    const existing = await fetchEmailOnlyInviteByActionId({
+      account_id,
+      action_id,
+      includeEmail,
+    });
+    if (!existing) {
+      throw new Error(`invite '${invite_id}' not found`);
+    }
+    const pool = getPool();
+    const rawInviterAccountId = `${existing.inviter_account_id ?? ""}`.trim();
+    if (rawInviterAccountId !== account_id && !includeEmail) {
+      await assertLocalProjectCollaborator({
+        account_id,
+        project_id: existing.project_id,
+      });
+    }
+    await pool.query(
+      `DELETE FROM account_creation_actions
+       WHERE id = $1::uuid`,
+      [action_id],
+    );
+    const now = new Date();
+    return {
+      ...existing,
+      status: "canceled",
+      responder_action: "revoke",
+      responded: now,
+      updated: now,
+    };
+  }
+
+  ensureUuid(invite_id, "invite_id");
+  const pool = getPool();
+  await expirePendingCollabInvites(pool);
+  const local = await getCanonicalCollabInvite(pool, invite_id);
+  if (local) {
+    return await respondCollabInviteCanonical({
+      account_id,
+      invite_id,
+      action: normalizedAction,
+      includeEmail,
+    });
+  }
+  const projected = await respondProjectedInboundCollabInvite({
+    account_id,
+    invite_id,
+    action: normalizedAction,
+    includeEmail,
+  });
+  if (!projected) {
+    throw new Error(`invite '${invite_id}' not found`);
+  }
+  return projected;
 }
 
 export async function listCollabInviteBlocks({
