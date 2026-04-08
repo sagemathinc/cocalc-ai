@@ -4,6 +4,7 @@
  */
 
 import { redux } from "./app-framework";
+import { getUnreadIncomingInviteCount } from "./collaborators/invite-count";
 import { lite } from "@cocalc/frontend/lite";
 
 // Calling set_window_title will set the title, but also put a notification
@@ -17,6 +18,7 @@ export function notifyCount() {
   // know how many of them there are until querying stripe.
   return (
     (mentions?.getUnreadSize() ?? 0) +
+    getUnreadIncomingInviteCount() +
     (news?.get("unread") ?? 0) +
     (account?.get("balance_alert") ? 1 : 0)
   );

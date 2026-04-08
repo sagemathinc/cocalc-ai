@@ -26,7 +26,11 @@ import {
 } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
-import { onCollabInvitesChanged } from "./invite-events";
+import { setUnreadIncomingInviteCount } from "./invite-count";
+import {
+  notifyCollabInvitesChanged,
+  onCollabInvitesChanged,
+} from "./invite-events";
 
 const { Panel } = Collapse;
 
@@ -163,9 +167,13 @@ export function useInviteInboxState({
             })
           : Promise.resolve([]),
       ]);
-      set_incoming(incomingRows ?? []);
+      const nextIncoming = incomingRows ?? [];
+      set_incoming(nextIncoming);
       set_outgoing(outgoingRows ?? []);
       set_blocks(blockRows ?? []);
+      if (project_id == null && includeIncoming) {
+        setUnreadIncomingInviteCount(nextIncoming.length);
+      }
     } catch (err) {
       set_error(`${err}`);
     } finally {
@@ -198,6 +206,7 @@ export function useInviteInboxState({
         action,
       });
       await load();
+      notifyCollabInvitesChanged(project_id);
     } catch (err) {
       set_error(`${err}`);
     } finally {
@@ -213,6 +222,7 @@ export function useInviteInboxState({
         blocked_account_id,
       });
       await load();
+      notifyCollabInvitesChanged(project_id);
     } catch (err) {
       set_error(`${err}`);
     } finally {

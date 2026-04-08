@@ -10,6 +10,8 @@ import {
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
+import { useInviteInboxState } from "@cocalc/frontend/collaborators";
+import { setUnreadIncomingInviteCount } from "@cocalc/frontend/collaborators/invite-count";
 import { Icon } from "@cocalc/frontend/components";
 import { unreachable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -31,15 +33,24 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
 
   const mentions_unread = useTypedRedux("mentions", "unread_count") ?? 0;
   const news_unread = useTypedRedux("news", "unread");
+  const inviteState = useInviteInboxState({
+    includeOutgoing: false,
+    includeBlocks: false,
+  });
+  const invite_unread = inviteState.incoming.length;
+
+  useEffect(() => {
+    setUnreadIncomingInviteCount(invite_unread);
+  }, [invite_unread]);
 
   const count = useMemo(
-    () => mentions_unread + (news_unread ?? 0),
-    [mentions_unread, news_unread],
+    () => mentions_unread + (news_unread ?? 0) + invite_unread,
+    [invite_unread, mentions_unread, news_unread],
   );
 
   useEffect(() => {
     set_window_title();
-  }, [count, news_unread]);
+  }, [count, invite_unread, news_unread]);
 
   const outer_style: CSS = {
     display: "flex",
