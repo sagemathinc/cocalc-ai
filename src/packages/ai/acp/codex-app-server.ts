@@ -23,6 +23,11 @@ import {
   type CodexAppServerRequestHandler,
 } from "./codex-project";
 import { getCodexSiteKeyGovernor } from "./codex-site-key-governor";
+import {
+  findSessionFile,
+  getSessionsRoot,
+  rewriteSessionMeta,
+} from "./codex-session-store";
 
 const logger = getLogger("ai:acp:codex-app-server");
 const REQUEST_TIMEOUT_MS = Math.max(
@@ -1371,6 +1376,7 @@ export class CodexAppServerAgent implements AcpAgent {
         sandbox: toSandboxMode(config),
       };
       if (resumeId) {
+        await this.tryEnsureSessionConfig(resumeId, cwd, config);
         try {
           threadResult = await client.request("thread/resume", {
             threadId: resumeId,
@@ -1918,6 +1924,51 @@ export class CodexAppServerAgent implements AcpAgent {
     if (!requested) return base;
     if (path.isAbsolute(requested)) return requested;
     return path.resolve(base, requested);
+  }
+
+  private async ensureSessionConfig(
+    sessionId: string,
+    cwd: string,
+    config?: CodexSessionConfig,
+  ): Promise<void> {
+    const sessionsRoot = getSessionsRoot();
+    if (!sessionsRoot) return;
+    const filePath = await findSessionFile(sessionId, sessionsRoot);
+    if (!filePath) return;
+    const mode = resolveCodexSessionMode(config);
+    const sandboxPolicy =
+      mode === "read-only"
+        ? { type: "read-only" }
+        : mode === "full-access"
+          ? { type: "danger-full-access" }
+          : {
+              type: "workspace-write",
+              network_access: true,
+              exclude_tmpdir_env_var: false,
+              exclude_slash_tmp: false,
+            };
+    await rewriteSessionMeta(filePath, (payload) => ({
+      ...payload,
+      cwd,
+      approval_policy: "never",
+      sandbox_policy: sandboxPolicy,
+    }));
+  }
+
+  private async tryEnsureSessionConfig(
+    sessionId: string,
+    cwd: string,
+    config?: CodexSessionConfig,
+  ): Promise<void> {
+    try {
+      await this.ensureSessionConfig(sessionId, cwd, config);
+    } catch (err) {
+      logger.warn("codex app-server: failed to update session metadata", {
+        sessionId,
+        cwd,
+        err: `${err}`,
+      });
+    }
   }
 
   private async spawnAppServer({
