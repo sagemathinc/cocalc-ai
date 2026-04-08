@@ -103,6 +103,32 @@ describe("appendStreamMessage", () => {
     expect((merged[0] as any).event.text).toBe("`src/.agents`");
   });
 
+  test("does not insert a space after a single-star emphasis opener", () => {
+    const events = [textEvent("message", "with the *", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent("message", "original* stale host row", 2),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "with the *original* stale host row",
+    );
+  });
+
+  test("does not insert a space after a double-star emphasis opener", () => {
+    const events = [textEvent("message", "with the **", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent("message", "original** stale host row", 2),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "with the **original** stale host row",
+    );
+  });
+
   test("inserts a paragraph break between large app-server chunks", () => {
     const events = [
       textEvent(
