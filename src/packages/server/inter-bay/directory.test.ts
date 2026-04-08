@@ -8,9 +8,9 @@ export {};
 const requestMock = jest.fn();
 const queryMock = jest.fn();
 
-jest.mock("@cocalc/backend/conat", () => ({
+jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   __esModule: true,
-  conat: jest.fn(() => ({
+  getInterBayFabricClient: jest.fn(() => ({
     request: (...args: any[]) => requestMock(...args),
   })),
 }));

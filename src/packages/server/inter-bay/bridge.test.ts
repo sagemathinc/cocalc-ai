@@ -7,9 +7,9 @@ export {};
 
 const requestMock = jest.fn();
 
-jest.mock("@cocalc/backend/conat", () => ({
+jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   __esModule: true,
-  conat: jest.fn(() => ({
+  getInterBayFabricClient: jest.fn(() => ({
     request: (...args: any[]) => requestMock(...args),
   })),
 }));
@@ -21,7 +21,7 @@ describe("inter-bay bridge", () => {
     delete process.env.COCALC_BAY_ID;
   });
 
-  it("dispatches local requests through conat request/reply", async () => {
+  it("dispatches local requests through the fabric client", async () => {
     requestMock.mockResolvedValue({ data: "ok" });
     const { getInterBayBridge } = await import("./bridge");
     const bridge = getInterBayBridge();
@@ -39,7 +39,8 @@ describe("inter-bay bridge", () => {
     );
   });
 
-  it("fails fast for remote bays until the real transport exists", async () => {
+  it("forwards remote-bay requests to the same fabric instead of failing fast", async () => {
+    requestMock.mockResolvedValue({ data: "remote-ok" });
     const { getInterBayBridge } = await import("./bridge");
     const bridge = getInterBayBridge();
     await expect(
@@ -48,6 +49,6 @@ describe("inter-bay bridge", () => {
         subject: "bay.bay-1.rpc.project-control.start",
         data: {},
       }),
-    ).rejects.toThrow("inter-bay transport not implemented yet");
+    ).resolves.toBe("remote-ok");
   });
 });

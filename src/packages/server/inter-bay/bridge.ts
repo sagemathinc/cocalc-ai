@@ -3,8 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { conat } from "@cocalc/backend/conat";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
 export interface InterBayRequestOptions {
   dest_bay: string;
@@ -20,14 +20,9 @@ export interface InterBayBridge {
 
 class LocalOnlyInterBayBridge implements InterBayBridge {
   public readonly bay_id = getConfiguredBayId();
-  private readonly client = conat();
+  private readonly client = getInterBayFabricClient();
 
   async request<T = any>(opts: InterBayRequestOptions): Promise<T> {
-    if (opts.dest_bay !== this.bay_id) {
-      throw new Error(
-        `inter-bay transport not implemented yet for remote bay ${opts.dest_bay}`,
-      );
-    }
     const resp = await this.client.request(opts.subject, opts.data, {
       timeout: opts.timeout_ms,
     });

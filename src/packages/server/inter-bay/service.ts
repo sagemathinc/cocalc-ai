@@ -4,12 +4,12 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
-import { conat } from "@cocalc/backend/conat";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   resolveHostBayDirect,
   resolveProjectBayDirect,
 } from "@cocalc/server/inter-bay/directory";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { handleProjectControlStart } from "@cocalc/server/inter-bay/project-control";
 import {
   directorySubject,
@@ -69,7 +69,7 @@ async function startRequestReplyService({
   handler: (data: any) => Promise<any>;
 }): Promise<void> {
   logger.debug("starting inter-bay listener", { subject });
-  const client = conat({ noCache: true });
+  const client = getInterBayFabricClient({ noCache: true });
   const sub = await client.subscribe(subject, { queue: "0" });
   (async () => {
     for await (const mesg of sub) {
