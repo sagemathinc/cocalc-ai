@@ -3,6 +3,7 @@
 import {
   ACP_THINKING_PLACEHOLDER,
   resolveEffectiveGenerating,
+  resolveMountedCodexRenderedValue,
   resolveRenderedMessageValue,
   shouldSuppressAcpPlaceholderBody,
 } from "../message";
@@ -117,5 +118,43 @@ describe("resolveRenderedMessageValue", () => {
         acpInterrupted: false,
       }),
     ).toBe(true);
+  });
+});
+
+describe("resolveMountedCodexRenderedValue", () => {
+  it("keeps the mounted streamed Codex body after completion", () => {
+    expect(
+      resolveMountedCodexRenderedValue({
+        renderedValue: "final summary",
+        mountedGeneratingValue: "streamed body still visible",
+        showCodexActivity: true,
+        generating: false,
+        interrupted: false,
+      }),
+    ).toBe("streamed body still visible");
+  });
+
+  it("does not override non-Codex rows", () => {
+    expect(
+      resolveMountedCodexRenderedValue({
+        renderedValue: "final summary",
+        mountedGeneratingValue: "streamed body still visible",
+        showCodexActivity: false,
+        generating: false,
+        interrupted: false,
+      }),
+    ).toBe("final summary");
+  });
+
+  it("does not override while the turn is still generating", () => {
+    expect(
+      resolveMountedCodexRenderedValue({
+        renderedValue: "live body",
+        mountedGeneratingValue: "older streamed body",
+        showCodexActivity: true,
+        generating: true,
+        interrupted: false,
+      }),
+    ).toBe("live body");
   });
 });
