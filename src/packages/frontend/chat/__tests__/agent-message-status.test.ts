@@ -71,6 +71,10 @@ describe("describeLastActivity", () => {
 });
 
 describe("AgentMessageStatus", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("renders the shared activity chip and opens it on click", () => {
     const onOpen = jest.fn();
     render(
@@ -90,6 +94,38 @@ describe("AgentMessageStatus", () => {
     expect(screen.getByText(/Last activity/)).toBeTruthy();
     expect(screen.getByText("Activity")).toBeTruthy();
     expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes the last activity age when the running duration rerenders", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date(5_000));
+    const onOpen = jest.fn();
+    const { rerender } = render(
+      React.createElement(AgentActivityChip, {
+        generating: true,
+        durationLabel: "0:05",
+        lastActivityAtMs: 4_000,
+        startedAtMs: 1_000,
+        date: 1_000,
+        onOpen,
+      }),
+    );
+
+    expect(screen.getByText("Last activity 0:01 ago")).toBeTruthy();
+
+    jest.setSystemTime(new Date(8_000));
+    rerender(
+      React.createElement(AgentActivityChip, {
+        generating: true,
+        durationLabel: "0:08",
+        lastActivityAtMs: 4_000,
+        startedAtMs: 1_000,
+        date: 1_000,
+        onOpen,
+      }),
+    );
+
+    expect(screen.getByText("Last activity 0:04 ago")).toBeTruthy();
   });
 
   it("shows the notify toggle next to a running Codex status row", () => {
