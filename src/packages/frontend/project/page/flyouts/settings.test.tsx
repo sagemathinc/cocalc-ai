@@ -79,7 +79,7 @@ jest.mock("@cocalc/frontend/components", () => ({
 }));
 
 jest.mock("@cocalc/frontend/course", () => ({
-  getStudentProjectFunctionality: () => ({ disableSSH: false }),
+  useStudentProjectFunctionality: () => ({ disableSSH: false }),
 }));
 
 jest.mock("@cocalc/frontend/i18n", () => ({
