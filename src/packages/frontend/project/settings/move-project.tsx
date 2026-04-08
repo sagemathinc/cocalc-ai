@@ -1,14 +1,16 @@
 import { Button, Descriptions, Modal, Spin, Tag, Typography } from "antd";
 import { useActions } from "@cocalc/frontend/app-framework";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import ShowError from "@cocalc/frontend/components/error";
 import { HostPickerModal } from "@cocalc/frontend/hosts/pick-host";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { DEFAULT_R2_REGION } from "@cocalc/util/consts";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { useProjectRegion } from "../use-project-region";
 import { SpotHostAlert, SpotHostTag } from "@cocalc/frontend/hosts/spot-ui";
+import type { Host } from "@cocalc/conat/hub/api/hosts";
 
 interface Props {
   project_id: string;
@@ -31,6 +33,8 @@ export default function MoveProject({
   const [error, setError] = useState<string>("");
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
+  const [detailsLoading, setDetailsLoading] = useState<boolean>(false);
+  const [detailHost, setDetailHost] = useState<Host | undefined>();
   const actions = useActions("projects");
   const currentHostId = useTypedRedux("projects", "project_map")?.getIn([
     project_id,
@@ -38,12 +42,14 @@ export default function MoveProject({
   ]) as string | undefined;
   const hostInfo = useHostInfo(currentHostId);
   const url = hostInfo?.get?.("connect_url");
-  const hostName = hostInfo?.get?.("name") ?? url ?? "Not Assigned";
-  const hostStatus = hostInfo?.get?.("status");
-  const hostRegion = hostInfo?.get?.("region");
-  const hostSize = hostInfo?.get?.("size");
-  const hostTier = hostInfo?.get?.("tier");
-  const pricingModel = hostInfo?.get?.("pricing_model");
+  const hostName =
+    detailHost?.name ?? hostInfo?.get?.("name") ?? url ?? "Not Assigned";
+  const hostStatus = detailHost?.status ?? hostInfo?.get?.("status");
+  const hostRegion = detailHost?.region ?? hostInfo?.get?.("region");
+  const hostSize = detailHost?.size ?? hostInfo?.get?.("size");
+  const hostTier = detailHost?.tier ?? hostInfo?.get?.("tier");
+  const pricingModel =
+    detailHost?.pricing_model ?? hostInfo?.get?.("pricing_model");
   const { region: projectRegionRaw, refresh: refreshProjectRegion } =
     useProjectRegion(project_id);
   const projectRegion = String(projectRegionRaw ?? DEFAULT_R2_REGION);
@@ -98,6 +104,29 @@ export default function MoveProject({
     }
   };
 
+  useEffect(() => {
+    if (!detailsOpen || !currentHostId) return;
+    let cancelled = false;
+    setDetailsLoading(true);
+    void webapp_client.conat_client.hub.hosts
+      .listHosts({ catalog: false })
+      .then((hosts) => {
+        if (cancelled) return;
+        setDetailHost(hosts.find((host) => host.id === currentHostId));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(`${err}`);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setDetailsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detailsOpen, currentHostId]);
+
   return (
     <>
       <Button
@@ -145,12 +174,18 @@ export default function MoveProject({
           await openPicker();
         }}
         okText="Move"
-        okButtonProps={{ disabled: moving || disabled || actions == null }}
+        okButtonProps={{
+          disabled: moving || detailsLoading || disabled || actions == null,
+        }}
       >
         <Typography.Paragraph type="secondary">
           This project is currently assigned to the following host.
         </Typography.Paragraph>
-        <Descriptions size="small" column={1} items={detailsItems} />
+        {detailsLoading ? (
+          <Spin />
+        ) : (
+          <Descriptions size="small" column={1} items={detailsItems} />
+        )}
         {pricingModel === "spot" && (
           <div style={{ marginTop: 16 }}>
             <SpotHostAlert />
