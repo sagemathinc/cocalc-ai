@@ -7,7 +7,7 @@
     "browser": true,
     "es2022": true,
   },
-  "plugins": ["react"],
+  "plugins": ["react", "promise"],
   "categories": {
     "correctness": "off",
     "suspicious": "off",
@@ -19,6 +19,15 @@
   },
   "rules": {
     "react/rules-of-hooks": "error",
+    "react/jsx-no-undef": "error",
+    "react/no-direct-mutation-state": "error",
+    "no-debugger": "error",
+    "no-self-compare": "error",
+    "no-async-promise-executor": "error",
+    "no-template-curly-in-string": "error",
+    "promise/no-return-wrap": "error",
+    "no-loss-of-precision": "error",
+    "no-constant-binary-expression": "error",
   },
   "ignorePatterns": [
     "frontend/dist/**",

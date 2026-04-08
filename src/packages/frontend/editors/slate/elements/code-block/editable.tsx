@@ -1056,24 +1056,21 @@ export function fromSlate({ node }) {
   // We always convert them to fenced, because otherwise collaborative editing just
   // isn't possible, e.g., because you can't have blank lines at the end.  This isn't
   // too bad, since the conversion only happens for code blocks you actually touch.
-  if (true || node.fence) {
-    const info = node.info.trim() ?? "";
-    // There is one special case with fenced codeblocks that we
-    // have to worry about -- if they contain ```, then we need
-    // to wrap with *more* than the max sequence of backticks
-    // actually in the codeblock!   See
-    //    https://stackoverflow.com/questions/49267811/how-can-i-escape-3-backticks-code-block-in-3-backticks-code-block
-    // for an excellent discussion of this, and also
-    // https://github.com/mwouts/jupytext/issues/712
-    let fence = "```";
-    while (value.indexOf(fence) != -1) {
-      fence += "`";
-    }
-    return fence + info + "\n" + value + "\n" + fence + "\n\n";
-    // this was the old code for non-fenced blocks:
-    //   } else {
-    //     return indent(value, 4) + "\n\n";
+  const info = node.info.trim() ?? "";
+  // There is one special case with fenced codeblocks that we
+  // have to worry about -- if they contain ```, then we need
+  // to wrap with *more* than the max sequence of backticks
+  // actually in the codeblock!   See
+  //    https://stackoverflow.com/questions/49267811/how-can-i-escape-3-backticks-code-block-in-3-backticks-code-block
+  // for an excellent discussion of this, and also
+  // https://github.com/mwouts/jupytext/issues/712
+  let fence = "```";
+  while (value.indexOf(fence) != -1) {
+    fence += "`";
   }
+  return fence + info + "\n" + value + "\n" + fence + "\n\n";
+  // this was the old code for non-fenced blocks:
+  //   return indent(value, 4) + "\n\n";
 }
 
 register({

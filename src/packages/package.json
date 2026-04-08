@@ -4,6 +4,7 @@
     "build": "echo 'nothing yet'",
     "check-deps": "check-dependency-version-consistency --ignore-dep entities .",
     "lint:frontend": "oxlint --config .oxlintrc.jsonc frontend",
+    "lint:non-frontend": "oxlint --config .oxlintrc.non-frontend.jsonc .",
     "lint:frontend:all": "pnpm lint:frontend",
     "tsc:build": "tsc --build tsconfig.solution.json",
     "tsc:watch": "tsc --build --watch --pretty --preserveWatchOutput tsconfig.solution.json"
