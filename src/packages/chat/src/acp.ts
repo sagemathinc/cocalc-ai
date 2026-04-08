@@ -275,6 +275,18 @@ export function getLiveResponseMarkdown(
   return getLatestEventLineText(events);
 }
 
+// After a Codex turn finishes, keep the mounted intermediate activity visible
+// without re-showing the final agent block, since the durable summary is
+// rendered separately in the chat row.
+export function getMountedIntermediateResponseMarkdown(
+  events: AcpStreamMessage[],
+): string | undefined {
+  const blocks = getAgentMessageTexts(events);
+  if (blocks.length <= 1) return undefined;
+  const content = blocks.slice(0, -1).join("\n\n").trim();
+  return content.length > 0 ? content : undefined;
+}
+
 export function getInterruptedResponseMarkdown(
   events: AcpStreamMessage[],
   interruptedText?: string,

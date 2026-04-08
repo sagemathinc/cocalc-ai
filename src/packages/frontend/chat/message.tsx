@@ -45,6 +45,7 @@ import {
   getBestResponseText,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
+  getMountedIntermediateResponseMarkdown,
   type InlineCodeLink,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
@@ -409,13 +410,13 @@ export function resolveRenderedMessageValue({
 
 export function resolveMountedCodexRenderedValue({
   renderedValue,
-  mountedGeneratingValue,
+  mountedGeneratingPrefixValue,
   showCodexActivity,
   generating,
   interrupted,
 }: {
   renderedValue: string;
-  mountedGeneratingValue?: string;
+  mountedGeneratingPrefixValue?: string;
   showCodexActivity: boolean;
   generating: boolean;
   interrupted?: boolean;
@@ -424,17 +425,12 @@ export function resolveMountedCodexRenderedValue({
     showCodexActivity &&
     !generating &&
     !interrupted &&
-    typeof mountedGeneratingValue === "string" &&
-    mountedGeneratingValue.trim().length > 0
+    typeof mountedGeneratingPrefixValue === "string" &&
+    mountedGeneratingPrefixValue.trim().length > 0
   ) {
-    const mounted = mountedGeneratingValue.trim();
     const rendered = renderedValue.trim();
-    if (!rendered) return mountedGeneratingValue;
-    if (!mounted) return renderedValue;
-    if (mounted === rendered || mounted.endsWith(rendered)) {
-      return mountedGeneratingValue;
-    }
-    return `${mountedGeneratingValue.trimEnd()}\n\n${renderedValue.trimStart()}`;
+    if (!rendered) return mountedGeneratingPrefixValue;
+    return `${mountedGeneratingPrefixValue.trimEnd()}\n\n${renderedValue.trimStart()}`;
   }
   return renderedValue;
 }
@@ -889,23 +885,28 @@ export default function Message({
     () => field<string>(message, "message_id"),
     [message],
   );
-  const [mountedGeneratingCodexBody, setMountedGeneratingCodexBody] = useState<
-    string | undefined
-  >(undefined);
+  const [mountedGeneratingCodexPrefix, setMountedGeneratingCodexPrefix] =
+    useState<string | undefined>(undefined);
   useEffect(() => {
-    setMountedGeneratingCodexBody(undefined);
+    setMountedGeneratingCodexPrefix(undefined);
   }, [messageId]);
+  const codexMountedPrefixValue = useMemo(() => {
+    if (
+      !Array.isArray(codexPreviewLog.events) ||
+      codexPreviewLog.events.length === 0
+    ) {
+      return undefined;
+    }
+    return getMountedIntermediateResponseMarkdown(
+      codexPreviewLog.events as any,
+    );
+  }, [codexPreviewLog.events]);
   useEffect(() => {
     if (!showCodexActivity || !effectiveGenerating) return;
-    if (
-      typeof codexBodyValue !== "string" ||
-      codexBodyValue.trim().length === 0
-    )
-      return;
-    setMountedGeneratingCodexBody((prev) =>
-      prev === codexBodyValue ? prev : codexBodyValue,
+    setMountedGeneratingCodexPrefix((prev) =>
+      prev === codexMountedPrefixValue ? prev : codexMountedPrefixValue,
     );
-  }, [showCodexActivity, effectiveGenerating, codexBodyValue]);
+  }, [showCodexActivity, effectiveGenerating, codexMountedPrefixValue]);
   const renderedMessageValue = useMemo(
     () =>
       resolveRenderedMessageValue({
@@ -920,14 +921,14 @@ export default function Message({
     () =>
       resolveMountedCodexRenderedValue({
         renderedValue: renderedMessageValue,
-        mountedGeneratingValue: mountedGeneratingCodexBody,
+        mountedGeneratingPrefixValue: mountedGeneratingCodexPrefix,
         showCodexActivity,
         generating: effectiveGenerating,
         interrupted: acpInterrupted,
       }),
     [
       renderedMessageValue,
-      mountedGeneratingCodexBody,
+      mountedGeneratingCodexPrefix,
       showCodexActivity,
       effectiveGenerating,
       acpInterrupted,

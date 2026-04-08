@@ -6,6 +6,7 @@ import {
   getBestResponseText,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
+  getMountedIntermediateResponseMarkdown,
   getLatestEventLineText,
   getLatestMessageText,
   getLatestSummaryText,
@@ -308,6 +309,25 @@ describe("response text helpers", () => {
       } as AcpStreamMessage,
     ];
     expect(getLiveResponseMarkdown(events)).toBe("first\n\nsecond");
+  });
+
+  test("drops the last agent message from mounted intermediate markdown", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "first", 1),
+      textEvent("thinking", "reasoning", 2),
+      textEvent("message", "second", 3),
+      textEvent("message", "**final summary**", 4),
+    ];
+    expect(getMountedIntermediateResponseMarkdown(events)).toBe(
+      "first\n\nsecond",
+    );
+  });
+
+  test("returns nothing for mounted intermediate markdown when there is only one agent block", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "**final summary**", 1),
+    ];
+    expect(getMountedIntermediateResponseMarkdown(events)).toBeUndefined();
   });
 
   test("keeps the latest live agent block when the summary extends it", () => {
