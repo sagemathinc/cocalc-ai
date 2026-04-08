@@ -7,7 +7,7 @@ export {};
 
 let queryMock: jest.Mock;
 let createHostControlClientMock: jest.Mock;
-let conatWithProjectRoutingMock: jest.Mock;
+let getExplicitHostRoutedClientMock: jest.Mock;
 let notifyProjectHostUpdateMock: jest.Mock;
 let sshKeysMock: jest.Mock;
 let maybeAutoGrowHostDiskForReservationFailureMock: jest.Mock;
@@ -60,8 +60,8 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
 
 jest.mock("@cocalc/server/conat/route-client", () => ({
   __esModule: true,
-  conatWithProjectRouting: (...args: any[]) =>
-    conatWithProjectRoutingMock(...args),
+  getExplicitHostRoutedClient: (...args: any[]) =>
+    getExplicitHostRoutedClientMock(...args),
 }));
 
 jest.mock("../conat/route-project", () => ({
@@ -85,7 +85,9 @@ describe("startProjectOnHost placement", () => {
   beforeEach(() => {
     jest.resetModules();
     notifyProjectHostUpdateMock = jest.fn(async () => undefined);
-    conatWithProjectRoutingMock = jest.fn(() => ({ client: "router" }));
+    getExplicitHostRoutedClientMock = jest.fn(async () => ({
+      client: "router",
+    }));
     sshKeysMock = jest.fn(async () => ({
       key: { value: "ssh-ed25519 AAAATEST user@test" },
     }));
