@@ -451,7 +451,10 @@ export class NebiusProvider implements CloudProvider {
           filesystems: [],
           cloudInitUserData: cloudInit,
           stopped: false,
-          recoveryPolicy: InstanceRecoveryPolicy.RECOVER,
+          recoveryPolicy:
+            spec.pricing_model === "spot"
+              ? InstanceRecoveryPolicy.FAIL
+              : InstanceRecoveryPolicy.RECOVER,
           preemptible:
             spec.pricing_model === "spot"
               ? PreemptibleSpec.create({

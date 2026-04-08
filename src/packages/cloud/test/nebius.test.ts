@@ -1,6 +1,9 @@
 import { NebiusProvider } from "../nebius/provider";
 import type { HostSpec } from "../types";
-import { PreemptibleSpec_PreemptionPolicy } from "@nebius/js-sdk/api/nebius/compute/v1/index";
+import {
+  InstanceRecoveryPolicy,
+  PreemptibleSpec_PreemptionPolicy,
+} from "@nebius/js-sdk/api/nebius/compute/v1/index";
 
 const disksCreateMock = jest.fn();
 const disksListMock = jest.fn();
@@ -91,5 +94,6 @@ describe("NebiusProvider", () => {
       PreemptibleSpec_PreemptionPolicy.STOP,
     );
     expect(createArgs.spec.preemptible.priority).toBe(3);
+    expect(createArgs.spec.recoveryPolicy).toBe(InstanceRecoveryPolicy.FAIL);
   });
 });
