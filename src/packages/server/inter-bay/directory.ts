@@ -4,28 +4,21 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import {
+  createInterBayDirectoryClient,
+  type BayOwnership,
+} from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
-import { directorySubject } from "@cocalc/server/inter-bay/subjects";
-
-export interface BayOwnership {
-  bay_id: string;
-  epoch: number;
-}
 
 const LOCAL_EPOCH = 0;
 
 export async function resolveProjectBay(
   project_id: string,
 ): Promise<BayOwnership | null> {
-  const resp = await getInterBayFabricClient().request(
-    directorySubject({ method: "resolve-project-bay" }),
-    { project_id },
-  );
-  if (resp.data?.error) {
-    throw new Error(`${resp.data.error}`);
-  }
-  return (resp.data ?? null) as BayOwnership | null;
+  return await createInterBayDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).resolveProjectBay({ project_id });
 }
 
 export async function resolveProjectBayDirect(
@@ -52,14 +45,9 @@ export async function resolveProjectBayDirect(
 export async function resolveHostBay(
   host_id: string,
 ): Promise<BayOwnership | null> {
-  const resp = await getInterBayFabricClient().request(
-    directorySubject({ method: "resolve-host-bay" }),
-    { host_id },
-  );
-  if (resp.data?.error) {
-    throw new Error(`${resp.data.error}`);
-  }
-  return (resp.data ?? null) as BayOwnership | null;
+  return await createInterBayDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).resolveHostBay({ host_id });
 }
 
 export async function resolveHostBayDirect(

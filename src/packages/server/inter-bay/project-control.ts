@@ -3,17 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { ProjectControlStartRequest } from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { getProject } from "@cocalc/server/projects/control";
-
-export interface ProjectControlStartRequest {
-  project_id: string;
-  account_id: string;
-  lro_op_id?: string;
-  epoch?: number;
-}
 
 function staleRoutingError({
   project_id,

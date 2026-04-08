@@ -3,33 +3,34 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  createInterBayProjectControlClient,
+  type InterBayProjectControlApi,
+} from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
-export interface InterBayRequestOptions {
-  dest_bay: string;
-  subject: string;
-  data?: any;
-  timeout_ms?: number;
-}
-
 export interface InterBayBridge {
   readonly bay_id: string;
-  request<T = any>(opts: InterBayRequestOptions): Promise<T>;
+  projectControl(
+    dest_bay: string,
+    opts?: { timeout_ms?: number },
+  ): InterBayProjectControlApi;
 }
 
 class LocalOnlyInterBayBridge implements InterBayBridge {
   public readonly bay_id = getConfiguredBayId();
   private readonly client = getInterBayFabricClient();
 
-  async request<T = any>(opts: InterBayRequestOptions): Promise<T> {
-    const resp = await this.client.request(opts.subject, opts.data, {
+  projectControl(
+    dest_bay: string,
+    opts: { timeout_ms?: number } = {},
+  ): InterBayProjectControlApi {
+    return createInterBayProjectControlClient({
+      client: this.client,
+      dest_bay,
       timeout: opts.timeout_ms,
     });
-    if (resp.data?.error) {
-      throw new Error(`${resp.data.error}`);
-    }
-    return resp.data as T;
   }
 }
 

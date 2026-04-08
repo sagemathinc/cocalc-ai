@@ -20,7 +20,6 @@ import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lr
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
-import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
 import TTLCache from "@isaacs/ttlcache";
@@ -1399,18 +1398,11 @@ export async function start({
       if (ownership == null) {
         throw new Error(`project ${project_id} not found`);
       }
-      await getInterBayBridge().request({
-        dest_bay: ownership.bay_id,
-        subject: projectControlSubject({
-          dest_bay: ownership.bay_id,
-          method: "start",
-        }),
-        data: {
-          project_id,
-          account_id,
-          lro_op_id: op.op_id,
-          epoch: ownership.epoch,
-        },
+      await getInterBayBridge().projectControl(ownership.bay_id).start({
+        project_id,
+        account_id,
+        lro_op_id: op.op_id,
+        epoch: ownership.epoch,
       });
       const phase_timings_ms = takeStartProjectPhaseTimings(op.op_id);
       const progress_summary = {

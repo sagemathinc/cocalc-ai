@@ -10,7 +10,7 @@ let projectStartMock: jest.Mock;
 let mirrorStartLroProgressMock: jest.Mock;
 let supersedeOlderProjectStartLrosMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
-let interBayRequestMock: jest.Mock;
+let interBayStartMock: jest.Mock;
 
 async function flushBackgroundStartTask() {
   for (let i = 0; i < 6; i += 1) {
@@ -82,7 +82,9 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   __esModule: true,
   getInterBayBridge: jest.fn(() => ({
-    request: (...args: any[]) => interBayRequestMock(...args),
+    projectControl: jest.fn(() => ({
+      start: (...args: any[]) => interBayStartMock(...args),
+    })),
   })),
 }));
 
@@ -160,7 +162,7 @@ describe("projects.start", () => {
       bay_id: "bay-0",
       epoch: 0,
     }));
-    interBayRequestMock = jest.fn(async () => undefined);
+    interBayStartMock = jest.fn(async () => undefined);
     getProjectMock = jest.fn(async () => ({
       start: projectStartMock,
     }));
@@ -183,15 +185,11 @@ describe("projects.start", () => {
       service: "persist-service",
       stream_name: "stream:op-1",
     });
-    expect(interBayRequestMock).toHaveBeenCalledWith({
-      dest_bay: "bay-0",
-      subject: "bay.bay-0.rpc.project-control.start",
-      data: {
-        project_id: "proj-1",
-        account_id: "acct-1",
-        lro_op_id: "op-1",
-        epoch: 0,
-      },
+    expect(interBayStartMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      lro_op_id: "op-1",
+      epoch: 0,
     });
     expect(supersedeOlderProjectStartLrosMock).toHaveBeenCalledWith({
       project_id: "proj-1",

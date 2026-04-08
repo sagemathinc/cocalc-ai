@@ -39,7 +39,11 @@ describe("inter-bay directory", () => {
     });
     expect(requestMock).toHaveBeenCalledWith(
       "global.directory.rpc.resolve-project-bay",
-      { project_id: "proj-1" },
+      {
+        name: "resolveProjectBay",
+        args: [{ project_id: "proj-1" }],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
     );
   });
 

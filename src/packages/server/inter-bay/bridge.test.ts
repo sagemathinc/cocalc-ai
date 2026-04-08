@@ -21,34 +21,27 @@ describe("inter-bay bridge", () => {
     delete process.env.COCALC_BAY_ID;
   });
 
-  it("dispatches local requests through the fabric client", async () => {
-    requestMock.mockResolvedValue({ data: "ok" });
+  it("dispatches typed project-control requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({ data: null });
     const { getInterBayBridge } = await import("./bridge");
     const bridge = getInterBayBridge();
-    await expect(
-      bridge.request({
-        dest_bay: "bay-0",
-        subject: "bay.bay-0.rpc.project-control.start",
-        data: { project_id: "p1" },
-      }),
-    ).resolves.toBe("ok");
+    await bridge.projectControl("bay-0").start({ project_id: "p1" } as any);
     expect(requestMock).toHaveBeenCalledWith(
       "bay.bay-0.rpc.project-control.start",
-      { project_id: "p1" },
-      { timeout: undefined },
+      {
+        name: "start",
+        args: [{ project_id: "p1" }],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
     );
   });
 
-  it("forwards remote-bay requests to the same fabric instead of failing fast", async () => {
-    requestMock.mockResolvedValue({ data: "remote-ok" });
+  it("forwards remote-bay typed requests to the same fabric", async () => {
+    requestMock.mockResolvedValue({ data: null });
     const { getInterBayBridge } = await import("./bridge");
     const bridge = getInterBayBridge();
     await expect(
-      bridge.request({
-        dest_bay: "bay-1",
-        subject: "bay.bay-1.rpc.project-control.start",
-        data: {},
-      }),
-    ).resolves.toBe("remote-ok");
+      bridge.projectControl("bay-1").start({ project_id: "p1" } as any),
+    ).resolves.toBeNull();
   });
 });

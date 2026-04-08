@@ -87,28 +87,33 @@ describe("inter-bay fabric routing", () => {
     })();
 
     process.env.COCALC_BAY_ID = "bay-0";
-    const [{ resolveProjectBay }, { getInterBayBridge }] = await Promise.all([
+    const [
+      { resolveProjectBay },
+      { getInterBayBridge },
+      { getInterBayFabricClient },
+    ] = await Promise.all([
       import("./directory"),
       import("./bridge"),
+      import("./fabric"),
     ]);
 
     await expect(resolveProjectBay("proj-1")).resolves.toEqual({
       bay_id: "bay-1",
       epoch: 3,
     });
-    await expect(
-      getInterBayBridge().request({
-        dest_bay: "bay-1",
-        subject: "bay.bay-1.rpc.project-control.start",
-        data: { project_id: "proj-1", account_id: "acct-1" },
-      }),
-    ).resolves.toEqual({ handled_by: "bay-1" });
+    await getInterBayBridge()
+      .projectControl("bay-1")
+      .start({ project_id: "proj-1", account_id: "acct-1" });
 
-    await expect(directoryPromise).resolves.toEqual({ project_id: "proj-1" });
-    await expect(projectControlPromise).resolves.toEqual({
-      project_id: "proj-1",
-      account_id: "acct-1",
+    await expect(directoryPromise).resolves.toEqual({
+      name: "resolveProjectBay",
+      args: [{ project_id: "proj-1" }],
     });
+    await expect(projectControlPromise).resolves.toEqual({
+      name: "start",
+      args: [{ project_id: "proj-1", account_id: "acct-1" }],
+    });
+    getInterBayFabricClient().close();
     projectControlSub.close();
     directorySub.close();
   });

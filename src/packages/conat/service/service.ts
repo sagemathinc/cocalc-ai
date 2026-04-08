@@ -86,6 +86,7 @@ export interface Options extends ServiceDescription {
   version?: string;
   handler: (mesg) => Promise<any>;
   client: Client;
+  parallel?: boolean;
 }
 
 export function createConatService(options: Options) {
@@ -159,6 +160,7 @@ export class ConatService extends EventEmitter {
   public readonly subject: string;
   public readonly name: string;
   private sub?;
+  private readonly activeHandlers = new Set<Promise<void>>();
 
   constructor(options: Options) {
     super();
@@ -192,29 +194,44 @@ export class ConatService extends EventEmitter {
 
   private listen = async () => {
     for await (const mesg of this.sub) {
-      const request = mesg.data ?? {};
-
-      // console.logger.debug("handle conat service call", request);
-      let resp;
-      if (request == "ping") {
-        resp = "pong";
+      if (this.options.parallel) {
+        let task: Promise<void>;
+        task = this.handleMessage(mesg)
+          .catch((err) => {
+            logger.debug("parallel service handler failed", this.name, err);
+          })
+          .finally(() => {
+            this.activeHandlers.delete(task);
+          });
+        this.activeHandlers.add(task);
       } else {
-        try {
-          resp = await this.options.handler(request);
-        } catch (err) {
-          resp = { error: `${err}` };
-        }
+        await this.handleMessage(mesg);
       }
+    }
+  };
+
+  private handleMessage = async (mesg): Promise<void> => {
+    const request = mesg.data ?? {};
+
+    let resp;
+    if (request == "ping") {
+      resp = "pong";
+    } else {
       try {
-        await mesg.respond(resp);
+        resp = await this.options.handler(request);
       } catch (err) {
-        const data = { error: `${err}` };
-        try {
-          await mesg.respond(data);
-        } catch (err2) {
-          // do not crash on sending an error report:
-          logger.debug("WARNING: unable to send error", this.name, err, err2);
-        }
+        resp = { error: `${err}` };
+      }
+    }
+    try {
+      await mesg.respond(resp);
+    } catch (err) {
+      const data = { error: `${err}` };
+      try {
+        await mesg.respond(data);
+      } catch (err2) {
+        // do not crash on sending an error report:
+        logger.debug("WARNING: unable to send error", this.name, err, err2);
       }
     }
   };

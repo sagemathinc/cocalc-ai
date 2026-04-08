@@ -12,6 +12,7 @@
     "./socket/*": "./dist/socket/*.js",
     "./sync-doc": "./dist/sync-doc/index.js",
     "./sync-doc/*": "./dist/sync-doc/*.js",
+    "./inter-bay/*": "./dist/inter-bay/*.js",
     "./hub/changefeeds": "./dist/hub/changefeeds/index.js",
     "./hub/api": "./dist/hub/api/index.js",
     "./hub/api/*": "./dist/hub/api/*.js",

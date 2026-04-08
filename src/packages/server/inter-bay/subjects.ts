@@ -3,23 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export type ProjectControlMethod = "start";
-export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
-
-export function projectControlSubject({
-  dest_bay,
-  method,
-}: {
-  dest_bay: string;
-  method: ProjectControlMethod;
-}): string {
-  return `bay.${dest_bay}.rpc.project-control.${method}`;
-}
-
-export function directorySubject({
-  method,
-}: {
-  method: DirectoryMethod;
-}): string {
-  return `global.directory.rpc.${method}`;
-}
+export {
+  type DirectoryMethod,
+  directorySubject,
+  type ProjectControlMethod,
+  projectControlSubject,
+} from "@cocalc/conat/inter-bay/api";

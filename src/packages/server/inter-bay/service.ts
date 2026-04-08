@@ -3,6 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  createInterBayDirectoryHandlers,
+  createInterBayProjectControlHandler,
+  type InterBayDirectoryApi,
+  type InterBayProjectControlApi,
+} from "@cocalc/conat/inter-bay/api";
+import type { ConatService } from "@cocalc/conat/service/typed";
 import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
@@ -11,14 +18,11 @@ import {
 } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { handleProjectControlStart } from "@cocalc/server/inter-bay/project-control";
-import {
-  directorySubject,
-  projectControlSubject,
-} from "@cocalc/server/inter-bay/subjects";
 
 const logger = getLogger("server:inter-bay:service");
 
 let serviceStarted = false;
+let services: ConatService[] = [];
 
 export async function initInterBayServices(): Promise<void> {
   if (serviceStarted) {
@@ -35,59 +39,40 @@ export async function initInterBayServices(): Promise<void> {
 }
 
 async function startDirectoryService(): Promise<void> {
-  await Promise.all([
-    startRequestReplyService({
-      subject: directorySubject({ method: "resolve-project-bay" }),
-      handler: async (data) =>
-        resolveProjectBayDirect(`${data?.project_id ?? ""}`),
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayDirectoryApi = {
+    resolveProjectBay: async ({ project_id }) =>
+      await resolveProjectBayDirect(`${project_id ?? ""}`),
+    resolveHostBay: async ({ host_id }) =>
+      await resolveHostBayDirect(`${host_id ?? ""}`),
+  };
+  services.push(
+    ...createInterBayDirectoryHandlers({
+      client,
+      parallel: true,
+      impl,
     }),
-    startRequestReplyService({
-      subject: directorySubject({ method: "resolve-host-bay" }),
-      handler: async (data) => resolveHostBayDirect(`${data?.host_id ?? ""}`),
-    }),
-  ]);
+  );
 }
 
 async function startProjectControlStartService(): Promise<void> {
-  await startRequestReplyService({
-    subject: projectControlSubject({
-      dest_bay: getConfiguredBayId(),
-      method: "start",
-    }),
-    handler: async (data) => {
-      await handleProjectControlStart(data);
-      return null;
-    },
-  });
-}
-
-async function startRequestReplyService({
-  subject,
-  handler,
-}: {
-  subject: string;
-  handler: (data: any) => Promise<any>;
-}): Promise<void> {
-  logger.debug("starting inter-bay listener", { subject });
   const client = getInterBayFabricClient({ noCache: true });
-  const sub = await client.subscribe(subject, { queue: "0" });
-  (async () => {
-    for await (const mesg of sub) {
-      try {
-        const result = await handler(mesg.data);
-        mesg.respond(result, { noThrow: true });
-      } catch (err) {
-        mesg.respond(
-          { error: err instanceof Error ? err.message : `${err}` },
-          { noThrow: true },
-        );
-      }
-    }
-  })().catch((err) => {
-    logger.warn("inter-bay listener stopped", {
-      subject,
-      err: `${err}`,
-    });
-    serviceStarted = false;
+  const impl: InterBayProjectControlApi = {
+    start: async (opts) => {
+      await handleProjectControlStart(opts);
+    },
+  };
+  const bay_id = getConfiguredBayId();
+  logger.debug("starting inter-bay listener", {
+    bay_id,
+    service: "project-control.start",
   });
+  services.push(
+    createInterBayProjectControlHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+  );
 }
