@@ -6,6 +6,12 @@ import { HostCreateAdvancedFields } from "./host-create-advanced-fields";
 import { HostCreateProviderFields } from "./host-create-provider-fields";
 import { SshTargetLabel } from "./ssh-target-help";
 
+function defaultRestorePolicy(
+  pricingModel: "on_demand" | "spot" | undefined,
+): "none" | "immediate" {
+  return pricingModel === "spot" ? "immediate" : "none";
+}
+
 type HostCreateFormProps = {
   form: FormInstance;
   canCreateHosts: boolean;
@@ -26,7 +32,14 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   const isSelfHost = provider.selectedProvider === "self-host";
   const hideAdvanced = isSelfHost;
   const simpleSelfHost = isSelfHost;
+  const showSpotFields =
+    provider.selectedProvider !== "none" &&
+    provider.selectedProvider !== "self-host";
+  const watchedPricingModel = Form.useWatch("pricing_model", form);
   const watchedSshTarget = Form.useWatch("self_host_ssh_target", form);
+  const previousPricingModelRef = React.useRef<"on_demand" | "spot">(
+    "on_demand",
+  );
   React.useEffect(() => {
     if (!simpleSelfHost) return;
     if (form.getFieldValue("provider") !== "self-host") {
@@ -50,6 +63,25 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
       form.setFieldsValue({ name: nextName });
     }
   }, [form, simpleSelfHost, watchedSshTarget]);
+  React.useEffect(() => {
+    if (!showSpotFields) return;
+    const nextPricingModel =
+      watchedPricingModel === "spot" ? "spot" : "on_demand";
+    const previousPricingModel = previousPricingModelRef.current;
+    const currentRestorePolicy = form.getFieldValue(
+      "interruption_restore_policy",
+    ) as "none" | "immediate" | undefined;
+    const nextDefault = defaultRestorePolicy(nextPricingModel);
+    const previousDefault = defaultRestorePolicy(previousPricingModel);
+    if (
+      currentRestorePolicy == null ||
+      (nextPricingModel !== previousPricingModel &&
+        currentRestorePolicy === previousDefault)
+    ) {
+      form.setFieldsValue({ interruption_restore_policy: nextDefault });
+    }
+    previousPricingModelRef.current = nextPricingModel;
+  }, [form, showSpotFields, watchedPricingModel]);
   const providerField = (
     <Form.Item
       name="provider"
@@ -97,6 +129,35 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
               <Form.Item name="name" label="Name" initialValue="My host">
                 <Input placeholder="My host" />
               </Form.Item>
+              {showSpotFields && (
+                <>
+                  <Form.Item
+                    name="pricing_model"
+                    label="Pricing model"
+                    initialValue="on_demand"
+                  >
+                    <Select
+                      options={[
+                        { value: "on_demand", label: "On-demand" },
+                        { value: "spot", label: "Spot / interruptible" },
+                      ]}
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="interruption_restore_policy"
+                    label="Interruption restore"
+                    initialValue="none"
+                    tooltip="For spot hosts, immediately restoring the host is strongly preferred because users otherwise lose access until a backup restore or manual recovery."
+                  >
+                    <Select
+                      options={[
+                        { value: "immediate", label: "Restore immediately" },
+                        { value: "none", label: "Do not auto-restore" },
+                      ]}
+                    />
+                  </Form.Item>
+                </>
+              )}
               <HostCreateProviderFields
                 provider={provider}
                 onProviderChange={onProviderChange}

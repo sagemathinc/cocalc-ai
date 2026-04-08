@@ -24,6 +24,8 @@ import type {
   HostManagedRootfsReleaseLifecycle,
   HostRootfsGcResult,
   HostRootfsImage,
+  HostPricingModel,
+  HostInterruptionRestorePolicy,
   HostCurrentMetrics,
   HostMetricsHistory,
 } from "@cocalc/conat/hub/api/hosts";
@@ -152,6 +154,34 @@ const HOST_DELETE_LRO_KIND = "host-delete";
 const HOST_FORCE_DEPROVISION_LRO_KIND = "host-force-deprovision";
 const HOST_REMOVE_CONNECTOR_LRO_KIND = "host-remove-connector";
 const logger = getLogger("server:conat:api:hosts");
+
+function normalizeHostPricingModel(
+  value: unknown,
+): HostPricingModel | undefined {
+  if (value == null) return undefined;
+  const normalized = `${value}`.trim().toLowerCase();
+  if (normalized === "spot") return "spot";
+  if (normalized === "on_demand" || normalized === "on-demand") {
+    return "on_demand";
+  }
+  return undefined;
+}
+
+function normalizeHostInterruptionRestorePolicy(
+  value: unknown,
+): HostInterruptionRestorePolicy | undefined {
+  if (value == null) return undefined;
+  const normalized = `${value}`.trim().toLowerCase();
+  if (normalized === "immediate") return "immediate";
+  if (normalized === "none") return "none";
+  return undefined;
+}
+
+function defaultInterruptionRestorePolicy(
+  pricingModel?: HostPricingModel,
+): HostInterruptionRestorePolicy {
+  return pricingModel === "spot" ? "immediate" : "none";
+}
 
 const HOST_PROJECTS_DEFAULT_LIMIT = 200;
 const HOST_PROJECTS_MAX_LIMIT = 5000;
@@ -1156,6 +1186,12 @@ function parseRow(
   const normalizedStatus =
     rawStatus === "active" ? "running" : rawStatus || "off";
   const normalizedBootstrap = normalizeBootstrap(bootstrap, bootstrapLifecycle);
+  const pricingModel =
+    normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand";
+  const interruptionRestorePolicy =
+    normalizeHostInterruptionRestorePolicy(
+      metadata.interruption_restore_policy,
+    ) ?? defaultInterruptionRestorePolicy(pricingModel);
   return {
     id: row.id,
     name: row.name ?? "Host",
@@ -1195,6 +1231,8 @@ function parseRow(
     can_place: opts.can_place,
     reason_unavailable: opts.reason_unavailable,
     starred: opts.starred,
+    pricing_model: pricingModel,
+    interruption_restore_policy: interruptionRestorePolicy,
     last_action: metadata.last_action,
     last_action_at: metadata.last_action_at,
     last_action_status: metadata.last_action_status,
@@ -3178,6 +3216,8 @@ export async function createHost({
   region,
   size,
   gpu = false,
+  pricing_model,
+  interruption_restore_policy,
   machine,
 }: {
   account_id?: string;
@@ -3185,6 +3225,8 @@ export async function createHost({
   region: string;
   size: string;
   gpu?: boolean;
+  pricing_model?: HostPricingModel;
+  interruption_restore_policy?: HostInterruptionRestorePolicy;
   machine?: Host["machine"];
 }): Promise<Host> {
   const owner = requireAccount(account_id);
@@ -3193,6 +3235,21 @@ export async function createHost({
   const id = randomUUID();
   const machineCloud = normalizeProviderId(machine?.cloud);
   const isSelfHost = machineCloud === "self-host";
+  const normalizedPricingModel = normalizeHostPricingModel(pricing_model);
+  if (pricing_model != null && !normalizedPricingModel) {
+    throw new Error(`invalid pricing_model '${pricing_model}'`);
+  }
+  const normalizedRestorePolicy = normalizeHostInterruptionRestorePolicy(
+    interruption_restore_policy,
+  );
+  if (interruption_restore_policy != null && !normalizedRestorePolicy) {
+    throw new Error(
+      `invalid interruption_restore_policy '${interruption_restore_policy}'`,
+    );
+  }
+  const pricingModel = normalizedPricingModel ?? "on_demand";
+  const interruptionRestorePolicy =
+    normalizedRestorePolicy ?? defaultInterruptionRestorePolicy(pricingModel);
   const initialStatus = machineCloud && !isSelfHost ? "starting" : "off";
   const rawSelfHostMode = machine?.metadata?.self_host_mode;
   const selfHostMode =
@@ -3278,6 +3335,8 @@ export async function createHost({
         owner,
         size,
         gpu: gpuEnabled,
+        pricing_model: pricingModel,
+        interruption_restore_policy: interruptionRestorePolicy,
         machine: normalizedMachine,
         ...(machineCloud && !isSelfHost
           ? {
@@ -4088,6 +4147,8 @@ export async function updateHostMachine({
   auto_grow_max_disk_gb,
   auto_grow_growth_step_gb,
   auto_grow_min_grow_interval_minutes,
+  pricing_model,
+  interruption_restore_policy,
 }: {
   account_id?: string;
   id: string;
@@ -4107,6 +4168,8 @@ export async function updateHostMachine({
   auto_grow_max_disk_gb?: number;
   auto_grow_growth_step_gb?: number;
   auto_grow_min_grow_interval_minutes?: number;
+  pricing_model?: HostPricingModel;
+  interruption_restore_policy?: HostInterruptionRestorePolicy;
 }): Promise<Host> {
   const row = await loadOwnedHost(id, account_id);
   const metadata = row.metadata ?? {};
@@ -4147,6 +4210,15 @@ export async function updateHostMachine({
     disk_type: specMachine.disk_type ?? null,
     storage_mode: specMachine.storage_mode ?? null,
     auto_grow: specMachine.metadata?.auto_grow ?? null,
+    pricing_model:
+      normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand",
+    interruption_restore_policy:
+      normalizeHostInterruptionRestorePolicy(
+        metadata.interruption_restore_policy,
+      ) ??
+      defaultInterruptionRestorePolicy(
+        normalizeHostPricingModel(metadata.pricing_model),
+      ),
   });
   const beforeSpec = buildConfigSpec(machine, row.region);
 
@@ -4186,6 +4258,32 @@ export async function updateHostMachine({
     auto_grow_min_grow_interval_minutes,
     "auto_grow_min_grow_interval_minutes",
   );
+  const currentPricingModel =
+    normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand";
+  const requestedPricingModel = normalizeHostPricingModel(pricing_model);
+  if (pricing_model != null && !requestedPricingModel) {
+    throw new Error(`invalid pricing_model '${pricing_model}'`);
+  }
+  const nextPricingModel = requestedPricingModel ?? currentPricingModel;
+  const currentInterruptionRestorePolicy =
+    normalizeHostInterruptionRestorePolicy(
+      metadata.interruption_restore_policy,
+    ) ?? defaultInterruptionRestorePolicy(currentPricingModel);
+  const requestedInterruptionRestorePolicy =
+    normalizeHostInterruptionRestorePolicy(interruption_restore_policy);
+  if (
+    interruption_restore_policy != null &&
+    !requestedInterruptionRestorePolicy
+  ) {
+    throw new Error(
+      `invalid interruption_restore_policy '${interruption_restore_policy}'`,
+    );
+  }
+  const nextInterruptionRestorePolicy =
+    requestedInterruptionRestorePolicy ??
+    (requestedPricingModel
+      ? defaultInterruptionRestorePolicy(nextPricingModel)
+      : currentInterruptionRestorePolicy);
 
   if (cloudChanged) {
     if (!isDeprovisioned) {
@@ -4342,6 +4440,15 @@ export async function updateHostMachine({
       ...(nextMachine.metadata ?? {}),
       auto_grow: nextAutoGrow,
     };
+    changed = true;
+  }
+
+  if (nextPricingModel !== currentPricingModel) {
+    metadata.pricing_model = nextPricingModel;
+    changed = true;
+  }
+  if (nextInterruptionRestorePolicy !== currentInterruptionRestorePolicy) {
+    metadata.interruption_restore_policy = nextInterruptionRestorePolicy;
     changed = true;
   }
 

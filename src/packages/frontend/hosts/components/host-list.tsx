@@ -366,6 +366,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       const haystack = [
         host.name,
         getProviderLabel(host),
+        host.pricing_model,
         selfHostDetail,
         host.region,
         host.size,
@@ -619,9 +620,12 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           : undefined,
       render: (_: string, host: Host) => (
         <Space orientation="vertical" size={0}>
-          <Button type="link" onClick={() => onDetails(host)}>
-            {host.name}
-          </Button>
+          <Space size="small" wrap>
+            <Button type="link" onClick={() => onDetails(host)}>
+              {host.name}
+            </Button>
+            {host.pricing_model === "spot" && <Tag color="orange">spot</Tag>}
+          </Space>
           {host.status === "error" && host.last_error && (
             <Popover
               title="Error"
@@ -658,11 +662,16 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       render: (_: string, host: Host) => {
         const baseLabel = getProviderLabel(host);
         const detail = getSelfHostDetail(host);
-        if (!detail) return baseLabel;
+        if (!detail && host.pricing_model !== "spot") return baseLabel;
         return (
           <Space orientation="vertical" size={0}>
-            <span>{baseLabel}</span>
-            <Typography.Text type="secondary">{detail}</Typography.Text>
+            <Space size="small" wrap>
+              <span>{baseLabel}</span>
+              {host.pricing_model === "spot" && <Tag color="orange">spot</Tag>}
+            </Space>
+            {detail && (
+              <Typography.Text type="secondary">{detail}</Typography.Text>
+            )}
           </Space>
         );
       },

@@ -192,6 +192,8 @@ export const useHostActions = ({
       auto_grow_max_disk_gb?: number;
       auto_grow_growth_step_gb?: number;
       auto_grow_min_grow_interval_minutes?: number;
+      pricing_model?: "on_demand" | "spot";
+      interruption_restore_policy?: "none" | "immediate";
     },
   ) => {
     if (!hub.hosts.updateHostMachine) {

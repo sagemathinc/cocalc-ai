@@ -24,6 +24,8 @@ export type HostSpec = {
   name: string;
   region: string;
   zone?: string;
+  pricing_model?: "on_demand" | "spot";
+  interruption_restore_policy?: "none" | "immediate";
   cpu: number;
   ram_gb: number;
   disk_gb: number;
