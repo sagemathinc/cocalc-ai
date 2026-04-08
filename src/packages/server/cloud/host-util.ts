@@ -406,6 +406,11 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
     name: providerName,
     region: row.region ?? "us-west1",
     zone: machine.zone,
+    pricing_model: metadata.pricing_model === "spot" ? "spot" : "on_demand",
+    interruption_restore_policy:
+      metadata.interruption_restore_policy === "immediate"
+        ? "immediate"
+        : "none",
     cpu,
     ram_gb,
     disk_gb,

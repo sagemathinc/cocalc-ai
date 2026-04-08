@@ -174,6 +174,9 @@ export function registerHostCommand(
             name: row.name,
             status: row.status ?? "",
             region: row.region ?? "",
+            pricing_model: row.pricing_model ?? "on_demand",
+            interruption_restore_policy:
+              row.interruption_restore_policy ?? null,
             size: row.size ?? "",
             gpu: !!row.gpu,
             scope: row.scope ?? "",
@@ -245,6 +248,8 @@ export function registerHostCommand(
           name: h.name,
           status: h.status ?? "",
           region: h.region ?? "",
+          pricing_model: h.pricing_model ?? "on_demand",
+          interruption_restore_policy: h.interruption_restore_policy ?? null,
           size: h.size ?? "",
           gpu: !!h.gpu,
           scope: h.scope ?? "",
@@ -815,6 +820,8 @@ export function registerHostCommand(
     )
     .option("--size <size>", "size label (defaults to --machine-type when set)")
     .option("--gpu", "mark host as gpu-enabled")
+    .option("--pricing-model <model>", "on_demand|spot", "on_demand")
+    .option("--interruption-restore-policy <policy>", "none|immediate")
     .option("--machine-type <machineType>", "provider machine type")
     .option("--zone <zone>", "provider zone")
     .option("--disk-gb <diskGb>", "boot disk size in GB")
@@ -837,6 +844,8 @@ export function registerHostCommand(
           region?: string;
           size?: string;
           gpu?: boolean;
+          pricingModel?: string;
+          interruptionRestorePolicy?: string;
           machineType?: string;
           zone?: string;
           diskGb?: string;
@@ -916,6 +925,9 @@ export function registerHostCommand(
             region,
             size,
             gpu,
+            pricing_model: opts.pricingModel as any,
+            interruption_restore_policy:
+              (opts.interruptionRestorePolicy as any) ?? undefined,
             machine,
           })) as HostRow;
 
@@ -925,6 +937,9 @@ export function registerHostCommand(
               name: created.name,
               provider,
               region: created.region ?? region,
+              pricing_model: created.pricing_model ?? "on_demand",
+              interruption_restore_policy:
+                created.interruption_restore_policy ?? null,
               size: created.size ?? size,
               status: created.status ?? "",
               gpu: !!created.gpu,
@@ -948,6 +963,9 @@ export function registerHostCommand(
             name: waited.host.name,
             provider,
             region: waited.host.region ?? region,
+            pricing_model: waited.host.pricing_model ?? "on_demand",
+            interruption_restore_policy:
+              waited.host.interruption_restore_policy ?? null,
             size: waited.host.size ?? size,
             status: waited.host.status ?? "",
             gpu: !!waited.host.gpu,
@@ -967,6 +985,8 @@ export function registerHostCommand(
     .option("--ram-gb <gb>", "ram in GB", "8")
     .option("--disk-gb <gb>", "disk in GB", "40")
     .option("--gpu", "mark host as having gpu")
+    .option("--pricing-model <model>", "on_demand|spot", "on_demand")
+    .option("--interruption-restore-policy <policy>", "none|immediate")
     .action(
       async (
         name: string,
@@ -978,6 +998,8 @@ export function registerHostCommand(
           ramGb?: string;
           diskGb?: string;
           gpu?: boolean;
+          pricingModel?: string;
+          interruptionRestorePolicy?: string;
         },
         command: Command,
       ) => {
@@ -990,6 +1012,9 @@ export function registerHostCommand(
             region: opts.region ?? "pending",
             size: opts.size ?? "custom",
             gpu: !!opts.gpu,
+            pricing_model: opts.pricingModel as any,
+            interruption_restore_policy:
+              (opts.interruptionRestorePolicy as any) ?? undefined,
             machine: {
               cloud: "self-host",
               storage_mode: "persistent",
@@ -1008,6 +1033,9 @@ export function registerHostCommand(
             name: host.name,
             status: host.status ?? "",
             region: host.region ?? "",
+            pricing_model: host.pricing_model ?? "on_demand",
+            interruption_restore_policy:
+              host.interruption_restore_policy ?? null,
             size: host.size ?? "",
             gpu: !!host.gpu,
           };

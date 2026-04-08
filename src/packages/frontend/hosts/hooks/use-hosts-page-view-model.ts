@@ -35,7 +35,12 @@ import type {
   HostSortField,
   HostProvider,
 } from "../types";
-import type { Host, HostSoftwareArtifact } from "@cocalc/conat/hub/api/hosts";
+import type {
+  Host,
+  HostInterruptionRestorePolicy,
+  HostPricingModel,
+  HostSoftwareArtifact,
+} from "@cocalc/conat/hub/api/hosts";
 
 const HOSTS_VIEW_MODE_STORAGE_KEY = "cocalc:hosts:viewMode";
 const HOSTS_SORT_FIELD_STORAGE_KEY = "cocalc:hosts:sortField";
@@ -1033,6 +1038,8 @@ export const useHostsPageViewModel = () => {
         auto_grow_max_disk_gb?: number;
         auto_grow_growth_step_gb?: number;
         auto_grow_min_grow_interval_minutes?: number;
+        pricing_model?: HostPricingModel;
+        interruption_restore_policy?: HostInterruptionRestorePolicy;
       },
     ) => {
       setSavingEdit(true);
@@ -1064,6 +1071,10 @@ export const useHostsPageViewModel = () => {
           if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
           return Math.floor(parsed);
         };
+        const currentPricingModel = editingHost.pricing_model ?? "on_demand";
+        const currentInterruptionRestorePolicy =
+          editingHost.interruption_restore_policy ??
+          (currentPricingModel === "spot" ? "immediate" : "none");
         if (isDeprovisioned) {
           const provider = (values.provider ??
             (editingHost.machine?.cloud as HostProvider | undefined) ??
@@ -1105,6 +1116,20 @@ export const useHostsPageViewModel = () => {
             update.ram_gb = metadata.ram_gb;
           if (typeof metadata.self_host_ssh_target === "string") {
             update.self_host_ssh_target = metadata.self_host_ssh_target;
+          }
+          if (
+            payload.pricing_model &&
+            payload.pricing_model !== currentPricingModel
+          ) {
+            update.pricing_model = payload.pricing_model;
+          }
+          if (
+            payload.interruption_restore_policy &&
+            payload.interruption_restore_policy !==
+              currentInterruptionRestorePolicy
+          ) {
+            update.interruption_restore_policy =
+              payload.interruption_restore_policy;
           }
           if (supportsAutoGrowConfig) {
             if (
@@ -1168,6 +1193,20 @@ export const useHostsPageViewModel = () => {
           if (String(currentTarget) !== String(nextTarget)) {
             update.self_host_ssh_target = nextTarget.trim() || undefined;
           }
+        }
+        if (
+          values.pricing_model &&
+          values.pricing_model !== currentPricingModel
+        ) {
+          update.pricing_model = values.pricing_model;
+        }
+        if (
+          values.interruption_restore_policy &&
+          values.interruption_restore_policy !==
+            currentInterruptionRestorePolicy
+        ) {
+          update.interruption_restore_policy =
+            values.interruption_restore_policy;
         }
 
         if (canEditMachine) {

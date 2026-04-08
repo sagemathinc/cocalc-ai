@@ -231,6 +231,9 @@ const buildBasePayload = (
     region: getDefaultRegion(vals, options),
     size: machine_type ?? vals.size ?? SIZES[0].value,
     gpu: wantsGpu,
+    pricing_model: vals.pricing_model === "spot" ? "spot" : "on_demand",
+    interruption_restore_policy:
+      vals.interruption_restore_policy === "none" ? "none" : "immediate",
     machine: {
       cloud:
         vals.provider !== "none" ? (vals.provider as HostProvider) : undefined,
