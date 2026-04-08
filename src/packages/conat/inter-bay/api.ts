@@ -10,6 +10,7 @@ import {
 } from "@cocalc/conat/service/typed";
 import type { ConatService } from "@cocalc/conat/service/typed";
 import type { Options, ServiceCall } from "@cocalc/conat/service/service";
+import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 
 export interface BayOwnership {
   bay_id: string;
@@ -35,6 +36,7 @@ export interface ProjectControlStartRequest {
   project_id: string;
   account_id: string;
   lro_op_id?: string;
+  source_bay_id?: string;
   epoch?: number;
 }
 
@@ -48,9 +50,16 @@ export interface GetProjectReferenceRequest {
   account_id: string;
 }
 
+export interface ForwardProjectLroProgressRequest {
+  project_id: string;
+  op_id: string;
+  event: Extract<LroEvent, { type: "progress" }>;
+}
+
 export type ProjectControlMethod = "start" | "stop";
 export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
 export type ProjectReferenceMethod = "get";
+export type ProjectLroMethod = "publish-progress";
 
 interface ResolveProjectBayApi {
   resolveProjectBay: (
@@ -76,6 +85,10 @@ export interface InterBayProjectControlApi {
 
 export interface InterBayProjectReferenceApi {
   get: (opts: GetProjectReferenceRequest) => Promise<ProjectReference | null>;
+}
+
+export interface InterBayProjectLroApi {
+  publishProgress: (opts: ForwardProjectLroProgressRequest) => Promise<void>;
 }
 
 function serviceClientOptions({
@@ -118,6 +131,16 @@ export function directorySubject({
   method: DirectoryMethod;
 }): string {
   return `global.directory.rpc.${method}`;
+}
+
+export function projectLroSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: ProjectLroMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.project-lro.${method}`;
 }
 
 export function createInterBayDirectoryClient({
@@ -248,6 +271,50 @@ export function createInterBayProjectReferenceHandler({
     subject: projectReferenceSubject({ dest_bay: bay_id, method: "get" }),
     impl: {
       get: async (opts) => await impl.get(opts),
+    },
+  });
+}
+
+export function createInterBayProjectLroClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayProjectLroApi {
+  const progressClient = createServiceClient<
+    Pick<InterBayProjectLroApi, "publishProgress">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectLroSubject({
+      dest_bay,
+      method: "publish-progress",
+    }),
+  });
+  return {
+    publishProgress: async (opts) => await progressClient.publishProgress(opts),
+  };
+}
+
+export function createInterBayProjectLroHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectLroApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectLroApi, "publishProgress">>({
+    ...options,
+    service: "inter-bay-project-lro",
+    subject: projectLroSubject({
+      dest_bay: bay_id,
+      method: "publish-progress",
+    }),
+    impl: {
+      publishProgress: async (opts) => await impl.publishProgress(opts),
     },
   });
 }

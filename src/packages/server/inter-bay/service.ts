@@ -6,10 +6,12 @@
 import {
   createInterBayDirectoryHandlers,
   createInterBayProjectControlHandler,
+  createInterBayProjectLroHandler,
   createInterBayProjectReferenceHandler,
   createInterBayProjectControlStopHandler,
   type InterBayDirectoryApi,
   type InterBayProjectControlApi,
+  type InterBayProjectLroApi,
   type InterBayProjectReferenceApi,
 } from "@cocalc/conat/inter-bay/api";
 import type { ConatService } from "@cocalc/conat/service/typed";
@@ -23,6 +25,7 @@ import {
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
   handleProjectControlStart,
+  handleProjectLroPublishProgress,
   handleProjectReferenceGet,
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
@@ -41,6 +44,7 @@ export async function initInterBayServices(): Promise<void> {
     await startDirectoryService();
     await startProjectControlStartService();
     await startProjectReferenceService();
+    await startProjectLroService();
   } catch (err) {
     serviceStarted = false;
     throw err;
@@ -106,6 +110,22 @@ async function startProjectReferenceService(): Promise<void> {
   };
   services.push(
     createInterBayProjectReferenceHandler({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startProjectLroService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayProjectLroApi = {
+    publishProgress: async (opts) =>
+      await handleProjectLroPublishProgress(opts),
+  };
+  services.push(
+    createInterBayProjectLroHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

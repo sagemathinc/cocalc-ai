@@ -189,6 +189,7 @@ describe("projects.start", () => {
       project_id: "proj-1",
       account_id: "acct-1",
       lro_op_id: "op-1",
+      source_bay_id: "bay-0",
       epoch: 0,
     });
     expect(supersedeOlderProjectStartLrosMock).toHaveBeenCalledWith({

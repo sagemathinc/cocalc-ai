@@ -239,7 +239,11 @@ export async function queryProjects<W extends ProjectLike = ProjectLike>({
   }
   const visibleRows = rows.filter((x) => !isDeleted(x.deleted));
   if (visibleRows.length || !project_id || title != null || host_id != null) {
-    if (!visibleRows.length && localErr) {
+    if (
+      !visibleRows.length &&
+      localErr &&
+      (!project_id || title != null || host_id != null)
+    ) {
       throw localErr;
     }
     return visibleRows;

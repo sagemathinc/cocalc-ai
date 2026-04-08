@@ -4,16 +4,19 @@
  */
 
 import type {
+  ForwardProjectLroProgressRequest,
   GetProjectReferenceRequest,
   ProjectReference,
   ProjectControlStartRequest,
   ProjectControlStopRequest,
 } from "@cocalc/conat/inter-bay/api";
+import { publishLroEvent } from "@cocalc/server/lro/stream";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveProjectBayDirect } from "@cocalc/server/inter-bay/directory";
 import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { getProject } from "@cocalc/server/projects/control";
 import { resolveVisibleProjectReferenceLocal } from "@cocalc/server/bay-directory";
+import { forwardRemoteStartLroProgress } from "@cocalc/server/inter-bay/start-lro-forward";
 
 function staleRoutingError({
   project_id,
@@ -67,10 +70,19 @@ export async function handleProjectControlStart(
     epoch: req.epoch,
   });
   const project = await getProject(req.project_id);
-  await project.start({
-    account_id: req.account_id,
-    lro_op_id: req.lro_op_id,
+  const stopForward = await forwardRemoteStartLroProgress({
+    project_id: req.project_id,
+    op_id: req.lro_op_id,
+    source_bay_id: req.source_bay_id,
   });
+  try {
+    await project.start({
+      account_id: req.account_id,
+      lro_op_id: req.lro_op_id,
+    });
+  } finally {
+    await stopForward();
+  }
 }
 
 export async function handleProjectControlStop(
@@ -101,6 +113,17 @@ export async function handleProjectReferenceGet(
   } catch {
     return null;
   }
+}
+
+export async function handleProjectLroPublishProgress(
+  req: ForwardProjectLroProgressRequest,
+): Promise<void> {
+  await publishLroEvent({
+    scope_type: "project",
+    scope_id: req.project_id,
+    op_id: req.op_id,
+    event: req.event,
+  });
 }
 
 export async function dispatchProjectControlRpc(

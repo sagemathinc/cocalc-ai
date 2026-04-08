@@ -95,6 +95,16 @@ describe("inter-bay fabric routing", () => {
         return mesg.data;
       }
     })();
+    const projectLroSub = await serviceClient.subscribe(
+      "bay.bay-1.rpc.project-lro.publish-progress",
+      { queue: "0" },
+    );
+    const projectLroPromise = (async () => {
+      for await (const mesg of projectLroSub) {
+        mesg.respond(null, { noThrow: true });
+        return mesg.data;
+      }
+    })();
 
     process.env.COCALC_BAY_ID = "bay-0";
     const [
@@ -117,6 +127,19 @@ describe("inter-bay fabric routing", () => {
     await getInterBayBridge()
       .projectControl("bay-1")
       .stop({ project_id: "proj-1" });
+    await getInterBayBridge()
+      .projectLro("bay-1")
+      .publishProgress({
+        project_id: "proj-1",
+        op_id: "op-1",
+        event: {
+          type: "progress",
+          ts: 1,
+          phase: "runner_start",
+          message: "starting",
+          progress: 86,
+        },
+      });
 
     await expect(directoryPromise).resolves.toEqual({
       name: "resolveProjectBay",
@@ -130,9 +153,26 @@ describe("inter-bay fabric routing", () => {
       name: "stop",
       args: [{ project_id: "proj-1" }],
     });
+    await expect(projectLroPromise).resolves.toEqual({
+      name: "publishProgress",
+      args: [
+        {
+          project_id: "proj-1",
+          op_id: "op-1",
+          event: {
+            type: "progress",
+            ts: 1,
+            phase: "runner_start",
+            message: "starting",
+            progress: 86,
+          },
+        },
+      ],
+    });
     getInterBayFabricClient().close();
     projectControlSub.close();
     projectControlStopSub.close();
+    projectLroSub.close();
     directorySub.close();
   });
 });

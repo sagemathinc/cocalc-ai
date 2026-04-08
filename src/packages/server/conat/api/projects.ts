@@ -19,6 +19,7 @@ import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lr
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
 import TTLCache from "@isaacs/ttlcache";
@@ -111,7 +112,6 @@ import {
   PROJECT_BAY_MISMATCH_ERROR,
   PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
 } from "@cocalc/server/conat/project-host-assignment";
-import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
@@ -1401,6 +1401,7 @@ export async function start({
         project_id,
         account_id,
         lro_op_id: op.op_id,
+        source_bay_id: getConfiguredBayId(),
         epoch: ownership.epoch,
       });
       const phase_timings_ms = takeStartProjectPhaseTimings(op.op_id);

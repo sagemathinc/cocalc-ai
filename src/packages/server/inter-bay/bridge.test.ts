@@ -90,4 +90,41 @@ describe("inter-bay bridge", () => {
       { timeout: 10 * 1000, waitForInterest: true },
     );
   });
+
+  it("dispatches typed project lro progress forwarding requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({ data: null });
+    const { getInterBayBridge } = await import("./bridge");
+    const bridge = getInterBayBridge();
+    await bridge.projectLro("bay-0").publishProgress({
+      project_id: "p1",
+      op_id: "op-1",
+      event: {
+        type: "progress",
+        ts: 1,
+        phase: "runner_start",
+        message: "starting",
+        progress: 86,
+      },
+    });
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-0.rpc.project-lro.publish-progress",
+      {
+        name: "publishProgress",
+        args: [
+          {
+            project_id: "p1",
+            op_id: "op-1",
+            event: {
+              type: "progress",
+              ts: 1,
+              phase: "runner_start",
+              message: "starting",
+              progress: 86,
+            },
+          },
+        ],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
 });

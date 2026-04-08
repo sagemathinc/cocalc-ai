@@ -6,6 +6,8 @@
 export {
   type DirectoryMethod,
   directorySubject,
+  type ProjectLroMethod,
+  projectLroSubject,
   type ProjectReferenceMethod,
   projectReferenceSubject,
   type ProjectControlMethod,
