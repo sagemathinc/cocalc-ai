@@ -122,7 +122,7 @@ describe("resolveRenderedMessageValue", () => {
 });
 
 describe("resolveMountedCodexRenderedValue", () => {
-  it("keeps the mounted streamed Codex body after completion", () => {
+  it("keeps mounted streamed Codex output and appends the final summary once", () => {
     expect(
       resolveMountedCodexRenderedValue({
         renderedValue: "final summary",
@@ -131,7 +131,19 @@ describe("resolveMountedCodexRenderedValue", () => {
         generating: false,
         interrupted: false,
       }),
-    ).toBe("streamed body still visible");
+    ).toBe("streamed body still visible\n\nfinal summary");
+  });
+
+  it("does not duplicate the final summary when the mounted body already ends with it", () => {
+    expect(
+      resolveMountedCodexRenderedValue({
+        renderedValue: "final summary",
+        mountedGeneratingValue: "streamed body still visible\n\nfinal summary",
+        showCodexActivity: true,
+        generating: false,
+        interrupted: false,
+      }),
+    ).toBe("streamed body still visible\n\nfinal summary");
   });
 
   it("does not override non-Codex rows", () => {

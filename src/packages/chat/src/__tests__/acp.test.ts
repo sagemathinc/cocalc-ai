@@ -296,7 +296,7 @@ describe("response text helpers", () => {
     );
   });
 
-  test("builds live markdown from agent messages plus streamed summary", () => {
+  test("builds live markdown from agent messages without appending the summary", () => {
     const events: AcpStreamMessage[] = [
       textEvent("message", "first", 1),
       textEvent("thinking", "reasoning", 2),
@@ -307,12 +307,10 @@ describe("response text helpers", () => {
         seq: 4,
       } as AcpStreamMessage,
     ];
-    expect(getLiveResponseMarkdown(events)).toBe(
-      "first\n\nsecond\n\nfinal summary",
-    );
+    expect(getLiveResponseMarkdown(events)).toBe("first\n\nsecond");
   });
 
-  test("replaces a partial live agent block when the streamed summary extends it", () => {
+  test("keeps the latest live agent block when the summary extends it", () => {
     const events: AcpStreamMessage[] = [
       textEvent("message", "I", 1),
       {
@@ -321,18 +319,15 @@ describe("response text helpers", () => {
         seq: 2,
       } as AcpStreamMessage,
     ];
-    expect(getLiveResponseMarkdown(events)).toBe(
-      "I'm checking the code path now.",
-    );
+    expect(getLiveResponseMarkdown(events)).toBe("I");
   });
 
-  test("does not duplicate the summary when it matches the latest agent block", () => {
+  test("falls back to the summary when there are no agent blocks yet", () => {
     const events: AcpStreamMessage[] = [
-      textEvent("message", "final summary", 1),
       {
         type: "summary",
         finalResponse: "final summary",
-        seq: 2,
+        seq: 1,
       } as AcpStreamMessage,
     ];
     expect(getLiveResponseMarkdown(events)).toBe("final summary");

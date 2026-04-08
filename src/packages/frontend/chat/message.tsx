@@ -427,7 +427,14 @@ export function resolveMountedCodexRenderedValue({
     typeof mountedGeneratingValue === "string" &&
     mountedGeneratingValue.trim().length > 0
   ) {
-    return mountedGeneratingValue;
+    const mounted = mountedGeneratingValue.trim();
+    const rendered = renderedValue.trim();
+    if (!rendered) return mountedGeneratingValue;
+    if (!mounted) return renderedValue;
+    if (mounted === rendered || mounted.endsWith(rendered)) {
+      return mountedGeneratingValue;
+    }
+    return `${mountedGeneratingValue.trimEnd()}\n\n${renderedValue.trimStart()}`;
   }
   return renderedValue;
 }

@@ -259,23 +259,18 @@ function normalizeProgressiveCompareText(text: string): string {
 
 // During a running turn the main chat row should be rendered from the live ACP
 // log, not from patchflow-backed chat-row edits. Show all agent message blocks
-// seen so far, then append the evolving summary when present.
+// seen so far. If there are no agent blocks yet, fall back to the latest
+// streamed summary so the row is never blank.
 export function getLiveResponseMarkdown(
   events: AcpStreamMessage[],
 ): string | undefined {
   const blocks = getAgentMessageTexts(events);
   const summary = getLatestSummaryText(events);
-  if (typeof summary === "string" && summary.trim().length > 0) {
-    const last = blocks[blocks.length - 1];
-    const progressiveSummary = mergeProgressiveMessageText(last, summary);
-    if (typeof progressiveSummary === "string") {
-      blocks[blocks.length - 1] = progressiveSummary;
-    } else if (blocks[blocks.length - 1] !== summary) {
-      blocks.push(summary);
-    }
-  }
   if (blocks.length > 0) {
     return blocks.join("\n\n");
+  }
+  if (typeof summary === "string" && summary.trim().length > 0) {
+    return summary;
   }
   return getLatestEventLineText(events);
 }
