@@ -5,6 +5,7 @@
 
 import {
   createInterBayAuthTokenHandlers,
+  createInterBayAccountProjectFeedHandlers,
   createInterBayAccountDirectoryHandlers,
   createInterBayAccountLocalHandler,
   createInterBayProjectCollabInviteHandlers,
@@ -18,6 +19,7 @@ import {
   createInterBayProjectReferenceHandler,
   createInterBayProjectControlStopHandler,
   type InterBayAuthTokenApi,
+  type InterBayAccountProjectFeedApi,
   type InterBayAccountDirectoryApi,
   type InterBayAccountLocalApi,
   type InterBayDirectoryApi,
@@ -35,6 +37,10 @@ import {
 } from "@cocalc/server/auth/tokens/redeem";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
+import {
+  applyAccountProjectFeedRemoveOnHomeBay,
+  applyAccountProjectFeedUpsertOnHomeBay,
+} from "@cocalc/server/account/project-feed";
 import {
   createClusterAccount,
   getClusterAccountByEmail,
@@ -80,6 +86,7 @@ export async function initInterBayServices(): Promise<void> {
     await startAuthTokenService();
     await startAccountDirectoryService();
     await startAccountLocalService();
+    await startAccountProjectFeedService();
     await startProjectControlStartService();
     await startProjectReferenceService();
     await startProjectLroService();
@@ -174,6 +181,24 @@ async function startAccountLocalService(): Promise<void> {
   };
   services.push(
     createInterBayAccountLocalHandler({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startAccountProjectFeedService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayAccountProjectFeedApi = {
+    upsert: async (event) =>
+      await applyAccountProjectFeedUpsertOnHomeBay(event),
+    remove: async (event) =>
+      await applyAccountProjectFeedRemoveOnHomeBay(event),
+  };
+  services.push(
+    ...createInterBayAccountProjectFeedHandlers({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

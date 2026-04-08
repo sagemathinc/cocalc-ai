@@ -10,6 +10,10 @@ import {
 } from "@cocalc/conat/service/typed";
 import type { ConatService } from "@cocalc/conat/service/typed";
 import type { Options, ServiceCall } from "@cocalc/conat/service/service";
+import type {
+  AccountFeedProjectRemoveEvent,
+  AccountFeedProjectUpsertEvent,
+} from "@cocalc/conat/hub/api/account-feed";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 import type {
   ProjectActiveOperationSummary,
@@ -196,6 +200,7 @@ export type ProjectCollabInviteMethod =
   | "upsert-inbox"
   | "delete-inbox"
   | "respond";
+export type AccountProjectFeedMethod = "upsert" | "remove";
 
 interface ResolveProjectBayApi {
   resolveProjectBay: (
@@ -271,6 +276,11 @@ export interface InterBayProjectCollabInviteApi {
   respond: (
     opts: ProjectCollabInviteRespondRequest,
   ) => Promise<ProjectCollabInviteWire>;
+}
+
+export interface InterBayAccountProjectFeedApi {
+  upsert: (opts: AccountFeedProjectUpsertEvent) => Promise<void>;
+  remove: (opts: AccountFeedProjectRemoveEvent) => Promise<void>;
 }
 
 function serviceClientOptions({
@@ -359,6 +369,16 @@ export function projectCollabInviteSubject({
   method: ProjectCollabInviteMethod;
 }): string {
   return `bay.${dest_bay}.rpc.project-collab-invite.${method}`;
+}
+
+export function accountProjectFeedSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: AccountProjectFeedMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.account-project-feed.${method}`;
 }
 
 export function createInterBayDirectoryClient({
@@ -777,6 +797,33 @@ export function createInterBayProjectCollabInviteClient({
   };
 }
 
+export function createInterBayAccountProjectFeedClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayAccountProjectFeedApi {
+  const upsertClient = createServiceClient<
+    Pick<InterBayAccountProjectFeedApi, "upsert">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountProjectFeedSubject({ dest_bay, method: "upsert" }),
+  });
+  const removeClient = createServiceClient<
+    Pick<InterBayAccountProjectFeedApi, "remove">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountProjectFeedSubject({ dest_bay, method: "remove" }),
+  });
+  return {
+    upsert: async (opts) => await upsertClient.upsert(opts),
+    remove: async (opts) => await removeClient.remove(opts),
+  };
+}
+
 export function createInterBayProjectCollabInviteHandlers({
   bay_id,
   impl,
@@ -817,6 +864,40 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         respond: async (opts) => await impl.respond(opts),
+      },
+    }),
+  ];
+}
+
+export function createInterBayAccountProjectFeedHandlers({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayAccountProjectFeedApi;
+}): ConatService[] {
+  return [
+    createServiceHandler<Pick<InterBayAccountProjectFeedApi, "upsert">>({
+      ...options,
+      service: "inter-bay-account-project-feed",
+      subject: accountProjectFeedSubject({
+        dest_bay: bay_id,
+        method: "upsert",
+      }),
+      impl: {
+        upsert: async (opts) => await impl.upsert(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountProjectFeedApi, "remove">>({
+      ...options,
+      service: "inter-bay-account-project-feed",
+      subject: accountProjectFeedSubject({
+        dest_bay: bay_id,
+        method: "remove",
+      }),
+      impl: {
+        remove: async (opts) => await impl.remove(opts),
       },
     }),
   ];

@@ -59,6 +59,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => {
 
   const webappClient = Object.assign(new EventEmitter(), {
     is_signed_in: jest.fn(() => true),
+    async_query: jest.fn(async () => ({
+      query: { account_project_index: [] },
+    })),
     conat_client: Object.assign(new EventEmitter(), {
       dstream: jest.fn(async () => new MockFeed()),
     }),
@@ -77,6 +80,7 @@ const mockedWebappClient = webapp_client as unknown as EventEmitter & {
   conat_client: EventEmitter & {
     dstream: jest.Mock;
   };
+  async_query: jest.Mock;
 };
 
 async function flush(): Promise<void> {
@@ -169,6 +173,70 @@ describe("ProjectsActions realtime feed", () => {
       "owner",
     );
     expect(projectMap.getIn(["project-1", "last_edited"])).toBeInstanceOf(Date);
+  });
+
+  it("bootstraps remote shared projects from account_project_index on init", async () => {
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id: "project-remote",
+            owning_bay_id: "bay-0",
+            host_id: "host-1",
+            title: "Shared Remote Project",
+            description: "visible from projection",
+            theme: { color: "#112233" },
+            users_summary: {
+              "acct-1": { group: "collaborator" },
+            },
+            state_summary: { state: "running" },
+            last_activity_at: "2026-04-05T03:00:00.000Z",
+            sort_key: "2026-04-05T03:00:00.000Z",
+            updated_at: "2026-04-05T03:00:01.000Z",
+            is_hidden: false,
+          },
+        ],
+      },
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          expect.objectContaining({
+            account_id: "acct-1",
+          }),
+        ],
+      },
+      options: [{ limit: 2000 }],
+    });
+    expect(projectMap.getIn(["project-remote", "title"])).toBe(
+      "Shared Remote Project",
+    );
+    expect(projectMap.getIn(["project-remote", "owning_bay_id"])).toBe("bay-0");
+    expect(projectMap.getIn(["project-remote", "state", "state"])).toBe(
+      "running",
+    );
   });
 
   it("refreshes the current projects table on history-gap without forcing all projects", async () => {

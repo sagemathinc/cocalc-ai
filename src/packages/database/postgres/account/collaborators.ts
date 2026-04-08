@@ -50,6 +50,9 @@ export async function addUserToProject(
   } finally {
     client.release();
   }
+  await _db.publishProjectAccountFeedEventsBestEffort?.({
+    project_id: opts.project_id,
+  });
 }
 
 export interface RemoveCollaboratorFromProjectOptions {
@@ -86,6 +89,9 @@ export async function removeCollaboratorFromProject(
   } finally {
     client.release();
   }
+  await _db.publishProjectAccountFeedEventsBestEffort?.({
+    project_id: opts.project_id,
+  });
 }
 
 export interface RemoveUserFromProjectOptions {
@@ -121,4 +127,7 @@ export async function removeUserFromProject(
   } finally {
     client.release();
   }
+  await _db.publishProjectAccountFeedEventsBestEffort?.({
+    project_id: opts.project_id,
+  });
 }

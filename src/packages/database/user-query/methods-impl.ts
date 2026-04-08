@@ -124,10 +124,9 @@ type ChangefeedLocals = {
 };
 
 function getProjectListReadMode(): ProjectListReadMode {
-  const value =
-    `${process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS ?? ""}`
-      .trim()
-      .toLowerCase();
+  const raw =
+    `${process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS ?? ""}`.trim();
+  const value = raw.toLowerCase();
   if (
     value === "1" ||
     value === "true" ||
@@ -138,6 +137,15 @@ function getProjectListReadMode(): ProjectListReadMode {
   }
   if (value === "only" || value === "strict" || value === "required") {
     return "only";
+  }
+  if (raw) {
+    return "off";
+  }
+  const clusterRole = `${process.env.COCALC_CLUSTER_ROLE ?? ""}`
+    .trim()
+    .toLowerCase();
+  if (clusterRole === "seed" || clusterRole === "attached") {
+    return "prefer";
   }
   return "off";
 }
