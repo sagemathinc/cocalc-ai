@@ -65,6 +65,7 @@ type NebiusInstance = {
   name: string;
   platform?: string | null;
   platform_label?: string | null;
+  allowed_for_preemptibles?: boolean | null;
   vcpus?: number | null;
   memory_gib?: number | null;
   gpus?: number | null;
@@ -112,6 +113,17 @@ export type HyperstackFlavorOption = HostFieldOption<HyperstackFlavor> & {
 
 export type NebiusInstanceOption = HostFieldOption<NebiusInstance> & {
   entry: NebiusInstance;
+};
+
+export const isNebiusSpotSupported = (
+  options?: HostFieldOption[],
+  machineType?: string,
+): boolean => {
+  const selected =
+    options?.find((opt) => opt.value === machineType) ?? options?.[0];
+  if (!selected) return true;
+  const meta = (selected.meta ?? {}) as NebiusInstance;
+  return meta.allowed_for_preemptibles !== false;
 };
 
 export type ProviderSelection = {

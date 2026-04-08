@@ -2,6 +2,7 @@ import { Collapse, Form, Input, Select } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import type { FormInstance } from "antd/es/form";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
+import { isNebiusSpotSupported } from "../providers/registry";
 import { HostCreateAdvancedFields } from "./host-create-advanced-fields";
 import { HostCreateProviderFields } from "./host-create-provider-fields";
 import { SshTargetLabel } from "./ssh-target-help";
@@ -35,8 +36,22 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   const showSpotFields =
     provider.selectedProvider !== "none" &&
     provider.selectedProvider !== "self-host";
+  const watchedMachineType = Form.useWatch("machine_type", form);
   const watchedPricingModel = Form.useWatch("pricing_model", form);
   const watchedSshTarget = Form.useWatch("self_host_ssh_target", form);
+  const nebiusSpotSupported = React.useMemo(
+    () =>
+      provider.selectedProvider !== "nebius" ||
+      isNebiusSpotSupported(
+        provider.fields.options.machine_type,
+        watchedMachineType,
+      ),
+    [
+      provider.fields.options.machine_type,
+      provider.selectedProvider,
+      watchedMachineType,
+    ],
+  );
   const previousPricingModelRef = React.useRef<"on_demand" | "spot">(
     "on_demand",
   );
@@ -82,6 +97,20 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
     }
     previousPricingModelRef.current = nextPricingModel;
   }, [form, showSpotFields, watchedPricingModel]);
+  React.useEffect(() => {
+    if (provider.selectedProvider !== "nebius") return;
+    if (nebiusSpotSupported) return;
+    if (watchedPricingModel !== "spot") return;
+    form.setFieldsValue({
+      pricing_model: "on_demand",
+      interruption_restore_policy: "none",
+    });
+  }, [
+    form,
+    nebiusSpotSupported,
+    provider.selectedProvider,
+    watchedPricingModel,
+  ]);
   const providerField = (
     <Form.Item
       name="provider"
@@ -135,11 +164,23 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
                     name="pricing_model"
                     label="Pricing model"
                     initialValue="on_demand"
+                    extra={
+                      provider.selectedProvider === "nebius" &&
+                      !nebiusSpotSupported
+                        ? "Spot is unavailable for the selected Nebius instance type."
+                        : undefined
+                    }
                   >
                     <Select
                       options={[
                         { value: "on_demand", label: "On-demand" },
-                        { value: "spot", label: "Spot / interruptible" },
+                        {
+                          value: "spot",
+                          label: "Spot / interruptible",
+                          disabled:
+                            provider.selectedProvider === "nebius" &&
+                            !nebiusSpotSupported,
+                        },
                       ]}
                     />
                   </Form.Item>
