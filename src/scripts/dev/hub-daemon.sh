@@ -888,9 +888,12 @@ show_status() {
     echo "software base (forced): $HUB_SOFTWARE_BASE_URL_FORCE"
   fi
   if [ "$HUB_ENABLE_SECOND_BAY" = "1" ]; then
+    local second_hub_url
+    second_hub_url="$(local_hub_url "$HUB_SECOND_BAY_BIND_HOST" "$HUB_SECOND_BAY_PORT")"
     echo "second bay enabled: yes"
     echo "second bay id: $HUB_SECOND_BAY_ID"
     echo "second bay port: $HUB_SECOND_BAY_PORT"
+    echo "second bay url: $second_hub_url"
     echo "second bay state: $HUB_SECOND_BAY_STATE_DIR"
     echo "second bay data: $HUB_SECOND_BAY_DATA_DIR"
     echo "second bay stdout: $HUB_SECOND_BAY_STDOUT_LOG"
