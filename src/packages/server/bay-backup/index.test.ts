@@ -1,6 +1,6 @@
 export {};
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -230,7 +230,7 @@ describe("bay-backup runner", () => {
         if (cmd === "rustic-bin") {
           const subcommand =
             args.find((arg) =>
-              ["backup", "snapshots", "restore"].includes(arg),
+              ["backup", "snapshots", "restore", "forget"].includes(arg),
             ) ?? "";
           if (subcommand === "backup") {
             const host = args[args.indexOf("--host") + 1];
@@ -314,6 +314,30 @@ describe("bay-backup runner", () => {
             cb(new Error("full rustic restore is not mocked in this test"));
             return;
           }
+          if (subcommand === "forget") {
+            const hostFlag =
+              args.indexOf("--host") >= 0
+                ? "--host"
+                : args.indexOf("--filter-host") >= 0
+                  ? "--filter-host"
+                  : null;
+            const host =
+              hostFlag == null ? "" : args[args.indexOf(hostFlag) + 1];
+            const keepLastIndex = args.indexOf("--keep-last");
+            const keepLast =
+              keepLastIndex >= 0
+                ? Number.parseInt(args[keepLastIndex + 1], 10)
+                : 0;
+            rusticSnapshots = rusticSnapshots
+              .filter((snapshot) => snapshot.host !== host)
+              .concat(
+                rusticSnapshots
+                  .filter((snapshot) => snapshot.host === host)
+                  .slice(-Math.max(keepLast, 0)),
+              );
+            cb(null, { stdout: "", stderr: "" });
+            return;
+          }
           cb(new Error(`unexpected rustic args '${args.join(" ")}'`));
           return;
         }
@@ -391,6 +415,9 @@ describe("bay-backup runner", () => {
     expect(status.bay_backup.restore_state).toBe("ready-local-only");
     expect(status.restore_readiness.latest_backup_restore_test_status).toBe(
       "not-run",
+    );
+    expect(status.restore_readiness.latest_backup_pitr_test_status).toBe(
+      "not-recovery-ready",
     );
     expect(status.restore_readiness.gold_star).toBe(false);
   });
@@ -592,6 +619,65 @@ describe("bay-backup runner", () => {
         2,
       ),
     );
+    const sentinelRows: Array<{ run_id: string; phase: "pre" | "post" }> = [];
+    getPoolMock = jest.fn(() => ({
+      query: jest.fn(async (sql: string, params?: string[]) => {
+        if (
+          sql.includes("current_user AS current_user") &&
+          sql.includes("FROM pg_roles r")
+        ) {
+          return {
+            rows: [
+              {
+                current_user: "smc",
+                role_superuser: false,
+                role_replication: true,
+                data_directory: "/tmp/pgdata",
+                config_file: "/tmp/pgdata/postgresql.conf",
+                archive_mode: "on",
+                archive_command: "archive",
+                archive_timeout: null,
+                wal_level: "replica",
+                max_wal_senders: "10",
+              },
+            ],
+          };
+        }
+        if (
+          sql.includes(
+            "CREATE TABLE IF NOT EXISTS public.bay_restore_test_pitr_events",
+          )
+        ) {
+          return { rows: [] };
+        }
+        if (sql.includes("DELETE FROM public.bay_restore_test_pitr_events")) {
+          return { rows: [] };
+        }
+        if (sql.includes("INSERT INTO public.bay_restore_test_pitr_events")) {
+          sentinelRows.push({
+            run_id: params?.[0] ?? "missing",
+            phase: sql.includes("'pre'") ? "pre" : "post",
+          });
+          return { rows: [] };
+        }
+        if (sql === "SELECT clock_timestamp() AS target_time") {
+          return {
+            rows: [{ target_time: "2026-04-07T15:38:10.000Z" }],
+          };
+        }
+        if (sql === "SELECT pg_sleep(0.25)") {
+          return { rows: [] };
+        }
+        if (sql === "SELECT pg_switch_wal()") {
+          writeFileSync(
+            join(walArchiveDir, "0000000100000000000000E9"),
+            "segment-2",
+          );
+          return { rows: [{ pg_switch_wal: "0000000100000000000000E9" }] };
+        }
+        throw new Error(`unexpected query '${sql}'`);
+      }),
+    }));
     execFileMock = jest.fn(
       (
         cmd: string,
@@ -613,7 +699,10 @@ describe("bay-backup runner", () => {
           mkdirSync(join(targetDir, "pg_wal"), { recursive: true });
           writeFileSync(join(targetDir, "PG_VERSION"), "17\n");
         } else if (archivePath.endsWith("pg_wal.tar.gz")) {
-          writeFileSync(join(targetDir, "0000000100000000000000E8"), "segment");
+          writeFileSync(
+            join(targetDir, "0000000100000000000000E8"),
+            "stale-segment",
+          );
         } else if (archivePath.endsWith("sync.tar.gz")) {
           mkdirSync(join(targetDir, "sync", "accounts", "test"), {
             recursive: true,
@@ -639,14 +728,16 @@ describe("bay-backup runner", () => {
       backup_set_id: backupSetId,
       target_dir: restoreTargetDir,
       dry_run: false,
+      target_time: "2026-04-07T08:00:00-07:00",
     });
     expect(result.recovery_ready).toBe(true);
     expect(result.source_storage_backend).toBe("local");
+    expect(result.target_time).toBe("2026-04-07T15:00:00.000Z");
     expect(result.data_dir).toBe(join(restoreTargetDir, "data"));
     expect(result.sync_dir).toBe(join(restoreTargetDir, "sync"));
     expect(result.secrets_dir).toBe(join(restoreTargetDir, "secrets"));
     expect(
-      readFileSync(join(restoreTargetDir, "data", "restore.signal"), "utf8"),
+      readFileSync(join(restoreTargetDir, "data", "standby.signal"), "utf8"),
     ).toBe("");
     expect(
       readFileSync(
@@ -655,8 +746,20 @@ describe("bay-backup runner", () => {
       ),
     ).toContain("restore_command");
     expect(
+      readFileSync(
+        join(restoreTargetDir, "data", "postgresql.auto.conf"),
+        "utf8",
+      ),
+    ).toContain("recovery_target_time = '2026-04-07 15:00:00.000+00'");
+    expect(
       readFileSync(join(restoreTargetDir, "restore-wal.sh"), "utf8"),
     ).toContain(walArchiveDir);
+    expect(
+      readFileSync(
+        join(restoreTargetDir, "data", "pg_wal", "0000000100000000000000E8"),
+        "utf8",
+      ),
+    ).toBe("segment");
     expect(
       readFileSync(
         join(restoreTargetDir, "sync", "accounts", "test", "seen-state.db"),
@@ -672,11 +775,86 @@ describe("bay-backup runner", () => {
       ),
     ).toMatchObject({
       backup_set_id: backupSetId,
+      target_time: "2026-04-07T15:00:00.000Z",
       recovery_ready: true,
       sync_dir: join(restoreTargetDir, "sync"),
       secrets_dir: join(restoreTargetDir, "secrets"),
       wal_segment_count: 1,
     });
+  });
+
+  it("rejects an invalid restore target time", async () => {
+    const { runBayRestore } = await import("./index");
+
+    await expect(
+      runBayRestore({
+        backup_set_id: "backup-1",
+        dry_run: true,
+        target_time: "yesterday",
+      }),
+    ).rejects.toThrow(
+      "target_time must be an RFC3339 timestamp with an explicit timezone",
+    );
+  });
+
+  it("rejects target_time for pg_dumpall restores", async () => {
+    const backupSetId = "restore-dump-1";
+    const bayRoot = join(backupRoot, "bay-backups", "bay-0");
+    const manifestsDir = join(bayRoot, "manifests");
+    mkdirSync(manifestsDir, { recursive: true });
+    writeFileSync(
+      join(manifestsDir, `${backupSetId}.json`),
+      JSON.stringify(
+        {
+          bay_id: "bay-0",
+          bay_label: "bay-0",
+          backup_set_id: backupSetId,
+          created_at: "2026-04-07T15:37:47.519Z",
+          finished_at: "2026-04-07T15:37:57.440Z",
+          format: "pg_dumpall",
+          current_storage_backend: "local",
+          latest_storage_backend: "local",
+          bucket_name: null,
+          bucket_region: null,
+          bucket_endpoint: null,
+          object_prefix: null,
+          remote_manifest_key: null,
+          remote_snapshot_id: null,
+          remote_snapshot_host: null,
+          rustic_repo_selector: null,
+          postgres: {},
+          artifacts: [
+            {
+              name: "cluster.sql.gz",
+              local_path: join(
+                bayRoot,
+                "archives",
+                backupSetId,
+                "cluster.sql.gz",
+              ),
+              object_key: null,
+              bytes: 8,
+              sha256: "dump",
+              content_type: "application/gzip",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const { runBayRestore } = await import("./index");
+
+    await expect(
+      runBayRestore({
+        backup_set_id: backupSetId,
+        dry_run: true,
+        target_time: "2026-04-07T08:00:00-07:00",
+      }),
+    ).rejects.toThrow(
+      "target_time is only supported for pg_basebackup backups with archived WAL",
+    );
   });
 
   it("restore-tests a pg_basebackup snapshot and records a gold star", async () => {
@@ -731,6 +909,12 @@ describe("bay-backup runner", () => {
           last_restore_tested_at: null,
           last_restore_test_target_dir: null,
           last_restore_test_recovery_ready: null,
+          last_pitr_test_backup_set_id: null,
+          last_pitr_test_status: null,
+          last_pitr_tested_at: null,
+          last_pitr_test_target_time: null,
+          last_pitr_test_target_dir: null,
+          last_pitr_test_remote_only: null,
         },
         null,
         2,
@@ -796,6 +980,65 @@ describe("bay-backup runner", () => {
         2,
       ),
     );
+    const sentinelRows: Array<{ run_id: string; phase: "pre" | "post" }> = [];
+    getPoolMock = jest.fn(() => ({
+      query: jest.fn(async (sql: string, params?: string[]) => {
+        if (
+          sql.includes("current_user AS current_user") &&
+          sql.includes("FROM pg_roles r")
+        ) {
+          return {
+            rows: [
+              {
+                current_user: "smc",
+                role_superuser: false,
+                role_replication: true,
+                data_directory: "/tmp/pgdata",
+                config_file: "/tmp/pgdata/postgresql.conf",
+                archive_mode: "on",
+                archive_command: "archive",
+                archive_timeout: null,
+                wal_level: "replica",
+                max_wal_senders: "10",
+              },
+            ],
+          };
+        }
+        if (
+          sql.includes(
+            "CREATE TABLE IF NOT EXISTS public.bay_restore_test_pitr_events",
+          )
+        ) {
+          return { rows: [] };
+        }
+        if (sql.includes("DELETE FROM public.bay_restore_test_pitr_events")) {
+          return { rows: [] };
+        }
+        if (sql.includes("INSERT INTO public.bay_restore_test_pitr_events")) {
+          sentinelRows.push({
+            run_id: params?.[0] ?? "missing",
+            phase: sql.includes("'pre'") ? "pre" : "post",
+          });
+          return { rows: [] };
+        }
+        if (sql === "SELECT clock_timestamp() AS target_time") {
+          return {
+            rows: [{ target_time: "2026-04-07T15:38:10.000Z" }],
+          };
+        }
+        if (sql === "SELECT pg_sleep(0.25)") {
+          return { rows: [] };
+        }
+        if (sql === "SELECT pg_switch_wal()") {
+          writeFileSync(
+            join(walArchiveDir, "0000000100000000000000E9"),
+            "segment-2",
+          );
+          return { rows: [{ pg_switch_wal: "0000000100000000000000E9" }] };
+        }
+        throw new Error(`unexpected query '${sql}'`);
+      }),
+    }));
     execFileMock = jest.fn(
       (
         cmd: string,
@@ -845,6 +1088,10 @@ describe("bay-backup runner", () => {
         }
         if (cmd === "/usr/bin/psql") {
           const sql = args[args.length - 1];
+          if (sql === "SELECT pg_is_in_recovery()::text") {
+            cb(null, { stdout: "f\n", stderr: "" });
+            return;
+          }
           if (sql === "SELECT current_database()") {
             cb(null, { stdout: "smc\n", stderr: "" });
             return;
@@ -861,6 +1108,23 @@ describe("bay-backup runner", () => {
             cb(null, { stdout: "server_settings\n", stderr: "" });
             return;
           }
+          const countMatch = sql.match(
+            /^SELECT count\(\*\) FILTER \(WHERE phase='pre'\)::text \|\| ',' \|\| count\(\*\) FILTER \(WHERE phase='post'\)::text FROM public\.bay_restore_test_pitr_events WHERE run_id = '([^']+)'$/,
+          );
+          if (countMatch) {
+            const [, runId] = countMatch;
+            const pre = sentinelRows.filter(
+              (row) => row.run_id === runId && row.phase === "pre",
+            ).length;
+            const post = sentinelRows.filter(
+              (row) => row.run_id === runId && row.phase === "post",
+            ).length;
+            cb(null, {
+              stdout: `${Math.min(pre, 1)},${post > 0 ? 0 : 0}\n`,
+              stderr: "",
+            });
+            return;
+          }
           cb(new Error(`unexpected SQL '${sql}'`));
           return;
         }
@@ -874,8 +1138,13 @@ describe("bay-backup runner", () => {
       backup_set_id: backupSetId,
     });
     expect(result.recovery_ready).toBe(true);
+    expect(result.pitr_verified).toBe(true);
     expect(result.kept_on_disk).toBe(false);
+    expect(result.target_time).toBe("2026-04-07T15:38:10.000Z");
     expect(result.verified_queries).toEqual([
+      "pitr_recovery_promoted=true",
+      "pitr_pre_count=1",
+      "pitr_post_count=0",
       "current_database=smc",
       "accounts_table=accounts",
       "projects_table=projects",
@@ -886,11 +1155,20 @@ describe("bay-backup runner", () => {
     expect(status.restore_readiness.latest_backup_restore_test_status).toBe(
       "passed",
     );
+    expect(status.restore_readiness.latest_backup_pitr_test_status).toBe(
+      "passed",
+    );
     expect(status.restore_readiness.gold_star).toBe(true);
     expect(status.restore_readiness.last_restore_test_backup_set_id).toBe(
       backupSetId,
     );
     expect(status.restore_readiness.last_restore_test_target_dir).toBe(null);
+    expect(status.restore_readiness.last_pitr_test_backup_set_id).toBe(
+      backupSetId,
+    );
+    expect(status.restore_readiness.last_pitr_test_target_time).toBe(
+      "2026-04-07T15:38:10.000Z",
+    );
   });
 
   it("restore-tests remotely from rustic plus R2 WAL when remote-only is requested", async () => {
@@ -1017,11 +1295,55 @@ describe("bay-backup runner", () => {
         "secrets.tar.gz": Buffer.from("secrets"),
       },
     });
+    const sentinelRows: Array<{ run_id: string; phase: "pre" | "post" }> = [];
+    const walArchiveDir = join(bayRoot, "wal", "archive");
+    const remoteWalKeys = [
+      "bay-backups/bay-0/wal/0000000100000000000000E8",
+      "bay-backups/bay-0/wal/0000000100000000000000E9",
+    ];
+    getPoolMock = jest.fn(() => ({
+      query: jest.fn(async (sql: string, params?: string[]) => {
+        if (
+          sql.includes(
+            "CREATE TABLE IF NOT EXISTS public.bay_restore_test_pitr_events",
+          )
+        ) {
+          return { rows: [] };
+        }
+        if (sql.includes("DELETE FROM public.bay_restore_test_pitr_events")) {
+          return { rows: [] };
+        }
+        if (sql.includes("INSERT INTO public.bay_restore_test_pitr_events")) {
+          sentinelRows.push({
+            run_id: params?.[0] ?? "missing",
+            phase: sql.includes("'pre'") ? "pre" : "post",
+          });
+          return { rows: [] };
+        }
+        if (sql === "SELECT clock_timestamp() AS target_time") {
+          return {
+            rows: [{ target_time: "2026-04-07T15:39:10.000Z" }],
+          };
+        }
+        if (sql === "SELECT pg_sleep(0.25)") {
+          return { rows: [] };
+        }
+        if (sql === "SELECT pg_switch_wal()") {
+          mkdirSync(walArchiveDir, { recursive: true });
+          writeFileSync(
+            join(walArchiveDir, "0000000100000000000000E9"),
+            "segment-2",
+          );
+          return { rows: [{ pg_switch_wal: "0000000100000000000000E9" }] };
+        }
+        throw new Error(`unexpected query '${sql}'`);
+      }),
+    }));
     listObjectsMock = jest.fn(async ({ prefix }: { prefix?: string }) => {
       if (prefix !== "bay-backups/bay-0/wal/") {
         throw new Error(`unexpected WAL prefix '${prefix}'`);
       }
-      return ["bay-backups/bay-0/wal/0000000100000000000000E8"];
+      return remoteWalKeys;
     });
     execFileMock = jest.fn(
       (
@@ -1117,6 +1439,10 @@ describe("bay-backup runner", () => {
         }
         if (cmd === "/usr/bin/psql") {
           const sql = args[args.length - 1];
+          if (sql === "SELECT pg_is_in_recovery()::text") {
+            cb(null, { stdout: "f\n", stderr: "" });
+            return;
+          }
           if (sql === "SELECT current_database()") {
             cb(null, { stdout: "smc\n", stderr: "" });
             return;
@@ -1133,6 +1459,23 @@ describe("bay-backup runner", () => {
             cb(null, { stdout: "server_settings\n", stderr: "" });
             return;
           }
+          const countMatch = sql.match(
+            /^SELECT count\(\*\) FILTER \(WHERE phase='pre'\)::text \|\| ',' \|\| count\(\*\) FILTER \(WHERE phase='post'\)::text FROM public\.bay_restore_test_pitr_events WHERE run_id = '([^']+)'$/,
+          );
+          if (countMatch) {
+            const [, runId] = countMatch;
+            const pre = sentinelRows.filter(
+              (row) => row.run_id === runId && row.phase === "pre",
+            ).length;
+            const post = sentinelRows.filter(
+              (row) => row.run_id === runId && row.phase === "post",
+            ).length;
+            cb(null, {
+              stdout: `${Math.min(pre, 1)},${post > 0 ? 0 : 0}\n`,
+              stderr: "",
+            });
+            return;
+          }
           cb(new Error(`unexpected SQL '${sql}'`));
           return;
         }
@@ -1147,6 +1490,8 @@ describe("bay-backup runner", () => {
       remote_only: true,
       keep: true,
     });
+    expect(result.pitr_verified).toBe(true);
+    expect(result.target_time).toBe("2026-04-07T15:39:10.000Z");
     expect(result.source_storage_backend).toBe("rustic");
     expect(result.wal_storage_backend).toBe("r2");
     expect(result.remote_only).toBe(true);
@@ -1158,10 +1503,83 @@ describe("bay-backup runner", () => {
     expect(
       readFileSync(join(result.target_dir, "restore-wal.js"), "utf8"),
     ).toContain("https://acct-1.r2.cloudflarestorage.com");
+    expect(result.verified_queries).toContain("pitr_pre_count=1");
+    expect(result.verified_queries).toContain("pitr_post_count=0");
+    expect(result.verified_queries).toContain("pitr_recovery_promoted=true");
     expect(listObjectsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         prefix: "bay-backups/bay-0/wal/",
       }),
     );
+  });
+
+  it("prunes old local archives and stale restore workspaces after a full backup", async () => {
+    process.env.COCALC_BAY_BACKUP_RETENTION_COUNT = "1";
+    process.env.COCALC_BAY_BACKUP_RESTORE_RETENTION_DAYS = "1";
+
+    const { getBayBackupStatus, runBayBackup } = await import("./index");
+
+    const first = await runBayBackup();
+    const second = await runBayBackup();
+    const bayRoot = join(backupRoot, "bay-backups", "bay-0");
+    const firstArchiveDir = join(bayRoot, "archives", first.backup_set_id);
+    const secondArchiveDir = join(bayRoot, "archives", second.backup_set_id);
+    const staleRestoreDir = join(bayRoot, "restores", "stale-restore");
+    mkdirSync(staleRestoreDir, { recursive: true });
+    utimesSync(
+      staleRestoreDir,
+      new Date("2026-03-01T00:00:00Z"),
+      new Date("2026-03-01T00:00:00Z"),
+    );
+
+    const third = await runBayBackup();
+    const thirdArchiveDir = join(bayRoot, "archives", third.backup_set_id);
+
+    expect(
+      readFileSync(join(thirdArchiveDir, "manifest.json"), "utf8"),
+    ).toContain(third.backup_set_id);
+    expect(() =>
+      readFileSync(join(firstArchiveDir, "manifest.json"), "utf8"),
+    ).toThrow();
+    expect(() =>
+      readFileSync(join(secondArchiveDir, "manifest.json"), "utf8"),
+    ).toThrow();
+    expect(() =>
+      readFileSync(join(staleRestoreDir, "missing"), "utf8"),
+    ).toThrow();
+
+    const status = await getBayBackupStatus();
+    expect(
+      status.bay_backup.last_pruned_local_archive_count,
+    ).toBeGreaterThanOrEqual(1);
+    expect(status.bay_backup.last_pruned_restore_count).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(status.bay_backup.last_pruned_at).toBeTruthy();
+  });
+
+  it("reports scheduled full snapshot maintenance state", async () => {
+    process.env.COCALC_BAY_BACKUP_INTERVAL_MS = "600000";
+    process.env.COCALC_BAY_BACKUP_RETRY_INTERVAL_MS = "12345";
+    process.env.COCALC_BAY_BACKUP_RETENTION_COUNT = "9";
+    process.env.COCALC_BAY_BACKUP_RESTORE_RETENTION_DAYS = "5";
+
+    const { getBayBackupStatus, runBayBackup, startBayBackupMaintenance } =
+      await import("./index");
+
+    await runBayBackup();
+    startBayBackupMaintenance();
+    let status = await getBayBackupStatus();
+    for (let i = 0; i < 5 && !status.bay_backup.maintenance_next_run_at; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      status = await getBayBackupStatus();
+    }
+    expect(status.bay_backup.full_snapshot_scheduler_enabled).toBe(true);
+    expect(status.bay_backup.full_snapshot_interval_ms).toBe(600000);
+    expect(status.bay_backup.full_snapshot_retry_interval_ms).toBe(12345);
+    expect(status.bay_backup.full_snapshot_retention_count).toBe(9);
+    expect(status.bay_backup.restore_workspace_retention_days).toBe(5);
+    expect(status.bay_backup.maintenance_running).toBe(false);
+    expect(status.bay_backup.maintenance_next_run_at).toBeTruthy();
   });
 });

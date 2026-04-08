@@ -25,6 +25,13 @@ export function createServiceClient<Api>(options: Omit<ServiceCall, "mesg">) {
         if (typeof prop !== "string") {
           return undefined;
         }
+        // Service clients are ordinary RPC proxies, not Promises/thenables.
+        // Returning a synthetic method for "then" makes async wrappers that
+        // return a service client accidentally trigger a remote "then" call
+        // during Promise resolution.
+        if (prop == "then" || prop == "catch" || prop == "finally") {
+          return undefined;
+        }
         if (prop == "conat") {
           return {
             ping: async (opts: { id?: string; maxWait?: number } = {}) =>

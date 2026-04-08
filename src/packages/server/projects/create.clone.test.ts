@@ -8,7 +8,7 @@ let assertLocalProjectCollaboratorMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
 let computePlacementPermissionMock: jest.Mock;
 let getUserHostTierMock: jest.Mock;
-let conatWithProjectRoutingMock: jest.Mock;
+let getExplicitHostRoutedClientMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let poolConnectMock: jest.Mock;
@@ -58,8 +58,10 @@ jest.mock("@cocalc/server/conat/file-server-client", () => ({
 
 jest.mock("@cocalc/server/conat/route-client", () => ({
   __esModule: true,
-  conatWithProjectRouting: (...args: any[]) =>
-    conatWithProjectRoutingMock(...args),
+  getExplicitHostRoutedClient: (...args: any[]) =>
+    getExplicitHostRoutedClientMock(...args),
+  getExplicitHostControlClient: (...args: any[]) =>
+    getExplicitHostRoutedClientMock(...args),
 }));
 
 jest.mock("@cocalc/conat/project-host/api", () => ({
@@ -97,7 +99,9 @@ describe("projects.createProject clone routing", () => {
     }));
     computePlacementPermissionMock = jest.fn(() => ({ can_place: true }));
     getUserHostTierMock = jest.fn(() => 0);
-    conatWithProjectRoutingMock = jest.fn(() => ({ id: "mock-conat-client" }));
+    getExplicitHostRoutedClientMock = jest.fn(async () => ({
+      id: "mock-conat-client",
+    }));
     appendProjectOutboxEventForProjectMock = jest.fn(async () => "event-id");
     publishProjectAccountFeedEventsBestEffortMock = jest.fn(
       async () => undefined,
@@ -231,7 +235,10 @@ describe("projects.createProject clone routing", () => {
         start: false,
       }),
     );
-    expect(conatWithProjectRoutingMock).toHaveBeenCalled();
+    expect(getExplicitHostRoutedClientMock).toHaveBeenCalledWith({
+      host_id: HOST_ID,
+      fresh: false,
+    });
   });
 
   it("rejects clone creation when the source project belongs to another bay", async () => {

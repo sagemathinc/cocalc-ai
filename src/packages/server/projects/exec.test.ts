@@ -1,9 +1,8 @@
 export {};
 
 let assertLocalProjectCollaboratorMock: jest.Mock;
-let materializeProjectHostMock: jest.Mock;
 let projectApiClientMock: jest.Mock;
-let conatWithProjectRoutingMock: jest.Mock;
+let getExplicitProjectRoutedClientMock: jest.Mock;
 let systemExecMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
@@ -12,16 +11,10 @@ jest.mock("@cocalc/server/conat/project-local-access", () => ({
     assertLocalProjectCollaboratorMock(...args),
 }));
 
-jest.mock("@cocalc/server/conat/route-project", () => ({
-  __esModule: true,
-  materializeProjectHost: (...args: any[]) =>
-    materializeProjectHostMock(...args),
-}));
-
 jest.mock("@cocalc/server/conat/route-client", () => ({
   __esModule: true,
-  conatWithProjectRouting: (...args: any[]) =>
-    conatWithProjectRoutingMock(...args),
+  getExplicitProjectRoutedClient: (...args: any[]) =>
+    getExplicitProjectRoutedClientMock(...args),
 }));
 
 jest.mock("@cocalc/conat/project/api", () => ({
@@ -36,8 +29,9 @@ describe("project exec local bay access", () => {
   beforeEach(() => {
     jest.resetModules();
     assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
-    materializeProjectHostMock = jest.fn(async () => undefined);
-    conatWithProjectRoutingMock = jest.fn(() => ({ kind: "conat-client" }));
+    getExplicitProjectRoutedClientMock = jest.fn(async () => ({
+      kind: "conat-client",
+    }));
     systemExecMock = jest.fn(async () => ({
       stdout: "ok",
       stderr: "",
@@ -62,7 +56,7 @@ describe("project exec local bay access", () => {
         execOpts: { command: "pwd" },
       }),
     ).rejects.toThrow("project belongs to another bay");
-    expect(materializeProjectHostMock).not.toHaveBeenCalled();
+    expect(getExplicitProjectRoutedClientMock).not.toHaveBeenCalled();
     expect(projectApiClientMock).not.toHaveBeenCalled();
   });
 
@@ -79,8 +73,9 @@ describe("project exec local bay access", () => {
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,
     });
-    expect(materializeProjectHostMock).toHaveBeenCalledWith(PROJECT_ID);
-    expect(conatWithProjectRoutingMock).toHaveBeenCalledTimes(1);
+    expect(getExplicitProjectRoutedClientMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+    });
     expect(projectApiClientMock).toHaveBeenCalledWith({
       client: { kind: "conat-client" },
       project_id: PROJECT_ID,

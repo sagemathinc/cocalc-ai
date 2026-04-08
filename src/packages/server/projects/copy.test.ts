@@ -10,7 +10,8 @@ let createBackupMock: jest.Mock;
 let waitLroMock: jest.Mock;
 let getProjectFileServerClientMock: jest.Mock;
 let applyPendingCopiesMock: jest.Mock;
-let createHostControlClientMock: jest.Mock;
+let getRoutedHostControlClientMock: jest.Mock;
+let getExplicitProjectRoutedClientMock: jest.Mock;
 let statMock: jest.Mock;
 
 type ProjectMeta = {
@@ -35,19 +36,16 @@ jest.mock("@cocalc/server/conat/file-server-client", () => ({
     getProjectFileServerClientMock(...args),
 }));
 
-jest.mock("@cocalc/conat/project-host/api", () => ({
-  __esModule: true,
-  createHostControlClient: (...args: any[]) =>
-    createHostControlClientMock(...args),
-}));
-
 jest.mock("@cocalc/server/conat/route-client", () => ({
   __esModule: true,
-  conatWithProjectRouting: jest.fn(() => ({
-    fs: jest.fn(() => ({
-      stat: (...args: any[]) => statMock(...args),
-    })),
-  })),
+  getExplicitProjectRoutedClient: (...args: any[]) =>
+    getExplicitProjectRoutedClientMock(...args),
+}));
+
+jest.mock("@cocalc/server/project-host/client", () => ({
+  __esModule: true,
+  getRoutedHostControlClient: (...args: any[]) =>
+    getRoutedHostControlClientMock(...args),
 }));
 
 jest.mock("@cocalc/server/conat/api/project-backups", () => ({
@@ -130,8 +128,13 @@ describe("projects.copyProjectFiles", () => {
       scope_id: "p1",
     }));
     applyPendingCopiesMock = jest.fn(async () => ({ claimed: 1 }));
-    createHostControlClientMock = jest.fn(() => ({
+    getRoutedHostControlClientMock = jest.fn(async () => ({
       applyPendingCopies: (...args: any[]) => applyPendingCopiesMock(...args),
+    }));
+    getExplicitProjectRoutedClientMock = jest.fn(async () => ({
+      fs: jest.fn(() => ({
+        stat: (...args: any[]) => statMock(...args),
+      })),
     }));
     waitLroMock = jest.fn(async () => ({
       status: "succeeded",
@@ -207,9 +210,10 @@ describe("projects.copyProjectFiles", () => {
         snapshot_id: "snap-existing",
       }),
     );
-    expect(createHostControlClientMock).toHaveBeenCalledWith(
+    expect(getRoutedHostControlClientMock).toHaveBeenCalledWith(
       expect.objectContaining({
         host_id: "h2",
+        timeout: 5000,
       }),
     );
     expect(applyPendingCopiesMock).toHaveBeenCalledWith(

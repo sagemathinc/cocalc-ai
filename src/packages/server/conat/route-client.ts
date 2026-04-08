@@ -13,6 +13,8 @@ import {
 } from "@cocalc/conat/core/client";
 import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import {
+  materializeHostRouteTarget,
+  materializeProjectHostTarget,
   routeProjectSubject,
   listenForUpdates as listenForProjectHostUpdates,
 } from "./route-project";
@@ -36,6 +38,16 @@ type RoutedHubClientState = {
 };
 
 const routedHubClients: Record<string, RoutedHubClientState> = {};
+
+type RoutedTarget =
+  | {
+      address?: string;
+      host_id?: string;
+      host_session_id?: string;
+    }
+  | {
+      client: Client;
+    };
 
 function evictRoutedHubClient(
   host_id: string,
@@ -115,20 +127,30 @@ function getOrCreateRoutedHubClient({
   const state: RoutedHubClientState = {
     address,
     host_session_id,
-    client: connect({
-      address,
-      inboxPrefix: inboxPrefix({ hub_id: "hub" }),
-      auth: async (cb) => {
-        try {
-          const token = await getHubRouteToken(host_id, state);
-          cb({ bearer: token });
-        } catch {
-          cb({});
-        }
-      },
-      reconnection: false,
-    }),
+    client: undefined as unknown as Client,
   };
+  state.client = connect({
+    // Routed host clients already have explicit lifecycle via routedHubClients,
+    // so they must not share the global Conat cache or socket.io manager state.
+    noCache: true,
+    forceNew: true,
+    address,
+    inboxPrefix: inboxPrefix({ hub_id: "hub" }),
+    auth: async (cb) => {
+      try {
+        const token = await getHubRouteToken(host_id, state);
+        cb({ bearer: token });
+      } catch (err) {
+        log.debug("failed issuing routed hub token", {
+          host_id,
+          address,
+          err: `${err}`,
+        });
+        cb({});
+      }
+    },
+    reconnection: false,
+  });
   const reconnectRouted = () => {
     for (const delayMs of ROUTED_RECONNECT_DELAYS_MS) {
       setTimeout(() => {
@@ -170,6 +192,77 @@ function getOrCreateRoutedHubClient({
   return state.client;
 }
 
+function routeTargetToClient(target?: {
+  address?: string;
+  host_id?: string;
+  host_session_id?: string;
+}): RoutedTarget | undefined {
+  if (!target?.address || !target.host_id) {
+    return target;
+  }
+  return {
+    client: getOrCreateRoutedHubClient({
+      host_id: target.host_id,
+      address: target.address,
+      host_session_id: target.host_session_id,
+    }),
+  };
+}
+
+function hasRoutedClient(target?: RoutedTarget): target is { client: Client } {
+  return !!target && "client" in target;
+}
+
+export async function getExplicitProjectRoutedClient({
+  project_id,
+  fresh = false,
+}: {
+  project_id: string;
+  fresh?: boolean;
+}): Promise<Client> {
+  const routed = routeTargetToClient(
+    await materializeProjectHostTarget(project_id, { fresh }),
+  );
+  if (!hasRoutedClient(routed)) {
+    throw new Error(`unable to route project ${project_id} to a host`);
+  }
+  return routed.client;
+}
+
+export async function getExplicitHostRoutedClient({
+  host_id,
+  fresh = false,
+}: {
+  host_id: string;
+  fresh?: boolean;
+}): Promise<Client> {
+  const routed = routeTargetToClient(
+    await materializeHostRouteTarget(host_id, { fresh }),
+  );
+  if (!hasRoutedClient(routed)) {
+    throw new Error(`unable to route host ${host_id} to its owning bay`);
+  }
+  return routed.client;
+}
+
+export async function getExplicitHostControlClient({
+  host_id,
+  fresh = false,
+}: {
+  host_id: string;
+  fresh?: boolean;
+}): Promise<Client> {
+  const routed = await materializeHostRouteTarget(host_id, { fresh });
+  if (!routed?.host_id) {
+    throw new Error(`unable to route host ${host_id} to its owning bay`);
+  }
+  // The project-host control service currently lives on the owning bay hub
+  // cluster, not the host-local Conat server. Keep the route materialization
+  // explicit so callers fail fast on invalid ownership, but send the RPC over
+  // the bay hub client.
+  return conatWithProjectRouting();
+}
+
 export function conatWithProjectRouting(options?: ClientOptions): Client {
   if (!listenerStarted) {
     listenerStarted = true;
@@ -191,31 +284,13 @@ export function conatWithProjectRouting(options?: ClientOptions): Client {
     routeSubject == null
       ? (subject: string) => {
           const routed = routeProjectSubject(subject);
-          if (!routed?.address || !routed.host_id) {
-            return routed;
-          }
-          return {
-            client: getOrCreateRoutedHubClient({
-              host_id: routed.host_id,
-              address: routed.address,
-              host_session_id: routed.host_session_id,
-            }),
-          };
+          return routeTargetToClient(routed);
         }
       : (subject: string) => {
           const custom = routeSubject(subject);
           if (custom) return custom;
           const routed = routeProjectSubject(subject);
-          if (!routed?.address || !routed.host_id) {
-            return routed;
-          }
-          return {
-            client: getOrCreateRoutedHubClient({
-              host_id: routed.host_id,
-              address: routed.address,
-              host_session_id: routed.host_session_id,
-            }),
-          };
+          return routeTargetToClient(routed);
         };
   client.setRouteSubject(combinedRoute);
   return client;

@@ -9,8 +9,7 @@ import type {
   ExecuteCodeOptions,
 } from "@cocalc/util/types/execute-code";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
-import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
-import { materializeProjectHost } from "@cocalc/server/conat/route-project";
+import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 
 // checks auth and runs code
 export default async function exec({
@@ -24,9 +23,8 @@ export default async function exec({
 }): Promise<ExecuteCodeOutput> {
   await assertLocalProjectCollaborator({ account_id, project_id });
 
-  await materializeProjectHost(project_id);
   const api = projectApiClient({
-    client: conatWithProjectRouting(),
+    client: await getExplicitProjectRoutedClient({ project_id }),
     project_id,
     timeout: execOpts.timeout ? execOpts.timeout * 1000 + 2000 : undefined,
   });

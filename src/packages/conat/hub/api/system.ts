@@ -437,6 +437,21 @@ export interface BayBackupStatus {
   last_error_at: string | null;
   last_error: string | null;
   restore_state: string | null;
+  full_snapshot_scheduler_enabled: boolean;
+  full_snapshot_interval_ms: number | null;
+  full_snapshot_retry_interval_ms: number;
+  full_snapshot_retention_count: number;
+  restore_workspace_retention_days: number;
+  maintenance_running: boolean;
+  maintenance_next_run_at: string | null;
+  maintenance_last_started_at: string | null;
+  maintenance_last_finished_at: string | null;
+  maintenance_last_success_at: string | null;
+  maintenance_last_error_at: string | null;
+  maintenance_last_error: string | null;
+  last_pruned_at: string | null;
+  last_pruned_local_archive_count: number;
+  last_pruned_restore_count: number;
 }
 
 export interface BayRestoreReadinessStatus {
@@ -450,12 +465,27 @@ export interface BayRestoreReadinessStatus {
     | "failed";
   latest_backup_restore_tested: boolean;
   latest_backup_restore_tested_at: string | null;
+  latest_backup_pitr_test_status:
+    | "no-backup"
+    | "not-recovery-ready"
+    | "not-run"
+    | "stale"
+    | "passed"
+    | "failed";
+  latest_backup_pitr_tested: boolean;
+  latest_backup_pitr_tested_at: string | null;
   gold_star: boolean;
   last_restore_test_backup_set_id: string | null;
   last_restore_test_status: "passed" | "failed" | null;
   last_restore_tested_at: string | null;
   last_restore_test_target_dir: string | null;
   last_restore_test_recovery_ready: boolean | null;
+  last_pitr_test_backup_set_id: string | null;
+  last_pitr_test_status: "passed" | "failed" | null;
+  last_pitr_tested_at: string | null;
+  last_pitr_test_target_time: string | null;
+  last_pitr_test_target_dir: string | null;
+  last_pitr_test_remote_only: boolean | null;
   summary: string;
 }
 
@@ -495,6 +525,7 @@ export interface BayRestoreRunResult extends BayInfo {
   finished_at: string;
   dry_run: boolean;
   remote_only: boolean;
+  target_time: string | null;
   backup_set_id: string;
   format: "pg_basebackup" | "pg_dumpall";
   target_dir: string;
@@ -518,6 +549,7 @@ export interface BayRestoreTestRunResult extends BayInfo {
   started_at: string;
   finished_at: string;
   remote_only: boolean;
+  target_time: string | null;
   backup_set_id: string;
   target_dir: string;
   data_dir: string | null;
@@ -532,6 +564,8 @@ export interface BayRestoreTestRunResult extends BayInfo {
   wal_storage_backend: "local" | "r2" | null;
   wal_segment_count: number;
   recovery_ready: boolean;
+  pitr_verified: boolean;
+  pitr_run_id: string | null;
   kept_on_disk: boolean;
   verified_queries: string[];
   notes: string[];
@@ -823,6 +857,7 @@ export interface System {
     target_dir?: string;
     dry_run?: boolean;
     remote_only?: boolean;
+    target_time?: string;
   }) => Promise<BayRestoreRunResult>;
 
   runBayRestoreTest: (opts?: {

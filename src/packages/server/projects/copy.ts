@@ -1,14 +1,14 @@
 import path from "node:path";
-import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
-import { createHostControlClient } from "@cocalc/conat/project-host/api";
+import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
 import { type Fileserver } from "@cocalc/conat/files/file-server";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
-import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
+import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { createBackup as createBackupLro } from "@cocalc/server/conat/api/project-backups";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { insertCopyRowIfMissing, upsertCopyRow } from "./copy-db";
 
 const logger = getLogger("server:projects:copy");
@@ -260,7 +260,9 @@ async function snapshotMatchesCurrentSourceFiles({
   ) {
     return false;
   }
-  const fs = conatWithProjectRouting().fs({ project_id });
+  const fs = (await getExplicitProjectRoutedClient({ project_id })).fs({
+    project_id,
+  });
   for (let i = 0; i < src_paths.length; i += 1) {
     const srcPath = src_paths[i];
     const backupPath = backup_src_paths[i];
@@ -354,15 +356,14 @@ async function triggerRemoteCopyApply({
   timeout_ms: number;
 }): Promise<void> {
   if (!queuedByHost.size) return;
-  const client = conat();
   await Promise.all(
     Array.from(queuedByHost.entries()).map(async ([host_id, queued]) => {
       try {
-        await createHostControlClient({
+        const client = await getRoutedHostControlClient({
           host_id,
-          client,
           timeout: Math.max(5_000, Math.min(timeout_ms, 30_000)),
-        }).applyPendingCopies({
+        });
+        await client.applyPendingCopies({
           limit: Math.max(queued, 10),
         });
       } catch (err) {
