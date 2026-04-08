@@ -342,14 +342,14 @@ Recommended order:
 ## Open Questions To Resolve Before Coding
 
 1. Should the first directory implementation be a fabric service or a router
-   extension?
-2. Should there be one bridge connection per bay or a small configurable pool?
-3. Which first RPC path should be the canary?
+   extension? ANS: i think directory = fabric service makes the most sense.
+2. Should there be one bridge connection per bay or a small configurable pool?  ANS: I'm not sure -- Interesting -- a haven't implemented pooling yet, but it certainly makes sense as it should increase throughput and hopefully not add too much complexity (?).  
+3. Which first RPC path should be the canary?  ANS: project control: a clear e2e test is to have an account in bay 1 and a project in bay 2 and to start that project via the account.
    - host control
    - project control
    - browser control
 4. What exact epoch/fencing mechanism should protect ownership changes during
-   replay and restore?
+   replay and restore?  ANS: No idea.
 
 ## Recommended Immediate Output
 
@@ -361,5 +361,184 @@ Before Phase 5 code starts, we should freeze:
 - initial directory/placement interface
 - first canary RPC path
 
-Once those are written down, implementation should be much less likely to
-drift into ad hoc routing.
+The following is the proposed frozen v1 contract.
+
+## Frozen Phase 5 v1 Contract
+
+### 1. Subject Naming
+
+Use a small fixed family of inter-bay subjects.
+
+Top-level families:
+
+- `bay.<dst_bay>.rpc.project-control.<method>`
+- `bay.<dst_bay>.rpc.host-control.<method>`
+- `bay.<dst_bay>.events.control`
+- `global.directory.rpc.<method>`
+
+Rules:
+
+- The first routing key is always the destination bay, not the source bay.
+- We do not create top-level per-project or per-host subject families.
+- We do not create per-project durable inter-bay streams.
+- Reply traffic in v1 uses ordinary Conat inbox subjects; we do not invent a
+  separate bespoke reply namespace in this phase.
+
+Implications:
+
+- cross-bay project control is always routed to the owning bay first
+- once inside the destination bay, normal local project/host routing takes over
+- replayable inter-bay events are batched into the bounded
+  `bay.<dst_bay>.events.control` family instead of exploding the subject space
+
+### 2. Bay Auth Pattern Rules
+
+Phase 5 v1 assumes each bay bridge is a trusted internal service identity on a
+private fabric.
+
+For bay `A`, the bridge is allowed:
+
+- publish:
+  - `bay.*.rpc.>`
+  - `bay.*.events.>`
+  - `global.directory.rpc.>`
+  - `_INBOX.>`
+- subscribe:
+  - `bay.A.rpc.>`
+  - `bay.A.events.>`
+  - `global.directory.rpc.>`
+  - `_INBOX.>`
+
+Notes:
+
+- This is intentionally broad enough to let one bridge request any other bay
+  and use ordinary request/reply semantics.
+- The `_INBOX.>` allowance is acceptable in v1 because this is an internal
+  trusted fabric, not a user-facing Conat surface.
+- If we later want tighter reply-path auth, we can move the bridge to an
+  explicit bay-owned reply namespace without changing application code.
+
+### 3. Bridge Abstraction API
+
+Bay application code should not construct raw inter-bay subject strings or
+manage extra Conat clients directly. It should depend on one bridge interface.
+
+Phase 5 v1 bridge shape:
+
+```ts
+interface InterBayBridge {
+  readonly bay_id: string;
+
+  request<T = any>(opts: {
+    dest_bay: string;
+    subject: string;
+    data?: any;
+    timeout_ms?: number;
+  }): Promise<T>;
+
+  publishEvent(opts: {
+    dest_bay: string;
+    subject: string;
+    data?: any;
+  }): Promise<void>;
+
+  subscribe(subject: string, handler: (mesg: any) => Promise<any>): Promise<{
+    close: () => void;
+  }>;
+}
+```
+
+Bridge rules:
+
+- there is one logical bridge connection per bay in v1
+- connection pooling is deferred; the interface must not preclude it later
+- all outgoing inter-bay RPC from bay code goes through `request(...)`
+- all incoming fabric handlers are registered through the bridge, not scattered
+  through unrelated modules
+
+Implementation note:
+
+- the bridge may internally use one Conat client today and a small client pool
+  later without changing call sites
+
+### 4. Initial Directory / Placement Interface
+
+The first directory implementation should be a fabric service, not a router
+extension.
+
+Phase 5 v1 directory surface:
+
+```ts
+interface InterBayDirectory {
+  resolveProjectBay(project_id: string): Promise<{
+    bay_id: string;
+    epoch: number;
+  } | null>;
+
+  resolveHostBay(host_id: string): Promise<{
+    bay_id: string;
+    epoch: number;
+  } | null>;
+}
+```
+
+Rules:
+
+- `project_id -> bay_id` is authoritative for project-control routing
+- `host_id -> bay_id` is authoritative for host-control routing
+- every response includes an `epoch`
+- callers may cache responses briefly, but mutating operations should carry or
+  check the epoch so stale ownership can be rejected explicitly
+
+Deferred from v1:
+
+- account home bay
+- browser session bay lookup
+- automatic placement decisions
+- migration / reassignment workflows
+
+### 5. First Canary RPC Path
+
+The first canary path is cross-bay project control.
+
+Concretely:
+
+- an account session connected to bay `A`
+- acting on a project owned by bay `B`
+- sends `project start --wait`
+- bay `A` resolves `project_id -> bay B`
+- bay `A` issues an inter-bay RPC to
+  `bay.B.rpc.project-control.start`
+- bay `B` performs the normal local start path
+- the result is returned to bay `A`
+
+Why this path first:
+
+- it is a real end-to-end operator-visible workflow
+- success/failure is unambiguous
+- it exercises directory lookup, inter-bay routing, destination-bay execution,
+  and reply handling
+- it does not require browser session migration or project data-plane movement
+
+Non-goals for the first canary:
+
+- browser control
+- inter-bay file access
+- project execution streams
+- ownership migration during the request
+
+### 6. Fencing Rule For v1
+
+The full replay/restore ownership fencing design is still open, but v1 should
+freeze one minimal rule so coding can start safely:
+
+- every authoritative directory answer includes `epoch`
+- inter-bay mutating RPC should carry the epoch it resolved against
+- if the destination bay sees an ownership mismatch or newer epoch, it returns
+  an explicit stale-routing error instead of silently acting
+
+That is enough to avoid baking in epoch-free routing while leaving room for a
+better migration/replay design later.
+
+Once these are written down, implementation should be much less likely to drift
+into ad hoc routing.
