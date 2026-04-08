@@ -129,6 +129,40 @@ describe("appendStreamMessage", () => {
     );
   });
 
+  test("does not insert a space inside dotfile markdown links", () => {
+    const events = [textEvent("message", "[.", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent(
+        "message",
+        "local/hub-daemon.env](/home/wstein/build/cocalc-lite2/src/.local/hub-daemon.env)",
+        2,
+      ),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "[.local/hub-daemon.env](/home/wstein/build/cocalc-lite2/src/.local/hub-daemon.env)",
+    );
+  });
+
+  test("does not insert a space inside markdown file names split at an extension dot", () => {
+    const events = [textEvent("message", "[README.", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent(
+        "message",
+        "md](/home/wstein/build/cocalc-lite2/src/README.md)",
+        2,
+      ),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "[README.md](/home/wstein/build/cocalc-lite2/src/README.md)",
+    );
+  });
+
   test("inserts a paragraph break between large app-server chunks", () => {
     const events = [
       textEvent(
