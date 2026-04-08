@@ -413,9 +413,18 @@ export class GcpProvider implements CloudProvider {
           },
         ]
       : [];
-    const scheduling = spec.gpu
-      ? { onHostMaintenance: "TERMINATE", automaticRestart: true }
-      : undefined;
+    const scheduling =
+      spec.pricing_model === "spot"
+        ? {
+            onHostMaintenance: "TERMINATE",
+            automaticRestart: false,
+            preemptible: true,
+            provisioningModel: "SPOT",
+            instanceTerminationAction: "STOP",
+          }
+        : spec.gpu
+          ? { onHostMaintenance: "TERMINATE", automaticRestart: true }
+          : undefined;
 
     const instanceResource = {
       name: spec.name,

@@ -24,6 +24,8 @@ import {
   ListDisksRequest,
   ListInstancesRequest,
   NetworkInterfaceSpec,
+  PreemptibleSpec,
+  PreemptibleSpec_PreemptionPolicy,
   PublicIPAddress,
   ResourcesSpec,
   SourceImageFamily,
@@ -450,6 +452,13 @@ export class NebiusProvider implements CloudProvider {
           cloudInitUserData: cloudInit,
           stopped: false,
           recoveryPolicy: InstanceRecoveryPolicy.RECOVER,
+          preemptible:
+            spec.pricing_model === "spot"
+              ? PreemptibleSpec.create({
+                  onPreemption: PreemptibleSpec_PreemptionPolicy.STOP,
+                  priority: 3,
+                })
+              : undefined,
           hostname: name,
         }),
       }),

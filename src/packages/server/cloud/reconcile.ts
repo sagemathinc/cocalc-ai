@@ -14,6 +14,7 @@ import { getProviderContext } from "./provider-context";
 import { DisksClient } from "@google-cloud/compute";
 import { NebiusClient } from "@cocalc/cloud/nebius/client";
 import { getVolumes } from "@cocalc/cloud/hyperstack/client";
+import { enqueueCloudVmWorkOnce } from "./db";
 import { listServerProviders } from "./providers";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getNebiusRegionKeys } from "./nebius-credentials";
@@ -237,6 +238,36 @@ function parseLastActionAt(row: HostRow): Date | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
+function pricingModel(row: HostRow): "on_demand" | "spot" {
+  return row.metadata?.pricing_model === "spot" ? "spot" : "on_demand";
+}
+
+function interruptionRestorePolicy(row: HostRow): "none" | "immediate" {
+  const explicit = row.metadata?.interruption_restore_policy;
+  if (explicit === "none") return "none";
+  if (explicit === "immediate") return "immediate";
+  return pricingModel(row) === "spot" ? "immediate" : "none";
+}
+
+export function shouldAutoRestoreInterruptedSpotHost(row: HostRow): boolean {
+  if (pricingModel(row) !== "spot") return false;
+  if (interruptionRestorePolicy(row) !== "immediate") return false;
+  if (row.status === "deprovisioned") return false;
+  const lastAction = `${row.metadata?.last_action ?? ""}`.trim().toLowerCase();
+  const lastActionStatus = `${row.metadata?.last_action_status ?? ""}`
+    .trim()
+    .toLowerCase();
+  if (
+    (lastAction === "stop" ||
+      lastAction === "delete" ||
+      lastAction === "deprovision") &&
+    lastActionStatus === "success"
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function getMissingCount(runtime: Record<string, any> | undefined): number {
   return Number(runtime?.metadata?.reconcile?.missing_count ?? 0);
 }
@@ -415,6 +446,48 @@ async function updateHost(
   );
 }
 
+async function enqueueSpotRestore(
+  provider: Provider,
+  row: HostRow,
+  nextRuntime: Record<string, any>,
+  reason: string,
+): Promise<boolean> {
+  if (!shouldAutoRestoreInterruptedSpotHost(row)) return false;
+  const enqueued = await enqueueCloudVmWorkOnce({
+    vm_id: row.id,
+    action: "start",
+    payload: {
+      source: "cloud_reconcile",
+      reason,
+    },
+  });
+  logger.warn("cloud reconcile: auto-restoring interrupted spot host", {
+    provider,
+    host_id: row.id,
+    reason,
+    enqueued: !!enqueued,
+  });
+  const runtimeMetadata = nextRuntime.metadata ?? {};
+  const reconcileMetadata = runtimeMetadata.reconcile ?? {};
+  await updateHost(row, {
+    status: "starting",
+    runtime: {
+      ...nextRuntime,
+      public_ip: undefined,
+      metadata: {
+        ...runtimeMetadata,
+        reconcile: {
+          ...reconcileMetadata,
+          auto_restore_reason: reason,
+          auto_restore_requested_at: new Date().toISOString(),
+        },
+      },
+    },
+  });
+  await bumpReconcile(provider, DEFAULT_INTERVALS.running_ms);
+  return true;
+}
+
 async function reconcileProvider(provider: Provider) {
   const { prefix, entry, creds } = await getProviderContext(provider);
   const hosts = await loadHosts(provider);
@@ -472,6 +545,19 @@ async function reconcileProvider(provider: Provider) {
         continue;
       }
       if (diskState === "present") {
+        if (
+          await enqueueSpotRestore(
+            provider,
+            row,
+            {
+              ...nextRuntime,
+              public_ip: undefined,
+            },
+            "missing-instance",
+          )
+        ) {
+          continue;
+        }
         await updateHost(row, {
           status: "off",
           runtime: {
@@ -497,6 +583,20 @@ async function reconcileProvider(provider: Provider) {
       row.metadata?.bootstrap_lifecycle?.summary_status === "in_sync";
     const nextStatus =
       desiredStatus === "starting" && bootstrapDone ? "running" : desiredStatus;
+    if (
+      nextStatus === "off" &&
+      (await enqueueSpotRestore(
+        provider,
+        row,
+        {
+          ...nextRuntime,
+          public_ip: undefined,
+        },
+        remote.status ? `provider-status:${remote.status}` : "provider-offline",
+      ))
+    ) {
+      continue;
+    }
     await updateHost(row, {
       status: nextStatus,
       runtime: nextRuntime,
