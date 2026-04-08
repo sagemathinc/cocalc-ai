@@ -501,7 +501,7 @@ export async function main(
   addCatchAll(app);
 
   logger.info("start Master Registration");
-  const stopMasterRegistration = await startMasterRegistration({
+  const masterRegistration = await startMasterRegistration({
     hostId,
     runnerId,
     host,
@@ -533,10 +533,14 @@ export async function main(
 
   logger.info("project-host ready");
 
+  let closed = false;
+  let shutdownInProgress = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     persistServer?.close?.();
     fsServer?.close?.();
-    stopMasterRegistration?.();
+    masterRegistration?.stop();
     stopReconciler?.();
     stopDataPermissionHardener?.();
     stopRuntimeConformanceMonitor?.();
@@ -547,8 +551,24 @@ export async function main(
     stopOnPremTunnel?.();
     stopHttpProxyRevocationKickLoop?.();
   };
+  const closeWithSignal = async (signal: string) => {
+    if (closed || shutdownInProgress) return;
+    shutdownInProgress = true;
+    try {
+      await masterRegistration?.notifyShutdown({
+        signal,
+        reason: "process-signal",
+      });
+    } finally {
+      close();
+    }
+  };
   process.once("exit", close);
-  ["SIGINT", "SIGTERM", "SIGQUIT"].forEach((sig) => process.once(sig, close));
+  ["SIGINT", "SIGTERM", "SIGQUIT"].forEach((sig) =>
+    process.once(sig, () => {
+      void closeWithSignal(sig);
+    }),
+  );
 
   return { port, host };
 }
