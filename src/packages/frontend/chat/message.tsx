@@ -407,6 +407,31 @@ export function resolveRenderedMessageValue({
   return rowValue;
 }
 
+export function resolveMountedCodexRenderedValue({
+  renderedValue,
+  mountedGeneratingValue,
+  showCodexActivity,
+  generating,
+  interrupted,
+}: {
+  renderedValue: string;
+  mountedGeneratingValue?: string;
+  showCodexActivity: boolean;
+  generating: boolean;
+  interrupted?: boolean;
+}): string {
+  if (
+    showCodexActivity &&
+    !generating &&
+    !interrupted &&
+    typeof mountedGeneratingValue === "string" &&
+    mountedGeneratingValue.trim().length > 0
+  ) {
+    return mountedGeneratingValue;
+  }
+  return renderedValue;
+}
+
 export function shouldSuppressAcpPlaceholderBody({
   value,
   showCodexActivity,
@@ -570,10 +595,6 @@ export default function Message({
   const [openActivityDrawerToken, setOpenActivityDrawerToken] = useState<
     number | undefined
   >(undefined);
-  const [activityJumpText, setActivityJumpText] = useState<string | undefined>(
-    undefined,
-  );
-  const [activityJumpToken, setActivityJumpToken] = useState(0);
   const [isActivityDrawerOpen, setIsActivityDrawerOpen] = useState(false);
   const [openCommitHash, setOpenCommitHash] = useState<string | undefined>(
     undefined,
@@ -857,6 +878,27 @@ export default function Message({
     () => getLatestCodexActivityAtMs(codexPreviewLog.events),
     [codexPreviewLog.events],
   );
+  const messageId = useMemo(
+    () => field<string>(message, "message_id"),
+    [message],
+  );
+  const [mountedGeneratingCodexBody, setMountedGeneratingCodexBody] = useState<
+    string | undefined
+  >(undefined);
+  useEffect(() => {
+    setMountedGeneratingCodexBody(undefined);
+  }, [messageId]);
+  useEffect(() => {
+    if (!showCodexActivity || !effectiveGenerating) return;
+    if (
+      typeof codexBodyValue !== "string" ||
+      codexBodyValue.trim().length === 0
+    )
+      return;
+    setMountedGeneratingCodexBody((prev) =>
+      prev === codexBodyValue ? prev : codexBodyValue,
+    );
+  }, [showCodexActivity, effectiveGenerating, codexBodyValue]);
   const renderedMessageValue = useMemo(
     () =>
       resolveRenderedMessageValue({
@@ -867,12 +909,29 @@ export default function Message({
       }),
     [acpInterrupted, codexBodyValue, effectiveGenerating, rowMessageValue],
   );
+  const stableRenderedMessageValue = useMemo(
+    () =>
+      resolveMountedCodexRenderedValue({
+        renderedValue: renderedMessageValue,
+        mountedGeneratingValue: mountedGeneratingCodexBody,
+        showCodexActivity,
+        generating: effectiveGenerating,
+        interrupted: acpInterrupted,
+      }),
+    [
+      renderedMessageValue,
+      mountedGeneratingCodexBody,
+      showCodexActivity,
+      effectiveGenerating,
+      acpInterrupted,
+    ],
+  );
   const renderedMessageMarkdown = useMemo(
     () =>
       is_viewers_message
-        ? renderedMessageValue
-        : linkifyCommitHashes(renderedMessageValue),
-    [is_viewers_message, renderedMessageValue],
+        ? stableRenderedMessageValue
+        : linkifyCommitHashes(stableRenderedMessageValue),
+    [is_viewers_message, stableRenderedMessageValue],
   );
 
   const threadLookup = useMemo(
@@ -1492,19 +1551,6 @@ export default function Message({
       }
       setOpenCommitHash(hash);
     };
-    const openActivityFromParagraph = (e: any) => {
-      if (!showCodexActivity || !effectiveGenerating) return;
-      const target = e.target as HTMLElement | null;
-      if (target?.closest?.("a[href]")) return;
-      const block = target?.closest?.(
-        "p, li, pre, blockquote, h1, h2, h3, h4, h5, h6",
-      ) as HTMLElement | null;
-      const text = block?.innerText?.replace(/\s+/g, " ").trim() ?? "";
-      if (text.length < 6) return;
-      setActivityJumpText(text);
-      setActivityJumpToken((n) => n + 1);
-      setOpenActivityDrawerToken((n) => (n ?? 0) + 1);
-    };
 
     return (
       <>
@@ -1540,8 +1586,8 @@ export default function Message({
           }
           deleteLog={codexPreviewLog.deleteLog}
           openDrawerToken={openActivityDrawerToken}
-          jumpText={activityJumpText}
-          jumpToken={activityJumpToken}
+          jumpText={undefined}
+          jumpToken={0}
           notifyOnTurnFinish={notifyOnTurnFinish}
           onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
           onOpenGitBrowser={
@@ -1552,17 +1598,7 @@ export default function Message({
           onDrawerOpenChange={setIsActivityDrawerOpen}
         />
         {!suppressPlaceholderBody && value.trim().length > 0 ? (
-          <div
-            onClickCapture={(e) => {
-              openCommitFromMessage(e);
-              openActivityFromParagraph(e);
-            }}
-            title={
-              showCodexActivity && effectiveGenerating
-                ? "Click a paragraph to open matching Codex activity"
-                : undefined
-            }
-          >
+          <div onClickCapture={openCommitFromMessage}>
             <StaticMarkdown
               style={MARKDOWN_STYLE}
               value={value}
