@@ -11,6 +11,7 @@ import {
 import type { ConatService } from "@cocalc/conat/service/typed";
 import type { Options, ServiceCall } from "@cocalc/conat/service/service";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
+import type { ProjectActiveOperationSummary } from "@cocalc/conat/hub/api/projects";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 
 export interface BayOwnership {
@@ -65,6 +66,11 @@ export interface ProjectControlAddressRequest {
   epoch?: number;
 }
 
+export interface ProjectControlActiveOperationRequest {
+  project_id: string;
+  epoch?: number;
+}
+
 export interface ProjectAddress {
   host: string;
   port: number;
@@ -87,7 +93,8 @@ export type ProjectControlMethod =
   | "stop"
   | "restart"
   | "state"
-  | "address";
+  | "address"
+  | "active-op";
 export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
 export type ProjectReferenceMethod = "get";
 export type ProjectLroMethod = "publish-progress";
@@ -115,6 +122,9 @@ export interface InterBayProjectControlApi {
   restart: (opts: ProjectControlRestartRequest) => Promise<void>;
   state: (opts: ProjectControlStateRequest) => Promise<ProjectState>;
   address: (opts: ProjectControlAddressRequest) => Promise<ProjectAddress>;
+  activeOp: (
+    opts: ProjectControlActiveOperationRequest,
+  ) => Promise<ProjectActiveOperationSummary | null>;
 }
 
 export interface InterBayProjectReferenceApi {
@@ -265,12 +275,19 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "address" }),
   });
+  const activeOpClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "activeOp">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({ dest_bay, method: "active-op" }),
+  });
   return {
     start: async (opts) => await startClient.start(opts),
     stop: async (opts) => await stopClient.stop(opts),
     restart: async (opts) => await restartClient.restart(opts),
     state: async (opts) => await stateClient.state(opts),
     address: async (opts) => await addressClient.address(opts),
+    activeOp: async (opts) => await activeOpClient.activeOp(opts),
   };
 }
 
@@ -442,6 +459,24 @@ export function createInterBayProjectControlAddressHandler({
     subject: projectControlSubject({ dest_bay: bay_id, method: "address" }),
     impl: {
       address: async (opts) => await impl.address(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlActiveOpHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "activeOp">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({ dest_bay: bay_id, method: "active-op" }),
+    impl: {
+      activeOp: async (opts) => await impl.activeOp(opts),
     },
   });
 }

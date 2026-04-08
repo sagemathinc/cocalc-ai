@@ -66,6 +66,7 @@ import type {
   ImportPublicUrlResult,
   ImportPublicPathResult,
   PublicPathInspectionResult,
+  ProjectActiveOperationSummary,
   ProjectCopyRow,
   ProjectLogPage,
   ProjectLogCursor,
@@ -1575,6 +1576,24 @@ export async function getProjectAddress({
   return await getInterBayBridge().projectControl(ownership.bay_id).address({
     project_id,
     account_id,
+    epoch: ownership.epoch,
+  });
+}
+
+export async function getProjectActiveOperation({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectActiveOperationSummary | null> {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  return await getInterBayBridge().projectControl(ownership.bay_id).activeOp({
+    project_id,
     epoch: ownership.epoch,
   });
 }

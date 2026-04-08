@@ -4,6 +4,7 @@ let assertCollabMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let interBayStateMock: jest.Mock;
 let interBayAddressMock: jest.Mock;
+let interBayActiveOpMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -72,6 +73,7 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
     projectControl: jest.fn(() => ({
       state: (...args: any[]) => interBayStateMock(...args),
       address: (...args: any[]) => interBayAddressMock(...args),
+      activeOp: (...args: any[]) => interBayActiveOpMock(...args),
     })),
   })),
 }));
@@ -138,6 +140,21 @@ describe("projects.getProjectState / getProjectAddress", () => {
       port: 443,
       secret_token: "secret",
     }));
+    interBayActiveOpMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      op_id: "op-1",
+      kind: "project-start",
+      action: "start",
+      status: "running",
+      started_by_account_id: "acct-1",
+      source_bay_id: "bay-0",
+      phase: "runner_start",
+      message: "starting",
+      progress: 50,
+      detail: null,
+      started_at: new Date("2026-04-08T10:00:00Z"),
+      updated_at: new Date("2026-04-08T10:00:01Z"),
+    }));
   });
 
   it("routes project state reads through the owning bay", async () => {
@@ -172,6 +189,27 @@ describe("projects.getProjectState / getProjectAddress", () => {
     expect(interBayAddressMock).toHaveBeenCalledWith({
       project_id: "proj-1",
       account_id: "acct-1",
+      epoch: 7,
+    });
+  });
+
+  it("routes project active operation reads through the owning bay", async () => {
+    const { getProjectActiveOperation } = await import("./projects");
+    await expect(
+      getProjectActiveOperation({
+        account_id: "acct-1",
+        project_id: "proj-1",
+      }),
+    ).resolves.toMatchObject({
+      project_id: "proj-1",
+      op_id: "op-1",
+      kind: "project-start",
+      action: "start",
+      status: "running",
+      phase: "runner_start",
+    });
+    expect(interBayActiveOpMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
       epoch: 7,
     });
   });

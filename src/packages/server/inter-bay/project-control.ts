@@ -7,6 +7,7 @@ import type {
   ForwardProjectLroProgressRequest,
   GetProjectReferenceRequest,
   ProjectReference,
+  ProjectControlActiveOperationRequest,
   ProjectControlAddressRequest,
   ProjectControlRestartRequest,
   ProjectControlStartRequest,
@@ -19,6 +20,11 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveProjectBayDirect } from "@cocalc/server/inter-bay/directory";
 import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { getProject } from "@cocalc/server/projects/control";
+import {
+  clearProjectActiveOperation,
+  getProjectActiveOperation,
+  upsertProjectActiveOperation,
+} from "@cocalc/server/projects/active-operation";
 import { resolveVisibleProjectReferenceLocal } from "@cocalc/server/bay-directory";
 import { forwardRemoteStartLroProgress } from "@cocalc/server/inter-bay/start-lro-forward";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
@@ -75,6 +81,18 @@ export async function handleProjectControlStart(
     epoch: req.epoch,
   });
   const project = await getProject(req.project_id);
+  await upsertProjectActiveOperation({
+    project_id: req.project_id,
+    op_id: req.lro_op_id,
+    kind: "project-start",
+    action: "start",
+    status: "running",
+    started_by_account_id: req.account_id,
+    source_bay_id: req.source_bay_id,
+    phase: "queued",
+    message: "queued",
+    progress: 0,
+  });
   const stopForward = await forwardRemoteStartLroProgress({
     project_id: req.project_id,
     op_id: req.lro_op_id,
@@ -87,6 +105,10 @@ export async function handleProjectControlStart(
     });
   } finally {
     await stopForward();
+    await clearProjectActiveOperation({
+      project_id: req.project_id,
+      op_id: req.lro_op_id,
+    });
   }
 }
 
@@ -98,7 +120,21 @@ export async function handleProjectControlStop(
     epoch: req.epoch,
   });
   const project = await getProject(req.project_id);
-  await project.stop();
+  await upsertProjectActiveOperation({
+    project_id: req.project_id,
+    kind: "project-stop",
+    action: "stop",
+    status: "running",
+    phase: "stop-project",
+    message: "stopping project",
+  });
+  try {
+    await project.stop();
+  } finally {
+    await clearProjectActiveOperation({
+      project_id: req.project_id,
+    });
+  }
 }
 
 export async function handleProjectControlRestart(
@@ -109,6 +145,18 @@ export async function handleProjectControlRestart(
     epoch: req.epoch,
   });
   const project = await getProject(req.project_id);
+  await upsertProjectActiveOperation({
+    project_id: req.project_id,
+    op_id: req.lro_op_id,
+    kind: "project-start",
+    action: "restart",
+    status: "running",
+    started_by_account_id: req.account_id,
+    source_bay_id: req.source_bay_id,
+    phase: "queued",
+    message: "queued",
+    progress: 0,
+  });
   const stopForward = await forwardRemoteStartLroProgress({
     project_id: req.project_id,
     op_id: req.lro_op_id,
@@ -121,6 +169,10 @@ export async function handleProjectControlRestart(
     });
   } finally {
     await stopForward();
+    await clearProjectActiveOperation({
+      project_id: req.project_id,
+      op_id: req.lro_op_id,
+    });
   }
 }
 
@@ -148,6 +200,18 @@ export async function handleProjectControlAddress(
   const project = await getProject(req.project_id);
   return await project.address({
     account_id: req.account_id,
+  });
+}
+
+export async function handleProjectControlActiveOperation(
+  req: ProjectControlActiveOperationRequest,
+) {
+  await assertCurrentProjectOwnership({
+    project_id: req.project_id,
+    epoch: req.epoch,
+  });
+  return await getProjectActiveOperation({
+    project_id: req.project_id,
   });
 }
 
@@ -225,6 +289,15 @@ export async function dispatchProjectControlRpc(
   if (subject === addressExpected) {
     return await handleProjectControlAddress(
       payload as ProjectControlAddressRequest,
+    );
+  }
+  const activeOpExpected = projectControlSubject({
+    dest_bay: getConfiguredBayId(),
+    method: "active-op",
+  });
+  if (subject === activeOpExpected) {
+    return await handleProjectControlActiveOperation(
+      payload as ProjectControlActiveOperationRequest,
     );
   }
   throw new Error(`unknown project-control subject: ${subject}`);

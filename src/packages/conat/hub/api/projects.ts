@@ -20,6 +20,7 @@ import type {
   ExecuteCodeOptions,
   ExecuteCodeOutput,
 } from "@cocalc/util/types/execute-code";
+import type { LroStatus } from "./lro";
 
 export type ProjectCopyState =
   | "queued"
@@ -213,6 +214,22 @@ export interface ProjectAddress {
   host: string;
   port: number;
   secret_token: string;
+}
+
+export interface ProjectActiveOperationSummary {
+  project_id: string;
+  op_id: string | null;
+  kind: string;
+  action: "start" | "restart" | "stop";
+  status: LroStatus;
+  started_by_account_id: string | null;
+  source_bay_id: string | null;
+  phase: string | null;
+  message: string | null;
+  progress: number | null;
+  detail: any;
+  started_at: Date;
+  updated_at: Date;
 }
 
 export type ProjectCollabInviteStatus =
@@ -478,6 +495,7 @@ export const projects = {
   restart: authFirstRequireAccount,
   getProjectState: authFirstRequireAccount,
   getProjectAddress: authFirstRequireAccount,
+  getProjectActiveOperation: authFirstRequireAccount,
   deleteProject: authFirstRequireAccount,
   setProjectDeleted: authFirstRequireAccount,
   updateAuthorizedKeysOnHost: authFirstRequireAccount,
@@ -1016,6 +1034,10 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectAddress>;
+  getProjectActiveOperation: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectActiveOperationSummary | null>;
   deleteProject: (opts: {
     account_id?: string;
     project_id: string;

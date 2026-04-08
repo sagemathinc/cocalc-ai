@@ -110,6 +110,44 @@ describe("inter-bay bridge", () => {
     );
   });
 
+  it("dispatches typed project active-op requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({
+      data: {
+        project_id: "p1",
+        op_id: "op-1",
+        kind: "project-start",
+        action: "start",
+        status: "running",
+        started_by_account_id: "a1",
+        source_bay_id: "bay-1",
+        phase: "runner_start",
+        message: "starting",
+        progress: 86,
+        detail: null,
+        started_at: new Date("2026-04-08T10:00:00Z"),
+        updated_at: new Date("2026-04-08T10:00:01Z"),
+      },
+    });
+    const { getInterBayBridge } = await import("./bridge");
+    const bridge = getInterBayBridge();
+    await expect(
+      bridge.projectControl("bay-0").activeOp({ project_id: "p1" } as any),
+    ).resolves.toMatchObject({
+      project_id: "p1",
+      op_id: "op-1",
+      kind: "project-start",
+      action: "start",
+    });
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-0.rpc.project-control.active-op",
+      {
+        name: "activeOp",
+        args: [{ project_id: "p1" }],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
+
   it("forwards remote-bay typed requests to the same fabric", async () => {
     requestMock.mockResolvedValue({ data: null });
     const { getInterBayBridge } = await import("./bridge");
