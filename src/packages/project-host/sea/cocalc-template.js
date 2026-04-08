@@ -13,8 +13,11 @@ const os = require("node:os");
 const version = "${VERSION}";
 const exeName = path.basename(process.argv[0] ?? "");
 const inferredName = exeName.startsWith("cocalc-plus") ? "cocalc-plus" : "";
+const configuredName = "${NAME}";
 const name =
-  "${NAME}" || process.env.COCALC_NAME || inferredName || "cocalc";
+  configuredName === "${NAME}" || configuredName === ""
+    ? process.env.COCALC_NAME || inferredName || "cocalc"
+    : configuredName;
 const mainScript = "${MAIN}";
 const quiet =
   process.env.COCALC_SEA_QUIET === "1" ||
@@ -124,7 +127,7 @@ if (path.basename(process.argv[1]) == "node") {
     const originalEmitWarning = process.emitWarning;
     process.emitWarning = (warning, ...args) => {
       const message =
-        typeof warning === "string" ? warning : warning?.message ?? "";
+        typeof warning === "string" ? warning : (warning?.message ?? "");
       const code = typeof warning === "object" ? warning?.code : undefined;
       if (
         message.includes("SQLite is an experimental feature") ||

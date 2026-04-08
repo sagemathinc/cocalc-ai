@@ -38,7 +38,7 @@ import {
 } from "@cocalc/conat/core/client";
 import jsonStableStringify from "json-stable-stringify";
 import type { JSONValue } from "@cocalc/util/types";
-import { delay, map as awaitMap } from "awaiting";
+import { delay } from "awaiting";
 import {
   asyncThrottle,
   cancel_scheduled,
@@ -393,14 +393,7 @@ export class DStream<T = any> extends EventEmitter {
         try {
           await this.attemptToSave();
           //console.log("successfully saved");
-        } catch (err) {
-          if (false && !process.env.COCALC_TEST_MODE) {
-            console.log(
-              `WARNING: dstream attemptToSave failed - ${err}`,
-              this.name,
-            );
-          }
-        }
+        } catch {}
         return !this.hasUnsavedChanges();
       },
       { start: 150, decay: 1.3, max: 10000 },
@@ -408,11 +401,7 @@ export class DStream<T = any> extends EventEmitter {
   });
 
   private attemptToSave = async () => {
-    if (true) {
-      await this.attemptToSaveBatch();
-    } else {
-      await this.attemptToSaveParallel();
-    }
+    await this.attemptToSaveBatch();
   };
 
   private attemptToSaveBatch = reuseInFlight(async () => {
@@ -468,52 +457,6 @@ export class DStream<T = any> extends EventEmitter {
     if (errors) {
       throw Error(`there were errors saving dstream '${this.name}'`);
     }
-  });
-
-  // non-batched version
-  private attemptToSaveParallel = reuseInFlight(async () => {
-    const f = async (id) => {
-      if (this.isClosed()) {
-        throw Error("closed");
-      }
-      const mesg = this.local[id];
-      try {
-        // @ts-ignore
-        const { seq } = await this.stream.publish(mesg, {
-          ...this.publishOptions[id],
-          msgID: id,
-        });
-        if (this.isClosed()) {
-          return;
-        }
-        if ((this.raw[this.raw.length - 1]?.seq ?? -1) < seq) {
-          // it still isn't in this.raw
-          this.saved[seq] = mesg;
-        }
-        delete this.local[id];
-        delete this.publishOptions[id];
-      } catch (err) {
-        if (err.code == "reject") {
-          delete this.local[id];
-          // err has mesg and subject set.
-          this.emit("reject", { err, mesg });
-        } else {
-          if (!process.env.COCALC_TEST_MODE) {
-            console.warn(
-              `WARNING: problem saving dstream ${this.name} -- ${err}`,
-            );
-          }
-        }
-      }
-      if (this.isStable()) {
-        this.emit("stable");
-      }
-    };
-    // NOTE: ES6 spec guarantees "String keys are returned in the order
-    // in which they were added to the object."
-    const ids = Object.keys(this.local);
-    const MAX_PARALLEL = 50;
-    await awaitMap(ids, MAX_PARALLEL, f);
   });
 
   // load older messages starting at start_seq

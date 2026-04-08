@@ -341,18 +341,17 @@ class PersistStreamClient extends EventEmitter {
         },
       );
     } finally {
-      if (this.state != "ready") {
-        return;
+      if (this.state == "ready") {
+        if (recovered) {
+          this.reconnecting = false;
+          stats.getMissedSuccess += 1;
+        }
+        this.gettingMissed = false;
+        for (const updates of this.changesWhenGettingMissed) {
+          this.changefeedEmit(updates);
+        }
+        this.changesWhenGettingMissed.length = 0;
       }
-      if (recovered) {
-        this.reconnecting = false;
-        stats.getMissedSuccess += 1;
-      }
-      this.gettingMissed = false;
-      for (const updates of this.changesWhenGettingMissed) {
-        this.changefeedEmit(updates);
-      }
-      this.changesWhenGettingMissed.length = 0;
     }
   };
 

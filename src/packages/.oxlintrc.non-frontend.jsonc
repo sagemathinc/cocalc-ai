@@ -22,6 +22,8 @@
     "no-async-promise-executor": "error",
     "promise/no-return-wrap": "error",
     "no-loss-of-precision": "error",
+    "no-unsafe-finally": "error",
+    "no-constant-binary-expression": "error",
   },
   "ignorePatterns": [
     "frontend/**",

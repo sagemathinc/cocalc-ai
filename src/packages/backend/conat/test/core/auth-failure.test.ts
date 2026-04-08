@@ -28,7 +28,7 @@ describe("auth failure disconnect behavior", () => {
 
   it("receives auth error info and then disconnects promptly", async () => {
     const u = new URL(server.address());
-    const path = `${u.pathname.replace(/\/$/, "")}/conat` || "/conat";
+    const path = `${u.pathname.replace(/\/$/, "")}/conat`;
     let sawConnect = false;
     let sawDisconnect = false;
     let info: any;

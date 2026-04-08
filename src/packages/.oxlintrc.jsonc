@@ -28,6 +28,7 @@
     "promise/no-return-wrap": "error",
     "no-loss-of-precision": "error",
     "no-constant-binary-expression": "error",
+    "jsx-a11y/alt-text": "error",
   },
   "ignorePatterns": [
     "frontend/dist/**",

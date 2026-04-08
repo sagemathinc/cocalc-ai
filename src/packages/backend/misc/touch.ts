@@ -21,8 +21,9 @@ export async function touch(
         await fd.close();
         return true;
       }
-    } finally {
-      return false;
+    } catch {
+      // Fall through to the false return below.
     }
+    return false;
   }
 }
