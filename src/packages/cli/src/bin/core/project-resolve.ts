@@ -228,10 +228,49 @@ export async function queryProjects<W extends ProjectLike = ProjectLike>({
   if (host_id != null) {
     row.host_id = host_id;
   }
-  const rows = await userQueryTable<W>(ctx, "projects", row, [
-    { limit, order_by: "-last_edited" },
-  ]);
-  return rows.filter((x) => !isDeleted(x.deleted));
+  let rows: W[] = [];
+  let localErr: unknown;
+  try {
+    rows = await userQueryTable<W>(ctx, "projects", row, [
+      { limit, order_by: "-last_edited" },
+    ]);
+  } catch (err) {
+    localErr = err;
+  }
+  const visibleRows = rows.filter((x) => !isDeleted(x.deleted));
+  if (visibleRows.length || !project_id || title != null || host_id != null) {
+    if (
+      !visibleRows.length &&
+      localErr &&
+      (!project_id || title != null || host_id != null)
+    ) {
+      throw localErr;
+    }
+    return visibleRows;
+  }
+  if (!isValidUUID(project_id)) {
+    if (localErr) {
+      throw localErr;
+    }
+    return visibleRows;
+  }
+  const located = await ctx.hub.system.getProjectBay({ project_id });
+  if (!located?.project_id) {
+    if (localErr) {
+      throw localErr;
+    }
+    return visibleRows;
+  }
+  return [
+    {
+      project_id: located.project_id,
+      title: `${located.title ?? ""}`.trim() || located.project_id,
+      host_id: located.host_id ?? null,
+      state: null,
+      last_edited: null,
+      deleted: false,
+    } as W,
+  ];
 }
 
 export async function resolveProject<W extends ProjectLike = ProjectLike>(
@@ -245,15 +284,42 @@ export async function resolveProject<W extends ProjectLike = ProjectLike>(
   }
 
   if (isValidUUID(identifier)) {
-    const rows = await queryProjects({
-      ctx,
-      project_id: identifier,
-      limit: 3,
-    });
+    let queryErr: unknown;
+    let rows: W[] = [];
+    try {
+      rows = await queryProjects({
+        ctx,
+        project_id: identifier,
+        limit: 3,
+      });
+    } catch (err) {
+      queryErr = err;
+    }
     if (rows[0]) {
       setCachedProject(ctx, rows[0], projectCacheTtlMs);
       return rows[0];
     }
+    try {
+      const located = await ctx.hub.system.getProjectBay({
+        project_id: identifier,
+      });
+      if (located?.project_id) {
+        const remoteProject = {
+          project_id: located.project_id,
+          title: `${located.title ?? ""}`.trim() || located.project_id,
+          host_id: located.host_id ?? null,
+          state: null,
+          last_edited: null,
+          deleted: false,
+        } as W;
+        setCachedProject(ctx, remoteProject, projectCacheTtlMs);
+        return remoteProject;
+      }
+    } catch (err) {
+      if (queryErr) throw queryErr;
+      throw err;
+    }
+    if (queryErr) throw queryErr;
   }
 
   const rows = await queryProjects({

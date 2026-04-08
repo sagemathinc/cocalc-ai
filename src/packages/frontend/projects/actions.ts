@@ -1488,18 +1488,27 @@ export class ProjectsActions extends Actions<ProjectsState> {
   );
 
   restart_project = reuseInFlight(
-    async (project_id: string, options?): Promise<void> => {
+    async (project_id: string, _options?): Promise<void> => {
       if (!(await allow_project_to_run(project_id))) {
         return;
       }
       this.project_log(project_id, {
         event: "project_restart_requested",
       });
-      const state = store.get_state(project_id);
-      if (state == "running") {
-        await this.stop_project(project_id);
+      const actions = redux.getProjectActions(project_id);
+      try {
+        const resp = await webapp_client.conat_client.hub.projects.restart({
+          project_id,
+          wait: false,
+        });
+        actions.trackStartOp(resp);
+      } catch (err) {
+        actions.setState({
+          control_error: `Error restarting project -- ${err}`,
+        });
+        throw err;
       }
-      await this.start_project(project_id, options);
+      actions.setState({ control_error: "" });
     },
   );
 

@@ -3,6 +3,8 @@ export {};
 let queryMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let listHostsMock: jest.Mock;
+let resolveProjectBayMock: jest.Mock;
+let projectReferenceGetMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -19,6 +21,20 @@ jest.mock("@cocalc/server/conat/api/hosts", () => ({
   listHosts: (...args: any[]) => listHostsMock(...args),
 }));
 
+jest.mock("@cocalc/server/inter-bay/directory", () => ({
+  __esModule: true,
+  resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  __esModule: true,
+  getInterBayBridge: jest.fn(() => ({
+    projectReference: jest.fn(() => ({
+      get: (...args: any[]) => projectReferenceGetMock(...args),
+    })),
+  })),
+}));
+
 describe("bay-directory", () => {
   const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
   const OTHER_ACCOUNT_ID = "22222222-2222-2222-2222-222222222222";
@@ -28,15 +44,18 @@ describe("bay-directory", () => {
   let prevBayId: string | undefined;
   let prevBayLabel: string | undefined;
   let prevBayRegion: string | undefined;
+  let prevClusterRole: string | undefined;
 
   beforeEach(() => {
     jest.resetModules();
     prevBayId = process.env.COCALC_BAY_ID;
     prevBayLabel = process.env.COCALC_BAY_LABEL;
     prevBayRegion = process.env.COCALC_BAY_REGION;
+    prevClusterRole = process.env.COCALC_CLUSTER_ROLE;
     delete process.env.COCALC_BAY_ID;
     delete process.env.COCALC_BAY_LABEL;
     delete process.env.COCALC_BAY_REGION;
+    delete process.env.COCALC_CLUSTER_ROLE;
 
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (sql.includes("FROM accounts")) {
@@ -75,6 +94,8 @@ describe("bay-directory", () => {
         name: "host-1",
       },
     ]);
+    resolveProjectBayMock = jest.fn(async () => null);
+    projectReferenceGetMock = jest.fn(async () => null);
   });
 
   afterEach(() => {
@@ -92,6 +113,11 @@ describe("bay-directory", () => {
       delete process.env.COCALC_BAY_REGION;
     } else {
       process.env.COCALC_BAY_REGION = prevBayRegion;
+    }
+    if (prevClusterRole == null) {
+      delete process.env.COCALC_CLUSTER_ROLE;
+    } else {
+      process.env.COCALC_CLUSTER_ROLE = prevClusterRole;
     }
   });
 
@@ -116,6 +142,20 @@ describe("bay-directory", () => {
         is_default: true,
       },
     ]);
+  });
+
+  it("reports a seed bay in multi-bay mode", async () => {
+    process.env.COCALC_BAY_ID = "bay-seed";
+    process.env.COCALC_CLUSTER_ROLE = "seed";
+    const { getSingleBayInfo } = await import("./bay-directory");
+    expect(getSingleBayInfo()).toEqual({
+      bay_id: "bay-seed",
+      label: "bay-seed",
+      region: null,
+      deployment_mode: "multi-bay",
+      role: "seed",
+      is_default: true,
+    });
   });
 
   it("allows resolving another account only for admins", async () => {
@@ -217,6 +257,39 @@ describe("bay-directory", () => {
       owning_bay_id: "bay-9",
       host_id: HOST_ID,
       title: "Project",
+      source: "project-row",
+    });
+  });
+
+  it("falls back to remote project reference when the project lives on another bay", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM projects")) {
+        throw new Error(`project '${PROJECT_ID}' not found`);
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-9",
+      epoch: 0,
+    }));
+    projectReferenceGetMock = jest.fn(async () => ({
+      project_id: PROJECT_ID,
+      title: "Remote Project",
+      host_id: HOST_ID,
+      owning_bay_id: "bay-9",
+    }));
+    const { resolveProjectOwningBay } = await import("./bay-directory");
+
+    await expect(
+      resolveProjectOwningBay({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      project_id: PROJECT_ID,
+      owning_bay_id: "bay-9",
+      host_id: HOST_ID,
+      title: "Remote Project",
       source: "project-row",
     });
   });

@@ -14,10 +14,12 @@ export * from "@cocalc/server/conat/api/project-backups";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from "@cocalc/server/project-host/control";
-import { getProject } from "@cocalc/server/projects/control";
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
+import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
 import TTLCache from "@isaacs/ttlcache";
@@ -49,7 +51,7 @@ import {
   offlineMoveConfirmationError,
 } from "@cocalc/server/projects/offline-move-confirmation";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
-import { assertCollab } from "./util";
+import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import type {
@@ -68,6 +70,7 @@ import type {
   ProjectLogPage,
   ProjectLogCursor,
   ProjectRuntimeLog,
+  ProjectAddress,
   ProjectLogRow,
   ProjectStorageCountedSummary,
   ProjectStorageBreakdown,
@@ -110,7 +113,6 @@ import {
   PROJECT_BAY_MISMATCH_ERROR,
   PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
 } from "@cocalc/server/conat/project-host-assignment";
-import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
@@ -1325,21 +1327,69 @@ export async function start({
   service: string;
   stream_name: string;
 }> {
-  await assertCollab({ account_id, project_id });
+  return await runProjectStartLikeAction({
+    kind: "start",
+    account_id,
+    project_id,
+    wait,
+  });
+}
+
+export async function restart({
+  account_id,
+  project_id,
+  wait = true,
+}: {
+  account_id: string;
+  project_id: string;
+  wait?: boolean;
+}): Promise<{
+  op_id: string;
+  scope_type: "project";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}> {
+  return await runProjectStartLikeAction({
+    kind: "restart",
+    account_id,
+    project_id,
+    wait,
+  });
+}
+
+async function runProjectStartLikeAction({
+  kind,
+  account_id,
+  project_id,
+  wait = true,
+}: {
+  kind: "start" | "restart";
+  account_id: string;
+  project_id: string;
+  wait?: boolean;
+}): Promise<{
+  op_id: string;
+  scope_type: "project";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}> {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   const op = await createLro({
     kind: "project-start",
     scope_type: "project",
     scope_id: project_id,
     created_by: account_id,
     routing: "hub",
-    input: { project_id },
+    input: { project_id, action: kind },
     status: "queued",
   });
   publishStartLroSummaryBestEffort({
     scope_type: op.scope_type,
     scope_id: op.scope_id,
     summary: op,
-    context: "start: initial",
+    context: `${kind}: initial`,
   });
   publishLroEvent({
     scope_type: op.scope_type,
@@ -1360,8 +1410,7 @@ export async function start({
     });
   });
 
-  log.debug("start", { project_id, op_id: op.op_id });
-  const project = await getProject(project_id);
+  log.debug(kind, { project_id, op_id: op.op_id });
   const response = {
     op_id: op.op_id,
     scope_type: "project" as const,
@@ -1385,7 +1434,7 @@ export async function start({
         scope_type: running.scope_type,
         scope_id: running.scope_id,
         summary: running,
-        context: "start: running",
+        context: `${kind}: running`,
       });
     }
     const stopProgressMirror = await mirrorStartLroProgress({
@@ -1393,10 +1442,27 @@ export async function start({
       op_id: op.op_id,
     });
     try {
-      await project.start({
-        lro_op_id: op.op_id,
-        account_id,
-      });
+      const ownership = await resolveProjectBay(project_id);
+      if (ownership == null) {
+        throw new Error(`project ${project_id} not found`);
+      }
+      if (kind === "start") {
+        await getInterBayBridge().projectControl(ownership.bay_id).start({
+          project_id,
+          account_id,
+          lro_op_id: op.op_id,
+          source_bay_id: getConfiguredBayId(),
+          epoch: ownership.epoch,
+        });
+      } else {
+        await getInterBayBridge().projectControl(ownership.bay_id).restart({
+          project_id,
+          account_id,
+          lro_op_id: op.op_id,
+          source_bay_id: getConfiguredBayId(),
+          epoch: ownership.epoch,
+        });
+      }
       const phase_timings_ms = takeStartProjectPhaseTimings(op.op_id);
       const progress_summary = {
         done: 1,
@@ -1420,7 +1486,7 @@ export async function start({
           scope_type: updated.scope_type,
           scope_id: updated.scope_id,
           summary: updated,
-          context: "start: succeeded",
+          context: `${kind}: succeeded`,
         });
       }
       await supersedeOlderProjectStartLros({
@@ -1438,7 +1504,7 @@ export async function start({
           scope_type: updated.scope_type,
           scope_id: updated.scope_id,
           summary: updated,
-          context: "start: failed",
+          context: `${kind}: failed`,
         });
       }
       throw err;
@@ -1464,10 +1530,53 @@ export async function stop({
   account_id: string;
   project_id: string;
 }): Promise<void> {
-  await assertCollab({ account_id, project_id });
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   log.debug("stop", { project_id });
-  const project = await getProject(project_id);
-  await project.stop();
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  await getInterBayBridge().projectControl(ownership.bay_id).stop({
+    project_id,
+    epoch: ownership.epoch,
+  });
+}
+
+export async function getProjectState({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}) {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  return await getInterBayBridge().projectControl(ownership.bay_id).state({
+    project_id,
+    epoch: ownership.epoch,
+  });
+}
+
+export async function getProjectAddress({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectAddress> {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  return await getInterBayBridge().projectControl(ownership.bay_id).address({
+    project_id,
+    account_id,
+    epoch: ownership.epoch,
+  });
 }
 
 export async function deleteProject({

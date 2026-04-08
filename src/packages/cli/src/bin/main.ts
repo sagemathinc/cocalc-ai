@@ -2052,8 +2052,10 @@ async function waitForProjectNotRunning(
     timeoutMs,
     pollMs,
     getState: async (id) => {
-      const rows = await queryProjects({ ctx, project_id: id, limit: 1 });
-      return projectState(rows[0]?.state);
+      const state = await ctx.hub.projects.getProjectState({
+        project_id: id,
+      });
+      return projectState(state);
     },
   });
 }

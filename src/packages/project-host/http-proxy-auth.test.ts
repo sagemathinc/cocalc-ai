@@ -74,7 +74,7 @@ describe("project-host HTTP session cookie", () => {
   it("accepts a valid scoped session cookie even if a stale legacy cookie is also present", () => {
     const valid = createProjectHostHttpSessionToken({
       account_id: "00000000-1000-4000-8000-000000000001",
-      now_ms: Date.UTC(2026, 2, 9, 18, 0, 0),
+      now_ms: Date.now(),
     });
     const invalid = "stale-legacy-cookie";
     const header = [

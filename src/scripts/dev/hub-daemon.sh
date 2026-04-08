@@ -14,6 +14,7 @@ CONFIG_FILE="${COCALC_HUB_DAEMON_CONFIG:-$CONFIG_FILE_DEFAULT}"
 mkdir -p "$STATE_DIR"
 
 PID_FILE="$STATE_DIR/hub.pid"
+SECOND_BAY_PID_FILE=""
 
 rotate_log_file() {
   local file="${1:-}"
@@ -131,7 +132,15 @@ find_pids_listening_on_port() {
 
 find_hub_pids_on_config_port() {
   local port="${HUB_PORT:-9100}"
+  find_hub_pid_on_port "$port"
+}
+
+find_hub_pid_on_port() {
+  local port="${1:-}"
   local hub_pids port_pids pid
+  if [ -z "$port" ]; then
+    return 0
+  fi
   hub_pids="$(find_hub_pids | sort -u)"
   port_pids="$(find_pids_listening_on_port "$port" || true)"
   if [ -z "$hub_pids" ] || [ -z "$port_pids" ]; then
@@ -302,6 +311,36 @@ load_config() {
   HUB_NODE_BIN="${HUB_NODE_BIN:-}"
   HUB_SELF_HOST_PAIR_URL="${HUB_SELF_HOST_PAIR_URL:-}"
   HUB_CLOUDFLARED_PID_FILE="${HUB_CLOUDFLARED_PID_FILE:-$STATE_DIR/cloudflared.pid}"
+  HUB_ENABLE_SECOND_BAY="${HUB_ENABLE_SECOND_BAY:-0}"
+  HUB_SECOND_BAY_ID="${HUB_SECOND_BAY_ID:-bay-1}"
+  HUB_SECOND_BAY_PORT="${HUB_SECOND_BAY_PORT:-$((HUB_PORT + 10))}"
+  HUB_SECOND_BAY_BIND_HOST="${HUB_SECOND_BAY_BIND_HOST:-$HUB_BIND_HOST}"
+  HUB_SECOND_BAY_CMD="${HUB_SECOND_BAY_CMD:-$HUB_CMD}"
+  HUB_SECOND_BAY_STATE_DIR="${HUB_SECOND_BAY_STATE_DIR:-$SRC_DIR/.local/hub-daemon-$HUB_SECOND_BAY_ID}"
+  HUB_SECOND_BAY_DATA_DIR="${HUB_SECOND_BAY_DATA_DIR:-$SRC_DIR/.local/hub-data-$HUB_SECOND_BAY_ID}"
+  HUB_SECOND_BAY_DEBUG_FILE="${HUB_SECOND_BAY_DEBUG_FILE:-$HUB_SECOND_BAY_STATE_DIR/log}"
+  HUB_SECOND_BAY_STDOUT_LOG="${HUB_SECOND_BAY_STDOUT_LOG:-$HUB_SECOND_BAY_STATE_DIR/hub.stdout.log}"
+  COCALC_BAY_ID="${COCALC_BAY_ID:-bay-0}"
+  COCALC_BAY_LABEL="${COCALC_BAY_LABEL:-}"
+  COCALC_BAY_REGION="${COCALC_BAY_REGION:-}"
+  COCALC_CLUSTER_ROLE="${COCALC_CLUSTER_ROLE:-standalone}"
+  COCALC_CLUSTER_SEED_BAY_ID="${COCALC_CLUSTER_SEED_BAY_ID:-}"
+  COCALC_CLUSTER_SEED_CONAT_SERVER="${COCALC_CLUSTER_SEED_CONAT_SERVER:-}"
+  COCALC_CLUSTER_SEED_CONAT_PASSWORD="${COCALC_CLUSTER_SEED_CONAT_PASSWORD:-}"
+  SECOND_BAY_PID_FILE="$HUB_SECOND_BAY_STATE_DIR/hub.pid"
+
+  if [ "$HUB_ENABLE_SECOND_BAY" = "1" ]; then
+    if [ "$COCALC_CLUSTER_ROLE" = "standalone" ]; then
+      COCALC_CLUSTER_ROLE="seed"
+    fi
+    if [ "$COCALC_CLUSTER_ROLE" = "attached" ]; then
+      echo "hub daemon config invalid: primary bay cannot be attached when HUB_ENABLE_SECOND_BAY=1" >&2
+      exit 1
+    fi
+    if [ -z "$COCALC_CLUSTER_SEED_BAY_ID" ]; then
+      COCALC_CLUSTER_SEED_BAY_ID="$COCALC_BAY_ID"
+    fi
+  fi
 
   if [ -z "$HUB_SOFTWARE_BASE_URL_FORCE" ] && [ "$HUB_USE_LOCAL_SOFTWARE" = "1" ]; then
     if [ -n "$HUB_SELF_HOST_PAIR_URL" ]; then
@@ -318,6 +357,183 @@ load_config() {
       fi
     fi
   fi
+}
+
+local_hub_url() {
+  local bind_host="${1:-localhost}"
+  local port="${2:-9100}"
+  local host="$bind_host"
+  if [ "$host" = "0.0.0.0" ] || [ -z "$host" ]; then
+    host="127.0.0.1"
+  fi
+  echo "http://$host:$port"
+}
+
+second_bay_running() {
+  load_config
+  local discovered
+  discovered="$(find_hub_pid_on_port "$HUB_SECOND_BAY_PORT" | tail -n 1 || true)"
+  if [ -n "$discovered" ]; then
+    echo "$discovered" >"$SECOND_BAY_PID_FILE"
+    return 0
+  fi
+  if [ ! -f "$SECOND_BAY_PID_FILE" ]; then
+    return 1
+  fi
+  local pid
+  pid="$(cat "$SECOND_BAY_PID_FILE" 2>/dev/null || true)"
+  if [ -z "$pid" ]; then
+    return 1
+  fi
+  discovered="$(find_hub_pid_on_port "$HUB_SECOND_BAY_PORT" | tail -n 1 || true)"
+  if [ -n "$discovered" ]; then
+    echo "$discovered" >"$SECOND_BAY_PID_FILE"
+    return 0
+  fi
+  return 1
+}
+
+wait_for_file() {
+  local file="${1:-}"
+  local timeout_s="${2:-30}"
+  local i
+  for i in $(seq 1 "$timeout_s"); do
+    if [ -f "$file" ] && [ -s "$file" ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+primary_seed_conat_password_value() {
+  local pg_data secrets_file
+  pg_data="$(detect_hub_postgres_data_dir || true)"
+  if [ -z "$pg_data" ]; then
+    return 1
+  fi
+  secrets_file="$(dirname "$pg_data")/secrets/conat-password"
+  if ! wait_for_file "$secrets_file" 30; then
+    return 1
+  fi
+  tr -d '\r\n' < "$secrets_file"
+}
+
+start_second_bay() {
+  load_config
+  if [ "$HUB_ENABLE_SECOND_BAY" != "1" ]; then
+    return 0
+  fi
+  if second_bay_running; then
+    echo "second bay already running (pid $(cat "$SECOND_BAY_PID_FILE"))"
+    return 0
+  fi
+
+  local seed_address seed_password
+  seed_address="$(local_hub_url "$HUB_BIND_HOST" "$HUB_PORT")"
+  seed_password="$(primary_seed_conat_password_value || true)"
+  if [ -z "$seed_password" ]; then
+    echo "unable to resolve primary hub conat password for second bay" >&2
+    return 1
+  fi
+
+  mkdir -p "$HUB_SECOND_BAY_STATE_DIR"
+  mkdir -p "$(dirname "$HUB_SECOND_BAY_STDOUT_LOG")"
+  mkdir -p "$HUB_SECOND_BAY_DATA_DIR"
+  rotate_log_file "$HUB_SECOND_BAY_STDOUT_LOG"
+  if [ -n "$HUB_SECOND_BAY_DEBUG_FILE" ]; then
+    rotate_log_file "$HUB_SECOND_BAY_DEBUG_FILE"
+  fi
+  touch "$HUB_SECOND_BAY_STDOUT_LOG"
+  if [ -n "$HUB_SECOND_BAY_DEBUG_FILE" ]; then
+    touch "$HUB_SECOND_BAY_DEBUG_FILE"
+  fi
+
+  (
+    cd "$SRC_DIR"
+    export PATH="$SRC_DIR/packages/hub/node_modules/.bin:$SRC_DIR/node_modules/.bin:$PATH:/usr/local/bin:/usr/bin:/bin"
+    local node_bin
+    node_bin="$(resolve_node_bin || true)"
+    if [ -n "$node_bin" ]; then
+      export PATH="$(dirname "$node_bin"):$PATH"
+    fi
+    unset npm_config_prefix
+    export DEBUG="$HUB_DEBUG"
+    export DEBUG_FILE="$HUB_SECOND_BAY_DEBUG_FILE"
+    export HOST="$HUB_SECOND_BAY_BIND_HOST"
+    if [ "$HUB_ALLOW_INSECURE_HTTP_MODE" = "1" ]; then
+      export COCALC_ALLOW_INSECURE_HTTP_MODE=true
+    fi
+    export COCALC_DISABLE_NEXT="$HUB_DISABLE_NEXT"
+    export PORT="$HUB_SECOND_BAY_PORT"
+    export DATA_BASE="$HUB_SECOND_BAY_DATA_DIR"
+    export COCALC_PROJECT_HOST_SOFTWARE_PACKAGES_ROOT="$HUB_SOFTWARE_PACKAGES_ROOT"
+    export COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE="$(local_hub_url "$HUB_SECOND_BAY_BIND_HOST" "$HUB_SECOND_BAY_PORT")/software"
+    export COCALC_SELF_HOST_PAIR_URL="$(local_hub_url "$HUB_SECOND_BAY_BIND_HOST" "$HUB_SECOND_BAY_PORT")"
+    export COCALC_LAUNCHPAD_CLOUDFLARED_PID_FILE="$HUB_SECOND_BAY_STATE_DIR/cloudflared.pid"
+    export COCALC_BAY_ID="$HUB_SECOND_BAY_ID"
+    unset COCALC_BAY_LABEL
+    if [ -n "$COCALC_BAY_REGION" ]; then
+      export COCALC_BAY_REGION
+    else
+      unset COCALC_BAY_REGION
+    fi
+    export COCALC_CLUSTER_ROLE="attached"
+    export COCALC_CLUSTER_SEED_BAY_ID="$COCALC_BAY_ID"
+    export COCALC_CLUSTER_SEED_CONAT_SERVER="$seed_address"
+    export COCALC_CLUSTER_SEED_CONAT_PASSWORD="$seed_password"
+    if command -v setsid >/dev/null 2>&1; then
+      nohup setsid bash -c "$HUB_SECOND_BAY_CMD" >>"$HUB_SECOND_BAY_STDOUT_LOG" 2>&1 < /dev/null &
+    else
+      nohup bash -c "$HUB_SECOND_BAY_CMD" >>"$HUB_SECOND_BAY_STDOUT_LOG" 2>&1 < /dev/null &
+    fi
+    echo $! >"$SECOND_BAY_PID_FILE"
+  )
+
+  local i
+  for i in $(seq 1 30); do
+    local running_pid
+    running_pid="$(find_hub_pid_on_port "$HUB_SECOND_BAY_PORT" | tail -n 1 || true)"
+    if [ -n "$running_pid" ]; then
+      echo "$running_pid" >"$SECOND_BAY_PID_FILE"
+      echo "second bay started (pid $(cat "$SECOND_BAY_PID_FILE"))"
+      echo "second bay stdout: $HUB_SECOND_BAY_STDOUT_LOG"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "second bay failed to start; see $HUB_SECOND_BAY_STDOUT_LOG" >&2
+  return 1
+}
+
+stop_second_bay() {
+  load_config
+  if ! second_bay_running; then
+    rm -f "$SECOND_BAY_PID_FILE"
+    return 0
+  fi
+  local pid pids
+  pid="$(cat "$SECOND_BAY_PID_FILE" 2>/dev/null || true)"
+  pids="$(printf "%s\n%s\n" "$pid" "$(find_pids_listening_on_port "$HUB_SECOND_BAY_PORT")" | awk 'NF' | sort -u)"
+  if [ -n "$pids" ]; then
+    echo "$pids" | xargs -r kill >/dev/null 2>&1 || true
+  fi
+  local i
+  for i in $(seq 1 30); do
+    if ! second_bay_running; then
+      rm -f "$SECOND_BAY_PID_FILE"
+      echo "second bay stopped"
+      return 0
+    fi
+    sleep 1
+  done
+  pids="$(printf "%s\n%s\n" "$pid" "$(find_pids_listening_on_port "$HUB_SECOND_BAY_PORT")" | awk 'NF' | sort -u)"
+  if [ -n "$pids" ]; then
+    echo "$pids" | xargs -r kill -9 >/dev/null 2>&1 || true
+  fi
+  rm -f "$SECOND_BAY_PID_FILE"
+  echo "second bay killed"
 }
 
 stop_cloudflared() {
@@ -463,80 +679,106 @@ start_daemon() {
   load_config
   if is_running; then
     echo "hub daemon already running (pid $(cat "$PID_FILE"))"
-    return 0
-  fi
+  else
+    ensure_local_software_artifacts
 
-  ensure_local_software_artifacts
+    rm -f "$PID_FILE"
+    mkdir -p "$(dirname "$HUB_STDOUT_LOG")"
+    rotate_log_file "$HUB_STDOUT_LOG"
+    if [ -n "$HUB_DEBUG_FILE" ]; then
+      rotate_log_file "$HUB_DEBUG_FILE"
+    fi
+    touch "$HUB_STDOUT_LOG"
+    if [ -n "$HUB_DEBUG_FILE" ]; then
+      touch "$HUB_DEBUG_FILE"
+    fi
 
-  rm -f "$PID_FILE"
-  mkdir -p "$(dirname "$HUB_STDOUT_LOG")"
-  rotate_log_file "$HUB_STDOUT_LOG"
-  if [ -n "$HUB_DEBUG_FILE" ]; then
-    rotate_log_file "$HUB_DEBUG_FILE"
-  fi
-  touch "$HUB_STDOUT_LOG"
-  if [ -n "$HUB_DEBUG_FILE" ]; then
-    touch "$HUB_DEBUG_FILE"
-  fi
+    (
+      cd "$SRC_DIR"
+      export PATH="$SRC_DIR/packages/hub/node_modules/.bin:$SRC_DIR/node_modules/.bin:$PATH:/usr/local/bin:/usr/bin:/bin"
+      local node_bin
+      node_bin="$(resolve_node_bin || true)"
+      if [ -n "$node_bin" ]; then
+        export PATH="$(dirname "$node_bin"):$PATH"
+      fi
+      unset npm_config_prefix
+      export DEBUG="$HUB_DEBUG"
+      export DEBUG_FILE="$HUB_DEBUG_FILE"
+      export HOST="$HUB_BIND_HOST"
+      if [ "$HUB_ALLOW_INSECURE_HTTP_MODE" = "1" ]; then
+        export COCALC_ALLOW_INSECURE_HTTP_MODE=true
+      fi
+      export COCALC_DISABLE_NEXT="$HUB_DISABLE_NEXT"
+      export PORT="$HUB_PORT"
+      export COCALC_PROJECT_HOST_SOFTWARE_PACKAGES_ROOT="$HUB_SOFTWARE_PACKAGES_ROOT"
+      export COCALC_BAY_ID
+      if [ -n "$COCALC_BAY_LABEL" ]; then
+        export COCALC_BAY_LABEL
+      else
+        unset COCALC_BAY_LABEL
+      fi
+      if [ -n "$COCALC_BAY_REGION" ]; then
+        export COCALC_BAY_REGION
+      else
+        unset COCALC_BAY_REGION
+      fi
+      export COCALC_CLUSTER_ROLE
+      if [ -n "$COCALC_CLUSTER_SEED_BAY_ID" ]; then
+        export COCALC_CLUSTER_SEED_BAY_ID
+      else
+        unset COCALC_CLUSTER_SEED_BAY_ID
+      fi
+      if [ -n "$COCALC_CLUSTER_SEED_CONAT_SERVER" ]; then
+        export COCALC_CLUSTER_SEED_CONAT_SERVER
+      else
+        unset COCALC_CLUSTER_SEED_CONAT_SERVER
+      fi
+      if [ -n "$COCALC_CLUSTER_SEED_CONAT_PASSWORD" ]; then
+        export COCALC_CLUSTER_SEED_CONAT_PASSWORD
+      else
+        unset COCALC_CLUSTER_SEED_CONAT_PASSWORD
+      fi
+      if [ -n "$HUB_SOFTWARE_BASE_URL_FORCE" ]; then
+        export COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE="$HUB_SOFTWARE_BASE_URL_FORCE"
+      fi
+      if [ -n "$HUB_SELF_HOST_PAIR_URL" ]; then
+        export COCALC_SELF_HOST_PAIR_URL="$HUB_SELF_HOST_PAIR_URL"
+      else
+        export COCALC_SELF_HOST_PAIR_URL="http://127.0.0.1:$HUB_PORT"
+      fi
+      export COCALC_LAUNCHPAD_CLOUDFLARED_PID_FILE="$HUB_CLOUDFLARED_PID_FILE"
+      if command -v setsid >/dev/null 2>&1; then
+        nohup setsid bash -c "$HUB_CMD" >>"$HUB_STDOUT_LOG" 2>&1 < /dev/null &
+      else
+        nohup bash -c "$HUB_CMD" >>"$HUB_STDOUT_LOG" 2>&1 < /dev/null &
+      fi
+      echo $! >"$PID_FILE"
+    )
 
-  (
-    cd "$SRC_DIR"
-    export PATH="$SRC_DIR/packages/hub/node_modules/.bin:$SRC_DIR/node_modules/.bin:$PATH:/usr/local/bin:/usr/bin:/bin"
-    local node_bin
-    node_bin="$(resolve_node_bin || true)"
-    if [ -n "$node_bin" ]; then
-      export PATH="$(dirname "$node_bin"):$PATH"
-    fi
-    unset npm_config_prefix
-    export DEBUG="$HUB_DEBUG"
-    export DEBUG_FILE="$HUB_DEBUG_FILE"
-    export HOST="$HUB_BIND_HOST"
-    if [ "$HUB_ALLOW_INSECURE_HTTP_MODE" = "1" ]; then
-      export COCALC_ALLOW_INSECURE_HTTP_MODE=true
-    fi
-    export COCALC_DISABLE_NEXT="$HUB_DISABLE_NEXT"
-    export PORT="$HUB_PORT"
-    export COCALC_PROJECT_HOST_SOFTWARE_PACKAGES_ROOT="$HUB_SOFTWARE_PACKAGES_ROOT"
-    if [ -n "$HUB_SOFTWARE_BASE_URL_FORCE" ]; then
-      export COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE="$HUB_SOFTWARE_BASE_URL_FORCE"
-    fi
-    if [ -n "$HUB_SELF_HOST_PAIR_URL" ]; then
-      export COCALC_SELF_HOST_PAIR_URL="$HUB_SELF_HOST_PAIR_URL"
+    local running_pid=""
+    local i
+    for i in $(seq 1 30); do
+      running_pid="$(find_primary_hub_pid || true)"
+      if [ -n "$running_pid" ]; then
+        echo "$running_pid" >"$PID_FILE"
+        break
+      fi
+      sleep 1
+    done
+    if is_running; then
+      echo "hub daemon started (pid $(cat "$PID_FILE"))"
+      echo "stdout: $HUB_STDOUT_LOG"
+      echo "debug:  $HUB_DEBUG_FILE"
+      if [ -n "$HUB_SOFTWARE_BASE_URL_FORCE" ]; then
+        echo "software base (forced): $HUB_SOFTWARE_BASE_URL_FORCE"
+      fi
+      print_bootstrap_signup_url
     else
-      export COCALC_SELF_HOST_PAIR_URL="http://127.0.0.1:$HUB_PORT"
+      echo "hub daemon failed to start; see $HUB_STDOUT_LOG" >&2
+      return 1
     fi
-    export COCALC_LAUNCHPAD_CLOUDFLARED_PID_FILE="$HUB_CLOUDFLARED_PID_FILE"
-    if command -v setsid >/dev/null 2>&1; then
-      nohup setsid bash -c "$HUB_CMD" >>"$HUB_STDOUT_LOG" 2>&1 < /dev/null &
-    else
-      nohup bash -c "$HUB_CMD" >>"$HUB_STDOUT_LOG" 2>&1 < /dev/null &
-    fi
-    echo $! >"$PID_FILE"
-  )
-
-  local running_pid=""
-  local i
-  for i in $(seq 1 30); do
-    running_pid="$(find_primary_hub_pid || true)"
-    if [ -n "$running_pid" ]; then
-      echo "$running_pid" >"$PID_FILE"
-      break
-    fi
-    sleep 1
-  done
-  if is_running; then
-    echo "hub daemon started (pid $(cat "$PID_FILE"))"
-    echo "stdout: $HUB_STDOUT_LOG"
-    echo "debug:  $HUB_DEBUG_FILE"
-    if [ -n "$HUB_SOFTWARE_BASE_URL_FORCE" ]; then
-      echo "software base (forced): $HUB_SOFTWARE_BASE_URL_FORCE"
-    fi
-    print_bootstrap_signup_url
-    return 0
   fi
-
-  echo "hub daemon failed to start; see $HUB_STDOUT_LOG" >&2
-  return 1
+  start_second_bay
 }
 
 build_daemon() {
@@ -556,6 +798,7 @@ build_daemon() {
 stop_daemon() {
   local keep_cloudflared="${1:-0}"
   load_config
+  stop_second_bay
   local stopped=0
   if ! is_running; then
     echo "hub daemon is not running"
@@ -606,6 +849,14 @@ show_status() {
   echo "state:  $STATE_DIR"
   echo "stdout: $HUB_STDOUT_LOG"
   echo "debug:  $HUB_DEBUG_FILE"
+  echo "bay id: $COCALC_BAY_ID"
+  echo "cluster role: $COCALC_CLUSTER_ROLE"
+  if [ -n "$COCALC_CLUSTER_SEED_BAY_ID" ]; then
+    echo "cluster seed bay: $COCALC_CLUSTER_SEED_BAY_ID"
+  fi
+  if [ -n "$COCALC_CLUSTER_SEED_CONAT_SERVER" ]; then
+    echo "cluster seed fabric: $COCALC_CLUSTER_SEED_CONAT_SERVER"
+  fi
   local hub_host hub_url public_hostname
   hub_host="$HUB_BIND_HOST"
   if [ "$hub_host" = "0.0.0.0" ] || [ -z "$hub_host" ]; then
@@ -636,6 +887,22 @@ show_status() {
   if [ -n "$HUB_SOFTWARE_BASE_URL_FORCE" ]; then
     echo "software base (forced): $HUB_SOFTWARE_BASE_URL_FORCE"
   fi
+  if [ "$HUB_ENABLE_SECOND_BAY" = "1" ]; then
+    local second_hub_url
+    second_hub_url="$(local_hub_url "$HUB_SECOND_BAY_BIND_HOST" "$HUB_SECOND_BAY_PORT")"
+    echo "second bay enabled: yes"
+    echo "second bay id: $HUB_SECOND_BAY_ID"
+    echo "second bay port: $HUB_SECOND_BAY_PORT"
+    echo "second bay url: $second_hub_url"
+    echo "second bay state: $HUB_SECOND_BAY_STATE_DIR"
+    echo "second bay data: $HUB_SECOND_BAY_DATA_DIR"
+    echo "second bay stdout: $HUB_SECOND_BAY_STDOUT_LOG"
+    if second_bay_running; then
+      echo "second bay running (pid $(cat "$SECOND_BAY_PID_FILE"))"
+    else
+      echo "second bay stopped"
+    fi
+  fi
 }
 
 show_env() {
@@ -657,6 +924,22 @@ HUB_SOFTWARE_BASE_URL_FORCE=$HUB_SOFTWARE_BASE_URL_FORCE
 HUB_NODE_BIN=$HUB_NODE_BIN
 HUB_SELF_HOST_PAIR_URL=$HUB_SELF_HOST_PAIR_URL
 HUB_CLOUDFLARED_PID_FILE=$HUB_CLOUDFLARED_PID_FILE
+HUB_ENABLE_SECOND_BAY=$HUB_ENABLE_SECOND_BAY
+HUB_SECOND_BAY_ID=$HUB_SECOND_BAY_ID
+HUB_SECOND_BAY_PORT=$HUB_SECOND_BAY_PORT
+HUB_SECOND_BAY_BIND_HOST=$HUB_SECOND_BAY_BIND_HOST
+HUB_SECOND_BAY_CMD=$HUB_SECOND_BAY_CMD
+HUB_SECOND_BAY_STATE_DIR=$HUB_SECOND_BAY_STATE_DIR
+HUB_SECOND_BAY_DATA_DIR=$HUB_SECOND_BAY_DATA_DIR
+HUB_SECOND_BAY_DEBUG_FILE=$HUB_SECOND_BAY_DEBUG_FILE
+HUB_SECOND_BAY_STDOUT_LOG=$HUB_SECOND_BAY_STDOUT_LOG
+COCALC_BAY_ID=$COCALC_BAY_ID
+COCALC_BAY_LABEL=$COCALC_BAY_LABEL
+COCALC_BAY_REGION=$COCALC_BAY_REGION
+COCALC_CLUSTER_ROLE=$COCALC_CLUSTER_ROLE
+COCALC_CLUSTER_SEED_BAY_ID=$COCALC_CLUSTER_SEED_BAY_ID
+COCALC_CLUSTER_SEED_CONAT_SERVER=$COCALC_CLUSTER_SEED_CONAT_SERVER
+COCALC_CLUSTER_SEED_CONAT_PASSWORD=$COCALC_CLUSTER_SEED_CONAT_PASSWORD
 EOF
 }
 

@@ -468,11 +468,7 @@ export function registerProjectBasicCommands(
       async (opts: { project?: string; wait?: boolean }, command: Command) => {
         await withContext(command, "project restart", async (ctx) => {
           const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
-          await ctx.hub.projects.stop({
-            project_id: ws.project_id,
-          });
-
-          const op = await ctx.hub.projects.start({
+          const op = await ctx.hub.projects.restart({
             project_id: ws.project_id,
             wait: false,
           });

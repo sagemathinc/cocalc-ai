@@ -1,22 +1,9 @@
 export {};
 
 let assertCollabMock: jest.Mock;
-let createLroMock: jest.Mock;
-let updateLroMock: jest.Mock;
-let publishLroSummaryMock: jest.Mock;
-let publishLroEventMock: jest.Mock;
-let getProjectMock: jest.Mock;
-let projectStartMock: jest.Mock;
-let mirrorStartLroProgressMock: jest.Mock;
-let supersedeOlderProjectStartLrosMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
-let interBayStartMock: jest.Mock;
-
-async function flushBackgroundStartTask() {
-  for (let i = 0; i < 6; i += 1) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-}
+let interBayStopMock: jest.Mock;
+let getProjectMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -83,7 +70,7 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   __esModule: true,
   getInterBayBridge: jest.fn(() => ({
     projectControl: jest.fn(() => ({
-      start: (...args: any[]) => interBayStartMock(...args),
+      stop: (...args: any[]) => interBayStopMock(...args),
     })),
   })),
 }));
@@ -96,31 +83,29 @@ jest.mock("@cocalc/server/projects/copy-db", () => ({
 
 jest.mock("@cocalc/server/lro/lro-db", () => ({
   __esModule: true,
-  createLro: (...args: any[]) => createLroMock(...args),
-  updateLro: (...args: any[]) => updateLroMock(...args),
+  createLro: jest.fn(),
+  updateLro: jest.fn(),
 }));
 
 jest.mock("@cocalc/server/projects/start-lro-progress", () => ({
   __esModule: true,
-  mirrorStartLroProgress: (...args: any[]) =>
-    mirrorStartLroProgressMock(...args),
+  mirrorStartLroProgress: jest.fn(),
 }));
 
 jest.mock("@cocalc/server/projects/start-lro-cleanup", () => ({
   __esModule: true,
-  supersedeOlderProjectStartLros: (...args: any[]) =>
-    supersedeOlderProjectStartLrosMock(...args),
+  supersedeOlderProjectStartLros: jest.fn(),
 }));
 
 jest.mock("@cocalc/server/lro/stream", () => ({
   __esModule: true,
-  publishLroEvent: (...args: any[]) => publishLroEventMock(...args),
-  publishLroSummary: (...args: any[]) => publishLroSummaryMock(...args),
+  publishLroEvent: jest.fn(),
+  publishLroSummary: jest.fn(),
 }));
 
 jest.mock("@cocalc/conat/lro/names", () => ({
   __esModule: true,
-  lroStreamName: jest.fn((op_id: string) => `stream:${op_id}`),
+  lroStreamName: jest.fn(),
 }));
 
 jest.mock("@cocalc/conat/persist/util", () => ({
@@ -130,72 +115,43 @@ jest.mock("@cocalc/conat/persist/util", () => ({
 
 jest.mock("./util", () => ({
   __esModule: true,
-  assertCollab: (...args: any[]) => assertCollabMock(...args),
+  assertCollab: jest.fn(),
   assertCollabAllowRemoteProjectAccess: (...args: any[]) =>
     assertCollabMock(...args),
 }));
 
-describe("projects.start", () => {
+describe("projects.stop", () => {
   beforeEach(() => {
     jest.resetModules();
     assertCollabMock = jest.fn(async () => undefined);
-    createLroMock = jest.fn(async () => ({
-      op_id: "op-1",
-      kind: "project-start",
-      scope_type: "project",
-      scope_id: "proj-1",
-      status: "queued",
-    }));
-    updateLroMock = jest.fn(async ({ status }: { status: string }) => ({
-      op_id: "op-1",
-      kind: "project-start",
-      scope_type: "project",
-      scope_id: "proj-1",
-      status,
-    }));
-    publishLroSummaryMock = jest.fn(() => new Promise(() => {}));
-    publishLroEventMock = jest.fn(async () => undefined);
-    projectStartMock = jest.fn(async () => undefined);
-    mirrorStartLroProgressMock = jest.fn(async () => async () => undefined);
-    supersedeOlderProjectStartLrosMock = jest.fn(async () => undefined);
     resolveProjectBayMock = jest.fn(async () => ({
-      bay_id: "bay-0",
-      epoch: 0,
+      bay_id: "bay-1",
+      epoch: 4,
     }));
-    interBayStartMock = jest.fn(async () => undefined);
+    interBayStopMock = jest.fn(async () => undefined);
     getProjectMock = jest.fn(async () => ({
-      start: projectStartMock,
+      stop: jest.fn(async () => undefined),
     }));
   });
 
-  it("does not let stuck summary publication block async project start", async () => {
-    const { start } = await import("./projects");
-    const response = await start({
+  it("uses remote-aware auth and routes stop through the inter-bay bridge", async () => {
+    const { stop } = await import("./projects");
+    await expect(
+      stop({
+        account_id: "acct-1",
+        project_id: "proj-1",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(assertCollabMock).toHaveBeenCalledWith({
       account_id: "acct-1",
       project_id: "proj-1",
-      wait: false,
     });
-
-    await flushBackgroundStartTask();
-
-    expect(response).toEqual({
-      op_id: "op-1",
-      scope_type: "project",
-      scope_id: "proj-1",
-      service: "persist-service",
-      stream_name: "stream:op-1",
-    });
-    expect(interBayStartMock).toHaveBeenCalledWith({
+    expect(resolveProjectBayMock).toHaveBeenCalledWith("proj-1");
+    expect(interBayStopMock).toHaveBeenCalledWith({
       project_id: "proj-1",
-      account_id: "acct-1",
-      lro_op_id: "op-1",
-      source_bay_id: "bay-0",
-      epoch: 0,
+      epoch: 4,
     });
-    expect(supersedeOlderProjectStartLrosMock).toHaveBeenCalledWith({
-      project_id: "proj-1",
-      keep_op_id: "op-1",
-    });
-    expect(publishLroSummaryMock).toHaveBeenCalled();
+    expect(getProjectMock).not.toHaveBeenCalled();
   });
 });

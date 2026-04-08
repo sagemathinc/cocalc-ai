@@ -15,6 +15,7 @@ import {
   type RestoreStagingHandle,
   type SnapshotRestoreMode,
 } from "@cocalc/conat/files/file-server";
+import type { ProjectState } from "@cocalc/util/db-schema/projects";
 import type {
   ExecuteCodeOptions,
   ExecuteCodeOutput,
@@ -206,6 +207,12 @@ export interface WorkspaceSshConnectionInfo {
   ssh_username: string;
   ssh_server: string | null;
   cloudflare_hostname: string | null;
+}
+
+export interface ProjectAddress {
+  host: string;
+  port: number;
+  secret_token: string;
 }
 
 export type ProjectCollabInviteStatus =
@@ -468,6 +475,9 @@ export const projects = {
 
   start: authFirstRequireAccount,
   stop: authFirstRequireAccount,
+  restart: authFirstRequireAccount,
+  getProjectState: authFirstRequireAccount,
+  getProjectAddress: authFirstRequireAccount,
   deleteProject: authFirstRequireAccount,
   setProjectDeleted: authFirstRequireAccount,
   updateAuthorizedKeysOnHost: authFirstRequireAccount,
@@ -987,6 +997,25 @@ export interface Projects {
     stream_name: string;
   }>;
   stop: (opts: { account_id?: string; project_id: string }) => Promise<void>;
+  restart: (opts: {
+    account_id?: string;
+    project_id: string;
+    wait?: boolean;
+  }) => Promise<{
+    op_id: string;
+    scope_type: "project";
+    scope_id: string;
+    service: string;
+    stream_name: string;
+  }>;
+  getProjectState: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectState>;
+  getProjectAddress: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectAddress>;
   deleteProject: (opts: {
     account_id?: string;
     project_id: string;

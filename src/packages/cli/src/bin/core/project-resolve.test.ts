@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { queryProjects } from "./project-resolve";
+import { queryProjects, resolveProject } from "./project-resolve";
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -174,4 +174,83 @@ test("queryProjects does not fall back in only mode", async () => {
   });
   assert.deepEqual(seen, ["account_project_index"]);
   assert.deepEqual(rows, []);
+});
+
+test("resolveProject falls back to getProjectBay for remote UUID projects", async () => {
+  const ctx = {
+    projectCache: new Map(),
+    hub: {
+      db: {
+        userQuery: async () => {
+          throw new Error("FATAL: you do not have read access to this project");
+        },
+      },
+      system: {
+        getProjectBay: async ({ project_id }) => ({
+          project_id,
+          owning_bay_id: "bay-0",
+          host_id: "host-1",
+          title: "Remote Project",
+          source: "project-row",
+        }),
+      },
+      hosts: {},
+    },
+  } as any;
+
+  const project = await resolveProject(
+    ctx,
+    "77777777-7777-4777-8777-777777777777",
+    60_000,
+  );
+
+  assert.deepEqual(project, {
+    project_id: "77777777-7777-4777-8777-777777777777",
+    title: "Remote Project",
+    host_id: "host-1",
+    state: null,
+    last_edited: null,
+    deleted: false,
+  });
+});
+
+test("queryProjects falls back to getProjectBay for exact remote UUID reads", async () => {
+  delete process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS;
+  const ctx = {
+    projectCache: new Map(),
+    hub: {
+      db: {
+        userQuery: async () => {
+          throw new Error("FATAL: you do not have read access to this project");
+        },
+      },
+      system: {
+        getProjectBay: async ({ project_id }) => ({
+          project_id,
+          owning_bay_id: "bay-0",
+          host_id: "host-2",
+          title: "Remote Query Project",
+          source: "project-row",
+        }),
+      },
+      hosts: {},
+    },
+  } as any;
+
+  const rows = await queryProjects({
+    ctx,
+    project_id: "88888888-8888-4888-8888-888888888888",
+    limit: 1,
+  });
+
+  assert.deepEqual(rows, [
+    {
+      project_id: "88888888-8888-4888-8888-888888888888",
+      title: "Remote Query Project",
+      host_id: "host-2",
+      state: null,
+      last_edited: null,
+      deleted: false,
+    },
+  ]);
 });

@@ -595,10 +595,7 @@ export function registerDevCommand(
 
           let restartResult: Record<string, unknown> | null = null;
           if (project && opts.restartProject !== false) {
-            await ctx.hub.projects.stop({
-              project_id: project.project_id,
-            });
-            const restart = await ctx.hub.projects.start({
+            const restart = await ctx.hub.projects.restart({
               project_id: project.project_id,
               wait: false,
             });

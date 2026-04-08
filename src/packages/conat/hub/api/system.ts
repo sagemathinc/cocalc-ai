@@ -269,8 +269,8 @@ export interface BayInfo {
   bay_id: string;
   label: string;
   region: string | null;
-  deployment_mode: "single-bay";
-  role: "combined";
+  deployment_mode: "single-bay" | "multi-bay";
+  role: "combined" | "seed" | "attached";
   is_default: boolean;
 }
 
