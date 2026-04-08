@@ -134,6 +134,7 @@ import {
   listRunningAcpJobs,
   markRunningAcpJobsInterrupted,
   requeueRunningAcpJob,
+  resendCanceledAcpJob,
   reprioritizeAcpJobImmediate,
   setAcpJobState,
   type AcpJobRow,
@@ -6709,6 +6710,30 @@ async function handleAcpControlRequest(
         err,
       });
     }
+    if (liteUseDetachedAcpWorker()) {
+      await ensureDetachedWorkerRunning({ force: true });
+    } else {
+      kickAllQueuedAcpJobs();
+    }
+    return { ok: true, state: "queued" };
+  }
+  if (request.action === "resend") {
+    const row = resendCanceledAcpJob({
+      project_id,
+      path,
+      user_message_id,
+    });
+    if (!row || row.state !== "queued") {
+      return { ok: false, state: row?.state ?? "missing" };
+    }
+    await persistQueuedUserMessageProjection({
+      client: conatClient,
+      project_id,
+      path,
+      thread_id,
+      user_message_id,
+      queued: true,
+    });
     if (liteUseDetachedAcpWorker()) {
       await ensureDetachedWorkerRunning({ force: true });
     } else {

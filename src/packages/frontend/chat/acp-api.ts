@@ -472,6 +472,41 @@ export async function sendQueuedAcpTurnImmediately({
   return true;
 }
 
+export async function resendCanceledAcpTurn({
+  actions,
+  message,
+}: {
+  actions: ChatActions;
+  message: ChatMessage;
+}): Promise<boolean> {
+  const { store } = actions;
+  if (!store) return false;
+  const messageId = field<string>(message, "message_id");
+  if (!messageId) return false;
+  const threadId = field<string>(message, "thread_id");
+  if (!threadId) return false;
+  const project_id = store.get("project_id");
+  const path = store.get("path");
+  if (!project_id || !path) return false;
+  const result = await webapp_client.conat_client.controlAcp({
+    project_id,
+    path,
+    thread_id: threadId,
+    user_message_id: messageId,
+    action: "resend",
+  });
+  if (!result?.ok) {
+    return false;
+  }
+  store.setState({
+    acpState: (store.get("acpState") ?? new Map()).set(
+      `message:${messageId}`,
+      "queue",
+    ),
+  });
+  return true;
+}
+
 async function automationRequest({
   actions,
   threadId,

@@ -54,6 +54,7 @@ import { codexEventsToMarkdown } from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
   resetAcpThreadState,
+  resendCanceledAcpTurn,
   sendQueuedAcpTurnImmediately,
 } from "./acp-api";
 import { History, HistoryFooter, HistoryTitle } from "./history";
@@ -2180,6 +2181,10 @@ export default function Message({
     if (!actions) return;
     void sendQueuedAcpTurnImmediately({ actions, message });
   };
+  const handleResendNotSent = () => {
+    if (!actions) return;
+    void resendCanceledAcpTurn({ actions, message });
+  };
 
   const acpStateToRender = useMemo(() => {
     return computeAcpStateToRender({
@@ -2219,9 +2224,14 @@ export default function Message({
     }
     if (acpStateToRender === "not-sent") {
       return (
-        <Button size="small" type="text" disabled>
-          not sent
-        </Button>
+        <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+          <Button size="small" type="text" disabled>
+            not sent
+          </Button>
+          <Button size="small" type="text" onClick={handleResendNotSent}>
+            Send
+          </Button>
+        </span>
       );
     }
     return (
