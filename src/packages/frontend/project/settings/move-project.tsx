@@ -156,7 +156,11 @@ export default function MoveProject({
             >
               {hostName}
             </span>
-            {pricingModel === "spot" && <SpotHostTag />}
+            {pricingModel === "spot" && (
+              <span style={{ marginLeft: 8 }}>
+                <SpotHostTag />
+              </span>
+            )}
           </>
         ) : (
           <span>{label ?? "Move Project"}</span>
