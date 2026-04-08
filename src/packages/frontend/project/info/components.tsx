@@ -20,7 +20,7 @@ import humanizeList from "humanize-list";
 import * as immutable from "immutable";
 import { Alert } from "@cocalc/frontend/antd-bootstrap";
 import { CSS, React } from "@cocalc/frontend/app-framework";
-import { Icon, IconName, TimeElapsed, Tip } from "@cocalc/frontend/components";
+import { Icon, IconName, Tip } from "@cocalc/frontend/components";
 import { FLYOUT_PADDING } from "@cocalc/frontend/project/page/flyouts/consts";
 import {
   Process,
@@ -476,8 +476,6 @@ export const CGroup: React.FC<CGroupProps> = React.memo(
       have_cgroup,
       cg_info,
       disk_usage,
-      pt_stats,
-      start_ts,
       project_status,
       mode = "full",
       style,
@@ -489,8 +487,6 @@ export const CGroup: React.FC<CGroupProps> = React.memo(
     const status_alerts: Readonly<string[]> = all_alerts.map((a) =>
       a.get("type"),
     );
-
-    const row1: CSS = { fontWeight: "bold", fontSize: "110%" };
 
     // we're essentially checking the type of @cocalc/comm/project-status/types
     // (but it is immutable js)
@@ -522,24 +518,6 @@ export const CGroup: React.FC<CGroupProps> = React.memo(
         <LabelQuestionmark text={"Disk"} />
       </CGroupTip>
     );
-
-    function render_row1() {
-      return (
-        <>
-          <Descriptions.Item label={"Processes"}>
-            <span style={row1}>{pt_stats.nprocs}</span>
-          </Descriptions.Item>
-          <Descriptions.Item label="Threads">
-            <span style={row1}>{pt_stats.threads}</span>
-          </Descriptions.Item>
-          <Descriptions.Item label="Uptime">
-            <span style={row1}>
-              {start_ts != null ? <TimeElapsed start_ts={start_ts} /> : "?"}
-            </span>{" "}
-          </Descriptions.Item>
-        </>
-      );
-    }
 
     function render_row2() {
       return (
@@ -603,7 +581,6 @@ export const CGroup: React.FC<CGroupProps> = React.memo(
           size={isFlyout ? "small" : "middle"}
           style={style}
         >
-          {false && render_row1()}
           {render_row2()}
         </Descriptions>
       );

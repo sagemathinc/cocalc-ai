@@ -306,17 +306,10 @@ export default function SiteSettings({ close }) {
       icon: <Icon name="warning" />,
       width: 700,
       content,
-      onOk() {
-        return new Promise<void>(async (done, error) => {
-          try {
-            await store();
-            setState("edit");
-            await load();
-            done();
-          } catch (err) {
-            error(err);
-          }
-        });
+      async onOk() {
+        await store();
+        setState("edit");
+        await load();
       },
       onCancel() {
         close();

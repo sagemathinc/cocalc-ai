@@ -208,7 +208,7 @@ export function PDFJS({
     if (evt.key == "ArrowDown") {
       if (evt.ctrlKey || evt.metaKey) {
         // end of document
-        virtuosoRef.current?.scrollTo({ top: 9999999999999999 });
+        virtuosoRef.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER });
       } else {
         virtuosoRef.current?.scrollBy({
           top: (divRef.current?.getBoundingClientRect()?.height ?? 300) / 20,
@@ -234,7 +234,7 @@ export function PDFJS({
     }
     if (evt.key == "End") {
       // end
-      virtuosoRef.current?.scrollTo({ top: 9999999999999999 });
+      virtuosoRef.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER });
       return;
     }
     if (evt.key == "-" || (evt.key == "," && evt.ctrlKey && evt.shiftKey)) {
