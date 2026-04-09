@@ -2609,7 +2609,9 @@ export class SandboxedFilesystem {
 // Shared watcher instance per process.
 // TODO: location below is TEMPORARY -- just need something stable for now
 const globalSyncFsService = new SyncFsService(
-  new SyncFsWatchStore(join(data, "sync-fs.sqlite")),
+  process.env.COCALC_TEST_MODE
+    ? new SyncFsWatchStore()
+    : new SyncFsWatchStore(join(data, "sync-fs.sqlite")),
 );
 globalSyncFsService.on("error", (err) => {
   logger.error("sync-fs-service error", err);

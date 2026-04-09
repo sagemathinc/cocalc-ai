@@ -500,6 +500,7 @@ export class PersistentStream extends EventEmitter {
     previousSeq,
     msgID,
     checkpoint,
+    changes,
   }: {
     encoding: DataEncoding;
     raw: Buffer;
@@ -509,10 +510,10 @@ export class PersistentStream extends EventEmitter {
     previousSeq?: number;
     msgID?: string;
     checkpoint?: CheckpointUpdate;
+    changes: ChangefeedOperation[];
   }): {
     time: number;
     seq: number;
-    change: SetOperation;
   } => {
     if (previousSeq === null) {
       previousSeq = undefined;
@@ -522,17 +523,17 @@ export class PersistentStream extends EventEmitter {
     }
     if (msgID != null && this.msgIDs?.has(msgID)) {
       const existing = this.msgIDs.get(msgID)! as { seq: number; time: number };
+      changes.push({
+        seq: existing.seq,
+        time: existing.time,
+        key,
+        encoding,
+        raw,
+        headers: headers == null ? undefined : (headers as Headers),
+        msgID,
+      });
       return {
         ...existing,
-        change: {
-          seq: existing.seq,
-          time: existing.time,
-          key,
-          encoding,
-          raw,
-          headers: headers == null ? undefined : (headers as Headers),
-          msgID,
-        },
       };
     }
     this.checkRequiredHeaders(headers);
@@ -554,7 +555,7 @@ export class PersistentStream extends EventEmitter {
       (raw?.length ?? 0) +
       (key?.length ?? 0);
 
-    this.enforceLimits(size);
+    this.enforceLimits(size, changes);
 
     if (key !== undefined) {
       this.db.prepare("DELETE FROM messages WHERE key = ?").run(key);
@@ -582,18 +583,18 @@ export class PersistentStream extends EventEmitter {
         data: checkpoint.data,
       });
     }
+    changes.push({
+      seq,
+      time,
+      key,
+      encoding,
+      raw,
+      headers: headers == null ? undefined : (headers as Headers),
+      msgID,
+    });
     return {
       time,
       seq,
-      change: {
-        seq,
-        time,
-        key,
-        encoding,
-        raw,
-        headers: headers == null ? undefined : (headers as Headers),
-        msgID,
-      },
     };
   };
 
@@ -619,6 +620,7 @@ export class PersistentStream extends EventEmitter {
     msgID?: string;
     checkpoint?: CheckpointUpdate;
   }): { seq: number; time: number } => {
+    const changes: ChangefeedOperation[] = [];
     const result = this.runTransaction(() =>
       this.setInternal({
         encoding,
@@ -629,10 +631,15 @@ export class PersistentStream extends EventEmitter {
         previousSeq,
         msgID,
         checkpoint,
+        changes,
       }),
     );
-    this.emit("change", result.change);
-    this.throttledBackup();
+    for (const change of changes) {
+      this.emit("change", change);
+    }
+    if (changes.length > 0) {
+      this.throttledBackup();
+    }
     if (msgID !== undefined) {
       this.msgIDs.set(msgID, { time: result.time, seq: result.seq });
     }
@@ -651,13 +658,12 @@ export class PersistentStream extends EventEmitter {
       checkpoint?: CheckpointUpdate;
     }>,
   ): Array<{ seq: number; time: number } | { error: string; code?: any }> => {
-    const changes: SetOperation[] = [];
+    const changes: ChangefeedOperation[] = [];
     const msgIds: Array<{ msgID: string; time: number; seq: number }> = [];
     const results = this.runTransaction(() =>
       operations.map((operation) => {
         try {
-          const result = this.setInternal(operation);
-          changes.push(result.change);
+          const result = this.setInternal({ ...operation, changes });
           if (operation.msgID !== undefined) {
             msgIds.push({
               msgID: operation.msgID,
@@ -1115,19 +1121,26 @@ export class PersistentStream extends EventEmitter {
       .run(...seqs);
   };
 
-  private emitDelete = (rows) => {
+  private emitDelete = (rows, deferredChanges?: ChangefeedOperation[]) => {
     if (rows.length > 0) {
       const seqs = rows.map((row: { seq: number }) => row.seq);
       this.deleteCheckpointsInSeqs(seqs);
-      this.emit("change", { op: "delete", seqs });
-      this.throttledBackup();
+      if (deferredChanges != null) {
+        deferredChanges.push({ op: "delete", seqs });
+      } else {
+        this.emit("change", { op: "delete", seqs });
+        this.throttledBackup();
+      }
     }
   };
 
   // do whatever limit enforcement and throttling is needed when inserting one new message
   // with the given size; if size=0 assume not actually inserting a new message, and just
   // enforcingt current limits
-  private enforceLimits = (size: number = 0) => {
+  private enforceLimits = (
+    size: number = 0,
+    deferredChanges?: ChangefeedOperation[],
+  ) => {
     if (
       size > 0 &&
       (this.conf.max_msgs_per_second > 0 || this.conf.max_bytes_per_second > 0)
@@ -1169,7 +1182,7 @@ export class PersistentStream extends EventEmitter {
               `DELETE FROM messages WHERE seq IN (SELECT seq FROM messages ORDER BY seq ASC LIMIT ?) RETURNING seq`,
             )
             .all(length - this.conf.max_msgs);
-          this.emitDelete(rows);
+          this.emitDelete(rows, deferredChanges);
         }
       }
     }
@@ -1180,7 +1193,7 @@ export class PersistentStream extends EventEmitter {
           `DELETE FROM messages WHERE seq IN (SELECT seq FROM messages WHERE time <= ?) RETURNING seq`,
         )
         .all((Date.now() - this.conf.max_age) / 1000);
-      this.emitDelete(rows);
+      this.emitDelete(rows, deferredChanges);
     }
 
     if (this.conf.max_bytes > -1) {
@@ -1196,7 +1209,7 @@ export class PersistentStream extends EventEmitter {
             .prepare("DELETE FROM messages RETURNING seq")
             .all() as { seq: number }[];
           this.db.prepare("DELETE FROM stream_checkpoints").run();
-          this.emitDelete(rows);
+          this.emitDelete(rows, deferredChanges);
         }
       } else {
         // delete all the earliest (in terms of seq number) messages
@@ -1229,7 +1242,7 @@ export class PersistentStream extends EventEmitter {
               const rows = this.db
                 .prepare(`DELETE FROM messages WHERE seq <= ? RETURNING seq`)
                 .all(lastSeqToDelete);
-              this.emitDelete(rows);
+              this.emitDelete(rows, deferredChanges);
             }
           }
         }
@@ -1242,7 +1255,7 @@ export class PersistentStream extends EventEmitter {
           `DELETE FROM messages WHERE ttl IS NOT null AND time + ttl/1000 < ? RETURNING seq`,
         )
         .all(Date.now() / 1000);
-      this.emitDelete(rows);
+      this.emitDelete(rows, deferredChanges);
     }
 
     if (this.conf.max_msg_size > -1 && size > this.conf.max_msg_size) {
