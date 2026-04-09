@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components";
 import type { StartLroState } from "@cocalc/frontend/project/start-ops";
+import { useProjectActiveOperation } from "../use-project-active-op";
 import { progressBarStatus } from "@cocalc/frontend/lro/utils";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -85,14 +86,38 @@ function isStartActive(startLro?: StartLroState): boolean {
   );
 }
 
-function phaseFromStart(startLro?: StartLroState): StartPhaseKey {
-  return normalizeStartPhaseKey(
-    startLro?.last_progress?.phase ??
-      startLro?.summary?.progress_summary?.phase,
+function isActiveOpStartLike(
+  activeOp?: {
+    kind?: string;
+    status?: string;
+  } | null,
+): boolean {
+  return (
+    activeOp?.kind === "project-start" &&
+    (activeOp.status === "queued" || activeOp.status === "running")
   );
 }
 
-function progressPercent(startLro?: StartLroState): number | undefined {
+function phaseFromStart(
+  startLro?: StartLroState,
+  activeOp?: {
+    phase?: string | null;
+  } | null,
+): StartPhaseKey {
+  return normalizeStartPhaseKey(
+    startLro?.last_progress?.phase ??
+      startLro?.summary?.progress_summary?.phase ??
+      activeOp?.phase,
+  );
+}
+
+function progressPercent(
+  startLro?: StartLroState,
+  activeOp?: {
+    phase?: string | null;
+    progress?: number | null;
+  } | null,
+): number | undefined {
   const status = startLro?.summary?.status;
   if (status === "succeeded") return 100;
   const direct = clampProgressPercent(startLro?.last_progress?.progress);
@@ -105,7 +130,11 @@ function progressPercent(startLro?: StartLroState): number | undefined {
   if (summaryDirect != null) {
     return summaryDirect;
   }
-  const phase = phaseFromStart(startLro);
+  const activeOpDirect = clampProgressPercent(activeOp?.progress);
+  if (activeOpDirect != null) {
+    return activeOpDirect;
+  }
+  const phase = phaseFromStart(startLro, activeOp);
   const index = START_PHASES.findIndex((entry) => entry.key === phase);
   if (index < 0) return 0;
   return Math.round((index / Math.max(1, START_PHASES.length - 1)) * 100);
@@ -122,7 +151,9 @@ export default function StartInProgress({
     () => startLroRecord?.toJS() as StartLroState | undefined,
     [startLroRecord],
   );
+  const { activeOp } = useProjectActiveOperation(project_id);
   const startLroActive = isStartActive(startLro);
+  const activeOpStartLike = isActiveOpStartLike(activeOp);
   const lifecycleState = `${
     projectMap?.getIn([project_id, "state", "state"]) ?? ""
   }`
@@ -130,9 +161,11 @@ export default function StartInProgress({
     .toLowerCase();
   const lifecycleActive =
     lifecycleState === "starting" || lifecycleState === "opening";
-  const active = startLroActive || lifecycleActive;
+  const active = startLroActive || activeOpStartLike || lifecycleActive;
   const startTsFromLro = toTimestamp(
-    startLro?.summary?.started_at ?? startLro?.summary?.created_at,
+    startLro?.summary?.started_at ??
+      startLro?.summary?.created_at ??
+      activeOp?.started_at,
   );
   const [detectedStartTs, setDetectedStartTs] = useState<number | undefined>();
   const [visible, setVisible] = useState<boolean>(false);
@@ -176,26 +209,30 @@ export default function StartInProgress({
     return null;
   }
 
-  const phase = phaseFromStart(startLro);
+  const phase = phaseFromStart(startLro, activeOp);
   const current = Math.max(
     0,
     START_PHASES.findIndex((entry) => entry.key === phase),
   );
-  const percent = progressPercent(startLro);
+  const percent = progressPercent(startLro, activeOp);
   const detailText = formatProgressDetail(
     startLro?.last_progress?.detail ??
-      startLro?.summary?.progress_summary?.detail,
+      startLro?.summary?.progress_summary?.detail ??
+      activeOp?.detail,
   );
   const rawMessage = `${
     startLro?.last_progress?.message ??
     startLro?.summary?.progress_summary?.message ??
+    activeOp?.message ??
     ""
   }`.trim();
   const phaseLabel = START_PHASES[current]?.label ?? "Starting";
+  const actionLabel =
+    activeOp?.action === "restart" ? "Restarting" : "Starting";
   const message =
     rawMessage && rawMessage.toLowerCase() !== phase
       ? rawMessage
-      : !startLroActive && lifecycleActive
+      : !startLroActive && !activeOpStartLike && lifecycleActive
         ? "Project is starting. Detailed startup progress has not arrived yet."
         : (START_PHASES[current]?.description ?? "Starting project");
 
@@ -221,9 +258,13 @@ export default function StartInProgress({
         >
           <Space wrap size={[8, 8]} align="center">
             <span style={{ fontSize: "18px", fontWeight: 600 }}>
-              Starting project
+              {actionLabel} project
             </span>
-            <Tag color={lroStatusColor(startLro?.summary?.status)}>
+            <Tag
+              color={lroStatusColor(
+                startLro?.summary?.status ?? activeOp?.status,
+              )}
+            >
               {phaseLabel}
             </Tag>
             {startTs != null ? (

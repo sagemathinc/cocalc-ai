@@ -1,14 +1,16 @@
 export {};
 
-let assertLocalProjectCollaboratorMock: jest.Mock;
+let getLocalProjectCollaboratorAccessStatusMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let getPoolMock: jest.Mock;
 let queryMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
-  assertLocalProjectCollaborator: (...args: any[]) =>
-    assertLocalProjectCollaboratorMock(...args),
+  PROJECT_COLLABORATOR_REQUIRED_ERROR: "user must be a collaborator on project",
+  PROJECT_NOT_FOUND_ERROR: "project not found",
+  getLocalProjectCollaboratorAccessStatus: (...args: any[]) =>
+    getLocalProjectCollaboratorAccessStatusMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
@@ -27,21 +29,27 @@ describe("project schedule readers", () => {
 
   beforeEach(() => {
     jest.resetModules();
-    assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
+    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
+      async () => "local-collaborator",
+    );
     isAdminMock = jest.fn(async () => false);
-    queryMock = jest.fn(async (sql: string) => {
-      if (sql.startsWith("SELECT snapshots")) {
-        return {
-          rows: [{ snapshots: { daily: 7, weekly: 4, monthly: 2 } }],
-        };
-      }
-      if (sql.startsWith("SELECT backups")) {
-        return {
-          rows: [{ backups: { disabled: true, daily: 1, weekly: 3 } }],
-        };
-      }
-      throw new Error(`unexpected query: ${sql}`);
-    });
+    queryMock = jest.fn(async () => ({
+      rows: [
+        {
+          launcher: null,
+          region: null,
+          created: null,
+          env: null,
+          rootfs_image: null,
+          rootfs_image_id: null,
+          snapshots: { daily: 7, weekly: 4, monthly: 2 },
+          backups: { disabled: true, daily: 1, weekly: 3 },
+          run_quota: null,
+          settings: null,
+          course: null,
+        },
+      ],
+    }));
     getPoolMock = jest.fn(() => ({ query: queryMock }));
   });
 
@@ -57,10 +65,9 @@ describe("project schedule readers", () => {
       weekly: 4,
       monthly: 2,
     });
-    expect(queryMock).toHaveBeenCalledWith(
-      "SELECT snapshots FROM projects WHERE project_id = $1",
-      [PROJECT_ID],
-    );
+    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining("SELECT"), [
+      PROJECT_ID,
+    ]);
   });
 
   it("returns project backup schedule for a collaborator", async () => {
@@ -75,16 +82,15 @@ describe("project schedule readers", () => {
       daily: 1,
       weekly: 3,
     });
-    expect(queryMock).toHaveBeenCalledWith(
-      "SELECT backups FROM projects WHERE project_id = $1",
-      [PROJECT_ID],
-    );
+    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining("SELECT"), [
+      PROJECT_ID,
+    ]);
   });
 
   it("allows admins to read schedules without collaborator access", async () => {
-    assertLocalProjectCollaboratorMock = jest.fn(async () => {
-      throw new Error("not a collaborator");
-    });
+    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
+      async () => "not-collaborator",
+    );
     isAdminMock = jest.fn(async () => true);
     const { getProjectSnapshotSchedule, getProjectBackupSchedule } =
       await import("./projects");

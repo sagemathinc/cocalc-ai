@@ -1,14 +1,16 @@
 export {};
 
-let assertLocalProjectCollaboratorMock: jest.Mock;
+let getLocalProjectCollaboratorAccessStatusMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let getPoolMock: jest.Mock;
 let queryMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
-  assertLocalProjectCollaborator: (...args: any[]) =>
-    assertLocalProjectCollaboratorMock(...args),
+  PROJECT_COLLABORATOR_REQUIRED_ERROR: "user must be a collaborator on project",
+  PROJECT_NOT_FOUND_ERROR: "project not found",
+  getLocalProjectCollaboratorAccessStatus: (...args: any[]) =>
+    getLocalProjectCollaboratorAccessStatusMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
@@ -27,11 +29,23 @@ describe("project course info helpers", () => {
 
   beforeEach(() => {
     jest.resetModules();
-    assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
+    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
+      async () => "local-collaborator",
+    );
     isAdminMock = jest.fn(async () => false);
     queryMock = jest.fn(async () => ({
       rows: [
         {
+          launcher: null,
+          region: null,
+          created: null,
+          env: null,
+          rootfs_image: null,
+          rootfs_image_id: null,
+          snapshots: null,
+          backups: null,
+          run_quota: null,
+          settings: null,
           course: {
             type: "student",
             project_id: "33333333-3333-4333-8333-333333333333",
@@ -55,16 +69,15 @@ describe("project course info helpers", () => {
       project_id: "33333333-3333-4333-8333-333333333333",
       path: ".course/main.course",
     });
-    expect(queryMock).toHaveBeenCalledWith(
-      "SELECT course FROM projects WHERE project_id = $1",
-      [PROJECT_ID],
-    );
+    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining("SELECT"), [
+      PROJECT_ID,
+    ]);
   });
 
   it("allows admins to read project course info without collaborator access", async () => {
-    assertLocalProjectCollaboratorMock = jest.fn(async () => {
-      throw new Error("not a collaborator");
-    });
+    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
+      async () => "not-collaborator",
+    );
     isAdminMock = jest.fn(async () => true);
     const { getProjectCourseInfo } = await import("./projects");
     await expect(

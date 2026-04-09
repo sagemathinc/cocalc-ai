@@ -11,6 +11,11 @@ import { uuid } from "@cocalc/util/misc";
 
 import { rebuildAccountCollaboratorIndex } from "../account-collaborator-index";
 import type { PostgreSQL } from "../types";
+import {
+  addUserToProject as addUserToProjectDirect,
+  removeCollaboratorFromProject as removeCollaboratorFromProjectDirect,
+  removeUserFromProject as removeUserFromProjectDirect,
+} from "./collaborators";
 
 describe("collaborator query methods", () => {
   const database: PostgreSQL = db();
@@ -21,7 +26,6 @@ describe("collaborator query methods", () => {
   const getCollaboratorsLegacy = callback_opts(
     database.get_collaborators.bind(database),
   ) as (opts: { project_id: string }) => Promise<string[]>;
-
   async function getCollaboratorIds(opts: {
     account_id: string;
   }): Promise<string[]> {
@@ -51,6 +55,7 @@ describe("collaborator query methods", () => {
 
   afterEach(async () => {
     delete process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS;
+    delete database.publishProjectAccountFeedEventsBestEffort;
     const pool = getPool();
     await pool.query("DELETE FROM projects");
     await pool.query("DELETE FROM account_collaborator_index");
@@ -145,5 +150,44 @@ describe("collaborator query methods", () => {
     expect(new Set(results)).toEqual(
       new Set([account_id, collaboratorA, collaboratorB]),
     );
+  });
+
+  it("publishes immediate project feed hooks after membership changes", async () => {
+    const project_id = uuid();
+    const owner_id = uuid();
+    const collaborator_id = uuid();
+    const publishProjectFeedMock = jest.fn(async () => undefined);
+    const databaseWithFeedHook = {
+      publishProjectAccountFeedEventsBestEffort: publishProjectFeedMock,
+    } as unknown as PostgreSQL;
+
+    await insertProject(project_id, {
+      [owner_id]: { group: "owner" },
+    });
+
+    await addUserToProjectDirect(databaseWithFeedHook, {
+      account_id: collaborator_id,
+      project_id,
+      group: "collaborator",
+    });
+    await removeCollaboratorFromProjectDirect(databaseWithFeedHook, {
+      account_id: collaborator_id,
+      project_id,
+    });
+    await addUserToProjectDirect(databaseWithFeedHook, {
+      account_id: collaborator_id,
+      project_id,
+      group: "collaborator",
+    });
+    await removeUserFromProjectDirect(databaseWithFeedHook, {
+      account_id: collaborator_id,
+      project_id,
+    });
+
+    expect(publishProjectFeedMock).toHaveBeenCalledTimes(4);
+    expect(publishProjectFeedMock).toHaveBeenNthCalledWith(1, { project_id });
+    expect(publishProjectFeedMock).toHaveBeenNthCalledWith(2, { project_id });
+    expect(publishProjectFeedMock).toHaveBeenNthCalledWith(3, { project_id });
+    expect(publishProjectFeedMock).toHaveBeenNthCalledWith(4, { project_id });
   });
 });

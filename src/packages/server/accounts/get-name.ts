@@ -2,10 +2,19 @@
 // Answers are cached for a while.
 
 import getPool from "@cocalc/database/pool";
+import {
+  getClusterAccountByEmail,
+  getClusterAccountById,
+  getClusterAccountsByIds,
+} from "@cocalc/server/inter-bay/accounts";
 
 export default async function getName(
   account_id: string,
 ): Promise<string | undefined> {
+  const cluster = await getClusterAccountById(account_id);
+  if (cluster?.account_id) {
+    return rowsToName([cluster]);
+  }
   const pool = getPool("long");
   const { rows } = await pool.query(
     "SELECT first_name, last_name FROM accounts WHERE account_id=$1",
@@ -17,6 +26,10 @@ export default async function getName(
 export async function getNameByEmail(
   email_address: string,
 ): Promise<string | undefined> {
+  const cluster = await getClusterAccountByEmail(email_address);
+  if (cluster?.account_id) {
+    return rowsToName([cluster]);
+  }
   const pool = getPool("long");
   const { rows } = await pool.query(
     "SELECT first_name, last_name FROM accounts WHERE email_address=$1",
@@ -68,6 +81,10 @@ function rowsToNames(rows, account_ids): Names {
 // This also includes the user's profile info, e.g., color or gravatar or image
 
 export async function getNames(account_ids: string[]): Promise<Names> {
+  const cluster = await getClusterAccountsByIds(account_ids);
+  if (cluster.length > 0) {
+    return rowsToNames(cluster, account_ids);
+  }
   const pool = getPool("long");
   const { rows } = await pool.query(
     "SELECT account_id, first_name, last_name, profile FROM accounts WHERE account_id=ANY($1::UUID[]) AND (deleted IS NULL OR deleted = false)",

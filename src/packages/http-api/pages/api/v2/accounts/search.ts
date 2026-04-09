@@ -4,8 +4,8 @@ Search for accounts matching a given query.
 If user is signed in, then their account_id is used to prioritize the search.
 */
 
-import userSearch from "@cocalc/server/accounts/search";
-import type { User } from "@cocalc/server/accounts/search";
+import { searchClusterAccounts } from "@cocalc/server/inter-bay/accounts";
+import type { UserSearchResult as User } from "@cocalc/util/db-schema/accounts";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
@@ -24,7 +24,7 @@ async function handle(req, res) {
 
 async function doUserSearch(req): Promise<User[]> {
   const { query } = getParams(req);
-  return await userSearch({ query });
+  return await searchClusterAccounts({ query });
 }
 
 export default apiRoute({

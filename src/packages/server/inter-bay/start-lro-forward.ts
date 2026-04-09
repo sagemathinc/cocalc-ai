@@ -10,6 +10,7 @@ import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { updateProjectActiveOperationProgress } from "@cocalc/server/projects/active-operation";
 
 const log = getLogger("server:inter-bay:start-lro-forward");
 
@@ -24,7 +25,7 @@ export async function forwardRemoteStartLroProgress({
   op_id?: string;
   source_bay_id?: string;
 }): Promise<CloseFn> {
-  if (!op_id || !source_bay_id || source_bay_id === getConfiguredBayId()) {
+  if (!op_id) {
     return async () => {};
   }
 
@@ -46,7 +47,10 @@ export async function forwardRemoteStartLroProgress({
     return async () => {};
   }
 
-  const bridge = getInterBayBridge().projectLro(source_bay_id);
+  const bridge =
+    source_bay_id && source_bay_id !== getConfiguredBayId()
+      ? getInterBayBridge().projectLro(source_bay_id)
+      : undefined;
   let lastIndex = 0;
   let lastProgressTs = -1;
   let closed = false;
@@ -61,6 +65,17 @@ export async function forwardRemoteStartLroProgress({
     lastProgressTs = event.ts;
     pending = pending
       .then(async () => {
+        await updateProjectActiveOperationProgress({
+          project_id,
+          op_id,
+          phase: event.phase,
+          message: event.message,
+          progress: event.progress,
+          detail: event.detail,
+        });
+        if (!bridge) {
+          return;
+        }
         await bridge.publishProgress({
           project_id,
           op_id,

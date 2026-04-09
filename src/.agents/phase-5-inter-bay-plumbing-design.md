@@ -419,6 +419,38 @@ Before Phase 5 code starts, we should freeze:
 
 The following is the proposed frozen v1 contract.
 
+## 2026-04-08 Execution Focus
+
+The next concrete implementation milestone for this design is:
+
+- remote collaborator auth/session plumbing
+
+This focus comes after proving that cross-bay invite delivery, acceptance,
+project listing, LRO forwarding, and projected project visibility work in the
+two-bay dev setup.
+
+What remains blocked is deeper authorization and session trust on remote
+project paths. In practice this means a remote collaborator can already see a
+shared project, but still hits one-bay assumptions on operations such as:
+
+- project metadata/detail reads
+- project open flows
+- project-host credential issuance
+- file/terminal/notebook access that depends on project-host auth
+
+For the next slice, "done" means:
+
+- remote collaborators are recognized as collaborators everywhere auth is
+  checked
+- account-bay sessions can request valid project-host credentials for remote
+  projects
+- browser and CLI flows can open and use a remote shared project from the
+  collaborator's account bay
+
+This milestone is intentionally deeper than generic UI polish. The goal is to
+remove the hidden one-bay auth/session assumptions before broadening the remote
+project UX surface further.
+
 ## Additional Frozen Phase 5 v1 Ownership Rules
 
 - `account_bay` and `project_bay` are separate concepts, but the default

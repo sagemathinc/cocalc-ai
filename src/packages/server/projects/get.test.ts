@@ -27,6 +27,7 @@ describe("server/projects/get", () => {
   beforeEach(() => {
     jest.resetModules();
     delete process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS;
+    delete process.env.COCALC_CLUSTER_ROLE;
     queryMock = jest.fn(async () => ({
       rows: [
         {
@@ -112,6 +113,35 @@ describe("server/projects/get", () => {
     await expect(
       getProjects({ account_id: ACCOUNT_ID, limit: 5 }),
     ).resolves.toEqual([]);
+    expect(listProjectedProjectsForAccountMock).toHaveBeenCalledTimes(1);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("prefers projection rows automatically in multi-bay mode", async () => {
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    listProjectedProjectsForAccountMock = jest.fn(async () => [
+      {
+        project_id: "33333333-3333-4333-8333-333333333333",
+        title: "Projected Project",
+        description: "projected",
+        host_id: null,
+        owning_bay_id: "bay-1",
+        is_hidden: false,
+        sort_key: null,
+        updated_at: null,
+      },
+    ]);
+
+    const getProjects = (await import("./get")).default;
+    await expect(
+      getProjects({ account_id: ACCOUNT_ID, limit: 5 }),
+    ).resolves.toEqual([
+      {
+        project_id: "33333333-3333-4333-8333-333333333333",
+        title: "Projected Project",
+        description: "projected",
+      },
+    ]);
     expect(listProjectedProjectsForAccountMock).toHaveBeenCalledTimes(1);
     expect(queryMock).not.toHaveBeenCalled();
   });

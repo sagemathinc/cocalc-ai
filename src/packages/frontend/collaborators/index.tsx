@@ -5,7 +5,9 @@
 
 export { AddCollaborators } from "./add-collaborators";
 export { CurrentCollaboratorsPanel } from "./current-collabs";
+export { useUnreadIncomingInviteCount } from "./invite-count";
 export {
+  type InviteInboxState,
   IncomingInviteBanner,
   IncomingInvitesNotificationSection,
   InviteInboxPanel,

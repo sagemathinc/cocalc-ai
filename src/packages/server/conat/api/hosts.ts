@@ -133,6 +133,7 @@ import {
 } from "@cocalc/util/rootfs-images";
 import { buildCloudInitStartupScript } from "@cocalc/server/cloud/bootstrap-host";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   assertAccountProjectHostTokenProjectAccess,
@@ -1886,6 +1887,23 @@ async function assertHostCanIssueProjectHostAgentToken({
   });
 }
 
+async function syncProjectUsersOnHostIfOwnedLocally({
+  project_id,
+  expected_host_id,
+}: {
+  project_id: string;
+  expected_host_id: string;
+}): Promise<void> {
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership && ownership.bay_id !== getConfiguredBayId()) {
+    return;
+  }
+  await syncProjectUsersOnHost({
+    project_id,
+    expected_host_id,
+  });
+}
+
 export async function issueProjectHostAuthToken({
   account_id,
   host_id,
@@ -1917,7 +1935,7 @@ export async function issueProjectHostAuthToken({
   if (project_id) {
     // Keep project-host local ACL up to date before issuing browser token.
     // This is best-effort fast path for grant/revoke propagation.
-    await syncProjectUsersOnHost({
+    await syncProjectUsersOnHostIfOwnedLocally({
       project_id,
       expected_host_id: host_id,
     });
