@@ -1175,6 +1175,13 @@ export class ConatClient extends EventEmitter {
     );
   };
 
+  steerAcp = async (request) => {
+    return await acp.steerAcp(
+      { account_id: this.client.account_id, ...request },
+      this.conat(),
+    );
+  };
+
   forkAcpSession = async (request) => {
     return await acp.forkAcpSession(
       { account_id: this.client.account_id, ...request },

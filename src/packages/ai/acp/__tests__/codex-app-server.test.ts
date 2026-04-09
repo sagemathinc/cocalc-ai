@@ -1997,6 +1997,227 @@ describe("CodexAppServerAgent", () => {
     expect(interruptResolved).toBe(true);
   });
 
+  it("steers an active app-server turn without interrupting it", async () => {
+    const steerRequests: any[] = [];
+    let steerPromise: Promise<any> | undefined;
+    let requested = false;
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-steer-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-steer-1" } });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-steer-1", status: "inProgress" },
+            });
+          });
+          break;
+        case "turn/steer":
+          steerRequests.push(message.params);
+          fake.sendResponse(message.id, { turnId: "turn-steer-1" });
+          setImmediate(() => {
+            fake.sendNotification("item/completed", {
+              threadId: "thr-steer-1",
+              turnId: "turn-steer-1",
+              item: {
+                type: "agentMessage",
+                id: "msg-steer-1",
+                text: "done",
+                phase: null,
+              },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-steer-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const pending = agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "keep working",
+      stream: async (payload) => {
+        if (
+          !requested &&
+          payload?.type === "status" &&
+          payload.state === "running"
+        ) {
+          requested = true;
+          steerPromise = agent.steer("thr-steer-1", {
+            project_id: "00000000-0000-4000-8000-000000000000",
+            account_id: "00000000-0000-4000-8000-000000000001",
+            prompt: "focus on failing tests",
+            chat: {
+              project_id: "00000000-0000-4000-8000-000000000000",
+              path: "x.chat",
+              sender_id: "user-1",
+              message_date: new Date().toISOString(),
+              thread_id: "thread-1",
+            },
+          });
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    await expect(pending).resolves.toBeUndefined();
+    await expect(steerPromise).resolves.toEqual({
+      state: "steered",
+      threadId: "thr-steer-1",
+    });
+    expect(steerRequests).toHaveLength(1);
+    expect(steerRequests[0]).toMatchObject({
+      threadId: "thr-steer-1",
+      expectedTurnId: "turn-steer-1",
+    });
+    expect(steerRequests[0].input[0]).toMatchObject({
+      type: "text",
+      text: "focus on failing tests",
+    });
+  });
+
+  it("retries steer once when the active turn id changed", async () => {
+    const steerRequests: any[] = [];
+    let steerPromise: Promise<any> | undefined;
+    let requested = false;
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-steer-race-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-steer-old" } });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-steer-old", status: "inProgress" },
+            });
+          });
+          break;
+        case "turn/steer":
+          steerRequests.push(message.params);
+          if (steerRequests.length === 1) {
+            fake.stdout.write(
+              `${JSON.stringify({
+                id: message.id,
+                error: {
+                  code: -32600,
+                  message:
+                    "expected active turn id `turn-steer-old` but found `turn-steer-new`",
+                },
+              })}\n`,
+            );
+            break;
+          }
+          fake.sendResponse(message.id, { turnId: "turn-steer-new" });
+          setImmediate(() => {
+            fake.sendNotification("item/completed", {
+              threadId: "thr-steer-race-1",
+              turnId: "turn-steer-old",
+              item: {
+                type: "agentMessage",
+                id: "msg-steer-race-1",
+                text: "done",
+                phase: null,
+              },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-steer-old", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const pending = agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "keep working",
+      stream: async (payload) => {
+        if (
+          !requested &&
+          payload?.type === "status" &&
+          payload.state === "running"
+        ) {
+          requested = true;
+          steerPromise = agent.steer("thr-steer-race-1", {
+            project_id: "00000000-0000-4000-8000-000000000000",
+            account_id: "00000000-0000-4000-8000-000000000001",
+            prompt: "actually focus on tests",
+            chat: {
+              project_id: "00000000-0000-4000-8000-000000000000",
+              path: "x.chat",
+              sender_id: "user-1",
+              message_date: new Date().toISOString(),
+              thread_id: "thread-1",
+            },
+          });
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    await expect(pending).resolves.toBeUndefined();
+    await expect(steerPromise).resolves.toEqual({
+      state: "steered",
+      threadId: "thr-steer-race-1",
+    });
+    expect(steerRequests).toHaveLength(2);
+    expect(steerRequests[0].expectedTurnId).toBe("turn-steer-old");
+    expect(steerRequests[1].expectedTurnId).toBe("turn-steer-new");
+  });
+
   it("forks an upstream app-server thread and returns the new thread id", async () => {
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {

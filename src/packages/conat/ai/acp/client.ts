@@ -8,6 +8,8 @@ import type {
   AcpForkSessionRequest,
   AcpInterruptRequest,
   AcpRequest,
+  AcpSteerRequest,
+  AcpSteerResponse,
   AcpStreamMessage,
 } from "./types";
 import {
@@ -15,6 +17,7 @@ import {
   acpControlSubject,
   acpForkSubject,
   acpInterruptSubject,
+  acpSteerSubject,
   acpSubject,
 } from "./server";
 
@@ -107,6 +110,26 @@ export async function interruptAcp(
   if (error) {
     throw Error(error);
   }
+}
+
+export async function steerAcp(
+  request: AcpSteerRequest,
+  client?: Client,
+): Promise<AcpSteerResponse> {
+  if (!isValidUUID(request.project_id)) {
+    throw Error("project_id must be a valid uuid");
+  }
+  if (!isValidUUID(request.account_id)) {
+    throw Error("account_id must be a valid uuid");
+  }
+  const subject = acpSteerSubject({ project_id: request.project_id });
+  const cn = requireExplicitConatClient(client);
+  const resp = await cn.request(subject, request, { timeout: 30 * 1000 });
+  const error = resp?.data?.error;
+  if (error) {
+    throw Error(error);
+  }
+  return (resp?.data ?? { ok: false, state: "missing" }) as AcpSteerResponse;
 }
 
 export async function forkAcpSession(

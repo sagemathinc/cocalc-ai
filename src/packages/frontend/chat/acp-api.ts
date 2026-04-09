@@ -314,68 +314,85 @@ export async function processAcpLLM({
   let acknowledged = false;
   try {
     await ensureChatStatePersisted();
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= ACP_ACK_MAX_ATTEMPTS; attempt += 1) {
-      acknowledged = false;
-      try {
-        setState("sending");
-        const stream = await webapp_client.conat_client.streamAcp(
-          {
-            project_id,
-            prompt: promptForRunWithLoop,
-            session_id: sessionKey,
-            config: buildAcpConfig({
-              path,
-              config:
-                effectiveSessionId != null
-                  ? { ...config, sessionId: effectiveSessionId }
-                  : config,
-              model: normalizedModel,
-            }),
-            chat: chatMetadata,
-          },
-          { timeout: ACP_ACK_TIMEOUT_MS },
-        );
-        for await (const response of stream) {
-          if (response?.type === "error") {
-            throw Error(response.error);
-          }
-          if (response?.type !== "status") {
-            continue;
-          }
-          acknowledged = true;
-          if (response.state === "queued") {
-            setState("queue");
-          } else if (response.state === "running") {
-            setState("running");
-          } else {
-            setState("sent");
-          }
-        }
-        if (!acknowledged) {
-          throw Error("ACP queue submission ended without acknowledgement");
-        }
-        lastError = undefined;
-        break;
-      } catch (err) {
-        lastError = err;
-        if (attempt >= ACP_ACK_MAX_ATTEMPTS || !isRetryableAcpAckError(err)) {
-          throw err;
-        }
-        try {
-          await webapp_client.conat_client.interruptAcp({
-            project_id,
-            threadId: sessionKey,
-            chat: chatMetadata,
-            note: `frontend retry after no ACP acknowledgement (attempt ${attempt})`,
-          });
-        } catch {}
-        setState("sending");
-        await waitForAcpRetryDelay(attempt);
+    const acpRequest = {
+      project_id,
+      prompt: promptForRunWithLoop,
+      session_id: sessionKey,
+      config: buildAcpConfig({
+        path,
+        config:
+          effectiveSessionId != null
+            ? { ...config, sessionId: effectiveSessionId }
+            : config,
+        model: normalizedModel,
+      }),
+      chat: chatMetadata,
+    };
+    if (sendMode === "immediate") {
+      setState("sending");
+      const response = await webapp_client.conat_client.steerAcp(acpRequest);
+      acknowledged = !!response?.ok;
+      if (!acknowledged) {
+        throw Error("ACP steer submission failed");
       }
-    }
-    if (lastError != null) {
-      throw lastError;
+      if (response.state === "queued") {
+        setState("queue");
+      } else if (response.state === "running") {
+        setState("running");
+      } else {
+        setState("");
+      }
+    } else {
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= ACP_ACK_MAX_ATTEMPTS; attempt += 1) {
+        acknowledged = false;
+        try {
+          setState("sending");
+          const stream = await webapp_client.conat_client.streamAcp(
+            acpRequest,
+            { timeout: ACP_ACK_TIMEOUT_MS },
+          );
+          for await (const response of stream) {
+            if (response?.type === "error") {
+              throw Error(response.error);
+            }
+            if (response?.type !== "status") {
+              continue;
+            }
+            acknowledged = true;
+            if (response.state === "queued") {
+              setState("queue");
+            } else if (response.state === "running") {
+              setState("running");
+            } else {
+              setState("sent");
+            }
+          }
+          if (!acknowledged) {
+            throw Error("ACP queue submission ended without acknowledgement");
+          }
+          lastError = undefined;
+          break;
+        } catch (err) {
+          lastError = err;
+          if (attempt >= ACP_ACK_MAX_ATTEMPTS || !isRetryableAcpAckError(err)) {
+            throw err;
+          }
+          try {
+            await webapp_client.conat_client.interruptAcp({
+              project_id,
+              threadId: sessionKey,
+              chat: chatMetadata,
+              note: `frontend retry after no ACP acknowledgement (attempt ${attempt})`,
+            });
+          } catch {}
+          setState("sending");
+          await waitForAcpRetryDelay(attempt);
+        }
+      }
+      if (lastError != null) {
+        throw lastError;
+      }
     }
   } catch (err) {
     console.error("ACP turn failed", err);

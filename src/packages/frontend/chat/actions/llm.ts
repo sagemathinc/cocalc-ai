@@ -29,14 +29,6 @@ import { processAcpLLM } from "../acp-api";
 import { type ChatActions } from "../actions";
 
 const MAX_CHAT_STREAM = 10;
-const ACP_IMMEDIATE_MODE_PREFIX = [
-  "[CoCalc UI immediate-send note]",
-  "The user clicked 'Send Immediately' during an active run.",
-  "This message is additional context for the SAME task, not a cancellation.",
-  "Only stop/switch if the user explicitly says stop/cancel/switch.",
-  "If the new message is just acknowledgement (e.g. 'thanks'), briefly acknowledge and continue the in-progress task.",
-  "[/CoCalc UI immediate-send note]",
-].join(" ");
 
 function findChatRecord({
   actions,
@@ -109,16 +101,11 @@ export async function processLLM({
 
   // ACP agent branch
   if (typeof model === "string" && isCodexModelName(model)) {
-    const acpBaseInput = acpPromptOverride || input;
-    const acpInput =
-      effectiveAcpSendMode === "immediate"
-        ? `${ACP_IMMEDIATE_MODE_PREFIX}\n\n${acpBaseInput}`
-        : acpBaseInput;
     await processAcpLLM({
       actions,
       message,
       model,
-      input: acpInput,
+      input: acpPromptOverride || input,
       sendMode: effectiveAcpSendMode,
       acpConfigOverride,
     });

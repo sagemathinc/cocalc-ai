@@ -3,14 +3,11 @@ jest.mock("./server", () => ({
   acpControlSubject: () => "acp.test.control",
   acpForkSubject: () => "acp.test.fork",
   acpInterruptSubject: () => "acp.test.interrupt",
+  acpSteerSubject: () => "acp.test.steer",
   acpSubject: () => "acp.test.api",
 }));
 
-import {
-  automationAcp,
-  forkAcpSession,
-  streamAcp,
-} from "./client";
+import { automationAcp, forkAcpSession, steerAcp, streamAcp } from "./client";
 
 describe("acp client explicit routing", () => {
   it("requires an explicit client for streamAcp", async () => {
@@ -34,6 +31,23 @@ describe("acp client explicit routing", () => {
         path: "a.chat",
         thread_id: "thread-1",
         action: "status",
+      } as any),
+    ).rejects.toThrow("must provide an explicit Conat client");
+  });
+
+  it("requires an explicit client for steerAcp", async () => {
+    await expect(
+      steerAcp({
+        project_id: "00000000-0000-4000-8000-000000000000",
+        account_id: "00000000-0000-4000-8000-000000000001",
+        prompt: "focus on tests",
+        chat: {
+          project_id: "00000000-0000-4000-8000-000000000000",
+          path: "a.chat",
+          sender_id: "user",
+          message_date: new Date().toISOString(),
+          thread_id: "thread-1",
+        },
       } as any),
     ).rejects.toThrow("must provide an explicit Conat client");
   });

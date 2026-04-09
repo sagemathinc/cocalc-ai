@@ -683,7 +683,7 @@ export function ChatRoomComposer({
             {hasActiveAcpTurn && isSelectedThreadAI ? (
               <>
                 <div style={{ height: "5px" }} />
-                <Tooltip title="Interrupt the current Codex turn and send now">
+                <Tooltip title="Send guidance to the current Codex turn without interrupting it">
                   <Button
                     onClick={handleSendImmediately}
                     disabled={!hasInput}

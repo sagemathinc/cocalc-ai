@@ -27,6 +27,8 @@ import type {
   AcpControlResponse,
   AcpJobRequest,
   AcpRequest,
+  AcpSteerRequest,
+  AcpSteerResponse,
   AcpStreamPayload,
   AcpStreamMessage,
   AcpStreamEvent,
@@ -6642,6 +6644,109 @@ async function enqueueChatAcpTurn({
   }
 }
 
+async function fallbackAcpSteerToQueuedTurn(
+  request: AcpSteerRequest,
+): Promise<AcpSteerResponse> {
+  let state: AcpSteerResponse["state"] = "queued";
+  let threadId: string | null | undefined;
+  await enqueueChatAcpTurn({
+    request,
+    stream: async (payload?: AcpStreamPayload | null) => {
+      if (payload?.type !== "status") {
+        return;
+      }
+      if (payload.state === "running") {
+        state = "running";
+      } else if (payload.state === "queued") {
+        state = "queued";
+      }
+      threadId = payload.threadId ?? threadId;
+    },
+  });
+  return {
+    ok: true,
+    state,
+    threadId,
+  };
+}
+
+async function handleAcpSteerRequest(
+  request: AcpSteerRequest,
+): Promise<AcpSteerResponse> {
+  if (!request.chat) {
+    throw new Error("chat metadata is required to steer an ACP turn");
+  }
+  const threadId = `${request.chat.thread_id ?? ""}`.trim();
+  if (!threadId) {
+    throw new Error("thread_id is required to steer an ACP turn");
+  }
+  if (!conatClient) {
+    throw new Error("conat client must be initialized");
+  }
+  await acknowledgeAutomationFromHumanTurn(request);
+
+  const writer = findChatWriter({
+    threadId,
+    chat: request.chat,
+  });
+  if (!writer || writer.isClosed()) {
+    return await fallbackAcpSteerToQueuedTurn(request);
+  }
+
+  const projectId = request.chat.project_id ?? request.project_id;
+  if (!projectId) {
+    throw new Error("project_id must be set");
+  }
+  const sessionMode = resolveCodexSessionMode(request.config);
+  const workspaceRoot = resolveWorkspaceRoot(request.config);
+  const executor: AcpExecutor = preferContainerExecutor()
+    ? new ContainerExecutor({
+        projectId,
+        workspaceRoot,
+        conatClient,
+      })
+    : new LocalExecutor(workspaceRoot);
+  const useContainer = preferContainerExecutor();
+  const hostRoot =
+    useContainer && executor instanceof ContainerExecutor
+      ? executor.getMountPoint()
+      : workspaceRoot;
+  const useNativeTerminal = useContainer ? false : sessionMode === "auto";
+  const bindings = buildExecutorAdapters(executor, workspaceRoot, hostRoot);
+  const agent = await ensureAgent(useNativeTerminal, bindings);
+  if (typeof agent.steer !== "function") {
+    return await fallbackAcpSteerToQueuedTurn(request);
+  }
+
+  const candidateIds = new Set<string>();
+  for (const id of writer.getKnownThreadIds()) {
+    const trimmed = `${id ?? ""}`.trim();
+    if (trimmed) {
+      candidateIds.add(trimmed);
+    }
+  }
+  const requestedSessionId = `${request.session_id ?? ""}`.trim();
+  if (requestedSessionId) {
+    candidateIds.add(requestedSessionId);
+  }
+
+  for (const candidateId of candidateIds) {
+    const result = await agent.steer(candidateId, request);
+    if (result.state === "steered") {
+      return {
+        ok: true,
+        state: "steered",
+        threadId: result.threadId ?? candidateId,
+      };
+    }
+    if (result.state === "not_steerable") {
+      break;
+    }
+  }
+
+  return await fallbackAcpSteerToQueuedTurn(request);
+}
+
 async function handleAcpControlRequest(
   request: AcpControlRequest,
 ): Promise<AcpControlResponse> {
@@ -6776,6 +6881,7 @@ export async function init(
     {
       evaluate,
       interrupt: handleInterruptRequest,
+      steer: handleAcpSteerRequest,
       forkSession: handleForkSessionRequest,
       control: handleAcpControlRequest,
       automation: handleAcpAutomationRequest,

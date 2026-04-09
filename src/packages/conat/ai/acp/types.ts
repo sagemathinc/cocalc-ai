@@ -182,6 +182,24 @@ export type AcpInterruptRequest = {
   note?: string;
 };
 
+export type AcpSteerRequest = {
+  request_kind?: "codex";
+  project_id: string;
+  account_id: string;
+  prompt: string;
+  local_images?: string[];
+  session_id?: string;
+  config?: CodexSessionConfig;
+  runtime_env?: Record<string, string>;
+  chat: AcpChatContext;
+};
+
+export type AcpSteerResponse = {
+  ok: boolean;
+  state: "steered" | "queued" | "running" | "missing";
+  threadId?: string | null;
+};
+
 export type AcpForkSessionRequest = {
   project_id: string;
   account_id: string;
