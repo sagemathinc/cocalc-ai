@@ -5,6 +5,7 @@ let isAdminMock: jest.Mock;
 let listHostsMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
+let getClusterAccountByIdMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -33,6 +34,11 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       get: (...args: any[]) => projectReferenceGetMock(...args),
     })),
   })),
+}));
+
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  __esModule: true,
+  getClusterAccountById: (...args: any[]) => getClusterAccountByIdMock(...args),
 }));
 
 describe("bay-directory", () => {
@@ -96,6 +102,7 @@ describe("bay-directory", () => {
     ]);
     resolveProjectBayMock = jest.fn(async () => null);
     projectReferenceGetMock = jest.fn(async () => null);
+    getClusterAccountByIdMock = jest.fn(async () => null);
   });
 
   afterEach(() => {
