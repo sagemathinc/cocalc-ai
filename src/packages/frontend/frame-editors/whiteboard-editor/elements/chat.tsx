@@ -2,7 +2,6 @@ import { Button, Tooltip } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
 
-import { Comment } from "@ant-design/compatible";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { redux } from "@cocalc/frontend/app-framework";
 import { SubmitMentionsFn } from "@cocalc/frontend/chat/types";
@@ -14,7 +13,12 @@ import { len, trunc_middle } from "@cocalc/util/misc";
 import { useFrameContext } from "../hooks";
 import { Element } from "../types";
 import Composing from "./chat-composing";
-import { ChatLog, getChatStyle, messageStyle } from "./chat-static";
+import {
+  ChatComment,
+  ChatLog,
+  getChatStyle,
+  messageStyle,
+} from "./chat-static";
 import useEditFocus from "./edit-focus";
 import useWheel from "./scroll-wheel";
 import { getStyle } from "./text";
@@ -220,7 +224,7 @@ export function Message({
   }
   return (
     <div style={messageStyle}>
-      <Comment
+      <ChatComment
         author={sender_id ? (getName(sender_id) ?? sender_name) : undefined}
         avatar={sender_id ? <Avatar account_id={sender_id} /> : undefined}
         content={

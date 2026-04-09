@@ -1,12 +1,13 @@
 import { CSSProperties, FC, ReactNode, useEffect, useRef } from "react";
-import { getStyle } from "./text-static";
+
 import { Icon } from "@cocalc/frontend/components/icon";
-import { Comment } from "@ant-design/compatible";
-import { Element } from "../types";
-import { cmp } from "@cocalc/util/misc";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown-public";
+import { cmp } from "@cocalc/util/misc";
 import useWheel from "./scroll-wheel";
+import { COLORS } from "@cocalc/util/theme";
 import { is_valid_uuid_string as isUUID } from "@cocalc/util/misc";
+import { getStyle } from "./text-static";
+import { Element } from "../types";
 
 export default function ChatStatic({ element }: { element: Element }) {
   return (
@@ -110,11 +111,76 @@ export function clearChat(element: Element): void {
 }
 
 export const messageStyle = {
-  border: "1px solid #ccc",
+  border: `1px solid ${COLORS.GRAY_L}`,
   borderRadius: "5px",
   margin: "5px 0",
   padding: "5px 15px",
 } as CSSProperties;
+
+const commentStyle = {
+  display: "flex",
+  gap: "12px",
+  alignItems: "flex-start",
+} as CSSProperties;
+
+const commentAvatarStyle = {
+  flex: "0 0 auto",
+  minWidth: "32px",
+} as CSSProperties;
+
+const commentBodyStyle = {
+  flex: 1,
+  minWidth: 0,
+} as CSSProperties;
+
+const commentMetaStyle = {
+  display: "flex",
+  gap: "8px",
+  alignItems: "baseline",
+  flexWrap: "wrap",
+  marginBottom: "4px",
+} as CSSProperties;
+
+const commentAuthorStyle = {
+  color: COLORS.GRAY_D,
+  fontWeight: 600,
+} as CSSProperties;
+
+const commentDatetimeStyle = {
+  color: COLORS.GRAY_M,
+  fontSize: "12px",
+} as CSSProperties;
+
+export function ChatComment({
+  author,
+  avatar,
+  content,
+  datetime,
+}: {
+  author?: ReactNode;
+  avatar?: ReactNode;
+  content: ReactNode;
+  datetime?: ReactNode;
+}) {
+  return (
+    <div style={commentStyle}>
+      {avatar ? <div style={commentAvatarStyle}>{avatar}</div> : undefined}
+      <div style={commentBodyStyle}>
+        {author || datetime ? (
+          <div style={commentMetaStyle}>
+            {author ? (
+              <span style={commentAuthorStyle}>{author}</span>
+            ) : undefined}
+            {datetime ? (
+              <span style={commentDatetimeStyle}>{datetime}</span>
+            ) : undefined}
+          </div>
+        ) : undefined}
+        <div>{content}</div>
+      </div>
+    </div>
+  );
+}
 
 export function Message({
   element,
@@ -126,7 +192,7 @@ export function Message({
   const { input, sender_name, time } = element.data?.[messageId] ?? {};
   return (
     <div style={messageStyle}>
-      <Comment
+      <ChatComment
         author={sender_name}
         content={
           typeof messageId == "number" ? (
