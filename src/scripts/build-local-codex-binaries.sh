@@ -13,6 +13,9 @@ CARGO_MANIFEST="${UPSTREAM_DIR}/codex-rs/Cargo.toml"
 ARM_LINKER="${CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER:-aarch64-linux-gnu-gcc}"
 ARM64_BUILD_TOOL="${CODEX_ARM64_BUILD_TOOL:-auto}"
 ARM64_PKG_CONFIG_PATH="${AARCH64_UNKNOWN_LINUX_GNU_PKG_CONFIG_PATH:-/usr/lib/aarch64-linux-gnu/pkgconfig}"
+ARM64_RELEASE_LTO="${CODEX_ARM64_RELEASE_LTO:-off}"
+ARM64_RELEASE_CODEGEN_UNITS="${CODEX_ARM64_RELEASE_CODEGEN_UNITS:-16}"
+ARM64_SYSROOT_LIB_DIR="${AARCH64_UNKNOWN_LINUX_GNU_LIB_DIR:-/usr/lib/aarch64-linux-gnu}"
 
 if [[ ! -d "${UPSTREAM_DIR}/.git" ]]; then
   echo "Missing upstream codex checkout at ${UPSTREAM_DIR}" >&2
@@ -23,6 +26,35 @@ if [[ ! -f "${PATCH_FILE}" ]]; then
   echo "Missing patch file at ${PATCH_FILE}" >&2
   exit 1
 fi
+
+require_arm64_cross_libs() {
+  local missing=0
+  for lib in openssl.pc libcap.so liblzma.so libbz2.so; do
+    case "${lib}" in
+      openssl.pc)
+        if [[ ! -f "${ARM64_PKG_CONFIG_PATH}/${lib}" ]]; then
+          missing=1
+        fi
+        ;;
+      *)
+        if [[ ! -e "${ARM64_SYSROOT_LIB_DIR}/${lib}" ]]; then
+          missing=1
+        fi
+        ;;
+    esac
+  done
+  if [[ "${missing}" != "0" ]]; then
+    cat >&2 <<EOF
+Missing arm64 cross-link prerequisites.
+
+Install them on this laptop with:
+  sudo dpkg --add-architecture arm64
+  sudo apt-get update
+  sudo apt-get install -y libssl-dev:arm64 libcap-dev:arm64 liblzma-dev:arm64 libbz2-dev:arm64
+EOF
+    exit 1
+  fi
+}
 
 echo "Using upstream checkout: ${UPSTREAM_DIR}"
 echo "Using output directory: ${LOCAL_BIN_ROOT}/${CODEX_VERSION}"
@@ -43,26 +75,39 @@ cargo build --release --locked -p codex-cli --manifest-path "${CARGO_MANIFEST}"
 case "${ARM64_BUILD_TOOL}" in
   auto)
     if [[ -f "${ARM64_PKG_CONFIG_PATH}/openssl.pc" ]]; then
+      require_arm64_cross_libs
       PKG_CONFIG_ALLOW_CROSS=1 \
         PKG_CONFIG_PATH="${ARM64_PKG_CONFIG_PATH}" \
         CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${ARM_LINKER}" \
+        CARGO_PROFILE_RELEASE_LTO="${ARM64_RELEASE_LTO}" \
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${ARM64_RELEASE_CODEGEN_UNITS}" \
         cargo build --release --locked --target aarch64-unknown-linux-gnu -p codex-cli --manifest-path "${CARGO_MANIFEST}"
     elif command -v cross >/dev/null 2>&1; then
-      cross build --release --locked --target aarch64-unknown-linux-gnu -p codex-cli --manifest-path "${CARGO_MANIFEST}"
+      CARGO_PROFILE_RELEASE_LTO="${ARM64_RELEASE_LTO}" \
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${ARM64_RELEASE_CODEGEN_UNITS}" \
+        cross build --release --locked --target aarch64-unknown-linux-gnu -p codex-cli --manifest-path "${CARGO_MANIFEST}"
     else
+      require_arm64_cross_libs
       PKG_CONFIG_ALLOW_CROSS=1 \
         PKG_CONFIG_PATH="${ARM64_PKG_CONFIG_PATH}" \
         CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${ARM_LINKER}" \
+        CARGO_PROFILE_RELEASE_LTO="${ARM64_RELEASE_LTO}" \
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${ARM64_RELEASE_CODEGEN_UNITS}" \
         cargo build --release --locked --target aarch64-unknown-linux-gnu -p codex-cli --manifest-path "${CARGO_MANIFEST}"
     fi
     ;;
   cross)
-    cross build --release --locked --target aarch64-unknown-linux-gnu -p codex-cli --manifest-path "${CARGO_MANIFEST}"
+    CARGO_PROFILE_RELEASE_LTO="${ARM64_RELEASE_LTO}" \
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${ARM64_RELEASE_CODEGEN_UNITS}" \
+      cross build --release --locked --target aarch64-unknown-linux-gnu -p codex-cli --manifest-path "${CARGO_MANIFEST}"
     ;;
   cargo)
+    require_arm64_cross_libs
     PKG_CONFIG_ALLOW_CROSS=1 \
       PKG_CONFIG_PATH="${ARM64_PKG_CONFIG_PATH}" \
       CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${ARM_LINKER}" \
+      CARGO_PROFILE_RELEASE_LTO="${ARM64_RELEASE_LTO}" \
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${ARM64_RELEASE_CODEGEN_UNITS}" \
       cargo build --release --locked --target aarch64-unknown-linux-gnu -p codex-cli --manifest-path "${CARGO_MANIFEST}"
     ;;
   *)
