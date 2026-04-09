@@ -44,6 +44,7 @@ const dkvMock = jest.fn(async ({ account_id, name }: any) => {
       }
     },
     save: async () => undefined,
+    flush: async () => undefined,
   };
 });
 

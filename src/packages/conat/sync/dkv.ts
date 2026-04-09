@@ -298,6 +298,9 @@ export class DKV<T = any> extends EventEmitter {
 
   // stable = everything is saved *and* also echoed back from the server as confirmation.
   isStable = () => {
+    for (const _ in this.saved) {
+      return false;
+    }
     for (const _ in this.local) {
       return false;
     }
@@ -550,7 +553,7 @@ export class DKV<T = any> extends EventEmitter {
     );
   };
 
-  save = reuseInFlight(async () => {
+  flush = reuseInFlight(async () => {
     if (this.noAutosave) {
       return await this.attemptToSave();
     }
@@ -562,12 +565,31 @@ export class DKV<T = any> extends EventEmitter {
           return true;
         }
         try {
-          status = await this.attemptToSave();
+          if (this.hasUnsavedChanges()) {
+            status = await this.attemptToSave();
+          }
           //console.log("successfully saved");
         } catch {}
         return !this.hasUnsavedChanges();
       },
       { start: 150, decay: 1.3, max: 10000 },
+    );
+    return status;
+  });
+
+  save = reuseInFlight(async () => {
+    if (this.noAutosave) {
+      return await this.attemptToSave();
+    }
+    const status = await this.flush();
+    await until(
+      async () => {
+        if (this.kv == null) {
+          return true;
+        }
+        return this.isStable();
+      },
+      { start: 25, decay: 1.3, max: 1000 },
     );
     return status;
   });
@@ -586,9 +608,18 @@ export class DKV<T = any> extends EventEmitter {
     }
     this.changed.clear();
     const status = { unsaved: 0, set: 0, delete: 0 };
-    const obj = { ...this.local };
-    for (const key in obj) {
-      if (obj[key] === TOMBSTONE) {
+    const obj: { [key: string]: T | typeof TOMBSTONE } = {};
+    for (const key of this.unsavedChanges()) {
+      obj[key] = this.local[key];
+    }
+    const tombstoneKeys = Object.keys(obj).filter(
+      (key) => obj[key] === TOMBSTONE,
+    );
+    await awaitMap(tombstoneKeys, MAX_PARALLEL, async (key: string) => {
+      if (this.kv == null) {
+        return;
+      }
+      try {
         status.unsaved += 1;
         await this.kv.deleteKv(key);
         if (this.kv == null) return;
@@ -599,8 +630,11 @@ export class DKV<T = any> extends EventEmitter {
           // successfully saved this and user didn't make a change *during* the set
           this.discardLocalState(key);
         }
+      } catch (err) {
+        status.unsaved = Math.max(0, status.unsaved - 1);
+        throw err;
       }
-    }
+    });
     let errors = false;
     const x: {
       key: string;
@@ -635,6 +669,9 @@ export class DKV<T = any> extends EventEmitter {
       if (!(resp as any).error) {
         status.unsaved -= 1;
         status.set += 1;
+        if (isEqual(this.local[key], obj[key])) {
+          this.saved[key] = obj[key];
+        }
       } else {
         const { code, error } = resp as any;
         if (DEBUG) {

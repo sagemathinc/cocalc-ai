@@ -461,7 +461,7 @@ export async function importReviewBundle({
   }
   if (imported > 0) {
     kv.setMany(pending);
-    await kv.save();
+    await kv.flush();
   }
   return {
     imported,
@@ -504,12 +504,15 @@ export async function deleteAllReviewRecords({
     clearAllReviewDrafts();
     return { deleted: 0 };
   }
+
   const tombstones: Record<string, GitReviewRecordV2 | undefined> = {};
   for (const key of reviewKeys) {
     tombstones[key] = undefined;
   }
   kv.setMany(tombstones);
-  await kv.save();
+  await kv.flush();
+
   clearAllReviewDrafts();
+
   return { deleted: reviewKeys.length };
 }
