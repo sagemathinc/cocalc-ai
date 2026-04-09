@@ -15,7 +15,13 @@ import {
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
-import type { AcpAgent, AcpEvaluateRequest, AcpStreamUsage } from "./types";
+import type {
+  AcpAgent,
+  AcpEvaluateRequest,
+  AcpSteerRequest,
+  AcpSteerResult,
+  AcpStreamUsage,
+} from "./types";
 import {
   getCodexProjectSpawner,
   type CodexAppServerLoginHint,
@@ -40,15 +46,6 @@ const TURN_NOTIFICATION_IDLE_TIMEOUT_MS = Math.max(
     process.env.COCALC_CODEX_APP_SERVER_NOTIFICATION_TIMEOUT_MS ?? 30 * 60_000,
   ),
 );
-
-const IMMEDIATE_SEND_GUIDANCE = [
-  "[CoCalc immediate-send behavior]",
-  "This user message was sent with 'Send Immediately' during an active run.",
-  "Treat it as additional context for the same task.",
-  "Do not stop or switch tasks unless the user explicitly asks to stop/cancel/switch.",
-  "If the message is short acknowledgement only (e.g., 'thanks'), acknowledge briefly and continue the interrupted task.",
-  "[/CoCalc immediate-send behavior]",
-].join(" ");
 
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*m/g;
 
@@ -980,19 +977,12 @@ function getCoCalcCliCommand(runtimeEnv?: Record<string, string>): string {
 
 function decoratePrompt(
   prompt: string,
-  opts?: {
-    sendMode?: "immediate";
-    runtimeEnv?: Record<string, string>;
-  },
+  opts?: { runtimeEnv?: Record<string, string> },
 ): string {
   if (/^\s*\/\w+/.test(prompt)) {
     return prompt;
   }
-  const withRuntime = addRuntimeGuidance(prompt, opts?.runtimeEnv);
-  if (opts?.sendMode === "immediate") {
-    return `${IMMEDIATE_SEND_GUIDANCE}\n\n${withRuntime}`;
-  }
-  return withRuntime;
+  return addRuntimeGuidance(prompt, opts?.runtimeEnv);
 }
 
 function addRuntimeGuidance(
@@ -1007,11 +997,15 @@ function addRuntimeGuidance(
   return `${getCoCalcRuntimeGuidanceHeader(getCoCalcCliCommand(runtimeEnv))}\n\n${prompt}`;
 }
 
-function buildTurnStartInput(
-  request: AcpEvaluateRequest,
-  prompt: string,
-  runtimeEnv?: Record<string, string>,
-): Array<
+function buildTurnInput({
+  local_images,
+  prompt,
+  runtimeEnv,
+}: {
+  local_images?: string[];
+  prompt: string;
+  runtimeEnv?: Record<string, string>;
+}): Array<
   | { type: "localImage"; path: string }
   | { type: "text"; text: string; textElements: any[] }
 > {
@@ -1019,20 +1013,40 @@ function buildTurnStartInput(
     | { type: "localImage"; path: string }
     | { type: "text"; text: string; textElements: any[] }
   > = [];
-  for (const imagePath of request.local_images ?? []) {
+  for (const imagePath of local_images ?? []) {
     const trimmed = `${imagePath ?? ""}`.trim();
     if (!trimmed) continue;
     input.push({ type: "localImage", path: trimmed });
   }
   input.push({
     type: "text",
-    text: decoratePrompt(prompt, {
-      sendMode: request.chat?.send_mode,
-      runtimeEnv,
-    }),
+    text: decoratePrompt(prompt, { runtimeEnv }),
     textElements: [],
   });
   return input;
+}
+
+function classifySteerError(err: unknown): {
+  kind: "missing" | "mismatch" | "not_steerable" | "other";
+  actualTurnId?: string;
+} {
+  const message = `${err ?? ""}`;
+  if (message.includes("no active turn to steer")) {
+    return { kind: "missing" };
+  }
+  const mismatch = message.match(
+    /expected active turn id `[^`]+` but found `([^`]+)`/,
+  );
+  if (mismatch?.[1]) {
+    return { kind: "mismatch", actualTurnId: mismatch[1] };
+  }
+  if (
+    message.includes("cannot steer a review turn") ||
+    message.includes("cannot steer a compact turn")
+  ) {
+    return { kind: "not_steerable" };
+  }
+  return { kind: "other" };
 }
 
 async function spawnStandaloneAppServer(
@@ -1422,7 +1436,11 @@ export class CodexAppServerAgent implements AcpAgent {
         model: config?.model ?? this.opts.model,
         effort: toReasoningEffort(config),
         env: Object.keys(turnEnv).length > 0 ? turnEnv : undefined,
-        input: buildTurnStartInput(request, prompt, turnEnv),
+        input: buildTurnInput({
+          local_images: request.local_images,
+          prompt,
+          runtimeEnv: turnEnv,
+        }),
       });
 
       turnId = turnStart?.turn?.id;
@@ -1894,6 +1912,66 @@ export class CodexAppServerAgent implements AcpAgent {
     running.interrupted = true;
     await running.stop();
     return true;
+  }
+
+  async steer(
+    threadId: string,
+    request: AcpSteerRequest,
+  ): Promise<AcpSteerResult> {
+    const running = this.running.get(threadId);
+    if (!running) {
+      return { state: "missing" };
+    }
+    const runtimeEnv = Object.fromEntries(
+      Object.entries({
+        ...(this.opts.env ?? {}),
+        ...(request.runtime_env ?? {}),
+      }).filter(([, value]) => typeof value === "string"),
+    ) as Record<string, string>;
+    let expectedTurnId = `${running.turnId ?? ""}`.trim();
+    if (!expectedTurnId) {
+      return { state: "missing" };
+    }
+    const input = buildTurnInput({
+      local_images: request.local_images,
+      prompt: request.prompt,
+      runtimeEnv,
+    });
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const result = await running.client.request("turn/steer", {
+          threadId,
+          expectedTurnId,
+          input,
+        });
+        const actualTurnId = `${result?.turnId ?? expectedTurnId}`.trim();
+        if (actualTurnId) {
+          running.turnId = actualTurnId;
+        }
+        return { state: "steered", threadId };
+      } catch (err) {
+        const classified = classifySteerError(err);
+        if (classified.kind === "missing") {
+          return { state: "missing" };
+        }
+        if (classified.kind === "not_steerable") {
+          return { state: "not_steerable", threadId };
+        }
+        if (
+          classified.kind === "mismatch" &&
+          classified.actualTurnId &&
+          classified.actualTurnId !== expectedTurnId
+        ) {
+          expectedTurnId = classified.actualTurnId;
+          running.turnId = classified.actualTurnId;
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    return { state: "missing" };
   }
 
   async dispose(): Promise<void> {

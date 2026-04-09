@@ -81,7 +81,12 @@ import {
   editingArray,
 } from "./access";
 import { SyncOutlined } from "@ant-design/icons";
-import { AgentActivityChip, AgentMessageStatus } from "./agent-message-status";
+import {
+  AgentActivityChip,
+  AgentMessageStatus,
+  AttachedSteerStatusList,
+  type AttachedSteerMessage,
+} from "./agent-message-status";
 import { useCodexLog } from "./use-codex-log";
 import { GitCommitDrawer } from "./git-commit-drawer";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
@@ -364,6 +369,7 @@ interface Props {
     cwdOverride?: string;
     commitHash: string;
   }) => void;
+  attachedSteers?: AttachedSteerMessage[];
 }
 
 export function resolveEditedMessageForSave(
@@ -509,6 +515,7 @@ export default function Message({
   notifyOnTurnFinish = false,
   onNotifyOnTurnFinishChange,
   onOpenGitBrowser,
+  attachedSteers,
 }: Props) {
   const intl = useIntl();
   const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
@@ -1599,6 +1606,7 @@ export default function Message({
           jumpToken={0}
           notifyOnTurnFinish={notifyOnTurnFinish}
           onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
+          attachedSteers={attachedSteers}
           onOpenGitBrowser={
             isCodexThread && !is_viewers_message
               ? openGitBrowserFromMessage
@@ -1621,6 +1629,9 @@ export default function Message({
             />
             <CodexQuotaHelp message={value} projectId={project_id} />
           </div>
+        ) : null}
+        {!showCodexActivity ? (
+          <AttachedSteerStatusList attachedSteers={attachedSteers} />
         ) : null}
       </>
     );

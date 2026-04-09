@@ -65,11 +65,11 @@ Project-host resolves auth at turn start, then runs upstream `codex` inside a pe
 ```mermaid
 flowchart TD
   FE[Frontend chat turn] --> ACP[ACP evaluate]
-  ACP --> CE[CodexExecAgent]
+  ACP --> CE[CodexAppServerAgent]
   CE --> SP[project-host codex spawner]
   SP --> AR[resolve auth runtime]
   AR -->|subscription/api key/site key/shared-home| CT[podman codex container]
-  CT --> CODEX[upstream codex exec]
+  CT --> CODEX[upstream codex app-server]
 
   AR --> REG[host RPC: credential pull/check]
   REG --> HUB[central hub]
@@ -77,7 +77,7 @@ flowchart TD
 
 Key modules:
 
-- [src/packages/ai/acp/codex-exec.ts](../src/packages/ai/acp/codex-exec.ts)
+- [src/packages/ai/acp/codex-app-server.ts](../src/packages/ai/acp/codex-app-server.ts)
 - [src/packages/project-host/codex/codex-project.ts](../src/packages/project-host/codex/codex-project.ts)
 - [src/packages/project-host/codex/codex-auth.ts](../src/packages/project-host/codex/codex-auth.ts)
 - [src/packages/project-host/codex/codex-auth-registry.ts](../src/packages/project-host/codex/codex-auth-registry.ts)
@@ -158,7 +158,7 @@ GC skips currently mounted `/root/.codex` paths from active `codex-*` containers
 
 ## Site Key Metering and Throttling
 
-When auth source is `site-api-key`, CodexExecAgent uses a governor:
+When auth source is `site-api-key`, `CodexAppServerAgent` uses a governor:
 
 - pre-check allowance before prompt
 - periodic allowance polling during run
@@ -198,7 +198,7 @@ Current intent:
 ## Known Limitations / Future Work
 
 - No full site-key proxy yet; site key is injected in project-host runtime path.
-- Mid-turn exact token cutoffs are coarse because upstream `codex exec --experimental-json` reports usage at turn completion.
+- Mid-turn exact token cutoffs are coarse because upstream app-server usage updates are still asynchronous and coarse-grained.
 - Strong end-to-end project-host websocket authz is still a separate hardening project.
 
 ## Fast Ban / Kill-Switch Approach

@@ -326,7 +326,7 @@ describe("processLLM model resolution and Codex dispatch", () => {
     );
   });
 
-  it("adds immediate-send guidance for Codex turns", async () => {
+  it("passes Send Now through to ACP without decorating the prompt", async () => {
     const { actions } = makeActions();
     const message = makeMessage();
     message.history[0].content = "thanks";
@@ -340,7 +340,6 @@ describe("processLLM model resolution and Codex dispatch", () => {
     expect(processAcpLLM).toHaveBeenCalledTimes(1);
     const args = processAcpLLM.mock.calls[0][0];
     expect(args.sendMode).toBe("immediate");
-    expect(args.input).toContain("CoCalc UI immediate-send note");
-    expect(args.input).toContain("thanks");
+    expect(args.input).toBe("thanks");
   });
 });

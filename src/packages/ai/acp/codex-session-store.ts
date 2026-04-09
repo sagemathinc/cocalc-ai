@@ -1,6 +1,6 @@
-// Manage Codex session JSONL files on disk (update metadata + fork sessions).
+// Manage Codex session JSONL files on disk.
 // We do this directly because the CLI does not expose a way to update
-// session_meta for resumed sessions (e.g. cwd/sandbox), and codex exec
+// session_meta for resumed sessions (e.g. cwd/sandbox), and Codex
 // cannot override those settings once a session exists. If upstream
 // adds a supported API, we can delete this and call that instead.
 
@@ -265,72 +265,4 @@ export async function truncateSessionHistory(
     size: stats.size,
   });
   return true;
-}
-
-function formatRolloutFilename(ts: Date, sessionId: string): string {
-  const iso = ts.toISOString().replace(/:/g, "-");
-  return `rollout-${iso}-${sessionId}.jsonl`;
-}
-
-export async function forkSession(
-  sessionId: string,
-  newSessionId: string,
-  sessionsRoot: string,
-): Promise<string> {
-  const source = await findSessionFile(sessionId, sessionsRoot);
-  if (!source) {
-    throw new Error(`session file not found for ${sessionId}`);
-  }
-  const firstLine = await readFirstLine(source);
-  const parsed = JSON.parse(firstLine) as SessionMetaLine;
-  if (!parsed || parsed.type !== "session_meta") {
-    throw new Error(`invalid session meta in ${source}`);
-  }
-  const now = new Date();
-  const payload = {
-    ...parsed.payload,
-    id: newSessionId,
-    timestamp: now.toISOString(),
-    forked_from: sessionId,
-  };
-  const nextLine = JSON.stringify({
-    type: "session_meta",
-    payload,
-    timestamp: now.toISOString(),
-  });
-  const dir = path.dirname(source);
-  const target = path.join(dir, formatRolloutFilename(now, newSessionId));
-  await new Promise<void>((resolve, reject) => {
-    const input = createReadStream(source, { encoding: "utf8" });
-    const output = createWriteStream(target, { encoding: "utf8" });
-    const rl = readline.createInterface({ input, crlfDelay: Infinity });
-    let wroteFirst = false;
-    rl.on("line", (line) => {
-      if (!wroteFirst) {
-        output.write(`${nextLine}\n`);
-        wroteFirst = true;
-        return;
-      }
-      output.write(`${line}\n`);
-    });
-    rl.on("close", () => {
-      output.end();
-    });
-    rl.on("error", (err) => {
-      input.destroy();
-      output.destroy();
-      reject(err);
-    });
-    input.on("error", (err) => {
-      output.destroy();
-      reject(err);
-    });
-    output.on("error", (err) => {
-      input.destroy();
-      reject(err);
-    });
-    output.on("close", () => resolve());
-  });
-  logger.debug("forked session", { source, target });
-  return target;
 }

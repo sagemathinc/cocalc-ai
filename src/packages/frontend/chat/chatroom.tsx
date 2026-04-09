@@ -60,7 +60,6 @@ import {
   acknowledgeThreadAutomation,
   deleteThreadAutomation,
   pauseThreadAutomation,
-  resetAcpThreadState,
   resumeThreadAutomation,
   runThreadAutomationNow,
   upsertThreadAutomation,
@@ -1437,49 +1436,6 @@ export function ChatPanel({
     return resolveFromThreadKey(selectedThreadKey);
   }
 
-  function interruptThreadIfRunning({
-    thread_id,
-    lookup,
-  }: {
-    thread_id?: string;
-    lookup?: string;
-  }): void {
-    const threadMessages =
-      (lookup ? actions.getMessagesInThread(lookup) : undefined) ?? [];
-    const sessionId = resolveAgentSessionIdForThread({
-      actions,
-      threadId: thread_id,
-      threadKey: thread_id ?? "",
-      persistedSessionId: thread_id
-        ? actions.getCodexConfig(thread_id)?.sessionId
-        : undefined,
-    });
-    for (const msg of threadMessages) {
-      if (field<boolean>(msg, "generating") !== true) continue;
-      const msgDate = dateValue(msg);
-      if (!msgDate) continue;
-      const threadId = field<string>(msg, "thread_id");
-      const threadState =
-        threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
-      const messageId = field<string>(msg, "message_id");
-      const msgState =
-        (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
-        acpState?.get?.(`${msgDate.valueOf()}`);
-      const isActive =
-        (typeof threadState === "string" &&
-          ACP_ACTIVE_STATES.has(threadState)) ||
-        (typeof msgState === "string" && ACP_ACTIVE_STATES.has(msgState));
-      if (!isActive) continue;
-      const interruptTargetThreadId =
-        field<string>(msg, "acp_thread_id") ?? sessionId;
-      if (!interruptTargetThreadId) continue;
-      actions.languageModelStopGenerating(new Date(msgDate.valueOf()), {
-        threadId: interruptTargetThreadId,
-        senderId: field<string>(msg, "sender_id"),
-      });
-    }
-  }
-
   function sendMessage(
     extraInput?: string,
     opts?: { immediate?: boolean },
@@ -1503,14 +1459,6 @@ export function ChatPanel({
       setAllowAutoSelectThread(false);
     } else if (isCombinedFeedSelected) {
       setAllowAutoSelectThread(false);
-    }
-
-    if (reply_thread_id && opts?.immediate && isSelectedThreadAI) {
-      interruptThreadIfRunning(target);
-      resetAcpThreadState({
-        actions,
-        threadId: reply_thread_id,
-      });
     }
 
     clearComposerNow(composerDraftKey);

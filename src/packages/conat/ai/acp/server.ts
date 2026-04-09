@@ -9,6 +9,8 @@ import type {
   AcpForkSessionRequest,
   AcpInterruptRequest,
   AcpRequest,
+  AcpSteerRequest,
+  AcpSteerResponse,
   AcpStreamPayload,
 } from "./types";
 import pLimit from "p-limit";
@@ -47,6 +49,13 @@ export function acpInterruptSubject(opts: {
   return `${buildSubjectPrefix(opts)}.interrupt`;
 }
 
+export function acpSteerSubject(opts: {
+  account_id?: string;
+  project_id?: string;
+}): string {
+  return `${buildSubjectPrefix(opts)}.steer`;
+}
+
 export function acpForkSubject(opts: {
   account_id?: string;
   project_id?: string;
@@ -83,6 +92,7 @@ function getProjectId(subject: string): string | undefined {
 
 let apiSub: Subscription | null = null;
 let interruptSub: Subscription | null = null;
+let steerSub: Subscription | null = null;
 let forkSub: Subscription | null = null;
 let controlSub: Subscription | null = null;
 let automationSub: Subscription | null = null;
@@ -117,6 +127,7 @@ type EvaluateHandler = (
 ) => Promise<void>;
 
 type InterruptHandler = (options: AcpInterruptRequest) => Promise<void>;
+type SteerHandler = (options: AcpSteerRequest) => Promise<AcpSteerResponse>;
 type ForkHandler = (
   options: AcpForkSessionRequest,
 ) => Promise<{ sessionId: string }>;
@@ -131,6 +142,7 @@ export async function init(
   handlers: {
     evaluate: EvaluateHandler;
     interrupt?: InterruptHandler;
+    steer?: SteerHandler;
     forkSession?: ForkHandler;
     control?: ControlHandler;
     automation?: AutomationHandler;
@@ -147,6 +159,12 @@ export async function init(
       queue: "acp-interrupt-q",
     });
     listenInterrupts(handlers.interrupt);
+  }
+  if (handlers.steer) {
+    steerSub = await client.subscribe(`${SUBJECT}.*.steer`, {
+      queue: "acp-steer-q",
+    });
+    listenSteers(handlers.steer);
   }
   if (handlers.forkSession) {
     forkSub = await client.subscribe(`${SUBJECT}.*.fork`, {
@@ -176,6 +194,10 @@ export async function close(): Promise<void> {
   if (interruptSub != null) {
     interruptSub.close();
     interruptSub = null;
+  }
+  if (steerSub != null) {
+    steerSub.close();
+    steerSub = null;
   }
   if (forkSub != null) {
     forkSub.close();
@@ -212,6 +234,17 @@ function listenInterrupts(interruptHandler: InterruptHandler): void {
     }
   })().catch((err) => {
     logger.warn("acp interrupt listener stopped", err);
+  });
+}
+
+function listenSteers(steerHandler: SteerHandler): void {
+  if (steerSub == null) return;
+  (async () => {
+    for await (const mesg of steerSub!) {
+      void runLimited("steer", () => handleSteerMessage(mesg, steerHandler));
+    }
+  })().catch((err) => {
+    logger.warn("acp steer listener stopped", err);
   });
 }
 
@@ -436,6 +469,25 @@ async function handleInterruptMessage(
     validateOptions(options, mesg.subject);
     await interrupt(options);
     await respond();
+  } catch (err) {
+    await respond(undefined, `${err}`);
+  }
+}
+
+async function handleSteerMessage(mesg, steer: SteerHandler): Promise<void> {
+  const options = mesg.data ?? {};
+  const respond = async (payload?: any, error?: string) => {
+    const data: any = payload ?? {};
+    if (error) {
+      data.error = error;
+    }
+    await mesg.respond(data, { noThrow: true });
+  };
+
+  try {
+    validateOptions(options, mesg.subject);
+    const result = await steer(options);
+    await respond(result);
   } catch (err) {
     await respond(undefined, `${err}`);
   }

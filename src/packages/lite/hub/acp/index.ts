@@ -8,13 +8,10 @@ import getLogger from "@cocalc/backend/logger";
 import { data } from "@cocalc/backend/data";
 import {
   CodexAppServerAgent,
-  CodexExecAgent,
   EchoAgent,
   type AcpAgent,
   type AcpEvaluateRequest,
   forkCodexAppServerSession,
-  forkSession,
-  getSessionsRoot,
 } from "@cocalc/ai/acp";
 import { AgentTimeTravelRecorder } from "@cocalc/ai/sync";
 import { init as initConatAcp } from "@cocalc/conat/ai/acp/server";
@@ -27,6 +24,8 @@ import type {
   AcpControlResponse,
   AcpJobRequest,
   AcpRequest,
+  AcpSteerRequest,
+  AcpSteerResponse,
   AcpStreamPayload,
   AcpStreamMessage,
   AcpStreamEvent,
@@ -42,7 +41,6 @@ import {
   normalizeCodexSessionId,
   resolveCodexSessionMode,
 } from "@cocalc/util/ai/codex";
-import { isValidUUID } from "@cocalc/util/misc";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import type {
   FileAdapter,
@@ -162,6 +160,14 @@ import {
   markAcpInterruptsHandledForThread,
 } from "../sqlite/acp-interrupts";
 import {
+  decodeAcpSteerCandidateIds,
+  decodeAcpSteerRequest,
+  enqueueAcpSteer,
+  listPendingAcpSteers,
+  markAcpSteerError,
+  markAcpSteerHandled,
+} from "../sqlite/acp-steers";
+import {
   getAcpWorker,
   heartbeatAcpWorker,
   listLiveAcpWorkers,
@@ -181,7 +187,6 @@ import {
   ensureAcpWorkerRunning,
   startAcpWorkerSupervisor,
 } from "./worker-manager";
-import { getConfiguredCodexBackend } from "./codex-backend";
 import { buildCodexRuntimeEnv } from "./runtime-env";
 
 // How often to persist in-flight ACP metadata (thread state/usage/flags).
@@ -219,6 +224,8 @@ let ensureDetachedWorkerRunning = ensureAcpWorkerRunning;
 let acpExecutionOwnedByCurrentProcess = false;
 let acpInterruptPollerStarted = false;
 let acpInterruptPollInFlight = false;
+let acpSteerPollerStarted = false;
+let acpSteerPollInFlight = false;
 let acpAutomationPollerStarted = false;
 let acpAutomationPollInFlight = false;
 const automationStores = new Map<string, Promise<DKV<AcpAutomationRecord>>>();
@@ -309,6 +316,7 @@ const ACP_WORKER_IDLE_EXIT_MS = envNumber(
   5000,
 );
 const ACP_INTERRUPT_POLL_MS = envNumber("COCALC_ACP_INTERRUPT_POLL_MS", 250);
+const ACP_STEER_POLL_MS = envNumber("COCALC_ACP_STEER_POLL_MS", 250);
 const ACP_INTERRUPT_MAX_AGE_MS = envNumber(
   "COCALC_ACP_INTERRUPT_MAX_AGE_MS",
   30_000,
@@ -4407,6 +4415,7 @@ export async function runDetachedAcpQueueWorker(
   initializeAcpRuntime(client);
   acpExecutionOwnedByCurrentProcess = true;
   startAcpInterruptPoller();
+  startAcpSteerPoller();
   if (typeof (client as any)?.waitUntilSignedIn === "function") {
     await (client as any).waitUntilSignedIn({ timeout: 5000 });
   }
@@ -4711,21 +4720,12 @@ async function ensureAgent(
     return mock;
   }
   try {
-    const codexBackend = getConfiguredCodexBackend();
-    logger.debug("ensureAgent: creating codex agent", {
-      codexBackend,
+    logger.debug("ensureAgent: creating codex app-server agent");
+    const created = await CodexAppServerAgent.create({
+      binaryPath: process.env.COCALC_CODEX_BIN,
+      cwd: bindings.workspaceRoot ?? process.cwd(),
     });
-    const created =
-      codexBackend === "app-server"
-        ? await CodexAppServerAgent.create({
-            binaryPath: process.env.COCALC_CODEX_BIN,
-            cwd: bindings.workspaceRoot ?? process.cwd(),
-          })
-        : await CodexExecAgent.create({
-            binaryPath: process.env.COCALC_CODEX_BIN,
-            cwd: bindings.workspaceRoot ?? process.cwd(),
-          });
-    logger.info("codex agent ready", { key, codexBackend });
+    logger.info("codex agent ready", { key, backend: "app-server" });
     agents.set(key, created);
     return created;
   } catch (err) {
@@ -6501,6 +6501,157 @@ function resolveInterruptCandidateIds({
   return [...ids];
 }
 
+function resolveSteerCandidateIds({
+  project_id,
+  path,
+  thread_id,
+  session_id,
+  chat,
+}: {
+  project_id?: string;
+  path?: string;
+  thread_id?: string;
+  session_id?: string;
+  chat?: AcpChatContext;
+}): string[] {
+  const ids = new Set<string>();
+  for (const id of resolveInterruptCandidateIds({
+    project_id,
+    path,
+    thread_id,
+  })) {
+    const trimmed = `${id ?? ""}`.trim();
+    if (trimmed) {
+      ids.add(trimmed);
+    }
+  }
+  const sessionId = `${session_id ?? ""}`.trim();
+  if (sessionId) {
+    ids.add(sessionId);
+  }
+  const writer = findChatWriter({ threadId: thread_id, chat });
+  writer?.getKnownThreadIds().forEach((id) => {
+    const trimmed = `${id ?? ""}`.trim();
+    if (trimmed) {
+      ids.add(trimmed);
+    }
+  });
+  return [...ids];
+}
+
+type AcpSteerAttemptResult = {
+  state: "steered" | "missing" | "not_steerable";
+  threadId?: string;
+};
+
+async function trySteerCandidateIds({
+  threadId,
+  chat,
+  request,
+  candidateIds,
+}: {
+  threadId?: string;
+  chat?: AcpChatContext;
+  request: AcpSteerRequest;
+  candidateIds?: string[];
+}): Promise<AcpSteerAttemptResult> {
+  const ids = new Set<string>();
+  const writer = findChatWriter({ threadId, chat });
+  for (const id of candidateIds ?? []) {
+    const trimmed = `${id ?? ""}`.trim();
+    if (trimmed) {
+      ids.add(trimmed);
+    }
+  }
+  if (threadId) {
+    ids.add(threadId);
+  }
+  writer?.getKnownThreadIds().forEach((id) => {
+    const trimmed = `${id ?? ""}`.trim();
+    if (trimmed) {
+      ids.add(trimmed);
+    }
+  });
+
+  let firstError: unknown;
+  let sawNotSteerable = false;
+  for (const id of ids) {
+    for (const agent of agents.values()) {
+      if (typeof agent.steer !== "function") {
+        continue;
+      }
+      try {
+        const result = await agent.steer(id, request);
+        if (result.state === "steered") {
+          return {
+            state: "steered",
+            threadId: result.threadId ?? id,
+          };
+        }
+        if (result.state === "not_steerable") {
+          sawNotSteerable = true;
+        }
+      } catch (err) {
+        if (firstError === undefined) {
+          firstError = err;
+        }
+        logger.warn("failed to steer codex session", {
+          threadId: id,
+          err,
+        });
+      }
+    }
+  }
+
+  if (sawNotSteerable) {
+    return { state: "not_steerable" };
+  }
+  if (firstError !== undefined) {
+    throw firstError;
+  }
+  return { state: "missing" };
+}
+
+function hasRemoteRunningAcpTurn({
+  project_id,
+  path,
+  thread_id,
+  candidateIds,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  candidateIds?: string[];
+}): boolean {
+  const ids = new Set<string>();
+  const threadId = `${thread_id ?? ""}`.trim();
+  if (threadId) {
+    ids.add(threadId);
+  }
+  for (const id of candidateIds ?? []) {
+    const trimmed = `${id ?? ""}`.trim();
+    if (trimmed) {
+      ids.add(trimmed);
+    }
+  }
+  for (const row of listRunningAcpTurnLeases({
+    exclude_owner_instance_id: ACP_INSTANCE_ID,
+  })) {
+    if (row.project_id !== project_id || row.path !== path) {
+      continue;
+    }
+    const runningThreadId = `${row.thread_id ?? ""}`.trim();
+    const sessionId = `${row.session_id ?? ""}`.trim();
+    if (
+      (runningThreadId && ids.has(runningThreadId)) ||
+      (sessionId && ids.has(sessionId))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function tryInterruptCandidateIds({
   threadId,
   chat,
@@ -6557,6 +6708,19 @@ function enqueueInterruptRequestForExecution({
   });
 }
 
+function enqueueSteerRequestForExecution({
+  request,
+  candidateIds,
+}: {
+  request: AcpSteerRequest;
+  candidateIds?: string[];
+}): void {
+  enqueueAcpSteer({
+    request,
+    candidate_ids: candidateIds,
+  });
+}
+
 async function processPendingAcpInterruptsOnce(): Promise<void> {
   if (acpInterruptPollInFlight) return;
   acpInterruptPollInFlight = true;
@@ -6590,6 +6754,43 @@ async function processPendingAcpInterruptsOnce(): Promise<void> {
   }
 }
 
+async function processPendingAcpSteersOnce(): Promise<void> {
+  if (acpSteerPollInFlight) return;
+  acpSteerPollInFlight = true;
+  try {
+    for (const row of listPendingAcpSteers()) {
+      const request = decodeAcpSteerRequest(row);
+      try {
+        const result = await trySteerCandidateIds({
+          threadId: row.thread_id,
+          chat: request.chat,
+          request,
+          candidateIds: resolveSteerCandidateIds({
+            project_id: row.project_id,
+            path: row.path,
+            thread_id: row.thread_id,
+            session_id: request.session_id,
+            chat: request.chat,
+          }).concat(decodeAcpSteerCandidateIds(row)),
+        });
+        if (result.state === "steered") {
+          markAcpSteerHandled({ id: row.id });
+          continue;
+        }
+        await fallbackAcpSteerToQueuedTurn(request);
+        markAcpSteerHandled({ id: row.id });
+      } catch (err) {
+        markAcpSteerError({
+          id: row.id,
+          error: `${(err as Error)?.message ?? err}`,
+        });
+      }
+    }
+  } finally {
+    acpSteerPollInFlight = false;
+  }
+}
+
 function startAcpInterruptPoller(): void {
   if (acpInterruptPollerStarted) return;
   acpInterruptPollerStarted = true;
@@ -6601,6 +6802,20 @@ function startAcpInterruptPoller(): void {
   timer.unref?.();
   void processPendingAcpInterruptsOnce().catch((err) => {
     logger.warn("ACP initial interrupt poll failed", err);
+  });
+}
+
+function startAcpSteerPoller(): void {
+  if (acpSteerPollerStarted) return;
+  acpSteerPollerStarted = true;
+  const timer = setInterval(() => {
+    void processPendingAcpSteersOnce().catch((err) => {
+      logger.warn("ACP steer poll failed", err);
+    });
+  }, ACP_STEER_POLL_MS);
+  timer.unref?.();
+  void processPendingAcpSteersOnce().catch((err) => {
+    logger.warn("ACP initial steer poll failed", err);
   });
 }
 
@@ -6640,6 +6855,129 @@ async function enqueueChatAcpTurn({
   } else {
     kickAllQueuedAcpJobs();
   }
+}
+
+async function fallbackAcpSteerToQueuedTurn(
+  request: AcpSteerRequest,
+): Promise<AcpSteerResponse> {
+  let state: AcpSteerResponse["state"] = "queued";
+  let threadId: string | null | undefined;
+  await enqueueChatAcpTurn({
+    request,
+    stream: async (payload?: AcpStreamPayload | null) => {
+      if (payload?.type !== "status") {
+        return;
+      }
+      if (payload.state === "running") {
+        state = "running";
+      } else if (payload.state === "queued") {
+        state = "queued";
+      }
+      threadId = payload.threadId ?? threadId;
+    },
+  });
+  return {
+    ok: true,
+    state,
+    threadId,
+  };
+}
+
+async function handleAcpSteerRequest(
+  request: AcpSteerRequest,
+): Promise<AcpSteerResponse> {
+  if (!request.chat) {
+    throw new Error("chat metadata is required to steer an ACP turn");
+  }
+  const threadId = `${request.chat.thread_id ?? ""}`.trim();
+  if (!threadId) {
+    throw new Error("thread_id is required to steer an ACP turn");
+  }
+  if (!conatClient) {
+    throw new Error("conat client must be initialized");
+  }
+  await acknowledgeAutomationFromHumanTurn(request);
+
+  const projectId = request.chat.project_id ?? request.project_id;
+  if (!projectId) {
+    throw new Error("project_id must be set");
+  }
+  const sessionMode = resolveCodexSessionMode(request.config);
+  const workspaceRoot = resolveWorkspaceRoot(request.config);
+  const executor: AcpExecutor = preferContainerExecutor()
+    ? new ContainerExecutor({
+        projectId,
+        workspaceRoot,
+        conatClient,
+      })
+    : new LocalExecutor(workspaceRoot);
+  const useContainer = preferContainerExecutor();
+  const hostRoot =
+    useContainer && executor instanceof ContainerExecutor
+      ? executor.getMountPoint()
+      : workspaceRoot;
+  const useNativeTerminal = useContainer ? false : sessionMode === "auto";
+  const bindings = buildExecutorAdapters(executor, workspaceRoot, hostRoot);
+  const agent = await ensureAgent(useNativeTerminal, bindings);
+  if (typeof agent.steer !== "function") {
+    return await fallbackAcpSteerToQueuedTurn(request);
+  }
+
+  const candidateIds = resolveSteerCandidateIds({
+    project_id: projectId,
+    path: request.chat.path,
+    thread_id: threadId,
+    session_id: request.session_id,
+    chat: request.chat,
+  });
+  const result = await trySteerCandidateIds({
+    threadId,
+    chat: request.chat,
+    request,
+    candidateIds,
+  });
+  if (result.state === "steered") {
+    return {
+      ok: true,
+      state: "steered",
+      threadId: result.threadId ?? threadId,
+    };
+  }
+  if (result.state === "not_steerable") {
+    return await fallbackAcpSteerToQueuedTurn(request);
+  }
+  if (
+    liteUseDetachedAcpWorker() &&
+    !acpExecutionOwnedByCurrentProcess &&
+    hasRemoteRunningAcpTurn({
+      project_id: projectId,
+      path: request.chat.path,
+      thread_id: threadId,
+      candidateIds,
+    })
+  ) {
+    enqueueSteerRequestForExecution({
+      request,
+      candidateIds,
+    });
+    try {
+      await ensureDetachedWorkerRunning({ force: true });
+    } catch (err) {
+      logger.debug("failed waking detached ACP worker for steer", {
+        project_id: projectId,
+        path: request.chat.path,
+        threadId,
+        err,
+      });
+    }
+    return {
+      ok: true,
+      state: "steered",
+      threadId: result.threadId ?? candidateIds[0] ?? threadId,
+    };
+  }
+
+  return await fallbackAcpSteerToQueuedTurn(request);
 }
 
 async function handleAcpControlRequest(
@@ -6776,6 +7114,7 @@ export async function init(
     {
       evaluate,
       interrupt: handleInterruptRequest,
+      steer: handleAcpSteerRequest,
       forkSession: handleForkSessionRequest,
       control: handleAcpControlRequest,
       automation: handleAcpAutomationRequest,
@@ -6799,6 +7138,7 @@ export async function init(
       await recoverOrphanedAcpTurns(client);
       markRunningAcpJobsInterrupted("server restart");
       startAcpInterruptPoller();
+      startAcpSteerPoller();
       kickAllQueuedAcpJobs();
     }
   } else {
@@ -7002,37 +7342,12 @@ async function handleForkSessionRequest(
   if (!sessionId) {
     throw Error("sessionId must be a non-empty string");
   }
-  if (getConfiguredCodexBackend() === "app-server") {
-    try {
-      return await forkCodexAppServerSession({
-        projectId: request.project_id,
-        accountId: request.account_id,
-        sessionId,
-        binaryPath: process.env.COCALC_CODEX_BIN,
-      });
-    } catch (err) {
-      if (!isValidUUID(sessionId)) {
-        throw err;
-      }
-      logger.info("app-server session fork failed; falling back to exec fork", {
-        sessionId,
-        err: `${err}`,
-      });
-    }
-  }
-  const sessionsRoot = getSessionsRoot();
-  if (!sessionsRoot) {
-    throw Error("codex sessions directory not configured");
-  }
-  if (!isValidUUID(sessionId)) {
-    throw Error("sessionId must be a valid uuid for exec-session fork");
-  }
-  const newSessionId = request.newSessionId ?? randomUUID();
-  if (!isValidUUID(newSessionId)) {
-    throw Error("newSessionId must be a valid uuid");
-  }
-  await forkSession(sessionId, newSessionId, sessionsRoot);
-  return { sessionId: newSessionId };
+  return await forkCodexAppServerSession({
+    projectId: request.project_id,
+    accountId: request.account_id,
+    sessionId,
+    binaryPath: process.env.COCALC_CODEX_BIN,
+  });
 }
 
 async function interruptCodexSession(threadId: string): Promise<boolean> {

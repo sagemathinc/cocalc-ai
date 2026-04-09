@@ -4,7 +4,7 @@ import {
   type AgentActionResult,
   type AgentCapabilityManifestEntry,
 } from "@cocalc/ai/agent-sdk";
-import { CodexExecAgent } from "@cocalc/ai/acp";
+import { CodexAppServerAgent, type AcpAgent } from "@cocalc/ai/acp";
 import { account_id as ACCOUNT_ID } from "@cocalc/backend/data";
 import type { AcpStreamPayload } from "@cocalc/conat/ai/acp/types";
 import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
@@ -117,10 +117,10 @@ function getPlannerCodexModel(explicit?: string): string {
   return "gpt-5.4-mini";
 }
 
-let plannerCodexAgent: Promise<CodexExecAgent> | undefined;
+let plannerCodexAgent: Promise<AcpAgent> | undefined;
 
-async function getPlannerCodexAgent(): Promise<CodexExecAgent> {
-  plannerCodexAgent ??= CodexExecAgent.create({
+async function getPlannerCodexAgent(): Promise<AcpAgent> {
+  plannerCodexAgent ??= CodexAppServerAgent.create({
     binaryPath: process.env.COCALC_CODEX_BIN,
     cwd: process.cwd(),
   });
@@ -424,7 +424,7 @@ async function runCodexPrompt({
   prompt,
   model,
 }: {
-  agent: CodexExecAgent;
+  agent: AcpAgent;
   account_id: string;
   prompt: string;
   model?: string;

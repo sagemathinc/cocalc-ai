@@ -19,14 +19,12 @@ export type {
 } from "./adapters";
 
 export { EchoAgent, echoAgent } from "./echo";
-export { CodexExecAgent } from "./codex-exec";
 export {
   CodexAppServerAgent,
   forkCodexAppServerSession,
 } from "./codex-app-server";
 export {
   findSessionFile,
-  forkSession,
   getSessionsRoot,
   readSessionMeta,
   rewriteSessionMeta,

@@ -46,7 +46,24 @@ export interface AcpEvaluateRequest {
   chat?: AcpChatContext;
 }
 
+export interface AcpSteerRequest {
+  project_id: string;
+  account_id: string;
+  prompt: string;
+  local_images?: string[];
+  session_id?: string;
+  runtime_env?: Record<string, string>;
+  config?: CodexSessionConfig;
+  chat: AcpChatContext;
+}
+
+export interface AcpSteerResult {
+  state: "steered" | "missing" | "not_steerable";
+  threadId?: string;
+}
+
 export interface AcpAgent {
   evaluate(request: AcpEvaluateRequest): Promise<void>;
+  steer?(threadId: string, request: AcpSteerRequest): Promise<AcpSteerResult>;
   dispose?(): Promise<void>;
 }
