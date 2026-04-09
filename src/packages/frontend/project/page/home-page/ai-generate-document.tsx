@@ -23,6 +23,7 @@ import {
 } from "antd";
 import { delay } from "awaiting";
 import { debounce, isEmpty, throttle } from "lodash";
+import type { ElementRef } from "react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
@@ -207,7 +208,7 @@ function EnabledAIGenerateDocument({
     }
   }, [show]);
 
-  const promptRef = useRef<HTMLElement>(null);
+  const promptRef = useRef<ElementRef<typeof Input.TextArea>>(null);
 
   const [kernelSpecs, setKernelSpecs] = useState<KernelSpec[] | null | string>(
     null,

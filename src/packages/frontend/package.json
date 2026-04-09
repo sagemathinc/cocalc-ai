@@ -38,7 +38,7 @@
   "devDependencies": {
     "@ant-design/colors": "^6.0.0",
     "@ant-design/compatible": "^5.1.1",
-    "@ant-design/icons": "^6.0.0",
+    "@ant-design/icons": "^6.1.1",
     "@cocalc/assets": "workspace:*",
     "@cocalc/cdn": "workspace:*",
     "@cocalc/chat": "workspace:*",
@@ -86,7 +86,7 @@
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
     "anser": "^2.1.1",
-    "antd": "^6.1.0",
+    "antd": "^6.3.5",
     "antd-img-crop": "^4.27.0",
     "audio-extensions": "^0.0.0",
     "awaiting": "^3.0.0",

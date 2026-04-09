@@ -2819,7 +2819,7 @@ export function GitCommitDrawer({
           void deleteAllReviewData();
         }}
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <Typography.Text>
             This will permanently delete all of your saved git review notes,
             review status, and inline review comments on this CoCalc server.

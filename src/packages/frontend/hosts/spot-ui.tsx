@@ -36,7 +36,7 @@ export function SpotHostAlert() {
     <Alert
       type="warning"
       showIcon
-      message="Spot host"
+      title="Spot host"
       description={spotDescription()}
     />
   );
