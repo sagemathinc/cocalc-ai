@@ -10,6 +10,7 @@ import {
   Modal,
   Select,
   Space,
+  Typography,
   message as antdMessage,
 } from "antd";
 import {
@@ -120,9 +121,13 @@ export function ChatRoomModals({
   const [exportIncludeBlobs, setExportIncludeBlobs] = useState<boolean>(false);
   const [exportIncludeCodexContext, setExportIncludeCodexContext] =
     useState<boolean>(false);
+  const [showExportCliCommand, setShowExportCliCommand] =
+    useState<boolean>(false);
   const [exportRunning, setExportRunning] = useState<boolean>(false);
   const [importOpen, setImportOpen] = useState<boolean>(false);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [showImportCliCommand, setShowImportCliCommand] =
+    useState<boolean>(false);
   const [importRunning, setImportRunning] = useState<boolean>(false);
   const [forkThread, setForkThread] = useState<{
     key: string;
@@ -295,17 +300,20 @@ export function ChatRoomModals({
 
   const closeExportModal = () => {
     setExportRequest(null);
+    setShowExportCliCommand(false);
     setExportRunning(false);
   };
 
   const openImportModal = useCallback(() => {
     setImportFile(null);
+    setShowImportCliCommand(false);
     setImportOpen(true);
   }, []);
 
   const closeImportModal = () => {
     setImportOpen(false);
     setImportFile(null);
+    setShowImportCliCommand(false);
     setImportRunning(false);
   };
 
@@ -497,6 +505,29 @@ export function ChatRoomModals({
     value: r.id,
     label: r.label,
   }));
+  const exportCliCommand =
+    exportRequest == null
+      ? ""
+      : buildChatExportCliCommand({
+          chatPath: path,
+          projectId: project_id,
+          outputPath: exportFilename,
+          scope: exportScope,
+          threadId:
+            exportScope === "current-thread"
+              ? exportRequest.threadKey
+              : undefined,
+          includeBlobs: exportIncludeBlobs,
+          includeCodexContext: exportIncludeCodexContext,
+        });
+  const importCliCommand = buildChatImportCliCommand({
+    archivePath:
+      importFile?.name?.trim() != null && importFile.name.trim() !== ""
+        ? `./${importFile.name.trim()}`
+        : "/path/to/chat-export.zip",
+    targetPath: path,
+    projectId: project_id,
+  });
 
   return (
     <>
@@ -610,6 +641,12 @@ export function ChatRoomModals({
           >
             Include Codex context
           </Checkbox>
+          <Checkbox
+            checked={showExportCliCommand}
+            onChange={(e) => setShowExportCliCommand(e.target.checked)}
+          >
+            Show CLI command
+          </Checkbox>
           {!exportIncludeCodexContext ? (
             <Alert
               type="warning"
@@ -622,6 +659,24 @@ export function ChatRoomModals({
             Export includes archived/offloaded chat messages for the selected
             threads. The canonical chat export excludes CoCalc activity logs.
           </div>
+          {showExportCliCommand ? (
+            <Typography.Paragraph
+              copyable={{ text: exportCliCommand }}
+              style={{
+                marginBottom: 0,
+                padding: "8px 10px",
+                border: `1px solid ${COLORS.GRAY_L}`,
+                borderRadius: 6,
+                background: COLORS.GRAY_LL,
+                fontFamily: "monospace",
+                fontSize: 12,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {exportCliCommand}
+            </Typography.Paragraph>
+          ) : null}
         </Space>
       </Modal>
       <ThemeEditorModal
@@ -825,6 +880,12 @@ export function ChatRoomModals({
               style={{ width: "100%" }}
             />
           </div>
+          <Checkbox
+            checked={showImportCliCommand}
+            onChange={(event) => setShowImportCliCommand(event.target.checked)}
+          >
+            Show CLI command
+          </Checkbox>
           {importFile ? (
             <Alert
               type="success"
@@ -839,6 +900,30 @@ export function ChatRoomModals({
               title="Choose a .cocalc-export.zip file to import."
             />
           )}
+          {showImportCliCommand ? (
+            <>
+              <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+                Adjust the first path to wherever the archive lives in the
+                project.
+              </div>
+              <Typography.Paragraph
+                copyable={{ text: importCliCommand }}
+                style={{
+                  marginBottom: 0,
+                  padding: "8px 10px",
+                  border: `1px solid ${COLORS.GRAY_L}`,
+                  borderRadius: 6,
+                  background: COLORS.GRAY_LL,
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {importCliCommand}
+              </Typography.Paragraph>
+            </>
+          ) : null}
         </Space>
       </Modal>
       <Modal
@@ -943,6 +1028,80 @@ function buildChatExportPath(
         ? ".all-threads"
         : ".threads";
   return `${head ? `${head}/` : ""}${stem || "chat"}${scopeSuffix}.cocalc-export.zip`;
+}
+
+function buildChatExportCliCommand({
+  chatPath,
+  projectId,
+  outputPath,
+  scope,
+  threadId,
+  includeBlobs,
+  includeCodexContext,
+}: {
+  chatPath: string;
+  projectId?: string;
+  outputPath: string;
+  scope: ChatExportScope;
+  threadId?: string;
+  includeBlobs?: boolean;
+  includeCodexContext?: boolean;
+}): string {
+  const args = ["cocalc", "export", "chat", chatPath, "--scope", scope];
+  if (scope === "current-thread" && threadId?.trim()) {
+    args.push("--thread-id", threadId.trim());
+  }
+  if (projectId?.trim()) {
+    args.push("--project-id", projectId.trim());
+  }
+  if (outputPath.trim()) {
+    args.push("--out", outputPath.trim());
+  }
+  if (includeBlobs) {
+    args.push("--include-blobs");
+    const blobBaseUrl =
+      typeof window !== "undefined" ? window.location?.origin?.trim() : "";
+    if (blobBaseUrl) {
+      args.push("--blob-base-url", blobBaseUrl);
+    }
+  }
+  if (includeCodexContext) {
+    args.push("--include-codex-context");
+  }
+  args.push("--json");
+  return shellQuoteCommand(args);
+}
+
+function buildChatImportCliCommand({
+  archivePath,
+  targetPath,
+  projectId,
+}: {
+  archivePath: string;
+  targetPath: string;
+  projectId?: string;
+}): string {
+  const args = [
+    "cocalc",
+    "import",
+    "chat",
+    archivePath,
+    "--target",
+    targetPath,
+  ];
+  if (projectId?.trim()) {
+    args.push("--project-id", projectId.trim());
+  }
+  args.push("--json");
+  return shellQuoteCommand(args);
+}
+
+function shellQuoteCommand(args: string[]): string {
+  return args.map(shellQuoteArg).join(" ");
+}
+
+function shellQuoteArg(value: string): string {
+  return `'${`${value ?? ""}`.replace(/'/g, `'\"'\"'`)}'`;
 }
 
 function slugifyLabel(label?: string): string {

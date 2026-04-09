@@ -144,6 +144,49 @@ describe("chatroom fork modal defaults", () => {
     ).not.toBeNull();
   });
 
+  it("shows a copyable CLI export command for the current export settings", async () => {
+    const actions: any = {
+      getThreadMetadata: jest.fn(() => ({
+        agent_kind: "acp",
+        acp_config: { sessionId: "session-1", model: "gpt-5.4" },
+      })),
+    };
+    let handlers: any;
+
+    render(
+      <ChatRoomModals
+        actions={actions}
+        path="project/chat/test.chat"
+        selectedThreadKey="thread-1"
+        selectedThreadLabel="Codex Thread"
+        onHandlers={(next) => {
+          handlers = next;
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(handlers?.openExportModal).toBeDefined());
+
+    act(() => {
+      handlers.openExportModal({
+        scope: "current-thread",
+        threadKey: "thread-1",
+        label: "Codex Thread",
+      });
+    });
+
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Show CLI command" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /cocalc' 'export' 'chat' 'project\/chat\/test.chat'/i,
+      ),
+    ).not.toBeNull();
+    expect(screen.getByText(/'--include-codex-context'/i)).not.toBeNull();
+  });
+
   it("opens import and passes the selected zip file to importChatArchive", async () => {
     const actions: any = {
       importChatArchive: jest.fn(async () => ({
@@ -183,5 +226,39 @@ describe("chatroom fork modal defaults", () => {
     await waitFor(() => {
       expect(actions.importChatArchive).toHaveBeenCalledWith({ file });
     });
+  });
+
+  it("shows a copyable CLI import command for the current chat", async () => {
+    const actions: any = {};
+    let handlers: any;
+
+    render(
+      <ChatRoomModals
+        actions={actions}
+        path="project/chat/test.chat"
+        onHandlers={(next) => {
+          handlers = next;
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(handlers?.openImportModal).toBeDefined());
+
+    act(() => {
+      handlers.openImportModal();
+    });
+
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Show CLI command" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /cocalc' 'import' 'chat' '\/path\/to\/chat-export.zip'/i,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/'--target' 'project\/chat\/test.chat'/i),
+    ).not.toBeNull();
   });
 });
