@@ -34,14 +34,17 @@ import { v4 } from "uuid";
 
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getPool from "@cocalc/database/pool";
-import createAccount from "@cocalc/server/accounts/create-account";
 import isAccountAvailable from "@cocalc/server/auth/is-account-available";
 import isDomainExclusiveSSO from "@cocalc/server/auth/is-domain-exclusive-sso";
 import passwordStrength from "@cocalc/server/auth/password-strength";
 import reCaptcha from "@cocalc/server/auth/recaptcha";
-import redeemRegistrationToken from "@cocalc/server/auth/tokens/redeem";
+import redeemRegistrationToken, {
+  disableRegistrationToken,
+} from "@cocalc/server/auth/tokens/redeem";
 import sendWelcomeEmail from "@cocalc/server/email/welcome-email";
 import getLogger from "@cocalc/backend/logger";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { createClusterAccount } from "@cocalc/server/inter-bay/accounts";
 import { getTierTemplate } from "@cocalc/util/membership-tier-templates";
 import {
   isLaunchpadMode,
@@ -188,19 +191,20 @@ export async function signUp(req, res) {
   }
 
   try {
-    const account_id = v4();
-    await createAccount({
-      email,
+    const created = await createClusterAccount({
+      account_id: v4(),
+      email_address: email,
       password,
-      firstName,
-      lastName,
-      account_id,
+      first_name: firstName,
+      last_name: lastName,
+      home_bay_id: getConfiguredBayId(),
       tags,
-      signupReason,
+      signup_reason: signupReason,
       owner_id,
       ephemeral: tokenInfo?.ephemeral,
       customize: tokenInfo?.customize,
     });
+    const account_id = created.account_id;
 
     const tokenCustomize = tokenInfo?.customize;
     const wantsAdmin =
@@ -294,11 +298,7 @@ export async function signUp(req, res) {
     }
 
     if (isBootstrap && registrationToken) {
-      const pool = getPool();
-      await pool.query(
-        "UPDATE registration_tokens SET disabled=true WHERE token=$1",
-        [registrationToken],
-      );
+      await disableRegistrationToken(registrationToken);
     }
 
     if (email) {

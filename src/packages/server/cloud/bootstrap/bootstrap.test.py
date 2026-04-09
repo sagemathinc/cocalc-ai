@@ -1015,5 +1015,51 @@ class BootstrapModesTest(unittest.TestCase):
             self.assertEqual(state["last_reconcile_result"], "success")
 
 
+class GpuBootstrapTest(unittest.TestCase):
+    def test_install_gpu_support_allows_held_nvidia_toolkit_upgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), has_gpu=True)
+            recorded = []
+
+            original_apt_run = bootstrap.apt_run
+            original_run_cmd = bootstrap.run_cmd
+            original_run_best_effort = bootstrap.run_best_effort
+            original_write_text = bootstrap.Path.write_text
+            original_chmod = bootstrap.os.chmod
+            try:
+                bootstrap.apt_run = (
+                    lambda _cfg, args, desc, **kwargs: recorded.append((args, desc))
+                )
+                bootstrap.run_cmd = (
+                    lambda _cfg, args, desc, **kwargs: recorded.append((args, desc))
+                )
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.Path.write_text = lambda self, _data, encoding="utf-8": 0
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                bootstrap.install_gpu_support(cfg)
+            finally:
+                bootstrap.apt_run = original_apt_run
+                bootstrap.run_cmd = original_run_cmd
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.Path.write_text = original_write_text
+                bootstrap.os.chmod = original_chmod
+
+            self.assertIn(
+                (
+                    [
+                        "apt-get",
+                        "-y",
+                        "--allow-change-held-packages",
+                        "install",
+                        "nvidia-container-toolkit",
+                    ],
+                    "install nvidia-container-toolkit",
+                ),
+                recorded,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

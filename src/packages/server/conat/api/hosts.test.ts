@@ -2,9 +2,16 @@ export {};
 
 let queryMock: jest.Mock;
 let isAdminMock: jest.Mock;
+let isBannedMock: jest.Mock;
 let moveProjectToHostMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
 let loadProjectHostMetricsHistoryMock: jest.Mock;
+let syncProjectUsersOnHostMock: jest.Mock;
+let issueProjectHostAuthTokenJwtMock: jest.Mock;
+let assertAccountProjectHostTokenProjectAccessMock: jest.Mock;
+let assertProjectHostAgentTokenAccessMock: jest.Mock;
+let hasAccountProjectHostTokenHostAccessMock: jest.Mock;
+let resolveProjectBayMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -14,6 +21,11 @@ jest.mock("@cocalc/database/pool", () => ({
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
   default: (...args: any[]) => isAdminMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/is-banned", () => ({
+  __esModule: true,
+  default: (...args: any[]) => isBannedMock(...args),
 }));
 
 jest.mock("@cocalc/server/projects/move", () => ({
@@ -32,6 +44,42 @@ jest.mock("@cocalc/database/postgres/project-host-metrics", () => ({
   clearProjectHostMetrics: jest.fn(async () => undefined),
   loadProjectHostMetricsHistory: (...args: any[]) =>
     loadProjectHostMetricsHistoryMock(...args),
+}));
+
+jest.mock("@cocalc/backend/data", () => {
+  const actual = jest.requireActual("@cocalc/backend/data");
+  return {
+    __esModule: true,
+    ...actual,
+    getProjectHostAuthTokenPrivateKey: jest.fn(() => "test-private-key"),
+  };
+});
+
+jest.mock("@cocalc/server/project-host/control", () => ({
+  __esModule: true,
+  syncProjectUsersOnHost: (...args: any[]) =>
+    syncProjectUsersOnHostMock(...args),
+}));
+
+jest.mock("@cocalc/conat/auth/project-host-token", () => ({
+  __esModule: true,
+  issueProjectHostAuthToken: (...args: any[]) =>
+    issueProjectHostAuthTokenJwtMock(...args),
+}));
+
+jest.mock("./project-host-token-auth", () => ({
+  __esModule: true,
+  assertAccountProjectHostTokenProjectAccess: (...args: any[]) =>
+    assertAccountProjectHostTokenProjectAccessMock(...args),
+  assertProjectHostAgentTokenAccess: (...args: any[]) =>
+    assertProjectHostAgentTokenAccessMock(...args),
+  hasAccountProjectHostTokenHostAccess: (...args: any[]) =>
+    hasAccountProjectHostTokenHostAccessMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/directory", () => ({
+  __esModule: true,
+  resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
 }));
 
 const HOST_ID = "host-123";
@@ -96,11 +144,26 @@ describe("hosts.listHostProjects", () => {
   beforeEach(() => {
     jest.resetModules();
     isAdminMock = jest.fn(async () => true);
+    isBannedMock = jest.fn(async () => false);
     moveProjectToHostMock = jest.fn();
     resolveMembershipForAccountMock = jest.fn(async () => ({
       entitlements: {},
     }));
     loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    syncProjectUsersOnHostMock = jest.fn(async () => undefined);
+    issueProjectHostAuthTokenJwtMock = jest.fn(() => ({
+      token: "test-token",
+      expires_at: 1234567890,
+    }));
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(
+      async () => undefined,
+    );
+    assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
+    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.includes("FROM project_hosts")) {
         return {
@@ -189,6 +252,92 @@ describe("hosts.listHostProjects", () => {
     const baseCount = (baseSql.match(/last_backup IS NULL/g) || []).length;
     const riskCount = (riskSql.match(/last_backup IS NULL/g) || []).length;
     expect(riskCount).toBeGreaterThan(baseCount);
+  });
+});
+
+describe("hosts.issueProjectHostAuthToken", () => {
+  const HOST_UUID = "00000000-0000-4000-8000-000000000201";
+  const ACCOUNT_UUID = "00000000-0000-4000-8000-000000000202";
+  const PROJECT_UUID = "00000000-0000-4000-8000-000000000203";
+
+  beforeEach(() => {
+    jest.resetModules();
+    queryMock = jest.fn();
+    isAdminMock = jest.fn(async () => false);
+    isBannedMock = jest.fn(async () => false);
+    moveProjectToHostMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: {},
+    }));
+    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    syncProjectUsersOnHostMock = jest.fn(async () => undefined);
+    issueProjectHostAuthTokenJwtMock = jest.fn(() => ({
+      token: "issued-token",
+      expires_at: 424242,
+    }));
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(
+      async () => undefined,
+    );
+    assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
+    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+  });
+
+  it("syncs host ACLs before issuing a browser token for a locally owned project", async () => {
+    const { issueProjectHostAuthToken } = await import("./hosts");
+    await expect(
+      issueProjectHostAuthToken({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+        project_id: PROJECT_UUID,
+      }),
+    ).resolves.toEqual({
+      host_id: HOST_UUID,
+      token: "issued-token",
+      expires_at: 424242,
+    });
+    expect(resolveProjectBayMock).toHaveBeenCalledWith(PROJECT_UUID);
+    expect(syncProjectUsersOnHostMock).toHaveBeenCalledWith({
+      project_id: PROJECT_UUID,
+      expected_host_id: HOST_UUID,
+    });
+    expect(issueProjectHostAuthTokenJwtMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+      }),
+    );
+  });
+
+  it("skips the local host ACL sync for remotely owned projects", async () => {
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+
+    const { issueProjectHostAuthToken } = await import("./hosts");
+    await expect(
+      issueProjectHostAuthToken({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+        project_id: PROJECT_UUID,
+      }),
+    ).resolves.toEqual({
+      host_id: HOST_UUID,
+      token: "issued-token",
+      expires_at: 424242,
+    });
+    expect(resolveProjectBayMock).toHaveBeenCalledWith(PROJECT_UUID);
+    expect(syncProjectUsersOnHostMock).not.toHaveBeenCalled();
+    expect(issueProjectHostAuthTokenJwtMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+      }),
+    );
   });
 });
 

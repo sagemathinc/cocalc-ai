@@ -92,6 +92,22 @@ export function buildProjectRecordFromFeedRow(
     .set("last_active", lastActiveMap(row.last_active));
 }
 
+type ProjectIndexBootstrapRow = {
+  account_id?: string | null;
+  project_id: string;
+  owning_bay_id?: string | null;
+  host_id?: string | null;
+  title?: string | null;
+  description?: string | null;
+  theme?: Record<string, any> | null;
+  users_summary?: Record<string, any> | null;
+  state_summary?: Record<string, any> | null;
+  last_activity_at?: string | Date | null;
+  sort_key?: string | Date | null;
+  updated_at?: string | Date | null;
+  is_hidden?: boolean | null;
+};
+
 // Define projects actions
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
@@ -253,6 +269,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   private handleRealtimeFeedHistoryGap = (): void => {
     void refresh_projects_table();
+    void this.loadProjectedProjectsForCurrentAccount(this.getAccountId());
   };
 
   private observeAccountStoreReady(): void {
@@ -316,7 +333,79 @@ export class ProjectsActions extends Actions<ProjectsState> {
     } catch (err) {
       console.warn("project realtime feed error", err);
     }
+    await this.loadProjectedProjectsForCurrentAccount(account_id);
   }
+
+  private loadProjectedProjectsForCurrentAccount = reuseInFlight(
+    async (account_id?: string): Promise<void> => {
+      if (!account_id || !webapp_client.is_signed_in()) {
+        return;
+      }
+      let resp: any;
+      try {
+        resp = await webapp_client.async_query({
+          query: {
+            account_project_index: [
+              {
+                account_id,
+                project_id: null,
+                owning_bay_id: null,
+                host_id: null,
+                title: null,
+                description: null,
+                theme: null,
+                users_summary: null,
+                state_summary: null,
+                last_activity_at: null,
+                sort_key: null,
+                updated_at: null,
+                is_hidden: null,
+              },
+            ],
+          },
+          options: [{ limit: 2000 }],
+        });
+      } catch (err) {
+        console.warn("project projected bootstrap failed", err);
+        return;
+      }
+      const rows = resp?.query?.account_project_index;
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return;
+      }
+      let project_map = store.get("project_map") ?? Map<string, any>();
+      for (const row of rows as ProjectIndexBootstrapRow[]) {
+        if (row?.is_hidden === true || !row?.project_id) {
+          continue;
+        }
+        project_map = project_map.set(
+          row.project_id,
+          (project_map.get(row.project_id) ?? Map<string, any>()).mergeDeep(
+            buildProjectRecordFromFeedRow({
+              project_id: row.project_id,
+              title: row.title ?? "",
+              description: row.description ?? "",
+              name: null,
+              theme: row.theme ?? null,
+              host_id: row.host_id ?? null,
+              owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || "bay-0",
+              users: row.users_summary ?? {},
+              state: row.state_summary ?? {},
+              last_active:
+                row.last_activity_at == null
+                  ? {}
+                  : { [account_id]: row.last_activity_at },
+              last_edited:
+                dateOrNull(row.sort_key ?? row.updated_at)?.toISOString() ??
+                null,
+              deleted: false,
+            }),
+          ),
+        );
+      }
+      this.setState({ project_map } as ProjectsState);
+    },
+  );
 
   private applyProjectFeedUpsert(row: AccountFeedProjectRow): void {
     const project_map = store.get("project_map") ?? Map<string, any>();

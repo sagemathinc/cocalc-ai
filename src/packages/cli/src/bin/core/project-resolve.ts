@@ -18,6 +18,7 @@ export type HostLike = {
 
 export type ProjectCacheContext<W extends ProjectLike = ProjectLike> = {
   projectCache: Map<string, { expiresAt: number; project: W }>;
+  accountId?: string;
   hub: Pick<HubApi, "db" | "system" | "hosts">;
 };
 
@@ -40,10 +41,20 @@ type AccountProjectIndexRow = {
 };
 
 function getProjectListReadMode(): ProjectListReadMode {
-  const value =
+  const raw =
     `${process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS ?? ""}`
       .trim()
       .toLowerCase();
+  if (!raw) {
+    const role = `${process.env.COCALC_CLUSTER_ROLE ?? ""}`
+      .trim()
+      .toLowerCase();
+    if (role === "seed" || role === "attached") {
+      return "prefer";
+    }
+    return "off";
+  }
+  const value = raw;
   if (
     value === "1" ||
     value === "true" ||
@@ -150,7 +161,7 @@ async function queryProjectedProjects<W extends ProjectLike = ProjectLike>({
   limit: number;
 }): Promise<W[]> {
   const row: Record<string, unknown> = {
-    account_id: null,
+    account_id: ctx.accountId ?? null,
     project_id: null,
     host_id: null,
     title: null,

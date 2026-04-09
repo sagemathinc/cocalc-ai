@@ -121,6 +121,33 @@ describe("inter-bay fabric routing", () => {
         return mesg.data;
       }
     })();
+    const projectControlActiveOpSub = await serviceClient.subscribe(
+      "bay.bay-1.rpc.project-control.active-op",
+      { queue: "0" },
+    );
+    const projectActiveOpPromise = (async () => {
+      for await (const mesg of projectControlActiveOpSub) {
+        mesg.respond(
+          {
+            project_id: "proj-1",
+            op_id: "op-1",
+            kind: "project-start",
+            action: "start",
+            status: "running",
+            started_by_account_id: "acct-1",
+            source_bay_id: "bay-0",
+            phase: "runner_start",
+            message: "starting",
+            progress: 86,
+            detail: null,
+            started_at: new Date("2026-04-08T10:00:00Z"),
+            updated_at: new Date("2026-04-08T10:00:01Z"),
+          },
+          { noThrow: true },
+        );
+        return mesg.data;
+      }
+    })();
 
     const directorySub = await serviceClient.subscribe(
       "global.directory.rpc.resolve-project-bay",
@@ -182,6 +209,16 @@ describe("inter-bay fabric routing", () => {
       port: 4242,
       secret_token: "secret",
     });
+    await expect(
+      getInterBayBridge().projectControl("bay-1").activeOp({
+        project_id: "proj-1",
+      }),
+    ).resolves.toMatchObject({
+      project_id: "proj-1",
+      op_id: "op-1",
+      kind: "project-start",
+      action: "start",
+    });
     await getInterBayBridge()
       .projectLro("bay-1")
       .publishProgress({
@@ -220,6 +257,10 @@ describe("inter-bay fabric routing", () => {
       name: "address",
       args: [{ project_id: "proj-1", account_id: "acct-1" }],
     });
+    await expect(projectActiveOpPromise).resolves.toEqual({
+      name: "activeOp",
+      args: [{ project_id: "proj-1" }],
+    });
     await expect(projectLroPromise).resolves.toEqual({
       name: "publishProgress",
       args: [
@@ -242,6 +283,7 @@ describe("inter-bay fabric routing", () => {
     projectControlRestartSub.close();
     projectControlStateSub.close();
     projectControlAddressSub.close();
+    projectControlActiveOpSub.close();
     projectLroSub.close();
     directorySub.close();
   });

@@ -6,6 +6,12 @@ let callback2Mock: jest.Mock;
 let isAdminMock: jest.Mock;
 let dbMock: jest.Mock;
 let listProjectedMyCollaboratorsForAccountMock: jest.Mock;
+let getClusterAccountByIdMock: jest.Mock;
+let getClusterAccountsByIdsMock: jest.Mock;
+let syncProjectedInboundCollabInviteMock: jest.Mock;
+let listProjectedInboundCollabInvitesMock: jest.Mock;
+let respondProjectedInboundCollabInviteMock: jest.Mock;
+let deleteProjectedInboundCollabInviteMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
@@ -37,6 +43,25 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 jest.mock("@cocalc/database", () => ({
   __esModule: true,
   db: (...args: any[]) => dbMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  __esModule: true,
+  getClusterAccountById: (...args: any[]) => getClusterAccountByIdMock(...args),
+  getClusterAccountsByIds: (...args: any[]) =>
+    getClusterAccountsByIdsMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/collab-invite-inbox", () => ({
+  __esModule: true,
+  syncProjectedInboundCollabInvite: (...args: any[]) =>
+    syncProjectedInboundCollabInviteMock(...args),
+  listProjectedInboundCollabInvites: (...args: any[]) =>
+    listProjectedInboundCollabInvitesMock(...args),
+  respondProjectedInboundCollabInvite: (...args: any[]) =>
+    respondProjectedInboundCollabInviteMock(...args),
+  deleteProjectedInboundCollabInvite: (...args: any[]) =>
+    deleteProjectedInboundCollabInviteMock(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -98,6 +123,20 @@ describe("project collaborators local bay access", () => {
     callback2Mock = jest.fn(async (fn, opts) => await fn(opts));
     isAdminMock = jest.fn(async () => false);
     listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => []);
+    getClusterAccountByIdMock = jest.fn(async (account_id: string) => ({
+      account_id,
+      home_bay_id: "bay-0",
+    }));
+    getClusterAccountsByIdsMock = jest.fn(async (account_ids: string[]) =>
+      account_ids.map((account_id) => ({
+        account_id,
+        home_bay_id: "bay-0",
+      })),
+    );
+    syncProjectedInboundCollabInviteMock = jest.fn(async () => undefined);
+    listProjectedInboundCollabInvitesMock = jest.fn(async () => []);
+    respondProjectedInboundCollabInviteMock = jest.fn(async () => undefined);
+    deleteProjectedInboundCollabInviteMock = jest.fn(async () => undefined);
     removeCollaboratorFromProject.mockClear();
     accountCreationActions.mockClear();
     whenSentProjectInvite.mockClear();
@@ -155,8 +194,16 @@ describe("project collaborators local bay access", () => {
         project_id: PROJECT_ID,
       }),
     ).resolves.toEqual([
-      { account_id: ACCOUNT_ID, group: "owner", name: "Owner" },
-      { account_id: TARGET_ACCOUNT_ID, group: "collaborator", name: "Collab" },
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        group: "owner",
+        name: "Owner",
+      }),
+      expect.objectContaining({
+        account_id: TARGET_ACCOUNT_ID,
+        group: "collaborator",
+        name: "Collab",
+      }),
     ]);
     expect(assertLocalProjectCollaboratorMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
@@ -280,6 +327,52 @@ describe("project collaborators local bay access", () => {
     ]);
   });
 
+  it("includes projected inbound invites for remote accounts", async () => {
+    listProjectedInboundCollabInvitesMock = jest.fn(async () => [
+      {
+        invite_id: "55555555-5555-4555-8555-555555555555",
+        project_id: PROJECT_ID,
+        project_title: "Remote Project",
+        inviter_account_id: TARGET_ACCOUNT_ID,
+        inviter_name: "Remote Owner",
+        invitee_account_id: ACCOUNT_ID,
+        invitee_name: "Invitee",
+        invite_source: "account",
+        status: "pending",
+        created: new Date("2026-04-08T21:00:00Z"),
+        updated: new Date("2026-04-08T21:00:00Z"),
+        responded: null,
+        expires: new Date("2026-05-08T21:00:00Z"),
+        shared_projects_count: 0,
+        shared_projects_sample: [],
+        prior_invites_accepted: 0,
+        prior_invites_declined: 0,
+      },
+    ]);
+    const { listCollabInvites } = await import("./collaborators");
+    await expect(
+      listCollabInvites({
+        account_id: ACCOUNT_ID,
+        direction: "inbound",
+        status: "pending",
+        limit: 20,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        invite_id: "55555555-5555-4555-8555-555555555555",
+        project_title: "Remote Project",
+        invite_source: "account",
+        status: "pending",
+      }),
+    ]);
+    expect(listProjectedInboundCollabInvitesMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: undefined,
+      status: "pending",
+      limit: 20,
+    });
+  });
+
   it("revokes pending email-only invites", async () => {
     queryMock = jest
       .fn()
@@ -319,6 +412,47 @@ describe("project collaborators local bay access", () => {
     expect(queryMock.mock.calls[1]?.[0]).toContain(
       "DELETE FROM account_creation_actions",
     );
+  });
+
+  it("forwards projected invite responses to the source bay", async () => {
+    queryMock = jest.fn(async () => ({ rows: [] }));
+    respondProjectedInboundCollabInviteMock = jest.fn(async () => ({
+      invite_id: "66666666-6666-4666-8666-666666666666",
+      project_id: PROJECT_ID,
+      inviter_account_id: TARGET_ACCOUNT_ID,
+      invitee_account_id: ACCOUNT_ID,
+      invite_source: "account",
+      status: "accepted",
+      responder_action: "accept",
+      created: new Date("2026-04-08T21:00:00Z"),
+      updated: new Date("2026-04-08T21:01:00Z"),
+      responded: new Date("2026-04-08T21:01:00Z"),
+      expires: new Date("2026-05-08T21:00:00Z"),
+      shared_projects_count: 0,
+      shared_projects_sample: [],
+      prior_invites_accepted: 0,
+      prior_invites_declined: 0,
+    }));
+    const { respondCollabInvite } = await import("./collaborators");
+    await expect(
+      respondCollabInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: "66666666-6666-4666-8666-666666666666",
+        action: "accept",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        invite_id: "66666666-6666-4666-8666-666666666666",
+        status: "accepted",
+        responder_action: "accept",
+      }),
+    );
+    expect(respondProjectedInboundCollabInviteMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      invite_id: "66666666-6666-4666-8666-666666666666",
+      action: "accept",
+      includeEmail: false,
+    });
   });
 
   it("stores inviter metadata for email-only invites", async () => {

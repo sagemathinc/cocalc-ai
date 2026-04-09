@@ -20,6 +20,7 @@ import {
   getConfiguredClusterRole,
   isMultiBayCluster,
 } from "@cocalc/server/cluster-config";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { listHosts } from "@cocalc/server/conat/api/hosts";
@@ -53,6 +54,13 @@ async function getAccountRow(account_id: string): Promise<{
 }> {
   if (!isValidUUID(account_id)) {
     throw new Error(`invalid account id '${account_id}'`);
+  }
+  const global = await getClusterAccountById(account_id);
+  if (global?.account_id) {
+    return {
+      account_id: global.account_id,
+      home_bay_id: global.home_bay_id ?? null,
+    };
   }
   const { rows } = await getPool().query(
     `SELECT account_id, home_bay_id FROM accounts

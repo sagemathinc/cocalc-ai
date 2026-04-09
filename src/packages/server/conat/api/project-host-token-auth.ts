@@ -1,6 +1,8 @@
 import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 
 function pool() {
   return getPool();
@@ -18,19 +20,14 @@ export async function assertAccountProjectHostTokenProjectAccess({
   const { rows } = await pool().query<{
     host_id: string | null;
     project_owning_bay_id: string | null;
-    host_bay_id: string | null;
     group: string | null;
   }>(
     `
       SELECT
         host_id,
         COALESCE(projects.owning_bay_id, $3) AS project_owning_bay_id,
-        COALESCE(project_hosts.bay_id, $3) AS host_bay_id,
         users -> $2::text ->> 'group' AS "group"
       FROM projects
-      LEFT JOIN project_hosts
-        ON project_hosts.id = projects.host_id
-       AND project_hosts.deleted IS NULL
       WHERE project_id=$1
         AND projects.deleted IS NOT true
       LIMIT 1
@@ -39,13 +36,38 @@ export async function assertAccountProjectHostTokenProjectAccess({
   );
   const row = rows[0];
   if (!row) {
-    throw new Error("project not found");
+    const ownership = await resolveProjectBay(project_id);
+    if (!ownership || ownership.bay_id === getConfiguredBayId()) {
+      throw new Error("project not found");
+    }
+    const remote = await getInterBayBridge()
+      .projectReference(ownership.bay_id)
+      .get({ account_id, project_id });
+    if (!remote) {
+      throw new Error("not authorized for project-host access token");
+    }
+    if (remote.host_id !== host_id) {
+      throw new Error("project is not assigned to the requested host");
+    }
+    return;
+  }
+  const remoteBayId = row.project_owning_bay_id;
+  if (remoteBayId && remoteBayId !== getConfiguredBayId()) {
+    const remote = await getInterBayBridge()
+      .projectReference(remoteBayId, {
+        timeout_ms: 15_000,
+      })
+      .get({ account_id, project_id });
+    if (!remote) {
+      throw new Error("not authorized for project-host access token");
+    }
+    if (remote.host_id !== host_id) {
+      throw new Error("project is not assigned to the requested host");
+    }
+    return;
   }
   if (row.host_id !== host_id) {
     throw new Error("project is not assigned to the requested host");
-  }
-  if (row.project_owning_bay_id !== row.host_bay_id) {
-    throw new Error("project bay does not match the requested host");
   }
   if (row.group === "owner" || row.group === "collaborator") {
     return;

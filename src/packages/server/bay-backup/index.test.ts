@@ -1,6 +1,12 @@
 export {};
 
-import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,6 +18,7 @@ let getSingleBayInfoMock: jest.Mock;
 let ensureRusticInitializedMock: jest.Mock;
 let whichMock: jest.Mock;
 let listObjectsMock: jest.Mock;
+let deleteObjectMock: jest.Mock;
 let issueSignedObjectDownloadMock: jest.Mock;
 let oldFetch: typeof global.fetch | undefined;
 
@@ -72,6 +79,7 @@ jest.mock("@cocalc/backend/which", () => ({
 jest.mock("@cocalc/server/project-backup/r2", () => ({
   __esModule: true,
   createBucket: jest.fn(),
+  deleteObject: (...args: any[]) => deleteObjectMock(...args),
   listBuckets: jest.fn(async () => []),
   listObjects: (...args: any[]) => listObjectsMock(...args),
   issueSignedObjectDownload: (...args: any[]) =>
@@ -225,6 +233,7 @@ describe("bay-backup runner", () => {
     ensureRusticInitializedMock = jest.fn(async () => undefined);
     whichMock = jest.fn(async (binary: string) => `/usr/bin/${binary}`);
     listObjectsMock = jest.fn(async () => []);
+    deleteObjectMock = jest.fn(async () => undefined);
     issueSignedObjectDownloadMock = jest.fn(({ key }: { key: string }) => ({
       url: `https://example.invalid/${key}`,
       headers: {},
@@ -1556,11 +1565,183 @@ describe("bay-backup runner", () => {
     expect(status.bay_backup.last_pruned_at).toBeTruthy();
   });
 
+  it("caps the local WAL archive to a recent tail", async () => {
+    process.env.COCALC_BAY_WAL_LOCAL_RETENTION_COUNT = "2";
+
+    const bayRoot = join(backupRoot, "bay-backups", "bay-0");
+    const walArchiveDir = join(bayRoot, "wal", "archive");
+    mkdirSync(walArchiveDir, { recursive: true });
+    const walSegments = [
+      "0000000100000000000000E1",
+      "0000000100000000000000E2",
+      "0000000100000000000000E3",
+      "0000000100000000000000E4",
+      "0000000100000000000000E5",
+    ];
+    for (const [index, name] of walSegments.entries()) {
+      const path = join(walArchiveDir, name);
+      writeFileSync(path, `segment-${index + 1}`);
+      const when = new Date(Date.UTC(2026, 3, 8, 12, index, 0));
+      utimesSync(path, when, when);
+    }
+
+    const { getBayBackupStatus, runBayBackup } = await import("./index");
+
+    await runBayBackup();
+
+    expect(readdirSync(walArchiveDir).sort()).toEqual([
+      "0000000100000000000000E4",
+      "0000000100000000000000E5",
+    ]);
+
+    const status = await getBayBackupStatus();
+    expect(status.bay_backup.local_wal_retention_count).toBe(2);
+    expect(status.bay_backup.archived_wal_count).toBe(2);
+    expect(status.bay_backup.pending_wal_count).toBe(2);
+    expect(status.bay_backup.last_pruned_wal_count).toBe(3);
+    expect(status.bay_backup.last_pruned_at).toBeTruthy();
+  });
+
+  it("prunes remote WAL older than the latest two recovery-ready backups", async () => {
+    process.env.COCALC_BAY_WAL_REMOTE_RETENTION_BACKUPS = "2";
+    getServerSettingsMock = jest.fn(async () => ({
+      r2_account_id: "acct-1",
+      r2_access_key_id: "key-1",
+      r2_secret_access_key: "secret-1",
+      r2_bucket_prefix: "lite4-dev",
+    }));
+
+    const bayRoot = join(backupRoot, "bay-backups", "bay-0");
+    const manifestsDir = join(bayRoot, "manifests");
+    const archivesDir = join(bayRoot, "archives");
+    mkdirSync(manifestsDir, { recursive: true });
+    mkdirSync(archivesDir, { recursive: true });
+
+    const seedBackup = ({
+      backupSetId,
+      finishedAt,
+      endLsn,
+    }: {
+      backupSetId: string;
+      finishedAt: string;
+      endLsn: string;
+    }) => {
+      const archiveDir = join(archivesDir, backupSetId);
+      mkdirSync(archiveDir, { recursive: true });
+      const backupManifestPath = join(archiveDir, "backup_manifest");
+      writeFileSync(
+        backupManifestPath,
+        JSON.stringify(
+          {
+            "PostgreSQL-Backup-Manifest-Version": 2,
+            "WAL-Ranges": [
+              {
+                Timeline: 1,
+                "Start-LSN": "0/00000028",
+                "End-LSN": endLsn,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+      writeFileSync(
+        join(manifestsDir, `${backupSetId}.json`),
+        JSON.stringify(
+          {
+            bay_id: "bay-0",
+            bay_label: "bay-0",
+            backup_set_id: backupSetId,
+            created_at: finishedAt,
+            finished_at: finishedAt,
+            format: "pg_basebackup",
+            current_storage_backend: "rustic",
+            latest_storage_backend: "rustic",
+            bucket_name: "lite4-dev-wnam",
+            bucket_region: "wnam",
+            bucket_endpoint: "https://example.invalid",
+            object_prefix: null,
+            remote_manifest_key: null,
+            remote_snapshot_id: `snap-${backupSetId}`,
+            remote_snapshot_host: "bay-0",
+            wal_keep_from_segment: null,
+            rustic_repo_selector: "r2:bay-backups:wnam",
+            postgres: {},
+            artifacts: [
+              {
+                name: "backup_manifest",
+                local_path: backupManifestPath,
+                object_key: null,
+                bytes: readFileSync(backupManifestPath).length,
+                sha256: backupSetId,
+                content_type: "application/json",
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+    };
+
+    seedBackup({
+      backupSetId: "backup-old",
+      finishedAt: "2026-04-06T08:00:00.000Z",
+      endLsn: "0/01000000",
+    });
+    seedBackup({
+      backupSetId: "backup-mid",
+      finishedAt: "2026-04-07T08:00:00.000Z",
+      endLsn: "0/05000000",
+    });
+    seedBackup({
+      backupSetId: "backup-new",
+      finishedAt: "2026-04-08T08:00:00.000Z",
+      endLsn: "0/07000000",
+    });
+
+    listObjectsMock = jest.fn(async ({ prefix }: { prefix?: string }) => {
+      if (prefix === "bay-backups/bay-0/wal/") {
+        return [
+          "bay-backups/bay-0/wal/000000010000000000000001",
+          "bay-backups/bay-0/wal/000000010000000000000002",
+          "bay-backups/bay-0/wal/000000010000000000000003",
+          "bay-backups/bay-0/wal/000000010000000000000004",
+          "bay-backups/bay-0/wal/000000010000000000000005",
+          "bay-backups/bay-0/wal/000000010000000000000006",
+          "bay-backups/bay-0/wal/000000010000000000000007",
+          "bay-backups/bay-0/wal/00000002.history",
+        ];
+      }
+      return [];
+    });
+
+    const { getBayBackupStatus, runBayBackup } = await import("./index");
+
+    await runBayBackup();
+
+    expect(
+      deleteObjectMock.mock.calls.map((call) => call[0].key).sort(),
+    ).toEqual([
+      "bay-backups/bay-0/wal/000000010000000000000001",
+      "bay-backups/bay-0/wal/000000010000000000000002",
+      "bay-backups/bay-0/wal/000000010000000000000003",
+      "bay-backups/bay-0/wal/000000010000000000000004",
+    ]);
+
+    const status = await getBayBackupStatus();
+    expect(status.bay_backup.remote_wal_retention_backups).toBe(2);
+    expect(status.bay_backup.last_pruned_remote_wal_count).toBe(4);
+  });
+
   it("reports scheduled full snapshot maintenance state", async () => {
     process.env.COCALC_BAY_BACKUP_INTERVAL_MS = "600000";
     process.env.COCALC_BAY_BACKUP_RETRY_INTERVAL_MS = "12345";
     process.env.COCALC_BAY_BACKUP_RETENTION_COUNT = "9";
     process.env.COCALC_BAY_BACKUP_RESTORE_RETENTION_DAYS = "5";
+    process.env.COCALC_BAY_WAL_LOCAL_RETENTION_COUNT = "17";
+    process.env.COCALC_BAY_WAL_REMOTE_RETENTION_BACKUPS = "4";
 
     const { getBayBackupStatus, runBayBackup, startBayBackupMaintenance } =
       await import("./index");
@@ -1577,6 +1758,8 @@ describe("bay-backup runner", () => {
     expect(status.bay_backup.full_snapshot_retry_interval_ms).toBe(12345);
     expect(status.bay_backup.full_snapshot_retention_count).toBe(9);
     expect(status.bay_backup.restore_workspace_retention_days).toBe(5);
+    expect(status.bay_backup.local_wal_retention_count).toBe(17);
+    expect(status.bay_backup.remote_wal_retention_backups).toBe(4);
     expect(status.bay_backup.maintenance_running).toBe(false);
     expect(status.bay_backup.maintenance_next_run_at).toBeTruthy();
   });

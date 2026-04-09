@@ -41,13 +41,10 @@ function sizeToResources(size?: string): { cpu: number; ram_gb: number } {
   }
 }
 
-async function resolveNebiusPlatform(
-  machineType?: string,
-): Promise<string | undefined> {
+async function resolveNebiusInstanceType(machineType?: string) {
   if (!machineType) return undefined;
   const types = await loadNebiusInstanceTypes();
-  const match = types.find((entry) => entry.name === machineType);
-  return match?.platform;
+  return types.find((entry) => entry.name === machineType);
 }
 
 const isNebiusGpuFamily = (family?: string | null) =>
@@ -323,8 +320,12 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
   delete sanitizedMetadata.source_image_id;
   delete sanitizedMetadata.image_id;
   delete sanitizedMetadata.source_image_project;
+  let nebiusInstanceType =
+    providerId === "nebius"
+      ? await resolveNebiusInstanceType(machine.machine_type)
+      : undefined;
   if (!platform && providerId === "nebius") {
-    platform = await resolveNebiusPlatform(machine.machine_type);
+    platform = nebiusInstanceType?.platform;
     if (platform) {
       logger.debug("buildHostSpec: resolved nebius platform", {
         host_id: row.id,
@@ -338,12 +339,25 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
       });
     }
   }
+  if (
+    providerId === "nebius" &&
+    metadata.pricing_model === "spot" &&
+    nebiusInstanceType &&
+    !nebiusInstanceType.allowed_for_preemptibles
+  ) {
+    throw new Error(
+      `Nebius spot instances are not supported for machine type ${nebiusInstanceType.name} (platform ${nebiusInstanceType.platform}). Choose an on-demand host or a Nebius machine type that supports preemptible instances.`,
+    );
+  }
   if (providerId === "nebius") {
     let wantsGpu = !!gpu;
     if (!wantsGpu && machine.machine_type) {
-      const types = await loadNebiusInstanceTypes();
-      const match = types.find((entry) => entry.name === machine.machine_type);
-      if ((match?.gpus ?? 0) > 0) {
+      if (!nebiusInstanceType) {
+        nebiusInstanceType = await resolveNebiusInstanceType(
+          machine.machine_type,
+        );
+      }
+      if ((nebiusInstanceType?.gpus ?? 0) > 0) {
         wantsGpu = true;
       }
     }

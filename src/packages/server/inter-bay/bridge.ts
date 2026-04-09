@@ -4,6 +4,8 @@
  */
 
 import {
+  createInterBayProjectDetailsClient,
+  type InterBayProjectDetailsApi,
   createInterBayProjectControlClient,
   type InterBayProjectControlApi,
   createInterBayProjectLroClient,
@@ -24,6 +26,10 @@ export interface InterBayBridge {
     dest_bay: string,
     opts?: { timeout_ms?: number },
   ): InterBayProjectReferenceApi;
+  projectDetails(
+    dest_bay: string,
+    opts?: { timeout_ms?: number },
+  ): InterBayProjectDetailsApi;
   projectLro(
     dest_bay: string,
     opts?: { timeout_ms?: number },
@@ -50,6 +56,17 @@ class LocalOnlyInterBayBridge implements InterBayBridge {
     opts: { timeout_ms?: number } = {},
   ): InterBayProjectReferenceApi {
     return createInterBayProjectReferenceClient({
+      client: this.client,
+      dest_bay,
+      timeout: opts.timeout_ms,
+    });
+  }
+
+  projectDetails(
+    dest_bay: string,
+    opts: { timeout_ms?: number } = {},
+  ): InterBayProjectDetailsApi {
+    return createInterBayProjectDetailsClient({
       client: this.client,
       dest_bay,
       timeout: opts.timeout_ms,

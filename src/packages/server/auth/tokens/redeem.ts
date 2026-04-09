@@ -6,8 +6,15 @@ If no token is needed because of how site is configured,
 then returns no matter what the input is.
 */
 
+import { createInterBayAuthTokenClient } from "@cocalc/conat/inter-bay/api";
 import getRequiresTokens from "./get-requires-token";
+import { getRequiresTokensDirect } from "./get-requires-token";
 import { getTransactionClient } from "@cocalc/database/pool";
+import {
+  getConfiguredClusterRole,
+  isMultiBayCluster,
+} from "@cocalc/server/cluster-config";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
 export interface RegistrationTokenInfo {
   token: string;
@@ -15,10 +22,10 @@ export interface RegistrationTokenInfo {
   customize?: any;
 }
 
-export default async function redeem(
+export async function redeemRegistrationTokenDirect(
   token: string,
 ): Promise<RegistrationTokenInfo | undefined> {
-  const required = await getRequiresTokens();
+  const required = await getRequiresTokensDirect();
   if (!required) {
     // no token required, so nothing to do.
     return;
@@ -89,4 +96,55 @@ export default async function redeem(
   } finally {
     client.release();
   }
+}
+
+export async function disableRegistrationTokenDirect(
+  token: string,
+): Promise<void> {
+  if (!token) {
+    return;
+  }
+  await getTransactionClient().then(async (client) => {
+    try {
+      await client.query(
+        "UPDATE registration_tokens SET disabled=true WHERE token=$1",
+        [token],
+      );
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
+}
+
+export async function disableRegistrationToken(token: string): Promise<void> {
+  if (!token) {
+    return;
+  }
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    await disableRegistrationTokenDirect(token);
+    return;
+  }
+  await createInterBayAuthTokenClient({
+    client: getInterBayFabricClient(),
+  }).disable({ token });
+}
+
+export default async function redeem(
+  token: string,
+): Promise<RegistrationTokenInfo | undefined> {
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    return await redeemRegistrationTokenDirect(token);
+  }
+  const required = await getRequiresTokens();
+  if (!required) {
+    return;
+  }
+  const result = await createInterBayAuthTokenClient({
+    client: getInterBayFabricClient(),
+  }).redeem({ token });
+  return result ?? undefined;
 }

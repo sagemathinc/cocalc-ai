@@ -47,6 +47,7 @@ import {
   clampProgressPercent,
 } from "./explorer/lro-timeline-utils";
 import { progressBarStatus } from "@cocalc/frontend/lro/utils";
+import { useProjectActiveOperation } from "./use-project-active-op";
 
 const STYLE: CSSProperties = {
   fontSize: "40px",
@@ -113,11 +114,15 @@ export function StartButton({
     () => moveLroRecord?.toJS() as MoveLroState | undefined,
     [moveLroRecord],
   );
+  const { activeOp } = useProjectActiveOperation(resolvedProjectId);
   const startLroActive =
     startLro != null &&
     (!startLro.summary ||
       startLro.summary.status === "queued" ||
       startLro.summary.status === "running");
+  const activeOpStartLike =
+    activeOp?.kind === "project-start" &&
+    (activeOp.status === "queued" || activeOp.status === "running");
   const startLroSummary = startLro?.summary;
   const startLroStatus = startLroSummary?.status
     ? capitalize(startLroSummary.status)
@@ -156,8 +161,8 @@ export function StartButton({
     if (lifecycleState === "starting" || lifecycleState === "opening")
       return true;
     if (lifecycleState === "running") return false;
-    return startLroActive;
-  }, [startLroActive, state]);
+    return startLroActive || activeOpStartLike;
+  }, [activeOpStartLike, startLroActive, state]);
 
   if (!project_id) {
     return null;

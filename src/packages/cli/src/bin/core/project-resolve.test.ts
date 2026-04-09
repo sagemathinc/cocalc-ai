@@ -5,8 +5,11 @@ import { queryProjects, resolveProject } from "./project-resolve";
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
-function createContext(handler: (table: string) => any[]) {
+function createContext(
+  handler: (table: string, row?: Record<string, unknown>) => any[],
+) {
   return {
+    accountId: ACCOUNT_ID,
     projectCache: new Map(),
     hub: {
       db: {
@@ -17,7 +20,7 @@ function createContext(handler: (table: string) => any[]) {
         }) => {
           const table = Object.keys(query)[0];
           return {
-            [table]: handler(table),
+            [table]: handler(table, query[table]?.[0]),
           };
         },
       },
@@ -29,6 +32,7 @@ function createContext(handler: (table: string) => any[]) {
 
 test("queryProjects uses legacy projects reads by default", async () => {
   delete process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS;
+  delete process.env.COCALC_CLUSTER_ROLE;
   const seen: string[] = [];
   const rows = await queryProjects({
     ctx: createContext((table) => {
@@ -52,6 +56,50 @@ test("queryProjects uses legacy projects reads by default", async () => {
   assert.deepEqual(seen, ["projects"]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].title, "Legacy Project");
+});
+
+test("queryProjects prefers account_project_index rows automatically in multi-bay mode", async () => {
+  delete process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS;
+  process.env.COCALC_CLUSTER_ROLE = "attached";
+  const seen: string[] = [];
+  let projectedRow: Record<string, unknown> | undefined;
+  const rows = await queryProjects({
+    ctx: createContext((table, row) => {
+      seen.push(table);
+      if (table === "account_project_index") {
+        projectedRow = row;
+      }
+      if (table === "account_project_index") {
+        return [
+          {
+            account_id: ACCOUNT_ID,
+            project_id: "99999999-9999-4999-8999-999999999999",
+            title: "Auto Projected Project",
+            host_id: "77777777-7777-4777-8777-777777777777",
+            state_summary: { state: "running" },
+            sort_key: "2026-04-03T00:00:00.000Z",
+            updated_at: "2026-04-03T00:00:01.000Z",
+            is_hidden: false,
+          },
+        ];
+      }
+      return [];
+    }),
+    limit: 10,
+  });
+  assert.deepEqual(seen, ["account_project_index"]);
+  assert.equal(projectedRow?.account_id, ACCOUNT_ID);
+  assert.deepEqual(rows, [
+    {
+      project_id: "99999999-9999-4999-8999-999999999999",
+      title: "Auto Projected Project",
+      host_id: "77777777-7777-4777-8777-777777777777",
+      state: { state: "running" },
+      last_edited: "2026-04-03T00:00:00.000Z",
+      deleted: false,
+    },
+  ]);
+  delete process.env.COCALC_CLUSTER_ROLE;
 });
 
 test("queryProjects prefers account_project_index rows when enabled", async () => {

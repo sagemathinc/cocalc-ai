@@ -119,6 +119,55 @@ describe("projection-backed read paths", () => {
     },
   );
 
+  it("allows direct account_project_index user_query reads for the signed-in account", async () => {
+    await getPool().query(
+      `INSERT INTO accounts
+         (account_id, first_name, last_name, created, email_address, home_bay_id)
+       VALUES
+         ($1, 'Local', 'User', NOW(), 'local@example.com', 'bay-0')`,
+      [ACCOUNT_ID],
+    );
+    await getPool().query(
+      `INSERT INTO account_project_index
+         (account_id, project_id, owning_bay_id, host_id, title, description,
+          users_summary, state_summary, last_activity_at, last_opened_at,
+          is_hidden, sort_key, updated_at)
+       VALUES
+         ($1, $2, 'bay-0', NULL, 'Projected Project', '',
+          $3::JSONB, '{}'::JSONB, NULL, NULL, FALSE, $4, $4)`,
+      [
+        ACCOUNT_ID,
+        PROJECT_ID,
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "owner" },
+        }),
+        NOW,
+      ],
+    );
+
+    const result = await runUserQuery<{
+      account_project_index?: Array<{ project_id?: string; title?: string }>;
+    }>(
+      {
+        account_project_index: [
+          {
+            account_id: ACCOUNT_ID,
+            project_id: null,
+            title: null,
+          },
+        ],
+      },
+      [{ limit: 10 }],
+    );
+
+    expect(result.account_project_index).toEqual([
+      expect.objectContaining({
+        project_id: PROJECT_ID,
+        title: "Projected Project",
+      }),
+    ]);
+  });
+
   it("publishes immediate project account-feed invalidation after a projects set query", async () => {
     await getPool().query(
       `INSERT INTO accounts

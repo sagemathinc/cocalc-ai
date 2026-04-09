@@ -19,7 +19,7 @@ Table({
     ],
     user_query: {
       get: {
-        pg_where: ["account_id"],
+        pg_where: [{ "account_id = $::UUID": "account_id" }],
         options: [{ order_by: "-sort_key" }, { limit: 2000 }],
         fields: {
           account_id: null,

@@ -26,6 +26,7 @@ import {
   getProviderDescriptor,
   getProviderOptions,
   getProviderStorageSupport,
+  isNebiusSpotSupported,
 } from "../providers/registry";
 import type { HostFieldId, ProviderSelection } from "../providers/registry";
 import { SshTargetLabel } from "./ssh-target-help";
@@ -261,6 +262,12 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     watchedRegion,
     watchedZone,
   ]);
+  const nebiusSpotSupported = React.useMemo(
+    () =>
+      providerId !== "nebius" ||
+      isNebiusSpotSupported(fieldOptions.machine_type, watchedMachineType),
+    [fieldOptions.machine_type, providerId, watchedMachineType],
+  );
   const storageSupport = providerDescriptor
     ? getProviderStorageSupport(providerId, catalog?.provider_capabilities)
     : { supported: false, growable: false };
@@ -487,6 +494,22 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     if (isDeprovisioned) return;
     ensureFieldValue("gpu_type", watchedGpuType);
   }, [ensureFieldValue, isDeprovisioned, watchedGpuType]);
+  React.useEffect(() => {
+    if (providerId !== "nebius") return;
+    if (isDeprovisioned) return;
+    if (nebiusSpotSupported) return;
+    if (watchedPricingModel !== "spot") return;
+    form.setFieldsValue({
+      pricing_model: "on_demand",
+      interruption_restore_policy: "none",
+    });
+  }, [
+    form,
+    isDeprovisioned,
+    nebiusSpotSupported,
+    providerId,
+    watchedPricingModel,
+  ]);
 
   const renderField = (field: HostFieldId) => {
     if (
@@ -554,11 +577,24 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             </Form.Item>
             {showSpotFields && (
               <>
-                <Form.Item name="pricing_model" label="Pricing model">
+                <Form.Item
+                  name="pricing_model"
+                  label="Pricing model"
+                  extra={
+                    providerId === "nebius" && !nebiusSpotSupported
+                      ? "Spot is unavailable for the selected Nebius instance type."
+                      : undefined
+                  }
+                >
                   <Select
                     options={[
                       { value: "on_demand", label: "On-demand" },
-                      { value: "spot", label: "Spot / interruptible" },
+                      {
+                        value: "spot",
+                        label: "Spot / interruptible",
+                        disabled:
+                          providerId === "nebius" && !nebiusSpotSupported,
+                      },
                     ]}
                   />
                 </Form.Item>

@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useInviteInboxState } from "@cocalc/frontend/collaborators";
 import { A, Loading, Paragraph, Title } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { labels } from "@cocalc/frontend/i18n";
@@ -22,7 +23,13 @@ export function NotificationPage() {
   const account_id = useTypedRedux("account", "account_id");
   const mentions = useTypedRedux("mentions", "mentions");
   const loading = useTypedRedux("mentions", "loading");
-  const unread_count = useTypedRedux("mentions", "unread_count") ?? 0;
+  const mentions_unread = useTypedRedux("mentions", "unread_count") ?? 0;
+  const inviteState = useInviteInboxState({
+    includeOutgoing: false,
+    includeBlocks: false,
+  });
+  const invite_unread = inviteState.incoming.length;
+  const unread_count = mentions_unread + invite_unread;
   const news_unread = useTypedRedux("news", "unread") ?? 0;
   const news = useTypedRedux("news", "news");
   const user_map = useTypedRedux("users", "user_map");
@@ -90,6 +97,7 @@ export function NotificationPage() {
         />
         <NotificationList
           account_id={account_id}
+          inviteState={inviteState}
           loading={loading}
           mentions={mentions}
           news={news}
