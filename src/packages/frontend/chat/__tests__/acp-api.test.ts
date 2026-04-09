@@ -76,7 +76,11 @@ describe("processAcpLLM", () => {
     };
 
     const actions: any = {
-      syncdb: { save: jest.fn().mockResolvedValue(undefined) },
+      syncdb: {
+        save: jest.fn().mockResolvedValue(undefined),
+        set: jest.fn(),
+        commit: jest.fn(),
+      },
       store,
       chatStreams: new Set<string>(),
       getAllMessages: () =>
@@ -123,6 +127,12 @@ describe("processAcpLLM", () => {
     expect(mockStreamAcp).not.toHaveBeenCalled();
     expect(mockInterruptAcp).not.toHaveBeenCalled();
     expect(acpState.get("message:user-msg-47")).toBe("sent");
+    expect(actions.syncdb.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message_id: "user-msg-47",
+        acp_state: "sent",
+      }),
+    );
   });
 
   it("retries a no-ack ACP submission with interrupt and backoff", async () => {

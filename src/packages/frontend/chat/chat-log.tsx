@@ -82,6 +82,14 @@ function collectAttachedSteers({
   acpState?: { get?: (key: string) => unknown };
 }): Map<string, AttachedSteerMessage[]> {
   const attached = new Map<string, AttachedSteerMessage[]>();
+  const byMessageId = new Map<string, ChatMessageTyped>();
+  for (const [, message] of messages) {
+    if (message == null) continue;
+    const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
+    if (messageId) {
+      byMessageId.set(messageId, message);
+    }
+  }
   for (const [, message] of messages) {
     if (message == null || !isImmediateAcpSteerMessage(message)) continue;
     const messageDate = dateValue(message);
@@ -89,19 +97,27 @@ function collectAttachedSteers({
     const messageKey = `${messageDate.valueOf()}`;
     if (visibleKeys && !visibleKeys.has(messageKey)) continue;
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
-    const parentId = `${parentMessageId(message) ?? ""}`.trim();
+    const directParentId = `${parentMessageId(message) ?? ""}`.trim();
     const text = newest_content(message)?.trim();
-    if (!messageId || !parentId || !text) continue;
-    const state = toAttachedSteerState(acpState?.get?.(`message:${messageId}`));
-    if (!state) continue;
-    const next = attached.get(parentId) ?? [];
+    if (!messageId || !directParentId || !text) continue;
+    const directParent = byMessageId.get(directParentId);
+    const anchoredParentId =
+      directParent != null && field<string>(directParent, "acp_account_id")
+        ? `${parentMessageId(directParent) ?? directParentId}`.trim() ||
+          directParentId
+        : directParentId;
+    const state =
+      toAttachedSteerState(acpState?.get?.(`message:${messageId}`)) ??
+      toAttachedSteerState(field<string>(message, "acp_state"));
+    if (!state || !anchoredParentId) continue;
+    const next = attached.get(anchoredParentId) ?? [];
     next.push({
       messageId,
       date: messageDate.valueOf(),
       text,
       state,
     });
-    attached.set(parentId, next);
+    attached.set(anchoredParentId, next);
   }
   for (const list of attached.values()) {
     list.sort((a, b) => cmp(a.date, b.date));
@@ -786,13 +802,9 @@ export function MessageList({
     const messageAcpState = messageId
       ? acpState?.get?.(`message:${messageId}`)
       : undefined;
-    const attachedSteers =
-      messageId &&
-      Boolean(field<string>(message, "acp_account_id")) &&
-      (field<boolean>(message, "generating") === true ||
-        ACP_ACTIVE_STATES.has(messageAcpState))
-        ? attachedSteersByParentMessageId?.get(messageId)
-        : undefined;
+    const attachedSteers = messageId
+      ? attachedSteersByParentMessageId?.get(messageId)
+      : undefined;
 
     const is_thread = numChildren != null && isThread(message, numChildren);
     const h = virtuosoHeightsRef.current?.[index];

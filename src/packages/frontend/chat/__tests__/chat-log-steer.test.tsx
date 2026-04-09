@@ -72,7 +72,7 @@ describe("ChatLog immediate steer rendering", () => {
     renderedMessages = [];
   });
 
-  it("hides immediate steer rows and attaches their state to the active Codex turn", () => {
+  it("hides immediate steer rows and attaches their state to the original user prompt", () => {
     render(
       <ChatLog
         project_id="project-1"
@@ -80,12 +80,7 @@ describe("ChatLog immediate steer rendering", () => {
         mode="standalone"
         actions={{ clearScrollRequest: jest.fn() } as any}
         selectedThread="thread-1"
-        acpState={
-          new Map([
-            ["message:assistant-1", "running"],
-            ["message:steer-1", "sending"],
-          ]) as any
-        }
+        acpState={new Map([["message:steer-1", "sending"]]) as any}
         messages={
           new Map([
             [
@@ -104,6 +99,7 @@ describe("ChatLog immediate steer rendering", () => {
                 date: 2000,
                 message_id: "assistant-1",
                 thread_id: "thread-1",
+                parent_message_id: "user-1",
                 sender_id: "acct-codex",
                 acp_account_id: "acct-codex",
                 generating: true,
@@ -132,10 +128,10 @@ describe("ChatLog immediate steer rendering", () => {
       renderedMessages.find((props) => props.message?.message_id === "steer-1"),
     ).toBeUndefined();
 
-    const assistantProps = renderedMessages.find(
-      (props) => props.message?.message_id === "assistant-1",
+    const userProps = renderedMessages.find(
+      (props) => props.message?.message_id === "user-1",
     );
-    expect(assistantProps?.attachedSteers).toEqual([
+    expect(userProps?.attachedSteers).toEqual([
       {
         messageId: "steer-1",
         date: 3000,

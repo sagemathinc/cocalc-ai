@@ -267,6 +267,18 @@ export async function processAcpLLM({
     store.setState({
       acpState: next,
     });
+    if (sendMode === "immediate" && typeof syncdb?.set === "function") {
+      try {
+        const nextMessage = { ...(message as any) };
+        if (state) {
+          nextMessage.acp_state = state;
+        } else {
+          delete nextMessage.acp_state;
+        }
+        syncdb.set(nextMessage);
+        syncdb.commit?.();
+      } catch {}
+    }
   };
 
   const sessionKey = effectiveSessionId ?? thread_id;
@@ -337,9 +349,7 @@ export async function processAcpLLM({
       }
       if (response.state === "queued") {
         setState("queue");
-      } else if (response.state === "running") {
-        setState("running");
-      } else if (response.state === "steered") {
+      } else if (response.state === "running" || response.state === "steered") {
         setState("sent");
       } else {
         setState("");

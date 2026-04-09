@@ -84,6 +84,7 @@ import { SyncOutlined } from "@ant-design/icons";
 import {
   AgentActivityChip,
   AgentMessageStatus,
+  AttachedSteerStatusList,
   type AttachedSteerMessage,
 } from "./agent-message-status";
 import { useCodexLog } from "./use-codex-log";
@@ -1628,6 +1629,9 @@ export default function Message({
             />
             <CodexQuotaHelp message={value} projectId={project_id} />
           </div>
+        ) : null}
+        {!showCodexActivity ? (
+          <AttachedSteerStatusList attachedSteers={attachedSteers} />
         ) : null}
       </>
     );
