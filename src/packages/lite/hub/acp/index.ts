@@ -8,13 +8,10 @@ import getLogger from "@cocalc/backend/logger";
 import { data } from "@cocalc/backend/data";
 import {
   CodexAppServerAgent,
-  CodexExecAgent,
   EchoAgent,
   type AcpAgent,
   type AcpEvaluateRequest,
   forkCodexAppServerSession,
-  forkSession,
-  getSessionsRoot,
 } from "@cocalc/ai/acp";
 import { AgentTimeTravelRecorder } from "@cocalc/ai/sync";
 import { init as initConatAcp } from "@cocalc/conat/ai/acp/server";
@@ -44,7 +41,6 @@ import {
   normalizeCodexSessionId,
   resolveCodexSessionMode,
 } from "@cocalc/util/ai/codex";
-import { isValidUUID } from "@cocalc/util/misc";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import type {
   FileAdapter,
@@ -183,7 +179,6 @@ import {
   ensureAcpWorkerRunning,
   startAcpWorkerSupervisor,
 } from "./worker-manager";
-import { getConfiguredCodexBackend } from "./codex-backend";
 import { buildCodexRuntimeEnv } from "./runtime-env";
 
 // How often to persist in-flight ACP metadata (thread state/usage/flags).
@@ -4713,21 +4708,12 @@ async function ensureAgent(
     return mock;
   }
   try {
-    const codexBackend = getConfiguredCodexBackend();
-    logger.debug("ensureAgent: creating codex agent", {
-      codexBackend,
+    logger.debug("ensureAgent: creating codex app-server agent");
+    const created = await CodexAppServerAgent.create({
+      binaryPath: process.env.COCALC_CODEX_BIN,
+      cwd: bindings.workspaceRoot ?? process.cwd(),
     });
-    const created =
-      codexBackend === "app-server"
-        ? await CodexAppServerAgent.create({
-            binaryPath: process.env.COCALC_CODEX_BIN,
-            cwd: bindings.workspaceRoot ?? process.cwd(),
-          })
-        : await CodexExecAgent.create({
-            binaryPath: process.env.COCALC_CODEX_BIN,
-            cwd: bindings.workspaceRoot ?? process.cwd(),
-          });
-    logger.info("codex agent ready", { key, codexBackend });
+    logger.info("codex agent ready", { key, backend: "app-server" });
     agents.set(key, created);
     return created;
   } catch (err) {
@@ -7108,37 +7094,12 @@ async function handleForkSessionRequest(
   if (!sessionId) {
     throw Error("sessionId must be a non-empty string");
   }
-  if (getConfiguredCodexBackend() === "app-server") {
-    try {
-      return await forkCodexAppServerSession({
-        projectId: request.project_id,
-        accountId: request.account_id,
-        sessionId,
-        binaryPath: process.env.COCALC_CODEX_BIN,
-      });
-    } catch (err) {
-      if (!isValidUUID(sessionId)) {
-        throw err;
-      }
-      logger.info("app-server session fork failed; falling back to exec fork", {
-        sessionId,
-        err: `${err}`,
-      });
-    }
-  }
-  const sessionsRoot = getSessionsRoot();
-  if (!sessionsRoot) {
-    throw Error("codex sessions directory not configured");
-  }
-  if (!isValidUUID(sessionId)) {
-    throw Error("sessionId must be a valid uuid for exec-session fork");
-  }
-  const newSessionId = request.newSessionId ?? randomUUID();
-  if (!isValidUUID(newSessionId)) {
-    throw Error("newSessionId must be a valid uuid");
-  }
-  await forkSession(sessionId, newSessionId, sessionsRoot);
-  return { sessionId: newSessionId };
+  return await forkCodexAppServerSession({
+    projectId: request.project_id,
+    accountId: request.account_id,
+    sessionId,
+    binaryPath: process.env.COCALC_CODEX_BIN,
+  });
 }
 
 async function interruptCodexSession(threadId: string): Promise<boolean> {
