@@ -690,7 +690,7 @@ export function ChatRoomComposer({
                     type="default"
                     icon={<Icon name="bolt" />}
                   >
-                    Send Now
+                    Steer
                   </Button>
                 </Tooltip>
               </>

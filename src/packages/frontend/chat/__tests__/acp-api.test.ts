@@ -122,7 +122,7 @@ describe("processAcpLLM", () => {
     expect(mockSteerAcp).toHaveBeenCalledTimes(1);
     expect(mockStreamAcp).not.toHaveBeenCalled();
     expect(mockInterruptAcp).not.toHaveBeenCalled();
-    expect(acpState.get("message:user-msg-47")).toBeUndefined();
+    expect(acpState.get("message:user-msg-47")).toBe("sent");
   });
 
   it("retries a no-ack ACP submission with interrupt and backoff", async () => {

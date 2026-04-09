@@ -339,6 +339,8 @@ export async function processAcpLLM({
         setState("queue");
       } else if (response.state === "running") {
         setState("running");
+      } else if (response.state === "steered") {
+        setState("sent");
       } else {
         setState("");
       }
