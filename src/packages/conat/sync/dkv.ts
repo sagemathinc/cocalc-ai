@@ -78,11 +78,7 @@ import {
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { isEqual } from "lodash";
 import { delay, map as awaitMap } from "awaiting";
-import {
-  type Client,
-  ConatError,
-  type Headers,
-} from "@cocalc/conat/core/client";
+import { type Client, type Headers } from "@cocalc/conat/core/client";
 import refCache from "@cocalc/util/refcache";
 import { type JSONValue } from "@cocalc/util/types";
 import {
@@ -733,126 +729,6 @@ export class DKV<T = any> extends EventEmitter {
     }
     if (DEBUG) {
       console.log("attemptToSaveMany: done", Date.now() - start);
-    }
-
-    return status;
-  });
-
-  attemptToSaveParallel = reuseInFlight(async () => {
-    let start = Date.now();
-    if (DEBUG) {
-      console.log("attemptToSaveParallel: start");
-    }
-    if (this.kv == null) {
-      throw Error("closed");
-    }
-    this.changed.clear();
-    const status = { unsaved: 0, set: 0, delete: 0 };
-    const obj = { ...this.local };
-    for (const key in obj) {
-      if (obj[key] === TOMBSTONE) {
-        status.unsaved += 1;
-        await this.kv.deleteKv(key);
-        if (this.kv == null) return;
-        status.delete += 1;
-        status.unsaved -= 1;
-        delete obj[key];
-        if (!this.changed.has(key)) {
-          // successfully saved this and user didn't make a change *during* the set
-          this.discardLocalState(key);
-        }
-      }
-    }
-    let errors = false;
-    const f = async (key: string) => {
-      if (this.kv == null) {
-        // closed
-        return;
-      }
-      const previousSeq = this.merge != null ? this.seq(key) : undefined;
-      try {
-        if (previousSeq && this.invalidSeq.has(previousSeq)) {
-          throw new ConatError("waiting on new sequence via changefeed", {
-            code: "wrong-last-sequence",
-          });
-        }
-        status.unsaved += 1;
-        await this.kv.setKv(key, obj[key] as T, {
-          ...this.options[key],
-          previousSeq,
-        });
-        if (this.kv == null) return;
-        if (DEBUG) {
-          console.log("kv store -- attemptToSave succeed", this.desc, {
-            key,
-            value: obj[key],
-          });
-        }
-        status.unsaved -= 1;
-        status.set += 1;
-        // note that we CANNOT call  this.discardLocalState(key) here, because
-        // this.get(key) needs to work immediately after save, but if this.local[key]
-        // is deleted, then this.get(key) would be undefined, because
-        // this.kv.getKv(key) only has value in it once the value is
-        // echoed back from the server.
-      } catch (err) {
-        if (DEBUG) {
-          console.log("kv store -- attemptToSave failed", this.desc, err, {
-            key,
-            value: obj[key],
-            code: err.code,
-          });
-        }
-        errors = true;
-        if (err.code == "reject") {
-          const value = this.local[key];
-          // can never save this.
-          this.discardLocalState(key);
-          status.unsaved -= 1;
-          this.emit("reject", { key, value });
-        }
-        if (err.code == "wrong-last-sequence") {
-          // This happens when another client has published a NEWER version of this key,
-          // so the right thing is to just ignore this.  In a moment there will be no
-          // need to save anything, since we'll receive a message that overwrites this key.
-          // It's very important that the changefeed actually be working, of course, which
-          // is why the this.invalidSeq, so we never retry in this case, since it can't work.
-          if (previousSeq) {
-            this.invalidSeq.add(previousSeq);
-          }
-          return;
-        }
-        if (err.code == 408) {
-          // timeout -- expected to happen periodically, of course
-          if (!process.env.COCALC_TEST_MODE) {
-            console.log("WARNING: timeout saving (will try again soon)");
-          }
-          return;
-        }
-        if (!process.env.COCALC_TEST_MODE) {
-          console.warn(
-            `WARNING: unexpected error saving dkv '${this.name}' -- ${err}`,
-          );
-        }
-      }
-    };
-    await awaitMap(Object.keys(obj), MAX_PARALLEL, f);
-    if (errors) {
-      this.saveErrors = true;
-      throw Error(`there were errors saving dkv '${this.name}'`);
-      // so it retries
-    } else {
-      if (
-        !process.env.COCALC_TEST_MODE &&
-        this.saveErrors &&
-        status.unsaved == 0
-      ) {
-        this.saveErrors = false;
-        console.log(`SUCCESS: dkv ${this.name} fully saved`);
-      }
-    }
-    if (DEBUG) {
-      console.log("attemptToSaveParallel: done", Date.now() - start);
     }
 
     return status;
