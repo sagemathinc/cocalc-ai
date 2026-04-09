@@ -274,6 +274,14 @@ function getLiteEnvValues() {
   };
 }
 
+function resolveLiteCodexHome(source) {
+  const explicit = `${source?.daemonVars?.COCALC_CODEX_HOME ?? ""}`.trim();
+  if (explicit) return explicit;
+  const liteHome = `${source?.daemonVars?.LITE_HOME ?? ""}`.trim();
+  if (liteHome) return path.join(liteHome, ".codex");
+  return "";
+}
+
 function resolveHubTarget(daemonVars, requestedBay) {
   const primaryBayId =
     `${daemonVars.COCALC_BAY_ID ?? "bay-0"}`.trim() || "bay-0";
@@ -787,6 +795,10 @@ function main() {
   }
   if (mode === "lite" && source.connectionPath) {
     exportsMap.COCALC_LITE_CONNECTION_INFO = source.connectionPath;
+    const codexHome = resolveLiteCodexHome(source);
+    if (codexHome) {
+      exportsMap.COCALC_CODEX_HOME = codexHome;
+    }
   }
   if (mode === "hub" && hubPassword) {
     exportsMap.COCALC_HUB_PASSWORD = hubPassword;
