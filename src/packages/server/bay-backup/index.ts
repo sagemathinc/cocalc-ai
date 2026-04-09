@@ -174,6 +174,7 @@ type StoredBayBackupState = {
   maintenance_last_error: string | null;
   maintenance_next_run_at: string | null;
   last_pruned_at: string | null;
+  last_pruned_wal_count: number;
   last_pruned_local_archive_count: number;
   last_pruned_restore_count: number;
   last_restore_test_backup_set_id: string | null;
@@ -280,6 +281,7 @@ const DEFAULT_BAY_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_BAY_BACKUP_RETRY_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_BAY_BACKUP_RETENTION_COUNT = 14;
 const DEFAULT_BAY_BACKUP_RESTORE_RETENTION_DAYS = 7;
+const DEFAULT_BAY_WAL_LOCAL_RETENTION_COUNT = 128;
 
 function getWalArchiveIntervalMs(): number {
   const n = Number.parseInt(
@@ -340,6 +342,14 @@ function getBayBackupRestoreRetentionDays(): number {
   return parsePositiveIntEnv({
     name: "COCALC_BAY_BACKUP_RESTORE_RETENTION_DAYS",
     defaultValue: DEFAULT_BAY_BACKUP_RESTORE_RETENTION_DAYS,
+    allowZero: true,
+  });
+}
+
+function getBayWalLocalRetentionCount(): number {
+  return parsePositiveIntEnv({
+    name: "COCALC_BAY_WAL_LOCAL_RETENTION_COUNT",
+    defaultValue: DEFAULT_BAY_WAL_LOCAL_RETENTION_COUNT,
     allowZero: true,
   });
 }
@@ -471,6 +481,7 @@ function defaultState({
     maintenance_last_error: null,
     maintenance_next_run_at: null,
     last_pruned_at: null,
+    last_pruned_wal_count: 0,
     last_pruned_local_archive_count: 0,
     last_pruned_restore_count: 0,
     last_restore_test_backup_set_id: null,
@@ -493,6 +504,7 @@ type BayBackupMaintenanceConfig = {
   full_snapshot_retry_interval_ms: number;
   full_snapshot_retention_count: number;
   restore_workspace_retention_days: number;
+  local_wal_retention_count: number;
 };
 
 function getBayBackupMaintenanceConfig(): BayBackupMaintenanceConfig {
@@ -503,6 +515,7 @@ function getBayBackupMaintenanceConfig(): BayBackupMaintenanceConfig {
     full_snapshot_retry_interval_ms: getBayBackupRetryIntervalMs(),
     full_snapshot_retention_count: getBayBackupRetentionCount(),
     restore_workspace_retention_days: getBayBackupRestoreRetentionDays(),
+    local_wal_retention_count: getBayWalLocalRetentionCount(),
   };
 }
 
@@ -560,6 +573,10 @@ async function loadBayBackupState({
     last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
     last_restore_test_recovery_ready:
       stored.last_restore_test_recovery_ready ?? null,
+    last_pruned_wal_count: stored.last_pruned_wal_count ?? 0,
+    last_pruned_local_archive_count:
+      stored.last_pruned_local_archive_count ?? 0,
+    last_pruned_restore_count: stored.last_pruned_restore_count ?? 0,
   };
   return {
     bay_id: resolvedBayId,
@@ -1678,6 +1695,41 @@ async function pruneRestoreWorkspaces({
   return removed;
 }
 
+async function pruneLocalWalArchive({
+  snapshot,
+  keep_recent_count,
+  protect_pending_files,
+}: {
+  snapshot: WalArchiveSnapshot;
+  keep_recent_count: number;
+  protect_pending_files: boolean;
+}): Promise<number> {
+  if (keep_recent_count <= 0) {
+    return 0;
+  }
+  const keep = new Set<string>();
+  if (protect_pending_files) {
+    for (const file of snapshot.pending_files) {
+      keep.add(file.name);
+    }
+  }
+  for (const file of snapshot.archived_files.slice(-keep_recent_count)) {
+    keep.add(file.name);
+  }
+  let removed = 0;
+  for (const file of snapshot.archived_files) {
+    if (keep.has(file.name)) continue;
+    await rm(file.path, { force: true }).catch((err) => {
+      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+        return;
+      }
+      throw err;
+    });
+    removed += 1;
+  }
+  return removed;
+}
+
 async function pruneBayRusticSnapshots({
   repoProfilePath,
   snapshotHost,
@@ -1758,6 +1810,7 @@ async function applyBayBackupRetention({
   return {
     ...state,
     last_pruned_at: new Date().toISOString(),
+    last_pruned_wal_count: state.last_pruned_wal_count ?? 0,
     last_pruned_local_archive_count: pruned_local_archive_count,
     last_pruned_restore_count: pruned_restore_count,
   };
@@ -2264,30 +2317,37 @@ async function syncBayWalArchive({
     last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
     last_restore_test_recovery_ready:
       stored.last_restore_test_recovery_ready ?? null,
+    last_pruned_wal_count: stored.last_pruned_wal_count ?? 0,
+    last_pruned_local_archive_count:
+      stored.last_pruned_local_archive_count ?? 0,
+    last_pruned_restore_count: stored.last_pruned_restore_count ?? 0,
   };
   const resolvedWalObjectPrefix = walObjectPrefix(
     r2.object_prefix_root ?? state.object_prefix_root ?? null,
   );
-  const remote_object_keys =
+  const config = getBayBackupMaintenanceConfig();
+  const canUploadRemote = Boolean(
     r2.configured &&
     r2.bucket_name &&
     r2.bucket_endpoint &&
     r2.access_key &&
     r2.secret_key &&
-    resolvedWalObjectPrefix
-      ? new Set(
-          await listRemoteWalObjectKeys({
-            r2,
-            wal_object_prefix: resolvedWalObjectPrefix,
-          }).catch((err) => {
-            logger.warn("failed to list remote WAL objects", {
-              bay_id: resolvedBayId,
-              err,
-            });
-            return [];
-          }),
-        )
-      : null;
+    resolvedWalObjectPrefix,
+  );
+  const remote_object_keys = canUploadRemote
+    ? new Set(
+        await listRemoteWalObjectKeys({
+          r2,
+          wal_object_prefix: resolvedWalObjectPrefix!,
+        }).catch((err) => {
+          logger.warn("failed to list remote WAL objects", {
+            bay_id: resolvedBayId,
+            err,
+          });
+          return [];
+        }),
+      )
+    : null;
   let snapshot = await getWalArchiveSnapshot({
     paths,
     state,
@@ -2295,6 +2355,7 @@ async function syncBayWalArchive({
   });
   const previous_last_segment = snapshot.last_archived_wal_segment;
   const walErrorPrefix = "wal archive:";
+  let last_pruned_wal_count = state.last_pruned_wal_count ?? 0;
   if (forceSwitch) {
     try {
       await getPool().query("SELECT pg_switch_wal()");
@@ -2323,14 +2384,11 @@ async function syncBayWalArchive({
   };
 
   try {
-    if (
-      r2.configured &&
-      r2.bucket_name &&
-      r2.bucket_endpoint &&
-      r2.access_key &&
-      r2.secret_key &&
-      snapshot.pending_files.length > 0
-    ) {
+    if (canUploadRemote && snapshot.pending_files.length > 0) {
+      const bucket_endpoint = r2.bucket_endpoint!;
+      const access_key = r2.access_key!;
+      const secret_key = r2.secret_key!;
+      const bucket_name = r2.bucket_name!;
       await ensureR2Bucket(r2);
       const object_prefix =
         resolvedWalObjectPrefix ??
@@ -2343,10 +2401,10 @@ async function syncBayWalArchive({
         const object_key = `${object_prefix}/${file.name}`;
         const { sha256, bytes } = await hashFile(file.path);
         await uploadObjectFromFile({
-          endpoint: r2.bucket_endpoint,
-          accessKey: r2.access_key,
-          secretKey: r2.secret_key,
-          bucket: r2.bucket_name,
+          endpoint: bucket_endpoint,
+          accessKey: access_key,
+          secretKey: secret_key,
+          bucket: bucket_name,
           key: object_key,
           filePath: file.path,
           artifactSha256: sha256,
@@ -2360,6 +2418,20 @@ async function syncBayWalArchive({
         last_uploaded_wal_segment,
       };
     }
+    const pruneSnapshot = await getWalArchiveSnapshot({ paths, state });
+    last_pruned_wal_count = await pruneLocalWalArchive({
+      snapshot: pruneSnapshot,
+      keep_recent_count: config.local_wal_retention_count,
+      protect_pending_files: canUploadRemote,
+    });
+    state = {
+      ...state,
+      last_pruned_wal_count,
+      last_pruned_at:
+        last_pruned_wal_count > 0
+          ? new Date().toISOString()
+          : (state.last_pruned_at ?? null),
+    };
     if (`${state.last_error ?? ""}`.startsWith(walErrorPrefix)) {
       state = {
         ...state,
@@ -2370,6 +2442,7 @@ async function syncBayWalArchive({
   } catch (err) {
     state = {
       ...state,
+      last_pruned_wal_count,
       last_error_at: new Date().toISOString(),
       last_error: `${walErrorPrefix} upload failed: ${String(err)}`,
     };
@@ -2615,6 +2688,7 @@ function mapStateToStatus({
     full_snapshot_retry_interval_ms: config.full_snapshot_retry_interval_ms,
     full_snapshot_retention_count: config.full_snapshot_retention_count,
     restore_workspace_retention_days: config.restore_workspace_retention_days,
+    local_wal_retention_count: config.local_wal_retention_count,
     maintenance_running: backupMaintenanceRunning,
     maintenance_next_run_at: state.maintenance_next_run_at,
     maintenance_last_started_at: state.maintenance_last_started_at,
@@ -2623,6 +2697,7 @@ function mapStateToStatus({
     maintenance_last_error_at: state.maintenance_last_error_at,
     maintenance_last_error: state.maintenance_last_error,
     last_pruned_at: state.last_pruned_at,
+    last_pruned_wal_count: state.last_pruned_wal_count,
     last_pruned_local_archive_count: state.last_pruned_local_archive_count,
     last_pruned_restore_count: state.last_pruned_restore_count,
   };
@@ -2810,6 +2885,10 @@ export async function getBayBackupStatus({
     last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
     last_restore_test_recovery_ready:
       stored.last_restore_test_recovery_ready ?? null,
+    last_pruned_wal_count: stored.last_pruned_wal_count ?? 0,
+    last_pruned_local_archive_count:
+      stored.last_pruned_local_archive_count ?? 0,
+    last_pruned_restore_count: stored.last_pruned_restore_count ?? 0,
   };
   const walPrefix = walObjectPrefix(
     r2.object_prefix_root ?? state.object_prefix_root ?? null,
@@ -2911,6 +2990,10 @@ export async function runBayBackup({
         previous.last_restore_test_target_dir ?? null,
       last_restore_test_recovery_ready:
         previous.last_restore_test_recovery_ready ?? null,
+      last_pruned_wal_count: previous.last_pruned_wal_count ?? 0,
+      last_pruned_local_archive_count:
+        previous.last_pruned_local_archive_count ?? 0,
+      last_pruned_restore_count: previous.last_pruned_restore_count ?? 0,
     };
     await writeJson(paths.state_file, initialState);
     const staging_dir = await mkdtemp(
@@ -3214,6 +3297,10 @@ export async function runBayRestore({
     last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
     last_restore_test_recovery_ready:
       stored.last_restore_test_recovery_ready ?? null,
+    last_pruned_wal_count: stored.last_pruned_wal_count ?? 0,
+    last_pruned_local_archive_count:
+      stored.last_pruned_local_archive_count ?? 0,
+    last_pruned_restore_count: stored.last_pruned_restore_count ?? 0,
   };
   const resolvedBackupSetId =
     `${backup_set_id ?? state.latest_backup_set_id ?? ""}`.trim() || undefined;
@@ -4008,6 +4095,10 @@ export async function runBayRestoreTest({
     last_restore_test_target_dir: stored.last_restore_test_target_dir ?? null,
     last_restore_test_recovery_ready:
       stored.last_restore_test_recovery_ready ?? null,
+    last_pruned_wal_count: stored.last_pruned_wal_count ?? 0,
+    last_pruned_local_archive_count:
+      stored.last_pruned_local_archive_count ?? 0,
+    last_pruned_restore_count: stored.last_pruned_restore_count ?? 0,
   };
   const resolvedBackupSetId =
     `${backup_set_id ?? state.latest_backup_set_id ?? ""}`.trim() || undefined;

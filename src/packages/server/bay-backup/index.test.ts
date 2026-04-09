@@ -1,6 +1,12 @@
 export {};
 
-import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -1556,11 +1562,49 @@ describe("bay-backup runner", () => {
     expect(status.bay_backup.last_pruned_at).toBeTruthy();
   });
 
+  it("caps the local WAL archive to a recent tail", async () => {
+    process.env.COCALC_BAY_WAL_LOCAL_RETENTION_COUNT = "2";
+
+    const bayRoot = join(backupRoot, "bay-backups", "bay-0");
+    const walArchiveDir = join(bayRoot, "wal", "archive");
+    mkdirSync(walArchiveDir, { recursive: true });
+    const walSegments = [
+      "0000000100000000000000E1",
+      "0000000100000000000000E2",
+      "0000000100000000000000E3",
+      "0000000100000000000000E4",
+      "0000000100000000000000E5",
+    ];
+    for (const [index, name] of walSegments.entries()) {
+      const path = join(walArchiveDir, name);
+      writeFileSync(path, `segment-${index + 1}`);
+      const when = new Date(Date.UTC(2026, 3, 8, 12, index, 0));
+      utimesSync(path, when, when);
+    }
+
+    const { getBayBackupStatus, runBayBackup } = await import("./index");
+
+    await runBayBackup();
+
+    expect(readdirSync(walArchiveDir).sort()).toEqual([
+      "0000000100000000000000E4",
+      "0000000100000000000000E5",
+    ]);
+
+    const status = await getBayBackupStatus();
+    expect(status.bay_backup.local_wal_retention_count).toBe(2);
+    expect(status.bay_backup.archived_wal_count).toBe(2);
+    expect(status.bay_backup.pending_wal_count).toBe(2);
+    expect(status.bay_backup.last_pruned_wal_count).toBe(3);
+    expect(status.bay_backup.last_pruned_at).toBeTruthy();
+  });
+
   it("reports scheduled full snapshot maintenance state", async () => {
     process.env.COCALC_BAY_BACKUP_INTERVAL_MS = "600000";
     process.env.COCALC_BAY_BACKUP_RETRY_INTERVAL_MS = "12345";
     process.env.COCALC_BAY_BACKUP_RETENTION_COUNT = "9";
     process.env.COCALC_BAY_BACKUP_RESTORE_RETENTION_DAYS = "5";
+    process.env.COCALC_BAY_WAL_LOCAL_RETENTION_COUNT = "17";
 
     const { getBayBackupStatus, runBayBackup, startBayBackupMaintenance } =
       await import("./index");
@@ -1577,6 +1621,7 @@ describe("bay-backup runner", () => {
     expect(status.bay_backup.full_snapshot_retry_interval_ms).toBe(12345);
     expect(status.bay_backup.full_snapshot_retention_count).toBe(9);
     expect(status.bay_backup.restore_workspace_retention_days).toBe(5);
+    expect(status.bay_backup.local_wal_retention_count).toBe(17);
     expect(status.bay_backup.maintenance_running).toBe(false);
     expect(status.bay_backup.maintenance_next_run_at).toBeTruthy();
   });
