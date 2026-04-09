@@ -1192,7 +1192,11 @@ export class PersistentStream extends EventEmitter {
         } else {
           // new message exceeds total, so this is the same as adding in the new message,
           // then deleting everything.
-          this.delete({ all: true });
+          const rows = this.db
+            .prepare("DELETE FROM messages RETURNING seq")
+            .all() as { seq: number }[];
+          this.db.prepare("DELETE FROM stream_checkpoints").run();
+          this.emitDelete(rows);
         }
       } else {
         // delete all the earliest (in terms of seq number) messages
