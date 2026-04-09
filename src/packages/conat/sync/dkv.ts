@@ -615,26 +615,28 @@ export class DKV<T = any> extends EventEmitter {
     const tombstoneKeys = Object.keys(obj).filter(
       (key) => obj[key] === TOMBSTONE,
     );
-    await awaitMap(tombstoneKeys, MAX_PARALLEL, async (key: string) => {
-      if (this.kv == null) {
-        return;
-      }
-      try {
-        status.unsaved += 1;
-        await this.kv.deleteKv(key);
-        if (this.kv == null) return;
-        status.delete += 1;
-        status.unsaved -= 1;
-        delete obj[key];
-        if (!this.changed.has(key)) {
-          // successfully saved this and user didn't make a change *during* the set
-          this.discardLocalState(key);
+    if (tombstoneKeys.length > 0) {
+      await awaitMap(tombstoneKeys, MAX_PARALLEL, async (key: string) => {
+        if (this.kv == null) {
+          return;
         }
-      } catch (err) {
-        status.unsaved = Math.max(0, status.unsaved - 1);
-        throw err;
-      }
-    });
+        try {
+          status.unsaved += 1;
+          await this.kv.deleteKv(key);
+          if (this.kv == null) return;
+          status.delete += 1;
+          status.unsaved -= 1;
+          delete obj[key];
+          if (!this.changed.has(key)) {
+            // successfully saved this and user didn't make a change *during* the set
+            this.discardLocalState(key);
+          }
+        } catch (err) {
+          status.unsaved = Math.max(0, status.unsaved - 1);
+          throw err;
+        }
+      });
+    }
     let errors = false;
     const x: {
       key: string;
