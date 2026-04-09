@@ -26,6 +26,7 @@ type ChatExportCliOptions = {
   projectId?: string;
   offloadDb?: string;
   includeBlobs?: boolean;
+  includeCodexContext?: boolean;
   blobBaseUrl?: string;
   blobBearerToken?: string;
   zipLevel?: string;
@@ -79,6 +80,10 @@ Export is intended to be both user-facing and agent-facing.
     .option("--offload-db <path>", "path to the archived chat sqlite database")
     .option("--include-blobs", "fetch blob references into assets/")
     .option(
+      "--include-codex-context",
+      "include raw resumable Codex session context when available",
+    )
+    .option(
       "--blob-base-url <url>",
       "base URL used to resolve relative /blobs/ references (defaults to --api / COCALC_API_URL)",
     )
@@ -97,8 +102,11 @@ Chat export bundles include:
 - machine-readable thread/message metadata
 - archived/offloaded chat messages for the selected threads
 - optional copied blobs/assets when --include-blobs is used
+- optional raw resumable Codex session context when --include-codex-context is used
 
-Codex activity/thinking logs are intentionally excluded.
+The canonical chat export intentionally excludes CoCalc activity/thinking logs.
+When Codex context is included, raw session JSONL is bundled separately under
+\`threads/<thread_id>/codex/\` for portability and later resume/fork workflows.
 
 Implementation note:
 
@@ -149,6 +157,7 @@ Examples:
             projectId,
             offloadDbPath: normalizeOptionalString(opts.offloadDb),
             includeBlobs: opts.includeBlobs === true,
+            includeCodexContext: opts.includeCodexContext === true,
             blobBaseUrl,
             blobBearerToken,
           };
@@ -162,6 +171,8 @@ Examples:
             thread_ids: (bundle.manifest as any)?.scope?.thread_ids ?? [],
             thread_count: (bundle.manifest as any)?.thread_count ?? 0,
             message_count: (bundle.manifest as any)?.message_count ?? 0,
+            codex_context_count:
+              (bundle.manifest as any)?.codex_context_count ?? 0,
             asset_count: (bundle.manifest as any)?.asset_count ?? 0,
             warning_count: (bundle.manifest as any)?.warning_count ?? 0,
             bytes: zip.byteLength,

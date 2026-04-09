@@ -30,6 +30,8 @@ function makeThreadConfig(options: {
   name?: string;
   archived?: boolean;
   pin?: boolean;
+  acpConfig?: any;
+  agentKind?: "acp" | "llm" | "none";
 }) {
   return {
     ...buildThreadConfigRecord({
@@ -37,6 +39,8 @@ function makeThreadConfig(options: {
       updated_by: options.updatedBy ?? "user-1",
       name: options.name,
       pin: options.pin,
+      acp_config: options.acpConfig,
+      agent_kind: options.agentKind,
     }),
     ...(options.archived != null ? { archived: options.archived } : {}),
   };
@@ -367,6 +371,118 @@ describe("chat export", () => {
         await new Promise<void>((resolve, reject) =>
           server!.close((err) => (err ? reject(err) : resolve())),
         );
+      }
+    }
+  });
+
+  it("optionally includes raw Codex session context for exported threads", async () => {
+    const tmp = await mkdtemp("cocalc-export-chat-codex-context-");
+    const chatPath = path.join(tmp, "sample.chat");
+    const threadId = "thread-codex";
+    const sessionId = "session-codex-1";
+    const codexHome = path.join(tmp, ".codex");
+    const sessionsDir = path.join(codexHome, "sessions", "2026", "04", "09");
+    const sessionFile = path.join(sessionsDir, `rollout-${sessionId}.jsonl`);
+    const originalCodexHome = process.env.COCALC_CODEX_HOME;
+    try {
+      await fs.mkdir(sessionsDir, { recursive: true });
+      await fs.writeFile(
+        sessionFile,
+        [
+          JSON.stringify({
+            type: "session_meta",
+            payload: {
+              id: sessionId,
+              cwd: "/home/user/project",
+              model: "gpt-5.4",
+            },
+          }),
+          JSON.stringify({
+            type: "message",
+            payload: {
+              role: "assistant",
+              content: "hello from codex",
+            },
+          }),
+        ].join("\n") + "\n",
+        "utf8",
+      );
+      process.env.COCALC_CODEX_HOME = codexHome;
+
+      await writeJsonl(chatPath, [
+        buildThreadRecord({
+          thread_id: threadId,
+          root_message_id: "codex-root",
+          created_by: "user-1",
+        }),
+        makeThreadConfig({
+          threadId,
+          name: "Codex Thread",
+          agentKind: "acp",
+          acpConfig: { sessionId, model: "gpt-5.4" },
+        }),
+        buildChatMessageRecordV2({
+          sender_id: "user-1",
+          date: "2026-03-01T00:00:00.000Z",
+          prevHistory: [],
+          content: "resume this elsewhere",
+          generating: false,
+          message_id: "codex-root",
+          thread_id: threadId,
+          acp_thread_id: sessionId,
+        }),
+      ]);
+
+      const bundle = await collectChatExport({
+        chatPath,
+        scope: "current-thread",
+        threadId,
+        includeCodexContext: true,
+      });
+
+      expect((bundle.manifest as any).codex_context_count).toBe(1);
+      expect((bundle.manifest as any).options.include_codex_context).toBe(true);
+      expect((bundle.manifest as any).entrypoints.codex_context_data).toEqual([
+        "threads/<thread_id>/codex/session.jsonl",
+      ]);
+
+      const threadData = JSON.parse(
+        `${bundle.files.find((file) => file.path === `threads/${threadId}/thread.json`)?.content ?? "{}"}`,
+      );
+      expect(threadData.codex_context).toMatchObject({
+        session_id: sessionId,
+        meta_path: `threads/${threadId}/codex/meta.json`,
+        session_path: `threads/${threadId}/codex/session.jsonl`,
+      });
+
+      const exportedMeta = JSON.parse(
+        `${bundle.files.find((file) => file.path === `threads/${threadId}/codex/meta.json`)?.content ?? "{}"}`,
+      );
+      expect(exportedMeta).toMatchObject({
+        format: "cocalc-codex-context",
+        version: 1,
+        session_id: sessionId,
+      });
+      expect(exportedMeta.session_meta).toMatchObject({
+        id: sessionId,
+        cwd: "/home/user/project",
+        model: "gpt-5.4",
+      });
+
+      const sessionBytes = bundle.files.find(
+        (file) => file.path === `threads/${threadId}/codex/session.jsonl`,
+      )?.content;
+      const sessionJsonl =
+        sessionBytes instanceof Uint8Array
+          ? new TextDecoder().decode(sessionBytes)
+          : `${sessionBytes ?? ""}`;
+      expect(sessionJsonl).toContain('"type":"session_meta"');
+      expect(sessionJsonl).toContain('"hello from codex"');
+    } finally {
+      if (originalCodexHome == null) {
+        delete process.env.COCALC_CODEX_HOME;
+      } else {
+        process.env.COCALC_CODEX_HOME = originalCodexHome;
       }
     }
   });

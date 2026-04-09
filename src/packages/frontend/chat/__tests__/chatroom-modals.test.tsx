@@ -94,4 +94,53 @@ describe("chatroom fork modal defaults", () => {
       expect(screen.queryByText("Fork chat")).toBeNull();
     });
   });
+
+  it("defaults Codex thread exports to including Codex context and shows a warning when disabled", async () => {
+    const actions: any = {
+      getThreadMetadata: jest.fn(() => ({
+        agent_kind: "acp",
+        acp_config: { sessionId: "session-1", model: "gpt-5.4" },
+      })),
+    };
+    let handlers: any;
+
+    render(
+      <ChatRoomModals
+        actions={actions}
+        path="project/chat/test.chat"
+        selectedThreadKey="thread-1"
+        selectedThreadLabel="Codex Thread"
+        onHandlers={(next) => {
+          handlers = next;
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(handlers?.openExportModal).toBeDefined());
+
+    act(() => {
+      handlers.openExportModal({
+        scope: "current-thread",
+        threadKey: "thread-1",
+        label: "Codex Thread",
+      });
+    });
+
+    const codexCheckbox = await screen.findByRole("checkbox", {
+      name: "Include Codex context",
+    });
+    expect((codexCheckbox as HTMLInputElement).checked).toBe(true);
+    expect(
+      screen.queryByText(/will not restore resumable Codex session state/i),
+    ).toBeNull();
+
+    fireEvent.click(codexCheckbox);
+
+    expect((codexCheckbox as HTMLInputElement).checked).toBe(false);
+    expect(
+      await screen.findByText(
+        /will not restore resumable Codex session state/i,
+      ),
+    ).not.toBeNull();
+  });
 });

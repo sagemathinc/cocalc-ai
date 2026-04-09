@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-
 import type {
   ChatMessage,
   ChatThreadConfigRecord,
@@ -27,6 +26,7 @@ export interface ChatExportOptions {
   projectId?: string | null;
   offloadDbPath?: string;
   includeBlobs?: boolean;
+  includeCodexContext?: boolean;
   blobBaseUrl?: string;
   blobBearerToken?: string;
   exportedAt?: string;
@@ -60,6 +60,15 @@ export interface ChatExportIndexEntry {
   transcript_path: string;
   thread_path: string;
   messages_path: string;
+  codex_context_path?: string;
+}
+
+export interface ChatExportCodexContext {
+  session_id: string;
+  meta_path: string;
+  session_path: string;
+  sha256: string;
+  exported_session_path?: string;
 }
 
 export interface ChatExportMessageRow {
@@ -112,15 +121,20 @@ export interface ChatExportThreadData {
   transcript_path: string;
   messages_path: string;
   asset_refs?: ChatExportAssetIndexEntry[];
+  codex_context?: ChatExportCodexContext;
   warnings?: ChatExportWarning[];
 }
 
 export interface ChatExportWarning {
-  code: "blob_fetch_failed";
+  code:
+    | "blob_fetch_failed"
+    | "codex_context_missing"
+    | "codex_context_read_failed";
   thread_id: string;
-  original_ref: string;
-  fetch_url: string;
   message: string;
+  original_ref?: string;
+  fetch_url?: string;
+  session_id?: string;
 }
 
 type ChatRow = any;
@@ -158,6 +172,7 @@ type ThreadAggregate = {
   firstMessageAt?: string;
   lastMessageAt?: string;
   assetRefs: ChatExportAssetIndexEntry[];
+  codexContext?: ChatExportCodexContext;
   warnings: ChatExportWarning[];
 };
 
@@ -260,6 +275,10 @@ export async function collectChatExport(
       })
     : { assetIndex: [], warnings: [] };
   const { assetIndex, warnings } = assetResult;
+  const codexContextResult = options.includeCodexContext
+    ? await collectChatCodexContexts({ threads })
+    : { files: [], count: 0, warnings: [] };
+  const allWarnings = [...warnings, ...codexContextResult.warnings];
 
   const sortedAggregates = sortThreads(Array.from(threads.values()));
   const senderDirectory = buildSenderDirectory(sortedAggregates);
@@ -267,7 +286,10 @@ export async function collectChatExport(
   const files: ExportFile[] = [
     {
       path: "README.md",
-      content: renderChatExportReadme(options.includeBlobs === true),
+      content: renderChatExportReadme({
+        includeBlobs: options.includeBlobs === true,
+        includeCodexContext: options.includeCodexContext === true,
+      }),
       contentType: "text/markdown; charset=utf-8",
     },
   ];
@@ -320,6 +342,7 @@ export async function collectChatExport(
       transcript_path: transcriptPath,
       messages_path: messagesPath,
       asset_refs: aggregate.assetRefs.length ? aggregate.assetRefs : undefined,
+      codex_context: aggregate.codexContext,
       warnings: aggregate.warnings.length ? aggregate.warnings : undefined,
     };
     threadIndex.push({
@@ -335,6 +358,7 @@ export async function collectChatExport(
       transcript_path: transcriptPath,
       thread_path: threadPath,
       messages_path: messagesPath,
+      codex_context_path: aggregate.codexContext?.session_path,
     });
     files.push(
       {
@@ -357,6 +381,8 @@ export async function collectChatExport(
     );
   }
 
+  files.push(...codexContextResult.files);
+
   files.push({
     path: "threads/index.json",
     content: `${JSON.stringify(threadIndex, null, 2)}\n`,
@@ -370,10 +396,10 @@ export async function collectChatExport(
       contentType: "application/json; charset=utf-8",
     });
   }
-  if (warnings.length) {
+  if (allWarnings.length) {
     files.push({
       path: "warnings.json",
-      content: `${JSON.stringify(warnings, null, 2)}\n`,
+      content: `${JSON.stringify(allWarnings, null, 2)}\n`,
       contentType: "application/json; charset=utf-8",
     });
   }
@@ -391,13 +417,18 @@ export async function collectChatExport(
         canonical_data: ["threads/<thread_id>/messages.jsonl"],
         derived_views: ["threads/<thread_id>/transcript.md"],
         assets_index: assetIndex.length ? "assets/index.json" : undefined,
-        warnings: warnings.length ? "warnings.json" : undefined,
+        warnings: allWarnings.length ? "warnings.json" : undefined,
+        codex_context_data:
+          codexContextResult.count > 0
+            ? ["threads/<thread_id>/codex/session.jsonl"]
+            : undefined,
       },
       agent_hints: {
         local_first: true,
         reconstruction_source: "threads/<thread_id>/messages.jsonl",
         derived_files_are_optional: true,
-        excludes_activity_logs: true,
+        excludes_activity_logs: options.includeCodexContext !== true,
+        includes_codex_context: options.includeCodexContext === true,
       },
       source: {
         project_id: options.projectId ?? null,
@@ -410,14 +441,16 @@ export async function collectChatExport(
       },
       options: {
         include_blobs: options.includeBlobs === true,
+        include_codex_context: options.includeCodexContext === true,
       },
       thread_count: threadIndex.length,
       message_count: threadIndex.reduce(
         (sum, entry) => sum + entry.message_count,
         0,
       ),
+      codex_context_count: codexContextResult.count,
       asset_count: assetIndex.length,
-      warning_count: warnings.length,
+      warning_count: allWarnings.length,
     }),
     files,
     assets: assetIndex.length
@@ -445,10 +478,23 @@ export async function collectChatExport(
   };
 }
 
-function renderChatExportReadme(includeBlobs: boolean): string {
-  const warningLine = includeBlobs
-    ? "- If `warnings.json` exists, some blob fetches failed and those references were left unchanged.\n"
-    : "";
+function renderChatExportReadme({
+  includeBlobs,
+  includeCodexContext,
+}: {
+  includeBlobs: boolean;
+  includeCodexContext: boolean;
+}): string {
+  const warningLines = [
+    includeBlobs
+      ? "- If `warnings.json` exists, some blob fetches failed and those references were left unchanged."
+      : undefined,
+    includeCodexContext
+      ? "- If Codex context was included, raw resumable session state lives under `threads/<thread_id>/codex/`."
+      : "- Codex context was not included, so importing this archive elsewhere will not restore resumable Codex state.",
+  ]
+    .filter((line): line is string => !!line)
+    .join("\n");
   return `# Chat Export
 
 This archive is designed for both people and agents.
@@ -463,9 +509,9 @@ Start here:
 Important properties:
 
 - Selected threads include archived/offloaded chat messages.
-- Codex activity/thinking logs are intentionally excluded.
+- The canonical chat export excludes CoCalc activity/thinking logs.
 - Blob references are ${includeBlobs ? "copied into `assets/` and rewritten to local paths." : "left as external references because blobs were not included."}
-${warningLine}
+${warningLines}
 
 Recommended agent workflow:
 
@@ -559,6 +605,219 @@ function collectThreadParticipants(
     participants.push(sender);
   }
   return participants.length ? participants : undefined;
+}
+
+function getSessionsRootForExport(): string | undefined {
+  if (process.env.COCALC_CODEX_HOME) {
+    return path.join(process.env.COCALC_CODEX_HOME, "sessions");
+  }
+  if (process.env.COCALC_ORIGINAL_HOME) {
+    return path.join(process.env.COCALC_ORIGINAL_HOME, ".codex", "sessions");
+  }
+  if (process.env.HOME) {
+    return path.join(process.env.HOME, ".codex", "sessions");
+  }
+  return undefined;
+}
+
+async function findSessionFileForExport(
+  sessionId: string,
+  sessionsRoot: string,
+): Promise<string | undefined> {
+  const suffix = `-${sessionId}.jsonl`;
+  return await walkForSessionFile(sessionsRoot, suffix);
+}
+
+async function walkForSessionFile(
+  dir: string,
+  suffix: string,
+): Promise<string | undefined> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (err: any) {
+    if (err?.code === "ENOENT" || err?.code === "ENOTDIR") {
+      return undefined;
+    }
+    throw err;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const found = await walkForSessionFile(full, suffix);
+      if (found) return found;
+      continue;
+    }
+    if (entry.isFile() && full.endsWith(suffix)) {
+      return full;
+    }
+  }
+  return undefined;
+}
+
+function readSessionMetaFromJsonl(
+  content: Uint8Array,
+  filePath: string,
+): { payload: Record<string, unknown> } {
+  const text = new TextDecoder("utf8").decode(content);
+  const firstLine = text.split(/\r?\n/, 1)[0]?.trim();
+  if (!firstLine) {
+    throw new Error(`empty session file ${filePath}`);
+  }
+  const parsed = JSON.parse(firstLine) as {
+    type?: string;
+    payload?: Record<string, unknown>;
+  };
+  if (parsed?.type !== "session_meta" || parsed.payload == null) {
+    throw new Error(`invalid session meta in ${filePath}`);
+  }
+  return { payload: parsed.payload };
+}
+
+async function collectChatCodexContexts({
+  threads,
+}: {
+  threads: Map<string, ThreadAggregate>;
+}): Promise<{
+  files: ExportFile[];
+  count: number;
+  warnings: ChatExportWarning[];
+}> {
+  const files: ExportFile[] = [];
+  const warnings: ChatExportWarning[] = [];
+  const sessionsRoot = getSessionsRootForExport();
+  let count = 0;
+  for (const aggregate of threads.values()) {
+    const sessionId = resolveCodexSessionId(aggregate);
+    if (!sessionId) {
+      if (isCodexThreadAggregate(aggregate)) {
+        const warning: ChatExportWarning = {
+          code: "codex_context_missing",
+          thread_id: aggregate.threadId,
+          message:
+            "Codex context was requested but this thread has no session id.",
+        };
+        warnings.push(warning);
+        aggregate.warnings.push(warning);
+      }
+      continue;
+    }
+    if (!sessionsRoot) {
+      const warning: ChatExportWarning = {
+        code: "codex_context_missing",
+        thread_id: aggregate.threadId,
+        session_id: sessionId,
+        message:
+          "Codex context was requested but the local Codex session store is unavailable.",
+      };
+      warnings.push(warning);
+      aggregate.warnings.push(warning);
+      continue;
+    }
+    const sessionFile = await findSessionFileForExport(sessionId, sessionsRoot);
+    if (!sessionFile) {
+      const warning: ChatExportWarning = {
+        code: "codex_context_missing",
+        thread_id: aggregate.threadId,
+        session_id: sessionId,
+        message: `Codex context was requested but no local session file was found for ${sessionId}.`,
+      };
+      warnings.push(warning);
+      aggregate.warnings.push(warning);
+      continue;
+    }
+    try {
+      const sessionBytes = new Uint8Array(await readFile(sessionFile));
+      const sha256 = createHash("sha256").update(sessionBytes).digest("hex");
+      const meta = readSessionMetaFromJsonl(sessionBytes, sessionFile);
+      const codexDir = `threads/${aggregate.threadId}/codex`;
+      const metaPath = `${codexDir}/meta.json`;
+      const sessionPath = `${codexDir}/session.jsonl`;
+      const relativeSessionPath = normalizeRelativeSessionPath(
+        sessionFile,
+        sessionsRoot,
+      );
+      aggregate.codexContext = {
+        session_id: sessionId,
+        meta_path: metaPath,
+        session_path: sessionPath,
+        sha256,
+        exported_session_path: relativeSessionPath,
+      };
+      files.push(
+        {
+          path: metaPath,
+          content: `${JSON.stringify(
+            {
+              format: "cocalc-codex-context",
+              version: 1,
+              session_id: sessionId,
+              sha256,
+              exported_session_path: relativeSessionPath,
+              session_meta: meta.payload,
+            },
+            null,
+            2,
+          )}\n`,
+          contentType: "application/json; charset=utf-8",
+        },
+        {
+          path: sessionPath,
+          content: sessionBytes,
+          contentType: "application/x-ndjson; charset=utf-8",
+        },
+      );
+      count += 1;
+    } catch (err) {
+      const warning: ChatExportWarning = {
+        code: "codex_context_read_failed",
+        thread_id: aggregate.threadId,
+        session_id: sessionId,
+        message: `Failed to export Codex context: ${err instanceof Error ? err.message : String(err)}`,
+      };
+      warnings.push(warning);
+      aggregate.warnings.push(warning);
+    }
+  }
+  return { files, count, warnings };
+}
+
+function isCodexThreadAggregate(aggregate: ThreadAggregate): boolean {
+  if (normalizeString(aggregate.config?.agent_kind) === "acp") {
+    return true;
+  }
+  if (aggregate.config?.acp_config != null) {
+    return true;
+  }
+  return aggregate.dedupedMessages.some(
+    (message) => normalizeString(message.acp_thread_id) != null,
+  );
+}
+
+function resolveCodexSessionId(aggregate: ThreadAggregate): string | undefined {
+  const configSessionId = normalizeString(
+    (aggregate.config?.acp_config as { sessionId?: string } | undefined)
+      ?.sessionId,
+  );
+  if (configSessionId) return configSessionId;
+  for (let i = aggregate.dedupedMessages.length - 1; i >= 0; i -= 1) {
+    const sessionId = normalizeString(
+      aggregate.dedupedMessages[i]?.acp_thread_id,
+    );
+    if (sessionId) return sessionId;
+  }
+  return undefined;
+}
+
+function normalizeRelativeSessionPath(
+  sessionFile: string,
+  sessionsRoot: string,
+): string | undefined {
+  const relative = path.relative(sessionsRoot, sessionFile).replace(/\\/g, "/");
+  if (!relative || relative.startsWith("../")) {
+    return undefined;
+  }
+  return relative;
 }
 
 function toExportMessageRow(

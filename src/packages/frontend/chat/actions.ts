@@ -2060,6 +2060,7 @@ export class ChatActions extends Actions<ChatState> {
     threadId,
     outputPath,
     includeBlobs = false,
+    includeCodexContext = false,
   }: ChatArchiveExportOptions): Promise<void> => {
     if (!this.store) return;
     const project_id = this.store.get("project_id");
@@ -2086,6 +2087,9 @@ export class ChatActions extends Actions<ChatState> {
       if (typeof window !== "undefined" && window.location?.origin) {
         args.push("--blob-base-url", window.location.origin);
       }
+    }
+    if (includeCodexContext) {
+      args.push("--include-codex-context");
     }
 
     await webapp_client.project_client.exec({

@@ -4,6 +4,7 @@
  */
 
 import {
+  Alert,
   Checkbox,
   Input,
   Modal,
@@ -116,6 +117,8 @@ export function ChatRoomModals({
   );
   const [exportFilename, setExportFilename] = useState<string>("");
   const [exportIncludeBlobs, setExportIncludeBlobs] = useState<boolean>(false);
+  const [exportIncludeCodexContext, setExportIncludeCodexContext] =
+    useState<boolean>(false);
   const [exportRunning, setExportRunning] = useState<boolean>(false);
   const [forkThread, setForkThread] = useState<{
     key: string;
@@ -316,6 +319,7 @@ export function ChatRoomModals({
             : undefined,
         outputPath,
         includeBlobs: exportIncludeBlobs,
+        includeCodexContext: exportIncludeCodexContext,
       });
       antdMessage.success("Chat exported.");
       closeExportModal();
@@ -399,13 +403,16 @@ export function ChatRoomModals({
     if (!exportRequest) return;
     setExportScope(exportRequest.scope);
     setExportIncludeBlobs(false);
+    setExportIncludeCodexContext(
+      shouldDefaultIncludeCodexContext(actions, exportRequest),
+    );
     setExportFilename(
       buildChatExportPath(path, exportRequest.scope, {
         threadKey: exportRequest.threadKey,
         label: exportRequest.label,
       }),
     );
-  }, [exportRequest, path]);
+  }, [actions, exportRequest, path]);
 
   const codexModelOptions = DEFAULT_CODEX_MODELS.map((model) => ({
     value: model.name,
@@ -451,6 +458,11 @@ export function ChatRoomModals({
                 <div>
                   Use <code>Include blobs/assets</code> when you want embedded
                   images or uploaded files copied into the export.
+                </div>
+                <div>
+                  For Codex threads, <code>Include Codex context</code> adds the
+                  latest resumable Codex session state so the archive can later
+                  be imported and resumed elsewhere.
                 </div>
                 <div>
                   The same export path is available from the CLI via{" "}
@@ -520,9 +532,23 @@ export function ChatRoomModals({
           >
             Include blobs/assets
           </Checkbox>
+          <Checkbox
+            checked={exportIncludeCodexContext}
+            onChange={(e) => setExportIncludeCodexContext(e.target.checked)}
+          >
+            Include Codex context
+          </Checkbox>
+          {!exportIncludeCodexContext ? (
+            <Alert
+              type="warning"
+              showIcon
+              title="Codex context will not be included."
+              description="The exported conversation will still include messages, but importing it elsewhere will not restore resumable Codex session state."
+            />
+          ) : null}
           <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
             Export includes archived/offloaded chat messages for the selected
-            threads. Codex activity logs are excluded.
+            threads. The canonical chat export excludes CoCalc activity logs.
           </div>
         </Space>
       </Modal>
@@ -767,6 +793,17 @@ function defaultWorkingDir(
   workspaceWorkingDirectory?: string,
 ): string {
   return defaultWorkingDirectoryForChat(chatPath, workspaceWorkingDirectory);
+}
+
+function shouldDefaultIncludeCodexContext(
+  actions: ChatActions,
+  request: ExportRequest,
+): boolean {
+  if (request.scope !== "current-thread" || !request.threadKey) {
+    return false;
+  }
+  const metadata = actions.getThreadMetadata?.(request.threadKey);
+  return metadata?.agent_kind === "acp" || metadata?.acp_config != null;
 }
 
 function buildChatExportPath(

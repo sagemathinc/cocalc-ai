@@ -28,6 +28,7 @@ export type ChatExportSummary = ExportSummary & {
   kind: "chat";
   threadCount?: number;
   messageCount?: number;
+  codexContextCount?: number;
 };
 
 export type TasksExportSummary = ExportSummary & {
@@ -52,6 +53,7 @@ export type BackendChatExportOptions = ExportPathOptions & {
   projectId?: string;
   offloadDbPath?: string;
   includeBlobs?: boolean;
+  includeCodexContext?: boolean;
   blobBaseUrl?: string;
   blobBearerToken?: string;
   zipLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
@@ -188,6 +190,7 @@ export function createExportApi<Ctx>({
           normalizeOptionalString(defaults.projectId),
         offloadDbPath: normalizeOptionalString(options.offloadDbPath),
         includeBlobs: options.includeBlobs === true,
+        includeCodexContext: options.includeCodexContext === true,
         blobBaseUrl:
           normalizeOptionalString(options.blobBaseUrl) ??
           normalizeOptionalString(defaults.apiBaseUrl),
@@ -209,6 +212,9 @@ export function createExportApi<Ctx>({
         manifest: bundle.manifest as Record<string, unknown>,
         threadCount: Number((bundle.manifest as any)?.thread_count ?? 0),
         messageCount: Number((bundle.manifest as any)?.message_count ?? 0),
+        codexContextCount: Number(
+          (bundle.manifest as any)?.codex_context_count ?? 0,
+        ),
       };
     },
     async tasks(

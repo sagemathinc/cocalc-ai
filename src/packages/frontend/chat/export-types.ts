@@ -14,4 +14,5 @@ export interface ChatArchiveExportOptions {
   threadId?: string;
   outputPath: string;
   includeBlobs?: boolean;
+  includeCodexContext?: boolean;
 }
