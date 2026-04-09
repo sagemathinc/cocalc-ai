@@ -50,6 +50,7 @@ import type {
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
   ProjectRunQuota,
+  ProjectActiveOperationSummary,
 } from "@cocalc/conat/hub/api/projects";
 import type {
   AccountFeedEvent,
@@ -588,6 +589,21 @@ async function getProjectBackupScheduleLite(opts: {
     });
   }
   return (await getLiteProjectReadDetails(opts)).backups;
+}
+
+async function getProjectActiveOperationLite(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectActiveOperationSummary | null> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.getProjectActiveOperation",
+      args: [opts],
+    });
+  }
+  requireLiteAccountId(opts.account_id);
+  requireLiteProjectId(opts.project_id);
+  return null;
 }
 
 async function logFileAccessLite(opts: {
@@ -1631,6 +1647,7 @@ export const hubApi: HubApi = {
     getProjectRunQuota: getProjectRunQuotaLite,
     getProjectSnapshotSchedule: getProjectSnapshotScheduleLite,
     getProjectBackupSchedule: getProjectBackupScheduleLite,
+    getProjectActiveOperation: getProjectActiveOperationLite,
     codexDeviceAuthStart: codexDeviceAuthStartLite,
     codexDeviceAuthStatus: codexDeviceAuthStatusLite,
     codexDeviceAuthCancel: codexDeviceAuthCancelLite,

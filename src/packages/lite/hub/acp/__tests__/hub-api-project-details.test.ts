@@ -120,5 +120,11 @@ describe("lite hub project detail getters", () => {
         project_id: PROJECT_ID,
       }),
     ).resolves.toEqual({ disabled: true });
+    await expect(
+      hubApi.projects.getProjectActiveOperation({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toBeNull();
   });
 });
