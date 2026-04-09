@@ -109,6 +109,7 @@ export function AttachedSteerStatusList({
         display: "flex",
         flexDirection: "column",
         gap: 6,
+        marginTop: 5,
         marginBottom: 8,
       }}
     >

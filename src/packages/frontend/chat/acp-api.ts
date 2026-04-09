@@ -482,23 +482,67 @@ export async function sendQueuedAcpTurnImmediately({
   const project_id = store.get("project_id");
   const path = store.get("path");
   if (!project_id || !path) return false;
-  const result = await webapp_client.conat_client.controlAcp({
-    project_id,
-    path,
-    thread_id: threadId,
-    user_message_id: messageId,
-    action: "send_immediately",
+  const setLocalState = ({
+    state,
+    sendMode,
+  }: {
+    state?: "queue" | "sending" | "sent";
+    sendMode?: "immediate";
+  }): void => {
+    let next = store.get("acpState") ?? new Map();
+    if (state) {
+      next = next.set(`message:${messageId}`, state);
+    } else {
+      next = next.delete(`message:${messageId}`);
+    }
+    store.setState({ acpState: next });
+
+    try {
+      const nextMessage = { ...(message as any) };
+      if (state) {
+        nextMessage.acp_state = state;
+      } else {
+        delete nextMessage.acp_state;
+      }
+      if (sendMode) {
+        nextMessage.acp_send_mode = sendMode;
+      } else {
+        delete nextMessage.acp_send_mode;
+      }
+      actions.syncdb?.set?.(nextMessage);
+      actions.syncdb?.commit?.();
+    } catch {}
+  };
+
+  setLocalState({
+    state: "sending",
+    sendMode: "immediate",
   });
-  if (!result?.ok) {
-    return false;
+  try {
+    const result = await webapp_client.conat_client.controlAcp({
+      project_id,
+      path,
+      thread_id: threadId,
+      user_message_id: messageId,
+      action: "send_immediately",
+    });
+    if (!result?.ok) {
+      setLocalState({
+        state: "queue",
+      });
+      return false;
+    }
+    setLocalState({
+      state: result.state === "queued" ? "queue" : "sent",
+      sendMode: "immediate",
+    });
+    return true;
+  } catch (err) {
+    setLocalState({
+      state: "queue",
+    });
+    throw err;
   }
-  store.setState({
-    acpState: (store.get("acpState") ?? new Map()).set(
-      `message:${messageId}`,
-      "sent",
-    ),
-  });
-  return true;
 }
 
 export async function resendCanceledAcpTurn({

@@ -2225,7 +2225,7 @@ export default function Message({
             type="text"
             onClick={handleSendQueuedImmediately}
           >
-            Send now
+            Steer
           </Button>
           <Button size="small" type="text" onClick={handleCancelQueued}>
             Cancel
