@@ -17,8 +17,18 @@ import type {
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 import type {
   ProjectActiveOperationSummary,
+  ProjectBackupSchedule,
   ProjectCollabInviteAction,
   ProjectCollabInviteRow,
+  ProjectCourseInfo,
+  ProjectCreated,
+  ProjectEnv,
+  ProjectLauncherSettings,
+  ProjectQuotaSettings,
+  ProjectRegion,
+  ProjectRootfsConfig,
+  ProjectRunQuota,
+  ProjectSnapshotSchedule,
 } from "@cocalc/conat/hub/api/projects";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
@@ -33,6 +43,19 @@ export interface ProjectReference {
   title: string;
   host_id: string | null;
   owning_bay_id: string;
+}
+
+export interface ProjectDetails {
+  launcher: ProjectLauncherSettings;
+  region: ProjectRegion;
+  created: ProjectCreated;
+  env: ProjectEnv;
+  rootfs: ProjectRootfsConfig | null;
+  snapshots: ProjectSnapshotSchedule;
+  backups: ProjectBackupSchedule;
+  run_quota: ProjectRunQuota;
+  settings: ProjectQuotaSettings;
+  course: ProjectCourseInfo;
 }
 
 export interface ResolveProjectBayRequest {
@@ -87,6 +110,11 @@ export interface ProjectAddress {
 }
 
 export interface GetProjectReferenceRequest {
+  project_id: string;
+  account_id: string;
+}
+
+export interface GetProjectDetailsRequest {
   project_id: string;
   account_id: string;
 }
@@ -187,6 +215,7 @@ export type ProjectControlMethod =
   | "active-op";
 export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
 export type ProjectReferenceMethod = "get";
+export type ProjectDetailsMethod = "get";
 export type ProjectLroMethod = "publish-progress";
 export type AccountDirectoryMethod =
   | "get"
@@ -232,6 +261,10 @@ export interface InterBayProjectControlApi {
 
 export interface InterBayProjectReferenceApi {
   get: (opts: GetProjectReferenceRequest) => Promise<ProjectReference | null>;
+}
+
+export interface InterBayProjectDetailsApi {
+  get: (opts: GetProjectDetailsRequest) => Promise<ProjectDetails>;
 }
 
 export interface InterBayProjectLroApi {
@@ -315,6 +348,16 @@ export function projectReferenceSubject({
   method: ProjectReferenceMethod;
 }): string {
   return `bay.${dest_bay}.rpc.project-reference.${method}`;
+}
+
+export function projectDetailsSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: ProjectDetailsMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.project-details.${method}`;
 }
 
 export function directorySubject({
@@ -523,6 +566,26 @@ export function createInterBayProjectReferenceClient({
   };
 }
 
+export function createInterBayProjectDetailsClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayProjectDetailsApi {
+  const detailsClient = createServiceClient<
+    Pick<InterBayProjectDetailsApi, "get">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectDetailsSubject({ dest_bay, method: "get" }),
+  });
+  return {
+    get: async (opts) => await detailsClient.get(opts),
+  };
+}
+
 export function createInterBayProjectReferenceHandler({
   bay_id,
   impl,
@@ -535,6 +598,24 @@ export function createInterBayProjectReferenceHandler({
     ...options,
     service: "inter-bay-project-reference",
     subject: projectReferenceSubject({ dest_bay: bay_id, method: "get" }),
+    impl: {
+      get: async (opts) => await impl.get(opts),
+    },
+  });
+}
+
+export function createInterBayProjectDetailsHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectDetailsApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectDetailsApi, "get">>({
+    ...options,
+    service: "inter-bay-project-details",
+    subject: projectDetailsSubject({ dest_bay: bay_id, method: "get" }),
     impl: {
       get: async (opts) => await impl.get(opts),
     },

@@ -53,7 +53,11 @@ import {
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
-import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
+import {
+  getLocalProjectCollaboratorAccessStatus,
+  PROJECT_COLLABORATOR_REQUIRED_ERROR,
+  PROJECT_NOT_FOUND_ERROR,
+} from "@cocalc/server/conat/project-local-access";
 import type {
   RecentDocumentActivityRow,
   ChatStoreDeleteResult,
@@ -119,6 +123,7 @@ import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/accoun
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { createHash } from "node:crypto";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
 const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
@@ -766,23 +771,50 @@ export async function listRecentDocumentActivity({
   }));
 }
 
-async function assertProjectReadAccessOrAdmin({
+async function getProjectReadDetailsAllowRemote({
   account_id,
   project_id,
 }: {
   account_id: string;
   project_id: string;
-}): Promise<void> {
-  if (!account_id) {
-    throw new Error("must be signed in");
+}) {
+  const localAccess = await getLocalProjectCollaboratorAccessStatus({
+    account_id,
+    project_id,
+  });
+  if (localAccess === "local-collaborator") {
+    const local = await loadProjectReadDetailsDirect(project_id);
+    if (local != null) {
+      return local;
+    }
+    throw new Error(`project ${project_id} not found`);
   }
-  try {
-    await assertLocalProjectCollaborator({ account_id, project_id });
-  } catch (err) {
-    if (!(await isAdmin(account_id))) {
-      throw err;
+
+  const admin = await isAdmin(account_id);
+  if (admin) {
+    const local = await loadProjectReadDetailsDirect(project_id);
+    if (local != null) {
+      return local;
     }
   }
+
+  if (localAccess === "not-collaborator") {
+    throw new Error(PROJECT_COLLABORATOR_REQUIRED_ERROR);
+  }
+  if (localAccess === "missing-project") {
+    const ownership = await resolveProjectBay(project_id);
+    if (!ownership) {
+      throw new Error(PROJECT_NOT_FOUND_ERROR);
+    }
+  }
+
+  const ownership = await resolveProjectBay(project_id);
+  if (!ownership || ownership.bay_id === getConfiguredBayId()) {
+    throw new Error(PROJECT_NOT_FOUND_ERROR);
+  }
+  return await getInterBayBridge()
+    .projectDetails(ownership.bay_id)
+    .get({ account_id, project_id });
 }
 
 export async function getProjectLauncher({
@@ -792,12 +824,8 @@ export async function getProjectLauncher({
   account_id: string;
   project_id: string;
 }): Promise<ProjectLauncherSettings> {
-  await assertProjectReadAccessOrAdmin({ account_id, project_id });
-  const { rows } = await getPool().query<{ launcher: ProjectLauncherSettings }>(
-    "SELECT launcher FROM projects WHERE project_id = $1",
-    [project_id],
-  );
-  return rows[0]?.launcher ?? null;
+  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
+    .launcher;
 }
 
 export async function setProjectLauncher({
@@ -827,12 +855,8 @@ export async function getProjectRegion({
   account_id: string;
   project_id: string;
 }): Promise<ProjectRegion> {
-  await assertProjectReadAccessOrAdmin({ account_id, project_id });
-  const { rows } = await getPool().query<{ region: ProjectRegion }>(
-    "SELECT region FROM projects WHERE project_id = $1",
-    [project_id],
-  );
-  return rows[0]?.region ?? null;
+  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
+    .region;
 }
 
 export async function getProjectCreated({
@@ -842,12 +866,8 @@ export async function getProjectCreated({
   account_id: string;
   project_id: string;
 }): Promise<ProjectCreated> {
-  await assertProjectReadAccessOrAdmin({ account_id, project_id });
-  const { rows } = await getPool().query<{ created: ProjectCreated }>(
-    "SELECT created FROM projects WHERE project_id = $1",
-    [project_id],
-  );
-  return rows[0]?.created ?? null;
+  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
+    .created;
 }
 
 export async function getProjectEnv({
@@ -857,12 +877,8 @@ export async function getProjectEnv({
   account_id: string;
   project_id: string;
 }): Promise<ProjectEnv> {
-  await assertProjectReadAccessOrAdmin({ account_id, project_id });
-  const { rows } = await getPool().query<{ env: ProjectEnv }>(
-    "SELECT env FROM projects WHERE project_id = $1",
-    [project_id],
-  );
-  return rows[0]?.env ?? null;
+  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
+    .env;
 }
 
 export async function getProjectRootfs({
@@ -872,23 +888,8 @@ export async function getProjectRootfs({
   account_id: string;
   project_id: string;
 }): Promise<ProjectRootfsConfig | null> {
-  await assertProjectReadAccessOrAdmin({ account_id, project_id });
-  const { rows } = await getPool().query<{
-    rootfs_image: string | null;
-    rootfs_image_id: string | null;
-  }>(
-    "SELECT rootfs_image, rootfs_image_id FROM projects WHERE project_id = $1",
-    [project_id],
-  );
-  const image = `${rows[0]?.rootfs_image ?? ""}`.trim();
-  if (!image) {
-    return null;
-  }
-  const image_id = `${rows[0]?.rootfs_image_id ?? ""}`.trim();
-  return {
-    image,
-    ...(image_id ? { image_id } : undefined),
-  };
+  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
+    .rootfs;
 }
 
 export async function setProjectEnv({
@@ -918,11 +919,8 @@ export async function getProjectSnapshotSchedule({
   account_id: string;
   project_id: string;
 }): Promise<ProjectSnapshotSchedule> {
-  await assertProjectReadAccessOrAdmin({ account_id, project_id });
-  const { rows } = await getPool().query<{
-    snapshots: ProjectSnapshotSchedule;
-  }>("SELECT snapshots FROM projects WHERE project_id = $1", [project_id]);
-  return rows[0]?.snapshots ?? null;
+  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
+    .snapshots;
 }
 
 export async function getProjectBackupSchedule({
@@ -932,12 +930,8 @@ export async function getProjectBackupSchedule({
   account_id: string;
   project_id: string;
 }): Promise<ProjectBackupSchedule> {
-  await assertProjectReadAccessOrAdmin({ account_id, project_id });
-  const { rows } = await getPool().query<{ backups: ProjectBackupSchedule }>(
-    "SELECT backups FROM projects WHERE project_id = $1",
-    [project_id],
-  );
-  return rows[0]?.backups ?? null;
+  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
+    .backups;
 }
 
 export async function getProjectRunQuota({
@@ -947,12 +941,8 @@ export async function getProjectRunQuota({
   account_id: string;
   project_id: string;
 }): Promise<ProjectRunQuota> {
-  await assertProjectReadAccessOrAdmin({ account_id, project_id });
-  const { rows } = await getPool().query<{ run_quota: ProjectRunQuota }>(
-    "SELECT run_quota FROM projects WHERE project_id = $1",
-    [project_id],
-  );
-  return rows[0]?.run_quota ?? null;
+  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
+    .run_quota;
 }
 
 export async function getProjectSettings({
@@ -962,12 +952,8 @@ export async function getProjectSettings({
   account_id: string;
   project_id: string;
 }): Promise<ProjectQuotaSettings> {
-  await assertProjectReadAccessOrAdmin({ account_id, project_id });
-  const { rows } = await getPool().query<{ settings: ProjectQuotaSettings }>(
-    "SELECT settings FROM projects WHERE project_id = $1",
-    [project_id],
-  );
-  return rows[0]?.settings ?? null;
+  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
+    .settings;
 }
 
 export async function getProjectCourseInfo({
@@ -977,12 +963,8 @@ export async function getProjectCourseInfo({
   account_id: string;
   project_id: string;
 }): Promise<ProjectCourseInfo> {
-  await assertProjectReadAccessOrAdmin({ account_id, project_id });
-  const { rows } = await getPool().query<{ course: ProjectCourseInfo }>(
-    "SELECT course FROM projects WHERE project_id = $1",
-    [project_id],
-  );
-  return rows[0]?.course ?? null;
+  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
+    .course;
 }
 
 export async function getStorageOverview({

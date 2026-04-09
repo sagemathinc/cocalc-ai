@@ -1,6 +1,6 @@
 export {};
 
-let assertLocalProjectCollaboratorMock: jest.Mock;
+let getLocalProjectCollaboratorAccessStatusMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let getPoolMock: jest.Mock;
 let queryMock: jest.Mock;
@@ -9,8 +9,10 @@ let publishProjectDetailInvalidationBestEffortMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
-  assertLocalProjectCollaborator: (...args: any[]) =>
-    assertLocalProjectCollaboratorMock(...args),
+  PROJECT_COLLABORATOR_REQUIRED_ERROR: "user must be a collaborator on project",
+  PROJECT_NOT_FOUND_ERROR: "project not found",
+  getLocalProjectCollaboratorAccessStatus: (...args: any[]) =>
+    getLocalProjectCollaboratorAccessStatusMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
@@ -40,11 +42,27 @@ describe("getProjectLauncher", () => {
 
   beforeEach(() => {
     jest.resetModules();
-    assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
+    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
+      async () => "local-collaborator",
+    );
     assertCollabMock = jest.fn(async () => undefined);
     isAdminMock = jest.fn(async () => false);
     queryMock = jest.fn(async () => ({
-      rows: [{ launcher: { quickCreate: ["chat", "ipynb"] } }],
+      rows: [
+        {
+          launcher: { quickCreate: ["chat", "ipynb"] },
+          region: null,
+          created: null,
+          env: null,
+          rootfs_image: null,
+          rootfs_image_id: null,
+          snapshots: null,
+          backups: null,
+          run_quota: null,
+          settings: null,
+          course: null,
+        },
+      ],
     }));
     getPoolMock = jest.fn(() => ({ query: queryMock }));
     publishProjectDetailInvalidationBestEffortMock = jest.fn(
@@ -60,21 +78,20 @@ describe("getProjectLauncher", () => {
         project_id: PROJECT_ID,
       }),
     ).resolves.toEqual({ quickCreate: ["chat", "ipynb"] });
-    expect(assertLocalProjectCollaboratorMock).toHaveBeenCalledWith({
+    expect(getLocalProjectCollaboratorAccessStatusMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,
     });
     expect(isAdminMock).not.toHaveBeenCalled();
-    expect(queryMock).toHaveBeenCalledWith(
-      "SELECT launcher FROM projects WHERE project_id = $1",
-      [PROJECT_ID],
-    );
+    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining("SELECT"), [
+      PROJECT_ID,
+    ]);
   });
 
   it("allows admins to read launcher settings without collaborator access", async () => {
-    assertLocalProjectCollaboratorMock = jest.fn(async () => {
-      throw new Error("not a collaborator");
-    });
+    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
+      async () => "not-collaborator",
+    );
     isAdminMock = jest.fn(async () => true);
     const { getProjectLauncher } = await import("./projects");
     await expect(
@@ -87,9 +104,9 @@ describe("getProjectLauncher", () => {
   });
 
   it("rejects non-admin non-collaborators", async () => {
-    assertLocalProjectCollaboratorMock = jest.fn(async () => {
-      throw new Error("not a collaborator");
-    });
+    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
+      async () => "not-collaborator",
+    );
     isAdminMock = jest.fn(async () => false);
     const { getProjectLauncher } = await import("./projects");
     await expect(
@@ -97,7 +114,7 @@ describe("getProjectLauncher", () => {
         account_id: ACCOUNT_ID,
         project_id: PROJECT_ID,
       }),
-    ).rejects.toThrow("not a collaborator");
+    ).rejects.toThrow("user must be a collaborator on project");
     expect(queryMock).not.toHaveBeenCalled();
   });
 

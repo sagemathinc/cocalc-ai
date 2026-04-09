@@ -452,6 +452,46 @@ Add the minimum cross-bay control-plane machinery.
 - one bay can replicate project summary changes to another
 - replay after outage works
 
+### 2026-04-08 Execution Milestone
+
+The next implementation milestone inside Phase 5 is not general "remote
+project UX polish". It is narrower and deeper:
+
+- remote collaborator auth/session plumbing must work end to end
+
+This means a collaborator whose account home bay differs from a project's
+owning bay must be able to use the project from their account bay without
+hitting hidden one-bay authorization assumptions.
+
+Acceptance checklist for this milestone:
+
+- a remote collaborator can sign in and keep one stable account-bay session
+- that collaborator is globally resolvable by `account_id` and email from any
+  bay
+- remote project membership is recognized everywhere authorization is checked
+- the collaborator can open the remote project from their account bay
+- project metadata reads such as project-created/detail paths do not reject the
+  remote collaborator
+- project-host credentials/tokens can be minted and validated for the remote
+  collaborator
+- the collaborator can open the project file listing
+- the collaborator can open and edit a file
+- the collaborator can use terminal/notebook paths that depend on
+  project-host/session authorization
+- equivalent CLI flows succeed from the attached bay
+
+Explicitly out of scope for this milestone:
+
+- polished public front-door routing
+- wrong-bay redirect/sign-in UX
+- production HA for seed auth/directory
+- region-aware public ingress rollout
+- full host-placement cleanup
+
+The purpose of this milestone is to remove the deeper auth/session blockers
+first, so that later remote-project UX work is not built on top of partial or
+misleading one-bay assumptions.
+
 ### Load Test Gate
 
 - inter-bay RPC latency measured under load

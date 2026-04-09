@@ -5,7 +5,9 @@
 
 import type {
   ForwardProjectLroProgressRequest,
+  GetProjectDetailsRequest,
   GetProjectReferenceRequest,
+  ProjectDetails,
   ProjectReference,
   ProjectControlActiveOperationRequest,
   ProjectControlAddressRequest,
@@ -20,6 +22,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveProjectBayDirect } from "@cocalc/server/inter-bay/directory";
 import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { getProject } from "@cocalc/server/projects/control";
+import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import {
   clearProjectActiveOperation,
   getProjectActiveOperation,
@@ -27,6 +30,8 @@ import {
 } from "@cocalc/server/projects/active-operation";
 import { resolveVisibleProjectReferenceLocal } from "@cocalc/server/bay-directory";
 import { forwardRemoteStartLroProgress } from "@cocalc/server/inter-bay/start-lro-forward";
+import isAdmin from "@cocalc/server/accounts/is-admin";
+import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 
 function staleRoutingError({
@@ -232,6 +237,36 @@ export async function handleProjectReferenceGet(
   } catch {
     return null;
   }
+}
+
+async function assertLocalProjectReadAccessOrAdmin({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<void> {
+  try {
+    await assertLocalProjectCollaborator({ account_id, project_id });
+  } catch (err) {
+    if (!(await isAdmin(account_id))) {
+      throw err;
+    }
+  }
+}
+
+export async function handleProjectDetailsGet(
+  req: GetProjectDetailsRequest,
+): Promise<ProjectDetails> {
+  await assertLocalProjectReadAccessOrAdmin({
+    account_id: req.account_id,
+    project_id: req.project_id,
+  });
+  const details = await loadProjectReadDetailsDirect(req.project_id);
+  if (details == null) {
+    throw new Error(`project ${req.project_id} not found`);
+  }
+  return details;
 }
 
 export async function handleProjectLroPublishProgress(

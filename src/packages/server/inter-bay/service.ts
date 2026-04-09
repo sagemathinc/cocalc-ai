@@ -9,6 +9,7 @@ import {
   createInterBayAccountDirectoryHandlers,
   createInterBayAccountLocalHandler,
   createInterBayProjectCollabInviteHandlers,
+  createInterBayProjectDetailsHandler,
   createInterBayProjectControlAddressHandler,
   createInterBayProjectControlActiveOpHandler,
   createInterBayDirectoryHandlers,
@@ -24,6 +25,7 @@ import {
   type InterBayAccountLocalApi,
   type InterBayDirectoryApi,
   type InterBayProjectCollabInviteApi,
+  type InterBayProjectDetailsApi,
   type InterBayProjectControlApi,
   type InterBayProjectLroApi,
   type InterBayProjectReferenceApi,
@@ -60,6 +62,7 @@ import {
   handleProjectControlRestart,
   handleProjectControlStart,
   handleProjectControlState,
+  handleProjectDetailsGet,
   handleProjectLroPublishProgress,
   handleProjectReferenceGet,
   handleProjectControlStop,
@@ -89,6 +92,7 @@ export async function initInterBayServices(): Promise<void> {
     await startAccountProjectFeedService();
     await startProjectControlStartService();
     await startProjectReferenceService();
+    await startProjectDetailsService();
     await startProjectLroService();
     await startProjectCollabInviteService();
   } catch (err) {
@@ -275,6 +279,21 @@ async function startProjectReferenceService(): Promise<void> {
   };
   services.push(
     createInterBayProjectReferenceHandler({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startProjectDetailsService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayProjectDetailsApi = {
+    get: async (opts) => await handleProjectDetailsGet(opts),
+  };
+  services.push(
+    createInterBayProjectDetailsHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

@@ -1,6 +1,6 @@
 export {};
 
-let assertLocalProjectCollaboratorMock: jest.Mock;
+let getLocalProjectCollaboratorAccessStatusMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let getPoolMock: jest.Mock;
 let queryMock: jest.Mock;
@@ -10,8 +10,10 @@ let publishProjectDetailInvalidationBestEffortMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
-  assertLocalProjectCollaborator: (...args: any[]) =>
-    assertLocalProjectCollaboratorMock(...args),
+  PROJECT_COLLABORATOR_REQUIRED_ERROR: "user must be a collaborator on project",
+  PROJECT_NOT_FOUND_ERROR: "project not found",
+  getLocalProjectCollaboratorAccessStatus: (...args: any[]) =>
+    getLocalProjectCollaboratorAccessStatusMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
@@ -46,18 +48,27 @@ describe("getProjectRunQuota", () => {
 
   beforeEach(() => {
     jest.resetModules();
-    assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
+    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
+      async () => "local-collaborator",
+    );
     isAdminMock = jest.fn(async () => false);
-    queryMock = jest.fn(async (sql: string) => {
-      if (sql.includes("SELECT settings FROM projects")) {
-        return {
-          rows: [{ settings: { memory: 2000, mintime: 3600 } }],
-        };
-      }
-      return {
-        rows: [{ run_quota: { disk_quota: 4000, always_running: false } }],
-      };
-    });
+    queryMock = jest.fn(async () => ({
+      rows: [
+        {
+          launcher: null,
+          region: null,
+          created: null,
+          env: null,
+          rootfs_image: null,
+          rootfs_image_id: null,
+          snapshots: null,
+          backups: null,
+          run_quota: { disk_quota: 4000, always_running: false },
+          settings: { memory: 2000, mintime: 3600 },
+          course: null,
+        },
+      ],
+    }));
     getPoolMock = jest.fn(() => ({ query: queryMock }));
     callback2Mock = jest.fn(async (fn: any, opts: any) => await fn(opts));
     publishProjectDetailInvalidationBestEffortMock = jest.fn(
@@ -82,16 +93,15 @@ describe("getProjectRunQuota", () => {
       disk_quota: 4000,
       always_running: false,
     });
-    expect(queryMock).toHaveBeenCalledWith(
-      "SELECT run_quota FROM projects WHERE project_id = $1",
-      [PROJECT_ID],
-    );
+    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining("SELECT"), [
+      PROJECT_ID,
+    ]);
   });
 
   it("allows admins to read run quota without collaborator access", async () => {
-    assertLocalProjectCollaboratorMock = jest.fn(async () => {
-      throw new Error("not a collaborator");
-    });
+    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
+      async () => "not-collaborator",
+    );
     isAdminMock = jest.fn(async () => true);
     const { getProjectRunQuota } = await import("./projects");
     await expect(
@@ -154,9 +164,8 @@ describe("getProjectRunQuota", () => {
       memory: 2000,
       mintime: 3600,
     });
-    expect(queryMock).toHaveBeenCalledWith(
-      "SELECT settings FROM projects WHERE project_id = $1",
-      [PROJECT_ID],
-    );
+    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining("SELECT"), [
+      PROJECT_ID,
+    ]);
   });
 });

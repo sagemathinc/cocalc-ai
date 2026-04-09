@@ -12,9 +12,9 @@ jest.mock("@cocalc/server/conat/project-local-access", () => ({
   hasLocalProjectCollaboratorAccess: jest.fn(),
 }));
 
-jest.mock("@cocalc/server/conat/route-project", () => ({
+jest.mock("@cocalc/server/conat/project-remote-access", () => ({
   __esModule: true,
-  materializeProjectHost: jest.fn(),
+  hasProjectCollaboratorAccessAllowRemote: jest.fn(),
 }));
 
 jest.mock("@cocalc/server/projects/control/secret-token", () => ({
@@ -22,8 +22,7 @@ jest.mock("@cocalc/server/projects/control/secret-token", () => ({
   getProjectSecretToken: jest.fn(),
 }));
 
-import { hasLocalProjectCollaboratorAccess } from "@cocalc/server/conat/project-local-access";
-import { materializeProjectHost } from "@cocalc/server/conat/route-project";
+import { hasProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 
 const PUBSUB: ("pub" | "sub")[] = ["pub", "sub"];
@@ -155,7 +154,9 @@ describe("test isAllowed for common subjects for projects and accounts", () => {
     ).toBe(false);
 
     // collab or not, account can't listen to inbox for a project:
-    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(false);
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      false,
+    );
     expect(
       await isAllowed({
         user: { account_id },
@@ -164,7 +165,9 @@ describe("test isAllowed for common subjects for projects and accounts", () => {
       }),
     ).toBe(false);
 
-    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(true);
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
     expect(
       await isAllowed({
         user: { account_id },
@@ -256,11 +259,13 @@ describe("test isAllowed for subjects special to accounts (similar to projects)"
 
 describe("test isAllowed for collaboration -- this is the most nontrivial one", () => {
   beforeEach(() => {
-    (materializeProjectHost as jest.Mock).mockReset();
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockReset();
   });
 
   it("verifies an account can access a project it collaborates on", async () => {
-    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(true);
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
 
     expect(
       await isAllowed({
@@ -270,12 +275,16 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
       }),
     ).toBe(true);
 
-    expect(hasLocalProjectCollaboratorAccess).toHaveBeenCalled();
-    expect(materializeProjectHost).toHaveBeenCalledWith(project_id);
+    expect(hasProjectCollaboratorAccessAllowRemote).toHaveBeenCalledWith({
+      account_id,
+      project_id,
+    });
   });
 
   it("same account and project -- even if not collaborator still have permissions because of LRU cache!", async () => {
-    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(false);
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      false,
+    );
 
     expect(
       await isAllowed({
@@ -287,7 +296,9 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
   });
 
   it("check on another project that not a collab on", async () => {
-    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(false);
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      false,
+    );
 
     expect(
       await isAllowed({
@@ -299,7 +310,9 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
   });
 
   it("verifies an account can access a project hub subject it collaborates on", async () => {
-    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(true);
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
 
     expect(
       await isAllowed({
@@ -308,13 +321,13 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
         type: "pub",
       }),
     ).toBe(true);
-
-    expect(materializeProjectHost).toHaveBeenCalledWith(project_id3);
   });
 
   it("warms routing for ACP automation subjects", async () => {
     const automationProjectId = "00000000-0000-4000-8000-000000000003";
-    (hasLocalProjectCollaboratorAccess as jest.Mock).mockResolvedValue(true);
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
 
     expect(
       await isAllowed({
@@ -323,8 +336,6 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
         type: "pub",
       }),
     ).toBe(true);
-
-    expect(materializeProjectHost).toHaveBeenCalledWith(automationProjectId);
   });
 });
 
