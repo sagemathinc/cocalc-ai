@@ -10,7 +10,6 @@ import {
   Modal,
   Select,
   Space,
-  Typography,
   message as antdMessage,
 } from "antd";
 import {
@@ -20,6 +19,7 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import { ThemeEditorModal } from "@cocalc/frontend/components";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import {
   defaultWorkingDirectoryForChat,
   useWorkspaceChatWorkingDirectory,
@@ -29,6 +29,7 @@ import { HelpIcon } from "@cocalc/frontend/components/help-icon";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import type { CodexThreadConfig } from "@cocalc/chat";
+import { argsJoin } from "@cocalc/util/args";
 import { path_split } from "@cocalc/util/misc";
 import {
   DEFAULT_CODEX_MODEL_NAME,
@@ -660,22 +661,10 @@ export function ChatRoomModals({
             threads. The canonical chat export excludes CoCalc activity logs.
           </div>
           {showExportCliCommand ? (
-            <Typography.Paragraph
-              copyable={{ text: exportCliCommand }}
-              style={{
-                marginBottom: 0,
-                padding: "8px 10px",
-                border: `1px solid ${COLORS.GRAY_L}`,
-                borderRadius: 6,
-                background: COLORS.GRAY_LL,
-                fontFamily: "monospace",
-                fontSize: 12,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              {exportCliCommand}
-            </Typography.Paragraph>
+            <StaticMarkdown
+              value={toShellCodeBlock(exportCliCommand)}
+              style={{ fontSize: 12, marginTop: 0 }}
+            />
           ) : null}
         </Space>
       </Modal>
@@ -906,22 +895,10 @@ export function ChatRoomModals({
                 Adjust the first path to wherever the archive lives in the
                 project.
               </div>
-              <Typography.Paragraph
-                copyable={{ text: importCliCommand }}
-                style={{
-                  marginBottom: 0,
-                  padding: "8px 10px",
-                  border: `1px solid ${COLORS.GRAY_L}`,
-                  borderRadius: 6,
-                  background: COLORS.GRAY_LL,
-                  fontFamily: "monospace",
-                  fontSize: 12,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                }}
-              >
-                {importCliCommand}
-              </Typography.Paragraph>
+              <StaticMarkdown
+                value={toShellCodeBlock(importCliCommand)}
+                style={{ fontSize: 12, marginTop: 0 }}
+              />
             </>
           ) : null}
         </Space>
@@ -1069,7 +1046,7 @@ function buildChatExportCliCommand({
     args.push("--include-codex-context");
   }
   args.push("--json");
-  return shellQuoteCommand(args);
+  return argsJoin(args);
 }
 
 function buildChatImportCliCommand({
@@ -1093,15 +1070,11 @@ function buildChatImportCliCommand({
     args.push("--project-id", projectId.trim());
   }
   args.push("--json");
-  return shellQuoteCommand(args);
+  return argsJoin(args);
 }
 
-function shellQuoteCommand(args: string[]): string {
-  return args.map(shellQuoteArg).join(" ");
-}
-
-function shellQuoteArg(value: string): string {
-  return `'${`${value ?? ""}`.replace(/'/g, `'\"'\"'`)}'`;
+function toShellCodeBlock(command: string): string {
+  return `\`\`\`sh\n${command}\n\`\`\``;
 }
 
 function slugifyLabel(label?: string): string {

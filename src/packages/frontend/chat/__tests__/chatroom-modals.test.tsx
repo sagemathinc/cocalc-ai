@@ -179,12 +179,22 @@ describe("chatroom fork modal defaults", () => {
       await screen.findByRole("checkbox", { name: "Show CLI command" }),
     );
 
-    expect(
-      await screen.findByText(
-        /cocalc' 'export' 'chat' 'project\/chat\/test.chat'/i,
-      ),
-    ).not.toBeNull();
-    expect(screen.getByText(/'--include-codex-context'/i)).not.toBeNull();
+    await waitFor(() => {
+      const blocks = Array.from(
+        document.querySelectorAll<HTMLPreElement>("pre.cocalc-slate-code-block"),
+      );
+      expect(
+        blocks.some((block) =>
+          block.textContent?.includes("cocalc export chat project/chat/test.chat") ??
+          false,
+        ),
+      ).toBe(true);
+      expect(
+        blocks.some((block) =>
+          block.textContent?.includes("--include-codex-context") ?? false,
+        ),
+      ).toBe(true);
+    });
   });
 
   it("opens import and passes the selected zip file to importChatArchive", async () => {
@@ -252,13 +262,22 @@ describe("chatroom fork modal defaults", () => {
       await screen.findByRole("checkbox", { name: "Show CLI command" }),
     );
 
-    expect(
-      await screen.findByText(
-        /cocalc' 'import' 'chat' '\/path\/to\/chat-export.zip'/i,
-      ),
-    ).not.toBeNull();
-    expect(
-      screen.getByText(/'--target' 'project\/chat\/test.chat'/i),
-    ).not.toBeNull();
+    await waitFor(() => {
+      const blocks = Array.from(
+        document.querySelectorAll<HTMLPreElement>("pre.cocalc-slate-code-block"),
+      );
+      expect(
+        blocks.some((block) =>
+          block.textContent?.includes("cocalc import chat /path/to/chat-export.zip") ??
+          false,
+        ),
+      ).toBe(true);
+      expect(
+        blocks.some((block) =>
+          block.textContent?.includes("--target project/chat/test.chat") ??
+          false,
+        ),
+      ).toBe(true);
+    });
   });
 });
