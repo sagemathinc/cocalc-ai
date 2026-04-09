@@ -665,7 +665,8 @@ export class DKV<T = any> extends EventEmitter {
 
     let i = 0;
     for (const resp of results) {
-      const { key } = x[i];
+      const req = x[i];
+      const { key } = req;
       i++;
       if (this.kv == null) return;
       if (!(resp as any).error) {
@@ -697,8 +698,8 @@ export class DKV<T = any> extends EventEmitter {
           // need to save anything, since we'll receive a message that overwrites this key.
           // It's very important that the changefeed actually be working, of course, which
           // is why the this.invalidSeq, so we never retry in this case, since it can't work.
-          if (x[i]?.options?.previousSeq) {
-            this.invalidSeq.add(x[i].options!.previousSeq!);
+          if (req.options?.previousSeq) {
+            this.invalidSeq.add(req.options.previousSeq);
           }
           return;
         }
