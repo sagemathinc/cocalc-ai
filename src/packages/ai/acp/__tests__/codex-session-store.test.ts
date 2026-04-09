@@ -1,8 +1,12 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { truncateSessionHistory } from "../codex-session-store";
+import {
+  readPortableSessionHistory,
+  truncateSessionHistory,
+  truncateSessionHistoryById,
+} from "../codex-session-store";
 
 async function makeSessionFile(lines: string[]): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "codex-session-store-"));
@@ -78,5 +82,74 @@ describe("truncateSessionHistory", () => {
     ).resolves.toBe(false);
 
     await expect(readFile(filePath, "utf8")).resolves.toBe(before);
+  });
+
+  it("can export a trimmed portable copy without mutating the source file", async () => {
+    const filePath = await makeSessionFile([
+      JSON.stringify({ type: "session_meta", payload: { id: "sess-1" } }),
+      compactedLine("old-1"),
+      eventLine("after-old-1"),
+      compactedLine("keep-1"),
+      eventLine("after-keep-1"),
+      compactedLine("keep-2"),
+      eventLine("after-keep-2"),
+    ]);
+    const before = await readFile(filePath, "utf8");
+
+    const portable = await readPortableSessionHistory(filePath, {
+      force: true,
+      keepCompactions: 2,
+    });
+    const exported = new TextDecoder().decode(portable.content).trimEnd();
+
+    expect(portable.trimmed).toBe(true);
+    expect(portable.totalCompactions).toBe(3);
+    expect(exported.split("\n")).toEqual([
+      JSON.stringify({ type: "session_meta", payload: { id: "sess-1" } }),
+      compactedLine("keep-1"),
+      eventLine("after-keep-1"),
+      compactedLine("keep-2"),
+      eventLine("after-keep-2"),
+    ]);
+    await expect(readFile(filePath, "utf8")).resolves.toBe(before);
+  });
+
+  it("can truncate a session by id from the sessions root", async () => {
+    const sessionsRoot = await mkdtemp(
+      path.join(os.tmpdir(), "codex-session-root-"),
+    );
+    const sessionId = "sess-lookup";
+    const sessionDir = path.join(sessionsRoot, "2026", "04", "09");
+    await mkdir(sessionDir, { recursive: true });
+    const filePath = path.join(sessionDir, `rollout-${sessionId}.jsonl`);
+    await writeFile(
+      filePath,
+      [
+        JSON.stringify({ type: "session_meta", payload: { id: sessionId } }),
+        compactedLine("old-1"),
+        eventLine("after-old-1"),
+        compactedLine("keep-1"),
+        eventLine("after-keep-1"),
+        compactedLine("keep-2"),
+        eventLine("after-keep-2"),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    await expect(
+      truncateSessionHistoryById(sessionId, {
+        sessionsRoot,
+        force: true,
+        keepCompactions: 2,
+      }),
+    ).resolves.toBe(true);
+
+    await expect(readLines(filePath)).resolves.toEqual([
+      JSON.stringify({ type: "session_meta", payload: { id: sessionId } }),
+      compactedLine("keep-1"),
+      eventLine("after-keep-1"),
+      compactedLine("keep-2"),
+      eventLine("after-keep-2"),
+    ]);
   });
 });

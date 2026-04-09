@@ -10,6 +10,7 @@ import type {
   AcpRequest,
   AcpSteerRequest,
   AcpSteerResponse,
+  AcpTruncateSessionRequest,
   AcpStreamMessage,
 } from "./types";
 import {
@@ -18,6 +19,7 @@ import {
   acpForkSubject,
   acpInterruptSubject,
   acpSteerSubject,
+  acpTruncateSubject,
   acpSubject,
 } from "./server";
 
@@ -163,6 +165,32 @@ export async function forkAcpSession(
     throw Error("invalid sessionId returned from fork");
   }
   return { sessionId };
+}
+
+export async function truncateAcpSession(
+  request: AcpTruncateSessionRequest,
+  client?: Client,
+): Promise<{ ok: boolean; truncated: boolean }> {
+  if (!isValidUUID(request.project_id)) {
+    throw Error("project_id must be a valid uuid");
+  }
+  if (!isValidUUID(request.account_id)) {
+    throw Error("account_id must be a valid uuid");
+  }
+  if (!isNonEmptySessionId(request.sessionId)) {
+    throw Error("sessionId must be a non-empty string");
+  }
+  const subject = acpTruncateSubject({ project_id: request.project_id });
+  const cn = requireExplicitConatClient(client);
+  const resp = await cn.request(subject, request, { timeout: 30 * 1000 });
+  const error = resp?.data?.error;
+  if (error) {
+    throw Error(error);
+  }
+  return {
+    ok: resp?.data?.ok === true,
+    truncated: resp?.data?.truncated === true,
+  };
 }
 
 export async function controlAcp(

@@ -4,10 +4,17 @@ jest.mock("./server", () => ({
   acpForkSubject: () => "acp.test.fork",
   acpInterruptSubject: () => "acp.test.interrupt",
   acpSteerSubject: () => "acp.test.steer",
+  acpTruncateSubject: () => "acp.test.truncate",
   acpSubject: () => "acp.test.api",
 }));
 
-import { automationAcp, forkAcpSession, steerAcp, streamAcp } from "./client";
+import {
+  automationAcp,
+  forkAcpSession,
+  steerAcp,
+  streamAcp,
+  truncateAcpSession,
+} from "./client";
 
 describe("acp client explicit routing", () => {
   it("requires an explicit client for streamAcp", async () => {
@@ -98,5 +105,27 @@ describe("forkAcpSession", () => {
         sessionId: "thr-shared-1",
       }),
     ).rejects.toThrow("must provide an explicit Conat client");
+  });
+});
+
+describe("truncateAcpSession", () => {
+  it("returns whether truncation happened", async () => {
+    const client = {
+      request: jest.fn().mockResolvedValue({
+        data: { ok: true, truncated: true },
+      }),
+    };
+
+    await expect(
+      truncateAcpSession(
+        {
+          project_id: "00000000-0000-4000-8000-000000000000",
+          account_id: "00000000-0000-4000-8000-000000000001",
+          sessionId: "thr-shared-1",
+          force: true,
+        },
+        client as any,
+      ),
+    ).resolves.toEqual({ ok: true, truncated: true });
   });
 });

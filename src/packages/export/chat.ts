@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { findSessionFile, readPortableSessionHistory } from "@cocalc/ai/acp";
 import type {
   ChatMessage,
   ChatThreadConfigRecord,
@@ -69,6 +70,10 @@ export interface ChatExportCodexContext {
   session_path: string;
   sha256: string;
   exported_session_path?: string;
+  trimmed?: boolean;
+  original_bytes?: number;
+  exported_bytes?: number;
+  total_compactions?: number;
 }
 
 export interface ChatExportMessageRow {
@@ -620,41 +625,6 @@ function getSessionsRootForExport(): string | undefined {
   return undefined;
 }
 
-async function findSessionFileForExport(
-  sessionId: string,
-  sessionsRoot: string,
-): Promise<string | undefined> {
-  const suffix = `-${sessionId}.jsonl`;
-  return await walkForSessionFile(sessionsRoot, suffix);
-}
-
-async function walkForSessionFile(
-  dir: string,
-  suffix: string,
-): Promise<string | undefined> {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch (err: any) {
-    if (err?.code === "ENOENT" || err?.code === "ENOTDIR") {
-      return undefined;
-    }
-    throw err;
-  }
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      const found = await walkForSessionFile(full, suffix);
-      if (found) return found;
-      continue;
-    }
-    if (entry.isFile() && full.endsWith(suffix)) {
-      return full;
-    }
-  }
-  return undefined;
-}
-
 function readSessionMetaFromJsonl(
   content: Uint8Array,
   filePath: string,
@@ -714,7 +684,7 @@ async function collectChatCodexContexts({
       aggregate.warnings.push(warning);
       continue;
     }
-    const sessionFile = await findSessionFileForExport(sessionId, sessionsRoot);
+    const sessionFile = await findSessionFile(sessionId, sessionsRoot);
     if (!sessionFile) {
       const warning: ChatExportWarning = {
         code: "codex_context_missing",
@@ -727,7 +697,10 @@ async function collectChatCodexContexts({
       continue;
     }
     try {
-      const sessionBytes = new Uint8Array(await readFile(sessionFile));
+      const portable = await readPortableSessionHistory(sessionFile, {
+        force: true,
+      });
+      const sessionBytes = portable.content;
       const sha256 = createHash("sha256").update(sessionBytes).digest("hex");
       const meta = readSessionMetaFromJsonl(sessionBytes, sessionFile);
       const codexDir = `threads/${aggregate.threadId}/codex`;
@@ -743,6 +716,10 @@ async function collectChatCodexContexts({
         session_path: sessionPath,
         sha256,
         exported_session_path: relativeSessionPath,
+        trimmed: portable.trimmed,
+        original_bytes: portable.originalBytes,
+        exported_bytes: portable.exportedBytes,
+        total_compactions: portable.totalCompactions,
       };
       files.push(
         {
@@ -754,6 +731,10 @@ async function collectChatCodexContexts({
               session_id: sessionId,
               sha256,
               exported_session_path: relativeSessionPath,
+              trimmed: portable.trimmed,
+              original_bytes: portable.originalBytes,
+              exported_bytes: portable.exportedBytes,
+              total_compactions: portable.totalCompactions,
               session_meta: meta.payload,
             },
             null,

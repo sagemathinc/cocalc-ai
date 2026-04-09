@@ -9,6 +9,8 @@
     "lib": ["es2020", "dom"],
     "baseUrl": ".",
     "paths": {
+      "@cocalc/ai": ["../ai"],
+      "@cocalc/ai/*": ["../ai/*"],
       "@cocalc/backend": ["../backend"],
       "@cocalc/backend/*": ["../backend/*"],
       "@cocalc/chat": ["../chat"],
@@ -17,5 +19,9 @@
   },
   "include": ["./**/*.ts"],
   "exclude": ["dist", "node_modules"],
-  "references": [{ "path": "../backend" }, { "path": "../chat" }]
+  "references": [
+    { "path": "../ai" },
+    { "path": "../backend" },
+    { "path": "../chat" }
+  ]
 }

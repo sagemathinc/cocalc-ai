@@ -29,6 +29,28 @@ type SessionMetaLine = {
   payload: Record<string, unknown>;
 };
 
+type SessionHistoryOptions = {
+  maxBytes?: number;
+  keepCompactions?: number;
+  minCompactionsToTruncate?: number;
+  force?: boolean;
+};
+
+type SessionHistoryPlan = {
+  firstLine?: string;
+  originalBytes: number;
+  totalCompactions: number;
+  startIndex?: number;
+};
+
+export type PortableSessionHistory = {
+  content: Uint8Array;
+  trimmed: boolean;
+  originalBytes: number;
+  exportedBytes: number;
+  totalCompactions: number;
+};
+
 function defaultCodexHome(): string | undefined {
   if (process.env.COCALC_CODEX_HOME) return process.env.COCALC_CODEX_HOME;
   if (process.env.COCALC_ORIGINAL_HOME) {
@@ -163,37 +185,40 @@ export async function rewriteSessionMeta(
   return true;
 }
 
-// Codex can accumulate huge JSONL session files (multi-GB) because it never
-// trims prior compactions. We don't need that full history for CoCalc since the
-// authoritative chat log lives in our frontend; we only need recent compaction
-// state for context. This keeps session files bounded and prevents OOM/slow
-// behavior when resuming old sessions, e.g., "codex resume" will easily use
-// 5GB+ loading a massive jsonl history, just to ignore most of it.
-// If codex will change to not store all these old pointless compaction
-// in the jsonl history and then we can remove this.
-export async function truncateSessionHistory(
+async function planSessionHistoryRewrite(
   filePath: string,
-  opts?: {
-    maxBytes?: number;
-    keepCompactions?: number;
-    minCompactionsToTruncate?: number;
-  },
-): Promise<boolean> {
+  opts?: SessionHistoryOptions,
+): Promise<SessionHistoryPlan> {
   const maxBytes = opts?.maxBytes ?? DEFAULT_TRUNCATE_BYTES;
   const keepCompactions = opts?.keepCompactions ?? DEFAULT_KEEP_COMPACTIONS;
   const minCompactionsToTruncate =
     opts?.minCompactionsToTruncate ?? DEFAULT_MIN_COMPACTIONS_TO_TRUNCATE;
-  if (keepCompactions <= 0) return false;
+  const force = opts?.force === true;
   const stats = await fs.stat(filePath);
-  if (stats.size < maxBytes) return false;
+  if (keepCompactions <= 0) {
+    return {
+      originalBytes: stats.size,
+      totalCompactions: 0,
+    };
+  }
+  if (!force && stats.size < maxBytes) {
+    return {
+      originalBytes: stats.size,
+      totalCompactions: 0,
+    };
+  }
 
   const compactionLines: number[] = [];
+  let firstLine: string | undefined;
   let totalLines = 0;
   let totalCompactions = 0;
   const input = createReadStream(filePath, { encoding: "utf8" });
   const rl = readline.createInterface({ input, crlfDelay: Infinity });
   try {
     for await (const line of rl) {
+      if (firstLine == null) {
+        firstLine = line;
+      }
       if (line.includes('"type":"compacted"')) {
         totalCompactions += 1;
         compactionLines.push(totalLines);
@@ -208,12 +233,107 @@ export async function truncateSessionHistory(
     input.destroy();
   }
 
-  if (totalCompactions < minCompactionsToTruncate) return false;
-  if (compactionLines.length === 0) return false;
+  if (totalCompactions < minCompactionsToTruncate) {
+    return {
+      firstLine,
+      originalBytes: stats.size,
+      totalCompactions,
+    };
+  }
+  if (compactionLines.length === 0) {
+    return {
+      firstLine,
+      originalBytes: stats.size,
+      totalCompactions,
+    };
+  }
   const startIndex = compactionLines[0];
-  if (startIndex <= 1) return false;
+  if (startIndex <= 1) {
+    return {
+      firstLine,
+      originalBytes: stats.size,
+      totalCompactions,
+    };
+  }
 
-  const firstLine = await readFirstLine(filePath);
+  return {
+    firstLine,
+    originalBytes: stats.size,
+    totalCompactions,
+    startIndex,
+  };
+}
+
+async function renderTrimmedSessionHistory(
+  filePath: string,
+  plan: SessionHistoryPlan,
+): Promise<Uint8Array> {
+  if (plan.startIndex == null || plan.firstLine == null) {
+    return new Uint8Array(await fs.readFile(filePath));
+  }
+  const chunks: string[] = [`${plan.firstLine}\n`];
+  const input = createReadStream(filePath, { encoding: "utf8" });
+  const rl = readline.createInterface({ input, crlfDelay: Infinity });
+  let lineNum = 0;
+  try {
+    for await (const line of rl) {
+      if (lineNum >= plan.startIndex) {
+        chunks.push(`${line}\n`);
+      }
+      lineNum += 1;
+    }
+  } finally {
+    rl.close();
+    input.destroy();
+  }
+  return new Uint8Array(Buffer.from(chunks.join(""), "utf8"));
+}
+
+export async function readPortableSessionHistory(
+  filePath: string,
+  opts?: SessionHistoryOptions,
+): Promise<PortableSessionHistory> {
+  const plan = await planSessionHistoryRewrite(filePath, opts);
+  const content = await renderTrimmedSessionHistory(filePath, plan);
+  return {
+    content,
+    trimmed: plan.startIndex != null,
+    originalBytes: plan.originalBytes,
+    exportedBytes: content.byteLength,
+    totalCompactions: plan.totalCompactions,
+  };
+}
+
+export async function truncateSessionHistoryById(
+  sessionId: string,
+  opts?: SessionHistoryOptions & {
+    sessionsRoot?: string;
+  },
+): Promise<boolean> {
+  const trimmedSessionId = `${sessionId ?? ""}`.trim();
+  if (!trimmedSessionId) return false;
+  const sessionsRoot = opts?.sessionsRoot ?? getSessionsRoot();
+  if (!sessionsRoot) return false;
+  const filePath = await findSessionFile(trimmedSessionId, sessionsRoot);
+  if (!filePath) return false;
+  return await truncateSessionHistory(filePath, opts);
+}
+
+// Codex can accumulate huge JSONL session files (multi-GB) because it never
+// trims prior compactions. We don't need that full history for CoCalc since the
+// authoritative chat log lives in our frontend; we only need recent compaction
+// state for context. This keeps session files bounded and prevents OOM/slow
+// behavior when resuming old sessions, e.g., "codex resume" will easily use
+// 5GB+ loading a massive jsonl history, just to ignore most of it.
+// If codex will change to not store all these old pointless compaction
+// in the jsonl history and then we can remove this.
+export async function truncateSessionHistory(
+  filePath: string,
+  opts?: SessionHistoryOptions,
+): Promise<boolean> {
+  const plan = await planSessionHistoryRewrite(filePath, opts);
+  if (plan.startIndex == null || plan.firstLine == null) return false;
+  const startIndex = plan.startIndex;
   const dir = path.dirname(filePath);
   const tmp = path.join(dir, `.tmp-${path.basename(filePath)}-${Date.now()}`);
 
@@ -229,7 +349,7 @@ export async function truncateSessionHistory(
 
     rlCopy.on("line", (line) => {
       if (!wroteHeader) {
-        write.write(`${firstLine}\n`);
+        write.write(`${plan.firstLine}\n`);
         wroteHeader = true;
       }
       if (lineNum >= startIndex) {
@@ -259,10 +379,9 @@ export async function truncateSessionHistory(
   await fs.rename(tmp, filePath);
   logger.debug("truncated session history", {
     filePath,
-    startIndex,
-    totalLines,
-    totalCompactions,
-    size: stats.size,
+    startIndex: plan.startIndex,
+    totalCompactions: plan.totalCompactions,
+    size: plan.originalBytes,
   });
   return true;
 }

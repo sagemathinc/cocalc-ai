@@ -207,6 +207,13 @@ export type AcpForkSessionRequest = {
   newSessionId?: string;
 };
 
+export type AcpTruncateSessionRequest = {
+  project_id: string;
+  account_id: string;
+  sessionId: string;
+  force?: boolean;
+};
+
 export type AcpControlRequest = {
   project_id: string;
   account_id: string;

@@ -149,6 +149,27 @@ export function resetAcpThreadState({
   store.setState({ acpState: nextState });
 }
 
+export async function truncateAcpSession({
+  actions,
+  sessionId,
+  force = true,
+}: {
+  actions: ChatActions;
+  sessionId?: string;
+  force?: boolean;
+}): Promise<boolean> {
+  const normalizedSessionId = `${sessionId ?? ""}`.trim();
+  if (!normalizedSessionId) return false;
+  const project_id = actions.store?.get("project_id");
+  if (!project_id) return false;
+  const result = await webapp_client.conat_client.truncateAcpSession({
+    project_id,
+    sessionId: normalizedSessionId,
+    force,
+  });
+  return result?.truncated === true;
+}
+
 type ProcessAcpRequest = {
   message: ChatMessage;
   model: string;

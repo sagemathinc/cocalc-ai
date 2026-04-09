@@ -1189,6 +1189,13 @@ export class ConatClient extends EventEmitter {
     );
   };
 
+  truncateAcpSession = async (request) => {
+    return await acp.truncateAcpSession(
+      { account_id: this.client.account_id, ...request },
+      this.conat(),
+    );
+  };
+
   controlAcp = async (request) => {
     return await acp.controlAcp(
       { account_id: this.client.account_id, ...request },
