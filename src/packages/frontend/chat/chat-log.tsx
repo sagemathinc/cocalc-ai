@@ -26,6 +26,7 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { DivTempHeight } from "@cocalc/frontend/jupyter/div-temp-height";
 import { cmp } from "@cocalc/util/misc";
 import type { ChatActions } from "./actions";
+import type { AttachedSteerMessage } from "./agent-message-status";
 import Composing from "./composing";
 import Message from "./message";
 import type {
@@ -48,6 +49,65 @@ import { COMBINED_FEED_KEY } from "./threads";
 // become basically impossible.
 const USE_VIRTUOSO = true;
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
+
+function isImmediateAcpSteerMessage(message: ChatMessageTyped): boolean {
+  return field<string>(message, "acp_send_mode") === "immediate";
+}
+
+function toAttachedSteerState(
+  state: unknown,
+): AttachedSteerMessage["state"] | undefined {
+  switch (state) {
+    case "sending":
+      return "sending";
+    case "sent":
+    case "running":
+      return "sent";
+    case "queue":
+      return "queued";
+    case "not-sent":
+      return "not-sent";
+    default:
+      return undefined;
+  }
+}
+
+function collectAttachedSteers({
+  messages,
+  visibleKeys,
+  acpState,
+}: {
+  messages: ChatMessages;
+  visibleKeys?: Set<string>;
+  acpState?: { get?: (key: string) => unknown };
+}): Map<string, AttachedSteerMessage[]> {
+  const attached = new Map<string, AttachedSteerMessage[]>();
+  for (const [, message] of messages) {
+    if (message == null || !isImmediateAcpSteerMessage(message)) continue;
+    const messageDate = dateValue(message);
+    if (!messageDate) continue;
+    const messageKey = `${messageDate.valueOf()}`;
+    if (visibleKeys && !visibleKeys.has(messageKey)) continue;
+    const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
+    const parentId = `${parentMessageId(message) ?? ""}`.trim();
+    const text = newest_content(message)?.trim();
+    if (!messageId || !parentId || !text) continue;
+    const state = toAttachedSteerState(acpState?.get?.(`message:${messageId}`));
+    if (!state) continue;
+    const next = attached.get(parentId) ?? [];
+    next.push({
+      messageId,
+      date: messageDate.valueOf(),
+      text,
+      state,
+    });
+    attached.set(parentId, next);
+  }
+  for (const list of attached.values()) {
+    list.sort((a, b) => cmp(a.date, b.date));
+  }
+  return attached;
+}
 
 const CHAT_LOG_CONTAINER_STYLE: CSSProperties = {
   display: "flex",
@@ -173,6 +233,10 @@ export function ChatLog({
   }, [showThreadHeaders, threadIndex]);
   const user_map = useTypedRedux("users", "user_map");
   const account_id = useTypedRedux("account", "account_id");
+  const attachedSteersByParentMessageId = useMemo(
+    () => collectAttachedSteers({ messages, visibleKeys, acpState }),
+    [messages, visibleKeys, acpState],
+  );
   const anyOverlayOpen = useAnyChatOverlayOpen();
   const activeTopTab = useTypedRedux("page", "active_top_tab");
   const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
@@ -360,6 +424,7 @@ export function ChatLog({
           scrollCacheId,
           scrollToBottomRef,
           acpState,
+          attachedSteersByParentMessageId,
           showThreadHeaders,
           onSelectThread: showThreadHeaders ? handleSelectThread : undefined,
           composerTargetKey,
@@ -468,6 +533,7 @@ export function getSortedDates(
     if (!messageDate) continue;
     const messageKey = `${messageDate.valueOf()}`;
     if (visibleKeys && !visibleKeys.has(messageKey)) continue;
+    if (isImmediateAcpSteerMessage(message)) continue;
     visibleMessages.push(message);
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
     if (messageId) visibleById.set(messageId, message);
@@ -548,6 +614,7 @@ export function MessageList({
   scrollCacheId,
   scrollToBottomRef,
   acpState,
+  attachedSteersByParentMessageId,
   showThreadHeaders,
   onSelectThread,
   searchQuery,
@@ -581,6 +648,7 @@ export function MessageList({
   scrollCacheId?: string;
   scrollToBottomRef?: MutableRefObject<(force?: boolean) => void>;
   acpState?;
+  attachedSteersByParentMessageId?: Map<string, AttachedSteerMessage[]>;
   showThreadHeaders?: boolean;
   onSelectThread?: (threadKey: string) => void;
   searchQuery?: string;
@@ -714,6 +782,17 @@ export function MessageList({
             ) ?? sortedDates[index - 1]
           }`
         : undefined;
+    const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
+    const messageAcpState = messageId
+      ? acpState?.get?.(`message:${messageId}`)
+      : undefined;
+    const attachedSteers =
+      messageId &&
+      Boolean(field<string>(message, "acp_account_id")) &&
+      (field<boolean>(message, "generating") === true ||
+        ACP_ACTIVE_STATES.has(messageAcpState))
+        ? attachedSteersByParentMessageId?.get(messageId)
+        : undefined;
 
     const is_thread = numChildren != null && isThread(message, numChildren);
     const h = virtuosoHeightsRef.current?.[index];
@@ -773,11 +852,8 @@ export function MessageList({
             }
             threadViewMode={singleThreadView}
             onForceScrollToBottom={forceScrollToBottom}
-            acpState={(() => {
-              const messageId = field<string>(message, "message_id");
-              if (!messageId) return undefined;
-              return acpState?.get(`message:${messageId}`);
-            })()}
+            acpState={messageAcpState}
+            attachedSteers={attachedSteers}
             dim={shouldDim}
             searchHighlight={searchQuery}
             openActivityToken={

@@ -50,6 +50,15 @@ type LogRefs = {
   liveStream?: string;
 };
 
+export type AttachedSteerState = "sending" | "sent" | "queued" | "not-sent";
+
+export interface AttachedSteerMessage {
+  messageId: string;
+  date: number;
+  text: string;
+  state: AttachedSteerState;
+}
+
 export const STALE_ACTIVITY_MS = 2 * 60 * 1000;
 
 function formatTimestampTitle(ms: number): string {
@@ -117,6 +126,7 @@ interface AgentMessageStatusProps {
   onDrawerOpenChange?: (open: boolean) => void;
   logEvents?: AcpStreamMessage[] | null;
   deleteLog?: () => Promise<void>;
+  attachedSteers?: AttachedSteerMessage[];
 }
 
 interface AgentActivityChipProps {
@@ -260,6 +270,7 @@ export function AgentMessageStatus({
   onDrawerOpenChange,
   logEvents,
   deleteLog,
+  attachedSteers,
   notifyOnTurnFinish = false,
   onNotifyOnTurnFinishChange,
 }: AgentMessageStatusProps) {
@@ -399,6 +410,43 @@ export function AgentMessageStatus({
   if (!show) return null;
 
   const openActivity = () => setShowDrawer(true);
+  const steerItems = Array.isArray(attachedSteers) ? attachedSteers : [];
+  const renderSteerStatus = (state: AttachedSteerState) => {
+    switch (state) {
+      case "sending":
+        return {
+          label: "Sending guidance",
+          borderColor: COLORS.BLUE_LLL,
+          background: COLORS.BLUE_LLLL,
+          pillBackground: COLORS.BLUE_LLL,
+          pillColor: COLORS.BLUE_DDD,
+        };
+      case "queued":
+        return {
+          label: "Guidance queued",
+          borderColor: COLORS.YELL_LL,
+          background: COLORS.YELL_LLL,
+          pillBackground: COLORS.YELL_LL,
+          pillColor: COLORS.BRWN,
+        };
+      case "not-sent":
+        return {
+          label: "Guidance not sent",
+          borderColor: COLORS.ANTD_BG_RED_M,
+          background: COLORS.ANTD_BG_RED_L,
+          pillBackground: COLORS.ANTD_BG_RED_M,
+          pillColor: "white",
+        };
+      default:
+        return {
+          label: "Guidance sent",
+          borderColor: COLORS.BLUE_LLL,
+          background: COLORS.BLUE_LLLL,
+          pillBackground: COLORS.BLUE_LLL,
+          pillColor: COLORS.BLUE_DDD,
+        };
+    }
+  };
 
   return (
     <>
@@ -435,6 +483,66 @@ export function AgentMessageStatus({
           </Tooltip>
         ) : null}
       </div>
+      {steerItems.length > 0 ? (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            marginBottom: 8,
+          }}
+        >
+          {steerItems.map((steer) => {
+            const status = renderSteerStatus(steer.state);
+            return (
+              <div
+                key={steer.messageId}
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 8,
+                  flexWrap: "wrap",
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  background: status.background,
+                  border: `1px solid ${status.borderColor}`,
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    background: status.pillBackground,
+                    color: status.pillColor,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    lineHeight: 1.2,
+                  }}
+                >
+                  {steer.state === "sending" ? (
+                    <LoadingOutlined spin style={{ fontSize: 12 }} />
+                  ) : null}
+                  {status.label}
+                </span>
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: COLORS.GRAY_D,
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
+                    flex: "1 1 220px",
+                  }}
+                >
+                  {steer.text}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
 
       <Drawer
         title={
