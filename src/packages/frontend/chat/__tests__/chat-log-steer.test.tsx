@@ -140,4 +140,93 @@ describe("ChatLog immediate steer rendering", () => {
       },
     ]);
   });
+
+  it("attaches later steer messages to the original prompt even when they reply to an earlier steer", () => {
+    render(
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        mode="standalone"
+        actions={{ clearScrollRequest: jest.fn() } as any}
+        selectedThread="thread-1"
+        acpState={
+          new Map([
+            ["message:steer-1", "sent"],
+            ["message:steer-2", "sent"],
+          ]) as any
+        }
+        messages={
+          new Map([
+            [
+              "1000",
+              {
+                date: 1000,
+                message_id: "user-1",
+                thread_id: "thread-1",
+                sender_id: "acct-1",
+                history: [{ content: "say hi" }],
+              },
+            ],
+            [
+              "2000",
+              {
+                date: 2000,
+                message_id: "assistant-1",
+                thread_id: "thread-1",
+                parent_message_id: "user-1",
+                sender_id: "acct-codex",
+                acp_account_id: "acct-codex",
+                generating: true,
+                history: [{ content: "hello" }],
+              },
+            ],
+            [
+              "3000",
+              {
+                date: 3000,
+                message_id: "steer-1",
+                thread_id: "thread-1",
+                sender_id: "acct-1",
+                acp_send_mode: "immediate",
+                parent_message_id: "assistant-1",
+                acp_state: "sent",
+                history: [{ content: "actually say hello" }],
+              },
+            ],
+            [
+              "4000",
+              {
+                date: 4000,
+                message_id: "steer-2",
+                thread_id: "thread-1",
+                sender_id: "acct-1",
+                acp_send_mode: "immediate",
+                parent_message_id: "steer-1",
+                acp_state: "sent",
+                history: [{ content: "also add punctuation" }],
+              },
+            ],
+          ]) as any
+        }
+      />,
+    );
+
+    const userProps = renderedMessages.find(
+      (props) => props.message?.message_id === "user-1",
+    );
+    expect(userProps?.attachedSteers).toEqual([
+      {
+        messageId: "steer-1",
+        date: 3000,
+        text: "actually say hello",
+        state: "sent",
+      },
+      {
+        messageId: "steer-2",
+        date: 4000,
+        text: "also add punctuation",
+        state: "sent",
+      },
+    ]);
+  });
 });

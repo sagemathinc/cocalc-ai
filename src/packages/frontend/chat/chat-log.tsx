@@ -72,6 +72,34 @@ function toAttachedSteerState(
   }
 }
 
+function resolveSteerAnchorMessageId({
+  message,
+  byMessageId,
+}: {
+  message: ChatMessageTyped;
+  byMessageId: Map<string, ChatMessageTyped>;
+}): string | undefined {
+  let current: ChatMessageTyped | undefined = message;
+  let guard = 0;
+  while (current != null && guard < 1000) {
+    const directParentId = `${parentMessageId(current) ?? ""}`.trim();
+    if (!directParentId) return undefined;
+    const directParent = byMessageId.get(directParentId);
+    if (directParent == null) return directParentId;
+    if (isImmediateAcpSteerMessage(directParent)) {
+      current = directParent;
+      guard += 1;
+      continue;
+    }
+    if (field<string>(directParent, "acp_account_id")) {
+      const assistantParentId = `${parentMessageId(directParent) ?? ""}`.trim();
+      return assistantParentId || directParentId;
+    }
+    return directParentId;
+  }
+  return undefined;
+}
+
 function collectAttachedSteers({
   messages,
   visibleKeys,
@@ -97,15 +125,12 @@ function collectAttachedSteers({
     const messageKey = `${messageDate.valueOf()}`;
     if (visibleKeys && !visibleKeys.has(messageKey)) continue;
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
-    const directParentId = `${parentMessageId(message) ?? ""}`.trim();
     const text = newest_content(message)?.trim();
-    if (!messageId || !directParentId || !text) continue;
-    const directParent = byMessageId.get(directParentId);
-    const anchoredParentId =
-      directParent != null && field<string>(directParent, "acp_account_id")
-        ? `${parentMessageId(directParent) ?? directParentId}`.trim() ||
-          directParentId
-        : directParentId;
+    if (!messageId || !text) continue;
+    const anchoredParentId = resolveSteerAnchorMessageId({
+      message,
+      byMessageId,
+    });
     const state =
       toAttachedSteerState(acpState?.get?.(`message:${messageId}`)) ??
       toAttachedSteerState(field<string>(message, "acp_state"));
