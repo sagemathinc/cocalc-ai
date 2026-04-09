@@ -40,6 +40,16 @@ import type {
   ProjectLogPage,
   ProjectLogRow,
   RecentDocumentActivityRow,
+  ProjectLauncherSettings,
+  ProjectRegion,
+  ProjectCreated,
+  ProjectEnv,
+  ProjectRootfsConfig,
+  ProjectQuotaSettings,
+  ProjectCourseInfo,
+  ProjectSnapshotSchedule,
+  ProjectBackupSchedule,
+  ProjectRunQuota,
 } from "@cocalc/conat/hub/api/projects";
 import type {
   AccountFeedEvent,
@@ -385,6 +395,199 @@ async function listRecentDocumentActivityLite(opts: {
           .map(([account_id]) => account_id),
       }),
     );
+}
+
+interface LiteProjectReadDetails {
+  launcher: ProjectLauncherSettings;
+  region: ProjectRegion;
+  created: ProjectCreated;
+  env: ProjectEnv;
+  rootfs: ProjectRootfsConfig | null;
+  snapshots: ProjectSnapshotSchedule;
+  backups: ProjectBackupSchedule;
+  run_quota: ProjectRunQuota;
+  settings: ProjectQuotaSettings;
+  course: ProjectCourseInfo;
+}
+
+function getLiteProjectRow(project_id: string): Record<string, any> | null {
+  return (
+    getRow("projects", JSON.stringify({ project_id })) ??
+    listRows("projects").find((row) => row?.project_id === project_id) ??
+    null
+  );
+}
+
+function getLiteProjectReadDetailsLocal(
+  project_id: string,
+): LiteProjectReadDetails {
+  const row = getLiteProjectRow(project_id);
+  if (!row) {
+    throw Error(`project ${project_id} not found`);
+  }
+  const image = `${row.rootfs_image ?? ""}`.trim();
+  const image_id = `${row.rootfs_image_id ?? ""}`.trim();
+  return {
+    launcher: row.launcher ?? null,
+    region: row.region ?? null,
+    created: row.created ?? null,
+    env: row.env ?? null,
+    rootfs: !image
+      ? null
+      : {
+          image,
+          ...(image_id ? { image_id } : undefined),
+        },
+    snapshots: row.snapshots ?? null,
+    backups: row.backups ?? null,
+    run_quota: row.run_quota ?? null,
+    settings: row.settings ?? null,
+    course: row.course ?? null,
+  };
+}
+
+async function getLiteProjectReadDetails(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<LiteProjectReadDetails> {
+  if (hasRemote) {
+    // There is no aggregate RPC; individual project detail getters route
+    // remotely as needed.
+    throw Error("remote project detail aggregator is not available");
+  }
+  requireLiteAccountId(opts.account_id);
+  const project_id = requireLiteProjectId(opts.project_id);
+  return getLiteProjectReadDetailsLocal(project_id);
+}
+
+async function getProjectLauncherLite(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectLauncherSettings> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.getProjectLauncher",
+      args: [opts],
+    });
+  }
+  return (await getLiteProjectReadDetails(opts)).launcher;
+}
+
+async function getProjectRegionLite(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectRegion> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.getProjectRegion",
+      args: [opts],
+    });
+  }
+  return (await getLiteProjectReadDetails(opts)).region;
+}
+
+async function getProjectCreatedLite(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectCreated> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.getProjectCreated",
+      args: [opts],
+    });
+  }
+  return (await getLiteProjectReadDetails(opts)).created;
+}
+
+async function getProjectEnvLite(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectEnv> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.getProjectEnv",
+      args: [opts],
+    });
+  }
+  return (await getLiteProjectReadDetails(opts)).env;
+}
+
+async function getProjectRootfsLite(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectRootfsConfig | null> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.getProjectRootfs",
+      args: [opts],
+    });
+  }
+  return (await getLiteProjectReadDetails(opts)).rootfs;
+}
+
+async function getProjectSettingsLite(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectQuotaSettings> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.getProjectSettings",
+      args: [opts],
+    });
+  }
+  return (await getLiteProjectReadDetails(opts)).settings;
+}
+
+async function getProjectCourseInfoLite(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectCourseInfo> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.getProjectCourseInfo",
+      args: [opts],
+    });
+  }
+  return (await getLiteProjectReadDetails(opts)).course;
+}
+
+async function getProjectRunQuotaLite(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectRunQuota> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.getProjectRunQuota",
+      args: [opts],
+    });
+  }
+  return (await getLiteProjectReadDetails(opts)).run_quota;
+}
+
+async function getProjectSnapshotScheduleLite(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectSnapshotSchedule> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.getProjectSnapshotSchedule",
+      args: [opts],
+    });
+  }
+  return (await getLiteProjectReadDetails(opts)).snapshots;
+}
+
+async function getProjectBackupScheduleLite(opts: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectBackupSchedule> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.getProjectBackupSchedule",
+      args: [opts],
+    });
+  }
+  return (await getLiteProjectReadDetails(opts)).backups;
 }
 
 async function logFileAccessLite(opts: {
@@ -1418,6 +1621,16 @@ export const hubApi: HubApi = {
   projects: {
     listProjectLog: listProjectLogLite,
     listRecentDocumentActivity: listRecentDocumentActivityLite,
+    getProjectLauncher: getProjectLauncherLite,
+    getProjectRegion: getProjectRegionLite,
+    getProjectCreated: getProjectCreatedLite,
+    getProjectEnv: getProjectEnvLite,
+    getProjectRootfs: getProjectRootfsLite,
+    getProjectSettings: getProjectSettingsLite,
+    getProjectCourseInfo: getProjectCourseInfoLite,
+    getProjectRunQuota: getProjectRunQuotaLite,
+    getProjectSnapshotSchedule: getProjectSnapshotScheduleLite,
+    getProjectBackupSchedule: getProjectBackupScheduleLite,
     codexDeviceAuthStart: codexDeviceAuthStartLite,
     codexDeviceAuthStatus: codexDeviceAuthStatusLite,
     codexDeviceAuthCancel: codexDeviceAuthCancelLite,
