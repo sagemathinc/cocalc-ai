@@ -317,6 +317,32 @@ export interface BackendExecApi {
     }): Promise<ExportSummary>;
   };
   import: {
+    /** Import a chat bundle or extracted export directory locally where the backend runtime runs. */
+    chat(options: {
+      sourcePath: string;
+      targetPath?: string;
+      projectId?: string;
+      apiBaseUrl?: string;
+      blobBearerToken?: string;
+      cwd?: string;
+    }): Promise<{
+      target_path: string;
+      created_thread_count: number;
+      created_message_count: number;
+      asset_count: number;
+      codex_context_count: number;
+      warning_count: number;
+      warnings: Array<{
+        code:
+          | "asset_missing"
+          | "asset_rebinding_skipped"
+          | "codex_context_skipped"
+          | "codex_context_missing";
+        thread_id?: string;
+        message: string;
+      }>;
+      thread_ids: string[];
+    }>;
     /** Import a tasks bundle or extracted export directory locally where the backend runtime runs. */
     tasks(options: {
       sourcePath: string;
@@ -638,6 +664,9 @@ function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
       },
     },
     import: {
+      async chat(options: any) {
+        return await deps.importApi.chat(ctx, options);
+      },
       async tasks(options: any) {
         return await deps.importApi.tasks(ctx, options);
       },
@@ -713,6 +742,7 @@ Important:
 - api.tasks.open({ path }) uses the live collaborative sync/session path.
 - api.workspaces.* uses the project-scoped workspace DKV plus backend chat/state helpers.
 - api.export.* writes archive bundles locally where the backend runtime runs.
+- api.import.chat appends imported threads, rebinds blobs, and re-forks bundled Codex context.
 - api.import.tasks merges a tasks bundle back into a local .tasks file.
 - Live namespaces do not read document state from disk directly.
 - Return JSON-serializable values from your script.

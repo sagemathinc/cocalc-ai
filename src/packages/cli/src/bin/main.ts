@@ -1911,7 +1911,15 @@ const exportApi = createExportApi<CommandContext>({
   }),
 });
 
-const importApi = createImportApi<CommandContext>();
+const importApi = createImportApi<CommandContext, ProjectRow>({
+  getDefaults: (ctx) => ({
+    apiBaseUrl: ctx.apiBaseUrl,
+    bearer: ctx.globals.bearer,
+    projectId: process.env.COCALC_PROJECT_ID,
+    accountId: ctx.accountId,
+  }),
+  resolveProjectConatClient,
+});
 
 async function projectHostHubCallAccount<T>(
   ctx: CommandContext,
@@ -2491,6 +2499,8 @@ const importCommandDeps = {
   emitSuccess,
   emitError,
   normalizeUrl,
+  withContext,
+  importApi,
 } satisfies ImportCommandDeps;
 
 registerImportCommand(program, importCommandDeps);

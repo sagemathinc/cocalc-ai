@@ -1,17 +1,24 @@
 import { Command } from "commander";
 
-import { importTaskBundle } from "@cocalc/export";
+import type { ImportApi } from "../../api/import";
 
 export type ImportCommandDeps = {
   globalsFrom: any;
   emitSuccess: any;
   emitError: any;
   normalizeUrl: any;
+  withContext: any;
+  importApi: ImportApi<any>;
 };
 
 type TaskImportCliOptions = {
   target?: string;
   dryRun?: boolean;
+};
+
+type ChatImportCliOptions = {
+  target?: string;
+  projectId?: string;
 };
 
 export function registerImportCommand(
@@ -33,6 +40,49 @@ first exported, edited locally in a structured bundle, and then merged back.
 - Current support is patch-oriented rather than overwrite-oriented.
 - The importer detects conflicting live edits and fails instead of silently clobbering them.
 `,
+    );
+
+  importCommand
+    .command("chat <bundlePath>")
+    .description(
+      "import a chat export bundle or extracted export directory into a .chat file",
+    )
+    .option("--target <path>", "override the destination .chat path")
+    .option(
+      "--project-id <projectId>",
+      "project id/identifier used when uploading imported blobs and forking Codex context",
+    )
+    .addHelpText(
+      "after",
+      `
+Chat import expects a bundle created by \`cocalc export chat\`.
+
+- It recreates imported threads with fresh thread and message ids.
+- Imported blobs/assets are rebound as live CoCalc blobs on the target server.
+- Imported Codex context is installed as a local seed session, then forked to a fresh session id for the new thread.
+- Importing the same bundle multiple times is supported; each import creates independent imported threads.
+
+Notes:
+
+- Point <bundlePath> at either the \`.cocalc-export.zip\` file or an extracted export directory.
+- Import appends new thread records into the target \`.chat\` file; it does not overwrite existing threads.
+- When the bundle includes Codex context, import should run in an environment with access to the target CoCalc project and Codex app-server.
+`,
+    )
+    .action(
+      async (
+        bundlePath: string,
+        opts: ChatImportCliOptions,
+        command: Command,
+      ) => {
+        await deps.withContext(command, "import chat", async (ctx) => {
+          return await deps.importApi.chat(ctx, {
+            sourcePath: bundlePath,
+            targetPath: opts.target,
+            projectId: opts.projectId,
+          });
+        });
+      },
     );
 
   importCommand
@@ -71,7 +121,7 @@ Notes:
         const globals = deps.globalsFrom(command);
         const commandName = "import tasks";
         try {
-          const result = await importTaskBundle({
+          const result = await deps.importApi.tasks(undefined, {
             sourcePath: bundlePath,
             targetPath: opts.target,
             dryRun: opts.dryRun === true,
