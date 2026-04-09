@@ -1,0 +1,69 @@
+diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth/default_client.rs
+index 7923c7478..a8c63a26d 100644
+--- a/codex-rs/login/src/auth/default_client.rs
++++ b/codex-rs/login/src/auth/default_client.rs
+@@ -14,6 +14,7 @@ use reqwest::header::HeaderValue;
+ use std::sync::LazyLock;
+ use std::sync::Mutex;
+ use std::sync::RwLock;
++use std::time::Duration;
+ 
+ /// Set this to add a suffix to the User-Agent string.
+ ///
+@@ -33,7 +34,9 @@ use std::sync::RwLock;
+ pub static USER_AGENT_SUFFIX: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+ pub const DEFAULT_ORIGINATOR: &str = "codex_cli_rs";
+ pub const CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR: &str = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE";
++pub const CODEX_TCP_USER_TIMEOUT_MS_ENV_VAR: &str = "CODEX_TCP_USER_TIMEOUT_MS";
+ pub const RESIDENCY_HEADER_NAME: &str = "x-openai-internal-codex-residency";
++const DEFAULT_TCP_USER_TIMEOUT_MS: u64 = 300_000;
+ 
+ pub use codex_config::ResidencyRequirement;
+ 
+@@ -216,6 +219,9 @@ pub fn try_build_reqwest_client() -> Result<reqwest::Client, BuildCustomCaTransp
+         // Set UA via dedicated helper to avoid header validation pitfalls
+         .user_agent(ua)
+         .default_headers(default_headers());
++    if let Some(timeout) = tcp_user_timeout() {
++        builder = builder.tcp_user_timeout(timeout);
++    }
+     if is_sandboxed() {
+         builder = builder.no_proxy();
+     }
+@@ -223,6 +229,36 @@ pub fn try_build_reqwest_client() -> Result<reqwest::Client, BuildCustomCaTransp
+     build_reqwest_client_with_custom_ca(builder)
+ }
+ 
++fn tcp_user_timeout() -> Option<Duration> {
++    #[cfg(any(target_os = "linux", target_os = "android", target_os = "fuchsia"))]
++    {
++        let timeout_ms = std::env::var(CODEX_TCP_USER_TIMEOUT_MS_ENV_VAR)
++            .ok()
++            .and_then(|value| {
++                let trimmed = value.trim();
++                match trimmed.parse::<u64>() {
++                    Ok(ms) if ms > 0 => Some(ms),
++                    Ok(_) => None,
++                    Err(err) => {
++                        tracing::warn!(
++                            env_var = CODEX_TCP_USER_TIMEOUT_MS_ENV_VAR,
++                            value = trimmed,
++                            error = %err,
++                            "ignoring invalid tcp_user_timeout override"
++                        );
++                        None
++                    }
++                }
++            })
++            .unwrap_or(DEFAULT_TCP_USER_TIMEOUT_MS);
++        Some(Duration::from_millis(timeout_ms))
++    }
++    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "fuchsia")))]
++    {
++        None
++    }
++}
++
+ pub fn default_headers() -> HeaderMap {
+     let mut headers = HeaderMap::new();
+     headers.insert("originator", originator().header_value);
