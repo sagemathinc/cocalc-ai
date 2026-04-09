@@ -544,6 +544,8 @@ export async function fetchNebiusCatalog(
         name: preset.name,
         platform: platformName,
         platform_label: platformLabel,
+        allowed_for_preemptibles:
+          platform.status?.allowedForPreemptibles ?? false,
         vcpus: resources?.vcpuCount || undefined,
         memory_gib: resources?.memoryGibibytes || undefined,
         gpus: resources?.gpuCount || undefined,

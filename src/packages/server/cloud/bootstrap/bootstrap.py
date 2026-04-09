@@ -3459,7 +3459,13 @@ def install_gpu_support(cfg: BootstrapConfig) -> None:
     apt_run(cfg, ["apt-get", "-y", "update"], "apt-get update (nvidia)", retries=3, timeout=60)
     apt_run(
         cfg,
-        ["apt-get", "-y", "install", "nvidia-container-toolkit"],
+        [
+            "apt-get",
+            "-y",
+            "--allow-change-held-packages",
+            "install",
+            "nvidia-container-toolkit",
+        ],
         "install nvidia-container-toolkit",
         retries=3,
         timeout=180,

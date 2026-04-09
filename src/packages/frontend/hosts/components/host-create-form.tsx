@@ -2,6 +2,7 @@ import { Collapse, Form, Input, Select } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import type { FormInstance } from "antd/es/form";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
+import { isNebiusSpotSupported } from "../providers/registry";
 import { HostCreateAdvancedFields } from "./host-create-advanced-fields";
 import { HostCreateProviderFields } from "./host-create-provider-fields";
 import { SshTargetLabel } from "./ssh-target-help";
@@ -35,8 +36,22 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   const showSpotFields =
     provider.selectedProvider !== "none" &&
     provider.selectedProvider !== "self-host";
+  const watchedMachineType = Form.useWatch("machine_type", form);
   const watchedPricingModel = Form.useWatch("pricing_model", form);
   const watchedSshTarget = Form.useWatch("self_host_ssh_target", form);
+  const nebiusSpotSupported = React.useMemo(
+    () =>
+      provider.selectedProvider !== "nebius" ||
+      isNebiusSpotSupported(
+        provider.fields.options.machine_type,
+        watchedMachineType,
+      ),
+    [
+      provider.fields.options.machine_type,
+      provider.selectedProvider,
+      watchedMachineType,
+    ],
+  );
   const previousPricingModelRef = React.useRef<"on_demand" | "spot">(
     "on_demand",
   );
@@ -82,6 +97,20 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
     }
     previousPricingModelRef.current = nextPricingModel;
   }, [form, showSpotFields, watchedPricingModel]);
+  React.useEffect(() => {
+    if (provider.selectedProvider !== "nebius") return;
+    if (nebiusSpotSupported) return;
+    if (watchedPricingModel !== "spot") return;
+    form.setFieldsValue({
+      pricing_model: "on_demand",
+      interruption_restore_policy: "none",
+    });
+  }, [
+    form,
+    nebiusSpotSupported,
+    provider.selectedProvider,
+    watchedPricingModel,
+  ]);
   const providerField = (
     <Form.Item
       name="provider"
@@ -129,35 +158,6 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
               <Form.Item name="name" label="Name" initialValue="My host">
                 <Input placeholder="My host" />
               </Form.Item>
-              {showSpotFields && (
-                <>
-                  <Form.Item
-                    name="pricing_model"
-                    label="Pricing model"
-                    initialValue="on_demand"
-                  >
-                    <Select
-                      options={[
-                        { value: "on_demand", label: "On-demand" },
-                        { value: "spot", label: "Spot / interruptible" },
-                      ]}
-                    />
-                  </Form.Item>
-                  <Form.Item
-                    name="interruption_restore_policy"
-                    label="Interruption restore"
-                    initialValue="none"
-                    tooltip="For spot hosts, immediately restoring the host is strongly preferred because users otherwise lose access until a backup restore or manual recovery."
-                  >
-                    <Select
-                      options={[
-                        { value: "immediate", label: "Restore immediately" },
-                        { value: "none", label: "Do not auto-restore" },
-                      ]}
-                    />
-                  </Form.Item>
-                </>
-              )}
               <HostCreateProviderFields
                 provider={provider}
                 onProviderChange={onProviderChange}
@@ -168,7 +168,11 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
           {!hideAdvanced && (
             <Collapse ghost style={{ marginBottom: 8 }}>
               <Collapse.Panel header="Advanced options" key="adv">
-                <HostCreateAdvancedFields provider={provider} />
+                <HostCreateAdvancedFields
+                  provider={provider}
+                  showSpotFields={showSpotFields}
+                  nebiusSpotSupported={nebiusSpotSupported}
+                />
               </Collapse.Panel>
             </Collapse>
           )}
