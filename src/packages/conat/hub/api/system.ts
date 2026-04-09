@@ -442,6 +442,8 @@ export interface BayBackupStatus {
   full_snapshot_retry_interval_ms: number;
   full_snapshot_retention_count: number;
   restore_workspace_retention_days: number;
+  local_wal_retention_count: number;
+  remote_wal_retention_backups: number;
   maintenance_running: boolean;
   maintenance_next_run_at: string | null;
   maintenance_last_started_at: string | null;
@@ -450,6 +452,8 @@ export interface BayBackupStatus {
   maintenance_last_error_at: string | null;
   maintenance_last_error: string | null;
   last_pruned_at: string | null;
+  last_pruned_wal_count: number;
+  last_pruned_remote_wal_count: number;
   last_pruned_local_archive_count: number;
   last_pruned_restore_count: number;
 }
