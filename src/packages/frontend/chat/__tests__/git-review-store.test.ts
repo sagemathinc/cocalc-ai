@@ -1,6 +1,10 @@
 /** @jest-environment jsdom */
 
-import { exportReviewBundle, importReviewBundle } from "../git-review-store";
+import {
+  deleteAllReviewRecords,
+  exportReviewBundle,
+  importReviewBundle,
+} from "../git-review-store";
 
 const stores = new Map<string, Map<string, any>>();
 
@@ -32,7 +36,11 @@ const dkvMock = jest.fn(async ({ account_id, name }: any) => {
     getAll: () => Object.fromEntries(store.entries()),
     setMany: (obj: Record<string, any>) => {
       for (const [key, value] of Object.entries(obj)) {
-        store.set(key, value);
+        if (value === undefined) {
+          store.delete(key);
+        } else {
+          store.set(key, value);
+        }
       }
     },
     save: async () => undefined,
@@ -153,5 +161,49 @@ describe("git review import/export", () => {
       note: "new import",
       reviewed: true,
     });
+  });
+
+  it("deletes all persisted reviews and local drafts for the account", async () => {
+    const store = getStore("acct-3", "cocalc-git-review-v2");
+    store.set("commit:aaa1111", {
+      version: 2,
+      account_id: "acct-3",
+      commit_sha: "aaa1111",
+      reviewed: true,
+      note: "one",
+      comments: {},
+      created_at: 10,
+      updated_at: 100,
+      revision: 1,
+    });
+    store.set("commit:bbb2222", {
+      version: 2,
+      account_id: "acct-3",
+      commit_sha: "bbb2222",
+      reviewed: false,
+      note: "two",
+      comments: {},
+      created_at: 20,
+      updated_at: 200,
+      revision: 2,
+    });
+    store.set("misc:key", { ignore: true });
+    localStorage.setItem(
+      "cocalc:git-review:draft:v2:commit:aaa1111",
+      JSON.stringify({ note: "draft" }),
+    );
+
+    await expect(
+      deleteAllReviewRecords({ accountId: "acct-3" }),
+    ).resolves.toEqual({
+      deleted: 2,
+    });
+
+    expect(store.get("commit:aaa1111")).toBeUndefined();
+    expect(store.get("commit:bbb2222")).toBeUndefined();
+    expect(store.get("misc:key")).toEqual({ ignore: true });
+    expect(
+      localStorage.getItem("cocalc:git-review:draft:v2:commit:aaa1111"),
+    ).toBe(null);
   });
 });

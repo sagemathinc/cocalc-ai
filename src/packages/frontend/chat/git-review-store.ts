@@ -469,3 +469,47 @@ export async function importReviewBundle({
     total: rawRecords.length,
   };
 }
+
+function clearAllReviewDrafts(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(REVIEW_DRAFT_STORAGE_PREFIX)) {
+        keys.push(key);
+      }
+    }
+    for (const key of keys) {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // ignore localStorage failures
+  }
+}
+
+export async function deleteAllReviewRecords({
+  accountId,
+}: {
+  accountId: string;
+}): Promise<{ deleted: number }> {
+  const normalizedAccountId = `${accountId ?? ""}`.trim();
+  if (!normalizedAccountId) {
+    throw new Error("account id is required to delete git reviews");
+  }
+  const kv = await getReviewBulkStore(normalizedAccountId);
+  const reviewKeys = Object.keys(kv.getAll()).filter((key) =>
+    key.startsWith("commit:"),
+  );
+  if (reviewKeys.length === 0) {
+    clearAllReviewDrafts();
+    return { deleted: 0 };
+  }
+  const tombstones: Record<string, GitReviewRecordV2 | undefined> = {};
+  for (const key of reviewKeys) {
+    tombstones[key] = undefined;
+  }
+  kv.setMany(tombstones);
+  await kv.save();
+  clearAllReviewDrafts();
+  return { deleted: reviewKeys.length };
+}

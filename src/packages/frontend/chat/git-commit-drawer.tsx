@@ -11,6 +11,7 @@ import {
   Drawer,
   Empty,
   Input,
+  Modal,
   Select,
   Space,
   Spin,
@@ -40,6 +41,7 @@ import { backtickSequence } from "@cocalc/frontend/markdown/util";
 import { containingPath } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
+  deleteAllReviewRecords,
   exportReviewBundle,
   importReviewBundle,
   loadReviewRecord,
@@ -82,6 +84,7 @@ const DIFF_FILE_HEADER_BACKGROUND = COLORS.GRAY_LLL;
 const DIFF_FILE_HEADER_BORDER = COLORS.GRAY_LL;
 const DIFF_FILE_HEADER_TEXT = COLORS.GRAY_D;
 const DIFF_FILE_HEADER_SECONDARY = COLORS.GRAY_M;
+const DELETE_ALL_REVIEWS_CONFIRM_TEXT = "delete all";
 
 export function getCommitReviewIndicatorState(
   reviewedByCommit: Record<string, boolean>,
@@ -1356,6 +1359,9 @@ export function GitCommitDrawer({
     string | undefined
   >(undefined);
   const [reviewReloadCounter, setReviewReloadCounter] = useState(0);
+  const [reviewDeleteAllOpen, setReviewDeleteAllOpen] = useState(false);
+  const [reviewDeleteAllConfirmValue, setReviewDeleteAllConfirmValue] =
+    useState("");
   const noteDirty = reviewNoteDraft !== reviewNote;
   const reviewLoadTokenRef = useRef(0);
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
@@ -1856,6 +1862,38 @@ export function GitCommitDrawer({
     [accountId],
   );
 
+  const deleteAllReviewData = useCallback(async () => {
+    if (!accountId) {
+      alert_message({
+        type: "error",
+        message: "Unable to delete git reviews without a signed-in account.",
+      });
+      return;
+    }
+    setReviewTransferBusy(true);
+    try {
+      const result = await deleteAllReviewRecords({ accountId });
+      setReviewedByCommit({});
+      setReviewReloadCounter((n) => n + 1);
+      setReviewDeleteAllOpen(false);
+      setReviewDeleteAllConfirmValue("");
+      alert_message({
+        type: "success",
+        message:
+          result.deleted === 0
+            ? "There were no git reviews to delete."
+            : `Deleted ${result.deleted} git review${result.deleted === 1 ? "" : "s"}.`,
+      });
+    } catch (err) {
+      alert_message({
+        type: "error",
+        message: `${err ?? "Unable to delete git reviews."}`,
+      });
+    } finally {
+      setReviewTransferBusy(false);
+    }
+  }, [accountId]);
+
   const reviewMenuItems = useMemo<NonNullable<MenuProps["items"]>>(() => {
     const items: NonNullable<MenuProps["items"]> = [
       {
@@ -1866,6 +1904,12 @@ export function GitCommitDrawer({
       {
         key: "import",
         label: "Import reviews",
+        disabled: reviewTransferBusy || !accountId,
+      },
+      {
+        key: "delete-all",
+        label: "Delete all reviews",
+        danger: true,
         disabled: reviewTransferBusy || !accountId,
       },
     ];
@@ -1887,6 +1931,11 @@ export function GitCommitDrawer({
       }
       if (key === "import") {
         reviewImportInputRef.current?.click();
+        return;
+      }
+      if (key === "delete-all") {
+        setReviewDeleteAllConfirmValue("");
+        setReviewDeleteAllOpen(true);
         return;
       }
       if (key === "activity") {
@@ -2747,6 +2796,55 @@ export function GitCommitDrawer({
       destroyOnHidden
       styles={{ body: { padding: 0, overflow: "hidden" } }}
     >
+      <Modal
+        open={reviewDeleteAllOpen}
+        title="Delete all git reviews?"
+        destroyOnHidden
+        okText="Delete all reviews"
+        okButtonProps={{
+          danger: true,
+          disabled:
+            reviewTransferBusy ||
+            reviewDeleteAllConfirmValue.trim().toLowerCase() !==
+              DELETE_ALL_REVIEWS_CONFIRM_TEXT,
+        }}
+        cancelButtonProps={{ disabled: reviewTransferBusy }}
+        confirmLoading={reviewTransferBusy}
+        onCancel={() => {
+          if (reviewTransferBusy) return;
+          setReviewDeleteAllOpen(false);
+          setReviewDeleteAllConfirmValue("");
+        }}
+        onOk={() => {
+          void deleteAllReviewData();
+        }}
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Typography.Text>
+            This will permanently delete all of your saved git review notes,
+            review status, and inline review comments on this CoCalc server.
+          </Typography.Text>
+          <Typography.Text type="secondary">
+            Type <code>{DELETE_ALL_REVIEWS_CONFIRM_TEXT}</code> to confirm.
+          </Typography.Text>
+          <Input
+            value={reviewDeleteAllConfirmValue}
+            autoFocus
+            placeholder={DELETE_ALL_REVIEWS_CONFIRM_TEXT}
+            onChange={(evt) => setReviewDeleteAllConfirmValue(evt.target.value)}
+            onPressEnter={() => {
+              if (
+                reviewTransferBusy ||
+                reviewDeleteAllConfirmValue.trim().toLowerCase() !==
+                  DELETE_ALL_REVIEWS_CONFIRM_TEXT
+              ) {
+                return;
+              }
+              void deleteAllReviewData();
+            }}
+          />
+        </Space>
+      </Modal>
       <input
         ref={reviewImportInputRef}
         type="file"
