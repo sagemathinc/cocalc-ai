@@ -213,23 +213,17 @@ export function server({
             }),
           );
         } else if (request.cmd == "setMany") {
-          // just like set except the main data of the mesg
-          // has an array of set operations
-          const resp: (
-            | { seq: number; time: number }
-            | { error: string; code?: any }
-          )[] = [];
-          for (const {
-            key,
-            previousSeq,
-            ttl,
-            msgID,
-            checkpoint,
-            messageData,
-          } of mesg.data as SetOptions[]) {
-            try {
-              resp.push(
-                stream.set({
+          mesg.respondSync(
+            stream.setMany(
+              (mesg.data as SetOptions[]).map(
+                ({
+                  key,
+                  previousSeq,
+                  ttl,
+                  msgID,
+                  checkpoint,
+                  messageData,
+                }) => ({
                   key,
                   previousSeq,
                   ttl,
@@ -239,12 +233,9 @@ export function server({
                   raw: messageData.raw,
                   encoding: messageData.encoding,
                 }),
-              );
-            } catch (err) {
-              resp.push({ error: `${err}`, code: err.code });
-            }
-          }
-          mesg.respondSync(resp);
+              ),
+            ),
+          );
         } else if (request.cmd == "delete") {
           mesg.respondSync(stream.delete(request));
         } else if (request.cmd == "config") {

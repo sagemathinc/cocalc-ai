@@ -491,6 +491,112 @@ export class PersistentStream extends EventEmitter {
     );
   };
 
+  private setInternal = ({
+    encoding,
+    raw,
+    headers,
+    key,
+    ttl,
+    previousSeq,
+    msgID,
+    checkpoint,
+  }: {
+    encoding: DataEncoding;
+    raw: Buffer;
+    headers?: JSONValue;
+    key?: string;
+    ttl?: number;
+    previousSeq?: number;
+    msgID?: string;
+    checkpoint?: CheckpointUpdate;
+  }): {
+    time: number;
+    seq: number;
+    change: SetOperation;
+  } => {
+    if (previousSeq === null) {
+      previousSeq = undefined;
+    }
+    if (key === null) {
+      key = undefined;
+    }
+    if (msgID != null && this.msgIDs?.has(msgID)) {
+      const existing = this.msgIDs.get(msgID)! as { seq: number; time: number };
+      return {
+        ...existing,
+        change: {
+          seq: existing.seq,
+          time: existing.time,
+          key,
+          encoding,
+          raw,
+          headers: headers == null ? undefined : (headers as Headers),
+          msgID,
+        },
+      };
+    }
+    this.checkRequiredHeaders(headers);
+    if (key !== undefined && previousSeq !== undefined) {
+      const { seq } = this.db
+        .prepare("SELECT seq FROM messages WHERE key=?")
+        .get(key) as any;
+      if (seq != previousSeq) {
+        throw new ConatError("wrong last sequence", {
+          code: "wrong-last-sequence",
+        });
+      }
+    }
+    const time = Date.now();
+    const compressedRaw = this.compress(raw);
+    const serializedHeaders = JSON.stringify(headers);
+    const size =
+      (serializedHeaders?.length ?? 0) +
+      (raw?.length ?? 0) +
+      (key?.length ?? 0);
+
+    this.enforceLimits(size);
+
+    if (key !== undefined) {
+      this.db.prepare("DELETE FROM messages WHERE key = ?").run(key);
+    }
+    const row = this.db
+      .prepare(
+        "INSERT INTO messages(time, compress, encoding, raw, headers, key, size, ttl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)  RETURNING seq",
+      )
+      .get(
+        time / 1000,
+        compressedRaw.compress,
+        encoding,
+        compressedRaw.raw,
+        serializedHeaders ?? null,
+        key ?? null,
+        size,
+        ttl ?? null,
+      );
+    const seq = Number((row as any).seq);
+    if (checkpoint != null) {
+      this.writeCheckpoint({
+        name: checkpoint.name,
+        seq: checkpoint.seq ?? seq,
+        time: checkpoint.time ?? time,
+        data: checkpoint.data,
+      });
+    }
+    return {
+      time,
+      seq,
+      change: {
+        seq,
+        time,
+        key,
+        encoding,
+        raw,
+        headers: headers == null ? undefined : (headers as Headers),
+        msgID,
+      },
+    };
+  };
+
   set = ({
     encoding,
     raw,
@@ -513,83 +619,68 @@ export class PersistentStream extends EventEmitter {
     msgID?: string;
     checkpoint?: CheckpointUpdate;
   }): { seq: number; time: number } => {
-    if (previousSeq === null) {
-      previousSeq = undefined;
-    }
-    if (key === null) {
-      key = undefined;
-    }
-    if (msgID != null && this.msgIDs?.has(msgID)) {
-      return this.msgIDs.get(msgID)!;
-    }
-    this.checkRequiredHeaders(headers);
-    if (key !== undefined && previousSeq !== undefined) {
-      // throw error if current seq number for the row
-      // with this key is not previousSeq.
-      const { seq } = this.db // there is an index on the key so this is fast
-        .prepare("SELECT seq FROM messages WHERE key=?")
-        .get(key) as any;
-      if (seq != previousSeq) {
-        throw new ConatError("wrong last sequence", {
-          code: "wrong-last-sequence",
-        });
-      }
-    }
-    const time = Date.now();
-    const compressedRaw = this.compress(raw);
-    const serializedHeaders = JSON.stringify(headers);
-    const size =
-      (serializedHeaders?.length ?? 0) +
-      (raw?.length ?? 0) +
-      (key?.length ?? 0);
-
-    this.enforceLimits(size);
-
-    const row = this.runTransaction(() => {
-      if (key !== undefined) {
-        this.db.prepare("DELETE FROM messages WHERE key = ?").run(key);
-      }
-      const row = this.db
-        .prepare(
-          "INSERT INTO messages(time, compress, encoding, raw, headers, key, size, ttl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)  RETURNING seq",
-        )
-        .get(
-          time / 1000,
-          compressedRaw.compress,
-          encoding,
-          compressedRaw.raw,
-          serializedHeaders ?? null,
-          key ?? null,
-          size,
-          ttl ?? null,
-        );
-      if (checkpoint != null) {
-        const seq = Number((row as any).seq);
-        this.writeCheckpoint({
-          name: checkpoint.name,
-          seq: checkpoint.seq ?? seq,
-          time: checkpoint.time ?? time,
-          data: checkpoint.data,
-        });
-      }
-      return row;
-    });
-    const seq = Number((row as any).seq);
-    // lastInsertRowid - is a bigint from sqlite, but we won't hit that limit
-    this.emit("change", {
-      seq,
-      time,
-      key,
-      encoding,
-      raw,
-      headers,
-      msgID,
-    });
+    const result = this.runTransaction(() =>
+      this.setInternal({
+        encoding,
+        raw,
+        headers,
+        key,
+        ttl,
+        previousSeq,
+        msgID,
+        checkpoint,
+      }),
+    );
+    this.emit("change", result.change);
     this.throttledBackup();
     if (msgID !== undefined) {
+      this.msgIDs.set(msgID, { time: result.time, seq: result.seq });
+    }
+    return { time: result.time, seq: result.seq };
+  };
+
+  setMany = (
+    operations: Array<{
+      encoding: DataEncoding;
+      raw: Buffer;
+      headers?: JSONValue;
+      key?: string;
+      ttl?: number;
+      previousSeq?: number;
+      msgID?: string;
+      checkpoint?: CheckpointUpdate;
+    }>,
+  ): Array<{ seq: number; time: number } | { error: string; code?: any }> => {
+    const changes: SetOperation[] = [];
+    const msgIds: Array<{ msgID: string; time: number; seq: number }> = [];
+    const results = this.runTransaction(() =>
+      operations.map((operation) => {
+        try {
+          const result = this.setInternal(operation);
+          changes.push(result.change);
+          if (operation.msgID !== undefined) {
+            msgIds.push({
+              msgID: operation.msgID,
+              time: result.time,
+              seq: result.seq,
+            });
+          }
+          return { time: result.time, seq: result.seq };
+        } catch (err) {
+          return { error: `${err}`, code: err.code };
+        }
+      }),
+    );
+    for (const change of changes) {
+      this.emit("change", change);
+    }
+    if (changes.length > 0) {
+      this.throttledBackup();
+    }
+    for (const { msgID, time, seq } of msgIds) {
       this.msgIDs.set(msgID, { time, seq });
     }
-    return { time, seq };
+    return results;
   };
 
   private checkRequiredHeaders = (headers?: JSONValue): void => {
