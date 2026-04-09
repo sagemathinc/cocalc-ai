@@ -237,6 +237,7 @@ interface ChatRoomSidebarContentProps {
   openBehaviorModal: (threadKey: string) => void;
   openGitBrowser: (threadKey: string) => void;
   openExportModal: (opts?: ChatExportOpenRequest) => void;
+  openImportModal: () => void;
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
   confirmResetThread: (threadKey: string, label: string) => void;
   confirmDeleteThread: (threadKey: string, label: string) => void;
@@ -258,6 +259,7 @@ export function ChatRoomSidebarContent({
   openBehaviorModal,
   openGitBrowser,
   openExportModal,
+  openImportModal,
   openForkModal,
   confirmResetThread,
   confirmDeleteThread,
@@ -322,6 +324,10 @@ export function ChatRoomSidebarContent({
           label: "Export...",
         },
         {
+          key: "import",
+          label: "Import...",
+        },
+        {
           key: "fork",
           label: "Fork chat…",
         },
@@ -366,6 +372,8 @@ export function ChatRoomSidebarContent({
             threadKey,
             label: plainLabel,
           });
+        } else if (key === "import") {
+          openImportModal();
         } else if (key === "fork") {
           openForkModal(threadKey, plainLabel, isAI);
         } else if (key === "clear") {

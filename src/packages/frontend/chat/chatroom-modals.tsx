@@ -52,6 +52,7 @@ export interface ChatRoomModalHandlers {
   ) => void;
   openBehaviorModal: (threadKey: string) => void;
   openExportModal: (opts?: ChatExportOpenRequest) => void;
+  openImportModal: () => void;
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
 }
 
@@ -120,6 +121,9 @@ export function ChatRoomModals({
   const [exportIncludeCodexContext, setExportIncludeCodexContext] =
     useState<boolean>(false);
   const [exportRunning, setExportRunning] = useState<boolean>(false);
+  const [importOpen, setImportOpen] = useState<boolean>(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importRunning, setImportRunning] = useState<boolean>(false);
   const [forkThread, setForkThread] = useState<{
     key: string;
     label: string;
@@ -294,6 +298,17 @@ export function ChatRoomModals({
     setExportRunning(false);
   };
 
+  const openImportModal = useCallback(() => {
+    setImportFile(null);
+    setImportOpen(true);
+  }, []);
+
+  const closeImportModal = () => {
+    setImportOpen(false);
+    setImportFile(null);
+    setImportRunning(false);
+  };
+
   const handleExportThread = async () => {
     if (!exportRequest) return;
     if (!actions?.exportChatArchive) {
@@ -332,6 +347,47 @@ export function ChatRoomModals({
       );
     } finally {
       setExportRunning(false);
+    }
+  };
+
+  const handleImportThread = async () => {
+    if (!actions?.importChatArchive) {
+      antdMessage.error("Import is not available.");
+      return;
+    }
+    if (!importFile) {
+      antdMessage.error("Please choose a chat export zip file.");
+      return;
+    }
+    try {
+      setImportRunning(true);
+      const result = await actions.importChatArchive({
+        file: importFile,
+      });
+      const threadCount = Number(result?.created_thread_count ?? 0);
+      const codexCount = Number(result?.codex_context_count ?? 0);
+      const warningCount = Number(result?.warning_count ?? 0);
+      let summary =
+        threadCount > 0
+          ? `Imported ${threadCount} thread${threadCount === 1 ? "" : "s"}.`
+          : "Chat import completed.";
+      if (codexCount > 0) {
+        summary += ` Restored ${codexCount} Codex context${codexCount === 1 ? "" : "s"}.`;
+      }
+      if (warningCount > 0) {
+        summary += ` ${warningCount} warning${warningCount === 1 ? "" : "s"}.`;
+      }
+      antdMessage.success(summary);
+      closeImportModal();
+    } catch (err) {
+      console.error("failed to import chat", err);
+      antdMessage.error(
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to import chat.",
+      );
+    } finally {
+      setImportRunning(false);
     }
   };
 
@@ -381,9 +437,16 @@ export function ChatRoomModals({
       openAppearanceModal,
       openBehaviorModal,
       openExportModal,
+      openImportModal,
       openForkModal,
     }),
-    [openAppearanceModal, openBehaviorModal, openExportModal, openForkModal],
+    [
+      openAppearanceModal,
+      openBehaviorModal,
+      openExportModal,
+      openImportModal,
+      openForkModal,
+    ],
   );
 
   useEffect(() => {
@@ -398,6 +461,15 @@ export function ChatRoomModals({
       }
     };
   }, [actions, openExportModal]);
+
+  useEffect(() => {
+    actions.openImportModal = openImportModal;
+    return () => {
+      if (actions.openImportModal === openImportModal) {
+        actions.openImportModal = undefined;
+      }
+    };
+  }, [actions, openImportModal]);
 
   useEffect(() => {
     if (!exportRequest) return;
@@ -720,6 +792,53 @@ export function ChatRoomModals({
           <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
             All behavior settings here can be changed later.
           </div>
+        </Space>
+      </Modal>
+      <Modal
+        title="Import..."
+        open={importOpen}
+        onCancel={closeImportModal}
+        onOk={handleImportThread}
+        okText="Import"
+        okButtonProps={{ loading: importRunning, disabled: importFile == null }}
+        destroyOnHidden
+      >
+        <Space orientation="vertical" size={10} style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            title="Import creates new thread(s) in this chat."
+            description="Imported blobs are rebound as live CoCalc blobs, and bundled Codex context is restored by forking a fresh local session."
+          />
+          <div>
+            <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+              Chat export zip
+            </div>
+            <input
+              aria-label="Chat export zip"
+              type="file"
+              accept=".zip,application/zip"
+              onChange={(event) => {
+                const nextFile = event.target.files?.[0] ?? null;
+                setImportFile(nextFile);
+              }}
+              style={{ width: "100%" }}
+            />
+          </div>
+          {importFile ? (
+            <Alert
+              type="success"
+              showIcon
+              title={importFile.name}
+              description="This archive will be staged into the project, imported into the current .chat file, then the temporary upload will be removed."
+            />
+          ) : (
+            <Alert
+              type="warning"
+              showIcon
+              title="Choose a .cocalc-export.zip file to import."
+            />
+          )}
         </Space>
       </Modal>
       <Modal

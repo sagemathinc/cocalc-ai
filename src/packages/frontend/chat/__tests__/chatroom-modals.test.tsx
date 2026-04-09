@@ -143,4 +143,45 @@ describe("chatroom fork modal defaults", () => {
       ),
     ).not.toBeNull();
   });
+
+  it("opens import and passes the selected zip file to importChatArchive", async () => {
+    const actions: any = {
+      importChatArchive: jest.fn(async () => ({
+        created_thread_count: 1,
+        codex_context_count: 1,
+        warning_count: 0,
+      })),
+    };
+    let handlers: any;
+
+    render(
+      <ChatRoomModals
+        actions={actions}
+        path="project/chat/test.chat"
+        onHandlers={(next) => {
+          handlers = next;
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(handlers?.openImportModal).toBeDefined());
+
+    act(() => {
+      handlers.openImportModal();
+    });
+
+    const input = await screen.findByLabelText("Chat export zip");
+    const file = new File(["zip-bytes"], "portable.cocalc-export.zip", {
+      type: "application/zip",
+    });
+    fireEvent.change(input, {
+      target: { files: [file] },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Import" }));
+
+    await waitFor(() => {
+      expect(actions.importChatArchive).toHaveBeenCalledWith({ file });
+    });
+  });
 });

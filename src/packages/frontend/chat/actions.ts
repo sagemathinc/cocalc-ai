@@ -86,6 +86,8 @@ import { getDefaultCodexSessionMode } from "./codex-defaults";
 import { isAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type {
   ChatArchiveExportOptions,
+  ChatArchiveImportOptions,
+  ChatArchiveImportResult,
   ChatExportOpenRequest,
 } from "./export-types";
 
@@ -98,6 +100,26 @@ export function shouldOptimisticallyStopGeneratingLocally(opts?: {
   threadId?: string;
 }): boolean {
   return `${opts?.threadId ?? ""}`.trim().length === 0;
+}
+
+function sanitizeImportFilename(value: string, fallback = "chat-import.zip") {
+  const trimmed = `${value ?? ""}`.trim();
+  if (!trimmed) return fallback;
+  const sanitized = trimmed.replace(/[^A-Za-z0-9._-]+/g, "-");
+  return sanitized || fallback;
+}
+
+function parentDirectoryOfChatPath(chatPath: string): string {
+  const normalized = `${chatPath ?? ""}`.trim();
+  if (!normalized) return ".";
+  const index = normalized.lastIndexOf("/");
+  return index <= 0 ? "." : normalized.slice(0, index);
+}
+
+function parseExecJsonResult(result: any): any {
+  const stdout = `${result?.stdout ?? ""}`.trim();
+  if (!stdout) return undefined;
+  return JSON.parse(stdout);
 }
 
 function getChangeCount(changes: unknown): number {
@@ -438,6 +460,7 @@ export class ChatActions extends Actions<ChatState> {
   // this might not be set for deprecated side chat:
   public frameTreeActions?: CodeEditorActions;
   public openExportModal?: (opts?: ChatExportOpenRequest) => void;
+  public openImportModal?: () => void;
   // Shared message cache for this actions instance; used by both React and actions.
   public messageCache?: ChatMessageCache;
   private chatStoreRegistrationAttempted: Set<string> = new Set();
@@ -591,6 +614,7 @@ export class ChatActions extends Actions<ChatState> {
     // do NOT dispose of messageCache and syncdb here; that's managed
     // elsewhere.
     this.openExportModal = undefined;
+    this.openImportModal = undefined;
     this.messageCache = undefined;
     this.syncdb?.removeListener("change", this.autosave);
     this.syncdb = undefined;
@@ -2102,6 +2126,66 @@ export class ChatActions extends Actions<ChatState> {
     this.redux
       .getProjectActions(project_id)
       .open_file({ path: outputPath, foreground: true });
+  };
+
+  importChatArchive = async ({
+    file,
+  }: ChatArchiveImportOptions): Promise<
+    ChatArchiveImportResult | undefined
+  > => {
+    if (!this.store) return;
+    const project_id = this.store.get("project_id");
+    const chatPath = this.store.get("path");
+    if (project_id == null || !chatPath || !file) return;
+
+    const safeFilename = sanitizeImportFilename(file.name);
+    const parentDir = parentDirectoryOfChatPath(chatPath);
+    const stagingPath = `${parentDir}/.${Date.now()}-${safeFilename}`;
+    const importStream = file.stream();
+
+    await webapp_client.project_client.writeFile({
+      project_id,
+      path: stagingPath,
+      // ProjectClient.writeFile already supports browser Blob streams at
+      // runtime; the shared conat type is just narrower than what browsers
+      // expose here.
+      // @ts-expect-error browser File.stream() is a ReadableStream
+      stream: importStream,
+    });
+
+    try {
+      const result = await webapp_client.project_client.exec({
+        project_id,
+        command: "cocalc",
+        args: [
+          "import",
+          "chat",
+          stagingPath,
+          "--target",
+          chatPath,
+          "--project-id",
+          project_id,
+          "--json",
+        ],
+        filesystem: true,
+        timeout: 300,
+      });
+      return parseExecJsonResult(result) as ChatArchiveImportResult | undefined;
+    } finally {
+      try {
+        await webapp_client.project_client.exec({
+          project_id,
+          command: "rm",
+          args: ["-f", "--", stagingPath],
+          filesystem: true,
+          path: parentDir,
+          err_on_exit: false,
+          timeout: 30,
+        });
+      } catch {
+        // ignore cleanup failures for staged imports
+      }
+    }
   };
 
   help = () => {

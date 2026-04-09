@@ -2183,6 +2183,9 @@ export function ChatPanel({
             openExportModal={
               modalHandlers?.openExportModal ?? (() => undefined)
             }
+            openImportModal={
+              modalHandlers?.openImportModal ?? (() => undefined)
+            }
             openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
             confirmResetThread={
               threadActionHandlers?.confirmResetThread ?? (() => undefined)
