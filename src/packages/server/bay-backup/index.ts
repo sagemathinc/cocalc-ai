@@ -87,6 +87,7 @@ import { getSingleBayInfo } from "@cocalc/server/bay-directory";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import {
   createBucket,
+  deleteObject,
   issueSignedObjectDownload,
   listObjects,
   listBuckets,
@@ -175,6 +176,7 @@ type StoredBayBackupState = {
   maintenance_next_run_at: string | null;
   last_pruned_at: string | null;
   last_pruned_wal_count: number;
+  last_pruned_remote_wal_count: number;
   last_pruned_local_archive_count: number;
   last_pruned_restore_count: number;
   last_restore_test_backup_set_id: string | null;
@@ -206,6 +208,7 @@ type StoredBayBackupManifest = {
   remote_manifest_key: string | null;
   remote_snapshot_id: string | null;
   remote_snapshot_host: string | null;
+  wal_keep_from_segment: string | null;
   rustic_repo_selector: string | null;
   postgres: BayBackupsPostgresStatus;
   artifacts: BayBackupArtifactInfo[];
@@ -282,6 +285,9 @@ const DEFAULT_BAY_BACKUP_RETRY_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_BAY_BACKUP_RETENTION_COUNT = 14;
 const DEFAULT_BAY_BACKUP_RESTORE_RETENTION_DAYS = 7;
 const DEFAULT_BAY_WAL_LOCAL_RETENTION_COUNT = 128;
+const DEFAULT_BAY_WAL_REMOTE_RETENTION_BACKUPS = 2;
+const WAL_SEGMENT_SIZE = 16n * 1024n * 1024n;
+const XLOG_SEGMENTS_PER_XLOG_ID = (1n << 32n) / WAL_SEGMENT_SIZE;
 
 function getWalArchiveIntervalMs(): number {
   const n = Number.parseInt(
@@ -350,6 +356,14 @@ function getBayWalLocalRetentionCount(): number {
   return parsePositiveIntEnv({
     name: "COCALC_BAY_WAL_LOCAL_RETENTION_COUNT",
     defaultValue: DEFAULT_BAY_WAL_LOCAL_RETENTION_COUNT,
+    allowZero: true,
+  });
+}
+
+function getBayWalRemoteRetentionBackups(): number {
+  return parsePositiveIntEnv({
+    name: "COCALC_BAY_WAL_REMOTE_RETENTION_BACKUPS",
+    defaultValue: DEFAULT_BAY_WAL_REMOTE_RETENTION_BACKUPS,
     allowZero: true,
   });
 }
@@ -482,6 +496,7 @@ function defaultState({
     maintenance_next_run_at: null,
     last_pruned_at: null,
     last_pruned_wal_count: 0,
+    last_pruned_remote_wal_count: 0,
     last_pruned_local_archive_count: 0,
     last_pruned_restore_count: 0,
     last_restore_test_backup_set_id: null,
@@ -505,6 +520,7 @@ type BayBackupMaintenanceConfig = {
   full_snapshot_retention_count: number;
   restore_workspace_retention_days: number;
   local_wal_retention_count: number;
+  remote_wal_retention_backups: number;
 };
 
 function getBayBackupMaintenanceConfig(): BayBackupMaintenanceConfig {
@@ -516,6 +532,7 @@ function getBayBackupMaintenanceConfig(): BayBackupMaintenanceConfig {
     full_snapshot_retention_count: getBayBackupRetentionCount(),
     restore_workspace_retention_days: getBayBackupRestoreRetentionDays(),
     local_wal_retention_count: getBayWalLocalRetentionCount(),
+    remote_wal_retention_backups: getBayWalRemoteRetentionBackups(),
   };
 }
 
@@ -574,6 +591,7 @@ async function loadBayBackupState({
     last_restore_test_recovery_ready:
       stored.last_restore_test_recovery_ready ?? null,
     last_pruned_wal_count: stored.last_pruned_wal_count ?? 0,
+    last_pruned_remote_wal_count: stored.last_pruned_remote_wal_count ?? 0,
     last_pruned_local_archive_count:
       stored.last_pruned_local_archive_count ?? 0,
     last_pruned_restore_count: stored.last_pruned_restore_count ?? 0,
@@ -1631,6 +1649,162 @@ async function readStoredBackupManifests({
     );
 }
 
+type BackupManifestWalRange = {
+  Timeline?: number;
+  "Start-LSN"?: string;
+  "End-LSN"?: string;
+};
+
+type BackupManifestFile = {
+  "WAL-Ranges"?: BackupManifestWalRange[];
+};
+
+async function readWalKeepFromBackupManifestFile(
+  path: string,
+): Promise<string | null> {
+  const parsed = JSON.parse(await readFile(path, "utf8")) as BackupManifestFile;
+  const ranges = Array.isArray(parsed["WAL-Ranges"])
+    ? parsed["WAL-Ranges"]
+    : [];
+  const segments = ranges
+    .map((range) =>
+      walSegmentNameFromLsn({
+        timeline: Number(range.Timeline),
+        lsn: `${range["End-LSN"] ?? ""}`,
+      }),
+    )
+    .filter((segment): segment is string => segment != null);
+  return segments.length > 0 ? segments.sort()[0] : null;
+}
+
+function walSegmentNameFromLsn({
+  timeline,
+  lsn,
+}: {
+  timeline: number;
+  lsn: string;
+}): string | null {
+  const match = `${lsn}`
+    .trim()
+    .toUpperCase()
+    .match(/^([0-9A-F]+)\/([0-9A-F]+)$/);
+  if (!match || !Number.isInteger(timeline) || timeline <= 0) {
+    return null;
+  }
+  const [, upperHex, lowerHex] = match;
+  const lsnValue = (BigInt(`0x${upperHex}`) << 32n) + BigInt(`0x${lowerHex}`);
+  const segmentNumber = lsnValue / WAL_SEGMENT_SIZE;
+  const log = segmentNumber / XLOG_SEGMENTS_PER_XLOG_ID;
+  const seg = segmentNumber % XLOG_SEGMENTS_PER_XLOG_ID;
+  return [
+    timeline.toString(16).padStart(8, "0").toUpperCase(),
+    log.toString(16).padStart(8, "0").toUpperCase(),
+    seg.toString(16).padStart(8, "0").toUpperCase(),
+  ].join("");
+}
+
+async function readBackupManifestWalKeepFromSegment({
+  manifest,
+  paths,
+}: {
+  manifest: StoredBayBackupManifest;
+  paths: ReturnType<typeof getBayBackupPaths>;
+}): Promise<string | null> {
+  if (manifest.wal_keep_from_segment) {
+    return manifest.wal_keep_from_segment;
+  }
+  const artifact = findArtifactByName(manifest.artifacts, "backup_manifest");
+  const candidatePaths = [
+    artifact?.local_path ?? null,
+    join(paths.archives_dir, manifest.backup_set_id, "backup_manifest"),
+  ].filter(
+    (path, index, all): path is string =>
+      Boolean(path) && all.indexOf(path) === index,
+  );
+  for (const path of candidatePaths) {
+    if (!(await exists(path))) continue;
+    try {
+      const segment = await readWalKeepFromBackupManifestFile(path);
+      if (segment) {
+        return segment;
+      }
+    } catch (err) {
+      logger.warn("failed to parse backup_manifest WAL ranges", {
+        backup_set_id: manifest.backup_set_id,
+        path,
+        err,
+      });
+    }
+  }
+  return null;
+}
+
+async function computeRemoteWalRetentionFloorSegment({
+  paths,
+  keep_latest_backups,
+}: {
+  paths: ReturnType<typeof getBayBackupPaths>;
+  keep_latest_backups: number;
+}): Promise<string | null> {
+  if (keep_latest_backups <= 0) {
+    return null;
+  }
+  const manifests = (await readStoredBackupManifests({ paths })).filter(
+    (manifest) => manifest.format === "pg_basebackup",
+  );
+  const retained = manifests.slice(0, keep_latest_backups);
+  const segments: string[] = [];
+  for (const manifest of retained) {
+    const segment = await readBackupManifestWalKeepFromSegment({
+      manifest,
+      paths,
+    });
+    if (segment) {
+      segments.push(segment);
+    }
+  }
+  return segments.length > 0 ? segments.sort()[0] : null;
+}
+
+async function pruneRemoteWalObjects({
+  r2,
+  remote_object_keys,
+  wal_object_prefix,
+  keep_from_segment,
+}: {
+  r2: R2Target;
+  remote_object_keys: Iterable<string>;
+  wal_object_prefix: string;
+  keep_from_segment: string | null;
+}): Promise<number> {
+  if (
+    !keep_from_segment ||
+    !r2.bucket_name ||
+    !r2.bucket_endpoint ||
+    !r2.access_key ||
+    !r2.secret_key
+  ) {
+    return 0;
+  }
+  let removed = 0;
+  for (const key of remote_object_keys) {
+    if (!key.startsWith(`${wal_object_prefix}/`)) continue;
+    const name = key.slice(wal_object_prefix.length + 1);
+    if (name.endsWith(".history")) continue;
+    if (!WAL_SEGMENT_NAME_RE.test(name)) continue;
+    if (name >= keep_from_segment) continue;
+    await deleteObject({
+      endpoint: r2.bucket_endpoint,
+      accessKey: r2.access_key,
+      secretKey: r2.secret_key,
+      bucket: r2.bucket_name,
+      key,
+    });
+    removed += 1;
+  }
+  return removed;
+}
+
 async function pruneLocalArchiveDirectories({
   paths,
   keep_backup_set_ids,
@@ -1811,6 +1985,7 @@ async function applyBayBackupRetention({
     ...state,
     last_pruned_at: new Date().toISOString(),
     last_pruned_wal_count: state.last_pruned_wal_count ?? 0,
+    last_pruned_remote_wal_count: state.last_pruned_remote_wal_count ?? 0,
     last_pruned_local_archive_count: pruned_local_archive_count,
     last_pruned_restore_count: pruned_restore_count,
   };
@@ -2318,6 +2493,7 @@ async function syncBayWalArchive({
     last_restore_test_recovery_ready:
       stored.last_restore_test_recovery_ready ?? null,
     last_pruned_wal_count: stored.last_pruned_wal_count ?? 0,
+    last_pruned_remote_wal_count: stored.last_pruned_remote_wal_count ?? 0,
     last_pruned_local_archive_count:
       stored.last_pruned_local_archive_count ?? 0,
     last_pruned_restore_count: stored.last_pruned_restore_count ?? 0,
@@ -2356,6 +2532,7 @@ async function syncBayWalArchive({
   const previous_last_segment = snapshot.last_archived_wal_segment;
   const walErrorPrefix = "wal archive:";
   let last_pruned_wal_count = state.last_pruned_wal_count ?? 0;
+  let last_pruned_remote_wal_count = state.last_pruned_remote_wal_count ?? 0;
   if (forceSwitch) {
     try {
       await getPool().query("SELECT pg_switch_wal()");
@@ -2412,11 +2589,23 @@ async function syncBayWalArchive({
           contentType: "application/octet-stream",
         });
         last_uploaded_wal_segment = file.name;
+        remote_object_keys?.add(object_key);
       }
       state = {
         ...state,
         last_uploaded_wal_segment,
       };
+    }
+    if (canUploadRemote && resolvedWalObjectPrefix) {
+      last_pruned_remote_wal_count = await pruneRemoteWalObjects({
+        r2,
+        remote_object_keys: remote_object_keys ?? [],
+        wal_object_prefix: resolvedWalObjectPrefix,
+        keep_from_segment: await computeRemoteWalRetentionFloorSegment({
+          paths,
+          keep_latest_backups: config.remote_wal_retention_backups,
+        }),
+      });
     }
     const pruneSnapshot = await getWalArchiveSnapshot({ paths, state });
     last_pruned_wal_count = await pruneLocalWalArchive({
@@ -2427,8 +2616,9 @@ async function syncBayWalArchive({
     state = {
       ...state,
       last_pruned_wal_count,
+      last_pruned_remote_wal_count,
       last_pruned_at:
-        last_pruned_wal_count > 0
+        last_pruned_wal_count > 0 || last_pruned_remote_wal_count > 0
           ? new Date().toISOString()
           : (state.last_pruned_at ?? null),
     };
@@ -2443,6 +2633,7 @@ async function syncBayWalArchive({
     state = {
       ...state,
       last_pruned_wal_count,
+      last_pruned_remote_wal_count,
       last_error_at: new Date().toISOString(),
       last_error: `${walErrorPrefix} upload failed: ${String(err)}`,
     };
@@ -2689,6 +2880,7 @@ function mapStateToStatus({
     full_snapshot_retention_count: config.full_snapshot_retention_count,
     restore_workspace_retention_days: config.restore_workspace_retention_days,
     local_wal_retention_count: config.local_wal_retention_count,
+    remote_wal_retention_backups: config.remote_wal_retention_backups,
     maintenance_running: backupMaintenanceRunning,
     maintenance_next_run_at: state.maintenance_next_run_at,
     maintenance_last_started_at: state.maintenance_last_started_at,
@@ -2698,6 +2890,7 @@ function mapStateToStatus({
     maintenance_last_error: state.maintenance_last_error,
     last_pruned_at: state.last_pruned_at,
     last_pruned_wal_count: state.last_pruned_wal_count,
+    last_pruned_remote_wal_count: state.last_pruned_remote_wal_count,
     last_pruned_local_archive_count: state.last_pruned_local_archive_count,
     last_pruned_restore_count: state.last_pruned_restore_count,
   };
@@ -2886,6 +3079,7 @@ export async function getBayBackupStatus({
     last_restore_test_recovery_ready:
       stored.last_restore_test_recovery_ready ?? null,
     last_pruned_wal_count: stored.last_pruned_wal_count ?? 0,
+    last_pruned_remote_wal_count: stored.last_pruned_remote_wal_count ?? 0,
     last_pruned_local_archive_count:
       stored.last_pruned_local_archive_count ?? 0,
     last_pruned_restore_count: stored.last_pruned_restore_count ?? 0,
@@ -2991,6 +3185,7 @@ export async function runBayBackup({
       last_restore_test_recovery_ready:
         previous.last_restore_test_recovery_ready ?? null,
       last_pruned_wal_count: previous.last_pruned_wal_count ?? 0,
+      last_pruned_remote_wal_count: previous.last_pruned_remote_wal_count ?? 0,
       last_pruned_local_archive_count:
         previous.last_pruned_local_archive_count ?? 0,
       last_pruned_restore_count: previous.last_pruned_restore_count ?? 0,
@@ -3035,6 +3230,12 @@ export async function runBayBackup({
       let latest_object_prefix: string | null = null;
       let latest_remote_snapshot_id: string | null = null;
       let latest_remote_snapshot_host: string | null = null;
+      const wal_keep_from_segment =
+        actual_strategy === "pg_basebackup"
+          ? await readWalKeepFromBackupManifestFile(
+              join(archive_dir, "backup_manifest"),
+            ).catch(() => null)
+          : null;
       const snapshotManifest: StoredBayBackupManifest = {
         bay_id: resolvedBayId,
         bay_label: currentBay.label,
@@ -3051,6 +3252,7 @@ export async function runBayBackup({
         remote_manifest_key: null,
         remote_snapshot_id: null,
         remote_snapshot_host: resolvedBayId,
+        wal_keep_from_segment,
         rustic_repo_selector: rusticRepo?.repo_selector ?? null,
         postgres,
         artifacts,
@@ -3106,6 +3308,7 @@ export async function runBayBackup({
         remote_manifest_key: latest_remote_manifest_key,
         remote_snapshot_id: latest_remote_snapshot_id,
         remote_snapshot_host: latest_remote_snapshot_host,
+        wal_keep_from_segment,
         rustic_repo_selector: rusticRepo?.repo_selector ?? null,
         postgres,
         artifacts,
@@ -3298,6 +3501,7 @@ export async function runBayRestore({
     last_restore_test_recovery_ready:
       stored.last_restore_test_recovery_ready ?? null,
     last_pruned_wal_count: stored.last_pruned_wal_count ?? 0,
+    last_pruned_remote_wal_count: stored.last_pruned_remote_wal_count ?? 0,
     last_pruned_local_archive_count:
       stored.last_pruned_local_archive_count ?? 0,
     last_pruned_restore_count: stored.last_pruned_restore_count ?? 0,
@@ -4096,6 +4300,7 @@ export async function runBayRestoreTest({
     last_restore_test_recovery_ready:
       stored.last_restore_test_recovery_ready ?? null,
     last_pruned_wal_count: stored.last_pruned_wal_count ?? 0,
+    last_pruned_remote_wal_count: stored.last_pruned_remote_wal_count ?? 0,
     last_pruned_local_archive_count:
       stored.last_pruned_local_archive_count ?? 0,
     last_pruned_restore_count: stored.last_pruned_restore_count ?? 0,
