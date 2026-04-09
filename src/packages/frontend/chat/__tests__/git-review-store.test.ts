@@ -26,9 +26,23 @@ const akvMock = jest.fn(({ account_id, name }: any) => {
   };
 });
 
+const dkvMock = jest.fn(async ({ account_id, name }: any) => {
+  const store = getStore(account_id, name);
+  return {
+    getAll: () => Object.fromEntries(store.entries()),
+    setMany: (obj: Record<string, any>) => {
+      for (const [key, value] of Object.entries(obj)) {
+        store.set(key, value);
+      }
+    },
+    save: async () => undefined,
+  };
+});
+
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
+      dkv: (opts: any) => dkvMock(opts),
       conat: () => ({
         sync: {
           akv: (opts: any) => akvMock(opts),
@@ -42,6 +56,7 @@ describe("git review import/export", () => {
   beforeEach(() => {
     stores.clear();
     akvMock.mockClear();
+    dkvMock.mockClear();
     localStorage.clear();
   });
 

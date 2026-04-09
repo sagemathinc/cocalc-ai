@@ -205,6 +205,13 @@ function getReviewStore(accountId: string) {
   });
 }
 
+async function getReviewBulkStore(accountId: string) {
+  return await webapp_client.conat_client.dkv<GitReviewRecordV2>({
+    account_id: accountId,
+    name: REVIEW_STORE_V2,
+  });
+}
+
 export function loadReviewDraft(
   commitSha?: string,
 ): GitReviewDraftV2 | undefined {
@@ -369,17 +376,14 @@ export async function exportReviewBundle({
   if (!normalizedAccountId) {
     throw new Error("account id is required to export git reviews");
   }
-  const kv = getReviewStore(normalizedAccountId);
-  const keys = (await kv.keys()).filter((key) => key.startsWith("commit:"));
-  const records = (
-    await Promise.all(
-      keys.map(async (key) =>
-        sanitizeReviewRecord(await kv.get(key), {
-          accountId: normalizedAccountId,
-        }),
-      ),
+  const kv = await getReviewBulkStore(normalizedAccountId);
+  const records = Object.entries(kv.getAll())
+    .filter(([key]) => key.startsWith("commit:"))
+    .map(([, value]) =>
+      sanitizeReviewRecord(value, {
+        accountId: normalizedAccountId,
+      }),
     )
-  )
     .filter((record): record is GitReviewRecordV2 => record != null)
     .sort((a, b) => {
       const updated = (b.updated_at ?? 0) - (a.updated_at ?? 0);
@@ -419,7 +423,9 @@ export async function importReviewBundle({
     throw new Error("account id is required to import git reviews");
   }
   const rawRecords = extractImportedReviewRecords(payload);
-  const kv = getReviewStore(normalizedAccountId);
+  const kv = await getReviewBulkStore(normalizedAccountId);
+  const existingAll = kv.getAll();
+  const pending: Record<string, GitReviewRecordV2> = {};
   let imported = 0;
   let skipped = 0;
   for (const raw of rawRecords) {
@@ -435,7 +441,7 @@ export async function importReviewBundle({
       skipped += 1;
       continue;
     }
-    const existing = sanitizeReviewRecord(await kv.get(key), {
+    const existing = sanitizeReviewRecord(existingAll[key], {
       accountId: normalizedAccountId,
       commitSha: record.commit_sha,
     });
@@ -449,9 +455,13 @@ export async function importReviewBundle({
       commit_sha: record.commit_sha,
       revision: Math.max(record.revision ?? 1, existing?.revision ?? 1),
     };
-    await kv.set(key, nextRecord);
+    pending[key] = nextRecord;
     clearReviewDraft(record.commit_sha);
     imported += 1;
+  }
+  if (imported > 0) {
+    kv.setMany(pending);
+    await kv.save();
   }
   return {
     imported,
