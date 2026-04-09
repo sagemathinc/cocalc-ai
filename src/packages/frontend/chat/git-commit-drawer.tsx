@@ -7,6 +7,7 @@ import {
   Alert,
   Button,
   Checkbox,
+  Dropdown,
   Drawer,
   Empty,
   Input,
@@ -16,6 +17,7 @@ import {
   Switch,
   Tooltip,
   Typography,
+  type MenuProps,
 } from "antd";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
@@ -31,13 +33,15 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { redux } from "@cocalc/frontend/app-framework";
-import { TimeAgo } from "@cocalc/frontend/components";
+import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import { filenameMode } from "@cocalc/frontend/file-associations";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { backtickSequence } from "@cocalc/frontend/markdown/util";
 import { containingPath } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
+  exportReviewBundle,
+  importReviewBundle,
   loadReviewRecord,
   loadReviewDraft,
   type GitReviewCommentSide,
@@ -1333,6 +1337,7 @@ export function GitCommitDrawer({
 
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewSaving, setReviewSaving] = useState(false);
+  const [reviewTransferBusy, setReviewTransferBusy] = useState(false);
   const [reviewError, setReviewError] = useState("");
   const [reviewed, setReviewed] = useState(false);
   const [reviewNote, setReviewNote] = useState("");
@@ -1350,9 +1355,11 @@ export function GitCommitDrawer({
   const [reviewStateCommit, setReviewStateCommit] = useState<
     string | undefined
   >(undefined);
+  const [reviewReloadCounter, setReviewReloadCounter] = useState(0);
   const noteDirty = reviewNoteDraft !== reviewNote;
   const reviewLoadTokenRef = useRef(0);
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
+  const reviewImportInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const restoringScrollRef = useRef(false);
   const pendingScrollRestoreRef = useRef<number | null>(null);
@@ -1686,7 +1693,7 @@ export function GitCommitDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, accountId, visibleLogEntries, commit]);
+  }, [open, accountId, visibleLogEntries, commit, reviewReloadCounter]);
 
   useEffect(() => {
     const token = ++reviewLoadTokenRef.current;
@@ -1766,7 +1773,128 @@ export function GitCommitDrawer({
         setReviewLoading(false);
       }
     })();
-  }, [open, accountId, commit]);
+  }, [open, accountId, commit, reviewReloadCounter]);
+
+  const exportReviewData = useCallback(async () => {
+    if (!accountId) {
+      alert_message({
+        type: "error",
+        message: "Unable to export git reviews without a signed-in account.",
+      });
+      return;
+    }
+    setReviewTransferBusy(true);
+    try {
+      const bundle = await exportReviewBundle({ accountId });
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const stamp = new Date(bundle.exported_at)
+        .toISOString()
+        .replace(/[:]/g, "-");
+      anchor.href = url;
+      anchor.download = `cocalc-git-reviews-${stamp}.json`;
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      alert_message({
+        type: "success",
+        message: `Exported ${bundle.records.length} git review${bundle.records.length === 1 ? "" : "s"}.`,
+      });
+    } catch (err) {
+      alert_message({
+        type: "error",
+        message: `${err ?? "Unable to export git reviews."}`,
+      });
+    } finally {
+      setReviewTransferBusy(false);
+    }
+  }, [accountId]);
+
+  const importReviewData = useCallback(
+    async (file?: File | null) => {
+      if (!file) return;
+      if (!accountId) {
+        alert_message({
+          type: "error",
+          message: "Unable to import git reviews without a signed-in account.",
+        });
+        return;
+      }
+      setReviewTransferBusy(true);
+      try {
+        const payload = JSON.parse(await file.text());
+        const result = await importReviewBundle({
+          accountId,
+          payload,
+        });
+        setReviewReloadCounter((n) => n + 1);
+        const skippedSuffix =
+          result.skipped > 0
+            ? ` Skipped ${result.skipped} older or invalid review${result.skipped === 1 ? "" : "s"}.`
+            : "";
+        alert_message({
+          type: "success",
+          message:
+            result.total === 0
+              ? "Import file contained no git reviews."
+              : `Imported ${result.imported} git review${result.imported === 1 ? "" : "s"}.${skippedSuffix}`,
+        });
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `${err ?? "Unable to import git reviews."}`,
+        });
+      } finally {
+        setReviewTransferBusy(false);
+      }
+    },
+    [accountId],
+  );
+
+  const reviewMenuItems = useMemo<NonNullable<MenuProps["items"]>>(() => {
+    const items: NonNullable<MenuProps["items"]> = [
+      {
+        key: "export",
+        label: "Export reviews",
+        disabled: reviewTransferBusy || !accountId,
+      },
+      {
+        key: "import",
+        label: "Import reviews",
+        disabled: reviewTransferBusy || !accountId,
+      },
+    ];
+    if (onOpenActivityLog) {
+      items.push({ type: "divider" });
+      items.push({
+        key: "activity",
+        label: "Open activity",
+      });
+    }
+    return items;
+  }, [accountId, onOpenActivityLog, reviewTransferBusy]);
+
+  const handleReviewMenuClick = useCallback<NonNullable<MenuProps["onClick"]>>(
+    ({ key }) => {
+      if (key === "export") {
+        void exportReviewData();
+        return;
+      }
+      if (key === "import") {
+        reviewImportInputRef.current?.click();
+        return;
+      }
+      if (key === "activity") {
+        onOpenActivityLog?.();
+      }
+    },
+    [exportReviewData, onOpenActivityLog],
+  );
 
   const saveReview = async (
     next: Partial<
@@ -2588,11 +2716,20 @@ export function GitCommitDrawer({
                 style={{ width: 120 }}
               />
             </Tooltip>
-            {onOpenActivityLog ? (
-              <Button size="small" onClick={() => onOpenActivityLog()}>
-                Open activity
-              </Button>
-            ) : null}
+            <Dropdown
+              trigger={["click"]}
+              menu={{
+                items: reviewMenuItems,
+                onClick: handleReviewMenuClick,
+              }}
+            >
+              <Button
+                size="small"
+                loading={reviewTransferBusy}
+                icon={<Icon name="ellipsis" />}
+                aria-label="Review actions"
+              />
+            </Dropdown>
           </div>
         </div>
       }
@@ -2610,6 +2747,17 @@ export function GitCommitDrawer({
       destroyOnHidden
       styles={{ body: { padding: 0, overflow: "hidden" } }}
     >
+      <input
+        ref={reviewImportInputRef}
+        type="file"
+        accept="application/json,.json"
+        style={{ display: "none" }}
+        onChange={(evt) => {
+          const file = evt.currentTarget.files?.[0] ?? null;
+          evt.currentTarget.value = "";
+          void importReviewData(file);
+        }}
+      />
       <div
         ref={scrollRef}
         onScroll={handleDrawerScroll}

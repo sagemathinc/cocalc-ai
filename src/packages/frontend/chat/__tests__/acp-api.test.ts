@@ -751,8 +751,8 @@ describe("queued ACP controls", () => {
     jest.clearAllMocks();
   });
 
-  it("updates local state after sending a queued turn immediately", async () => {
-    mockControlAcp.mockResolvedValue({ ok: true });
+  it("converts a queued turn into attached steer guidance", async () => {
+    mockControlAcp.mockResolvedValue({ ok: true, state: "running" });
     const acpState = new FakeAcpState();
     acpState.set("message:user-msg-queued", "queue");
     const store: any = {
@@ -764,10 +764,17 @@ describe("queued ACP controls", () => {
       },
       setState: jest.fn(),
     };
-    const actions: any = { store };
+    const actions: any = {
+      store,
+      syncdb: {
+        set: jest.fn(),
+        commit: jest.fn(),
+      },
+    };
     const message: any = {
       message_id: "user-msg-queued",
       thread_id: "thread-queued",
+      history: [{ content: "actually say hello" }],
     };
 
     await expect(
@@ -785,6 +792,11 @@ describe("queued ACP controls", () => {
       acpState,
     });
     expect(acpState.get("message:user-msg-queued")).toBe("sent");
+    expect(actions.syncdb.set).toHaveBeenLastCalledWith({
+      ...message,
+      acp_send_mode: "immediate",
+      acp_state: "sent",
+    });
   });
 
   it("updates local state after cancelling a queued turn", async () => {

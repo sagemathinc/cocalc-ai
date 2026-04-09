@@ -4,6 +4,7 @@ const REVIEW_STORE_V2 = "cocalc-git-review-v2";
 const REVIEW_STORE_V1 = "cocalc-commit-review-v1";
 const REVIEW_DRAFT_STORAGE_PREFIX = "cocalc:git-review:draft:v2:commit:";
 const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
+const REVIEW_EXPORT_KIND = "cocalc-git-review-export-v1";
 
 type LegacyCommitReviewRecord = {
   version?: number;
@@ -46,6 +47,13 @@ export type GitReviewRecordV2 = {
   created_at: number;
   updated_at: number;
   revision: number;
+};
+
+export type GitReviewExportV1 = {
+  kind: typeof REVIEW_EXPORT_KIND;
+  version: 1;
+  exported_at: number;
+  records: GitReviewRecordV2[];
 };
 
 type GitReviewDraftV2 = {
@@ -149,6 +157,54 @@ function sanitizeComments(input: unknown): Record<string, GitReviewCommentV2> {
   return out;
 }
 
+function sanitizeReviewRecord(
+  input: unknown,
+  {
+    accountId,
+    commitSha,
+  }: {
+    accountId?: string;
+    commitSha?: string;
+  } = {},
+): GitReviewRecordV2 | undefined {
+  const raw: any = input;
+  if (!raw || typeof raw !== "object") return undefined;
+  const normalizedCommit = normalizeCommitSha(commitSha ?? raw?.commit_sha);
+  const normalizedAccountId = `${accountId ?? raw?.account_id ?? ""}`.trim();
+  if (!normalizedCommit || !normalizedAccountId) return undefined;
+  const now = Date.now();
+  const createdAt = Number(raw?.created_at);
+  const updatedAt = Number(raw?.updated_at);
+  const revision = Number(raw?.revision);
+  const lastSubmittedAt = Number(raw?.last_submitted_at);
+  return {
+    version: 2,
+    account_id: normalizedAccountId,
+    commit_sha: normalizedCommit,
+    reviewed: Boolean(raw?.reviewed),
+    note: `${raw?.note ?? ""}`,
+    comments: sanitizeComments(raw?.comments),
+    last_submitted_at: Number.isFinite(lastSubmittedAt)
+      ? lastSubmittedAt
+      : undefined,
+    last_submission_turn_id:
+      typeof raw?.last_submission_turn_id === "string"
+        ? raw.last_submission_turn_id
+        : undefined,
+    created_at: Number.isFinite(createdAt) ? createdAt : now,
+    updated_at: Number.isFinite(updatedAt) ? updatedAt : now,
+    revision: Number.isFinite(revision) ? Math.max(1, revision) : 1,
+  };
+}
+
+function getReviewStore(accountId: string) {
+  const cn = webapp_client.conat_client.conat();
+  return cn.sync.akv<GitReviewRecordV2>({
+    account_id: accountId,
+    name: REVIEW_STORE_V2,
+  });
+}
+
 export function loadReviewDraft(
   commitSha?: string,
 ): GitReviewDraftV2 | undefined {
@@ -241,15 +297,15 @@ export async function loadReviewRecord({
   const normalizedCommit = normalizeCommitSha(commitSha);
   const key = makeReviewKey(commitSha);
   if (!normalizedCommit || !key) return undefined;
-  const cn = webapp_client.conat_client.conat();
-  const kvV2 = cn.sync.akv<GitReviewRecordV2>({
-    account_id: accountId,
-    name: REVIEW_STORE_V2,
+  const kvV2 = getReviewStore(accountId);
+  const current = sanitizeReviewRecord(await kvV2.get(key), {
+    accountId,
+    commitSha: normalizedCommit,
   });
-  const current = await kvV2.get(key);
   if (current) {
     return mergeRecordWithDraft(current, loadReviewDraft(normalizedCommit));
   }
+  const cn = webapp_client.conat_client.conat();
   const kvV1 = cn.sync.akv<LegacyCommitReviewRecord>({
     account_id: accountId,
     name: REVIEW_STORE_V1,
@@ -286,11 +342,7 @@ export async function saveReviewRecord(
   if (!accountId || !commitSha || !key) {
     throw new Error("invalid review record");
   }
-  const cn = webapp_client.conat_client.conat();
-  const kv = cn.sync.akv<GitReviewRecordV2>({
-    account_id: accountId,
-    name: REVIEW_STORE_V2,
-  });
+  const kv = getReviewStore(accountId);
   const now = Date.now();
   const payload: GitReviewRecordV2 = {
     ...record,
@@ -306,4 +358,104 @@ export async function saveReviewRecord(
   await kv.set(key, payload);
   clearReviewDraft(commitSha);
   return payload;
+}
+
+export async function exportReviewBundle({
+  accountId,
+}: {
+  accountId: string;
+}): Promise<GitReviewExportV1> {
+  const normalizedAccountId = `${accountId ?? ""}`.trim();
+  if (!normalizedAccountId) {
+    throw new Error("account id is required to export git reviews");
+  }
+  const kv = getReviewStore(normalizedAccountId);
+  const keys = (await kv.keys()).filter((key) => key.startsWith("commit:"));
+  const records = (
+    await Promise.all(
+      keys.map(async (key) =>
+        sanitizeReviewRecord(await kv.get(key), {
+          accountId: normalizedAccountId,
+        }),
+      ),
+    )
+  )
+    .filter((record): record is GitReviewRecordV2 => record != null)
+    .sort((a, b) => {
+      const updated = (b.updated_at ?? 0) - (a.updated_at ?? 0);
+      return updated !== 0 ? updated : a.commit_sha.localeCompare(b.commit_sha);
+    });
+  return {
+    kind: REVIEW_EXPORT_KIND,
+    version: 1,
+    exported_at: Date.now(),
+    records,
+  };
+}
+
+function extractImportedReviewRecords(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (
+    payload &&
+    typeof payload === "object" &&
+    Array.isArray((payload as { records?: unknown[] }).records)
+  ) {
+    return (payload as { records: unknown[] }).records;
+  }
+  throw new Error("invalid git review import file");
+}
+
+export async function importReviewBundle({
+  accountId,
+  payload,
+}: {
+  accountId: string;
+  payload: unknown;
+}): Promise<{ imported: number; skipped: number; total: number }> {
+  const normalizedAccountId = `${accountId ?? ""}`.trim();
+  if (!normalizedAccountId) {
+    throw new Error("account id is required to import git reviews");
+  }
+  const rawRecords = extractImportedReviewRecords(payload);
+  const kv = getReviewStore(normalizedAccountId);
+  let imported = 0;
+  let skipped = 0;
+  for (const raw of rawRecords) {
+    const record = sanitizeReviewRecord(raw, {
+      accountId: normalizedAccountId,
+    });
+    if (!record) {
+      skipped += 1;
+      continue;
+    }
+    const key = makeReviewKey(record.commit_sha);
+    if (!key) {
+      skipped += 1;
+      continue;
+    }
+    const existing = sanitizeReviewRecord(await kv.get(key), {
+      accountId: normalizedAccountId,
+      commitSha: record.commit_sha,
+    });
+    if (existing && (existing.updated_at ?? 0) >= (record.updated_at ?? 0)) {
+      skipped += 1;
+      continue;
+    }
+    const nextRecord: GitReviewRecordV2 = {
+      ...record,
+      account_id: normalizedAccountId,
+      commit_sha: record.commit_sha,
+      revision: Math.max(record.revision ?? 1, existing?.revision ?? 1),
+    };
+    await kv.set(key, nextRecord);
+    clearReviewDraft(record.commit_sha);
+    imported += 1;
+  }
+  return {
+    imported,
+    skipped,
+    total: rawRecords.length,
+  };
 }

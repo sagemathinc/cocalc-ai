@@ -644,23 +644,7 @@ export function ChatRoomComposer({
                 {isZenMode ? "Exit Zen" : "Zen"}
               </Button>
             </Tooltip>
-            <Tooltip
-              title={
-                hasActiveAcpTurn && isSelectedThreadAI ? (
-                  <FormattedMessage
-                    id="chatroom.chat_input.queue_button.tooltip"
-                    defaultMessage={
-                      "Queue after current Codex turn (shift+enter)"
-                    }
-                  />
-                ) : (
-                  <FormattedMessage
-                    id="chatroom.chat_input.send_button.tooltip"
-                    defaultMessage={"Send message (shift+enter)"}
-                  />
-                )
-              }
-            >
+            {hasActiveAcpTurn && isSelectedThreadAI ? (
               <Button
                 onClick={handleSend}
                 disabled={!hasInput}
@@ -679,20 +663,39 @@ export function ChatRoomComposer({
                   />
                 )}
               </Button>
-            </Tooltip>
+            ) : (
+              <Tooltip
+                title={
+                  <FormattedMessage
+                    id="chatroom.chat_input.send_button.tooltip"
+                    defaultMessage={"Send message (shift+enter)"}
+                  />
+                }
+              >
+                <Button
+                  onClick={handleSend}
+                  disabled={!hasInput}
+                  type="primary"
+                  icon={<Icon name="paper-plane" />}
+                >
+                  <FormattedMessage
+                    id="chatroom.chat_input.send_button.label"
+                    defaultMessage={"Send"}
+                  />
+                </Button>
+              </Tooltip>
+            )}
             {hasActiveAcpTurn && isSelectedThreadAI ? (
               <>
                 <div style={{ height: "5px" }} />
-                <Tooltip title="Send guidance to the current Codex turn without interrupting it">
-                  <Button
-                    onClick={handleSendImmediately}
-                    disabled={!hasInput}
-                    type="default"
-                    icon={<Icon name="bolt" />}
-                  >
-                    Steer
-                  </Button>
-                </Tooltip>
+                <Button
+                  onClick={handleSendImmediately}
+                  disabled={!hasInput}
+                  type="default"
+                  icon={<Icon name="bolt" />}
+                >
+                  Steer
+                </Button>
               </>
             ) : null}
           </>

@@ -6435,25 +6435,6 @@ function kickAllQueuedAcpJobs(): void {
   }
 }
 
-function resolveRunningInterruptKey({
-  project_id,
-  path,
-  thread_id,
-}: {
-  project_id: string;
-  path: string;
-  thread_id: string;
-}): string {
-  const running = listRunningAcpTurnLeases().find(
-    (row) =>
-      row.project_id === project_id &&
-      row.path === path &&
-      row.thread_id === thread_id &&
-      row.state === "running",
-  );
-  return `${running?.session_id ?? thread_id}`.trim() || thread_id;
-}
-
 function resolveInterruptCandidateIds({
   project_id,
   path,
@@ -6886,6 +6867,24 @@ async function fallbackAcpSteerToQueuedTurn(
 async function handleAcpSteerRequest(
   request: AcpSteerRequest,
 ): Promise<AcpSteerResponse> {
+  const result = await attemptAcpSteerRequest(request);
+  if (result.state === "steered") {
+    const threadId = `${request.chat?.thread_id ?? ""}`.trim();
+    return {
+      ok: true,
+      state: "steered",
+      threadId: result.threadId ?? threadId,
+    };
+  }
+  if (result.state === "not_steerable") {
+    return await fallbackAcpSteerToQueuedTurn(request);
+  }
+  return await fallbackAcpSteerToQueuedTurn(request);
+}
+
+async function attemptAcpSteerRequest(
+  request: AcpSteerRequest,
+): Promise<AcpSteerAttemptResult> {
   if (!request.chat) {
     throw new Error("chat metadata is required to steer an ACP turn");
   }
@@ -6920,7 +6919,7 @@ async function handleAcpSteerRequest(
   const bindings = buildExecutorAdapters(executor, workspaceRoot, hostRoot);
   const agent = await ensureAgent(useNativeTerminal, bindings);
   if (typeof agent.steer !== "function") {
-    return await fallbackAcpSteerToQueuedTurn(request);
+    return { state: "not_steerable" };
   }
 
   const candidateIds = resolveSteerCandidateIds({
@@ -6937,14 +6936,10 @@ async function handleAcpSteerRequest(
     candidateIds,
   });
   if (result.state === "steered") {
-    return {
-      ok: true,
-      state: "steered",
-      threadId: result.threadId ?? threadId,
-    };
+    return result;
   }
   if (result.state === "not_steerable") {
-    return await fallbackAcpSteerToQueuedTurn(request);
+    return result;
   }
   if (
     liteUseDetachedAcpWorker() &&
@@ -6971,13 +6966,12 @@ async function handleAcpSteerRequest(
       });
     }
     return {
-      ok: true,
       state: "steered",
       threadId: result.threadId ?? candidateIds[0] ?? threadId,
     };
   }
 
-  return await fallbackAcpSteerToQueuedTurn(request);
+  return result;
 }
 
 async function handleAcpControlRequest(
@@ -6993,6 +6987,7 @@ async function handleAcpControlRequest(
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
+  const client = conatClient;
   if (request.action === "cancel") {
     const row = cancelQueuedAcpJob({
       project_id,
@@ -7013,47 +7008,97 @@ async function handleAcpControlRequest(
     return { ok: true, state: "canceled" };
   }
   if (request.action === "send_immediately") {
-    const row = reprioritizeAcpJobImmediate({
+    const row = cancelQueuedAcpJob({
       project_id,
       path,
       user_message_id,
     });
-    if (!row || row.state !== "queued") {
+    if (!row || row.state !== "canceled") {
       return { ok: false, state: row?.state ?? "missing" };
     }
-    const interruptKey = resolveRunningInterruptKey({
-      project_id,
-      path,
-      thread_id,
-    });
-    try {
-      await handleInterruptRequest({
+
+    const restoreQueuedImmediate = async (): Promise<AcpControlResponse> => {
+      const resent = resendCanceledAcpJob({
         project_id,
-        account_id: request.account_id,
-        threadId: interruptKey,
-        chat: {
+        path,
+        user_message_id,
+      });
+      if (!resent || resent.state !== "queued") {
+        return { ok: false, state: resent?.state ?? "missing" };
+      }
+      reprioritizeAcpJobImmediate({
+        project_id,
+        path,
+        user_message_id,
+      });
+      await persistQueuedUserMessageProjection({
+        client,
+        project_id,
+        path,
+        thread_id,
+        user_message_id,
+        queued: true,
+      });
+      if (liteUseDetachedAcpWorker()) {
+        await ensureDetachedWorkerRunning({ force: true });
+      } else {
+        kickAllQueuedAcpJobs();
+      }
+      return { ok: true, state: "queued" };
+    };
+
+    try {
+      const queuedRequest = decodeAcpJobRequest(row);
+      if (
+        queuedRequest.request_kind === "command" ||
+        !queuedRequest.chat ||
+        !("prompt" in queuedRequest)
+      ) {
+        return await restoreQueuedImmediate();
+      }
+      const steerResult = await attemptAcpSteerRequest({
+        request_kind: queuedRequest.request_kind,
+        project_id: queuedRequest.project_id,
+        account_id: queuedRequest.account_id,
+        prompt: queuedRequest.prompt,
+        session_id: queuedRequest.session_id,
+        config: queuedRequest.config,
+        runtime_env: queuedRequest.runtime_env,
+        chat: queuedRequest.chat,
+      });
+      if (steerResult.state !== "steered") {
+        return await restoreQueuedImmediate();
+      }
+      await persistQueuedUserMessageProjection({
+        client,
+        project_id,
+        path,
+        thread_id,
+        user_message_id,
+        queued: false,
+      });
+      return { ok: true, state: "running" };
+    } catch (err) {
+      const restored = await restoreQueuedImmediate().catch((restoreErr) => {
+        logger.warn("failed to restore queued ACP job after steer failure", {
           project_id,
           path,
           thread_id,
-          message_date: "",
-          sender_id: "",
-        },
+          user_message_id,
+          err: restoreErr,
+        });
+        return null;
       });
-    } catch (err) {
-      logger.debug("send-immediately did not interrupt an active turn", {
+      logger.debug("failed to steer queued ACP turn", {
         project_id,
         path,
         thread_id,
         user_message_id,
         err,
+        restored,
       });
+      throw err;
     }
-    if (liteUseDetachedAcpWorker()) {
-      await ensureDetachedWorkerRunning({ force: true });
-    } else {
-      kickAllQueuedAcpJobs();
-    }
-    return { ok: true, state: "queued" };
   }
   if (request.action === "resend") {
     const row = resendCanceledAcpJob({
