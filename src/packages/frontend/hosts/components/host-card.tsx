@@ -255,7 +255,12 @@ export const HostCard: React.FC<HostCardProps> = ({
 
   return (
     <Card
-      title={host.name}
+      title={
+        <Space size="small" wrap>
+          <span>{host.name}</span>
+          {host.pricing_model === "spot" && <Tag color="orange">spot</Tag>}
+        </Space>
+      }
       extra={
         <Space size="small">
           <Tooltip title={host.starred ? "Starred" : "Star host"}>

@@ -7,12 +7,14 @@ import {
 } from "../../sqlite/database";
 import {
   claimNextQueuedAcpJobForThread,
+  cancelQueuedAcpJob,
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
   enqueueAcpJob,
   getAcpJob,
   listQueuedAcpJobs,
   listQueuedAcpJobsForThread,
+  resendCanceledAcpJob,
   reprioritizeAcpJobImmediate,
   setAcpJobState,
 } from "../../sqlite/acp-jobs";
@@ -232,5 +234,35 @@ describe("acp job queue ordering", () => {
         sender_id: "openai-codex-agent",
       },
     });
+  });
+
+  it("can resend a canceled queued job", async () => {
+    const queued = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-resend-1",
+        assistantMessageId: "assistant-resend-1",
+        assistantDate: "2026-03-08T00:00:04.000Z",
+      }),
+    );
+    const canceled = cancelQueuedAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    });
+    expect(canceled?.state).toBe("canceled");
+
+    const resent = resendCanceledAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    });
+    expect(resent?.state).toBe("queued");
+
+    const claimed = claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+    });
+    expect(claimed?.op_id).toBe(queued.op_id);
   });
 });

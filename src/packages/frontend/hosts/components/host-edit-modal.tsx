@@ -13,6 +13,8 @@ import type {
   Host,
   HostAutoGrowConfig,
   HostCatalog,
+  HostInterruptionRestorePolicy,
+  HostPricingModel,
 } from "@cocalc/conat/hub/api/hosts";
 import type { HostProvider } from "../types";
 import { getDiskTypeOptions } from "../constants";
@@ -24,11 +26,18 @@ import {
   getProviderDescriptor,
   getProviderOptions,
   getProviderStorageSupport,
+  isNebiusSpotSupported,
 } from "../providers/registry";
 import type { HostFieldId, ProviderSelection } from "../providers/registry";
 import { SshTargetLabel } from "./ssh-target-help";
 
 const NEBIUS_IO_M3_GB = 93;
+
+function defaultRestorePolicy(
+  pricingModel: "on_demand" | "spot" | undefined,
+): "none" | "immediate" {
+  return pricingModel === "spot" ? "immediate" : "none";
+}
 
 type HostEditModalProps = {
   open: boolean;
@@ -57,6 +66,8 @@ type HostEditModalProps = {
       auto_grow_max_disk_gb?: number;
       auto_grow_growth_step_gb?: number;
       auto_grow_min_grow_interval_minutes?: number;
+      pricing_model?: HostPricingModel;
+      interruption_restore_policy?: HostInterruptionRestorePolicy;
     },
   ) => Promise<void> | void;
   onProviderChange?: (provider: HostProvider) => void;
@@ -184,6 +195,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const watchedMachineType = Form.useWatch("machine_type", form);
   const watchedGpuType = Form.useWatch("gpu_type", form);
   const watchedSize = Form.useWatch("size", form);
+  const watchedPricingModel = Form.useWatch("pricing_model", form);
   const hideAdvanced = providerId === "self-host";
   const selection: ProviderSelection = {
     region: watchedRegion ?? host?.region ?? undefined,
@@ -250,6 +262,12 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     watchedRegion,
     watchedZone,
   ]);
+  const nebiusSpotSupported = React.useMemo(
+    () =>
+      providerId !== "nebius" ||
+      isNebiusSpotSupported(fieldOptions.machine_type, watchedMachineType),
+    [fieldOptions.machine_type, providerId, watchedMachineType],
+  );
   const storageSupport = providerDescriptor
     ? getProviderStorageSupport(providerId, catalog?.provider_capabilities)
     : { supported: false, growable: false };
@@ -325,6 +343,10 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     ((providerDescriptor && fieldSchema.advanced.length > 0) ||
       storageSupport.supported);
   const initRef = React.useRef<string | null>(null);
+  const previousPricingModelRef = React.useRef<"on_demand" | "spot">(
+    "on_demand",
+  );
+  const showSpotFields = providerId !== "none" && providerId !== "self-host";
 
   React.useEffect(() => {
     if (!open) {
@@ -352,6 +374,10 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       size: host.machine?.machine_type ?? host.size ?? undefined,
       storage_mode: storageMode,
       disk_type: host.machine?.disk_type,
+      pricing_model: host.pricing_model ?? "on_demand",
+      interruption_restore_policy:
+        host.interruption_restore_policy ??
+        defaultRestorePolicy(host.pricing_model),
       self_host_ssh_target: host.machine?.metadata?.self_host_ssh_target,
       auto_grow_enabled: currentAutoGrow.enabled,
       auto_grow_max_disk_gb:
@@ -375,6 +401,25 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     providerOptions,
     storageMode,
   ]);
+  React.useEffect(() => {
+    if (!showSpotFields) return;
+    const nextPricingModel =
+      watchedPricingModel === "spot" ? "spot" : "on_demand";
+    const previousPricingModel = previousPricingModelRef.current;
+    const currentRestorePolicy = form.getFieldValue(
+      "interruption_restore_policy",
+    ) as "none" | "immediate" | undefined;
+    const nextDefault = defaultRestorePolicy(nextPricingModel);
+    const previousDefault = defaultRestorePolicy(previousPricingModel);
+    if (
+      currentRestorePolicy == null ||
+      (nextPricingModel !== previousPricingModel &&
+        currentRestorePolicy === previousDefault)
+    ) {
+      form.setFieldsValue({ interruption_restore_policy: nextDefault });
+    }
+    previousPricingModelRef.current = nextPricingModel;
+  }, [form, showSpotFields, watchedPricingModel]);
   React.useEffect(() => {
     if (!isDeprovisioned) return;
     if (!diskTypeOptions.length) return;
@@ -449,6 +494,22 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     if (isDeprovisioned) return;
     ensureFieldValue("gpu_type", watchedGpuType);
   }, [ensureFieldValue, isDeprovisioned, watchedGpuType]);
+  React.useEffect(() => {
+    if (providerId !== "nebius") return;
+    if (isDeprovisioned) return;
+    if (nebiusSpotSupported) return;
+    if (watchedPricingModel !== "spot") return;
+    form.setFieldsValue({
+      pricing_model: "on_demand",
+      interruption_restore_policy: "none",
+    });
+  }, [
+    form,
+    isDeprovisioned,
+    nebiusSpotSupported,
+    providerId,
+    watchedPricingModel,
+  ]);
 
   const renderField = (field: HostFieldId) => {
     if (
@@ -514,6 +575,43 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             >
               <Input placeholder="Host name" />
             </Form.Item>
+            {showSpotFields && (
+              <>
+                <Form.Item
+                  name="pricing_model"
+                  label="Pricing model"
+                  extra={
+                    providerId === "nebius" && !nebiusSpotSupported
+                      ? "Spot is unavailable for the selected Nebius instance type."
+                      : undefined
+                  }
+                >
+                  <Select
+                    options={[
+                      { value: "on_demand", label: "On-demand" },
+                      {
+                        value: "spot",
+                        label: "Spot / interruptible",
+                        disabled:
+                          providerId === "nebius" && !nebiusSpotSupported,
+                      },
+                    ]}
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="interruption_restore_policy"
+                  label="Interruption restore"
+                  tooltip="For spot hosts, immediately restoring the host is strongly preferred because users otherwise lose access until a backup restore or manual recovery."
+                >
+                  <Select
+                    options={[
+                      { value: "immediate", label: "Restore immediately" },
+                      { value: "none", label: "Do not auto-restore" },
+                    ]}
+                  />
+                </Form.Item>
+              </>
+            )}
             {canEditMachine &&
               providerDescriptor &&
               fieldSchema.primary.map(renderField)}

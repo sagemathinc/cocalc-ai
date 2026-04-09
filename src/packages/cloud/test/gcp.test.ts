@@ -126,6 +126,36 @@ describe("GcpProvider", () => {
     );
   });
 
+  it("creates spot instances with spot scheduling", async () => {
+    insertMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-spot", status: "DONE" } },
+    ]);
+    waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
+    getMock.mockResolvedValueOnce([{ networkInterfaces: [] }]);
+    diskGetMock.mockRejectedValueOnce({ code: 404 });
+
+    const provider = new GcpProvider();
+    await provider.createHost(
+      buildSpec({
+        pricing_model: "spot",
+      }),
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+    );
+
+    const scheduling = insertMock.mock.calls[0][0].instanceResource.scheduling;
+    expect(scheduling).toMatchObject({
+      onHostMaintenance: "TERMINATE",
+      automaticRestart: false,
+      preemptible: true,
+      provisioningModel: "SPOT",
+      instanceTerminationAction: "STOP",
+    });
+  });
+
   it("starts, stops, and deletes a host", async () => {
     startMock.mockResolvedValueOnce([{}]);
     stopMock.mockResolvedValueOnce([{}]);

@@ -12,6 +12,8 @@ import {
   verifyProjectHostToken,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { enqueueCloudVmWorkOnce } from "@cocalc/server/cloud/db";
+import { shouldAutoRestoreInterruptedSpotHost } from "@cocalc/server/cloud/spot-restore";
 import { notifyProjectHostUpdate } from "./route-project";
 
 const logger = getLogger("server:conat:host-registry");
@@ -30,6 +32,12 @@ function getHostSessionId(metadata: any): string | undefined {
 export interface HostRegistryApi {
   register: (info: HostRegistration) => Promise<void>;
   heartbeat: (info: HostRegistration) => Promise<void>;
+  shutdownNotice: (opts: {
+    host_id: string;
+    host_session_id?: string;
+    signal?: string;
+    reason?: string;
+  }) => Promise<void>;
   getProjectHostAuthPublicKey: () => Promise<{
     project_host_auth_public_key: string;
   }>;
@@ -193,6 +201,87 @@ export async function initHostRegistryService() {
           host_session_id: getHostSessionId(sanitized.metadata),
         });
         await publishKey(info);
+      },
+      async shutdownNotice(opts) {
+        const host_id = `${opts?.host_id ?? ""}`.trim();
+        if (!host_id) {
+          throw Error("shutdownNotice: host_id is required");
+        }
+        const announcedSessionId = `${opts?.host_session_id ?? ""}`.trim();
+        const { rows } = await pool().query<{
+          status?: string;
+          metadata?: any;
+        }>(
+          "SELECT status, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+          [host_id],
+        );
+        const row = rows[0];
+        if (!row) {
+          logger.debug("shutdown notice ignored (missing host)", { host_id });
+          return;
+        }
+        const currentSessionId = getHostSessionId(row.metadata);
+        if (
+          announcedSessionId &&
+          currentSessionId &&
+          announcedSessionId !== currentSessionId
+        ) {
+          logger.debug("shutdown notice ignored (stale session)", {
+            host_id,
+            announcedSessionId,
+            currentSessionId,
+          });
+          return;
+        }
+        const notice = {
+          at: new Date().toISOString(),
+          signal:
+            typeof opts?.signal === "string" && opts.signal.trim()
+              ? opts.signal.trim()
+              : undefined,
+          reason:
+            typeof opts?.reason === "string" && opts.reason.trim()
+              ? opts.reason.trim()
+              : undefined,
+          host_session_id: currentSessionId ?? announcedSessionId ?? undefined,
+        };
+        const nextMetadata = {
+          ...(row.metadata ?? {}),
+          shutdown_notice: notice,
+        };
+        await pool().query(
+          "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
+          [host_id, nextMetadata],
+        );
+        if (
+          !shouldAutoRestoreInterruptedSpotHost({
+            status: row.status,
+            metadata: nextMetadata,
+          })
+        ) {
+          logger.debug("shutdown notice recorded without auto-restore", {
+            host_id,
+            status: row.status,
+            signal: notice.signal,
+            reason: notice.reason,
+          });
+          return;
+        }
+        const enqueued = await enqueueCloudVmWorkOnce({
+          vm_id: host_id,
+          action: "start",
+          payload: {
+            source: "shutdown_notice",
+            signal: notice.signal,
+            reason: notice.reason,
+          },
+        });
+        logger.info("processed shutdown notice for spot host", {
+          host_id,
+          signal: notice.signal,
+          reason: notice.reason,
+          enqueued,
+        });
       },
       async getProjectHostAuthPublicKey() {
         return {

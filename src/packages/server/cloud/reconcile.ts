@@ -14,9 +14,12 @@ import { getProviderContext } from "./provider-context";
 import { DisksClient } from "@google-cloud/compute";
 import { NebiusClient } from "@cocalc/cloud/nebius/client";
 import { getVolumes } from "@cocalc/cloud/hyperstack/client";
+import { enqueueCloudVmWorkOnce } from "./db";
 import { listServerProviders } from "./providers";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getNebiusRegionKeys } from "./nebius-credentials";
+import { shouldAutoRestoreInterruptedSpotHost } from "./spot-restore";
+export { shouldAutoRestoreInterruptedSpotHost } from "./spot-restore";
 
 const logger = getLogger("server:cloud:reconcile");
 const pool = () => getPool();
@@ -415,6 +418,48 @@ async function updateHost(
   );
 }
 
+async function enqueueSpotRestore(
+  provider: Provider,
+  row: HostRow,
+  nextRuntime: Record<string, any>,
+  reason: string,
+): Promise<boolean> {
+  if (!shouldAutoRestoreInterruptedSpotHost(row)) return false;
+  const enqueued = await enqueueCloudVmWorkOnce({
+    vm_id: row.id,
+    action: "start",
+    payload: {
+      source: "cloud_reconcile",
+      reason,
+    },
+  });
+  logger.warn("cloud reconcile: auto-restoring interrupted spot host", {
+    provider,
+    host_id: row.id,
+    reason,
+    enqueued: !!enqueued,
+  });
+  const runtimeMetadata = nextRuntime.metadata ?? {};
+  const reconcileMetadata = runtimeMetadata.reconcile ?? {};
+  await updateHost(row, {
+    status: "starting",
+    runtime: {
+      ...nextRuntime,
+      public_ip: undefined,
+      metadata: {
+        ...runtimeMetadata,
+        reconcile: {
+          ...reconcileMetadata,
+          auto_restore_reason: reason,
+          auto_restore_requested_at: new Date().toISOString(),
+        },
+      },
+    },
+  });
+  await bumpReconcile(provider, DEFAULT_INTERVALS.running_ms);
+  return true;
+}
+
 async function reconcileProvider(provider: Provider) {
   const { prefix, entry, creds } = await getProviderContext(provider);
   const hosts = await loadHosts(provider);
@@ -472,6 +517,19 @@ async function reconcileProvider(provider: Provider) {
         continue;
       }
       if (diskState === "present") {
+        if (
+          await enqueueSpotRestore(
+            provider,
+            row,
+            {
+              ...nextRuntime,
+              public_ip: undefined,
+            },
+            "missing-instance",
+          )
+        ) {
+          continue;
+        }
         await updateHost(row, {
           status: "off",
           runtime: {
@@ -497,6 +555,20 @@ async function reconcileProvider(provider: Provider) {
       row.metadata?.bootstrap_lifecycle?.summary_status === "in_sync";
     const nextStatus =
       desiredStatus === "starting" && bootstrapDone ? "running" : desiredStatus;
+    if (
+      nextStatus === "off" &&
+      (await enqueueSpotRestore(
+        provider,
+        row,
+        {
+          ...nextRuntime,
+          public_ip: undefined,
+        },
+        remote.status ? `provider-status:${remote.status}` : "provider-offline",
+      ))
+    ) {
+      continue;
+    }
     await updateHost(row, {
       status: nextStatus,
       runtime: nextRuntime,

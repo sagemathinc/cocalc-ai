@@ -49,8 +49,9 @@ describe("ensure_project_running", () => {
   let modalWaiters: Array<() => void> = [];
   let modalResolvers: Array<(value: "ok" | "cancel") => void> = [];
 
-  function flushMicrotasks() {
-    return Promise.resolve().then(() => Promise.resolve());
+  async function flushMicrotasks() {
+    await Promise.resolve();
+    await Promise.resolve();
   }
 
   function resolveNextModal(value: "ok" | "cancel") {
@@ -106,7 +107,7 @@ describe("ensure_project_running", () => {
     show_modal.mockImplementation(async () => {
       await wait_until_no_modals();
       modalOpen = true;
-      return await new Promise<"ok" | "cancel">((resolve) => {
+      return new Promise<"ok" | "cancel">((resolve) => {
         modalResolvers.push(resolve);
       });
     });

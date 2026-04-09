@@ -22,6 +22,7 @@ export {
   runReconcileOnce,
   startCloudVmReconciler,
   DEFAULT_INTERVALS,
+  shouldAutoRestoreInterruptedSpotHost,
   type ReconcileRunResult,
   bumpReconcile,
 } from "./reconcile";

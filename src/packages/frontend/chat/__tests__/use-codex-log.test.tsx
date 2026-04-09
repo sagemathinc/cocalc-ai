@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { EventEmitter } from "events";
-import { getLatestEventLineText } from "@cocalc/chat";
+import { getLatestEventLineText, getLiveResponseMarkdown } from "@cocalc/chat";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useCodexLog } from "../use-codex-log";
 
@@ -65,6 +65,28 @@ class FakeDstream extends EventEmitter {
   }
 }
 
+class RaceyFakeDstream extends FakeDstream {
+  constructor(
+    messages: any[] = [],
+    private readonly messageOnAttach?: any,
+  ) {
+    super(messages);
+  }
+
+  override on(
+    event: string | symbol,
+    listener: (...args: any[]) => void,
+  ): this {
+    const result = super.on(event, listener);
+    if (event === "change" && this.messageOnAttach != null) {
+      const payload = this.messageOnAttach;
+      (this as any).messageOnAttach = undefined;
+      this.push(payload);
+    }
+    return result;
+  }
+}
+
 function TestComponent({
   generating,
   logKey = "log-key",
@@ -88,6 +110,33 @@ function TestComponent({
   return (
     <div data-testid="latest-event">
       {getLatestEventLineText((events ?? []) as any) ?? ""}
+    </div>
+  );
+}
+
+function LiveResponseComponent({
+  generating,
+  logKey = "log-key",
+  logSubject = "subject-1",
+  liveLogStream,
+}: {
+  generating: boolean;
+  logKey?: string;
+  logSubject?: string;
+  liveLogStream?: string;
+}) {
+  const { events } = useCodexLog({
+    enabled: true,
+    generating,
+    projectId: "project-1",
+    logStore: "acp-log",
+    logKey,
+    logSubject,
+    liveLogStream,
+  });
+  return (
+    <div data-testid="live-response">
+      {getLiveResponseMarkdown((events ?? []) as any) ?? ""}
     </div>
   );
 }
@@ -410,6 +459,51 @@ describe("useCodexLog", () => {
       expect(screen.getByTestId("latest-event").textContent).toBe("Hello");
     });
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates a dstream event that races with getAll on first attach", async () => {
+    jest.useFakeTimers();
+    const payload = {
+      type: "event",
+      seq: 1,
+      time: 10,
+      event: {
+        type: "message",
+        text: "You want the real implementation",
+      },
+    };
+    const stream = new RaceyFakeDstream([], payload);
+    const get = jest.fn().mockResolvedValue(null);
+    dstreamMock.mockResolvedValue(stream);
+    conatMock.mockReturnValue({
+      subscribe: jest.fn(),
+      sync: {
+        akv: () => ({ get }),
+      },
+    });
+
+    render(
+      <LiveResponseComponent
+        generating={true}
+        logKey="log-key-live-race"
+        liveLogStream="live-stream-race"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(dstreamMock).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await jest.advanceTimersByTimeAsync(150);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("live-response").textContent).toBe(
+        "You want the real implementation",
+      );
+    });
   });
 
   it("closes the shared dstream on cleanup", async () => {

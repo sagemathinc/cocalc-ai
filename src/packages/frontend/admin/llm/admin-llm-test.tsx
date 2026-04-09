@@ -436,7 +436,7 @@ export function TestLLMAdmin() {
           <Space.Compact>
             <Input
               value={test != null ? PROMPTS[test].prompt : ""}
-              disabled={true || querying}
+              disabled={true}
               onChange={(e) => setTest(parseInt(e.target.value))}
               placeholder="Enter a query..."
             />

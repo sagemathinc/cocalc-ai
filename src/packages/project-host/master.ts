@@ -109,6 +109,18 @@ const DEFAULT_RUNTIME_LOG_PATH =
   process.env.COCALC_PROJECT_HOST_LOG?.trim() ||
   process.env.DEBUG_FILE?.trim() ||
   "/mnt/cocalc/data/log";
+const SHUTDOWN_NOTICE_TIMEOUT_MS = Math.max(
+  250,
+  Number(process.env.COCALC_PROJECT_HOST_SHUTDOWN_NOTICE_TIMEOUT_MS ?? 1500),
+);
+
+export interface MasterRegistrationHandle {
+  stop: () => void;
+  notifyShutdown: (opts?: {
+    signal?: string;
+    reason?: string;
+  }) => Promise<void>;
+}
 
 interface HostRegistration {
   id: string;
@@ -411,7 +423,7 @@ export async function startMasterRegistration({
   host: string;
   port: number;
   masterConatToken?: string;
-}) {
+}): Promise<MasterRegistrationHandle | undefined> {
   const masterAddress =
     process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER;
   if (!masterAddress) {
@@ -493,10 +505,10 @@ export async function startMasterRegistration({
     );
     let stopped = false;
     let inFlight = false;
-    let delegatedStop: (() => void) | undefined;
+    let delegatedHandle: MasterRegistrationHandle | undefined;
 
     const tryStartOnceTokenAvailable = async (reason: string) => {
-      if (stopped || delegatedStop || inFlight) return;
+      if (stopped || delegatedHandle || inFlight) return;
       inFlight = true;
       try {
         const source = getProjectHostBootstrapConatSource({
@@ -515,7 +527,7 @@ export async function startMasterRegistration({
           reason,
           token_path: expectedTokenPath,
         });
-        delegatedStop = await startMasterRegistration({
+        delegatedHandle = await startMasterRegistration({
           hostId: id,
           runnerId,
           host,
@@ -546,12 +558,14 @@ export async function startMasterRegistration({
     const stopPendingStartup = () => {
       stopped = true;
       clearInterval(retryTimer);
-      delegatedStop?.();
+      delegatedHandle?.stop();
     };
-    ["SIGINT", "SIGTERM", "SIGQUIT", "exit"].forEach((sig) =>
-      process.once(sig as any, stopPendingStartup),
-    );
-    return stopPendingStartup;
+    return {
+      stop: stopPendingStartup,
+      async notifyShutdown(opts) {
+        await delegatedHandle?.notifyShutdown(opts);
+      },
+    };
   }
 
   const client = connectToConat({
@@ -573,6 +587,12 @@ export async function startMasterRegistration({
   const registry = createServiceClient<{
     register: (info: HostRegistration) => Promise<void>;
     heartbeat: (info: HostRegistration) => Promise<void>;
+    shutdownNotice: (opts: {
+      host_id: string;
+      host_session_id?: string;
+      signal?: string;
+      reason?: string;
+    }) => Promise<void>;
     getProjectHostAuthPublicKey: () => Promise<{
       project_host_auth_public_key: string;
     }>;
@@ -808,6 +828,43 @@ export async function startMasterRegistration({
       await registry[fn](buildPayload());
     } catch (err) {
       logger.warn(`failed to ${fn} host`, { err });
+    }
+  };
+
+  const notifyShutdown = async (opts?: {
+    signal?: string;
+    reason?: string;
+  }) => {
+    const request = {
+      host_id: id,
+      host_session_id: `${basePayload.metadata?.host_session_id ?? ""}`.trim(),
+      signal:
+        typeof opts?.signal === "string" && opts.signal.trim()
+          ? opts.signal.trim()
+          : undefined,
+      reason:
+        typeof opts?.reason === "string" && opts.reason.trim()
+          ? opts.reason.trim()
+          : "process-signal",
+    };
+    try {
+      await Promise.race([
+        registry.shutdownNotice(request),
+        new Promise<never>((_, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error("shutdown notice timed out")),
+            SHUTDOWN_NOTICE_TIMEOUT_MS,
+          );
+          timer.unref?.();
+        }),
+      ]);
+    } catch (err) {
+      logger.warn("failed to send shutdown notice", {
+        err,
+        host_id: id,
+        signal: request.signal,
+        reason: request.reason,
+      });
     }
   };
 
@@ -1145,9 +1202,5 @@ export async function startMasterRegistration({
     client.close?.();
     controlService?.close?.();
   };
-  ["SIGINT", "SIGTERM", "SIGQUIT", "exit"].forEach((sig) =>
-    process.once(sig as any, stop),
-  );
-
-  return stop;
+  return { stop, notifyShutdown };
 }

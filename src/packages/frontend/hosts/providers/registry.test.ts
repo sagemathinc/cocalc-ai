@@ -1,4 +1,4 @@
-import { buildCreateHostPayload } from "./registry";
+import { buildCreateHostPayload, isNebiusSpotSupported } from "./registry";
 
 describe("buildCreateHostPayload", () => {
   it("preserves disk_gb from the host edit form for nebius", () => {
@@ -26,5 +26,61 @@ describe("buildCreateHostPayload", () => {
     );
 
     expect(payload.machine?.disk_gb).toBe(93);
+    expect(payload.pricing_model).toBe("on_demand");
+    expect(payload.interruption_restore_policy).toBe("immediate");
+  });
+
+  it("includes explicit spot pricing fields", () => {
+    const payload = buildCreateHostPayload(
+      {
+        provider: "gcp",
+        name: "Spot Host",
+        region: "us-west1",
+        size: "n2-standard-4",
+        pricing_model: "spot",
+        interruption_restore_policy: "none",
+      },
+      {
+        fieldOptions: {
+          region: [{ value: "us-west1", label: "US West 1" }],
+          size: [{ value: "n2-standard-4", label: "n2-standard-4" }],
+        },
+      },
+    );
+
+    expect(payload.pricing_model).toBe("spot");
+    expect(payload.interruption_restore_policy).toBe("none");
+  });
+});
+
+describe("isNebiusSpotSupported", () => {
+  it("returns false when the selected Nebius instance explicitly disallows preemptibles", () => {
+    expect(
+      isNebiusSpotSupported(
+        [
+          {
+            value: "cpu-d3-standard-4",
+            label: "CPU D3",
+            meta: { allowed_for_preemptibles: false },
+          },
+        ],
+        "cpu-d3-standard-4",
+      ),
+    ).toBe(false);
+  });
+
+  it("defaults to true when the catalog entry does not declare the capability", () => {
+    expect(
+      isNebiusSpotSupported(
+        [
+          {
+            value: "unknown",
+            label: "Unknown",
+            meta: {},
+          },
+        ],
+        "unknown",
+      ),
+    ).toBe(true);
   });
 });

@@ -6,6 +6,7 @@ import {
   getBestResponseText,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
+  getMountedIntermediateResponseMarkdown,
   getLatestEventLineText,
   getLatestMessageText,
   getLatestSummaryText,
@@ -100,6 +101,66 @@ describe("appendStreamMessage", () => {
 
     expect(merged).toHaveLength(1);
     expect((merged[0] as any).event.text).toBe("`src/.agents`");
+  });
+
+  test("does not insert a space after a single-star emphasis opener", () => {
+    const events = [textEvent("message", "with the *", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent("message", "original* stale host row", 2),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "with the *original* stale host row",
+    );
+  });
+
+  test("does not insert a space after a double-star emphasis opener", () => {
+    const events = [textEvent("message", "with the **", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent("message", "original** stale host row", 2),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "with the **original** stale host row",
+    );
+  });
+
+  test("does not insert a space inside dotfile markdown links", () => {
+    const events = [textEvent("message", "[.", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent(
+        "message",
+        "local/hub-daemon.env](/home/wstein/build/cocalc-lite2/src/.local/hub-daemon.env)",
+        2,
+      ),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "[.local/hub-daemon.env](/home/wstein/build/cocalc-lite2/src/.local/hub-daemon.env)",
+    );
+  });
+
+  test("does not insert a space inside markdown file names split at an extension dot", () => {
+    const events = [textEvent("message", "[README.", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent(
+        "message",
+        "md](/home/wstein/build/cocalc-lite2/src/README.md)",
+        2,
+      ),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe(
+      "[README.md](/home/wstein/build/cocalc-lite2/src/README.md)",
+    );
   });
 
   test("inserts a paragraph break between large app-server chunks", () => {
@@ -296,7 +357,7 @@ describe("response text helpers", () => {
     );
   });
 
-  test("builds live markdown from agent messages plus streamed summary", () => {
+  test("builds live markdown from agent messages without appending the summary", () => {
     const events: AcpStreamMessage[] = [
       textEvent("message", "first", 1),
       textEvent("thinking", "reasoning", 2),
@@ -307,12 +368,29 @@ describe("response text helpers", () => {
         seq: 4,
       } as AcpStreamMessage,
     ];
-    expect(getLiveResponseMarkdown(events)).toBe(
-      "first\n\nsecond\n\nfinal summary",
+    expect(getLiveResponseMarkdown(events)).toBe("first\n\nsecond");
+  });
+
+  test("drops the last agent message from mounted intermediate markdown", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "first", 1),
+      textEvent("thinking", "reasoning", 2),
+      textEvent("message", "second", 3),
+      textEvent("message", "**final summary**", 4),
+    ];
+    expect(getMountedIntermediateResponseMarkdown(events)).toBe(
+      "first\n\nsecond",
     );
   });
 
-  test("replaces a partial live agent block when the streamed summary extends it", () => {
+  test("returns nothing for mounted intermediate markdown when there is only one agent block", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "**final summary**", 1),
+    ];
+    expect(getMountedIntermediateResponseMarkdown(events)).toBeUndefined();
+  });
+
+  test("keeps the latest live agent block when the summary extends it", () => {
     const events: AcpStreamMessage[] = [
       textEvent("message", "I", 1),
       {
@@ -321,18 +399,15 @@ describe("response text helpers", () => {
         seq: 2,
       } as AcpStreamMessage,
     ];
-    expect(getLiveResponseMarkdown(events)).toBe(
-      "I'm checking the code path now.",
-    );
+    expect(getLiveResponseMarkdown(events)).toBe("I");
   });
 
-  test("does not duplicate the summary when it matches the latest agent block", () => {
+  test("falls back to the summary when there are no agent blocks yet", () => {
     const events: AcpStreamMessage[] = [
-      textEvent("message", "final summary", 1),
       {
         type: "summary",
         finalResponse: "final summary",
-        seq: 2,
+        seq: 1,
       } as AcpStreamMessage,
     ];
     expect(getLiveResponseMarkdown(events)).toBe("final summary");

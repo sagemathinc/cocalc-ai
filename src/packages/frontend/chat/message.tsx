@@ -45,6 +45,7 @@ import {
   getBestResponseText,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
+  getMountedIntermediateResponseMarkdown,
   type InlineCodeLink,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
@@ -53,6 +54,7 @@ import { codexEventsToMarkdown } from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
   resetAcpThreadState,
+  resendCanceledAcpTurn,
   sendQueuedAcpTurnImmediately,
 } from "./acp-api";
 import { History, HistoryFooter, HistoryTitle } from "./history";
@@ -409,13 +411,13 @@ export function resolveRenderedMessageValue({
 
 export function resolveMountedCodexRenderedValue({
   renderedValue,
-  mountedGeneratingValue,
+  mountedGeneratingPrefixValue,
   showCodexActivity,
   generating,
   interrupted,
 }: {
   renderedValue: string;
-  mountedGeneratingValue?: string;
+  mountedGeneratingPrefixValue?: string;
   showCodexActivity: boolean;
   generating: boolean;
   interrupted?: boolean;
@@ -424,10 +426,12 @@ export function resolveMountedCodexRenderedValue({
     showCodexActivity &&
     !generating &&
     !interrupted &&
-    typeof mountedGeneratingValue === "string" &&
-    mountedGeneratingValue.trim().length > 0
+    typeof mountedGeneratingPrefixValue === "string" &&
+    mountedGeneratingPrefixValue.trim().length > 0
   ) {
-    return mountedGeneratingValue;
+    const rendered = renderedValue.trim();
+    if (!rendered) return mountedGeneratingPrefixValue;
+    return `${mountedGeneratingPrefixValue.trimEnd()}\n\n${renderedValue.trimStart()}`;
   }
   return renderedValue;
 }
@@ -882,23 +886,28 @@ export default function Message({
     () => field<string>(message, "message_id"),
     [message],
   );
-  const [mountedGeneratingCodexBody, setMountedGeneratingCodexBody] = useState<
-    string | undefined
-  >(undefined);
+  const [mountedGeneratingCodexPrefix, setMountedGeneratingCodexPrefix] =
+    useState<string | undefined>(undefined);
   useEffect(() => {
-    setMountedGeneratingCodexBody(undefined);
+    setMountedGeneratingCodexPrefix(undefined);
   }, [messageId]);
+  const codexMountedPrefixValue = useMemo(() => {
+    if (
+      !Array.isArray(codexPreviewLog.events) ||
+      codexPreviewLog.events.length === 0
+    ) {
+      return undefined;
+    }
+    return getMountedIntermediateResponseMarkdown(
+      codexPreviewLog.events as any,
+    );
+  }, [codexPreviewLog.events]);
   useEffect(() => {
     if (!showCodexActivity || !effectiveGenerating) return;
-    if (
-      typeof codexBodyValue !== "string" ||
-      codexBodyValue.trim().length === 0
-    )
-      return;
-    setMountedGeneratingCodexBody((prev) =>
-      prev === codexBodyValue ? prev : codexBodyValue,
+    setMountedGeneratingCodexPrefix((prev) =>
+      prev === codexMountedPrefixValue ? prev : codexMountedPrefixValue,
     );
-  }, [showCodexActivity, effectiveGenerating, codexBodyValue]);
+  }, [showCodexActivity, effectiveGenerating, codexMountedPrefixValue]);
   const renderedMessageValue = useMemo(
     () =>
       resolveRenderedMessageValue({
@@ -913,14 +922,14 @@ export default function Message({
     () =>
       resolveMountedCodexRenderedValue({
         renderedValue: renderedMessageValue,
-        mountedGeneratingValue: mountedGeneratingCodexBody,
+        mountedGeneratingPrefixValue: mountedGeneratingCodexPrefix,
         showCodexActivity,
         generating: effectiveGenerating,
         interrupted: acpInterrupted,
       }),
     [
       renderedMessageValue,
-      mountedGeneratingCodexBody,
+      mountedGeneratingCodexPrefix,
       showCodexActivity,
       effectiveGenerating,
       acpInterrupted,
@@ -2172,6 +2181,10 @@ export default function Message({
     if (!actions) return;
     void sendQueuedAcpTurnImmediately({ actions, message });
   };
+  const handleResendNotSent = () => {
+    if (!actions) return;
+    void resendCanceledAcpTurn({ actions, message });
+  };
 
   const acpStateToRender = useMemo(() => {
     return computeAcpStateToRender({
@@ -2211,9 +2224,14 @@ export default function Message({
     }
     if (acpStateToRender === "not-sent") {
       return (
-        <Button size="small" type="text" disabled>
-          not sent
-        </Button>
+        <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+          <Button size="small" type="text" disabled>
+            not sent
+          </Button>
+          <Button size="small" type="text" onClick={handleResendNotSent}>
+            Send
+          </Button>
+        </span>
       );
     }
     return (

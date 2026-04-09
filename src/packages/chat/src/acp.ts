@@ -116,6 +116,15 @@ function needsTextBoundarySpace(
   }
   const leftLast = left[left.length - 1];
   const rightFirst = right[0];
+  if (
+    endsWithMarkdownEmphasisOpener(left) &&
+    /[A-Za-z0-9`"'([{]/.test(rightFirst)
+  ) {
+    return false;
+  }
+  if (shouldPreservePathLikeDotJoin(left, right)) {
+    return false;
+  }
   if (leftLast === "]" && rightFirst === "(") {
     return false;
   }
@@ -123,6 +132,35 @@ function needsTextBoundarySpace(
     return true;
   }
   if (/[)\]}`"'*]/.test(leftLast) && /[A-Za-z0-9`(]/.test(rightFirst)) {
+    return true;
+  }
+  return false;
+}
+
+function endsWithMarkdownEmphasisOpener(text: string): boolean {
+  const match = text.match(/(\*{1,2}|_{1,2})$/);
+  if (!match) return false;
+  const marker = match[1];
+  const before = text.slice(0, -marker.length).slice(-1);
+  return before === "" || /[\s([{'"`]/.test(before);
+}
+
+function shouldPreservePathLikeDotJoin(left: string, right: string): boolean {
+  if (!left.endsWith(".") || !/^[A-Za-z0-9_~/-]/.test(right)) {
+    return false;
+  }
+  const beforeDot = left.slice(-2, -1);
+  if (beforeDot === "" || /[\s([{/\\'"`]/.test(beforeDot)) {
+    return true;
+  }
+  const leftToken = left.match(/([^\s]+)\.$/)?.[1] ?? "";
+  if (!leftToken || leftToken.includes(".")) {
+    return false;
+  }
+  if (/[\/[`(_-]/.test(leftToken)) {
+    return true;
+  }
+  if (/[A-Z]/.test(leftToken)) {
     return true;
   }
   return false;
@@ -259,25 +297,32 @@ function normalizeProgressiveCompareText(text: string): string {
 
 // During a running turn the main chat row should be rendered from the live ACP
 // log, not from patchflow-backed chat-row edits. Show all agent message blocks
-// seen so far, then append the evolving summary when present.
+// seen so far. If there are no agent blocks yet, fall back to the latest
+// streamed summary so the row is never blank.
 export function getLiveResponseMarkdown(
   events: AcpStreamMessage[],
 ): string | undefined {
   const blocks = getAgentMessageTexts(events);
   const summary = getLatestSummaryText(events);
-  if (typeof summary === "string" && summary.trim().length > 0) {
-    const last = blocks[blocks.length - 1];
-    const progressiveSummary = mergeProgressiveMessageText(last, summary);
-    if (typeof progressiveSummary === "string") {
-      blocks[blocks.length - 1] = progressiveSummary;
-    } else if (blocks[blocks.length - 1] !== summary) {
-      blocks.push(summary);
-    }
-  }
   if (blocks.length > 0) {
     return blocks.join("\n\n");
   }
+  if (typeof summary === "string" && summary.trim().length > 0) {
+    return summary;
+  }
   return getLatestEventLineText(events);
+}
+
+// After a Codex turn finishes, keep the mounted intermediate activity visible
+// without re-showing the final agent block, since the durable summary is
+// rendered separately in the chat row.
+export function getMountedIntermediateResponseMarkdown(
+  events: AcpStreamMessage[],
+): string | undefined {
+  const blocks = getAgentMessageTexts(events);
+  if (blocks.length <= 1) return undefined;
+  const content = blocks.slice(0, -1).join("\n\n").trim();
+  return content.length > 0 ? content : undefined;
 }
 
 export function getInterruptedResponseMarkdown(

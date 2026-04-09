@@ -57,6 +57,7 @@ pnpm --filter @cocalc/plus build
 echo "- Bundle entry point with @vercel/ncc"
 ncc build packages/plus/dist/bin/start.js \
   -o "$OUT"/bundle \
+  --external prettier \
   --external node-pty \
   --external bufferutil \
   --external utf-8-validate \
@@ -90,8 +91,14 @@ fi
 
 copy_native_pkg() {
   local pkg="$1"
-  local dir
-  dir=$(find packages -path "*node_modules/${pkg}" -type d -print -quit || true)
+  local dir=""
+  if [ -d "$ROOT/packages/plus/node_modules/$pkg" ]; then
+    dir="$ROOT/packages/plus/node_modules/$pkg"
+  elif [ -d "$ROOT/packages/node_modules/$pkg" ]; then
+    dir="$ROOT/packages/node_modules/$pkg"
+  else
+    dir=$(find packages -path "*node_modules/${pkg}" -type d -print -quit || true)
+  fi
   if [ -n "$dir" ]; then
     echo "- Copy native module ${pkg}"
     mkdir -p "$OUT"/bundle/node_modules/"$pkg"
@@ -136,8 +143,14 @@ done
 
 copy_js_pkg() {
   local pkg="$1"
-  local dir
-  dir=$(find packages -path "*node_modules/${pkg}" -type d -print -quit || true)
+  local dir=""
+  if [ -d "$ROOT/packages/plus/node_modules/$pkg" ]; then
+    dir="$ROOT/packages/plus/node_modules/$pkg"
+  elif [ -d "$ROOT/packages/node_modules/$pkg" ]; then
+    dir="$ROOT/packages/node_modules/$pkg"
+  else
+    dir=$(find packages -path "*node_modules/${pkg}" -type d -print -quit || true)
+  fi
   if [ -n "$dir" ]; then
     echo "- Copy js package ${pkg}"
     mkdir -p "$OUT"/bundle/node_modules/"$pkg"
@@ -216,6 +229,9 @@ add(rootPkg, rootReq);
     rsync -aL "$dir"/ "$dest"/
   done
 }
+
+echo "- Copy prettier package"
+copy_js_pkg "prettier"
 
 echo "- Copy reflect-sync + deps (from @cocalc/plus)"
 copy_js_pkg_tree "reflect-sync" "$ROOT/packages/plus" "$OUT"

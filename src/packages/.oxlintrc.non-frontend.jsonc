@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+
+  // Non-frontend packages span Node services, shared libraries, and CLI code.
+  // Keep this config focused on low-noise, non-React correctness rules.
+  "env": {
+    "es2022": true,
+  },
+  "plugins": ["promise"],
+  "categories": {
+    "correctness": "off",
+    "suspicious": "off",
+    "pedantic": "off",
+    "perf": "off",
+    "style": "off",
+    "restriction": "off",
+    "nursery": "off",
+  },
+  "rules": {
+    "no-debugger": "error",
+    "no-self-compare": "error",
+    "no-async-promise-executor": "error",
+    "promise/no-return-wrap": "error",
+    "no-loss-of-precision": "error",
+    "no-unsafe-finally": "error",
+    "no-constant-binary-expression": "error",
+  },
+  "ignorePatterns": [
+    "frontend/**",
+    "assets/**",
+    "node_modules/**",
+    "patches/**",
+    "**/dist/**",
+    "**/*.d.ts",
+  ],
+}

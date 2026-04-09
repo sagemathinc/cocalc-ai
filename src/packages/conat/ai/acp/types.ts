@@ -195,7 +195,7 @@ export type AcpControlRequest = {
   path: string;
   thread_id: string;
   user_message_id: string;
-  action: "cancel" | "send_immediately";
+  action: "cancel" | "send_immediately" | "resend";
 };
 
 export type AcpControlResponse = {

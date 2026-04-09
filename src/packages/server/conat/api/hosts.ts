@@ -24,6 +24,8 @@ import type {
   HostManagedRootfsReleaseLifecycle,
   HostRootfsGcResult,
   HostRootfsImage,
+  HostPricingModel,
+  HostInterruptionRestorePolicy,
   HostCurrentMetrics,
   HostMetricsHistory,
 } from "@cocalc/conat/hub/api/hosts";
@@ -82,6 +84,7 @@ import {
   machineHasGpu,
   normalizeMachineGpuInPlace,
 } from "@cocalc/server/cloud/host-gpu";
+import { desiredHostState } from "@cocalc/server/cloud/spot-restore";
 import {
   createConnectorRecord,
   ensureConnectorRecord,
@@ -152,6 +155,34 @@ const HOST_DELETE_LRO_KIND = "host-delete";
 const HOST_FORCE_DEPROVISION_LRO_KIND = "host-force-deprovision";
 const HOST_REMOVE_CONNECTOR_LRO_KIND = "host-remove-connector";
 const logger = getLogger("server:conat:api:hosts");
+
+function normalizeHostPricingModel(
+  value: unknown,
+): HostPricingModel | undefined {
+  if (value == null) return undefined;
+  const normalized = `${value}`.trim().toLowerCase();
+  if (normalized === "spot") return "spot";
+  if (normalized === "on_demand" || normalized === "on-demand") {
+    return "on_demand";
+  }
+  return undefined;
+}
+
+function normalizeHostInterruptionRestorePolicy(
+  value: unknown,
+): HostInterruptionRestorePolicy | undefined {
+  if (value == null) return undefined;
+  const normalized = `${value}`.trim().toLowerCase();
+  if (normalized === "immediate") return "immediate";
+  if (normalized === "none") return "none";
+  return undefined;
+}
+
+function defaultInterruptionRestorePolicy(
+  pricingModel?: HostPricingModel,
+): HostInterruptionRestorePolicy {
+  return pricingModel === "spot" ? "immediate" : "none";
+}
 
 const HOST_PROJECTS_DEFAULT_LIMIT = 200;
 const HOST_PROJECTS_MAX_LIMIT = 5000;
@@ -1156,6 +1187,16 @@ function parseRow(
   const normalizedStatus =
     rawStatus === "active" ? "running" : rawStatus || "off";
   const normalizedBootstrap = normalizeBootstrap(bootstrap, bootstrapLifecycle);
+  const pricingModel =
+    normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand";
+  const interruptionRestorePolicy =
+    normalizeHostInterruptionRestorePolicy(
+      metadata.interruption_restore_policy,
+    ) ?? defaultInterruptionRestorePolicy(pricingModel);
+  const desiredState = desiredHostState({
+    status: normalizedStatus,
+    metadata,
+  });
   return {
     id: row.id,
     name: row.name ?? "Host",
@@ -1195,6 +1236,9 @@ function parseRow(
     can_place: opts.can_place,
     reason_unavailable: opts.reason_unavailable,
     starred: opts.starred,
+    pricing_model: pricingModel,
+    interruption_restore_policy: interruptionRestorePolicy,
+    desired_state: desiredState,
     last_action: metadata.last_action,
     last_action_at: metadata.last_action_at,
     last_action_status: metadata.last_action_status,
@@ -1450,10 +1494,30 @@ async function markHostActionPending(id: string, action: string) {
   );
 }
 
+async function setHostDesiredState(
+  id: string,
+  desiredState: "running" | "stopped",
+) {
+  await pool().query(
+    `
+      UPDATE project_hosts
+      SET metadata = jsonb_set(
+            COALESCE(metadata, '{}'::jsonb),
+            '{desired_state}',
+            to_jsonb($2::text)
+          ),
+          updated = NOW()
+      WHERE id=$1 AND deleted IS NULL
+    `,
+    [id, desiredState],
+  );
+}
+
 async function markHostDeprovisioned(row: any, action: string) {
   const machine: HostMachine = row.metadata?.machine ?? {};
   const runtime = row.metadata?.runtime;
   const nextMetadata = { ...(row.metadata ?? {}) };
+  nextMetadata.desired_state = "stopped";
   delete nextMetadata.runtime;
   delete nextMetadata.dns;
   delete nextMetadata.cloudflare_tunnel;
@@ -2600,6 +2664,12 @@ export async function resolveHostConnection({
   const availability = computeHostOperationalAvailability(row);
   const normalizedStatus =
     row.status === "active" ? "running" : (row.status ?? null);
+  const pricingModel =
+    normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand";
+  const interruptionRestorePolicy =
+    normalizeHostInterruptionRestorePolicy(
+      metadata.interruption_restore_policy,
+    ) ?? defaultInterruptionRestorePolicy(pricingModel);
   const lastSeenIso = row.last_seen
     ? new Date(row.last_seen).toISOString()
     : undefined;
@@ -2623,6 +2693,8 @@ export async function resolveHostConnection({
         ? row.bay_id.trim()
         : null,
     name: row.name ?? null,
+    region: row.region ?? null,
+    size: typeof metadata?.size === "string" ? metadata.size : null,
     ssh_server,
     connect_url,
     host_session_id:
@@ -2633,6 +2705,13 @@ export async function resolveHostConnection({
     local_proxy,
     ready,
     status: normalizedStatus,
+    tier: typeof row.tier === "number" ? row.tier : null,
+    pricing_model: pricingModel,
+    interruption_restore_policy: interruptionRestorePolicy,
+    desired_state: desiredHostState({
+      status: normalizedStatus ?? undefined,
+      metadata,
+    }),
     last_seen: lastSeenIso,
     online: availability.online,
     reason_unavailable: availability.operational
@@ -3178,6 +3257,8 @@ export async function createHost({
   region,
   size,
   gpu = false,
+  pricing_model,
+  interruption_restore_policy,
   machine,
 }: {
   account_id?: string;
@@ -3185,6 +3266,8 @@ export async function createHost({
   region: string;
   size: string;
   gpu?: boolean;
+  pricing_model?: HostPricingModel;
+  interruption_restore_policy?: HostInterruptionRestorePolicy;
   machine?: Host["machine"];
 }): Promise<Host> {
   const owner = requireAccount(account_id);
@@ -3193,7 +3276,24 @@ export async function createHost({
   const id = randomUUID();
   const machineCloud = normalizeProviderId(machine?.cloud);
   const isSelfHost = machineCloud === "self-host";
+  const normalizedPricingModel = normalizeHostPricingModel(pricing_model);
+  if (pricing_model != null && !normalizedPricingModel) {
+    throw new Error(`invalid pricing_model '${pricing_model}'`);
+  }
+  const normalizedRestorePolicy = normalizeHostInterruptionRestorePolicy(
+    interruption_restore_policy,
+  );
+  if (interruption_restore_policy != null && !normalizedRestorePolicy) {
+    throw new Error(
+      `invalid interruption_restore_policy '${interruption_restore_policy}'`,
+    );
+  }
+  const pricingModel = normalizedPricingModel ?? "on_demand";
+  const interruptionRestorePolicy =
+    normalizedRestorePolicy ?? defaultInterruptionRestorePolicy(pricingModel);
   const initialStatus = machineCloud && !isSelfHost ? "starting" : "off";
+  const initialDesiredState: "running" | "stopped" =
+    machineCloud && !isSelfHost ? "running" : "stopped";
   const rawSelfHostMode = machine?.metadata?.self_host_mode;
   const selfHostMode =
     rawSelfHostMode === "cloudflare" || rawSelfHostMode === "local"
@@ -3278,6 +3378,9 @@ export async function createHost({
         owner,
         size,
         gpu: gpuEnabled,
+        pricing_model: pricingModel,
+        interruption_restore_policy: interruptionRestorePolicy,
+        desired_state: initialDesiredState,
         machine: normalizedMachine,
         ...(machineCloud && !isSelfHost
           ? {
@@ -3460,6 +3563,7 @@ export async function startHostInternal({
     [row.id],
   );
   const nextMetadata = metaRowsFinal[0]?.metadata ?? metadata;
+  nextMetadata.desired_state = "running";
   if (nextMetadata?.self_host?.auto_start_pending) {
     const nextSelfHost = {
       ...(nextMetadata.self_host ?? {}),
@@ -3534,18 +3638,19 @@ export async function stopHostInternal({
 }): Promise<Host> {
   const row = await loadHostForStartStop(id, account_id);
   const metadata = row.metadata ?? {};
+  const nextMetadata = { ...metadata, desired_state: "stopped" };
   const machine: HostMachine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
   logStatusUpdate(id, "stopping", "api");
   await pool().query(
-    `UPDATE project_hosts SET status=$2, last_seen=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-    [id, "stopping", null],
+    `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+    [id, "stopping", null, nextMetadata],
   );
   if (!machineCloud) {
     logStatusUpdate(id, "off", "api");
     await pool().query(
-      `UPDATE project_hosts SET status=$2, last_seen=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-      [id, "off", null],
+      `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+      [id, "off", null, nextMetadata],
     );
   } else {
     await markHostActionPending(id, "stop");
@@ -3599,6 +3704,7 @@ export async function restartHostInternal({
     throw new Error("host must be running to restart");
   }
   const metadata = row.metadata ?? {};
+  metadata.desired_state = "running";
   const owner = metadata.owner ?? account_id;
   const machine: HostMachine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
@@ -3625,14 +3731,14 @@ export async function restartHostInternal({
   }
   logStatusUpdate(id, "restarting", "api");
   await pool().query(
-    `UPDATE project_hosts SET status=$2, last_seen=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-    [id, "restarting", null],
+    `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+    [id, "restarting", null, metadata],
   );
   if (!machineCloud) {
     logStatusUpdate(id, "running", "api");
     await pool().query(
-      `UPDATE project_hosts SET status=$2, last_seen=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-      [id, "running", new Date()],
+      `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+      [id, "running", new Date(), metadata],
     );
   } else {
     await markHostActionPending(
@@ -4088,6 +4194,8 @@ export async function updateHostMachine({
   auto_grow_max_disk_gb,
   auto_grow_growth_step_gb,
   auto_grow_min_grow_interval_minutes,
+  pricing_model,
+  interruption_restore_policy,
 }: {
   account_id?: string;
   id: string;
@@ -4107,6 +4215,8 @@ export async function updateHostMachine({
   auto_grow_max_disk_gb?: number;
   auto_grow_growth_step_gb?: number;
   auto_grow_min_grow_interval_minutes?: number;
+  pricing_model?: HostPricingModel;
+  interruption_restore_policy?: HostInterruptionRestorePolicy;
 }): Promise<Host> {
   const row = await loadOwnedHost(id, account_id);
   const metadata = row.metadata ?? {};
@@ -4147,6 +4257,15 @@ export async function updateHostMachine({
     disk_type: specMachine.disk_type ?? null,
     storage_mode: specMachine.storage_mode ?? null,
     auto_grow: specMachine.metadata?.auto_grow ?? null,
+    pricing_model:
+      normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand",
+    interruption_restore_policy:
+      normalizeHostInterruptionRestorePolicy(
+        metadata.interruption_restore_policy,
+      ) ??
+      defaultInterruptionRestorePolicy(
+        normalizeHostPricingModel(metadata.pricing_model),
+      ),
   });
   const beforeSpec = buildConfigSpec(machine, row.region);
 
@@ -4186,6 +4305,32 @@ export async function updateHostMachine({
     auto_grow_min_grow_interval_minutes,
     "auto_grow_min_grow_interval_minutes",
   );
+  const currentPricingModel =
+    normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand";
+  const requestedPricingModel = normalizeHostPricingModel(pricing_model);
+  if (pricing_model != null && !requestedPricingModel) {
+    throw new Error(`invalid pricing_model '${pricing_model}'`);
+  }
+  const nextPricingModel = requestedPricingModel ?? currentPricingModel;
+  const currentInterruptionRestorePolicy =
+    normalizeHostInterruptionRestorePolicy(
+      metadata.interruption_restore_policy,
+    ) ?? defaultInterruptionRestorePolicy(currentPricingModel);
+  const requestedInterruptionRestorePolicy =
+    normalizeHostInterruptionRestorePolicy(interruption_restore_policy);
+  if (
+    interruption_restore_policy != null &&
+    !requestedInterruptionRestorePolicy
+  ) {
+    throw new Error(
+      `invalid interruption_restore_policy '${interruption_restore_policy}'`,
+    );
+  }
+  const nextInterruptionRestorePolicy =
+    requestedInterruptionRestorePolicy ??
+    (requestedPricingModel
+      ? defaultInterruptionRestorePolicy(nextPricingModel)
+      : currentInterruptionRestorePolicy);
 
   if (cloudChanged) {
     if (!isDeprovisioned) {
@@ -4342,6 +4487,15 @@ export async function updateHostMachine({
       ...(nextMachine.metadata ?? {}),
       auto_grow: nextAutoGrow,
     };
+    changed = true;
+  }
+
+  if (nextPricingModel !== currentPricingModel) {
+    metadata.pricing_model = nextPricingModel;
+    changed = true;
+  }
+  if (nextInterruptionRestorePolicy !== currentInterruptionRestorePolicy) {
+    metadata.interruption_restore_policy = nextInterruptionRestorePolicy;
     changed = true;
   }
 
@@ -5233,6 +5387,7 @@ export async function deleteHostInternal({
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
   if (row.status === "deprovisioned") {
+    await setHostDesiredState(id, "stopped");
     await pool().query(
       `UPDATE project_hosts SET deleted=NOW(), updated=NOW() WHERE id=$1 AND deleted IS NULL`,
       [id],
@@ -5240,6 +5395,7 @@ export async function deleteHostInternal({
     return;
   }
   if (machineCloud) {
+    await setHostDesiredState(id, "stopped");
     await enqueueCloudVmWork({
       vm_id: id,
       action: "delete",
@@ -5254,7 +5410,11 @@ export async function deleteHostInternal({
   }
   logStatusUpdate(id, "deprovisioned", "api");
   await pool().query(
-    `UPDATE project_hosts SET status=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-    [id, "deprovisioned"],
+    `UPDATE project_hosts
+       SET status=$2,
+           metadata=jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', to_jsonb($3::text)),
+           updated=NOW()
+     WHERE id=$1 AND deleted IS NULL`,
+    [id, "deprovisioned", "stopped"],
   );
 }

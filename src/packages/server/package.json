@@ -45,7 +45,7 @@
     "inter-bay:dev:fabric": "node dist/inter-bay/dev-fabric.js",
     "inter-bay:dev:listener": "node dist/inter-bay/dev-listener.js",
     "publish:bootstrap": "cd cloud && ./publish-bootstrap.sh",
-    "test": "pnpm test:pglite",
+    "test": "pnpm test:pglite --maxWorkers=8",
     "test:psql": "NODE_NO_WARNINGS=1 TZ=UTC jest --maxWorkers=1",
     "test:pglite": "NODE_NO_WARNINGS=1 COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS='--experimental-vm-modules' TZ=UTC jest",
     "test:both": "pnpm test:psql && pnpm test:pglite",

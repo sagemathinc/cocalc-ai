@@ -2,9 +2,16 @@ import { Collapse, Form, Input, Select } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import type { FormInstance } from "antd/es/form";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
+import { isNebiusSpotSupported } from "../providers/registry";
 import { HostCreateAdvancedFields } from "./host-create-advanced-fields";
 import { HostCreateProviderFields } from "./host-create-provider-fields";
 import { SshTargetLabel } from "./ssh-target-help";
+
+function defaultRestorePolicy(
+  pricingModel: "on_demand" | "spot" | undefined,
+): "none" | "immediate" {
+  return pricingModel === "spot" ? "immediate" : "none";
+}
 
 type HostCreateFormProps = {
   form: FormInstance;
@@ -26,7 +33,28 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   const isSelfHost = provider.selectedProvider === "self-host";
   const hideAdvanced = isSelfHost;
   const simpleSelfHost = isSelfHost;
+  const showSpotFields =
+    provider.selectedProvider !== "none" &&
+    provider.selectedProvider !== "self-host";
+  const watchedMachineType = Form.useWatch("machine_type", form);
+  const watchedPricingModel = Form.useWatch("pricing_model", form);
   const watchedSshTarget = Form.useWatch("self_host_ssh_target", form);
+  const nebiusSpotSupported = React.useMemo(
+    () =>
+      provider.selectedProvider !== "nebius" ||
+      isNebiusSpotSupported(
+        provider.fields.options.machine_type,
+        watchedMachineType,
+      ),
+    [
+      provider.fields.options.machine_type,
+      provider.selectedProvider,
+      watchedMachineType,
+    ],
+  );
+  const previousPricingModelRef = React.useRef<"on_demand" | "spot">(
+    "on_demand",
+  );
   React.useEffect(() => {
     if (!simpleSelfHost) return;
     if (form.getFieldValue("provider") !== "self-host") {
@@ -50,6 +78,39 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
       form.setFieldsValue({ name: nextName });
     }
   }, [form, simpleSelfHost, watchedSshTarget]);
+  React.useEffect(() => {
+    if (!showSpotFields) return;
+    const nextPricingModel =
+      watchedPricingModel === "spot" ? "spot" : "on_demand";
+    const previousPricingModel = previousPricingModelRef.current;
+    const currentRestorePolicy = form.getFieldValue(
+      "interruption_restore_policy",
+    ) as "none" | "immediate" | undefined;
+    const nextDefault = defaultRestorePolicy(nextPricingModel);
+    const previousDefault = defaultRestorePolicy(previousPricingModel);
+    if (
+      currentRestorePolicy == null ||
+      (nextPricingModel !== previousPricingModel &&
+        currentRestorePolicy === previousDefault)
+    ) {
+      form.setFieldsValue({ interruption_restore_policy: nextDefault });
+    }
+    previousPricingModelRef.current = nextPricingModel;
+  }, [form, showSpotFields, watchedPricingModel]);
+  React.useEffect(() => {
+    if (provider.selectedProvider !== "nebius") return;
+    if (nebiusSpotSupported) return;
+    if (watchedPricingModel !== "spot") return;
+    form.setFieldsValue({
+      pricing_model: "on_demand",
+      interruption_restore_policy: "none",
+    });
+  }, [
+    form,
+    nebiusSpotSupported,
+    provider.selectedProvider,
+    watchedPricingModel,
+  ]);
   const providerField = (
     <Form.Item
       name="provider"
@@ -107,7 +168,11 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
           {!hideAdvanced && (
             <Collapse ghost style={{ marginBottom: 8 }}>
               <Collapse.Panel header="Advanced options" key="adv">
-                <HostCreateAdvancedFields provider={provider} />
+                <HostCreateAdvancedFields
+                  provider={provider}
+                  showSpotFields={showSpotFields}
+                  nebiusSpotSupported={nebiusSpotSupported}
+                />
               </Collapse.Panel>
             </Collapse>
           )}

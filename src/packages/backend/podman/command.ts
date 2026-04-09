@@ -14,9 +14,10 @@ type PodmanOpts =
     };
 
 const DEFAULT_PODMAN_TIMEOUT_S = 30 * 60;
-const STALE_PODMAN_STATE_PATTERNS = [
-  "invalid internal status",
-  'try resetting the pause process with "podman system migrate"',
+const STALE_PODMAN_STATE_REQUIRED_PATTERNS = ["invalid internal status"];
+const STALE_PODMAN_STATE_HINT_PATTERNS = [
+  "pause process",
+  "podman system migrate",
   "could not find any running process",
 ];
 let migrateInFlight: Promise<void> | undefined;
@@ -55,30 +56,57 @@ async function runPodman(
       command,
       args: cmdArgs,
       env: podmanEnv(),
-      err_on_exit: true,
+      err_on_exit: false,
       timeout,
     });
+    if (x.exit_code !== 0) {
+      if (!retried && isStalePodmanStateResult(x)) {
+        logger.warn(
+          "podman reported stale pause-process state; running `podman system migrate` and retrying once",
+        );
+        await repairStalePodmanState(timeout, sudo);
+        return await runPodman(args, timeout, sudo, true);
+      }
+      throw formatPodmanExitError(command, cmdArgs, x.exit_code, x.stderr);
+    }
     logger.debug("podman returned ", x);
     return x;
   } catch (err) {
     logger.debug("podman run error: ", err);
-    if (!retried && isStalePodmanStateError(err)) {
-      logger.warn(
-        "podman reported stale pause-process state; running `podman system migrate` and retrying once",
-      );
-      await repairStalePodmanState(timeout, sudo);
-      return await runPodman(args, timeout, sudo, true);
-    }
     throw err;
   }
 }
 
-function isStalePodmanStateError(err: unknown): boolean {
-  const text =
-    err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
+function formatPodmanExitError(
+  command: string,
+  args: string[],
+  exitCode: number,
+  stderr: string,
+): string {
+  const x =
+    command === "sudo"
+      ? `'podman' (args=${args.join(" ")})`
+      : `'${command}' (args=${args.join(" ")})`;
+  return `command '${x}' exited with nonzero code ${exitCode} -- stderr='${truncate(stderr, 1024)}'`;
+}
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function isStalePodmanStateResult(result: {
+  stderr?: string;
+  stdout?: string;
+}): boolean {
+  const text = `${result.stderr ?? ""}\n${result.stdout ?? ""}`;
   const normalized = text.toLowerCase();
-  return STALE_PODMAN_STATE_PATTERNS.every((pattern) =>
-    normalized.includes(pattern),
+  return (
+    STALE_PODMAN_STATE_REQUIRED_PATTERNS.every((pattern) =>
+      normalized.includes(pattern),
+    ) &&
+    STALE_PODMAN_STATE_HINT_PATTERNS.some((pattern) =>
+      normalized.includes(pattern),
+    )
   );
 }
 

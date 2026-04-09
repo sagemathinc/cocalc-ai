@@ -19,6 +19,9 @@ export type HostStatus =
   | "running"
   | "stopping";
 
+export type HostPricingModel = "on_demand" | "spot";
+export type HostInterruptionRestorePolicy = "none" | "immediate";
+
 export const HOST_LRO_KINDS = [
   "host-start",
   "host-stop",
@@ -377,6 +380,9 @@ export interface Host {
   can_place?: boolean;
   reason_unavailable?: string;
   starred?: boolean;
+  pricing_model?: HostPricingModel;
+  interruption_restore_policy?: HostInterruptionRestorePolicy;
+  desired_state?: "running" | "stopped";
   last_action?: string;
   last_action_at?: string;
   last_action_status?: string;
@@ -392,12 +398,18 @@ export interface HostConnectionInfo {
   host_id: string;
   bay_id?: string | null;
   name?: string | null;
+  region?: string | null;
+  size?: string | null;
   ssh_server?: string | null;
   connect_url?: string | null;
   host_session_id?: string;
   local_proxy?: boolean;
   ready?: boolean;
   status?: HostStatus | null;
+  tier?: number | null;
+  pricing_model?: HostPricingModel;
+  interruption_restore_policy?: HostInterruptionRestorePolicy;
+  desired_state?: "running" | "stopped";
   last_seen?: string;
   online?: boolean;
   reason_unavailable?: string;
@@ -774,6 +786,8 @@ export interface Hosts {
     region: string;
     size: string;
     gpu?: boolean;
+    pricing_model?: HostPricingModel;
+    interruption_restore_policy?: HostInterruptionRestorePolicy;
     machine?: HostMachine;
   }) => Promise<Host>;
 
@@ -837,6 +851,8 @@ export interface Hosts {
     auto_grow_max_disk_gb?: number;
     auto_grow_growth_step_gb?: number;
     auto_grow_min_grow_interval_minutes?: number;
+    pricing_model?: HostPricingModel;
+    interruption_restore_policy?: HostInterruptionRestorePolicy;
   }) => Promise<Host>;
   upgradeHostSoftware: (opts: {
     account_id?: string;

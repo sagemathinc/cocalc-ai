@@ -58,6 +58,7 @@ export type NebiusInstanceType = {
   name: string;
   platform: string;
   platform_label: string;
+  allowed_for_preemptibles?: boolean;
   vcpus?: number;
   memory_gib?: number;
   gpus?: number;

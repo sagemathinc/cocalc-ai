@@ -59,6 +59,7 @@ echo "- Bundle entry point with @vercel/ncc"
 ncc build packages/project/bin/cocalc-project.js \
   -o "$OUT"/bundle \
   --source-map \
+  --external prettier \
   --external node-pty \
   --external bufferutil \
   --external utf-8-validate
@@ -142,6 +143,8 @@ copy_native_pkg() {
     dir="$ROOT/packages/project/node_modules/$pkg"
   elif [ -d "$ROOT/packages/project-runner/node_modules/$pkg" ]; then
     dir="$ROOT/packages/project-runner/node_modules/$pkg"
+  elif [ -d "$ROOT/packages/node_modules/$pkg" ]; then
+    dir="$ROOT/packages/node_modules/$pkg"
   else
     dir=$(find "$ROOT/packages" -path "*node_modules/${pkg}" -type d -print -quit || true)
   fi
@@ -177,6 +180,9 @@ fi
 
 copy_native_pkg "bufferutil"
 copy_native_pkg "utf-8-validate"
+
+echo "- Copy prettier package"
+copy_native_pkg "prettier"
 
 echo "- Prune non-linux prebuilds"
 for pkg in bufferutil utf-8-validate; do

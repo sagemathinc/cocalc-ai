@@ -166,7 +166,7 @@ export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
     user_message_id,
     assistant_message_id,
     assistant_message_date,
-    request.request_kind === "command" ? null : request.session_id ?? null,
+    request.request_kind === "command" ? null : (request.session_id ?? null),
     send_mode,
     priority,
     request_json,
@@ -488,6 +488,38 @@ export function cancelQueuedAcpJob({
         AND user_message_id = ?
         AND state = 'queued'`,
   ).run(now, now, project_id, path, user_message_id);
+  return getAcpJob({ project_id, path, user_message_id });
+}
+
+export function resendCanceledAcpJob({
+  project_id,
+  path,
+  user_message_id,
+}: {
+  project_id: string;
+  path: string;
+  user_message_id: string;
+}): AcpJobRow | undefined {
+  ensureInit();
+  const db = getDatabase();
+  const now = Date.now();
+  db.prepare(
+    `UPDATE ${TABLE}
+      SET state = 'queued',
+          priority = CASE
+            WHEN send_mode = 'immediate' THEN 1
+            ELSE 0
+          END,
+          updated_at = ?,
+          started_at = NULL,
+          finished_at = NULL,
+          worker_id = NULL,
+          worker_bundle_version = NULL
+      WHERE project_id = ?
+        AND path = ?
+        AND user_message_id = ?
+        AND state = 'canceled'`,
+  ).run(now, project_id, path, user_message_id);
   return getAcpJob({ project_id, path, user_message_id });
 }
 

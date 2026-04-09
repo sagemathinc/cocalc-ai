@@ -16,6 +16,7 @@ import {
   DiskSpec,
   DiskSpec_DiskType,
   ExistingDisk,
+  GetDiskRequest,
   GetInstanceRequest,
   InstanceRecoveryPolicy,
   InstanceSpec,
@@ -24,6 +25,8 @@ import {
   ListDisksRequest,
   ListInstancesRequest,
   NetworkInterfaceSpec,
+  PreemptibleSpec,
+  PreemptibleSpec_PreemptionPolicy,
   PublicIPAddress,
   ResourcesSpec,
   SourceImageFamily,
@@ -44,6 +47,9 @@ type NebiusRuntimeMeta = {
   diskTypeCode?: number;
   subnetId?: string;
 };
+
+const DISK_DELETE_MAX_ATTEMPTS = 12;
+const DISK_DELETE_RETRY_DELAY_MS = 5000;
 
 function sanitizeName(base: string, maxLen = 63): string {
   const clean = (value: string) =>
@@ -123,6 +129,97 @@ function isNotFoundError(err: unknown): boolean {
     code === "NOT_FOUND" ||
     code === 5
   );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isDiskDeletionBlockedByError(err: unknown): boolean {
+  const message = String((err as any)?.message ?? err).toLowerCase();
+  return (
+    message.includes("attached") ||
+    message.includes("attachment") ||
+    message.includes("reconcil") ||
+    message.includes("lock") ||
+    message.includes("busy") ||
+    message.includes("in use")
+  );
+}
+
+async function waitForDiskToDetach(
+  client: NebiusClient,
+  diskId: string,
+  instanceId: string | undefined,
+): Promise<"ready" | "missing"> {
+  for (let attempt = 1; attempt <= DISK_DELETE_MAX_ATTEMPTS; attempt += 1) {
+    let disk;
+    try {
+      disk = await client.disks.get(GetDiskRequest.create({ id: diskId }));
+    } catch (err) {
+      if (isNotFoundError(err)) return "missing";
+      throw err;
+    }
+    const status = disk.status;
+    const attachedTo = status?.readWriteAttachment ?? "";
+    const locked = !!status?.lockState?.images?.length;
+    const reconciling = !!status?.reconciling;
+    const attached =
+      attachedTo.length > 0 &&
+      (!instanceId || attachedTo === instanceId || attachedTo.length > 0);
+    if (!attached && !reconciling && !locked) {
+      return "ready";
+    }
+    logger.info("nebius: waiting for disk to become deletable", {
+      diskId,
+      attempt,
+      attachedTo: attachedTo || undefined,
+      reconciling,
+      locked_images: status?.lockState?.images?.length ?? 0,
+    });
+    if (attempt < DISK_DELETE_MAX_ATTEMPTS) {
+      await delay(DISK_DELETE_RETRY_DELAY_MS);
+    }
+  }
+  return "ready";
+}
+
+async function deleteDiskWithRetry(
+  client: NebiusClient,
+  diskId: string,
+  instanceId: string | undefined,
+): Promise<void> {
+  const readiness = await waitForDiskToDetach(client, diskId, instanceId);
+  if (readiness === "missing") return;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= DISK_DELETE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const diskOp = await client.disks.delete(
+        DeleteDiskRequest.create({ id: diskId }),
+      );
+      await diskOp.wait();
+      return;
+    } catch (err) {
+      if (isNotFoundError(err)) return;
+      lastError = err;
+      logger.warn("nebius: disk delete attempt failed", {
+        diskId,
+        attempt,
+        err,
+      });
+      if (
+        attempt < DISK_DELETE_MAX_ATTEMPTS &&
+        isDiskDeletionBlockedByError(err)
+      ) {
+        await delay(DISK_DELETE_RETRY_DELAY_MS);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`nebius: failed deleting disk ${diskId}`);
 }
 
 async function findDiskIdByName(
@@ -449,7 +546,17 @@ export class NebiusProvider implements CloudProvider {
           filesystems: [],
           cloudInitUserData: cloudInit,
           stopped: false,
-          recoveryPolicy: InstanceRecoveryPolicy.RECOVER,
+          recoveryPolicy:
+            spec.pricing_model === "spot"
+              ? InstanceRecoveryPolicy.FAIL
+              : InstanceRecoveryPolicy.RECOVER,
+          preemptible:
+            spec.pricing_model === "spot"
+              ? PreemptibleSpec.create({
+                  onPreemption: PreemptibleSpec_PreemptionPolicy.STOP,
+                  priority: 3,
+                })
+              : undefined,
           hostname: name,
         }),
       }),
@@ -532,14 +639,7 @@ export class NebiusProvider implements CloudProvider {
       ? [diskIds?.boot]
       : [diskIds?.data, diskIds?.boot];
     for (const diskId of disksToDelete.filter(Boolean) as string[]) {
-      try {
-        const diskOp = await client.disks.delete(
-          DeleteDiskRequest.create({ id: diskId }),
-        );
-        await diskOp.wait();
-      } catch (err) {
-        logger.warn("nebius: failed to delete disk", { diskId, err });
-      }
+      await deleteDiskWithRetry(client, diskId, runtime.instance_id);
     }
   }
 

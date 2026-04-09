@@ -601,7 +601,9 @@ function recreateMessagesTables(redux): void {
 
 function loadFontSize() {
   try {
-    const n = parseInt(localStorage.messagesFontSize ?? "${DEFAULT_FONT_SIZE}");
+    const n = parseInt(
+      localStorage.messagesFontSize ?? String(DEFAULT_FONT_SIZE),
+    );
     return isNaN(n) ? DEFAULT_FONT_SIZE : n;
   } catch {
     return DEFAULT_FONT_SIZE;

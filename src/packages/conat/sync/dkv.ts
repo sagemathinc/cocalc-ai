@@ -564,16 +564,7 @@ export class DKV<T = any> extends EventEmitter {
         try {
           status = await this.attemptToSave();
           //console.log("successfully saved");
-        } catch (err) {
-          if (false && !process.env.COCALC_TEST_MODE) {
-            console.log(
-              "WARNING: dkv attemptToSave failed -- ",
-              this.name,
-              this.kv?.name,
-              err,
-            );
-          }
-        }
+        } catch {}
         return !this.hasUnsavedChanges();
       },
       { start: 150, decay: 1.3, max: 10000 },
@@ -582,11 +573,7 @@ export class DKV<T = any> extends EventEmitter {
   });
 
   private attemptToSave = async () => {
-    if (true) {
-      await this.attemptToSaveMany();
-    } else {
-      await this.attemptToSaveParallel();
-    }
+    await this.attemptToSaveMany();
   };
 
   private attemptToSaveMany = reuseInFlight(async () => {
