@@ -103,8 +103,11 @@ export function normalizeProjectStateForDisplay({
   const state = asComputeState(projectState);
   if (!state) return undefined;
   if (state !== "running" || !hostId) return state;
-  const availability = evaluateHostOperational(hostInfo);
-  if (availability.state === "unavailable") {
+  const hostStatus = normalizeStatus(read(hostInfo, "status"));
+  // A stale/missing host heartbeat should not make a definitely running
+  // project appear stopped in the UI. Reserve the downgrade for explicit
+  // non-running host states such as off/error/deleted.
+  if (hostStatus && hostStatus !== "running") {
     return "opened";
   }
   return state;
