@@ -12,6 +12,8 @@ import {
   decodeAcpJobRequest,
   enqueueAcpJob,
   getAcpJob,
+  getAcpJobByOpId,
+  listAcpJobsByRecoveryParent,
   listQueuedAcpJobs,
   listQueuedAcpJobsForThread,
   resendCanceledAcpJob,
@@ -234,6 +236,35 @@ describe("acp job queue ordering", () => {
         sender_id: "openai-codex-agent",
       },
     });
+  });
+
+  it("stores recovery metadata for resumed codex turns", () => {
+    const job = enqueueAcpJob({
+      ...makeRequest({
+        userMessageId: "user-recovery-1",
+        assistantMessageId: "assistant-recovery-1",
+        assistantDate: "2026-03-08T00:00:03.500Z",
+      }),
+      recovery_parent_op_id: "assistant-parent-1",
+      recovery_reason: "backend server restarted",
+      recovery_count: 2,
+    });
+    expect(job.recovery_parent_op_id).toBe("assistant-parent-1");
+    expect(job.recovery_reason).toBe("backend server restarted");
+    expect(job.recovery_count).toBe(2);
+    expect(getAcpJobByOpId(job.op_id)?.recovery_count).toBe(2);
+    expect(
+      listAcpJobsByRecoveryParent({
+        recovery_parent_op_id: "assistant-parent-1",
+      }).map((row) => row.op_id),
+    ).toEqual([job.op_id]);
+    expect(decodeAcpJobRequest(job)).toEqual(
+      expect.objectContaining({
+        recovery_parent_op_id: "assistant-parent-1",
+        recovery_reason: "backend server restarted",
+        recovery_count: 2,
+      }),
+    );
   });
 
   it("can resend a canceled queued job", async () => {

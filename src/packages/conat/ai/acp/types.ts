@@ -156,6 +156,9 @@ export type AcpRequest = {
   account_id: string;
   prompt: string;
   session_id?: string;
+  recovery_parent_op_id?: string;
+  recovery_reason?: string;
+  recovery_count?: number;
   config?: CodexSessionConfig;
   runtime_env?: Record<string, string>;
   chat?: AcpChatContext;
@@ -166,6 +169,9 @@ export type AcpCommandRequest = {
   project_id: string;
   account_id: string;
   command: string;
+  recovery_parent_op_id?: string;
+  recovery_reason?: string;
+  recovery_count?: number;
   cwd?: string;
   timeout_ms?: number;
   max_output_bytes?: number;

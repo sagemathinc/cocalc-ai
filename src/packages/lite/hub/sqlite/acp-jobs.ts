@@ -30,6 +30,9 @@ export interface AcpJobRow {
   priority: number;
   worker_id?: string | null;
   worker_bundle_version?: string | null;
+  recovery_parent_op_id?: string | null;
+  recovery_reason?: string | null;
+  recovery_count?: number | null;
   request_json: string;
   error?: string | null;
   created_at: number;
@@ -55,6 +58,9 @@ function init(): void {
       priority INTEGER NOT NULL DEFAULT 0,
       worker_id TEXT,
       worker_bundle_version TEXT,
+      recovery_parent_op_id TEXT,
+      recovery_reason TEXT,
+      recovery_count INTEGER,
       request_json TEXT NOT NULL,
       error TEXT,
       created_at INTEGER NOT NULL,
@@ -81,6 +87,18 @@ function init(): void {
   if (!hasColumn("worker_bundle_version")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN worker_bundle_version TEXT`);
   }
+  if (!hasColumn("recovery_parent_op_id")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN recovery_parent_op_id TEXT`);
+  }
+  if (!hasColumn("recovery_reason")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN recovery_reason TEXT`);
+  }
+  if (!hasColumn("recovery_count")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN recovery_count INTEGER`);
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS acp_jobs_recovery_parent_idx ON ${TABLE}(recovery_parent_op_id, state, created_at)`,
+  );
 }
 
 let initialized = false;
@@ -150,10 +168,24 @@ export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
   const send_mode = request.chat?.send_mode ?? null;
   const priority = send_mode === "immediate" ? 1 : 0;
   const request_json = JSON.stringify(normalizeRequest(request));
+  const recovery_parent_op_id =
+    request.request_kind === "command"
+      ? null
+      : `${(request as any).recovery_parent_op_id ?? ""}`.trim() || null;
+  const recovery_reason =
+    request.request_kind === "command"
+      ? null
+      : `${(request as any).recovery_reason ?? ""}`.trim() || null;
+  const recovery_count =
+    request.request_kind === "command"
+      ? null
+      : Number.isFinite(Number((request as any).recovery_count))
+        ? Math.max(1, Math.floor(Number((request as any).recovery_count)))
+        : null;
   db.prepare(
     `INSERT INTO ${TABLE}
-      (op_id, project_id, path, thread_id, user_message_id, assistant_message_id, assistant_message_date, session_id, state, send_mode, priority, worker_id, worker_bundle_version, request_json, error, created_at, updated_at, started_at, finished_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, NULL, ?, NULL, ?, ?, NULL, NULL)
+      (op_id, project_id, path, thread_id, user_message_id, assistant_message_id, assistant_message_date, session_id, state, send_mode, priority, worker_id, worker_bundle_version, recovery_parent_op_id, recovery_reason, recovery_count, request_json, error, created_at, updated_at, started_at, finished_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, NULL, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
       ON CONFLICT(project_id, path, user_message_id) DO UPDATE SET
         send_mode = COALESCE(excluded.send_mode, ${TABLE}.send_mode),
         priority = MAX(${TABLE}.priority, excluded.priority),
@@ -169,6 +201,9 @@ export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
     request.request_kind === "command" ? null : (request.session_id ?? null),
     send_mode,
     priority,
+    recovery_parent_op_id,
+    recovery_reason,
+    recovery_count,
     request_json,
     now,
     now,
@@ -178,6 +213,30 @@ export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
     path,
     user_message_id,
   })!;
+}
+
+export function getAcpJobByOpId(op_id: string): AcpJobRow | undefined {
+  ensureInit();
+  const db = getDatabase();
+  return db.prepare(`SELECT * FROM ${TABLE} WHERE op_id = ?`).get(op_id) as
+    | AcpJobRow
+    | undefined;
+}
+
+export function listAcpJobsByRecoveryParent({
+  recovery_parent_op_id,
+}: {
+  recovery_parent_op_id: string;
+}): AcpJobRow[] {
+  ensureInit();
+  const db = getDatabase();
+  return db
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE recovery_parent_op_id = ?
+       ORDER BY created_at ASC`,
+    )
+    .all(recovery_parent_op_id) as AcpJobRow[];
 }
 
 export function getAcpJob({

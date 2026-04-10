@@ -127,7 +127,9 @@ import {
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
   enqueueAcpJob,
+  getAcpJobByOpId,
   listQueuedAcpJobs,
+  listAcpJobsByRecoveryParent,
   listQueuedAcpJobsForThread,
   listRunningAcpJobs,
   markRunningAcpJobsInterrupted,
@@ -345,6 +347,8 @@ const ACP_JOB_WITHOUT_LEASE_RECOVERY_GRACE_MS = envNumber(
 );
 const WORKER_INTERRUPTED_NOTICE =
   "**Conversation interrupted because the ACP worker stopped unexpectedly.**";
+const ACP_RECOVERY_CHAT_SENDER_ID = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
+const ACP_RECOVERY_VISIBLE_LABEL = "System recovery";
 
 function interruptedNoticeForRecoveryReason(recoveryReason: string): string {
   const normalized = `${recoveryReason ?? ""}`.trim().toLowerCase();
@@ -361,6 +365,39 @@ function interruptedNoticeForRecoveryReason(recoveryReason: string): string {
     return STALE_TURN_INTERRUPTED_NOTICE;
   }
   return WORKER_INTERRUPTED_NOTICE;
+}
+
+function buildRecoveryContinuationContent({
+  interruptedNotice,
+  recoveryCount,
+}: {
+  interruptedNotice: string;
+  recoveryCount: number;
+}): string {
+  const plain = `${interruptedNotice ?? ""}`.replace(/^\*\*|\*\*$/g, "").trim();
+  return `${ACP_RECOVERY_VISIBLE_LABEL}: ${plain} CoCalc is automatically resuming this Codex session (attempt ${recoveryCount}).`;
+}
+
+function buildRecoveryContinuationPrompt({
+  interruptedNotice,
+  recoveryCount,
+  originalPrompt,
+}: {
+  interruptedNotice: string;
+  recoveryCount: number;
+  originalPrompt: string;
+}): string {
+  return [
+    "The previous Codex turn in this same session was interrupted because the project host or backend restarted.",
+    `Recovery attempt: ${recoveryCount}.`,
+    `Interruption summary: ${`${interruptedNotice ?? ""}`.replace(/\*\*/g, "").trim()}`,
+    "Resume the work from the current workspace state.",
+    "Before repeating any expensive, destructive, or externally visible action, inspect what already completed and avoid duplicating side effects.",
+    "If commands, calculations, or scripts may have been interrupted, determine their state first and then continue safely.",
+    "",
+    "Original user request:",
+    originalPrompt,
+  ].join("\n");
 }
 
 type DetachedWorkerContext = {
@@ -3962,6 +3999,7 @@ export async function recoverOrphanedAcpTurns(
     liveOwnerIds?: Set<string>;
     interruptedNotice?: string;
     recoveryReason?: string;
+    autoResume?: boolean;
   } = {},
 ): Promise<number> {
   let running;
@@ -3983,6 +4021,7 @@ export async function recoverOrphanedAcpTurns(
   const interruptedNotice =
     opts.interruptedNotice ?? RESTART_INTERRUPTED_NOTICE;
   const recoveryReason = opts.recoveryReason ?? "server restart recovery";
+  const autoResume = opts.autoResume === true;
   const interruptedReasonId =
     interruptedNotice === RESTART_INTERRUPTED_NOTICE
       ? "server_restart"
@@ -3994,6 +4033,15 @@ export async function recoverOrphanedAcpTurns(
   });
   let recovered = 0;
   for (const turn of running) {
+    const recoverySourceJob = listRunningAcpJobs().find((row) =>
+      runningTurnMatchesTarget(row, {
+        project_id: turn.project_id,
+        path: turn.path,
+        message_date: turn.message_date,
+        message_id: turn.message_id ?? undefined,
+        thread_id: turn.thread_id ?? undefined,
+      }),
+    );
     try {
       if (
         await repairInterruptedAcpTurn({
@@ -4004,6 +4052,30 @@ export async function recoverOrphanedAcpTurns(
           recoveryReason,
         })
       ) {
+        if (autoResume && recoverySourceJob) {
+          try {
+            const resumed = await enqueueRecoveryContinuationForJob({
+              client,
+              job: recoverySourceJob,
+              interruptedNotice,
+              recoveryReason,
+            });
+            if (resumed) {
+              logger.warn("queued ACP recovery continuation", {
+                interrupted_op_id: recoverySourceJob.op_id,
+                resumed_op_id: resumed.op_id,
+                recovery_count: resumed.recovery_count,
+                thread_id: resumed.thread_id,
+              });
+            }
+          } catch (err) {
+            logger.warn("failed to enqueue ACP recovery continuation", {
+              turn,
+              op_id: recoverySourceJob.op_id,
+              err,
+            });
+          }
+        }
         recovered += 1;
         continue;
       }
@@ -4177,6 +4249,30 @@ export async function recoverOrphanedAcpTurns(
           error: recoveryReason,
           worker_id: turn.owner_instance_id,
         });
+      }
+      if (autoResume && recoverySourceJob) {
+        try {
+          const resumed = await enqueueRecoveryContinuationForJob({
+            client,
+            job: recoverySourceJob,
+            interruptedNotice,
+            recoveryReason,
+          });
+          if (resumed) {
+            logger.warn("queued ACP recovery continuation", {
+              interrupted_op_id: recoverySourceJob.op_id,
+              resumed_op_id: resumed.op_id,
+              recovery_count: resumed.recovery_count,
+              thread_id: resumed.thread_id,
+            });
+          }
+        } catch (err) {
+          logger.warn("failed to enqueue ACP recovery continuation", {
+            turn,
+            op_id: recoverySourceJob.op_id,
+            err,
+          });
+        }
       }
       finalizeAcpTurnLease({
         key: {
@@ -4365,6 +4461,7 @@ export async function recoverDetachedWorkerStartupState(
       liveOwnerIds: liveWorkerOwnerIds(workerContext.host_id),
       interruptedNotice: interruptedNoticeForRecoveryReason(recoveryReason),
       recoveryReason,
+      autoResume: true,
     });
   } else {
     // Local Lite detached workers do not have a host-managed worker registry.
@@ -4379,7 +4476,11 @@ export async function recoverDetachedWorkerStartupState(
     // intended recovery reason consistently elsewhere, but we intentionally do
     // not apply it as a blanket job-state rewrite here.
     void restartReason;
-    await recoverOrphanedAcpTurns(client);
+    await recoverOrphanedAcpTurns(client, {
+      interruptedNotice: interruptedNoticeForRecoveryReason(restartReason),
+      recoveryReason: restartReason,
+      autoResume: true,
+    });
   }
   await recoverOrphanedRunningAcpJobsWithoutLease({
     recoveryReason,
@@ -6055,6 +6156,112 @@ async function prepareQueuedUserMessageForExecution({
       }
     },
   });
+}
+
+async function enqueueRecoveryContinuationForJob({
+  client,
+  job,
+  interruptedNotice,
+  recoveryReason,
+}: {
+  client: ConatClient;
+  job: AcpJobRow;
+  interruptedNotice: string;
+  recoveryReason: string;
+}): Promise<AcpJobRow | undefined> {
+  const parentOpId = `${job.op_id ?? ""}`.trim();
+  if (!parentOpId) return undefined;
+  if (
+    listAcpJobsByRecoveryParent({
+      recovery_parent_op_id: parentOpId,
+    }).length > 0
+  ) {
+    return undefined;
+  }
+  const current = getAcpJobByOpId(parentOpId);
+  const sourceJob = current ?? job;
+  const request = decodeAcpJobRequest(sourceJob);
+  if (request.request_kind === "command") {
+    return undefined;
+  }
+  const session_id =
+    `${request.session_id ?? sourceJob.session_id ?? ""}`.trim();
+  const thread_id =
+    `${request.chat?.thread_id ?? sourceJob.thread_id ?? ""}`.trim();
+  const project_id =
+    `${request.chat?.project_id ?? request.project_id ?? sourceJob.project_id ?? ""}`.trim();
+  const path = `${request.chat?.path ?? sourceJob.path ?? ""}`.trim();
+  if (!project_id || !path || !thread_id || !session_id || !request.chat) {
+    return undefined;
+  }
+  const recoveryCount = Math.max(
+    1,
+    Math.floor(Number(sourceJob.recovery_count ?? 0)) + 1,
+  );
+  const user_message_id = randomUUID();
+  const assistant_message_id = randomUUID();
+  const now = Date.now();
+  const userDate = new Date(now).toISOString();
+  const assistantDate = new Date(now + 1).toISOString();
+  await withChatSyncDB({
+    client,
+    project_id,
+    path,
+    fn: async (syncdb) => {
+      const parent_message_id = latestThreadMessageIdInSyncDB({
+        syncdb,
+        threadId: thread_id,
+      });
+      syncdb.set(
+        buildChatMessage({
+          sender_id: ACP_RECOVERY_CHAT_SENDER_ID,
+          date: userDate,
+          prevHistory: [],
+          content: buildRecoveryContinuationContent({
+            interruptedNotice,
+            recoveryCount,
+          }),
+          generating: false,
+          message_id: user_message_id,
+          thread_id,
+          parent_message_id,
+        }),
+      );
+      syncdb.commit();
+      await syncdb.save();
+    },
+  });
+  const resumedRequest: AcpJobRequest = {
+    ...request,
+    prompt: buildRecoveryContinuationPrompt({
+      interruptedNotice,
+      recoveryCount,
+      originalPrompt: request.prompt,
+    }),
+    session_id,
+    recovery_parent_op_id: parentOpId,
+    recovery_reason: recoveryReason,
+    recovery_count: recoveryCount,
+    chat: {
+      ...request.chat,
+      project_id,
+      path,
+      thread_id,
+      parent_message_id: user_message_id,
+      message_id: assistant_message_id,
+      message_date: assistantDate,
+    },
+  };
+  const queued = enqueueAcpJob(resumedRequest);
+  await persistQueuedUserMessageProjection({
+    client,
+    project_id,
+    path,
+    thread_id,
+    user_message_id,
+    queued: true,
+  });
+  return queued;
 }
 
 async function writeQueuedJobFailureToChat({

@@ -15,8 +15,10 @@ import {
 } from "../../sqlite/database";
 import {
   claimNextQueuedAcpJobForThread,
+  decodeAcpJobRequest,
   enqueueAcpJob,
   getAcpJob,
+  listAcpJobsByRecoveryParent,
   listQueuedAcpJobs,
 } from "../../sqlite/acp-jobs";
 
@@ -83,6 +85,27 @@ function makeRequest() {
     config: {
       workingDirectory: "/tmp",
     },
+    chat: {
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/tmp/detached-worker.chat",
+      thread_id: "thread-1",
+      parent_message_id: "user-1",
+      message_id: "assistant-1",
+      message_date: "2026-03-16T00:00:01.000Z",
+      sender_id: "openai-codex-agent",
+    },
+  };
+}
+
+function makeCommandRequest() {
+  return {
+    request_kind: "command" as const,
+    project_id: "00000000-1000-4000-8000-000000000000",
+    account_id: "00000000-1000-4000-8000-000000000001",
+    command: "python long_running.py",
+    cwd: "/tmp",
+    timeout_ms: 60_000,
+    max_output_bytes: 100_000,
     chat: {
       project_id: "00000000-1000-4000-8000-000000000000",
       path: "/tmp/detached-worker.chat",
@@ -250,6 +273,214 @@ describe("recoverDetachedWorkerStartupState", () => {
     expect(repaired?.acp_interrupted_text).toContain(
       "backend server restarted",
     );
+  });
+
+  it("auto-enqueues a Codex recovery continuation after startup repair", async () => {
+    const request = makeRequest();
+    const queued = enqueueAcpJob(request as any);
+    const running = claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-a",
+      worker_bundle_version: "bundle-a",
+    });
+    expect(running?.state).toBe("running");
+
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: "2026-03-16T00:00:01.000Z",
+        sender_id: "openai-codex-agent",
+        message_id: "assistant-1",
+        thread_id: "thread-1",
+        generating: true,
+        history: [
+          {
+            author_id: "openai-codex-agent",
+            content: "partial answer",
+            date: "2026-03-16T00:00:01.000Z",
+          },
+        ],
+      },
+    ];
+    const syncdb: any = {
+      isReady: () => true,
+      get: (where: any) =>
+        rows.filter((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      get_one: (where: any) =>
+        rows.find((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      set: (val: any) => {
+        const idx = rows.findIndex((row) =>
+          row.message_id && val.message_id
+            ? row.message_id === val.message_id
+            : row.event === val.event &&
+              row.date === val.date &&
+              row.sender_id === val.sender_id,
+        );
+        if (idx >= 0) {
+          rows[idx] = { ...rows[idx], ...val };
+        } else {
+          rows.push({ ...val });
+        }
+      },
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      close: async () => {},
+    };
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: request.project_id,
+        path: request.chat.path,
+        message_date: request.chat.message_date,
+        sender_id: request.chat.sender_id,
+        message_id: request.chat.message_id,
+        thread_id: request.chat.thread_id,
+        owner_instance_id: "worker-old",
+      },
+    ]);
+
+    await recoverDetachedWorkerStartupState({} as ConatClient, {
+      workerContext: {
+        worker_id: "worker-new",
+        host_id: "host-1",
+        bundle_version: "bundle-1",
+        bundle_path: "/bundle",
+        state: "active",
+      },
+      restartReason: "backend server restarted",
+    });
+
+    const interrupted = getAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    });
+    expect(interrupted?.state).toBe("interrupted");
+
+    const recoveryChildren = listAcpJobsByRecoveryParent({
+      recovery_parent_op_id: queued.op_id,
+    });
+    expect(recoveryChildren).toHaveLength(1);
+    expect(recoveryChildren[0].state).toBe("queued");
+    expect(recoveryChildren[0].session_id).toBe("session-1");
+    expect(recoveryChildren[0].recovery_count).toBe(1);
+    const resumedRequest = decodeAcpJobRequest(recoveryChildren[0] as any);
+    expect(resumedRequest.request_kind).toBe("codex");
+    if (resumedRequest.request_kind === "command") {
+      throw new Error("expected codex recovery request");
+    }
+    expect(resumedRequest.session_id).toBe("session-1");
+    expect(resumedRequest.prompt).toContain(
+      "Resume the work from the current workspace state.",
+    );
+    expect(resumedRequest.chat?.parent_message_id).toBeTruthy();
+    const recoveryRow = rows.find(
+      (row) =>
+        row.event === "chat" &&
+        row.message_id === resumedRequest.chat?.parent_message_id,
+    );
+    expect(recoveryRow).toBeTruthy();
+    expect(recoveryRow?.sender_id).toBeTruthy();
+  });
+
+  it("does not auto-resume command jobs during startup recovery", async () => {
+    const request = makeCommandRequest();
+    const queued = enqueueAcpJob(request as any);
+    claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-a",
+      worker_bundle_version: "bundle-a",
+    });
+
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: request.chat.message_date,
+        sender_id: request.chat.sender_id,
+        message_id: request.chat.message_id,
+        thread_id: request.chat.thread_id,
+        generating: true,
+        history: [
+          {
+            author_id: "openai-codex-agent",
+            content: "partial command result",
+            date: request.chat.message_date,
+          },
+        ],
+      },
+    ];
+    const syncdb: any = {
+      isReady: () => true,
+      get: (where: any) =>
+        rows.filter((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      get_one: (where: any) =>
+        rows.find((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      set: (val: any) => {
+        const idx = rows.findIndex((row) =>
+          row.message_id && val.message_id
+            ? row.message_id === val.message_id
+            : row.event === val.event &&
+              row.date === val.date &&
+              row.sender_id === val.sender_id,
+        );
+        if (idx >= 0) {
+          rows[idx] = { ...rows[idx], ...val };
+        } else {
+          rows.push({ ...val });
+        }
+      },
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      close: async () => {},
+    };
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: request.project_id,
+        path: request.chat.path,
+        message_date: request.chat.message_date,
+        sender_id: request.chat.sender_id,
+        message_id: request.chat.message_id,
+        thread_id: request.chat.thread_id,
+        owner_instance_id: "worker-old",
+      },
+    ]);
+
+    await recoverDetachedWorkerStartupState({} as ConatClient, {
+      workerContext: {
+        worker_id: "worker-new",
+        host_id: "host-1",
+        bundle_version: "bundle-1",
+        bundle_path: "/bundle",
+        state: "active",
+      },
+      restartReason: "backend server restarted",
+    });
+
+    expect(
+      listAcpJobsByRecoveryParent({
+        recovery_parent_op_id: queued.op_id,
+      }),
+    ).toHaveLength(0);
+    expect(
+      getAcpJob({
+        project_id: queued.project_id,
+        path: queued.path,
+        user_message_id: queued.user_message_id,
+      })?.state,
+    ).toBe("interrupted");
   });
 });
 
