@@ -12,6 +12,7 @@ import hasAccess, {
 import { handleFileDownload } from "@cocalc/conat/files/file-download";
 import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
 import { getProjectHostRedirectUrl } from "./project-host";
+import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 
 const logger = getLogger("proxy:handle-request");
 const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
@@ -27,6 +28,8 @@ export default function init({
   isPersonal,
   projectProxyHandlersPromise,
 }: Options) {
+  const fileDownloadClient = conatWithProjectRouting();
+
   function isPublicAppTokenBypassRequest(req): boolean {
     try {
       const url = stripBasePath(`${req.url ?? "/"}`);
@@ -110,7 +113,7 @@ export default function init({
     }
 
     if (type == "files") {
-      await handleFileDownload({ req, res, url });
+      await handleFileDownload({ req, res, url, client: fileDownloadClient });
       return;
     }
 
