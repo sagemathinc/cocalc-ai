@@ -630,6 +630,21 @@ export default function Message({
     () => field<string>(message, "acp_interrupted_text"),
     [message],
   );
+  const acpRecoveryCount = useMemo(() => {
+    const value = field<number | string>(message, "acp_recovery_count");
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return Math.floor(value);
+    }
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+    }
+    return undefined;
+  }, [message]);
+  const acpRecoveryReason = useMemo(
+    () => field<string>(message, "acp_recovery_reason"),
+    [message],
+  );
   const acpStartedAtMs = useMemo(() => {
     const value = field<number | string>(message, "acp_started_at_ms");
     if (typeof value === "number" && Number.isFinite(value) && value > 0) {
@@ -1614,6 +1629,26 @@ export default function Message({
           }
           onDrawerOpenChange={setIsActivityDrawerOpen}
         />
+        {showCodexActivity && acpRecoveryCount ? (
+          <div
+            style={{
+              color: COLORS.GRAY_M,
+              fontSize: `${Math.max((font_size ?? 14) - 2, 11)}px`,
+              marginBottom: "8px",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              flexWrap: "wrap",
+            }}
+          >
+            <Icon name="history" />
+            <span>
+              Recovered automatically after restart
+              {acpRecoveryReason ? `: ${acpRecoveryReason}` : ""}. Attempt{" "}
+              {acpRecoveryCount}.
+            </span>
+          </div>
+        ) : null}
         {!suppressPlaceholderBody && value.trim().length > 0 ? (
           <div onClickCapture={openCommitFromMessage}>
             <StaticMarkdown

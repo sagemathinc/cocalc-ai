@@ -400,6 +400,59 @@ function buildRecoveryContinuationPrompt({
   ].join("\n");
 }
 
+function toPlainSyncValue<T>(value: T): T {
+  if (value && typeof (value as any).toJS === "function") {
+    return (value as any).toJS() as T;
+  }
+  return value;
+}
+
+function normalizeRecoveryLoopResume({
+  loopConfig,
+  loopState,
+  originalPrompt,
+}: {
+  loopConfig?: AcpLoopConfig;
+  loopState?: AcpLoopState;
+  originalPrompt: string;
+}): {
+  prompt: string;
+  loopConfig?: AcpLoopConfig;
+  loopState?: AcpLoopState;
+} {
+  if (!loopConfig || !loopState || loopState.status === "stopped") {
+    return { prompt: originalPrompt };
+  }
+  if (
+    loopState.status === "scheduled" &&
+    `${loopState.next_prompt ?? ""}`.trim()
+  ) {
+    const nextPrompt = `${loopState.next_prompt ?? ""}`.trim();
+    return {
+      prompt: nextPrompt,
+      loopConfig,
+      loopState: {
+        ...loopState,
+        status: "running",
+        next_prompt: undefined,
+        stop_reason: undefined,
+        iteration: clampLoopNumber(loopState.iteration, 1, 1, 10_000) + 1,
+        updated_at_ms: Date.now(),
+      },
+    };
+  }
+  return {
+    prompt: originalPrompt,
+    loopConfig,
+    loopState: {
+      ...loopState,
+      status: "running",
+      stop_reason: undefined,
+      updated_at_ms: Date.now(),
+    },
+  };
+}
+
 type DetachedWorkerContext = {
   worker_id: string;
   host_id: string;
@@ -1943,6 +1996,12 @@ export class ChatStreamWriter {
         message_id: this.metadata.message_id,
         thread_id: this.metadata.thread_id,
         parent_message_id: (this.metadata as any).parent_message_id,
+        acp_recovery_parent_op_id: (this.metadata as any).recovery_parent_op_id,
+        acp_recovery_reason: (this.metadata as any).recovery_reason,
+        acp_recovery_count:
+          Number((this.metadata as any).recovery_count) > 0
+            ? Number((this.metadata as any).recovery_count)
+            : undefined,
       } as any);
       if ((this.metadata as any).parent_message_id) {
         (placeholder as any).parent_message_id = (
@@ -2237,6 +2296,12 @@ export class ChatStreamWriter {
           : undefined,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
+      acp_recovery_parent_op_id: (this.metadata as any).recovery_parent_op_id,
+      acp_recovery_reason: (this.metadata as any).recovery_reason,
+      acp_recovery_count:
+        Number((this.metadata as any).recovery_count) > 0
+          ? Number((this.metadata as any).recovery_count)
+          : undefined,
       message_id: this.metadata.message_id,
       thread_id: this.metadata.thread_id,
       parent_message_id: (this.metadata as any).parent_message_id,
@@ -2282,6 +2347,12 @@ export class ChatStreamWriter {
           : undefined,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
+      acp_recovery_parent_op_id: (this.metadata as any).recovery_parent_op_id,
+      acp_recovery_reason: (this.metadata as any).recovery_reason,
+      acp_recovery_count:
+        Number((this.metadata as any).recovery_count) > 0
+          ? Number((this.metadata as any).recovery_count)
+          : undefined,
       message_id: this.metadata.message_id,
       thread_id: this.metadata.thread_id,
       parent_message_id: (this.metadata as any).parent_message_id,
@@ -3674,6 +3745,7 @@ export async function repairInterruptedAcpTurn({
   interruptedNotice = INTERRUPT_STATUS_TEXT,
   interruptedReasonId = "interrupt",
   recoveryReason = INTERRUPT_STATUS_TEXT,
+  preserveLoopState = false,
 }: {
   client: ConatClient;
   turn: {
@@ -3688,6 +3760,7 @@ export async function repairInterruptedAcpTurn({
   interruptedNotice?: string;
   interruptedReasonId?: string;
   recoveryReason?: string;
+  preserveLoopState?: boolean;
 }): Promise<boolean> {
   const project_id = `${turn.project_id ?? ""}`.trim();
   const path = `${turn.path ?? ""}`.trim();
@@ -3842,6 +3915,7 @@ export async function repairInterruptedAcpTurn({
             ? rawLoopState.toJS()
             : rawLoopState;
         if (
+          !preserveLoopState &&
           loopCfg?.enabled === true &&
           loopStateCurrent &&
           loopStateCurrent.status !== "stopped"
@@ -4050,6 +4124,7 @@ export async function recoverOrphanedAcpTurns(
           interruptedNotice,
           interruptedReasonId,
           recoveryReason,
+          preserveLoopState: autoResume,
         })
       ) {
         if (autoResume && recoverySourceJob) {
@@ -4203,6 +4278,7 @@ export async function recoverOrphanedAcpTurns(
                 ? rawLoopState.toJS()
                 : rawLoopState;
             if (
+              !autoResume &&
               loopCfg?.enabled === true &&
               loopStateCurrent &&
               loopStateCurrent.status !== "stopped"
@@ -6203,11 +6279,29 @@ async function enqueueRecoveryContinuationForJob({
   const now = Date.now();
   const userDate = new Date(now).toISOString();
   const assistantDate = new Date(now + 1).toISOString();
+  let resumedPrompt = request.prompt;
+  let resumedLoopConfig: AcpLoopConfig | undefined;
+  let resumedLoopState: AcpLoopState | undefined;
   await withChatSyncDB({
     client,
     project_id,
     path,
     fn: async (syncdb) => {
+      const threadCfg = preferredThreadConfigRow(syncdb, thread_id);
+      const persistedLoopConfig = toPlainSyncValue(
+        syncdbField<AcpLoopConfig | undefined>(threadCfg, "loop_config"),
+      );
+      const persistedLoopState = toPlainSyncValue(
+        syncdbField<AcpLoopState | undefined>(threadCfg, "loop_state"),
+      );
+      const resumedLoop = normalizeRecoveryLoopResume({
+        loopConfig: persistedLoopConfig ?? request.chat?.loop_config,
+        loopState: persistedLoopState ?? request.chat?.loop_state,
+        originalPrompt: request.prompt,
+      });
+      resumedPrompt = resumedLoop.prompt;
+      resumedLoopConfig = resumedLoop.loopConfig;
+      resumedLoopState = resumedLoop.loopState;
       const parent_message_id = latestThreadMessageIdInSyncDB({
         syncdb,
         threadId: thread_id,
@@ -6236,7 +6330,7 @@ async function enqueueRecoveryContinuationForJob({
     prompt: buildRecoveryContinuationPrompt({
       interruptedNotice,
       recoveryCount,
-      originalPrompt: request.prompt,
+      originalPrompt: resumedPrompt,
     }),
     session_id,
     recovery_parent_op_id: parentOpId,
@@ -6250,6 +6344,11 @@ async function enqueueRecoveryContinuationForJob({
       parent_message_id: user_message_id,
       message_id: assistant_message_id,
       message_date: assistantDate,
+      loop_config: resumedLoopConfig,
+      loop_state: resumedLoopState,
+      recovery_parent_op_id: parentOpId,
+      recovery_reason: recoveryReason,
+      recovery_count: recoveryCount,
     },
   };
   const queued = enqueueAcpJob(resumedRequest);

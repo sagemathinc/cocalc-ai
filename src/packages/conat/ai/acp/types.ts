@@ -148,6 +148,11 @@ export interface AcpChatContext {
   // automation attached to the thread.
   automation_id?: string;
   automation_title?: string;
+  // Optional restart-recovery metadata for turns automatically resumed after
+  // backend or host interruption.
+  recovery_parent_op_id?: string;
+  recovery_reason?: string;
+  recovery_count?: number;
 }
 
 export type AcpRequest = {
