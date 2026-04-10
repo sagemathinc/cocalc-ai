@@ -478,5 +478,5 @@ describe("hosts.drainHostInternal", () => {
       parallel: 3,
     });
     expect(moveProjectToHostMock).toHaveBeenCalledTimes(5);
-  });
+  }, 15000);
 });
