@@ -40,3 +40,21 @@ export function resolveAgentSessionIdForThread({
   if (liveSessionId) return liveSessionId;
   return threadKey;
 }
+
+export function resolvePersistedOrLiveAcpSessionIdForThread({
+  actions,
+  threadId,
+  persistedSessionId,
+}: {
+  actions?: Pick<ChatActions, "getMessagesInThread">;
+  threadId?: string;
+  persistedSessionId?: string | null;
+}): string | undefined {
+  if (
+    typeof persistedSessionId === "string" &&
+    persistedSessionId.trim().length > 0
+  ) {
+    return persistedSessionId.trim();
+  }
+  return getLatestAcpThreadIdForThread({ actions, threadId });
+}

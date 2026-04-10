@@ -398,6 +398,38 @@ describe("chat export", () => {
             },
           }),
           JSON.stringify({
+            type: "compacted",
+            payload: {
+              replacement_history: [{ type: "message", label: "old-1" }],
+            },
+          }),
+          JSON.stringify({
+            type: "message",
+            payload: {
+              role: "assistant",
+              content: "stale compacted history",
+            },
+          }),
+          JSON.stringify({
+            type: "compacted",
+            payload: {
+              replacement_history: [{ type: "message", label: "keep-1" }],
+            },
+          }),
+          JSON.stringify({
+            type: "message",
+            payload: {
+              role: "assistant",
+              content: "recent compacted history",
+            },
+          }),
+          JSON.stringify({
+            type: "compacted",
+            payload: {
+              replacement_history: [{ type: "message", label: "keep-2" }],
+            },
+          }),
+          JSON.stringify({
             type: "message",
             payload: {
               role: "assistant",
@@ -462,6 +494,8 @@ describe("chat export", () => {
         format: "cocalc-codex-context",
         version: 1,
         session_id: sessionId,
+        trimmed: true,
+        total_compactions: 3,
       });
       expect(exportedMeta.session_meta).toMatchObject({
         id: sessionId,
@@ -478,6 +512,8 @@ describe("chat export", () => {
           : `${sessionBytes ?? ""}`;
       expect(sessionJsonl).toContain('"type":"session_meta"');
       expect(sessionJsonl).toContain('"hello from codex"');
+      expect(sessionJsonl).toContain('"recent compacted history"');
+      expect(sessionJsonl).not.toContain('"stale compacted history"');
     } finally {
       if (originalCodexHome == null) {
         delete process.env.COCALC_CODEX_HOME;

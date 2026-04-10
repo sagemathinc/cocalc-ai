@@ -6,7 +6,10 @@
 import { Modal, message as antdMessage } from "antd";
 import { useEffect, useMemo, useRef } from "@cocalc/frontend/app-framework";
 import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/navigator-state";
+import { normalizeCodexSessionId } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "./actions";
+import { truncateAcpSession } from "./acp-api";
+import { resolvePersistedOrLiveAcpSessionIdForThread } from "./thread-session";
 
 function getPreviousThreadLabel(label?: string): string {
   const clean = `${label ?? ""}`.trim();
@@ -85,7 +88,7 @@ export function ChatRoomThreadActions({
         });
       },
       confirmDeleteThread: (threadKey: string, label?: string) => {
-        const performDeleteThread = () => {
+        const performDeleteThread = async () => {
           const currentActions = actionsRef.current;
           const currentSelected = selectedThreadKeyRef.current;
           const currentSetSelected = setSelectedThreadKeyRef.current;
@@ -93,10 +96,27 @@ export function ChatRoomThreadActions({
             antdMessage.error("Deleting chats is not available.");
             return;
           }
+          const threadMetadata = currentActions.getThreadMetadata?.(threadKey, {
+            threadId: threadKey,
+          });
+          const maybeSessionId = resolvePersistedOrLiveAcpSessionIdForThread({
+            actions: currentActions,
+            threadId: threadKey,
+            persistedSessionId: normalizeCodexSessionId(
+              threadMetadata?.acp_config?.sessionId,
+            ),
+          });
           const deleted = currentActions.deleteThread(threadKey);
           if (deleted === 0) {
             antdMessage.info("This chat has no messages to delete.");
             return;
+          }
+          if (maybeSessionId) {
+            void truncateAcpSession({
+              actions: currentActions,
+              sessionId: maybeSessionId,
+              force: true,
+            }).catch(() => {});
           }
           if (currentSelected === threadKey) {
             currentSetSelected(null);

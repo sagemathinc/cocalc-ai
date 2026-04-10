@@ -11,6 +11,7 @@ import type {
   AcpRequest,
   AcpSteerRequest,
   AcpSteerResponse,
+  AcpTruncateSessionRequest,
   AcpStreamPayload,
 } from "./types";
 import pLimit from "p-limit";
@@ -63,6 +64,13 @@ export function acpForkSubject(opts: {
   return `${buildSubjectPrefix(opts)}.fork`;
 }
 
+export function acpTruncateSubject(opts: {
+  account_id?: string;
+  project_id?: string;
+}): string {
+  return `${buildSubjectPrefix(opts)}.truncate`;
+}
+
 export function acpControlSubject(opts: {
   account_id?: string;
   project_id?: string;
@@ -94,6 +102,7 @@ let apiSub: Subscription | null = null;
 let interruptSub: Subscription | null = null;
 let steerSub: Subscription | null = null;
 let forkSub: Subscription | null = null;
+let truncateSub: Subscription | null = null;
 let controlSub: Subscription | null = null;
 let automationSub: Subscription | null = null;
 const MAX_CONCURRENCY = Number(process.env.COCALC_ACP_MAX_CONCURRENCY ?? 64);
@@ -131,6 +140,9 @@ type SteerHandler = (options: AcpSteerRequest) => Promise<AcpSteerResponse>;
 type ForkHandler = (
   options: AcpForkSessionRequest,
 ) => Promise<{ sessionId: string }>;
+type TruncateHandler = (
+  options: AcpTruncateSessionRequest,
+) => Promise<{ ok: boolean; truncated: boolean }>;
 type ControlHandler = (
   options: AcpControlRequest,
 ) => Promise<AcpControlResponse>;
@@ -144,6 +156,7 @@ export async function init(
     interrupt?: InterruptHandler;
     steer?: SteerHandler;
     forkSession?: ForkHandler;
+    truncateSession?: TruncateHandler;
     control?: ControlHandler;
     automation?: AutomationHandler;
   },
@@ -171,6 +184,12 @@ export async function init(
       queue: "acp-fork-q",
     });
     listenForks(handlers.forkSession);
+  }
+  if (handlers.truncateSession) {
+    truncateSub = await client.subscribe(`${SUBJECT}.*.truncate`, {
+      queue: "acp-truncate-q",
+    });
+    listenTruncates(handlers.truncateSession);
   }
   if (handlers.control) {
     controlSub = await client.subscribe(`${SUBJECT}.*.control`, {
@@ -202,6 +221,10 @@ export async function close(): Promise<void> {
   if (forkSub != null) {
     forkSub.close();
     forkSub = null;
+  }
+  if (truncateSub != null) {
+    truncateSub.close();
+    truncateSub = null;
   }
   if (controlSub != null) {
     controlSub.close();
@@ -256,6 +279,19 @@ function listenForks(forkHandler: ForkHandler): void {
     }
   })().catch((err) => {
     logger.warn("acp fork listener stopped", err);
+  });
+}
+
+function listenTruncates(truncateHandler: TruncateHandler): void {
+  if (truncateSub == null) return;
+  (async () => {
+    for await (const mesg of truncateSub!) {
+      void runLimited("truncate", () =>
+        handleTruncateMessage(mesg, truncateHandler),
+      );
+    }
+  })().catch((err) => {
+    logger.warn("acp truncate listener stopped", err);
   });
 }
 
@@ -509,6 +545,28 @@ async function handleForkMessage(
   try {
     validateOptions(options, mesg.subject);
     const result = await forkSession(options);
+    await respond(result);
+  } catch (err) {
+    await respond(undefined, `${err}`);
+  }
+}
+
+async function handleTruncateMessage(
+  mesg,
+  truncateSession: TruncateHandler,
+): Promise<void> {
+  const options = mesg.data ?? {};
+  const respond = async (payload?: any, error?: string) => {
+    const data: any = payload ?? {};
+    if (error) {
+      data.error = error;
+    }
+    await mesg.respond(data, { noThrow: true });
+  };
+
+  try {
+    validateOptions(options, mesg.subject);
+    const result = await truncateSession(options);
     await respond(result);
   } catch (err) {
     await respond(undefined, `${err}`);

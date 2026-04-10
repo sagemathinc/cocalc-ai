@@ -33,6 +33,7 @@ import {
   findSessionFile,
   getSessionsRoot,
   rewriteSessionMeta,
+  truncateSessionHistoryById,
 } from "./codex-session-store";
 
 const logger = getLogger("ai:acp:codex-app-server");
@@ -44,6 +45,12 @@ const TURN_NOTIFICATION_IDLE_TIMEOUT_MS = Math.max(
   REQUEST_TIMEOUT_MS,
   Number(
     process.env.COCALC_CODEX_APP_SERVER_NOTIFICATION_TIMEOUT_MS ?? 30 * 60_000,
+  ),
+);
+const SESSION_TRUNCATE_CHECK_INTERVAL_MS = Math.max(
+  60_000,
+  Number(
+    process.env.COCALC_CODEX_SESSION_TRUNCATE_INTERVAL_MS ?? 15 * 60_000,
   ),
 );
 
@@ -1158,6 +1165,8 @@ export class CodexAppServerAgent implements AcpAgent {
 
   private readonly sessions = new Map<string, SessionStoreEntry>();
   private readonly running = new Map<string, RunningTurn>();
+  private readonly lastSessionTruncateAt = new Map<string, number>();
+  private readonly truncatingSessions = new Set<string>();
 
   async evaluate(request: AcpEvaluateRequest): Promise<void> {
     let maxRetries = 0;
@@ -1844,6 +1853,11 @@ export class CodexAppServerAgent implements AcpAgent {
         usage: latestUsage ?? undefined,
         threadId: actualThreadId,
       });
+      void this.maybeTruncateSessionHistory({
+        sessionId: actualThreadId,
+        spawned,
+        cwd,
+      });
     } catch (err) {
       if (quotaPollTimer) {
         clearInterval(quotaPollTimer);
@@ -2046,6 +2060,53 @@ export class CodexAppServerAgent implements AcpAgent {
         cwd,
         err: `${err}`,
       });
+    }
+  }
+
+  private async maybeTruncateSessionHistory({
+    sessionId,
+    spawned,
+    cwd,
+    force = false,
+  }: {
+    sessionId?: string;
+    spawned: SpawnedCodexAppServer;
+    cwd: string;
+    force?: boolean;
+  }): Promise<void> {
+    const normalizedSessionId = normalizeCodexSessionId(sessionId);
+    if (!normalizedSessionId) return;
+    if (this.truncatingSessions.has(normalizedSessionId)) return;
+    const now = Date.now();
+    const last = this.lastSessionTruncateAt.get(normalizedSessionId) ?? 0;
+    if (!force && now - last < SESSION_TRUNCATE_CHECK_INTERVAL_MS) {
+      return;
+    }
+    const codexHome = getCodexHomeHostPath(spawned, cwd);
+    if (!codexHome) return;
+    this.truncatingSessions.add(normalizedSessionId);
+    this.lastSessionTruncateAt.set(normalizedSessionId, now);
+    try {
+      const truncated = await truncateSessionHistoryById(normalizedSessionId, {
+        sessionsRoot: path.join(codexHome, "sessions"),
+        force,
+      });
+      if (truncated) {
+        logger.debug("codex app-server: truncated session history", {
+          sessionId: normalizedSessionId,
+          cwd,
+          codexHome,
+        });
+      }
+    } catch (err) {
+      logger.warn("codex app-server: failed to truncate session history", {
+        sessionId: normalizedSessionId,
+        cwd,
+        codexHome,
+        err: `${err}`,
+      });
+    } finally {
+      this.truncatingSessions.delete(normalizedSessionId);
     }
   }
 
