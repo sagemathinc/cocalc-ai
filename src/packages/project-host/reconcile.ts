@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
 import { listProjects, upsertProject } from "./sqlite/projects";
 import {
@@ -21,6 +22,11 @@ interface ContainerState {
   ssh_port?: number | null;
 }
 
+interface ContainerProbeResult {
+  ok: boolean;
+  states: Map<string, ContainerState>;
+}
+
 function parsePorts(ports?: string): {
   http_port?: number | null;
   ssh_port?: number | null;
@@ -37,11 +43,7 @@ function parsePorts(ports?: string): {
     if (Number.isNaN(host) || Number.isNaN(container)) continue;
     if (container === 22) {
       ssh_port = host;
-    } else if (
-      http_port == null ||
-      container === 8080 ||
-      container === 80
-    ) {
+    } else if (http_port == null || container === 8080 || container === 80) {
       // Project containers always publish SSH on 22 and their main HTTP proxy
       // on one non-SSH TCP port (currently 8080). Preserve compatibility with
       // any older 80/tcp layouts, but otherwise treat the first non-22 tcp
@@ -52,17 +54,24 @@ function parsePorts(ports?: string): {
   return { http_port, ssh_port };
 }
 
-export async function getContainerStates(): Promise<
-  Map<string, ContainerState>
-> {
-  return await new Promise<Map<string, ContainerState>>((resolve) => {
+export async function getContainerStates(): Promise<ContainerProbeResult> {
+  return await new Promise<ContainerProbeResult>((resolve) => {
     const states = new Map<string, ContainerState>();
-    const child = spawn("podman", [
-      "ps",
-      "-a",
-      "--format",
-      "{{.Names}}|{{.State}}|{{.Ports}}",
-    ]);
+    let env: NodeJS.ProcessEnv;
+    try {
+      env = podmanEnv();
+    } catch (err) {
+      logger.debug("podman probe env unavailable", { err: `${err}` });
+      resolve({ ok: false, states });
+      return;
+    }
+    const child = spawn(
+      "podman",
+      ["ps", "-a", "--format", "{{.Names}}|{{.State}}|{{.Ports}}"],
+      {
+        env,
+      },
+    );
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (d) => {
@@ -73,7 +82,7 @@ export async function getContainerStates(): Promise<
     });
     child.on("error", (err) => {
       logger.debug("podman ps failed", { err: `${err}` });
-      resolve(states);
+      resolve({ ok: false, states });
     });
     child.on("exit", (code) => {
       if (code !== 0) {
@@ -81,7 +90,7 @@ export async function getContainerStates(): Promise<
           code,
           stderr: stderr.trim(),
         });
-        return resolve(states);
+        return resolve({ ok: false, states });
       }
       for (const line of stdout.split(/\r?\n/)) {
         if (!line.trim()) continue;
@@ -98,7 +107,7 @@ export async function getContainerStates(): Promise<
         const { http_port, ssh_port } = parsePorts(portsRaw);
         states.set(project_id, { project_id, state, http_port, ssh_port });
       }
-      resolve(states);
+      resolve({ ok: true, states });
     });
   });
 }
@@ -107,7 +116,16 @@ export async function reconcileOnce() {
   const now = Date.now();
   const knownProjects = listProjects();
   const knownIds = new Set(knownProjects.map((p) => p.project_id));
-  const containers = await getContainerStates();
+  const { ok, states: containers } = await getContainerStates();
+  if (!ok) {
+    logger.debug(
+      "skipping reconcile state downgrade after failed podman probe",
+      {
+        known_projects: knownProjects.length,
+      },
+    );
+    return;
+  }
   let mountPoint: string | undefined;
   let mountPointError: string | undefined;
   let loggedMountPointError = false;

@@ -24,6 +24,10 @@ jest.mock("@cocalc/backend/logger", () => {
   };
 });
 
+jest.mock("@cocalc/backend/podman/env", () => ({
+  podmanEnv: jest.fn(() => ({})),
+}));
+
 jest.mock("@cocalc/file-server/btrfs/subvolume-snapshots", () => ({
   getGeneration: jest.fn(),
 }));
@@ -52,6 +56,21 @@ function mockPodmanPs(stdoutText = "", stderrText = "", exitCode = 0) {
       child.stdout.end();
       child.stderr.end();
       child.emit("exit", exitCode);
+    });
+    return child;
+  });
+}
+
+function mockPodmanPsError(message = "spawn podman ENOENT") {
+  mockSpawn.mockImplementation(() => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: PassThrough;
+      stderr: PassThrough;
+    };
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    process.nextTick(() => {
+      child.emit("error", new Error(message));
     });
     return child;
   });
@@ -110,6 +129,25 @@ describe("reconcileOnce", () => {
       state: "opened",
       http_port: null,
       ssh_port: null,
+    });
+  });
+
+  it("does not downgrade running projects when the podman probe fails", async () => {
+    upsertProject({
+      project_id,
+      state: "running",
+      http_port: 12345,
+      ssh_port: 23456,
+    });
+    mockPodmanPsError();
+
+    await reconcileOnce();
+
+    expect(getProject(project_id)).toMatchObject({
+      project_id,
+      state: "running",
+      http_port: 12345,
+      ssh_port: 23456,
     });
   });
 
