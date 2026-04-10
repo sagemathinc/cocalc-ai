@@ -345,6 +345,14 @@ const ACP_JOB_WITHOUT_LEASE_RECOVERY_GRACE_MS = envNumber(
   "COCALC_ACP_JOB_WITHOUT_LEASE_RECOVERY_GRACE_MS",
   15_000,
 );
+const ACP_AUTO_RECOVERY_MAX_AGE_MS = envNumber(
+  "COCALC_ACP_AUTO_RECOVERY_MAX_AGE_MS",
+  2 * 60 * 60_000,
+);
+const ACP_AUTO_RECOVERY_MAX_RETRIES = envNumber(
+  "COCALC_ACP_AUTO_RECOVERY_MAX_RETRIES",
+  2,
+);
 const WORKER_INTERRUPTED_NOTICE =
   "**Conversation interrupted because the ACP worker stopped unexpectedly.**";
 const ACP_RECOVERY_CHAT_SENDER_ID = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
@@ -398,6 +406,40 @@ function buildRecoveryContinuationPrompt({
     "Original user request:",
     originalPrompt,
   ].join("\n");
+}
+
+function shouldAutoResumeRecoveredTurn({
+  turn,
+  job,
+  now = Date.now(),
+}: {
+  turn: {
+    started_at?: number | null;
+    heartbeat_at?: number | null;
+    message_date?: string | null;
+  };
+  job?: Pick<AcpJobRow, "recovery_count"> | null;
+  now?: number;
+}): { ok: boolean; reason?: "expired" | "max_retries" } {
+  const recoveryCount = Math.max(
+    0,
+    Math.floor(Number(job?.recovery_count ?? 0)) || 0,
+  );
+  if (recoveryCount >= ACP_AUTO_RECOVERY_MAX_RETRIES) {
+    return { ok: false, reason: "max_retries" };
+  }
+  const heartbeatAt = Number(turn.heartbeat_at ?? 0);
+  const startedAt = Number(turn.started_at ?? 0);
+  const messageAt = Date.parse(`${turn.message_date ?? ""}`);
+  const lastKnownAt = Math.max(
+    Number.isFinite(heartbeatAt) ? heartbeatAt : 0,
+    Number.isFinite(startedAt) ? startedAt : 0,
+    Number.isFinite(messageAt) ? messageAt : 0,
+  );
+  if (lastKnownAt > 0 && now - lastKnownAt > ACP_AUTO_RECOVERY_MAX_AGE_MS) {
+    return { ok: false, reason: "expired" };
+  }
+  return { ok: true };
 }
 
 function toPlainSyncValue<T>(value: T): T {
@@ -4116,6 +4158,23 @@ export async function recoverOrphanedAcpTurns(
         thread_id: turn.thread_id ?? undefined,
       }),
     );
+    const autoResumeDecision =
+      autoResume && recoverySourceJob
+        ? shouldAutoResumeRecoveredTurn({
+            turn,
+            job: recoverySourceJob,
+          })
+        : { ok: false as const };
+    const shouldAutoResume = autoResumeDecision.ok;
+    if (autoResume && recoverySourceJob && !shouldAutoResume) {
+      logger.warn("skipping ACP recovery continuation", {
+        interrupted_op_id: recoverySourceJob.op_id,
+        reason: autoResumeDecision.reason,
+        recovery_count: recoverySourceJob.recovery_count ?? 0,
+        heartbeat_at: (turn as any).heartbeat_at ?? null,
+        started_at: (turn as any).started_at ?? null,
+      });
+    }
     try {
       if (
         await repairInterruptedAcpTurn({
@@ -4124,10 +4183,10 @@ export async function recoverOrphanedAcpTurns(
           interruptedNotice,
           interruptedReasonId,
           recoveryReason,
-          preserveLoopState: autoResume,
+          preserveLoopState: shouldAutoResume,
         })
       ) {
-        if (autoResume && recoverySourceJob) {
+        if (shouldAutoResume && recoverySourceJob) {
           try {
             const resumed = await enqueueRecoveryContinuationForJob({
               client,
@@ -4278,7 +4337,7 @@ export async function recoverOrphanedAcpTurns(
                 ? rawLoopState.toJS()
                 : rawLoopState;
             if (
-              !autoResume &&
+              !shouldAutoResume &&
               loopCfg?.enabled === true &&
               loopStateCurrent &&
               loopStateCurrent.status !== "stopped"
@@ -4326,7 +4385,7 @@ export async function recoverOrphanedAcpTurns(
           worker_id: turn.owner_instance_id,
         });
       }
-      if (autoResume && recoverySourceJob) {
+      if (shouldAutoResume && recoverySourceJob) {
         try {
           const resumed = await enqueueRecoveryContinuationForJob({
             client,
