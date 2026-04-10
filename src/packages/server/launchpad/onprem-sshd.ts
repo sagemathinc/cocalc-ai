@@ -20,6 +20,7 @@ import { restServer } from "@cocalc/backend/sandbox/install";
 import { which } from "@cocalc/backend/which";
 import ssh from "micro-key-producer/ssh.js";
 import { getLaunchpadLocalConfig, isLaunchpadProduct } from "./mode";
+import { ensureLocalCloudflaredBinary } from "./cloudflared-installer";
 import {
   ensureCloudflareTunnelForHub,
   hasHubCloudflareTunnel,
@@ -813,7 +814,24 @@ async function ensureRestAuth(): Promise<{
 }
 
 async function resolveCloudflaredBinary(): Promise<string | null> {
-  return await which("cloudflared");
+  const configured = clean(process.env.COCALC_LAUNCHPAD_CLOUDFLARED_BINARY);
+  if (configured) {
+    return configured;
+  }
+  const systemBinary = await which("cloudflared");
+  if (systemBinary) {
+    return systemBinary;
+  }
+  try {
+    return await ensureLocalCloudflaredBinary({
+      stateDir: cloudflaredStateDir(),
+      logger,
+    });
+  } catch (err) {
+    cloudflaredLastError = `failed to install cloudflared automatically: ${String(err)}`;
+    logger.warn(cloudflaredLastError);
+    return null;
+  }
 }
 
 function cloudflaredStateDir(): string {
@@ -1209,9 +1227,6 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
   }
   const cloudflaredBin = await resolveCloudflaredBinary();
   if (!cloudflaredBin) {
-    cloudflaredLastError =
-      "cloudflared binary not found; install from https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/";
-    logger.warn(cloudflaredLastError);
     logger.info("cloudflare tunnel not started (cloudflared missing)");
     return null;
   }
