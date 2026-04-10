@@ -1,6 +1,7 @@
 import { executeCode } from "@cocalc/backend/execute-code";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import getLogger from "@cocalc/backend/logger";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import type { HostCurrentMetrics } from "@cocalc/conat/hub/api/hosts";
 import { getDatabase, initDatabase } from "@cocalc/lite/hub/sqlite/database";
 import {
@@ -217,7 +218,7 @@ async function hostHasProjectContainers(): Promise<boolean> {
       err_on_exit: false,
       verbose: false,
       env: {
-        ...process.env,
+        ...podmanEnv(),
         LC_ALL: "C.UTF-8",
         LANG: "C.UTF-8",
       },

@@ -38,6 +38,7 @@ import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { podmanLimits } from "./limits";
 import { executeCode } from "@cocalc/backend/execute-code";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import {
   type LocalPathFunction,
   type SshServersFunction,
@@ -272,6 +273,7 @@ async function inspectContainerPids(name: string): Promise<number[]> {
     args: ["inspect", "--format", "{{.State.Pid}} {{.State.ConmonPid}}", name],
     timeout: STOP_INSPECT_TIMEOUT_S,
     err_on_exit: false,
+    env: podmanEnv(),
   });
   const out = `${stdout ?? ""}`.trim();
   if (!out) return [];

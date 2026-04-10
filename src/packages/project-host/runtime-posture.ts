@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { stat } from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import { getFileServerRuntimeStatus } from "./file-server";
 
 const logger = getLogger("project-host:runtime-posture");
@@ -31,9 +32,10 @@ function aptStaleHours(): number {
 async function run(
   command: string,
   args: string[],
+  env?: NodeJS.ProcessEnv,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: "pipe" });
+    const child = spawn(command, args, { stdio: "pipe", env });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => {
@@ -113,7 +115,7 @@ async function postureSweep(context: "startup" | "periodic"): Promise<void> {
     }
 
     try {
-      const podman = await run("podman", ["--version"]);
+      const podman = await run("podman", ["--version"], podmanEnv());
       if (podman.exitCode === 0) {
         logger.debug("runtime posture: podman version", {
           context,

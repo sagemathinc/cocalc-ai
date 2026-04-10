@@ -5,6 +5,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { executeCode } from "@cocalc/backend/execute-code";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("project-runner:rootfs-preflight");
@@ -330,6 +331,7 @@ printf '{"ok":true,"distro_family":"%s","package_manager":"%s","shell":"%s","gli
       err_on_exit: true,
       verbose: false,
       timeout: 10 * 60,
+      env: podmanEnv(),
     });
     stdout = `${result.stdout ?? ""}`.trim();
   } catch (err) {

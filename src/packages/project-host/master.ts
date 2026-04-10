@@ -18,6 +18,7 @@ import { getSoftwareVersions } from "./software";
 import { getBootstrapLifecycle } from "./bootstrap-lifecycle";
 import { upgradeSoftware } from "./upgrade";
 import { executeCode } from "@cocalc/backend/execute-code";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import { deleteProjectLocal } from "./sqlite/projects";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
 import { matchAppRequest } from "./app-public-access";
@@ -310,12 +311,14 @@ async function runPodmanCommand(
     command: "podman",
     args,
     timeout: 30,
+    env: podmanEnv(),
   });
   if (result.exit_code === 0) return result;
   result = await executeCode({
     command: "sudo",
     args: ["-n", "podman", ...args],
     timeout: 30,
+    env: podmanEnv(),
   });
   return result;
 }

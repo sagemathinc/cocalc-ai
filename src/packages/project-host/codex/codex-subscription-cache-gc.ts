@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { codexSubscriptionsPath } from "@cocalc/backend/data";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 
 const logger = getLogger("project-host:codex-subscription-cache-gc");
@@ -29,10 +30,15 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
 
 function execPodman(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("podman", args, { encoding: "utf8" }, (err, stdout) => {
-      if (err) reject(err);
-      else resolve(stdout ?? "");
-    });
+    execFile(
+      "podman",
+      args,
+      { encoding: "utf8", env: podmanEnv() },
+      (err, stdout) => {
+        if (err) reject(err);
+        else resolve(stdout ?? "");
+      },
+    );
   });
 }
 

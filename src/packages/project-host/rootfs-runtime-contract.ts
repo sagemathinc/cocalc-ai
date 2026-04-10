@@ -5,6 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { executeCode } from "@cocalc/backend/execute-code";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import {
   projectRuntimeRootfsContractLabels,
   rootfsLabelsSatisfyCurrentProjectRuntimeContract,
@@ -41,12 +42,14 @@ export async function readCurrentProjectRuntimeUsernsMapFingerprint(): Promise<s
       args: ["unshare", "cat", "/proc/self/uid_map"],
       err_on_exit: true,
       verbose: false,
+      env: podmanEnv(),
     }),
     executeCode({
       command: "podman",
       args: ["unshare", "cat", "/proc/self/gid_map"],
       err_on_exit: true,
       verbose: false,
+      env: podmanEnv(),
     }),
   ]);
   return projectRuntimeUsernsMapFingerprint({

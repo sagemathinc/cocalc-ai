@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { data } from "@cocalc/backend/data";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { executeCode } from "@cocalc/backend/execute-code";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import { spawn } from "node:child_process";
 import { readFile, rm, writeFile } from "fs/promises";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -224,6 +225,7 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
         verbose: true,
         command: "podman",
         args: ["image", "inspect", image, "--format", "{{json .}}"],
+        env: podmanEnv(),
       });
 
       reportProgress({ progress: 60, desc: `extracting ${image}...` });
@@ -248,7 +250,7 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
 `,
       ];
       logger.debug(`extracting ${image}...`);
-      const child = spawn("podman", args);
+      const child = spawn("podman", args, { env: podmanEnv() });
       await rsyncProgressReporter({
         child,
         progress: ({ progress, speed, eta }) => {
@@ -290,7 +292,11 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
       // remove the image to save space, in case it isn't used by
       // anything else.  we will not need it again, since we already
       // have a copy of it.
-      await executeCode({ command: "podman", args: ["image", "rm", image] });
+      await executeCode({
+        command: "podman",
+        args: ["image", "rm", image],
+        env: podmanEnv(),
+      });
       reportProgress({ progress: 100, desc: `pulled and extracted ${image}` });
       return baseImagePath;
     } catch (err) {
@@ -304,7 +310,11 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
           inspectPath,
           preflightPath,
         ]);
-        await executeCode({ command: "podman", args: ["image", "rm", image] });
+        await executeCode({
+          command: "podman",
+          args: ["image", "rm", image],
+          env: podmanEnv(),
+        });
       } catch {}
       reportProgress({
         progress: 100,
