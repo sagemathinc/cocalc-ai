@@ -75,6 +75,7 @@ import {
   startRuntimeConformanceMonitor,
 } from "./runtime-conformance";
 import { startRuntimePostureMonitor } from "./runtime-posture";
+import { startProjectSnapshotBackupMaintenance } from "./snapshot-backup-maintenance";
 import {
   assertLocalBindOrInsecure,
   assertSecureUrlOrLocal,
@@ -516,10 +517,14 @@ export async function main(
   logger.info("File-server (local btrfs + optional ssh proxy if enabled)");
   let stopOnPremTunnel: (() => void) | undefined;
   let stopRuntimePostureMonitor: () => void = () => {};
+  let stopSnapshotBackupMaintenance: () => void = () => {};
   try {
     await initFileServer({ client: conatClient });
     stopOnPremTunnel = await startOnPremTunnel({ localHttpPort: port });
     stopRuntimePostureMonitor = startRuntimePostureMonitor();
+    stopSnapshotBackupMaintenance = startProjectSnapshotBackupMaintenance({
+      hostId,
+    });
   } catch (err) {
     reportFatalStartupError("FATAL: Failed to init file server", err);
     process.exit(1);
@@ -545,6 +550,7 @@ export async function main(
     stopDataPermissionHardener?.();
     stopRuntimeConformanceMonitor?.();
     stopRuntimePostureMonitor?.();
+    stopSnapshotBackupMaintenance?.();
     stopConatRevocationKickLoop?.();
     stopCodexSubscriptionCacheGc?.();
     stopCopyWorker?.();

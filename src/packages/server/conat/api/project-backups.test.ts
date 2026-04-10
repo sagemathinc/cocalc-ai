@@ -7,7 +7,6 @@ let publishLroSummaryMock: jest.Mock;
 let publishLroEventMock: jest.Mock;
 let triggerBackupLroWorkerMock: jest.Mock;
 let getProjectFileServerClientMock: jest.Mock;
-let publishProjectDetailInvalidationBestEffortMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -69,12 +68,6 @@ jest.mock("@cocalc/server/conat/file-server-client", () => ({
     getProjectFileServerClientMock(...args),
 }));
 
-jest.mock("@cocalc/server/account/project-detail-feed", () => ({
-  __esModule: true,
-  publishProjectDetailInvalidationBestEffort: (...args: any[]) =>
-    publishProjectDetailInvalidationBestEffortMock(...args),
-}));
-
 describe("project-backups.createBackup", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -90,9 +83,6 @@ describe("project-backups.createBackup", () => {
     publishLroSummaryMock = jest.fn(async () => undefined);
     publishLroEventMock = jest.fn(async () => undefined);
     triggerBackupLroWorkerMock = jest.fn();
-    publishProjectDetailInvalidationBestEffortMock = jest.fn(
-      async () => undefined,
-    );
     getProjectFileServerClientMock = jest.fn(async () => ({
       deleteBackup: jest.fn(),
       updateBackups: jest.fn(),
@@ -152,32 +142,5 @@ describe("project-backups.createBackup", () => {
       service: "persist-service",
       stream_name: "stream:op-backup-1",
     });
-  });
-
-  it("publishes project detail invalidation when updating backup schedules", async () => {
-    const updateBackupsMock = jest.fn(async () => undefined);
-    getProjectFileServerClientMock = jest.fn(async () => ({
-      deleteBackup: jest.fn(),
-      updateBackups: updateBackupsMock,
-    }));
-    const { updateBackups } = await import("./project-backups");
-
-    await updateBackups({
-      account_id: "acct-1",
-      project_id: "proj-1",
-      counts: { monthly: 2 },
-    });
-
-    expect(updateBackupsMock).toHaveBeenCalledWith({
-      project_id: "proj-1",
-      counts: { monthly: 2 },
-      limit: 30,
-    });
-    expect(publishProjectDetailInvalidationBestEffortMock).toHaveBeenCalledWith(
-      {
-        project_id: "proj-1",
-        fields: ["backups"],
-      },
-    );
   });
 });

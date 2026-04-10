@@ -1493,6 +1493,23 @@ async function updateSnapshots({
   await vol.snapshots.update(counts, { limit, quotaMode });
 }
 
+export async function runScheduledSnapshotMaintenance({
+  project_id,
+  counts,
+  limit = 250,
+}: {
+  project_id: string;
+  counts: Partial<SnapshotCounts>;
+  limit?: number;
+}): Promise<void> {
+  await updateSnapshots({
+    project_id,
+    counts,
+    limit,
+    quotaMode: "async",
+  });
+}
+
 async function allSnapshotUsage({
   project_id,
 }: {
@@ -2853,6 +2870,22 @@ async function updateBackups({
   } catch (err) {
     logger.warn("backup index update failed", { project_id, err });
   }
+}
+
+export async function runScheduledBackupMaintenance({
+  project_id,
+  counts,
+  limit = 30,
+}: {
+  project_id: string;
+  counts: Partial<SnapshotCounts>;
+  limit?: number;
+}): Promise<void> {
+  await updateBackups({
+    project_id,
+    counts,
+    limit,
+  });
 }
 
 export async function getBackups({

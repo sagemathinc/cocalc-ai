@@ -3,10 +3,7 @@ import {
   type CourseInfo,
   type CreateProjectOptions,
 } from "@cocalc/util/db-schema/projects";
-import {
-  type SnapshotCounts,
-  type SnapshotSchedule,
-} from "@cocalc/util/consts/snapshots";
+import { type SnapshotSchedule } from "@cocalc/util/consts/snapshots";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 import {
   type FileTextPreview,
@@ -475,7 +472,6 @@ export const projects = {
   finalizeRestoreStaging: authFirstRequireAccount,
   releaseRestoreStaging: authFirstRequireAccount,
   cleanupRestoreStaging: authFirstRequireAccount,
-  updateBackups: authFirstRequireAccount,
   getBackups: authFirstRequireAccount,
   getBackupFiles: authFirstRequireAccount,
   findBackupFiles: authFirstRequireAccount,
@@ -485,7 +481,6 @@ export const projects = {
   createSnapshot: authFirstRequireAccount,
   deleteSnapshot: authFirstRequireAccount,
   restoreSnapshot: authFirstRequireAccount,
-  updateSnapshots: authFirstRequireAccount,
   getSnapshotQuota: authFirstRequireAccount,
   allSnapshotUsage: authFirstRequireAccount,
   getSnapshotFileText: authFirstRequireAccount,
@@ -883,12 +878,6 @@ export interface Projects {
     root?: string;
   }) => Promise<void>;
 
-  updateBackups: (opts: {
-    account_id?: string;
-    project_id: string;
-    counts?: Partial<SnapshotCounts>;
-  }) => Promise<void>;
-
   getProjectBackupSchedule: (opts: {
     account_id?: string;
     project_id: string;
@@ -965,12 +954,6 @@ export interface Projects {
     account_id?: string;
     project_id: string;
     name: string;
-  }) => Promise<void>;
-
-  updateSnapshots: (opts: {
-    account_id?: string;
-    project_id: string;
-    counts?: Partial<SnapshotCounts>;
   }) => Promise<void>;
 
   getProjectSnapshotSchedule: (opts: {
