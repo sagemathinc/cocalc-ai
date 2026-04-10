@@ -12,8 +12,10 @@ import {
 import { getMountPoint } from "./file-server";
 
 const DEFAULT_INTERVAL = 15_000;
+const DEFAULT_MISSING_CYCLES_BEFORE_OPENED = 2;
 
 const logger = getLogger("project-host:reconcile");
+const missingSince = new Map<string, number>();
 
 interface ContainerState {
   project_id: string;
@@ -141,6 +143,7 @@ export async function reconcileOnce() {
   // Update rows for containers we see that belong to this host (ignore other hosts on same machine).
   for (const info of containers.values()) {
     if (!knownIds.has(info.project_id)) continue;
+    missingSince.delete(info.project_id);
     upsertProject({
       project_id: info.project_id,
       state: info.state,
@@ -183,6 +186,20 @@ export async function reconcileOnce() {
       !containers.has(row.project_id) &&
       (row.state === "running" || row.state === "starting")
     ) {
+      const misses = (missingSince.get(row.project_id) ?? 0) + 1;
+      missingSince.set(row.project_id, misses);
+      if (misses < missingCyclesBeforeOpened()) {
+        logger.debug(
+          "reconcile saw running project without container; delaying downgrade",
+          {
+            project_id: row.project_id,
+            previous_state: row.state,
+            misses,
+            required_misses: missingCyclesBeforeOpened(),
+          },
+        );
+        continue;
+      }
       upsertProject({
         project_id: row.project_id,
         state: "opened",
@@ -194,6 +211,18 @@ export async function reconcileOnce() {
       resetProjectLastEditedRunning(row.project_id);
     }
   }
+}
+
+function missingCyclesBeforeOpened(): number {
+  const raw = Number(process.env.COCALC_PROJECT_HOST_RECONCILE_MISSING_CYCLES);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_MISSING_CYCLES_BEFORE_OPENED;
+  }
+  return Math.max(1, Math.floor(raw));
+}
+
+export function resetReconcileStateForTests(): void {
+  missingSince.clear();
 }
 
 export function startReconciler(intervalMs = DEFAULT_INTERVAL): () => void {

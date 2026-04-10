@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { closeDatabase } from "@cocalc/lite/hub/sqlite/database";
-import { reconcileOnce } from "./reconcile";
+import { reconcileOnce, resetReconcileStateForTests } from "./reconcile";
 import { getProject, upsertProject } from "./sqlite/projects";
 
 const mockSpawn = jest.fn();
@@ -83,7 +83,9 @@ describe("reconcileOnce", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.COCALC_LITE_SQLITE_FILENAME = ":memory:";
+    delete process.env.COCALC_PROJECT_HOST_RECONCILE_MISSING_CYCLES;
     closeDatabase();
+    resetReconcileStateForTests();
     mockPodmanPs();
   });
 
@@ -108,6 +110,15 @@ describe("reconcileOnce", () => {
 
     expect(getProject(project_id)).toMatchObject({
       project_id,
+      state: "starting",
+      http_port: 12345,
+      ssh_port: 23456,
+    });
+
+    await reconcileOnce();
+
+    expect(getProject(project_id)).toMatchObject({
+      project_id,
       state: "opened",
       http_port: null,
       ssh_port: null,
@@ -116,6 +127,15 @@ describe("reconcileOnce", () => {
 
   it("clears stale running projects when the container is gone", async () => {
     upsertProject({
+      project_id,
+      state: "running",
+      http_port: 12345,
+      ssh_port: 23456,
+    });
+
+    await reconcileOnce();
+
+    expect(getProject(project_id)).toMatchObject({
       project_id,
       state: "running",
       http_port: 12345,
@@ -148,6 +168,36 @@ describe("reconcileOnce", () => {
       state: "running",
       http_port: 12345,
       ssh_port: 23456,
+    });
+  });
+
+  it("resets the missing-container streak once the project is seen running again", async () => {
+    upsertProject({
+      project_id,
+      state: "running",
+      http_port: 12345,
+      ssh_port: 23456,
+    });
+
+    await reconcileOnce();
+    expect(getProject(project_id)).toMatchObject({
+      project_id,
+      state: "running",
+    });
+
+    mockPodmanPs(
+      `project-${project_id}|running|127.0.0.1:32803->22/tcp, 127.0.0.1:33167->8080/tcp\n`,
+    );
+    await reconcileOnce();
+
+    mockPodmanPs();
+    await reconcileOnce();
+
+    expect(getProject(project_id)).toMatchObject({
+      project_id,
+      state: "running",
+      http_port: 33167,
+      ssh_port: 32803,
     });
   });
 
