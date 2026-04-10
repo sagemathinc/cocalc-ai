@@ -1,0 +1,36 @@
+import {
+  getCloudflaredDownloadSpec,
+  localCloudflaredBinaryPath,
+} from "./cloudflared-installer";
+
+describe("launchpad cloudflared installer", () => {
+  test("maps linux x64 to the amd64 release binary", () => {
+    expect(
+      getCloudflaredDownloadSpec({ platform: "linux", arch: "x64" }),
+    ).toEqual({
+      filename: "cloudflared-linux-amd64",
+      url: "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
+    });
+  });
+
+  test("maps linux arm64 to the arm64 release binary", () => {
+    expect(
+      getCloudflaredDownloadSpec({ platform: "linux", arch: "arm64" }),
+    ).toEqual({
+      filename: "cloudflared-linux-arm64",
+      url: "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64",
+    });
+  });
+
+  test("returns undefined for unsupported platforms", () => {
+    expect(
+      getCloudflaredDownloadSpec({ platform: "darwin", arch: "arm64" }),
+    ).toBeUndefined();
+  });
+
+  test("uses a stable local cache path under the state dir", () => {
+    expect(localCloudflaredBinaryPath("/tmp/launchpad-cloudflare")).toBe(
+      "/tmp/launchpad-cloudflare/bin/cloudflared",
+    );
+  });
+});
