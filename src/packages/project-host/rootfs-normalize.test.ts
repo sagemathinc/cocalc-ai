@@ -24,6 +24,13 @@ jest.mock("@cocalc/backend/logger", () => {
 describe("rootfs preflight metadata", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.COCALC_PODMAN_RUNTIME_DIR = os.tmpdir();
+    process.env.LOGS = os.tmpdir();
+  });
+
+  afterEach(() => {
+    delete process.env.COCALC_PODMAN_RUNTIME_DIR;
+    delete process.env.LOGS;
   });
 
   it("records and reloads current preflight metadata", async () => {

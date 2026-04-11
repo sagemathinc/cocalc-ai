@@ -8,7 +8,7 @@ import type {
   ExecuteCodeOutput,
   ExecuteCodeOptions,
 } from "@cocalc/util/types/execute-code";
-import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
+import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 
 // checks auth and runs code
@@ -21,7 +21,7 @@ export default async function exec({
   project_id: string;
   execOpts: ExecuteCodeOptions;
 }): Promise<ExecuteCodeOutput> {
-  await assertLocalProjectCollaborator({ account_id, project_id });
+  await assertProjectCollaboratorAccessAllowRemote({ account_id, project_id });
 
   const api = projectApiClient({
     client: await getExplicitProjectRoutedClient({ project_id }),
