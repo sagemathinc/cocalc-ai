@@ -15,9 +15,9 @@ describe("SyncClient", () => {
       id: "conn-123",
       info: {
         user: {
-          account_id: "acct-456",
-          project_id: "proj-789",
-          hub_id: "hub-000",
+          account_id: "11111111-1111-4111-8111-111111111111",
+          project_id: "22222222-2222-4222-8222-222222222222",
+          hub_id: "33333333-3333-4333-8333-333333333333",
         },
       },
       isConnected: () => true,
@@ -30,11 +30,11 @@ describe("SyncClient", () => {
     };
   }
 
-  it("uses the live connection id as the sync client identity", () => {
+  it("uses the signed-in account identity as the sync client identity", () => {
     const client = createConatClient({ id: "conn-live-1" });
     const syncClient = new SyncClient(client as any);
 
-    expect(syncClient.client_id()).toBe("conn-live-1");
+    expect(syncClient.client_id()).toBe("11111111-1111-4111-8111-111111111111");
   });
 
   it("still touches projects using the user account identity", async () => {
@@ -42,9 +42,9 @@ describe("SyncClient", () => {
       id: "conn-live-2",
       info: {
         user: {
-          account_id: "acct-real",
-          project_id: "proj-real",
-          hub_id: "hub-real",
+          account_id: "44444444-4444-4444-8444-444444444444",
+          project_id: "55555555-5555-4555-8555-555555555555",
+          hub_id: "66666666-6666-4666-8666-666666666666",
         },
       },
     });
@@ -55,9 +55,14 @@ describe("SyncClient", () => {
     expect(callHubMock).toHaveBeenCalledTimes(1);
     expect(callHubMock).toHaveBeenCalledWith({
       client,
-      account_id: "acct-real",
+      account_id: "44444444-4444-4444-8444-444444444444",
       name: "db.touch",
-      args: [{ project_id: "project-under-edit", account_id: "acct-real" }],
+      args: [
+        {
+          project_id: "project-under-edit",
+          account_id: "44444444-4444-4444-8444-444444444444",
+        },
+      ],
     });
   });
 });

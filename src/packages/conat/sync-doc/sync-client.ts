@@ -48,11 +48,9 @@ export class SyncClient extends EventEmitter implements Client0 {
     return this.client.isSignedIn();
   };
 
-  private accountId = (): string => {
+  private accountId = (): string | undefined => {
     const user = this.client.info?.user;
-    return (
-      user?.account_id ?? user?.project_id ?? user?.hub_id ?? this.client.id
-    );
+    return user?.account_id ?? user?.project_id ?? user?.hub_id;
   };
 
   touch_project = async (project_id): Promise<void> => {
@@ -101,9 +99,9 @@ export class SyncClient extends EventEmitter implements Client0 {
     return new PubSub({ client: this.client, ...opts });
   };
 
-  // Unique sync-session identity for this client connection.
+  // account_id or project_id for this signed-in conat client.
   client_id = (): string => {
-    return this.client.id;
+    return this.accountId() ?? this.client.id;
   };
 
   server_time = (): Date => {

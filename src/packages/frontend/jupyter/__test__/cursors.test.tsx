@@ -29,10 +29,11 @@ describe("jupyter cursor profiles", () => {
   it("hydrates missing users instead of silently staying private", async () => {
     const { getProfile } = await import("../cursors");
     const { actions } = await import("@cocalc/frontend/users/actions");
+    const accountId = "11111111-1111-4111-8111-111111111111";
 
-    const profile = getProfile("acct-missing", immutable.Map());
+    const profile = getProfile(accountId, immutable.Map());
 
-    expect(actions.fetch_non_collaborator).toHaveBeenCalledWith("acct-missing");
+    expect(actions.fetch_non_collaborator).toHaveBeenCalledWith(accountId);
     expect(profile).toEqual({
       color: "rgb(170,170,170)",
       name: "Private User",
@@ -42,9 +43,10 @@ describe("jupyter cursor profiles", () => {
   it("uses alias fallback and refreshes stale placeholder identities", async () => {
     const { getProfile } = await import("../cursors");
     const { actions } = await import("@cocalc/frontend/users/actions");
+    const accountId = "22222222-2222-4222-8222-222222222222";
 
     const userMap = immutable.fromJS({
-      "acct-remote": {
+      [accountId]: {
         first_name: "Deleted",
         last_name: "User",
         name: "Remote Friend",
@@ -52,9 +54,9 @@ describe("jupyter cursor profiles", () => {
       },
     });
 
-    const profile = getProfile("acct-remote", userMap);
+    const profile = getProfile(accountId, userMap);
 
-    expect(actions.fetch_non_collaborator).toHaveBeenCalledWith("acct-remote");
+    expect(actions.fetch_non_collaborator).toHaveBeenCalledWith(accountId);
     expect(profile).toEqual({
       color: "#123456",
       name: "Remote Friend",

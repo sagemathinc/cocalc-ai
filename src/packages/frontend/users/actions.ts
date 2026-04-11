@@ -8,12 +8,13 @@ import { fromJS } from "immutable";
 import { webapp_client } from "../webapp-client";
 import { UsersState } from "./types";
 import { store } from "./store";
+import { isValidUUID } from "@cocalc/util/misc";
 
 const warned = new Set<string>();
 
 export class UsersActions extends Actions<UsersState> {
   public async fetch_non_collaborator(account_id: string): Promise<void> {
-    if (!account_id) {
+    if (!account_id || !isValidUUID(account_id)) {
       return;
     }
     let obj;

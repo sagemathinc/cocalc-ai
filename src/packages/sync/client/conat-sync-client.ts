@@ -25,6 +25,11 @@ export class ConatSyncClient extends EventEmitter implements SyncClient {
     super();
   }
 
+  private identity = (): string | undefined => {
+    const user = this.client.info?.user;
+    return user?.account_id ?? user?.project_id ?? user?.hub_id;
+  };
+
   synctable_conat = async (query0, options?): Promise<SyncTable> => {
     const { query } = parseQueryWithOptions(query0, options);
     return (await this.client.sync.synctable({
@@ -39,7 +44,7 @@ export class ConatSyncClient extends EventEmitter implements SyncClient {
 
   // account_id or project_id
   client_id = (): string => {
-    return this.client.id;
+    return this.identity() ?? this.client.id;
   };
 
   server_time = (): Date => {

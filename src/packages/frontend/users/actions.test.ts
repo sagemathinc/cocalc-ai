@@ -34,13 +34,21 @@ jest.mock("./store", () => ({
 }));
 
 describe("UsersActions.fetch_non_collaborator", () => {
+  beforeEach(async () => {
+    const { webapp_client } = await import("../webapp-client");
+    const { actions } = await import("./actions");
+    (webapp_client.users_client.getNames as jest.Mock).mockReset();
+    (actions.setState as jest.Mock).mockReset();
+  });
+
   it("hydrates an existing placeholder collaborator row", async () => {
     const { webapp_client } = await import("../webapp-client");
     const { store } = await import("./store");
     const { actions } = await import("./actions");
+    const remoteAccountId = "11111111-1111-4111-8111-111111111111";
 
     (webapp_client.users_client.getNames as jest.Mock).mockResolvedValue({
-      "acct-1": {
+      [remoteAccountId]: {
         first_name: "Remote",
         last_name: "Friend",
         profile: { image: "remote.png" },
@@ -48,7 +56,7 @@ describe("UsersActions.fetch_non_collaborator", () => {
     });
     (store.get as jest.Mock).mockReturnValue(
       fromJS({
-        "acct-1": {
+        [remoteAccountId]: {
           first_name: "Deleted",
           last_name: "User",
           collaborator: true,
@@ -56,21 +64,31 @@ describe("UsersActions.fetch_non_collaborator", () => {
       }),
     );
 
-    await actions.fetch_non_collaborator("acct-1");
+    await actions.fetch_non_collaborator(remoteAccountId);
 
     expect(webapp_client.users_client.getNames).toHaveBeenCalledWith([
-      "acct-1",
+      remoteAccountId,
     ]);
     expect(
       (actions.setState as jest.Mock).mock.calls[0][0].user_map.toJS(),
     ).toEqual({
-      "acct-1": {
-        account_id: "acct-1",
+      [remoteAccountId]: {
+        account_id: remoteAccountId,
         collaborator: true,
         first_name: "Remote",
         last_name: "Friend",
         profile: { image: "remote.png" },
       },
     });
+  });
+
+  it("ignores non-uuid ids instead of querying for names", async () => {
+    const { webapp_client } = await import("../webapp-client");
+    const { actions } = await import("./actions");
+
+    await actions.fetch_non_collaborator("un7nePsSiK");
+
+    expect(webapp_client.users_client.getNames).not.toHaveBeenCalled();
+    expect(actions.setState).not.toHaveBeenCalled();
   });
 });
