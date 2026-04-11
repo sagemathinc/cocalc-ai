@@ -126,6 +126,7 @@ const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 type RoutedHubClientState = {
   address: string;
   host_session_id?: string;
+  project_id?: string;
   client: ReturnType<typeof connectToConat>;
   reconnectTimer?: ReturnType<typeof setTimeout>;
   reconnectAttempts: number;
@@ -198,7 +199,12 @@ export class ConatClient extends EventEmitter {
           if (!routing) {
             return;
           }
-          return { client: this.getOrCreateRoutedHubClient(routing) };
+          return {
+            client: this.getOrCreateRoutedHubClient({
+              ...routing,
+              project_id,
+            }),
+          };
         },
         // it is necessary to manually managed reconnects due to a bugs
         // in socketio that has stumped their devs
@@ -544,7 +550,8 @@ export class ConatClient extends EventEmitter {
     if (
       current &&
       current.address === address &&
-      current.host_session_id === host_session_id
+      current.host_session_id === host_session_id &&
+      current.project_id === project_id
     ) {
       return current.client;
     }
@@ -554,6 +561,7 @@ export class ConatClient extends EventEmitter {
     const state: RoutedHubClientState = {
       address,
       host_session_id,
+      project_id,
       reconnectAttempts: 0,
       client: connectToConat({
         address,
