@@ -1772,14 +1772,15 @@ export class SyncDoc extends EventEmitter {
         continue;
       }
       const key =
-        (state.userId != null ? this.users[state.userId] : undefined) ??
+        this.cursorStateAccountId(state) ??
         state.clientId ??
         `client-${state.time}`;
+      const userId = this.cursorStateUserId(state);
       const time = new Date(state.time);
       map = map.set(
         key,
         fromJS({
-          user_id: state.userId,
+          user_id: userId,
           locs: state.locs,
           time,
         }),
@@ -1812,14 +1813,15 @@ export class SyncDoc extends EventEmitter {
         continue;
       }
       const key =
-        (state.userId != null ? this.users[state.userId] : undefined) ??
+        this.cursorStateAccountId(state) ??
         state.clientId ??
         `client-${state.time}`;
+      const userId = this.cursorStateUserId(state);
       const time = new Date(state.time);
       map = map.set(
         key,
         fromJS({
-          user_id: state.userId,
+          user_id: userId,
           locs: state.locs,
           time,
         }),
@@ -2269,17 +2271,34 @@ export class SyncDoc extends EventEmitter {
         name: "cursors",
       });
       const listeners: Array<(state: unknown, clientId: string) => void> = [];
-      table.on("change", (obj: { user_id?: number }) => {
-        const account_id =
-          obj?.user_id != null ? this.users[obj.user_id] : undefined;
-        const clientId = account_id ?? `cursor-${obj?.user_id ?? "unknown"}`;
+      table.on("change", (obj: any) => {
+        const account_id = this.cursorStateAccountId(obj);
+        const userId = this.cursorStateUserId(obj);
+        const clientId = account_id ?? `cursor-${userId ?? "unknown"}`;
+        const state =
+          obj != null && typeof obj === "object"
+            ? {
+                ...obj,
+                accountId: account_id ?? obj.accountId ?? obj.account_id,
+                userId: obj.userId ?? obj.user_id,
+              }
+            : obj;
         for (const fn of listeners) {
-          fn(obj, clientId);
+          fn(state, clientId);
         }
       });
       return {
         publish: (state: unknown) => {
-          table.set(state);
+          if (state == null || typeof state !== "object") {
+            table.set(state);
+            return;
+          }
+          const accountId = this.client_id();
+          table.set({
+            ...(state as Record<string, unknown>),
+            accountId,
+            account_id: accountId,
+          });
         },
         subscribe: (onState: (state: unknown, clientId: string) => void) => {
           listeners.push(onState);
@@ -2295,6 +2314,30 @@ export class SyncDoc extends EventEmitter {
     // Fallback for test/fake clients: shared in-memory presence.
     return fallbackCursorPresence;
   }
+
+  private cursorStateUserId = (state: any): number | undefined => {
+    if (typeof state?.userId === "number") {
+      return state.userId;
+    }
+    if (typeof state?.user_id === "number") {
+      return state.user_id;
+    }
+    return;
+  };
+
+  private cursorStateAccountId = (state: any): string | undefined => {
+    if (typeof state?.accountId === "string" && state.accountId.length > 0) {
+      return state.accountId;
+    }
+    if (typeof state?.account_id === "string" && state.account_id.length > 0) {
+      return state.account_id;
+    }
+    const userId = this.cursorStateUserId(state);
+    if (userId != null) {
+      return this.users[userId];
+    }
+    return;
+  };
 
   private createPatchflowStore = (): PatchflowPatchStore => {
     return {

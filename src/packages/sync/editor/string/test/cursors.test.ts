@@ -80,6 +80,24 @@ describe("cursor presence emits cursor_activity", () => {
     expect(handlerCalls).toBeGreaterThan(0);
     expect(cursorEvents.length).toBeGreaterThan(0);
   });
+
+  it("prefers accountId from cursor presence when user mapping is missing", async () => {
+    const remoteAccountId = "bb06e800-1894-4cb0-8777-eb0e8620c7e0";
+    (syncA as any).users = ["__filesystem__", "userA"];
+    (syncA as any).handlePatchflowCursors([
+      {
+        type: "cursor",
+        time: Date.now(),
+        locs: [{ pos: 2 }],
+        userId: 2,
+        clientId: "user-2",
+        accountId: remoteAccountId,
+      },
+    ]);
+    const cursors = syncA.get_cursors({ excludeSelf: "never" });
+    expect(cursors.has(remoteAccountId)).toBe(true);
+    expect(cursors.has("user-2")).toBe(false);
+  });
 });
 
 async function waitForReady(doc: SyncString): Promise<void> {
