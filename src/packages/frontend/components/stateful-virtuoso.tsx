@@ -19,7 +19,7 @@ type SnapshotEnvelope = {
 const cache = new LRUCache<string, SnapshotEnvelope>({ max: 500 });
 const SAVE_THROTTLE_MS = 50;
 const PERSIST_THROTTLE_MS = 1000;
-const DEFAULT_VIEWPORT = 1000;
+const DEFAULT_VIEWPORT = 10000;
 const MIN_SNAPSHOT_VIEWPORT_PX = 80;
 const MIN_SNAPSHOT_SCROLL_HEIGHT_PX = 120;
 
