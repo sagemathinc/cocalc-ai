@@ -105,6 +105,51 @@ export function selectionForPath(
   return selectionForWorkspacePathCore(records, path);
 }
 
+export function selectionForPathFollowThrough(
+  currentSelection: WorkspaceSelection,
+  records: WorkspaceRecord[],
+  path: string,
+): WorkspaceSelection {
+  if (currentSelection.kind === "all") {
+    return currentSelection;
+  }
+  const targetSelection = selectionForPath(records, path);
+  if (currentSelection.kind === "unscoped") {
+    return targetSelection.kind === "unscoped"
+      ? currentSelection
+      : { kind: "all" };
+  }
+  if (
+    targetSelection.kind === "workspace" &&
+    targetSelection.workspace_id === currentSelection.workspace_id
+  ) {
+    return currentSelection;
+  }
+  const currentRecord =
+    records.find(
+      (record) => record.workspace_id === currentSelection.workspace_id,
+    ) ?? null;
+  if (currentRecord == null) {
+    return targetSelection.kind === "workspace"
+      ? targetSelection
+      : { kind: "all" };
+  }
+  const containingWorkspace =
+    records
+      .filter(
+        (record) =>
+          pathMatchesWorkspaceRoot(currentRecord.root_path, record.root_path) &&
+          pathMatchesWorkspace(record, path),
+      )
+      .sort((a, b) => b.root_path.length - a.root_path.length)[0] ?? null;
+  return containingWorkspace != null
+    ? {
+        kind: "workspace",
+        workspace_id: containingWorkspace.workspace_id,
+      }
+    : { kind: "all" };
+}
+
 function sameSelection(a: WorkspaceSelection, b: WorkspaceSelection): boolean {
   return (
     a.kind === b.kind &&

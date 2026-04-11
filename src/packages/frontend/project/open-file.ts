@@ -21,6 +21,13 @@ import {
   uuid,
 } from "@cocalc/util/misc";
 import { isChatExtension } from "@cocalc/frontend/chat/paths";
+import { getRuntimeWorkspaceRecords } from "@cocalc/frontend/project/workspaces/records-runtime";
+import {
+  dispatchWorkspaceSelectionEvent,
+  loadSessionSelection,
+  persistSessionSelection,
+} from "@cocalc/frontend/project/workspaces/selection-runtime";
+import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 import { normalize } from "./utils";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { canonicalSyncPath, toAbsoluteProjectPath } from "./sync-path";
@@ -81,6 +88,30 @@ type SyncIdentityFs = {
   canonicalSyncIdentityPath?: (path: string) => Promise<string>;
 };
 
+export function applyWorkspaceSelectionForForegroundOpen(
+  project_id: string,
+  path: string,
+): void {
+  const records = getRuntimeWorkspaceRecords(project_id);
+  if (records.length === 0) return;
+  const currentSelection = loadSessionSelection(project_id);
+  const nextSelection = selectionForPathFollowThrough(
+    currentSelection,
+    records,
+    path,
+  );
+  const sameSelection =
+    currentSelection.kind === nextSelection.kind &&
+    (currentSelection.kind !== "workspace" ||
+      (nextSelection.kind === "workspace" &&
+        currentSelection.workspace_id === nextSelection.workspace_id));
+  if (sameSelection) {
+    return;
+  }
+  persistSessionSelection(project_id, nextSelection);
+  dispatchWorkspaceSelectionEvent(project_id, nextSelection);
+}
+
 export async function resolveSyncPath(
   fs: SyncIdentityFs,
   displayPath: string,
@@ -135,6 +166,9 @@ export async function open_file(
   }
   opts.path = normalize(opts.path);
   const displayPath = opts.path;
+  if (opts.foreground) {
+    applyWorkspaceSelectionForForegroundOpen(actions.project_id, displayPath);
+  }
 
   if (opts.line != null && !opts.fragmentId) {
     // backward compat
