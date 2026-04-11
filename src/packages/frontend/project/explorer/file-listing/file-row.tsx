@@ -19,7 +19,7 @@ import { should_open_in_foreground } from "@cocalc/frontend/lib/should-open-in-f
 import { open_new_tab } from "@cocalc/frontend/misc";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ProjectActions } from "@cocalc/frontend/project_actions";
-import { selectionForPath } from "@cocalc/frontend/project/workspaces/state";
+import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 import track from "@cocalc/frontend/user-tracking";
 import * as misc from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -270,7 +270,11 @@ export function FileRow({
       return;
     }
     const path = full_path();
-    const nextSelection = selectionForPath(workspaces.records, path);
+    const nextSelection = selectionForPathFollowThrough(
+      workspaces.selection,
+      workspaces.records,
+      path,
+    );
     workspaces.setSelection(nextSelection);
     if (onOpenSpecial?.(path, isDir)) {
       return;

@@ -27,7 +27,7 @@ import { ProjectStatus } from "@cocalc/frontend/todo-types";
 import { labels } from "@cocalc/frontend/i18n";
 import AskNewFilename from "../ask-filename";
 import { useProjectContext } from "@cocalc/frontend/project/context";
-import { selectionForPath } from "@cocalc/frontend/project/workspaces/state";
+import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 import { ActionBar } from "./action-bar";
 import BackupOps from "./backup-ops";
 import CopyOps from "./copy-ops";
@@ -451,7 +451,11 @@ export function Explorer() {
         if (x != null) {
           const { isDir, name } = x;
           const path = join(effective_current_path, name);
-          const nextSelection = selectionForPath(workspaces.records, path);
+          const nextSelection = selectionForPathFollowThrough(
+            workspaces.selection,
+            workspaces.records,
+            path,
+          );
           workspaces.setSelection(nextSelection);
           if (isDir) {
             navigateExplorer(path);

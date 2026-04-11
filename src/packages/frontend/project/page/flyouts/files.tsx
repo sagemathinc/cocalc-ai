@@ -67,7 +67,7 @@ import { useFlyoutSettings } from "@cocalc/frontend/project/explorer/use-explore
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import { selectionForPath } from "@cocalc/frontend/project/workspaces/state";
+import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
@@ -539,7 +539,11 @@ export function FilesFlyout({
 
     if (!skip) {
       const fullPath = path_to_file(effective_current_path, file.name);
-      const nextSelection = selectionForPath(workspaces.records, fullPath);
+      const nextSelection = selectionForPathFollowThrough(
+        workspaces.selection,
+        workspaces.records,
+        fullPath,
+      );
       workspaces.setSelection(nextSelection);
 
       if (file.isDir) {

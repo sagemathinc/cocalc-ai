@@ -3,6 +3,7 @@ import {
   pathMatchesRoot,
   resolveWorkspaceForPath,
   selectionForPath,
+  selectionForPathFollowThrough,
   selectionMatchesPath,
 } from "./state";
 import type { WorkspaceRecord } from "./types";
@@ -114,6 +115,57 @@ describe("project workspaces path matching", () => {
     expect(selectionForPath(records, "/repo/b/file.ts")).toEqual({
       kind: "unscoped",
     });
+  });
+
+  it("promotes unscoped opens into workspaces to all tabs", () => {
+    const records = [record("/repo/a", "a")];
+    expect(
+      selectionForPathFollowThrough(
+        { kind: "unscoped" },
+        records,
+        "/repo/a/file.ts",
+      ),
+    ).toEqual({ kind: "all" });
+  });
+
+  it("keeps unscoped selection for unscoped paths", () => {
+    const records = [record("/repo/a", "a")];
+    expect(
+      selectionForPathFollowThrough(
+        { kind: "unscoped" },
+        records,
+        "/repo/b/file.ts",
+      ),
+    ).toEqual({ kind: "unscoped" });
+  });
+
+  it("promotes to the smallest containing workspace when opening outside the current workspace", () => {
+    const records = [
+      record("/repo", "root"),
+      record("/repo/a", "a"),
+      record("/repo/b", "b"),
+    ];
+    expect(
+      selectionForPathFollowThrough(
+        { kind: "workspace", workspace_id: "a" },
+        records,
+        "/repo/b/file.ts",
+      ),
+    ).toEqual({
+      kind: "workspace",
+      workspace_id: "root",
+    });
+  });
+
+  it("falls back to all tabs when no containing workspace can keep both paths visible", () => {
+    const records = [record("/repo/a", "a"), record("/repo/b", "b")];
+    expect(
+      selectionForPathFollowThrough(
+        { kind: "workspace", workspace_id: "a" },
+        records,
+        "/repo/b/file.ts",
+      ),
+    ).toEqual({ kind: "all" });
   });
 
   it("preserves a cached selected workspace while records are still catching up", () => {
