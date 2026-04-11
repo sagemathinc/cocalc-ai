@@ -577,6 +577,10 @@ export interface BayRestoreTestRunResult extends BayInfo {
 
 export interface AccountBayLocation {
   account_id: string;
+  email_address?: string;
+  first_name?: string;
+  last_name?: string;
+  name?: string;
   home_bay_id: string;
   source: "account-row" | "single-bay-default";
 }

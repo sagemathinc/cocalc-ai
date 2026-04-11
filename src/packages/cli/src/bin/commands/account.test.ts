@@ -16,6 +16,10 @@ test("account where defaults to the current account", async () => {
           system: {
             getAccountBay: async ({ user_account_id }) => ({
               account_id: user_account_id,
+              email_address: "alice@example.com",
+              first_name: "Alice",
+              last_name: "Example",
+              name: "Alice Example",
               home_bay_id: "bay-0",
               source: "single-bay-default",
             }),
@@ -33,6 +37,10 @@ test("account where defaults to the current account", async () => {
   await program.parseAsync(["node", "test", "account", "where"]);
 
   assert.equal(captured?.account_id, "11111111-1111-1111-1111-111111111111");
+  assert.equal(captured?.email_address, "alice@example.com");
+  assert.equal(captured?.first_name, "Alice");
+  assert.equal(captured?.last_name, "Example");
+  assert.equal(captured?.name, "Alice Example");
   assert.equal(captured?.home_bay_id, "bay-0");
 });
 
@@ -48,6 +56,10 @@ test("account where resolves an explicit account identifier", async () => {
           system: {
             getAccountBay: async ({ user_account_id }) => ({
               account_id: user_account_id,
+              email_address: "bob@example.com",
+              first_name: "Bob",
+              last_name: "Other",
+              name: "Bob Other",
               home_bay_id: "bay-0",
               source: "single-bay-default",
             }),
@@ -69,4 +81,8 @@ test("account where resolves an explicit account identifier", async () => {
 
   assert.equal(resolvedIdentifier, "alice");
   assert.equal(captured?.account_id, "22222222-2222-2222-2222-222222222222");
+  assert.equal(captured?.email_address, "bob@example.com");
+  assert.equal(captured?.first_name, "Bob");
+  assert.equal(captured?.last_name, "Other");
+  assert.equal(captured?.name, "Bob Other");
 });

@@ -69,6 +69,10 @@ describe("bay-directory", () => {
           rows: [
             {
               account_id: params?.[0] ?? ACCOUNT_ID,
+              email_address: "user@example.com",
+              first_name: "Alice",
+              last_name: "Example",
+              name: "Alice Example",
               home_bay_id: null,
             },
           ],
@@ -184,6 +188,10 @@ describe("bay-directory", () => {
       }),
     ).resolves.toEqual({
       account_id: OTHER_ACCOUNT_ID,
+      email_address: "user@example.com",
+      first_name: "Alice",
+      last_name: "Example",
+      name: "Alice Example",
       home_bay_id: "bay-0",
       source: "single-bay-default",
     });
@@ -196,6 +204,10 @@ describe("bay-directory", () => {
           rows: [
             {
               account_id: params?.[0] ?? OTHER_ACCOUNT_ID,
+              email_address: "remote@example.com",
+              first_name: "Remote",
+              last_name: "User",
+              name: "Remote User",
               home_bay_id: "bay-7",
             },
           ],
@@ -213,6 +225,10 @@ describe("bay-directory", () => {
       }),
     ).resolves.toEqual({
       account_id: OTHER_ACCOUNT_ID,
+      email_address: "remote@example.com",
+      first_name: "Remote",
+      last_name: "User",
+      name: "Remote User",
       home_bay_id: "bay-7",
       source: "account-row",
     });

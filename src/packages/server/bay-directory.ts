@@ -50,6 +50,10 @@ export async function listConfiguredBays(): Promise<BayInfo[]> {
 
 async function getAccountRow(account_id: string): Promise<{
   account_id: string;
+  email_address?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  name?: string | null;
   home_bay_id?: string | null;
 }> {
   if (!isValidUUID(account_id)) {
@@ -59,11 +63,15 @@ async function getAccountRow(account_id: string): Promise<{
   if (global?.account_id) {
     return {
       account_id: global.account_id,
+      email_address: global.email_address ?? null,
+      first_name: global.first_name ?? null,
+      last_name: global.last_name ?? null,
+      name: global.name ?? null,
       home_bay_id: global.home_bay_id ?? null,
     };
   }
   const { rows } = await getPool().query(
-    `SELECT account_id, home_bay_id FROM accounts
+    `SELECT account_id, email_address, first_name, last_name, name, home_bay_id FROM accounts
       WHERE account_id=$1
         AND (deleted IS NULL OR deleted = FALSE)
       LIMIT 1`,
@@ -157,6 +165,10 @@ export async function resolveAccountHomeBay({
   const home_bay_id = resolveStoredBayId(row.home_bay_id);
   return {
     account_id: target_account_id,
+    email_address: row.email_address ?? undefined,
+    first_name: row.first_name ?? undefined,
+    last_name: row.last_name ?? undefined,
+    name: row.name ?? undefined,
     home_bay_id: home_bay_id ?? getConfiguredBayId(),
     source: home_bay_id ? "account-row" : "single-bay-default",
   };
