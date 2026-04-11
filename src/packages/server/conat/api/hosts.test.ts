@@ -16,6 +16,7 @@ let hasAccountProjectHostTokenHostAccessMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
+let projectHostAuthTokenIssueMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -106,6 +107,9 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   getInterBayBridge: jest.fn(() => ({
     hostConnection: jest.fn(() => ({
       get: (...args: any[]) => hostConnectionGetMock(...args),
+    })),
+    projectHostAuthToken: jest.fn(() => ({
+      issue: (...args: any[]) => projectHostAuthTokenIssueMock(...args),
     })),
   })),
 }));
@@ -198,6 +202,7 @@ describe("hosts.listHostProjects", () => {
       epoch: 1,
     }));
     hostConnectionGetMock = jest.fn();
+    projectHostAuthTokenIssueMock = jest.fn();
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.includes("FROM project_hosts")) {
         return {
@@ -398,6 +403,15 @@ describe("hosts.issueProjectHostAuthToken", () => {
       bay_id: "bay-0",
       epoch: 1,
     }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    projectHostAuthTokenIssueMock = jest.fn(async () => ({
+      host_id: HOST_UUID,
+      token: "remote-issued-token",
+      expires_at: 777777,
+    }));
   });
 
   it("syncs host ACLs before issuing a browser token for a locally owned project", async () => {
@@ -426,7 +440,7 @@ describe("hosts.issueProjectHostAuthToken", () => {
     );
   });
 
-  it("skips the local host ACL sync for remotely owned projects", async () => {
+  it("routes project-host token issuance to the owning bay for remotely owned projects", async () => {
     resolveProjectBayMock = jest.fn(async () => ({
       bay_id: "bay-7",
       epoch: 2,
@@ -441,11 +455,34 @@ describe("hosts.issueProjectHostAuthToken", () => {
       }),
     ).resolves.toEqual({
       host_id: HOST_UUID,
-      token: "issued-token",
-      expires_at: 424242,
+      token: "remote-issued-token",
+      expires_at: 777777,
     });
     expect(resolveProjectBayMock).toHaveBeenCalledWith(PROJECT_UUID);
     expect(syncProjectUsersOnHostMock).not.toHaveBeenCalled();
+    expect(issueProjectHostAuthTokenJwtMock).not.toHaveBeenCalled();
+    expect(projectHostAuthTokenIssueMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_UUID,
+      host_id: HOST_UUID,
+      project_id: PROJECT_UUID,
+      ttl_seconds: undefined,
+    });
+  });
+
+  it("issues locally when no project is supplied", async () => {
+    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => true);
+    const { issueProjectHostAuthToken } = await import("./hosts");
+    await expect(
+      issueProjectHostAuthToken({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+      }),
+    ).resolves.toEqual({
+      host_id: HOST_UUID,
+      token: "issued-token",
+      expires_at: 424242,
+    });
+    expect(resolveProjectBayMock).not.toHaveBeenCalled();
     expect(issueProjectHostAuthTokenJwtMock).toHaveBeenCalledWith(
       expect.objectContaining({
         account_id: ACCOUNT_UUID,

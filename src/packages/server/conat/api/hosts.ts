@@ -1924,6 +1924,43 @@ export async function issueProjectHostAuthToken({
   expires_at: number;
 }> {
   const owner = requireAccount(account_id);
+  if (project_id) {
+    const ownership = await resolveProjectBay(project_id);
+    if (ownership && ownership.bay_id !== getConfiguredBayId()) {
+      return await getInterBayBridge()
+        .projectHostAuthToken(ownership.bay_id)
+        .issue({
+          account_id: owner,
+          host_id,
+          project_id,
+          ttl_seconds,
+        });
+    }
+  }
+  return await issueProjectHostAuthTokenLocal({
+    account_id: owner,
+    host_id,
+    project_id,
+    ttl_seconds,
+  });
+}
+
+export async function issueProjectHostAuthTokenLocal({
+  account_id,
+  host_id,
+  project_id,
+  ttl_seconds,
+}: {
+  account_id?: string;
+  host_id: string;
+  project_id?: string;
+  ttl_seconds?: number;
+}): Promise<{
+  host_id: string;
+  token: string;
+  expires_at: number;
+}> {
+  const owner = requireAccount(account_id);
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
