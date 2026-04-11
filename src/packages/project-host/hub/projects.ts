@@ -7,10 +7,7 @@ import {
   getOrCreateProjectLocalSecretToken,
   upsertProject,
 } from "../sqlite/projects";
-import {
-  type CreateProjectOptions,
-  type SnapshotCounts,
-} from "@cocalc/util/db-schema/projects";
+import { type CreateProjectOptions } from "@cocalc/util/db-schema/projects";
 import type { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import {
   DEFAULT_PROJECT_IMAGE,
@@ -1161,7 +1158,6 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.getSshKeys = getSshKeys;
   hubApi.projects.createBackup = createBackup;
   hubApi.projects.deleteBackup = deleteBackup;
-  hubApi.projects.updateBackups = updateBackups;
   hubApi.projects.restoreBackup = restoreBackup;
   hubApi.projects.restoreSnapshot = restoreSnapshot;
   hubApi.projects.beginRestoreStaging = beginRestoreStaging;
@@ -1408,23 +1404,6 @@ export async function deleteBackup({
     throw Error("invalid project_id");
   }
   await fileServer(project_id).deleteBackup({ project_id, id });
-}
-
-export async function updateBackups({
-  project_id,
-  counts,
-}: {
-  project_id: string;
-  counts?: Partial<SnapshotCounts>;
-}): Promise<void> {
-  if (!isValidUUID(project_id)) {
-    throw Error("invalid project_id");
-  }
-  await fileServer(project_id).updateBackups({
-    project_id,
-    counts,
-    limit: MAX_BACKUPS_PER_PROJECT,
-  });
 }
 
 export async function restoreBackup({

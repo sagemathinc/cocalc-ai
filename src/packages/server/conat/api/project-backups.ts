@@ -3,9 +3,7 @@ import {
   type RestoreStagingHandle,
 } from "@cocalc/conat/files/file-server";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
-import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import getLogger from "@cocalc/backend/logger";
-import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { assertCollab } from "./util";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
@@ -136,29 +134,6 @@ export async function deleteBackup({
 }) {
   await assertCollab({ account_id, project_id });
   await (await projectClient(project_id)).deleteBackup({ project_id, id });
-}
-
-export async function updateBackups({
-  account_id,
-  project_id,
-  counts,
-}: {
-  account_id?: string;
-  project_id: string;
-  counts?: Partial<SnapshotCounts>;
-}) {
-  await assertCollab({ account_id, project_id });
-  await (
-    await projectClient(project_id)
-  ).updateBackups({
-    project_id,
-    counts,
-    limit: MAX_BACKUPS_PER_PROJECT,
-  });
-  await publishProjectDetailInvalidationBestEffort({
-    project_id,
-    fields: ["backups"],
-  });
 }
 
 export async function restoreBackup({

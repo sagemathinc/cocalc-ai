@@ -1,6 +1,9 @@
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
-import { createHostStatusService } from "@cocalc/conat/project-host/api";
+import {
+  createHostStatusService,
+  type HostProjectMaintenanceSchedule,
+} from "@cocalc/conat/project-host/api";
 import getPool from "@cocalc/database/pool";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
@@ -19,6 +22,61 @@ import {
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 
 const logger = getLogger("server:conat:host-status");
+
+export async function listHostProjectMaintenanceSchedules({
+  host_id,
+  active_days,
+}: {
+  host_id: string;
+  active_days?: number;
+}): Promise<HostProjectMaintenanceSchedule[]> {
+  if (!host_id) {
+    throw Error("host_id is required");
+  }
+  const { rows: hostRows } = await getPool().query<{ id: string }>(
+    `SELECT id FROM project_hosts WHERE id=$1 AND deleted IS NULL LIMIT 1`,
+    [host_id],
+  );
+  if (!hostRows.length) {
+    throw Error("host not found");
+  }
+
+  const normalizedActiveDays = Math.max(
+    0,
+    Math.floor(Number(active_days ?? 0) || 0),
+  );
+  const params: any[] = [host_id];
+  let activeWhere = "";
+  if (normalizedActiveDays > 0) {
+    params.push(normalizedActiveDays);
+    activeWhere = ` AND last_edited >= NOW() - ($2::int * INTERVAL '1 day')`;
+  }
+  const { rows } = await getPool().query<{
+    project_id: string;
+    last_edited: Date | string | null;
+    snapshots: HostProjectMaintenanceSchedule["snapshots"];
+    backups: HostProjectMaintenanceSchedule["backups"];
+  }>(
+    `SELECT project_id, last_edited, snapshots, backups
+     FROM projects
+     WHERE host_id=$1
+       AND provisioned IS TRUE
+       AND deleted IS NOT TRUE${activeWhere}
+     ORDER BY last_edited DESC NULLS LAST, project_id ASC`,
+    params,
+  );
+  return rows.map((row) => ({
+    project_id: row.project_id,
+    last_edited:
+      row.last_edited == null
+        ? null
+        : row.last_edited instanceof Date
+          ? row.last_edited.toISOString()
+          : `${row.last_edited}`,
+    snapshots: row.snapshots ?? null,
+    backups: row.backups ?? null,
+  }));
+}
 
 export async function initHostStatusService() {
   logger.info("starting host status service");
@@ -277,6 +335,12 @@ export async function initHostStatusService() {
           next_cursor_updated_ms: last?.updated_ms,
           next_cursor_account_id: last?.account_id,
         };
+      },
+      async listProjectMaintenanceSchedules({ host_id, active_days }) {
+        return await listHostProjectMaintenanceSchedules({
+          host_id,
+          active_days,
+        });
       },
     },
   });

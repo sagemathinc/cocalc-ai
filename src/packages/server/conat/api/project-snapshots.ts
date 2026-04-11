@@ -3,9 +3,7 @@ import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
-import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { type SnapshotRestoreMode } from "@cocalc/conat/files/file-server";
-import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { assertCollab } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 
@@ -76,29 +74,6 @@ export async function deleteSnapshot({
 }) {
   await assertCollab({ account_id, project_id });
   await (await projectClient(project_id)).deleteSnapshot({ project_id, name });
-}
-
-export async function updateSnapshots({
-  account_id,
-  project_id,
-  counts,
-}: {
-  account_id?: string;
-  project_id: string;
-  counts?: Partial<SnapshotCounts>;
-}) {
-  await assertCollab({ account_id, project_id });
-  await (
-    await projectClient(project_id)
-  ).updateSnapshots({
-    project_id,
-    counts,
-    limit: MAX_SNAPSHOTS_PER_PROJECT,
-  });
-  await publishProjectDetailInvalidationBestEffort({
-    project_id,
-    fields: ["snapshots"],
-  });
 }
 
 export async function getSnapshotQuota({
