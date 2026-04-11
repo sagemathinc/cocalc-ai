@@ -3,7 +3,7 @@
 import immutable from "immutable";
 
 describe("ConatClient routed project-host reconnect", () => {
-  it("routes same-host project subjects with distinct project-scoped clients", async () => {
+  it("reuses one routed host client for same-host project subjects", async () => {
     jest.resetModules();
 
     const connectCalls: any[] = [];
@@ -42,23 +42,6 @@ describe("ConatClient routed project-host reconnect", () => {
       close: jest.fn(),
       request: jest.fn(),
     };
-    const routedClient2 = {
-      conn: {
-        connected: false,
-        on: jest.fn(),
-        io: {
-          on: jest.fn(),
-          engine: {
-            close: jest.fn(),
-          },
-        },
-      },
-      on: jest.fn(),
-      connect: jest.fn(),
-      close: jest.fn(),
-      request: jest.fn(),
-    };
-
     jest.doMock("@cocalc/frontend/app-framework", () => ({
       redux: {
         getStore: jest.fn((name: string) => {
@@ -100,7 +83,7 @@ describe("ConatClient routed project-host reconnect", () => {
         if (opts?.address === "http://hub") {
           return hubClient;
         }
-        return connectCalls.length === 2 ? routedClient1 : routedClient2;
+        return routedClient1;
       }),
     }));
 
@@ -185,7 +168,8 @@ describe("ConatClient routed project-host reconnect", () => {
     );
 
     expect(routed1?.client).toBe(routedClient1);
-    expect(routed2?.client).toBe(routedClient2);
+    expect(routed2?.client).toBe(routedClient1);
+    expect(connectCalls).toHaveLength(2);
   });
 
   it("reconnects a cached routed host client after disconnect", async () => {
