@@ -218,14 +218,8 @@ export function finalizeAcpTurnLease({
   );
 }
 
-export function listRunningAcpTurnLeases({
-  exclude_owner_instance_id,
-}: {
-  exclude_owner_instance_id?: string;
-} = {}): AcpTurnLeaseRow[] {
-  ensureInit();
-  const db = getDatabase();
-  let query = `SELECT
+function selectLeaseByWhere(where: string): string {
+  return `SELECT
       project_id,
       path,
       message_date,
@@ -241,7 +235,17 @@ export function listRunningAcpTurnLeases({
       ended_at,
       reason
     FROM ${TABLE}
-    WHERE state = 'running'`;
+    ${where}`;
+}
+
+export function listRunningAcpTurnLeases({
+  exclude_owner_instance_id,
+}: {
+  exclude_owner_instance_id?: string;
+} = {}): AcpTurnLeaseRow[] {
+  ensureInit();
+  const db = getDatabase();
+  let query = selectLeaseByWhere("WHERE state = 'running'");
   const params: any[] = [];
   if (exclude_owner_instance_id) {
     query += ` AND owner_instance_id != ?`;
@@ -249,4 +253,20 @@ export function listRunningAcpTurnLeases({
   }
   query += " ORDER BY heartbeat_at ASC";
   return db.prepare(query).all(...params) as AcpTurnLeaseRow[];
+}
+
+export function getAcpTurnLease(
+  key: AcpTurnLeaseKey,
+): AcpTurnLeaseRow | undefined {
+  ensureInit();
+  const db = getDatabase();
+  return db
+    .prepare(
+      selectLeaseByWhere(
+        "WHERE project_id = ? AND path = ? AND message_date = ?",
+      ),
+    )
+    .get(key.project_id, key.path, key.message_date) as
+    | AcpTurnLeaseRow
+    | undefined;
 }

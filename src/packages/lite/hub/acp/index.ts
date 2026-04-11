@@ -118,6 +118,7 @@ import {
 import { initDatabase } from "../sqlite/database";
 import {
   finalizeAcpTurnLease,
+  getAcpTurnLease,
   heartbeatAcpTurnLease,
   listRunningAcpTurnLeases,
   startAcpTurnLease,
@@ -4449,6 +4450,19 @@ function acpTurnLeaseKey({
   return `${project_id}\u0000${path}\u0000${message_date}`;
 }
 
+function terminalAcpJobStateFromTurnLeaseState(
+  state: "completed" | "error" | "aborted",
+): "completed" | "error" | "interrupted" {
+  switch (state) {
+    case "completed":
+      return "completed";
+    case "error":
+      return "error";
+    case "aborted":
+      return "interrupted";
+  }
+}
+
 export async function recoverOrphanedRunningAcpJobsWithoutLease(
   opts: {
     recoveryReason?: string;
@@ -4472,6 +4486,24 @@ export async function recoverOrphanedRunningAcpJobsWithoutLease(
   for (const job of listRunningAcpJobs()) {
     const messageDate = `${job.assistant_message_date ?? ""}`.trim();
     if (!messageDate) continue;
+    const terminalTurn = getAcpTurnLease({
+      project_id: job.project_id,
+      path: job.path,
+      message_date: messageDate,
+    });
+    if (terminalTurn != null && terminalTurn.state !== "running") {
+      setAcpJobState({
+        op_id: job.op_id,
+        state: terminalAcpJobStateFromTurnLeaseState(terminalTurn.state),
+        error:
+          terminalTurn.state === "completed"
+            ? undefined
+            : (terminalTurn.reason ?? recoveryReason),
+        worker_id: job.worker_id ?? undefined,
+      });
+      recovered += 1;
+      continue;
+    }
     if (
       runningLeaseKeys.has(
         acpTurnLeaseKey({
