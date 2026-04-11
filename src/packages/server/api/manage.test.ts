@@ -4,7 +4,7 @@ import base62 from "base62/lib/ascii";
 
 let queryMock: jest.Mock;
 let isValidAccountMock: jest.Mock;
-let assertLocalProjectCollaboratorMock: jest.Mock;
+let assertProjectCollaboratorAccessAllowRemoteMock: jest.Mock;
 let getLocalProjectCollaboratorAccessStatusMock: jest.Mock;
 let verifyPasswordMock: jest.Mock;
 let isBannedMock: jest.Mock;
@@ -19,10 +19,14 @@ jest.mock("@cocalc/server/accounts/is-valid-account", () => ({
   default: (...args: any[]) => isValidAccountMock(...args),
 }));
 
+jest.mock("@cocalc/server/conat/project-remote-access", () => ({
+  __esModule: true,
+  assertProjectCollaboratorAccessAllowRemote: (...args: any[]) =>
+    assertProjectCollaboratorAccessAllowRemoteMock(...args),
+}));
+
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
-  assertLocalProjectCollaborator: (...args: any[]) =>
-    assertLocalProjectCollaboratorMock(...args),
   getLocalProjectCollaboratorAccessStatus: (...args: any[]) =>
     getLocalProjectCollaboratorAccessStatusMock(...args),
 }));
@@ -56,7 +60,9 @@ describe("manageApiKeys local bay access", () => {
     jest.resetModules();
     queryMock = jest.fn(async () => ({ rows: [] }));
     isValidAccountMock = jest.fn(async () => true);
-    assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
+    assertProjectCollaboratorAccessAllowRemoteMock = jest.fn(
+      async () => undefined,
+    );
     getLocalProjectCollaboratorAccessStatusMock = jest.fn(
       async () => "local-collaborator",
     );
@@ -64,10 +70,7 @@ describe("manageApiKeys local bay access", () => {
     isBannedMock = jest.fn(async () => false);
   });
 
-  it("rejects project-scoped api key management for wrong-bay projects", async () => {
-    assertLocalProjectCollaboratorMock = jest.fn(async () => {
-      throw new Error("project belongs to another bay");
-    });
+  it("allows project-scoped api key management for remote collaborators", async () => {
     const { default: manageApiKeys } = await import("./manage");
     await expect(
       manageApiKeys({
@@ -75,8 +78,14 @@ describe("manageApiKeys local bay access", () => {
         action: "get",
         project_id: PROJECT_ID,
       }),
-    ).rejects.toThrow("project belongs to another bay");
-    expect(queryMock).not.toHaveBeenCalled();
+    ).resolves.toEqual([]);
+    expect(assertProjectCollaboratorAccessAllowRemoteMock).toHaveBeenCalledWith(
+      {
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      },
+    );
+    expect(queryMock).toHaveBeenCalledTimes(1);
   });
 
   it("allows account-wide api key management without project bay checks", async () => {
@@ -87,11 +96,13 @@ describe("manageApiKeys local bay access", () => {
         action: "get",
       }),
     ).resolves.toEqual([]);
-    expect(assertLocalProjectCollaboratorMock).not.toHaveBeenCalled();
+    expect(
+      assertProjectCollaboratorAccessAllowRemoteMock,
+    ).not.toHaveBeenCalled();
     expect(queryMock).toHaveBeenCalledTimes(1);
   });
 
-  it("allows project-scoped api key management for local collaborators", async () => {
+  it("allows project-scoped api key management for collaborators", async () => {
     const { default: manageApiKeys } = await import("./manage");
     await expect(
       manageApiKeys({
@@ -100,10 +111,12 @@ describe("manageApiKeys local bay access", () => {
         project_id: PROJECT_ID,
       }),
     ).resolves.toEqual([]);
-    expect(assertLocalProjectCollaboratorMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-    });
+    expect(assertProjectCollaboratorAccessAllowRemoteMock).toHaveBeenCalledWith(
+      {
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      },
+    );
     expect(queryMock).toHaveBeenCalledTimes(1);
   });
 

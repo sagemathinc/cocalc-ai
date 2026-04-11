@@ -9,6 +9,7 @@ import { is_valid_uuid_string, trunc_middle } from "@cocalc/util/misc";
 import { UserMap } from "./types";
 import { actions } from "./actions";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import { shouldHydrateUserIdentity } from "./store";
 
 interface Props {
   account_id: string;
@@ -107,6 +108,9 @@ function User_map_given(props: Props) {
     actions.fetch_non_collaborator(props.account_id);
     return <span style={style}>Loading...{addonAfter}</span>;
   } else {
+    if (shouldHydrateUserIdentity(info)) {
+      actions.fetch_non_collaborator(props.account_id);
+    }
     info = info.toJS();
     const n = name(info);
     return (

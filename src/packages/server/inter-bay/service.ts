@@ -10,6 +10,8 @@ import {
   createInterBayAccountLocalHandler,
   createInterBayProjectCollabInviteHandlers,
   createInterBayProjectDetailsHandler,
+  createInterBayHostConnectionHandler,
+  createInterBayProjectHostAuthTokenHandler,
   createInterBayProjectControlAddressHandler,
   createInterBayProjectControlActiveOpHandler,
   createInterBayDirectoryHandlers,
@@ -26,6 +28,8 @@ import {
   type InterBayDirectoryApi,
   type InterBayProjectCollabInviteApi,
   type InterBayProjectDetailsApi,
+  type InterBayHostConnectionApi,
+  type InterBayProjectHostAuthTokenApi,
   type InterBayProjectControlApi,
   type InterBayProjectLroApi,
   type InterBayProjectReferenceApi,
@@ -68,6 +72,10 @@ import {
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
 import {
+  issueProjectHostAuthTokenLocal,
+  resolveHostConnectionLocal,
+} from "@cocalc/server/conat/api/hosts";
+import {
   deleteProjectedCollabInviteDirect,
   toWire as collabInviteToWire,
   upsertProjectedCollabInviteDirect,
@@ -93,6 +101,8 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectControlStartService();
     await startProjectReferenceService();
     await startProjectDetailsService();
+    await startHostConnectionService();
+    await startProjectHostAuthTokenService();
     await startProjectLroService();
     await startProjectCollabInviteService();
   } catch (err) {
@@ -339,6 +349,51 @@ async function startProjectCollabInviteService(): Promise<void> {
   };
   services.push(
     ...createInterBayProjectCollabInviteHandlers({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startHostConnectionService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayHostConnectionApi = {
+    get: async ({ account_id, host_id }) => {
+      const connection = await resolveHostConnectionLocal({
+        account_id,
+        host_id,
+      });
+      if (!connection) {
+        throw new Error("host not found");
+      }
+      return connection;
+    },
+  };
+  services.push(
+    createInterBayHostConnectionHandler({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startProjectHostAuthTokenService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayProjectHostAuthTokenApi = {
+    issue: async ({ account_id, host_id, project_id, ttl_seconds }) =>
+      await issueProjectHostAuthTokenLocal({
+        account_id,
+        host_id,
+        project_id,
+        ttl_seconds,
+      }),
+  };
+  services.push(
+    createInterBayProjectHostAuthTokenHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

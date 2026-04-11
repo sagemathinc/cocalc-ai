@@ -1,5 +1,5 @@
 import getPool from "@cocalc/database/pool";
-import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
+import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 
 // This sets the last_edited field of the public path to now.  In Kucalc
 // that triggers manage-share to copy the files over to the NFS volume
@@ -27,7 +27,7 @@ export default async function savePublicPath(
     throw Error(`no public path with id=${public_path_id}`);
   }
 
-  await assertLocalProjectCollaborator({
+  await assertProjectCollaboratorAccessAllowRemote({
     account_id,
     project_id: rows[0].project_id,
   });

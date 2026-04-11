@@ -29,7 +29,7 @@ describe("account_collaborator_index rebuild", () => {
 
   afterEach(async () => {
     await getPool().query(
-      "TRUNCATE account_collaborator_index, projects, accounts CASCADE",
+      "TRUNCATE account_collaborator_index, projects, accounts, cluster_account_directory CASCADE",
     );
   });
 
@@ -266,6 +266,72 @@ describe("account_collaborator_index rebuild", () => {
         }),
       ],
     });
+  });
+
+  it("projects remote collaborator identity from the cluster directory", async () => {
+    await getPool().query(
+      `INSERT INTO accounts
+         (account_id, first_name, last_name, created, email_address, home_bay_id, profile)
+       VALUES
+         ($1, 'Local', 'User', NOW(), 'local@example.com', $2, '{"image":"local.png"}'::JSONB)`,
+      [ACCOUNT_ID, LOCAL_BAY_ID],
+    );
+    await getPool().query(
+      `INSERT INTO cluster_account_directory
+         (account_id, email_address, first_name, last_name, name, home_bay_id, provisioned)
+       VALUES
+         ($1, 'remote@example.com', 'Remote', 'Friend', 'Remote Friend', $2, TRUE)`,
+      [COLLAB_B, OTHER_BAY_ID],
+    );
+    await getPool().query(
+      `INSERT INTO projects
+        (project_id, title, users, created, last_edited, deleted)
+       VALUES
+        ($1, 'Shared', $2::JSONB, NOW(), NOW(), FALSE)`,
+      [
+        PROJECT_A,
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "owner" },
+          [COLLAB_B]: { group: "collaborator" },
+        }),
+      ],
+    );
+
+    await rebuildAccountCollaboratorIndex({
+      account_id: ACCOUNT_ID,
+      bay_id: LOCAL_BAY_ID,
+      dry_run: false,
+    });
+
+    await expect(
+      listProjectedCollaboratorsForAccount({
+        account_id: ACCOUNT_ID,
+        collaborator_account_id: COLLAB_B,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        collaborator_account_id: COLLAB_B,
+        first_name: "Remote",
+        last_name: "Friend",
+        name: "Remote Friend",
+        profile: null,
+      }),
+    ]);
+
+    await expect(
+      listProjectedMyCollaboratorsForAccount({
+        account_id: ACCOUNT_ID,
+        include_email: true,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        account_id: COLLAB_B,
+        first_name: "Remote",
+        last_name: "Friend",
+        name: "Remote Friend",
+        email_address: "remote@example.com",
+      }),
+    ]);
   });
 
   it("rejects accounts homed in another bay", async () => {

@@ -6,6 +6,8 @@
 import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 
+const CLUSTER_ACCOUNT_DIRECTORY_TABLE = "cluster_account_directory";
+
 export interface RebuildAccountCollaboratorIndexResult {
   bay_id: string;
   target_account_id: string;
@@ -86,6 +88,25 @@ function normalizeLimit(raw?: number): number {
   return limit;
 }
 
+async function ensureClusterAccountDirectorySchema(
+  db: Queryable = getPool(),
+): Promise<void> {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS ${CLUSTER_ACCOUNT_DIRECTORY_TABLE} (
+      account_id UUID PRIMARY KEY,
+      email_address VARCHAR(254) NOT NULL UNIQUE,
+      first_name VARCHAR(254),
+      last_name VARCHAR(254),
+      name VARCHAR(39),
+      home_bay_id VARCHAR(64) NOT NULL,
+      created TIMESTAMP NOT NULL DEFAULT NOW(),
+      last_active TIMESTAMP,
+      banned BOOLEAN,
+      provisioned BOOLEAN NOT NULL DEFAULT TRUE
+    )
+  `);
+}
+
 export async function listProjectedCollaboratorsForAccount(opts: {
   account_id: string;
   limit?: number;
@@ -132,6 +153,7 @@ export async function listProjectedMyCollaboratorsForAccount(opts: {
   limit?: number;
   include_email?: boolean;
 }): Promise<ProjectedMyCollaboratorRow[]> {
+  await ensureClusterAccountDirectorySchema();
   const account_id = normalizeAccountId(opts.account_id);
   const limit = normalizeLimit(opts.limit);
   const include_email = opts.include_email ?? false;
@@ -144,12 +166,16 @@ export async function listProjectedMyCollaboratorsForAccount(opts: {
        CASE
          WHEN $2::boolean AND a.account_id IS NOT NULL AND a.deleted IS NOT TRUE
            THEN a.email_address
+         WHEN $2::boolean AND cad.account_id IS NOT NULL AND cad.provisioned IS TRUE
+           THEN cad.email_address
          ELSE NULL
        END AS email_address,
        aci.last_active,
        aci.common_project_count AS shared_projects
      FROM account_collaborator_index aci
      LEFT JOIN accounts a ON a.account_id = aci.collaborator_account_id
+     LEFT JOIN ${CLUSTER_ACCOUNT_DIRECTORY_TABLE} cad
+       ON cad.account_id = aci.collaborator_account_id
      WHERE aci.account_id = $1::UUID
        AND aci.collaborator_account_id <> $1::UUID
      ORDER BY
@@ -172,44 +198,61 @@ function deletedUserProjection() {
   };
 }
 
-function collaboratorProjectionSelect(accountAlias = "a"): string {
+function displayNameSql(alias: string): string {
+  return `COALESCE(
+            NULLIF(BTRIM(${alias}.name), ''),
+            NULLIF(
+              BTRIM(
+                CONCAT_WS(
+                  ' ',
+                  COALESCE(${alias}.first_name, ''),
+                  COALESCE(${alias}.last_name, '')
+                )
+              ),
+              ''
+            ),
+            'No Name'
+          )`;
+}
+
+function collaboratorProjectionSelect(
+  accountAlias = "a",
+  directoryAlias = "cad",
+): string {
+  const localAvailable = `${accountAlias}.account_id IS NOT NULL AND (${accountAlias}.deleted IS NULL OR ${accountAlias}.deleted IS FALSE)`;
+  const directoryAvailable = `${directoryAlias}.account_id IS NOT NULL AND ${directoryAlias}.provisioned IS TRUE`;
   return `CASE
-            WHEN ${accountAlias}.account_id IS NULL OR ${accountAlias}.deleted IS TRUE
-              THEN $2::TEXT
-            ELSE ${accountAlias}.first_name
+            WHEN ${localAvailable}
+              THEN ${accountAlias}.first_name
+            WHEN ${directoryAvailable}
+              THEN ${directoryAlias}.first_name
+            ELSE $2::TEXT
           END AS first_name,
           CASE
-            WHEN ${accountAlias}.account_id IS NULL OR ${accountAlias}.deleted IS TRUE
-              THEN $3::TEXT
-            ELSE ${accountAlias}.last_name
+            WHEN ${localAvailable}
+              THEN ${accountAlias}.last_name
+            WHEN ${directoryAvailable}
+              THEN ${directoryAlias}.last_name
+            ELSE $3::TEXT
           END AS last_name,
           CASE
-            WHEN ${accountAlias}.account_id IS NULL OR ${accountAlias}.deleted IS TRUE
-              THEN $4::TEXT
-            ELSE COALESCE(
-              NULLIF(BTRIM(${accountAlias}.name), ''),
-              NULLIF(
-                BTRIM(
-                  CONCAT_WS(
-                    ' ',
-                    COALESCE(${accountAlias}.first_name, ''),
-                    COALESCE(${accountAlias}.last_name, '')
-                  )
-                ),
-                ''
-              ),
-              'No Name'
-            )
+            WHEN ${localAvailable}
+              THEN ${displayNameSql(accountAlias)}
+            WHEN ${directoryAvailable}
+              THEN ${displayNameSql(directoryAlias)}
+            ELSE $4::TEXT
           END AS name,
           CASE
-            WHEN ${accountAlias}.account_id IS NULL OR ${accountAlias}.deleted IS TRUE
-              THEN NULL
-            ELSE ${accountAlias}.last_active
+            WHEN ${localAvailable}
+              THEN ${accountAlias}.last_active
+            WHEN ${directoryAvailable}
+              THEN ${directoryAlias}.last_active
+            ELSE NULL
           END AS last_active,
           CASE
-            WHEN ${accountAlias}.account_id IS NULL OR ${accountAlias}.deleted IS TRUE
-              THEN NULL
-            ELSE ${accountAlias}.profile
+            WHEN ${localAvailable}
+              THEN ${accountAlias}.profile
+            ELSE NULL
           END AS profile`;
 }
 
@@ -284,6 +327,7 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
   db: Queryable;
   account_id: string;
 }): Promise<ReplaceAccountCollaboratorIndexRowsResult> {
+  await ensureClusterAccountDirectorySchema(opts.db);
   const account_id = normalizeAccountId(opts.account_id);
   const deleted = await opts.db.query(
     `DELETE FROM account_collaborator_index
@@ -323,6 +367,8 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
       LEFT JOIN accounts a
         ON a.account_id = shared.collaborator_account_id
        AND (a.deleted IS NULL OR a.deleted = FALSE)
+      LEFT JOIN ${CLUSTER_ACCOUNT_DIRECTORY_TABLE} cad
+        ON cad.account_id = shared.collaborator_account_id
       ORDER BY
         shared.common_project_count DESC,
         name ASC,
@@ -344,6 +390,7 @@ export async function refreshProjectedCollaboratorIdentityRows(opts: {
   db: Queryable;
   collaborator_account_id: string;
 }): Promise<RefreshProjectedCollaboratorIdentityResult> {
+  await ensureClusterAccountDirectorySchema(opts.db);
   const collaborator_account_id = normalizeUuid(
     opts.collaborator_account_id,
     "collaborator account id",
@@ -361,6 +408,8 @@ export async function refreshProjectedCollaboratorIdentityRows(opts: {
         LEFT JOIN accounts a
           ON a.account_id = aci.collaborator_account_id
          AND (a.deleted IS NULL OR a.deleted = FALSE)
+        LEFT JOIN ${CLUSTER_ACCOUNT_DIRECTORY_TABLE} cad
+          ON cad.account_id = aci.collaborator_account_id
         WHERE aci.collaborator_account_id = $1::UUID
       ),
       updated AS (

@@ -15,6 +15,7 @@ import type {
   AccountFeedProjectUpsertEvent,
 } from "@cocalc/conat/hub/api/account-feed";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
+import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import type {
   ProjectActiveOperationSummary,
   ProjectBackupSchedule,
@@ -119,6 +120,24 @@ export interface GetProjectDetailsRequest {
   account_id: string;
 }
 
+export interface GetHostConnectionRequest {
+  host_id: string;
+  account_id: string;
+}
+
+export interface IssueProjectHostAuthTokenRequest {
+  host_id: string;
+  account_id: string;
+  project_id?: string;
+  ttl_seconds?: number;
+}
+
+export interface IssueProjectHostAuthTokenResponse {
+  host_id: string;
+  token: string;
+  expires_at: number;
+}
+
 export interface ForwardProjectLroProgressRequest {
   project_id: string;
   op_id: string;
@@ -216,6 +235,8 @@ export type ProjectControlMethod =
 export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
 export type ProjectReferenceMethod = "get";
 export type ProjectDetailsMethod = "get";
+export type HostConnectionMethod = "get";
+export type ProjectHostAuthTokenMethod = "issue";
 export type ProjectLroMethod = "publish-progress";
 export type AccountDirectoryMethod =
   | "get"
@@ -265,6 +286,16 @@ export interface InterBayProjectReferenceApi {
 
 export interface InterBayProjectDetailsApi {
   get: (opts: GetProjectDetailsRequest) => Promise<ProjectDetails>;
+}
+
+export interface InterBayHostConnectionApi {
+  get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
+}
+
+export interface InterBayProjectHostAuthTokenApi {
+  issue: (
+    opts: IssueProjectHostAuthTokenRequest,
+  ) => Promise<IssueProjectHostAuthTokenResponse>;
 }
 
 export interface InterBayProjectLroApi {
@@ -358,6 +389,26 @@ export function projectDetailsSubject({
   method: ProjectDetailsMethod;
 }): string {
   return `bay.${dest_bay}.rpc.project-details.${method}`;
+}
+
+export function hostConnectionSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: HostConnectionMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.host-connection.${method}`;
+}
+
+export function projectHostAuthTokenSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: ProjectHostAuthTokenMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.project-host-auth-token.${method}`;
 }
 
 export function directorySubject({
@@ -586,6 +637,46 @@ export function createInterBayProjectDetailsClient({
   };
 }
 
+export function createInterBayHostConnectionClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayHostConnectionApi {
+  const hostConnectionClient = createServiceClient<
+    Pick<InterBayHostConnectionApi, "get">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostConnectionSubject({ dest_bay, method: "get" }),
+  });
+  return {
+    get: async (opts) => await hostConnectionClient.get(opts),
+  };
+}
+
+export function createInterBayProjectHostAuthTokenClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayProjectHostAuthTokenApi {
+  const tokenClient = createServiceClient<
+    Pick<InterBayProjectHostAuthTokenApi, "issue">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectHostAuthTokenSubject({ dest_bay, method: "issue" }),
+  });
+  return {
+    issue: async (opts) => await tokenClient.issue(opts),
+  };
+}
+
 export function createInterBayProjectReferenceHandler({
   bay_id,
   impl,
@@ -618,6 +709,42 @@ export function createInterBayProjectDetailsHandler({
     subject: projectDetailsSubject({ dest_bay: bay_id, method: "get" }),
     impl: {
       get: async (opts) => await impl.get(opts),
+    },
+  });
+}
+
+export function createInterBayHostConnectionHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayHostConnectionApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayHostConnectionApi, "get">>({
+    ...options,
+    service: "inter-bay-host-connection",
+    subject: hostConnectionSubject({ dest_bay: bay_id, method: "get" }),
+    impl: {
+      get: async (opts) => await impl.get(opts),
+    },
+  });
+}
+
+export function createInterBayProjectHostAuthTokenHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectHostAuthTokenApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectHostAuthTokenApi, "issue">>({
+    ...options,
+    service: "inter-bay-project-host-auth-token",
+    subject: projectHostAuthTokenSubject({ dest_bay: bay_id, method: "issue" }),
+    impl: {
+      issue: async (opts) => await impl.issue(opts),
     },
   });
 }

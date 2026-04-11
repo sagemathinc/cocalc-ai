@@ -16,6 +16,7 @@ import path from "node:path";
 import type { Client } from "@cocalc/conat/core/client";
 import { projectApiClient, type ProjectApi } from "@cocalc/conat/project/api";
 import getLogger from "@cocalc/backend/logger";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 
 const DEFAULT_TERMINAL_TIMEOUT_MS = Number.isFinite(
   Number.parseInt(process.env.COCALC_CODEX_TERMINAL_TIMEOUT_MS ?? "", 10),
@@ -106,7 +107,14 @@ export class ContainerExecutor {
     if (!containerFileIO) {
       throw Error("containerFileIO must be defined");
     }
-    return containerFileIO.mountPoint(this.options.projectId);
+    const projectRoot = containerFileIO.mountPoint(this.options.projectId);
+    const runtimeRelative = projectRuntimeHomeRelativePath(
+      this.options.workspaceRoot,
+    );
+    if (runtimeRelative == null || runtimeRelative.length === 0) {
+      return projectRoot;
+    }
+    return path.join(projectRoot, runtimeRelative);
   };
 
   // Read a project file relative to the project root/workspaceRoot.

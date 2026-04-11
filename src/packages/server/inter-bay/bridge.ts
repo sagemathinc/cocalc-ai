@@ -6,6 +6,10 @@
 import {
   createInterBayProjectDetailsClient,
   type InterBayProjectDetailsApi,
+  createInterBayHostConnectionClient,
+  type InterBayHostConnectionApi,
+  createInterBayProjectHostAuthTokenClient,
+  type InterBayProjectHostAuthTokenApi,
   createInterBayProjectControlClient,
   type InterBayProjectControlApi,
   createInterBayProjectLroClient,
@@ -30,6 +34,14 @@ export interface InterBayBridge {
     dest_bay: string,
     opts?: { timeout_ms?: number },
   ): InterBayProjectDetailsApi;
+  hostConnection(
+    dest_bay: string,
+    opts?: { timeout_ms?: number },
+  ): InterBayHostConnectionApi;
+  projectHostAuthToken(
+    dest_bay: string,
+    opts?: { timeout_ms?: number },
+  ): InterBayProjectHostAuthTokenApi;
   projectLro(
     dest_bay: string,
     opts?: { timeout_ms?: number },
@@ -67,6 +79,28 @@ class LocalOnlyInterBayBridge implements InterBayBridge {
     opts: { timeout_ms?: number } = {},
   ): InterBayProjectDetailsApi {
     return createInterBayProjectDetailsClient({
+      client: this.client,
+      dest_bay,
+      timeout: opts.timeout_ms,
+    });
+  }
+
+  hostConnection(
+    dest_bay: string,
+    opts: { timeout_ms?: number } = {},
+  ): InterBayHostConnectionApi {
+    return createInterBayHostConnectionClient({
+      client: this.client,
+      dest_bay,
+      timeout: opts.timeout_ms,
+    });
+  }
+
+  projectHostAuthToken(
+    dest_bay: string,
+    opts: { timeout_ms?: number } = {},
+  ): InterBayProjectHostAuthTokenApi {
+    return createInterBayProjectHostAuthTokenClient({
       client: this.client,
       dest_bay,
       timeout: opts.timeout_ms,
