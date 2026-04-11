@@ -22,6 +22,15 @@ interface Profile {
 // To avoid overfetching profiles we cache them for a few minutes:
 const profiles = new LRU({ ttl: 1000 * 120, max: 5000 });
 
+export function shouldHydrateUserIdentity(user?: any): boolean {
+  if (user == null) {
+    return true;
+  }
+  const first = `${user.get?.("first_name") ?? user.first_name ?? ""}`.trim();
+  const last = `${user.get?.("last_name") ?? user.last_name ?? ""}`.trim();
+  return !first || !last || (first === "Deleted" && last === "User");
+}
+
 // Define user store: all the users you collaborate with
 export class UsersStore extends Store<UsersState> {
   public get_first_name(account_id: string): string {
@@ -93,6 +102,9 @@ export class UsersStore extends Store<UsersState> {
     }
     const m = user_map.get(account_id);
     if (m != null) {
+      if (shouldHydrateUserIdentity(m)) {
+        actions.fetch_non_collaborator(account_id);
+      }
       return `${m.get("first_name")} ${m.get("last_name")}`;
     } else {
       // look it up, which causes it to get saved in the store, which causes a new render later.

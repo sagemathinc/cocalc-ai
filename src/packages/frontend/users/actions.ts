@@ -18,7 +18,9 @@ export class UsersActions extends Actions<UsersState> {
     }
     let obj;
     try {
-      obj = await webapp_client.users_client.get_username(account_id);
+      obj = (await webapp_client.users_client.getNames([account_id]))[
+        account_id
+      ];
     } catch (err) {
       if (!warned.has(account_id)) {
         warned.add(account_id);
@@ -29,11 +31,17 @@ export class UsersActions extends Actions<UsersState> {
       }
       return;
     }
+    if (obj == null) {
+      return;
+    }
     // see https://github.com/sagemathinc/cocalc/issues/2828
     obj.account_id = account_id;
     let user_map = store.get("user_map");
-    if (user_map != null && user_map.get(account_id) == null) {
-      user_map = user_map.set(account_id, fromJS(obj));
+    if (user_map != null) {
+      user_map = user_map.set(
+        account_id,
+        (user_map.get(account_id) ?? fromJS({})).merge(fromJS(obj)),
+      );
       this.setState({ user_map });
     }
   }
