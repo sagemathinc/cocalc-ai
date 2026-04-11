@@ -1,3 +1,4 @@
+import os from "node:os";
 import * as executeCodeModule from "@cocalc/backend/execute-code";
 import {
   closeDatabase,
@@ -14,9 +15,24 @@ import {
   _test,
 } from "./storage-reservations";
 
+jest.mock("@cocalc/backend/logger", () => {
+  const factory = () => ({
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  });
+  return {
+    __esModule: true,
+    default: factory,
+    getLogger: factory,
+  };
+});
+
 describe("storage reservations", () => {
   beforeEach(() => {
     process.env.COCALC_LITE_SQLITE_FILENAME = ":memory:";
+    process.env.COCALC_PODMAN_RUNTIME_DIR = os.tmpdir();
     closeDatabase();
     initDatabase();
   });
@@ -24,6 +40,7 @@ describe("storage reservations", () => {
   afterEach(() => {
     closeDatabase();
     delete process.env.COCALC_LITE_SQLITE_FILENAME;
+    delete process.env.COCALC_PODMAN_RUNTIME_DIR;
     delete process.env.COCALC_STORAGE_ORPHANED_PULL_GRACE_MS;
   });
 

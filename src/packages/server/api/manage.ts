@@ -12,10 +12,8 @@ they have no password, then the provided one is ignored.
 
 import getPool from "@cocalc/database/pool";
 import { generate } from "random-key";
-import {
-  assertLocalProjectCollaborator,
-  getLocalProjectCollaboratorAccessStatus,
-} from "@cocalc/server/conat/project-local-access";
+import { getLocalProjectCollaboratorAccessStatus } from "@cocalc/server/conat/project-local-access";
+import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
@@ -70,7 +68,10 @@ export default async function manageApiKeys({
 
   // Now we allow the action.
   if (project_id != null) {
-    await assertLocalProjectCollaborator({ account_id, project_id });
+    await assertProjectCollaboratorAccessAllowRemote({
+      account_id,
+      project_id,
+    });
   }
 
   return await doManageApiKeys({

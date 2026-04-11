@@ -5,7 +5,7 @@
 
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
+import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import {
   getProjectedNotificationCounts,
   listProjectedNotificationsForAccount,
@@ -137,7 +137,7 @@ export async function createMention(
     opts.source_project_id,
     "source project id",
   );
-  await assertLocalProjectCollaborator({
+  await assertProjectCollaboratorAccessAllowRemote({
     account_id,
     project_id: source_project_id,
   });

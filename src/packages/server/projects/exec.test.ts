@@ -1,14 +1,14 @@
 export {};
 
-let assertLocalProjectCollaboratorMock: jest.Mock;
+let assertProjectCollaboratorAccessAllowRemoteMock: jest.Mock;
 let projectApiClientMock: jest.Mock;
 let getExplicitProjectRoutedClientMock: jest.Mock;
 let systemExecMock: jest.Mock;
 
-jest.mock("@cocalc/server/conat/project-local-access", () => ({
+jest.mock("@cocalc/server/conat/project-remote-access", () => ({
   __esModule: true,
-  assertLocalProjectCollaborator: (...args: any[]) =>
-    assertLocalProjectCollaboratorMock(...args),
+  assertProjectCollaboratorAccessAllowRemote: (...args: any[]) =>
+    assertProjectCollaboratorAccessAllowRemoteMock(...args),
 }));
 
 jest.mock("@cocalc/server/conat/route-client", () => ({
@@ -28,7 +28,9 @@ describe("project exec local bay access", () => {
 
   beforeEach(() => {
     jest.resetModules();
-    assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
+    assertProjectCollaboratorAccessAllowRemoteMock = jest.fn(
+      async () => undefined,
+    );
     getExplicitProjectRoutedClientMock = jest.fn(async () => ({
       kind: "conat-client",
     }));
@@ -44,23 +46,7 @@ describe("project exec local bay access", () => {
     }));
   });
 
-  it("rejects exec when the project belongs to another bay", async () => {
-    assertLocalProjectCollaboratorMock = jest.fn(async () => {
-      throw new Error("project belongs to another bay");
-    });
-    const { default: execProject } = await import("./exec");
-    await expect(
-      execProject({
-        account_id: ACCOUNT_ID,
-        project_id: PROJECT_ID,
-        execOpts: { command: "pwd" },
-      }),
-    ).rejects.toThrow("project belongs to another bay");
-    expect(getExplicitProjectRoutedClientMock).not.toHaveBeenCalled();
-    expect(projectApiClientMock).not.toHaveBeenCalled();
-  });
-
-  it("executes using the routed project api for local collaborators", async () => {
+  it("executes using the routed project api for collaborators on any bay", async () => {
     const { default: execProject } = await import("./exec");
     await expect(
       execProject({
@@ -69,10 +55,12 @@ describe("project exec local bay access", () => {
         execOpts: { command: "pwd", timeout: 5 },
       }),
     ).resolves.toEqual({ stdout: "ok", stderr: "", exit_code: 0 });
-    expect(assertLocalProjectCollaboratorMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-    });
+    expect(assertProjectCollaboratorAccessAllowRemoteMock).toHaveBeenCalledWith(
+      {
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      },
+    );
     expect(getExplicitProjectRoutedClientMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
     });
