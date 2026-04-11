@@ -147,6 +147,7 @@ export interface ProjectClient extends EventEmitter {
 
   // account_id or project_id (encoded as a UUID - use decodeUUIDtoNum to decode)
   client_id: () => string;
+  raw_client_id?: () => string | undefined;
 
   is_deleted: (
     filename: string,

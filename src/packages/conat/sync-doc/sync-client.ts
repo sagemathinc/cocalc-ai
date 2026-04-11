@@ -104,6 +104,10 @@ export class SyncClient extends EventEmitter implements Client0 {
     return this.accountId() ?? this.client.id;
   };
 
+  raw_client_id = (): string => {
+    return this.client.id;
+  };
+
   server_time = (): Date => {
     return new Date();
   };

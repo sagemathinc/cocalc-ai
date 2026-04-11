@@ -47,6 +47,10 @@ export class ConatSyncClient extends EventEmitter implements SyncClient {
     return this.identity() ?? this.client.id;
   };
 
+  raw_client_id = (): string => {
+    return this.client.id;
+  };
+
   server_time = (): Date => {
     return new Date();
   };

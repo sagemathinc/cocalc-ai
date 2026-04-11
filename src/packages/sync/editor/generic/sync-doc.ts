@@ -549,6 +549,7 @@ export class SyncDoc extends EventEmitter {
     if (!this.patchflowReady()) {
       return;
     }
+    void this.ensureCurrentClientIdentity();
     const now = this.client.server_time();
     if (!side_effect || now >= this.cursor_last_time) {
       this.cursor_last_time = now;
@@ -886,6 +887,55 @@ export class SyncDoc extends EventEmitter {
     return normalized;
   };
 
+  private rawClientId = (): string | undefined => {
+    return this.client?.raw_client_id?.();
+  };
+
+  private ensureCurrentClientIdentity = async (): Promise<void> => {
+    if (this.client == null) {
+      this.my_user_id = 1;
+      return;
+    }
+    const client_id = this.client_id();
+    if (!client_id) {
+      this.my_user_id = 1;
+      return;
+    }
+    const raw_client_id = this.rawClientId();
+    let users = this.normalizedUsers(this.users);
+    let changed = false;
+    if (raw_client_id && raw_client_id !== client_id) {
+      const rawIdx = users.indexOf(raw_client_id);
+      const clientIdx = users.indexOf(client_id);
+      if (rawIdx !== -1) {
+        if (clientIdx === -1) {
+          users[rawIdx] = client_id;
+        } else if (rawIdx !== clientIdx) {
+          users.splice(rawIdx, 1);
+        }
+        changed = true;
+      }
+    }
+    let idx = users.indexOf(client_id);
+    if (idx === -1) {
+      users.push(client_id);
+      idx = users.length - 1;
+      changed = true;
+    } else if (
+      idx === FILESYSTEM_USER_ID &&
+      users[idx] !== FILESYSTEM_CLIENT_ID
+    ) {
+      users.push(client_id);
+      idx = users.length - 1;
+      changed = true;
+    }
+    this.users = this.normalizedUsers(users);
+    this.my_user_id = Math.max(1, idx);
+    if (changed) {
+      await this.setDocumentMetadata({ users: this.users });
+    }
+  };
+
   private patchDocMetadataFromState = (): PatchDocMetadataV1 => {
     return {
       version: PATCH_DOC_METADATA_VERSION,
@@ -941,18 +991,7 @@ export class SyncDoc extends EventEmitter {
     this.users = this.normalizedUsers(metadata?.users);
     this.setSyncMetadataState({ metadata, checkpoint });
 
-    if (this.client != null) {
-      const client_id = this.client_id();
-      let idx = this.users.indexOf(client_id);
-      if (idx === -1) {
-        this.users.push(client_id);
-        idx = this.users.length - 1;
-        await this.setDocumentMetadata({ users: this.users });
-      }
-      this.my_user_id = Math.max(1, idx);
-    } else {
-      this.my_user_id = 1;
-    }
+    await this.ensureCurrentClientIdentity();
 
     if (metadata == null || metadata.users == null) {
       dbg("initializing patch metadata for new document");
@@ -1052,23 +1091,7 @@ export class SyncDoc extends EventEmitter {
 
     this.applyPatchWriteHeaders();
 
-    if (this.client != null) {
-      const client_id = this.client_id();
-      let idx = this.users.indexOf(client_id);
-      if (idx === -1) {
-        this.users.push(client_id);
-        idx = this.users.length - 1;
-        await this.setDocumentMetadata({ users: this.users });
-      } else if (
-        idx === FILESYSTEM_USER_ID &&
-        this.users[idx] !== FILESYSTEM_CLIENT_ID
-      ) {
-        this.users.push(client_id);
-        idx = this.users.length - 1;
-        await this.setDocumentMetadata({ users: this.users });
-      }
-      this.my_user_id = Math.max(1, idx);
-    }
+    await this.ensureCurrentClientIdentity();
 
     this.emit("metadata-change");
     if (!immutableIs(previousSettings, nextSettings)) {
@@ -2294,11 +2317,18 @@ export class SyncDoc extends EventEmitter {
             return;
           }
           const accountId = this.client_id();
-          table.set({
+          const rawClientId = this.rawClientId();
+          const nextState: Record<string, unknown> = {
             ...(state as Record<string, unknown>),
-            accountId,
-            account_id: accountId,
-          });
+          };
+          if (accountId && accountId !== rawClientId) {
+            nextState.accountId = accountId;
+            nextState.account_id = accountId;
+          } else {
+            delete nextState.accountId;
+            delete nextState.account_id;
+          }
+          table.set(nextState);
         },
         subscribe: (onState: (state: unknown, clientId: string) => void) => {
           listeners.push(onState);
@@ -2334,7 +2364,10 @@ export class SyncDoc extends EventEmitter {
     }
     const userId = this.cursorStateUserId(state);
     if (userId != null) {
-      return this.users[userId];
+      const user = this.users[userId];
+      if (user && user !== this.rawClientId()) {
+        return user;
+      }
     }
     return;
   };
@@ -2558,7 +2591,11 @@ export class SyncDoc extends EventEmitter {
       DEFAULT_SNAPSHOT_INTERVAL;
 
     this.my_user_id = 1;
-    this.users = [FILESYSTEM_CLIENT_ID, this.client.client_id()];
+    this.users = [FILESYSTEM_CLIENT_ID];
+    const client_id = this.client.client_id();
+    if (client_id != null) {
+      this.users.push(client_id);
+    }
     const obj = {
       string_id: this.string_id,
       project_id: this.project_id,
@@ -2660,23 +2697,7 @@ export class SyncDoc extends EventEmitter {
       this.emit("settings-change", settings);
     }
 
-    if (this.client != null) {
-      const client_id: string = this.client_id();
-      let idx = this.users.indexOf(client_id);
-      if (idx === -1) {
-        this.users.push(client_id);
-        idx = this.users.length - 1;
-        await this.setDocumentMetadata({ users: this.users });
-      } else if (
-        idx === FILESYSTEM_USER_ID &&
-        this.users[idx] !== FILESYSTEM_CLIENT_ID
-      ) {
-        this.users.push(client_id);
-        idx = this.users.length - 1;
-        await this.setDocumentMetadata({ users: this.users });
-      }
-      this.my_user_id = Math.max(1, idx);
-    }
+    await this.ensureCurrentClientIdentity();
     this.emit("metadata-change");
   };
 

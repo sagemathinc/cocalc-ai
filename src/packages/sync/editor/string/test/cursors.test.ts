@@ -98,6 +98,42 @@ describe("cursor presence emits cursor_activity", () => {
     expect(cursors.has(remoteAccountId)).toBe(true);
     expect(cursors.has("user-2")).toBe(false);
   });
+
+  it("canonicalizes stale raw client ids to the signed-in account id", async () => {
+    const rawClientId = "un7nePsSiK";
+    const stableAccountId = "bb06e800-1894-4cb0-8777-eb0e8620c7e0";
+    const client = new Client(init_queries, rawClientId, rawClientId);
+    const sync = new SyncString({
+      project_id,
+      path,
+      client,
+      fs,
+      cursors: true,
+      string_id: "cursor-test-canonicalize",
+    });
+    await waitForReady(sync);
+    (sync as any).users = ["__filesystem__", rawClientId];
+
+    client.set_client_identity(stableAccountId, rawClientId);
+    await (sync as any).ensureCurrentClientIdentity();
+    expect((sync as any).users).toContain(stableAccountId);
+    expect((sync as any).users).not.toContain(rawClientId);
+
+    (sync as any).handlePatchflowCursors([
+      {
+        type: "cursor",
+        time: Date.now(),
+        locs: [{ pos: 3 }],
+        userId: 1,
+        clientId: rawClientId,
+      },
+    ]);
+    const cursors = sync.get_cursors({ excludeSelf: "never" });
+    expect(cursors.has(stableAccountId)).toBe(true);
+    expect(cursors.has(rawClientId)).toBe(false);
+
+    await sync.close();
+  });
 });
 
 async function waitForReady(doc: SyncString): Promise<void> {

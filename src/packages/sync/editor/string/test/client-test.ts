@@ -29,15 +29,18 @@ export class FileWatcher extends EventEmitter implements FileWatcher0 {
 
 export class Client extends EventEmitter implements Client0 {
   private _client_id: string;
+  private _raw_client_id: string;
   private initial_get_query: { [table: string]: any[] };
   public set_queries: any[] = [];
 
   constructor(
     initial_get_query: { [table: string]: any[] },
     client_id: string,
+    raw_client_id?: string,
   ) {
     super();
     this._client_id = client_id;
+    this._raw_client_id = raw_client_id ?? client_id;
     this.initial_get_query = initial_get_query;
     bind_methods(this, ["query", "dbg", "query_cancel"]);
   }
@@ -173,6 +176,17 @@ export class Client extends EventEmitter implements Client0 {
   // account_id or project_id
   public client_id(): string {
     return this._client_id;
+  }
+
+  public raw_client_id(): string {
+    return this._raw_client_id;
+  }
+
+  public set_client_identity(client_id: string, raw_client_id?: string): void {
+    this._client_id = client_id;
+    if (raw_client_id != null) {
+      this._raw_client_id = raw_client_id;
+    }
   }
 
   public sage_session({ path }): void {
