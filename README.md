@@ -1,139 +1,304 @@
-# CoCalc
+# CoCalc-AI
 
-[![Make all packages and run their tests](https://github.com/sagemathinc/cocalc/actions/workflows/make-and-test.yml/badge.svg)](https://github.com/sagemathinc/cocalc/actions/workflows/make-and-test.yml)
+CoCalc-AI is a complete rewrite of CoCalc.  This repository is the codebase for the next generation of CoCalc products:
 
-#### <u>_**Co**_</u>_llaborative_ <u>_**Calc**_</u>_ulation_
+- [CoCalc Plus](https://software.cocalc.ai/software/cocalc-plus/index.html): a local, single-user CoCalc runtime
+- [CoCalc Launchpad](https://software.cocalc.ai/software/cocalc-launchpad/index.html): a multi-user CoCalc with project hosts
+- [CoCalc CLI:](https://software.cocalc.ai/software/cocalc/index.html) the operator and agent CLI used to drive projects, browsers, workspaces, and automation
+- `CoCalc Rocket`: the multi-bay scalable architecture built on the same core ideas as Launchpad
 
-CoCalc is web-based software that enables collaboration in research, teaching, and scientific publishing. It includes [Jupyter Notebooks](https://cocalc.com/features/jupyter-notebook), [SageMath](https://cocalc.com/features/sage), a [LaTeX Editor](https://cocalc.com/features/latex-editor) and a [Linux Terminal](https://cocalc.com/features/terminal) to help people work together in real time from different locations. It also has a [Computational Whiteboard](https://cocalc.com/features/whiteboard) for expressing and sharing ideas and running code. It is available for free and [can be upgraded for internet access, better hosting quality, and other features](https://cocalc.com/store). It can also be used for [teaching courses](https://cocalc.com/features/teaching) with flexible [course license options](https://cocalc.com/pricing/courses). It is also possible to run CoCalc [on your own infrastructure](https://cocalc.com/pricing/onprem).
+The relaunch is AI-native: Codex is integrated as a first-class agent runtime, browser automation is built into the platform, and the same project/workspace concepts are intended to work across local, self-hosted, and large-scale deployments.
 
-**CoCalc** supports sophisticated calculations that arise in teaching, research, and authoring documents. This includes working with the full data science and scientific Python stack, [SageMath](https://www.sagemath.org), [Julia](https://julialang.org), [R Statistics](https://cocalc.com/doc/r-statistical-software.html), [Octave](https://www.gnu.org/software/octave/), and much more. It also offers capabilities to author documents in [LaTeX](https://cocalc.com/doc/latex-editor.html), R/knitr and Markdown, storing and organizing files, a web-based [Linux Terminal](https://doc.cocalc.com/terminal.html), an [X11 graphical desktop](https://doc.cocalc.com/x11.html), and communication tools like a [chatrooms](https://doc.cocalc.com/chat.html), [course management](https://cocalc.com/doc/teaching.html) and more. It is the best choice for [teaching remote scientific courses](https://cocalc.com/doc/teaching.html).
+```mermaid
+flowchart TD
+    A["CoCalc-AI<br/>one codebase"]:::core
 
-## Quick Start
+    A --> P["CoCalc Plus<br/>local, single-user"]
+    A --> L["CoCalc Launchpad<br/>multi-user, project-host"]
+    A --> C["CoCalc CLI<br/>browser + ops + automation"]
+    A --> R["CoCalc Rocket<br/>multi-bay scale-out"]
 
-1. Visit https://cocalc.com
-2. Sign up for a free account
-3. Create a new project
-4. Choose a computational environment (e.g., Jupyter Notebook, SageMath, LaTeX Editor)
-5. Start collaborating with others in real-time
+    P --> S["Workspaces"]
+    L --> S
+    C --> S
+    R --> S
 
-## Key Features
+    P --> G["Codex agents"]
+    L --> G
+    C --> G
+    R --> G
 
-- **Jupyter Notebooks**: Interactive Python, R, and Julia environments
-- **SageMath**: Powerful mathematical computations
-- **LaTeX Editor**: Collaborative document creation with real-time preview
-- **Linux Terminal**: Full command-line access
-- **Computational Whiteboard**: Visual collaboration and code execution
-- **Course Management**: Tools for teaching and managing classes
-- **Real-time Collaboration**: Work together seamlessly on projects
-- **Version Control**: Built-in time travel and project history
+    P --> T["Notebooks • Files • Terminals • Apps"]
+    L --> T
+    C --> T
+    R --> T
 
-## Website
+    classDef core fill:#1f2937,color:#fff,stroke:#111827,stroke-width:2px;
+```
 
-- [CoCalc](https://cocalc.com/index.html) -- commercial CoCalc hosting and support
-- [CoCalc user manual](https://doc.cocalc.com/) -- learn how to use CoCalc
-- [Code GitHub repository](https://github.com/sagemathinc/cocalc) -- source code of CoCalc
-- [CoCalc-Docker](https://github.com/sagemathinc/cocalc-docker) -- run CoCalc on your own computer (using Docker)
-- [CoCalc mailing list](https://groups.google.com/forum/#!forum/cocalc) -- discuss CoCalc via email
-- [CoCalc Discord server](https://discord.gg/nEHs2GK) -- chat about CoCalc
+## What CoCalc-AI Is
 
-## Install CoCalc on your server or computer
+At a product level, CoCalc-AI combines:
 
-You can obtain a packaged version of CoCalc for your own on-premises infrastructure: [**CoCalc Cloud**](https://doc-cloud.cocalc.com/).
-It runs on Kubernetes and inherits the security and scalability of the SaaS platform.
+- computational documents and notebooks
+- files, terminals, app servers, and browser-based IDE workflows
+- real-time collaboration
+- project-scoped agent workflows
+- durable project infrastructure: root filesystems, backups, snapshots, and project and host placement
 
-### CoCalc Cloud
+Compared to the older CoCalc architecture, the important shift is this:
 
-CoCalc Cloud runs on Kubernetes and inherits the security and scalability of the SaaS platform. To get started:
+- Plus is the fast local single-user path
+- Launchpad is the current multi-user project-host architecture
+- Rocket is the scale-out target
+- Codex and agent tooling are core part of the platform, not an add-on
 
-1. Visit https://cocalc.com/pricing/onprem for pricing information
-2. Contact sales@sagemath.com to discuss deployment options
-3. Prepare your Kubernetes cluster
-4. Follow the deployment guide at https://doc-cloud.cocalc.com/
-5. Configure your instance and start using your self-hosted CoCalc
+## Product Surface
 
-### CoCalc-Docker (for smaller deployments or personal use)
+### CoCalc Plus
 
-1. Ensure Docker is installed on your system
-2. Visit the CoCalc-Docker repository: https://github.com/sagemathinc/cocalc-docker
-3. Follow the installation and usage instructions provided in the repository's README
+Single-user, local-first CoCalc. This is the lightweight path for running CoCalc on one machine without the full multi-host control plane.
 
-For more detailed information on self-hosting options, please contact help@sagemath.com.
+### CoCalc Launchpad
 
-## History
+The current multi-user direction. A hub manages auth, routing, and orchestration while project-hosts run project workloads and own project storage, proxies, backups, and runtime state.
 
-_CoCalc_ was formerly called _SageMathCloud_.
-It started to offer way more than just SageMath and hence outgrew itself.
-The name was coined in fall 2016 and changed around spring 2017.
+### CoCalc CLI
 
-## Contributors
+The CLI is increasingly important. It is not just an admin tool; it also provides browser automation, workspace inspection, notebook execution helpers, and agent-facing control surfaces.
 
-CoCalc is made possible by the hard work of many contributors. Our team includes mathematicians, computer scientists, and software engineers from around the world. Key contributors include:
+### CoCalc Rocket
 
-- Greg Bard
-- Rob Beezer
-- Blaec Bejarano
-- Keith Clawson
-- Tim Clemans
-- Andy Huchala
-- John Jeng
-- Jon Lee
-- Simon Luu
-- Andrey Novoseltsev
-- Nicholas Ruhland
-- Harald Schilly
-- Travis Scholl
-- Hal Snyder
-- William Stein
-- Jonathan Thompson
-- Todd Zimmerman
+Rocket is the scalable form of Launchpad: many bays, many project hosts, and the same basic architecture extended to much larger deployments.
 
-... and others: See https://github.com/sagemathinc/cocalc/graphs/contributors
+## Current Architecture In One Page
 
-We welcome new contributions! If you're interested in contributing, please see our Contributing Guidelines (link to be added).
+The current architecture centers on:
 
-## Copyright/License
+- a TypeScript-heavy pnpm monorepo under `src/packages`
+- Conat for typed RPC and streaming between frontend, hub, hosts, and project services
+- project-hosts that combine file server, runtime, proxying, quotas, snapshots, and backups
+- local Lite/Plus mode for fast single-user workflows
+- Codex app-server integration through ACP-style request/stream transport
+- browser automation and workspace-aware tooling as first-class capabilities
 
-The copyright of CoCalc is owned by SageMath, Inc., and the source code
-here is released under the **MICROSOFT REFERENCE SOURCE LICENSE (MS-RSL)**.
+Useful architecture docs:
 
-See the included file [LICENSE.md](./LICENSE.md) for more details.
+- [docs/overview.md](./docs/overview.md)
+- [docs/architecture.md](./docs/architecture.md)
+- [docs/agents.md](./docs/agents.md)
+- [docs/api.md](./docs/api.md)
+- [docs/launchpad.md](./docs/launchpad.md)
+- [docs/self-host.md](./docs/self-host.md)
 
-None of the frontend or server dependencies of CoCalc are themselves GPL licensed;
-they all have non-viral liberal licenses.
+Also note that `src/.agents/` contains many working design docs and implementation plans. Those files are valuable, but some describe target state or active rollout work rather than fully shipped behavior.
 
-To clarify the above in relation to the "reference use":
+## Repository Layout
 
-- you can download the CoCalc source code at your organization
-- you are allowed to read the source code and to inspect it
-- you are allowed to enhance the interoperability of your product with CoCalc
-- you are **not** allowed to compile and run the code
+Top-level:
 
-**If want to host your own CoCalc at your organization, please contact [help@sagemath.com](mailto:help@sagemath.com).**
-In particular, [CoCalc OnPrem](https://cocalc.com/pricing/onprem) is designed for setting up an instance of CoCalc on-premises.
+- [`docs/`](./docs) - architecture notes, operational docs, and implementation references
+- [`src/`](./src) - the actual application monorepo
+- [`AGENTS.md`](./AGENTS.md) - repo-specific guidance for coding agents and contributors
 
-## Trademark
+Inside `src/`:
 
-"CoCalc" is a [registered trademark](http://tsdr.uspto.gov/#caseNumber=87155974&caseType=SERIAL_NO&searchType=statusSearch) of SageMath, Inc.
+- `package.json` - the main build, test, Lite, and daemon scripts
+- `workspaces.py` - the workspace build/install helper used across packages
+- `packages/` - the monorepo packages
+- `scripts/dev/` - Lite and hub daemon helpers, smoke scripts, and local dev tooling
+- `python/` - the Python API client and related Python build surface
 
-## Development
+Notable package areas:`src/packages/frontend` - main browser UI
 
-The scripts [here](https://github.com/sagemathinc/cocalc/tree/master/src/dev) might be helpful. &nbsp;We do most of our development of CoCalc on https://cocalc.com itself. CoCalc uses pnpm version at least 10.
+- `src/packages/conat` - RPC, persistence, and routing primitives
 
-## Support and Community
+- `src/packages/lite` - local single-user runtime
 
-- **User Manual**: https://doc.cocalc.com/
-- **Mailing List**: https://groups.google.com/forum/#!forum/cocalc
-- **Discord Chat**: https://discord.gg/nEHs2GK
-- **Bug Reports**: https://github.com/sagemathinc/cocalc/issues
-- **Commercial Support**: https://cocalc.com/pricing
+- `src/packages/hub` - hub/control-plane server
+
+- `src/packages/cli` - `cocalc` CLI
+
+- `src/packages/ai` - agent and Codex integration
+
+- `src/packages/file-server` - project storage, quotas, snapshots, and backup plumbing
+
+- `src/packages/cloud` / `src/packages/launchpad` - cloud and Launchpad-specific functionality
+
+## Building From Source
+
+If you are working on the codebase itself, almost everything starts in `src/`.
+
+### Prerequisites
+
+- Node.js `22+`
+- a recent `pnpm`
+- Python `3`
+- `make` for the Python API build
+
+For full Launchpad / project-host work you will also want a Linux environment with the host/runtime tooling used by that stack. For general frontend, Lite, CLI, and many agent workflows, the local Lite path is enough.
+
+### First Build
+
+```bash
+git clone https://github.com/sagemathinc/cocalc-ai.git
+cd cocalc-ai/src
+pnpm build
+```
+
+That command installs package dependencies and builds the development bundles across the monorepo.
+
+## Running CoCalc-AI Locally
+
+### Lite / CoCalc Plus Style Development
+
+This is the fastest way to get a local server running.
+
+```bash
+cd src
+pnpm lite:daemon:init
+pnpm lite:daemon:start
+pnpm lite:daemon:status
+```
+
+To load the matching environment in your current shell:
+
+```bash
+cd src
+eval "$(pnpm -s dev:env:lite)"
+```
+
+That prints and exports the current Lite API URL, browser target, auth context, and helper paths. It is the recommended starting point for browser automation and local bug reproduction.
+
+### Hub / Launchpad Development
+
+For the fuller control-plane path:
+
+```bash
+cd src
+pnpm hub:daemon:init
+pnpm hub:daemon:start
+pnpm hub:daemon:status
+```
+
+And load the corresponding shell environment:
+
+```bash
+cd src
+eval "$(pnpm -s dev:env:hub)"
+```
+
+That environment matters for CLI commands, browser automation, host operations, and any live Launchpad control-plane testing.
+
+## Useful Development Commands
+
+Run these from `src/` unless stated otherwise.
+
+### Core Build And Validation
+
+```bash
+pnpm build:dev   # debug frontend - uses a lot more browser memory but better for some development
+pnpm tsc
+pnpm lint
+pnpm version-check
+pnpm test
+```
+
+### Package-Scoped Work
+
+```bash
+cd src/packages/<package>
+pnpm tsc --build
+pnpm build
+```
+
+### Formatting
+
+```bash
+pnpm prettier --write <file>
+```
+
+### Lite / Browser Validation
+
+```bash
+pnpm lite:daemon:status
+pnpm lite:test:e2e
+pnpm lite:test:e2e:headed
+```
+
+### Smoke / Ops Tooling
+
+```bash
+pnpm smoke:self-host
+pnpm smoke:cloud-host
+pnpm smoke:codex-launchpad
+```
+
+## Recommended Docs To Read First
+
+If you are new to this repository, start here:
+
+1. [docs/overview.md](./docs/overview.md)  
+   Fast entry point to the newer subsystem docs.
+2. [docs/architecture.md](./docs/architecture.md)  
+   Current project-host architecture.
+3. [docs/agents.md](./docs/agents.md)  
+   How Codex/ACP fits into CoCalc today.
+4. [docs/api.md](./docs/api.md)  
+   Browser automation and agentic browser API.
+5. [docs/browser-debugging.md](./docs/browser-debugging.md)  
+   How to debug real browser behavior when tests are not enough.
+6. [docs/launchpad.md](./docs/launchpad.md) and [docs/self-host.md](./docs/self-host.md)  
+   Launchpad and self-hosted deployment direction.
+
+Then browse `src/.agents/` for deeper design notes on the specific subsystem you are touching.
+
+## What Has Changed From Older CoCalc
+
+The old top-level description of CoCalc as a single hosted collaboration app is no longer enough.
+
+This repo now includes:
+
+- local single-user runtime work
+- multi-user project-host orchestration
+- agent and Codex infrastructure
+- browser automation APIs
+- workspaces, app servers, and portability tooling
+- the early architecture for the Rocket scale-out path
+
+So the right mental model is:
+
+- this is a product-family repository
+- `src/` is the real monorepo
+- Lite and Launchpad are both first-class
+- many docs in `docs/` and `src/.agents/` are newer and more accurate than older public-facing descriptions
+
+## License And Commercial Use
+
+This repository is source-available under the Microsoft Reference Source License. See [LICENSE.md](./LICENSE.md).
+
+Important implication: **this is not an ordinary permissive open source license**. Read the license carefully before building, running, redistributing, or hosting CoCalc outside of an authorized context.
+
+If you need:
+
+- a licensed self-hosted deployment
+- commercial support
+- permission to evaluate or deploy CoCalc in your organization
+
+contact SageMath, Inc. through the commercial CoCalc channels:
+
+- https://cocalc.com/
+- https://cocalc.com/pricing/onprem
+
+## Project Links
+
+- Main CoCalc site: https://cocalc.com/
+- User documentation: https://doc.cocalc.com/
+- Active repository: https://github.com/sagemathinc/cocalc-ai
+- Historical/public CoCalc repository: https://github.com/sagemathinc/cocalc
+- This repo's docs index: [docs/README.md](./docs/README.md)
+- Contributors: [AUTHORS.md](./AUTHORS.md)
 
 ## Acknowledgements
 
-### Browserstack
-
-We are grateful to BrowserStack for providing infrastructure to test CoCalc.
-<a href="https://www.browserstack.com" target="_blank"><img alt='' src='http://i.imgur.com/VProOTR.png' width=128 height=undefined title=''/></a>
-
-### Google
-
-We thank Google for donating over \$150K in cloud credits since 2014 to support this project.
+CoCalc has been developed over many years by SageMath, Inc. and a long list of contributors. See [AUTHORS.md](./AUTHORS.md) and the contributor history in GitHub for the broader picture.
