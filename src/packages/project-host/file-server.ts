@@ -1493,6 +1493,23 @@ async function updateSnapshots({
   await vol.snapshots.update(counts, { limit, quotaMode });
 }
 
+export async function runScheduledSnapshotMaintenance({
+  project_id,
+  counts,
+  limit = 250,
+}: {
+  project_id: string;
+  counts: Partial<SnapshotCounts>;
+  limit?: number;
+}): Promise<void> {
+  await updateSnapshots({
+    project_id,
+    counts,
+    limit,
+    quotaMode: "async",
+  });
+}
+
 async function allSnapshotUsage({
   project_id,
 }: {
@@ -1717,6 +1734,7 @@ async function publishRootfsImage({
   let mergedPath: string | undefined;
   let workdirPath: string | undefined;
   let stagedRootfsPath: string | undefined;
+  let publishSucceeded = false;
   try {
     const currentImagePath = join(rootfsPath, "current-image.txt");
     const sourceImage = `${await readFile(currentImagePath, "utf8")}`.trim();
@@ -1924,6 +1942,7 @@ async function publishRootfsImage({
       await writeFile(finalInspectPath, JSON.stringify(publishedInspectData));
     }
 
+    publishSucceeded = true;
     return {
       image,
       content_key: contentKey,
@@ -1946,6 +1965,18 @@ async function publishRootfsImage({
     await removeDirectoryTree(mergedPath).catch(() => {});
     await deleteSubvolumeTree(stagedRootfsPath).catch(() => {});
     await deleteSubvolumeTree(staged.path).catch(() => {});
+    if (createdSnapshot && publishSucceeded) {
+      await deleteSnapshot({
+        project_id,
+        name: snapshotName,
+      }).catch((err) => {
+        logger.warn("unable to delete temporary rootfs publish snapshot", {
+          project_id,
+          snapshot: snapshotName,
+          err: `${err}`,
+        });
+      });
+    }
   }
 }
 
@@ -2853,6 +2884,22 @@ async function updateBackups({
   } catch (err) {
     logger.warn("backup index update failed", { project_id, err });
   }
+}
+
+export async function runScheduledBackupMaintenance({
+  project_id,
+  counts,
+  limit = 30,
+}: {
+  project_id: string;
+  counts: Partial<SnapshotCounts>;
+  limit?: number;
+}): Promise<void> {
+  await updateBackups({
+    project_id,
+    counts,
+    limit,
+  });
 }
 
 export async function getBackups({

@@ -8,6 +8,7 @@ import type {
   CreateProjectOptions,
   ProjectState,
 } from "@cocalc/util/db-schema/projects";
+import type { SnapshotSchedule } from "@cocalc/util/consts/snapshots";
 
 export interface HostCreateProjectRequest extends CreateProjectOptions {
   project_id?: string;
@@ -231,6 +232,13 @@ export interface HostRegisterOnPremTunnelResponse {
   rest_port: number;
 }
 
+export interface HostProjectMaintenanceSchedule {
+  project_id: string;
+  last_edited: string | null;
+  snapshots: SnapshotSchedule | null;
+  backups: SnapshotSchedule | null;
+}
+
 export type SoftwareArtifact =
   | "project-host"
   | "project"
@@ -284,6 +292,10 @@ export interface HostStatusApi {
     next_cursor_updated_ms?: number;
     next_cursor_account_id?: string;
   }>;
+  listProjectMaintenanceSchedules: (opts: {
+    host_id: string;
+    active_days?: number;
+  }) => Promise<HostProjectMaintenanceSchedule[]>;
   registerOnPremTunnel: (
     opts: HostRegisterOnPremTunnelRequest,
   ) => Promise<HostRegisterOnPremTunnelResponse>;
