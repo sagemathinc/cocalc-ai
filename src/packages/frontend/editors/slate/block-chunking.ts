@@ -11,7 +11,7 @@ import { markdown_to_slate } from "./markdown-to-slate";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { normalizeBlockMarkdown } from "./block-markdown-utils";
 
-const BLOCK_CHUNK_TARGET_CHARS = 4000;
+const BLOCK_CHUNK_TARGET_CHARS = 16000;
 
 type SplitOptions = {
   targetChars?: number;
