@@ -1,5 +1,7 @@
 export {};
 
+import os from "node:os";
+
 let queryMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let isBannedMock: jest.Mock;
@@ -12,11 +14,27 @@ let assertAccountProjectHostTokenProjectAccessMock: jest.Mock;
 let assertProjectHostAgentTokenAccessMock: jest.Mock;
 let hasAccountProjectHostTokenHostAccessMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
+let resolveHostBayMock: jest.Mock;
+let hostConnectionGetMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({ query: queryMock })),
 }));
+
+jest.mock("@cocalc/backend/logger", () => {
+  const factory = () => ({
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  });
+  return {
+    __esModule: true,
+    default: factory,
+    getLogger: factory,
+  };
+});
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
@@ -80,6 +98,16 @@ jest.mock("./project-host-token-auth", () => ({
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   __esModule: true,
   resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
+  resolveHostBay: (...args: any[]) => resolveHostBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  __esModule: true,
+  getInterBayBridge: jest.fn(() => ({
+    hostConnection: jest.fn(() => ({
+      get: (...args: any[]) => hostConnectionGetMock(...args),
+    })),
+  })),
 }));
 
 const HOST_ID = "host-123";
@@ -143,6 +171,7 @@ const PROJECT_ROWS_PAGE_2 = [
 describe("hosts.listHostProjects", () => {
   beforeEach(() => {
     jest.resetModules();
+    process.env.LOGS = os.tmpdir();
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
     moveProjectToHostMock = jest.fn();
@@ -164,6 +193,11 @@ describe("hosts.listHostProjects", () => {
       bay_id: "bay-0",
       epoch: 1,
     }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    hostConnectionGetMock = jest.fn();
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.includes("FROM project_hosts")) {
         return {
@@ -252,6 +286,86 @@ describe("hosts.listHostProjects", () => {
     const baseCount = (baseSql.match(/last_backup IS NULL/g) || []).length;
     const riskCount = (riskSql.match(/last_backup IS NULL/g) || []).length;
     expect(riskCount).toBeGreaterThan(baseCount);
+  });
+
+  afterEach(() => {
+    delete process.env.LOGS;
+  });
+});
+
+describe("hosts.resolveHostConnection", () => {
+  const REMOTE_HOST_ID = "host-remote";
+
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.LOGS = os.tmpdir();
+    isAdminMock = jest.fn(async () => true);
+    isBannedMock = jest.fn(async () => false);
+    moveProjectToHostMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: {},
+    }));
+    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    syncProjectUsersOnHostMock = jest.fn(async () => undefined);
+    issueProjectHostAuthTokenJwtMock = jest.fn(() => ({
+      token: "test-token",
+      expires_at: 1234567890,
+    }));
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(
+      async () => undefined,
+    );
+    assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
+    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+    hostConnectionGetMock = jest.fn(async () => ({
+      host_id: REMOTE_HOST_ID,
+      bay_id: "bay-7",
+      name: "Remote Host",
+      region: "us-central1",
+      size: "n2-standard-4",
+      ssh_server: null,
+      connect_url: "https://remote-host.example.test",
+      local_proxy: false,
+      ready: true,
+      status: "running",
+      tier: null,
+      pricing_model: "on_demand",
+      interruption_restore_policy: "never",
+      desired_state: "running",
+      last_seen: "2026-04-10T00:00:00.000Z",
+      online: true,
+    }));
+    queryMock = jest.fn(async () => ({ rows: [] }));
+  });
+
+  afterEach(() => {
+    delete process.env.LOGS;
+  });
+
+  it("routes host connection lookup to the owning bay when the host is remote", async () => {
+    const { resolveHostConnection } = await import("./hosts");
+    await expect(
+      resolveHostConnection({
+        account_id: ACCOUNT_ID,
+        host_id: REMOTE_HOST_ID,
+      }),
+    ).resolves.toMatchObject({
+      host_id: REMOTE_HOST_ID,
+      bay_id: "bay-7",
+      connect_url: "https://remote-host.example.test",
+    });
+    expect(resolveHostBayMock).toHaveBeenCalledWith(REMOTE_HOST_ID);
+    expect(hostConnectionGetMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      host_id: REMOTE_HOST_ID,
+    });
   });
 });
 

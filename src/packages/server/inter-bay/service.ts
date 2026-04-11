@@ -10,6 +10,7 @@ import {
   createInterBayAccountLocalHandler,
   createInterBayProjectCollabInviteHandlers,
   createInterBayProjectDetailsHandler,
+  createInterBayHostConnectionHandler,
   createInterBayProjectControlAddressHandler,
   createInterBayProjectControlActiveOpHandler,
   createInterBayDirectoryHandlers,
@@ -26,6 +27,7 @@ import {
   type InterBayDirectoryApi,
   type InterBayProjectCollabInviteApi,
   type InterBayProjectDetailsApi,
+  type InterBayHostConnectionApi,
   type InterBayProjectControlApi,
   type InterBayProjectLroApi,
   type InterBayProjectReferenceApi,
@@ -67,6 +69,7 @@ import {
   handleProjectReferenceGet,
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
+import { resolveHostConnectionLocal } from "@cocalc/server/conat/api/hosts";
 import {
   deleteProjectedCollabInviteDirect,
   toWire as collabInviteToWire,
@@ -93,6 +96,7 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectControlStartService();
     await startProjectReferenceService();
     await startProjectDetailsService();
+    await startHostConnectionService();
     await startProjectLroService();
     await startProjectCollabInviteService();
   } catch (err) {
@@ -339,6 +343,30 @@ async function startProjectCollabInviteService(): Promise<void> {
   };
   services.push(
     ...createInterBayProjectCollabInviteHandlers({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startHostConnectionService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayHostConnectionApi = {
+    get: async ({ account_id, host_id }) => {
+      const connection = await resolveHostConnectionLocal({
+        account_id,
+        host_id,
+      });
+      if (!connection) {
+        throw new Error("host not found");
+      }
+      return connection;
+    },
+  };
+  services.push(
+    createInterBayHostConnectionHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

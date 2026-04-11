@@ -133,7 +133,11 @@ import {
 } from "@cocalc/util/rootfs-images";
 import { buildCloudInitStartupScript } from "@cocalc/server/cloud/bootstrap-host";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveHostBay,
+  resolveProjectBay,
+} from "@cocalc/server/inter-bay/directory";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   assertAccountProjectHostTokenProjectAccess,
@@ -2640,6 +2644,36 @@ export async function resolveHostConnection({
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
+  const local = await resolveHostConnectionLocal({
+    account_id: owner,
+    host_id,
+    allowMissing: true,
+  });
+  if (local) {
+    return local;
+  }
+  const hostBay = await resolveHostBay(host_id);
+  if (!hostBay || hostBay.bay_id === getConfiguredBayId()) {
+    throw new Error("host not found");
+  }
+  return await getInterBayBridge()
+    .hostConnection(hostBay.bay_id)
+    .get({ account_id: owner, host_id });
+}
+
+export async function resolveHostConnectionLocal({
+  account_id,
+  host_id,
+  allowMissing = false,
+}: {
+  account_id?: string;
+  host_id: string;
+  allowMissing?: boolean;
+}): Promise<HostConnectionInfo | undefined> {
+  const owner = requireAccount(account_id);
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
   const { rows } = await pool().query(
     `SELECT id, bay_id, name, public_url, internal_url, ssh_server, metadata, tier, status, last_seen
      FROM project_hosts
@@ -2648,6 +2682,9 @@ export async function resolveHostConnection({
   );
   const row = rows[0];
   if (!row) {
+    if (allowMissing) {
+      return undefined;
+    }
     throw new Error("host not found");
   }
   const metadata = row.metadata ?? {};
