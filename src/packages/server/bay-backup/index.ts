@@ -860,12 +860,27 @@ async function ensureR2Bucket(target: R2Target): Promise<void> {
   if (names.has(target.bucket_name)) {
     return;
   }
-  await createBucket(
-    target.api_token,
-    target.account_id,
-    target.bucket_name,
-    target.bucket_region,
-  );
+  try {
+    await createBucket(
+      target.api_token,
+      target.account_id,
+      target.bucket_name,
+      target.bucket_region,
+    );
+  } catch (err) {
+    const text = `${err}`.toLowerCase();
+    const alreadyExists =
+      text.includes("409 conflict") ||
+      text.includes("status code 409") ||
+      text.includes("http 409") ||
+      text.includes("already exists") ||
+      text.includes("already in use") ||
+      text.includes("bucketexists") ||
+      text.includes("conflict");
+    if (!alreadyExists) {
+      throw err;
+    }
+  }
 }
 
 async function hashFile(

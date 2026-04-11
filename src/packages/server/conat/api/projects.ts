@@ -145,6 +145,13 @@ const MAX_PROJECT_LOG_LIMIT = 2_000;
 const DEFAULT_RECENT_DOCUMENT_ACTIVITY_LIMIT = 200;
 const MAX_RECENT_DOCUMENT_ACTIVITY_LIMIT = 500;
 const DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S = 21 * 24 * 60 * 60;
+// Start/restart can legitimately take a long time because the owning bay may
+// need to provision storage, restore data, pull rootfs layers, or seal a
+// mutable rootfs into a release artifact before the operation fully completes.
+// The initial hub RPC returns immediately when wait=false, but the background
+// worker still calls the typed inter-bay project-control service and must not
+// inherit the short default Conat request timeout.
+const PROJECT_START_CONTROL_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 
 function normalizeStoragePath(path?: string): string {
   const normalized = posix.normalize(`${path ?? ""}`.trim() || "/");
@@ -1429,8 +1436,12 @@ async function runProjectStartLikeAction({
       if (ownership == null) {
         throw new Error(`project ${project_id} not found`);
       }
+      const projectControl = getInterBayBridge().projectControl(
+        ownership.bay_id,
+        { timeout_ms: PROJECT_START_CONTROL_TIMEOUT_MS },
+      );
       if (kind === "start") {
-        await getInterBayBridge().projectControl(ownership.bay_id).start({
+        await projectControl.start({
           project_id,
           account_id,
           lro_op_id: op.op_id,
@@ -1438,7 +1449,7 @@ async function runProjectStartLikeAction({
           epoch: ownership.epoch,
         });
       } else {
-        await getInterBayBridge().projectControl(ownership.bay_id).restart({
+        await projectControl.restart({
           project_id,
           account_id,
           lro_op_id: op.op_id,

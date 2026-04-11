@@ -258,6 +258,29 @@ describe("project-backup", () => {
     expect(result?.name).toBe("cocalc-backups-weur");
   });
 
+  it("treats cloudflare 409 conflict during bucket ensure as already-exists", async () => {
+    settings = {
+      r2_account_id: "account",
+      r2_api_token: "token",
+      r2_access_key_id: "access",
+      r2_secret_access_key: "secret",
+      r2_bucket_prefix: "cocalc-backups",
+    };
+    listBucketsMock = jest.fn().mockResolvedValue([]);
+    createBucketMock = jest.fn(async () => {
+      throw new Error("cloudflare api failed: 409 Conflict");
+    });
+    const { ensureProjectBackupBucketForRegion } = await import("./index");
+    const result = await ensureProjectBackupBucketForRegion("weur");
+    expect(createBucketMock).toHaveBeenCalledWith(
+      "token",
+      "account",
+      "cocalc-backups-weur",
+      "weur",
+    );
+    expect(result?.name).toBe("cocalc-backups-weur");
+  });
+
   it("records last_backup using the provided time", async () => {
     settings = {
       project_host_id: HOST_ID,

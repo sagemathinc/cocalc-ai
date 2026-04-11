@@ -11,6 +11,7 @@ let mirrorStartLroProgressMock: jest.Mock;
 let supersedeOlderProjectStartLrosMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let interBayStartMock: jest.Mock;
+let projectControlBridgeMock: jest.Mock;
 
 async function flushBackgroundStartTask() {
   for (let i = 0; i < 6; i += 1) {
@@ -82,10 +83,12 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   __esModule: true,
   getInterBayBridge: jest.fn(() => ({
-    projectControl: jest.fn(() => ({
-      start: (...args: any[]) => interBayStartMock(...args),
-    })),
+    projectControl: (...args: any[]) => projectControlBridgeMock(...args),
   })),
+}));
+
+projectControlBridgeMock = jest.fn(() => ({
+  start: (...args: any[]) => interBayStartMock(...args),
 }));
 
 jest.mock("@cocalc/server/projects/copy-db", () => ({
@@ -163,6 +166,9 @@ describe("projects.start", () => {
       epoch: 0,
     }));
     interBayStartMock = jest.fn(async () => undefined);
+    projectControlBridgeMock = jest.fn(() => ({
+      start: (...args: any[]) => interBayStartMock(...args),
+    }));
     getProjectMock = jest.fn(async () => ({
       start: projectStartMock,
     }));
@@ -191,6 +197,9 @@ describe("projects.start", () => {
       lro_op_id: "op-1",
       source_bay_id: "bay-0",
       epoch: 0,
+    });
+    expect(projectControlBridgeMock).toHaveBeenCalledWith("bay-0", {
+      timeout_ms: 8 * 60 * 60 * 1000,
     });
     expect(supersedeOlderProjectStartLrosMock).toHaveBeenCalledWith({
       project_id: "proj-1",

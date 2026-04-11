@@ -360,6 +360,10 @@ function inferBucketRegion(name: string): string | undefined {
 function isAlreadyExistsError(err: string): boolean {
   const lower = err.toLowerCase();
   return (
+    lower.includes("409 conflict") ||
+    lower.includes("status code 409") ||
+    lower.includes("http 409") ||
+    lower.includes("conflict") ||
     lower.includes("already exists") ||
     lower.includes("already in use") ||
     lower.includes("bucketexists")
@@ -385,6 +389,7 @@ async function ensureBucketExistsInR2({
   let names = await listBucketsCached(accountId, apiToken);
   if (!names.has(name)) {
     let createdNow = false;
+    let alreadyExisted = false;
     try {
       await createBucket(apiToken, accountId, name, region);
       createdNow = true;
@@ -393,10 +398,17 @@ async function ensureBucketExistsInR2({
       if (!isAlreadyExistsError(`${err}`)) {
         throw err;
       }
+      alreadyExisted = true;
     }
     names = await listBucketsCached(accountId, apiToken, true);
     if (!names.has(name)) {
-      if (createdNow) {
+      if (createdNow || alreadyExisted) {
+        if (alreadyExisted) {
+          logger.warn(
+            "r2 bucket verify list omitted bucket after already-exists conflict; assuming bucket is usable",
+            { account_id: accountId, name, region },
+          );
+        }
         names.add(name);
         bucketListCache.set(accountId, {
           names,

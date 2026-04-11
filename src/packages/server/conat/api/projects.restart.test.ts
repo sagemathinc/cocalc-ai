@@ -9,6 +9,7 @@ let mirrorStartLroProgressMock: jest.Mock;
 let supersedeOlderProjectStartLrosMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let interBayRestartMock: jest.Mock;
+let projectControlBridgeMock: jest.Mock;
 
 async function flushBackgroundRestartTask() {
   for (let i = 0; i < 6; i += 1) {
@@ -80,10 +81,12 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   __esModule: true,
   getInterBayBridge: jest.fn(() => ({
-    projectControl: jest.fn(() => ({
-      restart: (...args: any[]) => interBayRestartMock(...args),
-    })),
+    projectControl: (...args: any[]) => projectControlBridgeMock(...args),
   })),
+}));
+
+projectControlBridgeMock = jest.fn(() => ({
+  restart: (...args: any[]) => interBayRestartMock(...args),
 }));
 
 jest.mock("@cocalc/server/projects/copy-db", () => ({
@@ -160,6 +163,9 @@ describe("projects.restart", () => {
       epoch: 4,
     }));
     interBayRestartMock = jest.fn(async () => undefined);
+    projectControlBridgeMock = jest.fn(() => ({
+      restart: (...args: any[]) => interBayRestartMock(...args),
+    }));
   });
 
   it("routes restart through the typed inter-bay bridge and reuses the start LRO shape", async () => {
@@ -185,6 +191,9 @@ describe("projects.restart", () => {
       lro_op_id: "op-2",
       source_bay_id: "bay-0",
       epoch: 4,
+    });
+    expect(projectControlBridgeMock).toHaveBeenCalledWith("bay-1", {
+      timeout_ms: 8 * 60 * 60 * 1000,
     });
     expect(createLroMock).toHaveBeenCalledWith(
       expect.objectContaining({
