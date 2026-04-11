@@ -1,6 +1,7 @@
 import { fromJS } from "immutable";
 
 import {
+  applyWorkspaceSelectionForForegroundOpen,
   canonicalPath,
   findOpenDisplayPathForSyncPath,
   log_file_open,
@@ -8,6 +9,8 @@ import {
   mark_open_phase,
   resolveSyncPath,
 } from "./open-file";
+import * as workspaceRecordsRuntime from "./workspaces/records-runtime";
+import * as workspaceSelectionRuntime from "./workspaces/selection-runtime";
 import { termPath } from "@cocalc/util/terminal/names";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -158,5 +161,87 @@ describe("open-file logging updates", () => {
       }),
       "open-log-entry-id",
     );
+  });
+});
+
+describe("applyWorkspaceSelectionForForegroundOpen", () => {
+  const PROJECT_ID = "project-1";
+  const workspaceRecord = {
+    workspace_id: "w1",
+    project_id: PROJECT_ID,
+    root_path: "/repo/workspace",
+    theme: {
+      title: "workspace",
+      description: "",
+      color: null,
+      accent_color: null,
+      icon: null,
+      image_blob: null,
+    },
+    pinned: false,
+    last_used_at: null,
+    last_active_path: null,
+    chat_path: null,
+    notice_thread_id: null,
+    notice: null,
+    activity_viewed_at: null,
+    activity_running_at: null,
+    created_at: 1,
+    updated_at: 1,
+    source: "manual" as const,
+  };
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("promotes unscoped foreground opens into workspaces to all tabs", () => {
+    jest
+      .spyOn(workspaceRecordsRuntime, "getRuntimeWorkspaceRecords")
+      .mockReturnValue([workspaceRecord]);
+    jest
+      .spyOn(workspaceSelectionRuntime, "loadSessionSelection")
+      .mockReturnValue({ kind: "unscoped" });
+    const persist = jest.spyOn(
+      workspaceSelectionRuntime,
+      "persistSessionSelection",
+    );
+    const dispatch = jest.spyOn(
+      workspaceSelectionRuntime,
+      "dispatchWorkspaceSelectionEvent",
+    );
+
+    applyWorkspaceSelectionForForegroundOpen(
+      PROJECT_ID,
+      "/repo/workspace/file.ts",
+    );
+
+    expect(persist).toHaveBeenCalledWith(PROJECT_ID, { kind: "all" });
+    expect(dispatch).toHaveBeenCalledWith(PROJECT_ID, { kind: "all" });
+  });
+
+  it("does nothing when the selection already matches", () => {
+    jest
+      .spyOn(workspaceRecordsRuntime, "getRuntimeWorkspaceRecords")
+      .mockReturnValue([workspaceRecord]);
+    jest
+      .spyOn(workspaceSelectionRuntime, "loadSessionSelection")
+      .mockReturnValue({ kind: "all" });
+    const persist = jest.spyOn(
+      workspaceSelectionRuntime,
+      "persistSessionSelection",
+    );
+    const dispatch = jest.spyOn(
+      workspaceSelectionRuntime,
+      "dispatchWorkspaceSelectionEvent",
+    );
+
+    applyWorkspaceSelectionForForegroundOpen(
+      PROJECT_ID,
+      "/repo/workspace/file.ts",
+    );
+
+    expect(persist).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });

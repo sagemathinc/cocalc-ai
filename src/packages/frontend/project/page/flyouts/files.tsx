@@ -60,6 +60,10 @@ import useBackupsListing, {
 } from "@cocalc/frontend/project/listing/use-backups";
 import Backups from "@cocalc/frontend/project/backups";
 import Snapshots from "@cocalc/frontend/project/snapshots";
+import {
+  extractSnapshotTimestamp,
+  SnapshotTimestamp,
+} from "@cocalc/frontend/project/snapshots/timestamp";
 import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import ShowError from "@cocalc/frontend/components/error";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
@@ -67,7 +71,7 @@ import { useFlyoutSettings } from "@cocalc/frontend/project/explorer/use-explore
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import { selectionForPath } from "@cocalc/frontend/project/workspaces/state";
+import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
@@ -539,7 +543,11 @@ export function FilesFlyout({
 
     if (!skip) {
       const fullPath = path_to_file(effective_current_path, file.name);
-      const nextSelection = selectionForPath(workspaces.records, fullPath);
+      const nextSelection = selectionForPathFollowThrough(
+        workspaces.selection,
+        workspaces.records,
+        fullPath,
+      );
       workspaces.setSelection(nextSelection);
 
       if (file.isDir) {
@@ -686,6 +694,14 @@ export function FilesFlyout({
   }
 
   function renderTimeAgo(item: DirectoryListingEntry) {
+    if (
+      isSnapshotsPath(effective_current_path) &&
+      extractSnapshotTimestamp(item.name) != null
+    ) {
+      return (
+        <SnapshotTimestamp name={item.name} clickToToggle={isOpen(item)} />
+      );
+    }
     const { mtime } = item;
     if (typeof mtime === "number") {
       return (

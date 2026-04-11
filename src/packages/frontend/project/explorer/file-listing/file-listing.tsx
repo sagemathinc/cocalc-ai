@@ -35,6 +35,7 @@ import { buildFileActionItems } from "@cocalc/frontend/project/file-context-menu
 import { triggerFileAction as triggerProjectFileAction } from "@cocalc/frontend/project/file-action-trigger";
 import { FILE_ITEM_OPENED_STYLE } from "@cocalc/frontend/project/page/flyouts/file-list-item";
 import { fileItemStyle } from "@cocalc/frontend/project/page/flyouts/utils";
+import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 import { type DirectoryListingEntry } from "@cocalc/frontend/project/explorer/types";
 import {
   type FileAction,
@@ -47,6 +48,10 @@ import { isSnapshotsPath, SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import * as misc from "@cocalc/util/misc";
 import { useBackupsCacheVersion } from "@cocalc/frontend/project/listing/use-backups";
 import { useFilesCacheVersion } from "@cocalc/frontend/project/listing/use-files";
+import {
+  extractSnapshotTimestamp,
+  SnapshotTimestamp,
+} from "@cocalc/frontend/project/snapshots/timestamp";
 
 import {
   useFileDrag,
@@ -186,7 +191,21 @@ function typeFilterValue(record: DirectoryListingEntry): string {
   return misc.filename_extension(record.name)?.toLowerCase() || "(none)";
 }
 
-function renderTimestamp(mtime?: number): React.ReactNode {
+function renderTimestamp({
+  mtime,
+  name,
+  currentPath,
+}: {
+  mtime?: number;
+  name?: string;
+  currentPath?: string;
+}): React.ReactNode {
+  if (
+    isSnapshotsPath(currentPath ?? "") &&
+    extractSnapshotTimestamp(name) != null
+  ) {
+    return <SnapshotTimestamp name={name} />;
+  }
   if (mtime == null) return null;
   try {
     return (
@@ -431,7 +450,7 @@ export function FileListing({
   const type_filter = useTypedRedux({ project_id }, "type_filter") ?? null;
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);
-  const { manageStarredFiles } = useProjectContext();
+  const { manageStarredFiles, workspaces } = useProjectContext();
   const { starred, setStarredPath } = manageStarredFiles;
   const starredSet = useMemo(() => new Set(starred), [starred]);
   const { onOpenSpecial, modal } = useSpecialPathPreview({
@@ -468,6 +487,20 @@ export function FileListing({
   }, [listing]);
 
   const [expandedDirs, setExpandedDirs] = useState<string[]>([]);
+
+  const applyPathSelection = useCallback(
+    (path: string) => {
+      const nextSelection = selectionForPathFollowThrough(
+        workspaces.selection,
+        workspaces.records,
+        path,
+      );
+      workspaces.setSelection(nextSelection);
+      setTimeout(() => workspaces.setSelection(nextSelection), 0);
+      return nextSelection;
+    },
+    [workspaces],
+  );
 
   useEffect(() => {
     setExpandedDirs([]);
@@ -635,6 +668,7 @@ export function FileListing({
           icon: <Icon name={record.isDir ? "folder-open" : "edit-filled"} />,
           label: record.isDir ? "Open folder" : "Open file",
           onClick: () => {
+            applyPathSelection(record.fullPath);
             if (record.isDir) {
               if (onNavigateDirectory) {
                 onNavigateDirectory(record.fullPath);
@@ -737,6 +771,7 @@ export function FileListing({
       }
 
       if (record.isDir) {
+        applyPathSelection(record.fullPath);
         if (onNavigateDirectory) {
           onNavigateDirectory(record.fullPath);
         } else {
@@ -747,6 +782,7 @@ export function FileListing({
       }
 
       const foreground = should_open_in_foreground(e as any);
+      applyPathSelection(record.fullPath);
       actions.open_file({
         path: record.fullPath,
         foreground,
@@ -1050,9 +1086,10 @@ export function FileListing({
                 )
               }
               onNavigateDirectory={onNavigateDirectory}
-              onOpenFile={(path) =>
-                actions.open_file({ path, foreground: true, explicit: true })
-              }
+              onOpenFile={(path) => {
+                applyPathSelection(path);
+                actions.open_file({ path, foreground: true, explicit: true });
+              }}
             />
           </td>
         );
@@ -1136,7 +1173,11 @@ export function FileListing({
           </td>
           <td style={cellStyle}>{renderFileName(record)}</td>
           <td style={{ ...cellStyle, width: COL_W.DATE }}>
-            {renderTimestamp(record.mtime)}
+            {renderTimestamp({
+              mtime: record.mtime,
+              name: record.name,
+              currentPath: current_path,
+            })}
           </td>
           {!isNarrow && (
             <>

@@ -47,11 +47,38 @@ import {
   useProjectWorkspaces,
 } from "./workspaces/state";
 import type { ProjectWorkspaceState } from "./workspaces/types";
-import { path_to_tab, tab_to_path } from "@cocalc/util/misc";
+import { EDITOR_PREFIX, path_to_tab, tab_to_path } from "@cocalc/util/misc";
 import {
   notifyProjectFilesystemChange,
   registerProjectFilesystemChangeHandler,
 } from "./user-filesystem-change";
+
+type HiddenActiveTabResolution =
+  | { kind: "noop" }
+  | { kind: "activate-path"; path: string }
+  | { kind: "show-files" };
+
+export function resolveHiddenActiveTabForSelection({
+  activeProjectTab,
+  orderedPaths,
+  matchesPath,
+}: {
+  activeProjectTab?: string;
+  orderedPaths: string[];
+  matchesPath: (path: string) => boolean;
+}): HiddenActiveTabResolution {
+  const activePath = tab_to_path(activeProjectTab ?? "");
+  if (!activeProjectTab?.startsWith(EDITOR_PREFIX) || !activePath) {
+    return { kind: "noop" };
+  }
+  if (orderedPaths.includes(activePath) && matchesPath(activePath)) {
+    return { kind: "noop" };
+  }
+  const fallbackPath = orderedPaths.find((path) => matchesPath(path));
+  return fallbackPath != null
+    ? { kind: "activate-path", path: fallbackPath }
+    : { kind: "show-files" };
+}
 
 export interface ProjectContextState {
   actions?: ProjectActions;
@@ -253,15 +280,32 @@ export function useProjectContextProvider({
     }
 
     if (!actions) return;
+    const orderedPaths: string[] =
+      open_files_order?.toJS?.() ?? open_files_order ?? [];
     if (workspaces.selection.kind !== "workspace") {
       workspaceRestorePendingRef.current = false;
       workspaceRestoreStableMatchesRef.current = 0;
+      if (workspaces.selection.kind === "unscoped") {
+        const resolution = resolveHiddenActiveTabForSelection({
+          activeProjectTab: active_project_tab,
+          orderedPaths,
+          matchesPath: workspaces.matchesPath,
+        });
+        if (resolution.kind === "activate-path") {
+          actions.set_active_tab(path_to_tab(resolution.path), {
+            change_history: false,
+          });
+          return;
+        }
+        if (resolution.kind === "show-files") {
+          actions.set_active_tab("files", { change_history: false });
+          return;
+        }
+      }
       return;
     }
     const current = workspaces.current;
     if (!current) return;
-    const orderedPaths: string[] =
-      open_files_order?.toJS?.() ?? open_files_order ?? [];
     const previousActivePath = previousActivePathRef.current;
     const previousOpenPaths = previousOpenFilesOrderRef.current;
     const orderStable =
