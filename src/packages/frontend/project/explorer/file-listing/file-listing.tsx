@@ -47,6 +47,10 @@ import { isSnapshotsPath, SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import * as misc from "@cocalc/util/misc";
 import { useBackupsCacheVersion } from "@cocalc/frontend/project/listing/use-backups";
 import { useFilesCacheVersion } from "@cocalc/frontend/project/listing/use-files";
+import {
+  extractSnapshotTimestamp,
+  SnapshotTimestamp,
+} from "@cocalc/frontend/project/snapshots/timestamp";
 
 import {
   useFileDrag,
@@ -186,7 +190,21 @@ function typeFilterValue(record: DirectoryListingEntry): string {
   return misc.filename_extension(record.name)?.toLowerCase() || "(none)";
 }
 
-function renderTimestamp(mtime?: number): React.ReactNode {
+function renderTimestamp({
+  mtime,
+  name,
+  currentPath,
+}: {
+  mtime?: number;
+  name?: string;
+  currentPath?: string;
+}): React.ReactNode {
+  if (
+    isSnapshotsPath(currentPath ?? "") &&
+    extractSnapshotTimestamp(name) != null
+  ) {
+    return <SnapshotTimestamp name={name} />;
+  }
   if (mtime == null) return null;
   try {
     return (
@@ -1136,7 +1154,11 @@ export function FileListing({
           </td>
           <td style={cellStyle}>{renderFileName(record)}</td>
           <td style={{ ...cellStyle, width: COL_W.DATE }}>
-            {renderTimestamp(record.mtime)}
+            {renderTimestamp({
+              mtime: record.mtime,
+              name: record.name,
+              currentPath: current_path,
+            })}
           </td>
           {!isNarrow && (
             <>
