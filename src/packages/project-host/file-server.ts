@@ -1734,6 +1734,7 @@ async function publishRootfsImage({
   let mergedPath: string | undefined;
   let workdirPath: string | undefined;
   let stagedRootfsPath: string | undefined;
+  let publishSucceeded = false;
   try {
     const currentImagePath = join(rootfsPath, "current-image.txt");
     const sourceImage = `${await readFile(currentImagePath, "utf8")}`.trim();
@@ -1941,6 +1942,7 @@ async function publishRootfsImage({
       await writeFile(finalInspectPath, JSON.stringify(publishedInspectData));
     }
 
+    publishSucceeded = true;
     return {
       image,
       content_key: contentKey,
@@ -1963,6 +1965,18 @@ async function publishRootfsImage({
     await removeDirectoryTree(mergedPath).catch(() => {});
     await deleteSubvolumeTree(stagedRootfsPath).catch(() => {});
     await deleteSubvolumeTree(staged.path).catch(() => {});
+    if (createdSnapshot && publishSucceeded) {
+      await deleteSnapshot({
+        project_id,
+        name: snapshotName,
+      }).catch((err) => {
+        logger.warn("unable to delete temporary rootfs publish snapshot", {
+          project_id,
+          snapshot: snapshotName,
+          err: `${err}`,
+        });
+      });
+    }
   }
 }
 
