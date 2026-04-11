@@ -6433,13 +6433,17 @@ async function writeQueuedJobFailureToChat({
 }): Promise<void> {
   if (!request.chat || !conatClient) return;
   try {
+    const workspaceRoot = resolveWorkspaceRoot(request.config);
     const writer = new ChatStreamWriter({
       metadata: request.chat,
       client: conatClient,
       approverAccountId: request.account_id,
       sessionKey: request.session_id,
-      workspaceRoot: resolveWorkspaceRoot(request.config),
-      hostWorkspaceRoot: resolveWorkspaceRoot(request.config),
+      workspaceRoot,
+      hostWorkspaceRoot: resolveHostWorkspaceRoot({
+        projectId: request.chat.project_id,
+        workspaceRoot,
+      }),
     });
     await writer.waitUntilReady();
     if (writer.isClosed()) {
@@ -6456,6 +6460,26 @@ async function writeQueuedJobFailureToChat({
       writerErr,
     });
   }
+}
+
+function resolveHostWorkspaceRoot({
+  projectId,
+  workspaceRoot,
+}: {
+  projectId: string;
+  workspaceRoot: string;
+}): string {
+  if (!preferContainerExecutor()) {
+    return workspaceRoot;
+  }
+  if (!conatClient) {
+    throw Error("conat client must be initialized");
+  }
+  return new ContainerExecutor({
+    projectId,
+    workspaceRoot,
+    conatClient,
+  }).getMountPoint();
 }
 
 async function writeQueuedCommandResultToChat({

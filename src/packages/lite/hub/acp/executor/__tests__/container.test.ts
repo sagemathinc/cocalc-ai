@@ -69,6 +69,21 @@ describe("ContainerExecutor", () => {
     );
   });
 
+  it("maps the host mount point to the configured runtime workspace root", () => {
+    const { api } = makeMockApi();
+    setContainerFileIO({
+      readFile: jest.fn(),
+      writeFile: jest.fn(),
+      mountPoint: (projectId: string) => `/projects/${projectId}`,
+    });
+    const exec = new ContainerExecutor({
+      projectId,
+      workspaceRoot: "/home/user/cocalc-ai",
+      projectApi: api as any,
+    });
+    expect(exec.getMountPoint()).toBe(`/projects/${projectId}/cocalc-ai`);
+  });
+
   it("prevents path escape", async () => {
     const { api } = makeMockApi();
     const exec = new ContainerExecutor({

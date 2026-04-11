@@ -1965,6 +1965,30 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
+  it("maps deep runtime workspace chat paths through the matching host workspace root", async () => {
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        path: "/home/user/cocalc-ai/lite4.chat",
+        message_id: "msg-deep-host-chat-path",
+      } as any,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: makeFakeSyncDB().syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    writer.workspaceRoot = "/home/user/cocalc-ai";
+    writer.hostWorkspaceRoot = "/mnt/cocalc/project-test/cocalc-ai";
+
+    expect((writer as any).resolveChatFilePath()).toBe(
+      "/mnt/cocalc/project-test/cocalc-ai/lite4.chat",
+    );
+    writer.dispose?.(true);
+  });
+
   it("resolves chat row by message_id when sender/date changed", async () => {
     const rowDate = new Date("2026-02-21T10:11:12.000Z").toISOString();
     const rows: any[] = [
