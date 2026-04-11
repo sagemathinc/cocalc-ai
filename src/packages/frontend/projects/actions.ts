@@ -470,6 +470,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const x = store.get("open_projects");
     const index = x.indexOf(project_id);
     if (index !== -1) {
+      webapp_client.conat_client.releaseProjectHostRouting({ project_id });
       redux.removeProjectReferences(project_id);
       this.setState({ open_projects: x.delete(index) });
     }

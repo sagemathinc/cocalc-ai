@@ -47,6 +47,10 @@ describe("ConatClient routed project-host reconnect", () => {
         getStore: jest.fn((name: string) => {
           if (name !== "projects") return undefined;
           return immutable.Map({
+            open_projects: immutable.List([
+              "00000000-0000-4000-8000-000000000001",
+              "00000000-0000-4000-8000-000000000002",
+            ]),
             project_map: immutable.Map({
               "00000000-0000-4000-8000-000000000001": immutable.Map({
                 host_id: "host-1",
@@ -170,6 +174,212 @@ describe("ConatClient routed project-host reconnect", () => {
     expect(routed1?.client).toBe(routedClient1);
     expect(routed2?.client).toBe(routedClient1);
     expect(connectCalls).toHaveLength(2);
+    expect(
+      Array.from(client.routedHubClients["host-1"].project_ids).sort(),
+    ).toEqual([
+      "00000000-0000-4000-8000-000000000001",
+      "00000000-0000-4000-8000-000000000002",
+    ]);
+  });
+
+  it("reissues shared host auth using a remaining tracked project and frees the host client when none remain", async () => {
+    jest.resetModules();
+
+    const connectCalls: any[] = [];
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => ({
+        data: {
+          token: `token-for-${mesg.args?.[0]?.project_id ?? "host"}`,
+          expires_at: Date.now() + 5 * 60_000,
+        },
+      })),
+    };
+    const routedClient = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      request: jest.fn(),
+    };
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            open_projects: immutable.List([
+              "00000000-0000-4000-8000-000000000001",
+              "00000000-0000-4000-8000-000000000002",
+            ]),
+            project_map: immutable.Map({
+              "00000000-0000-4000-8000-000000000001": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+              "00000000-0000-4000-8000-000000000002": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+            }),
+            host_info: immutable.Map({
+              "host-1": immutable.Map({
+                bay_id: "bay-1",
+                connect_url: "http://project-host",
+                host_session_id: "session-1",
+                updated_at: Date.now(),
+              }),
+            }),
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: jest.fn(),
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn((opts?: any) => {
+        connectCalls.push(opts);
+        if (opts?.address === "http://hub") {
+          return hubClient;
+        }
+        return routedClient;
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/util/async-utils", () => {
+      const actual = jest.requireActual("@cocalc/util/async-utils");
+      return {
+        ...actual,
+        until: jest.fn(),
+      };
+    });
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    const defaultClient = client.conat();
+    const routeSubject = connectCalls[0]?.routeSubject;
+    expect(defaultClient).toBe(hubClient);
+    expect(typeof routeSubject).toBe("function");
+
+    routeSubject("project.00000000-0000-4000-8000-000000000001.api");
+    routeSubject("project.00000000-0000-4000-8000-000000000002.api");
+
+    client.releaseProjectHostRouting({
+      project_id: "00000000-0000-4000-8000-000000000001",
+    });
+
+    const routedAuth = connectCalls[1]?.auth;
+    expect(typeof routedAuth).toBe("function");
+    await new Promise<void>((resolve) => {
+      routedAuth(() => resolve());
+    });
+
+    expect(hubClient.request).toHaveBeenLastCalledWith(
+      "hub.account.acct-1.api",
+      {
+        name: "hosts.issueProjectHostAuthToken",
+        args: [
+          {
+            host_id: "host-1",
+            project_id: "00000000-0000-4000-8000-000000000002",
+          },
+        ],
+      },
+      { timeout: 15000 },
+    );
+
+    client.releaseProjectHostRouting({
+      project_id: "00000000-0000-4000-8000-000000000002",
+    });
+    expect(routedClient.close).toHaveBeenCalledTimes(1);
+    expect(client.routedHubClients["host-1"]).toBeUndefined();
   });
 
   it("reconnects a cached routed host client after disconnect", async () => {

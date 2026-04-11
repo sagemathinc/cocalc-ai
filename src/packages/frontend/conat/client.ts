@@ -126,6 +126,8 @@ const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 type RoutedHubClientState = {
   address: string;
   host_session_id?: string;
+  project_ids: Set<string>;
+  last_project_id?: string;
   client: ReturnType<typeof connectToConat>;
   reconnectTimer?: ReturnType<typeof setTimeout>;
   reconnectAttempts: number;
@@ -389,9 +391,90 @@ export class ConatClient extends EventEmitter {
     delete this.projectHostTokens[host_id];
   };
 
-  private removeRoutedHubClient = (host_id: string) => {
+  private getOpenProjectIdsForHost = (host_id: string): Set<string> => {
+    const result = new Set<string>();
+    const projectsStore = redux.getStore("projects");
+    const openProjects = projectsStore?.get("open_projects");
+    const projectMap = projectsStore?.get("project_map");
+    openProjects?.forEach?.((project_id: string) => {
+      if (projectMap?.getIn?.([project_id, "host_id"]) === host_id) {
+        result.add(project_id);
+      }
+    });
+    return result;
+  };
+
+  private syncTrackedProjectsForHost = (
+    host_id: string,
+    state?: RoutedHubClientState,
+  ): Set<string> => {
+    const current = state ?? this.routedHubClients[host_id];
+    if (!current) {
+      return new Set();
+    }
+    const openProjects = this.getOpenProjectIdsForHost(host_id);
+    for (const project_id of Array.from(current.project_ids)) {
+      if (!openProjects.has(project_id)) {
+        current.project_ids.delete(project_id);
+      }
+    }
+    if (
+      current.last_project_id &&
+      !current.project_ids.has(current.last_project_id)
+    ) {
+      delete current.last_project_id;
+    }
+    return current.project_ids;
+  };
+
+  private registerTrackedProjectForHost = (
+    host_id: string,
+    state: RoutedHubClientState,
+    project_id?: string,
+  ): void => {
+    this.syncTrackedProjectsForHost(host_id, state);
+    if (!project_id || !isValidUUID(project_id)) {
+      return;
+    }
+    state.project_ids.add(project_id);
+    state.last_project_id = project_id;
+  };
+
+  private pickTrackedProjectForHost = (
+    host_id: string,
+    state: RoutedHubClientState,
+    preferred_project_id?: string,
+  ): string | undefined => {
+    this.syncTrackedProjectsForHost(host_id, state);
+    if (
+      preferred_project_id &&
+      state.project_ids.has(preferred_project_id)
+    ) {
+      state.last_project_id = preferred_project_id;
+      return preferred_project_id;
+    }
+    if (
+      state.last_project_id &&
+      state.project_ids.has(state.last_project_id)
+    ) {
+      return state.last_project_id;
+    }
+    for (const project_id of state.project_ids) {
+      state.last_project_id = project_id;
+      return project_id;
+    }
+    return undefined;
+  };
+
+  private removeRoutedHubClient = (
+    host_id: string,
+    opts?: { expectedClient?: ReturnType<typeof connectToConat> },
+  ) => {
     const current = this.routedHubClients[host_id];
     if (!current) return;
+    if (opts?.expectedClient && current.client !== opts.expectedClient) {
+      return;
+    }
     if (current.reconnectTimer != null) {
       clearTimeout(current.reconnectTimer);
       delete current.reconnectTimer;
@@ -402,6 +485,19 @@ export class ConatClient extends EventEmitter {
       console.warn(`failed closing routed hub client for host ${host_id}`, err);
     }
     delete this.routedHubClients[host_id];
+  };
+
+  private maybeReleaseRoutedHubClient = (
+    host_id: string,
+    state?: RoutedHubClientState,
+  ) => {
+    const current = state ?? this.routedHubClients[host_id];
+    if (!current) return;
+    if (this.syncTrackedProjectsForHost(host_id, current).size !== 0) {
+      return;
+    }
+    this.invalidateProjectHostToken(host_id);
+    this.removeRoutedHubClient(host_id, { expectedClient: current.client });
   };
 
   private scheduleRoutedHostRecovery = () => {
@@ -431,6 +527,22 @@ export class ConatClient extends EventEmitter {
       if (!host_id) continue;
       this.invalidateProjectHostToken(host_id);
       this.removeRoutedHubClient(host_id);
+    }
+  };
+
+  releaseProjectHostRouting = ({ project_id }: { project_id: string }) => {
+    if (!isValidUUID(project_id)) {
+      return;
+    }
+    for (const [host_id, state] of Object.entries(this.routedHubClients)) {
+      if (!state.project_ids.has(project_id)) {
+        continue;
+      }
+      state.project_ids.delete(project_id);
+      if (state.last_project_id === project_id) {
+        delete state.last_project_id;
+      }
+      this.maybeReleaseRoutedHubClient(host_id, state);
     }
   };
 
@@ -539,11 +651,13 @@ export class ConatClient extends EventEmitter {
     address,
     host_session_id,
     project_id,
+    project_ids,
   }: {
     host_id: string;
     address: string;
     host_session_id?: string;
     project_id?: string;
+    project_ids?: Iterable<string>;
   }): ReturnType<typeof connectToConat> => {
     const current = this.routedHubClients[host_id];
     if (
@@ -551,6 +665,12 @@ export class ConatClient extends EventEmitter {
       current.address === address &&
       current.host_session_id === host_session_id
     ) {
+      this.registerTrackedProjectForHost(host_id, current, project_id);
+      if (project_ids) {
+        for (const id of project_ids) {
+          this.registerTrackedProjectForHost(host_id, current, id);
+        }
+      }
       return current.client;
     }
     if (current) {
@@ -559,15 +679,21 @@ export class ConatClient extends EventEmitter {
     const state: RoutedHubClientState = {
       address,
       host_session_id,
+      project_ids: new Set<string>(),
       reconnectAttempts: 0,
       client: connectToConat({
         address,
         inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
         auth: async (cb) => {
           try {
+            const authProjectId = this.pickTrackedProjectForHost(
+              host_id,
+              state,
+              project_id,
+            );
             const token = await this.getProjectHostToken({
               host_id,
-              project_id,
+              project_id: authProjectId,
             });
             cb({ bearer: token });
           } catch (err) {
@@ -614,10 +740,11 @@ export class ConatClient extends EventEmitter {
             refreshed.host_session_id !== state.host_session_id)
         ) {
           this.invalidateProjectHostToken(host_id);
-          this.removeRoutedHubClient(host_id);
+          this.removeRoutedHubClient(host_id, { expectedClient: state.client });
           const replacement = this.getOrCreateRoutedHubClient({
             ...refreshed,
             project_id,
+            project_ids: state.project_ids,
           });
           if (!replacement.conn?.connected) {
             replacement.connect();
@@ -657,6 +784,12 @@ export class ConatClient extends EventEmitter {
       this.invalidateProjectHostToken(host_id);
       reconnectRouted();
     });
+    this.registerTrackedProjectForHost(host_id, state, project_id);
+    if (project_ids) {
+      for (const id of project_ids) {
+        this.registerTrackedProjectForHost(host_id, state, id);
+      }
+    }
     this.routedHubClients[host_id] = state;
     return state.client;
   };
