@@ -22,6 +22,8 @@ import { times_n } from "@cocalc/jupyter/util/misc";
 
 import { server_time, trunc_middle, is_different } from "@cocalc/util/misc";
 import { IS_SAFARI, IS_FIREFOX } from "@cocalc/frontend/feature";
+import { actions as usersActions } from "@cocalc/frontend/users/actions";
+import { shouldHydrateUserIdentity } from "@cocalc/frontend/users/store";
 
 const UNKNOWN_USER_PROFILE = {
   color: "rgb(170,170,170)",
@@ -372,11 +374,22 @@ export function getProfile(
 ): { color: string; name: string } {
   if (user_map == null) return UNKNOWN_USER_PROFILE;
   const user = user_map.get(account_id);
-  if (user == null) return UNKNOWN_USER_PROFILE;
+  if (user == null) {
+    usersActions.fetch_non_collaborator(account_id);
+    return UNKNOWN_USER_PROFILE;
+  }
+  const needsHydration = shouldHydrateUserIdentity(user);
+  if (needsHydration) {
+    usersActions.fetch_non_collaborator(account_id);
+  }
   const color = user.getIn(["profile", "color"], "rgb(170,170,170)");
-  const name = trunc_middle(
-    user.get("first_name", "") + " " + user.get("last_name", ""),
-    60,
-  );
+  const fullName =
+    `${user.get("first_name", "")} ${user.get("last_name", "")}`.trim();
+  const fallbackName = `${user.get("name", "")}`.trim();
+  const preferredName =
+    needsHydration && fallbackName && fallbackName !== "Deleted User"
+      ? fallbackName
+      : fullName || fallbackName || "Private User";
+  const name = trunc_middle(preferredName, 60);
   return { color, name };
 }
