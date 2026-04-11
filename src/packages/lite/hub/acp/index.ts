@@ -6293,7 +6293,7 @@ async function prepareQueuedUserMessageForExecution({
             "parent_message_id",
           );
           const effectiveParentMessageId =
-            latestParentMessageId ?? currentParentMessageId;
+            currentParentMessageId || latestParentMessageId;
           if (
             effectiveParentMessageId &&
             effectiveParentMessageId !== currentParentMessageId
