@@ -539,6 +539,22 @@ async function getOrCreateBucketForRegion(
   });
 }
 
+export async function ensureProjectBackupBucketForRegion(
+  region: string,
+): Promise<{
+  id: string;
+  name: string;
+  purpose: string | null;
+  region: string | null;
+  endpoint: string | null;
+  access_key_id: string | null;
+  secret_access_key: string | null;
+  status: string | null;
+} | null> {
+  const normalized = parseR2Region(region) ?? mapCloudRegionToR2Region(region);
+  return await getOrCreateBucketForRegion(normalized);
+}
+
 async function ensureExistingBucketRowIsUsable({
   bucket,
   fallbackRegion,

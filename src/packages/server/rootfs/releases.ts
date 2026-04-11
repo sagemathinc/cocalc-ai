@@ -14,6 +14,7 @@ import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { buildLaunchpadRestRusticRepoConfig } from "@cocalc/server/launchpad/rest-repo";
+import { ensureProjectBackupBucketForRegion } from "@cocalc/server/project-backup";
 import { appendRootfsImageEventForReleaseImages } from "@cocalc/server/rootfs/events";
 import {
   DEFAULT_R2_REGION,
@@ -200,29 +201,8 @@ async function loadRootfsReleaseRowByContentKey(
   return rows[0] ?? null;
 }
 
-async function loadR2BucketForRegion(
-  region: string,
-): Promise<BucketRow | null> {
-  const { rows } = await getPool("medium").query<BucketRow>(
-    `SELECT
-      id,
-      name,
-      purpose,
-      region,
-      endpoint,
-      access_key_id,
-      secret_access_key,
-      status
-    FROM buckets
-    WHERE provider='r2'
-      AND purpose='project-backups'
-      AND region=$1
-      AND (status IS NULL OR status != 'disabled')
-    ORDER BY created DESC
-    LIMIT 1`,
-    [region],
-  );
-  return rows[0] ?? null;
+async function loadR2BucketForRegion(region: string): Promise<BucketRow | null> {
+  return (await ensureProjectBackupBucketForRegion(region)) as BucketRow | null;
 }
 
 async function loadR2BucketById(bucket_id: string): Promise<BucketRow | null> {
