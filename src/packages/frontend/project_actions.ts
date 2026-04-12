@@ -1243,9 +1243,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       obj.time = misc.server_time();
     }
     obj.id = id;
-    webapp_client.conat_client.hub.projects
-      .appendProjectLog({
-        project_id: this.project_id,
+    this.projectApi()
+      .system.appendProjectLog({
+        account_id: webapp_client.account_id,
         id: obj.id,
         time: obj.time,
         event: obj.event,
