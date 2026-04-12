@@ -52,6 +52,7 @@ import type {
   ProjectRunQuota,
   ProjectActiveOperationSummary,
 } from "@cocalc/conat/hub/api/projects";
+import { PROJECT_LOG_STREAM_NAME } from "@cocalc/conat/hub/api/projects";
 import type {
   AccountFeedEvent,
   AccountFeedProjectRow,
@@ -106,6 +107,7 @@ import {
   stopChatOffloadBackgroundMaintenance,
 } from "./chat-offload-maintenance";
 import { getLiteConatClient } from "./runtime-client";
+import { dstream, type DStream } from "@cocalc/conat/sync/dstream";
 import {
   cancelLiteCodexDeviceAuth,
   getLiteCodexDeviceAuthStatus,
@@ -115,6 +117,7 @@ import {
 } from "./codex-auth";
 import { getRow, listRows, upsertRow } from "./sqlite/database";
 import { uuid } from "@cocalc/util/misc";
+import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
@@ -260,6 +263,105 @@ function compareProjectLogRows(a: ProjectLogRow, b: ProjectLogRow): number {
   return `${b.id}`.localeCompare(`${a.id}`);
 }
 
+function filterProjectLogRows(
+  rows: ProjectLogRow[],
+  opts: {
+    newer_than?: ProjectLogCursor;
+    older_than?: ProjectLogCursor;
+  },
+): ProjectLogRow[] {
+  const newerKey = projectLogCursorKey(opts.newer_than);
+  const olderKey = projectLogCursorKey(opts.older_than);
+  return rows.filter((row) => {
+    const key: [number, string] = [
+      normalizeProjectLogTime(row.time)?.getTime() ?? 0,
+      row.id,
+    ];
+    if (
+      newerKey != null &&
+      (key[0] < newerKey[0] ||
+        (key[0] === newerKey[0] && key[1] <= newerKey[1]))
+    ) {
+      return false;
+    }
+    if (
+      olderKey != null &&
+      (key[0] > olderKey[0] ||
+        (key[0] === olderKey[0] && key[1] >= olderKey[1]))
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function buildProjectLogRowsFromStream(
+  stream: DStream<ProjectLogRow>,
+  project_id: string,
+): ProjectLogRow[] {
+  const seen: Record<string, true> = {};
+  return stream
+    .getAll()
+    .map(
+      (row, index): ProjectLogRow => ({
+        id: `${row?.id ?? ""}`,
+        project_id: `${row?.project_id ?? project_id}`,
+        account_id: `${row?.account_id ?? ""}`,
+        time: normalizeProjectLogTime(row?.time) ?? stream.time(index) ?? null,
+        event: row?.event ?? {},
+      }),
+    )
+    .filter((row) => row.id && row.account_id)
+    .sort(compareProjectLogRows)
+    .filter((row) => {
+      if (seen[row.id]) {
+        return false;
+      }
+      seen[row.id] = true;
+      return true;
+    });
+}
+
+function pageProjectLogRows(
+  rows: ProjectLogRow[],
+  opts: {
+    limit: number;
+    newer_than?: ProjectLogCursor;
+    older_than?: ProjectLogCursor;
+  },
+): ProjectLogPage {
+  const entries = filterProjectLogRows(rows, opts);
+  return {
+    entries: entries.slice(0, opts.limit),
+    has_more: entries.length > opts.limit,
+  };
+}
+
+const liteProjectLogStreams: Record<
+  string,
+  DStream<ProjectLogRow> | undefined
+> = {};
+
+const getLiteProjectLogStream = reuseInFlight(
+  async (project_id: string): Promise<DStream<ProjectLogRow>> => {
+    const stream = liteProjectLogStreams[project_id];
+    if (stream && !stream.isClosed()) {
+      return stream;
+    }
+    const next = await dstream<ProjectLogRow>({
+      client: getLiteConatClient(),
+      project_id,
+      name: PROJECT_LOG_STREAM_NAME,
+      noInventory: true,
+    });
+    liteProjectLogStreams[project_id] = next;
+    return next;
+  },
+  {
+    createKey: ([project_id]) => `${project_id ?? ""}`,
+  },
+);
+
 async function listProjectLogLite(opts: {
   account_id?: string;
   project_id: string;
@@ -275,47 +377,15 @@ async function listProjectLogLite(opts: {
   }
   const project_id = requireLiteProjectId(opts.project_id);
   const limit = normalizeProjectLogLimit(opts.limit);
-  const newerKey = projectLogCursorKey(opts.newer_than);
-  const olderKey = projectLogCursorKey(opts.older_than);
-
-  const entries = (listRows("project_log") as any[])
-    .filter((row) => row?.project_id === project_id)
-    .map(
-      (row): ProjectLogRow => ({
-        id: `${row.id}`,
-        project_id: `${row.project_id}`,
-        account_id: `${row.account_id}`,
-        time: normalizeProjectLogTime(row.time),
-        event: row.event ?? {},
-      }),
-    )
-    .sort(compareProjectLogRows)
-    .filter((row) => {
-      const key: [number, string] = [
-        normalizeProjectLogTime(row.time)?.getTime() ?? 0,
-        row.id,
-      ];
-      if (
-        newerKey != null &&
-        (key[0] < newerKey[0] ||
-          (key[0] === newerKey[0] && key[1] <= newerKey[1]))
-      ) {
-        return false;
-      }
-      if (
-        olderKey != null &&
-        (key[0] > olderKey[0] ||
-          (key[0] === olderKey[0] && key[1] >= olderKey[1]))
-      ) {
-        return false;
-      }
-      return true;
-    });
-
-  return {
-    entries: entries.slice(0, limit),
-    has_more: entries.length > limit,
-  };
+  const rows = buildProjectLogRowsFromStream(
+    await getLiteProjectLogStream(project_id),
+    project_id,
+  );
+  return pageProjectLogRows(rows, {
+    limit,
+    newer_than: opts.newer_than,
+    older_than: opts.older_than,
+  });
 }
 
 async function appendProjectLogLite(opts: {
@@ -340,7 +410,9 @@ async function appendProjectLogLite(opts: {
     time: normalizeProjectLogTime(opts.time) ?? new Date(),
     event: opts.event ?? {},
   };
-  upsertRow("project_log", row.id, row as any);
+  const stream = await getLiteProjectLogStream(project_id);
+  stream.publish(row);
+  await stream.save();
   return row;
 }
 
