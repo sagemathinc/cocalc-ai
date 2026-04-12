@@ -3,7 +3,7 @@ Supporting component for creating an edge.
 
 */
 
-import { Tooltip } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { Element } from "./types";
 import { CSSProperties } from "react";

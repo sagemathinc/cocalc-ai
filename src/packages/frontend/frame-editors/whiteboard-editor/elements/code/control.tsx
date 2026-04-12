@@ -3,9 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Switch, Tooltip } from "antd";
+import { Button, Switch } from "antd";
 import { delay } from "awaiting";
 
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useFrameContext } from "../../hooks";
 import { Element } from "../../types";

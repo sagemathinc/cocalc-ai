@@ -6,7 +6,8 @@ Panel for a particular tool.
 */
 
 import { CSSProperties, ReactNode, useState } from "react";
-import { Button, Popover, Slider, TimePicker, Tooltip } from "antd";
+import { Button, Popover, Slider, TimePicker } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { PANEL_STYLE } from "./panel";
 import { Icon, IconName } from "@cocalc/frontend/components/icon";
 import { CloseX } from "@cocalc/frontend/components/close-x";

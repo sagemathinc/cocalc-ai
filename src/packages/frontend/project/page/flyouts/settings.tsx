@@ -4,7 +4,7 @@
  */
 
 import { ReloadOutlined } from "@ant-design/icons";
-import { Button, Collapse, CollapseProps, Space, Tooltip } from "antd";
+import { Button, Collapse, CollapseProps, Space } from "antd";
 import { useIntl } from "react-intl";
 import {
   redux,
@@ -12,7 +12,13 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Icon, IconName, Loading, Title } from "@cocalc/frontend/components";
+import {
+  Icon,
+  IconName,
+  Loading,
+  Title,
+  Tooltip,
+} from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { IntlMessage, isIntlMessage, labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";

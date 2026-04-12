@@ -3,16 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  Alert,
-  Button,
-  Input,
-  InputRef,
-  Radio,
-  Select,
-  Space,
-  Tooltip,
-} from "antd";
+import { Alert, Button, Input, InputRef, Radio, Select, Space } from "antd";
 import immutable from "immutable";
 import { useIntl } from "react-intl";
 import { VirtuosoHandle } from "react-virtuoso";
@@ -30,6 +21,7 @@ import {
   DropdownMenu,
   Icon,
   Text,
+  Tooltip,
   type MenuItems,
   ErrorDisplay,
 } from "@cocalc/frontend/components";

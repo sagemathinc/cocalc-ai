@@ -3,11 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Tooltip, Space } from "antd";
+import { Button, Space } from "antd";
 import immutable from "immutable";
 
 import { Button as BSButton } from "@cocalc/frontend/antd-bootstrap";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 
 interface FilesSelectButtonsProps {
   checked_files: immutable.Set<string>;

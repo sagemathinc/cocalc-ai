@@ -13,7 +13,6 @@ import {
   Space,
   Switch,
   Tag,
-  Tooltip,
   Typography,
   message as antdMessage,
   type MenuProps,
@@ -29,7 +28,7 @@ import {
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Icon, Loading, TimeAgo } from "@cocalc/frontend/components";
+import { Icon, Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import type {
   AgentSessionRecord,

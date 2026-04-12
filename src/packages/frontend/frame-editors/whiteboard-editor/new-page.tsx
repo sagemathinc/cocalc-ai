@@ -1,6 +1,7 @@
-import { Button, Popover, Tooltip } from "antd";
+import { Button, Popover } from "antd";
 import { CSSProperties, ReactNode } from "react";
 
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { COLORS } from "@cocalc/util/theme";
 import { useFrameContext } from "./hooks";
