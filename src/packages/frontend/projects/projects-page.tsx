@@ -490,7 +490,7 @@ export const ProjectsPage: React.FC = () => {
                     />
                   </div>
                   {IS_MOBILE && createPanelOpen && (
-                    <Card size="small" bodyStyle={{ padding: "12px" }}>
+                    <Card size="small" styles={{ body: { padding: "12px" } }}>
                       <NewProjectCreator
                         default_value={search}
                         open={createPanelOpen}

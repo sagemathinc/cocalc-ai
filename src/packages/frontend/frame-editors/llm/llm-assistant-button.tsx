@@ -166,9 +166,9 @@ export default function LanguageModelTitleBarButton({
         open={Boolean(visible && showDialog)}
         onCancel={closeDialog}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
         width={560}
-        maskClosable={!querying}
+        mask={{ closable: !querying }}
       >
         <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <PopupAgentComposer

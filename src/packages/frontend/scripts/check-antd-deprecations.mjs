@@ -50,12 +50,33 @@ const RULES = [
     prop: "popupClassName",
   },
   {
+    id: "card-body-style",
+    component: "Card",
+    message: "[antd: Card] `bodyStyle` is deprecated. Use `styles.body`.",
+    tagPattern: (name) => new RegExp(`<\\s*${escapeRegExp(name)}\\b`, "g"),
+    prop: "bodyStyle",
+  },
+  {
     id: "modal-destroy-on-close",
     component: "Modal",
     message:
       "[antd: Modal] `destroyOnClose` is deprecated. Use `destroyOnHidden`.",
     tagPattern: (name) => new RegExp(`<\\s*${escapeRegExp(name)}\\b`, "g"),
     prop: "destroyOnClose",
+  },
+  {
+    id: "modal-body-style",
+    component: "Modal",
+    message: "[antd: Modal] `bodyStyle` is deprecated. Use `styles.body`.",
+    tagPattern: (name) => new RegExp(`<\\s*${escapeRegExp(name)}\\b`, "g"),
+    prop: "bodyStyle",
+  },
+  {
+    id: "modal-mask-closable",
+    component: "Modal",
+    message: "[antd: Modal] `maskClosable` is deprecated. Use `mask.closable`.",
+    tagPattern: (name) => new RegExp(`<\\s*${escapeRegExp(name)}\\b`, "g"),
+    prop: "maskClosable",
   },
   {
     id: "drawer-destroy-on-close",

@@ -198,7 +198,7 @@ export function AIGenerateCodeCell({
     <>
       {children}
       <Modal
-        destroyOnClose
+        destroyOnHidden
         title={
           <Space size="small">
             <AIAvatar size={18} />

@@ -483,7 +483,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     const displayLabel =
       selectedRootfsEntry?.label || displayImage || DEFAULT_PROJECT_IMAGE;
     return (
-      <Card size="small" bodyStyle={{ padding: "10px 12px" }}>
+      <Card size="small" styles={{ body: { padding: "10px 12px" } }}>
         <Space orientation="vertical" size="small" style={{ width: "100%" }}>
           <div style={{ fontWeight: 600 }}>Root Filesystem Software Image</div>
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
@@ -575,7 +575,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 }}
               />
             </Paragraph>
-            <Card size="small" bodyStyle={{ padding: "10px 12px" }}>
+            <Card size="small" styles={{ body: { padding: "10px 12px" } }}>
               <Space
                 orientation="vertical"
                 size="small"

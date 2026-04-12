@@ -126,11 +126,13 @@ export function OneCard({
         transitionName=""
         maskTransitionName=""
         style={{ minWidth: "800px" }}
-        bodyStyle={{
-          maxHeight: "80vh",
-          maxWidth: "90vw",
-          overflow: "auto",
-          padding: "10px",
+        styles={{
+          body: {
+            maxHeight: "80vh",
+            maxWidth: "90vw",
+            overflow: "auto",
+            padding: "10px",
+          },
         }}
         open={open}
         title={

@@ -37,7 +37,7 @@ export function SelectNewHost({
         size="small"
         style={{ width: "100%", paddingTop: 12 }}
       >
-        <Card size="small" bodyStyle={{ padding: "10px 12px" }}>
+        <Card size="small" styles={{ body: { padding: "10px 12px" } }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ flex: 1 }}>
               <div
