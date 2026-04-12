@@ -119,11 +119,44 @@ function assertCollaborator({
   const row = getRow("projects", JSON.stringify({ project_id }));
   const userEntry = row?.users?.[account_id];
   const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
-  if (!isProjectCollaboratorGroup(group) && account_id !== project_id) {
+  if (!isProjectCollaboratorGroup(group)) {
     throw new Error(
       `account '${account_id}' is not a collaborator on project '${project_id}'`,
     );
   }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function compileSearchPattern(search?: string): RegExp | undefined {
+  const pattern = `${search ?? ""}`.trim();
+  if (!pattern) {
+    return;
+  }
+  const wildcard = `%${pattern}%`;
+  let regex = "^";
+  let escaped = false;
+  for (const ch of wildcard) {
+    if (!escaped && ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (!escaped && ch === "%") {
+      regex += ".*";
+    } else if (!escaped && ch === "_") {
+      regex += ".";
+    } else {
+      regex += escapeRegExp(ch);
+    }
+    escaped = false;
+  }
+  if (escaped) {
+    regex += escapeRegExp("\\");
+  }
+  regex += "$";
+  return new RegExp(regex, "i");
 }
 
 function normalizeLimit(limit?: number): number {
@@ -287,7 +320,7 @@ export async function handleMarkFileRequest(
 
 export async function handleListRecentRequest(
   this: { subject?: string },
-  opts: { limit?: number; max_age_s?: number } | undefined,
+  opts: { limit?: number; max_age_s?: number; search?: string } | undefined,
   client: Client,
 ): Promise<RecentProjectDocumentActivityEntry[]> {
   const { account_id, project_id } = parseActivitySubject(this?.subject);
@@ -295,6 +328,7 @@ export async function handleListRecentRequest(
   const store = await getRecentStore({ client, project_id });
   const nowMs = Date.now();
   const cutoffMs = nowMs - normalizeMaxAgeSeconds(opts?.max_age_s) * 1000;
+  const search = compileSearchPattern(opts?.search);
   const rows: RecentProjectDocumentActivityEntry[] = [];
   for (const [path, row] of Object.entries(store.getAll())) {
     const lastAccessedMs = Date.parse(row?.last_accessed ?? "");
@@ -307,6 +341,9 @@ export async function handleListRecentRequest(
       continue;
     }
     if (lastAccessedMs < cutoffMs) {
+      continue;
+    }
+    if (search && !search.test(path)) {
       continue;
     }
     rows.push({

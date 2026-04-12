@@ -30,27 +30,6 @@ export async function touch({
   await callback2(D.touch, { account_id, project_id, path, action });
 }
 
-export async function logFileAccess({
-  account_id,
-  project_id,
-  path,
-}: {
-  account_id?: string;
-  project_id: string;
-  path: string;
-}): Promise<void> {
-  if (!account_id) {
-    throw Error("account_id must be set");
-  }
-  await assertCollab({ account_id, project_id });
-  const D = db();
-  await callback2(D.log_file_access, {
-    account_id,
-    project_id,
-    filename: path,
-  });
-}
-
 export async function getLegacyTimeTravelInfo({
   account_id,
   project_id,

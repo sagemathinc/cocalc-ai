@@ -109,19 +109,6 @@ export interface ImportPublicPathResult {
   stream_name: string;
 }
 
-export interface RecentDocumentActivityRow {
-  id: string;
-  project_id: string;
-  path: string;
-  last_accessed?: Date | null;
-  recent_account_ids?: string[];
-  last_edited?: Date | null;
-  users?: Record<
-    string,
-    Record<string, Date | string | null | undefined> | undefined
-  >;
-}
-
 export type ProjectQuotaSettings = Record<string, unknown> | null;
 export type ProjectCourseInfo = CourseInfo | null;
 
@@ -375,7 +362,6 @@ export const projects = {
   unblockCollabInviteSender: authFirstRequireAccount,
   listCollaborators: authFirstRequireAccount,
   listMyCollaborators: authFirstRequireAccount,
-  listRecentDocumentActivity: authFirstRequireAccount,
   getProjectLauncher: authFirstRequireAccount,
   setProjectLauncher: authFirstRequireAccount,
   getProjectRegion: authFirstRequireAccount,
@@ -505,12 +491,6 @@ export interface Projects {
     project_id: string;
     include_completed?: boolean;
   }) => Promise<ProjectCopyRow[]>;
-
-  listRecentDocumentActivity: (opts: {
-    account_id?: string;
-    limit?: number;
-    max_age_s?: number;
-  }) => Promise<RecentDocumentActivityRow[]>;
 
   getProjectLauncher: (opts: {
     account_id?: string;
