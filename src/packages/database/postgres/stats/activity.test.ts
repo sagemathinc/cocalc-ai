@@ -341,7 +341,7 @@ describe("Activity tracking methods", () => {
       expect(projectResult.rows[0].last_active[account_id]).toBeDefined();
     });
 
-    it("touches account, project, and file when path provided", async () => {
+    it("touches account and project when path is provided for compatibility", async () => {
       database._clear_throttles();
 
       const account_id = uuid();
@@ -360,15 +360,18 @@ describe("Activity tracking methods", () => {
 
       await touchWrapper({ account_id, project_id, path, action: "edit" });
 
-      // Verify file access was recorded
-      const fileResult = await getPool().query(
-        `SELECT * FROM file_access_log WHERE project_id = $1 AND filename = $2`,
-        [project_id, path],
+      const accountResult = await getPool().query(
+        `SELECT last_active FROM accounts WHERE account_id = $1`,
+        [account_id],
       );
+      expect(accountResult.rows[0].last_active).not.toBeNull();
 
-      expect(fileResult.rows.length).toBe(1);
-      expect(fileResult.rows[0].account_id).toBe(account_id);
-      expect(fileResult.rows[0].filename).toBe(path);
+      const projectResult = await getPool().query(
+        `SELECT last_edited, last_active FROM projects WHERE project_id = $1`,
+        [project_id],
+      );
+      expect(projectResult.rows[0].last_edited).not.toBeNull();
+      expect(projectResult.rows[0].last_active[account_id]).toBeDefined();
     });
 
     it("respects custom ttl_s throttle parameter", async () => {

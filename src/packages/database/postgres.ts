@@ -180,7 +180,6 @@ import {
   touchAccount,
 } from "./postgres/account/management";
 import { get_hub_servers, register_hub } from "./postgres/hub/management";
-import { get_file_access, log_file_access } from "./postgres/paths/file-access";
 import {
   touch,
   touchProject,
@@ -1517,31 +1516,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     return runWithCbResultValue(opts.cb, () =>
       count_password_reset_attempts(this, opts),
     );
-  }
-
-  /*
-    Tracking file access
-
-    log_file_access is throttled in each server, in the sense that
-    if it is called with the same input within a minute, those
-    subsequent calls are ignored.  Of course, if multiple servers
-    are recording file_access then there can be more than one
-    entry per minute.
-    */
-  async log_file_access(opts: DbFunctionOptsWithCb<typeof log_file_access>) {
-    if (!this._validate_opts(opts)) {
-      return;
-    }
-    return runWithCb(opts.cb, () => log_file_access(this, opts));
-  }
-
-  async get_file_access(
-    opts: DbFunctionOptsWithCb<
-      typeof get_file_access,
-      Awaited<ReturnType<typeof get_file_access>>
-    >,
-  ) {
-    return runWithCbResultValue(opts.cb, () => get_file_access(this, opts));
   }
 
   _validate_opts(opts: PgMethodOpts<"_validate_opts">) {
