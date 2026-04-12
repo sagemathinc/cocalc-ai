@@ -25,7 +25,7 @@ export function RecentDocumentActivityButton({ style }: Props) {
         open={open}
         onCancel={() => setOpen(false)}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
         width={960}
         styles={{
           body: {

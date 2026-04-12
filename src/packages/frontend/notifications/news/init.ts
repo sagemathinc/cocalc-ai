@@ -4,7 +4,6 @@
  */
 
 import { Map, Set as ImmutableSet } from "immutable";
-import { notification } from "antd";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import type { DKV } from "@cocalc/conat/sync/dkv";
 import { createElement } from "react";
@@ -20,6 +19,7 @@ import {
   TypedMap,
   redux,
 } from "@cocalc/frontend/app-framework";
+import { getAntdNotificationInstance } from "@cocalc/frontend/app/antd-notification";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { NewsItemWebapp, SYSTEM_CHANNEL } from "@cocalc/util/types/news";
@@ -103,6 +103,7 @@ function getSystemNewsIdFromSeenKey(key: string): string | undefined {
 }
 
 function closeSystemNewsSeenState(): void {
+  const notification = getAntdNotificationInstance();
   for (const id of openSystemNewsAlertIds) {
     notification.destroy(`system-news:${id}`);
   }
@@ -171,6 +172,7 @@ async function ensureSystemNewsSeenState(): Promise<void> {
     }
     syncSeenSystemNewsState();
     systemNewsSeenStateListener = (changeEvent) => {
+      const notification = getAntdNotificationInstance();
       const id = normalizeNewsId(getSystemNewsIdFromSeenKey(changeEvent.key));
       if (!id) {
         return;
@@ -331,6 +333,7 @@ export class NewsActions extends Actions<NewsState> {
   ): void {
     const now = webapp_client.server_time();
     const liveIds = new Set<string>();
+    const notification = getAntdNotificationInstance();
 
     news.forEach((item) => {
       if (item.get("channel") !== SYSTEM_CHANNEL) return;
@@ -348,7 +351,7 @@ export class NewsActions extends Actions<NewsState> {
       openSystemNewsAlertIds.add(id);
       notification.warning({
         key: `system-news:${id}`,
-        message: item.get("title") || "System notice",
+        title: item.get("title") || "System notice",
         description: createElement(StaticMarkdown, {
           value: item.get("text") || item.get("title") || "System notice",
         }),

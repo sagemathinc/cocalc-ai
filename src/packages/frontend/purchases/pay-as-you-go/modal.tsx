@@ -53,7 +53,7 @@ export default function PayAsYouGoModal({}) {
       width={800}
       zIndex={zIndex}
       destroyOnHidden
-      maskClosable={false}
+      mask={{ closable: false }}
       open={storeState.showModal}
       title={
         <>

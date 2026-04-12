@@ -2,8 +2,6 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
-
-import { notification } from "antd";
 import { ReactElement } from "react";
 
 import {
@@ -13,6 +11,7 @@ import {
   server_time,
 } from "@cocalc/util/misc";
 
+import { getAntdNotificationInstance } from "./app/antd-notification";
 import { webapp_client } from "./webapp-client";
 
 type NotificationType = "error" | "default" | "success" | "info" | "warning";
@@ -66,6 +65,7 @@ export function alert_message(opts: AlertMessageOptions = {}) {
     last_shown[hash] = server_time();
   }
 
+  const notification = getAntdNotificationInstance();
   const f =
     opts.type == "default" ? notification.open : notification[opts.type];
   if (f == null) {
@@ -74,7 +74,7 @@ export function alert_message(opts: AlertMessageOptions = {}) {
   }
 
   f({
-    message: opts.title != null ? opts.title : "",
+    title: opts.title != null ? opts.title : "",
     description: stripExcessiveError(opts.message),
     duration: opts.block ? 0 : opts.timeout,
   });

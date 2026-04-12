@@ -1052,7 +1052,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           background: selected ? "#f6ffed" : undefined,
           cursor: "pointer",
         }}
-        bodyStyle={{ padding: isFlyout ? 10 : 12 }}
+        styles={{ body: { padding: isFlyout ? 10 : 12 } }}
         onClick={() => void activateWorkspace(record)}
       >
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
@@ -1654,7 +1654,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           setManagedWorkspaceIds([]);
           setManageAnchorId(null);
         }}
-        destroyOnClose
+        destroyOnHidden
         footer={
           <Space>
             <Button
