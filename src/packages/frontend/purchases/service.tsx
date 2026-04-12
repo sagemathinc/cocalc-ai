@@ -4,8 +4,9 @@ Show tag for each service
 - [ ] TODO: add links/popups so clicking on service provides helpful additional context, configuration, etc.
 */
 
-import { Tag, Tooltip } from "antd";
+import { Tag } from "antd";
 import { useState } from "react";
+import { Tooltip } from "@cocalc/frontend/components";
 
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {

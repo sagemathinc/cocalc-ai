@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 import { useState } from "react";
-import { Button, Spin, Tooltip } from "antd";
+import { Button, Spin } from "antd";
 import { TimeTravelActions } from "./actions";
-import { Icon } from "../../components";
+import { Icon, Tooltip } from "../../components";
 
 interface Props {
   actions: TimeTravelActions;

@@ -12,7 +12,6 @@ import {
   Spin,
   Table,
   Tag,
-  Tooltip,
 } from "antd";
 import {
   CSSProperties,
@@ -25,6 +24,7 @@ import {
 import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { useTypedRedux, redux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { Icon } from "@cocalc/frontend/components/icon";
 import Next from "@cocalc/frontend/components/next";

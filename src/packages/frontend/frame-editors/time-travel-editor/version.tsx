@@ -3,8 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Tooltip } from "antd";
-import { TimeAgo } from "@cocalc/frontend/components";
+import { TimeAgo, Tooltip } from "@cocalc/frontend/components";
 
 interface Props {
   date: Date;

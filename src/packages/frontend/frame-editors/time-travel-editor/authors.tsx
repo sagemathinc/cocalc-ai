@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Popover, Tooltip } from "antd";
+import { Popover } from "antd";
 import { User } from "../../users";
-import { Loading, r_join } from "../../components";
+import { Loading, Tooltip, r_join } from "../../components";
 import { TimeTravelActions } from "./actions";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { plural } from "@cocalc/util/misc";

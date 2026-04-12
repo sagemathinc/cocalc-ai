@@ -8,9 +8,9 @@
 - This is really just some minimal data *about* the history for now.
 */
 
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 import { TimeTravelActions } from "./actions";
-import { Icon } from "../../components";
+import { Icon, Tooltip } from "../../components";
 
 interface Props {
   actions: TimeTravelActions;

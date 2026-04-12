@@ -17,8 +17,8 @@ import {
   Spin,
   Table,
   Tag,
-  Tooltip,
 } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { FinishStripePayment } from "./stripe-payment";
 import { capitalize, replace_all } from "@cocalc/util/misc";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";

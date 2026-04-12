@@ -3,8 +3,8 @@ A dynamically updating cost and rate components, which is useful for pay as you 
 For rate display, only the tooltip is dynamically updated.
 */
 
-import { Tooltip } from "antd";
 import { useState } from "react";
+import { Tooltip } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { currency, round3 } from "@cocalc/util/misc";
 import { useInterval } from "react-interval-hook";

@@ -1,4 +1,5 @@
-import { Flex, Tooltip } from "antd";
+import { Flex } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import BalancePlot from "./balance-plot";
 import { useMemo } from "react";
 import { field_cmp } from "@cocalc/util/misc";

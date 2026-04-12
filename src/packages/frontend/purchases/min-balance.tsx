@@ -1,4 +1,5 @@
-import { Card, Space, Tooltip } from "antd";
+import { Card, Space } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import Support from "./support";
 import MoneyStatistic from "./money-statistic";
 import ClosingDate from "./closing-date";

@@ -1,7 +1,7 @@
 import { List } from "immutable";
 import { useState } from "react";
-import { Button, Tooltip } from "antd";
-import { TimeAgo } from "@cocalc/frontend/components";
+import { Button } from "antd";
+import { TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { TimeTravelActions } from "./actions";
 

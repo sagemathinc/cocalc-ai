@@ -1,4 +1,5 @@
 import { Alert, Spin, Table } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import Refresh from "@cocalc/frontend/components/refresh";
 import { getStatements } from "./api";
@@ -9,7 +10,6 @@ import { moneyRound2Down, toDecimal } from "@cocalc/util/money";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { PurchasesTable } from "./purchases";
 import EmailDailyStatements from "./email-daily-statements";
-import { Tooltip } from "antd";
 
 interface Props {
   interval: Interval;
