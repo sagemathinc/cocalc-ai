@@ -1,6 +1,9 @@
 import useAsyncEffect from "use-async-effect";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  getBackupFiles,
+  getBackups,
+} from "@cocalc/frontend/project/archive-info";
 import { field_cmp } from "@cocalc/util/misc";
 import { BACKUPS, isBackupsPath } from "@cocalc/util/consts/backups";
 import type { DirectoryListingEntry } from "@cocalc/frontend/project/explorer/types";
@@ -143,7 +146,7 @@ export default function useBackupsListing({
     setListing(null);
     setError(null);
     try {
-      const backups = await webapp_client.conat_client.hub.projects.getBackups({
+      const backups = await getBackups({
         project_id,
         indexed_only: true,
       });
@@ -245,7 +248,7 @@ export default function useBackupsListing({
     if (existing) return await existing;
     const promise = (async () => {
       const raw =
-        (await webapp_client.conat_client.hub.projects.getBackupFiles({
+        (await getBackupFiles({
           project_id,
           id: backup_id,
           path: subpath,

@@ -7,18 +7,12 @@ export type BrowserTimeTravelProviders = {
   git: boolean;
 };
 
-export function getBrowserTimeTravelProviders(
-  projectsApi: Record<string, unknown> | undefined,
-): BrowserTimeTravelProviders {
+export function getBrowserTimeTravelProviders(): BrowserTimeTravelProviders {
   return {
     patchflow: true,
-    snapshots: typeof projectsApi?.getSnapshotFileText === "function",
-    // Lite does not implement project backup APIs even though the generic hub
-    // proxy exposes callable stubs for every declared method.
-    backups:
-      !lite &&
-      typeof projectsApi?.findBackupFiles === "function" &&
-      typeof projectsApi?.getBackupFileText === "function",
+    snapshots: true,
+    // Lite does not implement project backup archives.
+    backups: !lite,
     git: true,
   };
 }

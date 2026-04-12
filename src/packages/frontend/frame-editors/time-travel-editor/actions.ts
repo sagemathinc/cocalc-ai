@@ -21,6 +21,11 @@ import { List } from "immutable";
 import { once } from "@cocalc/util/async-utils";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
+  findBackupFiles,
+  getBackupFileText,
+  getSnapshotFileText,
+} from "@cocalc/frontend/project/archive-info";
+import {
   filename_extension,
   history_path,
   path_split,
@@ -568,12 +573,11 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   ): Promise<ViewDocument | undefined> => {
     if (version == null) return;
     try {
-      const resp =
-        await webapp_client.conat_client.hub.projects.getSnapshotFileText({
-          project_id: this.project_id,
-          snapshot: `${version}`,
-          path: this.docpath,
-        });
+      const resp = await getSnapshotFileText({
+        project_id: this.project_id,
+        snapshot: `${version}`,
+        path: this.docpath,
+      });
       return new ViewDocument(this.docpath, resp.content);
     } catch (err) {
       this.set_error(`${err}`);
@@ -584,12 +588,10 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   updateBackupVersions = async (): Promise<List<string>> => {
     try {
       // Use indexed backup search in one RPC with exact path match.
-      const raw = await webapp_client.conat_client.hub.projects.findBackupFiles(
-        {
-          project_id: this.project_id,
-          glob: [this.docpath],
-        },
-      );
+      const raw = await findBackupFiles({
+        project_id: this.project_id,
+        glob: [this.docpath],
+      });
       const rows = raw
         .filter((x) => !x.isDir && x.path === this.docpath)
         .map((x) => {
@@ -644,12 +646,11 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   ): Promise<ViewDocument | undefined> => {
     if (version == null) return;
     try {
-      const resp =
-        await webapp_client.conat_client.hub.projects.getBackupFileText({
-          project_id: this.project_id,
-          id: `${version}`,
-          path: this.docpath,
-        });
+      const resp = await getBackupFileText({
+        project_id: this.project_id,
+        id: `${version}`,
+        path: this.docpath,
+      });
       return new ViewDocument(this.docpath, resp.content);
     } catch (err) {
       this.set_error(`${err}`);

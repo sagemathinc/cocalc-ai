@@ -4,9 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type VirtuosoGridHandle } from "react-virtuoso";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Loading, SearchInput } from "@cocalc/frontend/components";
+import {
+  findBackupFiles,
+  getBackupFileText,
+  getBackups,
+} from "@cocalc/frontend/project/archive-info";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { BACKUPS } from "@cocalc/util/consts/backups";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { search_match, search_split } from "@cocalc/util/misc";
@@ -21,6 +25,7 @@ import {
 } from "./types";
 import { matchesScope, normalizeGlobQuery, stripDotSlash } from "./utils";
 import FindRestoreModal from "./restore-modal";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const DEFAULT_STATE: FindBackupsState = {
   query: "",
@@ -167,12 +172,11 @@ export function BackupsTab({
     const requestId = previewRequestRef.current + 1;
     previewRequestRef.current = requestId;
     setPreview({ loading: true });
-    webapp_client.conat_client.hub.projects
-      .getBackupFileText({
-        project_id,
-        id: restoreTarget.id,
-        path: restoreTarget.path,
-      })
+    getBackupFileText({
+      project_id,
+      id: restoreTarget.id,
+      path: restoreTarget.path,
+    })
       .then((resp) => {
         if (previewRequestRef.current !== requestId) return;
         setPreview({
@@ -195,11 +199,10 @@ export function BackupsTab({
         return;
       }
       try {
-        const backups =
-          await webapp_client.conat_client.hub.projects.getBackups({
-            project_id,
-            indexed_only: true,
-          });
+        const backups = await getBackups({
+          project_id,
+          indexed_only: true,
+        });
         const matched = backups.filter(
           (backup) => new Date(backup.time).toISOString() === backupName,
         );
@@ -252,10 +255,7 @@ export function BackupsTab({
           iglob: state.caseSensitive ? undefined : [normalized],
           ids: backupIds && backupIds.length ? backupIds : undefined,
         };
-        const raw =
-          await webapp_client.conat_client.hub.projects.findBackupFiles(
-            payload,
-          );
+        const raw = await findBackupFiles(payload);
         const filtered = raw
           .map((item) => {
             const time = coerceDate(item.time);

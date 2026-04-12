@@ -1,6 +1,11 @@
 import { message } from "antd";
 import { posix } from "path";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  getBackupFileText,
+  getBackups,
+  getSnapshotFileText,
+} from "@cocalc/frontend/project/archive-info";
 import { ProjectActions } from "@cocalc/frontend/project_actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
@@ -90,7 +95,7 @@ export function useSpecialPathPreview({
       if (backupIdRef.current && backupNameRef.current === backupName) {
         return backupIdRef.current;
       }
-      const backups = await webapp_client.conat_client.hub.projects.getBackups({
+      const backups = await getBackups({
         project_id,
         indexed_only: indexedOnly ? true : undefined,
       });
@@ -128,16 +133,14 @@ export function useSpecialPathPreview({
     setPreview({ loading: true });
     const load = async () => {
       if (restoreTarget.kind === "snapshot") {
-        return await webapp_client.conat_client.hub.projects.getSnapshotFileText(
-          {
-            project_id,
-            snapshot: restoreTarget.name,
-            path: restoreTarget.path,
-          },
-        );
+        return await getSnapshotFileText({
+          project_id,
+          snapshot: restoreTarget.name,
+          path: restoreTarget.path,
+        });
       }
       const backupId = await resolveBackupId(restoreTarget.name, true);
-      return await webapp_client.conat_client.hub.projects.getBackupFileText({
+      return await getBackupFileText({
         project_id,
         id: backupId,
         path: restoreTarget.path,

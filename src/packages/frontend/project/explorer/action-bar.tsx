@@ -27,6 +27,7 @@ import {
   type BackupMeta,
   isBackupsPath,
 } from "@cocalc/frontend/project/listing/use-backups";
+import { getBackups } from "@cocalc/frontend/project/archive-info";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import path from "path";
 import {
@@ -98,11 +99,10 @@ function ActionBarEnabled({
       try {
         setBackupsLoading(true);
         setBackupsErr(null);
-        const backups =
-          await webapp_client.conat_client.hub.projects.getBackups({
-            project_id,
-            indexed_only: true,
-          });
+        const backups = await getBackups({
+          project_id,
+          indexed_only: true,
+        });
         if (backupsRequestIdRef.current !== requestId) return;
         setBackupsMeta(
           backups.map(({ id, time }) => ({
