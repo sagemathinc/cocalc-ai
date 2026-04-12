@@ -42,7 +42,7 @@ describe("create a blank minimal string SyncDoc and call public methods on it", 
     expect(syncstring.get_project_id()).toBe(project_id);
     expect(syncstring.get_path()).toBe(path);
     expect(syncstring.get_string_id()).toBe(string_id);
-    expect(syncstring.get_my_user_id()).toBe(1);
+    expect(syncstring.get_my_user_id()).toBe(2);
   });
 
   it("the db-style get methods all fail on a string", () => {
