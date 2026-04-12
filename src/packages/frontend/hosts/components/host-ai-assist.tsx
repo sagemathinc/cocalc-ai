@@ -95,7 +95,7 @@ export const HostAiAssist: React.FC<HostAiAssistProps> = ({ ai }) => {
                 <Card
                   key={`${rec.provider}-${rec.region}-${idx}`}
                   size="small"
-                  bodyStyle={{ padding: "10px 12px" }}
+                  styles={{ body: { padding: "10px 12px" } }}
                 >
                   <Space
                     orientation="vertical"

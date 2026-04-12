@@ -1058,7 +1058,7 @@ export function Kernel({
             </div>
           }
           destroyOnHidden={false}
-          maskClosable={false}
+          mask={{ closable: false }}
         >
           <Tabs
             size="small"

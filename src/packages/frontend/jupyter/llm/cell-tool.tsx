@@ -609,7 +609,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
   return (
     <div style={style}>
       <Modal
-        destroyOnClose
+        destroyOnHidden
         title={
           mode == null ? null : (
             <Space size="small">

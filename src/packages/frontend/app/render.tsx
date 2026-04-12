@@ -3,10 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { App as AntdApp } from "antd";
 import {
   redux,
   Redux,
   useAsyncEffect,
+  useEffect,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import {
@@ -16,11 +18,12 @@ import {
 } from "@cocalc/frontend/i18n";
 import { QueryParams } from "@cocalc/frontend/misc/query-params";
 import { createRoot } from "react-dom/client";
+import { setAntdNotificationInstance } from "./antd-notification";
 import { AppContext, useAppContextProvider } from "./context";
 import { Localize, useLocalizationCtx } from "./localize";
 
 // App uses the context provided by Redux (for the locale, etc.) and Localize.
-function App({ children }) {
+function CocalcApp({ children }) {
   const appState = useAppContextProvider();
   const { setLocale } = useLocalizationCtx();
   const other_settings = useTypedRedux("account", "other_settings");
@@ -86,13 +89,27 @@ function App({ children }) {
   );
 }
 
+function AntdNotificationBridge() {
+  const { notification } = AntdApp.useApp();
+
+  useEffect(() => {
+    setAntdNotificationInstance(notification);
+    return () => setAntdNotificationInstance(undefined);
+  }, [notification]);
+
+  return null;
+}
+
 function Root({ Page }) {
   return (
     <Redux>
       <Localize>
-        <App>
-          <Page />
-        </App>
+        <AntdApp>
+          <AntdNotificationBridge />
+          <CocalcApp>
+            <Page />
+          </CocalcApp>
+        </AntdApp>
       </Localize>
     </Redux>
   );
