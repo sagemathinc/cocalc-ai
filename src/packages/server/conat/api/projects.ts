@@ -22,9 +22,6 @@ import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
-import TTLCache from "@isaacs/ttlcache";
-import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
-import { human_readable_size } from "@cocalc/util/misc";
 import type {
   ExecuteCodeOptions,
   ExecuteCodeOutput,
@@ -52,7 +49,6 @@ import {
 } from "@cocalc/server/projects/offline-move-confirmation";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
-import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import {
   getLocalProjectCollaboratorAccessStatus,
   PROJECT_COLLABORATOR_REQUIRED_ERROR,
@@ -74,11 +70,6 @@ import type {
   ProjectCopyRow,
   ProjectRuntimeLog,
   ProjectAddress,
-  ProjectStorageCountedSummary,
-  ProjectStorageBreakdown,
-  ProjectStorageHistory,
-  ProjectStorageOverview,
-  ProjectStorageVisibleSummary,
   ProjectLauncherSettings,
   ProjectRegion,
   ProjectCreated,
@@ -106,11 +97,6 @@ import {
   upsertProjectSshKeyInDb,
 } from "@cocalc/server/projects/project-ssh-keys";
 import {
-  loadProjectStorageHistory,
-  recordProjectStorageHistorySample,
-} from "@cocalc/database/postgres/project-storage-history";
-import { parseDustOutput } from "./storage-breakdown";
-import {
   getAssignedProjectHostInfo,
   PROJECT_BAY_MISMATCH_ERROR,
   PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
@@ -122,21 +108,6 @@ import { createHash } from "node:crypto";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 
-const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
-const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
-const projectStorageOverviewCache = new TTLCache<
-  string,
-  ProjectStorageOverview
->({
-  ttl: PROJECT_STORAGE_CACHE_TTL_MS,
-});
-const projectStorageBreakdownCache = new TTLCache<
-  string,
-  ProjectStorageBreakdown
->({
-  ttl: PROJECT_STORAGE_CACHE_TTL_MS,
-});
-
 const DEFAULT_RECENT_DOCUMENT_ACTIVITY_LIMIT = 200;
 const MAX_RECENT_DOCUMENT_ACTIVITY_LIMIT = 500;
 const DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S = 21 * 24 * 60 * 60;
@@ -147,14 +118,6 @@ const DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S = 21 * 24 * 60 * 60;
 // worker still calls the typed inter-bay project-control service and must not
 // inherit the short default Conat request timeout.
 const PROJECT_START_CONTROL_TIMEOUT_MS = 8 * 60 * 60 * 1000;
-
-function normalizeStoragePath(path?: string): string {
-  const normalized = posix.normalize(`${path ?? ""}`.trim() || "/");
-  if (!normalized.startsWith("/")) {
-    throw new Error(`storage path must be absolute: ${path}`);
-  }
-  return normalized;
-}
 
 function normalizeRecentDocumentActivityLimit(limit?: number): number {
   if (!Number.isFinite(limit)) {
@@ -173,56 +136,10 @@ function normalizeRecentDocumentActivityMaxAge(max_age_s?: number): number {
   return Math.max(60, Math.floor(max_age_s!));
 }
 
-function storageOverviewCacheKey({
-  project_id,
-  home,
-}: {
-  project_id: string;
-  home: string;
-}): string {
-  return `${project_id}:${home}`;
-}
-
-function storageBreakdownCacheKey({
-  project_id,
-  path,
-}: {
-  project_id: string;
-  path: string;
-}): string {
-  return `${project_id}:${path}`;
-}
-
 async function projectFs(project_id: string) {
   return (await getExplicitProjectRoutedClient({ project_id })).fs({
     project_id,
   });
-}
-
-async function getStorageBreakdownImpl({
-  project_id,
-  path,
-}: {
-  project_id: string;
-  path: string;
-}): Promise<ProjectStorageBreakdown> {
-  const normalizedPath = normalizeStoragePath(path);
-  const cacheKey = storageBreakdownCacheKey({
-    project_id,
-    path: normalizedPath,
-  });
-  const cached = projectStorageBreakdownCache.get(cacheKey);
-  if (cached) return cached;
-  const fs = await projectFs(project_id);
-  const breakdown = parseDustOutput(
-    await fs.dust(normalizedPath, {
-      options: ["-j", "-x", "-d", "1", "-s", "-o", "b", "-P"],
-      timeout: PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS,
-    }),
-    normalizedPath,
-  );
-  projectStorageBreakdownCache.set(cacheKey, breakdown);
-  return breakdown;
 }
 
 export async function copyPathBetweenProjects({
@@ -606,24 +523,6 @@ export async function setQuotas(opts: {
   });
 }
 
-export async function getDiskQuota({
-  account_id,
-  project_id,
-}: {
-  account_id: string;
-  project_id: string;
-}): Promise<{
-  used: number;
-  size: number;
-  qgroupid?: string;
-  scope?: "tracking" | "subvolume";
-  warning?: string;
-}> {
-  await assertCollab({ account_id, project_id });
-  const client = await getProjectFileServerClient({ project_id });
-  return await client.getQuota({ project_id });
-}
-
 export async function listRecentDocumentActivity({
   account_id,
   limit,
@@ -893,176 +792,6 @@ export async function getProjectCourseInfo({
 }): Promise<ProjectCourseInfo> {
   return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
     .course;
-}
-
-export async function getStorageOverview({
-  account_id,
-  project_id,
-  home,
-  force_sample,
-}: {
-  account_id: string;
-  project_id: string;
-  home?: string;
-  force_sample?: boolean;
-}): Promise<ProjectStorageOverview> {
-  await assertCollab({ account_id, project_id });
-  const homePath = normalizeStoragePath(home || "/root");
-  const cacheKey = storageOverviewCacheKey({ project_id, home: homePath });
-  const cached = force_sample
-    ? undefined
-    : projectStorageOverviewCache.get(cacheKey);
-  if (cached) return cached;
-
-  const environmentPath = posix.join(homePath, PROJECT_IMAGE_PATH);
-  const fileServer = await getProjectFileServerClient({ project_id });
-  const [quota, homeUsage, scratchUsage, environmentUsage, snapshotUsage] =
-    await Promise.all([
-      fileServer.getQuota({ project_id }),
-      getStorageBreakdownImpl({ project_id, path: homePath }),
-      getStorageBreakdownImpl({ project_id, path: "/scratch" }).catch((err) => {
-        const text = `${err ?? ""}`.toLowerCase();
-        if (
-          text.includes("scratch is not mounted") ||
-          text.includes("no such file") ||
-          text.includes("not found")
-        ) {
-          return null;
-        }
-        throw err;
-      }),
-      getStorageBreakdownImpl({
-        project_id,
-        path: environmentPath,
-      }).catch((err) => {
-        const text = `${err ?? ""}`.toLowerCase();
-        if (text.includes("no such file") || text.includes("not found")) {
-          return null;
-        }
-        throw err;
-      }),
-      fileServer.allSnapshotUsage({ project_id }),
-    ]);
-
-  const visible: ProjectStorageVisibleSummary[] = [
-    {
-      key: "home",
-      label: homePath,
-      summaryLabel: "Home",
-      path: homePath,
-      summaryBytes: Math.max(
-        0,
-        homeUsage.bytes - Math.max(0, environmentUsage?.bytes ?? 0),
-      ),
-      usage: homeUsage,
-    },
-  ];
-  if (scratchUsage != null) {
-    visible.push({
-      key: "scratch",
-      label: "/scratch",
-      summaryLabel: "Scratch",
-      path: "/scratch",
-      summaryBytes: scratchUsage.bytes,
-      usage: scratchUsage,
-    });
-  }
-  if (environmentUsage != null) {
-    visible.push({
-      key: "environment",
-      label: "Environment changes",
-      summaryLabel: "Environment",
-      path: environmentPath,
-      summaryBytes: environmentUsage.bytes,
-      usage: environmentUsage,
-    });
-  }
-
-  const snapshotExclusiveBytes = snapshotUsage.reduce(
-    (sum, snapshot) => sum + Math.max(0, snapshot.exclusive ?? 0),
-    0,
-  );
-  const counted: ProjectStorageCountedSummary[] = [];
-  if (snapshotExclusiveBytes >= 1 << 20) {
-    const snapshotCount = snapshotUsage.length;
-    const largestExclusiveBytes = snapshotUsage.reduce(
-      (max, snapshot) => Math.max(max, Math.max(0, snapshot.exclusive ?? 0)),
-      0,
-    );
-    counted.push({
-      key: "snapshots",
-      label: "Snapshots",
-      bytes: snapshotExclusiveBytes,
-      compactLabel: "Snapshots",
-      detail:
-        snapshotCount <= 1
-          ? "This snapshot currently holds counted storage that would be freed if it is deleted."
-          : `Across ${snapshotCount} snapshots, this is storage referenced only by snapshots. The largest single snapshot currently has about ${human_readable_size(largestExclusiveBytes)} of exclusive data, and exact savings from deleting one snapshot depend on overlap.`,
-    });
-  }
-
-  const overview: ProjectStorageOverview = {
-    collected_at: new Date().toISOString(),
-    quotas: [
-      {
-        key: "project",
-        label: "Project quota",
-        used: quota.used,
-        size: quota.size,
-        qgroupid: quota.qgroupid,
-        scope: quota.scope,
-        warning: quota.warning,
-      },
-    ],
-    visible,
-    counted,
-  };
-  try {
-    await recordProjectStorageHistorySample({
-      project_id,
-      overview,
-      force: !!force_sample,
-    });
-  } catch (err) {
-    log.warn("getStorageOverview: unable to record storage history sample", {
-      project_id,
-      err,
-    });
-  }
-  projectStorageOverviewCache.set(cacheKey, overview);
-  return overview;
-}
-
-export async function getStorageBreakdown({
-  account_id,
-  project_id,
-  path,
-}: {
-  account_id: string;
-  project_id: string;
-  path: string;
-}): Promise<ProjectStorageBreakdown> {
-  await assertCollab({ account_id, project_id });
-  return await getStorageBreakdownImpl({ project_id, path });
-}
-
-export async function getStorageHistory({
-  account_id,
-  project_id,
-  window_minutes,
-  max_points,
-}: {
-  account_id: string;
-  project_id: string;
-  window_minutes?: number;
-  max_points?: number;
-}): Promise<ProjectStorageHistory> {
-  await assertCollab({ account_id, project_id });
-  return await loadProjectStorageHistory({
-    project_id,
-    window_minutes,
-    max_points,
-  });
 }
 
 export async function exec({

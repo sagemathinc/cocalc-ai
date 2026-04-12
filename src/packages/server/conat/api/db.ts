@@ -6,7 +6,6 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { assertCollab } from "./util";
 
 export { userQuery };
-export { fileUseTimes } from "./file-use-times";
 
 export async function touch({
   account_id,

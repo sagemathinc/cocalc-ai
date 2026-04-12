@@ -1,6 +1,9 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import TTLCache from "@isaacs/ttlcache";
-import type { ProjectStorageOverview } from "@cocalc/conat/hub/api/projects";
+import {
+  getStorageOverview as getProjectStorageOverview,
+  type ProjectStorageOverview,
+} from "@cocalc/conat/project/storage-info";
 
 const storageOverviewCache = new TTLCache<string, ProjectStorageOverview>({
   ttl: 1000 * 30,
@@ -31,12 +34,12 @@ export default async function getStorageOverview({
   if (cache && storageOverviewCache.has(k)) {
     return storageOverviewCache.get(k)!;
   }
-  const overview =
-    await webapp_client.conat_client.hub.projects.getStorageOverview({
-      project_id,
-      home,
-      force_sample,
-    });
+  const overview = await getProjectStorageOverview({
+    client: webapp_client.conat_client.conat(),
+    project_id,
+    home,
+    force_sample,
+  });
   storageOverviewCache.set(k, overview);
   return overview;
 }

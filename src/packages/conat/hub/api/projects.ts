@@ -109,70 +109,6 @@ export interface ImportPublicPathResult {
   stream_name: string;
 }
 
-export interface ProjectStorageBreakdown {
-  path: string;
-  bytes: number;
-  children: { bytes: number; path: string }[];
-  collected_at: string;
-}
-
-export interface ProjectStorageQuotaSummary {
-  key: "project";
-  label: string;
-  used: number;
-  size: number;
-  qgroupid?: string;
-  scope?: "tracking" | "subvolume";
-  warning?: string;
-}
-
-export interface ProjectStorageVisibleSummary {
-  key: "home" | "scratch" | "environment";
-  label: string;
-  summaryLabel: string;
-  path: string;
-  summaryBytes: number;
-  usage: ProjectStorageBreakdown;
-}
-
-export interface ProjectStorageCountedSummary {
-  key: "snapshots";
-  label: string;
-  bytes: number;
-  detail?: string;
-  compactLabel?: string;
-}
-
-export interface ProjectStorageOverview {
-  collected_at: string;
-  quotas: ProjectStorageQuotaSummary[];
-  visible: ProjectStorageVisibleSummary[];
-  counted: ProjectStorageCountedSummary[];
-}
-
-export interface ProjectStorageHistoryPoint {
-  collected_at: string;
-  quota_used_bytes?: number;
-  quota_size_bytes?: number;
-  quota_used_percent?: number;
-  home_visible_bytes?: number;
-  scratch_visible_bytes?: number;
-  environment_visible_bytes?: number;
-  snapshot_counted_bytes?: number;
-}
-
-export interface ProjectStorageHistoryGrowth {
-  window_minutes: number;
-  quota_used_bytes_per_hour?: number;
-}
-
-export interface ProjectStorageHistory {
-  window_minutes: number;
-  point_count: number;
-  points: ProjectStorageHistoryPoint[];
-  growth?: ProjectStorageHistoryGrowth;
-}
-
 export interface RecentDocumentActivityRow {
   id: string;
   project_id: string;
@@ -456,10 +392,6 @@ export const projects = {
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
 
-  getDiskQuota: authFirstRequireAccount,
-  getStorageOverview: authFirstRequireAccount,
-  getStorageBreakdown: authFirstRequireAccount,
-  getStorageHistory: authFirstRequireAccount,
   exec: authFirstRequireAccount,
   getRuntimeLog: authFirstRequireAccount,
   resolveWorkspaceSshConnection: authFirstRequireAccount,
@@ -758,34 +690,6 @@ export interface Projects {
     member_host?: number;
     always_running?: number;
   }) => Promise<void>;
-
-  getDiskQuota: (opts: { account_id?: string; project_id: string }) => Promise<{
-    used: number;
-    size: number;
-    qgroupid?: string;
-    scope?: "tracking" | "subvolume";
-    warning?: string;
-  }>;
-
-  getStorageOverview: (opts: {
-    account_id?: string;
-    project_id: string;
-    home?: string;
-    force_sample?: boolean;
-  }) => Promise<ProjectStorageOverview>;
-
-  getStorageBreakdown: (opts: {
-    account_id?: string;
-    project_id: string;
-    path: string;
-  }) => Promise<ProjectStorageBreakdown>;
-
-  getStorageHistory: (opts: {
-    account_id?: string;
-    project_id: string;
-    window_minutes?: number;
-    max_points?: number;
-  }) => Promise<ProjectStorageHistory>;
 
   exec: (opts: {
     account_id?: string;

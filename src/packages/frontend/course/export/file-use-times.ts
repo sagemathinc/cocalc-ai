@@ -4,6 +4,7 @@
  */
 
 import { StudentsMap, StudentRecord } from "../store";
+import { getFileUseTimes as getProjectFileUseTimes } from "@cocalc/conat/project/document-activity";
 import {
   exec,
   write_text_file_to_project,
@@ -35,17 +36,22 @@ async function one_student_file_use_times(
   project_id = project_id;
   account_id = account_id;
   const times: { [path: string]: PathUseTimes } = {};
+  const requester_account_id = `${webapp_client.account_id ?? ""}`.trim();
+  if (!requester_account_id) {
+    throw Error("must be signed in");
+  }
   for (const path of paths) {
-    const { edit_times, access_times } =
-      await webapp_client.conat_client.hub.db.fileUseTimes({
-        project_id,
-        path,
-        target_account_id: account_id,
-        limit,
-        edit_times: true,
-        access_times: true,
-        timeout: 1000 * 60 * 15,
-      });
+    const { edit_times, access_times } = await getProjectFileUseTimes({
+      client: webapp_client.conat_client.conat(),
+      account_id: requester_account_id,
+      project_id,
+      path,
+      target_account_id: account_id,
+      limit,
+      edit_times: true,
+      access_times: true,
+      timeout: 1000 * 60 * 15,
+    });
     if (edit_times == null || access_times == null) {
       throw Error("bug");
     }

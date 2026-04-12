@@ -46,7 +46,6 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { inspectStaticAppRequest } from "./static-apps";
 import { startHostMetricsCollector } from "./host-metrics";
 import { applyPendingCopies } from "./pending-copies";
-import { initProjectTouchService } from "./touch-service";
 
 const logger = getLogger("project-host:master");
 
@@ -771,7 +770,6 @@ export async function startMasterRegistration({
       },
     },
   });
-  const projectTouchService = await initProjectTouchService(client);
 
   const basePayload: HostRegistration = {
     id,
@@ -1206,7 +1204,6 @@ export async function startMasterRegistration({
     }
     client.close?.();
     controlService?.close?.();
-    projectTouchService?.close?.();
   };
   return { stop, notifyShutdown };
 }

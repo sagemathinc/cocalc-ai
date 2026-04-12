@@ -1,13 +1,11 @@
+import {
+  getDiskQuota as getProjectDiskQuota,
+  type ProjectDiskQuota,
+} from "@cocalc/conat/project/storage-info";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import TTLCache from "@isaacs/ttlcache";
 
-export type DiskQuota = {
-  used: number;
-  size: number;
-  qgroupid?: string;
-  scope?: "tracking" | "subvolume";
-  warning?: string;
-};
+export type DiskQuota = ProjectDiskQuota;
 
 const quotaCache = new TTLCache<string, DiskQuota>({
   ttl: 1000 * 60,
@@ -28,7 +26,8 @@ export default async function quota({
   if (cache && quotaCache.has(k)) {
     return quotaCache.get(k)!;
   }
-  const x = await webapp_client.conat_client.hub.projects.getDiskQuota({
+  const x = await getProjectDiskQuota({
+    client: webapp_client.conat_client.conat(),
     project_id,
   });
   quotaCache.set(k, x);

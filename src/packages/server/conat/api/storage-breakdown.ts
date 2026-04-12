@@ -5,7 +5,7 @@
 
 import { posix } from "path";
 import type { ExecOutput } from "@cocalc/conat/files/fs";
-import type { ProjectStorageBreakdown } from "@cocalc/conat/hub/api/projects";
+import type { ProjectStorageBreakdown } from "@cocalc/conat/project/storage-info";
 
 export function parseDustOutput(
   output: ExecOutput,
