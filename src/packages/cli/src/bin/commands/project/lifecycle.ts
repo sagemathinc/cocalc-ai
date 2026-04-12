@@ -6,6 +6,7 @@
  */
 import { URL } from "node:url";
 import { Command } from "commander";
+import { getBackupFiles, getBackups } from "@cocalc/conat/project/archive-info";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -16,6 +17,7 @@ export function registerProjectLifecycleCommands(
   const {
     withContext,
     resolveProjectFromArgOrContext,
+    resolveProjectConatClient,
     waitForLro,
     toIso,
     resolveProxyUrl,
@@ -82,9 +84,13 @@ export function registerProjectLifecycleCommands(
         command: Command,
       ) => {
         await withContext(command, "project backup list", async (ctx) => {
-          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
-          const backups = (await ctx.hub.projects.getBackups({
-            project_id: ws.project_id,
+          const { project, client } = await resolveProjectConatClient(
+            ctx,
+            opts.project,
+          );
+          const backups = (await getBackups({
+            client,
+            project_id: project.project_id,
             indexed_only: !!opts.indexedOnly,
           })) as Array<{
             id: string;
@@ -96,7 +102,7 @@ export function registerProjectLifecycleCommands(
             Math.min(10000, Number(opts.limit ?? "100") || 100),
           );
           return (backups ?? []).slice(0, limitNum).map((b) => ({
-            project_id: ws.project_id,
+            project_id: project.project_id,
             backup_id: b.id,
             time: toIso(b.time),
             summary: b.summary ?? null,
@@ -117,9 +123,13 @@ export function registerProjectLifecycleCommands(
         command: Command,
       ) => {
         await withContext(command, "project backup files", async (ctx) => {
-          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
-          const files = (await ctx.hub.projects.getBackupFiles({
-            project_id: ws.project_id,
+          const { project, client } = await resolveProjectConatClient(
+            ctx,
+            opts.project,
+          );
+          const files = (await getBackupFiles({
+            client,
+            project_id: project.project_id,
             id: opts.backupId,
             path: opts.path,
           })) as Array<{
@@ -129,7 +139,7 @@ export function registerProjectLifecycleCommands(
             size: number;
           }>;
           return (files ?? []).map((f) => ({
-            project_id: ws.project_id,
+            project_id: project.project_id,
             backup_id: opts.backupId,
             name: f.name,
             is_dir: !!f.isDir,

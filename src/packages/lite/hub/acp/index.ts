@@ -1872,6 +1872,26 @@ export class ChatStreamWriter {
     }
   }
 
+  private finalizeFinishedTurn(): void {
+    if (!this.finished || this.leaseFinalized) return;
+    switch (this.finishedBy) {
+      case "error":
+        this.setThreadState("error");
+        this.finalizeLease("error", this.lastErrorText ?? undefined);
+        return;
+      case "interrupt":
+        this.setThreadState("interrupted");
+        this.finalizeLease("completed");
+        return;
+      case "summary":
+        this.setThreadState("complete");
+        this.finalizeLease("completed");
+        return;
+      default:
+        return;
+    }
+  }
+
   constructor({
     metadata,
     client,
@@ -2123,6 +2143,7 @@ export class ChatStreamWriter {
         message.type === "error" ? "error" : "summary",
       );
       await this.waitForScheduledSyncdbSaves();
+      this.finalizeFinishedTurn();
       if (shouldAutoRotate) {
         await maybeAutoRotateChatStore({
           client: this.client,
@@ -2300,8 +2321,6 @@ export class ChatStreamWriter {
       }
       clearAcpPayloads(this.metadata);
       this.finished = true;
-      this.setThreadState(this.interruptNotified ? "interrupted" : "complete");
-      this.finalizeLease("completed");
       this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
         this.timeTravel?.finalizeTurn(this.metadata.message_date),
       );
@@ -2313,8 +2332,6 @@ export class ChatStreamWriter {
       clearAcpPayloads(this.metadata);
       this.finished = true;
       this.finishedBy = "error";
-      this.setThreadState("error");
-      this.finalizeLease("error", payload.error);
       this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
         this.timeTravel?.finalizeTurn(this.metadata.message_date),
       );

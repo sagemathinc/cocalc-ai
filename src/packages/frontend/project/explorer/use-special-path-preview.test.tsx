@@ -5,6 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import * as archiveInfo from "@cocalc/frontend/project/archive-info";
 import { useSpecialPathPreview } from "./use-special-path-preview";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 
@@ -16,14 +17,17 @@ jest.mock("antd", () => ({
   },
 }));
 
+jest.mock("@cocalc/frontend/project/archive-info", () => ({
+  getSnapshotFileText: (...args: any[]) => getSnapshotFileText(...args),
+  getBackups: jest.fn(),
+  getBackupFileText: jest.fn(),
+}));
+
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       hub: {
         projects: {
-          getSnapshotFileText: (...args: any[]) => getSnapshotFileText(...args),
-          getBackups: jest.fn(),
-          getBackupFileText: jest.fn(),
           restoreBackup: jest.fn(),
         },
       },
@@ -83,6 +87,7 @@ function TestComponent() {
 describe("useSpecialPathPreview", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (archiveInfo.getBackups as jest.Mock).mockResolvedValue([]);
   });
 
   it("invalidates a pending preview when the modal is closed", async () => {

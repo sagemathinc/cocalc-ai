@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type VirtuosoGridHandle } from "react-virtuoso";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Loading, SearchInput } from "@cocalc/frontend/components";
+import { getSnapshotFileText } from "@cocalc/frontend/project/archive-info";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -179,12 +180,11 @@ export function SnapshotsTab({
     const requestId = previewRequestRef.current + 1;
     previewRequestRef.current = requestId;
     setPreview({ loading: true });
-    webapp_client.conat_client.hub.projects
-      .getSnapshotFileText({
-        project_id,
-        snapshot: restoreTarget.snapshot,
-        path: relative,
-      })
+    getSnapshotFileText({
+      project_id,
+      snapshot: restoreTarget.snapshot,
+      path: relative,
+    })
       .then((resp) => {
         if (previewRequestRef.current !== requestId) return;
         setPreview({

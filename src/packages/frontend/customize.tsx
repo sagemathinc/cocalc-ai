@@ -8,7 +8,7 @@
 
 import { fromJS, List } from "immutable";
 import { join } from "path";
-import { useIntl } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import {
   Actions,
   rclass,
@@ -531,15 +531,15 @@ export const Footer: React.FC = React.memo(() => {
     defaultMessage: "System Status",
   });
 
-  const name = intl.formatMessage(
-    {
-      id: "customize.footer.name",
-      defaultMessage: "{name} by {organizationName}",
-    },
-    {
-      name: <SiteName />,
-      organizationName,
-    },
+  const name = (
+    <FormattedMessage
+      id="customize.footer.name"
+      defaultMessage="{name} by {organizationName}"
+      values={{
+        name: <SiteName />,
+        organizationName,
+      }}
+    />
   );
 
   function contents() {

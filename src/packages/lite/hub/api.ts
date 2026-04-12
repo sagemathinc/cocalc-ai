@@ -36,7 +36,6 @@ import type {
   SaveNotificationOptions,
 } from "@cocalc/conat/hub/api/notifications";
 import type {
-  RecentDocumentActivityRow,
   ProjectLauncherSettings,
   ProjectRegion,
   ProjectCreated,
@@ -71,7 +70,6 @@ import {
   project_id as REMOTE_PROJECT_ID,
 } from "../remote";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
@@ -110,15 +108,11 @@ import {
   startLiteCodexDeviceAuth,
   uploadLiteSubscriptionAuthFile,
 } from "./codex-auth";
-import { getRow, listRows, upsertRow } from "./sqlite/database";
-import { uuid } from "@cocalc/util/misc";
+import { getRow, listRows } from "./sqlite/database";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
 const DEFAULT_BAY_ID = "bay-0";
-const DEFAULT_RECENT_DOCUMENT_ACTIVITY_LIMIT = 200;
-const MAX_RECENT_DOCUMENT_ACTIVITY_LIMIT = 500;
-const DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S = 21 * 24 * 60 * 60;
 
 function syncHistoryWithExplicitClient(
   opts: Parameters<typeof syncHistory>[0],
@@ -209,109 +203,6 @@ function requireLiteProjectId(value?: string): string {
     throw Error(`project '${project_id}' is not available in lite mode`);
   }
   return project_id;
-}
-
-function normalizeRecentDocumentActivityLimit(limit?: number): number {
-  if (!Number.isFinite(limit)) {
-    return DEFAULT_RECENT_DOCUMENT_ACTIVITY_LIMIT;
-  }
-  return Math.max(
-    1,
-    Math.min(MAX_RECENT_DOCUMENT_ACTIVITY_LIMIT, Math.floor(limit!)),
-  );
-}
-
-function normalizeRecentDocumentActivityMaxAge(max_age_s?: number): number {
-  if (!Number.isFinite(max_age_s)) {
-    return DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S;
-  }
-  return Math.max(60, Math.floor(max_age_s!));
-}
-
-function normalizeProjectLogTime(value: unknown): Date | null {
-  if (value == null) return null;
-  const date = value instanceof Date ? value : new Date(`${value}`);
-  return Number.isFinite(date.getTime()) ? date : null;
-}
-
-async function listRecentDocumentActivityLite(opts: {
-  account_id?: string;
-  limit?: number;
-  max_age_s?: number;
-}): Promise<RecentDocumentActivityRow[]> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.listRecentDocumentActivity",
-      args: [opts],
-    });
-  }
-  const limit = normalizeRecentDocumentActivityLimit(opts.limit);
-  const maxAgeS = normalizeRecentDocumentActivityMaxAge(opts.max_age_s);
-  const cutoffMs = Date.now() - maxAgeS * 1000;
-  const grouped = new Map<
-    string,
-    {
-      project_id: string;
-      path: string;
-      last_accessed: Date | null;
-      accountTimes: Map<string, number>;
-    }
-  >();
-  for (const raw of listRows("file_access_log") as any[]) {
-    if (`${raw?.project_id ?? ""}`.trim() !== LITE_PROJECT_ID) continue;
-    const project_id = `${raw?.project_id ?? ""}`.trim();
-    const path = `${raw?.filename ?? ""}`;
-    if (!project_id || !path) continue;
-    const time = normalizeProjectLogTime(raw?.time);
-    const timeMs = time?.getTime() ?? 0;
-    if (timeMs < cutoffMs) continue;
-    const key = `${project_id}\u0000${path}`;
-    let entry = grouped.get(key);
-    if (!entry) {
-      entry = {
-        project_id,
-        path,
-        last_accessed: time,
-        accountTimes: new Map<string, number>(),
-      };
-      grouped.set(key, entry);
-    } else if ((entry.last_accessed?.getTime() ?? 0) < timeMs) {
-      entry.last_accessed = time;
-    }
-    const account_id = `${raw?.account_id ?? ""}`.trim();
-    if (account_id) {
-      entry.accountTimes.set(
-        account_id,
-        Math.max(entry.accountTimes.get(account_id) ?? 0, timeMs),
-      );
-    }
-  }
-  return Array.from(grouped.values())
-    .sort((a, b) => {
-      const at = a.last_accessed?.getTime() ?? 0;
-      const bt = b.last_accessed?.getTime() ?? 0;
-      if (at !== bt) return bt - at;
-      return `${b.project_id}\u0000${b.path}`.localeCompare(
-        `${a.project_id}\u0000${a.path}`,
-      );
-    })
-    .slice(0, limit)
-    .map(
-      (row): RecentDocumentActivityRow => ({
-        id: createHash("sha1")
-          .update(row.project_id)
-          .update("\0")
-          .update(row.path)
-          .digest("hex"),
-        project_id: row.project_id,
-        path: row.path,
-        last_accessed: row.last_accessed,
-        recent_account_ids: Array.from(row.accountTimes.entries())
-          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-          .slice(0, 5)
-          .map(([account_id]) => account_id),
-      }),
-    );
 }
 
 interface LiteProjectReadDetails {
@@ -520,33 +411,6 @@ async function getProjectActiveOperationLite(opts: {
   requireLiteAccountId(opts.account_id);
   requireLiteProjectId(opts.project_id);
   return null;
-}
-
-async function logFileAccessLite(opts: {
-  account_id?: string;
-  project_id: string;
-  path: string;
-}): Promise<void> {
-  if (hasRemote) {
-    await callRemoteHub({
-      name: "db.logFileAccess",
-      args: [opts],
-    });
-    return;
-  }
-  const account_id = requireLiteAccountId(opts.account_id);
-  const project_id = requireLiteProjectId(opts.project_id);
-  const path = `${opts.path ?? ""}`;
-  if (!path) return;
-  const id = uuid();
-  upsertRow("file_access_log", id, {
-    id,
-    project_id,
-    account_id,
-    filename: path,
-    time: new Date().toISOString(),
-    expire: null,
-  });
 }
 
 function isSetUserQueryLite(opts: {
@@ -1551,7 +1415,6 @@ export const hubApi: HubApi = {
     archive: archiveNotificationLite,
   },
   projects: {
-    listRecentDocumentActivity: listRecentDocumentActivityLite,
     getProjectLauncher: getProjectLauncherLite,
     getProjectRegion: getProjectRegionLite,
     getProjectCreated: getProjectCreatedLite,
@@ -1684,7 +1547,6 @@ export const hubApi: HubApi = {
   },
   db: {
     touch: () => {},
-    logFileAccess: logFileAccessLite,
     userQuery: userQueryLite,
   },
   purchases: {},

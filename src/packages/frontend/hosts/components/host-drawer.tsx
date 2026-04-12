@@ -712,7 +712,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                     <Card
                       key={artifact}
                       size="small"
-                      bodyStyle={{ padding: "12px" }}
+                      styles={{ body: { padding: "12px" } }}
                     >
                       <Space
                         orientation="vertical"
@@ -1006,7 +1006,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 <Card
                   key={entry.id}
                   size="small"
-                  bodyStyle={{ padding: "10px 12px" }}
+                  styles={{ body: { padding: "10px 12px" } }}
                 >
                   {(() => {
                     const change = describeSpecChange(entry.spec);

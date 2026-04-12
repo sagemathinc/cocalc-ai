@@ -54,6 +54,11 @@ import {
   getJupyterActionsForPath,
   openFileInProject,
 } from "./project-open-helpers";
+import {
+  findBackupFiles as getProjectBackupVersions,
+  getBackupFileText as getProjectBackupFileText,
+  getSnapshotFileText as getProjectSnapshotFileText,
+} from "@cocalc/frontend/project/archive-info";
 import { createManagedSyncDocLeases } from "./syncdoc-leases";
 import { createBrowserExecOperations } from "./exec-operations";
 import { createBrowserSessionHeartbeat } from "./session-heartbeat";
@@ -1450,8 +1455,7 @@ export function createBrowserSessionAutomation({
           git: boolean;
         }> => {
           assertExecNotCanceled(isCanceled);
-          const projectsApi = (client.conat_client as any)?.hub?.projects ?? {};
-          return getBrowserTimeTravelProviders(projectsApi);
+          return getBrowserTimeTravelProviders();
         },
         patchflow: {
           listVersions: async (
@@ -1609,12 +1613,8 @@ export function createBrowserSessionAutomation({
             if (!cleanSnapshot) {
               throw Error("snapshot must be specified");
             }
-            const getSnapshotFileText = (client.conat_client as any)?.hub
-              ?.projects?.getSnapshotFileText;
-            if (typeof getSnapshotFileText !== "function") {
-              throw Error("snapshot provider unavailable");
-            }
-            const resp = await getSnapshotFileText({
+            const resp = await getProjectSnapshotFileText({
+              client: conat(),
               project_id,
               snapshot: cleanSnapshot,
               path: cleanPath,
@@ -1635,12 +1635,8 @@ export function createBrowserSessionAutomation({
           > => {
             assertExecNotCanceled(isCanceled);
             const cleanPath = requireAbsolutePath(path);
-            const findBackupFiles = (client.conat_client as any)?.hub?.projects
-              ?.findBackupFiles;
-            if (typeof findBackupFiles !== "function") {
-              throw Error("backup provider unavailable");
-            }
-            const raw = await findBackupFiles({
+            const raw = await getProjectBackupVersions({
+              client: conat(),
               project_id,
               glob: [cleanPath],
             });
@@ -1683,12 +1679,8 @@ export function createBrowserSessionAutomation({
             if (!cleanBackupId) {
               throw Error("backup_id must be specified");
             }
-            const getBackupFileText = (client.conat_client as any)?.hub
-              ?.projects?.getBackupFileText;
-            if (typeof getBackupFileText !== "function") {
-              throw Error("backup provider unavailable");
-            }
-            const resp = await getBackupFileText({
+            const resp = await getProjectBackupFileText({
+              client: conat(),
               project_id,
               id: cleanBackupId,
               path: cleanPath,

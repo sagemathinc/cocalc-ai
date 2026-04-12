@@ -4,6 +4,7 @@
  */
 
 import { redux } from "@cocalc/frontend/app-framework";
+import { markFile as markProjectDocumentActivity } from "@cocalc/conat/project/document-activity";
 import { webapp_client } from "../webapp-client";
 import * as misc from "@cocalc/util/misc";
 import { Actions } from "../app-framework";
@@ -107,9 +108,12 @@ export class FileUseActions extends Actions<any> {
     }
     await Promise.all([
       Promise.resolve(webapp_client.project_client.touch_project(project_id)),
-      (webapp_client.conat_client.hub.db as any).logFileAccess({
+      markProjectDocumentActivity({
+        client: webapp_client.conat_client.conat(),
+        account_id,
         project_id,
         path,
+        action,
       }),
     ]);
   }

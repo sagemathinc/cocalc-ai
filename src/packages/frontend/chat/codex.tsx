@@ -362,7 +362,7 @@ export function CodexConfigButton({
         onOk={onSave}
         onCancel={() => setOpen(false)}
         width={560}
-        bodyStyle={{ maxHeight: "75vh", overflowY: "auto" }}
+        styles={{ body: { maxHeight: "75vh", overflowY: "auto" } }}
       >
         <Space orientation="vertical" style={{ width: "100%" }} size={12}>
           <Form form={form} layout="vertical">
@@ -496,7 +496,7 @@ export function CodexConfigButton({
         footer={null}
         onCancel={() => setPaymentOpen(false)}
         width={760}
-        bodyStyle={{ maxHeight: "75vh", overflowY: "auto" }}
+        styles={{ body: { maxHeight: "75vh", overflowY: "auto" } }}
       >
         {lite ? (
           <Space orientation="vertical" size={12} style={{ width: "100%" }}>

@@ -60,12 +60,15 @@ jest.mock("@cocalc/frontend/project/explorer/file-actions-dropdown", () => ({
   FileActionsDropdown: () => null,
 }));
 
+jest.mock("@cocalc/frontend/project/archive-info", () => ({
+  getBackups: (...args: any[]) => getBackups(...args),
+}));
+
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       hub: {
         projects: {
-          getBackups: (...args: any[]) => getBackups(...args),
           restoreBackup: jest.fn(),
           deleteBackup: jest.fn(),
         },

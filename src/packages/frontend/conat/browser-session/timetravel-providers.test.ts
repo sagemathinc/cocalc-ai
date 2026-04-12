@@ -13,13 +13,7 @@ describe("getBrowserTimeTravelProviders", () => {
     const { getBrowserTimeTravelProviders } =
       await import("./timetravel-providers");
 
-    expect(
-      getBrowserTimeTravelProviders({
-        findBackupFiles: () => {},
-        getBackupFileText: () => {},
-        getSnapshotFileText: () => {},
-      }),
-    ).toEqual({
+    expect(getBrowserTimeTravelProviders()).toEqual({
       patchflow: true,
       snapshots: true,
       backups: false,
@@ -28,13 +22,7 @@ describe("getBrowserTimeTravelProviders", () => {
   });
 
   it("enables backups outside lite mode when both backup APIs exist", () => {
-    expect(
-      getBrowserTimeTravelProviders({
-        findBackupFiles: () => {},
-        getBackupFileText: () => {},
-        getSnapshotFileText: () => {},
-      }),
-    ).toEqual({
+    expect(getBrowserTimeTravelProviders()).toEqual({
       patchflow: true,
       snapshots: true,
       backups: true,

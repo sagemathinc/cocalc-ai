@@ -93,6 +93,8 @@ import { maybeHandleStaticAppRequest } from "./static-apps";
 import { runPrivilegedRmHelper } from "./privileged-rm-helper";
 import { initProjectTouchService } from "./touch-service";
 import { initProjectStorageInfoService } from "./storage-info-service";
+import { initProjectDocumentActivityService } from "./document-activity-service";
+import { initProjectArchiveInfoService } from "./archive-info-service";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -326,6 +328,10 @@ export async function main(
   const projectTouchService = await initProjectTouchService(conatClient);
   const projectStorageInfoService =
     await initProjectStorageInfoService(conatClient);
+  const projectDocumentActivityService =
+    await initProjectDocumentActivityService(conatClient);
+  const projectArchiveInfoService =
+    await initProjectArchiveInfoService(conatClient);
 
   // ACP runs inside project-host in container mode (no env flag needed).
   setPreferContainerExecutor(true);
@@ -552,6 +558,8 @@ export async function main(
     fsServer?.close?.();
     projectTouchService?.close?.();
     projectStorageInfoService?.close?.();
+    projectDocumentActivityService?.close?.();
+    projectArchiveInfoService?.close?.();
     masterRegistration?.stop();
     stopReconciler?.();
     stopDataPermissionHardener?.();

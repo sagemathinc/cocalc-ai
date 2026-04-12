@@ -339,7 +339,7 @@ export function HostRootfsCachePanel({
                   <Card
                     key={entry.image}
                     size="small"
-                    bodyStyle={{ padding: "12px" }}
+                    styles={{ body: { padding: "12px" } }}
                   >
                     <Space
                       orientation="vertical"

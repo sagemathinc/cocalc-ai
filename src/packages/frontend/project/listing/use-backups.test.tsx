@@ -1,18 +1,10 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import * as archiveInfo from "@cocalc/frontend/project/archive-info";
 import useBackupsListing, { getCachedBackupsListing } from "./use-backups";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 
-jest.mock("@cocalc/frontend/webapp-client", () => ({
-  webapp_client: {
-    conat_client: {
-      hub: {
-        projects: {
-          getBackups: jest.fn(),
-          getBackupFiles: jest.fn(),
-        },
-      },
-    },
-  },
+jest.mock("@cocalc/frontend/project/archive-info", () => ({
+  getBackups: jest.fn(),
+  getBackupFiles: jest.fn(),
 }));
 
 function TestComponent({
@@ -29,10 +21,8 @@ function TestComponent({
 }
 
 describe("useBackupsListing", () => {
-  const getBackupsMock = webapp_client.conat_client.hub.projects
-    .getBackups as jest.Mock;
-  const getBackupFilesMock = webapp_client.conat_client.hub.projects
-    .getBackupFiles as jest.Mock;
+  const getBackupsMock = archiveInfo.getBackups as jest.Mock;
+  const getBackupFilesMock = archiveInfo.getBackupFiles as jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();

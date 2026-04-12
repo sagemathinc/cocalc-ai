@@ -254,6 +254,13 @@ export class ConatClient extends EventEmitter {
       }
     } else {
       const parts = subject.split(".");
+      if (
+        parts[0] === "services" &&
+        parts[1]?.startsWith("account-") &&
+        isValidUUID(parts[3] ?? "")
+      ) {
+        return parts[3];
+      }
       const maybe = parts[1];
       if (maybe?.startsWith("project-")) {
         const project_id = maybe.slice("project-".length);
