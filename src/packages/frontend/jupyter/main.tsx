@@ -7,7 +7,7 @@
 Top-level react component, which ties everything together
 */
 
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 import * as immutable from "immutable";
 import { useEffect } from "react";
 
@@ -20,7 +20,7 @@ import "./output-messages/mime-types/init-frontend";
 // React components that implement parts of the Jupyter notebook.
 import { useLanguageModelSetting } from "@cocalc/frontend/account/useLanguageModelSetting";
 import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-source";
-import { ErrorDisplay, Icon, Text } from "@cocalc/frontend/components";
+import { ErrorDisplay, Icon, Text, Tooltip } from "@cocalc/frontend/components";
 import { A } from "@cocalc/frontend/components/A";
 import { Loading } from "@cocalc/frontend/components/loading";
 import { LLMTools, NotebookMode, Scroll } from "@cocalc/jupyter/types";

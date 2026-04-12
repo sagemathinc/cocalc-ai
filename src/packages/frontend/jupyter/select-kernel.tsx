@@ -16,7 +16,6 @@ import {
   Spin,
   Space,
   Tabs,
-  Tooltip,
   Typography,
 } from "antd";
 import { Map as ImmutableMap, List, OrderedMap } from "immutable";
@@ -28,7 +27,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { useState } from "react";
-import { Icon, Paragraph, Text } from "@cocalc/frontend/components";
+import { Icon, Paragraph, Text, Tooltip } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";

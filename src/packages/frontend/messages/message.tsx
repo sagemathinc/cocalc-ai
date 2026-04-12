@@ -1,8 +1,9 @@
-import { Checkbox, Flex, Space, Tag, Tooltip } from "antd";
+import { Checkbox, Flex, Space, Tag } from "antd";
 import { useEffect, useRef } from "react";
 import { useIntl } from "react-intl";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import MostlyStaticMarkdown, {

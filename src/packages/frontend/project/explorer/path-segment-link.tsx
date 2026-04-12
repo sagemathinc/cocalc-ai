@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Tooltip } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 
 import { CSS } from "@cocalc/frontend/app-framework";
 

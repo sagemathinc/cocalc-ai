@@ -2,9 +2,10 @@
 Use ChatGPT to explain an error message and help the user fix it.
 */
 
-import { Alert, Button, Space, Tooltip } from "antd";
+import { Alert, Button, Space } from "antd";
 import { useMemo, useState } from "react";
 
+import { Tooltip } from "@cocalc/frontend/components";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 

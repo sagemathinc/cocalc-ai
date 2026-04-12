@@ -6,7 +6,13 @@
 // Kernel display
 
 import { CSS, React, redux, useRedux } from "@cocalc/frontend/app-framework";
-import { A, Icon, IconName, Loading } from "@cocalc/frontend/components";
+import {
+  A,
+  Icon,
+  IconName,
+  Loading,
+  Tooltip,
+} from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import type {
   AlertLevel,
@@ -27,7 +33,6 @@ import {
   Progress,
   Space,
   Tabs,
-  Tooltip,
   Typography,
 } from "antd";
 import * as immutable from "immutable";

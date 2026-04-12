@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Tooltip } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 
 import { numToOrdinal } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";

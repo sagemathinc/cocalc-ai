@@ -1,7 +1,8 @@
-import { Button, Space, Tooltip } from "antd";
+import { Button, Space } from "antd";
 import { useIntl } from "react-intl";
 
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { labels } from "@cocalc/frontend/i18n";
 
