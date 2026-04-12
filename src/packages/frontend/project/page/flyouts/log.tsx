@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Flex, Input, Space, Switch, Tooltip } from "antd";
+import {
+  Alert,
+  Button,
+  Flex,
+  Input,
+  Popconfirm,
+  Space,
+  Switch,
+  Tooltip,
+} from "antd";
 import immutable from "immutable";
 import { debounce } from "lodash";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -298,6 +307,10 @@ export function LogFlyout({
   const project_log_loading = useTypedRedux(
     { project_id },
     "project_log_loading",
+  );
+  const project_log_deleting = useTypedRedux(
+    { project_id },
+    "project_log_deleting",
   );
   const project_log_loading_older = useTypedRedux(
     { project_id },
@@ -770,10 +783,31 @@ export function LogFlyout({
                 size="small"
                 type="text"
                 icon={<Icon name="refresh" />}
+                disabled={!!project_log_deleting}
                 loading={!!project_log_loading}
                 onClick={() => actions?.refresh_project_log()}
               />
             </Tooltip>
+            <Popconfirm
+              title="Delete project log?"
+              description="This permanently deletes the activity log and cannot be undone."
+              okText="Delete"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => actions?.delete_project_log()}
+            >
+              <Tooltip title="Delete log">
+                <Button
+                  size="small"
+                  type="text"
+                  danger
+                  disabled={
+                    !!project_log_loading || !!project_log_loading_older
+                  }
+                  icon={<Icon name="trash" />}
+                  loading={!!project_log_deleting}
+                />
+              </Tooltip>
+            </Popconfirm>
             {renderDedup()}
           </>
         );
@@ -785,10 +819,31 @@ export function LogFlyout({
                 size="small"
                 type="text"
                 icon={<Icon name="refresh" />}
+                disabled={!!project_log_deleting}
                 loading={!!project_log_loading}
                 onClick={() => actions?.refresh_project_log()}
               />
             </Tooltip>
+            <Popconfirm
+              title="Delete project log?"
+              description="This permanently deletes the activity log and cannot be undone."
+              okText="Delete"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => actions?.delete_project_log()}
+            >
+              <Tooltip title="Delete log">
+                <Button
+                  size="small"
+                  type="text"
+                  danger
+                  disabled={
+                    !!project_log_loading || !!project_log_loading_older
+                  }
+                  icon={<Icon name="trash" />}
+                  loading={!!project_log_deleting}
+                />
+              </Tooltip>
+            </Popconfirm>
             {renderFilter()}
           </>
         );

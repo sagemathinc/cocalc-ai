@@ -132,6 +132,7 @@ export interface ProjectStoreState {
   project_log_all?: ProjectLogMap;
   project_log_loading?: boolean;
   project_log_loading_older?: boolean;
+  project_log_deleting?: boolean;
   project_log_has_older?: boolean;
   project_log_error?: string;
   search?: string;
@@ -334,6 +335,7 @@ export class ProjectStore extends Store<ProjectStoreState> {
       // Project Log
       project_log_loading: false,
       project_log_loading_older: false,
+      project_log_deleting: false,
       project_log_has_older: false,
       project_log_error: undefined,
 

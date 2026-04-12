@@ -3427,6 +3427,39 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     void this.load_project_log("newer");
   };
 
+  delete_project_log = async (): Promise<void> => {
+    this.setState({
+      project_log_deleting: true,
+      project_log_error: undefined,
+    });
+    try {
+      const stream = await this.getProjectLogStream();
+      await stream.delete({ all: true });
+      stream.close();
+      if (this.projectLogStream === stream) {
+        this.projectLogStream = undefined;
+      }
+      this.setState({
+        project_log: buildProjectLogMap([]),
+        project_log_has_older: false,
+        project_log_loading: false,
+        project_log_loading_older: false,
+        project_log_deleting: false,
+        project_log_error: undefined,
+      });
+    } catch (err) {
+      console.warn("project log delete failed", {
+        project_id: this.project_id,
+        err,
+      });
+      this.setState({
+        project_log_deleting: false,
+        project_log_error: `${err ?? ""}`,
+      });
+      throw err;
+    }
+  };
+
   ensure_project_log = (): void => {
     const store = this.get_store();
     if (store == null) return;
