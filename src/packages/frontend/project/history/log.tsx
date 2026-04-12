@@ -332,6 +332,16 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
         {workspaces.current ? (
           <Flex justify="space-between" style={{ marginBottom: 8 }}>
             <Space size={8}>
+              <Switch
+                size="small"
+                checked={workspaceOnly}
+                onChange={setWorkspaceOnly}
+              />
+              <span style={{ fontSize: "12px", color: "#666" }}>
+                Only current workspace
+              </span>
+            </Space>
+            <Space size={8}>
               <Button
                 icon={<Icon name="refresh" />}
                 disabled={!!project_log_deleting}
@@ -359,44 +369,38 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
                 </Button>
               </Popconfirm>
             </Space>
-            <Space size={8}>
-              <Switch
-                size="small"
-                checked={workspaceOnly}
-                onChange={setWorkspaceOnly}
-              />
-              <span style={{ fontSize: "12px", color: "#666" }}>
-                Only current workspace
-              </span>
-            </Space>
           </Flex>
         ) : (
-          <Space size={8} style={{ marginBottom: 8 }}>
-            <Button
-              icon={<Icon name="refresh" />}
-              disabled={!!project_log_deleting}
-              loading={!!project_log_loading}
-              onClick={() => actions?.refresh_project_log()}
-            >
-              Refresh
-            </Button>
-            <Popconfirm
-              title="Delete project log?"
-              description="This permanently deletes the activity log and cannot be undone."
-              okText="Delete"
-              okButtonProps={{ danger: true }}
-              onConfirm={() => actions?.delete_project_log()}
-            >
+          <Flex justify="flex-end" style={{ marginBottom: 8 }}>
+            <Space size={8}>
               <Button
-                icon={<Icon name="trash" />}
-                danger
-                disabled={!!project_log_loading || !!project_log_loading_older}
-                loading={!!project_log_deleting}
+                icon={<Icon name="refresh" />}
+                disabled={!!project_log_deleting}
+                loading={!!project_log_loading}
+                onClick={() => actions?.refresh_project_log()}
               >
-                Delete Log
+                Refresh
               </Button>
-            </Popconfirm>
-          </Space>
+              <Popconfirm
+                title="Delete project log?"
+                description="This permanently deletes the activity log and cannot be undone."
+                okText="Delete"
+                okButtonProps={{ danger: true }}
+                onConfirm={() => actions?.delete_project_log()}
+              >
+                <Button
+                  icon={<Icon name="trash" />}
+                  danger
+                  disabled={
+                    !!project_log_loading || !!project_log_loading_older
+                  }
+                  loading={!!project_log_deleting}
+                >
+                  Delete Log
+                </Button>
+              </Popconfirm>
+            </Space>
+          </Flex>
         )}
         {render_search()}
         {render_body()}
