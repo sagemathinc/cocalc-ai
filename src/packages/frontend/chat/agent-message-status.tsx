@@ -234,6 +234,8 @@ interface AgentMessageStatusProps {
   logEvents?: AcpStreamMessage[] | null;
   deleteLog?: () => Promise<void>;
   attachedSteers?: AttachedSteerMessage[];
+  interruptRequested?: boolean;
+  onInterrupt?: () => void;
 }
 
 interface AgentActivityChipProps {
@@ -380,6 +382,8 @@ export function AgentMessageStatus({
   attachedSteers,
   notifyOnTurnFinish = false,
   onNotifyOnTurnFinishChange,
+  interruptRequested = false,
+  onInterrupt,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
@@ -537,6 +541,16 @@ export function AgentMessageStatus({
           date={date}
           onOpen={openActivity}
         />
+        {generating && onInterrupt ? (
+          <Button
+            size="small"
+            disabled={interruptRequested}
+            loading={interruptRequested}
+            onClick={onInterrupt}
+          >
+            {interruptRequested ? "Interrupting..." : "Interrupt"}
+          </Button>
+        ) : null}
         {generating && onNotifyOnTurnFinishChange ? (
           <Tooltip title="Show a modal in this browser tab when this Codex turn finishes.">
             <span

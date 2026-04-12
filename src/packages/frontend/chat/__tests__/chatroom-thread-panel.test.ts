@@ -3,6 +3,7 @@ import {
   applyNewThreadSetupPatch,
   resolveActiveThreadSearchMatchDate,
   resolveCompactThreadBadgeAppearance,
+  resolveSelectedThreadRunningCodexMessage,
   resolveThreadSearchHighlightQuery,
 } from "../chatroom-thread-panel";
 import immutable from "immutable";
@@ -119,5 +120,38 @@ describe("resolveThreadSearchHighlightQuery", () => {
         threadSearchQuery: "hello",
       }),
     ).toBe("hello");
+  });
+});
+
+describe("resolveSelectedThreadRunningCodexMessage", () => {
+  it("picks the newest generating codex turn", () => {
+    const older = {
+      acp_account_id: "acp-1",
+      generating: true,
+      date: new Date("2026-04-12T10:00:00Z"),
+    } as any;
+    const newer = {
+      acp_account_id: "acp-2",
+      generating: true,
+      date: new Date("2026-04-12T10:01:00Z"),
+    } as any;
+    expect(resolveSelectedThreadRunningCodexMessage([older, newer])).toBe(
+      newer,
+    );
+  });
+
+  it("ignores interrupted or non-generating codex rows", () => {
+    const interrupted = {
+      acp_account_id: "acp-1",
+      generating: true,
+      acp_interrupted: true,
+    } as any;
+    const complete = {
+      acp_account_id: "acp-2",
+      generating: false,
+    } as any;
+    expect(
+      resolveSelectedThreadRunningCodexMessage([interrupted, complete]),
+    ).toBeUndefined();
   });
 });

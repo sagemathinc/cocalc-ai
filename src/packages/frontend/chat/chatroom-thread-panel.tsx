@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Input, Modal, Popover, Select, Space, Switch } from "antd";
+import {
+  Button,
+  Input,
+  message as antdMessage,
+  Modal,
+  Popover,
+  Select,
+  Space,
+  Switch,
+} from "antd";
 import {
   React,
   useCallback,
@@ -25,9 +34,10 @@ import {
   type CodexReasoningId,
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
-import type { CodexThreadConfig } from "@cocalc/chat";
+import { deriveAcpLogRefs, type CodexThreadConfig } from "@cocalc/chat";
 import type { AcpAutomationConfig } from "@cocalc/conat/ai/acp/types";
 import { ChatLog } from "./chat-log";
+import { AgentMessageStatus } from "./agent-message-status";
 import CodexConfigButton from "./codex";
 import { ThreadBadge } from "./thread-badge";
 import type { ChatActions } from "./actions";
@@ -39,8 +49,8 @@ import {
   type ThreadListItem,
   type ThreadMeta,
 } from "./threads";
-import { dateValue } from "./access";
-import { newest_content } from "./utils";
+import { dateValue, field } from "./access";
+import { getThreadRootDate, newest_content } from "./utils";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import type {
   ChatStoreArchivedRow,
@@ -63,6 +73,8 @@ import {
   chatPanelOwnsThreadSearchShortcut,
   shouldOpenThreadSearchShortcut,
 } from "./chatroom-thread-panel-shortcuts";
+import { resolveAgentSessionIdForThread } from "./thread-session";
+import { useCodexLog } from "./use-codex-log";
 import {
   AutomationConfigFields,
   buildAutomationDraft,
@@ -183,6 +195,46 @@ export function applyNewThreadSetupPatch(
   patch: Partial<NewThreadSetup>,
 ): NewThreadSetup {
   return { ...current, ...patch };
+}
+
+export function resolveSelectedThreadRunningCodexMessage(
+  threadMessages: ChatMessages | any[] | undefined,
+) {
+  const entries = Array.isArray(threadMessages) ? threadMessages : [];
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const message = entries[i];
+    if (message == null) continue;
+    if (!field<string>(message, "acp_account_id")) continue;
+    if (field<boolean>(message, "acp_interrupted") === true) continue;
+    if (field<boolean>(message, "generating") !== true) continue;
+    return message;
+  }
+  return undefined;
+}
+
+function getAcpStartedAtMs(message: any): number | undefined {
+  const value = field<number | string>(message, "acp_started_at_ms");
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function getLatestCodexActivityAtMs(
+  events: any[] | null | undefined,
+): number | undefined {
+  if (!Array.isArray(events)) return undefined;
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const time = (events[i] as any)?.time;
+    if (typeof time === "number" && Number.isFinite(time)) {
+      return time;
+    }
+  }
+  return undefined;
 }
 
 function normalizeThreadKey(value?: string | null): string | undefined {
@@ -338,6 +390,112 @@ export function ChatRoomThreadPanel({
         : [],
     [actions, selectedThreadLookup, messages],
   );
+  const selectedRunningCodexMessage = useMemo(
+    () => resolveSelectedThreadRunningCodexMessage(selectedThreadMessages),
+    [selectedThreadMessages],
+  );
+  const selectedRunningCodexDate = useMemo(
+    () => dateValue(selectedRunningCodexMessage)?.valueOf(),
+    [selectedRunningCodexMessage],
+  );
+  const selectedRunningAcpStartedAtMs = useMemo(
+    () => getAcpStartedAtMs(selectedRunningCodexMessage),
+    [selectedRunningCodexMessage],
+  );
+  const selectedRunningMessageId = useMemo(
+    () => field<string>(selectedRunningCodexMessage, "message_id"),
+    [selectedRunningCodexMessage],
+  );
+  const selectedRunningThreadId = useMemo(
+    () =>
+      field<string>(selectedRunningCodexMessage, "thread_id") ??
+      selectedThreadId,
+    [selectedRunningCodexMessage, selectedThreadId],
+  );
+  const selectedRunningThreadRootMs = useMemo(() => {
+    if (selectedRunningCodexDate == null) return undefined;
+    const root = getThreadRootDate({
+      date: selectedRunningCodexDate,
+      messages,
+    });
+    const rootMs =
+      root?.valueOf?.() ?? (typeof root === "number" ? root : undefined);
+    return Number.isFinite(rootMs)
+      ? (rootMs as number)
+      : selectedRunningCodexDate;
+  }, [messages, selectedRunningCodexDate]);
+  const selectedRunningFallbackLogRefs = useMemo(() => {
+    const derived =
+      project_id && path && selectedRunningThreadId && selectedRunningMessageId
+        ? deriveAcpLogRefs({
+            project_id,
+            path,
+            thread_id: selectedRunningThreadId,
+            message_id: selectedRunningMessageId,
+          })
+        : undefined;
+    return {
+      store: derived?.store,
+      key: derived?.key,
+      subject: derived?.subject,
+      liveStream: derived?.liveStream,
+    };
+  }, [path, project_id, selectedRunningMessageId, selectedRunningThreadId]);
+  const selectedRunningLogStore = useMemo(
+    () =>
+      field<string>(selectedRunningCodexMessage, "acp_log_store") ??
+      selectedRunningFallbackLogRefs.store,
+    [selectedRunningCodexMessage, selectedRunningFallbackLogRefs.store],
+  );
+  const selectedRunningLogKey = useMemo(
+    () =>
+      field<string>(selectedRunningCodexMessage, "acp_log_key") ??
+      selectedRunningFallbackLogRefs.key,
+    [selectedRunningCodexMessage, selectedRunningFallbackLogRefs.key],
+  );
+  const selectedRunningLogSubject = useMemo(
+    () =>
+      field<string>(selectedRunningCodexMessage, "acp_log_subject") ??
+      selectedRunningFallbackLogRefs.subject,
+    [selectedRunningCodexMessage, selectedRunningFallbackLogRefs.subject],
+  );
+  const selectedRunningLiveLogStream = useMemo(
+    () =>
+      field<string>(selectedRunningCodexMessage, "acp_live_log_stream") ??
+      selectedRunningFallbackLogRefs.liveStream,
+    [selectedRunningCodexMessage, selectedRunningFallbackLogRefs.liveStream],
+  );
+  const selectedRunningCodexLog = useCodexLog({
+    projectId: project_id,
+    logStore: selectedRunningLogStore,
+    logKey: selectedRunningLogKey,
+    logSubject: selectedRunningLogSubject,
+    liveLogStream: selectedRunningLiveLogStream,
+    generating: selectedRunningCodexMessage != null,
+    enabled: selectedRunningCodexMessage != null,
+  });
+  const selectedRunningLastActivityAtMs = useMemo(
+    () => getLatestCodexActivityAtMs(selectedRunningCodexLog.events),
+    [selectedRunningCodexLog.events],
+  );
+  const selectedRunningSessionIdForInterrupt = useMemo(() => {
+    if (!selectedThreadId) return undefined;
+    const resolved = resolveAgentSessionIdForThread({
+      actions,
+      threadId: selectedThreadId,
+      threadKey: selectedThreadId,
+      persistedSessionId: selectedThreadMeta?.acp_config?.sessionId,
+    });
+    return (
+      field<string>(selectedRunningCodexMessage, "acp_thread_id") ?? resolved
+    );
+  }, [
+    actions,
+    selectedRunningCodexMessage,
+    selectedThreadId,
+    selectedThreadMeta,
+  ]);
+  const [interruptRequested, setInterruptRequested] = useState(false);
   const threadSearchMatches = useMemo(() => {
     const needle = threadSearchQuery.trim().toLowerCase();
     if (!needle) return [] as string[];
@@ -392,6 +550,40 @@ export function ChatRoomThreadPanel({
   useEffect(() => {
     setThreadNearTop(false);
   }, [selectedThreadId]);
+
+  useEffect(() => {
+    if (selectedRunningCodexMessage == null) {
+      setInterruptRequested(false);
+    }
+  }, [selectedRunningCodexDate, selectedRunningCodexMessage]);
+
+  const handleInterruptSelectedRunningTurn = useCallback(async () => {
+    if (
+      interruptRequested ||
+      selectedRunningCodexMessage == null ||
+      selectedRunningCodexDate == null
+    ) {
+      return;
+    }
+    setInterruptRequested(true);
+    const ok = await actions.languageModelStopGenerating(
+      new Date(selectedRunningCodexDate),
+      {
+        threadId: selectedRunningSessionIdForInterrupt,
+        senderId: field<string>(selectedRunningCodexMessage, "sender_id"),
+      },
+    );
+    if (!ok) {
+      setInterruptRequested(false);
+      antdMessage.error("Failed to interrupt Codex turn.");
+    }
+  }, [
+    actions,
+    interruptRequested,
+    selectedRunningCodexDate,
+    selectedRunningCodexMessage,
+    selectedRunningSessionIdForInterrupt,
+  ]);
 
   const loadArchivedHistory = useCallback(
     async (offset = 0, append = false) => {
@@ -1154,6 +1346,9 @@ export function ChatRoomThreadPanel({
   const threadImagePreview = showThreadImagePreview
     ? compactThreadImage?.trim()
     : undefined;
+  const runningStatusTop = shouldShowCodexConfig ? 52 : 8;
+  const contentTopInset =
+    (shouldShowCodexConfig ? 44 : 0) + (selectedRunningCodexMessage ? 56 : 0);
 
   return (
     <div
@@ -1182,6 +1377,57 @@ export function ChatRoomThreadPanel({
           </Space>
         </div>
       )}
+      {selectedRunningCodexMessage != null &&
+      selectedRunningCodexDate != null ? (
+        <div
+          style={{
+            position: "absolute",
+            top: runningStatusTop,
+            left: 8,
+            right: threadImagePreview ? 112 : 8,
+            zIndex: 10,
+            pointerEvents: "none",
+          }}
+        >
+          <div style={{ pointerEvents: "auto" }}>
+            <AgentMessageStatus
+              show={true}
+              generating={true}
+              durationLabel=""
+              lastActivityAtMs={selectedRunningLastActivityAtMs}
+              startedAtMs={selectedRunningAcpStartedAtMs}
+              fontSize={fontSize}
+              project_id={project_id}
+              path={path}
+              activityBasePath={
+                selectedThreadMeta?.acp_config?.workingDirectory
+              }
+              date={selectedRunningCodexDate}
+              logRefs={{
+                store: selectedRunningLogStore,
+                key: selectedRunningLogKey,
+                subject: selectedRunningLogSubject,
+                liveStream: selectedRunningLiveLogStream,
+              }}
+              activityContext={{
+                actions,
+                message: selectedRunningCodexMessage,
+                messages,
+                threadRootMs: selectedRunningThreadRootMs,
+                threadId: selectedRunningThreadId,
+                project_id,
+                path,
+              }}
+              logEvents={selectedRunningCodexLog.events}
+              deleteLog={selectedRunningCodexLog.deleteLog}
+              notifyOnTurnFinish={notifyOnTurnFinish}
+              onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
+              interruptRequested={interruptRequested}
+              onInterrupt={handleInterruptSelectedRunningTurn}
+            />
+          </div>
+        </div>
+      ) : null}
       {threadImagePreview ? (
         <div
           style={{
@@ -1775,114 +2021,127 @@ export function ChatRoomThreadPanel({
           ) : null}
         </div>
       </Modal>
-      {showArchivedBanner ? (
-        <div
-          style={{
-            margin: shouldShowCodexConfig
-              ? "44px 12px 0 12px"
-              : "8px 12px 0 12px",
-            padding: "8px 10px",
-            border: "1px solid #ffe58f",
-            background: "#fffbe6",
-            borderRadius: 8,
-            color: "#8a6d3b",
-            fontSize: 12,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            zIndex: 1,
-          }}
-        >
-          <span
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          flex: "1 1 0",
+          minHeight: 0,
+          paddingTop: contentTopInset,
+        }}
+      >
+        {showArchivedBanner ? (
+          <div
+            style={{
+              margin: "8px 12px 0 12px",
+              padding: "8px 10px",
+              border: "1px solid #ffe58f",
+              background: "#fffbe6",
+              borderRadius: 8,
+              color: "#8a6d3b",
+              fontSize: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              zIndex: 1,
+            }}
           >
-            {archivedRowsCount.toLocaleString()} older message
-            {archivedRowsCount === 1 ? "" : "s"} stored on backend
-            {archivedLoadedOffset > 0 ? (
-              <> ({archivedLoadedOffset.toLocaleString()} loaded)</>
-            ) : (
-              "."
-            )}
-            <Button
-              size="small"
-              type="link"
-              style={{ padding: 0, height: "auto" }}
-              onClick={() => {
-                void loadArchivedIntoThread();
-              }}
-              disabled={archivedLoadInProgress || archivedLoadDone}
+            <span
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
             >
-              {archivedLoadInProgress
-                ? "Loading..."
-                : archivedLoadDone
-                  ? "All loaded"
-                  : "Load more"}
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              style={{ padding: 0, height: "auto" }}
-              onClick={() => {
-                void loadArchivedIntoThread("all");
-              }}
-              disabled={archivedLoadInProgress || archivedLoadDone}
-            >
-              {archivedLoadInProgress && archivedLoadMode === "all"
-                ? "Loading all..."
-                : "Load all"}
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              style={{ padding: 0, height: "auto" }}
-              onClick={() => {
-                setArchivedHistoryOpen(true);
-                void loadArchivedHistory(0, false);
-              }}
-            >
-              Preview
-            </Button>
-          </span>
-        </div>
-      ) : null}
-      {selectedThreadId && archivedLoadError ? (
-        <div
-          style={{
-            margin: "6px 12px 0 12px",
-            color: "#b71c1c",
-            fontSize: 12,
-          }}
-        >
-          {archivedLoadError}
-        </div>
-      ) : null}
-      <ChatLog
-        actions={actions}
-        project_id={project_id ?? ""}
-        path={path ?? ""}
-        messages={messages}
-        threadIndex={threadIndex}
-        acpState={acpState}
-        scrollToBottomRef={scrollToBottomRef}
-        scrollCacheId={scrollCacheId}
-        mode={variant === "compact" ? "sidechat" : "standalone"}
-        fontSize={fontSize}
-        selectedThread={selectedThreadForLog}
-        scrollToIndex={scrollToIndex}
-        scrollToDate={scrollToDate}
-        selectedDate={activeSearchMatchDate ?? fragmentId ?? undefined}
-        composerTargetKey={composerTargetKey}
-        composerFocused={composerFocused}
-        searchJumpDate={activeSearchMatchDate}
-        searchJumpToken={threadSearchJumpToken}
-        searchQuery={threadSearchHighlightQuery}
-        onAtTopStateChange={setThreadNearTop}
-        activityJumpDate={activityJumpDate}
-        activityJumpToken={activityJumpToken}
-        notifyOnTurnFinish={notifyOnTurnFinish}
-        onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
-        onOpenGitBrowser={onOpenGitBrowser}
-      />
+              {archivedRowsCount.toLocaleString()} older message
+              {archivedRowsCount === 1 ? "" : "s"} stored on backend
+              {archivedLoadedOffset > 0 ? (
+                <> ({archivedLoadedOffset.toLocaleString()} loaded)</>
+              ) : (
+                "."
+              )}
+              <Button
+                size="small"
+                type="link"
+                style={{ padding: 0, height: "auto" }}
+                onClick={() => {
+                  void loadArchivedIntoThread();
+                }}
+                disabled={archivedLoadInProgress || archivedLoadDone}
+              >
+                {archivedLoadInProgress
+                  ? "Loading..."
+                  : archivedLoadDone
+                    ? "All loaded"
+                    : "Load more"}
+              </Button>
+              <Button
+                size="small"
+                type="link"
+                style={{ padding: 0, height: "auto" }}
+                onClick={() => {
+                  void loadArchivedIntoThread("all");
+                }}
+                disabled={archivedLoadInProgress || archivedLoadDone}
+              >
+                {archivedLoadInProgress && archivedLoadMode === "all"
+                  ? "Loading all..."
+                  : "Load all"}
+              </Button>
+              <Button
+                size="small"
+                type="link"
+                style={{ padding: 0, height: "auto" }}
+                onClick={() => {
+                  setArchivedHistoryOpen(true);
+                  void loadArchivedHistory(0, false);
+                }}
+              >
+                Preview
+              </Button>
+            </span>
+          </div>
+        ) : null}
+        {selectedThreadId && archivedLoadError ? (
+          <div
+            style={{
+              margin: "6px 12px 0 12px",
+              color: "#b71c1c",
+              fontSize: 12,
+            }}
+          >
+            {archivedLoadError}
+          </div>
+        ) : null}
+        <ChatLog
+          actions={actions}
+          project_id={project_id ?? ""}
+          path={path ?? ""}
+          messages={messages}
+          threadIndex={threadIndex}
+          acpState={acpState}
+          scrollToBottomRef={scrollToBottomRef}
+          scrollCacheId={scrollCacheId}
+          mode={variant === "compact" ? "sidechat" : "standalone"}
+          fontSize={fontSize}
+          selectedThread={selectedThreadForLog}
+          scrollToIndex={scrollToIndex}
+          scrollToDate={scrollToDate}
+          selectedDate={activeSearchMatchDate ?? fragmentId ?? undefined}
+          composerTargetKey={composerTargetKey}
+          composerFocused={composerFocused}
+          searchJumpDate={activeSearchMatchDate}
+          searchJumpToken={threadSearchJumpToken}
+          searchQuery={threadSearchHighlightQuery}
+          onAtTopStateChange={setThreadNearTop}
+          activityJumpDate={activityJumpDate}
+          activityJumpToken={activityJumpToken}
+          notifyOnTurnFinish={notifyOnTurnFinish}
+          onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
+          onOpenGitBrowser={onOpenGitBrowser}
+          suppressInlineCodexStatusDate={
+            selectedRunningCodexDate != null
+              ? `${selectedRunningCodexDate}`
+              : undefined
+          }
+        />
+      </div>
     </div>
   );
 }

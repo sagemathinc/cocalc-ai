@@ -369,6 +369,7 @@ interface Props {
     commitHash: string;
   }) => void;
   attachedSteers?: AttachedSteerMessage[];
+  suppressInlineCodexStatus?: boolean;
 }
 
 export function resolveEditedMessageForSave(
@@ -515,6 +516,7 @@ export default function Message({
   onNotifyOnTurnFinishChange,
   onOpenGitBrowser,
   attachedSteers,
+  suppressInlineCodexStatus = false,
 }: Props) {
   const intl = useIntl();
   const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
@@ -822,6 +824,8 @@ export default function Message({
     // other kinds of LLM messages.
     return Boolean(field<string>(message, "acp_account_id"));
   }, [message]);
+  const suppressInlineCodexActivity =
+    showCodexActivity && effectiveGenerating && suppressInlineCodexStatus;
 
   useEffect(() => {
     if (!showCodexActivity) return;
@@ -1586,7 +1590,7 @@ export default function Message({
       <>
         {renderForkNotice()}
         <AgentMessageStatus
-          show={showCodexActivity}
+          show={showCodexActivity && !suppressInlineCodexActivity}
           generating={effectiveGenerating}
           durationLabel={durationLabel}
           lastActivityAtMs={lastCodexActivityAtMs}
@@ -1628,6 +1632,9 @@ export default function Message({
           }
           onDrawerOpenChange={setIsActivityDrawerOpen}
         />
+        {suppressInlineCodexActivity ? (
+          <AttachedSteerStatusList attachedSteers={attachedSteers} />
+        ) : null}
         {showCodexActivity && acpRecoveryCount ? (
           <div
             style={{
@@ -1745,6 +1752,9 @@ export default function Message({
 
   function renderBottomControls() {
     if (!effectiveGenerating || actions == null) {
+      return null;
+    }
+    if (suppressInlineCodexActivity) {
       return null;
     }
     const interruptLabel = isCodexThread

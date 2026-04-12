@@ -165,4 +165,23 @@ describe("AgentMessageStatus", () => {
 
     expect(screen.queryByRole("checkbox", { name: "Notify" })).toBeNull();
   });
+
+  it("renders an interrupt button when a handler is provided", () => {
+    const onInterrupt = jest.fn();
+    render(
+      React.createElement(AgentMessageStatus, {
+        show: true,
+        generating: true,
+        durationLabel: "0:10",
+        date: 1000,
+        logRefs: {},
+        activityContext: {} as any,
+        onInterrupt,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Interrupt" }));
+
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+  });
 });
