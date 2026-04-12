@@ -106,9 +106,7 @@ export class FileUseActions extends Actions<any> {
       return;
     }
     await Promise.all([
-      webapp_client.conat_client.hub.db.touch({
-        project_id,
-      }),
+      Promise.resolve(webapp_client.project_client.touch_project(project_id)),
       (webapp_client.conat_client.hub.db as any).logFileAccess({
         project_id,
         path,

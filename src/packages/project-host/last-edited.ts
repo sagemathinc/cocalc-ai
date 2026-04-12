@@ -10,39 +10,48 @@ const RUNNING_TOUCH_TTL_MS = 5 * 60_000;
 const touchCache = new TTL<string, true>({ ttl: TOUCH_TTL_MS });
 const runningTouchCache = new TTL<string, true>({ ttl: RUNNING_TOUCH_TTL_MS });
 const runningGeneration = new Map<string, number>();
+const pendingProjectTouches = new Set<string>();
 
 export async function touchProjectLastEdited(
   project_id: string,
-  reason?: string,
-  opts?: { force?: boolean },
+  _reason?: string,
+  opts?: { force?: boolean; flushNow?: boolean },
 ): Promise<void> {
   if (!opts?.force && touchCache.has(project_id)) {
     return;
   }
   touchCache.set(project_id, true);
+  pendingProjectTouches.add(project_id);
+  if (opts?.flushNow) {
+    await reportPendingProjectTouches();
+  }
+}
+
+export async function reportPendingProjectTouches(): Promise<void> {
   const client = getMasterConatClient();
   const host_id = getLocalHostId();
   if (!client || !host_id) {
-    logger.debug("touchProjectLastEdited skipped (missing client/host)", {
-      project_id,
-      reason,
+    logger.debug("project touch flush skipped (missing client/host)", {
+      pending: pendingProjectTouches.size,
     });
     return;
   }
-  try {
-    await callHub({
-      client,
-      host_id,
-      name: "hosts.touchProject",
-      args: [{ project_id }],
-      timeout: 5000,
-    });
-  } catch (err) {
-    logger.debug("touchProjectLastEdited failed", {
-      project_id,
-      reason,
-      err: `${err}`,
-    });
+  for (const project_id of Array.from(pendingProjectTouches)) {
+    try {
+      await callHub({
+        client,
+        host_id,
+        name: "hosts.touchProject",
+        args: [{ project_id }],
+        timeout: 5000,
+      });
+      pendingProjectTouches.delete(project_id);
+    } catch (err) {
+      logger.debug("touchProjectLastEdited flush failed", {
+        project_id,
+        err: `${err}`,
+      });
+    }
   }
 }
 

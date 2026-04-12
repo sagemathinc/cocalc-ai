@@ -560,14 +560,20 @@ export class ProjectClient {
         });
         return;
       }
-      try {
-        await this.client.conat_client.hub.db.touch({ project_id });
-      } catch (err) {
-        // 503 would just mean the hub isn't listening yet, so expected
-        // sometimes.
-        if (err.code == 503) {
-          console.log("WARNING: issue touching project", err);
+      const results = await Promise.allSettled([
+        this.client.conat_client.hub.db.touch({}),
+        this.client.conat_client.touchProjectHost({ project_id }),
+      ]);
+      for (const result of results) {
+        if (result.status !== "rejected") {
+          continue;
         }
+        const err: any = result.reason;
+        if (err?.code == 503) {
+          console.log("WARNING: issue touching project", err);
+          continue;
+        }
+        console.warn("WARNING: issue touching project", err);
       }
     },
     TOUCH_THROTTLE,

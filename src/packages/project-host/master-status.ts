@@ -21,6 +21,7 @@ import {
   setProjectProvisioned,
   deleteProjectProvisioning,
 } from "./sqlite/provisioning";
+import { reportPendingProjectTouches } from "./last-edited";
 import {
   getRevocationSyncCursor,
   setRevocationSyncCursor,
@@ -219,6 +220,7 @@ async function reportPendingStates() {
     }
   }
   await reportPendingProvisioning();
+  await reportPendingProjectTouches();
   await syncAccountRevocationsFromMaster();
 }
 

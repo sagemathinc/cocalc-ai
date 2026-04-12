@@ -59,12 +59,15 @@ export class SyncClient extends EventEmitter implements Client0 {
     if (client == null || !client.isConnected()) {
       return;
     }
+    if (!account_id) {
+      return;
+    }
     try {
       await callHub({
         client,
         account_id,
         name: "db.touch",
-        args: [{ project_id, account_id }],
+        args: [{ account_id }],
       });
     } catch (err) {
       const code = (err as any)?.code;
@@ -76,7 +79,11 @@ export class SyncClient extends EventEmitter implements Client0 {
         );
       if (!disconnected && code != 503) {
         // 503 when hub not running yet
-        logger.warn("issue touching project", { project_id, err });
+        logger.warn("issue touching account activity", {
+          project_id,
+          account_id,
+          err,
+        });
       }
     }
   };

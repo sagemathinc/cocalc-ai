@@ -446,17 +446,11 @@ export class ConatClient extends EventEmitter {
     preferred_project_id?: string,
   ): string | undefined => {
     this.syncTrackedProjectsForHost(host_id, state);
-    if (
-      preferred_project_id &&
-      state.project_ids.has(preferred_project_id)
-    ) {
+    if (preferred_project_id && state.project_ids.has(preferred_project_id)) {
       state.last_project_id = preferred_project_id;
       return preferred_project_id;
     }
-    if (
-      state.last_project_id &&
-      state.project_ids.has(state.last_project_id)
-    ) {
+    if (state.last_project_id && state.project_ids.has(state.last_project_id)) {
       return state.last_project_id;
     }
     for (const project_id of state.project_ids) {
@@ -639,6 +633,41 @@ export class ConatClient extends EventEmitter {
       return parsed.toString();
     }
     return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  };
+
+  public touchProjectHost = async ({
+    project_id,
+    timeout = DEFAULT_TIMEOUT,
+  }: {
+    project_id: string;
+    timeout?: number;
+  }): Promise<void> => {
+    if (!isValidUUID(project_id)) {
+      return;
+    }
+    const routing = await this.ensureProjectRoutingInfo(project_id);
+    if (!routing) {
+      return;
+    }
+    const subject = projectSubject({ project_id, service: "touch" });
+    let cn = this.getOrCreateRoutedHubClient({ ...routing, project_id });
+    try {
+      await cn.request(subject, ["touch", []], {
+        timeout,
+        waitForInterest: true,
+      });
+    } catch (err) {
+      if (!this.isProjectHostAuthError(err)) {
+        throw err;
+      }
+      this.invalidateProjectHostToken(routing.host_id);
+      this.removeRoutedHubClient(routing.host_id);
+      cn = this.getOrCreateRoutedHubClient({ ...routing, project_id });
+      await cn.request(subject, ["touch", []], {
+        timeout,
+        waitForInterest: true,
+      });
+    }
   };
 
   // Project-host routing + auth design:
