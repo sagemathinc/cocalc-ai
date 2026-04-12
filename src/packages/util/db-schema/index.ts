@@ -59,7 +59,6 @@ import "./organizations";
 import "./password-reset";
 import "./pg-system";
 import "./project-invite-tokens";
-import "./project-log";
 import "./project-hosts";
 import "./project-host-bootstrap-tokens";
 import "./project-backup-repos";

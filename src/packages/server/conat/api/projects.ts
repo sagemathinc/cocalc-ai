@@ -53,7 +53,6 @@ import {
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
-import { projectApiClient } from "@cocalc/conat/project/api";
 import {
   getLocalProjectCollaboratorAccessStatus,
   PROJECT_COLLABORATOR_REQUIRED_ERROR,
@@ -73,11 +72,8 @@ import type {
   PublicPathInspectionResult,
   ProjectActiveOperationSummary,
   ProjectCopyRow,
-  ProjectLogPage,
-  ProjectLogCursor,
   ProjectRuntimeLog,
   ProjectAddress,
-  ProjectLogRow,
   ProjectStorageCountedSummary,
   ProjectStorageBreakdown,
   ProjectStorageHistory,
@@ -141,8 +137,6 @@ const projectStorageBreakdownCache = new TTLCache<
   ttl: PROJECT_STORAGE_CACHE_TTL_MS,
 });
 
-const DEFAULT_PROJECT_LOG_LIMIT = 750;
-const MAX_PROJECT_LOG_LIMIT = 2_000;
 const DEFAULT_RECENT_DOCUMENT_ACTIVITY_LIMIT = 200;
 const MAX_RECENT_DOCUMENT_ACTIVITY_LIMIT = 500;
 const DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S = 21 * 24 * 60 * 60;
@@ -162,13 +156,6 @@ function normalizeStoragePath(path?: string): string {
   return normalized;
 }
 
-function normalizeProjectLogLimit(limit?: number): number {
-  if (!Number.isFinite(limit)) {
-    return DEFAULT_PROJECT_LOG_LIMIT;
-  }
-  return Math.max(1, Math.min(MAX_PROJECT_LOG_LIMIT, Math.floor(limit!)));
-}
-
 function normalizeRecentDocumentActivityLimit(limit?: number): number {
   if (!Number.isFinite(limit)) {
     return DEFAULT_RECENT_DOCUMENT_ACTIVITY_LIMIT;
@@ -184,22 +171,6 @@ function normalizeRecentDocumentActivityMaxAge(max_age_s?: number): number {
     return DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S;
   }
   return Math.max(60, Math.floor(max_age_s!));
-}
-
-function normalizeProjectLogTime(value: unknown): Date | null {
-  if (value == null) return null;
-  const date = value instanceof Date ? value : new Date(`${value}`);
-  return Number.isFinite(date.getTime()) ? date : null;
-}
-
-function normalizeProjectLogCursor(
-  cursor?: ProjectLogCursor,
-): ProjectLogCursor | undefined {
-  if (!cursor?.id) return undefined;
-  return {
-    id: cursor.id,
-    time: normalizeProjectLogTime(cursor.time),
-  };
 }
 
 function storageOverviewCacheKey({
@@ -651,57 +622,6 @@ export async function getDiskQuota({
   await assertCollab({ account_id, project_id });
   const client = await getProjectFileServerClient({ project_id });
   return await client.getQuota({ project_id });
-}
-
-export async function listProjectLog({
-  account_id,
-  project_id,
-  limit,
-  newer_than,
-  older_than,
-}: {
-  account_id: string;
-  project_id: string;
-  limit?: number;
-  newer_than?: ProjectLogCursor;
-  older_than?: ProjectLogCursor;
-}): Promise<ProjectLogPage> {
-  await assertCollab({ account_id, project_id });
-  const api = projectApiClient({
-    client: await getExplicitProjectRoutedClient({ project_id }),
-    project_id,
-  });
-  return await api.system.listProjectLog({
-    limit: normalizeProjectLogLimit(limit),
-    newer_than: normalizeProjectLogCursor(newer_than),
-    older_than: normalizeProjectLogCursor(older_than),
-  });
-}
-
-export async function appendProjectLog({
-  account_id,
-  project_id,
-  id,
-  time,
-  event,
-}: {
-  account_id: string;
-  project_id: string;
-  id?: string;
-  time?: Date | null;
-  event: Record<string, any> | string | null;
-}): Promise<ProjectLogRow> {
-  await assertCollab({ account_id, project_id });
-  const api = projectApiClient({
-    client: await getExplicitProjectRoutedClient({ project_id }),
-    project_id,
-  });
-  return await api.system.appendProjectLog({
-    account_id,
-    id,
-    time: normalizeProjectLogTime(time),
-    event,
-  });
 }
 
 export async function listRecentDocumentActivity({

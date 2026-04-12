@@ -21,7 +21,6 @@ import "./messages";
 import "./agents";
 import "./patches";
 import "./projects";
-import "./project-log";
 import "./public-paths";
 import "./purchases";
 import "./purchase-quotas";

@@ -506,13 +506,6 @@ async function purgeProjectRows({
     });
     await runDeleteMaybeMissingTable({
       client,
-      table: "project_log",
-      query: "DELETE FROM project_log WHERE project_id=$1",
-      params: [project.project_id],
-      purged,
-    });
-    await runDeleteMaybeMissingTable({
-      client,
       table: "api_keys",
       query: "DELETE FROM api_keys WHERE project_id=$1",
       params: [project.project_id],

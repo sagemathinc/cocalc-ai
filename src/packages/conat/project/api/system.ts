@@ -7,11 +7,6 @@ import type {
   Configuration,
   ConfigurationAspect,
 } from "@cocalc/comm/project-configuration";
-import type {
-  ProjectLogCursor,
-  ProjectLogPage,
-  ProjectLogRow,
-} from "@cocalc/conat/hub/api/projects";
 
 export const system = {
   terminate: true,
@@ -41,9 +36,6 @@ export const system = {
   // ssh support
   sshPublicKey: true,
   updateSshKeys: true,
-
-  appendProjectLog: true,
-  listProjectLog: true,
 };
 
 export interface System {
@@ -94,17 +86,4 @@ export interface System {
   // ~/.ssh/authorized_keys contains all entries set
   // in the database (in addition to whatever else might be there).
   updateSshKeys: () => Promise<string>;
-
-  appendProjectLog: (opts: {
-    account_id: string;
-    id?: string;
-    time?: Date | null;
-    event: Record<string, any> | string | null;
-  }) => Promise<ProjectLogRow>;
-
-  listProjectLog: (opts: {
-    limit?: number;
-    newer_than?: ProjectLogCursor;
-    older_than?: ProjectLogCursor;
-  }) => Promise<ProjectLogPage>;
 }

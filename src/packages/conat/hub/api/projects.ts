@@ -439,8 +439,6 @@ export const projects = {
   unblockCollabInviteSender: authFirstRequireAccount,
   listCollaborators: authFirstRequireAccount,
   listMyCollaborators: authFirstRequireAccount,
-  appendProjectLog: authFirstRequireAccount,
-  listProjectLog: authFirstRequireAccount,
   listRecentDocumentActivity: authFirstRequireAccount,
   getProjectLauncher: authFirstRequireAccount,
   setProjectLauncher: authFirstRequireAccount,
@@ -575,22 +573,6 @@ export interface Projects {
     project_id: string;
     include_completed?: boolean;
   }) => Promise<ProjectCopyRow[]>;
-
-  listProjectLog: (opts: {
-    account_id?: string;
-    project_id: string;
-    limit?: number;
-    newer_than?: ProjectLogCursor;
-    older_than?: ProjectLogCursor;
-  }) => Promise<ProjectLogPage>;
-
-  appendProjectLog: (opts: {
-    account_id?: string;
-    project_id: string;
-    id?: string;
-    time?: Date | null;
-    event: Record<string, any> | string | null;
-  }) => Promise<ProjectLogRow>;
 
   listRecentDocumentActivity: (opts: {
     account_id?: string;

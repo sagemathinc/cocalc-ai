@@ -21,16 +21,6 @@ export const retentionModels = {
     description:
       "Number of accounts with an entry in the openai_chatgpt_log during each period.",
   },
-  project_log: {
-    title: "Project Log - Retention",
-    description:
-      "Number of accounts in the cohort with an entry in the project log during each period.",
-  },
-  "project_log:all": {
-    title: "Project Log - Active Users",
-    description:
-      "Number of accounts with an entry in the project log during each period.",
-  },
   user_tracking: {
     title: "User Tracking - Retention",
     description:
@@ -69,7 +59,7 @@ Table({
       type: "timestamp",
     },
     model: {
-      desc: "The model that defines active users, e.g., 'file_access_log', 'file_access_log:all'. This determines the cohort and how active is measured, via code that is hardcoded in cocalc's source code.  E.g., 'project_log:paid' might mean that we use entries in the project_log to define activity and restrict to paying customers only to define the cohort.",
+      desc: "The model that defines active users, e.g., 'file_access_log', 'file_access_log:all'. This determines the cohort and how active is measured, via code that is hardcoded in cocalc's source code.",
       type: "string",
     },
     period: {

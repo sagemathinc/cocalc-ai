@@ -8,11 +8,25 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Command } from "commander";
 
+import { PROJECT_LOG_STREAM_NAME } from "@cocalc/conat/hub/api/projects";
+import { astream } from "@cocalc/conat/sync/astream";
+import type {
+  ProjectLogPage,
+  ProjectLogRow,
+} from "@cocalc/conat/hub/api/projects";
 import type { LroStatus } from "../../core/lro";
 import type { ProjectCommandDeps } from "../project";
 
 type SyncKeyInfo = any;
 type ProjectRuntimeLogRow = any;
+type ProjectLogStreamEntry = {
+  mesg: unknown;
+  seq: number;
+  time: number;
+};
+type ProjectLogStreamLike = {
+  getAll: () => AsyncGenerator<ProjectLogStreamEntry, void, unknown>;
+};
 
 export function getMovePlacementFallbackTimeoutMs(
   summary: Pick<LroStatus, "status" | "timedOut">,
@@ -24,6 +38,75 @@ export function getMovePlacementFallbackTimeoutMs(
   // An explicit failed/canceled move can still leave placement eventually
   // updated, but waiting the full command timeout here wedges automation.
   return Math.min(timeoutMs, 10_000);
+}
+
+function normalizeProjectLogTime(value: unknown): Date | null {
+  if (value == null) return null;
+  const date = value instanceof Date ? value : new Date(`${value}`);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function compareProjectLogRows(a: ProjectLogRow, b: ProjectLogRow): number {
+  const at = normalizeProjectLogTime(a.time)?.getTime() ?? 0;
+  const bt = normalizeProjectLogTime(b.time)?.getTime() ?? 0;
+  if (at !== bt) return bt - at;
+  return `${b.id}`.localeCompare(`${a.id}`);
+}
+
+function normalizeProjectLogRow(
+  project_id: string,
+  entry: ProjectLogStreamEntry,
+): ProjectLogRow | null {
+  const row = entry.mesg as Partial<ProjectLogRow> | null | undefined;
+  const id = `${row?.id ?? ""}`.trim();
+  const account_id = `${row?.account_id ?? ""}`.trim();
+  if (!id || !account_id) {
+    return null;
+  }
+  return {
+    id,
+    project_id: `${row?.project_id ?? project_id}`.trim() || project_id,
+    account_id,
+    time: normalizeProjectLogTime(row?.time) ?? new Date(entry.time),
+    event: row?.event ?? {},
+  };
+}
+
+export async function readProjectLogPage({
+  stream,
+  project_id,
+  limit,
+}: {
+  stream: ProjectLogStreamLike;
+  project_id: string;
+  limit: number;
+}): Promise<ProjectLogPage> {
+  const latestById = new Map<string, ProjectLogRow>();
+  for await (const entry of stream.getAll()) {
+    const row = normalizeProjectLogRow(project_id, entry);
+    if (row) {
+      latestById.set(row.id, row);
+    }
+  }
+  const entries = Array.from(latestById.values()).sort(compareProjectLogRows);
+  return {
+    entries: entries.slice(0, limit),
+    has_more: entries.length > limit,
+  };
+}
+
+function formatProjectLogEvent(event: ProjectLogRow["event"]): string {
+  if (typeof event === "string") {
+    return event;
+  }
+  if (event == null) {
+    return "";
+  }
+  try {
+    return JSON.stringify(event);
+  } catch {
+    return String(event);
+  }
 }
 
 export function registerProjectOpsCommands(
@@ -50,6 +133,9 @@ export function registerProjectOpsCommands(
     waitForLro,
     waitForProjectPlacement,
     resolveProject,
+    resolveProjectConatClient,
+    printArrayTable,
+    parsePositiveInteger,
   } = deps;
 
   project
@@ -515,6 +601,52 @@ export function registerProjectOpsCommands(
             return null;
           }
           return log;
+        });
+      },
+    );
+
+  project
+    .command("log")
+    .description("show project activity log from the project-log stream")
+    .option("-w, --project <project>", "project id or name")
+    .option("--limit <n>", "number of log entries", "200")
+    .action(
+      async (opts: { project?: string; limit?: string }, command: Command) => {
+        await withContext(command, "project log", async (ctx) => {
+          const { project: ws, client } = await resolveProjectConatClient(
+            ctx,
+            opts.project,
+          );
+          const limit = parsePositiveInteger(opts.limit, 200, "--limit");
+          const stream = astream<ProjectLogRow>({
+            client,
+            project_id: ws.project_id,
+            name: PROJECT_LOG_STREAM_NAME,
+          });
+          try {
+            const page = await readProjectLogPage({
+              stream,
+              project_id: ws.project_id,
+              limit,
+            });
+            if (!ctx.globals.json && ctx.globals.output !== "json") {
+              printArrayTable(
+                page.entries.map((row) => ({
+                  time: row.time?.toISOString?.() ?? row.time ?? null,
+                  account_id: row.account_id,
+                  event: formatProjectLogEvent(row.event),
+                  id: row.id,
+                })),
+              );
+              return null;
+            }
+            return {
+              project_id: ws.project_id,
+              ...page,
+            };
+          } finally {
+            stream.close();
+          }
         });
       },
     );
