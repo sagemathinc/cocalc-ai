@@ -3226,6 +3226,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
 
       try {
+        const projectApi = this.projectApi().system;
         if (effectiveMode === "newer") {
           const baseline = newestProjectLogCursor(currentLog);
           if (baseline == null) {
@@ -3234,13 +3235,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           let merged = currentLog;
           let older_than: ProjectLogCursor | undefined = undefined;
           for (let i = 0; i < MAX_PROJECT_LOG_REFRESH_BATCHES; i++) {
-            const page =
-              await webapp_client.conat_client.hub.projects.listProjectLog({
-                project_id: this.project_id,
-                limit: PROJECT_LOG_BATCH_LIMIT,
-                newer_than: baseline,
-                older_than,
-              });
+            const page = await projectApi.listProjectLog({
+              limit: PROJECT_LOG_BATCH_LIMIT,
+              newer_than: baseline,
+              older_than,
+            });
             if (page.entries.length === 0) {
               break;
             }
@@ -3263,12 +3262,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
         const older_than =
           effectiveMode === "older" ? oldestProjectLogCursor(currentLog) : null;
-        const page =
-          await webapp_client.conat_client.hub.projects.listProjectLog({
-            project_id: this.project_id,
-            limit: PROJECT_LOG_BATCH_LIMIT,
-            ...(older_than ? { older_than } : {}),
-          });
+        const page = await projectApi.listProjectLog({
+          limit: PROJECT_LOG_BATCH_LIMIT,
+          ...(older_than ? { older_than } : {}),
+        });
         const nextLog =
           effectiveMode === "initial"
             ? buildProjectLogMap(page.entries)
