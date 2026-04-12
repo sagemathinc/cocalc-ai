@@ -5,7 +5,13 @@
 
 import { Alert, Spin } from "antd";
 
-import { React, useEffect, useState, useTypedRedux } from "../app-framework";
+import {
+  React,
+  useEffect,
+  useRef,
+  useState,
+  useTypedRedux,
+} from "../app-framework";
 import FileUseViewer from "./viewer";
 import { listRecentDocumentActivityBestEffort } from "./project-host";
 import type { RecentDocumentActivityEntry } from "./types";
@@ -17,26 +23,48 @@ interface Props {
 
 export function RecentDocumentActivityPanel({ onClose, title }: Props) {
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string>("");
   const [rows, setRows] = useState<RecentDocumentActivityEntry[]>([]);
+  const refreshIdRef = useRef(0);
   const account_id = useTypedRedux("account", "account_id");
   const user_map = useTypedRedux("users", "user_map");
   const project_map = useTypedRedux("projects", "project_map");
 
   const refresh = async (): Promise<void> => {
+    const refreshId = refreshIdRef.current + 1;
+    refreshIdRef.current = refreshId;
     try {
       setLoading(true);
+      setLoadingMore(false);
       setError("");
-      setRows(
-        await listRecentDocumentActivityBestEffort({
-          account_id,
-          project_map,
-        }),
-      );
+      const finalRows = await listRecentDocumentActivityBestEffort({
+        account_id,
+        project_map,
+        onRows: ({ rows: nextRows, complete }) => {
+          if (refreshIdRef.current !== refreshId) {
+            return;
+          }
+          setRows(nextRows);
+          setLoading(false);
+          setLoadingMore(!complete);
+        },
+      });
+      if (refreshIdRef.current !== refreshId) {
+        return;
+      }
+      setRows(finalRows);
     } catch (err) {
+      if (refreshIdRef.current !== refreshId) {
+        return;
+      }
       setError(`${err ?? ""}`);
     } finally {
+      if (refreshIdRef.current !== refreshId) {
+        return;
+      }
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
@@ -68,6 +96,14 @@ export function RecentDocumentActivityPanel({ onClose, title }: Props) {
           showIcon
           title="Recent document activity failed to load"
           description={error}
+          style={{ marginBottom: "10px" }}
+        />
+      ) : null}
+      {loadingMore ? (
+        <Alert
+          type="info"
+          showIcon
+          message="Showing fast results first while slower projects continue loading."
           style={{ marginBottom: "10px" }}
         />
       ) : null}
