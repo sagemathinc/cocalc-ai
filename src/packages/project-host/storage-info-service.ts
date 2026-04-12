@@ -9,7 +9,6 @@ import getLogger from "@cocalc/backend/logger";
 import type { Client } from "@cocalc/conat/core/client";
 import { extractProjectSubject } from "@cocalc/conat/auth/subject-policy";
 import { fsClient, fsSubject, type ExecOutput } from "@cocalc/conat/files/fs";
-import { dstream, type DStream } from "@cocalc/conat/sync/dstream";
 import type {
   ProjectStorageBreakdown,
   ProjectStorageCountedSummary,
@@ -18,7 +17,8 @@ import type {
   ProjectStorageHistoryPoint,
   ProjectStorageOverview,
   ProjectStorageVisibleSummary,
-} from "@cocalc/conat/hub/api/projects";
+} from "@cocalc/conat/project/storage-info";
+import { dstream, type DStream } from "@cocalc/conat/sync/dstream";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import { human_readable_size } from "@cocalc/util/misc";
 import { fileServerClient } from "./file-server";

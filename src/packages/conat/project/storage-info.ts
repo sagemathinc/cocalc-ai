@@ -5,21 +5,70 @@
 
 import { projectSubject } from "@cocalc/conat/names";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
-import type {
-  ProjectStorageBreakdown,
-  ProjectStorageHistory,
-  ProjectStorageOverview,
-} from "@cocalc/conat/hub/api/projects";
-export type {
-  ProjectStorageBreakdown,
-  ProjectStorageCountedSummary,
-  ProjectStorageHistory,
-  ProjectStorageHistoryGrowth,
-  ProjectStorageHistoryPoint,
-  ProjectStorageOverview,
-  ProjectStorageQuotaSummary,
-  ProjectStorageVisibleSummary,
-} from "@cocalc/conat/hub/api/projects";
+
+export interface ProjectStorageBreakdown {
+  path: string;
+  bytes: number;
+  children: { bytes: number; path: string }[];
+  collected_at: string;
+}
+
+export interface ProjectStorageQuotaSummary {
+  key: "project";
+  label: string;
+  used: number;
+  size: number;
+  qgroupid?: string;
+  scope?: "tracking" | "subvolume";
+  warning?: string;
+}
+
+export interface ProjectStorageVisibleSummary {
+  key: "home" | "scratch" | "environment";
+  label: string;
+  summaryLabel: string;
+  path: string;
+  summaryBytes: number;
+  usage: ProjectStorageBreakdown;
+}
+
+export interface ProjectStorageCountedSummary {
+  key: "snapshots";
+  label: string;
+  bytes: number;
+  detail?: string;
+  compactLabel?: string;
+}
+
+export interface ProjectStorageOverview {
+  collected_at: string;
+  quotas: ProjectStorageQuotaSummary[];
+  visible: ProjectStorageVisibleSummary[];
+  counted: ProjectStorageCountedSummary[];
+}
+
+export interface ProjectStorageHistoryPoint {
+  collected_at: string;
+  quota_used_bytes?: number;
+  quota_size_bytes?: number;
+  quota_used_percent?: number;
+  home_visible_bytes?: number;
+  scratch_visible_bytes?: number;
+  environment_visible_bytes?: number;
+  snapshot_counted_bytes?: number;
+}
+
+export interface ProjectStorageHistoryGrowth {
+  window_minutes: number;
+  quota_used_bytes_per_hour?: number;
+}
+
+export interface ProjectStorageHistory {
+  window_minutes: number;
+  point_count: number;
+  points: ProjectStorageHistoryPoint[];
+  growth?: ProjectStorageHistoryGrowth;
+}
 
 const SERVICE_NAME = "storage-info";
 

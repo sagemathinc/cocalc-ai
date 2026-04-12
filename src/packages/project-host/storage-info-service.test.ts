@@ -1,4 +1,4 @@
-import type { ProjectStorageHistoryPoint } from "@cocalc/conat/hub/api/projects";
+import type { ProjectStorageHistoryPoint } from "@cocalc/conat/project/storage-info";
 
 const fileServerClientMock = jest.fn();
 const fsClientMock = jest.fn();
