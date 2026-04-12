@@ -8,7 +8,6 @@ import {
   Button,
   Input,
   Popconfirm,
-  Tooltip,
   Space,
   Table,
   Tag,
@@ -17,7 +16,12 @@ import {
 } from "antd";
 
 import { React } from "@cocalc/frontend/app-framework";
-import { ErrorDisplay, Loading, TimeAgo } from "@cocalc/frontend/components";
+import {
+  ErrorDisplay,
+  Loading,
+  TimeAgo,
+  Tooltip,
+} from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   RootfsAdminCatalogEntry,

@@ -27,7 +27,6 @@ import {
   Space,
   Switch,
   Table,
-  Tooltip,
   Typography,
 } from "antd";
 import { defineMessage, FormattedMessage, useIntl } from "react-intl";
@@ -45,6 +44,7 @@ import {
   Icon,
   SettingBox,
   Tip,
+  Tooltip,
 } from "@cocalc/frontend/components";
 import Password, {
   PasswordTextArea,

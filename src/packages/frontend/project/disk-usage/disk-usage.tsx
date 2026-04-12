@@ -15,7 +15,6 @@ import {
   Space,
   Spin,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import ShowError from "@cocalc/frontend/components/error";
@@ -26,7 +25,7 @@ import type {
 import { human_readable_size } from "@cocalc/util/misc";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { redux, useAsyncEffect } from "@cocalc/frontend/app-framework";
 import { dirname, posix } from "path";
 import { COLORS } from "@cocalc/util/theme";

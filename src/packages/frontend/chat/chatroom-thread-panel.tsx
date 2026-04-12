@@ -3,16 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  Button,
-  Input,
-  Modal,
-  Popover,
-  Select,
-  Space,
-  Switch,
-  Tooltip,
-} from "antd";
+import { Button, Input, Modal, Popover, Select, Space, Switch } from "antd";
 import {
   React,
   useCallback,
@@ -64,7 +55,7 @@ import {
   getDefaultCodexSessionMode,
   saveCodexNewChatDefaults,
 } from "./codex-defaults";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import { resolveThreadStatusDot } from "./chatroom-sidebar";

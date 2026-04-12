@@ -1,21 +1,2 @@
 # Temporary baseline for direct Antd Tooltip usage in frontend source.
 # New files must use the shared tooltip wrapper instead of importing Tooltip directly.
-
-frontend/account/i18n-selector.tsx
-frontend/account/user-defined-llm.tsx
-frontend/admin/llm/admin-llm-test.tsx
-frontend/admin/rootfs.tsx
-frontend/chat/automation-form.tsx
-frontend/chat/chatroom-sidebar.tsx
-frontend/chat/chatroom-thread-panel.tsx
-frontend/chat/codex.tsx
-frontend/chat/git-commit-drawer.tsx
-frontend/chat/message.tsx
-frontend/course/configuration/configuration-copying.tsx
-frontend/course/students/students-panel-student.tsx
-frontend/frame-editors/crm-editor/views/retention/config.tsx
-frontend/project/disk-usage/disk-usage.tsx
-frontend/project/info/components.tsx
-frontend/project/info/full.tsx
-frontend/project/new/navigator-shell.tsx
-frontend/project/settings/datastore.tsx

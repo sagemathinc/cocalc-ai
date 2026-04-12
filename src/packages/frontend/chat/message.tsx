@@ -14,7 +14,6 @@ import {
   Modal,
   Row,
   Tag,
-  Tooltip,
   message as antdMessage,
 } from "antd";
 import { CSSProperties, ReactNode, useEffect, useLayoutEffect } from "react";
@@ -27,7 +26,7 @@ import {
   useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
-import { Gap, Icon, TimeAgo, Tip } from "@cocalc/frontend/components";
+import { Gap, Icon, TimeAgo, Tip, Tooltip } from "@cocalc/frontend/components";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { IS_TOUCH } from "@cocalc/frontend/feature";

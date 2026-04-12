@@ -5,7 +5,6 @@ import {
   Modal,
   Select,
   Space,
-  Tooltip,
   Typography,
   message as antdMessage,
 } from "antd";
@@ -21,6 +20,7 @@ import {
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { Loading, ThemeEditorModal } from "@cocalc/frontend/components";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { useKeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
