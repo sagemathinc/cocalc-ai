@@ -22,7 +22,7 @@ const DEFAULT_TERMINAL_TIMEOUT_MS = Number.isFinite(
   Number.parseInt(process.env.COCALC_CODEX_TERMINAL_TIMEOUT_MS ?? "", 10),
 )
   ? Number.parseInt(process.env.COCALC_CODEX_TERMINAL_TIMEOUT_MS!, 10)
-  : 30_000;
+  : 5 * 60_000;
 
 // Container executor for multiuser (podman) mode.
 // Wraps project-scoped conat APIs to run commands and read/write files
