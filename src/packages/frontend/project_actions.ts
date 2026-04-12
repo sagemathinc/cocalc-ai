@@ -92,7 +92,13 @@ import { reduxNameToProjectId } from "@cocalc/util/redux/name";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { client_db } from "@cocalc/util/schema";
 import { type FilesystemClient } from "@cocalc/conat/files/fs";
-import type { ProjectLogCursor } from "@cocalc/conat/hub/api/projects";
+import type { DStream } from "@cocalc/conat/sync/dstream";
+import {
+  PROJECT_LOG_STREAM_NAME,
+  type ProjectLogCursor,
+  type ProjectLogPage,
+  type ProjectLogRow,
+} from "@cocalc/conat/hub/api/projects";
 import {
   getCacheId,
   getFiles,
@@ -145,7 +151,114 @@ const BANNED_FILE_TYPES = new Set(["doc", "docx", "pdf", "sws"]);
 
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
-const MAX_PROJECT_LOG_REFRESH_BATCHES = 20;
+
+function normalizeProjectLogTime(value: unknown): Date | null {
+  if (value == null) return null;
+  const date = value instanceof Date ? value : new Date(`${value}`);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function normalizeProjectLogCursor(
+  cursor?: ProjectLogCursor,
+): ProjectLogCursor | undefined {
+  if (!cursor?.id) return;
+  return {
+    id: `${cursor.id}`,
+    time: normalizeProjectLogTime(cursor.time),
+  };
+}
+
+function compareProjectLogRows(a: ProjectLogRow, b: ProjectLogRow): number {
+  const at = normalizeProjectLogTime(a.time)?.getTime() ?? 0;
+  const bt = normalizeProjectLogTime(b.time)?.getTime() ?? 0;
+  if (at !== bt) return bt - at;
+  return `${b.id}`.localeCompare(`${a.id}`);
+}
+
+function projectLogCursorKey(
+  cursor?: ProjectLogCursor,
+): [number, string] | null {
+  if (!cursor?.id) return null;
+  return [normalizeProjectLogTime(cursor.time)?.getTime() ?? 0, `${cursor.id}`];
+}
+
+function filterProjectLogRows(
+  rows: ProjectLogRow[],
+  opts: {
+    newer_than?: ProjectLogCursor;
+    older_than?: ProjectLogCursor;
+  },
+): ProjectLogRow[] {
+  const newerKey = projectLogCursorKey(
+    normalizeProjectLogCursor(opts.newer_than),
+  );
+  const olderKey = projectLogCursorKey(
+    normalizeProjectLogCursor(opts.older_than),
+  );
+  return rows.filter((row) => {
+    const key: [number, string] = [
+      normalizeProjectLogTime(row.time)?.getTime() ?? 0,
+      `${row.id}`,
+    ];
+    if (
+      newerKey != null &&
+      (key[0] < newerKey[0] ||
+        (key[0] === newerKey[0] && key[1] <= newerKey[1]))
+    ) {
+      return false;
+    }
+    if (
+      olderKey != null &&
+      (key[0] > olderKey[0] ||
+        (key[0] === olderKey[0] && key[1] >= olderKey[1]))
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function buildProjectLogRowsFromStream(
+  stream: DStream<ProjectLogRow>,
+  project_id: string,
+): ProjectLogRow[] {
+  const seen: Record<string, true> = {};
+  return stream
+    .getAll()
+    .map(
+      (row, index): ProjectLogRow => ({
+        id: `${row?.id ?? ""}`,
+        project_id: `${row?.project_id ?? project_id}`,
+        account_id: `${row?.account_id ?? ""}`,
+        time: normalizeProjectLogTime(row?.time) ?? stream.time(index) ?? null,
+        event: row?.event ?? {},
+      }),
+    )
+    .filter((row) => row.id && row.account_id)
+    .sort(compareProjectLogRows)
+    .filter((row) => {
+      if (seen[row.id]) {
+        return false;
+      }
+      seen[row.id] = true;
+      return true;
+    });
+}
+
+function pageProjectLogRows(
+  rows: ProjectLogRow[],
+  opts: {
+    limit: number;
+    newer_than?: ProjectLogCursor;
+    older_than?: ProjectLogCursor;
+  },
+): ProjectLogPage {
+  const entries = filterProjectLogRows(rows, opts);
+  return {
+    entries: entries.slice(0, opts.limit),
+    has_more: entries.length > opts.limit,
+  };
+}
 
 export const QUERIES = {
   project_log: {
@@ -313,6 +426,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // these are all potentially expensive
   public open_files?: OpenFiles;
   private projectStatusSub?;
+  private projectLogStream?: DStream<ProjectLogRow>;
   private copyOpsManager: CopyOpsManager;
   private backupOpsManager: BackupOpsManager;
   private restoreOpsManager: RestoreOpsManager;
@@ -479,6 +593,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.moveOpsManager.close();
     this.projectStatusSub?.close();
     delete this.projectStatusSub;
+    this.projectLogStream?.close();
+    delete this.projectLogStream;
     must_define(this.redux);
     this.close_all_files();
     for (const table in QUERIES) {
@@ -492,6 +608,26 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   public async api(): Promise<API> {
     return await webapp_client.project_client.api(this.project_id);
   }
+
+  private getProjectLogStream = reuseInFlight(
+    async (): Promise<DStream<ProjectLogRow>> => {
+      if (this.projectLogStream && !this.projectLogStream.isClosed()) {
+        return this.projectLogStream;
+      }
+      const stream = await webapp_client.conat_client.dstream<ProjectLogRow>({
+        project_id: this.project_id,
+        name: PROJECT_LOG_STREAM_NAME,
+        noInventory: true,
+      });
+      if (this.isClosed()) {
+        stream.close();
+        throw Error("project closed");
+      }
+      this.projectLogStream = stream;
+      return stream;
+    },
+    { createKey: () => "project-log" },
+  );
 
   trackStartOp = (op: {
     op_id?: string;
@@ -1243,12 +1379,17 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       obj.time = misc.server_time();
     }
     obj.id = id;
-    this.projectApi()
-      .system.appendProjectLog({
-        account_id: webapp_client.account_id,
-        id: obj.id,
-        time: obj.time,
-        event: obj.event,
+    const row: ProjectLogRow = {
+      id: obj.id,
+      project_id: this.project_id,
+      account_id: webapp_client.account_id,
+      time: obj.time,
+      event: obj.event,
+    };
+    this.getProjectLogStream()
+      .then(async (stream) => {
+        stream.publish(row);
+        await stream.save();
       })
       .then(() => cb?.())
       .catch((err) => {
@@ -3226,32 +3367,19 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
 
       try {
-        const projectApi = this.projectApi().system;
+        const rows = buildProjectLogRowsFromStream(
+          await this.getProjectLogStream(),
+          this.project_id,
+        );
         if (effectiveMode === "newer") {
           const baseline = newestProjectLogCursor(currentLog);
           if (baseline == null) {
             return;
           }
-          let merged = currentLog;
-          let older_than: ProjectLogCursor | undefined = undefined;
-          for (let i = 0; i < MAX_PROJECT_LOG_REFRESH_BATCHES; i++) {
-            const page = await projectApi.listProjectLog({
-              limit: PROJECT_LOG_BATCH_LIMIT,
-              newer_than: baseline,
-              older_than,
-            });
-            if (page.entries.length === 0) {
-              break;
-            }
-            merged = mergeProjectLogMap(merged, page.entries);
-            if (!page.has_more) {
-              break;
-            }
-            older_than = {
-              id: page.entries[page.entries.length - 1].id,
-              time: page.entries[page.entries.length - 1].time ?? null,
-            };
-          }
+          const merged = mergeProjectLogMap(
+            currentLog,
+            filterProjectLogRows(rows, { newer_than: baseline }),
+          );
           this.setState({
             project_log: merged,
             project_log_loading: false,
@@ -3262,7 +3390,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
         const older_than =
           effectiveMode === "older" ? oldestProjectLogCursor(currentLog) : null;
-        const page = await projectApi.listProjectLog({
+        const page = pageProjectLogRows(rows, {
           limit: PROJECT_LOG_BATCH_LIMIT,
           ...(older_than ? { older_than } : {}),
         });
