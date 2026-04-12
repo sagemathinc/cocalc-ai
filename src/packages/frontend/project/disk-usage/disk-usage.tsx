@@ -22,7 +22,7 @@ import ShowError from "@cocalc/frontend/components/error";
 import type {
   ProjectStorageHistory,
   ProjectStorageHistoryPoint,
-} from "@cocalc/conat/hub/api/projects";
+} from "@cocalc/conat/project/storage-info";
 import { human_readable_size } from "@cocalc/util/misc";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";

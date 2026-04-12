@@ -14,7 +14,12 @@ import type {
   ProjectStorageOverview,
   ProjectStorageQuotaSummary,
   ProjectStorageVisibleSummary,
-} from "@cocalc/conat/hub/api/projects";
+} from "@cocalc/conat/project/storage-info";
+import {
+  getStorageBreakdown,
+  getStorageHistory,
+  getStorageOverview,
+} from "@cocalc/conat/project/storage-info";
 import { human_readable_size } from "@cocalc/util/misc";
 
 import type { ProjectCommandDeps } from "../project";
@@ -668,7 +673,7 @@ export function registerProjectStorageCommands(
 ): void {
   const {
     withContext,
-    resolveProjectFromArgOrContext,
+    resolveProjectConatClient,
     durationToMs,
     parsePositiveInteger,
   } = deps;
@@ -696,8 +701,12 @@ export function registerProjectStorageCommands(
         command: Command,
       ) => {
         await withContext(command, "project storage show", async (ctx) => {
-          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
-          const overview = await ctx.hub.projects.getStorageOverview({
+          const { project: ws, client } = await resolveProjectConatClient(
+            ctx,
+            opts.project,
+          );
+          const overview = await getStorageOverview({
+            client,
             project_id: ws.project_id,
             home: opts.home,
             force_sample: !!opts.forceSample,
@@ -740,19 +749,24 @@ export function registerProjectStorageCommands(
         command: Command,
       ) => {
         await withContext(command, "project storage history", async (ctx) => {
-          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+          const { project: ws, client } = await resolveProjectConatClient(
+            ctx,
+            opts.project,
+          );
           const window_minutes = parseHistoryWindowMinutes(
             durationToMs,
             opts.window,
           );
           const max_points = parseMaxPoints(parsePositiveInteger, opts.points);
           if (opts.forceSample) {
-            await ctx.hub.projects.getStorageOverview({
+            await getStorageOverview({
+              client,
               project_id: ws.project_id,
               force_sample: true,
             });
           }
-          const history = await ctx.hub.projects.getStorageHistory({
+          const history = await getStorageHistory({
+            client,
             project_id: ws.project_id,
             window_minutes,
             max_points,
@@ -780,15 +794,20 @@ export function registerProjectStorageCommands(
         command: Command,
       ) => {
         await withContext(command, "project storage breakdown", async (ctx) => {
-          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+          const { project: ws, client } = await resolveProjectConatClient(
+            ctx,
+            opts.project,
+          );
           let targetPath = path;
           if (!targetPath) {
-            const overview = await ctx.hub.projects.getStorageOverview({
+            const overview = await getStorageOverview({
+              client,
               project_id: ws.project_id,
             });
             targetPath = visibleSummary(overview, "home")?.path ?? "/root";
           }
-          const breakdown = await ctx.hub.projects.getStorageBreakdown({
+          const breakdown = await getStorageBreakdown({
+            client,
             project_id: ws.project_id,
             path: targetPath,
           });
@@ -831,20 +850,25 @@ export function registerProjectStorageCommands(
         command: Command,
       ) => {
         await withContext(command, "project storage analyze", async (ctx) => {
-          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+          const { project: ws, client } = await resolveProjectConatClient(
+            ctx,
+            opts.project,
+          );
           const window_minutes = parseHistoryWindowMinutes(
             durationToMs,
             opts.window,
           );
           const max_points = parseMaxPoints(parsePositiveInteger, opts.points);
-          const overview = await ctx.hub.projects.getStorageOverview({
+          const overview = await getStorageOverview({
+            client,
             project_id: ws.project_id,
             home: opts.home,
             force_sample: !!opts.forceSample,
           });
           const homePath =
             visibleSummary(overview, "home")?.path ?? opts.home ?? "/root";
-          const history = await ctx.hub.projects.getStorageHistory({
+          const history = await getStorageHistory({
+            client,
             project_id: ws.project_id,
             window_minutes,
             max_points,
@@ -852,7 +876,8 @@ export function registerProjectStorageCommands(
           const breakdowns = await Promise.all(
             overview.visible.map(async (bucket) => {
               try {
-                const breakdown = await ctx.hub.projects.getStorageBreakdown({
+                const breakdown = await getStorageBreakdown({
+                  client,
                   project_id: ws.project_id,
                   path: bucket.path,
                 });

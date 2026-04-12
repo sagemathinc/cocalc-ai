@@ -1,6 +1,9 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import TTLCache from "@isaacs/ttlcache";
-import type { ProjectStorageHistory } from "@cocalc/conat/hub/api/projects";
+import {
+  getStorageHistory as getProjectStorageHistory,
+  type ProjectStorageHistory,
+} from "@cocalc/conat/project/storage-info";
 
 const storageHistoryCache = new TTLCache<string, ProjectStorageHistory>({
   ttl: 1000 * 30,
@@ -33,12 +36,12 @@ export default async function getStorageHistory({
   if (cache && storageHistoryCache.has(k)) {
     return storageHistoryCache.get(k)!;
   }
-  const history =
-    await webapp_client.conat_client.hub.projects.getStorageHistory({
-      project_id,
-      window_minutes,
-      max_points,
-    });
+  const history = await getProjectStorageHistory({
+    client: webapp_client.conat_client.conat(),
+    project_id,
+    window_minutes,
+    max_points,
+  });
   storageHistoryCache.set(k, history);
   return history;
 }

@@ -7,7 +7,7 @@ import type {
   ProjectStorageCountedSummary,
   ProjectStorageQuotaSummary,
   ProjectStorageVisibleSummary,
-} from "@cocalc/conat/hub/api/projects";
+} from "@cocalc/conat/project/storage-info";
 
 export type DiskUsageTree = ProjectStorageBreakdown;
 
