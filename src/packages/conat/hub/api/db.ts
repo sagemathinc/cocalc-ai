@@ -3,7 +3,6 @@ import { authFirst, requireAccount } from "./util";
 export const db = {
   userQuery: authFirst,
   touch: authFirst,
-  logFileAccess: authFirst,
   getLegacyTimeTravelInfo: authFirst,
   getLegacyTimeTravelPatches: authFirst,
   removeBlobTtls: requireAccount,
@@ -22,12 +21,6 @@ export interface DB {
     project_id?: string;
     path?: string;
     action?: string;
-  }) => Promise<void>;
-
-  logFileAccess: (opts: {
-    account_id?: string;
-    project_id: string;
-    path: string;
   }) => Promise<void>;
 
   getLegacyTimeTravelInfo: (opts: {

@@ -125,6 +125,7 @@ export async function listRecent({
   project_id,
   limit,
   max_age_s,
+  search,
   timeout,
 }: {
   client?: ConatClient;
@@ -132,6 +133,7 @@ export async function listRecent({
   project_id: string;
   limit?: number;
   max_age_s?: number;
+  search?: string;
   timeout?: number;
 }): Promise<RecentProjectDocumentActivityEntry[]> {
   return await callDocumentActivity<RecentProjectDocumentActivityEntry[]>({
@@ -140,7 +142,7 @@ export async function listRecent({
     project_id,
     timeout,
     name: "listRecent",
-    args: [{ limit, max_age_s }],
+    args: [{ limit, max_age_s, search }],
   });
 }
 

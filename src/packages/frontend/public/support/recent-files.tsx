@@ -8,7 +8,11 @@ import { useEffect, useState } from "react";
 
 import { Alert, Spin, TreeSelect } from "antd";
 
-import api from "@cocalc/frontend/client/api";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  listRecentDocumentActivityBestEffort,
+  parseIntervalToSeconds,
+} from "@cocalc/frontend/file-use/project-host";
 import { WORKSPACE_LABEL } from "@cocalc/util/i18n/terminology";
 
 interface RecentFile {
@@ -33,6 +37,8 @@ export default function RecentFiles({ disabled, interval, onChange }: Props) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [treeData, setTreeData] = useState<Node[]>([]);
+  const account_id = useTypedRedux("account", "account_id");
+  const project_map = useTypedRedux("projects", "project_map");
 
   useEffect(() => {
     let canceled = false;
@@ -40,19 +46,35 @@ export default function RecentFiles({ disabled, interval, onChange }: Props) {
       try {
         setLoading(true);
         setError("");
-        const result = await api("file-access", {
-          interval: interval ?? "1 day",
+        const rows = await listRecentDocumentActivityBestEffort({
+          account_id,
+          project_map,
+          max_age_s: parseIntervalToSeconds(interval),
         });
         if (canceled) {
           return;
         }
 
         const projects: Record<string, RecentFile[]> = {};
-        for (const file of result?.files ?? []) {
+        for (const file of rows) {
           if (projects[file.project_id] == null) {
-            projects[file.project_id] = [file];
+            projects[file.project_id] = [
+              {
+                project_id: file.project_id,
+                path: file.path,
+                title:
+                  `${project_map?.getIn([file.project_id, "title"]) ?? ""}` ||
+                  "Untitled",
+              },
+            ];
           } else {
-            projects[file.project_id].push(file);
+            projects[file.project_id].push({
+              project_id: file.project_id,
+              path: file.path,
+              title:
+                `${project_map?.getIn([file.project_id, "title"]) ?? ""}` ||
+                "Untitled",
+            });
           }
         }
 
@@ -93,7 +115,7 @@ export default function RecentFiles({ disabled, interval, onChange }: Props) {
     return () => {
       canceled = true;
     };
-  }, [interval]);
+  }, [account_id, interval, project_map]);
 
   return (
     <div>

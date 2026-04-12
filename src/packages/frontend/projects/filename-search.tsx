@@ -4,13 +4,12 @@ Search for any file you've edited in the last year.
 
 import { Input } from "antd";
 import { useIntl } from "react-intl";
-
-import { CSS, useState } from "@cocalc/frontend/app-framework";
-import api from "@cocalc/frontend/client/api";
 import { Tooltip } from "@cocalc/frontend/components";
+import { CSS, useState, useTypedRedux } from "@cocalc/frontend/app-framework";
 import ShowError from "@cocalc/frontend/components/error";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { PathLink } from "@cocalc/frontend/components/path-link";
+import { searchRecentFilenamesBestEffort } from "@cocalc/frontend/file-use/project-host";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { MAX_FILENAME_SEARCH_RESULTS } from "@cocalc/util/db-schema/projects";
 
@@ -29,6 +28,8 @@ export function FilenameSearch({ style }: Props) {
     { project_id: string; filename: string; time: Date }[] | null
   >(null);
   const [searched, setSearched] = useState<string>("");
+  const account_id = useTypedRedux("account", "account_id");
+  const project_map = useTypedRedux("projects", "project_map");
 
   const doSearch = async () => {
     try {
@@ -37,7 +38,11 @@ export function FilenameSearch({ style }: Props) {
       setSearched(search.trim());
       if (search.trim()) {
         setResult(
-          await api("projects/filename-search", { search: search.trim() }),
+          await searchRecentFilenamesBestEffort({
+            account_id,
+            project_map,
+            search: search.trim(),
+          }),
         );
       }
     } catch (err) {
@@ -50,7 +55,7 @@ export function FilenameSearch({ style }: Props) {
   return (
     <div style={style}>
       <Tooltip
-        title={`Search filenames of files you edited in the last year.  Use % as wildcard.  At most ${MAX_FILENAME_SEARCH_RESULTS} results shown.`}
+        title={`Search filenames of files you edited in the last 90 days.  Use % as wildcard.  At most ${MAX_FILENAME_SEARCH_RESULTS} results shown.`}
       >
         <Search
           allowClear

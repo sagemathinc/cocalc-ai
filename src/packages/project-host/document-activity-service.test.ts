@@ -150,6 +150,42 @@ describe("project document activity service", () => {
     ]);
   });
 
+  it("filters recent activity by wildcard filename search", async () => {
+    const store = makeStore({
+      "notes/a.txt": {
+        path: "notes/a.txt",
+        last_accessed: "2026-04-12T12:00:00.000Z",
+        recent_accounts: {
+          "00000000-0000-4000-8000-000000000001": "2026-04-12T12:00:00.000Z",
+        },
+      },
+      "notes/b.ipynb": {
+        path: "notes/b.ipynb",
+        last_accessed: "2026-04-12T11:00:00.000Z",
+        recent_accounts: {
+          "00000000-0000-4000-8000-000000000001": "2026-04-12T11:00:00.000Z",
+        },
+      },
+    });
+    const events = makeStream();
+    dkvMock.mockResolvedValue(store);
+    dstreamMock.mockResolvedValue(events);
+
+    const { handleListRecentRequest } =
+      await import("./document-activity-service");
+    const subject =
+      "services.account-00000000-0000-4000-8000-000000000001._.11111111-1111-4111-8111-111111111111._.document-activity";
+
+    const rows = await handleListRecentRequest.call(
+      { subject },
+      { limit: 10, max_age_s: 90 * 24 * 60 * 60, search: "%.ipynb" },
+      {} as any,
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].path).toBe("notes/b.ipynb");
+  });
+
   it("rejects invalid document activity subjects", async () => {
     const store = makeStore();
     const events = makeStream();

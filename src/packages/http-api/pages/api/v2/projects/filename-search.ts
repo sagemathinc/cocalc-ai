@@ -7,7 +7,7 @@ project you want to open.
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
-import { filenameSearch } from "@cocalc/server/projects/filename-search";
+import { filenameSearch } from "@cocalc/server/projects/document-activity";
 
 export default async function handle(req, res) {
   const { search } = getParams(req);

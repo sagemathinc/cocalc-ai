@@ -55,7 +55,6 @@ import {
   PROJECT_NOT_FOUND_ERROR,
 } from "@cocalc/server/conat/project-local-access";
 import type {
-  RecentDocumentActivityRow,
   ChatStoreDeleteResult,
   ChatStoreScope,
   ChatStoreStats,
@@ -104,13 +103,9 @@ import {
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
-import { createHash } from "node:crypto";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 
-const DEFAULT_RECENT_DOCUMENT_ACTIVITY_LIMIT = 200;
-const MAX_RECENT_DOCUMENT_ACTIVITY_LIMIT = 500;
-const DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S = 21 * 24 * 60 * 60;
 // Start/restart can legitimately take a long time because the owning bay may
 // need to provision storage, restore data, pull rootfs layers, or seal a
 // mutable rootfs into a release artifact before the operation fully completes.
@@ -118,23 +113,6 @@ const DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S = 21 * 24 * 60 * 60;
 // worker still calls the typed inter-bay project-control service and must not
 // inherit the short default Conat request timeout.
 const PROJECT_START_CONTROL_TIMEOUT_MS = 8 * 60 * 60 * 1000;
-
-function normalizeRecentDocumentActivityLimit(limit?: number): number {
-  if (!Number.isFinite(limit)) {
-    return DEFAULT_RECENT_DOCUMENT_ACTIVITY_LIMIT;
-  }
-  return Math.max(
-    1,
-    Math.min(MAX_RECENT_DOCUMENT_ACTIVITY_LIMIT, Math.floor(limit!)),
-  );
-}
-
-function normalizeRecentDocumentActivityMaxAge(max_age_s?: number): number {
-  if (!Number.isFinite(max_age_s)) {
-    return DEFAULT_RECENT_DOCUMENT_ACTIVITY_MAX_AGE_S;
-  }
-  return Math.max(60, Math.floor(max_age_s!));
-}
 
 async function projectFs(project_id: string) {
   return (await getExplicitProjectRoutedClient({ project_id })).fs({
@@ -521,81 +499,6 @@ export async function setQuotas(opts: {
     project_id: opts.project_id,
     fields: ["run_quota", "settings"],
   });
-}
-
-export async function listRecentDocumentActivity({
-  account_id,
-  limit,
-  max_age_s,
-}: {
-  account_id: string;
-  limit?: number;
-  max_age_s?: number;
-}): Promise<RecentDocumentActivityRow[]> {
-  const pageLimit = normalizeRecentDocumentActivityLimit(limit);
-  const maxAgeS = normalizeRecentDocumentActivityMaxAge(max_age_s);
-  const cutoff = new Date(Date.now() - maxAgeS * 1000);
-  const { rows } = await getPool().query<{
-    project_id: string;
-    path: string;
-    last_accessed: Date | null;
-    recent_account_ids: string[] | null;
-  }>(
-    `SELECT grouped.project_id,
-            grouped.path,
-            grouped.last_accessed,
-            COALESCE(
-              (
-                SELECT array_agg(recent.account_id ORDER BY recent.last_time DESC)
-                  FROM (
-                    SELECT fal2.account_id::TEXT AS account_id,
-                           MAX(fal2.time) AS last_time
-                      FROM file_access_log AS fal2
-                     WHERE fal2.project_id = grouped.project_id
-                       AND fal2.filename = grouped.path
-                       AND fal2.time >= $1
-                     GROUP BY fal2.account_id
-                     ORDER BY MAX(fal2.time) DESC, fal2.account_id::TEXT
-                     LIMIT 5
-                  ) AS recent
-              ),
-              ARRAY[]::TEXT[]
-            ) AS recent_account_ids
-       FROM (
-              SELECT fal.project_id,
-                     fal.filename AS path,
-                     MAX(fal.time) AS last_accessed
-                FROM file_access_log AS fal
-               WHERE fal.time >= $1
-                 AND EXISTS (
-                   SELECT 1
-                     FROM projects AS p
-                    WHERE p.project_id = fal.project_id
-                      AND p.deleted IS NOT TRUE
-                      AND p.users ? $2
-                 )
-               GROUP BY fal.project_id, fal.filename
-               ORDER BY MAX(fal.time) DESC, fal.project_id DESC, fal.filename DESC
-               LIMIT $3
-            ) AS grouped
-      ORDER BY grouped.last_accessed DESC NULLS LAST,
-               grouped.project_id DESC,
-               grouped.path DESC`,
-    [cutoff, account_id, pageLimit],
-  );
-  return rows.map((row) => ({
-    id: createHash("sha1")
-      .update(row.project_id)
-      .update("\0")
-      .update(row.path)
-      .digest("hex"),
-    project_id: row.project_id,
-    path: row.path,
-    last_accessed: row.last_accessed,
-    recent_account_ids: Array.isArray(row.recent_account_ids)
-      ? row.recent_account_ids
-      : [],
-  }));
 }
 
 async function getProjectReadDetailsAllowRemote({
