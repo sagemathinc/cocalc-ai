@@ -63,12 +63,19 @@ function workerRollingCapable(worker: WorkerProcessInfo): boolean {
 export function planProjectHostAcpWorkerRollout({
   workers,
   launch,
+  drainingWorkerIds,
 }: {
   workers: WorkerProcessInfo[];
   launch: WorkerLaunch;
+  drainingWorkerIds?: Iterable<string>;
 }): ProjectHostAcpWorkerRolloutPlan {
+  const drainingIds = new Set(drainingWorkerIds ?? []);
   const matchingCurrent = workers
-    .filter((worker) => isExpectedWorkerProcess(worker, launch))
+    .filter(
+      (worker) =>
+        isExpectedWorkerProcess(worker, launch) &&
+        !drainingIds.has(workerIdOf(worker)),
+    )
     .sort((left, right) => right.pid - left.pid);
   const activePid = matchingCurrent[0]?.pid;
   const drainingPids: number[] = [];
@@ -354,6 +361,15 @@ async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
     planProjectHostAcpWorkerRollout({
       workers,
       launch,
+      drainingWorkerIds: workers
+        .map((worker) => {
+          const worker_id = workerIdOf(worker);
+          if (!worker_id) return;
+          return getAcpWorker(worker_id)?.state === "draining"
+            ? worker_id
+            : undefined;
+        })
+        .filter((worker_id): worker_id is string => worker_id != null),
     });
   const liveWorkerIds = new Set<string>();
   for (const worker of workers) {

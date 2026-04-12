@@ -199,6 +199,10 @@ export function heartbeatAcpWorker({
       `UPDATE ${TABLE}
        SET pid = COALESCE(?, pid),
            state = COALESCE(?, state),
+           exit_requested_at = CASE
+             WHEN COALESCE(?, state) = 'draining' THEN COALESCE(exit_requested_at, ?)
+             ELSE exit_requested_at
+           END,
            last_heartbeat_at = ?,
            last_seen_running_jobs = ?
        WHERE worker_id = ?`,
@@ -206,6 +210,8 @@ export function heartbeatAcpWorker({
     .run(
       pid ?? null,
       state ?? null,
+      state ?? null,
+      now,
       now,
       Math.max(0, Math.floor(last_seen_running_jobs)),
       worker_id,
