@@ -3,10 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Tooltip } from "antd";
-
 import { CSS, React, useActions } from "@cocalc/frontend/app-framework";
-import { Icon, IconName } from "@cocalc/frontend/components";
+import { Icon, IconName, Tooltip } from "@cocalc/frontend/components";
 import track from "@cocalc/frontend/user-tracking";
 import { COLORS } from "@cocalc/util/theme";
 import { TOP_BAR_ELEMENT_CLASS } from "./top-nav-consts";

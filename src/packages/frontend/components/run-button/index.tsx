@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Popover, Tooltip, Space } from "antd";
+import { Button, Popover, Space } from "antd";
 import {
   CSSProperties,
   MutableRefObject,
@@ -22,6 +22,7 @@ import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { AsyncComponent } from "@cocalc/frontend/misc/async-component";
 import { path_split, plural } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import getKernel from "./get-kernel";
 import { kernelDisplayName, kernelLanguage } from "./kernel-info";
 import SelectKernel from "./select-kernel";

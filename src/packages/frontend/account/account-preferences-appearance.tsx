@@ -268,8 +268,8 @@ export function AccountPreferencesAppearance() {
         >
           <FormattedMessage
             id="account.other-settings.button_tooltips"
-            defaultMessage={`<strong>Hide Button Tooltips:</strong>
-            hides some button tooltips (this is only partial)`}
+            defaultMessage={`<strong>Hide Tooltips:</strong>
+            hides all tooltips`}
           />
         </Switch>
         <Switch

@@ -74,6 +74,7 @@ export interface AccountState {
     [OTHER_SETTINGS_REPLY_ENGLISH_KEY]?: string;
     no_email_new_messages?: boolean;
     use_balance_toward_subscriptions?: boolean;
+    hide_button_tooltips?: boolean;
     auto_update_file_listing?: boolean;
     follow_current_path?: boolean;
     show_symbol_bar_labels?: boolean; // whether to show labels on the menu buttons

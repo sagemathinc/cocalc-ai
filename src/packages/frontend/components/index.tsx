@@ -51,7 +51,8 @@ export * from "./table-of-contents";
 export { TextInput } from "./text-input";
 export { TimeAgo, TimeAgoElement, is_different_date } from "./time-ago";
 export { TimeElapsed } from "./time-elapsed";
-export { Tip } from "./tip";
+export { Tip, Tooltip } from "./tip";
+export type { TooltipProps } from "./tip";
 export { UncommittedChanges } from "./uncommited-changes";
 
 export { AIAvatar, CopyToClipBoard, Delay };

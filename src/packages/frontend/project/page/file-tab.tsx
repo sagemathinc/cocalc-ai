@@ -11,7 +11,7 @@ A single tab in a project.
 
 // cSpell:ignore fixedtab popout Collabs
 
-import { Popover, Tag, Tooltip } from "antd";
+import { Popover, Tag } from "antd";
 import { CSSProperties, ReactNode } from "react";
 import { defineMessage, useIntl } from "react-intl";
 
@@ -22,7 +22,7 @@ import {
   useRedux,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Icon, IconName, r_join } from "@cocalc/frontend/components";
+import { Icon, IconName, Tooltip, r_join } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { IntlMessage, isIntlMessage, labels } from "@cocalc/frontend/i18n";
 import { ICON_USERS } from "@cocalc/frontend/project/servers/consts";

@@ -26,12 +26,12 @@ import {
   Tabs as AntdTabs,
   TabsProps as AntdTabsProps,
   Space,
-  Tooltip,
 } from "antd";
 import type { MouseEventHandler } from "react";
 
 import { inDarkMode } from "@cocalc/frontend/account/dark-mode";
 import { Gap } from "@cocalc/frontend/components/gap";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import { r_join } from "@cocalc/frontend/components/r_join";
 import { COLORS } from "@cocalc/util/theme";
 import { CSS } from "./app-framework";

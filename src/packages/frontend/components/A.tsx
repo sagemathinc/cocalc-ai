@@ -10,7 +10,7 @@
 */
 
 import { CSSProperties, ReactNode } from "react";
-import { Tooltip } from "antd";
+import { Tooltip } from "./tip";
 
 interface AProps {
   href: string;

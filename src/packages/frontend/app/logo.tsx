@@ -6,8 +6,7 @@
 import { React, useTypedRedux } from "../app-framework";
 import { APP_ICON } from "../art";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { A } from "@cocalc/frontend/components/A";
-import { Tooltip } from "antd";
+import { A, Tooltip } from "@cocalc/frontend/components";
 
 const STYLE: React.CSSProperties = {
   display: "inline-block",

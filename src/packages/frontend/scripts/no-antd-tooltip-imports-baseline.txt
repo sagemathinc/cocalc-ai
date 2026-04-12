@@ -8,9 +8,6 @@ frontend/account/user-defined-llm.tsx
 frontend/admin/llm/admin-llm-test.tsx
 frontend/admin/rootfs.tsx
 frontend/admin/users/money.tsx
-frontend/antd-bootstrap.tsx
-frontend/app/logo.tsx
-frontend/app/nav-tab.tsx
 frontend/chat/agent-message-status.tsx
 frontend/chat/automation-form.tsx
 frontend/chat/chat-indicator.tsx
@@ -21,11 +18,6 @@ frontend/chat/codex.tsx
 frontend/chat/composer.tsx
 frontend/chat/git-commit-drawer.tsx
 frontend/chat/message.tsx
-frontend/components/A.tsx
-frontend/components/copy-to-clipboard.tsx
-frontend/components/link-retry.tsx
-frontend/components/run-button/index.tsx
-frontend/components/run-button/select-kernel.tsx
 frontend/course/configuration/configuration-copying.tsx
 frontend/course/students/students-panel-student.tsx
 frontend/editors/markdown-input/mentionable-users.tsx
@@ -45,7 +37,6 @@ frontend/frame-editors/crm-editor/views/retention.tsx
 frontend/frame-editors/crm-editor/views/retention/config.tsx
 frontend/frame-editors/crm-editor/views/selectable-index.tsx
 frontend/frame-editors/frame-tree/commands/manage.tsx
-frontend/frame-editors/frame-tree/title-bar.tsx
 frontend/frame-editors/html-editor/iframe-html.tsx
 frontend/frame-editors/llm/llm-history-selector.tsx
 frontend/frame-editors/llm/llm-selector.tsx
@@ -114,8 +105,6 @@ frontend/project/history/log-entry.tsx
 frontend/project/info/components.tsx
 frontend/project/info/full.tsx
 frontend/project/new/navigator-shell.tsx
-frontend/project/page/activity-bar-tabs.tsx
-frontend/project/page/file-tab.tsx
 frontend/project/page/flyouts/active-top.tsx
 frontend/project/page/flyouts/agents.tsx
 frontend/project/page/flyouts/file-list-item.tsx
@@ -131,11 +120,8 @@ frontend/project/page/flyouts/workspaces.tsx
 frontend/project/settings/datastore.tsx
 frontend/project/settings/restart-project.tsx
 frontend/project/settings/ssh.tsx
-frontend/project/start-button.tsx
 frontend/projects/collaborators-avatars.tsx
 frontend/projects/filename-search.tsx
-frontend/projects/project-row.tsx
-frontend/projects/projects-nav.tsx
 frontend/projects/projects-starred.tsx
 frontend/purchases/auto-balance.tsx
 frontend/purchases/balance-plot.tsx
