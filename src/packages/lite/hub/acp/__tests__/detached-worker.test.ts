@@ -3,6 +3,7 @@ import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { CHAT_THREAD_META_ROW_DATE, threadConfigSenderId } from "@cocalc/chat";
 import {
   recoverDetachedWorkerStartupState,
+  shouldStopDetachedWorkerForDrain,
   shouldStopDetachedWorkerForIdle,
   turnNeedsInterruptedRepair,
 } from "../index";
@@ -922,6 +923,44 @@ describe("shouldStopDetachedWorkerForIdle", () => {
         idleSince: now - 5_000,
         idleExitMs: 5_000,
         now,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("shouldStopDetachedWorkerForDrain", () => {
+  it("does not drain-stop while the worker still owns a running turn lease", () => {
+    expect(
+      shouldStopDetachedWorkerForDrain({
+        isDraining: true,
+        runningJobs: 0,
+        runningTurnLeases: 1,
+        exitRequestedAt: 1_000,
+        quiesceMs: 30_000,
+        now: 60_000,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not drain-stop before the quiescence window elapses", () => {
+    expect(
+      shouldStopDetachedWorkerForDrain({
+        isDraining: true,
+        runningJobs: 0,
+        runningTurnLeases: 0,
+        exitRequestedAt: 10_000,
+        quiesceMs: 30_000,
+        now: 39_999,
+      }),
+    ).toBe(false);
+    expect(
+      shouldStopDetachedWorkerForDrain({
+        isDraining: true,
+        runningJobs: 0,
+        runningTurnLeases: 0,
+        exitRequestedAt: 10_000,
+        quiesceMs: 30_000,
+        now: 40_000,
       }),
     ).toBe(true);
   });

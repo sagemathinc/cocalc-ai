@@ -330,6 +330,10 @@ const ACP_WORKER_HEARTBEAT_MS = envNumber(
   "COCALC_ACP_WORKER_HEARTBEAT_MS",
   2_000,
 );
+const ACP_WORKER_DRAIN_QUIESCE_MS = envNumber(
+  "COCALC_ACP_WORKER_DRAIN_QUIESCE_MS",
+  30_000,
+);
 const ACP_WORKER_STALE_MS = envNumber("COCALC_ACP_WORKER_STALE_MS", 15_000);
 const ACP_ORPHAN_RECOVERY_POLL_MS = envNumber(
   "COCALC_ACP_ORPHAN_RECOVERY_POLL_MS",
@@ -4612,6 +4616,28 @@ export function shouldStopDetachedWorkerForIdle({
   return now - idleSince >= idleExitMs;
 }
 
+export function shouldStopDetachedWorkerForDrain({
+  isDraining,
+  runningJobs,
+  runningTurnLeases,
+  exitRequestedAt,
+  quiesceMs,
+  now = Date.now(),
+}: {
+  isDraining: boolean;
+  runningJobs: number;
+  runningTurnLeases: number;
+  exitRequestedAt?: number | null;
+  quiesceMs?: number | null;
+  now?: number;
+}): boolean {
+  if (!isDraining) return false;
+  if (runningJobs > 0 || runningTurnLeases > 0) return false;
+  if (quiesceMs == null || quiesceMs < 0) return true;
+  if (!exitRequestedAt || !Number.isFinite(exitRequestedAt)) return false;
+  return now - exitRequestedAt >= quiesceMs;
+}
+
 export async function recoverDetachedWorkerStartupState(
   client: ConatClient,
   opts: {
@@ -4701,10 +4727,12 @@ export async function runDetachedAcpQueueWorker(
   const syncDetachedWorkerState = (): {
     state: AcpWorkerState;
     runningJobs: number;
+    runningTurnLeases: number;
   } | null => {
     if (!workerContext || !currentDetachedWorkerContext) {
       return null;
     }
+    const now = Date.now();
     const persisted = getAcpWorker(workerContext.worker_id);
     const nextState =
       persisted?.state === "draining" || persisted?.state === "stopped"
@@ -4712,17 +4740,29 @@ export async function runDetachedAcpQueueWorker(
         : currentDetachedWorkerContext.state;
     currentDetachedWorkerContext.state = nextState;
     const runningJobs = countRunningAcpJobsForWorker(workerContext.worker_id);
+    const runningTurnLeases = listRunningAcpTurnLeases().filter(
+      (row) => row.owner_instance_id === workerContext.worker_id,
+    ).length;
     heartbeatAcpWorker({
       worker_id: workerContext.worker_id,
       pid: process.pid,
       state: nextState,
       last_seen_running_jobs: runningJobs,
     });
-    if (nextState === "draining" && runningJobs === 0) {
+    if (
+      shouldStopDetachedWorkerForDrain({
+        isDraining: nextState === "draining",
+        runningJobs,
+        runningTurnLeases,
+        exitRequestedAt: persisted?.exit_requested_at ?? null,
+        quiesceMs: ACP_WORKER_DRAIN_QUIESCE_MS,
+        now,
+      })
+    ) {
       workerStopReason ??=
         persisted?.state === "stopped" ? "stopped" : "drained";
     }
-    return { state: nextState, runningJobs };
+    return { state: nextState, runningJobs, runningTurnLeases };
   };
   try {
     if (workerContext) {
