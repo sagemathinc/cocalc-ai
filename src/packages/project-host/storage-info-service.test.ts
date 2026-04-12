@@ -111,6 +111,43 @@ describe("project storage info service", () => {
     expect(stream.publish).toHaveBeenCalledTimes(1);
   });
 
+  it("returns direct quota and snapshot usage without scanning storage", async () => {
+    fileServerClientMock.mockReturnValue({
+      getQuota: jest.fn(async () => ({
+        used: 123,
+        size: 456,
+        qgroupid: "1/9",
+        scope: "tracking",
+        warning: "warn",
+      })),
+      allSnapshotUsage: jest.fn(async () => [
+        { name: "a", exclusive: 11 },
+        { name: "b", exclusive: 22 },
+      ]),
+    });
+
+    const { handleProjectDiskQuotaRequest, handleProjectSnapshotUsageRequest } =
+      await import("./storage-info-service");
+    const subject =
+      "project.11111111-1111-4111-8111-111111111111.storage-info.-";
+
+    const quota = await handleProjectDiskQuotaRequest.call(
+      { subject },
+      undefined,
+      {} as any,
+    );
+    const usage = await handleProjectSnapshotUsageRequest.call(
+      { subject },
+      undefined,
+      {} as any,
+    );
+
+    expect(quota.used).toBe(123);
+    expect(quota.size).toBe(456);
+    expect(usage).toHaveLength(2);
+    expect(usage[1].exclusive).toBe(22);
+  });
+
   it("loads filtered local history from the project-host stream", async () => {
     const now = Date.now();
     const stream = makeStream([

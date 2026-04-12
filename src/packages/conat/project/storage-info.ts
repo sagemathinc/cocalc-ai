@@ -5,6 +5,7 @@
 
 import { projectSubject } from "@cocalc/conat/names";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
+import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
 
 export interface ProjectStorageBreakdown {
   path: string;
@@ -70,13 +71,23 @@ export interface ProjectStorageHistory {
   growth?: ProjectStorageHistoryGrowth;
 }
 
+export interface ProjectDiskQuota {
+  used: number;
+  size: number;
+  qgroupid?: string;
+  scope?: "tracking" | "subvolume";
+  warning?: string;
+}
+
 const SERVICE_NAME = "storage-info";
 
 interface Api {
+  getQuota: () => Promise<ProjectDiskQuota>;
   getOverview: (opts?: {
     home?: string;
     force_sample?: boolean;
   }) => Promise<ProjectStorageOverview>;
+  getSnapshotUsage: () => Promise<SnapshotUsage[]>;
   getBreakdown: (opts: { path: string }) => Promise<ProjectStorageBreakdown>;
   getHistory: (opts?: {
     window_minutes?: number;
@@ -98,6 +109,17 @@ export function getSubject({ project_id }: { project_id: string }): string {
   });
 }
 
+export async function getDiskQuota({
+  client,
+  project_id,
+}: {
+  client?: ConatClient;
+  project_id: string;
+}): Promise<ProjectDiskQuota> {
+  const subject = getSubject({ project_id });
+  return await requireExplicitConatClient(client).call<Api>(subject).getQuota();
+}
+
 export async function getStorageOverview({
   client,
   project_id,
@@ -113,6 +135,19 @@ export async function getStorageOverview({
   return await requireExplicitConatClient(client)
     .call<Api>(subject)
     .getOverview({ home, force_sample });
+}
+
+export async function getSnapshotUsage({
+  client,
+  project_id,
+}: {
+  client?: ConatClient;
+  project_id: string;
+}): Promise<SnapshotUsage[]> {
+  const subject = getSubject({ project_id });
+  return await requireExplicitConatClient(client)
+    .call<Api>(subject)
+    .getSnapshotUsage();
 }
 
 export async function getStorageBreakdown({

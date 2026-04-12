@@ -1,5 +1,6 @@
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { getSnapshotUsage as getProjectSnapshotUsage } from "@cocalc/conat/project/storage-info";
 import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import TTLCache from "@isaacs/ttlcache";
 
 const snapshotUsageCache = new TTLCache<string, SnapshotUsage[]>({
@@ -21,7 +22,8 @@ export default async function getSnapshotUsage({
   if (cache && snapshotUsageCache.has(k)) {
     return snapshotUsageCache.get(k)!;
   }
-  const usage = await webapp_client.conat_client.hub.projects.allSnapshotUsage({
+  const usage = await getProjectSnapshotUsage({
+    client: webapp_client.conat_client.conat(),
     project_id,
   });
   snapshotUsageCache.set(k, usage);

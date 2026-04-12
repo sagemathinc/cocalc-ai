@@ -10,6 +10,7 @@ import type { Client } from "@cocalc/conat/core/client";
 import { extractProjectSubject } from "@cocalc/conat/auth/subject-policy";
 import { fsClient, fsSubject, type ExecOutput } from "@cocalc/conat/files/fs";
 import type {
+  ProjectDiskQuota,
   ProjectStorageBreakdown,
   ProjectStorageCountedSummary,
   ProjectStorageHistory,
@@ -62,6 +63,17 @@ function extractProjectId(subject?: string): string {
     throw new Error(`invalid project storage subject '${subject ?? ""}'`);
   }
   return project_id;
+}
+
+async function getDiskQuotaImpl({
+  client,
+  project_id,
+}: {
+  client: Client;
+  project_id: string;
+}): Promise<ProjectDiskQuota> {
+  const fileServer = fileServerClient(client);
+  return await fileServer.getQuota({ project_id });
 }
 
 function normalizeStoragePath(path?: string): string {
@@ -518,6 +530,31 @@ async function getStorageOverviewImpl({
   return overview;
 }
 
+async function getSnapshotUsageImpl({
+  client,
+  project_id,
+}: {
+  client: Client;
+  project_id: string;
+}) {
+  const fileServer = fileServerClient(client);
+  return await fileServer.allSnapshotUsage({ project_id });
+}
+
+export async function handleProjectDiskQuotaRequest(
+  this: { subject?: string },
+  _opts: undefined,
+  client?: Client,
+): Promise<ProjectDiskQuota> {
+  if (client == null) {
+    throw new Error("project disk quota requires a local conat client");
+  }
+  return await getDiskQuotaImpl({
+    client,
+    project_id: extractProjectId(this?.subject),
+  });
+}
+
 export async function handleProjectStorageOverviewRequest(
   this: { subject?: string },
   opts?: { home?: string; force_sample?: boolean },
@@ -531,6 +568,20 @@ export async function handleProjectStorageOverviewRequest(
     project_id: extractProjectId(this?.subject),
     home: opts?.home,
     force_sample: opts?.force_sample,
+  });
+}
+
+export async function handleProjectSnapshotUsageRequest(
+  this: { subject?: string },
+  _opts: undefined,
+  client?: Client,
+) {
+  if (client == null) {
+    throw new Error("project snapshot usage requires a local conat client");
+  }
+  return await getSnapshotUsageImpl({
+    client,
+    project_id: extractProjectId(this?.subject),
   });
 }
 
@@ -570,8 +621,14 @@ export async function initProjectStorageInfoService(client: Client) {
     subject: PROJECT_STORAGE_INFO_SUBJECT,
   });
   return await client.service(PROJECT_STORAGE_INFO_SUBJECT, {
+    getQuota() {
+      return handleProjectDiskQuotaRequest.call(this, undefined, client);
+    },
     getOverview(opts?: { home?: string; force_sample?: boolean }) {
       return handleProjectStorageOverviewRequest.call(this, opts, client);
+    },
+    getSnapshotUsage() {
+      return handleProjectSnapshotUsageRequest.call(this, undefined, client);
     },
     getBreakdown(opts: { path: string }) {
       return handleProjectStorageBreakdownRequest.call(this, opts, client);

@@ -392,7 +392,6 @@ export const projects = {
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
 
-  getDiskQuota: authFirstRequireAccount,
   exec: authFirstRequireAccount,
   getRuntimeLog: authFirstRequireAccount,
   resolveWorkspaceSshConnection: authFirstRequireAccount,
@@ -691,14 +690,6 @@ export interface Projects {
     member_host?: number;
     always_running?: number;
   }) => Promise<void>;
-
-  getDiskQuota: (opts: { account_id?: string; project_id: string }) => Promise<{
-    used: number;
-    size: number;
-    qgroupid?: string;
-    scope?: "tracking" | "subvolume";
-    warning?: string;
-  }>;
 
   exec: (opts: {
     account_id?: string;

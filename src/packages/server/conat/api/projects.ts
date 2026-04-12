@@ -49,7 +49,6 @@ import {
 } from "@cocalc/server/projects/offline-move-confirmation";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
-import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import {
   getLocalProjectCollaboratorAccessStatus,
   PROJECT_COLLABORATOR_REQUIRED_ERROR,
@@ -522,24 +521,6 @@ export async function setQuotas(opts: {
     project_id: opts.project_id,
     fields: ["run_quota", "settings"],
   });
-}
-
-export async function getDiskQuota({
-  account_id,
-  project_id,
-}: {
-  account_id: string;
-  project_id: string;
-}): Promise<{
-  used: number;
-  size: number;
-  qgroupid?: string;
-  scope?: "tracking" | "subvolume";
-  warning?: string;
-}> {
-  await assertCollab({ account_id, project_id });
-  const client = await getProjectFileServerClient({ project_id });
-  return await client.getQuota({ project_id });
 }
 
 export async function listRecentDocumentActivity({
