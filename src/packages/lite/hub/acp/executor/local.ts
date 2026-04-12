@@ -13,7 +13,7 @@ const DEFAULT_TERMINAL_TIMEOUT_MS = Number.isFinite(
   Number.parseInt(process.env.COCALC_CODEX_TERMINAL_TIMEOUT_MS ?? "", 10),
 )
   ? Number.parseInt(process.env.COCALC_CODEX_TERMINAL_TIMEOUT_MS!, 10)
-  : 30_000;
+  : 5 * 60_000;
 
 /**
  * Local executor used in lite/single-process mode.
