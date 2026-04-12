@@ -1,8 +1,8 @@
 import api from "@cocalc/frontend/client/api";
 import { useEffect, useState } from "react";
-import { Spin, Tooltip } from "antd";
+import { Spin } from "antd";
 import { currency, round2 } from "@cocalc/util/misc";
-import { TimeAgo } from "@cocalc/frontend/components";
+import { TimeAgo, Tooltip } from "@cocalc/frontend/components";
 
 export default function Money({ account_id }) {
   const [data, setData] = useState<{

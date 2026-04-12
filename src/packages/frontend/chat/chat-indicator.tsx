@@ -10,13 +10,13 @@
 // do work properly via a hack in close_chat in project_actions.
 
 import { isChatPath } from "./paths";
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 import { debounce } from "lodash";
 import { useEffect, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { UsersViewing } from "@cocalc/frontend/account/avatar/users-viewing";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { HiddenXS } from "@cocalc/frontend/components";
+import { HiddenXS, Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import track from "@cocalc/frontend/user-tracking";
 import { labels } from "../i18n";

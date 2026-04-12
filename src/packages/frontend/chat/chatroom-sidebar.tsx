@@ -13,13 +13,12 @@ import {
   Menu,
   Popconfirm,
   Space,
-  Tooltip,
   message as antdMessage,
 } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { Resizable } from "re-resizable";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { dateValue, field } from "./access";

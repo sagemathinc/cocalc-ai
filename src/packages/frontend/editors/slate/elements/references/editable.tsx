@@ -13,7 +13,7 @@ is good, but it could be confusing.  Undo will put them back though.
 */
 
 import { register } from "../register";
-import { Tooltip } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { highlightCodeHtml } from "../code-block/prism";
 
 function fromSlate({ node }) {

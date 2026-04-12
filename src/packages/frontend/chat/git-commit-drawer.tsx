@@ -16,7 +16,6 @@ import {
   Space,
   Spin,
   Switch,
-  Tooltip,
   Typography,
   type MenuProps,
 } from "antd";
@@ -34,7 +33,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { redux } from "@cocalc/frontend/app-framework";
-import { Icon, TimeAgo } from "@cocalc/frontend/components";
+import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { filenameMode } from "@cocalc/frontend/file-associations";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { backtickSequence } from "@cocalc/frontend/markdown/util";

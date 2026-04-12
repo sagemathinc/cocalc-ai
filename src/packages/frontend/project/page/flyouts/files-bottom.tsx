@@ -4,7 +4,7 @@
  */
 
 import { CaretRightOutlined } from "@ant-design/icons";
-import { Button, Collapse, CollapseProps, Space, Tooltip } from "antd";
+import { Button, Collapse, CollapseProps, Space } from "antd";
 import immutable from "immutable";
 import { debounce } from "lodash";
 
@@ -19,7 +19,7 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import { ConnectionStatus } from "@cocalc/frontend/app/store";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { ConnectionStatusIcon } from "@cocalc/frontend/frame-editors/frame-tree/title-bar";

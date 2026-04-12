@@ -1,5 +1,6 @@
-import { Tooltip, Typography } from "antd";
+import { Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 
 type HostBootstrapProgressProps = {

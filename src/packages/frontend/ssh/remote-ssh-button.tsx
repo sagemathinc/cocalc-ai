@@ -1,6 +1,6 @@
-import { Button, Modal, Space, Tooltip, Typography } from "antd";
+import { Button, Modal, Space, Typography } from "antd";
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 
 const BUTTON_STYLE: React.CSSProperties = {
   margin: "2.5px 0 0 6px",

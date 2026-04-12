@@ -5,10 +5,10 @@
 
 import { useState } from "react";
 
-import { Alert, Button, Input, Space, Tooltip } from "antd";
+import { Alert, Button, Input, Space } from "antd";
 
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 
 import { setVoucherCodeNotes } from "./api";
 

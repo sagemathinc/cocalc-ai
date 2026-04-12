@@ -4,14 +4,19 @@
  */
 
 import type { SelectProps } from "antd";
-import { Select, Space, Tag, Tooltip } from "antd";
+import { Select, Space, Tag } from "antd";
 import type { ConfigProviderProps } from "antd/lib/config-provider";
 import { isEmpty } from "lodash";
 import { useEffect, useState } from "react";
 
 import api from "@cocalc/frontend/client/api";
 import { CSS, redux, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { HelpIcon, Paragraph, Text } from "@cocalc/frontend/components";
+import {
+  HelpIcon,
+  Paragraph,
+  Text,
+  Tooltip,
+} from "@cocalc/frontend/components";
 import { LanguageModelVendorAvatar } from "@cocalc/frontend/components/language-model-icon";
 import {
   getUserDefinedLLMByModel,

@@ -2,16 +2,7 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
-import {
-  Button,
-  Card,
-  Col,
-  Input,
-  Popconfirm,
-  Row,
-  Space,
-  Tooltip,
-} from "antd";
+import { Button, Card, Col, Input, Popconfirm, Row, Space } from "antd";
 import { useEffect, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
@@ -21,6 +12,7 @@ import {
   Text,
   TimeAgo,
   Tip,
+  Tooltip,
 } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectMap, UserMap } from "@cocalc/frontend/todo-types";

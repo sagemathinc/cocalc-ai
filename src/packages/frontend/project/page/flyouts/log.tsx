@@ -3,16 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  Alert,
-  Button,
-  Flex,
-  Input,
-  Popconfirm,
-  Space,
-  Switch,
-  Tooltip,
-} from "antd";
+import { Alert, Button, Flex, Input, Popconfirm, Space, Switch } from "antd";
 import immutable from "immutable";
 import { debounce } from "lodash";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -29,7 +20,13 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Icon, IconName, Loading, TimeAgo } from "@cocalc/frontend/components";
+import {
+  Icon,
+  IconName,
+  Loading,
+  TimeAgo,
+  Tooltip,
+} from "@cocalc/frontend/components";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";

@@ -16,7 +16,6 @@ import {
   Select,
   SelectProps,
   Space,
-  Tooltip,
 } from "antd";
 import { SizeType } from "antd/es/config-provider/SizeContext";
 import { useState } from "react";
@@ -25,7 +24,7 @@ import { defineMessage, useIntl } from "react-intl";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { I18N_HINT_ACCOUNT_SETTINGS } from "@cocalc/frontend/app/i18n-banner";
 import { useLocalizationCtx } from "@cocalc/frontend/app/localize";
-import { Icon, Paragraph } from "@cocalc/frontend/components";
+import { Icon, Paragraph, Tooltip } from "@cocalc/frontend/components";
 import {
   getLocale,
   labels,

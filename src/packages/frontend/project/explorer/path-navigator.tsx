@@ -4,7 +4,7 @@
  */
 
 import { HomeOutlined } from "@ant-design/icons";
-import { Breadcrumb, Button, Dropdown, Flex, Tooltip } from "antd";
+import { Breadcrumb, Button, Dropdown, Flex } from "antd";
 import type { MenuProps } from "antd";
 import { dirname } from "path";
 
@@ -17,6 +17,7 @@ import {
 import {
   DropdownMenu,
   Icon,
+  Tooltip,
   type MenuItems,
 } from "@cocalc/frontend/components";
 import { isBackupsPath } from "@cocalc/util/consts/backups";

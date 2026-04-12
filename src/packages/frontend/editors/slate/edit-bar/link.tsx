@@ -1,4 +1,5 @@
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { formatAction } from "../format";
 import { Icon } from "@cocalc/frontend/components/icon";
 

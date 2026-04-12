@@ -3,10 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Popover, Tooltip } from "antd";
+import { Popover, Tooltip as AntdTooltip } from "antd";
+import type { TooltipProps as AntdTooltipProps } from "antd";
 import { TooltipPlacement } from "antd/lib/tooltip";
 import React, { CSSProperties as CSS } from "react";
 
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import * as misc from "@cocalc/util/misc";
 import * as feature from "../feature";
 import { Icon, IconName } from "./icon";
@@ -38,9 +40,15 @@ interface Props {
   popover_style?: CSS; // changing not checked ever (default={zIndex:1000})
   stable?: boolean; // if true, children assumed to never change
   allow_touch?: boolean;
+  ignore_hide_setting?: boolean;
   trigger?: Trigger | Trigger[];
   children?: React.ReactNode;
   tip_style?: CSS;
+}
+
+export interface TooltipProps extends AntdTooltipProps {
+  allow_touch?: boolean;
+  ignore_hide_setting?: boolean;
 }
 
 function is_equal(prev, next) {
@@ -59,6 +67,38 @@ function is_equal(prev, next) {
   }
 }
 
+function useTooltipsDisabled({
+  allow_touch = false,
+  ignore_hide_setting = false,
+}: {
+  allow_touch?: boolean;
+  ignore_hide_setting?: boolean;
+}) {
+  const other_settings = useTypedRedux("account", "other_settings");
+  const hideTooltips = !!other_settings?.get?.("hide_button_tooltips");
+  return (
+    (feature.IS_TOUCH && !allow_touch) || (hideTooltips && !ignore_hide_setting)
+  );
+}
+
+export function Tooltip({
+  allow_touch = false,
+  ignore_hide_setting = false,
+  children,
+  title,
+  ...props
+}: Readonly<TooltipProps>) {
+  const disabled = useTooltipsDisabled({ allow_touch, ignore_hide_setting });
+  if (disabled || title == null) {
+    return <>{children}</>;
+  }
+  return (
+    <AntdTooltip title={title} {...props}>
+      {children}
+    </AntdTooltip>
+  );
+}
+
 export const Tip: React.FC<Props> = React.memo((props: Props) => {
   const {
     placement = "right",
@@ -67,6 +107,7 @@ export const Tip: React.FC<Props> = React.memo((props: Props) => {
     // rootClose = false,
     popover_style = { zIndex: 1000 },
     allow_touch = false,
+    ignore_hide_setting = false,
     // id = "tip",
     title,
     tip,
@@ -77,6 +118,7 @@ export const Tip: React.FC<Props> = React.memo((props: Props) => {
     children,
     tip_style,
   } = props;
+  const disabled = useTooltipsDisabled({ allow_touch, ignore_hide_setting });
 
   function render_title() {
     const renderedTitle = typeof title === "function" ? title() : title;
@@ -121,7 +163,12 @@ export const Tip: React.FC<Props> = React.memo((props: Props) => {
       );
     } else {
       return (
-        <Tooltip title={render_title()} {...props}>
+        <Tooltip
+          allow_touch={allow_touch}
+          ignore_hide_setting={ignore_hide_setting}
+          title={render_title()}
+          {...props}
+        >
           {render_wrapped()}
         </Tooltip>
       );
@@ -131,7 +178,7 @@ export const Tip: React.FC<Props> = React.memo((props: Props) => {
   // Tooltips are very frustrating and pointless on mobile or tablets, and cause a lot of trouble; also,
   // our assumption is that mobile users will also use the desktop version at some point, where
   // they can learn what the tooltips say.  We do optionally allow a way to use them.
-  if (feature.IS_TOUCH && !allow_touch) {
+  if (disabled) {
     return render_wrapped();
   } else {
     return render_tooltip();

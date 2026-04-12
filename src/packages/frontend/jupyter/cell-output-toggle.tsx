@@ -8,7 +8,8 @@
 import React from "react";
 import { Icon } from "../components/icon";
 import type { JupyterActions } from "./browser-actions";
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 
 const SCROLLED_STYLE: React.CSSProperties = {
   fontSize: "inherit",

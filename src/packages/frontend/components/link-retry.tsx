@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 
 import {
   useEffect,
@@ -14,6 +14,7 @@ import { Gap, Icon, Loading } from "@cocalc/frontend/components";
 import { open_new_tab } from "@cocalc/frontend/misc";
 import { retry_until_success } from "@cocalc/util/async-utils";
 import { COLORS } from "@cocalc/util/theme";
+import { Tooltip } from "./tip";
 
 interface Props {
   href: string;

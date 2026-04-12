@@ -7,14 +7,14 @@
 React component that describes the input of a cell
 */
 
-import { Button, Dropdown, Tooltip } from "antd";
+import { Button, Dropdown } from "antd";
 import { delay } from "awaiting";
 import { Map } from "immutable";
 import React, { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useFrameContext } from "@cocalc/frontend/app-framework";
-import { Icon, isIconName } from "@cocalc/frontend/components";
+import { Icon, Tooltip, isIconName } from "@cocalc/frontend/components";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
 import { jupyter, labels } from "@cocalc/frontend/i18n";
 import track from "@cocalc/frontend/user-tracking";

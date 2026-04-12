@@ -31,13 +31,12 @@ import {
   Popconfirm,
   Space,
   Spin,
-  Tooltip,
 } from "antd";
 import { useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { labels } from "@cocalc/frontend/i18n";
 import { redux, useFrameContext } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { COMMANDS } from "@cocalc/frontend/course/commands";
 import { IntlMessage } from "@cocalc/frontend/i18n";

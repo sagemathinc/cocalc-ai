@@ -1,6 +1,7 @@
-import { Alert, Button, Input, Modal, Select, Space, Tooltip } from "antd";
+import { Alert, Button, Input, Modal, Select, Space } from "antd";
 import { dirname, join } from "path";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Tooltip } from "@cocalc/frontend/components";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { webapp_client } from "@cocalc/frontend/webapp-client";

@@ -8,7 +8,7 @@ Tabs in a particular project.
 */
 
 import type { MenuProps } from "antd";
-import { Button, Checkbox, Dropdown, Modal, Tooltip } from "antd";
+import { Button, Checkbox, Dropdown, Modal } from "antd";
 import { debounce, throttle } from "lodash";
 import {
   ReactNode,
@@ -23,7 +23,7 @@ import { CSS, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useAccountStoreReady } from "@cocalc/frontend/app/account-store-ready";
 import useAppContext from "@cocalc/frontend/app/use-context";
 import { ChatIndicator } from "@cocalc/frontend/chat/chat-indicator";
-import { Icon, type IconName } from "@cocalc/frontend/components";
+import { Icon, Tooltip, type IconName } from "@cocalc/frontend/components";
 import {
   DragHandle,
   SortableItem,

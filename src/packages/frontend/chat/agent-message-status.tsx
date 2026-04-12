@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Checkbox, Drawer, Tooltip } from "antd";
+import { Button, Checkbox, Drawer } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import type { CSSProperties } from "react";
 import {
@@ -12,7 +12,7 @@ import {
   useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
-import { TimeAgo } from "@cocalc/frontend/components";
+import { TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import type { InlineCodeLink } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { COLORS } from "@cocalc/util/theme";

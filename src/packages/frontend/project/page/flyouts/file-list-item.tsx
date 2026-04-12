@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Dropdown, MenuProps, Tooltip } from "antd";
+import { Button, Dropdown, MenuProps } from "antd";
 import immutable from "immutable";
 import { useIntl } from "react-intl";
 import {
@@ -13,7 +13,7 @@ import {
   useRef,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { A, Icon, IconName } from "@cocalc/frontend/components";
+import { A, Icon, IconName, Tooltip } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { useProjectContext } from "@cocalc/frontend/project/context";

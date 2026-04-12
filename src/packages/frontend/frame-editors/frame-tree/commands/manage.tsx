@@ -3,12 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 import { ReactNode } from "react";
 import { IntlShape } from "react-intl";
 
 import { set_account_table } from "@cocalc/frontend/account/util";
 import { redux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import type { MenuItem } from "@cocalc/frontend/components/dropdown-menu";
 import { STAY_OPEN_ON_CLICK } from "@cocalc/frontend/components/dropdown-menu";
 import { Icon, IconName, isIconName } from "@cocalc/frontend/components/icon";

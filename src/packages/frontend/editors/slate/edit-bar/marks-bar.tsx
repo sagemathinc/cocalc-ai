@@ -3,10 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 import React, { CSSProperties } from "react";
 
-import { Icon, IconName } from "@cocalc/frontend/components";
+import { Icon, IconName, Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import { SlateEditor } from "../editable-markdown";
 import { formatAction } from "../format";

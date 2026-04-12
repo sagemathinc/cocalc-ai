@@ -1,0 +1,2 @@
+# Temporary baseline for direct Antd Tooltip usage in frontend source.
+# New files must use the shared tooltip wrapper instead of importing Tooltip directly.

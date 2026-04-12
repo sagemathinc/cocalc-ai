@@ -1,4 +1,4 @@
-import { Button, Popconfirm, Space, Tag, Tooltip, Typography } from "antd";
+import { Button, Popconfirm, Space, Tag, Typography } from "antd";
 import { mergeProgressiveMessageText, type InlineCodeLink } from "@cocalc/chat";
 import type {
   AcpStreamEvent,
@@ -12,7 +12,7 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
-import { TimeAgo } from "@cocalc/frontend/components";
+import { TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import type { VirtuosoHandle } from "react-virtuoso";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";

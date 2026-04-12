@@ -5,7 +5,8 @@ import {
   toDecimal,
   type MoneyValue,
 } from "@cocalc/util/money";
-import { Tooltip, Statistic } from "antd";
+import { Statistic } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { zIndexTip } from "./zindex";
 
 interface Props {

@@ -15,11 +15,11 @@ import {
   Switch,
   Table,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";

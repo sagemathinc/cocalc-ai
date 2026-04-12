@@ -1,4 +1,5 @@
-import { Alert, Button, Space, Tooltip } from "antd";
+import { Alert, Button, Space } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import {
   createContext,
   CSSProperties,

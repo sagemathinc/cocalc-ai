@@ -1,8 +1,9 @@
 import type { iThreads, Folder } from "./types";
-import { Badge, List, Tooltip } from "antd";
+import { Badge, List } from "antd";
 import { MessageInThread } from "./message";
 import type { Message as MessageType } from "@cocalc/util/db-schema/messages";
 import { useState } from "react";
+import { Tooltip } from "@cocalc/frontend/components";
 import { plural } from "@cocalc/util/misc";
 import { isFromMe, isRead } from "./util";
 import User from "./user";

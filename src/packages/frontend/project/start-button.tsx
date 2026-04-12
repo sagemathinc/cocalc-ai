@@ -12,7 +12,7 @@ It's really more than just that button, since it gives info as starting/stopping
 happens, and also when the system is heavily loaded.
 */
 
-import { Alert, Button, Progress, Space, Spin, Tooltip } from "antd";
+import { Alert, Button, Progress, Space, Spin } from "antd";
 import type { ButtonProps } from "antd";
 import { CSSProperties, useRef } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -22,6 +22,7 @@ import {
   Icon,
   ProjectState,
   TimeElapsed,
+  Tooltip,
   VisibleMDLG,
 } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";

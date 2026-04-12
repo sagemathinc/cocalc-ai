@@ -1,9 +1,9 @@
-import { Alert, Button, Input, Radio, Space, Tooltip, message } from "antd";
+import { Alert, Button, Input, Radio, Space, message } from "antd";
 import { join, posix } from "path";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type VirtuosoGridHandle } from "react-virtuoso";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Loading, SearchInput } from "@cocalc/frontend/components";
+import { Loading, SearchInput, Tooltip } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";

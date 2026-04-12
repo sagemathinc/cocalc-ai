@@ -4,8 +4,9 @@
  */
 
 import { CSSProperties, useState } from "react";
-import { Button, Dropdown, Input, Menu, MenuProps, Tooltip } from "antd";
+import { Button, Dropdown, Input, Menu, MenuProps } from "antd";
 
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { COLORS } from "@cocalc/util/theme";
 

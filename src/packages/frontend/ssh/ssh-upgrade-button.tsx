@@ -1,6 +1,6 @@
-import { Button, Modal, Space, Tooltip, Typography } from "antd";
+import { Button, Modal, Space, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { UpgradeInfo } from "@cocalc/conat/hub/api/ssh";

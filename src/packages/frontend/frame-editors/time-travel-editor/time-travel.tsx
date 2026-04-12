@@ -5,13 +5,13 @@
 
 // Time travel editor react component
 
-import { Button, Modal, Radio, Select, Space, Tooltip, message } from "antd";
+import { Button, Modal, Radio, Select, Space, message } from "antd";
 import { Map, List } from "immutable";
 import { debounce } from "lodash";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AccountState } from "@cocalc/frontend/account/types";
 import { useAsyncEffect, useEditorRedux } from "@cocalc/frontend/app-framework";
-import { Loading, TimeAgo } from "@cocalc/frontend/components";
+import { Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { lite } from "@cocalc/frontend/lite";
 import type { Document } from "@cocalc/sync/editor/generic/types";

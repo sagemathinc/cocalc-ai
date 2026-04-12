@@ -14,10 +14,11 @@ which is confusing.
 
 // cSpell:ignore aicell
 
-import { Button, Space, Tooltip } from "antd";
+import { Button, Space } from "antd";
 import { ReactNode } from "react";
 
 import { redux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { Icon } from "@cocalc/frontend/components/icon";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";

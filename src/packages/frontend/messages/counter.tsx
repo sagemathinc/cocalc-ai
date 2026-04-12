@@ -1,6 +1,7 @@
 import { useEffect } from "react";
-import { Badge, Tooltip } from "antd";
+import { Badge } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import { set_window_title } from "@cocalc/frontend/browser";
 

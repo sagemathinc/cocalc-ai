@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Checkbox, Tooltip } from "antd";
+import { Checkbox } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 
 interface Props {
   disabled: boolean;

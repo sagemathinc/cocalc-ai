@@ -3,11 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Tooltip } from "antd";
-
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { CSS, redux, useState } from "@cocalc/frontend/app-framework";
-import { Icon, IconName, TimeAgo } from "@cocalc/frontend/components";
+import { Icon, IconName, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";

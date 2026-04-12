@@ -3,11 +3,11 @@
 Floating panel from which you can select a tool.
 
 */
-
-import { Button, Tooltip, Typography } from "antd";
+import { Button, Typography } from "antd";
 import { ReactNode, useEffect } from "react";
 
 import { CSS } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { r_join } from "@cocalc/frontend/components/r_join";
 import { useFrameContext } from "../hooks";

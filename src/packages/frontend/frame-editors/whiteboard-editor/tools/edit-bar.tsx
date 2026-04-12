@@ -2,11 +2,12 @@
 Editing bar for editing one (or more) selected elements.
 */
 
-import { Button, Dropdown, InputNumber, Select, Tooltip, Space } from "antd";
+import { Button, Dropdown, InputNumber, Select, Space } from "antd";
 import { CSSProperties, ReactNode, useMemo, useState } from "react";
 const { Option } = Select;
 
 import { CSS } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import ColorPicker from "@cocalc/frontend/components/color-picker";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { FONT_FACES as FONT_FAMILIES } from "@cocalc/frontend/editors/editor-button-bar";

@@ -3,11 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Select, Tooltip } from "antd";
+import { Alert, Select } from "antd";
 import { OptionProps } from "antd/es/select";
 import { fromJS } from "immutable";
 import { sortBy } from "lodash";
 import { useEffect, useState } from "react";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import Logo from "@cocalc/frontend/jupyter/logo";
 import type { KernelSpec } from "@cocalc/jupyter/types";
 import {

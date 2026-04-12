@@ -37,6 +37,7 @@ jest.mock("@cocalc/frontend/components/error", () => () => null);
 jest.mock("@cocalc/frontend/editors/slate/static-markdown", () => () => null);
 jest.mock("@cocalc/frontend/components", () => ({
   TimeAgo: () => null,
+  Tooltip: ({ children }: any) => <>{children}</>,
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({

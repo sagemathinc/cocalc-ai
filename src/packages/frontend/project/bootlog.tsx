@@ -1,6 +1,6 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useEffect, useState } from "react";
-import { Progress, Space, Spin, Switch, Tooltip } from "antd";
+import { Progress, Space, Spin, Switch } from "antd";
 import { useProjectContext } from "./context";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { LroEvent, LroScopeType } from "@cocalc/conat/hub/api/lro";
@@ -13,7 +13,7 @@ import {
 } from "@cocalc/util/misc";
 import { namespaceToColor } from "@cocalc/util/color";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
-import { TimeAgo } from "@cocalc/frontend/components";
+import { TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import type { StartLroState } from "./start-ops";
 
 type ProgressEvent = {

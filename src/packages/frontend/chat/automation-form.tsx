@@ -3,19 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  Button,
-  Input,
-  InputNumber,
-  Select,
-  Space,
-  Switch,
-  Tooltip,
-} from "antd";
+import { Button, Input, InputNumber, Select, Space, Switch } from "antd";
 import type {
   AcpAutomationConfig,
   AcpAutomationState,
 } from "@cocalc/conat/ai/acp/types";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 
 const DEFAULT_LOCAL_TIME = "05:00";
 const DEFAULT_INTERVAL_MINUTES = 120;

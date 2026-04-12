@@ -9,9 +9,9 @@ import type {
   MouseEvent as ReactMouseEvent,
 } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, InputNumber, Modal, Select, Switch, Tooltip } from "antd";
+import { Button, InputNumber, Modal, Select, Switch } from "antd";
 import { FormattedMessage } from "react-intl";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import {
   delete_local_storage,

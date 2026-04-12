@@ -1,4 +1,5 @@
-import { Card, Statistic, Tooltip } from "antd";
+import { Card, Statistic } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import {
   moneyToCurrency,
   toDecimal,

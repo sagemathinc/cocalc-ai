@@ -14,12 +14,13 @@ import {
   PlayCircleTwoTone,
   StopTwoTone,
 } from "@ant-design/icons";
-import { Button, Col, Modal, Row, TimePicker, Tooltip, Space } from "antd";
+import { Button, Col, Modal, Row, TimePicker, Space } from "antd";
 import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
 import { CSSProperties, useEffect, useState } from "react";
 
 import { redux, useForceUpdate } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";

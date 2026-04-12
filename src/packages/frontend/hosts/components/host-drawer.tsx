@@ -8,7 +8,6 @@ import {
   Popconfirm,
   Space,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import {
@@ -17,6 +16,7 @@ import {
   SyncOutlined,
 } from "@ant-design/icons";
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type {
   Host,
