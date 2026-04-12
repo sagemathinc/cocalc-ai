@@ -1,16 +1,6 @@
 import { Table } from "./types";
 
 export const retentionModels = {
-  file_access_log: {
-    title: "File Access Log - Retention",
-    description:
-      "Number of accounts in the cohort with an entry in the file_access_log during each period.",
-  },
-  "file_access_log:all": {
-    title: "File Access Log - Active Users",
-    description:
-      "Number of accounts with an entry in the file_access_log during each period.",
-  },
   openai_chatgpt_log: {
     title: "ChatGPT - Retention",
     description:
@@ -59,7 +49,7 @@ Table({
       type: "timestamp",
     },
     model: {
-      desc: "The model that defines active users, e.g., 'file_access_log', 'file_access_log:all'. This determines the cohort and how active is measured, via code that is hardcoded in cocalc's source code.",
+      desc: "The model that defines active users, e.g., 'user_tracking', 'user_tracking:all'. This determines the cohort and how active is measured, via code that is hardcoded in cocalc's source code.",
       type: "string",
     },
     period: {

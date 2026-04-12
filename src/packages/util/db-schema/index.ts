@@ -39,7 +39,6 @@ import "./crm";
 import "./deleted-projects";
 import "./email-counter";
 import "./external-credentials";
-import "./file-access-log";
 import "./groups";
 import "./hub-servers";
 import "./instances"; // probably deprecated
