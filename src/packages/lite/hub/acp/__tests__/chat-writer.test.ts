@@ -228,6 +228,10 @@ async function flush(writer: ChatStreamWriter) {
   await delay(0);
 }
 
+function findLastChatSet(sets: RecordedSet[]): RecordedSet | undefined {
+  return [...sets].reverse().find((row) => row.event === "chat");
+}
+
 function flattenLivePayloads(
   payloads: Array<AcpStreamMessage | AcpStreamMessage[]>,
 ): AcpStreamMessage[] {
@@ -307,7 +311,7 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    const final = sets[sets.length - 1];
+    const final = findLastChatSet(sets)!;
     expect(final.generating).toBe(false);
     (writer as any).dispose?.(true);
   });
@@ -620,6 +624,58 @@ describe("ChatStreamWriter", () => {
     expect(disposed).toBe(true);
   });
 
+  it("does not finalize the lease before the terminal chat save settles", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      get: (key: string) => (key === "generating" ? true : undefined),
+    });
+    let holdSave = false;
+    let releaseSave: (() => void) | undefined;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    syncdb.save = async () => {
+      if (holdSave) {
+        await saveGate;
+      }
+    };
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await writer.waitUntilReady();
+    holdSave = true;
+    const pending = writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+
+    await delay(0);
+    expect((turns.finalizeAcpTurnLease as any).mock.calls).toHaveLength(0);
+
+    releaseSave?.();
+    await pending;
+
+    expect((turns.finalizeAcpTurnLease as any).mock.calls).toEqual(
+      expect.arrayContaining([
+        [
+          expect.objectContaining({
+            state: "completed",
+          }),
+        ],
+      ]),
+    );
+    (writer as any).dispose?.(true);
+  });
+
   it("does not write a duplicate terminal assistant patch during dispose", async () => {
     const { syncdb, getVersions } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
@@ -676,7 +732,7 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    const final = sets[sets.length - 1] as any;
+    const final = findLastChatSet(sets) as any;
     expect(final.acp_log_store).toBe("acp-log/folder/chat.chat");
     expect(final.acp_log_key).toBe("thread-7:assistant-msg-7");
     expect(final.acp_log_subject).toBe(
@@ -798,7 +854,7 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    const final = sets[sets.length - 1];
+    const final = findLastChatSet(sets)!;
     expect(final.generating).toBe(false);
     expect(commits).toBeGreaterThanOrEqual(1);
     expect(saves).toBeGreaterThanOrEqual(1);
@@ -830,7 +886,7 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    const final = sets[sets.length - 1];
+    const final = findLastChatSet(sets)!;
     expect(final.generating).toBe(false);
     expect((writer as any).usage).toBeTruthy();
     (writer as any).dispose?.(true);
@@ -1180,7 +1236,7 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    const final = sets[sets.length - 1];
+    const final = findLastChatSet(sets)!;
     expect(final.generating).toBe(false);
     expect((queue.clearAcpPayloads as any).mock.calls.length).toBe(1);
     (writer as any).dispose?.(true);
@@ -1240,7 +1296,7 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    const final = sets[sets.length - 1] as any;
+    const final = findLastChatSet(sets) as any;
     expect(final.generating).toBe(false);
     expect((writer as any).content).toContain("**LLM usage limit reached**");
     expect((writer as any).content).toContain(
@@ -1458,7 +1514,7 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer2);
 
-    const final = sets[sets.length - 1];
+    const final = findLastChatSet(sets)!;
     expect(final.generating).toBe(false);
     writer1.dispose?.(true);
     writer2.dispose?.(true);
@@ -1603,7 +1659,7 @@ describe("ChatStreamWriter", () => {
     (writer as any).notifyInterrupted("Conversation interrupted.");
     await flush(writer);
 
-    const final = sets[sets.length - 1] as any;
+    const final = findLastChatSet(sets) as any;
     expect(final.generating).toBe(false);
     expect(final.acp_interrupted).toBe(true);
     expect(final.history?.[0]?.content ?? "").toContain("First paragraph.");
@@ -1683,7 +1739,7 @@ describe("ChatStreamWriter", () => {
     (writer as any).notifyInterrupted("Conversation interrupted.");
     await flush(writer);
 
-    const final = sets[sets.length - 1] as any;
+    const final = findLastChatSet(sets) as any;
     expect(final.generating).toBe(false);
     expect(final.history?.[0]?.content).toBe(
       "I'm going to wait here.\n\nConversation interrupted.",
@@ -1865,7 +1921,7 @@ describe("ChatStreamWriter", () => {
       } as AcpStreamMessage);
       await flush(writer);
 
-      const final = sets[sets.length - 1] as any;
+      const final = findLastChatSet(sets) as any;
       const expectedWorkspaceRoot = await fs.realpath(workspaceRoot);
       const expectedExistsPath = await fs.realpath(
         path.join(workspaceRoot, "src", "exists.ts"),
@@ -1923,7 +1979,7 @@ describe("ChatStreamWriter", () => {
       } as AcpStreamMessage);
       await flush(writer);
 
-      const final = sets[sets.length - 1] as any;
+      const final = findLastChatSet(sets) as any;
       const expectedWorkspaceRoot = await fs.realpath(workspaceRoot);
       const expectedInsidePath = await fs.realpath(insidePath);
       expect(Array.isArray(final.inline_code_links)).toBe(true);
