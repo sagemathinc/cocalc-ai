@@ -20,6 +20,7 @@ jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }) => <span>{name}</span>,
   Loading: () => <span>loading</span>,
   IconName: {},
+  Tooltip: ({ children }) => <>{children}</>,
 }));
 
 jest.mock("@cocalc/frontend/feature", () => ({

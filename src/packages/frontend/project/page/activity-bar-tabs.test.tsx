@@ -100,6 +100,7 @@ jest.mock("@cocalc/frontend/app/account-store-ready", () => ({
 
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: any) => <span>{name}</span>,
+  Tooltip: ({ children }: any) => <>{children}</>,
 }));
 
 jest.mock("@cocalc/frontend/components/sortable-list", () => ({
