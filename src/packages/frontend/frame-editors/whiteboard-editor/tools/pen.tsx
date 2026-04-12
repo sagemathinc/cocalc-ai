@@ -2,7 +2,8 @@
 The pen panel.
 */
 
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import ToolPanel, { getPresetManager, Tool } from "./tool-panel";
 import { defaultRadius, maxRadius as defaultMaxRadius } from "./defaults";

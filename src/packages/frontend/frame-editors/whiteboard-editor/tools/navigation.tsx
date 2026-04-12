@@ -16,7 +16,8 @@ import {
   useState,
 } from "react";
 import { Icon, IconName } from "@cocalc/frontend/components/icon";
-import { Button, Slider, Tooltip } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
+import { Button, Slider } from "antd";
 import { useFrameContext } from "../hooks";
 import { Actions } from "../actions";
 import { getPageSpan, fontSizeToZoom, MAX_ELEMENTS } from "../math";

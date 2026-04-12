@@ -1,13 +1,4 @@
-import {
-  Alert,
-  Button,
-  Input,
-  Progress,
-  Select,
-  Space,
-  Table,
-  Tooltip,
-} from "antd";
+import { Alert, Button, Input, Progress, Select, Space, Table } from "antd";
 
 import {
   redux,
@@ -15,7 +6,13 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Icon, Loading, Paragraph, Title } from "@cocalc/frontend/components";
+import {
+  Icon,
+  Loading,
+  Paragraph,
+  Title,
+  Tooltip,
+} from "@cocalc/frontend/components";
 import { LLMModelName } from "@cocalc/frontend/components/llm-name";
 import { Markdown } from "@cocalc/frontend/markdown";
 import { webapp_client } from "@cocalc/frontend/webapp-client";

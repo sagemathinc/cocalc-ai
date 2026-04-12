@@ -3,13 +3,13 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { Button, Dropdown, Flex, Spin, Tooltip } from "antd";
+import { Button, Dropdown, Flex, Spin } from "antd";
 import type { MenuProps } from "antd";
 import { useMemo } from "react";
 import { useIntl } from "react-intl";
 
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import {

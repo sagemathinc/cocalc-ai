@@ -3,12 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Tooltip } from "antd";
 import { List } from "immutable";
 import { isEmpty } from "lodash";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { useLanguageModelSetting } from "@cocalc/frontend/account/useLanguageModelSetting";
 import { redux, useMemo, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import AnthropicAvatar from "@cocalc/frontend/components/anthropic-avatar";
 import GoogleGeminiLogo from "@cocalc/frontend/components/google-gemini-avatar";
 import { LanguageModelVendorAvatar } from "@cocalc/frontend/components/language-model-icon";

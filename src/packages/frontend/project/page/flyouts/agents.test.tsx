@@ -164,6 +164,7 @@ jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
   Loading: () => <div>Loading...</div>,
   TimeAgo: ({ date }: any) => <span>{date}</span>,
+  Tooltip: ({ children }: any) => <>{children}</>,
 }));
 
 jest.mock("@cocalc/frontend/lib/file-context", () => ({

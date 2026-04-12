@@ -1,8 +1,9 @@
-import { Button, Spin, Tooltip, type ButtonProps } from "antd";
+import { Button, Spin, type ButtonProps } from "antd";
 import { useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 
 import { redux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { Message } from "./types";
 import useCommand from "./use-command";

@@ -7,9 +7,9 @@
 The tag editing toolbar functionality for cells.
 */
 
-import { Button, Input, Space, Tooltip } from "antd";
+import { Button, Input, Space } from "antd";
 import { useMemo, useState } from "@cocalc/frontend/app-framework";
-import { A } from "@cocalc/frontend/components";
+import { A, Tooltip } from "@cocalc/frontend/components";
 import { Map as ImmutableMap } from "immutable";
 import type { JupyterActions } from "./browser-actions";
 import { useEffect } from "react";

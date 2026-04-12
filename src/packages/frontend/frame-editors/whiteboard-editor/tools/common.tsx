@@ -1,5 +1,7 @@
 import type { CSSProperties } from "react";
-import { Button, Popconfirm, Tooltip } from "antd";
+import { Button, Popconfirm } from "antd";
+
+import { Tooltip } from "@cocalc/frontend/components";
 
 export const SELECTED = "#337ab7";
 

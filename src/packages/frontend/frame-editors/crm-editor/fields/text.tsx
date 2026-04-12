@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Input, Tooltip } from "antd";
+import { Input } from "antd";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { useEditableContext } from "./context";
 import { render, RenderProps } from "./register";
 import type { Text } from "@cocalc/util/db-schema/render-types";
 import { Tag } from "./tags";
-import { Icon } from "@cocalc/frontend/components";
 
 interface Props extends RenderProps {
   spec: Text;

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Card, Tooltip } from "antd";
+import { Card } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { moneyRound2Down, type MoneyValue } from "@cocalc/util/money";
 import Plot from "@cocalc/frontend/components/plotly";

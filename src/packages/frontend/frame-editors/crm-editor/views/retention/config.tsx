@@ -1,6 +1,7 @@
 import type { Retention } from "../retention";
 import dayjs from "dayjs";
 import update, { Data } from "./update";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import {
   Button,
@@ -9,7 +10,6 @@ import {
   Input,
   Radio,
   Select,
-  Tooltip,
   Alert,
   Progress,
 } from "antd";

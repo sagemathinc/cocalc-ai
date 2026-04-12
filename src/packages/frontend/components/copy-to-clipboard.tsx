@@ -4,11 +4,12 @@
  */
 
 import { CopyOutlined } from "@ant-design/icons";
-import { Button, Input, Space, Tooltip } from "antd";
+import { Button, Input, Space } from "antd";
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { CopyToClipboard } from "react-copy-to-clipboard";
 
 import { CSS } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "./tip";
 
 interface Props {
   value: string;
@@ -64,7 +65,7 @@ export default function CopyToClipBoard({
         {btn}
       </Tooltip>
     );
-  }, [value, copied, size]);
+  }, [copyTip, value, copied, size]);
 
   // ws: See https://ant.design/components/input for why using Input.Group is the
   // right way to do this.

@@ -5,7 +5,7 @@
 
 // A single terminal frame.
 
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 import { Map } from "immutable";
 import { throttle } from "lodash";
 import {
@@ -16,6 +16,7 @@ import {
   useIsMountedRef,
   useRef,
 } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { effectiveTerminalColorScheme } from "@cocalc/frontend/project/workspaces/terminal-theme";

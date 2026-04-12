@@ -7,16 +7,7 @@
 
 declare let DEBUG;
 
-import {
-  Alert,
-  Button,
-  Card,
-  Form,
-  Modal,
-  Popover,
-  Table,
-  Tooltip,
-} from "antd";
+import { Alert, Button, Card, Form, Modal, Popover, Table } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -28,7 +19,7 @@ import {
 } from "@ant-design/icons";
 import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
 import { CSS, ProjectActions } from "@cocalc/frontend/app-framework";
-import { A, Icon, Loading, Tip } from "@cocalc/frontend/components";
+import { A, Icon, Loading, Tip, Tooltip } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { labels } from "@cocalc/frontend/i18n";
 import { cmp, field_cmp, seconds2hms } from "@cocalc/util/misc";

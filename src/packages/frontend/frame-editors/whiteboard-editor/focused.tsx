@@ -7,10 +7,10 @@ then the border will be too wide.  We'll probably have to redo
 things to fix that later.
 */
 
-import { Tooltip } from "antd";
 import { ReactNode, useMemo, useRef, useState } from "react";
 import Draggable from "react-draggable";
 import { getAngle, getPosition, MAX_ELEMENTS } from "./math";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useFrameContext } from "./hooks";
 import EditBar from "./tools/edit-bar";

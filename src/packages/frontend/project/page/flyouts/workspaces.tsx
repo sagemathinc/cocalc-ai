@@ -16,7 +16,6 @@ import {
   Spin,
   Switch,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -31,6 +30,7 @@ import {
   SelectorInput,
   ThemeEditorModal,
   TimeAgo,
+  Tooltip,
   type IconName,
 } from "@cocalc/frontend/components";
 import {

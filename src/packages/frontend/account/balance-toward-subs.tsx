@@ -1,6 +1,7 @@
 // slightly weird props since this will be used in the nextjs app
 
-import { Alert, Card, Checkbox, Tooltip } from "antd";
+import { Alert, Card, Checkbox } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 
 export default function UseBalanceTowardSubscriptions({

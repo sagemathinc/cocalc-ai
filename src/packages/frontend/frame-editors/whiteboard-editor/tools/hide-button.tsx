@@ -1,4 +1,5 @@
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Element } from "../types";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { BUTTON_STYLE } from "./edit-bar";

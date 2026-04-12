@@ -22,10 +22,11 @@ import {
   Markdown,
   ProjectState,
   TimeAgo,
+  Tooltip,
 } from "@cocalc/frontend/components";
 import track from "@cocalc/frontend/user-tracking";
 import { COLORS } from "@cocalc/util/theme";
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 import { ProjectAvatarImage } from "./project-avatar";
 import { ProjectUsers } from "./project-users";
 import { projectThemeColor } from "./theme";

@@ -10,7 +10,6 @@ import {
   Select,
   Skeleton,
   Space,
-  Tooltip,
 } from "antd";
 import { useWatch } from "antd/es/form/Form";
 import { sortBy } from "lodash";
@@ -28,6 +27,7 @@ import {
   Icon,
   RawPrompt,
   Text,
+  Tooltip,
 } from "@cocalc/frontend/components";
 import { LanguageModelVendorAvatar } from "@cocalc/frontend/components/language-model-icon";
 import { webapp_client } from "@cocalc/frontend/webapp-client";

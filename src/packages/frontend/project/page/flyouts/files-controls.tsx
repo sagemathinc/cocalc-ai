@@ -10,12 +10,11 @@ import {
   Popconfirm,
   Radio,
   Space,
-  Tooltip,
   message,
 } from "antd";
 import immutable from "immutable";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Icon, TimeAgo } from "@cocalc/frontend/components";
+import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import {
   ACTION_BUTTONS_DIR,
   ACTION_BUTTONS_FILE,

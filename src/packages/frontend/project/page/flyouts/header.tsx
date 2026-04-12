@@ -3,9 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Tooltip } from "antd";
 import { useIntl } from "react-intl";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { isIntlMessage } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { PathNavigator } from "@cocalc/frontend/project/explorer/path-navigator";

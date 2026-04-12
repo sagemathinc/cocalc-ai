@@ -2,9 +2,9 @@
 Search for any file you've edited in the last year.
 */
 
-import { Input, Tooltip } from "antd";
+import { Input } from "antd";
 import { useIntl } from "react-intl";
-
+import { Tooltip } from "@cocalc/frontend/components";
 import { CSS, useState, useTypedRedux } from "@cocalc/frontend/app-framework";
 import ShowError from "@cocalc/frontend/components/error";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";

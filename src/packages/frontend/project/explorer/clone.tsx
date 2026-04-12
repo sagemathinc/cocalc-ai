@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import { Button, Input, Popconfirm, Spin, Tooltip } from "antd";
+import { Button, Input, Popconfirm, Spin } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { redux } from "@cocalc/frontend/app-framework";

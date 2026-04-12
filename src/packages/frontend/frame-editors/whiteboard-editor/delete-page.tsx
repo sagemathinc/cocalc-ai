@@ -1,5 +1,6 @@
-import { Button, Popconfirm, Tooltip } from "antd";
+import { Button, Popconfirm } from "antd";
 
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useFrameContext } from "./hooks";
 import { COLORS } from "@cocalc/util/theme";

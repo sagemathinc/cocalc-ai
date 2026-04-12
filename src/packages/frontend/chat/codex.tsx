@@ -8,7 +8,6 @@ import {
   Radio,
   Select,
   Space,
-  Tooltip,
   Typography,
 } from "antd";
 import {
@@ -17,6 +16,7 @@ import {
   useMemo,
   useState,
 } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import { lite } from "@cocalc/frontend/lite";
 import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
 import LiteAISettings from "@cocalc/frontend/account/lite-ai-settings";

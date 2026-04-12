@@ -14,13 +14,12 @@ import {
   Space,
   //Badge,
   Switch,
-  Tooltip,
 } from "antd";
 import humanizeList from "humanize-list";
 import * as immutable from "immutable";
 import { Alert } from "@cocalc/frontend/antd-bootstrap";
 import { CSS, React } from "@cocalc/frontend/app-framework";
-import { Icon, IconName, Tip } from "@cocalc/frontend/components";
+import { Icon, IconName, Tip, Tooltip } from "@cocalc/frontend/components";
 import { FLYOUT_PADDING } from "@cocalc/frontend/project/page/flyouts/consts";
 import {
   Process,

@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { useState } from "react";
-import { Button, Card, Tooltip, Spin } from "antd";
+import { Button, Card, Spin } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { zIndexTip } from "./zindex";
 import MoneyStatistic from "./money-statistic";
 import Payment from "./payment";

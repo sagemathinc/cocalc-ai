@@ -11,10 +11,10 @@ import {
   Radio,
   Space,
   Spin,
-  Tooltip,
 } from "antd";
 import { useEffect, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { currency } from "@cocalc/util/misc";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import ShowError from "@cocalc/frontend/components/error";

@@ -51,6 +51,9 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 
 ## Git and Validation
 
+- By default, agents should auto-commit completed change-sets after relevant validation passes.
+- The default workflow is: make the change, run the relevant checks, commit, then let the user review and request follow-up fixes in a new commit if needed.
+- Do not wait for an explicit "commit" request unless the user asked not to commit, the work is clearly exploratory/incomplete, or there are unrelated worktree changes that would make an automatic commit unsafe.
 - Commit messages should be prefixed by area/package, e.g. `frontend/chat: ...`.
 - By default, write commit messages with:
   - a concise first line (subject), and
@@ -68,6 +71,7 @@ git commit -F - <<'EOF'
 EOF
   ```
 - `git commit -m` is only for subject-only commits with no body.
+- Prefer follow-up commits over amending or rewriting history unless the user explicitly asks for that.
 - For new source files that use the standard CoCalc file header comment, set the copyright year to the current year.
 - Before finishing a change-set, run relevant typecheck/tests for touched packages.
 - Run `pnpm -C src prettier --write <file>` on modified files as needed.

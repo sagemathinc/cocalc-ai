@@ -1,7 +1,8 @@
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { CSSProperties } from "react";
-import { Checkbox, Tooltip } from "antd";
+import { Checkbox } from "antd";
 import { redux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 
 interface Props {
   style?: CSSProperties;

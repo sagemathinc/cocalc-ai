@@ -2,11 +2,12 @@
 Use the Agent to work on a Jupyter cell.
 */
 
-import { Alert, Button, Dropdown, Input, Modal, Space, Tooltip } from "antd";
+import { Alert, Button, Dropdown, Input, Modal, Space } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { defineMessage, useIntl } from "react-intl";
 import type { Entries } from "type-fest";
 
+import { Tooltip } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";

@@ -3,8 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Dropdown, Modal, Tooltip, message } from "antd";
+import { Button, Dropdown, Modal, message } from "antd";
 import { useState } from "react";
+import { Tooltip } from "@cocalc/frontend/components";
 import { TimeTravelActions } from "./actions";
 
 interface Props {

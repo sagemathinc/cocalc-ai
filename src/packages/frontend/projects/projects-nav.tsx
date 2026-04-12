@@ -4,7 +4,7 @@
  */
 
 import type { TabsProps } from "antd";
-import { Button, Divider, Popover, Select, Tabs, Tooltip } from "antd";
+import { Button, Divider, Popover, Select, Tabs } from "antd";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -15,7 +15,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { set_window_title } from "@cocalc/frontend/browser";
-import { Icon, Loading } from "@cocalc/frontend/components";
+import { Icon, Loading, Tooltip } from "@cocalc/frontend/components";
 import {
   SortableTab,
   SortableTabs,

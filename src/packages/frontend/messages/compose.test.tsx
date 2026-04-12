@@ -64,6 +64,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 
 jest.mock("@cocalc/frontend/components", () => ({
   Paragraph: ({ children }: any) => <div>{children}</div>,
+  Tooltip: ({ children }: any) => <>{children}</>,
 }));
 
 jest.mock("@cocalc/frontend/components/error", () => ({

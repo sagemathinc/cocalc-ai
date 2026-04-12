@@ -5,9 +5,10 @@
 
 declare const $: any;
 
-import { Tag, Tooltip } from "antd";
+import { Tag } from "antd";
 import { CSSProperties, useEffect, useMemo, useRef } from "react";
 import { Map } from "immutable";
+import { Tooltip } from "@cocalc/frontend/components";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
 
 // e.g., this is a subset of { JupyterActions } from "./browser-actions";

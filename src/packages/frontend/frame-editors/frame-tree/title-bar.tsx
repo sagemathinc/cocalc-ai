@@ -12,7 +12,7 @@ FrameTitleBar - title bar in a frame, in the frame tree
 
 import { useDraggable } from "@dnd-kit/core";
 import { ButtonGroup } from "@cocalc/frontend/antd-bootstrap";
-import { Button, Dropdown, Input, InputNumber, Popover, Tooltip } from "antd";
+import { Button, Dropdown, Input, InputNumber, Popover } from "antd";
 import type { MenuProps } from "antd/lib";
 import { List } from "immutable";
 import { lazy, Suspense, useMemo, useRef } from "react";
@@ -29,6 +29,7 @@ import {
   Icon,
   MenuItem,
   MenuItems,
+  Tooltip,
   r_join,
   VisibleMDLG,
 } from "@cocalc/frontend/components";

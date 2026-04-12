@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Tooltip } from "antd";
 import { CSSProperties, useRef, useState } from "react";
 
 import { isChatBot } from "@cocalc/frontend/account/chatbot";
@@ -13,7 +12,7 @@ import {
   useAsyncEffect,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Gap } from "@cocalc/frontend/components";
+import { Gap, Tooltip } from "@cocalc/frontend/components";
 import { LanguageModelVendorAvatar } from "@cocalc/frontend/components/language-model-icon";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { DEFAULT_COLOR } from "@cocalc/frontend/users/store";

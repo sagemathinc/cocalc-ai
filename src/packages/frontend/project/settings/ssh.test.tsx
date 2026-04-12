@@ -44,6 +44,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 jest.mock("@cocalc/frontend/components", () => ({
   A: ({ children, href }: any) => <a href={href}>{children}</a>,
   Icon: () => null,
+  Tooltip: ({ children }: any) => <>{children}</>,
 }));
 
 jest.mock("@cocalc/frontend/components/copy-button", () => ({

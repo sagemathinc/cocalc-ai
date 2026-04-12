@@ -2,7 +2,7 @@
 Editing/composing a message.
 */
 
-import { Button, Flex, Input, Modal, Space, Spin, Tooltip } from "antd";
+import { Button, Flex, Input, Modal, Space, Spin } from "antd";
 import { isEqual } from "lodash";
 import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -12,7 +12,7 @@ import {
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Paragraph } from "@cocalc/frontend/components";
+import { Paragraph, Tooltip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { Icon } from "@cocalc/frontend/components/icon";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";

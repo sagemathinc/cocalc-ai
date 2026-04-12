@@ -6,10 +6,11 @@
 // The "Restart Project" button, which says "Start" like the one at the top if the project isn't running
 
 import { PlayCircleOutlined, SyncOutlined } from "@ant-design/icons";
-import { Button, ButtonProps, Popconfirm, Tooltip } from "antd";
+import { Button, ButtonProps, Popconfirm } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useActions } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
 import { StartButton } from "@cocalc/frontend/project/start-button";

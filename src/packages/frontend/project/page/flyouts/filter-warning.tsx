@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Tooltip } from "antd";
+import { Alert, Button } from "antd";
 
-import { Icon, Text } from "@cocalc/frontend/components";
+import { Icon, Text, Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import { FLYOUT_PADDING } from "./consts";
 

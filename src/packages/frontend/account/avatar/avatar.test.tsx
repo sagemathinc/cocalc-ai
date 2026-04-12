@@ -43,6 +43,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 
 jest.mock("@cocalc/frontend/components", () => ({
   Gap: () => null,
+  Tooltip: ({ children }: any) => <>{children}</>,
 }));
 
 jest.mock("@cocalc/frontend/components/language-model-icon", () => ({

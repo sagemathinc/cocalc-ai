@@ -1,5 +1,5 @@
-import { Tooltip } from "antd";
 import { ReactNode, useMemo, useState } from "react";
+import { Tooltip } from "@cocalc/frontend/components";
 import { TableVirtuoso } from "react-virtuoso";
 import RetentionConfig from "./retention/config";
 import type { Data as RetentionData } from "./retention/update";

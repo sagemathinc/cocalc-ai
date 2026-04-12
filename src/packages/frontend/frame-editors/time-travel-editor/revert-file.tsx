@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 import { TimeTravelActions } from "./actions";
-import { Icon } from "../../components";
+import { Icon, Tooltip } from "../../components";
 import type { Document } from "@cocalc/sync/editor/generic/types";
 
 interface Props {

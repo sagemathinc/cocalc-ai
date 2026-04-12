@@ -3,12 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Tooltip, Typography } from "antd";
+import { Button, Typography } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import SSHKeyList from "@cocalc/frontend/account/ssh-keys/ssh-key-list";
 import { redux } from "@cocalc/frontend/app-framework";
-import { A, Icon } from "@cocalc/frontend/components";
+import { A, Icon, Tooltip } from "@cocalc/frontend/components";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { CopyToClipboard } from "react-copy-to-clipboard";
 import { labels } from "@cocalc/frontend/i18n";

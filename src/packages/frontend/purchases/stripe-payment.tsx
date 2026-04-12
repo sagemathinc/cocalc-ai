@@ -30,8 +30,9 @@ import {
   getPaymentMethods,
   processPaymentIntents,
 } from "./api";
-import { Alert, Button, Card, Modal, Space, Spin, Tooltip } from "antd";
+import { Alert, Button, Card, Modal, Space, Spin } from "antd";
 import { loadStripe } from "@cocalc/frontend/billing/stripe";
+import { Tooltip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { delay } from "awaiting";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";

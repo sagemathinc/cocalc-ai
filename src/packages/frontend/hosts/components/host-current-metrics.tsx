@@ -1,5 +1,6 @@
-import { Progress, Space, Tag, Tooltip, Typography } from "antd";
+import { Progress, Space, Tag, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import type {
   Host,
   HostMetricsDerived,

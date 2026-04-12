@@ -4,7 +4,7 @@
  */
 
 import React from "react";
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 
 import { SlateEditor } from "../editable-markdown";
 import { LinkEdit } from "./link-edit";
@@ -12,7 +12,7 @@ import { ListProperties } from "./list";
 import { ListEdit } from "./list-edit";
 import { Marks } from "./marks";
 import { MarksBar } from "./marks-bar";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 
 interface Props {
   Search: React.JSX.Element;

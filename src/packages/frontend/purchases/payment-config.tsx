@@ -1,4 +1,5 @@
-import { Divider, InputNumber, Spin, Tag, Tooltip } from "antd";
+import { Divider, InputNumber, Spin, Tag } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useEffect, useState } from "react";
 import { zIndexPayAsGo } from "./zindex";

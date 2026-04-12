@@ -1,11 +1,11 @@
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
 
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { redux } from "@cocalc/frontend/app-framework";
 import { SubmitMentionsFn } from "@cocalc/frontend/chat/types";
-import { Icon, TimeAgo } from "@cocalc/frontend/components";
+import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import MultiMarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
