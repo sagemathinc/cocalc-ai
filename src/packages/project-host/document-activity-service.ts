@@ -435,8 +435,20 @@ export async function initProjectDocumentActivityService(client: Client) {
     subject: PROJECT_DOCUMENT_ACTIVITY_SUBJECT,
   });
   return await client.service(PROJECT_DOCUMENT_ACTIVITY_SUBJECT, {
-    markFile: handleMarkFileRequest,
-    listRecent: handleListRecentRequest,
-    getFileUseTimes: handleGetFileUseTimesRequest,
+    markFile(opts: { path: string; action: DocumentActivityAction }) {
+      return handleMarkFileRequest.call(this, opts, client);
+    },
+    listRecent(opts: { limit?: number; max_age_s?: number; search?: string }) {
+      return handleListRecentRequest.call(this, opts, client);
+    },
+    getFileUseTimes(opts: {
+      path: string;
+      target_account_id?: string;
+      limit?: number;
+      access_times?: boolean;
+      edit_times?: boolean;
+    }) {
+      return handleGetFileUseTimesRequest.call(this, opts, client);
+    },
   });
 }

@@ -202,4 +202,38 @@ describe("project document activity service", () => {
       ),
     ).rejects.toThrow("invalid project document activity subject");
   });
+
+  it("binds the local conat client when registering the service", async () => {
+    const store = makeStore();
+    const events = makeStream();
+    dkvMock.mockResolvedValue(store);
+    dstreamMock.mockResolvedValue(events);
+
+    const registered: Record<string, any> = {};
+    const client = {
+      service: jest.fn(async (_subject: string, api: Record<string, any>) => {
+        Object.assign(registered, api);
+        return { close: jest.fn() };
+      }),
+    } as any;
+
+    const { initProjectDocumentActivityService } =
+      await import("./document-activity-service");
+    await initProjectDocumentActivityService(client);
+
+    await registered.markFile.call(
+      {
+        subject:
+          "services.account-00000000-0000-4000-8000-000000000001._.11111111-1111-4111-8111-111111111111._.document-activity",
+      },
+      { path: "a.txt", action: "open" },
+    );
+
+    expect(dkvMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        client,
+        project_id: "11111111-1111-4111-8111-111111111111",
+      }),
+    );
+  });
 });
