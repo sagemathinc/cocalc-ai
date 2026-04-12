@@ -318,6 +318,32 @@ async function listProjectLogLite(opts: {
   };
 }
 
+async function appendProjectLogLite(opts: {
+  account_id?: string;
+  project_id: string;
+  id?: string;
+  time?: Date | null;
+  event: Record<string, any> | string | null;
+}): Promise<ProjectLogRow> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "projects.appendProjectLog",
+      args: [opts],
+    });
+  }
+  const project_id = requireLiteProjectId(opts.project_id);
+  const account_id = requireLiteAccountId(opts.account_id);
+  const row: ProjectLogRow = {
+    id: `${opts.id ?? misc.uuid()}`,
+    project_id,
+    account_id,
+    time: normalizeProjectLogTime(opts.time) ?? new Date(),
+    event: opts.event ?? {},
+  };
+  upsertRow("project_log", row.id, row as any);
+  return row;
+}
+
 async function listRecentDocumentActivityLite(opts: {
   account_id?: string;
   limit?: number;
@@ -1635,6 +1661,7 @@ export const hubApi: HubApi = {
     archive: archiveNotificationLite,
   },
   projects: {
+    appendProjectLog: appendProjectLogLite,
     listProjectLog: listProjectLogLite,
     listRecentDocumentActivity: listRecentDocumentActivityLite,
     getProjectLauncher: getProjectLauncherLite,

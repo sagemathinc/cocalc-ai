@@ -324,6 +324,8 @@ export interface ProjectLogPage {
   has_more: boolean;
 }
 
+export const PROJECT_LOG_STREAM_NAME = "project-log";
+
 export type ChatStoreScope = "chat" | "before_date" | "thread" | "messages";
 
 export interface ChatStoreStats {
@@ -437,6 +439,7 @@ export const projects = {
   unblockCollabInviteSender: authFirstRequireAccount,
   listCollaborators: authFirstRequireAccount,
   listMyCollaborators: authFirstRequireAccount,
+  appendProjectLog: authFirstRequireAccount,
   listProjectLog: authFirstRequireAccount,
   listRecentDocumentActivity: authFirstRequireAccount,
   getProjectLauncher: authFirstRequireAccount,
@@ -580,6 +583,14 @@ export interface Projects {
     newer_than?: ProjectLogCursor;
     older_than?: ProjectLogCursor;
   }) => Promise<ProjectLogPage>;
+
+  appendProjectLog: (opts: {
+    account_id?: string;
+    project_id: string;
+    id?: string;
+    time?: Date | null;
+    event: Record<string, any> | string | null;
+  }) => Promise<ProjectLogRow>;
 
   listRecentDocumentActivity: (opts: {
     account_id?: string;

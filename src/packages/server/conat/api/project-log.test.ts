@@ -3,129 +3,109 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
-import { listProjectLog } from "./projects";
+import os from "node:os";
 
-const LOCAL_BAY_ID = "bay-0";
-const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
-const ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
+process.env.LOGS = os.tmpdir();
+
+const assertCollabMock = jest.fn();
+const getExplicitProjectRoutedClientMock = jest.fn();
+const listProjectLogMock = jest.fn();
+const appendProjectLogMock = jest.fn();
+
+jest.mock("./util", () => ({
+  assertCollab: (...args: any[]) => assertCollabMock(...args),
+}));
+
+jest.mock("@cocalc/server/conat/route-client", () => ({
+  getExplicitProjectRoutedClient: (...args: any[]) =>
+    getExplicitProjectRoutedClientMock(...args),
+}));
+
+jest.mock("@cocalc/conat/project/api", () => ({
+  projectApiClient: () => ({
+    system: {
+      listProjectLog: (...args: any[]) => listProjectLogMock(...args),
+      appendProjectLog: (...args: any[]) => appendProjectLogMock(...args),
+    },
+  }),
+}));
 
 describe("conat project log api", () => {
-  beforeAll(async () => {
-    await initEphemeralDatabase({});
-  }, 15000);
+  const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
+  const ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
 
-  afterEach(async () => {
-    await getPool().query(
-      `TRUNCATE project_log,
-                projects,
-                accounts
-         CASCADE`,
-    );
+  beforeEach(() => {
+    jest.resetModules();
+    assertCollabMock.mockReset();
+    getExplicitProjectRoutedClientMock.mockReset();
+    listProjectLogMock.mockReset();
+    appendProjectLogMock.mockReset();
+    getExplicitProjectRoutedClientMock.mockResolvedValue({ id: "client-1" });
   });
 
-  afterAll(async () => {
-    await getPool().end();
+  it("routes listProjectLog to the project api", async () => {
+    const page = {
+      entries: [
+        {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+          project_id: PROJECT_ID,
+          account_id: ACCOUNT_ID,
+          time: new Date("2026-04-11T20:00:00.000Z"),
+          event: { event: "newest" },
+        },
+      ],
+      has_more: false,
+    };
+    listProjectLogMock.mockResolvedValue(page);
+    const { listProjectLog } = await import("./projects");
+
+    await expect(
+      listProjectLog({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        limit: 25,
+      }),
+    ).resolves.toEqual(page);
+    expect(assertCollabMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(listProjectLogMock).toHaveBeenCalledWith({
+      limit: 25,
+      newer_than: undefined,
+      older_than: undefined,
+    });
   });
 
-  async function seedProjectLog() {
-    await getPool().query(
-      `INSERT INTO accounts
-         (account_id, first_name, last_name, created, email_address, home_bay_id, groups)
-       VALUES
-         ($1, 'Alice', 'Example', NOW(), 'alice@example.com', $2, ARRAY[]::TEXT[])`,
-      [ACCOUNT_ID, LOCAL_BAY_ID],
-    );
-    await getPool().query(
-      `INSERT INTO projects
-         (project_id, title, users, owning_bay_id, created, last_edited, deleted)
-       VALUES
-         ($1, 'Project', $2::JSONB, $3, NOW(), NOW(), FALSE)`,
-      [
-        PROJECT_ID,
-        JSON.stringify({
-          [ACCOUNT_ID]: { group: "owner" },
-        }),
-        LOCAL_BAY_ID,
-      ],
-    );
-    await getPool().query(
-      `INSERT INTO project_log
-         (id, project_id, account_id, time, event)
-       VALUES
-         ($1, $4, $5, $6, $7::JSONB),
-         ($2, $4, $5, $8, $9::JSONB),
-         ($3, $4, $5, $10, $11::JSONB)`,
-      [
-        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
-        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
-        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3",
-        PROJECT_ID,
-        ACCOUNT_ID,
-        new Date("2026-04-05T06:00:00.000Z"),
-        JSON.stringify({ event: "set", title: "Newest" }),
-        new Date("2026-04-05T05:00:00.000Z"),
-        JSON.stringify({ event: "set", title: "Middle" }),
-        new Date("2026-04-05T04:00:00.000Z"),
-        JSON.stringify({ event: "set", title: "Oldest" }),
-      ],
-    );
-  }
+  it("routes appendProjectLog to the project api", async () => {
+    const row = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+      project_id: PROJECT_ID,
+      account_id: ACCOUNT_ID,
+      time: new Date("2026-04-11T20:00:00.000Z"),
+      event: { event: "open_project" },
+    };
+    appendProjectLogMock.mockResolvedValue(row);
+    const { appendProjectLog } = await import("./projects");
 
-  it("lists newest entries, older pages, and missing newer entries", async () => {
-    await seedProjectLog();
-
-    const firstPage = await listProjectLog({
+    await expect(
+      appendProjectLog({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        id: row.id,
+        time: row.time,
+        event: row.event,
+      }),
+    ).resolves.toEqual(row);
+    expect(assertCollabMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,
-      limit: 2,
     });
-    expect(firstPage.entries.map((row) => row.id)).toEqual([
-      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
-      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
-    ]);
-    expect(firstPage.has_more).toBe(true);
-
-    const olderPage = await listProjectLog({
+    expect(appendProjectLogMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-      limit: 2,
-      older_than: {
-        id: firstPage.entries[1].id,
-        time: firstPage.entries[1].time,
-      },
+      id: row.id,
+      time: row.time,
+      event: row.event,
     });
-    expect(olderPage.entries.map((row) => row.id)).toEqual([
-      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3",
-    ]);
-    expect(olderPage.has_more).toBe(false);
-
-    await getPool().query(
-      `INSERT INTO project_log
-         (id, project_id, account_id, time, event)
-       VALUES
-         ($1, $2, $3, $4, $5::JSONB)`,
-      [
-        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4",
-        PROJECT_ID,
-        ACCOUNT_ID,
-        new Date("2026-04-05T06:30:00.000Z"),
-        JSON.stringify({ event: "set", title: "Newest Again" }),
-      ],
-    );
-
-    const newerPage = await listProjectLog({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-      limit: 10,
-      newer_than: {
-        id: firstPage.entries[0].id,
-        time: firstPage.entries[0].time,
-      },
-    });
-    expect(newerPage.entries.map((row) => row.id)).toEqual([
-      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4",
-    ]);
-    expect(newerPage.has_more).toBe(false);
   });
 });

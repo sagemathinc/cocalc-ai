@@ -1243,19 +1243,23 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       obj.time = misc.server_time();
     }
     obj.id = id;
-    const query = { project_log: obj };
-    webapp_client.query({
-      query,
-      cb: (err) => {
+    webapp_client.conat_client.hub.projects
+      .appendProjectLog({
+        project_id: this.project_id,
+        id: obj.id,
+        time: obj.time,
+        event: obj.event,
+      })
+      .then(() => cb?.())
+      .catch((err) => {
         if (err) {
           // TODO: what do we want to do if a log doesn't get recorded?
           // (It *should* keep trying and store that in localStorage, and try next time, etc...
           //  of course done in a systematic way across everything.)
           console.warn("error recording a log entry: ", err, event);
         }
-        if (cb != null) cb(err);
-      },
-    });
+        cb?.(err);
+      });
 
     if (window.parent != null) {
       // (I think this is always defined.)
@@ -1268,7 +1272,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       // If not in an iframe, seems to be the window itself.
       // I copied the {source:?,payload:?} format from react devtools.
       window.parent.postMessage(
-        { source: "cocalc-project-log", payload: query },
+        { source: "cocalc-project-log", payload: { project_log: obj } },
         "*",
       );
     }

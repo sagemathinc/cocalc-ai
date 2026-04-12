@@ -53,6 +53,7 @@ import {
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
+import { projectApiClient } from "@cocalc/conat/project/api";
 import {
   getLocalProjectCollaboratorAccessStatus,
   PROJECT_COLLABORATOR_REQUIRED_ERROR,
@@ -185,13 +186,19 @@ function normalizeRecentDocumentActivityMaxAge(max_age_s?: number): number {
   return Math.max(60, Math.floor(max_age_s!));
 }
 
+function normalizeProjectLogTime(value: unknown): Date | null {
+  if (value == null) return null;
+  const date = value instanceof Date ? value : new Date(`${value}`);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
 function normalizeProjectLogCursor(
   cursor?: ProjectLogCursor,
 ): ProjectLogCursor | undefined {
   if (!cursor?.id) return undefined;
   return {
     id: cursor.id,
-    time: cursor.time ? new Date(cursor.time) : null,
+    time: normalizeProjectLogTime(cursor.time),
   };
 }
 
@@ -660,47 +667,41 @@ export async function listProjectLog({
   older_than?: ProjectLogCursor;
 }): Promise<ProjectLogPage> {
   await assertCollab({ account_id, project_id });
-  const newer = normalizeProjectLogCursor(newer_than);
-  const older = normalizeProjectLogCursor(older_than);
-  const pageLimit = normalizeProjectLogLimit(limit);
+  const api = projectApiClient({
+    client: await getExplicitProjectRoutedClient({ project_id }),
+    project_id,
+  });
+  return await api.system.listProjectLog({
+    limit: normalizeProjectLogLimit(limit),
+    newer_than: normalizeProjectLogCursor(newer_than),
+    older_than: normalizeProjectLogCursor(older_than),
+  });
+}
 
-  const clauses = [`project_id = $1`];
-  const params: any[] = [project_id];
-  let nextParam = 2;
-  const tupleSql = `(
-    COALESCE(time, 'epoch'::timestamp),
-    id
-  )`;
-
-  if (newer) {
-    clauses.push(
-      `${tupleSql} > (COALESCE($${nextParam}::timestamp, 'epoch'::timestamp), $${nextParam + 1}::uuid)`,
-    );
-    params.push(newer.time, newer.id);
-    nextParam += 2;
-  }
-  if (older) {
-    clauses.push(
-      `${tupleSql} < (COALESCE($${nextParam}::timestamp, 'epoch'::timestamp), $${nextParam + 1}::uuid)`,
-    );
-    params.push(older.time, older.id);
-    nextParam += 2;
-  }
-
-  params.push(pageLimit + 1);
-  const { rows } = await getPool().query<ProjectLogRow>(
-    `SELECT id, project_id, account_id, time, event
-       FROM project_log
-      WHERE ${clauses.join(" AND ")}
-      ORDER BY COALESCE(time, 'epoch'::timestamp) DESC, id DESC
-      LIMIT $${nextParam}`,
-    params,
-  );
-
-  return {
-    entries: rows.slice(0, pageLimit),
-    has_more: rows.length > pageLimit,
-  };
+export async function appendProjectLog({
+  account_id,
+  project_id,
+  id,
+  time,
+  event,
+}: {
+  account_id: string;
+  project_id: string;
+  id?: string;
+  time?: Date | null;
+  event: Record<string, any> | string | null;
+}): Promise<ProjectLogRow> {
+  await assertCollab({ account_id, project_id });
+  const api = projectApiClient({
+    client: await getExplicitProjectRoutedClient({ project_id }),
+    project_id,
+  });
+  return await api.system.appendProjectLog({
+    account_id,
+    id,
+    time: normalizeProjectLogTime(time),
+    event,
+  });
 }
 
 export async function listRecentDocumentActivity({
