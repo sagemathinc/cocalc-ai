@@ -10,11 +10,11 @@
  * up to 20 collaborator names.
  */
 
-import { Tooltip } from "antd";
 import { useMemo } from "react";
 
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { CSS, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { DEFAULT_COLOR } from "../users/store";
 
 const AVATARS_CONTAINER_STYLE: CSS = {

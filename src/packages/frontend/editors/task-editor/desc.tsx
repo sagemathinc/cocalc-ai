@@ -10,9 +10,9 @@ Task description:
  - allows for changing it
 */
 
-import { Button, Popconfirm, Tooltip, Space } from "antd";
+import { Button, Popconfirm, Space } from "antd";
 import { React } from "../../app-framework";
-import { Icon } from "../../components";
+import { Icon, Tooltip } from "../../components";
 import { DescriptionRendered } from "./desc-rendered";
 import DescriptionEditor from "./desc-editor";
 import { TaskActions } from "./actions";

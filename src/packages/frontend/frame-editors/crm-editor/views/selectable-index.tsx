@@ -3,7 +3,8 @@
 */
 
 import { useRef } from "react";
-import { Checkbox, Tooltip } from "antd";
+import { Checkbox } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Selection } from "./use-selection";
 import useMouse from "@react-hook/mouse-position";
 

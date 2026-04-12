@@ -7,7 +7,8 @@
 Checkbox for toggling done status
 */
 
-import { Checkbox, Tooltip } from "antd";
+import { Checkbox } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { TaskActions } from "./actions";
 
 interface Props {

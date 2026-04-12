@@ -6,9 +6,9 @@
 import { Text } from "slate";
 import { register } from "../register";
 import { useProcessLinks } from "../hooks";
+import { Tooltip } from "@cocalc/frontend/components";
 import { open_new_tab } from "@cocalc/frontend/misc";
 import { Link, LINK_STYLE } from "./index";
-import { Tooltip } from "antd";
 
 const linkify = require("linkify-it")();
 

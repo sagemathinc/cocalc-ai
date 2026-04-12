@@ -1,13 +1,10 @@
 # Temporary baseline for direct Antd Tooltip usage in frontend source.
 # New files must use the shared tooltip wrapper instead of importing Tooltip directly.
 
-frontend/account/avatar/avatar.tsx
-frontend/account/balance-toward-subs.tsx
 frontend/account/i18n-selector.tsx
 frontend/account/user-defined-llm.tsx
 frontend/admin/llm/admin-llm-test.tsx
 frontend/admin/rootfs.tsx
-frontend/admin/users/money.tsx
 frontend/chat/automation-form.tsx
 frontend/chat/chatroom-sidebar.tsx
 frontend/chat/chatroom-thread-panel.tsx
@@ -16,40 +13,9 @@ frontend/chat/git-commit-drawer.tsx
 frontend/chat/message.tsx
 frontend/course/configuration/configuration-copying.tsx
 frontend/course/students/students-panel-student.tsx
-frontend/editors/markdown-input/mentionable-users.tsx
-frontend/editors/slate/edit-bar/code.tsx
-frontend/editors/slate/edit-bar/component.tsx
-frontend/editors/slate/edit-bar/link.tsx
-frontend/editors/slate/edit-bar/marks-bar.tsx
-frontend/editors/slate/elements/code-block/index.tsx
-frontend/editors/slate/elements/link/editable.tsx
-frontend/editors/slate/elements/references/editable.tsx
-frontend/editors/stopwatch/stopwatch.tsx
-frontend/editors/task-editor/desc.tsx
-frontend/editors/task-editor/done.tsx
-frontend/frame-editors/crm-editor/fields/context.tsx
-frontend/frame-editors/crm-editor/fields/text.tsx
-frontend/frame-editors/crm-editor/views/retention.tsx
 frontend/frame-editors/crm-editor/views/retention/config.tsx
-frontend/frame-editors/crm-editor/views/selectable-index.tsx
-frontend/frame-editors/frame-tree/commands/manage.tsx
-frontend/frame-editors/html-editor/iframe-html.tsx
-frontend/frame-editors/llm/llm-history-selector.tsx
-frontend/frame-editors/llm/llm-selector.tsx
-frontend/frame-editors/terminal-editor/terminal.tsx
-frontend/notifications/mentions/mention-row.tsx
-frontend/project/bootlog.tsx
 frontend/project/disk-usage/disk-usage.tsx
-frontend/project/find/find-scope-bar.tsx
-frontend/project/find/find-tab-backups.tsx
-frontend/project/history/log-entry.tsx
 frontend/project/info/components.tsx
 frontend/project/info/full.tsx
 frontend/project/new/navigator-shell.tsx
 frontend/project/settings/datastore.tsx
-frontend/project/settings/restart-project.tsx
-frontend/project/settings/ssh.tsx
-frontend/projects/collaborators-avatars.tsx
-frontend/projects/filename-search.tsx
-frontend/projects/projects-starred.tsx
-frontend/store/voucher-code-notes.tsx

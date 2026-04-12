@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Popover, Tooltip } from "antd";
+import { Button, Popover } from "antd";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import React, { ReactNode, useEffect, useRef, useState } from "react";
 import { Element } from "slate";
 import { register, RenderElementProps } from "../register";

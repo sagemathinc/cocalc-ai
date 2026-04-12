@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Dropdown, Space, Tooltip } from "antd";
+import { Button, Dropdown, Space } from "antd";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
@@ -20,7 +20,7 @@ import {
 } from "@dnd-kit/sortable";
 
 import { CSS, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Icon, TimeAgo } from "@cocalc/frontend/components";
+import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { trunc } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {

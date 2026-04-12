@@ -2,7 +2,7 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
-import { Space, Tooltip } from "antd";
+import { Space } from "antd";
 import React from "react";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { avatar_fontcolor } from "@cocalc/frontend/account/avatar/font-color";
@@ -21,6 +21,7 @@ import {
   r_join,
   TimeAgo,
   Tip,
+  Tooltip,
 } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { file_associations } from "@cocalc/frontend/file-associations";

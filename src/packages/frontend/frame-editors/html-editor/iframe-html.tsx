@@ -15,7 +15,7 @@ Component that shows rendered HTML in an iFrame, so safe and no mangling needed.
 // Some day in the future this might no longer be necessary ... (react 16.13.1)
 
 import $ from "jquery";
-import { Spin, Switch, Tooltip } from "antd";
+import { Spin, Switch } from "antd";
 import { delay } from "awaiting";
 import { Set } from "immutable";
 import { debounce } from "lodash";
@@ -28,6 +28,7 @@ import {
   path_split,
 } from "@cocalc/util/misc";
 import { CSS, React, Rendered } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   delete_local_storage,
