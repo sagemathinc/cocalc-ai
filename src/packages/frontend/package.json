@@ -181,6 +181,7 @@
     "i18n:update": "pnpm i18n:extract && pnpm i18n:upload && pnpm i18n:download && pnpm i18n:compile",
     "spellcheck": "git ls-files \"*.ts\" \"*.tsx\" | xargs cspell --config cspell.json",
     "check:antd-deprecations": "node ./scripts/check-antd-deprecations.mjs",
+    "check:antd-tooltip-imports": "node ./scripts/check-antd-tooltip-imports.mjs",
     "check:antd-deprecations:ci": "node ./scripts/check-antd-deprecations.mjs --fail-on-findings"
   },
   "homepage": "https://github.com/sagemathinc/cocalc",
