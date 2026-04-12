@@ -282,74 +282,75 @@ function resolveLiteCodexHome(source) {
   return "";
 }
 
+function parseHubClusterBays(daemonVars) {
+  const count = Number(`${daemonVars.HUB_CLUSTER_BAY_COUNT ?? ""}`.trim());
+  if (!Number.isFinite(count) || count <= 0) return [];
+  const bays = [];
+  for (let i = 0; i < count; i += 1) {
+    const prefix = `HUB_CLUSTER_BAY_${i}_`;
+    const dataDir = `${daemonVars[`${prefix}DATA_DIR`] ?? ""}`.trim();
+    bays.push({
+      index: i,
+      id: `${daemonVars[`${prefix}ID`] ?? ""}`.trim(),
+      role: `${daemonVars[`${prefix}ROLE`] ?? ""}`.trim(),
+      isPrimary: `${daemonVars[`${prefix}IS_PRIMARY`] ?? ""}`.trim() === "1",
+      port: Number(`${daemonVars[`${prefix}PORT`] ?? ""}`.trim()),
+      bindHost: `${daemonVars[`${prefix}BIND_HOST`] ?? ""}`.trim(),
+      dataDir: dataDir ? path.join(dataDir, "postgres") : undefined,
+      label: `${daemonVars[`${prefix}LABEL`] ?? ""}`.trim(),
+      region: `${daemonVars[`${prefix}REGION`] ?? ""}`.trim(),
+      seedBayId: `${daemonVars[`${prefix}SEED_BAY_ID`] ?? ""}`.trim(),
+      seedConatServer:
+        `${daemonVars[`${prefix}SEED_CONAT_SERVER`] ?? ""}`.trim(),
+      seedConatPassword:
+        `${daemonVars[`${prefix}SEED_CONAT_PASSWORD`] ?? ""}`.trim(),
+    });
+  }
+  return bays.filter((bay) => bay.id);
+}
+
 function resolveHubTarget(daemonVars, requestedBay) {
-  const primaryBayId =
-    `${daemonVars.COCALC_BAY_ID ?? "bay-0"}`.trim() || "bay-0";
-  const secondBayEnabled =
-    `${daemonVars.HUB_ENABLE_SECOND_BAY ?? "0"}`.trim() === "1";
-  const secondBayId =
-    `${daemonVars.HUB_SECOND_BAY_ID ?? "bay-1"}`.trim() || "bay-1";
   const requested =
     `${requestedBay ?? process.env.COCALC_DEV_ENV_BAY ?? ""}`.trim();
-
-  if (
-    !requested ||
-    requested === primaryBayId ||
-    requested === "primary" ||
-    requested === "seed"
-  ) {
-    return {
-      bayId: primaryBayId,
-      apiUrl: localHubUrl(
-        daemonVars.HUB_BIND_HOST,
-        daemonVars.HUB_PORT || 9100,
-      ),
-      dataDir: undefined,
-      selectedEnv: {
-        COCALC_BAY_ID: primaryBayId,
-        COCALC_CLUSTER_ROLE:
-          `${daemonVars.COCALC_CLUSTER_ROLE ?? ""}`.trim() || "standalone",
-        COCALC_CLUSTER_SEED_BAY_ID:
-          `${daemonVars.COCALC_CLUSTER_SEED_BAY_ID ?? ""}`.trim(),
-        COCALC_CLUSTER_SEED_CONAT_SERVER:
-          `${daemonVars.COCALC_CLUSTER_SEED_CONAT_SERVER ?? ""}`.trim(),
-        COCALC_CLUSTER_SEED_CONAT_PASSWORD:
-          `${daemonVars.COCALC_CLUSTER_SEED_CONAT_PASSWORD ?? ""}`.trim(),
-      },
-    };
+  const bays = parseHubClusterBays(daemonVars);
+  const primary =
+    bays.find((bay) => bay.isPrimary) ||
+    bays.find(
+      (bay) =>
+        bay.id === `${daemonVars.HUB_CLUSTER_PRIMARY_BAY_ID ?? ""}`.trim(),
+    ) ||
+    bays[0];
+  if (!primary) {
+    throw new Error(`unable to resolve hub bay topology from daemon env`);
   }
 
-  if (
-    secondBayEnabled &&
-    (requested === secondBayId ||
-      requested === "second" ||
-      requested === "attached")
-  ) {
-    const secondBayRoot =
-      `${daemonVars.HUB_SECOND_BAY_DATA_DIR ?? ""}`.trim() || undefined;
-    return {
-      bayId: secondBayId,
-      apiUrl: localHubUrl(
-        daemonVars.HUB_SECOND_BAY_BIND_HOST,
-        daemonVars.HUB_SECOND_BAY_PORT || 0,
-      ),
-      dataDir: secondBayRoot ? path.join(secondBayRoot, "postgres") : undefined,
-      selectedEnv: {
-        COCALC_BAY_ID: secondBayId,
-        COCALC_CLUSTER_ROLE: "attached",
-        COCALC_CLUSTER_SEED_BAY_ID:
-          `${daemonVars.COCALC_CLUSTER_SEED_BAY_ID ?? daemonVars.COCALC_BAY_ID ?? ""}`.trim(),
-        COCALC_CLUSTER_SEED_CONAT_SERVER: localHubUrl(
-          daemonVars.HUB_BIND_HOST,
-          daemonVars.HUB_PORT || 9100,
-        ),
-        COCALC_CLUSTER_SEED_CONAT_PASSWORD:
-          `${daemonVars.COCALC_CLUSTER_SEED_CONAT_PASSWORD ?? ""}`.trim(),
-      },
-    };
+  const firstAttached = bays.find(
+    (bay) => !bay.isPrimary && bay.role === "attached",
+  );
+  const target =
+    !requested || requested === "primary" || requested === "seed"
+      ? primary
+      : requested === "attached" || requested === "second"
+        ? firstAttached
+        : bays.find((bay) => bay.id === requested);
+  if (!target) {
+    throw new Error(`unknown hub bay target: ${requested}`);
   }
 
-  throw new Error(`unknown hub bay target: ${requested}`);
+  return {
+    bayId: target.id,
+    apiUrl: localHubUrl(target.bindHost, target.port || 0),
+    dataDir: target.dataDir,
+    selectedEnv: {
+      COCALC_BAY_ID: target.id,
+      COCALC_BAY_LABEL: target.label,
+      COCALC_BAY_REGION: target.region,
+      COCALC_CLUSTER_ROLE: target.role || "standalone",
+      COCALC_CLUSTER_SEED_BAY_ID: target.seedBayId,
+      COCALC_CLUSTER_SEED_CONAT_SERVER: target.seedConatServer,
+      COCALC_CLUSTER_SEED_CONAT_PASSWORD: target.seedConatPassword,
+    },
+  };
 }
 
 function getHubEnvValues(opts = {}) {
@@ -814,8 +815,8 @@ function main() {
     exportsMap.COCALC_CLI_AGENT_MODE = "";
     exportsMap.COCALC_PROJECT_INFO_SCOPE = "";
     copyIfPresent(exportsMap, source.selectedEnv, "COCALC_BAY_ID");
-    copyIfPresent(exportsMap, source.daemonVars, "COCALC_BAY_LABEL");
-    copyIfPresent(exportsMap, source.daemonVars, "COCALC_BAY_REGION");
+    copyIfPresent(exportsMap, source.selectedEnv, "COCALC_BAY_LABEL");
+    copyIfPresent(exportsMap, source.selectedEnv, "COCALC_BAY_REGION");
     copyIfPresent(exportsMap, source.selectedEnv, "COCALC_CLUSTER_ROLE");
     copyIfPresent(exportsMap, source.selectedEnv, "COCALC_CLUSTER_SEED_BAY_ID");
     copyIfPresent(
