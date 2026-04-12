@@ -231,6 +231,7 @@ interface Props {
     cwdOverride?: string;
     commitHash: string;
   }) => void;
+  suppressInlineCodexStatusDate?: string;
 }
 
 export function ChatLog({
@@ -260,6 +261,7 @@ export function ChatLog({
   notifyOnTurnFinish = false,
   onNotifyOnTurnFinishChange,
   onOpenGitBrowser,
+  suppressInlineCodexStatusDate,
 }: Props) {
   const singleThreadView = selectedThread != null;
   const messages = messagesProp ?? new Map();
@@ -479,6 +481,7 @@ export function ChatLog({
           selectedThread,
           anyOverlayOpen,
           onOpenGitBrowser,
+          suppressInlineCodexStatusDate,
         }}
       />
       <Composing
@@ -667,6 +670,7 @@ export function MessageList({
   selectedThread,
   anyOverlayOpen = false,
   onOpenGitBrowser,
+  suppressInlineCodexStatusDate,
 }: {
   messages: ChatMessages;
   account_id: string;
@@ -705,6 +709,7 @@ export function MessageList({
     cwdOverride?: string;
     commitHash: string;
   }) => void;
+  suppressInlineCodexStatusDate?: string;
 }) {
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
   const listContainerRef = useRef<HTMLDivElement | null>(null);
@@ -903,6 +908,7 @@ export function MessageList({
               canNotifyForRunningTurn ? onNotifyOnTurnFinishChange : undefined
             }
             onOpenGitBrowser={onOpenGitBrowser}
+            suppressInlineCodexStatus={suppressInlineCodexStatusDate === date}
           />
         </DivTempHeight>
       </div>
