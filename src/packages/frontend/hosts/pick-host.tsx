@@ -9,11 +9,11 @@ import {
   Radio,
   Space,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { labels } from "@cocalc/frontend/i18n";
 import { useIntl } from "react-intl";

@@ -1,6 +1,6 @@
-import { Button, Tooltip } from "antd";
+import { Button } from "antd";
 import { redux } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 
 export default function SshButton() {
   return (

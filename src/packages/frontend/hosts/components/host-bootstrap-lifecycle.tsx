@@ -1,5 +1,6 @@
-import { Space, Tag, Tooltip, Typography } from "antd";
+import { Space, Tag, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import type {
   Host,
   HostBootstrapLifecycleItem,

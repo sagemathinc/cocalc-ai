@@ -7,11 +7,11 @@ import {
   Spin,
   Table,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import type {
   ParallelOpsWorkerBreakdownStatus,
   ParallelOpsWorkerStatus,

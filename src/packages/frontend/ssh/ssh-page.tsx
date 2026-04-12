@@ -18,12 +18,12 @@ import {
   Switch,
   Table,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { CopyOutlined, InfoCircleOutlined } from "@ant-design/icons";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import {
   CSS,
