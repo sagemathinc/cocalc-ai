@@ -122,6 +122,7 @@ const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK = new Set<string>([
   "projects.codexUploadAuthFile",
 ]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
+const ROUTED_HOST_REBUILD_AFTER_ATTEMPTS = 3;
 
 type RoutedHubClientState = {
   address: string;
@@ -789,6 +790,22 @@ export class ConatClient extends EventEmitter {
           // client and only rebuild when that client reconnects. Trigger that
           // rebuild when the routed host endpoint/session changed.
           this.scheduleRoutedHostRecovery();
+          return;
+        }
+        if (state.reconnectAttempts >= ROUTED_HOST_REBUILD_AFTER_ATTEMPTS) {
+          this.invalidateProjectHostToken(host_id);
+          this.removeRoutedHubClient(host_id, { expectedClient: state.client });
+          const replacement = this.getOrCreateRoutedHubClient({
+            host_id,
+            address: refreshed?.address ?? state.address,
+            host_session_id:
+              refreshed?.host_session_id ?? state.host_session_id,
+            project_id,
+            project_ids: state.project_ids,
+          });
+          if (!replacement.conn?.connected) {
+            replacement.connect();
+          }
           return;
         }
         if (state.client.conn?.connected) {

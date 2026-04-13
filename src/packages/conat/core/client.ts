@@ -605,7 +605,8 @@ export class Client extends EventEmitter {
           }
         : undefined),
       path,
-      reconnection: true,
+      reconnection:
+        options.reconnection ?? DEFAULT_SOCKETIO_CLIENT_OPTIONS.reconnection,
     });
 
     this.conn.on("info", (info, ack) => {
