@@ -44,6 +44,7 @@ import type { Document } from "@cocalc/sync/editor/generic/types";
 import LRUCache from "lru-cache";
 import { until } from "@cocalc/util/async-utils";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
+import { toArchiveRelativePath } from "./archive-path";
 type PatchId = string;
 interface GitCommitEntry {
   hash: string;
@@ -110,6 +111,10 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   private gitFilesByHash: { [hash: string]: string[] } = {};
   private gitProjectPathPrefix?: string;
   private backupTimeById: { [id: string]: number } = {};
+
+  private archiveDocpath(): string {
+    return toArchiveRelativePath(this.project_id, this.docpath);
+  }
 
   _init2(): void {
     const { head, tail } = path_split(this.path);
@@ -496,11 +501,12 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
 
   updateSnapshotVersions = async (): Promise<List<string>> => {
     try {
+      const archiveDocpath = this.archiveDocpath();
       const fs = webapp_client.conat_client.conat().fs({
         project_id: this.project_id,
       });
       const { tail } = path_split(this.docpath);
-      const docDepth = this.docpath.split("/").filter(Boolean).length + 1;
+      const docDepth = archiveDocpath.split("/").filter(Boolean).length + 1;
       // Find candidate files in one RPC, then exact-match relative path in JS.
       // This avoids tricky glob escaping and N per-snapshot stat calls.
       const { stdout } = await fs.find(SNAPSHOTS, {
@@ -529,7 +535,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
         if (j <= 0) continue;
         const snapshot = rel.slice(0, j).trim();
         const docpath = rel.slice(j + 1);
-        if (!snapshot || docpath !== this.docpath) continue;
+        if (!snapshot || docpath !== archiveDocpath) continue;
         const mtimeMs = Math.round(mtime * 1000);
         const prev = existingBySnapshot.get(snapshot);
         if (prev == null || mtimeMs > prev) {
@@ -573,10 +579,11 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   ): Promise<ViewDocument | undefined> => {
     if (version == null) return;
     try {
+      const archiveDocpath = this.archiveDocpath();
       const resp = await getSnapshotFileText({
         project_id: this.project_id,
         snapshot: `${version}`,
-        path: this.docpath,
+        path: archiveDocpath,
       });
       return new ViewDocument(this.docpath, resp.content);
     } catch (err) {
@@ -587,13 +594,14 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
 
   updateBackupVersions = async (): Promise<List<string>> => {
     try {
+      const archiveDocpath = this.archiveDocpath();
       // Use indexed backup search in one RPC with exact path match.
       const raw = await findBackupFiles({
         project_id: this.project_id,
-        glob: [this.docpath],
+        glob: [archiveDocpath],
       });
       const rows = raw
-        .filter((x) => !x.isDir && x.path === this.docpath)
+        .filter((x) => !x.isDir && x.path === archiveDocpath)
         .map((x) => {
           const t = new Date(x.time as any).getTime();
           return {
@@ -646,10 +654,11 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   ): Promise<ViewDocument | undefined> => {
     if (version == null) return;
     try {
+      const archiveDocpath = this.archiveDocpath();
       const resp = await getBackupFileText({
         project_id: this.project_id,
         id: `${version}`,
-        path: this.docpath,
+        path: archiveDocpath,
       });
       return new ViewDocument(this.docpath, resp.content);
     } catch (err) {
