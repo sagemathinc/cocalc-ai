@@ -58,27 +58,30 @@ type ModeOption = {
   warning?: boolean;
 };
 
-const MODE_OPTIONS: ModeOption[] = [
-  {
-    value: "read-only",
-    label: "Read only",
-    description:
-      "Inspect files safely. Commands that would modify files will fail.",
-  },
-  {
-    value: "workspace-write",
-    label: "Workspace write",
-    description:
-      "Allow edits inside this project only (network access is allowed). System-wide changes are blocked.",
-  },
-  {
-    value: "full-access",
-    label: "Full access",
-    description:
-      "Run commands with network access and edit files outside this project. Extremely powerful—use with caution.",
-    warning: true,
-  },
-];
+function getModeOptions(): ModeOption[] {
+  return [
+    {
+      value: "read-only",
+      label: "Read only",
+      description:
+        "Inspect files safely. Commands that would modify files will fail.",
+    },
+    {
+      value: "workspace-write",
+      label: "Workspace write",
+      description:
+        "Allow edits inside this project only (network access is allowed). System-wide changes are blocked.",
+    },
+    {
+      value: "full-access",
+      label: "Full access",
+      description: lite
+        ? "Run commands with network access and edit files outside this workspace. Extremely powerful—use with caution."
+        : "Run commands with network access and edit any files in this CoCalc project container. Extremely powerful—use with caution.",
+      warning: true,
+    },
+  ];
+}
 
 export interface CodexConfigButtonProps {
   threadKey: string;
@@ -214,14 +217,15 @@ export function CodexConfigButton({
     Form.useWatch("reasoning", form) ?? value?.reasoning;
   const currentSessionMode =
     Form.useWatch("sessionMode", form) ?? value?.sessionMode;
+  const allModeOptions = useMemo(() => getModeOptions(), []);
   const availableModeValues = useMemo(
     () => new Set(getCodexNewChatModeOptions().map(({ value }) => value)),
     [],
   );
   const modeOptions = useMemo(
     () =>
-      MODE_OPTIONS.filter((option) => availableModeValues.has(option.value)),
-    [availableModeValues],
+      allModeOptions.filter((option) => availableModeValues.has(option.value)),
+    [allModeOptions, availableModeValues],
   );
   const reasoningOptions = useMemo(() => {
     const selected =
