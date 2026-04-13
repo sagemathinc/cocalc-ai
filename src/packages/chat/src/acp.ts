@@ -128,6 +128,9 @@ function needsTextBoundarySpace(
   if (leftLast === "]" && rightFirst === "(") {
     return false;
   }
+  if (/\d\.$/.test(left) && /^\d/.test(right)) {
+    return false;
+  }
   if (/[.!?;:]/.test(leftLast) && /[A-Za-z0-9`"'([{]/.test(rightFirst)) {
     return true;
   }
