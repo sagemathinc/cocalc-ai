@@ -9,6 +9,7 @@ import { delay } from "awaiting";
 import { Map } from "immutable";
 import { debounce, isEqual, throttle } from "lodash";
 import {
+  CSSProperties,
   MutableRefObject,
   RefObject,
   useCallback,
@@ -395,6 +396,7 @@ interface Props {
   style?: CSS;
   pageStyle?: CSS;
   editBarStyle?: CSS;
+  autoMinHeight?: CSSProperties["minHeight"];
   onFocus?: () => void;
   onBlur?: () => void;
   onSelectionReady?: () => void;
@@ -455,6 +457,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     scrollDivRef,
     editBar2,
     editBarStyle,
+    autoMinHeight = "50px",
     editor_state,
     font_size: font_size0,
     getValueRef,
@@ -2720,7 +2723,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           backgroundColor: "white",
           ...style,
           height,
-          minHeight: height == "auto" ? "50px" : undefined,
+          minHeight: height == "auto" ? autoMinHeight : undefined,
         }}
       >
         {!hidePath && (

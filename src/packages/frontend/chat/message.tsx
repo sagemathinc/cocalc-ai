@@ -1795,6 +1795,7 @@ export default function Message({
           noVfill
           showEditBar={false}
           height="auto"
+          autoMinHeight={0}
           style={{
             backgroundColor: "transparent",
             minHeight: 0,
