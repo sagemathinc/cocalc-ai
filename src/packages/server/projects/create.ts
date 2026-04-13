@@ -37,6 +37,8 @@ import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-loc
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
@@ -85,6 +87,33 @@ function isHostRunningAndOnline(row: any): {
   }
   if (Date.now() - lastSeenMs > HOST_ONLINE_WINDOW_MS) {
     return { ok: false, reason: "heartbeat is stale" };
+  }
+  return { ok: true };
+}
+
+function isRemoteHostRunningAndOnline(row: {
+  status?: string | null;
+  online?: boolean;
+  reason_unavailable?: string;
+}): {
+  ok: boolean;
+  reason?: string;
+} {
+  const status = `${row.status ?? ""}`.trim().toLowerCase();
+  if (!["running", "active"].includes(status)) {
+    return { ok: false, reason: `status is ${status || "unknown"}` };
+  }
+  if (row.online === false) {
+    return {
+      ok: false,
+      reason: `${row.reason_unavailable ?? "host is offline"}`,
+    };
+  }
+  if (`${row.reason_unavailable ?? ""}`.trim()) {
+    return {
+      ok: false,
+      reason: `${row.reason_unavailable}`,
+    };
   }
   return { ok: true };
 }
@@ -179,7 +208,8 @@ export default async function createProject(opts: CreateProjectOptions) {
   let host_id: string | undefined = requested_host_id;
   let requested_region_raw: string | undefined = requested_region_raw_input;
   let hostStatus: string | null | undefined;
-  let owningBayId = getConfiguredBayId();
+  let projectOwningBayId = getConfiguredBayId();
+  let assignedHostBayId = getConfiguredBayId();
 
   async function resolveHostPlacement(host_id: string) {
     if (!account_id) {
@@ -191,7 +221,31 @@ export default async function createProject(opts: CreateProjectOptions) {
     );
     const row = rows[0];
     if (!row) {
-      throw Error(`host ${host_id} not found`);
+      const hostBay = await resolveHostBay(host_id);
+      if (!hostBay || hostBay.bay_id === getConfiguredBayId()) {
+        throw Error(`host ${host_id} not found`);
+      }
+      const remote = await getInterBayBridge()
+        .hostConnection(hostBay.bay_id, {
+          timeout_ms: 15_000,
+        })
+        .get({ account_id, host_id });
+      const availability = isRemoteHostRunningAndOnline(remote);
+      if (!availability.ok) {
+        throw Error(
+          `host ${host_id} is unavailable for new workspaces (${availability.reason})`,
+        );
+      }
+      if (!remote.can_place) {
+        throw Error("not allowed to place a project on that host");
+      }
+      const hostRegion = mapCloudRegionToR2Region(remote.region ?? "");
+      return {
+        host_id,
+        hostRegion,
+        hostBayId: `${remote.bay_id ?? ""}`.trim() || hostBay.bay_id,
+        hostStatus: remote.status as string | null | undefined,
+      };
     }
     const availability = isHostRunningAndOnline(row);
     if (!availability.ok) {
@@ -262,7 +316,8 @@ export default async function createProject(opts: CreateProjectOptions) {
       opts.rootfs_image_id = rows[0].rootfs_image_id;
     }
     if (!host_id && rows[0]?.owning_bay_id) {
-      owningBayId = `${rows[0].owning_bay_id}`.trim() || owningBayId;
+      projectOwningBayId =
+        `${rows[0].owning_bay_id}`.trim() || projectOwningBayId;
     }
     // create filesystem for new project as a clone.
     // Route clone to the host that owns the source project.
@@ -283,7 +338,7 @@ export default async function createProject(opts: CreateProjectOptions) {
       host_id,
       hostRegion,
       hostStatus,
-      hostBayId: owningBayId,
+      hostBayId: assignedHostBayId,
     } = await resolveHostPlacement(host_id));
   }
 
@@ -309,14 +364,14 @@ export default async function createProject(opts: CreateProjectOptions) {
         ephemeral ?? null,
         host_id ?? null,
         projectRegion,
-        owningBayId,
+        projectOwningBayId,
       ],
     );
     await appendProjectOutboxEventForProject({
       db: client,
       event_type: "project.created",
       project_id,
-      default_bay_id: owningBayId,
+      default_bay_id: projectOwningBayId,
     });
     await client.query("COMMIT");
   } catch (err) {
@@ -327,7 +382,7 @@ export default async function createProject(opts: CreateProjectOptions) {
   }
   await publishProjectAccountFeedEventsBestEffort({
     project_id,
-    default_bay_id: owningBayId,
+    default_bay_id: projectOwningBayId,
   });
 
   if (src_project_id) {
@@ -351,17 +406,30 @@ export default async function createProject(opts: CreateProjectOptions) {
     try {
       for (let attempt = 1; attempt <= 4; attempt += 1) {
         try {
-          const client = await getRoutedHostControlClient({
-            host_id,
-            timeout: 15000,
-          });
-          await client.createProject({
+          const createOpts = {
             project_id,
             title,
             users,
             image: rootfs_image,
             start: false,
-          });
+          };
+          if (assignedHostBayId !== getConfiguredBayId()) {
+            await getInterBayBridge()
+              .hostControl(assignedHostBayId, {
+                timeout_ms: 15_000,
+              })
+              .createProject({
+                account_id: account_id!,
+                host_id,
+                create: createOpts,
+              });
+          } else {
+            const client = await getRoutedHostControlClient({
+              host_id,
+              timeout: 15000,
+            });
+            await client.createProject(createOpts);
+          }
           lastErr = undefined;
           break;
         } catch (err) {

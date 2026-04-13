@@ -1939,6 +1939,115 @@ describe("CodexAppServerAgent", () => {
     });
   });
 
+  it("rewrites resumed session metadata in the project codex home for container-backed sessions", async () => {
+    const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-home-"));
+    const sessionId = "019d0000-0000-7000-8000-000000000002";
+    const sessionDir = path.join(
+      rootHostPath,
+      ".codex",
+      "sessions",
+      "2026",
+      "04",
+      "08",
+    );
+    mkdirSync(sessionDir, { recursive: true });
+    const sessionFile = path.join(
+      sessionDir,
+      `rollout-2026-04-08T00-00-00-${sessionId}.jsonl`,
+    );
+    writeFileSync(
+      sessionFile,
+      `${JSON.stringify({
+        timestamp: "2026-04-08T00:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: sessionId,
+          cwd: "/tmp/old-project",
+          approval_policy: "never",
+          sandbox_policy: {
+            type: "workspace-write",
+            network_access: true,
+            exclude_tmpdir_env_var: false,
+            exclude_slash_tmp: false,
+          },
+        },
+      })}\n`,
+      "utf8",
+    );
+
+    let rewrittenMeta: any;
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/resume":
+          rewrittenMeta = JSON.parse(
+            readFileSync(sessionFile, "utf8").split("\n")[0],
+          );
+          fake.sendResponse(message.id, {
+            thread: { id: sessionId },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-container-resume-1" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-container-resume-1", status: "inProgress" },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-container-resume-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    try {
+      setCodexProjectSpawner({
+        spawnCodexExec: async () => {
+          throw new Error("unexpected codex exec spawn");
+        },
+        spawnCodexAppServer: async () => ({
+          proc: proc as any,
+          cmd: "fake-codex",
+          args: ["app-server"],
+          cwd: "/home/user/cocalc-ai",
+          containerPathMap: {
+            rootHostPath,
+          },
+        }),
+      });
+
+      const agent = new CodexAppServerAgent();
+      await agent.evaluate({
+        project_id: "00000000-0000-4000-8000-000000000000",
+        account_id: "00000000-0000-4000-8000-000000000001",
+        prompt: "commit the change",
+        stream: async () => {},
+        config: {
+          sessionId,
+          workingDirectory: "/home/user/cocalc-ai",
+          sessionMode: "full-access",
+        } as any,
+      });
+    } finally {
+      rmSync(rootHostPath, { recursive: true, force: true });
+    }
+
+    expect(rewrittenMeta?.payload?.cwd).toBe("/home/user/cocalc-ai");
+    expect(rewrittenMeta?.payload?.approval_policy).toBe("never");
+    expect(rewrittenMeta?.payload?.sandbox_policy).toEqual({
+      type: "danger-full-access",
+    });
+  });
+
   it("answers server auth-refresh requests during a turn", async () => {
     const refreshResponses: any[] = [];
     const proc = new FakeCodexAppServerProc((fake, message) => {

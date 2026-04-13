@@ -4,10 +4,14 @@
  */
 
 import {
+  createInterBayBayDirectoryClient,
+  type InterBayDirectoryApi,
   createInterBayProjectDetailsClient,
   type InterBayProjectDetailsApi,
   createInterBayHostConnectionClient,
   type InterBayHostConnectionApi,
+  createInterBayHostControlClient,
+  type InterBayHostControlApi,
   createInterBayProjectHostAuthTokenClient,
   type InterBayProjectHostAuthTokenApi,
   createInterBayProjectControlClient,
@@ -22,6 +26,10 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
 export interface InterBayBridge {
   readonly bay_id: string;
+  directory(
+    dest_bay: string,
+    opts?: { timeout_ms?: number },
+  ): InterBayDirectoryApi;
   projectControl(
     dest_bay: string,
     opts?: { timeout_ms?: number },
@@ -38,6 +46,10 @@ export interface InterBayBridge {
     dest_bay: string,
     opts?: { timeout_ms?: number },
   ): InterBayHostConnectionApi;
+  hostControl(
+    dest_bay: string,
+    opts?: { timeout_ms?: number },
+  ): InterBayHostControlApi;
   projectHostAuthToken(
     dest_bay: string,
     opts?: { timeout_ms?: number },
@@ -51,6 +63,17 @@ export interface InterBayBridge {
 class LocalOnlyInterBayBridge implements InterBayBridge {
   public readonly bay_id = getConfiguredBayId();
   private readonly client = getInterBayFabricClient();
+
+  directory(
+    dest_bay: string,
+    opts: { timeout_ms?: number } = {},
+  ): InterBayDirectoryApi {
+    return createInterBayBayDirectoryClient({
+      client: this.client,
+      dest_bay,
+      timeout: opts.timeout_ms,
+    });
+  }
 
   projectControl(
     dest_bay: string,
@@ -90,6 +113,17 @@ class LocalOnlyInterBayBridge implements InterBayBridge {
     opts: { timeout_ms?: number } = {},
   ): InterBayHostConnectionApi {
     return createInterBayHostConnectionClient({
+      client: this.client,
+      dest_bay,
+      timeout: opts.timeout_ms,
+    });
+  }
+
+  hostControl(
+    dest_bay: string,
+    opts: { timeout_ms?: number } = {},
+  ): InterBayHostControlApi {
+    return createInterBayHostControlClient({
       client: this.client,
       dest_bay,
       timeout: opts.timeout_ms,

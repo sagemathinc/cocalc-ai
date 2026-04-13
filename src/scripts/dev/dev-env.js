@@ -496,12 +496,14 @@ WITH recent AS (
       (
         SELECT e.key
         FROM jsonb_each(COALESCE(p.users, '{}'::jsonb)) AS e(key, value)
+        JOIN accounts a ON a.account_id::text = e.key
         WHERE COALESCE(e.value->>'group', '') = 'owner'
         LIMIT 1
       ),
       (
         SELECT e.key
         FROM jsonb_each(COALESCE(p.users, '{}'::jsonb)) AS e(key, value)
+        JOIN accounts a ON a.account_id::text = e.key
         LIMIT 1
       )
     ) AS account_id
@@ -510,7 +512,9 @@ WITH recent AS (
   ORDER BY COALESCE(p.last_edited, p.created) DESC NULLS LAST
   LIMIT 1
 )
-SELECT project_id, account_id FROM recent;
+SELECT project_id, account_id
+FROM recent
+WHERE account_id IS NOT NULL;
 `.trim();
 
   const line = runPsqlQuery(connection, latestProjectSql);

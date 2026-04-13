@@ -7,6 +7,8 @@ export {};
 
 const requestMock = jest.fn();
 const queryMock = jest.fn();
+const directoryResolveProjectBayMock = jest.fn();
+const directoryResolveHostBayMock = jest.fn();
 
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   __esModule: true,
@@ -22,11 +24,29 @@ jest.mock("@cocalc/database/pool", () => ({
   })),
 }));
 
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  __esModule: true,
+  getInterBayBridge: jest.fn(() => ({
+    directory: jest.fn(() => ({
+      resolveProjectBay: (...args: any[]) =>
+        directoryResolveProjectBayMock(...args),
+      resolveHostBay: (...args: any[]) => directoryResolveHostBayMock(...args),
+    })),
+  })),
+}));
+
+jest.mock("@cocalc/server/cluster-config", () => ({
+  __esModule: true,
+  getConfiguredClusterBayIds: jest.fn(() => ["bay-0", "bay-1", "bay-2"]),
+}));
+
 describe("inter-bay directory", () => {
   beforeEach(() => {
     jest.resetModules();
     requestMock.mockReset();
     queryMock.mockReset();
+    directoryResolveProjectBayMock.mockReset();
+    directoryResolveHostBayMock.mockReset();
     delete process.env.COCALC_BAY_ID;
   });
 
@@ -55,6 +75,31 @@ describe("inter-bay directory", () => {
       epoch: 0,
     });
     expect(queryMock).toHaveBeenCalled();
+  });
+
+  it("falls back across configured bays for project resolution", async () => {
+    queryMock.mockResolvedValue({ rows: [] });
+    directoryResolveProjectBayMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ bay_id: "bay-2", epoch: 0 });
+    const { resolveProjectBayAcrossCluster } = await import("./directory");
+    await expect(resolveProjectBayAcrossCluster("proj-1")).resolves.toEqual({
+      bay_id: "bay-2",
+      epoch: 0,
+    });
+  });
+
+  it("falls back across configured bays for host resolution", async () => {
+    queryMock.mockResolvedValue({ rows: [] });
+    directoryResolveHostBayMock.mockResolvedValueOnce({
+      bay_id: "bay-1",
+      epoch: 0,
+    });
+    const { resolveHostBayAcrossCluster } = await import("./directory");
+    await expect(resolveHostBayAcrossCluster("host-1")).resolves.toEqual({
+      bay_id: "bay-1",
+      epoch: 0,
+    });
   });
 
   it("surfaces service-side directory errors", async () => {

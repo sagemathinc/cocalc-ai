@@ -441,20 +441,29 @@ export async function resolveHost<H extends HostLike = HostLike>(
   ctx: ProjectCacheContext,
   identifier: string,
 ): Promise<H> {
+  if (isValidUUID(identifier)) {
+    const hosts = (await ctx.hub.hosts.listHosts({
+      include_deleted: false,
+      catalog: true,
+    })) as unknown as H[];
+    if (Array.isArray(hosts)) {
+      const match = hosts.find((x) => x.id === identifier);
+      if (match) {
+        return match;
+      }
+    }
+    return {
+      id: identifier,
+      name: identifier,
+    } as H;
+  }
+
   const hosts = (await ctx.hub.hosts.listHosts({
     include_deleted: false,
     catalog: true,
   })) as unknown as H[];
   if (!Array.isArray(hosts) || !hosts.length) {
     throw new Error("no hosts are visible to this account");
-  }
-
-  if (isValidUUID(identifier)) {
-    const match = hosts.find((x) => x.id === identifier);
-    if (match) {
-      return match;
-    }
-    throw new Error(`host '${identifier}' not found`);
   }
 
   const matches = hosts.filter((x) => x.name === identifier);

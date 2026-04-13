@@ -2730,6 +2730,14 @@ export async function resolveHostConnectionLocal({
   const isOwner = rowOwner === owner;
   const isCollab = collaborators.includes(owner);
   const isShared = row.tier != null;
+  const membership = await loadMembership(owner);
+  const userTier = getUserHostTier(membership.entitlements);
+  const placement = computePlacementPermission({
+    tier: row.tier,
+    userTier,
+    isOwner,
+    isCollab,
+  });
   if (!isOwner && !isCollab && !isShared) {
     const { rows: projectRows } = await pool().query(
       `SELECT 1
@@ -2785,6 +2793,7 @@ export async function resolveHostConnectionLocal({
         ? row.bay_id.trim()
         : null,
     name: row.name ?? null,
+    can_place: placement.can_place,
     region: row.region ?? null,
     size: typeof metadata?.size === "string" ? metadata.size : null,
     ssh_server,

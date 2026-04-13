@@ -31,6 +31,10 @@ import type {
   ProjectRunQuota,
   ProjectSnapshotSchedule,
 } from "@cocalc/conat/hub/api/projects";
+import type {
+  HostCreateProjectRequest,
+  HostCreateProjectResponse,
+} from "@cocalc/conat/project-host/api";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 
@@ -233,9 +237,11 @@ export type ProjectControlMethod =
   | "address"
   | "active-op";
 export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
+export type BayDirectoryMethod = DirectoryMethod;
 export type ProjectReferenceMethod = "get";
 export type ProjectDetailsMethod = "get";
 export type HostConnectionMethod = "get";
+export type HostControlMethod = "create-project";
 export type ProjectHostAuthTokenMethod = "issue";
 export type ProjectLroMethod = "publish-progress";
 export type AccountDirectoryMethod =
@@ -290,6 +296,14 @@ export interface InterBayProjectDetailsApi {
 
 export interface InterBayHostConnectionApi {
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
+}
+
+export interface InterBayHostControlApi {
+  createProject: (opts: {
+    account_id: string;
+    host_id: string;
+    create: HostCreateProjectRequest;
+  }) => Promise<HostCreateProjectResponse>;
 }
 
 export interface InterBayProjectHostAuthTokenApi {
@@ -401,6 +415,16 @@ export function hostConnectionSubject({
   return `bay.${dest_bay}.rpc.host-connection.${method}`;
 }
 
+export function hostControlSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: HostControlMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.host-control.${method}`;
+}
+
 export function projectHostAuthTokenSubject({
   dest_bay,
   method,
@@ -417,6 +441,16 @@ export function directorySubject({
   method: DirectoryMethod;
 }): string {
   return `global.directory.rpc.${method}`;
+}
+
+export function bayDirectorySubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: BayDirectoryMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.directory.${method}`;
 }
 
 export function projectLroSubject({
@@ -517,6 +551,71 @@ export function createInterBayDirectoryHandlers({
       ...options,
       service: "inter-bay-directory",
       subject: directorySubject({ method: "resolve-host-bay" }),
+      impl: {
+        resolveHostBay: async (opts) => await impl.resolveHostBay(opts),
+      },
+    }),
+  ];
+}
+
+export function createInterBayBayDirectoryClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayDirectoryApi {
+  const resolveProjectBayClient = createServiceClient<ResolveProjectBayApi>({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayDirectorySubject({
+      dest_bay,
+      method: "resolve-project-bay",
+    }),
+  });
+  const resolveHostBayClient = createServiceClient<ResolveHostBayApi>({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayDirectorySubject({
+      dest_bay,
+      method: "resolve-host-bay",
+    }),
+  });
+  return {
+    resolveProjectBay: async (opts) =>
+      await resolveProjectBayClient.resolveProjectBay(opts),
+    resolveHostBay: async (opts) =>
+      await resolveHostBayClient.resolveHostBay(opts),
+  };
+}
+
+export function createInterBayBayDirectoryHandlers({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayDirectoryApi;
+}): ConatService[] {
+  return [
+    createServiceHandler<ResolveProjectBayApi>({
+      ...options,
+      service: "inter-bay-bay-directory",
+      subject: bayDirectorySubject({
+        dest_bay: bay_id,
+        method: "resolve-project-bay",
+      }),
+      impl: {
+        resolveProjectBay: async (opts) => await impl.resolveProjectBay(opts),
+      },
+    }),
+    createServiceHandler<ResolveHostBayApi>({
+      ...options,
+      service: "inter-bay-bay-directory",
+      subject: bayDirectorySubject({
+        dest_bay: bay_id,
+        method: "resolve-host-bay",
+      }),
       impl: {
         resolveHostBay: async (opts) => await impl.resolveHostBay(opts),
       },
@@ -657,6 +756,26 @@ export function createInterBayHostConnectionClient({
   };
 }
 
+export function createInterBayHostControlClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayHostControlApi {
+  const hostControlClient = createServiceClient<
+    Pick<InterBayHostControlApi, "createProject">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "create-project" }),
+  });
+  return {
+    createProject: async (opts) => await hostControlClient.createProject(opts),
+  };
+}
+
 export function createInterBayProjectHostAuthTokenClient({
   client,
   dest_bay,
@@ -727,6 +846,24 @@ export function createInterBayHostConnectionHandler({
     subject: hostConnectionSubject({ dest_bay: bay_id, method: "get" }),
     impl: {
       get: async (opts) => await impl.get(opts),
+    },
+  });
+}
+
+export function createInterBayHostControlHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayHostControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayHostControlApi, "createProject">>({
+    ...options,
+    service: "inter-bay-host-control",
+    subject: hostControlSubject({ dest_bay: bay_id, method: "create-project" }),
+    impl: {
+      createProject: async (opts) => await impl.createProject(opts),
     },
   });
 }

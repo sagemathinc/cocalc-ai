@@ -8,6 +8,7 @@ export {};
 describe("cluster-config", () => {
   const env = {
     bay_id: process.env.COCALC_BAY_ID,
+    cluster_bay_ids: process.env.HUB_CLUSTER_BAY_IDS,
     cluster_role: process.env.COCALC_CLUSTER_ROLE,
     seed_bay_id: process.env.COCALC_CLUSTER_SEED_BAY_ID,
     seed_server: process.env.COCALC_CLUSTER_SEED_CONAT_SERVER,
@@ -17,6 +18,7 @@ describe("cluster-config", () => {
   beforeEach(() => {
     jest.resetModules();
     delete process.env.COCALC_BAY_ID;
+    delete process.env.HUB_CLUSTER_BAY_IDS;
     delete process.env.COCALC_CLUSTER_ROLE;
     delete process.env.COCALC_CLUSTER_SEED_BAY_ID;
     delete process.env.COCALC_CLUSTER_SEED_CONAT_SERVER;
@@ -25,6 +27,7 @@ describe("cluster-config", () => {
 
   afterAll(() => {
     process.env.COCALC_BAY_ID = env.bay_id;
+    process.env.HUB_CLUSTER_BAY_IDS = env.cluster_bay_ids;
     process.env.COCALC_CLUSTER_ROLE = env.cluster_role;
     process.env.COCALC_CLUSTER_SEED_BAY_ID = env.seed_bay_id;
     process.env.COCALC_CLUSTER_SEED_CONAT_SERVER = env.seed_server;
@@ -78,5 +81,12 @@ describe("cluster-config", () => {
     expect(() => getConfiguredClusterRole()).toThrow(
       "invalid COCALC_CLUSTER_ROLE",
     );
+  });
+
+  it("parses configured cluster bay ids from the daemon env", async () => {
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.HUB_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
+    const { getConfiguredClusterBayIds } = await import("./cluster-config");
+    expect(getConfiguredClusterBayIds()).toEqual(["bay-0", "bay-1", "bay-2"]);
   });
 });

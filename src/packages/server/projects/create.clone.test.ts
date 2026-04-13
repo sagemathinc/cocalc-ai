@@ -13,6 +13,9 @@ let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
+let resolveHostBayMock: jest.Mock;
+let hostConnectionGetMock: jest.Mock;
+let hostControlCreateProjectMock: jest.Mock;
 let insertedProjectId: string | undefined;
 
 const ACCOUNT_ID = "6e22d250-68d4-46fb-9851-80fbeaa2d6b6";
@@ -84,6 +87,23 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
     resolveMembershipForAccountMock(...args),
 }));
 
+jest.mock("@cocalc/server/inter-bay/directory", () => ({
+  __esModule: true,
+  resolveHostBay: (...args: any[]) => resolveHostBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  __esModule: true,
+  getInterBayBridge: jest.fn(() => ({
+    hostConnection: jest.fn(() => ({
+      get: (...args: any[]) => hostConnectionGetMock(...args),
+    })),
+    hostControl: jest.fn(() => ({
+      createProject: (...args: any[]) => hostControlCreateProjectMock(...args),
+    })),
+  })),
+}));
+
 describe("projects.createProject clone routing", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -106,6 +126,12 @@ describe("projects.createProject clone routing", () => {
     publishProjectAccountFeedEventsBestEffortMock = jest.fn(
       async () => undefined,
     );
+    resolveHostBayMock = jest.fn(async () => null);
+    hostConnectionGetMock = jest.fn();
+    hostControlCreateProjectMock = jest.fn(async () => ({
+      project_id: insertedProjectId,
+      state: { state: "stopped" },
+    }));
     releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
@@ -168,7 +194,7 @@ describe("projects.createProject clone routing", () => {
         insertedProjectId = params[0];
         expect(params[7]).toBe(HOST_ID);
         expect(params[8]).toBe("wnam");
-        expect(params[9]).toBe("bay-7");
+        expect(params[9]).toBe("bay-0");
         return { rowCount: 1 };
       }
       if (sql.includes("INSERT INTO project_rootfs_states")) {
@@ -229,16 +255,16 @@ describe("projects.createProject clone routing", () => {
       project_id,
       src_project_id: SOURCE_PROJECT_ID,
     });
-    expect(hostCreateProjectMock).toHaveBeenCalledWith(
+    expect(hostControlCreateProjectMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        project_id,
-        start: false,
+        account_id: ACCOUNT_ID,
+        host_id: HOST_ID,
+        create: expect.objectContaining({
+          project_id,
+          start: false,
+        }),
       }),
     );
-    expect(getExplicitHostRoutedClientMock).toHaveBeenCalledWith({
-      host_id: HOST_ID,
-      fresh: false,
-    });
   });
 
   it("rejects clone creation when the source project belongs to another bay", async () => {
@@ -259,5 +285,122 @@ describe("projects.createProject clone routing", () => {
     expect(getProjectFileServerClientMock).not.toHaveBeenCalled();
     expect(cloneMock).not.toHaveBeenCalled();
     expect(hostCreateProjectMock).not.toHaveBeenCalled();
+  });
+
+  it("creates a project on a host owned by another bay when remote placement is allowed", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (
+        sql.includes(
+          "SELECT project_id FROM deleted_projects WHERE project_id=$1 LIMIT 1",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "SELECT project_id FROM projects WHERE project_id=$1 LIMIT 1",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        expect(params).toEqual([HOST_ID]);
+        return { rows: [] };
+      }
+      if (sql.startsWith("INSERT INTO projects ")) {
+        insertedProjectId = params[0];
+        expect(params[7]).toBe(HOST_ID);
+        expect(params[8]).toBe("wnam");
+        expect(params[9]).toBe("bay-0");
+        return { rowCount: 1 };
+      }
+      if (
+        sql.includes("SELECT release_id") &&
+        sql.includes("FROM rootfs_images")
+      ) {
+        expect(params).toEqual(["buildpack-deps:noble-scm"]);
+        return { rows: [{ release_id: null }] };
+      }
+      if (
+        sql.includes("SELECT release_id") &&
+        sql.includes("FROM rootfs_releases")
+      ) {
+        expect(params).toEqual(["buildpack-deps:noble-scm"]);
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO project_rootfs_states")) {
+        return { rowCount: 1 };
+      }
+      if (
+        sql.includes("FROM project_rootfs_states") &&
+        sql.includes(
+          "ORDER BY CASE state_role WHEN 'current' THEN 0 ELSE 1 END",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              project_id: insertedProjectId,
+              state_role: "current",
+              runtime_image: "buildpack-deps:noble-scm",
+              release_id: null,
+              image_id: null,
+              set_by_account_id: null,
+              created: new Date(),
+              updated: new Date(),
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 1,
+    }));
+    hostConnectionGetMock = jest.fn(async ({ account_id, host_id }) => {
+      expect(account_id).toBe(ACCOUNT_ID);
+      expect(host_id).toBe(HOST_ID);
+      return {
+        host_id: HOST_ID,
+        bay_id: "bay-7",
+        region: "us-west1",
+        can_place: true,
+        status: "running",
+        online: true,
+      };
+    });
+
+    const createProject = (await import("./create")).default;
+    const project_id = await createProject({
+      title: "Remote host placement",
+      description: "",
+      account_id: ACCOUNT_ID,
+      host_id: HOST_ID,
+      rootfs_image: "buildpack-deps:noble-scm",
+      start: false,
+    });
+
+    expect(typeof project_id).toBe("string");
+    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
+    expect(hostConnectionGetMock).toHaveBeenCalledTimes(1);
+    expect(hostControlCreateProjectMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      host_id: HOST_ID,
+      create: {
+        image: "buildpack-deps:noble-scm",
+        project_id,
+        start: false,
+        title: "Remote host placement",
+        users: { [ACCOUNT_ID]: { group: "owner" } },
+      },
+    });
   });
 });

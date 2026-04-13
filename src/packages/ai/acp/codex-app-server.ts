@@ -844,6 +844,14 @@ function getCodexHomeHostPath(
   if (spawned.containerPathMap?.rootHostPath) {
     return path.join(spawned.containerPathMap.rootHostPath, ".codex");
   }
+  const configuredCodexHome = `${process.env.COCALC_CODEX_HOME ?? ""}`.trim();
+  if (configuredCodexHome) {
+    return configuredCodexHome;
+  }
+  const originalHome = `${process.env.COCALC_ORIGINAL_HOME ?? ""}`.trim();
+  if (originalHome) {
+    return path.join(originalHome, ".codex");
+  }
   const localHome = `${process.env.HOME ?? ""}`.trim();
   if (localHome) {
     return path.join(localHome, ".codex");
@@ -1461,7 +1469,7 @@ export class CodexAppServerAgent implements AcpAgent {
         sandbox: toSandboxMode(config),
       };
       if (resumeId) {
-        await this.tryEnsureSessionConfig(resumeId, cwd, config);
+        await this.tryEnsureSessionConfig(spawned, resumeId, cwd, config);
         try {
           threadResult = await client.request("thread/resume", {
             threadId: resumeId,
@@ -2086,11 +2094,15 @@ export class CodexAppServerAgent implements AcpAgent {
   }
 
   private async ensureSessionConfig(
+    spawned: SpawnedCodexAppServer,
     sessionId: string,
     cwd: string,
     config?: CodexSessionConfig,
   ): Promise<void> {
-    const sessionsRoot = getSessionsRoot();
+    const codexHome = getCodexHomeHostPath(spawned, cwd);
+    const sessionsRoot = codexHome
+      ? path.join(codexHome, "sessions")
+      : getSessionsRoot();
     if (!sessionsRoot) return;
     const filePath = await findSessionFile(sessionId, sessionsRoot);
     if (!filePath) return;
@@ -2115,12 +2127,13 @@ export class CodexAppServerAgent implements AcpAgent {
   }
 
   private async tryEnsureSessionConfig(
+    spawned: SpawnedCodexAppServer,
     sessionId: string,
     cwd: string,
     config?: CodexSessionConfig,
   ): Promise<void> {
     try {
-      await this.ensureSessionConfig(sessionId, cwd, config);
+      await this.ensureSessionConfig(spawned, sessionId, cwd, config);
     } catch (err) {
       logger.warn("codex app-server: failed to update session metadata", {
         sessionId,

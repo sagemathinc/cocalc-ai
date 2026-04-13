@@ -11,9 +11,11 @@ import {
   createInterBayProjectCollabInviteHandlers,
   createInterBayProjectDetailsHandler,
   createInterBayHostConnectionHandler,
+  createInterBayHostControlHandler,
   createInterBayProjectHostAuthTokenHandler,
   createInterBayProjectControlAddressHandler,
   createInterBayProjectControlActiveOpHandler,
+  createInterBayBayDirectoryHandlers,
   createInterBayDirectoryHandlers,
   createInterBayProjectControlHandler,
   createInterBayProjectControlRestartHandler,
@@ -29,6 +31,7 @@ import {
   type InterBayProjectCollabInviteApi,
   type InterBayProjectDetailsApi,
   type InterBayHostConnectionApi,
+  type InterBayHostControlApi,
   type InterBayProjectHostAuthTokenApi,
   type InterBayProjectControlApi,
   type InterBayProjectLroApi,
@@ -56,7 +59,9 @@ import {
   searchClusterAccounts,
 } from "@cocalc/server/inter-bay/accounts";
 import {
+  resolveHostBayAcrossCluster,
   resolveHostBayDirect,
+  resolveProjectBayAcrossCluster,
   resolveProjectBayDirect,
 } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
@@ -75,6 +80,7 @@ import {
   issueProjectHostAuthTokenLocal,
   resolveHostConnectionLocal,
 } from "@cocalc/server/conat/api/hosts";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   deleteProjectedCollabInviteDirect,
   toWire as collabInviteToWire,
@@ -102,6 +108,7 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectReferenceService();
     await startProjectDetailsService();
     await startHostConnectionService();
+    await startHostControlService();
     await startProjectHostAuthTokenService();
     await startProjectLroService();
     await startProjectCollabInviteService();
@@ -135,10 +142,6 @@ async function startAuthTokenService(): Promise<void> {
 }
 
 async function startDirectoryService(): Promise<void> {
-  const role = getConfiguredClusterRole();
-  if (role === "attached") {
-    return;
-  }
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayDirectoryApi = {
     resolveProjectBay: async ({ project_id }) =>
@@ -147,10 +150,27 @@ async function startDirectoryService(): Promise<void> {
       await resolveHostBayDirect(`${host_id ?? ""}`),
   };
   services.push(
+    ...createInterBayBayDirectoryHandlers({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+  const role = getConfiguredClusterRole();
+  if (role === "attached") {
+    return;
+  }
+  services.push(
     ...createInterBayDirectoryHandlers({
       client,
       parallel: true,
-      impl,
+      impl: {
+        resolveProjectBay: async ({ project_id }) =>
+          await resolveProjectBayAcrossCluster(`${project_id ?? ""}`),
+        resolveHostBay: async ({ host_id }) =>
+          await resolveHostBayAcrossCluster(`${host_id ?? ""}`),
+      },
     }),
   );
 }
@@ -373,6 +393,34 @@ async function startHostConnectionService(): Promise<void> {
   };
   services.push(
     createInterBayHostConnectionHandler({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startHostControlService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayHostControlApi = {
+    createProject: async ({ account_id, host_id, create }) => {
+      const connection = await resolveHostConnectionLocal({
+        account_id,
+        host_id,
+      });
+      if (!connection?.can_place) {
+        throw new Error("not allowed to place a project on that host");
+      }
+      const hostClient = await getRoutedHostControlClient({
+        host_id,
+        timeout: 15_000,
+      });
+      return await hostClient.createProject(create);
+    },
+  };
+  services.push(
+    createInterBayHostControlHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,
