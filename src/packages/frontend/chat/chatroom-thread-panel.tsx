@@ -59,9 +59,9 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import { ChatIconPicker } from "./chat-icon-picker";
 import {
-  CODEX_NEW_CHAT_MODE_OPTIONS,
   codexNewChatDefaultsEqual,
   getDefaultCodexNewChatDefaults,
+  getCodexNewChatModeOptions,
   getDefaultCodexSessionMode,
   saveCodexNewChatDefaults,
 } from "./codex-defaults";
@@ -1208,7 +1208,7 @@ export function ChatRoomThreadPanel({
                       defaultSessionMode
                     }
                     style={{ width: "100%" }}
-                    options={CODEX_NEW_CHAT_MODE_OPTIONS}
+                    options={getCodexNewChatModeOptions()}
                     onChange={(value) =>
                       update({
                         codexConfig: {
@@ -2193,15 +2193,12 @@ function getReasoningForModel({
 function normalizeSessionMode(
   config?: Partial<CodexThreadConfig>,
 ): CodexSessionMode | undefined {
-  const mode = resolveCodexSessionMode(config as CodexThreadConfig);
-  if (
-    mode === "read-only" ||
-    mode === "workspace-write" ||
-    mode === "full-access"
-  ) {
-    return mode;
-  }
-  return undefined;
+  return getCodexNewChatModeOptions().some(
+    ({ value }) =>
+      value === resolveCodexSessionMode(config as CodexThreadConfig),
+  )
+    ? (resolveCodexSessionMode(config as CodexThreadConfig) as CodexSessionMode)
+    : getDefaultCodexSessionMode();
 }
 
 function renderOptionWithDescription({

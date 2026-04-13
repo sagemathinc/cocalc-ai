@@ -40,7 +40,10 @@ import {
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "./actions";
-import { getDefaultCodexSessionMode } from "./codex-defaults";
+import {
+  getCodexNewChatModeOptions,
+  getDefaultCodexSessionMode,
+} from "./codex-defaults";
 import { ThreadImageUpload } from "./thread-image-upload";
 import type { ChatExportOpenRequest, ChatExportScope } from "./export-types";
 
@@ -70,12 +73,6 @@ interface ChatRoomModalsProps {
 type ThreadAgentMode = "codex" | "human";
 const DEFAULT_CODEX_MODEL =
   DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
-const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
-  { value: "read-only", label: "Read only" },
-  { value: "workspace-write", label: "Workspace write" },
-  { value: "full-access", label: "Full access" },
-];
-
 type ExportRequest = {
   scope: ChatExportScope;
   threadKey?: string;
@@ -789,7 +786,7 @@ export function ChatRoomModals({
                     defaultSessionMode
                   }
                   style={{ width: "100%" }}
-                  options={MODE_OPTIONS}
+                  options={getCodexNewChatModeOptions()}
                   onChange={(value) =>
                     setRenameCodexConfig((prev) => ({
                       ...prev,
@@ -959,14 +956,10 @@ function normalizeSessionMode(
   config?: Partial<CodexThreadConfig>,
 ): CodexSessionMode | undefined {
   const mode = resolveCodexSessionMode(config as CodexThreadConfig);
-  if (
-    mode === "read-only" ||
-    mode === "workspace-write" ||
-    mode === "full-access"
-  ) {
+  if (getCodexNewChatModeOptions().some(({ value }) => value === mode)) {
     return mode;
   }
-  return undefined;
+  return getDefaultCodexSessionMode();
 }
 
 function defaultWorkingDir(

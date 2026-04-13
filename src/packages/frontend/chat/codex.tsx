@@ -37,7 +37,10 @@ import {
 import { COLORS } from "@cocalc/util/theme";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import type { ChatActions } from "./actions";
-import { getDefaultCodexSessionMode } from "./codex-defaults";
+import {
+  getCodexNewChatModeOptions,
+  getDefaultCodexSessionMode,
+} from "./codex-defaults";
 import { getLatestAcpThreadIdForThread } from "./thread-session";
 import {
   getCodexPaymentSourceShortLabel,
@@ -211,6 +214,15 @@ export function CodexConfigButton({
     Form.useWatch("reasoning", form) ?? value?.reasoning;
   const currentSessionMode =
     Form.useWatch("sessionMode", form) ?? value?.sessionMode;
+  const availableModeValues = useMemo(
+    () => new Set(getCodexNewChatModeOptions().map(({ value }) => value)),
+    [],
+  );
+  const modeOptions = useMemo(
+    () =>
+      MODE_OPTIONS.filter((option) => availableModeValues.has(option.value)),
+    [availableModeValues],
+  );
   const reasoningOptions = useMemo(() => {
     const selected =
       models.find((m) => m.value === selectedModelValue) ?? models[0];
@@ -262,7 +274,7 @@ export function CodexConfigButton({
     form.setFieldsValue(finalValues);
   };
 
-  const modeOptions = MODE_OPTIONS.map((option) => ({
+  const compactModeOptions = modeOptions.map((option) => ({
     value: option.value,
     label: option.label,
   }));
@@ -325,7 +337,7 @@ export function CodexConfigButton({
         <Select
           size="small"
           value={currentSessionMode}
-          options={modeOptions}
+          options={compactModeOptions}
           style={{ minWidth: 140 }}
           onChange={(val) => {
             updateConfig({ sessionMode: val as CodexSessionMode });
@@ -444,7 +456,7 @@ export function CodexConfigButton({
                   size={8}
                   style={{ width: "100%" }}
                 >
-                  {MODE_OPTIONS.map((option) => {
+                  {modeOptions.map((option) => {
                     const selected = currentSessionMode === option.value;
                     return (
                       <div
@@ -607,14 +619,10 @@ function normalizeSessionMode(
   config?: Partial<CodexThreadConfig>,
 ): CodexSessionMode | undefined {
   const mode = resolveCodexSessionMode(config as CodexThreadConfig);
-  if (
-    mode === "read-only" ||
-    mode === "workspace-write" ||
-    mode === "full-access"
-  ) {
+  if (getCodexNewChatModeOptions().some(({ value }) => value === mode)) {
     return mode;
   }
-  return undefined;
+  return getDefaultCodexSessionMode();
 }
 
 function defaultWorkingDir(
