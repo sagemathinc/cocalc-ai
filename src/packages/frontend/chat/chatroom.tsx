@@ -95,9 +95,14 @@ import {
   useWorkspaceChatWorkingDirectory,
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
 import {
+  clearWorkspaceNoticeForChatPath,
+  setWorkspaceReadyForReviewNotice,
+} from "@cocalc/frontend/project/workspaces/runtime";
+import {
   isCodexModelName,
   resolveCodexSessionMode,
 } from "@cocalc/util/ai/codex";
+import { tab_to_path } from "@cocalc/util/misc";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
 import {
   combinedComposerTargetStorageKey,
@@ -141,6 +146,12 @@ export type CompletedCodexTurnNotification = CodexTurnNotificationWatch & {
 };
 
 type CodexTurnNotificationSnapshot = {
+  active: boolean;
+  interrupted: boolean;
+  newestMessageDate?: string;
+};
+
+type ChatThreadCompletionSnapshot = {
   active: boolean;
   interrupted: boolean;
   newestMessageDate?: string;
@@ -208,6 +219,35 @@ export function splitCompletedCodexTurnNotifications({
     });
   }
   return { remainingWatches, completedNotifications };
+}
+
+function buildChatThreadCompletionSnapshots({
+  actions,
+  acpState,
+  threads,
+}: {
+  actions: ChatActions;
+  acpState?: immutable.Map<string, string>;
+  threads: readonly any[];
+}): Map<string, ChatThreadCompletionSnapshot> {
+  const snapshots = new Map<string, ChatThreadCompletionSnapshot>();
+  for (const thread of threads) {
+    if (!thread?.isAI) continue;
+    const threadId = normalizeThreadKey(thread.key);
+    if (!threadId) continue;
+    const threadMessages = actions.getMessagesInThread(threadId) ?? [];
+    snapshots.set(thread.key, {
+      active: hasActiveAcpTurnForComposer({
+        isSelectedThreadAI: true,
+        selectedThreadId: threadId,
+        selectedThreadMessages: threadMessages,
+        acpState,
+      }),
+      interrupted: latestThreadAcpInterrupted(threadMessages),
+      newestMessageDate: getLatestThreadMessageDate(threadMessages),
+    });
+  }
+  return snapshots;
 }
 
 export function enabledLoopConfig(
@@ -581,7 +621,15 @@ export function ChatPanel({
   const [codexTurnNotifyDefaultEnabled, setCodexTurnNotifyDefaultEnabled] =
     useState<boolean>(() => readCodexTurnNotifyPreference());
   const accountOtherSettings = useTypedRedux("account", "other_settings");
+  const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(path);
+  const priorThreadCompletionSnapshotsRef = useRef<
+    Map<string, ChatThreadCompletionSnapshot>
+  >(new Map());
+  const isChatForeground = useMemo(
+    () => tab_to_path(activeProjectTab ?? "") === path,
+    [activeProjectTab, path],
+  );
   const defaultNewThreadSetup = useMemo<NewThreadSetup>(() => {
     const title = asTrimmedString(
       getDescValue(desc, "data-newThreadTitleDefault"),
@@ -1128,6 +1176,75 @@ export function ChatPanel({
       return next;
     });
   }, [actions, acpState, codexTurnNotificationWatches, messages]);
+
+  useEffect(() => {
+    if (!project_id || !path?.trim() || !account_id?.trim()) {
+      priorThreadCompletionSnapshotsRef.current = new Map();
+      return;
+    }
+    const currentSnapshots = buildChatThreadCompletionSnapshots({
+      actions,
+      acpState,
+      threads: [...threads, ...archivedThreads],
+    });
+    const previousSnapshots = priorThreadCompletionSnapshotsRef.current;
+    priorThreadCompletionSnapshotsRef.current = currentSnapshots;
+
+    if (isChatForeground) {
+      return;
+    }
+
+    const anyActive = Array.from(currentSnapshots.values()).some(
+      (snapshot) => snapshot.active,
+    );
+    if (anyActive) {
+      return;
+    }
+
+    let newestCompletedAt = 0;
+    for (const [threadKey, current] of currentSnapshots) {
+      const previous = previousSnapshots.get(threadKey);
+      if (!previous?.active || current.active || current.interrupted) continue;
+      const completedAt = Number(current.newestMessageDate ?? "");
+      if (Number.isFinite(completedAt) && completedAt > newestCompletedAt) {
+        newestCompletedAt = completedAt;
+      }
+    }
+    if (newestCompletedAt <= 0) return;
+
+    void setWorkspaceReadyForReviewNotice({
+      project_id,
+      account_id,
+      chat_path: path,
+      updated_at: newestCompletedAt,
+    }).catch(() => {});
+  }, [
+    account_id,
+    acpState,
+    actions,
+    archivedThreads,
+    isChatForeground,
+    path,
+    project_id,
+    threads,
+    messages,
+  ]);
+
+  useEffect(() => {
+    if (
+      !isChatForeground ||
+      !project_id ||
+      !path?.trim() ||
+      !account_id?.trim()
+    ) {
+      return;
+    }
+    void clearWorkspaceNoticeForChatPath({
+      project_id,
+      account_id,
+      chat_path: path,
+    }).catch(() => {});
+  }, [account_id, isChatForeground, path, project_id]);
 
   const agentSessionRecords = useMemo<AgentSessionRecord[]>(() => {
     if (typeof account_id !== "string" || !account_id.trim()) {
