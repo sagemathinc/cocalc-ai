@@ -1,7 +1,7 @@
 import { List } from "immutable";
 import { useState } from "react";
 import { Button } from "antd";
-import { TimeAgo, Tooltip } from "@cocalc/frontend/components";
+import { Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { TimeTravelActions } from "./actions";
 
@@ -9,6 +9,7 @@ interface Props {
   actions: TimeTravelActions;
   source: "timetravel" | "git" | "snapshots" | "backups";
   versions: List<string | number>;
+  loading?: boolean;
   currentVersion?: string | number;
   firstVersion: number;
   onSelectVersion: (
@@ -29,6 +30,7 @@ export function LogView({
   actions,
   source,
   versions,
+  loading,
   currentVersion,
   firstVersion,
   onSelectVersion,
@@ -41,7 +43,9 @@ export function LogView({
         Click a title to compare with the previous version. Shift+click another
         row to compare with selected.
       </div>
-      {rows.length === 0 ? (
+      {loading ? (
+        <Loading theme="medium" />
+      ) : rows.length === 0 ? (
         <div style={{ color: "#666" }}>No versions found.</div>
       ) : (
         rows.map((row) => {

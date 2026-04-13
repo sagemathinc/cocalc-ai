@@ -103,6 +103,7 @@ export function TimeTravel(props: Props) {
   );
   const [showCommitRange, setShowCommitRange] = useState<boolean>(false);
   const [showChangedFiles, setShowChangedFiles] = useState<boolean>(false);
+  const [sourceLoading, setSourceLoading] = useState<boolean>(false);
   const [logMode, setLogMode] = useState<boolean>(() => {
     const saved = props.desc?.get("logMode");
     return saved == null ? true : !!saved;
@@ -230,19 +231,38 @@ export function TimeTravel(props: Props) {
   }, [version, version0, version1, source, changesMode]);
 
   useAsyncEffect(async () => {
+    if (!gitMode && !snapshotsMode && !backupsMode) {
+      setSourceLoading(false);
+      return;
+    }
+    setSourceLoading(true);
     if (gitMode) {
-      await props.actions.updateGitVersions();
+      try {
+        await props.actions.updateGitVersions();
+      } finally {
+        setSourceLoading(false);
+      }
       return;
     }
     if (snapshotsMode) {
-      await props.actions.updateSnapshotVersions();
+      try {
+        await props.actions.updateSnapshotVersions();
+      } finally {
+        setSourceLoading(false);
+      }
       return;
     }
     if (backupsMode) {
-      await props.actions.updateBackupVersions();
+      try {
+        await props.actions.updateBackupVersions();
+      } finally {
+        setSourceLoading(false);
+      }
       return;
     }
   }, [props.actions, source]);
+
+  const showLogLoading = logMode && sourceLoading && activeVersions.size === 0;
 
   const wallTime = useMemo(() => {
     return gitMode
@@ -1161,6 +1181,7 @@ export function TimeTravel(props: Props) {
         actions={props.actions}
         source={source}
         versions={activeVersions}
+        loading={showLogLoading}
         currentVersion={version}
         firstVersion={firstVersion}
         onSelectVersion={(selected, opts) => {
