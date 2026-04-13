@@ -13,6 +13,7 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import { TimeAgo, Tooltip } from "@cocalc/frontend/components";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import type { InlineCodeLink } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { COLORS } from "@cocalc/util/theme";
@@ -148,17 +149,23 @@ export function AttachedSteerStatusList({
               ) : null}
               {status.label}
             </span>
-            <span
+            <div
               style={{
                 fontSize: 12,
                 color: COLORS.GRAY_D,
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
                 flex: "1 1 220px",
+                minWidth: 0,
               }}
             >
-              {steer.text}
-            </span>
+              <StaticMarkdown
+                value={steer.text}
+                style={{
+                  fontSize: 12,
+                  color: COLORS.GRAY_D,
+                  overflowWrap: "anywhere",
+                }}
+              />
+            </div>
           </div>
         );
       })}
