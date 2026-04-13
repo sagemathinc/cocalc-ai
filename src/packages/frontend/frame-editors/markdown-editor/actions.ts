@@ -75,10 +75,10 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
       direction: "col",
       type: "node",
       first: {
-        type: "markdown_table_of_contents",
+        type: "slate", // if hit issues, switch to "markdown"
       },
       second: {
-        type: "slate", // if hit issues, switch to "markdown"
+        type: "markdown_table_of_contents",
       },
       pos: 0.75,
     };
