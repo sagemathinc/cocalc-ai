@@ -1833,6 +1833,80 @@ describe("CodexAppServerAgent", () => {
     });
   });
 
+  it("uses full-access sandboxing for container-backed sessions by default", async () => {
+    let threadStartParams: any;
+    let turnStartParams: any;
+    const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-home-"));
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          threadStartParams = message.params;
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-container-1" },
+          });
+          break;
+        case "turn/start":
+          turnStartParams = message.params;
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-container-1" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-container-1", status: "inProgress" },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-container-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    try {
+      setCodexProjectSpawner({
+        spawnCodexExec: async () => {
+          throw new Error("unexpected codex exec spawn");
+        },
+        spawnCodexAppServer: async () => ({
+          proc: proc as any,
+          cmd: "fake-codex",
+          args: ["app-server"],
+          cwd: "/home/user/cocalc-ai",
+          containerPathMap: {
+            rootHostPath,
+          },
+        }),
+      });
+
+      const agent = new CodexAppServerAgent();
+      await agent.evaluate({
+        project_id: "00000000-0000-4000-8000-000000000000",
+        account_id: "00000000-0000-4000-8000-000000000001",
+        prompt: "commit the change",
+        stream: async () => {},
+        config: {
+          workingDirectory: "/home/user/cocalc-ai",
+        } as any,
+      });
+    } finally {
+      rmSync(rootHostPath, { recursive: true, force: true });
+    }
+
+    expect(threadStartParams?.approvalPolicy).toBe("never");
+    expect(threadStartParams?.sandbox).toBe("danger-full-access");
+    expect(turnStartParams?.approvalPolicy).toBe("never");
+    expect(turnStartParams?.sandboxPolicy).toEqual({
+      type: "dangerFullAccess",
+    });
+  });
+
   it("rewrites resumed session metadata before thread/resume", async () => {
     const originalCodexHome = process.env.COCALC_CODEX_HOME;
     const codexHome = mkdtempSync(path.join(tmpdir(), "codex-home-"));
@@ -2035,6 +2109,114 @@ describe("CodexAppServerAgent", () => {
           sessionId,
           workingDirectory: "/home/user/cocalc-ai",
           sessionMode: "full-access",
+        } as any,
+      });
+    } finally {
+      rmSync(rootHostPath, { recursive: true, force: true });
+    }
+
+    expect(rewrittenMeta?.payload?.cwd).toBe("/home/user/cocalc-ai");
+    expect(rewrittenMeta?.payload?.approval_policy).toBe("never");
+    expect(rewrittenMeta?.payload?.sandbox_policy).toEqual({
+      type: "danger-full-access",
+    });
+  });
+
+  it("rewrites container-backed resumed sessions to full-access by default", async () => {
+    const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-home-"));
+    const sessionId = "019d0000-0000-7000-8000-000000000003";
+    const sessionDir = path.join(
+      rootHostPath,
+      ".codex",
+      "sessions",
+      "2026",
+      "04",
+      "08",
+    );
+    mkdirSync(sessionDir, { recursive: true });
+    const sessionFile = path.join(
+      sessionDir,
+      `rollout-2026-04-08T00-00-00-${sessionId}.jsonl`,
+    );
+    writeFileSync(
+      sessionFile,
+      `${JSON.stringify({
+        timestamp: "2026-04-08T00:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: sessionId,
+          cwd: "/tmp/old-project",
+          approval_policy: "never",
+          sandbox_policy: {
+            type: "workspace-write",
+            network_access: true,
+            exclude_tmpdir_env_var: false,
+            exclude_slash_tmp: false,
+          },
+        },
+      })}\n`,
+      "utf8",
+    );
+
+    let rewrittenMeta: any;
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/resume":
+          rewrittenMeta = JSON.parse(
+            readFileSync(sessionFile, "utf8").split("\n")[0],
+          );
+          fake.sendResponse(message.id, {
+            thread: { id: sessionId },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-container-resume-2" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-container-resume-2", status: "inProgress" },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-container-resume-2", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    try {
+      setCodexProjectSpawner({
+        spawnCodexExec: async () => {
+          throw new Error("unexpected codex exec spawn");
+        },
+        spawnCodexAppServer: async () => ({
+          proc: proc as any,
+          cmd: "fake-codex",
+          args: ["app-server"],
+          cwd: "/home/user/cocalc-ai",
+          containerPathMap: {
+            rootHostPath,
+          },
+        }),
+      });
+
+      const agent = new CodexAppServerAgent();
+      await agent.evaluate({
+        project_id: "00000000-0000-4000-8000-000000000000",
+        account_id: "00000000-0000-4000-8000-000000000001",
+        prompt: "commit the change",
+        stream: async () => {},
+        config: {
+          sessionId,
+          workingDirectory: "/home/user/cocalc-ai",
         } as any,
       });
     } finally {
