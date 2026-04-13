@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { queryProjects, resolveProject } from "./project-resolve";
+import { queryProjects, resolveHost, resolveProject } from "./project-resolve";
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -301,4 +301,45 @@ test("queryProjects falls back to getProjectBay for exact remote UUID reads", as
       deleted: false,
     },
   ]);
+});
+
+test("resolveHost accepts an explicit host UUID even when no hosts are visible", async () => {
+  const host = await resolveHost(
+    {
+      projectCache: new Map(),
+      hub: {
+        db: {},
+        system: {},
+        hosts: {
+          listHosts: async () => [],
+        },
+      },
+    } as any,
+    "99999999-9999-4999-8999-999999999999",
+  );
+
+  assert.deepEqual(host, {
+    id: "99999999-9999-4999-8999-999999999999",
+    name: "99999999-9999-4999-8999-999999999999",
+  });
+});
+
+test("resolveHost still requires visible hosts for name lookup", async () => {
+  await assert.rejects(
+    () =>
+      resolveHost(
+        {
+          projectCache: new Map(),
+          hub: {
+            db: {},
+            system: {},
+            hosts: {
+              listHosts: async () => [],
+            },
+          },
+        } as any,
+        "host",
+      ),
+    /no hosts are visible to this account/,
+  );
 });
