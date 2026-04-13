@@ -32,6 +32,7 @@ import type {
   ProjectSnapshotSchedule,
 } from "@cocalc/conat/hub/api/projects";
 import type {
+  HostControlApi,
   HostCreateProjectRequest,
   HostCreateProjectResponse,
   HostBackupExecutionStatus,
@@ -329,6 +330,10 @@ export interface InterBayHostConnectionApi {
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
 }
 
+type HostControlArg<K extends keyof HostControlApi> = Parameters<
+  HostControlApi[K]
+>[0];
+
 export interface InterBayHostControlApi {
   createProject: (opts: {
     account_id: string;
@@ -337,39 +342,27 @@ export interface InterBayHostControlApi {
   }) => Promise<HostCreateProjectResponse>;
   startProject: (opts: {
     host_id: string;
-    start: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["startProject"]
-    >[0];
+    start: HostControlArg<"startProject">;
   }) => Promise<HostCreateProjectResponse>;
   stopProject: (opts: {
     host_id: string;
-    stop: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["stopProject"]
-    >[0];
+    stop: HostControlArg<"stopProject">;
   }) => Promise<HostCreateProjectResponse>;
   updateAuthorizedKeys: (opts: {
     host_id: string;
-    update: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["updateAuthorizedKeys"]
-    >[0];
+    update: HostControlArg<"updateAuthorizedKeys">;
   }) => Promise<void>;
   updateProjectUsers: (opts: {
     host_id: string;
-    update: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["updateProjectUsers"]
-    >[0];
+    update: HostControlArg<"updateProjectUsers">;
   }) => Promise<void>;
   applyPendingCopies: (opts: {
     host_id: string;
-    apply: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["applyPendingCopies"]
-    >[0];
+    apply: HostControlArg<"applyPendingCopies">;
   }) => Promise<{ claimed: number }>;
   deleteProjectData: (opts: {
     host_id: string;
-    del: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["deleteProjectData"]
-    >[0];
+    del: HostControlArg<"deleteProjectData">;
   }) => Promise<void>;
   upgradeSoftware: (opts: {
     host_id: string;
@@ -377,70 +370,50 @@ export interface InterBayHostControlApi {
   }) => Promise<UpgradeSoftwareResponse>;
   growBtrfs: (opts: {
     host_id: string;
-    grow: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["growBtrfs"]
-    >[0];
+    grow: HostControlArg<"growBtrfs">;
   }) => Promise<{ ok: boolean }>;
   getRuntimeLog: (opts: {
     host_id: string;
-    get: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["getRuntimeLog"]
-    >[0];
+    get: HostControlArg<"getRuntimeLog">;
   }) => Promise<HostRuntimeLogResponse>;
   getProjectRuntimeLog: (opts: {
     host_id: string;
-    get: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["getProjectRuntimeLog"]
-    >[0];
+    get: HostControlArg<"getProjectRuntimeLog">;
   }) => Promise<HostProjectRuntimeLogResponse>;
   listRootfsImages: (opts: { host_id: string }) => Promise<HostRootfsCacheEntry[]>;
   pullRootfsImage: (opts: {
     host_id: string;
-    pull: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["pullRootfsImage"]
-    >[0];
+    pull: HostControlArg<"pullRootfsImage">;
   }) => Promise<HostRootfsCacheEntry>;
   deleteRootfsImage: (opts: {
     host_id: string;
-    del: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["deleteRootfsImage"]
-    >[0];
+    del: HostControlArg<"deleteRootfsImage">;
   }) => Promise<{ removed: boolean }>;
   listHostSshAuthorizedKeys: (opts: {
     host_id: string;
   }) => Promise<HostSshAuthorizedKeysResponse>;
   addHostSshAuthorizedKey: (opts: {
     host_id: string;
-    add: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["addHostSshAuthorizedKey"]
-    >[0];
+    add: HostControlArg<"addHostSshAuthorizedKey">;
   }) => Promise<HostSshAuthorizedKeysResponse & { added: boolean }>;
   removeHostSshAuthorizedKey: (opts: {
     host_id: string;
-    remove: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["removeHostSshAuthorizedKey"]
-    >[0];
+    remove: HostControlArg<"removeHostSshAuthorizedKey">;
   }) => Promise<HostSshAuthorizedKeysResponse & { removed: boolean }>;
   getBackupExecutionStatus: (opts: {
     host_id: string;
   }) => Promise<HostBackupExecutionStatus>;
   inspectStaticAppPath: (opts: {
     host_id: string;
-    inspect: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["inspectStaticAppPath"]
-    >[0];
+    inspect: HostControlArg<"inspectStaticAppPath">;
   }) => Promise<HostStaticAppPathInspection>;
   buildRootfsImageManifest: (opts: {
     host_id: string;
-    build: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["buildRootfsImageManifest"]
-    >[0];
+    build: HostControlArg<"buildRootfsImageManifest">;
   }) => Promise<HostRootfsManifest>;
   buildProjectRootfsManifest: (opts: {
     host_id: string;
-    build: Parameters<
-      import("@cocalc/conat/project-host/api").HostControlApi["buildProjectRootfsManifest"]
-    >[0];
+    build: HostControlArg<"buildProjectRootfsManifest">;
   }) => Promise<HostRootfsManifest>;
 }
 
