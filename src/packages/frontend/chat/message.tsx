@@ -500,12 +500,10 @@ export function getFocusMessageButtonStyle(): CSSProperties {
 
 export function shouldUseCodexSelectToolbar({
   isCodexThread,
-  isViewersMessage,
 }: {
   isCodexThread: boolean;
-  isViewersMessage: boolean;
 }): boolean {
-  return isCodexThread && !isViewersMessage;
+  return isCodexThread;
 }
 
 export function resolveMessageBodyMode({
@@ -603,16 +601,11 @@ export default function Message({
     () =>
       shouldUseCodexSelectToolbar({
         isCodexThread,
-        isViewersMessage: is_viewers_message,
       }),
-    [isCodexThread, is_viewers_message],
+    [isCodexThread],
   );
   const showEditButton =
-    project_id != null &&
-    path != null &&
-    actions != null &&
-    !isEditing &&
-    !useCodexSelectToolbar;
+    project_id != null && path != null && actions != null && !isEditing;
 
   const editor_name = useMemo(() => {
     return get_user_name(firstHistoryEntry?.author_id);
@@ -1667,6 +1660,7 @@ export default function Message({
           style={{
             color: selectMode ? undefined : COLORS.GRAY_M,
             fontSize: "12px",
+            marginTop: "-4px",
           }}
           onClick={() => setSelectMode((prev) => !prev)}
         >
@@ -1740,6 +1734,14 @@ export default function Message({
         key: "delete",
         label: <span style={{ color: COLORS.ANTD_RED }}>Delete message</span>,
         onClick: confirm_delete_message,
+      });
+    }
+
+    if (showEditButton) {
+      overflowItems.splice(Math.min(overflowItems.length, 2), 0, {
+        key: "edit",
+        label: "Edit message",
+        onClick: edit_message,
       });
     }
 

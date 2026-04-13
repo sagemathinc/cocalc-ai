@@ -17,19 +17,11 @@ describe("message action layout", () => {
     expect(
       shouldUseCodexSelectToolbar({
         isCodexThread: true,
-        isViewersMessage: false,
       }),
     ).toBe(true);
     expect(
       shouldUseCodexSelectToolbar({
-        isCodexThread: true,
-        isViewersMessage: true,
-      }),
-    ).toBe(false);
-    expect(
-      shouldUseCodexSelectToolbar({
         isCodexThread: false,
-        isViewersMessage: false,
       }),
     ).toBe(false);
   });
