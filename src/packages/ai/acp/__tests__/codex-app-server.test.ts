@@ -354,6 +354,135 @@ describe("CodexAppServerAgent", () => {
     ]);
   });
 
+  it("backfills terminal command metadata when output arrives before item start", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-out-of-order-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-out-of-order-1" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-out-of-order-1", status: "inProgress" },
+            });
+            fake.sendNotification("item/commandExecution/outputDelta", {
+              threadId: "thr-out-of-order-1",
+              turnId: "turn-out-of-order-1",
+              itemId: "cmd-out-of-order-1",
+              delta: "hi\n",
+            });
+            fake.sendNotification("item/started", {
+              threadId: "thr-out-of-order-1",
+              turnId: "turn-out-of-order-1",
+              item: {
+                type: "commandExecution",
+                id: "cmd-out-of-order-1",
+                command: "echo hi",
+                cwd: "/tmp/project",
+                processId: null,
+                status: "inProgress",
+                commandActions: [],
+                aggregatedOutput: null,
+                exitCode: null,
+                durationMs: null,
+              },
+            });
+            fake.sendNotification("item/completed", {
+              threadId: "thr-out-of-order-1",
+              turnId: "turn-out-of-order-1",
+              item: {
+                type: "commandExecution",
+                id: "cmd-out-of-order-1",
+                command: "echo hi",
+                cwd: "/tmp/project",
+                processId: null,
+                status: "completed",
+                commandActions: [],
+                aggregatedOutput: "hi\n",
+                exitCode: 0,
+                durationMs: 5,
+              },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-out-of-order-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "say hello",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    const terminalStarts = streamPayloads.filter(
+      (payload) =>
+        payload?.type === "event" &&
+        payload.event?.type === "terminal" &&
+        payload.event?.terminalId === "cmd-out-of-order-1" &&
+        payload.event?.phase === "start",
+    );
+
+    expect(terminalStarts).toEqual([
+      {
+        type: "event",
+        event: {
+          type: "terminal",
+          terminalId: "cmd-out-of-order-1",
+          phase: "start",
+          command: undefined,
+          cwd: "/tmp/project",
+        },
+      },
+      {
+        type: "event",
+        event: {
+          type: "terminal",
+          terminalId: "cmd-out-of-order-1",
+          phase: "start",
+          command: "echo hi",
+          cwd: "/tmp/project",
+        },
+      },
+    ]);
+  });
+
   it("retries remote compaction timeouts before visible turn side effects", async () => {
     process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES = "1";
     process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS = "1";
