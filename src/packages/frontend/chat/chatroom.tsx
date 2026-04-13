@@ -142,6 +142,7 @@ export type CompletedCodexTurnNotification = CodexTurnNotificationWatch & {
 
 type CodexTurnNotificationSnapshot = {
   active: boolean;
+  interrupted: boolean;
   newestMessageDate?: string;
 };
 
@@ -169,6 +170,17 @@ export function getLatestThreadMessageDate(
   return undefined;
 }
 
+export function latestThreadAcpInterrupted(
+  messages: readonly ChatMessage[],
+): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (!field<string>(msg, "acp_account_id")) continue;
+    return field<boolean>(msg, "acp_interrupted") === true;
+  }
+  return false;
+}
+
 export function splitCompletedCodexTurnNotifications({
   watches,
   snapshots,
@@ -185,6 +197,9 @@ export function splitCompletedCodexTurnNotifications({
     const snapshot = snapshots.get(watch.threadKey);
     if (snapshot?.active === true) {
       remainingWatches.push(watch);
+      continue;
+    }
+    if (snapshot?.interrupted === true) {
       continue;
     }
     completedNotifications.push({
@@ -1034,6 +1049,7 @@ export function ChatPanel({
           selectedThreadMessages: threadMessages,
           acpState,
         }),
+        interrupted: latestThreadAcpInterrupted(threadMessages),
         newestMessageDate: getLatestThreadMessageDate(threadMessages),
       });
     }
