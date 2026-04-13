@@ -45,6 +45,7 @@ import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspa
 import { modelToName } from "@cocalc/frontend/frame-editors/llm/llm-selector";
 import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
+import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { User } from "@cocalc/frontend/users";
 import { isLanguageModelService } from "@cocalc/util/db-schema/llm-utils";
 import { unreachable } from "@cocalc/util/misc";
@@ -1103,10 +1104,19 @@ export default function Message({
     }
   }
 
-  function selectMessageLink() {
+  async function copyMessageLink() {
     const d = dateValue(message);
-    if (d != null) {
-      actions?.setFragment(d);
+    if (d == null) return;
+    actions?.setFragment(d);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.hash = Fragment.encode({ chat: toMsString(d) });
+    window.history.replaceState({}, "", url.href);
+    const ok = await copyTextToClipboard({ text: url.href });
+    if (ok) {
+      antdMessage.success("Copied link to message.");
+    } else {
+      antdMessage.error("Unable to copy message link.");
     }
   }
 
@@ -1298,13 +1308,15 @@ export default function Message({
         placement={"top"}
         title={intl.formatMessage({
           id: "chat.message.copy_link.tooltip",
-          defaultMessage: "Select message. Copy URL to link to this message.",
+          defaultMessage: "Copy a direct link to this message.",
           description:
             "Tooltip for button to copy URL link to specific chat message",
         })}
       >
         <Button
-          onClick={selectMessageLink}
+          onClick={() => {
+            void copyMessageLink();
+          }}
           size="small"
           type={"text"}
           style={{
@@ -1693,7 +1705,9 @@ export default function Message({
       {
         key: "copy-link",
         label: "Link to message",
-        onClick: selectMessageLink,
+        onClick: () => {
+          void copyMessageLink();
+        },
       },
     ];
 
