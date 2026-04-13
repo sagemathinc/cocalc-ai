@@ -1645,28 +1645,28 @@ export default function Message({
 
   function renderCodexHeaderActions() {
     const buttons: ReactNode[] = [
-      <Tip
-        key="select"
-        placement="bottom"
-        title={
-          selectMode
-            ? "Exit selection mode"
-            : "Select and copy part of this message with Slate formatting"
-        }
-      >
-        <Button
-          size="small"
-          type={selectMode ? "primary" : "text"}
-          style={{
-            color: selectMode ? undefined : COLORS.GRAY_M,
-            fontSize: "12px",
-            marginTop: "-4px",
-          }}
-          onClick={() => setSelectMode((prev) => !prev)}
+      <span key="select" style={{ marginTop: "-5px" }}>
+        <Tip
+          placement="bottom"
+          title={
+            selectMode
+              ? "Exit selection mode"
+              : "Select and copy part of this message with Slate formatting"
+          }
         >
-          Select
-        </Button>
-      </Tip>,
+          <Button
+            size="small"
+            type={selectMode ? "primary" : "text"}
+            style={{
+              color: selectMode ? undefined : COLORS.GRAY_M,
+              fontSize: "12px",
+            }}
+            onClick={() => setSelectMode((prev) => !prev)}
+          >
+            Select
+          </Button>
+        </Tip>
+      </span>,
       <Tooltip key="git-browser" placement="bottom" title="Open git browser">
         <Button
           size="small"
