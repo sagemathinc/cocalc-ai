@@ -15,6 +15,7 @@ import {
   createInterBayProjectHostAuthTokenHandler,
   createInterBayProjectControlAddressHandler,
   createInterBayProjectControlActiveOpHandler,
+  createInterBayBayDirectoryHandlers,
   createInterBayDirectoryHandlers,
   createInterBayProjectControlHandler,
   createInterBayProjectControlRestartHandler,
@@ -58,7 +59,9 @@ import {
   searchClusterAccounts,
 } from "@cocalc/server/inter-bay/accounts";
 import {
+  resolveHostBayAcrossCluster,
   resolveHostBayDirect,
+  resolveProjectBayAcrossCluster,
   resolveProjectBayDirect,
 } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
@@ -139,10 +142,6 @@ async function startAuthTokenService(): Promise<void> {
 }
 
 async function startDirectoryService(): Promise<void> {
-  const role = getConfiguredClusterRole();
-  if (role === "attached") {
-    return;
-  }
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayDirectoryApi = {
     resolveProjectBay: async ({ project_id }) =>
@@ -151,10 +150,27 @@ async function startDirectoryService(): Promise<void> {
       await resolveHostBayDirect(`${host_id ?? ""}`),
   };
   services.push(
+    ...createInterBayBayDirectoryHandlers({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+  const role = getConfiguredClusterRole();
+  if (role === "attached") {
+    return;
+  }
+  services.push(
     ...createInterBayDirectoryHandlers({
       client,
       parallel: true,
-      impl,
+      impl: {
+        resolveProjectBay: async ({ project_id }) =>
+          await resolveProjectBayAcrossCluster(`${project_id ?? ""}`),
+        resolveHostBay: async ({ host_id }) =>
+          await resolveHostBayAcrossCluster(`${host_id ?? ""}`),
+      },
     }),
   );
 }

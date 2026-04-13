@@ -49,6 +49,21 @@ export function getClusterConfig(): ClusterConfig {
   };
 }
 
+export function getConfiguredClusterBayIds(): string[] {
+  const fromEnv =
+    `${process.env.COCALC_CLUSTER_BAY_IDS ?? process.env.HUB_CLUSTER_BAY_IDS ?? ""}`
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const fallback = [
+    getConfiguredBayId(),
+    ...(getConfiguredClusterRole() === "attached"
+      ? [getConfiguredClusterSeedBayId()]
+      : []),
+  ];
+  return [...new Set([...fromEnv, ...fallback])];
+}
+
 export function isMultiBayCluster(): boolean {
   return getConfiguredClusterRole() !== "standalone";
 }

@@ -237,6 +237,7 @@ export type ProjectControlMethod =
   | "address"
   | "active-op";
 export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
+export type BayDirectoryMethod = DirectoryMethod;
 export type ProjectReferenceMethod = "get";
 export type ProjectDetailsMethod = "get";
 export type HostConnectionMethod = "get";
@@ -442,6 +443,16 @@ export function directorySubject({
   return `global.directory.rpc.${method}`;
 }
 
+export function bayDirectorySubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: BayDirectoryMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.directory.${method}`;
+}
+
 export function projectLroSubject({
   dest_bay,
   method,
@@ -540,6 +551,71 @@ export function createInterBayDirectoryHandlers({
       ...options,
       service: "inter-bay-directory",
       subject: directorySubject({ method: "resolve-host-bay" }),
+      impl: {
+        resolveHostBay: async (opts) => await impl.resolveHostBay(opts),
+      },
+    }),
+  ];
+}
+
+export function createInterBayBayDirectoryClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayDirectoryApi {
+  const resolveProjectBayClient = createServiceClient<ResolveProjectBayApi>({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayDirectorySubject({
+      dest_bay,
+      method: "resolve-project-bay",
+    }),
+  });
+  const resolveHostBayClient = createServiceClient<ResolveHostBayApi>({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayDirectorySubject({
+      dest_bay,
+      method: "resolve-host-bay",
+    }),
+  });
+  return {
+    resolveProjectBay: async (opts) =>
+      await resolveProjectBayClient.resolveProjectBay(opts),
+    resolveHostBay: async (opts) =>
+      await resolveHostBayClient.resolveHostBay(opts),
+  };
+}
+
+export function createInterBayBayDirectoryHandlers({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayDirectoryApi;
+}): ConatService[] {
+  return [
+    createServiceHandler<ResolveProjectBayApi>({
+      ...options,
+      service: "inter-bay-bay-directory",
+      subject: bayDirectorySubject({
+        dest_bay: bay_id,
+        method: "resolve-project-bay",
+      }),
+      impl: {
+        resolveProjectBay: async (opts) => await impl.resolveProjectBay(opts),
+      },
+    }),
+    createServiceHandler<ResolveHostBayApi>({
+      ...options,
+      service: "inter-bay-bay-directory",
+      subject: bayDirectorySubject({
+        dest_bay: bay_id,
+        method: "resolve-host-bay",
+      }),
       impl: {
         resolveHostBay: async (opts) => await impl.resolveHostBay(opts),
       },

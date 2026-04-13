@@ -4,6 +4,8 @@
  */
 
 import {
+  createInterBayBayDirectoryClient,
+  type InterBayDirectoryApi,
   createInterBayProjectDetailsClient,
   type InterBayProjectDetailsApi,
   createInterBayHostConnectionClient,
@@ -24,6 +26,10 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
 export interface InterBayBridge {
   readonly bay_id: string;
+  directory(
+    dest_bay: string,
+    opts?: { timeout_ms?: number },
+  ): InterBayDirectoryApi;
   projectControl(
     dest_bay: string,
     opts?: { timeout_ms?: number },
@@ -57,6 +63,17 @@ export interface InterBayBridge {
 class LocalOnlyInterBayBridge implements InterBayBridge {
   public readonly bay_id = getConfiguredBayId();
   private readonly client = getInterBayFabricClient();
+
+  directory(
+    dest_bay: string,
+    opts: { timeout_ms?: number } = {},
+  ): InterBayDirectoryApi {
+    return createInterBayBayDirectoryClient({
+      client: this.client,
+      dest_bay,
+      timeout: opts.timeout_ms,
+    });
+  }
 
   projectControl(
     dest_bay: string,
