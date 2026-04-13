@@ -114,15 +114,6 @@ const WORKSPACE_TERMINAL_THEME_OPTIONS = [
   })),
 ];
 
-type WorkspaceActivityState =
-  | {
-      kind: "running" | "done" | "failed";
-      label: string;
-      color: string;
-      updatedAt: string;
-    }
-  | undefined;
-
 type WorkspaceOpenFileActivity = {
   terminals: number;
   notebooks: number;
@@ -271,6 +262,12 @@ function formatCompactMemoryMiB(memRss: number): string {
   return `${Math.round(memRss)}MiB`;
 }
 
+function dateMs(value?: string): number {
+  if (!value) return 0;
+  const ms = new Date(value).valueOf();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 function workspaceNoticeColor(
   level: NonNullable<WorkspaceRecord["notice"]>["level"],
 ): string {
@@ -288,10 +285,9 @@ function workspaceNoticeColor(
 
 function buildWorkspaceSummaryRow(opts: {
   record: WorkspaceRecord;
-  activity: WorkspaceActivityState;
   fileActivityLabel: string | null;
 }): WorkspaceSummaryRow {
-  const { record, activity, fileActivityLabel } = opts;
+  const { record, fileActivityLabel } = opts;
   if (record.notice != null) {
     const label = [record.notice.title, record.notice.text]
       .filter((part) => `${part ?? ""}`.trim())
@@ -312,29 +308,6 @@ function buildWorkspaceSummaryRow(opts: {
       ),
       dismissNotice: true,
       icon: "info-circle",
-    };
-  }
-  if (activity != null) {
-    return {
-      label: activity.kind === "done" ? "Ready for review" : activity.label,
-      color:
-        activity.kind === "running"
-          ? COLORS.BLUE_D
-          : activity.kind === "failed"
-            ? COLORS.ANTD_RED_WARN
-            : COLORS.ANTD_GREEN_D,
-      timestamp: activity.updatedAt,
-      tooltip:
-        activity.kind === "done"
-          ? "All Codex turns done. Open this workspace to review."
-          : activity.label,
-      icon:
-        activity.kind === "done"
-          ? "check-circle"
-          : activity.kind === "failed"
-            ? "warning"
-            : undefined,
-      filled: activity.kind === "done",
     };
   }
   if (fileActivityLabel != null) {
@@ -619,69 +592,6 @@ function processTooltipContent(
   );
 }
 
-function dateMs(value?: string): number {
-  if (!value) return 0;
-  const ms = new Date(value).valueOf();
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-export function getWorkspaceActivityState(
-  record: WorkspaceRecord,
-  sessions: AgentSessionRecord[],
-  opts?: {
-    currentRunning?: boolean;
-  },
-): WorkspaceActivityState {
-  const viewedAt = record.activity_viewed_at ?? 0;
-  const runningSeenAt = record.activity_running_at ?? 0;
-  const chatPath = `${record.chat_path ?? ""}`.trim();
-  if (!chatPath) return undefined;
-  const currentRunning = opts?.currentRunning === true;
-  const matching = sessions
-    .filter((session) => session.chat_path === chatPath)
-    .sort((a, b) => dateMs(b.updated_at) - dateMs(a.updated_at));
-  if (matching.length === 0) {
-    return currentRunning
-      ? {
-          kind: "running",
-          label: "Codex running",
-          color: "processing",
-          updatedAt: new Date().toISOString(),
-        }
-      : undefined;
-  }
-
-  const latest = matching[0];
-  if (
-    currentRunning ||
-    matching.some((session) => session.status === "running")
-  ) {
-    return {
-      kind: "running",
-      label: "Codex running",
-      color: "processing",
-      updatedAt: latest.updated_at,
-    };
-  }
-  if (latest.status === "failed" && dateMs(latest.updated_at) > viewedAt) {
-    return {
-      kind: "failed",
-      label: "Codex error",
-      color: "error",
-      updatedAt: latest.updated_at,
-    };
-  }
-  if (runningSeenAt > viewedAt && dateMs(latest.updated_at) > 0) {
-    return {
-      kind: "done",
-      label: "Codex done",
-      color: "success",
-      updatedAt: latest.updated_at,
-    };
-  }
-  return undefined;
-}
-
 function getWorkspaceOpenFileActivity(
   record: WorkspaceRecord,
   openFilesOrder: string[],
@@ -704,17 +614,6 @@ function getWorkspaceOpenFileActivity(
     }
   }
   return { terminals, notebooks, other };
-}
-
-function workspaceChatHasActivity(
-  record: WorkspaceRecord,
-  openFilesOrder: string[],
-  openFiles: any,
-): boolean {
-  const chatPath = `${record.chat_path ?? ""}`.trim();
-  if (!chatPath) return false;
-  if (!openFilesOrder.includes(chatPath)) return false;
-  return !!openFiles?.getIn?.([chatPath, "has_activity"]);
 }
 
 export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
@@ -805,64 +704,6 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       unsubscribe?.();
     };
   }, [project_id]);
-
-  useEffect(() => {
-    if (workspaces.selection.kind !== "workspace") return;
-    const workspaceId = workspaces.selection.workspace_id;
-    const record = workspaces.records.find(
-      ({ workspace_id }) => workspace_id === workspaceId,
-    );
-    if (!record) return;
-    const activity = getWorkspaceActivityState(record, agentSessions, {
-      currentRunning: workspaceChatHasActivity(
-        record,
-        openFilesOrder,
-        openFiles,
-      ),
-    });
-    if (activity == null || activity.kind === "running") return;
-    workspaces.updateWorkspace(workspaceId, {
-      activity_viewed_at: Date.now(),
-    });
-  }, [agentSessions, openFiles, openFilesOrder, workspaces]);
-
-  useEffect(() => {
-    for (const record of workspaces.records) {
-      const chatPath = `${record.chat_path ?? ""}`.trim();
-      if (!chatPath) continue;
-      const latestRunning = agentSessions
-        .filter(
-          (session) =>
-            session.chat_path === chatPath && session.status === "running",
-        )
-        .reduce(
-          (best, session) => Math.max(best, dateMs(session.updated_at)),
-          0,
-        );
-      const currentChatActivity = workspaceChatHasActivity(
-        record,
-        openFilesOrder,
-        openFiles,
-      );
-      const currentChatRunningStartedAt =
-        currentChatActivity &&
-        (record.activity_running_at ?? 0) <= (record.activity_viewed_at ?? 0)
-          ? Date.now()
-          : 0;
-      const latestSeenRunning = Math.max(
-        latestRunning,
-        currentChatRunningStartedAt,
-      );
-      if (
-        latestSeenRunning > 0 &&
-        latestSeenRunning > (record.activity_running_at ?? 0)
-      ) {
-        workspaces.updateWorkspace(record.workspace_id, {
-          activity_running_at: latestSeenRunning,
-        });
-      }
-    }
-  }, [agentSessions, openFiles, openFilesOrder, workspaces]);
 
   function openCreate(): void {
     const draft = makeDraft(null, defaultRootPath);
@@ -1064,20 +905,11 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       openFilesOrder,
       openFiles,
     );
-    const chatActivity = workspaceChatHasActivity(
-      record,
-      openFilesOrder,
-      openFiles,
-    );
-    const activity = getWorkspaceActivityState(record, agentSessions, {
-      currentRunning: chatActivity,
-    });
     const fileActivityLabel = workspaceOpenFileActivityLabel(fileActivity);
     const processSummary: WorkspaceProcessSummary | null =
       processSummaryByWorkspaceId.get(record.workspace_id) ?? null;
     const summaryRow = buildWorkspaceSummaryRow({
       record,
-      activity,
       fileActivityLabel,
     });
     const compactProcessSummary =

@@ -8,8 +8,10 @@ import {
   openWorkspaceStore,
   readWorkspaceRecordsFromStore,
   resolveWorkspaceForPath,
+  updateStoredWorkspaceRecord,
   updateWorkspaceRecords,
   writeWorkspaceRecordsToStore,
+  type WorkspaceNotice,
   type WorkspaceRecord,
 } from "@cocalc/conat/workspaces";
 import { lite } from "@cocalc/frontend/lite";
@@ -151,4 +153,76 @@ export async function ensureWorkspaceChatDirectory(opts: {
   } catch {
     // best effort only
   }
+}
+
+async function updateWorkspaceNoticeForPath(opts: {
+  project_id: string;
+  account_id: string;
+  path: string;
+  notice: Partial<WorkspaceNotice> | null;
+}): Promise<WorkspaceRecord | null> {
+  const workspace = await resolveStoredWorkspaceForPath(opts);
+  if (!workspace) return null;
+  const store = await openWorkspaceStore({
+    client: webapp_client.conat_client,
+    account_id: opts.account_id,
+    project_id: opts.project_id,
+  });
+  try {
+    const updated = updateStoredWorkspaceRecord(store, workspace.workspace_id, {
+      notice: opts.notice,
+    });
+    await store.save();
+    return updated;
+  } finally {
+    store.close();
+  }
+}
+
+export async function setWorkspaceReadyForReviewNotice(opts: {
+  project_id: string;
+  account_id: string;
+  chat_path: string;
+  updated_at?: number;
+}): Promise<WorkspaceRecord | null> {
+  const updated_at =
+    typeof opts.updated_at === "number" && Number.isFinite(opts.updated_at)
+      ? opts.updated_at
+      : Date.now();
+  return await updateWorkspaceNoticeForPath({
+    project_id: opts.project_id,
+    account_id: opts.account_id,
+    path: opts.chat_path,
+    notice: {
+      title: "Ready for review",
+      text: "Codex finished in this workspace.",
+      level: "success",
+      updated_at,
+    },
+  });
+}
+
+export async function clearWorkspaceNoticeForChatPath(opts: {
+  project_id: string;
+  account_id: string;
+  chat_path: string;
+}): Promise<WorkspaceRecord | null> {
+  const workspace = await resolveStoredWorkspaceForPath({
+    project_id: opts.project_id,
+    account_id: opts.account_id,
+    path: opts.chat_path,
+  });
+  if (!workspace) return null;
+  if (
+    workspace.notice?.title !== "Ready for review" ||
+    workspace.notice?.level !== "success"
+  ) {
+    return workspace;
+  }
+  return await updateWorkspaceNoticeForPath({
+    project_id: opts.project_id,
+    account_id: opts.account_id,
+    path: opts.chat_path,
+    notice: null,
+  });
 }
