@@ -1,6 +1,6 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { TerminalRow } from "../codex-activity";
+import CodexActivity, { TerminalRow } from "../codex-activity";
 
 jest.mock("@cocalc/frontend/components", () => {
   const actual = jest.requireActual("@cocalc/frontend/components");
@@ -87,5 +87,58 @@ describe("CodexActivity terminal rows", () => {
     );
 
     expect(screen.getByText("2026-03-15T18:00:00.000Z")).not.toBeNull();
+  });
+
+  it("renders inline shell strings as input", () => {
+    const { container } = render(
+      React.createElement(TerminalRow, {
+        fontSize: 14,
+        entry: {
+          kind: "terminal",
+          id: "terminal-4",
+          seq: 4,
+          terminalId: "term-4",
+          command: "/bin/bash -lc 'pwd && ls -la'",
+          cwd: "/root",
+          output: "/root\nfile.txt\n",
+          completed: true,
+        },
+      }),
+    );
+
+    expect(screen.getByText("Input")).not.toBeNull();
+    expect(container.textContent).toContain("pwd && ls -la");
+  });
+
+  it('does not leave "Waiting for output…" after a finished turn without terminal exit output', () => {
+    render(
+      React.createElement(CodexActivity, {
+        expanded: true,
+        events: [
+          { type: "status", state: "running", seq: 1, time: 1000 } as any,
+          {
+            type: "event",
+            seq: 2,
+            time: 1010,
+            event: {
+              type: "terminal",
+              terminalId: "term-5",
+              phase: "start",
+              command: "/bin/bash -lc 'sleep 10'",
+              cwd: "/root",
+            },
+          } as any,
+          {
+            type: "summary",
+            seq: 3,
+            time: 1020,
+            finalResponse: "Done.",
+          } as any,
+        ],
+      }),
+    );
+
+    expect(screen.queryByText("Waiting for output…")).toBeNull();
+    expect(screen.getByText("No output.")).not.toBeNull();
   });
 });

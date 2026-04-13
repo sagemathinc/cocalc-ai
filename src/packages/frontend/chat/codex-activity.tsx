@@ -508,10 +508,12 @@ function normalizeEvents(events: AcpLogStreamMessage[]): ActivityEntry[] {
   const rows: ActivityEntry[] = [];
   let fallbackId = 0;
   const terminals = new Map<string, ActivityEntry & { kind: "terminal" }>();
+  let sawTerminalFinalizer = false;
   for (const message of events) {
     const seq = message.seq ?? ++fallbackId;
     const time = getMessageTimestamp(message);
     if (message.type === "error") {
+      sawTerminalFinalizer = true;
       rows.push({
         kind: "status",
         id: `error-${seq}`,
@@ -524,6 +526,7 @@ function normalizeEvents(events: AcpLogStreamMessage[]): ActivityEntry[] {
       continue;
     }
     if (message.type === "summary") {
+      sawTerminalFinalizer = true;
       rows.push({
         kind: "status",
         id: `summary-${seq}`,
@@ -564,6 +567,12 @@ function normalizeEvents(events: AcpLogStreamMessage[]): ActivityEntry[] {
       if (entry) {
         rows.push(entry);
       }
+    }
+  }
+  if (sawTerminalFinalizer) {
+    for (const row of rows) {
+      if (row.kind !== "terminal" || row.completed === true) continue;
+      row.completed = true;
     }
   }
   const sorted = rows.sort((a, b) => a.seq - b.seq);
