@@ -11,11 +11,19 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 const getCodexSiteKeyGovernorMock: jest.Mock<any, []> = jest.fn(() => null);
+const loggerMock = {
+  debug: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+};
 
 jest.mock("../codex-site-key-governor", () => ({
   getCodexSiteKeyGovernor: () => getCodexSiteKeyGovernorMock(),
   setCodexSiteKeyGovernor: jest.fn(),
 }));
+
+jest.mock("@cocalc/backend/logger", () => () => loggerMock);
 
 import {
   CodexAppServerAgent,
@@ -81,11 +89,19 @@ describe("CodexAppServerAgent", () => {
     process.env.COCALC_CODEX_MODEL_CAPACITY_MAX_RETRIES;
   const originalCapacityRetryDelay =
     process.env.COCALC_CODEX_MODEL_CAPACITY_RETRY_DELAY_MS;
+  const originalTimeoutRetryLimit =
+    process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES;
+  const originalTimeoutRetryDelay =
+    process.env.COCALC_CODEX_TIMEOUT_RETRY_DELAY_MS;
 
   afterEach(async () => {
     setCodexProjectSpawner(null);
     getCodexSiteKeyGovernorMock.mockReset();
     getCodexSiteKeyGovernorMock.mockReturnValue(null);
+    loggerMock.debug.mockReset();
+    loggerMock.info.mockReset();
+    loggerMock.warn.mockReset();
+    loggerMock.error.mockReset();
     if (originalCompactRetryLimit == null) {
       delete process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES;
     } else {
@@ -109,6 +125,17 @@ describe("CodexAppServerAgent", () => {
     } else {
       process.env.COCALC_CODEX_MODEL_CAPACITY_RETRY_DELAY_MS =
         originalCapacityRetryDelay;
+    }
+    if (originalTimeoutRetryLimit == null) {
+      delete process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES;
+    } else {
+      process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES = originalTimeoutRetryLimit;
+    }
+    if (originalTimeoutRetryDelay == null) {
+      delete process.env.COCALC_CODEX_TIMEOUT_RETRY_DELAY_MS;
+    } else {
+      process.env.COCALC_CODEX_TIMEOUT_RETRY_DELAY_MS =
+        originalTimeoutRetryDelay;
     }
   });
 
@@ -872,6 +899,193 @@ describe("CodexAppServerAgent", () => {
     expect(
       streamPayloads.find((payload) => payload.type === "error")?.error,
     ).toContain("Error running remote compact task");
+  });
+
+  it("retries bare timeout failures with a visible retry message", async () => {
+    process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES = "1";
+    process.env.COCALC_CODEX_TIMEOUT_RETRY_DELAY_MS = "1000";
+
+    let spawnCount = 0;
+    const makeProc = (spawn: number) =>
+      new FakeCodexAppServerProc((fake, message) => {
+        switch (message.method) {
+          case "initialize":
+            fake.sendResponse(message.id, { ok: true });
+            break;
+          case "thread/start":
+            fake.sendResponse(message.id, {
+              thread: { id: "thr-timeout-1" },
+            });
+            break;
+          case "turn/start": {
+            const turnId = `turn-timeout-${spawn}`;
+            fake.sendResponse(message.id, { turn: { id: turnId } });
+            setImmediate(() => {
+              fake.sendNotification("turn/started", {
+                turn: { id: turnId, status: "inProgress" },
+              });
+              if (spawn === 1) {
+                fake.sendNotification("error", {
+                  turnId,
+                  error: { message: "timeout" },
+                });
+                fake.sendNotification("turn/completed", {
+                  turn: {
+                    id: turnId,
+                    status: "failed",
+                    error: { message: "timeout" },
+                  },
+                });
+              } else {
+                fake.sendNotification("item/agentMessage/delta", {
+                  threadId: "thr-timeout-1",
+                  turnId,
+                  itemId: "msg-timeout-1",
+                  delta: "Recovered",
+                });
+                fake.sendNotification("turn/completed", {
+                  turn: { id: turnId, status: "completed" },
+                });
+              }
+            });
+            break;
+          }
+          default:
+            if (typeof message.id === "number") {
+              fake.sendResponse(message.id, {});
+            }
+        }
+      });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: makeProc(++spawnCount) as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) streamPayloads.push(payload);
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    expect(spawnCount).toBe(2);
+    expect(streamPayloads).toEqual(
+      expect.arrayContaining([
+        {
+          type: "event",
+          event: {
+            type: "thinking",
+            text: "Codex returned a transient timeout. Retrying in 1 second (1/1)... If this repeats, check the project-host ACP logs.",
+          },
+        },
+        {
+          type: "summary",
+          finalResponse: "Recovered",
+          usage: undefined,
+          threadId: "thr-timeout-1",
+        },
+      ]),
+    );
+  });
+
+  it("adds timeout guidance after retries are exhausted", async () => {
+    process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES = "1";
+    process.env.COCALC_CODEX_TIMEOUT_RETRY_DELAY_MS = "1000";
+
+    let spawnCount = 0;
+    const makeProc = () =>
+      new FakeCodexAppServerProc((fake, message) => {
+        switch (message.method) {
+          case "initialize":
+            fake.sendResponse(message.id, { ok: true });
+            break;
+          case "thread/start":
+            fake.sendResponse(message.id, {
+              thread: { id: `thr-timeout-${spawnCount}` },
+            });
+            break;
+          case "turn/start": {
+            const turnId = `turn-timeout-${spawnCount}`;
+            fake.sendResponse(message.id, { turn: { id: turnId } });
+            setImmediate(() => {
+              fake.sendNotification("turn/started", {
+                turn: { id: turnId, status: "inProgress" },
+              });
+              fake.sendNotification("error", {
+                turnId,
+                error: { message: "timeout" },
+              });
+              fake.sendNotification("turn/completed", {
+                turn: {
+                  id: turnId,
+                  status: "failed",
+                  error: { message: "timeout" },
+                },
+              });
+            });
+            break;
+          }
+          default:
+            if (typeof message.id === "number") {
+              fake.sendResponse(message.id, {});
+            }
+        }
+      });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => {
+        spawnCount += 1;
+        return {
+          proc: makeProc() as any,
+          cmd: "fake-codex",
+          args: ["app-server"],
+          cwd: "/tmp/project",
+        };
+      },
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) streamPayloads.push(payload);
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    expect(spawnCount).toBe(2);
+    const errorPayload = streamPayloads.find(
+      (payload) => payload.type === "error",
+    );
+    expect(errorPayload?.error).toContain(
+      "Codex kept returning a transient timeout after automatic retries.",
+    );
+    expect(errorPayload?.error).toContain(
+      "Check the project-host ACP logs for the failed turn payload and stderr tail",
+    );
   });
 
   it("resumes the actual Codex thread when repeated turns use the chat-thread alias", async () => {
