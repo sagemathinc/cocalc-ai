@@ -13,10 +13,10 @@ import {
 } from "@cocalc/util/ai/codex";
 import type { AccountState } from "./types";
 import {
-  CODEX_NEW_CHAT_MODE_OPTIONS,
   OTHER_SETTINGS_CODEX_NEW_CHAT_DEFAULTS,
   codexNewChatDefaultsEqual,
   getDefaultCodexNewChatDefaults,
+  getCodexNewChatModeOptions,
   getStoredCodexNewChatDefaults,
   normalizeCodexNewChatDefaults,
   saveCodexNewChatDefaults,
@@ -118,7 +118,7 @@ export function CodexDefaultsPanel({ other_settings }: Readonly<Props>) {
           <Select
             value={draft.sessionMode}
             style={{ width: "100%" }}
-            options={CODEX_NEW_CHAT_MODE_OPTIONS}
+            options={getCodexNewChatModeOptions()}
             onChange={(value) =>
               setDraft(
                 normalizeCodexNewChatDefaults({

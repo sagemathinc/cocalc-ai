@@ -99,4 +99,46 @@ describe("codex new chat defaults", () => {
       },
     });
   });
+
+  it("maps legacy workspace-write launchpad settings to full-access and hides the option", () => {
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+    jest.doMock("@cocalc/frontend/account/util", () => ({
+      set_account_table: jest.fn(),
+    }));
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: (name: string) => {
+          if (name === "customize") {
+            return {
+              get: (key: string) => key === "is_launchpad",
+            };
+          }
+          return undefined;
+        },
+      },
+    }));
+
+    const {
+      getCodexNewChatModeOptions,
+      getDefaultCodexSessionMode,
+      normalizeCodexNewChatDefaults,
+    } = require("../codex-defaults");
+
+    expect(getDefaultCodexSessionMode()).toBe("full-access");
+    expect(getCodexNewChatModeOptions()).toEqual([
+      { value: "read-only", label: "Read only" },
+      { value: "full-access", label: "Full access" },
+    ]);
+    expect(
+      normalizeCodexNewChatDefaults({
+        model: "gpt-5.4",
+        sessionMode: "workspace-write",
+      }),
+    ).toMatchObject({
+      model: "gpt-5.4",
+      sessionMode: "full-access",
+    });
+  });
 });

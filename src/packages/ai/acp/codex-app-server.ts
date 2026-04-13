@@ -988,9 +988,16 @@ function toReasoningEffort(
 }
 
 function toSandboxMode(
+  spawned: SpawnedCodexAppServer | undefined,
   config?: CodexSessionConfig,
 ): "read-only" | "workspace-write" | "danger-full-access" {
   const mode = resolveCodexSessionMode(config);
+  if (spawned?.containerPathMap?.rootHostPath && mode !== "read-only") {
+    // Launchpad Codex runs inside a dedicated project container already, so
+    // Codex's own workspace sandbox only adds flakiness without improving
+    // isolation. Keep explicit read-only threads read-only.
+    return "danger-full-access";
+  }
   switch (mode) {
     case "read-only":
       return "read-only";
@@ -1001,7 +1008,10 @@ function toSandboxMode(
   }
 }
 
-function toTurnSandboxPolicy(config?: CodexSessionConfig):
+function toTurnSandboxPolicy(
+  spawned: SpawnedCodexAppServer | undefined,
+  config?: CodexSessionConfig,
+):
   | {
       type: "readOnly";
       access: { type: "fullAccess" };
@@ -1019,6 +1029,11 @@ function toTurnSandboxPolicy(config?: CodexSessionConfig):
       type: "dangerFullAccess";
     } {
   const mode = resolveCodexSessionMode(config);
+  if (spawned?.containerPathMap?.rootHostPath && mode !== "read-only") {
+    return {
+      type: "dangerFullAccess",
+    };
+  }
   switch (mode) {
     case "read-only":
       return {
@@ -1040,6 +1055,36 @@ function toTurnSandboxPolicy(config?: CodexSessionConfig):
         excludeSlashTmp: false,
       };
   }
+}
+
+function getSessionMetaSandboxPolicy(
+  spawned: SpawnedCodexAppServer | undefined,
+  config?: CodexSessionConfig,
+):
+  | { type: "read-only" }
+  | {
+      type: "workspace-write";
+      network_access: true;
+      exclude_tmpdir_env_var: false;
+      exclude_slash_tmp: false;
+    }
+  | { type: "danger-full-access" } {
+  const mode = resolveCodexSessionMode(config);
+  if (spawned?.containerPathMap?.rootHostPath && mode !== "read-only") {
+    return { type: "danger-full-access" };
+  }
+  if (mode === "read-only") {
+    return { type: "read-only" };
+  }
+  if (mode === "full-access") {
+    return { type: "danger-full-access" };
+  }
+  return {
+    type: "workspace-write",
+    network_access: true,
+    exclude_tmpdir_env_var: false,
+    exclude_slash_tmp: false,
+  };
 }
 
 function getCoCalcCliCommand(runtimeEnv?: Record<string, string>): string {
@@ -1469,7 +1514,7 @@ export class CodexAppServerAgent implements AcpAgent {
         cwd,
         model: config?.model ?? this.opts.model,
         approvalPolicy: "never",
-        sandbox: toSandboxMode(config),
+        sandbox: toSandboxMode(spawned, config),
       };
       if (resumeId) {
         await this.tryEnsureSessionConfig(spawned, resumeId, cwd, config);
@@ -1514,7 +1559,7 @@ export class CodexAppServerAgent implements AcpAgent {
         threadId: actualThreadId,
         cwd,
         approvalPolicy: "never",
-        sandboxPolicy: toTurnSandboxPolicy(config),
+        sandboxPolicy: toTurnSandboxPolicy(spawned, config),
         model: config?.model ?? this.opts.model,
         effort: toReasoningEffort(config),
         env: Object.keys(turnEnv).length > 0 ? turnEnv : undefined,
@@ -2117,23 +2162,11 @@ export class CodexAppServerAgent implements AcpAgent {
     if (!sessionsRoot) return;
     const filePath = await findSessionFile(sessionId, sessionsRoot);
     if (!filePath) return;
-    const mode = resolveCodexSessionMode(config);
-    const sandboxPolicy =
-      mode === "read-only"
-        ? { type: "read-only" }
-        : mode === "full-access"
-          ? { type: "danger-full-access" }
-          : {
-              type: "workspace-write",
-              network_access: true,
-              exclude_tmpdir_env_var: false,
-              exclude_slash_tmp: false,
-            };
     await rewriteSessionMeta(filePath, (payload) => ({
       ...payload,
       cwd,
       approval_policy: "never",
-      sandbox_policy: sandboxPolicy,
+      sandbox_policy: getSessionMetaSandboxPolicy(spawned, config),
     }));
   }
 
