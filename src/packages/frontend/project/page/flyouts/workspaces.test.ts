@@ -57,12 +57,36 @@ function session(
 }
 
 describe("getWorkspaceActivityState", () => {
+  it("shows running even before a session record lands when chat activity is live", () => {
+    const state = getWorkspaceActivityState(workspace(), [], {
+      currentRunning: true,
+    });
+    expect(state?.kind).toBe("running");
+    expect(state?.label).toBe("Codex running");
+  });
+
+  it("treats an active chat with current chat activity as running", () => {
+    const state = getWorkspaceActivityState(
+      workspace(),
+      [session({ status: "active" })],
+      { currentRunning: true },
+    );
+    expect(state).toEqual({
+      kind: "running",
+      label: "Codex running",
+      color: "processing",
+      updatedAt: "2026-03-20T00:00:10.000Z",
+    });
+  });
+
   it("uses shared workspace running and viewed timestamps for ready-for-review", () => {
     const record = workspace({
       activity_running_at: Date.parse("2026-03-20T00:00:05.000Z"),
       activity_viewed_at: Date.parse("2026-03-20T00:00:01.000Z"),
     });
-    const state = getWorkspaceActivityState(record, [session()]);
+    const state = getWorkspaceActivityState(record, [
+      session({ status: "active" }),
+    ]);
     expect(state).toEqual({
       kind: "done",
       label: "Codex done",
