@@ -56,6 +56,7 @@ export const NAVIGATOR_CHAT_INSTANCE_KEY = "navigator-shell";
 const NAVIGATOR_DEFAULT_THREAD_TITLE = "Navigator";
 const NAVIGATOR_DEFAULT_THREAD_ICON = "sitemap";
 const NAVIGATOR_DEFAULT_THREAD_COLOR = "#c8e6c9";
+const ACTIVE_THREAD_STATES = new Set(["queue", "sending", "sent", "running"]);
 
 function sanitizeAccountId(accountId: string): string {
   return accountId.replace(/[^a-zA-Z0-9_.-]/g, "-");
@@ -193,6 +194,39 @@ export function resolveSelectedAcpConfig({
     threadId,
   });
   return metadata?.acp_config ?? selectedRootMessage?.acp_config ?? {};
+}
+
+export function resolveSelectedSessionStatus({
+  actions,
+  selectedRootMessage,
+}: {
+  actions?: ChatActions | null;
+  selectedRootMessage?: any;
+}): AgentSessionStatus {
+  const threadId =
+    typeof selectedRootMessage?.thread_id === "string"
+      ? selectedRootMessage.thread_id
+      : undefined;
+  const threadState =
+    threadId != null
+      ? actions?.store?.get("acpState")?.get?.(`thread:${threadId}`)
+      : undefined;
+  if (
+    typeof threadState === "string" &&
+    ACTIVE_THREAD_STATES.has(threadState)
+  ) {
+    return "running";
+  }
+  const rowState = `${selectedRootMessage?.acp_state ?? ""}`
+    .trim()
+    .toLowerCase();
+  if (rowState === "queued" || rowState === "running") {
+    return "running";
+  }
+  if (selectedRootMessage?.generating === true) {
+    return "running";
+  }
+  return "active";
 }
 
 function buildSessionRecord({
@@ -552,9 +586,10 @@ export function NavigatorShell({
     ) {
       return;
     }
-    const status: AgentSessionStatus = selectedRootMessage?.generating
-      ? "running"
-      : "active";
+    const status = resolveSelectedSessionStatus({
+      actions,
+      selectedRootMessage,
+    });
     return buildSessionRecord({
       project_id,
       account_id,
@@ -566,6 +601,7 @@ export function NavigatorShell({
       defaultWorkingDirectory: homeDirectory,
     });
   }, [
+    actions,
     account_id,
     navigatorPath,
     project_id,

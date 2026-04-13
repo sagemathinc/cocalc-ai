@@ -141,6 +141,7 @@ jest.mock("@cocalc/frontend/project/page/url-transform", () => ({
 const {
   NavigatorShell,
   resolveSelectedAcpConfig,
+  resolveSelectedSessionStatus,
 } = require("./navigator-shell");
 
 describe("NavigatorShell keyboard suppression", () => {
@@ -194,5 +195,21 @@ describe("NavigatorShell keyboard suppression", () => {
       threadId: "thread-1",
     });
     expect(resolved).toEqual(latestConfig);
+  });
+
+  it("keeps queued or running thread state indexed as running", () => {
+    expect(
+      resolveSelectedSessionStatus({
+        actions: {
+          store: {
+            get: () => new Map<string, string>([["thread:thread-1", "queue"]]),
+          },
+        },
+        selectedRootMessage: {
+          thread_id: "thread-1",
+          generating: false,
+        },
+      }),
+    ).toBe("running");
   });
 });
