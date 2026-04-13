@@ -2712,6 +2712,7 @@ export function GitCommitDrawer({
     const next = CONTEXT_OPTIONS[nextIdx]?.value;
     if (next && next !== contextLines) {
       const node = scrollRef.current;
+      pendingScrollRestoreRef.current = node?.scrollTop ?? null;
       pendingContextAnchorRef.current = node
         ? (captureGitDiffScrollAnchor(node) ?? null)
         : null;
@@ -2870,6 +2871,7 @@ export function GitCommitDrawer({
                 options={CONTEXT_OPTIONS}
                 onChange={(value) => {
                   const node = scrollRef.current;
+                  pendingScrollRestoreRef.current = node?.scrollTop ?? null;
                   pendingContextAnchorRef.current = node
                     ? (captureGitDiffScrollAnchor(node) ?? null)
                     : null;
