@@ -34,6 +34,15 @@ import type {
 import type {
   HostCreateProjectRequest,
   HostCreateProjectResponse,
+  HostBackupExecutionStatus,
+  HostProjectRuntimeLogResponse,
+  HostRootfsCacheEntry,
+  HostRootfsManifest,
+  HostRuntimeLogResponse,
+  HostSshAuthorizedKeysResponse,
+  HostStaticAppPathInspection,
+  UpgradeSoftwareRequest,
+  UpgradeSoftwareResponse,
 } from "@cocalc/conat/project-host/api";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
@@ -242,7 +251,28 @@ export type BayDirectoryMethod = DirectoryMethod;
 export type ProjectReferenceMethod = "get";
 export type ProjectDetailsMethod = "get";
 export type HostConnectionMethod = "get";
-export type HostControlMethod = "create-project";
+export type HostControlMethod =
+  | "create-project"
+  | "start-project"
+  | "stop-project"
+  | "update-authorized-keys"
+  | "update-project-users"
+  | "apply-pending-copies"
+  | "delete-project-data"
+  | "upgrade-software"
+  | "grow-btrfs"
+  | "get-runtime-log"
+  | "get-project-runtime-log"
+  | "list-rootfs-images"
+  | "pull-rootfs-image"
+  | "delete-rootfs-image"
+  | "list-host-ssh-authorized-keys"
+  | "add-host-ssh-authorized-key"
+  | "remove-host-ssh-authorized-key"
+  | "get-backup-execution-status"
+  | "inspect-static-app-path"
+  | "build-rootfs-image-manifest"
+  | "build-project-rootfs-manifest";
 export type ProjectHostAuthTokenMethod = "issue";
 export type ProjectLroMethod = "publish-progress";
 export type AccountDirectoryMethod =
@@ -305,6 +335,113 @@ export interface InterBayHostControlApi {
     host_id: string;
     create: HostCreateProjectRequest;
   }) => Promise<HostCreateProjectResponse>;
+  startProject: (opts: {
+    host_id: string;
+    start: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["startProject"]
+    >[0];
+  }) => Promise<HostCreateProjectResponse>;
+  stopProject: (opts: {
+    host_id: string;
+    stop: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["stopProject"]
+    >[0];
+  }) => Promise<HostCreateProjectResponse>;
+  updateAuthorizedKeys: (opts: {
+    host_id: string;
+    update: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["updateAuthorizedKeys"]
+    >[0];
+  }) => Promise<void>;
+  updateProjectUsers: (opts: {
+    host_id: string;
+    update: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["updateProjectUsers"]
+    >[0];
+  }) => Promise<void>;
+  applyPendingCopies: (opts: {
+    host_id: string;
+    apply: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["applyPendingCopies"]
+    >[0];
+  }) => Promise<{ claimed: number }>;
+  deleteProjectData: (opts: {
+    host_id: string;
+    del: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["deleteProjectData"]
+    >[0];
+  }) => Promise<void>;
+  upgradeSoftware: (opts: {
+    host_id: string;
+    upgrade: UpgradeSoftwareRequest;
+  }) => Promise<UpgradeSoftwareResponse>;
+  growBtrfs: (opts: {
+    host_id: string;
+    grow: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["growBtrfs"]
+    >[0];
+  }) => Promise<{ ok: boolean }>;
+  getRuntimeLog: (opts: {
+    host_id: string;
+    get: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["getRuntimeLog"]
+    >[0];
+  }) => Promise<HostRuntimeLogResponse>;
+  getProjectRuntimeLog: (opts: {
+    host_id: string;
+    get: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["getProjectRuntimeLog"]
+    >[0];
+  }) => Promise<HostProjectRuntimeLogResponse>;
+  listRootfsImages: (opts: { host_id: string }) => Promise<HostRootfsCacheEntry[]>;
+  pullRootfsImage: (opts: {
+    host_id: string;
+    pull: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["pullRootfsImage"]
+    >[0];
+  }) => Promise<HostRootfsCacheEntry>;
+  deleteRootfsImage: (opts: {
+    host_id: string;
+    del: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["deleteRootfsImage"]
+    >[0];
+  }) => Promise<{ removed: boolean }>;
+  listHostSshAuthorizedKeys: (opts: {
+    host_id: string;
+  }) => Promise<HostSshAuthorizedKeysResponse>;
+  addHostSshAuthorizedKey: (opts: {
+    host_id: string;
+    add: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["addHostSshAuthorizedKey"]
+    >[0];
+  }) => Promise<HostSshAuthorizedKeysResponse & { added: boolean }>;
+  removeHostSshAuthorizedKey: (opts: {
+    host_id: string;
+    remove: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["removeHostSshAuthorizedKey"]
+    >[0];
+  }) => Promise<HostSshAuthorizedKeysResponse & { removed: boolean }>;
+  getBackupExecutionStatus: (opts: {
+    host_id: string;
+  }) => Promise<HostBackupExecutionStatus>;
+  inspectStaticAppPath: (opts: {
+    host_id: string;
+    inspect: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["inspectStaticAppPath"]
+    >[0];
+  }) => Promise<HostStaticAppPathInspection>;
+  buildRootfsImageManifest: (opts: {
+    host_id: string;
+    build: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["buildRootfsImageManifest"]
+    >[0];
+  }) => Promise<HostRootfsManifest>;
+  buildProjectRootfsManifest: (opts: {
+    host_id: string;
+    build: Parameters<
+      import("@cocalc/conat/project-host/api").HostControlApi["buildProjectRootfsManifest"]
+    >[0];
+  }) => Promise<HostRootfsManifest>;
 }
 
 export interface InterBayProjectHostAuthTokenApi {
@@ -766,14 +903,197 @@ export function createInterBayHostControlClient({
   dest_bay: string;
   timeout?: number;
 }): InterBayHostControlApi {
-  const hostControlClient = createServiceClient<
+  const createProjectClient = createServiceClient<
     Pick<InterBayHostControlApi, "createProject">
   >({
     ...serviceClientOptions({ client, timeout }),
     subject: hostControlSubject({ dest_bay, method: "create-project" }),
   });
+  const startProjectClient = createServiceClient<
+    Pick<InterBayHostControlApi, "startProject">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "start-project" }),
+  });
+  const stopProjectClient = createServiceClient<
+    Pick<InterBayHostControlApi, "stopProject">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "stop-project" }),
+  });
+  const updateAuthorizedKeysClient = createServiceClient<
+    Pick<InterBayHostControlApi, "updateAuthorizedKeys">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({
+      dest_bay,
+      method: "update-authorized-keys",
+    }),
+  });
+  const updateProjectUsersClient = createServiceClient<
+    Pick<InterBayHostControlApi, "updateProjectUsers">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "update-project-users" }),
+  });
+  const applyPendingCopiesClient = createServiceClient<
+    Pick<InterBayHostControlApi, "applyPendingCopies">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "apply-pending-copies" }),
+  });
+  const deleteProjectDataClient = createServiceClient<
+    Pick<InterBayHostControlApi, "deleteProjectData">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "delete-project-data" }),
+  });
+  const upgradeSoftwareClient = createServiceClient<
+    Pick<InterBayHostControlApi, "upgradeSoftware">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "upgrade-software" }),
+  });
+  const growBtrfsClient = createServiceClient<
+    Pick<InterBayHostControlApi, "growBtrfs">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "grow-btrfs" }),
+  });
+  const getRuntimeLogClient = createServiceClient<
+    Pick<InterBayHostControlApi, "getRuntimeLog">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "get-runtime-log" }),
+  });
+  const getProjectRuntimeLogClient = createServiceClient<
+    Pick<InterBayHostControlApi, "getProjectRuntimeLog">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({
+      dest_bay,
+      method: "get-project-runtime-log",
+    }),
+  });
+  const listRootfsImagesClient = createServiceClient<
+    Pick<InterBayHostControlApi, "listRootfsImages">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "list-rootfs-images" }),
+  });
+  const pullRootfsImageClient = createServiceClient<
+    Pick<InterBayHostControlApi, "pullRootfsImage">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "pull-rootfs-image" }),
+  });
+  const deleteRootfsImageClient = createServiceClient<
+    Pick<InterBayHostControlApi, "deleteRootfsImage">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "delete-rootfs-image" }),
+  });
+  const listHostSshAuthorizedKeysClient = createServiceClient<
+    Pick<InterBayHostControlApi, "listHostSshAuthorizedKeys">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({
+      dest_bay,
+      method: "list-host-ssh-authorized-keys",
+    }),
+  });
+  const addHostSshAuthorizedKeyClient = createServiceClient<
+    Pick<InterBayHostControlApi, "addHostSshAuthorizedKey">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({
+      dest_bay,
+      method: "add-host-ssh-authorized-key",
+    }),
+  });
+  const removeHostSshAuthorizedKeyClient = createServiceClient<
+    Pick<InterBayHostControlApi, "removeHostSshAuthorizedKey">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({
+      dest_bay,
+      method: "remove-host-ssh-authorized-key",
+    }),
+  });
+  const getBackupExecutionStatusClient = createServiceClient<
+    Pick<InterBayHostControlApi, "getBackupExecutionStatus">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({
+      dest_bay,
+      method: "get-backup-execution-status",
+    }),
+  });
+  const inspectStaticAppPathClient = createServiceClient<
+    Pick<InterBayHostControlApi, "inspectStaticAppPath">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({
+      dest_bay,
+      method: "inspect-static-app-path",
+    }),
+  });
+  const buildRootfsImageManifestClient = createServiceClient<
+    Pick<InterBayHostControlApi, "buildRootfsImageManifest">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({
+      dest_bay,
+      method: "build-rootfs-image-manifest",
+    }),
+  });
+  const buildProjectRootfsManifestClient = createServiceClient<
+    Pick<InterBayHostControlApi, "buildProjectRootfsManifest">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({
+      dest_bay,
+      method: "build-project-rootfs-manifest",
+    }),
+  });
   return {
-    createProject: async (opts) => await hostControlClient.createProject(opts),
+    createProject: async (opts) => await createProjectClient.createProject(opts),
+    startProject: async (opts) => await startProjectClient.startProject(opts),
+    stopProject: async (opts) => await stopProjectClient.stopProject(opts),
+    updateAuthorizedKeys: async (opts) =>
+      await updateAuthorizedKeysClient.updateAuthorizedKeys(opts),
+    updateProjectUsers: async (opts) =>
+      await updateProjectUsersClient.updateProjectUsers(opts),
+    applyPendingCopies: async (opts) =>
+      await applyPendingCopiesClient.applyPendingCopies(opts),
+    deleteProjectData: async (opts) =>
+      await deleteProjectDataClient.deleteProjectData(opts),
+    upgradeSoftware: async (opts) =>
+      await upgradeSoftwareClient.upgradeSoftware(opts),
+    growBtrfs: async (opts) => await growBtrfsClient.growBtrfs(opts),
+    getRuntimeLog: async (opts) => await getRuntimeLogClient.getRuntimeLog(opts),
+    getProjectRuntimeLog: async (opts) =>
+      await getProjectRuntimeLogClient.getProjectRuntimeLog(opts),
+    listRootfsImages: async (opts) =>
+      await listRootfsImagesClient.listRootfsImages(opts),
+    pullRootfsImage: async (opts) =>
+      await pullRootfsImageClient.pullRootfsImage(opts),
+    deleteRootfsImage: async (opts) =>
+      await deleteRootfsImageClient.deleteRootfsImage(opts),
+    listHostSshAuthorizedKeys: async (opts) =>
+      await listHostSshAuthorizedKeysClient.listHostSshAuthorizedKeys(opts),
+    addHostSshAuthorizedKey: async (opts) =>
+      await addHostSshAuthorizedKeyClient.addHostSshAuthorizedKey(opts),
+    removeHostSshAuthorizedKey: async (opts) =>
+      await removeHostSshAuthorizedKeyClient.removeHostSshAuthorizedKey(opts),
+    getBackupExecutionStatus: async (opts) =>
+      await getBackupExecutionStatusClient.getBackupExecutionStatus(opts),
+    inspectStaticAppPath: async (opts) =>
+      await inspectStaticAppPathClient.inspectStaticAppPath(opts),
+    buildRootfsImageManifest: async (opts) =>
+      await buildRootfsImageManifestClient.buildRootfsImageManifest(opts),
+    buildProjectRootfsManifest: async (opts) =>
+      await buildProjectRootfsManifestClient.buildProjectRootfsManifest(opts),
   };
 }
 
@@ -858,15 +1178,261 @@ export function createInterBayHostControlHandler({
 }: ServiceHandlerOptions & {
   bay_id: string;
   impl: InterBayHostControlApi;
-}): ConatService {
-  return createServiceHandler<Pick<InterBayHostControlApi, "createProject">>({
-    ...options,
-    service: "inter-bay-host-control",
-    subject: hostControlSubject({ dest_bay: bay_id, method: "create-project" }),
-    impl: {
-      createProject: async (opts) => await impl.createProject(opts),
-    },
-  });
+}): ConatService[] {
+  return [
+    createServiceHandler<Pick<InterBayHostControlApi, "createProject">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "create-project",
+      }),
+      impl: {
+        createProject: async (opts) => await impl.createProject(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "startProject">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "start-project",
+      }),
+      impl: {
+        startProject: async (opts) => await impl.startProject(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "stopProject">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "stop-project",
+      }),
+      impl: {
+        stopProject: async (opts) => await impl.stopProject(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "updateAuthorizedKeys">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "update-authorized-keys",
+      }),
+      impl: {
+        updateAuthorizedKeys: async (opts) =>
+          await impl.updateAuthorizedKeys(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "updateProjectUsers">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "update-project-users",
+      }),
+      impl: {
+        updateProjectUsers: async (opts) => await impl.updateProjectUsers(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "applyPendingCopies">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "apply-pending-copies",
+      }),
+      impl: {
+        applyPendingCopies: async (opts) => await impl.applyPendingCopies(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "deleteProjectData">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "delete-project-data",
+      }),
+      impl: {
+        deleteProjectData: async (opts) => await impl.deleteProjectData(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "upgradeSoftware">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "upgrade-software",
+      }),
+      impl: {
+        upgradeSoftware: async (opts) => await impl.upgradeSoftware(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "growBtrfs">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "grow-btrfs",
+      }),
+      impl: {
+        growBtrfs: async (opts) => await impl.growBtrfs(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "getRuntimeLog">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "get-runtime-log",
+      }),
+      impl: {
+        getRuntimeLog: async (opts) => await impl.getRuntimeLog(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "getProjectRuntimeLog">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "get-project-runtime-log",
+      }),
+      impl: {
+        getProjectRuntimeLog: async (opts) =>
+          await impl.getProjectRuntimeLog(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "listRootfsImages">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "list-rootfs-images",
+      }),
+      impl: {
+        listRootfsImages: async (opts) => await impl.listRootfsImages(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "pullRootfsImage">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "pull-rootfs-image",
+      }),
+      impl: {
+        pullRootfsImage: async (opts) => await impl.pullRootfsImage(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "deleteRootfsImage">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "delete-rootfs-image",
+      }),
+      impl: {
+        deleteRootfsImage: async (opts) => await impl.deleteRootfsImage(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayHostControlApi, "listHostSshAuthorizedKeys">
+    >({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "list-host-ssh-authorized-keys",
+      }),
+      impl: {
+        listHostSshAuthorizedKeys: async (opts) =>
+          await impl.listHostSshAuthorizedKeys(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "addHostSshAuthorizedKey">>(
+      {
+        ...options,
+        service: "inter-bay-host-control",
+        subject: hostControlSubject({
+          dest_bay: bay_id,
+          method: "add-host-ssh-authorized-key",
+        }),
+        impl: {
+          addHostSshAuthorizedKey: async (opts) =>
+            await impl.addHostSshAuthorizedKey(opts),
+        },
+      },
+    ),
+    createServiceHandler<
+      Pick<InterBayHostControlApi, "removeHostSshAuthorizedKey">
+    >({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "remove-host-ssh-authorized-key",
+      }),
+      impl: {
+        removeHostSshAuthorizedKey: async (opts) =>
+          await impl.removeHostSshAuthorizedKey(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayHostControlApi, "getBackupExecutionStatus">
+    >({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "get-backup-execution-status",
+      }),
+      impl: {
+        getBackupExecutionStatus: async (opts) =>
+          await impl.getBackupExecutionStatus(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayHostControlApi, "inspectStaticAppPath">>({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "inspect-static-app-path",
+      }),
+      impl: {
+        inspectStaticAppPath: async (opts) =>
+          await impl.inspectStaticAppPath(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayHostControlApi, "buildRootfsImageManifest">
+    >({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "build-rootfs-image-manifest",
+      }),
+      impl: {
+        buildRootfsImageManifest: async (opts) =>
+          await impl.buildRootfsImageManifest(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayHostControlApi, "buildProjectRootfsManifest">
+    >({
+      ...options,
+      service: "inter-bay-host-control",
+      subject: hostControlSubject({
+        dest_bay: bay_id,
+        method: "build-project-rootfs-manifest",
+      }),
+      impl: {
+        buildProjectRootfsManifest: async (opts) =>
+          await impl.buildProjectRootfsManifest(opts),
+      },
+    }),
+  ];
 }
 
 export function createInterBayProjectHostAuthTokenHandler({

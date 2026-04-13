@@ -67,7 +67,7 @@ describe("project host assignment", () => {
     );
   });
 
-  it("rejects assigned hosts in the wrong bay", async () => {
+  it("returns assigned host info when project and host bays differ", async () => {
     queryMock = jest.fn(async () => ({
       rows: [
         {
@@ -81,8 +81,12 @@ describe("project host assignment", () => {
     }));
     const { getAssignedProjectHostInfo } =
       await import("./project-host-assignment");
-    await expect(getAssignedProjectHostInfo(PROJECT_ID)).rejects.toThrow(
-      "project bay does not match assigned host",
+    await expect(getAssignedProjectHostInfo(PROJECT_ID)).resolves.toMatchObject(
+      {
+        host_id: HOST_ID,
+        ssh_server: "ssh.example:22",
+        metadata: {},
+      },
     );
   });
 });

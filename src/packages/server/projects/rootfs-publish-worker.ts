@@ -29,7 +29,6 @@ import {
 } from "@cocalc/server/rootfs/releases";
 import {
   getAssignedProjectHostInfo,
-  PROJECT_BAY_MISMATCH_ERROR,
   PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
   PROJECT_NOT_FOUND_ERROR,
 } from "@cocalc/server/conat/project-host-assignment";
@@ -163,11 +162,6 @@ async function loadProjectHostId(project_id: string): Promise<string> {
     const message = err instanceof Error ? err.message : `${err}`;
     if (message === PROJECT_HAS_NO_ASSIGNED_HOST_ERROR) {
       throw new Error(`project ${project_id} is not assigned to a host`);
-    }
-    if (message === PROJECT_BAY_MISMATCH_ERROR) {
-      throw new Error(
-        `project ${project_id} assigned host does not match owning bay`,
-      );
     }
     if (message === PROJECT_NOT_FOUND_ERROR) {
       throw new Error(`project ${project_id} not found`);

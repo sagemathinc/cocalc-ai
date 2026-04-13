@@ -403,6 +403,11 @@ async function startHostConnectionService(): Promise<void> {
 
 async function startHostControlService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
+  const getHostClient = async (host_id: string, timeout: number) =>
+    await getRoutedHostControlClient({
+      host_id,
+      timeout,
+    });
   const impl: InterBayHostControlApi = {
     createProject: async ({ account_id, host_id, create }) => {
       const connection = await resolveHostConnectionLocal({
@@ -412,15 +417,64 @@ async function startHostControlService(): Promise<void> {
       if (!connection?.can_place) {
         throw new Error("not allowed to place a project on that host");
       }
-      const hostClient = await getRoutedHostControlClient({
-        host_id,
-        timeout: 15_000,
-      });
+      const hostClient = await getHostClient(host_id, 15_000);
       return await hostClient.createProject(create);
     },
+    startProject: async ({ host_id, start }) =>
+      await (await getHostClient(host_id, 60 * 60 * 1000)).startProject(start),
+    stopProject: async ({ host_id, stop }) =>
+      await (await getHostClient(host_id, 30_000)).stopProject(stop),
+    updateAuthorizedKeys: async ({ host_id, update }) =>
+      await (await getHostClient(host_id, 30_000)).updateAuthorizedKeys(update),
+    updateProjectUsers: async ({ host_id, update }) =>
+      await (await getHostClient(host_id, 30_000)).updateProjectUsers(update),
+    applyPendingCopies: async ({ host_id, apply }) =>
+      await (await getHostClient(host_id, 30_000)).applyPendingCopies(apply),
+    deleteProjectData: async ({ host_id, del }) =>
+      await (await getHostClient(host_id, 30_000)).deleteProjectData(del),
+    upgradeSoftware: async ({ host_id, upgrade }) =>
+      await (await getHostClient(host_id, 10 * 60 * 1000)).upgradeSoftware(
+        upgrade,
+      ),
+    growBtrfs: async ({ host_id, grow }) =>
+      await (await getHostClient(host_id, 10 * 60 * 1000)).growBtrfs(grow),
+    getRuntimeLog: async ({ host_id, get }) =>
+      await (await getHostClient(host_id, 30_000)).getRuntimeLog(get),
+    getProjectRuntimeLog: async ({ host_id, get }) =>
+      await (await getHostClient(host_id, 30_000)).getProjectRuntimeLog(get),
+    listRootfsImages: async ({ host_id }) =>
+      await (await getHostClient(host_id, 30_000)).listRootfsImages(),
+    pullRootfsImage: async ({ host_id, pull }) =>
+      await (await getHostClient(host_id, 10 * 60 * 1000)).pullRootfsImage(
+        pull,
+      ),
+    deleteRootfsImage: async ({ host_id, del }) =>
+      await (await getHostClient(host_id, 30_000)).deleteRootfsImage(del),
+    listHostSshAuthorizedKeys: async ({ host_id }) =>
+      await (await getHostClient(host_id, 30_000)).listHostSshAuthorizedKeys(),
+    addHostSshAuthorizedKey: async ({ host_id, add }) =>
+      await (await getHostClient(host_id, 30_000)).addHostSshAuthorizedKey(add),
+    removeHostSshAuthorizedKey: async ({ host_id, remove }) =>
+      await (await getHostClient(host_id, 30_000)).removeHostSshAuthorizedKey(
+        remove,
+      ),
+    getBackupExecutionStatus: async ({ host_id }) =>
+      await (await getHostClient(host_id, 30_000)).getBackupExecutionStatus(),
+    inspectStaticAppPath: async ({ host_id, inspect }) =>
+      await (await getHostClient(host_id, 30_000)).inspectStaticAppPath(
+        inspect,
+      ),
+    buildRootfsImageManifest: async ({ host_id, build }) =>
+      await (await getHostClient(host_id, 10 * 60 * 1000)).buildRootfsImageManifest(
+        build,
+      ),
+    buildProjectRootfsManifest: async ({ host_id, build }) =>
+      await (await getHostClient(host_id, 10 * 60 * 1000)).buildProjectRootfsManifest(
+        build,
+      ),
   };
   services.push(
-    createInterBayHostControlHandler({
+    ...createInterBayHostControlHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

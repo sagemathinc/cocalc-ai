@@ -97,7 +97,6 @@ import {
 } from "@cocalc/server/projects/project-ssh-keys";
 import {
   getAssignedProjectHostInfo,
-  PROJECT_BAY_MISMATCH_ERROR,
   PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
 } from "@cocalc/server/conat/project-host-assignment";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
@@ -726,10 +725,7 @@ export async function getRuntimeLog({
   } catch (err) {
     const reason =
       err instanceof Error ? err.message : PROJECT_HAS_NO_ASSIGNED_HOST_ERROR;
-    if (
-      reason === PROJECT_HAS_NO_ASSIGNED_HOST_ERROR ||
-      reason === PROJECT_BAY_MISMATCH_ERROR
-    ) {
+    if (reason === PROJECT_HAS_NO_ASSIGNED_HOST_ERROR) {
       return {
         project_id,
         host_id: null,

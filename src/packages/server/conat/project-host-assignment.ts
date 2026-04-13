@@ -8,8 +8,6 @@ function pool() {
 export const PROJECT_NOT_FOUND_ERROR = "project not found";
 export const PROJECT_HAS_NO_ASSIGNED_HOST_ERROR =
   "project has no assigned host";
-export const PROJECT_BAY_MISMATCH_ERROR =
-  "project bay does not match assigned host";
 
 export async function getAssignedProjectHostInfo(project_id: string): Promise<{
   host_id: string;
@@ -45,9 +43,6 @@ export async function getAssignedProjectHostInfo(project_id: string): Promise<{
   }
   if (!row.host_id) {
     throw new Error(PROJECT_HAS_NO_ASSIGNED_HOST_ERROR);
-  }
-  if (row.project_owning_bay_id !== row.host_bay_id) {
-    throw new Error(PROJECT_BAY_MISMATCH_ERROR);
   }
   return {
     host_id: row.host_id,

@@ -12,6 +12,7 @@ let routeHostSubjectMock: jest.Mock;
 let routeProjectSubjectMock: jest.Mock;
 let listenForUpdatesMock: jest.Mock;
 let issueProjectHostAuthTokenMock: jest.Mock;
+let resolveHostBayAcrossClusterMock: jest.Mock;
 
 jest.mock("@cocalc/backend/data", () => ({
   conatPassword: "hub-password",
@@ -53,6 +54,11 @@ jest.mock("./route-project", () => ({
   listenForUpdates: (...args: any[]) => listenForUpdatesMock(...args),
 }));
 
+jest.mock("@cocalc/server/inter-bay/directory", () => ({
+  resolveHostBayAcrossCluster: (...args: any[]) =>
+    resolveHostBayAcrossClusterMock(...args),
+}));
+
 function createFakeClient() {
   const emitter = new EventEmitter() as any;
   emitter.conn = new EventEmitter() as any;
@@ -81,6 +87,7 @@ describe("server/conat route-client", () => {
     routeHostSubjectMock = jest.fn();
     routeProjectSubjectMock = jest.fn();
     listenForUpdatesMock = jest.fn(async () => undefined);
+    resolveHostBayAcrossClusterMock = jest.fn(async () => null);
     issueProjectHostAuthTokenMock = jest.fn(() => ({
       token: "token-1",
       expires_at: Date.now() + 60_000,
@@ -247,5 +254,21 @@ describe("server/conat route-client", () => {
         forceNew: true,
       }),
     );
+  });
+
+  it("allows explicit host control clients for hosts resolved on another bay", async () => {
+    const central = createFakeClient();
+    connectMock.mockImplementationOnce(() => central);
+    materializeHostRouteTargetMock.mockResolvedValue(undefined);
+    resolveHostBayAcrossClusterMock.mockResolvedValue({
+      bay_id: "bay-7",
+      epoch: 0,
+    });
+
+    const { getExplicitHostControlClient } = await import("./route-client");
+
+    await expect(
+      getExplicitHostControlClient({ host_id: "host-9" }),
+    ).resolves.toBe(central);
   });
 });

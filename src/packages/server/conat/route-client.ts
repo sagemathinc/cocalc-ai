@@ -18,6 +18,7 @@ import {
   routeProjectSubject,
   listenForUpdates as listenForProjectHostUpdates,
 } from "./route-project";
+import { resolveHostBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
 
 // Create or reuse a conat client and retrofit project routing onto it.
 // We intentionally set the route function after creation so we can mutate
@@ -253,7 +254,7 @@ export async function getExplicitHostControlClient({
   fresh?: boolean;
 }): Promise<Client> {
   const routed = await materializeHostRouteTarget(host_id, { fresh });
-  if (!routed?.host_id) {
+  if (!routed?.host_id && !(await resolveHostBayAcrossCluster(host_id))) {
     throw new Error(`unable to route host ${host_id} to its owning bay`);
   }
   // The project-host control service currently lives on the owning bay hub

@@ -241,4 +241,24 @@ describe("inter-bay bridge", () => {
       { timeout: 10 * 1000, waitForInterest: true },
     );
   });
+
+  it("dispatches typed host-control start requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({ data: { project_id: "p1" } });
+    const { getInterBayBridge } = await import("./bridge");
+    const bridge = getInterBayBridge();
+    await expect(
+      bridge.hostControl("bay-0").startProject({
+        host_id: "h1",
+        start: { project_id: "p1" },
+      } as any),
+    ).resolves.toEqual({ project_id: "p1" });
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-0.rpc.host-control.start-project",
+      {
+        name: "startProject",
+        args: [{ host_id: "h1", start: { project_id: "p1" } }],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
 });
