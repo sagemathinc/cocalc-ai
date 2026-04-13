@@ -353,10 +353,12 @@ export async function main(
   // Local persist must exist before ACP startup so automation indexes can
   // republish into the project-scoped DKV stores on restart.
   const persistServer = createPersistServer({ client: conatClient });
-  configureAcpDetachedWorkerRunning(({ force } = {}) =>
-    ensureProjectHostAcpWorkerRunning({
-      restartReason: force ? "backend server restarted" : undefined,
-    }),
+  configureAcpDetachedWorkerRunning(() =>
+    // ACP uses `force: true` to mean "wake or ensure the detached worker now"
+    // when new work arrives. That is not evidence of a backend restart, and
+    // mapping it to a restart reason causes false "backend server restarted"
+    // recovery banners on ordinary worker wakeups.
+    ensureProjectHostAcpWorkerRunning(),
   );
   await initAcp(conatClient, { manageDetachedWorker: false });
   for (const row of listProjects()) {
