@@ -680,14 +680,14 @@ function isRetryableBareTimeoutText(text: string): boolean {
 }
 
 function hasObservableTurnSideEffects(opts: {
-  startedTerminalIds: Set<string>;
+  startedTerminalMeta: Map<string, { command?: string; cwd?: string }>;
   emittedFileWrites: Set<string>;
   emittedFileWritePaths: Set<string>;
   finalResponse: string;
   latestTurnDiffText?: string;
 }): boolean {
   return (
-    opts.startedTerminalIds.size > 0 ||
+    opts.startedTerminalMeta.size > 0 ||
     opts.emittedFileWrites.size > 0 ||
     opts.emittedFileWritePaths.size > 0 ||
     !!opts.finalResponse.trim() ||
@@ -1317,7 +1317,10 @@ export class CodexAppServerAgent implements AcpAgent {
     let runningEntry: RunningTurn | undefined;
     let turnId: string | undefined;
     const terminalOutputs = new Map<string, string>();
-    const startedTerminalIds = new Set<string>();
+    const startedTerminalMeta = new Map<
+      string,
+      { command?: string; cwd?: string }
+    >();
     const emittedFileWrites = new Set<string>();
     const emittedFileWritePaths = new Set<string>();
     let latestTurnDiffText: string | undefined;
@@ -1551,16 +1554,25 @@ export class CodexAppServerAgent implements AcpAgent {
         terminalId: string,
         { command, cwd: terminalCwd }: { command?: string; cwd?: string } = {},
       ): Promise<void> => {
-        if (startedTerminalIds.has(terminalId)) return;
-        startedTerminalIds.add(terminalId);
+        const nextCwd = terminalCwd ?? cwd;
+        const previous = startedTerminalMeta.get(terminalId);
+        const shouldEmit =
+          previous == null ||
+          (command != null && command !== previous.command) ||
+          (nextCwd != null && nextCwd !== previous.cwd);
+        if (!shouldEmit) return;
+        startedTerminalMeta.set(terminalId, {
+          command: command ?? previous?.command,
+          cwd: nextCwd ?? previous?.cwd,
+        });
         await stream({
           type: "event",
           event: {
             type: "terminal",
             terminalId,
             phase: "start",
-            command,
-            cwd: terminalCwd ?? cwd,
+            command: command ?? previous?.command,
+            cwd: nextCwd ?? previous?.cwd,
           },
         });
       };
@@ -1577,8 +1589,7 @@ export class CodexAppServerAgent implements AcpAgent {
             const terminalId = `${item.id ?? item.processId ?? "app-server-terminal"}`;
             const cwdForEvent =
               typeof item.cwd === "string" && item.cwd.trim() ? item.cwd : cwd;
-            if (item.command && !terminalOutputs.has(terminalId)) {
-              terminalOutputs.set(terminalId, "");
+            if (item.command || cwdForEvent) {
               await ensureTerminalStarted(terminalId, {
                 command: item.command,
                 cwd: cwdForEvent,
@@ -1962,7 +1973,7 @@ export class CodexAppServerAgent implements AcpAgent {
       if (
         retryKind &&
         !hasObservableTurnSideEffects({
-          startedTerminalIds,
+          startedTerminalMeta,
           emittedFileWrites,
           emittedFileWritePaths,
           finalResponse,
