@@ -31,6 +31,10 @@ import type {
   ProjectRunQuota,
   ProjectSnapshotSchedule,
 } from "@cocalc/conat/hub/api/projects";
+import type {
+  HostCreateProjectRequest,
+  HostCreateProjectResponse,
+} from "@cocalc/conat/project-host/api";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 
@@ -236,6 +240,7 @@ export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
 export type ProjectReferenceMethod = "get";
 export type ProjectDetailsMethod = "get";
 export type HostConnectionMethod = "get";
+export type HostControlMethod = "create-project";
 export type ProjectHostAuthTokenMethod = "issue";
 export type ProjectLroMethod = "publish-progress";
 export type AccountDirectoryMethod =
@@ -290,6 +295,14 @@ export interface InterBayProjectDetailsApi {
 
 export interface InterBayHostConnectionApi {
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
+}
+
+export interface InterBayHostControlApi {
+  createProject: (opts: {
+    account_id: string;
+    host_id: string;
+    create: HostCreateProjectRequest;
+  }) => Promise<HostCreateProjectResponse>;
 }
 
 export interface InterBayProjectHostAuthTokenApi {
@@ -399,6 +412,16 @@ export function hostConnectionSubject({
   method: HostConnectionMethod;
 }): string {
   return `bay.${dest_bay}.rpc.host-connection.${method}`;
+}
+
+export function hostControlSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: HostControlMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.host-control.${method}`;
 }
 
 export function projectHostAuthTokenSubject({
@@ -657,6 +680,26 @@ export function createInterBayHostConnectionClient({
   };
 }
 
+export function createInterBayHostControlClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayHostControlApi {
+  const hostControlClient = createServiceClient<
+    Pick<InterBayHostControlApi, "createProject">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: hostControlSubject({ dest_bay, method: "create-project" }),
+  });
+  return {
+    createProject: async (opts) => await hostControlClient.createProject(opts),
+  };
+}
+
 export function createInterBayProjectHostAuthTokenClient({
   client,
   dest_bay,
@@ -727,6 +770,24 @@ export function createInterBayHostConnectionHandler({
     subject: hostConnectionSubject({ dest_bay: bay_id, method: "get" }),
     impl: {
       get: async (opts) => await impl.get(opts),
+    },
+  });
+}
+
+export function createInterBayHostControlHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayHostControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayHostControlApi, "createProject">>({
+    ...options,
+    service: "inter-bay-host-control",
+    subject: hostControlSubject({ dest_bay: bay_id, method: "create-project" }),
+    impl: {
+      createProject: async (opts) => await impl.createProject(opts),
     },
   });
 }

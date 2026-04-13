@@ -208,7 +208,8 @@ export default async function createProject(opts: CreateProjectOptions) {
   let host_id: string | undefined = requested_host_id;
   let requested_region_raw: string | undefined = requested_region_raw_input;
   let hostStatus: string | null | undefined;
-  let owningBayId = getConfiguredBayId();
+  let projectOwningBayId = getConfiguredBayId();
+  let assignedHostBayId = getConfiguredBayId();
 
   async function resolveHostPlacement(host_id: string) {
     if (!account_id) {
@@ -315,7 +316,8 @@ export default async function createProject(opts: CreateProjectOptions) {
       opts.rootfs_image_id = rows[0].rootfs_image_id;
     }
     if (!host_id && rows[0]?.owning_bay_id) {
-      owningBayId = `${rows[0].owning_bay_id}`.trim() || owningBayId;
+      projectOwningBayId =
+        `${rows[0].owning_bay_id}`.trim() || projectOwningBayId;
     }
     // create filesystem for new project as a clone.
     // Route clone to the host that owns the source project.
@@ -336,7 +338,7 @@ export default async function createProject(opts: CreateProjectOptions) {
       host_id,
       hostRegion,
       hostStatus,
-      hostBayId: owningBayId,
+      hostBayId: assignedHostBayId,
     } = await resolveHostPlacement(host_id));
   }
 
@@ -362,14 +364,14 @@ export default async function createProject(opts: CreateProjectOptions) {
         ephemeral ?? null,
         host_id ?? null,
         projectRegion,
-        owningBayId,
+        projectOwningBayId,
       ],
     );
     await appendProjectOutboxEventForProject({
       db: client,
       event_type: "project.created",
       project_id,
-      default_bay_id: owningBayId,
+      default_bay_id: projectOwningBayId,
     });
     await client.query("COMMIT");
   } catch (err) {
@@ -380,7 +382,7 @@ export default async function createProject(opts: CreateProjectOptions) {
   }
   await publishProjectAccountFeedEventsBestEffort({
     project_id,
-    default_bay_id: owningBayId,
+    default_bay_id: projectOwningBayId,
   });
 
   if (src_project_id) {
@@ -404,17 +406,30 @@ export default async function createProject(opts: CreateProjectOptions) {
     try {
       for (let attempt = 1; attempt <= 4; attempt += 1) {
         try {
-          const client = await getRoutedHostControlClient({
-            host_id,
-            timeout: 15000,
-          });
-          await client.createProject({
+          const createOpts = {
             project_id,
             title,
             users,
             image: rootfs_image,
             start: false,
-          });
+          };
+          if (assignedHostBayId !== getConfiguredBayId()) {
+            await getInterBayBridge()
+              .hostControl(assignedHostBayId, {
+                timeout_ms: 15_000,
+              })
+              .createProject({
+                account_id: account_id!,
+                host_id,
+                create: createOpts,
+              });
+          } else {
+            const client = await getRoutedHostControlClient({
+              host_id,
+              timeout: 15000,
+            });
+            await client.createProject(createOpts);
+          }
           lastErr = undefined;
           break;
         } catch (err) {

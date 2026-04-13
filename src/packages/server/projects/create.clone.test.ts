@@ -15,6 +15,7 @@ let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
+let hostControlCreateProjectMock: jest.Mock;
 let insertedProjectId: string | undefined;
 
 const ACCOUNT_ID = "6e22d250-68d4-46fb-9851-80fbeaa2d6b6";
@@ -97,6 +98,9 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
     hostConnection: jest.fn(() => ({
       get: (...args: any[]) => hostConnectionGetMock(...args),
     })),
+    hostControl: jest.fn(() => ({
+      createProject: (...args: any[]) => hostControlCreateProjectMock(...args),
+    })),
   })),
 }));
 
@@ -124,6 +128,10 @@ describe("projects.createProject clone routing", () => {
     );
     resolveHostBayMock = jest.fn(async () => null);
     hostConnectionGetMock = jest.fn();
+    hostControlCreateProjectMock = jest.fn(async () => ({
+      project_id: insertedProjectId,
+      state: { state: "stopped" },
+    }));
     releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
@@ -186,7 +194,7 @@ describe("projects.createProject clone routing", () => {
         insertedProjectId = params[0];
         expect(params[7]).toBe(HOST_ID);
         expect(params[8]).toBe("wnam");
-        expect(params[9]).toBe("bay-7");
+        expect(params[9]).toBe("bay-0");
         return { rowCount: 1 };
       }
       if (sql.includes("INSERT INTO project_rootfs_states")) {
@@ -247,16 +255,16 @@ describe("projects.createProject clone routing", () => {
       project_id,
       src_project_id: SOURCE_PROJECT_ID,
     });
-    expect(hostCreateProjectMock).toHaveBeenCalledWith(
+    expect(hostControlCreateProjectMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        project_id,
-        start: false,
+        account_id: ACCOUNT_ID,
+        host_id: HOST_ID,
+        create: expect.objectContaining({
+          project_id,
+          start: false,
+        }),
       }),
     );
-    expect(getExplicitHostRoutedClientMock).toHaveBeenCalledWith({
-      host_id: HOST_ID,
-      fresh: false,
-    });
   });
 
   it("rejects clone creation when the source project belongs to another bay", async () => {
@@ -306,7 +314,7 @@ describe("projects.createProject clone routing", () => {
         insertedProjectId = params[0];
         expect(params[7]).toBe(HOST_ID);
         expect(params[8]).toBe("wnam");
-        expect(params[9]).toBe("bay-7");
+        expect(params[9]).toBe("bay-0");
         return { rowCount: 1 };
       }
       if (
@@ -383,5 +391,16 @@ describe("projects.createProject clone routing", () => {
     expect(typeof project_id).toBe("string");
     expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
     expect(hostConnectionGetMock).toHaveBeenCalledTimes(1);
+    expect(hostControlCreateProjectMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      host_id: HOST_ID,
+      create: {
+        image: "buildpack-deps:noble-scm",
+        project_id,
+        start: false,
+        title: "Remote host placement",
+        users: { [ACCOUNT_ID]: { group: "owner" } },
+      },
+    });
   });
 });

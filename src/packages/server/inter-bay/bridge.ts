@@ -8,6 +8,8 @@ import {
   type InterBayProjectDetailsApi,
   createInterBayHostConnectionClient,
   type InterBayHostConnectionApi,
+  createInterBayHostControlClient,
+  type InterBayHostControlApi,
   createInterBayProjectHostAuthTokenClient,
   type InterBayProjectHostAuthTokenApi,
   createInterBayProjectControlClient,
@@ -38,6 +40,10 @@ export interface InterBayBridge {
     dest_bay: string,
     opts?: { timeout_ms?: number },
   ): InterBayHostConnectionApi;
+  hostControl(
+    dest_bay: string,
+    opts?: { timeout_ms?: number },
+  ): InterBayHostControlApi;
   projectHostAuthToken(
     dest_bay: string,
     opts?: { timeout_ms?: number },
@@ -90,6 +96,17 @@ class LocalOnlyInterBayBridge implements InterBayBridge {
     opts: { timeout_ms?: number } = {},
   ): InterBayHostConnectionApi {
     return createInterBayHostConnectionClient({
+      client: this.client,
+      dest_bay,
+      timeout: opts.timeout_ms,
+    });
+  }
+
+  hostControl(
+    dest_bay: string,
+    opts: { timeout_ms?: number } = {},
+  ): InterBayHostControlApi {
+    return createInterBayHostControlClient({
       client: this.client,
       dest_bay,
       timeout: opts.timeout_ms,
