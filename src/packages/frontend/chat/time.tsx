@@ -5,7 +5,7 @@ import { dateValue } from "./access";
 
 interface Props {
   message: ChatMessageTyped;
-  edit: (event) => void;
+  edit?: (event) => void;
 }
 
 export function Time({ message, edit }: Props) {

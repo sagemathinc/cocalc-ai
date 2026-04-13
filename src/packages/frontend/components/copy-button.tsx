@@ -12,19 +12,13 @@ interface Props {
   markdown?: boolean;
 }
 
-export default function CopyButton({
-  style,
-  value,
-  size,
-  noText = false,
-  block,
+export async function copyTextToClipboard({
+  text,
   markdown = false,
-}: Props) {
-  const [copied, setCopied] = useState<boolean>(false);
-  useEffect(() => {
-    setCopied(false);
-  }, [value]);
-  const text = value ?? "";
+}: {
+  text: string;
+  markdown?: boolean;
+}): Promise<boolean> {
   const noteMarkdownCopy = () => {
     if (!markdown) return;
     if (typeof window === "undefined") return;
@@ -93,12 +87,32 @@ export default function CopyButton({
     }
   };
 
+  const viaNavigator = await copyWithNavigatorApi();
+  const ok = viaNavigator || copyWithExecCommand();
+  if (ok) {
+    noteMarkdownCopy();
+  }
+  return ok;
+}
+
+export default function CopyButton({
+  style,
+  value,
+  size,
+  noText = false,
+  block,
+  markdown = false,
+}: Props) {
+  const [copied, setCopied] = useState<boolean>(false);
+  useEffect(() => {
+    setCopied(false);
+  }, [value]);
+  const text = value ?? "";
+
   const copy = async () => {
     if (!text) return;
-    const viaNavigator = await copyWithNavigatorApi();
-    const ok = viaNavigator || copyWithExecCommand();
+    const ok = await copyTextToClipboard({ text, markdown });
     if (ok) {
-      noteMarkdownCopy();
       setCopied(true);
     }
   };

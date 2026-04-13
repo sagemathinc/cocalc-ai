@@ -26,8 +26,19 @@ import {
   useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
-import { Gap, Icon, TimeAgo, Tip, Tooltip } from "@cocalc/frontend/components";
-import CopyButton from "@cocalc/frontend/components/copy-button";
+import {
+  DropdownMenu,
+  Gap,
+  Icon,
+  TimeAgo,
+  Tip,
+  Tooltip,
+} from "@cocalc/frontend/components";
+import CopyButton, {
+  copyTextToClipboard,
+} from "@cocalc/frontend/components/copy-button";
+import type { MenuItems } from "@cocalc/frontend/components/dropdown-menu";
+import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
@@ -486,6 +497,30 @@ export function getFocusMessageButtonStyle(): CSSProperties {
   };
 }
 
+export function shouldUseCodexSelectToolbar({
+  isCodexThread,
+  isViewersMessage,
+}: {
+  isCodexThread: boolean;
+  isViewersMessage: boolean;
+}): boolean {
+  return isCodexThread && !isViewersMessage;
+}
+
+export function resolveMessageBodyMode({
+  isEditing,
+  selectMode,
+  useCodexSelectToolbar,
+}: {
+  isEditing: boolean;
+  selectMode: boolean;
+  useCodexSelectToolbar: boolean;
+}): "edit" | "select" | "static" {
+  if (isEditing) return "edit";
+  if (selectMode && useCodexSelectToolbar) return "select";
+  return "static";
+}
+
 export default function Message({
   index,
   actions,
@@ -555,8 +590,28 @@ export default function Message({
     () => is_editing(message, account_id),
     [message, account_id],
   );
+  const is_viewers_message = sender_is_viewer(account_id, message);
+  const isLLMThread = useMemo(
+    () => actions?.isLanguageModelThread(dateValue(message)),
+    [message, actions],
+  );
+  // Thread identity/model now comes from thread_config metadata.
+  const isCodexThread =
+    typeof isLLMThread === "string" && isCodexModelName(isLLMThread);
+  const useCodexSelectToolbar = useMemo(
+    () =>
+      shouldUseCodexSelectToolbar({
+        isCodexThread,
+        isViewersMessage: is_viewers_message,
+      }),
+    [isCodexThread, is_viewers_message],
+  );
   const showEditButton =
-    project_id != null && path != null && actions != null && !isEditing;
+    project_id != null &&
+    path != null &&
+    actions != null &&
+    !isEditing &&
+    !useCodexSelectToolbar;
 
   const editor_name = useMemo(() => {
     return get_user_name(firstHistoryEntry?.author_id);
@@ -603,6 +658,7 @@ export default function Message({
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [showTouchActions, setShowTouchActions] = useState<boolean>(false);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
+  const [selectMode, setSelectMode] = useState<boolean>(false);
   const [interruptRequested, setInterruptRequested] = useState<boolean>(false);
   const [openActivityDrawerToken, setOpenActivityDrawerToken] = useState<
     number | undefined
@@ -614,15 +670,6 @@ export default function Message({
 
   const replyMessageRef = useRef<string>("");
   const replyMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
-
-  const is_viewers_message = sender_is_viewer(account_id, message);
-  const isLLMThread = useMemo(
-    () => actions?.isLanguageModelThread(dateValue(message)),
-    [message, actions],
-  );
-  // Thread identity/model now comes from thread_config metadata.
-  const isCodexThread =
-    typeof isLLMThread === "string" && isCodexModelName(isLLMThread);
   const acpInterrupted = useMemo(
     () => field<boolean>(message, "acp_interrupted") === true,
     [message],
@@ -916,6 +963,9 @@ export default function Message({
   useEffect(() => {
     setMountedGeneratingCodexPrefix(undefined);
   }, [messageId]);
+  useEffect(() => {
+    setSelectMode(false);
+  }, [messageId]);
   const codexMountedPrefixValue = useMemo(() => {
     if (
       !Array.isArray(codexPreviewLog.events) ||
@@ -1012,7 +1062,21 @@ export default function Message({
   const feedbackMap = useMemo(() => field<any>(message, "feedback"), [message]);
 
   const isActive =
-    selected || isHovered || replying || show_history || isEditing;
+    selected ||
+    isHovered ||
+    replying ||
+    show_history ||
+    isEditing ||
+    selectMode;
+  const messageBodyMode = useMemo(
+    () =>
+      resolveMessageBodyMode({
+        isEditing,
+        selectMode,
+        useCodexSelectToolbar,
+      }),
+    [isEditing, selectMode, useCodexSelectToolbar],
+  );
 
   useLayoutEffect(() => {
     if (replying) {
@@ -1026,6 +1090,25 @@ export default function Message({
         startMs: acpStartedAtMs ?? date,
         history: historyEntries,
       });
+
+  async function copyMessageMarkdown() {
+    const ok = await copyTextToClipboard({
+      text: message_to_markdown(message, { includeHeader: false }),
+      markdown: true,
+    });
+    if (ok) {
+      antdMessage.success("Copied message as markdown.");
+    } else {
+      antdMessage.error("Unable to copy message.");
+    }
+  }
+
+  function selectMessageLink() {
+    const d = dateValue(message);
+    if (d != null) {
+      actions?.setFragment(d);
+    }
+  }
 
   function render_editing_status(is_editing: boolean) {
     let text;
@@ -1221,12 +1304,7 @@ export default function Message({
         })}
       >
         <Button
-          onClick={() => {
-            const d = dateValue(message);
-            if (d != null) {
-              actions?.setFragment(d);
-            }
-          }}
+          onClick={selectMessageLink}
           size="small"
           type={"text"}
           style={{
@@ -1326,7 +1404,10 @@ export default function Message({
           gap: "10px",
         }}
       >
-        <Time message={message} edit={edit_message} />
+        <Time
+          message={message}
+          edit={showEditButton ? edit_message : undefined}
+        />
         {headerActions}
       </div>
     );
@@ -1350,6 +1431,9 @@ export default function Message({
     const showActions = isActive;
     if (!showActions && !IS_TOUCH) {
       return null;
+    }
+    if (useCodexSelectToolbar) {
+      return renderCodexHeaderActions();
     }
     const buttons: ReactNode[] = [];
 
@@ -1554,6 +1638,163 @@ export default function Message({
     );
   }
 
+  function renderCodexHeaderActions() {
+    const buttons: ReactNode[] = [
+      <Tip
+        key="select"
+        placement="bottom"
+        title={
+          selectMode
+            ? "Exit selection mode"
+            : "Select and copy part of this message with Slate formatting"
+        }
+      >
+        <Button
+          size="small"
+          type={selectMode ? "primary" : "text"}
+          style={{
+            color: selectMode ? undefined : COLORS.GRAY_M,
+            fontSize: "12px",
+          }}
+          onClick={() => setSelectMode((prev) => !prev)}
+        >
+          Select
+        </Button>
+      </Tip>,
+      <Tooltip key="git-browser" placement="bottom" title="Open git browser">
+        <Button
+          size="small"
+          type="text"
+          style={{ color: COLORS.GRAY_M }}
+          onClick={openGitBrowserFromMessage}
+          icon={<Icon name="git" />}
+        />
+      </Tooltip>,
+      <Tooltip key="focus" placement="top" title="Focus this message">
+        <Button
+          size="small"
+          type="text"
+          style={getFocusMessageButtonStyle()}
+          onClick={() => setShowZenMessage(true)}
+        >
+          <Icon name="expand-arrows" />
+        </Button>
+      </Tooltip>,
+    ];
+
+    const overflowItems: MenuItems = [
+      {
+        key: "copy-whole",
+        label: "Copy whole message",
+        onClick: () => {
+          void copyMessageMarkdown();
+        },
+      },
+      {
+        key: "copy-link",
+        label: "Link to message",
+        onClick: selectMessageLink,
+      },
+    ];
+
+    if (allowReply && !replying && actions) {
+      overflowItems.push({
+        key: "reply",
+        label: isLLMThread
+          ? `Reply to ${modelToName(isLLMThread)}`
+          : "Reply to thread",
+        onClick: () => {
+          setReplying(true);
+          setAutoFocusReply(true);
+        },
+      });
+    }
+
+    if (history_size > 1) {
+      overflowItems.push({
+        key: "history",
+        label: show_history ? "Hide history" : "Show history",
+        onClick: () => {
+          set_show_history(!show_history);
+          scroll_into_view?.();
+        },
+      });
+    }
+
+    if (showDeleteButton) {
+      overflowItems.push({
+        key: "delete",
+        label: <span style={{ color: COLORS.ANTD_RED }}>Delete message</span>,
+        onClick: confirm_delete_message,
+      });
+    }
+
+    if (overflowItems.length > 0) {
+      buttons.push(
+        <DropdownMenu
+          key="more"
+          items={overflowItems}
+          title={<Icon name="ellipsis" />}
+          size="small"
+          style={{ color: COLORS.GRAY_M }}
+        />,
+      );
+    }
+
+    return (
+      <div
+        style={{
+          position: "absolute",
+          right: 0,
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          flexWrap: "wrap",
+          justifyContent: "flex-end",
+        }}
+      >
+        {buttons}
+      </div>
+    );
+  }
+
+  function renderSelectableMarkdownBody({
+    value,
+    message_class,
+    style,
+  }: {
+    value: string;
+    message_class?: string;
+    style?: CSSProperties;
+  }) {
+    return (
+      <div className={message_class}>
+        <EditableMarkdown
+          value={value}
+          read_only
+          font_size={font_size}
+          minimal
+          hidePath
+          disableWindowing
+          noVfill
+          showEditBar={false}
+          height="auto"
+          style={{
+            backgroundColor: "transparent",
+            minHeight: 0,
+            ...style,
+          }}
+          pageStyle={{
+            padding: 0,
+            background: "transparent",
+            minWidth: "100%",
+            overflowX: "visible",
+          }}
+        />
+      </div>
+    );
+  }
+
   function renderMessageBody({ message_class }) {
     const value = renderedMessageMarkdown;
     const suppressPlaceholderBody = shouldSuppressAcpPlaceholderBody({
@@ -1657,17 +1898,25 @@ export default function Message({
         ) : null}
         {!suppressPlaceholderBody && value.trim().length > 0 ? (
           <div onClickCapture={openCommitFromMessage}>
-            <StaticMarkdown
-              style={MARKDOWN_STYLE}
-              value={value}
-              className={message_class}
-              editorTheme={editorTheme}
-              highlightQuery={searchHighlight}
-              inlineCodeLinks={
-                Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
-              }
-              inlineCodeProjectRoot={activityBasePath}
-            />
+            {messageBodyMode === "select" ? (
+              renderSelectableMarkdownBody({
+                value,
+                message_class,
+                style: MARKDOWN_STYLE,
+              })
+            ) : (
+              <StaticMarkdown
+                style={MARKDOWN_STYLE}
+                value={value}
+                className={message_class}
+                editorTheme={editorTheme}
+                highlightQuery={searchHighlight}
+                inlineCodeLinks={
+                  Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+                }
+                inlineCodeProjectRoot={activityBasePath}
+              />
+            )}
             <CodexQuotaHelp message={value} projectId={project_id} />
           </div>
         ) : null}
@@ -1719,16 +1968,23 @@ export default function Message({
           style={{ maxWidth: 960, margin: "0 auto", padding: "0 8px 24px 8px" }}
         >
           <div onClickCapture={openCommitFromMessage}>
-            <StaticMarkdown
-              style={{ fontSize: `${font_size ?? 14}px` }}
-              value={value}
-              editorTheme={editorTheme}
-              highlightQuery={searchHighlight}
-              inlineCodeLinks={
-                Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
-              }
-              inlineCodeProjectRoot={activityBasePath}
-            />
+            {messageBodyMode === "select" ? (
+              renderSelectableMarkdownBody({
+                value,
+                style: { fontSize: `${font_size ?? 14}px` },
+              })
+            ) : (
+              <StaticMarkdown
+                style={{ fontSize: `${font_size ?? 14}px` }}
+                value={value}
+                editorTheme={editorTheme}
+                highlightQuery={searchHighlight}
+                inlineCodeLinks={
+                  Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+                }
+                inlineCodeProjectRoot={activityBasePath}
+              />
+            )}
           </div>
         </div>
       </Drawer>
@@ -1945,7 +2201,7 @@ export default function Message({
         </div>
         <div style={messageStyle} className="smc-chat-message">
           {renderMessageHeader(lighten)}
-          {isEditing
+          {messageBodyMode === "edit"
             ? renderEditMessage()
             : renderMessageBody({ message_class })}
           {renderEditingMeta()}
