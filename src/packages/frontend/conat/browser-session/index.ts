@@ -118,6 +118,7 @@ import { getBrowserTimeTravelProviders } from "./timetravel-providers";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_MS = 4_000;
+const HEARTBEAT_RETRY_MAX_MS = 60_000;
 const MAX_EXEC_CODE_LENGTH = 100_000;
 const MAX_EXEC_OPS = 256;
 const EXEC_OP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -151,6 +152,7 @@ export function createBrowserSessionAutomation({
     getSnapshot: () => buildSessionSnapshot(client),
     intervalMs: HEARTBEAT_INTERVAL_MS,
     retryMs: HEARTBEAT_RETRY_MS,
+    maxRetryMs: HEARTBEAT_RETRY_MAX_MS,
     onWarn: (message) => console.warn(message),
   });
 

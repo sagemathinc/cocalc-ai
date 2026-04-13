@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import immutable from "immutable";
+import { EventEmitter } from "events";
 
 describe("ConatClient routed project-host reconnect", () => {
   it("reuses one routed host client for same-host project subjects", async () => {
@@ -1562,5 +1563,120 @@ describe("ConatClient sync wrapper client preservation", () => {
     expect(dkoMock).toHaveBeenCalledWith(
       expect.objectContaining({ client: explicitClient }),
     );
+  });
+});
+
+describe("ConatClient main reconnect scheduling", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("uses a single scheduled reconnect path", async () => {
+    jest.resetModules();
+    Object.defineProperty(window.navigator, "onLine", {
+      configurable: true,
+      value: true,
+    });
+
+    class MockCoreClient extends EventEmitter {
+      info: any;
+      stats = {};
+      conn: any;
+      connect = jest.fn();
+      close = jest.fn();
+      disconnect = jest.fn();
+
+      constructor() {
+        super();
+        this.conn = new EventEmitter();
+        this.conn.connected = false;
+        this.conn.connect = this.connect;
+        this.conn.on = this.conn.addListener.bind(this.conn);
+        this.conn.io = {
+          on: jest.fn(),
+          engine: { close: jest.fn() },
+        };
+      }
+    }
+
+    const hubClient = new MockCoreClient();
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn(() => undefined),
+        getActions: jest.fn(() => undefined),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn(() => hubClient),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    client.conat();
+    hubClient.emit("connected");
+    hubClient.emit("disconnected", "transport close", {});
+    client.resume();
+
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(hubClient.connect).toHaveBeenCalledTimes(1);
   });
 });

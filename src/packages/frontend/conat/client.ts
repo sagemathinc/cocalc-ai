@@ -41,7 +41,6 @@ import { info as refCacheInfo } from "@cocalc/util/refcache";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import type { ConnectionStats } from "@cocalc/conat/core/types";
-import { until } from "@cocalc/util/async-utils";
 import { delay } from "awaiting";
 import type {
   AgentExecuteRequest,
@@ -78,7 +77,7 @@ import {
 import { routeProjectHostHttpUrl } from "./project-host-route";
 
 export interface ConatConnectionStatus {
-  state: "connected" | "disconnected";
+  state: "connected" | "connecting" | "disconnected";
   reason: string;
   details: any;
   stats: ConnectionStats;
@@ -123,6 +122,11 @@ const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK = new Set<string>([
 ]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 const ROUTED_HOST_REBUILD_AFTER_ATTEMPTS = 3;
+const MAIN_RECONNECT_DELAY_MS = 1_000;
+const MAIN_RECONNECT_DELAY_MAX_MS = 30_000;
+const MAIN_RECONNECT_DELAY_DECAY = 2;
+const MAIN_RECONNECT_DELAY_JITTER = 0.2;
+const MAIN_RECONNECT_STABLE_RESET_MS = 60_000;
 
 type RoutedHubClientState = {
   address: string;
@@ -152,6 +156,9 @@ export class ConatClient extends EventEmitter {
   private browserSessionAutomation: BrowserSessionAutomation;
   public numConnectionAttempts = 0;
   private automaticallyReconnect;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private reconnectStableTimer?: ReturnType<typeof setTimeout>;
+  private reconnectAttempt = 0;
   public address: string;
   private remote: boolean;
   constructor(
@@ -214,6 +221,8 @@ export class ConatClient extends EventEmitter {
         reconnection: false,
       });
       this._conatClient.on("connected", () => {
+        this.clearReconnectTimer();
+        this.scheduleReconnectStableReset();
         this.setConnectionStatus({
           state: "connected",
           reason: "",
@@ -232,15 +241,114 @@ export class ConatClient extends EventEmitter {
         });
         this.client.emit("disconnected", "offline");
         if (this.automaticallyReconnect) {
-          setTimeout(this.connect, 1000);
+          this.scheduleReconnect();
         }
       });
-      this._conatClient.conn.io.on("reconnect_attempt", (attempt) => {
-        this.numConnectionAttempts = attempt;
-        this.client.emit("connecting");
+      this._conatClient.conn.on("connect_error", (err) => {
+        if (!this.automaticallyReconnect) {
+          return;
+        }
+        this.setConnectionStatus({
+          state: "disconnected",
+          reason: "connect_error",
+          details: err,
+          stats: this._conatClient?.stats,
+        });
+        this.scheduleReconnect();
       });
     }
     return this._conatClient!;
+  };
+
+  private clearReconnectTimer = () => {
+    if (this.reconnectTimer != null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+  };
+
+  private cancelReconnectStableReset = () => {
+    if (this.reconnectStableTimer != null) {
+      clearTimeout(this.reconnectStableTimer);
+      this.reconnectStableTimer = undefined;
+    }
+  };
+
+  private resetReconnectBackoff = () => {
+    this.clearReconnectTimer();
+    this.cancelReconnectStableReset();
+    this.reconnectAttempt = 0;
+    this.numConnectionAttempts = 0;
+  };
+
+  private scheduleReconnectStableReset = () => {
+    if (this.reconnectAttempt == 0) {
+      return;
+    }
+    this.cancelReconnectStableReset();
+    const attempt = this.reconnectAttempt;
+    this.reconnectStableTimer = setTimeout(() => {
+      if (
+        this._conatClient?.conn?.connected &&
+        this.reconnectAttempt === attempt &&
+        !this.permanentlyDisconnected
+      ) {
+        this.reconnectAttempt = 0;
+        this.numConnectionAttempts = 0;
+      }
+    }, MAIN_RECONNECT_STABLE_RESET_MS);
+  };
+
+  private nextReconnectDelay = () => {
+    const base = Math.max(1, MAIN_RECONNECT_DELAY_MS);
+    const max = Math.max(base, MAIN_RECONNECT_DELAY_MAX_MS);
+    const decay = Math.max(1, MAIN_RECONNECT_DELAY_DECAY);
+    const jitter = Math.max(0, MAIN_RECONNECT_DELAY_JITTER);
+    this.reconnectAttempt += 1;
+    this.numConnectionAttempts = this.reconnectAttempt;
+    const raw = Math.min(
+      max,
+      Math.round(base * decay ** Math.max(0, this.reconnectAttempt - 1)),
+    );
+    const factor = jitter == 0 ? 1 : 1 + (Math.random() * 2 - 1) * jitter;
+    return Math.max(base, Math.round(raw * factor));
+  };
+
+  private scheduleReconnect = (delayMs?: number) => {
+    if (this.permanentlyDisconnected || !this.automaticallyReconnect) {
+      return;
+    }
+    this.cancelReconnectStableReset();
+    if (this._conatClient?.conn?.connected) {
+      this.resetReconnectBackoff();
+      return;
+    }
+    if (this.reconnectTimer != null) {
+      return;
+    }
+    const delay =
+      delayMs != null ? Math.max(0, delayMs) : this.nextReconnectDelay();
+    if (delayMs != null && delayMs === 0) {
+      this.reconnectAttempt = Math.max(this.reconnectAttempt, 1);
+      this.numConnectionAttempts = this.reconnectAttempt;
+    }
+    this.client.emit("connecting");
+    this.setConnectionStatus({
+      state: "connecting",
+      reason: "reconnect_scheduled",
+      details: { delay_ms: delay, attempt: this.numConnectionAttempts },
+      stats: this._conatClient?.stats,
+    });
+    this.reconnectTimer = setTimeout(async () => {
+      delete this.reconnectTimer;
+      if (this.permanentlyDisconnected || this._conatClient?.conn?.connected) {
+        return;
+      }
+      await this.connect();
+      if (!this._conatClient?.conn?.connected) {
+        this.scheduleReconnect();
+      }
+    }, delay);
   };
 
   // Match project subjects in the same way the server auth does:
@@ -975,14 +1083,45 @@ export class ConatClient extends EventEmitter {
   };
 
   reconnect = () => {
-    this._conatClient?.conn.io.engine.close();
-    this.resume();
+    if (this.permanentlyDisconnected) {
+      return;
+    }
+    this.clearReconnectTimer();
+    this.cancelReconnectStableReset();
+    this.reconnectAttempt = 0;
+    this.numConnectionAttempts = 0;
+    void this.browserSessionAutomation.stop();
+    if (this.routedHostRecoveryTimer != null) {
+      clearTimeout(this.routedHostRecoveryTimer);
+      delete this.routedHostRecoveryTimer;
+    }
+    for (const host_id in this.routedHubClients) {
+      try {
+        this.routedHubClients[host_id]?.client?.close();
+      } catch (err) {
+        console.warn(
+          `failed closing routed hub client for host ${host_id}`,
+          err,
+        );
+      }
+    }
+    this.routedHubClients = {};
+    this.projectHostTokens = {};
+    try {
+      this._conatClient?.disconnect();
+    } catch {}
+    try {
+      this._conatClient?.conn?.io?.engine?.close();
+    } catch {}
+    this.automaticallyReconnect = true;
+    this.scheduleReconnect(0);
   };
 
   // if there is a connection, put it in standby
   standby = () => {
     // @ts-ignore
     this.automaticallyReconnect = false;
+    this.resetReconnectBackoff();
     void this.browserSessionAutomation.stop();
     if (this.routedHostRecoveryTimer != null) {
       clearTimeout(this.routedHostRecoveryTimer);
@@ -1005,44 +1144,33 @@ export class ConatClient extends EventEmitter {
 
   // if there is a connection, resume it
   resume = () => {
-    this.connect();
-    // sometimes due to a race (?) the above connect fails or
-    // is disconnected immedaitely. So we call connect more times,
-    // which are no-ops once connected.
-    for (const delay of [3_500, 10_000, 20_000]) {
-      setTimeout(() => {
-        this.connect();
-      }, delay);
-    }
+    this.automaticallyReconnect = true;
+    this.scheduleReconnect(0);
   };
 
   // keep trying until connected.
   connect = reuseInFlight(async () => {
-    let attempts = 0;
-    await until(
-      async () => {
-        if (this.permanentlyDisconnected) {
-          console.log(
-            "Not connecting -- client is permanently disconnected and must refresh their browser",
-          );
-          return true;
-        }
-        if (this._conatClient == null) {
-          this.conat();
-        }
-        if (this._conatClient?.conn?.connected) {
-          return true;
-        }
-        this._conatClient?.disconnect();
-        await delay(750);
-        await waitForOnline();
-        attempts += 1;
-        console.log(`Connecting to ${this.address}: attempts ${attempts}`);
-        this._conatClient?.connect();
-        return false;
-      },
-      { min: 3000, max: 15000 },
+    if (this.permanentlyDisconnected) {
+      console.log(
+        "Not connecting -- client is permanently disconnected and must refresh their browser",
+      );
+      return;
+    }
+    if (this._conatClient == null) {
+      this.conat();
+    }
+    if (this._conatClient?.conn?.connected) {
+      return;
+    }
+    await waitForOnline();
+    if (this.permanentlyDisconnected || this._conatClient?.conn?.connected) {
+      return;
+    }
+    console.log(
+      `Connecting to ${this.address}: attempt ${Math.max(this.numConnectionAttempts, 1)}`,
     );
+    this.client.emit("connecting");
+    this._conatClient?.connect();
   });
 
   callConatService: CallConatServiceFunction = async (options) => {
