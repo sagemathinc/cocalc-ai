@@ -42,6 +42,31 @@ describe("CodexActivity terminal rows", () => {
     ).toBeTruthy();
   });
 
+  it("renders shell payload as input without a fake prompt line", () => {
+    const { container } = render(
+      React.createElement(TerminalRow, {
+        fontSize: 14,
+        entry: {
+          kind: "terminal",
+          id: "terminal-3",
+          seq: 3,
+          terminalId: "term-3",
+          command: "/bin/bash",
+          args: ["-lc", "printf 'hi\\nthere'"],
+          cwd: "/root",
+          output: "hi\nthere\n",
+          completed: true,
+        },
+      }),
+    );
+
+    expect(screen.getByText("Input")).not.toBeNull();
+    expect(screen.getByText("Output")).not.toBeNull();
+    expect(container.textContent).toContain("printf 'hi\\nthere'");
+    expect(container.textContent).not.toContain("~/root$");
+    expect(container.textContent).not.toContain("$ printf");
+  });
+
   it("shows a visible per-row timestamp", () => {
     render(
       React.createElement(TerminalRow, {

@@ -1174,21 +1174,11 @@ export function TerminalRow({
   fontSize: number;
   editorTheme?: string | null;
 }) {
-  const commandLine = formatCommand(entry.command, entry.args);
+  const inputText = formatTerminalInput(entry.command, entry.args);
   const status = formatTerminalStatus(entry);
   const secondarySize = Math.max(11, fontSize - 2);
   const timestamp = formatEntryTimestamp(entry.time);
-  const cwdPrompt = entry.cwd ? shortenPath(entry.cwd) : "~";
-  const promptLine = `${cwdPrompt}$${commandLine ? " " + commandLine : ""}`;
   const outputText = stripAnsi(entry.output ?? "").trimEnd();
-  const lines = [promptLine];
-  if (outputText.length) {
-    lines.push(outputText);
-  }
-  if (entry.truncated) {
-    lines.push("[output truncated]");
-  }
-  const markdown = toFencedCodeBlock(lines.join("\n"), "sh");
   const emptyOutputLabel =
     !outputText && !entry.truncated
       ? entry.completed
@@ -1207,17 +1197,60 @@ export function TerminalRow({
           </TimestampTooltip>
         ) : null}
         <ActivityTimestamp time={entry.time} />
+        {entry.cwd ? (
+          <Text type="secondary" style={{ fontSize: secondarySize }}>
+            cwd {shortenPath(entry.cwd)}
+          </Text>
+        ) : null}
         {entry.truncated ? (
           <Tag color="red" style={{ margin: 0 }}>
             Output truncated
           </Tag>
         ) : null}
       </Space>
-      <StaticMarkdown
-        value={markdown}
-        style={{ fontSize, marginTop: 0 }}
-        editorTheme={editorTheme}
-      />
+      {inputText ? (
+        <>
+          <Text
+            type="secondary"
+            style={{
+              display: "block",
+              fontSize: secondarySize,
+              marginBottom: 4,
+            }}
+          >
+            Input
+          </Text>
+          <StaticMarkdown
+            value={toFencedCodeBlock(inputText, "sh")}
+            style={{ fontSize, marginTop: 0 }}
+            editorTheme={editorTheme}
+          />
+        </>
+      ) : null}
+      {outputText.length || entry.truncated ? (
+        <>
+          <Text
+            type="secondary"
+            style={{
+              display: "block",
+              fontSize: secondarySize,
+              marginTop: inputText ? 6 : 0,
+              marginBottom: 4,
+            }}
+          >
+            Output
+          </Text>
+          <StaticMarkdown
+            value={toFencedCodeBlock(
+              entry.truncated
+                ? `${outputText}\n[output truncated]`.trim()
+                : outputText,
+            )}
+            style={{ fontSize, marginTop: 0 }}
+            editorTheme={editorTheme}
+          />
+        </>
+      ) : null}
       {emptyOutputLabel ? (
         <Text
           type="secondary"
@@ -1232,6 +1265,18 @@ export function TerminalRow({
       ) : null}
     </div>
   );
+}
+
+function formatTerminalInput(
+  command?: string,
+  args?: string[],
+): string | undefined {
+  if (!command) return undefined;
+  const shellPayload = extractShellPayload(command, args ?? []);
+  if (shellPayload != null) {
+    return shellPayload.trimEnd();
+  }
+  return formatCommand(command, args)?.trimEnd();
 }
 
 function shortenPath(path?: string): string {
@@ -1359,6 +1404,20 @@ function unwrapShellCommand(
   command: string,
   args: string[],
 ): { cmd: string; argv: string[] } {
+  const shellPayload = extractShellPayload(command, args);
+  if (shellPayload != null) {
+    return { cmd: shellPayload, argv: [] };
+  }
+  if (!args.length) {
+    return { cmd: command, argv: [] };
+  }
+  return { cmd: command, argv: args };
+}
+
+function extractShellPayload(
+  command: string,
+  args: string[],
+): string | undefined {
   const shells = new Set([
     "bash",
     "/bin/bash",
@@ -1367,26 +1426,23 @@ function unwrapShellCommand(
     "/bin/sh",
     "/usr/bin/sh",
   ]);
-  // Some events arrive with a fully composed shell string in `command`, so
-  // peel off `/bin/bash -lc "..."` to show the actual user command.
+  // Some events arrive wrapped in `/bin/bash -lc`, but the actual input we
+  // want to show is the shell payload, not a fake terminal prompt.
   if (!args.length) {
     const inline = command.match(
       /^(?:\/usr\/bin\/|\/bin\/)?(?:bash|sh)\s+-l?c\s+([\s\S]+)$/,
     );
     if (inline?.[1]) {
-      return { cmd: inline[1], argv: [] };
+      return stripOuterQuotes(inline[1]);
     }
   }
-  if (!shells.has(command)) {
-    return { cmd: command, argv: args };
-  }
   if (args.length >= 2 && (args[0] === "-lc" || args[0] === "-c")) {
-    return { cmd: args[1], argv: [] };
+    return args[1];
   }
-  if (args.length > 0) {
-    return { cmd: args[0], argv: args.slice(1) };
+  if (shells.has(command) && args.length > 0) {
+    return args.join(" ");
   }
-  return { cmd: command, argv: [] };
+  return undefined;
 }
 
 function stripOuterQuotes(value: string): string {
@@ -1560,17 +1616,19 @@ export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
         break;
       }
       case "terminal": {
-        const cmd = formatCommand(entry.command, entry.args) ?? "Command";
+        const input =
+          formatTerminalInput(entry.command, entry.args) ?? "Command";
         const cwd = entry.cwd ? ` (cwd ${entry.cwd})` : "";
         const status = formatTerminalStatus(entry);
-        let block = `- Terminal: ${cmd}${cwd}`;
-        const cwdPrompt = entry.cwd ? shortenPath(entry.cwd) : "~";
-        const promptLine = `${cwdPrompt}$${cmd ? " " + cmd : ""}`;
+        let block = `- Terminal${cwd}`;
         const output = stripAnsi(entry.output ?? "").trimEnd();
-        const blockLines = [promptLine];
-        if (output.length) blockLines.push(output);
-        if (entry.truncated) blockLines.push("[output truncated]");
-        block += `\n\n${toFencedCodeBlock(blockLines.join("\n"), "sh")}`;
+        block += `\n\nInput:\n\n${toFencedCodeBlock(input, "sh")}`;
+        if (output.length || entry.truncated) {
+          const outputBlock = entry.truncated
+            ? `${output}\n[output truncated]`.trim()
+            : output;
+          block += `\n\nOutput:\n\n${toFencedCodeBlock(outputBlock)}`;
+        }
         const tags: string[] = [];
         if (status) {
           tags.push(status);

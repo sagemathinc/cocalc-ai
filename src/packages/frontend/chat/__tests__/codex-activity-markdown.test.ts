@@ -7,6 +7,30 @@ import {
 } from "../codex-activity";
 
 describe("codexEventsToMarkdown", () => {
+  it("exports terminal input and output as separate blocks", () => {
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "terminal",
+          terminalId: "term-1",
+          phase: "exit",
+          command: "/bin/bash",
+          args: ["-lc", "printf 'hi\\nthere'"],
+          cwd: "/tmp/project",
+          output: "hi\nthere\n",
+        },
+      } as any,
+    ]);
+
+    expect(markdown).toContain("- Terminal (cwd /tmp/project)");
+    expect(markdown).toContain("Input:");
+    expect(markdown).toContain("printf 'hi\\nthere'");
+    expect(markdown).toContain("Output:");
+    expect(markdown).not.toContain("$ printf");
+  });
+
   it("formats file paths as inline code (not markdown links)", () => {
     const markdown = codexEventsToMarkdown([
       {
