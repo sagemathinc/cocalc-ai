@@ -3,6 +3,7 @@ import {
   getLatestThreadMessageDate,
   hasActiveAcpTurnForComposer,
   latestThreadAcpInterrupted,
+  resolveAgentSessionRecordStatus,
   splitCompletedCodexTurnNotifications,
 } from "../chatroom";
 
@@ -93,6 +94,54 @@ describe("getLatestThreadMessageDate", () => {
         },
       ]),
     ).toBe(`${Date.parse("2026-03-11T08:01:00.000Z")}`);
+  });
+});
+
+describe("resolveAgentSessionRecordStatus", () => {
+  it("treats a generating ACP message as running when thread ACP state is absent", () => {
+    expect(
+      resolveAgentSessionRecordStatus({
+        thread: { isArchived: false },
+        threadId: "thread-1",
+        acpState: immutable.Map<string, string>(),
+        actions: {
+          getMessagesInThread: () => [
+            {
+              event: "chat",
+              sender_id: "assistant",
+              generating: true,
+              acp_account_id: "acct-1",
+              thread_id: "thread-1",
+              message_id: "msg-1",
+              history: [],
+            },
+          ],
+        } as any,
+      }),
+    ).toBe("running");
+  });
+
+  it("treats queued ACP row state as running for workspace activity", () => {
+    expect(
+      resolveAgentSessionRecordStatus({
+        thread: { isArchived: false },
+        threadId: "thread-1",
+        acpState: immutable.Map<string, string>(),
+        actions: {
+          getMessagesInThread: () => [
+            {
+              event: "chat",
+              sender_id: "assistant",
+              acp_account_id: "acct-1",
+              acp_state: "queued",
+              thread_id: "thread-1",
+              message_id: "msg-1",
+              history: [],
+            },
+          ],
+        } as any,
+      }),
+    ).toBe("running");
   });
 });
 

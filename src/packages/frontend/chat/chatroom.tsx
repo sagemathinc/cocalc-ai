@@ -291,6 +291,57 @@ export function hasActiveAcpTurnForComposer({
   return false;
 }
 
+export function resolveAgentSessionRecordStatus({
+  thread,
+  threadId,
+  actions,
+  acpState,
+}: {
+  thread: { isArchived?: boolean };
+  threadId?: string | null;
+  actions: Pick<ChatActions, "getMessagesInThread">;
+  acpState?: immutable.Map<string, string>;
+}): AgentSessionRecord["status"] {
+  if (thread.isArchived) return "archived";
+  const normalizedThreadId = normalizeThreadKey(threadId);
+  const threadState =
+    normalizedThreadId != null
+      ? acpState?.get?.(`thread:${normalizedThreadId}`)
+      : undefined;
+  if (typeof threadState === "string" && ACP_ACTIVE_STATES.has(threadState)) {
+    return "running";
+  }
+  if (!normalizedThreadId) {
+    return "active";
+  }
+  const threadMessages = actions.getMessagesInThread(normalizedThreadId) ?? [];
+  for (let i = threadMessages.length - 1; i >= 0; i -= 1) {
+    const msg = threadMessages[i];
+    if (field<string>(msg, "acp_account_id") == null) continue;
+    const rowState = `${field<string>(msg, "acp_state") ?? ""}`
+      .trim()
+      .toLowerCase();
+    if (rowState === "queued" || rowState === "running") {
+      return "running";
+    }
+    const messageId = `${field<string>(msg, "message_id") ?? ""}`.trim();
+    const messageState =
+      messageId.length > 0
+        ? acpState?.get?.(`message:${messageId}`)
+        : undefined;
+    if (
+      typeof messageState === "string" &&
+      ACP_ACTIVE_STATES.has(messageState)
+    ) {
+      return "running";
+    }
+    if (field<boolean>(msg, "generating") === true) {
+      return "running";
+    }
+  }
+  return "active";
+}
+
 function parseDateISOString(value: unknown): string | undefined {
   if (!value) return undefined;
   const d = value instanceof Date ? value : new Date(value as string | number);
@@ -1107,13 +1158,12 @@ export function ChatPanel({
         parseDateISOString(thread.newestTime) ??
         parseDateISOString(threadDateRaw) ??
         new Date().toISOString();
-      const threadState =
-        threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
-      const status = thread.isArchived
-        ? "archived"
-        : typeof threadState === "string" && ACP_ACTIVE_STATES.has(threadState)
-          ? "running"
-          : "active";
+      const status = resolveAgentSessionRecordStatus({
+        thread,
+        threadId,
+        actions,
+        acpState,
+      });
       records.push({
         session_id: sessionIdRaw,
         project_id,
