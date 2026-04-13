@@ -140,6 +140,7 @@ jest.mock("@cocalc/frontend/project/page/url-transform", () => ({
 
 const {
   NavigatorShell,
+  classifyNavigatorCodexError,
   resolveSelectedAcpConfig,
   resolveSelectedSessionStatus,
 } = require("./navigator-shell");
@@ -211,5 +212,29 @@ describe("NavigatorShell keyboard suppression", () => {
         },
       }),
     ).toBe("running");
+  });
+
+  it("classifies missing Codex auth errors as first-time sign-in", () => {
+    expect(
+      classifyNavigatorCodexError(
+        "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header",
+      ),
+    ).toMatchObject({
+      kind: "missing-auth",
+      title: "Codex is not signed in yet.",
+      actionLabel: "Sign in to Codex",
+    });
+  });
+
+  it("classifies expired Codex auth errors as re-authentication", () => {
+    expect(
+      classifyNavigatorCodexError(
+        "unexpected status 401 Unauthorized: Provided authentication token is expired. Please try signing in again.",
+      ),
+    ).toMatchObject({
+      kind: "expired-auth",
+      title: "Codex needs you to sign in again.",
+      actionLabel: "Sign in again",
+    });
   });
 });

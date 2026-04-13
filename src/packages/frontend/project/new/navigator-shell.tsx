@@ -31,6 +31,7 @@ import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-comp
 import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import SideChat from "@cocalc/frontend/chat/side-chat";
+import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
 import { path_split } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -57,6 +58,13 @@ const NAVIGATOR_DEFAULT_THREAD_TITLE = "Navigator";
 const NAVIGATOR_DEFAULT_THREAD_ICON = "sitemap";
 const NAVIGATOR_DEFAULT_THREAD_COLOR = "#c8e6c9";
 const ACTIVE_THREAD_STATES = new Set(["queue", "sending", "sent", "running"]);
+
+type NavigatorCodexErrorPresentation = {
+  kind: "missing-auth" | "expired-auth" | "other";
+  title: string;
+  description?: string;
+  actionLabel?: string;
+};
 
 function sanitizeAccountId(accountId: string): string {
   return accountId.replace(/[^a-zA-Z0-9_.-]/g, "-");
@@ -229,6 +237,41 @@ export function resolveSelectedSessionStatus({
   return "active";
 }
 
+export function classifyNavigatorCodexError(
+  error: string,
+): NavigatorCodexErrorPresentation {
+  const raw = `${error ?? ""}`;
+  const normalized = raw.toLowerCase();
+  if (
+    normalized.includes("token_expired") ||
+    normalized.includes("provided authentication token is expired") ||
+    normalized.includes("please try signing in again")
+  ) {
+    return {
+      kind: "expired-auth",
+      title: "Codex needs you to sign in again.",
+      description:
+        "Your existing Codex authentication expired. Reconnect it, then retry the prompt.",
+      actionLabel: "Sign in again",
+    };
+  }
+  if (
+    normalized.includes("missing bearer or basic authentication") ||
+    normalized.includes("missing authentication in header")
+  ) {
+    return {
+      kind: "missing-auth",
+      title: "Codex is not signed in yet.",
+      description: "Open Codex credentials and sign in before starting a turn.",
+      actionLabel: "Sign in to Codex",
+    };
+  }
+  return {
+    kind: "other",
+    title: raw,
+  };
+}
+
 function buildSessionRecord({
   project_id,
   account_id,
@@ -371,6 +414,7 @@ export function NavigatorShell({
     undefined,
   );
   const [settingsImage, setSettingsImage] = useState("");
+  const [codexAuthOpen, setCodexAuthOpen] = useState(false);
   const [sessionIndexRetry, setSessionIndexRetry] = useState(0);
   const [intentRetryTick, setIntentRetryTick] = useState(0);
   const lastIndexedValueRef = useRef<string>("");
@@ -610,6 +654,11 @@ export function NavigatorShell({
     selectedThread,
     selectedThreadKey,
   ]);
+
+  const presentedError = useMemo(
+    () => (error ? classifyNavigatorCodexError(error) : undefined),
+    [error],
+  );
 
   useEffect(() => {
     if (!selectedSessionRecord) return;
@@ -1236,11 +1285,47 @@ export function NavigatorShell({
       {error ? (
         <Alert
           type="error"
-          title={error}
+          title={presentedError?.title ?? error}
+          description={
+            presentedError?.kind === "other" ? undefined : (
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                {presentedError?.description ? (
+                  <span>{presentedError.description}</span>
+                ) : null}
+                <details>
+                  <summary>Error details</summary>
+                  <div style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
+                    {error}
+                  </div>
+                </details>
+              </Space>
+            )
+          }
+          action={
+            presentedError?.actionLabel ? (
+              <Button size="small" onClick={() => setCodexAuthOpen(true)}>
+                {presentedError.actionLabel}
+              </Button>
+            ) : undefined
+          }
           showIcon
           style={{ marginBottom: 8 }}
         />
       ) : null}
+      <Modal
+        open={codexAuthOpen}
+        title="Codex Authentication"
+        footer={null}
+        onCancel={() => setCodexAuthOpen(false)}
+        width={lite ? 760 : 680}
+        styles={{ body: { maxHeight: "75vh", overflowY: "auto" } }}
+      >
+        <CodexCredentialsPanel
+          embedded
+          hidePanelChrome
+          defaultProjectId={project_id}
+        />
+      </Modal>
       <div
         style={{
           border: "1px solid #eee",
