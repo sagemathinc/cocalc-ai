@@ -5,6 +5,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import {
   AgentActivityChip,
   AgentMessageStatus,
+  AttachedSteerStatusList,
   describeLastActivity,
   resolveLiveRunStartMs,
   STALE_ACTIVITY_MS,
@@ -183,5 +184,26 @@ describe("AgentMessageStatus", () => {
     fireEvent.click(screen.getByRole("button", { name: "Interrupt" }));
 
     expect(onInterrupt).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("AttachedSteerStatusList", () => {
+  it("renders guidance text as markdown", () => {
+    render(
+      React.createElement(AttachedSteerStatusList, {
+        attachedSteers: [
+          {
+            messageId: "m1",
+            date: 1000,
+            state: "sent",
+            text: "**bold guidance** with `code`",
+          },
+        ],
+      }),
+    );
+
+    expect(screen.getByText("bold guidance")).toBeTruthy();
+    expect(screen.getByText("code")).toBeTruthy();
+    expect(screen.getByText("Guidance sent")).toBeTruthy();
   });
 });
