@@ -393,7 +393,6 @@ export function AgentMessageStatus({
   onInterrupt,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
-  const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
   const [activitySize, setActivitySize0] = useState<number>(
     parseInt(localStorage?.acpActivitySize ?? "600"),
   );
@@ -456,11 +455,6 @@ export function AgentMessageStatus({
     const saved = activityScrollPositions.get(persistKey);
     pendingRestoreRef.current = saved ?? null;
   }, [persistKey, showDrawer]);
-
-  useEffect(() => {
-    if (!showDrawer) return;
-    setScrollParent(scrollRef.current);
-  }, [showDrawer, contentVersion]);
 
   useEffect(() => {
     if (!showDrawer) return;
@@ -635,8 +629,6 @@ export function AgentMessageStatus({
             durationLabel={liveDurationLabel}
             projectId={project_id}
             inlineCodeLinks={inlineCodeLinks}
-            virtualizeEntries
-            scrollParent={scrollParent}
             onOpenFileLink={handleDrawerClose}
             deleteLog={deleteLog}
           />

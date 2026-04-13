@@ -32,8 +32,6 @@ interface Props {
   onDeleteEvents?: () => void;
   onDeleteAllEvents?: () => void;
   inlineCodeLinks?: InlineCodeLink[];
-  virtualizeEntries?: boolean;
-  scrollParent?: HTMLElement | null;
   onOpenFileLink?: () => void;
   deleteLog?: () => Promise<void>;
 }
@@ -61,8 +59,6 @@ export function CodexLogPanel({
   onDeleteEvents,
   onDeleteAllEvents,
   inlineCodeLinks,
-  virtualizeEntries = false,
-  scrollParent,
   onOpenFileLink,
   deleteLog,
 }: Props) {
@@ -135,8 +131,6 @@ export function CodexLogPanel({
       onDeleteEvents={handleDeleteEvents}
       onDeleteAllEvents={handleDeleteAllEvents}
       inlineCodeLinks={inlineCodeLinks}
-      virtualizeEntries={virtualizeEntries}
-      scrollParent={scrollParent}
       onOpenFileLink={onOpenFileLink}
     />
   );

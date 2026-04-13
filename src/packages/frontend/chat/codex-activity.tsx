@@ -13,9 +13,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { TimeAgo, Tooltip } from "@cocalc/frontend/components";
-import type { VirtuosoHandle } from "react-virtuoso";
 import CopyButton from "@cocalc/frontend/components/copy-button";
-import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -29,8 +27,6 @@ import {
   highlightPrismLines,
   languageHintFromPath,
 } from "./diff-prism";
-
-const VIRTUALIZE_THRESHOLD = 20;
 
 const { Text } = Typography;
 type ActivityEntry =
@@ -118,8 +114,6 @@ export interface CodexActivityProps {
   jumpText?: string;
   jumpToken?: number;
   expanded?: boolean;
-  virtualizeEntries?: boolean;
-  scrollParent?: HTMLElement | null;
   onOpenFileLink?: () => void;
 }
 
@@ -142,8 +136,6 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   jumpText,
   jumpToken,
   expanded: initExpanded,
-  virtualizeEntries = false,
-  scrollParent,
   onOpenFileLink,
 }): React.ReactElement | null => {
   const entries = useMemo(() => normalizeEvents(events ?? []), [events]);
@@ -163,7 +155,6 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     return !!initExpanded;
   });
   const [hovered, setHovered] = useState(false);
-  const virtuosoRef = React.useRef<VirtuosoHandle | null>(null);
 
   useEffect(() => {
     if (!persistKey) return;
@@ -190,11 +181,6 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     }
     const index = findActivityEntryIndexForJumpText(entries, jumpText);
     if (index < 0) return;
-    const handle = virtuosoRef.current;
-    if (handle) {
-      handle.scrollToIndex({ index, align: "start" });
-      return;
-    }
     const node = document.querySelector(
       `[data-codex-activity-entry-index="${index}"]`,
     ) as HTMLElement | null;
@@ -221,8 +207,6 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   const toggleLabel = expanded ? "Hide log" : `${durationSummary} (show)`;
 
   const showCloseButton = IS_TOUCH || hovered;
-  const useVirtualizedEntries =
-    virtualizeEntries && entries.length > VIRTUALIZE_THRESHOLD;
   const handleClickCapture = (e: React.MouseEvent) => {
     if (!onOpenFileLink) return;
     const target = e.target as HTMLElement | null;
@@ -371,41 +355,18 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     >
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
         {header}
-        {useVirtualizedEntries ? (
-          <StatefulVirtuoso
-            cacheId={`codex-activity:${persistKey ?? "default"}`}
-            ref={virtuosoRef}
-            totalCount={entries.length}
-            customScrollParent={scrollParent ?? undefined}
-            itemContent={(index) => {
-              const entry = entries[index];
-              return (
-                <ActivityRow
-                  key={entry.id}
-                  rowIndex={index}
-                  entry={entry}
-                  fontSize={baseFontSize}
-                  projectId={projectId}
-                  basePath={resolvedBasePath}
-                  inlineCodeLinks={inlineCodeLinks}
-                />
-              );
-            }}
+        {entries.map((entry, index) => (
+          <ActivityRow
+            key={entry.id}
+            rowIndex={index}
+            entry={entry}
+            fontSize={baseFontSize}
+            projectId={projectId}
+            basePath={resolvedBasePath}
+            editorTheme={editorTheme}
+            inlineCodeLinks={inlineCodeLinks}
           />
-        ) : (
-          entries.map((entry, index) => (
-            <ActivityRow
-              key={entry.id}
-              rowIndex={index}
-              entry={entry}
-              fontSize={baseFontSize}
-              projectId={projectId}
-              basePath={resolvedBasePath}
-              editorTheme={editorTheme}
-              inlineCodeLinks={inlineCodeLinks}
-            />
-          ))
-        )}
+        ))}
       </Space>
     </div>
   );
