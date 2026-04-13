@@ -398,6 +398,7 @@ export interface HostConnectionInfo {
   host_id: string;
   bay_id?: string | null;
   name?: string | null;
+  can_place?: boolean;
   region?: string | null;
   size?: string | null;
   ssh_server?: string | null;

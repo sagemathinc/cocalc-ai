@@ -37,6 +37,8 @@ import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-loc
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
@@ -85,6 +87,33 @@ function isHostRunningAndOnline(row: any): {
   }
   if (Date.now() - lastSeenMs > HOST_ONLINE_WINDOW_MS) {
     return { ok: false, reason: "heartbeat is stale" };
+  }
+  return { ok: true };
+}
+
+function isRemoteHostRunningAndOnline(row: {
+  status?: string | null;
+  online?: boolean;
+  reason_unavailable?: string;
+}): {
+  ok: boolean;
+  reason?: string;
+} {
+  const status = `${row.status ?? ""}`.trim().toLowerCase();
+  if (!["running", "active"].includes(status)) {
+    return { ok: false, reason: `status is ${status || "unknown"}` };
+  }
+  if (row.online === false) {
+    return {
+      ok: false,
+      reason: `${row.reason_unavailable ?? "host is offline"}`,
+    };
+  }
+  if (`${row.reason_unavailable ?? ""}`.trim()) {
+    return {
+      ok: false,
+      reason: `${row.reason_unavailable}`,
+    };
   }
   return { ok: true };
 }
@@ -191,7 +220,31 @@ export default async function createProject(opts: CreateProjectOptions) {
     );
     const row = rows[0];
     if (!row) {
-      throw Error(`host ${host_id} not found`);
+      const hostBay = await resolveHostBay(host_id);
+      if (!hostBay || hostBay.bay_id === getConfiguredBayId()) {
+        throw Error(`host ${host_id} not found`);
+      }
+      const remote = await getInterBayBridge()
+        .hostConnection(hostBay.bay_id, {
+          timeout_ms: 15_000,
+        })
+        .get({ account_id, host_id });
+      const availability = isRemoteHostRunningAndOnline(remote);
+      if (!availability.ok) {
+        throw Error(
+          `host ${host_id} is unavailable for new workspaces (${availability.reason})`,
+        );
+      }
+      if (!remote.can_place) {
+        throw Error("not allowed to place a project on that host");
+      }
+      const hostRegion = mapCloudRegionToR2Region(remote.region ?? "");
+      return {
+        host_id,
+        hostRegion,
+        hostBayId: `${remote.bay_id ?? ""}`.trim() || hostBay.bay_id,
+        hostStatus: remote.status as string | null | undefined,
+      };
     }
     const availability = isHostRunningAndOnline(row);
     if (!availability.ok) {
