@@ -142,6 +142,7 @@ import {
   oldestProjectLogCursor,
 } from "@cocalc/frontend/project/log-state";
 import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
+import { createSharedLroListClient } from "@cocalc/frontend/lro/shared-list";
 
 const { defaults, required } = misc;
 
@@ -438,11 +439,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     super(name, b);
     this.project_id = reduxNameToProjectId(name);
     this.open_files = new OpenFiles(this);
+    const listProjectLro = createSharedLroListClient({
+      listLro: (opts) => webapp_client.conat_client.hub.lro.list(opts),
+    });
     this.copyOpsManager = new CopyOpsManager({
       project_id: this.project_id,
       setState: (state) => this.setState(state),
       isClosed: () => this.isClosed(),
-      listLro: (opts) => webapp_client.conat_client.hub.lro.list(opts),
+      listLro: listProjectLro,
       getLroStream: (opts) => webapp_client.conat_client.lroStream(opts),
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
       log: (message, err) => console.warn(message, err),
@@ -451,7 +455,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       project_id: this.project_id,
       setState: (state) => this.setState(state),
       isClosed: () => this.isClosed(),
-      listLro: (opts) => webapp_client.conat_client.hub.lro.list(opts),
+      listLro: listProjectLro,
       getLroStream: (opts) => webapp_client.conat_client.lroStream(opts),
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
       log: (message, err) => console.warn(message, err),
@@ -460,7 +464,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       project_id: this.project_id,
       setState: (state) => this.setState(state),
       isClosed: () => this.isClosed(),
-      listLro: (opts) => webapp_client.conat_client.hub.lro.list(opts),
+      listLro: listProjectLro,
       getLroStream: (opts) => webapp_client.conat_client.lroStream(opts),
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
       log: (message, err) => console.warn(message, err),
@@ -469,7 +473,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       project_id: this.project_id,
       setState: (state) => this.setState(state),
       isClosed: () => this.isClosed(),
-      listLro: (opts) => webapp_client.conat_client.hub.lro.list(opts),
+      listLro: listProjectLro,
       getLroStream: (opts) => webapp_client.conat_client.lroStream(opts),
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
       log: (message, err) => console.warn(message, err),
@@ -478,7 +482,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       project_id: this.project_id,
       setState: (state) => this.setState(state),
       isClosed: () => this.isClosed(),
-      listLro: (opts) => webapp_client.conat_client.hub.lro.list(opts),
+      listLro: listProjectLro,
       getLroStream: (opts) => webapp_client.conat_client.lroStream(opts),
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
       log: (message, err) => console.warn(message, err),
@@ -487,7 +491,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       project_id: this.project_id,
       setState: (state) => this.setState(state),
       isClosed: () => this.isClosed(),
-      listLro: (opts) => webapp_client.conat_client.hub.lro.list(opts),
+      listLro: listProjectLro,
       getLroStream: (opts) => webapp_client.conat_client.lroStream(opts),
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
       log: (message, err) => console.warn(message, err),

@@ -13,7 +13,10 @@ import {
   getAssignedProjectHostInfo,
   PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
 } from "@cocalc/server/conat/project-host-assignment";
+import { getCurrentProjectRootfsBinding } from "@cocalc/server/projects/rootfs-state";
+import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { getRoutedHostControlClient } from "./client";
+import { resolveHostBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
 
 const log = getLogger("server:project-host:control");
 // Project starts can include large restores, so allow a long RPC timeout.
@@ -143,7 +146,11 @@ export async function loadProject(project_id: string): Promise<ProjectMeta> {
   const authorized_keys = Object.values(keys)
     .map((k: any) => k.value)
     .join("\n");
-  return { ...rows[0], authorized_keys };
+  const image =
+    `${rows[0].image ?? ""}`.trim() ||
+    (await getCurrentProjectRootfsBinding({ project_id }))?.image ||
+    DEFAULT_PROJECT_IMAGE;
+  return { ...rows[0], image, authorized_keys };
 }
 
 async function hostHasGpu(host_id: string): Promise<boolean> {
@@ -199,6 +206,13 @@ export async function loadHostFromRegistry(host_id: string) {
     tier,
     local_proxy: isLocalSelfHost,
   };
+}
+
+async function hostExistsAnywhere(host_id: string): Promise<boolean> {
+  if (await loadHostFromRegistry(host_id)) {
+    return true;
+  }
+  return !!(await resolveHostBayAcrossCluster(host_id));
 }
 
 export async function selectActiveHost({
@@ -273,7 +287,6 @@ export async function savePlacement(
         WHERE projects.project_id = $2
           AND project_hosts.id = $1
           AND project_hosts.deleted IS NULL
-          AND COALESCE(projects.owning_bay_id, $3) = COALESCE(project_hosts.bay_id, $3)
         RETURNING
           COALESCE(projects.owning_bay_id, $3) AS owning_bay_id,
           COALESCE(project_hosts.bay_id, $3) AS host_bay_id
@@ -302,25 +315,16 @@ export async function savePlacement(
     });
   }
   if (!rows[0]) {
-    const [{ rows: projectRows }, { rows: hostRows }] = await Promise.all([
-      pool().query<{ owning_bay_id: string }>(
-        "SELECT COALESCE(owning_bay_id, $2) AS owning_bay_id FROM projects WHERE project_id=$1",
-        [project_id, defaultBayId],
-      ),
-      pool().query<{ bay_id: string }>(
-        "SELECT COALESCE(bay_id, $2) AS bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
-        [placement.host_id, defaultBayId],
-      ),
-    ]);
+    const { rows: projectRows } = await pool().query<{ owning_bay_id: string }>(
+      "SELECT COALESCE(owning_bay_id, $2) AS owning_bay_id FROM projects WHERE project_id=$1",
+      [project_id, defaultBayId],
+    );
     if (!projectRows[0]) {
       throw Error(`project ${project_id} not found`);
     }
-    if (!hostRows[0]) {
+    if (!(await hostExistsAnywhere(placement.host_id))) {
       throw Error(`host ${placement.host_id} not found`);
     }
-    throw Error(
-      `project ${project_id} belongs to bay ${projectRows[0].owning_bay_id} but host ${placement.host_id} belongs to bay ${hostRows[0].bay_id}`,
-    );
   }
   await notifyProjectHostUpdate({
     project_id,
@@ -334,15 +338,13 @@ async function ensurePlacement(project_id: string): Promise<HostPlacement> {
   if (meta.host_id) {
     const hostInfo = await loadHostFromRegistry(meta.host_id);
     if (!hostInfo) {
-      // Project is already placed, but the host is missing/unregistered.
-      // Never auto-reassign here to avoid split-brain/data loss; require an explicit move.
+      // Project is already placed. In multi-bay mode the assigned host may be
+      // registered on another bay, so only reject if it cannot be resolved at all.
+      if (await hostExistsAnywhere(meta.host_id)) {
+        return { host_id: meta.host_id };
+      }
       throw Error(
         `project is assigned to host ${meta.host_id} but it is unavailable`,
-      );
-    }
-    if (hostInfo.bay_id !== projectBayId) {
-      throw Error(
-        `project ${project_id} belongs to bay ${projectBayId} but host ${meta.host_id} belongs to bay ${hostInfo.bay_id}`,
       );
     }
     return { host_id: meta.host_id };

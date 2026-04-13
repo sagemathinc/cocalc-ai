@@ -593,6 +593,8 @@ start_cluster_bay() {
       unset COCALC_BAY_REGION
     fi
     export COCALC_CLUSTER_ROLE="$role"
+    export HUB_CLUSTER_BAY_IDS="$HUB_CLUSTER_BAY_IDS"
+    export COCALC_CLUSTER_BAY_IDS="$HUB_CLUSTER_BAY_IDS"
     if [ -n "$seed_bay_id" ]; then
       export COCALC_CLUSTER_SEED_BAY_ID="$seed_bay_id"
     else
@@ -851,6 +853,8 @@ start_daemon() {
         unset COCALC_BAY_REGION
       fi
       export COCALC_CLUSTER_ROLE
+      export HUB_CLUSTER_BAY_IDS
+      export COCALC_CLUSTER_BAY_IDS="$HUB_CLUSTER_BAY_IDS"
       if [ -n "$COCALC_CLUSTER_SEED_BAY_ID" ]; then
         export COCALC_CLUSTER_SEED_BAY_ID
       else

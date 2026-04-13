@@ -22,7 +22,10 @@ import {
 } from "@cocalc/server/cluster-config";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
-import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveHostBay as resolveHostBayAcrossCluster,
+  resolveProjectBay,
+} from "@cocalc/server/inter-bay/directory";
 import { listHosts } from "@cocalc/server/conat/api/hosts";
 import { isValidUUID } from "@cocalc/util/misc";
 
@@ -235,8 +238,24 @@ export async function resolveHostBay({
     show_all: true,
   });
   const host = hosts.find((x) => x.id === host_id);
+  const localName = host?.name ?? "";
   if (!host) {
-    throw new Error(`host '${host_id}' not found`);
+    const ownership = await resolveHostBayAcrossCluster(host_id);
+    if (!ownership || ownership.bay_id === getConfiguredBayId()) {
+      throw new Error(`host '${host_id}' not found`);
+    }
+    const remote = await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .get({
+        account_id: acting_account_id,
+        host_id,
+      });
+    return {
+      host_id,
+      bay_id: ownership.bay_id,
+      name: remote.name ?? "",
+      source: "host-row",
+    };
   }
   const { rows } = await getPool().query(
     `SELECT bay_id FROM project_hosts
@@ -249,7 +268,7 @@ export async function resolveHostBay({
   return {
     host_id,
     bay_id: bay_id ?? getConfiguredBayId(),
-    name: host.name ?? "",
+    name: localName,
     source: bay_id ? "host-row" : "single-bay-default",
   };
 }

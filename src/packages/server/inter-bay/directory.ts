@@ -52,6 +52,10 @@ export async function resolveProjectBayAcrossCluster(
   if (local != null) {
     return local;
   }
+  // This is a miss-path fallback, not the intended steady-state cluster
+  // directory design. It keeps attached-bay-owned projects resolvable now,
+  // but the long-term fix should be a cluster-wide index or broadcast-style
+  // lookup rather than sequential fanout across bays.
   const currentBayId = getConfiguredBayId();
   for (const bay_id of getConfiguredClusterBayIds()) {
     if (!bay_id || bay_id === currentBayId) {
@@ -111,6 +115,8 @@ export async function resolveHostBayAcrossCluster(
   if (local != null) {
     return local;
   }
+  // Same tradeoff as resolveProjectBayAcrossCluster: this is only a bounded
+  // fallback path until we have a better cluster-wide ownership directory.
   const currentBayId = getConfiguredBayId();
   for (const bay_id of getConfiguredClusterBayIds()) {
     if (!bay_id || bay_id === currentBayId) {

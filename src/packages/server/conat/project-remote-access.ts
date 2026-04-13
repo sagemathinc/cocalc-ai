@@ -26,13 +26,15 @@ async function loadLocalProjectReference({
     title: string | null;
     host_id: string | null;
     owning_bay_id: string | null;
+    users: Record<string, any> | null;
   }>(
     `
       SELECT
         project_id,
         title,
         host_id,
-        COALESCE(owning_bay_id, $3) AS owning_bay_id
+        COALESCE(owning_bay_id, $3) AS owning_bay_id,
+        COALESCE(users, '{}'::jsonb) AS users
       FROM projects
       WHERE project_id = $1
         AND deleted IS NOT TRUE
@@ -50,6 +52,7 @@ async function loadLocalProjectReference({
     title: row.title ?? "",
     host_id: row.host_id ?? null,
     owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
+    users: row.users ?? {},
   };
 }
 
