@@ -49,9 +49,7 @@ const TURN_NOTIFICATION_IDLE_TIMEOUT_MS = Math.max(
 );
 const SESSION_TRUNCATE_CHECK_INTERVAL_MS = Math.max(
   60_000,
-  Number(
-    process.env.COCALC_CODEX_SESSION_TRUNCATE_INTERVAL_MS ?? 15 * 60_000,
-  ),
+  Number(process.env.COCALC_CODEX_SESSION_TRUNCATE_INTERVAL_MS ?? 15 * 60_000),
 );
 
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*m/g;
@@ -322,7 +320,8 @@ type RunningTurn = {
 
 type RetryableAppServerFailureKind =
   | "remote-compact-timeout"
-  | "model-capacity";
+  | "model-capacity"
+  | "timeout";
 
 type RetryableAppServerError = Error & {
   retryableAppServerError: true;
@@ -631,6 +630,17 @@ function getModelCapacityRetryDelayMs(): number {
   );
 }
 
+function getTimeoutRetryLimit(): number {
+  return Math.max(0, Number(process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES ?? 2));
+}
+
+function getTimeoutRetryDelayMs(): number {
+  return Math.max(
+    1_000,
+    Number(process.env.COCALC_CODEX_TIMEOUT_RETRY_DELAY_MS ?? 5_000),
+  );
+}
+
 function isRetryableRemoteCompactTimeoutText(text: string): boolean {
   const normalized = stripAnsi(`${text ?? ""}`).toLowerCase();
   if (!normalized.includes("error running remote compact task")) {
@@ -650,6 +660,23 @@ function isRetryableModelCapacityText(text: string): boolean {
   return normalized.includes(
     "selected model is at capacity. please try a different model.",
   );
+}
+
+function isRetryableBareTimeoutText(text: string): boolean {
+  const normalized = stripAnsi(`${text ?? ""}`).toLowerCase();
+  if (
+    normalized.includes("timeout waiting for child process to exit") ||
+    normalized.includes("idle timeout waiting for sse") ||
+    normalized.includes("idle timeout waiting for websocket") ||
+    normalized.includes("timed out after")
+  ) {
+    return false;
+  }
+  return normalized
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .some((line) => line === "timeout");
 }
 
 function hasObservableTurnSideEffects(opts: {
@@ -690,6 +717,21 @@ function isRetryableAppServerError(
   return !!(err as RetryableAppServerError)?.retryableAppServerError;
 }
 
+function getRetryableFailureKind(
+  text: string,
+): RetryableAppServerFailureKind | undefined {
+  if (isRetryableModelCapacityText(text)) {
+    return "model-capacity";
+  }
+  if (isRetryableRemoteCompactTimeoutText(text)) {
+    return "remote-compact-timeout";
+  }
+  if (isRetryableBareTimeoutText(text)) {
+    return "timeout";
+  }
+  return undefined;
+}
+
 function formatRemoteCompactRetryExhaustedError(error: string): string {
   const normalized = `${error ?? ""}`.trim();
   const guidance =
@@ -701,6 +743,13 @@ function formatModelCapacityRetryExhaustedError(error: string): string {
   const normalized = `${error ?? ""}`.trim();
   const guidance =
     "The selected model stayed at capacity after automatic retries. Try again later, or switch to a different model if the turn is urgent.";
+  return normalized ? `${normalized}\n\n${guidance}` : guidance;
+}
+
+function formatTimeoutRetryExhaustedError(error: string): string {
+  const normalized = `${error ?? ""}`.trim();
+  const guidance =
+    "Codex kept returning a transient timeout after automatic retries. Check the project-host ACP logs for the failed turn payload and stderr tail if this repeats.";
   return normalized ? `${normalized}\n\n${guidance}` : guidance;
 }
 
@@ -731,6 +780,16 @@ function getRetryPolicyForFailure(kind: RetryableAppServerFailureKind): {
         retryMessage: (attempt, maxRetries) =>
           `Selected model is at capacity. Retrying in ${formatRetryDelay(retryDelayMs * attempt)} (${attempt}/${maxRetries})...`,
         exhaustedMessage: formatModelCapacityRetryExhaustedError,
+      };
+    }
+    case "timeout": {
+      const retryDelayMs = getTimeoutRetryDelayMs();
+      return {
+        maxRetries: getTimeoutRetryLimit(),
+        retryDelayMs,
+        retryMessage: (attempt, maxRetries) =>
+          `Codex returned a transient timeout. Retrying in ${formatRetryDelay(retryDelayMs * attempt)} (${attempt}/${maxRetries})... If this repeats, check the project-host ACP logs.`,
+        exhaustedMessage: formatTimeoutRetryExhaustedError,
       };
     }
     case "remote-compact-timeout":
@@ -1249,8 +1308,11 @@ export class CodexAppServerAgent implements AcpAgent {
       spawned.handleAppServerRequest,
     );
     const errors: string[] = [];
+    let lastErrorNotification: any | undefined;
+    let lastFailedTurnCompletion: any | undefined;
     let finalResponse = "";
     let latestUsage: AcpStreamUsage | undefined;
+    let persistedTurnInfo: PersistedTurnInfo | undefined;
     let currentThreadId = session.sessionId;
     let runningEntry: RunningTurn | undefined;
     let turnId: string | undefined;
@@ -1741,6 +1803,7 @@ export class CodexAppServerAgent implements AcpAgent {
           case "error": {
             const message =
               `${notification.params?.error?.message ?? ""}`.trim();
+            lastErrorNotification = notification.params;
             if (message && notification.params?.willRetry !== true) {
               errors.push(message);
             }
@@ -1770,6 +1833,7 @@ export class CodexAppServerAgent implements AcpAgent {
               status === "failed" &&
               notification.params?.turn?.error?.message
             ) {
+              lastFailedTurnCompletion = notification.params;
               errors.push(notification.params.turn.error.message);
             }
             if (status === "interrupted" && runningEntry) {
@@ -1789,7 +1853,7 @@ export class CodexAppServerAgent implements AcpAgent {
       if (maxTurnTimer) {
         clearTimeout(maxTurnTimer);
       }
-      const persistedTurnInfo = await readPersistedTurnInfo({
+      persistedTurnInfo = await readPersistedTurnInfo({
         spawned,
         cwd,
         threadId: actualThreadId,
@@ -1882,16 +1946,21 @@ export class CodexAppServerAgent implements AcpAgent {
         .join("\n");
       logger.warn("codex app-server evaluate failed", {
         threadId: currentThreadId,
+        turnId,
         cwd,
         cmd: spawned.cmd,
         args: argsJoin(spawned.args),
         authSource: spawned.authSource,
         err: `${err}`,
+        normalizedErrors: normalizeErrorMessages(errors),
+        lastErrorNotification,
+        lastFailedTurnCompletion,
+        persistedTurnInfo,
         stderrTail,
       });
+      const retryKind = getRetryableFailureKind(error);
       if (
-        (isRetryableRemoteCompactTimeoutText(error) ||
-          isRetryableModelCapacityText(error)) &&
+        retryKind &&
         !hasObservableTurnSideEffects({
           startedTerminalIds,
           emittedFileWrites,
@@ -1901,9 +1970,7 @@ export class CodexAppServerAgent implements AcpAgent {
         })
       ) {
         throw createRetryableAppServerError({
-          kind: isRetryableModelCapacityText(error)
-            ? "model-capacity"
-            : "remote-compact-timeout",
+          kind: retryKind,
           message: error,
           threadId: currentThreadId,
           turnId,

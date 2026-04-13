@@ -14,7 +14,10 @@ CONFIG_FILE="${COCALC_HUB_DAEMON_CONFIG:-$CONFIG_FILE_DEFAULT}"
 mkdir -p "$STATE_DIR"
 
 PID_FILE="$STATE_DIR/hub.pid"
-SECOND_BAY_PID_FILE=""
+HUB_CLUSTER_SCRIPT="$SCRIPT_DIR/hub-cluster.js"
+HUB_CLUSTER_BAY_COUNT=0
+HUB_CLUSTER_PRIMARY_BAY_INDEX=0
+HUB_CLUSTER_SEED_BAY_INDEX=0
 
 rotate_log_file() {
   local file="${1:-}"
@@ -311,6 +314,8 @@ load_config() {
   HUB_NODE_BIN="${HUB_NODE_BIN:-}"
   HUB_SELF_HOST_PAIR_URL="${HUB_SELF_HOST_PAIR_URL:-}"
   HUB_CLOUDFLARED_PID_FILE="${HUB_CLOUDFLARED_PID_FILE:-$STATE_DIR/cloudflared.pid}"
+  HUB_DEV_CLUSTER_CONFIG="${HUB_DEV_CLUSTER_CONFIG:-}"
+  HUB_DEV_CLUSTER_JSON="${HUB_DEV_CLUSTER_JSON:-}"
   HUB_ENABLE_SECOND_BAY="${HUB_ENABLE_SECOND_BAY:-0}"
   HUB_SECOND_BAY_ID="${HUB_SECOND_BAY_ID:-bay-1}"
   HUB_SECOND_BAY_PORT="${HUB_SECOND_BAY_PORT:-$((HUB_PORT + 10))}"
@@ -327,20 +332,8 @@ load_config() {
   COCALC_CLUSTER_SEED_BAY_ID="${COCALC_CLUSTER_SEED_BAY_ID:-}"
   COCALC_CLUSTER_SEED_CONAT_SERVER="${COCALC_CLUSTER_SEED_CONAT_SERVER:-}"
   COCALC_CLUSTER_SEED_CONAT_PASSWORD="${COCALC_CLUSTER_SEED_CONAT_PASSWORD:-}"
-  SECOND_BAY_PID_FILE="$HUB_SECOND_BAY_STATE_DIR/hub.pid"
 
-  if [ "$HUB_ENABLE_SECOND_BAY" = "1" ]; then
-    if [ "$COCALC_CLUSTER_ROLE" = "standalone" ]; then
-      COCALC_CLUSTER_ROLE="seed"
-    fi
-    if [ "$COCALC_CLUSTER_ROLE" = "attached" ]; then
-      echo "hub daemon config invalid: primary bay cannot be attached when HUB_ENABLE_SECOND_BAY=1" >&2
-      exit 1
-    fi
-    if [ -z "$COCALC_CLUSTER_SEED_BAY_ID" ]; then
-      COCALC_CLUSTER_SEED_BAY_ID="$COCALC_BAY_ID"
-    fi
-  fi
+  load_cluster_vars
 
   if [ -z "$HUB_SOFTWARE_BASE_URL_FORCE" ] && [ "$HUB_USE_LOCAL_SOFTWARE" = "1" ]; then
     if [ -n "$HUB_SELF_HOST_PAIR_URL" ]; then
@@ -369,28 +362,115 @@ local_hub_url() {
   echo "http://$host:$port"
 }
 
-second_bay_running() {
-  load_config
-  local discovered
-  discovered="$(find_hub_pid_on_port "$HUB_SECOND_BAY_PORT" | tail -n 1 || true)"
-  if [ -n "$discovered" ]; then
-    echo "$discovered" >"$SECOND_BAY_PID_FILE"
+load_cluster_vars() {
+  local line key value
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    printf -v "$key" '%s' "$value"
+  done < <(
+    env \
+      STATE_DIR="$STATE_DIR" \
+      DATA_BASE="${DATA_BASE:-}" \
+      HUB_CMD="$HUB_CMD" \
+      HUB_PORT="$HUB_PORT" \
+      HUB_BIND_HOST="$HUB_BIND_HOST" \
+      HUB_DEBUG_FILE="$HUB_DEBUG_FILE" \
+      HUB_STDOUT_LOG="$HUB_STDOUT_LOG" \
+      HUB_CLOUDFLARED_PID_FILE="$HUB_CLOUDFLARED_PID_FILE" \
+      HUB_SOFTWARE_BASE_URL_FORCE="$HUB_SOFTWARE_BASE_URL_FORCE" \
+      HUB_SELF_HOST_PAIR_URL="$HUB_SELF_HOST_PAIR_URL" \
+      COCALC_BAY_ID="$COCALC_BAY_ID" \
+      COCALC_BAY_LABEL="$COCALC_BAY_LABEL" \
+      COCALC_BAY_REGION="$COCALC_BAY_REGION" \
+      COCALC_CLUSTER_ROLE="$COCALC_CLUSTER_ROLE" \
+      COCALC_CLUSTER_SEED_BAY_ID="$COCALC_CLUSTER_SEED_BAY_ID" \
+      COCALC_CLUSTER_SEED_CONAT_SERVER="$COCALC_CLUSTER_SEED_CONAT_SERVER" \
+      COCALC_CLUSTER_SEED_CONAT_PASSWORD="$COCALC_CLUSTER_SEED_CONAT_PASSWORD" \
+      HUB_DEV_CLUSTER_CONFIG="$HUB_DEV_CLUSTER_CONFIG" \
+      HUB_DEV_CLUSTER_JSON="$HUB_DEV_CLUSTER_JSON" \
+      HUB_ENABLE_SECOND_BAY="$HUB_ENABLE_SECOND_BAY" \
+      HUB_SECOND_BAY_ID="$HUB_SECOND_BAY_ID" \
+      HUB_SECOND_BAY_PORT="$HUB_SECOND_BAY_PORT" \
+      HUB_SECOND_BAY_BIND_HOST="$HUB_SECOND_BAY_BIND_HOST" \
+      HUB_SECOND_BAY_CMD="$HUB_SECOND_BAY_CMD" \
+      HUB_SECOND_BAY_STATE_DIR="$HUB_SECOND_BAY_STATE_DIR" \
+      HUB_SECOND_BAY_DATA_DIR="$HUB_SECOND_BAY_DATA_DIR" \
+      HUB_SECOND_BAY_DEBUG_FILE="$HUB_SECOND_BAY_DEBUG_FILE" \
+      HUB_SECOND_BAY_STDOUT_LOG="$HUB_SECOND_BAY_STDOUT_LOG" \
+      node "$HUB_CLUSTER_SCRIPT"
+  )
+  PID_FILE="$STATE_DIR/hub.pid"
+}
+
+cluster_bay_value() {
+  local idx="${1:-}"
+  local key="${2:-}"
+  local var="HUB_CLUSTER_BAY_${idx}_${key}"
+  printf '%s' "${!var:-}"
+}
+
+cluster_bay_pid_file() {
+  local idx="${1:-}"
+  if [ "$idx" = "$HUB_CLUSTER_PRIMARY_BAY_INDEX" ]; then
+    printf '%s' "$PID_FILE"
     return 0
   fi
-  if [ ! -f "$SECOND_BAY_PID_FILE" ]; then
+  local state_dir
+  state_dir="$(cluster_bay_value "$idx" STATE_DIR)"
+  printf '%s/hub.pid' "$state_dir"
+}
+
+cluster_bay_running() {
+  local idx="${1:-}"
+  local port pid_file discovered pid
+  port="$(cluster_bay_value "$idx" PORT)"
+  pid_file="$(cluster_bay_pid_file "$idx")"
+  discovered="$(find_hub_pid_on_port "$port" | tail -n 1 || true)"
+  if [ -n "$discovered" ]; then
+    echo "$discovered" >"$pid_file"
+    return 0
+  fi
+  if [ ! -f "$pid_file" ]; then
     return 1
   fi
-  local pid
-  pid="$(cat "$SECOND_BAY_PID_FILE" 2>/dev/null || true)"
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
   if [ -z "$pid" ]; then
     return 1
   fi
-  discovered="$(find_hub_pid_on_port "$HUB_SECOND_BAY_PORT" | tail -n 1 || true)"
+  discovered="$(find_hub_pid_on_port "$port" | tail -n 1 || true)"
   if [ -n "$discovered" ]; then
-    echo "$discovered" >"$SECOND_BAY_PID_FILE"
+    echo "$discovered" >"$pid_file"
     return 0
   fi
   return 1
+}
+
+start_attached_bays() {
+  local idx role
+  for idx in $(seq 0 $((HUB_CLUSTER_BAY_COUNT - 1))); do
+    if [ "$idx" = "$HUB_CLUSTER_PRIMARY_BAY_INDEX" ]; then
+      continue
+    fi
+    role="$(cluster_bay_value "$idx" ROLE)"
+    if [ "$role" = "attached" ]; then
+      start_cluster_bay "$idx"
+    fi
+  done
+}
+
+stop_attached_bays() {
+  local idx role
+  for idx in $(seq $((HUB_CLUSTER_BAY_COUNT - 1)) -1 0); do
+    if [ "$idx" = "$HUB_CLUSTER_PRIMARY_BAY_INDEX" ]; then
+      continue
+    fi
+    role="$(cluster_bay_value "$idx" ROLE)"
+    if [ "$role" = "attached" ]; then
+      stop_cluster_bay "$idx"
+    fi
+  done
 }
 
 wait_for_file() {
@@ -419,34 +499,52 @@ primary_seed_conat_password_value() {
   tr -d '\r\n' < "$secrets_file"
 }
 
-start_second_bay() {
-  load_config
-  if [ "$HUB_ENABLE_SECOND_BAY" != "1" ]; then
-    return 0
-  fi
-  if second_bay_running; then
-    echo "second bay already running (pid $(cat "$SECOND_BAY_PID_FILE"))"
+start_cluster_bay() {
+  local idx="${1:-}"
+  local bay_id pid_file role port bind_host cmd data_dir state_dir debug_file stdout_log label region seed_bay_id seed_server seed_password software_base_url self_host_pair_url
+  bay_id="$(cluster_bay_value "$idx" ID)"
+  role="$(cluster_bay_value "$idx" ROLE)"
+  pid_file="$(cluster_bay_pid_file "$idx")"
+  port="$(cluster_bay_value "$idx" PORT)"
+  bind_host="$(cluster_bay_value "$idx" BIND_HOST)"
+  cmd="$(cluster_bay_value "$idx" CMD)"
+  data_dir="$(cluster_bay_value "$idx" DATA_DIR)"
+  state_dir="$(cluster_bay_value "$idx" STATE_DIR)"
+  debug_file="$(cluster_bay_value "$idx" DEBUG_FILE)"
+  stdout_log="$(cluster_bay_value "$idx" STDOUT_LOG)"
+  label="$(cluster_bay_value "$idx" LABEL)"
+  region="$(cluster_bay_value "$idx" REGION)"
+  seed_bay_id="$(cluster_bay_value "$idx" SEED_BAY_ID)"
+  seed_server="$(cluster_bay_value "$idx" SEED_CONAT_SERVER)"
+  seed_password="$(cluster_bay_value "$idx" SEED_CONAT_PASSWORD)"
+  software_base_url="$(cluster_bay_value "$idx" SOFTWARE_BASE_URL_FORCE)"
+  self_host_pair_url="$(cluster_bay_value "$idx" SELF_HOST_PAIR_URL)"
+
+  if cluster_bay_running "$idx"; then
+    echo "$bay_id already running (pid $(cat "$pid_file"))"
     return 0
   fi
 
-  local seed_address seed_password
-  seed_address="$(local_hub_url "$HUB_BIND_HOST" "$HUB_PORT")"
-  seed_password="$(primary_seed_conat_password_value || true)"
-  if [ -z "$seed_password" ]; then
-    echo "unable to resolve primary hub conat password for second bay" >&2
-    return 1
+  if [ "$role" = "attached" ]; then
+    seed_password="$(primary_seed_conat_password_value || true)"
+    if [ -z "$seed_password" ]; then
+      echo "unable to resolve seed hub conat password for $bay_id" >&2
+      return 1
+    fi
   fi
 
-  mkdir -p "$HUB_SECOND_BAY_STATE_DIR"
-  mkdir -p "$(dirname "$HUB_SECOND_BAY_STDOUT_LOG")"
-  mkdir -p "$HUB_SECOND_BAY_DATA_DIR"
-  rotate_log_file "$HUB_SECOND_BAY_STDOUT_LOG"
-  if [ -n "$HUB_SECOND_BAY_DEBUG_FILE" ]; then
-    rotate_log_file "$HUB_SECOND_BAY_DEBUG_FILE"
+  mkdir -p "$state_dir"
+  mkdir -p "$(dirname "$stdout_log")"
+  if [ -n "$data_dir" ]; then
+    mkdir -p "$data_dir"
   fi
-  touch "$HUB_SECOND_BAY_STDOUT_LOG"
-  if [ -n "$HUB_SECOND_BAY_DEBUG_FILE" ]; then
-    touch "$HUB_SECOND_BAY_DEBUG_FILE"
+  rotate_log_file "$stdout_log"
+  if [ -n "$debug_file" ]; then
+    rotate_log_file "$debug_file"
+  fi
+  touch "$stdout_log"
+  if [ -n "$debug_file" ]; then
+    touch "$debug_file"
   fi
 
   (
@@ -459,85 +557,115 @@ start_second_bay() {
     fi
     unset npm_config_prefix
     export DEBUG="$HUB_DEBUG"
-    export DEBUG_FILE="$HUB_SECOND_BAY_DEBUG_FILE"
-    export HOST="$HUB_SECOND_BAY_BIND_HOST"
+    export DEBUG_FILE="$debug_file"
+    export HOST="$bind_host"
     if [ "$HUB_ALLOW_INSECURE_HTTP_MODE" = "1" ]; then
       export COCALC_ALLOW_INSECURE_HTTP_MODE=true
     fi
     export COCALC_DISABLE_NEXT="$HUB_DISABLE_NEXT"
-    export PORT="$HUB_SECOND_BAY_PORT"
-    export DATA_BASE="$HUB_SECOND_BAY_DATA_DIR"
+    export PORT="$port"
+    if [ -n "$data_dir" ]; then
+      export DATA_BASE="$data_dir"
+    else
+      unset DATA_BASE
+    fi
     export COCALC_PROJECT_HOST_SOFTWARE_PACKAGES_ROOT="$HUB_SOFTWARE_PACKAGES_ROOT"
-    export COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE="$(local_hub_url "$HUB_SECOND_BAY_BIND_HOST" "$HUB_SECOND_BAY_PORT")/software"
-    export COCALC_SELF_HOST_PAIR_URL="$(local_hub_url "$HUB_SECOND_BAY_BIND_HOST" "$HUB_SECOND_BAY_PORT")"
-    export COCALC_LAUNCHPAD_CLOUDFLARED_PID_FILE="$HUB_SECOND_BAY_STATE_DIR/cloudflared.pid"
-    export COCALC_BAY_ID="$HUB_SECOND_BAY_ID"
-    unset COCALC_BAY_LABEL
-    if [ -n "$COCALC_BAY_REGION" ]; then
-      export COCALC_BAY_REGION
+    if [ -n "$software_base_url" ]; then
+      export COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE="$software_base_url"
+    else
+      unset COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE
+    fi
+    if [ -n "$self_host_pair_url" ]; then
+      export COCALC_SELF_HOST_PAIR_URL="$self_host_pair_url"
+    else
+      unset COCALC_SELF_HOST_PAIR_URL
+    fi
+    export COCALC_LAUNCHPAD_CLOUDFLARED_PID_FILE="$(cluster_bay_value "$idx" CLOUDFLARED_PID_FILE)"
+    export COCALC_BAY_ID="$bay_id"
+    if [ -n "$label" ]; then
+      export COCALC_BAY_LABEL="$label"
+    else
+      unset COCALC_BAY_LABEL
+    fi
+    if [ -n "$region" ]; then
+      export COCALC_BAY_REGION="$region"
     else
       unset COCALC_BAY_REGION
     fi
-    export COCALC_CLUSTER_ROLE="attached"
-    export COCALC_CLUSTER_SEED_BAY_ID="$COCALC_BAY_ID"
-    export COCALC_CLUSTER_SEED_CONAT_SERVER="$seed_address"
-    export COCALC_CLUSTER_SEED_CONAT_PASSWORD="$seed_password"
-    if command -v setsid >/dev/null 2>&1; then
-      nohup setsid bash -c "$HUB_SECOND_BAY_CMD" >>"$HUB_SECOND_BAY_STDOUT_LOG" 2>&1 < /dev/null &
+    export COCALC_CLUSTER_ROLE="$role"
+    if [ -n "$seed_bay_id" ]; then
+      export COCALC_CLUSTER_SEED_BAY_ID="$seed_bay_id"
     else
-      nohup bash -c "$HUB_SECOND_BAY_CMD" >>"$HUB_SECOND_BAY_STDOUT_LOG" 2>&1 < /dev/null &
+      unset COCALC_CLUSTER_SEED_BAY_ID
     fi
-    echo $! >"$SECOND_BAY_PID_FILE"
+    if [ -n "$seed_server" ]; then
+      export COCALC_CLUSTER_SEED_CONAT_SERVER="$seed_server"
+    else
+      unset COCALC_CLUSTER_SEED_CONAT_SERVER
+    fi
+    if [ -n "$seed_password" ]; then
+      export COCALC_CLUSTER_SEED_CONAT_PASSWORD="$seed_password"
+    else
+      unset COCALC_CLUSTER_SEED_CONAT_PASSWORD
+    fi
+    if command -v setsid >/dev/null 2>&1; then
+      nohup setsid bash -c "$cmd" >>"$stdout_log" 2>&1 < /dev/null &
+    else
+      nohup bash -c "$cmd" >>"$stdout_log" 2>&1 < /dev/null &
+    fi
+    echo $! >"$pid_file"
   )
 
-  local i
+  local i running_pid
   for i in $(seq 1 30); do
-    local running_pid
-    running_pid="$(find_hub_pid_on_port "$HUB_SECOND_BAY_PORT" | tail -n 1 || true)"
+    running_pid="$(find_hub_pid_on_port "$port" | tail -n 1 || true)"
     if [ -n "$running_pid" ]; then
-      echo "$running_pid" >"$SECOND_BAY_PID_FILE"
-      echo "second bay started (pid $(cat "$SECOND_BAY_PID_FILE"))"
-      echo "second bay stdout: $HUB_SECOND_BAY_STDOUT_LOG"
+      echo "$running_pid" >"$pid_file"
+      echo "$bay_id started (pid $(cat "$pid_file"))"
+      echo "$bay_id stdout: $stdout_log"
       return 0
     fi
     sleep 1
   done
 
-  echo "second bay failed to start; see $HUB_SECOND_BAY_STDOUT_LOG" >&2
+  echo "$bay_id failed to start; see $stdout_log" >&2
   return 1
 }
 
-stop_second_bay() {
-  load_config
-  if ! second_bay_running; then
-    rm -f "$SECOND_BAY_PID_FILE"
+stop_cluster_bay() {
+  local idx="${1:-}"
+  local bay_id pid_file port pid pids
+  bay_id="$(cluster_bay_value "$idx" ID)"
+  pid_file="$(cluster_bay_pid_file "$idx")"
+  port="$(cluster_bay_value "$idx" PORT)"
+  if ! cluster_bay_running "$idx"; then
+    rm -f "$pid_file"
     return 0
   fi
-  local pid pids
-  pid="$(cat "$SECOND_BAY_PID_FILE" 2>/dev/null || true)"
-  pids="$(printf "%s\n%s\n" "$pid" "$(find_pids_listening_on_port "$HUB_SECOND_BAY_PORT")" | awk 'NF' | sort -u)"
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  pids="$(printf "%s\n%s\n" "$pid" "$(find_pids_listening_on_port "$port")" | awk 'NF' | sort -u)"
   if [ -n "$pids" ]; then
     echo "$pids" | xargs -r kill >/dev/null 2>&1 || true
   fi
   local i
   for i in $(seq 1 30); do
-    if ! second_bay_running; then
-      rm -f "$SECOND_BAY_PID_FILE"
-      echo "second bay stopped"
+    if ! cluster_bay_running "$idx"; then
+      rm -f "$pid_file"
+      echo "$bay_id stopped"
       return 0
     fi
     sleep 1
   done
-  pids="$(printf "%s\n%s\n" "$pid" "$(find_pids_listening_on_port "$HUB_SECOND_BAY_PORT")" | awk 'NF' | sort -u)"
+  pids="$(printf "%s\n%s\n" "$pid" "$(find_pids_listening_on_port "$port")" | awk 'NF' | sort -u)"
   if [ -n "$pids" ]; then
     echo "$pids" | xargs -r kill -9 >/dev/null 2>&1 || true
   fi
-  rm -f "$SECOND_BAY_PID_FILE"
-  echo "second bay killed"
+  rm -f "$pid_file"
+  echo "$bay_id killed"
 }
 
 stop_cloudflared() {
-  local pid_file="${HUB_CLOUDFLARED_PID_FILE:-$STATE_DIR/cloudflared.pid}"
+  local pid_file="${1:-${HUB_CLOUDFLARED_PID_FILE:-$STATE_DIR/cloudflared.pid}}"
   if [ ! -f "$pid_file" ]; then
     return 0
   fi
@@ -778,7 +906,7 @@ start_daemon() {
       return 1
     fi
   fi
-  start_second_bay
+  start_attached_bays
 }
 
 build_daemon() {
@@ -798,7 +926,7 @@ build_daemon() {
 stop_daemon() {
   local keep_cloudflared="${1:-0}"
   load_config
-  stop_second_bay
+  stop_attached_bays
   local stopped=0
   if ! is_running; then
     echo "hub daemon is not running"
@@ -834,7 +962,10 @@ stop_daemon() {
   fi
 
   if [ "$keep_cloudflared" != "1" ]; then
-    stop_cloudflared
+    local idx
+    for idx in $(seq 0 $((HUB_CLUSTER_BAY_COUNT - 1))); do
+      stop_cloudflared "$(cluster_bay_value "$idx" CLOUDFLARED_PID_FILE)"
+    done
   fi
 }
 
@@ -887,22 +1018,27 @@ show_status() {
   if [ -n "$HUB_SOFTWARE_BASE_URL_FORCE" ]; then
     echo "software base (forced): $HUB_SOFTWARE_BASE_URL_FORCE"
   fi
-  if [ "$HUB_ENABLE_SECOND_BAY" = "1" ]; then
-    local second_hub_url
-    second_hub_url="$(local_hub_url "$HUB_SECOND_BAY_BIND_HOST" "$HUB_SECOND_BAY_PORT")"
-    echo "second bay enabled: yes"
-    echo "second bay id: $HUB_SECOND_BAY_ID"
-    echo "second bay port: $HUB_SECOND_BAY_PORT"
-    echo "second bay url: $second_hub_url"
-    echo "second bay state: $HUB_SECOND_BAY_STATE_DIR"
-    echo "second bay data: $HUB_SECOND_BAY_DATA_DIR"
-    echo "second bay stdout: $HUB_SECOND_BAY_STDOUT_LOG"
-    if second_bay_running; then
-      echo "second bay running (pid $(cat "$SECOND_BAY_PID_FILE"))"
+  echo "cluster bay count: $HUB_CLUSTER_BAY_COUNT"
+  local idx bay_id role port url pid_file
+  for idx in $(seq 0 $((HUB_CLUSTER_BAY_COUNT - 1))); do
+    bay_id="$(cluster_bay_value "$idx" ID)"
+    role="$(cluster_bay_value "$idx" ROLE)"
+    port="$(cluster_bay_value "$idx" PORT)"
+    url="$(local_hub_url "$(cluster_bay_value "$idx" BIND_HOST)" "$port")"
+    pid_file="$(cluster_bay_pid_file "$idx")"
+    echo "bay[$idx] id: $bay_id"
+    echo "bay[$idx] role: $role"
+    echo "bay[$idx] port: $port"
+    echo "bay[$idx] url: $url"
+    echo "bay[$idx] state: $(cluster_bay_value "$idx" STATE_DIR)"
+    echo "bay[$idx] data: $(cluster_bay_value "$idx" DATA_DIR)"
+    echo "bay[$idx] stdout: $(cluster_bay_value "$idx" STDOUT_LOG)"
+    if cluster_bay_running "$idx"; then
+      echo "bay[$idx] running (pid $(cat "$pid_file"))"
     else
-      echo "second bay stopped"
+      echo "bay[$idx] stopped"
     fi
-  fi
+  done
 }
 
 show_env() {
@@ -924,15 +1060,8 @@ HUB_SOFTWARE_BASE_URL_FORCE=$HUB_SOFTWARE_BASE_URL_FORCE
 HUB_NODE_BIN=$HUB_NODE_BIN
 HUB_SELF_HOST_PAIR_URL=$HUB_SELF_HOST_PAIR_URL
 HUB_CLOUDFLARED_PID_FILE=$HUB_CLOUDFLARED_PID_FILE
-HUB_ENABLE_SECOND_BAY=$HUB_ENABLE_SECOND_BAY
-HUB_SECOND_BAY_ID=$HUB_SECOND_BAY_ID
-HUB_SECOND_BAY_PORT=$HUB_SECOND_BAY_PORT
-HUB_SECOND_BAY_BIND_HOST=$HUB_SECOND_BAY_BIND_HOST
-HUB_SECOND_BAY_CMD=$HUB_SECOND_BAY_CMD
-HUB_SECOND_BAY_STATE_DIR=$HUB_SECOND_BAY_STATE_DIR
-HUB_SECOND_BAY_DATA_DIR=$HUB_SECOND_BAY_DATA_DIR
-HUB_SECOND_BAY_DEBUG_FILE=$HUB_SECOND_BAY_DEBUG_FILE
-HUB_SECOND_BAY_STDOUT_LOG=$HUB_SECOND_BAY_STDOUT_LOG
+HUB_DEV_CLUSTER_CONFIG=$HUB_DEV_CLUSTER_CONFIG
+HUB_DEV_CLUSTER_JSON=$HUB_DEV_CLUSTER_JSON
 COCALC_BAY_ID=$COCALC_BAY_ID
 COCALC_BAY_LABEL=$COCALC_BAY_LABEL
 COCALC_BAY_REGION=$COCALC_BAY_REGION
@@ -940,7 +1069,19 @@ COCALC_CLUSTER_ROLE=$COCALC_CLUSTER_ROLE
 COCALC_CLUSTER_SEED_BAY_ID=$COCALC_CLUSTER_SEED_BAY_ID
 COCALC_CLUSTER_SEED_CONAT_SERVER=$COCALC_CLUSTER_SEED_CONAT_SERVER
 COCALC_CLUSTER_SEED_CONAT_PASSWORD=$COCALC_CLUSTER_SEED_CONAT_PASSWORD
+HUB_CLUSTER_BAY_COUNT=$HUB_CLUSTER_BAY_COUNT
+HUB_CLUSTER_PRIMARY_BAY_ID=$HUB_CLUSTER_PRIMARY_BAY_ID
+HUB_CLUSTER_PRIMARY_BAY_INDEX=$HUB_CLUSTER_PRIMARY_BAY_INDEX
+HUB_CLUSTER_SEED_BAY_ID=$HUB_CLUSTER_SEED_BAY_ID
+HUB_CLUSTER_SEED_BAY_INDEX=$HUB_CLUSTER_SEED_BAY_INDEX
+HUB_CLUSTER_BAY_IDS=$HUB_CLUSTER_BAY_IDS
 EOF
+  local idx key
+  for idx in $(seq 0 $((HUB_CLUSTER_BAY_COUNT - 1))); do
+    for key in ID ROLE IS_PRIMARY PORT BIND_HOST CMD STATE_DIR DATA_DIR DEBUG_FILE STDOUT_LOG CLOUDFLARED_PID_FILE LABEL REGION SEED_BAY_ID SEED_CONAT_SERVER SEED_CONAT_PASSWORD SOFTWARE_BASE_URL_FORCE SELF_HOST_PAIR_URL; do
+      echo "HUB_CLUSTER_BAY_${idx}_${key}=$(cluster_bay_value "$idx" "$key")"
+    done
+  done
 }
 
 init_config() {
@@ -951,6 +1092,13 @@ init_config() {
   mkdir -p "$(dirname "$CONFIG_FILE")"
   cp "$EXAMPLE_FILE" "$CONFIG_FILE"
   echo "created config: $CONFIG_FILE"
+  local cluster_example cluster_target
+  cluster_example="$SCRIPT_DIR/hub-cluster.example.json"
+  cluster_target="$SRC_DIR/.local/hub-cluster.json"
+  if [ -f "$cluster_example" ] && [ ! -f "$cluster_target" ]; then
+    cp "$cluster_example" "$cluster_target"
+    echo "created cluster example: $cluster_target"
+  fi
 }
 
 cmd="${1:-}"

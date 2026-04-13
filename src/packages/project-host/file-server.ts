@@ -100,6 +100,7 @@ import {
 } from "@cocalc/file-server/btrfs/rustic-progress";
 import { publishLroEvent } from "./lro/stream";
 import { touchProjectLastEdited } from "./last-edited";
+import { normalizeArchivePath } from "./archive-path";
 import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
 import {
   extractBaseImage,
@@ -2358,7 +2359,7 @@ async function findBackupFilesIndexed({
     .map((name) => join(dir, name));
   if (!files.length) return [];
 
-  const scope = scopePath?.replace(/^\/+/, "").replace(/^\.\/+/, "") ?? "";
+  const scope = scopePath ? normalizeArchivePath(scopePath) : "";
   const scoped = (entryPath: string) => {
     if (!scope) return true;
     if (entryPath === scope) return true;
@@ -2412,14 +2413,20 @@ async function findBackupFilesIndexed({
       const stmt = db.prepare(
         `SELECT ${pathExpr} AS path, type, size, mtime FROM files WHERE ${clauses}`,
       );
-      addRows(stmt.all(...glob));
+      addRows(stmt.all(...glob.map(normalizeArchivePath)));
     }
     if (iglob?.length) {
       const clauses = iglob.map(() => `LOWER(${pathExpr}) GLOB ?`).join(" OR ");
       const stmt = db.prepare(
         `SELECT ${pathExpr} AS path, type, size, mtime FROM files WHERE ${clauses}`,
       );
-      addRows(stmt.all(...iglob.map((pattern) => pattern.toLowerCase())));
+      addRows(
+        stmt.all(
+          ...iglob.map((pattern) =>
+            normalizeArchivePath(pattern).toLowerCase(),
+          ),
+        ),
+      );
     }
     db.close();
   }
@@ -2441,8 +2448,7 @@ async function getBackupFilesIndexed({
   if (!entry) return [];
   const dbPath = join(backupIndexDir(project_id), entry.file);
   if (!(await exists(dbPath))) return [];
-  const parent =
-    (subpath ?? "").replace(/^\/+/, "").replace(/^\.\/+/, "") ?? "";
+  const parent = subpath ? normalizeArchivePath(subpath) : "";
   const db = new DatabaseSync(dbPath);
   try {
     const rows = db
@@ -2462,8 +2468,7 @@ async function getBackupFilesIndexed({
 }
 
 function normalizePreviewPath(input: string): string {
-  const trimmed = input.replace(/^\/+/, "").replace(/^\.\/+/, "");
-  const normalized = path.posix.normalize(trimmed);
+  const normalized = normalizeArchivePath(input);
   if (!normalized || normalized === "." || normalized.startsWith("..")) {
     throw new Error("invalid path");
   }
