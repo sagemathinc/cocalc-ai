@@ -1891,15 +1891,40 @@ async function assertHostCanIssueProjectHostAgentToken({
   });
 }
 
-async function syncProjectUsersOnHostIfOwnedLocally({
+async function syncProjectUsersOnHostForBrowserAccess({
+  account_id,
   project_id,
   expected_host_id,
 }: {
+  account_id: string;
   project_id: string;
   expected_host_id: string;
 }): Promise<void> {
+  const hostBay = await resolveHostBay(expected_host_id);
+  if (hostBay && hostBay.bay_id !== getConfiguredBayId()) {
+    return;
+  }
   const ownership = await resolveProjectBay(project_id);
   if (ownership && ownership.bay_id !== getConfiguredBayId()) {
+    const remote = await getInterBayBridge()
+      .projectReference(ownership.bay_id, {
+        timeout_ms: 15_000,
+      })
+      .get({
+        account_id,
+        project_id,
+      });
+    if (!remote) {
+      throw new Error("not authorized for project-host access token");
+    }
+    if (remote.host_id !== expected_host_id) {
+      throw new Error("project is not assigned to the requested host");
+    }
+    const client = await hostControlClient(expected_host_id);
+    await client.updateProjectUsers({
+      project_id,
+      users: remote.users ?? {},
+    });
     return;
   }
   await syncProjectUsersOnHost({
@@ -1924,18 +1949,16 @@ export async function issueProjectHostAuthToken({
   expires_at: number;
 }> {
   const owner = requireAccount(account_id);
-  if (project_id) {
-    const ownership = await resolveProjectBay(project_id);
-    if (ownership && ownership.bay_id !== getConfiguredBayId()) {
-      return await getInterBayBridge()
-        .projectHostAuthToken(ownership.bay_id)
-        .issue({
-          account_id: owner,
-          host_id,
-          project_id,
-          ttl_seconds,
-        });
-    }
+  const hostBay = await resolveHostBay(host_id);
+  if (hostBay && hostBay.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .projectHostAuthToken(hostBay.bay_id)
+      .issue({
+        account_id: owner,
+        host_id,
+        project_id,
+        ttl_seconds,
+      });
   }
   return await issueProjectHostAuthTokenLocal({
     account_id: owner,
@@ -1976,7 +1999,8 @@ export async function issueProjectHostAuthTokenLocal({
   if (project_id) {
     // Keep project-host local ACL up to date before issuing browser token.
     // This is best-effort fast path for grant/revoke propagation.
-    await syncProjectUsersOnHostIfOwnedLocally({
+    await syncProjectUsersOnHostForBrowserAccess({
+      account_id: owner,
       project_id,
       expected_host_id: host_id,
     });

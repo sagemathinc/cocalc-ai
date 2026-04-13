@@ -4,7 +4,9 @@ let queryMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let listHostsMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
+let resolveHostBayMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
+let hostConnectionGetMock: jest.Mock;
 let getClusterAccountByIdMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -25,6 +27,7 @@ jest.mock("@cocalc/server/conat/api/hosts", () => ({
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   __esModule: true,
   resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
+  resolveHostBay: (...args: any[]) => resolveHostBayMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
@@ -32,6 +35,9 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   getInterBayBridge: jest.fn(() => ({
     projectReference: jest.fn(() => ({
       get: (...args: any[]) => projectReferenceGetMock(...args),
+    })),
+    hostConnection: jest.fn(() => ({
+      get: (...args: any[]) => hostConnectionGetMock(...args),
     })),
   })),
 }));
@@ -105,7 +111,9 @@ describe("bay-directory", () => {
       },
     ]);
     resolveProjectBayMock = jest.fn(async () => null);
+    resolveHostBayMock = jest.fn(async () => null);
     projectReferenceGetMock = jest.fn(async () => null);
+    hostConnectionGetMock = jest.fn(async () => null);
     getClusterAccountByIdMock = jest.fn(async () => null);
   });
 
@@ -354,6 +362,32 @@ describe("bay-directory", () => {
       host_id: HOST_ID,
       bay_id: "bay-5",
       name: "host-1",
+      source: "host-row",
+    });
+  });
+
+  it("falls back to the remote host bay when the host is not local", async () => {
+    listHostsMock = jest.fn(async () => []);
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 0,
+    }));
+    hostConnectionGetMock = jest.fn(async () => ({
+      host_id: HOST_ID,
+      bay_id: "bay-7",
+      name: "remote-host",
+    }));
+    const { resolveHostBay } = await import("./bay-directory");
+
+    await expect(
+      resolveHostBay({
+        account_id: ACCOUNT_ID,
+        host_id: HOST_ID,
+      }),
+    ).resolves.toEqual({
+      host_id: HOST_ID,
+      bay_id: "bay-7",
+      name: "remote-host",
       source: "host-row",
     });
   });

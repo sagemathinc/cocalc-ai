@@ -48,6 +48,7 @@ export interface ProjectReference {
   title: string;
   host_id: string | null;
   owning_bay_id: string;
+  users?: Record<string, any>;
 }
 
 export interface ProjectDetails {

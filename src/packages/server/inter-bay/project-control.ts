@@ -228,11 +228,22 @@ export async function handleProjectReferenceGet(
       account_id: req.account_id,
       project_id: req.project_id,
     });
+    const { rows } = await getPool().query<{ users: Record<string, any> | null }>(
+      `
+        SELECT COALESCE(users, '{}'::jsonb) AS users
+        FROM projects
+        WHERE project_id = $1
+          AND deleted IS NOT TRUE
+        LIMIT 1
+      `,
+      [req.project_id],
+    );
     return {
       project_id: project.project_id,
       title: project.title,
       host_id: project.host_id,
       owning_bay_id: project.owning_bay_id,
+      users: rows[0]?.users ?? {},
     };
   } catch {
     return null;
