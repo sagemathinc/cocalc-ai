@@ -233,7 +233,7 @@ export default async function createProject(opts: CreateProjectOptions) {
       const availability = isRemoteHostRunningAndOnline(remote);
       if (!availability.ok) {
         throw Error(
-          `host ${host_id} is unavailable for new workspaces (${availability.reason})`,
+          `host ${host_id} is unavailable for new projects (${availability.reason})`,
         );
       }
       if (!remote.can_place) {
@@ -250,7 +250,7 @@ export default async function createProject(opts: CreateProjectOptions) {
     const availability = isHostRunningAndOnline(row);
     if (!availability.ok) {
       throw Error(
-        `host ${host_id} is unavailable for new workspaces (${availability.reason})`,
+        `host ${host_id} is unavailable for new projects (${availability.reason})`,
       );
     }
     const metadata = row.metadata ?? {};
