@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import {
+  captureGitDiffScrollAnchor,
   DiffBlock,
   diffLineNumberColumnWidth,
   getCommitReviewIndicatorState,
@@ -8,6 +9,7 @@ import {
   formatMergeCommitBodyMarkdown,
   isMergeCommitSummary,
   matchGitDrawerScrollCommand,
+  restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
 } from "../git-commit-drawer";
 import { act, render } from "@testing-library/react";
@@ -274,5 +276,52 @@ describe("git commit drawer merge commit formatting", () => {
 
     expect(runGitDrawerScrollCommand(node, "lineUp")).toBe(false);
     expect(node.scrollTop).toBe(0);
+  });
+
+  it("captures the diff line nearest the drawer midpoint", () => {
+    const node = {
+      clientHeight: 200,
+      getBoundingClientRect: () => ({ top: 100, bottom: 300 }),
+      querySelectorAll: () =>
+        [
+          {
+            dataset: { gitAnchorId: "line-a", gitHunkHash: "hunk-a" },
+            getBoundingClientRect: () => ({ top: 120, bottom: 140 }),
+          },
+          {
+            dataset: { gitAnchorId: "line-b", gitHunkHash: "hunk-b" },
+            getBoundingClientRect: () => ({ top: 190, bottom: 210 }),
+          },
+        ] as any,
+    } as any;
+
+    expect(captureGitDiffScrollAnchor(node)).toEqual({
+      anchorId: "line-b",
+      hunkHash: "hunk-b",
+      offsetTop: 90,
+    });
+  });
+
+  it("restores drawer scroll from a captured diff anchor", () => {
+    const target = {
+      dataset: { gitAnchorId: "line-b", gitHunkHash: "hunk-b" },
+      getBoundingClientRect: () => ({ top: 260, bottom: 280 }),
+    };
+    const node = {
+      scrollTop: 200,
+      scrollHeight: 1600,
+      clientHeight: 400,
+      getBoundingClientRect: () => ({ top: 100, bottom: 500 }),
+      querySelectorAll: () => [target] as any,
+    } as any;
+
+    expect(
+      restoreGitDiffScrollAnchor(node, {
+        anchorId: "line-b",
+        hunkHash: "hunk-b",
+        offsetTop: 120,
+      }),
+    ).toBe(true);
+    expect(node.scrollTop).toBe(240);
   });
 });

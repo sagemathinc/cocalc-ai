@@ -165,6 +165,89 @@ export function runGitDrawerScrollCommand(
   return true;
 }
 
+type GitDiffScrollAnchor = {
+  anchorId?: string;
+  hunkHash?: string;
+  offsetTop: number;
+};
+
+function getGitDiffAnchorElements(
+  node: Pick<HTMLDivElement, "querySelectorAll">,
+): HTMLElement[] {
+  return Array.from(
+    node.querySelectorAll<HTMLElement>(
+      "[data-git-anchor-id],[data-git-hunk-hash]",
+    ),
+  );
+}
+
+export function captureGitDiffScrollAnchor(
+  node: Pick<
+    HTMLDivElement,
+    "querySelectorAll" | "getBoundingClientRect" | "clientHeight"
+  >,
+): GitDiffScrollAnchor | undefined {
+  const elements = getGitDiffAnchorElements(node);
+  if (!elements.length) return undefined;
+  const containerRect = node.getBoundingClientRect();
+  const midpoint = containerRect.top + node.clientHeight / 2;
+  const visible = elements.filter((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.bottom > containerRect.top && rect.top < containerRect.bottom;
+  });
+  const candidates = visible.length ? visible : elements;
+  let best: HTMLElement | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const element of candidates) {
+    const rect = element.getBoundingClientRect();
+    const distance = Math.abs(rect.top - midpoint);
+    if (distance < bestDistance) {
+      best = element;
+      bestDistance = distance;
+    }
+  }
+  if (!best) return undefined;
+  const rect = best.getBoundingClientRect();
+  return {
+    anchorId: best.dataset.gitAnchorId || undefined,
+    hunkHash: best.dataset.gitHunkHash || undefined,
+    offsetTop: rect.top - containerRect.top,
+  };
+}
+
+export function restoreGitDiffScrollAnchor(
+  node: Pick<
+    HTMLDivElement,
+    | "scrollTop"
+    | "scrollHeight"
+    | "clientHeight"
+    | "querySelectorAll"
+    | "getBoundingClientRect"
+  >,
+  anchor?: GitDiffScrollAnchor | null,
+): boolean {
+  if (!anchor) return false;
+  const elements = getGitDiffAnchorElements(node);
+  if (!elements.length) return false;
+  let target =
+    elements.find(
+      (element) =>
+        !!anchor.anchorId && element.dataset.gitAnchorId === anchor.anchorId,
+    ) ??
+    elements.find(
+      (element) =>
+        !!anchor.hunkHash && element.dataset.gitHunkHash === anchor.hunkHash,
+    );
+  if (!target) return false;
+  const containerRect = node.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const rawTop =
+    node.scrollTop + (targetRect.top - containerRect.top) - anchor.offsetTop;
+  const maxTop = Math.max(0, node.scrollHeight - node.clientHeight);
+  node.scrollTop = Math.max(0, Math.min(maxTop, rawTop));
+  return true;
+}
+
 type GitShowFile = {
   path: string;
   lines: string[];
@@ -995,6 +1078,8 @@ export const DiffBlock = memo(function DiffBlock({
                 alignItems: "flex-start",
                 gap: 6,
               }}
+              data-git-anchor-id={anchorId || undefined}
+              data-git-hunk-hash={meta.hunkHash || undefined}
               onMouseEnter={() => setHoveredLineIdx(idx)}
               onMouseLeave={() =>
                 setHoveredLineIdx((current) =>
@@ -1368,6 +1453,7 @@ export function GitCommitDrawer({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const restoringScrollRef = useRef(false);
   const pendingScrollRestoreRef = useRef<number | null>(null);
+  const pendingContextAnchorRef = useRef<GitDiffScrollAnchor | null>(null);
 
   const cwd = useMemo(() => {
     const override = `${cwdOverride ?? ""}`.trim();
@@ -1394,11 +1480,27 @@ export function GitCommitDrawer({
   useEffect(() => {
     if (!open) return;
     const target = pendingScrollRestoreRef.current;
-    if (target == null) return;
+    const anchor = pendingContextAnchorRef.current;
     const node = scrollRef.current;
     if (!node) return;
     let frame: number | undefined;
     const restore = () => {
+      if (anchor) {
+        restoringScrollRef.current = true;
+        if (restoreGitDiffScrollAnchor(node, anchor)) {
+          pendingContextAnchorRef.current = null;
+          restoringScrollRef.current = false;
+          pendingScrollRestoreRef.current = null;
+          persistDrawerScrollPosition(scrollStorageId, node.scrollTop);
+          return;
+        }
+        restoringScrollRef.current = false;
+        if (loading) {
+          return;
+        }
+        pendingContextAnchorRef.current = null;
+      }
+      if (target == null) return;
       const maxTop = Math.max(0, node.scrollHeight - node.clientHeight);
       if (target > 0 && maxTop <= 0) {
         // Content is not laid out yet; keep pending target and retry on next render.
@@ -2608,7 +2710,13 @@ export function GitCommitDrawer({
       Math.min(CONTEXT_OPTIONS.length - 1, idx + delta),
     );
     const next = CONTEXT_OPTIONS[nextIdx]?.value;
-    if (next && next !== contextLines) setContextLines(next);
+    if (next && next !== contextLines) {
+      const node = scrollRef.current;
+      pendingContextAnchorRef.current = node
+        ? (captureGitDiffScrollAnchor(node) ?? null)
+        : null;
+      setContextLines(next);
+    }
   };
   const canFindInChat = typeof onFindInChat === "function";
   const findInChatEnabled = canFindInChat && Boolean(commit) && !isHeadSelected;
@@ -2760,7 +2868,13 @@ export function GitCommitDrawer({
                 size="small"
                 value={contextLines}
                 options={CONTEXT_OPTIONS}
-                onChange={(value) => setContextLines(value)}
+                onChange={(value) => {
+                  const node = scrollRef.current;
+                  pendingContextAnchorRef.current = node
+                    ? (captureGitDiffScrollAnchor(node) ?? null)
+                    : null;
+                  setContextLines(value);
+                }}
                 style={{ width: 120 }}
               />
             </Tooltip>
