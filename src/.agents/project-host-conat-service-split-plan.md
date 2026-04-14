@@ -54,6 +54,30 @@ portable. The deployment split belongs in `src/packages/project-host`.
    - distinct logs
    - distinct health checks
 6. The split must reuse existing Conat code paths as much as possible.
+7. Upgrading `project-host` must not restart router or persist by default.
+8. The design must preserve a path toward no browser reconnect storm on ordinary
+   `project-host` upgrades.
+
+## Lifecycle Invariants
+
+These are required properties of the final architecture:
+
+1. `project-host` is a fast-moving control-plane service.
+2. `router` and `persist` are stable data-plane services.
+3. `router` and `persist` must have their own rollout cadence.
+4. A normal `project-host` bundle upgrade must not imply a router/persist
+   rollout.
+5. The public ingress layer must eventually be separable from `project-host`, so
+   frequent business-logic upgrades do not force user reconnect storms.
+
+In practice, this means we need to think in terms of three layers:
+
+- stable public ingress / proxy
+- stable Conat data plane (`router`, `persist`)
+- fast-moving `project-host` business logic
+
+This plan implements the second layer first. The ingress split is a later phase,
+but the lifecycle rules must be defined now.
 
 ## Existing Building Blocks To Reuse
 
@@ -122,6 +146,51 @@ Reason:
 
 Do not start persist inside `project-host` once external persist mode is
 enabled.
+
+## Upgrade And Versioning Model
+
+### Immediate Upgrade Semantics
+
+After this split, a normal admin action to upgrade `project-host` should do only
+this:
+
+- deploy new `project-host` bundle
+- restart `project-host` service
+
+It should not, by default:
+
+- restart router
+- restart persist-lb
+- restart persist workers
+
+That makes router and persist low-level host services rather than incidental
+children of the latest `project-host` bundle.
+
+### Why This Matters
+
+If `project-host` continues to own the public-facing HTTP/WebSocket proxy, then
+users may still reconnect during a `project-host` restart even if router and
+persist stay up.
+
+That is not a reason to avoid the split. It is a reason to explicitly treat
+public ingress as the next stable boundary after router/persist are separated.
+
+### Compatibility Contract
+
+Separate rollout cadence implies a compatibility boundary.
+
+Therefore:
+
+- `project-host` must treat router/persist bootstrap and wire protocol as a
+  stable interface
+- router/persist should not require lockstep deployment with every
+  `project-host` bundle
+- any incompatible router/persist protocol change must be treated as a deliberate
+  rollout event, not an incidental side effect of normal `project-host` upgrades
+
+Short version:
+
+- separate services require version discipline
 
 ## Why Router And Persist Should Be Split This Way
 
@@ -281,6 +350,11 @@ Add:
 - service status summary to project-host diagnostics
 - external service startup checks
 - clearer fatal startup errors when required services are missing
+- explicit lifecycle status reporting that distinguishes:
+  - embedded mode
+  - external router only
+  - external router plus persist
+- upgrade-safe service ownership documentation and tooling
 
 Optional:
 
@@ -295,6 +369,27 @@ Add:
 - readiness gating in `project-host`
 - restart/backoff policies in systemd
 - per-service metrics and structured logs
+
+### Phase 5: Stable Public Ingress
+
+Introduce a stable ingress layer that is not restarted for ordinary
+`project-host` upgrades.
+
+Goal:
+
+- upgrading `project-host` business logic does not force browsers to reconnect
+  to router/persist
+
+This ingress layer may remain very small. Its job is to:
+
+- terminate public HTTP/WebSocket connections
+- proxy to stable router/persist services
+- proxy to the current `project-host` instance for control-plane and app logic
+
+It should be treated more like infrastructure than application logic.
+
+This phase is deliberately later than the router/persist split, but it should be
+considered part of the intended end state.
 
 ## Changes To `project-host/main.ts`
 
@@ -405,3 +500,6 @@ The split is successful when:
    - router
    - persist
      rather than one undifferentiated Node process.
+6. A routine `project-host` upgrade does not restart router or persist.
+7. The architecture preserves a path to user-stable upgrades by separating
+   ingress from frequently changing `project-host` logic.
