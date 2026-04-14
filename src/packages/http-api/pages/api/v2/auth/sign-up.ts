@@ -44,6 +44,9 @@ import redeemRegistrationToken, {
 import sendWelcomeEmail from "@cocalc/server/email/welcome-email";
 import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
+import { issueHomeBayRetryToken } from "@cocalc/server/auth/home-bay-retry-token";
+import { selectSignupHomeBay } from "@cocalc/server/accounts/select-home-bay";
 import { createClusterAccount } from "@cocalc/server/inter-bay/accounts";
 import { getTierTemplate } from "@cocalc/util/membership-tier-templates";
 import {
@@ -64,7 +67,7 @@ import {
   SignUpOutputSchema,
 } from "@cocalc/http-api/lib/api/schema/accounts/sign-up";
 import { SignUpIssues } from "@cocalc/http-api/lib/types/sign-up";
-import { getAccount, signUserIn } from "./sign-in";
+import { getAccount, isWrongBayError, signUserIn } from "./sign-in";
 import {
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
@@ -108,7 +111,18 @@ export async function signUp(req, res) {
       const account_id = await getAccount(email, password);
       await signUserIn(req, res, account_id);
       return;
-    } catch (_err) {
+    } catch (err) {
+      if (isWrongBayError(err)) {
+        res.json({
+          wrong_bay: true,
+          home_bay_id: err.home_bay_id,
+          home_bay_url:
+            (await getBayPublicOriginForRequest(req, err.home_bay_id)) ??
+            err.home_bay_url,
+          retry_token: err.retry_token,
+        });
+        return;
+      }
       // fine -- just means they don't already have an account.
     }
   }
@@ -190,6 +204,20 @@ export async function signUp(req, res) {
     return;
   }
 
+  const tokenCustomize = tokenInfo?.customize;
+  const wantsAdmin =
+    tokenCustomize != null &&
+    typeof tokenCustomize === "object" &&
+    (tokenCustomize as { make_admin?: boolean }).make_admin === true;
+  const isBootstrap =
+    tokenCustomize != null &&
+    typeof tokenCustomize === "object" &&
+    (tokenCustomize as { bootstrap?: boolean }).bootstrap === true;
+  const selected_home_bay_id =
+    wantsAdmin || isBootstrap
+      ? getConfiguredBayId()
+      : await selectSignupHomeBay({ req });
+
   try {
     const created = await createClusterAccount({
       account_id: v4(),
@@ -197,7 +225,7 @@ export async function signUp(req, res) {
       password,
       first_name: firstName,
       last_name: lastName,
-      home_bay_id: getConfiguredBayId(),
+      home_bay_id: selected_home_bay_id,
       tags,
       signup_reason: signupReason,
       owner_id,
@@ -205,16 +233,8 @@ export async function signUp(req, res) {
       customize: tokenInfo?.customize,
     });
     const account_id = created.account_id;
-
-    const tokenCustomize = tokenInfo?.customize;
-    const wantsAdmin =
-      tokenCustomize != null &&
-      typeof tokenCustomize === "object" &&
-      (tokenCustomize as { make_admin?: boolean }).make_admin === true;
-    const isBootstrap =
-      tokenCustomize != null &&
-      typeof tokenCustomize === "object" &&
-      (tokenCustomize as { bootstrap?: boolean }).bootstrap === true;
+    const home_bay_id =
+      `${created.home_bay_id ?? ""}`.trim() || selected_home_bay_id;
 
     if (wantsAdmin) {
       const pool = getPool();
@@ -313,10 +333,27 @@ export async function signUp(req, res) {
       }
     }
     if (!owner_id) {
+      if (home_bay_id !== getConfiguredBayId()) {
+        res.json({
+          wrong_bay: true,
+          home_bay_id,
+          home_bay_url: await getBayPublicOriginForRequest(req, home_bay_id),
+          retry_token: issueHomeBayRetryToken({
+            email,
+            home_bay_id,
+            purpose: "sign-in",
+          }).token,
+        });
+        return;
+      }
       await signUserIn(req, res, account_id); // sets a cookie + response
       return;
     }
-    res.json({ account_id });
+    res.json({
+      account_id,
+      home_bay_id,
+      home_bay_url: await getBayPublicOriginForRequest(req, home_bay_id),
+    });
   } catch (err) {
     if (!res.headersSent) {
       res.json({ error: err.message });

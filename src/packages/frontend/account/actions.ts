@@ -10,6 +10,7 @@ import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { set_url } from "@cocalc/frontend/history";
 import { deleteRememberMe } from "@cocalc/frontend/misc/remember-me";
+import { clearStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import track from "@cocalc/frontend/user-tracking";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { once } from "@cocalc/util/async-utils";
@@ -122,6 +123,7 @@ export class AccountActions extends Actions<AccountState> {
     sign_in: boolean = false,
   ): Promise<void> {
     // disable redirection from sign in/up...
+    clearStoredControlPlaneOrigin();
     deleteRememberMe(appBasePath);
 
     // Send a message to the server that the user explicitly

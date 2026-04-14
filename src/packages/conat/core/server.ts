@@ -324,6 +324,10 @@ export class ConatServer extends EventEmitter {
       maxHttpBufferSize: MAX_PAYLOAD,
       path,
       adapter,
+      cors: {
+        origin: true,
+        credentials: true,
+      },
       // perMessageDeflate is disabled by default in socket.io, but it
       // seems unclear exactly *why*:
       //   https://github.com/socketio/socket.io/issues/3477#issuecomment-930503313

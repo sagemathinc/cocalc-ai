@@ -40,6 +40,14 @@ import { ACCOUNT_ID_COOKIE } from "@cocalc/frontend/client/client";
 import { info as refCacheInfo } from "@cocalc/util/refcache";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import {
+  clearStoredControlPlaneOrigin,
+  getControlPlaneAppUrl,
+  getStoredControlPlaneOrigin,
+  normalizeControlPlaneOrigin,
+  setStoredControlPlaneOrigin,
+} from "@cocalc/frontend/control-plane-origin";
+import { getAuthBootstrap } from "@cocalc/frontend/auth/api";
 import type { ConnectionStats } from "@cocalc/conat/core/types";
 import { delay } from "awaiting";
 import type {
@@ -166,7 +174,8 @@ export class ConatClient extends EventEmitter {
     { address, remote }: { address?: string; remote?: boolean } = {},
   ) {
     super();
-    this.address = address ?? location.origin + appBasePath;
+    this.address =
+      address ?? getControlPlaneAppUrl() ?? location.origin + appBasePath;
     this.remote = !!remote;
     this.setMaxListeners(100);
     this.client = client;
@@ -181,6 +190,57 @@ export class ConatClient extends EventEmitter {
       this.emit(state);
     });
   }
+
+  private updateAddress = (address: string | undefined) => {
+    const normalized = normalizeControlPlaneOrigin(address);
+    if (!normalized) {
+      return;
+    }
+    const appUrl = `${normalized}${appBasePath === "/" ? "" : appBasePath}`;
+    if (appUrl === this.address) {
+      return;
+    }
+    this.address = appUrl;
+    if (this._conatClient == null) {
+      return;
+    }
+    try {
+      this._conatClient.disconnect();
+    } catch {}
+    try {
+      this._conatClient.conn?.io?.engine?.close();
+    } catch {}
+    this._conatClient = null;
+  };
+
+  private bootstrapControlPlaneOrigin = reuseInFlight(async () => {
+    if (this.remote || typeof window === "undefined") {
+      return;
+    }
+    const stored = getStoredControlPlaneOrigin();
+    if (stored) {
+      this.updateAddress(stored);
+      return;
+    }
+    const cookie = Cookies.get(ACCOUNT_ID_COOKIE);
+    if (!cookie) {
+      return;
+    }
+    try {
+      const bootstrap = await getAuthBootstrap();
+      if (!bootstrap?.signed_in) {
+        return;
+      }
+      const origin = normalizeControlPlaneOrigin(bootstrap.home_bay_url);
+      if (!origin) {
+        return;
+      }
+      setStoredControlPlaneOrigin(origin);
+      this.updateAddress(origin);
+    } catch (err) {
+      console.warn(`control-plane bootstrap failed: ${err}`);
+    }
+  });
 
   private setConnectionStatus = (status: Partial<ConatConnectionStatus>) => {
     const actions = redux?.getActions("page");
@@ -199,6 +259,7 @@ export class ConatClient extends EventEmitter {
         address: this.address,
         inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
         auth: (cb) => cb({ browser_id: this.client.browser_id }),
+        withCredentials: true,
         routeSubject: (subject: string) => {
           const project_id = this.extractProjectIdFromSubject(subject);
           if (!project_id) {
@@ -1065,11 +1126,13 @@ export class ConatClient extends EventEmitter {
   private signedIn = (mesg: { account_id: string; hub: string }) => {
     this.signedInMessage = mesg;
     this.client.account_id = mesg.account_id;
+    setStoredControlPlaneOrigin(this.address);
     setRememberMe(appBasePath);
     this.client.emit("signed_in", mesg);
   };
 
   private signInFailed = (error) => {
+    clearStoredControlPlaneOrigin();
     deleteRememberMe(appBasePath);
     this.client.emit("remember_me_failed", { error });
   };
@@ -1156,6 +1219,7 @@ export class ConatClient extends EventEmitter {
       );
       return;
     }
+    await this.bootstrapControlPlaneOrigin();
     if (this._conatClient == null) {
       this.conat();
     }

@@ -412,6 +412,27 @@ export async function searchClusterAccountsDirect({
     .slice(0, cappedLimit);
 }
 
+export async function getClusterAccountHomeBayCountsDirect(): Promise<
+  Record<string, number>
+> {
+  await ensureClusterAccountDirectorySchema();
+  const { rows } = await getPool("medium").query<{
+    home_bay_id: string;
+    count: string;
+  }>(
+    `SELECT home_bay_id, COUNT(*)::TEXT AS count
+       FROM ${TABLE}
+      WHERE provisioned=TRUE
+      GROUP BY home_bay_id`,
+  );
+  const counts: Record<string, number> = {};
+  for (const row of rows) {
+    const bay_id = normalizedHomeBayId(row.home_bay_id);
+    counts[bay_id] = Math.max(0, Number(row.count ?? 0) || 0);
+  }
+  return counts;
+}
+
 export async function reserveClusterAccountDirectoryEntry({
   account_id,
   email_address,

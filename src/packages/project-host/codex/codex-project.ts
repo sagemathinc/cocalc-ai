@@ -85,9 +85,8 @@ type OptionalBindMount = {
 
 const BUILTIN_LAUNCHPAD_SKILLS = ["cocalc"] as const;
 
+const OPENAI_PROVIDER_BASE_URL = "https://api.openai.com/v1";
 const API_KEY_PROVIDER_ID = "cocalc-openai-api-key";
-const API_KEY_PROVIDER_CONFIG = `model_providers.${API_KEY_PROVIDER_ID}={name="OpenAI",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false}`;
-const API_KEY_PROVIDER_SELECT = `model_provider="${API_KEY_PROVIDER_ID}"`;
 const EPHEMERAL_AUTH_STORE_CONFIG = 'cli_auth_credentials_store="ephemeral"';
 const PROJECT_RUNTIME_HOME = DEFAULT_PROJECT_RUNTIME_HOME;
 const PROJECT_RUNTIME_CODEX_HOME = join(PROJECT_RUNTIME_HOME, ".codex");
@@ -177,6 +176,44 @@ function normalizeProjectRuntimeCwd(cwd?: string): string {
   }
   if (trimmed.startsWith("/")) return trimmed;
   return join(PROJECT_RUNTIME_HOME, trimmed);
+}
+
+function getCodexProviderStreamIdleTimeoutMs(): number {
+  return Math.max(
+    60_000,
+    Number(
+      process.env.COCALC_CODEX_PROVIDER_STREAM_IDLE_TIMEOUT_MS ?? 30 * 60_000,
+    ),
+  );
+}
+
+function getCodexProviderWebsocketConnectTimeoutMs(): number {
+  return Math.max(
+    5_000,
+    Number(
+      process.env.COCALC_CODEX_PROVIDER_WEBSOCKET_CONNECT_TIMEOUT_MS ?? 60_000,
+    ),
+  );
+}
+
+function getManagedOpenAiProviderArgs(
+  authRuntime: CodexAuthRuntime,
+): string[] | undefined {
+  const streamIdleTimeoutMs = getCodexProviderStreamIdleTimeoutMs();
+  const websocketConnectTimeoutMs = getCodexProviderWebsocketConnectTimeoutMs();
+  if (
+    authRuntime.source === "project-api-key" ||
+    authRuntime.source === "account-api-key" ||
+    authRuntime.source === "site-api-key"
+  ) {
+    return [
+      "--config",
+      `model_providers.${API_KEY_PROVIDER_ID}={name="OpenAI",base_url="${OPENAI_PROVIDER_BASE_URL}",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false,supports_websockets=true,stream_idle_timeout_ms=${streamIdleTimeoutMs},websocket_connect_timeout_ms=${websocketConnectTimeoutMs}}`,
+      "--config",
+      `model_provider="${API_KEY_PROVIDER_ID}"`,
+    ];
+  }
+  return;
 }
 
 function applyProjectRuntimeCliEnv(
@@ -1084,25 +1121,15 @@ export async function spawnCodexInProjectContainer({
       forceRefreshSiteKey,
     }));
   let codexArgs = args;
-  if (
-    authRuntime.source === "project-api-key" ||
-    authRuntime.source === "account-api-key" ||
-    authRuntime.source === "site-api-key"
-  ) {
-    // Codex's built-in OpenAI provider expects auth from auth.json by default.
-    // For key-based auth in project-host, force a provider that reads
-    // OPENAI_API_KEY from env so turns can run without mutating user auth.json.
-    codexArgs = [
-      ...codexArgs,
-      "--config",
-      API_KEY_PROVIDER_CONFIG,
-      "--config",
-      API_KEY_PROVIDER_SELECT,
-    ];
-    logger.debug("codex project: forcing API-key provider config", {
+  const providerArgs = getManagedOpenAiProviderArgs(authRuntime);
+  if (providerArgs) {
+    codexArgs = [...codexArgs, ...providerArgs];
+    logger.debug("codex project: forcing managed OpenAI provider config", {
       projectId,
       accountId,
       source: authRuntime.source,
+      streamIdleTimeoutMs: getCodexProviderStreamIdleTimeoutMs(),
+      websocketConnectTimeoutMs: getCodexProviderWebsocketConnectTimeoutMs(),
       provider: API_KEY_PROVIDER_ID,
     });
   }
@@ -1295,6 +1322,21 @@ async function spawnCodexAppServerInProjectRuntime({
     execArgs.push("-e", `${key}=${execEnv[key]}`);
   }
   const codexArgs: string[] = [];
+  const providerArgs = getManagedOpenAiProviderArgs(authRuntime);
+  if (providerArgs) {
+    codexArgs.push(...providerArgs);
+    logger.debug(
+      "codex project runtime: forcing managed OpenAI provider config",
+      {
+        projectId,
+        accountId,
+        source: authRuntime.source,
+        streamIdleTimeoutMs: getCodexProviderStreamIdleTimeoutMs(),
+        websocketConnectTimeoutMs: getCodexProviderWebsocketConnectTimeoutMs(),
+        provider: API_KEY_PROVIDER_ID,
+      },
+    );
+  }
   if (shouldForceEphemeralAppServerAuthStorage(authRuntime)) {
     // Host-managed auth must stay in-process only. Otherwise app-server's
     // apiKey login path can write credentials into the collaborative

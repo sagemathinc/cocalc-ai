@@ -241,7 +241,22 @@ detect_hub_postgres_data_dir() {
 }
 
 detect_hub_public_hostname() {
-  find_latest_in_log "$HUB_STDOUT_LOG" "s/.*hostname: '\\([^']*\\)'.*/\\1/p"
+  local idx explicit_url signup_url
+  for idx in $(seq 0 $((HUB_CLUSTER_BAY_COUNT - 1))); do
+    if [ "$(cluster_bay_value "$idx" ID)" = "$COCALC_BAY_ID" ]; then
+      explicit_url="$(cluster_bay_value "$idx" PUBLIC_URL)"
+      break
+    fi
+  done
+  if [ -n "$explicit_url" ]; then
+    printf '%s\n' "$explicit_url" | sed -n 's#^[a-zA-Z][a-zA-Z0-9+.-]*://\([^/:]*\).*$#\1#p'
+    return 0
+  fi
+  signup_url="$(detect_hub_bootstrap_signup_url || true)"
+  if [ -n "$signup_url" ]; then
+    printf '%s\n' "$signup_url" | sed -n 's#^[a-zA-Z][a-zA-Z0-9+.-]*://\([^/:]*\).*$#\1#p'
+    return 0
+  fi
 }
 
 detect_hub_bootstrap_signup_url() {
@@ -595,6 +610,9 @@ start_cluster_bay() {
     export COCALC_CLUSTER_ROLE="$role"
     export HUB_CLUSTER_BAY_IDS="$HUB_CLUSTER_BAY_IDS"
     export COCALC_CLUSTER_BAY_IDS="$HUB_CLUSTER_BAY_IDS"
+    export HUB_CLUSTER_BAY_PUBLIC_URLS="$HUB_CLUSTER_BAY_PUBLIC_URLS"
+    export COCALC_CLUSTER_BAY_PUBLIC_URLS="$HUB_CLUSTER_BAY_PUBLIC_URLS"
+    export COCALC_BAY_PUBLIC_URL="$(cluster_bay_value "$idx" PUBLIC_URL)"
     if [ -n "$seed_bay_id" ]; then
       export COCALC_CLUSTER_SEED_BAY_ID="$seed_bay_id"
     else
@@ -855,6 +873,9 @@ start_daemon() {
       export COCALC_CLUSTER_ROLE
       export HUB_CLUSTER_BAY_IDS
       export COCALC_CLUSTER_BAY_IDS="$HUB_CLUSTER_BAY_IDS"
+      export HUB_CLUSTER_BAY_PUBLIC_URLS
+      export COCALC_CLUSTER_BAY_PUBLIC_URLS="$HUB_CLUSTER_BAY_PUBLIC_URLS"
+      export COCALC_BAY_PUBLIC_URL="${HUB_CLUSTER_BAY_0_PUBLIC_URL:-}"
       if [ -n "$COCALC_CLUSTER_SEED_BAY_ID" ]; then
         export COCALC_CLUSTER_SEED_BAY_ID
       else
@@ -1079,10 +1100,11 @@ HUB_CLUSTER_PRIMARY_BAY_INDEX=$HUB_CLUSTER_PRIMARY_BAY_INDEX
 HUB_CLUSTER_SEED_BAY_ID=$HUB_CLUSTER_SEED_BAY_ID
 HUB_CLUSTER_SEED_BAY_INDEX=$HUB_CLUSTER_SEED_BAY_INDEX
 HUB_CLUSTER_BAY_IDS=$HUB_CLUSTER_BAY_IDS
+HUB_CLUSTER_BAY_PUBLIC_URLS=$HUB_CLUSTER_BAY_PUBLIC_URLS
 EOF
   local idx key
   for idx in $(seq 0 $((HUB_CLUSTER_BAY_COUNT - 1))); do
-    for key in ID ROLE IS_PRIMARY PORT BIND_HOST CMD STATE_DIR DATA_DIR DEBUG_FILE STDOUT_LOG CLOUDFLARED_PID_FILE LABEL REGION SEED_BAY_ID SEED_CONAT_SERVER SEED_CONAT_PASSWORD SOFTWARE_BASE_URL_FORCE SELF_HOST_PAIR_URL; do
+    for key in ID ROLE IS_PRIMARY PORT BIND_HOST CMD STATE_DIR DATA_DIR DEBUG_FILE STDOUT_LOG CLOUDFLARED_PID_FILE LABEL REGION SEED_BAY_ID SEED_CONAT_SERVER SEED_CONAT_PASSWORD SOFTWARE_BASE_URL_FORCE SELF_HOST_PAIR_URL PUBLIC_URL; do
       echo "HUB_CLUSTER_BAY_${idx}_${key}=$(cluster_bay_value "$idx" "$key")"
     done
   done

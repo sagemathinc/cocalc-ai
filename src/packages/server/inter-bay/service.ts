@@ -6,6 +6,7 @@
 import {
   createInterBayAuthTokenHandlers,
   createInterBayAccountProjectFeedHandlers,
+  createInterBayBayRegistryHandlers,
   createInterBayAccountDirectoryHandlers,
   createInterBayAccountLocalHandler,
   createInterBayProjectCollabInviteHandlers,
@@ -25,6 +26,7 @@ import {
   createInterBayProjectControlStopHandler,
   type InterBayAuthTokenApi,
   type InterBayAccountProjectFeedApi,
+  type InterBayBayRegistryApi,
   type InterBayAccountDirectoryApi,
   type InterBayAccountLocalApi,
   type InterBayDirectoryApi,
@@ -47,6 +49,12 @@ import {
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 import {
+  listBayRegistryLocal,
+  registerBayPresenceLocal,
+  startBayRegistrationHeartbeat,
+} from "@cocalc/server/bay-registry";
+import { startManagedBayCloudflared } from "@cocalc/server/bay-cloudflared";
+import {
   applyAccountProjectFeedRemoveOnHomeBay,
   applyAccountProjectFeedUpsertOnHomeBay,
 } from "@cocalc/server/account/project-feed";
@@ -54,6 +62,7 @@ import {
   createClusterAccount,
   getClusterAccountByEmail,
   getClusterAccountById,
+  getClusterAccountHomeBayCounts,
   getClusterAccountsByIds,
   provisionLocalClusterAccount,
   searchClusterAccounts,
@@ -101,6 +110,7 @@ export async function initInterBayServices(): Promise<void> {
   try {
     await startDirectoryService();
     await startAuthTokenService();
+    await startBayRegistryService();
     await startAccountDirectoryService();
     await startAccountLocalService();
     await startAccountProjectFeedService();
@@ -112,10 +122,31 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectHostAuthTokenService();
     await startProjectLroService();
     await startProjectCollabInviteService();
+    startBayRegistrationHeartbeat();
+    startManagedBayCloudflared();
   } catch (err) {
     serviceStarted = false;
     throw err;
   }
+}
+
+async function startBayRegistryService(): Promise<void> {
+  const role = getConfiguredClusterRole();
+  if (role === "attached") {
+    return;
+  }
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayBayRegistryApi = {
+    register: async (opts) => await registerBayPresenceLocal(opts),
+    list: async (opts) => await listBayRegistryLocal(opts),
+  };
+  services.push(
+    ...createInterBayBayRegistryHandlers({
+      client,
+      parallel: true,
+      impl,
+    }),
+  );
 }
 
 async function startAuthTokenService(): Promise<void> {
@@ -197,6 +228,7 @@ async function startAccountDirectoryService(): Promise<void> {
         admin,
         only_email,
       }),
+    getHomeBayCounts: async () => await getClusterAccountHomeBayCounts(),
     create: async (opts) => await createClusterAccount(opts),
   };
   services.push(
@@ -433,9 +465,9 @@ async function startHostControlService(): Promise<void> {
     deleteProjectData: async ({ host_id, del }) =>
       await (await getHostClient(host_id, 30_000)).deleteProjectData(del),
     upgradeSoftware: async ({ host_id, upgrade }) =>
-      await (await getHostClient(host_id, 10 * 60 * 1000)).upgradeSoftware(
-        upgrade,
-      ),
+      await (
+        await getHostClient(host_id, 10 * 60 * 1000)
+      ).upgradeSoftware(upgrade),
     growBtrfs: async ({ host_id, grow }) =>
       await (await getHostClient(host_id, 10 * 60 * 1000)).growBtrfs(grow),
     getRuntimeLog: async ({ host_id, get }) =>
@@ -445,9 +477,9 @@ async function startHostControlService(): Promise<void> {
     listRootfsImages: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).listRootfsImages(),
     pullRootfsImage: async ({ host_id, pull }) =>
-      await (await getHostClient(host_id, 10 * 60 * 1000)).pullRootfsImage(
-        pull,
-      ),
+      await (
+        await getHostClient(host_id, 10 * 60 * 1000)
+      ).pullRootfsImage(pull),
     deleteRootfsImage: async ({ host_id, del }) =>
       await (await getHostClient(host_id, 30_000)).deleteRootfsImage(del),
     listHostSshAuthorizedKeys: async ({ host_id }) =>
@@ -455,23 +487,23 @@ async function startHostControlService(): Promise<void> {
     addHostSshAuthorizedKey: async ({ host_id, add }) =>
       await (await getHostClient(host_id, 30_000)).addHostSshAuthorizedKey(add),
     removeHostSshAuthorizedKey: async ({ host_id, remove }) =>
-      await (await getHostClient(host_id, 30_000)).removeHostSshAuthorizedKey(
-        remove,
-      ),
+      await (
+        await getHostClient(host_id, 30_000)
+      ).removeHostSshAuthorizedKey(remove),
     getBackupExecutionStatus: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).getBackupExecutionStatus(),
     inspectStaticAppPath: async ({ host_id, inspect }) =>
-      await (await getHostClient(host_id, 30_000)).inspectStaticAppPath(
-        inspect,
-      ),
+      await (
+        await getHostClient(host_id, 30_000)
+      ).inspectStaticAppPath(inspect),
     buildRootfsImageManifest: async ({ host_id, build }) =>
-      await (await getHostClient(host_id, 10 * 60 * 1000)).buildRootfsImageManifest(
-        build,
-      ),
+      await (
+        await getHostClient(host_id, 10 * 60 * 1000)
+      ).buildRootfsImageManifest(build),
     buildProjectRootfsManifest: async ({ host_id, build }) =>
-      await (await getHostClient(host_id, 10 * 60 * 1000)).buildProjectRootfsManifest(
-        build,
-      ),
+      await (
+        await getHostClient(host_id, 10 * 60 * 1000)
+      ).buildProjectRootfsManifest(build),
   };
   services.push(
     ...createInterBayHostControlHandler({

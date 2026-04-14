@@ -16,6 +16,7 @@ import {
   getConfiguredBayLabel,
   getConfiguredBayRegion,
 } from "@cocalc/server/bay-config";
+import { listClusterBayInfos } from "@cocalc/server/bay-registry";
 import {
   getConfiguredClusterRole,
   isMultiBayCluster,
@@ -48,6 +49,17 @@ export function getSingleBayInfo(): BayInfo {
 }
 
 export async function listConfiguredBays(): Promise<BayInfo[]> {
+  if (isMultiBayCluster()) {
+    try {
+      const infos = await listClusterBayInfos();
+      if (infos.length > 0) {
+        return infos;
+      }
+    } catch {
+      // Fall back to the local bay view if the seed registry is temporarily
+      // unavailable; listing bays should stay best-effort.
+    }
+  }
   return [getSingleBayInfo()];
 }
 

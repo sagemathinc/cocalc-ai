@@ -3,6 +3,7 @@ import {
   REMEMBER_ME_COOKIE_NAME,
 } from "@cocalc/backend/auth/cookie-names";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
+import { getBrowserCookieDomain } from "@cocalc/server/bay-public-origin";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import Cookies from "cookies";
 
@@ -29,7 +30,9 @@ async function setRememberMeCookie({ req, res, account_id, maxAge }) {
   const cookies = new Cookies(req, res);
   const { samesite_remember_me } = await getServerSettings();
   const sameSite = samesite_remember_me;
+  const domain = await getBrowserCookieDomain();
   cookies.set(REMEMBER_ME_COOKIE_NAME, value, {
+    ...(domain ? { domain } : {}),
     maxAge,
     sameSite,
     secure: req.protocol === "https",
@@ -41,7 +44,9 @@ async function setAccountIdCookie({ req, res, account_id, maxAge }) {
   // from browser.  It's not for telling the server the account_id, but
   // for telling the user their own account_id.
   const cookies = new Cookies(req, res, { secure: false, httpOnly: false });
+  const domain = await getBrowserCookieDomain();
   cookies.set(ACCOUNT_ID_COOKIE_NAME, account_id, {
+    ...(domain ? { domain } : {}),
     maxAge,
     httpOnly: false,
   });

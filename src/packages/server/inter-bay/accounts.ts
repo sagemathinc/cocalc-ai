@@ -15,6 +15,7 @@ import {
   deleteClusterAccountDirectoryEntry,
   getClusterAccountByEmailDirect,
   getClusterAccountByIdDirect,
+  getClusterAccountHomeBayCountsDirect,
   getClusterAccountsByIdsDirect,
   markClusterAccountProvisioned,
   reserveClusterAccountDirectoryEntry,
@@ -93,6 +94,17 @@ export async function searchClusterAccounts({
   });
 }
 
+export async function getClusterAccountHomeBayCounts(): Promise<
+  Record<string, number>
+> {
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    return await getClusterAccountHomeBayCountsDirect();
+  }
+  return await createInterBayAccountDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).getHomeBayCounts({});
+}
+
 export async function provisionLocalClusterAccount(
   opts: AccountDirectoryCreateRequest,
 ): Promise<AccountDirectoryEntry> {
@@ -104,6 +116,7 @@ export async function provisionLocalClusterAccount(
     lastName: opts.last_name,
     account_id,
     owner_id: opts.owner_id,
+    home_bay_id: opts.home_bay_id,
     noFirstProject: !!opts.no_first_project,
     tags: Array.isArray(opts.tags) && opts.tags.length ? opts.tags : undefined,
     signupReason: opts.signup_reason,

@@ -295,7 +295,7 @@ export async function deleteHostDns(opts: { record_id?: string }) {
   }
 }
 
-export async function ensureAppSubdomainDns(opts: {
+export async function ensureHostnameCnameDns(opts: {
   hostname: string;
   target_hostname: string;
   record_id?: string;
@@ -384,6 +384,14 @@ export async function ensureAppSubdomainDns(opts: {
     }
   }
   return { record_id: record_id! };
+}
+
+export async function ensureAppSubdomainDns(opts: {
+  hostname: string;
+  target_hostname: string;
+  record_id?: string;
+}): Promise<{ record_id: string }> {
+  return await ensureHostnameCnameDns(opts);
 }
 
 export async function ensurePublicViewerDns(): Promise<

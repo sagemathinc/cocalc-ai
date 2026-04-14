@@ -12,6 +12,7 @@ import { existsSync, readdirSync, statSync } from "fs";
 import { delimiter, join, sep } from "path";
 import * as Module from "module";
 import { getLogger } from "@cocalc/backend/logger";
+import { applyBrowserCors } from "@cocalc/server/bay-public-origin";
 import type { ApiV2ManifestEntry } from "./api-v2-manifest";
 
 export interface ApiV2RouterOptions {
@@ -25,6 +26,14 @@ export default function createApiV2Router(
   const logger = getLogger("http-api-router");
   const router = express.Router();
 
+  router.use(async (req, res, next) => {
+    await applyBrowserCors(req, res);
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
   router.use(express.json({ limit: "10mb" }));
   router.use(express.urlencoded({ extended: true }));
   router.use(ensureCookies);
