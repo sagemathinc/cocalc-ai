@@ -225,6 +225,20 @@ export interface BayRegistryEntry {
   last_seen: string;
 }
 
+export interface BayRegistryManagedTunnel {
+  id: string;
+  name: string;
+  hostname: string;
+  tunnel_secret: string;
+  account_id: string;
+  record_id?: string;
+  token?: string;
+}
+
+export interface BayRegistryRegisterResult extends BayRegistryEntry {
+  managed_tunnel?: BayRegistryManagedTunnel | null;
+}
+
 export interface AuthTokenRequiresRequest {}
 
 export interface AuthTokenRedeemRequest {
@@ -486,7 +500,9 @@ export interface InterBayAccountLocalApi {
 }
 
 export interface InterBayBayRegistryApi {
-  register: (opts: BayRegistryRegisterRequest) => Promise<BayRegistryEntry>;
+  register: (
+    opts: BayRegistryRegisterRequest,
+  ) => Promise<BayRegistryRegisterResult>;
   list: (opts: BayRegistryListRequest) => Promise<BayRegistryEntry[]>;
 }
 

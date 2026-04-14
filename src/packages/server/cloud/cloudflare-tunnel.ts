@@ -1,6 +1,7 @@
 import getLogger from "@cocalc/backend/logger";
 import crypto from "node:crypto";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getDerivedBayPublicHostname } from "@cocalc/server/bay-public-origin";
 
 const logger = getLogger("server:cloud:cloudflare-tunnel");
 const TTL = 120;
@@ -563,6 +564,29 @@ export async function ensureCloudflareTunnelForHost(opts: {
     name: `${prefix}host-${opts.host_id}`,
     existing: opts.existing,
     logContext: { host_id: opts.host_id },
+  });
+}
+
+export async function ensureCloudflareTunnelForBay(opts: {
+  bay_id: string;
+  existing?: CloudflareTunnel;
+}): Promise<CloudflareTunnel | undefined> {
+  const config = await getHubConfig();
+  if (!config) return undefined;
+  const hostname = await getDerivedBayPublicHostname(opts.bay_id);
+  if (!hostname) {
+    return undefined;
+  }
+  const prefix = config.prefix ? `${config.prefix}-` : "";
+  const name = `${prefix}bay-${opts.bay_id}`;
+  return await ensureCloudflareTunnel({
+    accountId: config.accountId,
+    token: config.token,
+    zone: config.hostname,
+    hostname,
+    name,
+    existing: opts.existing,
+    logContext: { bay_id: opts.bay_id, hostname },
   });
 }
 

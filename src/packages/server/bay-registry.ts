@@ -7,7 +7,9 @@ import type { BayInfo } from "@cocalc/conat/hub/api/system";
 import type {
   BayRegistryEntry,
   BayRegistryListRequest,
+  BayRegistryManagedTunnel,
   BayRegistryRegisterRequest,
+  BayRegistryRegisterResult,
 } from "@cocalc/conat/inter-bay/api";
 import {
   createInterBayBayRegistryClient,
@@ -33,6 +35,10 @@ import {
   ensureHostnameCnameDns,
   hasDns,
 } from "@cocalc/server/cloud/dns";
+import {
+  ensureCloudflareTunnelForBay,
+  type CloudflareTunnel,
+} from "@cocalc/server/cloud/cloudflare-tunnel";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
 const logger = getLogger("server:bay-registry");
@@ -83,10 +89,14 @@ async function ensureTable(): Promise<void> {
         public_target_kind TEXT,
         dns_hostname TEXT,
         dns_record_id TEXT,
+        managed_tunnel JSONB,
         last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await pool.query(
+      `ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS managed_tunnel JSONB`,
+    );
     await pool.query(
       `CREATE INDEX IF NOT EXISTS ${TABLE}_last_seen_idx ON ${TABLE} (last_seen DESC)`,
     );
@@ -112,6 +122,22 @@ function mapRow(row: any): BayRegistryEntry {
   };
 }
 
+function mapManagedTunnel(value: unknown): BayRegistryManagedTunnel | null {
+  const tunnel = value as CloudflareTunnel | undefined | null;
+  if (!tunnel?.id || !tunnel?.hostname || !tunnel?.tunnel_secret) {
+    return null;
+  }
+  return {
+    id: tunnel.id,
+    name: tunnel.name,
+    hostname: tunnel.hostname,
+    tunnel_secret: tunnel.tunnel_secret,
+    account_id: tunnel.account_id,
+    record_id: tunnel.record_id,
+    token: tunnel.token,
+  };
+}
+
 async function getEntryLocal(bay_id: string): Promise<BayRegistryEntry | null> {
   await ensureTable();
   const { rows } = await getPool().query(
@@ -123,6 +149,20 @@ async function getEntryLocal(bay_id: string): Promise<BayRegistryEntry | null> {
     [bay_id],
   );
   return rows[0] ? mapRow(rows[0]) : null;
+}
+
+async function getManagedTunnelLocal(
+  bay_id: string,
+): Promise<CloudflareTunnel | undefined> {
+  await ensureTable();
+  const { rows } = await getPool().query(
+    `SELECT managed_tunnel
+       FROM ${TABLE}
+      WHERE bay_id=$1
+      LIMIT 1`,
+    [bay_id],
+  );
+  return (rows[0]?.managed_tunnel as CloudflareTunnel | undefined) ?? undefined;
 }
 
 async function reconcileDnsForEntry(
@@ -138,9 +178,12 @@ async function reconcileDnsForEntry(
       dns_record_id: normalizedNullable(entry.dns_record_id),
     };
   }
-  const public_target = normalizedNullable(
+  let public_target = normalizedNullable(
     normalizeHostname(entry.public_target),
   );
+  if (!public_target) {
+    public_target = normalizedNullable(normalizeHostname(entry.public_origin));
+  }
   if (isDnsTargetCandidate(public_target) && public_target !== dns_hostname) {
     const { record_id } = await ensureHostnameCnameDns({
       hostname: dns_hostname,
@@ -157,13 +200,14 @@ async function reconcileDnsForEntry(
 
 export async function registerBayPresenceLocal(
   request: BayRegistryRegisterRequest,
-): Promise<BayRegistryEntry> {
+): Promise<BayRegistryRegisterResult> {
   await ensureTable();
   const bay_id = trim(request.bay_id);
   if (!bay_id) {
     throw new Error("bay_id is required");
   }
   const existing = await getEntryLocal(bay_id);
+  const managedTunnel = await getManagedTunnelLocal(bay_id);
   const next: BayRegistryEntry = {
     bay_id,
     label: trim(request.label) || existing?.label || bay_id,
@@ -184,14 +228,34 @@ export async function registerBayPresenceLocal(
     dns_record_id: existing?.dns_record_id ?? null,
     last_seen: new Date().toISOString(),
   };
+  let nextManagedTunnel = managedTunnel ?? null;
+  if (
+    getConfiguredClusterRole() === "seed" &&
+    next.role === "attached" &&
+    !next.public_target
+  ) {
+    nextManagedTunnel =
+      (await ensureCloudflareTunnelForBay({
+        bay_id,
+        existing: managedTunnel ?? undefined,
+      })) ?? null;
+    const managedTarget = normalizedNullable(nextManagedTunnel?.id)
+      ? `${nextManagedTunnel?.id}.cfargotunnel.com`
+      : null;
+    if (managedTarget) {
+      next.public_target = managedTarget;
+      next.public_target_kind = "hostname";
+    }
+  }
   if (getConfiguredClusterRole() === "seed") {
     Object.assign(next, await reconcileDnsForEntry(next));
   }
   await getPool().query(
     `INSERT INTO ${TABLE}
        (bay_id, label, region, role, public_origin, public_target,
-        public_target_kind, dns_hostname, dns_record_id, last_seen, updated)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
+        public_target_kind, dns_hostname, dns_record_id, managed_tunnel,
+        last_seen, updated)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::JSONB,NOW(),NOW())
      ON CONFLICT (bay_id) DO UPDATE SET
        label=EXCLUDED.label,
        region=EXCLUDED.region,
@@ -201,6 +265,7 @@ export async function registerBayPresenceLocal(
        public_target_kind=EXCLUDED.public_target_kind,
        dns_hostname=EXCLUDED.dns_hostname,
        dns_record_id=EXCLUDED.dns_record_id,
+       managed_tunnel=EXCLUDED.managed_tunnel,
        last_seen=NOW(),
        updated=NOW()`,
     [
@@ -213,9 +278,13 @@ export async function registerBayPresenceLocal(
       next.public_target_kind,
       next.dns_hostname,
       next.dns_record_id,
+      nextManagedTunnel ? JSON.stringify(nextManagedTunnel) : null,
     ],
   );
-  return (await getEntryLocal(bay_id)) ?? next;
+  return {
+    ...((await getEntryLocal(bay_id)) ?? next),
+    managed_tunnel: mapManagedTunnel(nextManagedTunnel),
+  };
 }
 
 export async function listBayRegistryLocal(

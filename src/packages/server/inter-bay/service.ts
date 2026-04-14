@@ -53,6 +53,7 @@ import {
   registerBayPresenceLocal,
   startBayRegistrationHeartbeat,
 } from "@cocalc/server/bay-registry";
+import { startManagedBayCloudflared } from "@cocalc/server/bay-cloudflared";
 import {
   applyAccountProjectFeedRemoveOnHomeBay,
   applyAccountProjectFeedUpsertOnHomeBay,
@@ -122,6 +123,7 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectLroService();
     await startProjectCollabInviteService();
     startBayRegistrationHeartbeat();
+    startManagedBayCloudflared();
   } catch (err) {
     serviceStarted = false;
     throw err;
