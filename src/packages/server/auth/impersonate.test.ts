@@ -4,9 +4,11 @@ let queryMock: jest.Mock;
 let setSignInCookiesMock: jest.Mock;
 let getClusterAccountByIdMock: jest.Mock;
 let getBayPublicOriginForRequestMock: jest.Mock;
+let getSitePublicOriginForRequestMock: jest.Mock;
 let clientSideRedirectMock: jest.Mock;
 let issueHomeBayRetryTokenMock: jest.Mock;
 let verifyHomeBayRetryTokenMock: jest.Mock;
+let clearAuthCookiesMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -18,6 +20,11 @@ jest.mock("@cocalc/server/auth/set-sign-in-cookies", () => ({
   default: (...args: any[]) => setSignInCookiesMock(...args),
 }));
 
+jest.mock("@cocalc/server/auth/clear-auth-cookies", () => ({
+  __esModule: true,
+  default: (...args: any[]) => clearAuthCookiesMock(...args),
+}));
+
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   __esModule: true,
   getClusterAccountById: (...args: any[]) => getClusterAccountByIdMock(...args),
@@ -27,6 +34,8 @@ jest.mock("@cocalc/server/bay-public-origin", () => ({
   __esModule: true,
   getBayPublicOriginForRequest: (...args: any[]) =>
     getBayPublicOriginForRequestMock(...args),
+  getSitePublicOriginForRequest: (...args: any[]) =>
+    getSitePublicOriginForRequestMock(...args),
 }));
 
 jest.mock("@cocalc/server/auth/client-side-redirect", () => ({
@@ -60,11 +69,15 @@ describe("auth/impersonate", () => {
     getBayPublicOriginForRequestMock = jest.fn(
       async () => "https://bay-2-lite4b.cocalc.ai",
     );
+    getSitePublicOriginForRequestMock = jest.fn(
+      async () => "https://lite4b.cocalc.ai",
+    );
     clientSideRedirectMock = jest.fn();
     issueHomeBayRetryTokenMock = jest.fn(() => ({
       token: "retry-token",
     }));
     verifyHomeBayRetryTokenMock = jest.fn();
+    clearAuthCookiesMock = jest.fn(async () => undefined);
   });
 
   afterEach(() => {
@@ -99,6 +112,7 @@ describe("auth/impersonate", () => {
       purpose: "impersonate",
     });
     expect(getBayPublicOriginForRequestMock).toHaveBeenCalledWith(req, "bay-2");
+    expect(clearAuthCookiesMock).toHaveBeenCalledWith({ req, res });
     expect(setSignInCookiesMock).not.toHaveBeenCalled();
     expect(clientSideRedirectMock).toHaveBeenCalledWith({
       res,
@@ -137,6 +151,7 @@ describe("auth/impersonate", () => {
       home_bay_id: "bay-2",
       purpose: "impersonate",
     });
+    expect(clearAuthCookiesMock).not.toHaveBeenCalled();
     expect(setSignInCookiesMock).toHaveBeenCalledWith({
       req,
       res,
@@ -145,7 +160,7 @@ describe("auth/impersonate", () => {
     });
     expect(clientSideRedirectMock).toHaveBeenCalledWith({
       res,
-      target: "https://bay-2-lite4b.cocalc.ai/app?lang_temp=en",
+      target: "https://lite4b.cocalc.ai/app?lang_temp=en",
     });
   });
 });

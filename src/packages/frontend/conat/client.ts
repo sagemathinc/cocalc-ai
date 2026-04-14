@@ -228,9 +228,6 @@ export class ConatClient extends EventEmitter {
     }
     try {
       const bootstrap = await getAuthBootstrap();
-      if (!bootstrap?.signed_in) {
-        return;
-      }
       const origin = normalizeControlPlaneOrigin(bootstrap.home_bay_url);
       if (!origin) {
         return;

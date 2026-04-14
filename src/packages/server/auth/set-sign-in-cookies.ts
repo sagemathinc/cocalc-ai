@@ -1,9 +1,12 @@
 import {
   ACCOUNT_ID_COOKIE_NAME,
+  HOME_BAY_ID_COOKIE_NAME,
   REMEMBER_ME_COOKIE_NAME,
 } from "@cocalc/backend/auth/cookie-names";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
-import { getBrowserCookieDomain } from "@cocalc/server/bay-public-origin";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getBrowserCookieDomainForRequest } from "@cocalc/server/bay-public-origin";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import Cookies from "cookies";
 
@@ -22,7 +25,22 @@ export default async function setSignInCookies({
   maxAge?: number;
 }) {
   const opts = { req, res, account_id, maxAge };
-  await Promise.all([setRememberMeCookie(opts), setAccountIdCookie(opts)]);
+  await Promise.all([
+    setRememberMeCookie(opts),
+    setAccountIdCookie(opts),
+    setHomeBayCookie(opts),
+  ]);
+}
+
+function cookieOptionVariants<T extends Record<string, any>>(
+  opts: T,
+): Array<T | Omit<T, "domain">> {
+  const variants: Array<T | Omit<T, "domain">> = [opts];
+  if (opts.domain) {
+    const { domain: _domain, ...hostOnly } = opts;
+    variants.push(hostOnly);
+  }
+  return variants;
 }
 
 async function setRememberMeCookie({ req, res, account_id, maxAge }) {
@@ -30,13 +48,15 @@ async function setRememberMeCookie({ req, res, account_id, maxAge }) {
   const cookies = new Cookies(req, res);
   const { samesite_remember_me } = await getServerSettings();
   const sameSite = samesite_remember_me;
-  const domain = await getBrowserCookieDomain();
-  cookies.set(REMEMBER_ME_COOKIE_NAME, value, {
+  const domain = await getBrowserCookieDomainForRequest(req);
+  for (const opts of cookieOptionVariants({
     ...(domain ? { domain } : {}),
     maxAge,
     sameSite,
     secure: req.protocol === "https",
-  });
+  })) {
+    cookies.set(REMEMBER_ME_COOKIE_NAME, value, opts);
+  }
 }
 
 async function setAccountIdCookie({ req, res, account_id, maxAge }) {
@@ -44,10 +64,29 @@ async function setAccountIdCookie({ req, res, account_id, maxAge }) {
   // from browser.  It's not for telling the server the account_id, but
   // for telling the user their own account_id.
   const cookies = new Cookies(req, res, { secure: false, httpOnly: false });
-  const domain = await getBrowserCookieDomain();
-  cookies.set(ACCOUNT_ID_COOKIE_NAME, account_id, {
+  const domain = await getBrowserCookieDomainForRequest(req);
+  for (const opts of cookieOptionVariants({
     ...(domain ? { domain } : {}),
     maxAge,
     httpOnly: false,
-  });
+  })) {
+    cookies.set(ACCOUNT_ID_COOKIE_NAME, account_id, opts);
+  }
+}
+
+async function setHomeBayCookie({ req, res, account_id, maxAge }) {
+  const cookies = new Cookies(req, res);
+  const domain = await getBrowserCookieDomainForRequest(req);
+  const account = await getClusterAccountById(account_id);
+  const home_bay_id =
+    `${account?.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  for (const opts of cookieOptionVariants({
+    ...(domain ? { domain } : {}),
+    maxAge,
+    sameSite: "lax",
+    secure: req.protocol === "https",
+    httpOnly: true,
+  })) {
+    cookies.set(HOME_BAY_ID_COOKIE_NAME, home_bay_id, opts);
+  }
 }

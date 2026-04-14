@@ -24,6 +24,7 @@ import getParams from "@cocalc/http-api/lib/api/get-params";
 import { verify } from "password-hash";
 import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
+import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import {
@@ -54,6 +55,7 @@ export default async function signIn(req: Request, res: Response) {
     account_id = await getAccount(email, password, retry_token);
   } catch (err) {
     if (isWrongBayError(err)) {
+      await clearAuthCookies({ req, res });
       res.json({
         wrong_bay: true,
         home_bay_id: err.home_bay_id,

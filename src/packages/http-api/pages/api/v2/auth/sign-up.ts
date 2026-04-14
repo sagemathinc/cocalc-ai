@@ -48,6 +48,7 @@ import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { issueHomeBayRetryToken } from "@cocalc/server/auth/home-bay-retry-token";
 import { selectSignupHomeBay } from "@cocalc/server/accounts/select-home-bay";
 import { createClusterAccount } from "@cocalc/server/inter-bay/accounts";
+import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
 import { getTierTemplate } from "@cocalc/util/membership-tier-templates";
 import {
   isLaunchpadMode,
@@ -113,6 +114,7 @@ export async function signUp(req, res) {
       return;
     } catch (err) {
       if (isWrongBayError(err)) {
+        await clearAuthCookies({ req, res });
         res.json({
           wrong_bay: true,
           home_bay_id: err.home_bay_id,

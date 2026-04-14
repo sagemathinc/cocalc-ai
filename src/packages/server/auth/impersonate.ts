@@ -4,7 +4,10 @@ import getPool from "@cocalc/database/pool";
 import basePath from "@cocalc/backend/base-path";
 import clientSideRedirect from "@cocalc/server/auth/client-side-redirect";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
+import {
+  getBayPublicOriginForRequest,
+  getSitePublicOriginForRequest,
+} from "@cocalc/server/bay-public-origin";
 import { isLocale } from "@cocalc/util/i18n/const";
 import {
   issueHomeBayRetryToken,
@@ -12,6 +15,7 @@ import {
 } from "@cocalc/server/auth/home-bay-retry-token";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
+import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
 
 export async function signInUsingImpersonateToken({ req, res }) {
   try {
@@ -55,6 +59,7 @@ async function doIt({ req, res }) {
   const home_bay_id = `${account?.home_bay_id ?? ""}`.trim() || local_bay_id;
 
   if (!`${retry_token ?? ""}`.trim() && home_bay_id !== local_bay_id) {
+    await clearAuthCookies({ req, res });
     const retry = issueHomeBayRetryToken({
       account_id,
       home_bay_id,
@@ -78,7 +83,8 @@ async function doIt({ req, res }) {
 
   const target = new URL(
     basePath === "/" ? "/app" : `${basePath}/app`,
-    (await getBayPublicOriginForRequest(req, home_bay_id)) ??
+    (await getSitePublicOriginForRequest(req)) ??
+      (await getBayPublicOriginForRequest(req, home_bay_id)) ??
       `${req.protocol === "https" ? "https" : "http"}://${req.headers.host}`,
   );
 

@@ -19,11 +19,7 @@ import {
   AccountSignOutInputSchema,
   AccountSignOutOutputSchema,
 } from "@cocalc/http-api/lib/api/schema/accounts/sign-out";
-import {
-  ACCOUNT_ID_COOKIE_NAME,
-  REMEMBER_ME_COOKIE_NAME,
-} from "@cocalc/backend/auth/cookie-names";
-import { getBrowserCookieDomain } from "@cocalc/server/bay-public-origin";
+import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
 
 async function handle(req, res) {
   try {
@@ -49,10 +45,7 @@ async function signOut(req, res): Promise<void> {
     await deleteRememberMe(hash);
   }
   // also delete any security relevant cookies for safety and to avoid confusion.
-  const domain = await getBrowserCookieDomain();
-  const cookieOpts = domain ? { domain } : undefined;
-  res.clearCookie(REMEMBER_ME_COOKIE_NAME, cookieOpts);
-  res.clearCookie(ACCOUNT_ID_COOKIE_NAME, cookieOpts);
+  await clearAuthCookies({ req, res });
 }
 
 export default apiRoute({
