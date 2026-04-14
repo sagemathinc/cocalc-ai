@@ -11,6 +11,7 @@ describe("project-host daemon stop", () => {
   beforeEach(() => {
     jest.restoreAllMocks();
     process.env = { ...originalEnv };
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "0";
     runtimeDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-runtime-"),
     );
@@ -298,6 +299,47 @@ describe("project-host daemon stop", () => {
     ).toBe("1111");
     expect(fs.readFileSync(path.join(dataDir, "daemon.pid"), "utf8")).toBe(
       "2222",
+    );
+  });
+
+  it("defaults project-host bootstrap to a managed external conat router", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    delete process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
+
+    jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 0 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockImplementation(((_command: any, _args: any, opts?: any) => {
+        const env = opts?.env ?? {};
+        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+          return { pid: 3333, unref: () => {} } as any;
+        }
+        return { pid: 4444, unref: () => {} } as any;
+      }) as typeof __test__.processRuntime.spawn);
+
+    startDaemon(0);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(2);
+    expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).toMatchObject({
+      COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER: "1",
+      COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON: "1",
+      HOST: "127.0.0.1",
+      PORT: "9102",
+    });
+    expect(
+      fs.readFileSync(path.join(dataDir, "conat-router.pid"), "utf8"),
+    ).toBe("3333");
+    expect(fs.readFileSync(path.join(dataDir, "daemon.pid"), "utf8")).toBe(
+      "4444",
     );
   });
 

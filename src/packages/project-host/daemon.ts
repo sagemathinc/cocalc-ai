@@ -123,14 +123,27 @@ function envIsTrue(value: string | undefined): boolean {
   return TRUE_VALUES.has(`${value ?? ""}`.trim().toLowerCase());
 }
 
+function isProjectHostExternalConatRouterEnabled(
+  env: Record<string, string>,
+): boolean {
+  const value = `${env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER ?? ""}`.trim();
+  if (!value) {
+    return true;
+  }
+  return envIsTrue(value);
+}
+
 function usesManagedLocalConatRouter(env: Record<string, string>): boolean {
   return (
-    envIsTrue(env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER) &&
+    isProjectHostExternalConatRouterEnabled(env) &&
     !`${env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim()
   );
 }
 
 function ensureDefaults(env: Record<string, string>, index: number): void {
+  if (!`${env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER ?? ""}`.trim()) {
+    env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+  }
   if (!env.COCALC_DISABLE_BEES) {
     env.COCALC_DISABLE_BEES = "no";
   }
@@ -208,9 +221,7 @@ function resolveEnv(index: number): {
   if (env.COCALC_RUSTIC && !env.COCALC_RUSTIC_REPO) {
     env.COCALC_RUSTIC_REPO = path.join(env.COCALC_RUSTIC, "rustic");
   }
-  const routerEnabled = envIsTrue(
-    env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER,
-  );
+  const routerEnabled = isProjectHostExternalConatRouterEnabled(env);
   const managedRouter =
     routerEnabled &&
     !`${env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim();
