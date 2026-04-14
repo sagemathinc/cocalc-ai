@@ -7,6 +7,8 @@ import path from "node:path";
 import { btrfs } from "./util";
 
 const logger = getLogger("file-server:btrfs:quota-queue");
+const DEFAULT_RESCAN_LOG_MS = 250;
+const DEFAULT_RESCAN_WARN_MS = 2000;
 
 type QuotaWorkKind =
   | "create_qgroup"
@@ -82,6 +84,78 @@ const waiters = new Map<
   string,
   { resolve: () => void; reject: (err: Error) => void }
 >();
+
+type QuotaWorkLogContext = {
+  queue_id?: string;
+  kind?: QuotaWorkKind;
+  mount: string;
+  path?: string;
+  snapshotPath?: string;
+  subvolumePath?: string;
+  attempts?: number;
+  phase?: string;
+};
+
+function positiveNumberEnv(name: string, fallback: number): number {
+  const raw = Number(process.env[name]);
+  return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
+}
+
+function rescanLogMs(): number {
+  return positiveNumberEnv(
+    "COCALC_BTRFS_QUOTA_RESCAN_LOG_MS",
+    DEFAULT_RESCAN_LOG_MS,
+  );
+}
+
+function rescanWarnMs(): number {
+  return Math.max(
+    rescanLogMs(),
+    positiveNumberEnv(
+      "COCALC_BTRFS_QUOTA_RESCAN_WARN_MS",
+      DEFAULT_RESCAN_WARN_MS,
+    ),
+  );
+}
+
+function trimOutput(value: unknown, max = 400): string | undefined {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return;
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+function logRescanResult(
+  context: QuotaWorkLogContext,
+  {
+    elapsedMs,
+    exit_code,
+    stderr,
+    stdout,
+  }: {
+    elapsedMs: number;
+    exit_code?: number;
+    stderr?: string;
+    stdout?: string;
+  },
+): void {
+  const threshold = rescanLogMs();
+  const warnThreshold = rescanWarnMs();
+  if (elapsedMs < threshold) {
+    return;
+  }
+  const payload = {
+    elapsed_ms: elapsedMs,
+    exit_code: exit_code ?? 0,
+    stderr: trimOutput(stderr),
+    stdout: trimOutput(stdout),
+    ...context,
+  };
+  if (elapsedMs >= warnThreshold || (exit_code ?? 0) !== 0) {
+    logger.warn("btrfs quota rescan completed", payload);
+  } else {
+    logger.info("btrfs quota rescan completed", payload);
+  }
+}
 
 function sqliteFilename(): string {
   return (
@@ -178,12 +252,26 @@ function rescanInProgressError(err: any): boolean {
   return s.includes("operation now in progress");
 }
 
-async function waitForRescan(mount: string): Promise<void> {
+async function waitForRescan(
+  mount: string,
+  context?: Omit<QuotaWorkLogContext, "mount">,
+): Promise<void> {
+  const started = Date.now();
   const result = await btrfs({
     args: ["quota", "rescan", "-W", mount],
     err_on_exit: false,
     verbose: false,
   });
+  const elapsedMs = Date.now() - started;
+  logRescanResult(
+    { mount, ...context },
+    {
+      elapsedMs,
+      exit_code: result.exit_code,
+      stderr: result.stderr,
+      stdout: result.stdout,
+    },
+  );
   if (!result.exit_code) return;
   const stderr = `${result.stderr ?? ""}`.toLowerCase();
   if (
@@ -209,43 +297,54 @@ async function getSubvolumeIdAtPath(path: string): Promise<number> {
   return Number(match[1]);
 }
 
-async function enableQuota(mount: string): Promise<void> {
+async function enableQuota(
+  mount: string,
+  context?: Omit<QuotaWorkLogContext, "mount">,
+): Promise<void> {
   await btrfs({
     args: ["quota", "enable", mount],
     err_on_exit: true,
     verbose: false,
   });
-  await waitForRescan(mount);
+  await waitForRescan(mount, { ...context, phase: "enable-quota" });
 }
 
 async function withRescanBarrier(
   mount: string,
+  context: Omit<QuotaWorkLogContext, "mount">,
   fn: () => Promise<void>,
 ): Promise<void> {
-  await waitForRescan(mount);
+  await waitForRescan(mount, { ...context, phase: "before" });
   try {
     await fn();
   } catch (err) {
     if (!rescanInProgressError(err)) {
       throw err;
     }
-    await waitForRescan(mount);
+    logger.warn("btrfs qgroup operation hit in-progress rescan", {
+      mount,
+      ...context,
+      err: trimOutput((err as any)?.stderr ?? (err as any)?.message ?? err),
+    });
+    await waitForRescan(mount, { ...context, phase: "retry-before" });
     await fn();
   }
-  await waitForRescan(mount);
+  await waitForRescan(mount, { ...context, phase: "after" });
 }
 
 async function createQgroupNow({
   mount,
   path,
+  context,
 }: {
   mount: string;
   path: string;
+  context?: Omit<QuotaWorkLogContext, "mount" | "path">;
 }): Promise<void> {
   if (!(await exists(path))) return;
   const id = await getSubvolumeIdAtPath(path);
   const tryCreate = async () => {
-    await withRescanBarrier(mount, async () => {
+    await withRescanBarrier(mount, { ...context, path }, async () => {
       await btrfs({
         args: ["qgroup", "create", `1/${id}`, path],
         verbose: false,
@@ -257,7 +356,7 @@ async function createQgroupNow({
   } catch (err) {
     if (alreadyExistsError(err)) return;
     if (!quotaDisabledError(err)) throw err;
-    await enableQuota(mount);
+    await enableQuota(mount, { ...context, path });
     try {
       await tryCreate();
     } catch (retryErr) {
@@ -271,34 +370,43 @@ async function assignSnapshotQgroupNow({
   mount,
   snapshotPath,
   subvolumePath,
+  context,
 }: {
   mount: string;
   snapshotPath: string;
   subvolumePath: string;
+  context?: Omit<
+    QuotaWorkLogContext,
+    "mount" | "snapshotPath" | "subvolumePath"
+  >;
 }): Promise<void> {
   if (!(await exists(snapshotPath)) || !(await exists(subvolumePath))) return;
   const snapshotId = await getSubvolumeIdAtPath(snapshotPath);
   const subvolumeId = await getSubvolumeIdAtPath(subvolumePath);
   const tryAssign = async () => {
-    await withRescanBarrier(mount, async () => {
-      await btrfs({
-        args: [
-          "qgroup",
-          "assign",
-          `0/${snapshotId}`,
-          `1/${subvolumeId}`,
-          subvolumePath,
-        ],
-        verbose: false,
-      });
-    });
+    await withRescanBarrier(
+      mount,
+      { ...context, snapshotPath, subvolumePath },
+      async () => {
+        await btrfs({
+          args: [
+            "qgroup",
+            "assign",
+            `0/${snapshotId}`,
+            `1/${subvolumeId}`,
+            subvolumePath,
+          ],
+          verbose: false,
+        });
+      },
+    );
   };
   try {
     await tryAssign();
   } catch (err) {
     if (alreadyExistsError(err)) return;
     if (!quotaDisabledError(err)) throw err;
-    await enableQuota(mount);
+    await enableQuota(mount, { ...context, snapshotPath, subvolumePath });
     try {
       await tryAssign();
     } catch (retryErr) {
@@ -312,15 +420,17 @@ async function setQgroupLimitNow({
   mount,
   path,
   size,
+  context,
 }: {
   mount: string;
   path: string;
   size: string;
+  context?: Omit<QuotaWorkLogContext, "mount" | "path">;
 }): Promise<void> {
   if (!(await exists(path))) return;
   const id = await getSubvolumeIdAtPath(path);
   const tryLimit = async () => {
-    await withRescanBarrier(mount, async () => {
+    await withRescanBarrier(mount, { ...context, path }, async () => {
       await btrfs({
         args: ["qgroup", "limit", `${size}`, path],
         verbose: false,
@@ -334,18 +444,24 @@ async function setQgroupLimitNow({
   try {
     await tryLimit();
   } catch (err) {
-    await enableQuota(mount);
-    await createQgroupNow({ mount, path });
+    await enableQuota(mount, { ...context, path });
+    await createQgroupNow({ mount, path, context });
     await tryLimit();
   }
 }
 
 async function executeRow(row: QueueRow): Promise<void> {
+  const context = {
+    queue_id: row.id,
+    kind: row.kind,
+    attempts: row.attempts,
+  } satisfies Omit<QuotaWorkLogContext, "mount">;
   switch (row.payload.kind) {
     case "create_qgroup":
       await createQgroupNow({
         mount: row.payload.mount,
         path: row.payload.path,
+        context,
       });
       return;
     case "assign_snapshot_qgroup":
@@ -353,6 +469,7 @@ async function executeRow(row: QueueRow): Promise<void> {
         mount: row.payload.mount,
         snapshotPath: row.payload.snapshotPath,
         subvolumePath: row.payload.subvolumePath,
+        context,
       });
       return;
     case "set_qgroup_limit":
@@ -360,6 +477,7 @@ async function executeRow(row: QueueRow): Promise<void> {
         mount: row.payload.mount,
         path: row.payload.path,
         size: row.payload.size,
+        context,
       });
       return;
   }
