@@ -1719,20 +1719,14 @@ async function resolveProjectApi(
   projectIdentifier?: string,
   cwd = process.cwd(),
 ): Promise<{ project: ProjectRow; api: ProjectApi }> {
-  const project = await resolveProjectFromArgOrContext(
+  const { project, client } = await resolveProjectConatClient(
     ctx,
     projectIdentifier,
     cwd,
   );
-  const routed = await getOrCreateRoutedProjectHostClient(ctx, project);
-  if (!routed.client) {
-    throw new Error(
-      `internal error: routed client missing for host ${routed.host_id}`,
-    );
-  }
   const api = projectApiClient({
     project_id: project.project_id,
-    client: routed.client,
+    client,
     timeout: Math.max(1_000, Math.min(ctx.timeoutMs, ctx.rpcTimeoutMs)),
   });
   return { project, api };

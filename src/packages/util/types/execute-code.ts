@@ -68,6 +68,10 @@ export interface ExecuteCodeOptionsAsyncGet {
   async_await?: boolean; // if set, the call returns when the job finishes (status "complete" or "error")
 }
 
+export type ExecuteCodeRequest =
+  | ExecuteCodeOptions
+  | ExecuteCodeOptionsAsyncGet;
+
 export interface ExecuteCodeOptionsWithCallback extends ExecuteCodeOptions {
   cb?: (err: undefined | Error, output?: ExecuteCodeOutput) => void;
 }

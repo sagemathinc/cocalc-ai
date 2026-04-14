@@ -5,8 +5,13 @@
  * This is the "core admin surface" for direct project operations.
  */
 import { Command } from "commander";
+import type {
+  ExecuteCodeOutput,
+  ExecuteCodeOutputAsync,
+} from "@cocalc/util/types/execute-code";
 
 import type { ProjectCommandDeps } from "../project";
+import { durationToMs } from "../../../core/utils";
 
 export function getProjectExecTimeoutSeconds(argv = process.argv): number {
   const timeout = extractProjectExecTimeout(argv);
@@ -14,6 +19,13 @@ export function getProjectExecTimeoutSeconds(argv = process.argv): number {
     return timeout;
   }
   return 60;
+}
+
+function getProjectExecArgv(command?: Command): string[] {
+  return (
+    ((command as any)?.parent?.parent?.rawArgs as string[] | undefined) ??
+    process.argv
+  );
 }
 
 function extractProjectExecTimeout(argv: string[]): number | null {
@@ -37,7 +49,13 @@ function extractProjectExecTimeout(argv: string[]): number | null {
       const value = Number(token.slice("--timeout=".length));
       return Number.isFinite(value) ? value : null;
     }
-    if (token === "--project" || token === "-w" || token === "--path") {
+    if (
+      token === "--project" ||
+      token === "-w" ||
+      token === "--path" ||
+      token === "--job-id" ||
+      token === "--poll-ms"
+    ) {
       i += 1;
     }
   }
@@ -51,6 +69,20 @@ function findProjectExecArgs(argv: string[]): number {
     }
   }
   return -1;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAsyncExecOutput(
+  result: ExecuteCodeOutput,
+): result is ExecuteCodeOutputAsync {
+  return result.type === "async";
+}
+
+function isTerminalAsyncStatus(status: string | undefined): boolean {
+  return status === "completed" || status === "error" || status === "killed";
 }
 
 export function registerProjectBasicCommands(
@@ -72,6 +104,7 @@ export function registerProjectBasicCommands(
     confirmHardProjectDelete,
     waitForLro,
     waitForProjectNotRunning,
+    resolveProjectProjectApi,
     runLocalCommand,
   } = deps;
 
@@ -511,6 +544,17 @@ export function registerProjectBasicCommands(
     .option("--timeout <seconds>", "command timeout seconds", "60")
     .option("--path <path>", "working path inside project")
     .option("--bash", "treat command as a bash command string")
+    .option("--async", "start execution asynchronously and return a job id")
+    .option(
+      "--wait",
+      "when used with --async or --job-id, wait for completion and return final status/output",
+    )
+    .option("--job-id <id>", "fetch or wait on an existing async execution job")
+    .option(
+      "--poll-ms <duration>",
+      "poll interval for async wait mode (e.g. 250ms, 2s)",
+      "1s",
+    )
     .action(
       async (
         commandArgs: string[],
@@ -519,6 +563,10 @@ export function registerProjectBasicCommands(
           timeout?: string;
           path?: string;
           bash?: boolean;
+          async?: boolean;
+          wait?: boolean;
+          jobId?: string;
+          pollMs?: string;
         },
         command: Command,
       ) => {
@@ -528,52 +576,161 @@ export function registerProjectBasicCommands(
             : commandArgs
               ? [commandArgs]
               : [];
-          if (!execArgs.length) {
-            throw new Error("command is required");
+          const jobId = `${opts.jobId ?? ""}`.trim();
+          const wantsAsync = !!opts.async;
+          const wantsWait = !!opts.wait;
+          if (jobId && execArgs.length) {
+            throw new Error("do not pass a command when using --job-id");
           }
-          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
-          const timeout =
-            opts.timeout != null && Number(opts.timeout) !== 60
-              ? Number(opts.timeout)
-              : getProjectExecTimeoutSeconds();
-          const [first, ...rest] = execArgs;
-          const execOpts = opts.bash
-            ? {
-                command: execArgs.join(" "),
-                bash: true,
-                timeout,
-                err_on_exit: false,
-                path: opts.path,
-              }
-            : {
-                command: first,
-                args: rest,
-                bash: false,
-                timeout,
-                err_on_exit: false,
-                path: opts.path,
+          if (jobId && wantsAsync) {
+            throw new Error("do not combine --job-id with --async");
+          }
+          if (!jobId && !execArgs.length) {
+            throw new Error("command is required unless --job-id is provided");
+          }
+          if (wantsWait && !jobId && !wantsAsync) {
+            throw new Error("--wait requires --async or --job-id");
+          }
+          const pollMs = Math.max(100, durationToMs(opts.pollMs, ctx.pollMs));
+
+          const fetchAsyncExecResult = async (
+            existingJobId: string,
+            api: {
+              system: {
+                exec: (opts: {
+                  async_get: string;
+                }) => Promise<ExecuteCodeOutput>;
               };
+            },
+          ): Promise<ExecuteCodeOutput> =>
+            await api.system.exec({ async_get: existingJobId });
 
-          const commandTimeoutMs = Math.max(
-            30_000,
-            Math.ceil(timeout * 1000) + 5_000,
-          );
-          const prevTimeoutMs = ctx.timeoutMs;
-          const prevRpcTimeoutMs = ctx.rpcTimeoutMs;
-          ctx.timeoutMs = Math.max(prevTimeoutMs, commandTimeoutMs);
-          ctx.rpcTimeoutMs = Math.max(prevRpcTimeoutMs, commandTimeoutMs);
-          let result;
-          try {
-            result = await ctx.hub.projects.exec({
-              project_id: ws.project_id,
-              execOpts,
-            });
-          } finally {
-            ctx.timeoutMs = prevTimeoutMs;
-            ctx.rpcTimeoutMs = prevRpcTimeoutMs;
+          const waitForAsyncExecResult = async (
+            existingJobId: string,
+            api: {
+              system: {
+                exec: (opts: {
+                  async_get: string;
+                }) => Promise<ExecuteCodeOutput>;
+              };
+            },
+          ): Promise<ExecuteCodeOutput> => {
+            const started = Date.now();
+            let last: ExecuteCodeOutput | undefined;
+            while (Date.now() - started <= ctx.timeoutMs) {
+              last = await fetchAsyncExecResult(existingJobId, api);
+              if (
+                !isAsyncExecOutput(last) ||
+                isTerminalAsyncStatus(last.status)
+              ) {
+                return last;
+              }
+              await sleep(pollMs);
+            }
+            const lastStatus =
+              last && isAsyncExecOutput(last) ? last.status : "unknown";
+            throw new Error(
+              `timeout waiting for exec job ${existingJobId}; last status=${lastStatus}`,
+            );
+          };
+
+          let result: ExecuteCodeOutput;
+          let ws:
+            | {
+                project_id: string;
+                title: string;
+                host_id: string | null;
+              }
+            | undefined;
+          if (jobId) {
+            const resolved = await resolveProjectProjectApi(ctx, opts.project);
+            ws = resolved.project;
+            result = wantsWait
+              ? await waitForAsyncExecResult(jobId, resolved.api)
+              : await fetchAsyncExecResult(jobId, resolved.api);
+          } else {
+            const timeout = getProjectExecTimeoutSeconds(
+              getProjectExecArgv(command),
+            );
+            const [first, ...rest] = execArgs;
+            if (wantsAsync) {
+              const resolved = await resolveProjectProjectApi(
+                ctx,
+                opts.project,
+              );
+              ws = resolved.project;
+              result = await resolved.api.system.exec(
+                opts.bash
+                  ? {
+                      command: execArgs.join(" "),
+                      bash: true,
+                      timeout,
+                      err_on_exit: false,
+                      path: opts.path,
+                      async_call: true,
+                    }
+                  : {
+                      command: first,
+                      args: rest,
+                      bash: false,
+                      timeout,
+                      err_on_exit: false,
+                      path: opts.path,
+                      async_call: true,
+                    },
+              );
+              if (wantsWait && isAsyncExecOutput(result)) {
+                result = await waitForAsyncExecResult(
+                  result.job_id,
+                  resolved.api,
+                );
+              }
+            } else {
+              const commandTimeoutMs = Math.max(
+                30_000,
+                Math.ceil(timeout * 1000) + 5_000,
+              );
+              const prevTimeoutMs = ctx.timeoutMs;
+              const prevRpcTimeoutMs = ctx.rpcTimeoutMs;
+              ctx.timeoutMs = Math.max(prevTimeoutMs, commandTimeoutMs);
+              ctx.rpcTimeoutMs = Math.max(prevRpcTimeoutMs, commandTimeoutMs);
+              try {
+                const resolved = await resolveProjectProjectApi(
+                  ctx,
+                  opts.project,
+                );
+                ws = resolved.project;
+                result = await resolved.api.system.exec(
+                  opts.bash
+                    ? {
+                        command: execArgs.join(" "),
+                        bash: true,
+                        timeout,
+                        err_on_exit: false,
+                        path: opts.path,
+                      }
+                    : {
+                        command: first,
+                        args: rest,
+                        bash: false,
+                        timeout,
+                        err_on_exit: false,
+                        path: opts.path,
+                      },
+                );
+              } finally {
+                ctx.timeoutMs = prevTimeoutMs;
+                ctx.rpcTimeoutMs = prevRpcTimeoutMs;
+              }
+            }
           }
 
-          if (!ctx.globals.json && ctx.globals.output !== "json") {
+          const shouldWriteOutput =
+            !ctx.globals.json &&
+            ctx.globals.output !== "json" &&
+            (!isAsyncExecOutput(result) ||
+              isTerminalAsyncStatus(result.status));
+          if (shouldWriteOutput) {
             if (result.stdout) process.stdout.write(result.stdout);
             if (result.stderr) process.stderr.write(result.stderr);
             if (result.exit_code !== 0) {
@@ -582,7 +739,7 @@ export function registerProjectBasicCommands(
           }
 
           return {
-            project_id: ws.project_id,
+            project_id: ws!.project_id,
             ...result,
           };
         });
