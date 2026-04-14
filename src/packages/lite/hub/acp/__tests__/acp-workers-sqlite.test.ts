@@ -1,8 +1,8 @@
 import {
-  closeDatabase,
-  getDatabase,
-  initDatabase,
-} from "../../sqlite/database";
+  closeAcpDatabase,
+  getAcpDatabase,
+  initAcpDatabase,
+} from "../../sqlite/acp-database";
 import {
   getAcpWorker,
   heartbeatAcpWorker,
@@ -10,16 +10,16 @@ import {
 } from "../../sqlite/acp-workers";
 
 beforeAll(() => {
-  closeDatabase();
-  initDatabase({ filename: ":memory:" });
+  closeAcpDatabase();
+  initAcpDatabase({ filename: ":memory:" });
 });
 
 afterEach(() => {
-  getDatabase().prepare("DELETE FROM acp_workers").run();
+  getAcpDatabase().prepare("DELETE FROM acp_workers").run();
 });
 
 afterAll(() => {
-  closeDatabase();
+  closeAcpDatabase();
 });
 
 describe("heartbeatAcpWorker", () => {

@@ -192,6 +192,19 @@ describe("the filesystem operations", () => {
 
 describe("snapshot-aware quota accounting", () => {
   let vol: Subvolume;
+  const previousEnv = process.env.COCALC_BTRFS_ENABLE_SNAPSHOT_QGROUP_ASSIGN;
+
+  beforeAll(() => {
+    process.env.COCALC_BTRFS_ENABLE_SNAPSHOT_QGROUP_ASSIGN = "1";
+  });
+
+  afterAll(() => {
+    if (previousEnv == null) {
+      delete process.env.COCALC_BTRFS_ENABLE_SNAPSHOT_QGROUP_ASSIGN;
+    } else {
+      process.env.COCALC_BTRFS_ENABLE_SNAPSHOT_QGROUP_ASSIGN = previousEnv;
+    }
+  });
 
   it("reports quota from the tracking qgroup when snapshots retain data", async () => {
     vol = await fs.subvolumes.ensure("quota-with-snapshots");
@@ -231,6 +244,12 @@ describe("test snapshots", () => {
     await vol.snapshots.create("snap1");
     expect(await vol.snapshots.readdir()).toEqual(["snap1"]);
     expect(await vol.snapshots.hasUnsavedChanges()).toBe(false);
+  });
+
+  it("reports snapshot usage without tracking qgroup assignment", async () => {
+    const usage = await vol.snapshots.usage("snap1");
+    expect(usage.name).toBe("snap1");
+    expect(usage.used).toBeGreaterThanOrEqual(0);
   });
 
   it("create a file see that we know there are unsaved changes", async () => {

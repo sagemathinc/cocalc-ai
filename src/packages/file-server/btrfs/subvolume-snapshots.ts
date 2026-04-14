@@ -11,6 +11,14 @@ import { parsePlainQgroupShow } from "./subvolume-quota";
 import { queueAssignSnapshotQgroup } from "./quota-queue";
 
 const logger = getLogger("file-server:btrfs:subvolume-snapshots");
+const SNAPSHOT_QGROUP_ASSIGN_ENV = "COCALC_BTRFS_ENABLE_SNAPSHOT_QGROUP_ASSIGN";
+
+function snapshotQgroupAssignmentEnabled(): boolean {
+  const raw = `${process.env[SNAPSHOT_QGROUP_ASSIGN_ENV] ?? ""}`
+    .trim()
+    .toLowerCase();
+  return ["1", "true", "yes", "on"].includes(raw);
+}
 
 export class SubvolumeSnapshots {
   public readonly snapshotsDir: string;
@@ -72,6 +80,15 @@ export class SubvolumeSnapshots {
     await btrfs({ args });
 
     if (quotaMode === "skip") {
+      return;
+    }
+
+    if (!snapshotQgroupAssignmentEnabled()) {
+      logger.debug("skipping snapshot qgroup assignment", {
+        subvolume: this.subvolume.name,
+        snapshot: name,
+        env: SNAPSHOT_QGROUP_ASSIGN_ENV,
+      });
       return;
     }
 

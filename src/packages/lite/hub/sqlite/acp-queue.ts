@@ -2,12 +2,12 @@ import type {
   AcpChatContext,
   AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
-import { getDatabase } from "./database";
+import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 
 const TABLE = "acp_queue";
 
 function init(): void {
-  const db = getDatabase();
+  const db = getAcpDatabase();
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${TABLE} (
       project_id TEXT NOT NULL,
@@ -22,6 +22,7 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_queue_created_idx ON ${TABLE}(created_at)`,
   );
+  ensureAcpTableMigrated(TABLE);
 }
 
 let initialized = false;
@@ -38,7 +39,7 @@ export function enqueueAcpPayload(
   payload: AcpStreamMessage,
 ): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const stmt = db.prepare(
     `INSERT OR REPLACE INTO ${TABLE}
       (project_id, path, message_date, seq, payload, created_at)
@@ -57,7 +58,7 @@ export function enqueueAcpPayload(
 
 export function listAcpPayloads(context: AcpChatContext): AcpStreamMessage[] {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const stmt = db.prepare(
     `SELECT payload FROM ${TABLE}
      WHERE project_id = ? AND path = ? AND message_date = ?
@@ -70,7 +71,7 @@ export function listAcpPayloads(context: AcpChatContext): AcpStreamMessage[] {
 
 export function clearAcpPayloads(context: AcpChatContext): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const stmt = db.prepare(
     `DELETE FROM ${TABLE}
      WHERE project_id = ? AND path = ? AND message_date = ?`,
@@ -83,6 +84,6 @@ const DEFAULT_RETENTION_MS = 24 * 60 * 60 * 1000;
 export function pruneExpired(retentionMs: number = DEFAULT_RETENTION_MS): void {
   ensureInit();
   const cutoff = Date.now() - retentionMs;
-  const db = getDatabase();
+  const db = getAcpDatabase();
   db.prepare(`DELETE FROM ${TABLE} WHERE created_at < ?`).run(cutoff);
 }

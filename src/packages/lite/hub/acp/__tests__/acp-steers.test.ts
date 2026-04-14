@@ -1,8 +1,8 @@
 import {
-  closeDatabase,
-  initDatabase,
-  getDatabase,
-} from "../../sqlite/database";
+  closeAcpDatabase,
+  initAcpDatabase,
+  getAcpDatabase,
+} from "../../sqlite/acp-database";
 import {
   decodeAcpSteerCandidateIds,
   decodeAcpSteerRequest,
@@ -30,17 +30,17 @@ function makeRequest() {
 }
 
 beforeAll(() => {
-  closeDatabase();
-  initDatabase({ filename: ":memory:" });
+  closeAcpDatabase();
+  initAcpDatabase({ filename: ":memory:" });
   listPendingAcpSteers();
 });
 
 beforeEach(() => {
-  getDatabase().prepare("DELETE FROM acp_steers").run();
+  getAcpDatabase().prepare("DELETE FROM acp_steers").run();
 });
 
 afterAll(() => {
-  closeDatabase();
+  closeAcpDatabase();
 });
 
 describe("acp steer queue", () => {
@@ -78,7 +78,7 @@ describe("acp steer queue", () => {
     });
     markAcpSteerHandled({ id: row.id });
     expect(listPendingAcpSteers()).toEqual([]);
-    const stored = getDatabase()
+    const stored = getAcpDatabase()
       .prepare("SELECT state FROM acp_steers WHERE id = ?")
       .get(row.id);
     expect(stored && stored.state).toBe("handled");

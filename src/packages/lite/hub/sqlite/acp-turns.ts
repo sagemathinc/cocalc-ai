@@ -1,5 +1,5 @@
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
-import { getDatabase } from "./database";
+import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 
 const TABLE = "acp_turns";
 
@@ -26,7 +26,7 @@ export interface AcpTurnLeaseRow extends AcpTurnLeaseKey {
 }
 
 function init(): void {
-  const db = getDatabase();
+  const db = getAcpDatabase();
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${TABLE} (
       project_id TEXT NOT NULL,
@@ -63,6 +63,7 @@ function init(): void {
   if (!hasColumn("thread_id")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN thread_id TEXT`);
   }
+  ensureAcpTableMigrated(TABLE);
 }
 
 let initialized = false;
@@ -94,7 +95,7 @@ export function startAcpTurnLease({
   session_id?: string;
 }): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const key = keyFromContext(context);
   const now = Date.now();
   db.prepare(
@@ -140,7 +141,7 @@ export function heartbeatAcpTurnLease({
   session_id?: string;
 }): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   db.prepare(
     `UPDATE ${TABLE}
       SET heartbeat_at = ?,
@@ -171,7 +172,7 @@ export function updateAcpTurnLeaseSessionId({
 }): void {
   if (!session_id) return;
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   db.prepare(
     `UPDATE ${TABLE}
       SET session_id = ?
@@ -193,7 +194,7 @@ export function finalizeAcpTurnLease({
   owner_instance_id?: string;
 }): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   db.prepare(
     `UPDATE ${TABLE}
@@ -244,7 +245,7 @@ export function listRunningAcpTurnLeases({
   exclude_owner_instance_id?: string;
 } = {}): AcpTurnLeaseRow[] {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   let query = selectLeaseByWhere("WHERE state = 'running'");
   const params: any[] = [];
   if (exclude_owner_instance_id) {
@@ -259,7 +260,7 @@ export function getAcpTurnLease(
   key: AcpTurnLeaseKey,
 ): AcpTurnLeaseRow | undefined {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return db
     .prepare(
       selectLeaseByWhere(

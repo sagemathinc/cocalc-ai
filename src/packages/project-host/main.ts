@@ -95,6 +95,7 @@ import { initProjectTouchService } from "./touch-service";
 import { initProjectStorageInfoService } from "./storage-info-service";
 import { initProjectDocumentActivityService } from "./document-activity-service";
 import { initProjectArchiveInfoService } from "./archive-info-service";
+import { startProjectHostEventLoopStallMonitor } from "./event-loop-stalls";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -292,6 +293,7 @@ export async function main(
 
   logger.info("Local sqlite + changefeeds for UI data");
   initSqlite();
+  startProjectHostEventLoopStallMonitor();
   const hostId = resolveProjectHostId(_config.hostId);
   const conatAuth = createProjectHostConatAuth({ host_id: hostId });
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
-import { getDatabase } from "./database";
+import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 
 const TABLE = "acp_interrupts";
 
@@ -21,7 +21,7 @@ export interface AcpInterruptRow {
 }
 
 function init(): void {
-  const db = getDatabase();
+  const db = getAcpDatabase();
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${TABLE} (
       id TEXT PRIMARY KEY,
@@ -43,6 +43,7 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_interrupts_thread_state_idx ON ${TABLE}(project_id, path, thread_id, state, created_at)`,
   );
+  ensureAcpTableMigrated(TABLE);
 }
 
 let initialized = false;
@@ -68,7 +69,7 @@ export function enqueueAcpInterrupt({
   chat?: AcpChatContext;
 }): AcpInterruptRow {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   const normalizedCandidateIds = [
     ...new Set(
@@ -133,7 +134,7 @@ export function enqueueAcpInterrupt({
 
 export function listPendingAcpInterrupts(limit = 50): AcpInterruptRow[] {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return db
     .prepare(
       `SELECT * FROM ${TABLE}
@@ -146,7 +147,7 @@ export function listPendingAcpInterrupts(limit = 50): AcpInterruptRow[] {
 
 export function markAcpInterruptHandled({ id }: { id: string }): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   db.prepare(
     `UPDATE ${TABLE}
@@ -169,7 +170,7 @@ export function markAcpInterruptsHandledForThread({
   thread_id: string;
 }): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   db.prepare(
     `UPDATE ${TABLE}
@@ -192,7 +193,7 @@ export function markAcpInterruptError({
   error: string;
 }): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   db.prepare(
     `UPDATE ${TABLE}
