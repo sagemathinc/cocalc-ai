@@ -8,7 +8,7 @@ import type {
   AcpAutomationRecord,
   AcpAutomationState,
 } from "@cocalc/conat/ai/acp/types";
-import { getDatabase } from "./database";
+import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 
 const TABLE = "acp_automations";
 
@@ -49,7 +49,7 @@ export interface AcpAutomationRow {
 }
 
 function init(): void {
-  const db = getDatabase();
+  const db = getAcpDatabase();
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${TABLE} (
       automation_id TEXT PRIMARY KEY,
@@ -126,6 +126,7 @@ function init(): void {
   if (!hasColumn("command_max_output_bytes")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN command_max_output_bytes INTEGER`);
   }
+  ensureAcpTableMigrated(TABLE);
 }
 
 let initialized = false;
@@ -208,7 +209,7 @@ export function getAcpAutomationByThread(opts: {
   thread_id: string;
 }): AcpAutomationRow | undefined {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return decodeRow(
     db
       .prepare(
@@ -223,7 +224,7 @@ export function getAcpAutomationById(
   automation_id: string,
 ): AcpAutomationRow | undefined {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return decodeRow(
     db
       .prepare(`SELECT * FROM ${TABLE} WHERE automation_id = ?`)
@@ -238,7 +239,7 @@ export function upsertAcpAutomation(
   },
 ): AcpAutomationRow {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = row.updated_at ?? Date.now();
   const created_at = row.created_at ?? now;
   db.prepare(
@@ -321,7 +322,7 @@ export function deleteAcpAutomationByThread(opts: {
   thread_id: string;
 }): void {
   ensureInit();
-  getDatabase()
+  getAcpDatabase()
     .prepare(
       `DELETE FROM ${TABLE}
        WHERE project_id = ? AND path = ? AND thread_id = ?`,
@@ -333,7 +334,7 @@ export function listDueAcpAutomations(
   dueAt: number = Date.now(),
 ): AcpAutomationRow[] {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return db
     .prepare(
       `SELECT * FROM ${TABLE}
@@ -352,7 +353,7 @@ export function listAcpAutomationsForProject(
   project_id: string,
 ): AcpAutomationRow[] {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return db
     .prepare(
       `SELECT * FROM ${TABLE}
@@ -366,7 +367,7 @@ export function listAcpAutomationsForProject(
 
 export function deleteAcpAutomationsForProject(project_id: string): void {
   ensureInit();
-  getDatabase()
+  getAcpDatabase()
     .prepare(
       `DELETE FROM ${TABLE}
        WHERE project_id = ?`,
@@ -376,7 +377,7 @@ export function deleteAcpAutomationsForProject(project_id: string): void {
 
 export function listAllAcpAutomations(): AcpAutomationRow[] {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return db
     .prepare(
       `SELECT * FROM ${TABLE}

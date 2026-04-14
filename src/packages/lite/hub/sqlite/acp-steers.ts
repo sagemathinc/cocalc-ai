@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AcpSteerRequest } from "@cocalc/conat/ai/acp/types";
-import { getDatabase } from "./database";
+import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 
 const TABLE = "acp_steers";
 
@@ -22,7 +22,7 @@ export interface AcpSteerRow {
 }
 
 function init(): void {
-  const db = getDatabase();
+  const db = getAcpDatabase();
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${TABLE} (
       id TEXT PRIMARY KEY,
@@ -46,6 +46,7 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_steers_thread_state_idx ON ${TABLE}(project_id, path, thread_id, state, created_at)`,
   );
+  ensureAcpTableMigrated(TABLE);
 }
 
 let initialized = false;
@@ -65,7 +66,7 @@ export function enqueueAcpSteer({
   candidate_ids?: string[];
 }): AcpSteerRow {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const project_id =
     `${request.chat?.project_id ?? request.project_id ?? ""}`.trim();
   const path = `${request.chat?.path ?? ""}`.trim();
@@ -138,7 +139,7 @@ export function enqueueAcpSteer({
 
 export function listPendingAcpSteers(limit = 50): AcpSteerRow[] {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return db
     .prepare(
       `SELECT * FROM ${TABLE}
@@ -151,7 +152,7 @@ export function listPendingAcpSteers(limit = 50): AcpSteerRow[] {
 
 export function markAcpSteerHandled({ id }: { id: string }): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   db.prepare(
     `UPDATE ${TABLE}
@@ -172,7 +173,7 @@ export function markAcpSteerError({
   error: string;
 }): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   db.prepare(
     `UPDATE ${TABLE}

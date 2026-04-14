@@ -1,5 +1,5 @@
 import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
-import { getDatabase } from "./database";
+import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 
 const TABLE = "acp_jobs";
 const THREAD_QUEUE_ORDER = `
@@ -42,7 +42,7 @@ export interface AcpJobRow {
 }
 
 function init(): void {
-  const db = getDatabase();
+  const db = getAcpDatabase();
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${TABLE} (
       op_id TEXT PRIMARY KEY,
@@ -99,6 +99,7 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_jobs_recovery_parent_idx ON ${TABLE}(recovery_parent_op_id, state, created_at)`,
   );
+  ensureAcpTableMigrated(TABLE);
 }
 
 let initialized = false;
@@ -154,7 +155,7 @@ function assertChatIdentity(request: AcpJobRequest): {
 
 export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const {
     project_id,
     path,
@@ -217,7 +218,7 @@ export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
 
 export function getAcpJobByOpId(op_id: string): AcpJobRow | undefined {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return db.prepare(`SELECT * FROM ${TABLE} WHERE op_id = ?`).get(op_id) as
     | AcpJobRow
     | undefined;
@@ -229,7 +230,7 @@ export function listAcpJobsByRecoveryParent({
   recovery_parent_op_id: string;
 }): AcpJobRow[] {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return db
     .prepare(
       `SELECT * FROM ${TABLE}
@@ -249,7 +250,7 @@ export function getAcpJob({
   user_message_id: string;
 }): AcpJobRow | undefined {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return db
     .prepare(
       `SELECT * FROM ${TABLE}
@@ -260,7 +261,7 @@ export function getAcpJob({
 
 export function listQueuedAcpJobs(): AcpJobRow[] {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return db
     .prepare(
       `SELECT * FROM ${TABLE}
@@ -277,7 +278,7 @@ export function listRunningAcpJobs(): AcpJobRow[] {
 
 export function listRunningAcpJobsByWorker(worker_id?: string): AcpJobRow[] {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   if (`${worker_id ?? ""}`.trim()) {
     return db
       .prepare(
@@ -299,7 +300,7 @@ export function listRunningAcpJobsByWorker(worker_id?: string): AcpJobRow[] {
 
 export function countRunningAcpJobsForWorker(worker_id: string): number {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const row = db
     .prepare(
       `SELECT COUNT(*) AS count
@@ -321,7 +322,7 @@ export function listQueuedAcpJobsForThread({
   thread_id: string;
 }): AcpJobRow[] {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   return db
     .prepare(
       `SELECT * FROM ${TABLE}
@@ -348,7 +349,7 @@ export function claimNextQueuedAcpJobForThread({
   worker_bundle_version?: string;
 }): AcpJobRow | undefined {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   db.exec("BEGIN IMMEDIATE");
   try {
     const running = db
@@ -427,7 +428,7 @@ export function setAcpJobState({
   worker_id?: string;
 }): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   if (`${worker_id ?? ""}`.trim()) {
     db.prepare(
@@ -465,7 +466,7 @@ export function requeueRunningAcpJob({
   worker_id?: string;
 }): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   if (`${worker_id ?? ""}`.trim()) {
     db.prepare(
@@ -510,7 +511,7 @@ export function reprioritizeAcpJobImmediate({
   user_message_id: string;
 }): AcpJobRow | undefined {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   db.prepare(
     `UPDATE ${TABLE}
@@ -535,7 +536,7 @@ export function cancelQueuedAcpJob({
   user_message_id: string;
 }): AcpJobRow | undefined {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   db.prepare(
     `UPDATE ${TABLE}
@@ -560,7 +561,7 @@ export function resendCanceledAcpJob({
   user_message_id: string;
 }): AcpJobRow | undefined {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   db.prepare(
     `UPDATE ${TABLE}
@@ -584,7 +585,7 @@ export function resendCanceledAcpJob({
 
 export function markRunningAcpJobsInterrupted(reason = "server restart"): void {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   const now = Date.now();
   db.prepare(
     `UPDATE ${TABLE}

@@ -1,4 +1,4 @@
-import { getDatabase } from "./database";
+import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 
 const TABLE = "acp_workers";
 
@@ -20,7 +20,7 @@ export interface AcpWorkerRow {
 }
 
 function init(): void {
-  const db = getDatabase();
+  const db = getAcpDatabase();
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${TABLE} (
       worker_id TEXT PRIMARY KEY,
@@ -40,6 +40,7 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_workers_host_state_idx ON ${TABLE}(host_id, state, last_heartbeat_at)`,
   );
+  ensureAcpTableMigrated(TABLE);
 }
 
 let initialized = false;
@@ -53,7 +54,7 @@ function ensureInit(): void {
 
 export function upsertAcpWorker(row: AcpWorkerRow): AcpWorkerRow {
   ensureInit();
-  const db = getDatabase();
+  const db = getAcpDatabase();
   db.prepare(
     `INSERT INTO ${TABLE}
       (worker_id, host_id, bundle_version, bundle_path, pid, state, started_at, last_heartbeat_at, last_seen_running_jobs, exit_requested_at, stopped_at, stop_reason)
@@ -89,7 +90,7 @@ export function upsertAcpWorker(row: AcpWorkerRow): AcpWorkerRow {
 
 export function getAcpWorker(worker_id: string): AcpWorkerRow | undefined {
   ensureInit();
-  return getDatabase()
+  return getAcpDatabase()
     .prepare(`SELECT * FROM ${TABLE} WHERE worker_id = ?`)
     .get(worker_id) as AcpWorkerRow | undefined;
 }
@@ -113,7 +114,7 @@ export function listAcpWorkers({
     params.push(...states);
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  return getDatabase()
+  return getAcpDatabase()
     .prepare(
       `SELECT * FROM ${TABLE}
        ${where}
@@ -149,7 +150,7 @@ export function setAcpWorkerState({
 }): AcpWorkerRow | undefined {
   ensureInit();
   const now = Date.now();
-  getDatabase()
+  getAcpDatabase()
     .prepare(
       `UPDATE ${TABLE}
        SET state = ?,
@@ -194,7 +195,7 @@ export function heartbeatAcpWorker({
 }): AcpWorkerRow | undefined {
   ensureInit();
   const now = Date.now();
-  getDatabase()
+  getAcpDatabase()
     .prepare(
       `UPDATE ${TABLE}
        SET pid = COALESCE(?, pid),
@@ -228,7 +229,7 @@ export function stopAcpWorker({
 }): AcpWorkerRow | undefined {
   ensureInit();
   const now = Date.now();
-  getDatabase()
+  getAcpDatabase()
     .prepare(
       `UPDATE ${TABLE}
        SET state = 'stopped',
