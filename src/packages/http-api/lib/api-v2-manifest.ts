@@ -270,10 +270,7 @@ export const apiV2Manifest: ApiV2ManifestEntry[] = [
   { path: "/purchases/stripe/cancel-payment-intent", handler: handler110 },
   { path: "/purchases/stripe/create-payment-intent", handler: handler111 },
   { path: "/purchases/stripe/create-setup-intent", handler: handler112 },
-  {
-    path: "/purchases/stripe/create-subscription-payment",
-    handler: handler113,
-  },
+  { path: "/purchases/stripe/create-subscription-payment", handler: handler113 },
   { path: "/purchases/stripe/delete-payment-method", handler: handler114 },
   { path: "/purchases/stripe/get-checkout-session", handler: handler115 },
   { path: "/purchases/stripe/get-customer-session", handler: handler116 },
