@@ -15,6 +15,15 @@ What is now proven:
 - account home bay, project owning bay, and host bay can be different
 - a `bay-1` account can access a `bay-2` owned project running on a `bay-0`
   host
+- browser control-plane bootstrap now supports:
+  - one stable public site URL
+  - per-bay public control-plane hostnames derived from site `dns`
+  - wrong-bay auth recovery using `home_bay_url + retry_token`
+- seed-managed bay DNS/tunnel lifecycle now works:
+  - attached bays get managed Cloudflare tunnels from the seed
+  - attached bays start local `cloudflared` automatically
+  - stable bay hostnames are reconciled on the seed
+  - the seed bay alias is served by the main launchpad tunnel
 - direct project-host runtime paths now work for the major project-local
   surfaces that were migrated:
   - project log
@@ -28,7 +37,7 @@ What is now proven:
 
 What is not finished:
 
-- browser/bootstrap/account-home routing polish
+- full end-to-end validation of browser/bootstrap/account-home routing
 - full 3-way browser validation matrix
 - lifecycle cleanup / hardening
 - inter-bay observability, replay, and load-test hardening
@@ -48,16 +57,20 @@ Phase 5 should be considered complete enough to move on when:
 
 ### 1. Session And Bootstrap
 
-- [ ] Confirm the intended public-browser model is enforced:
+- [x] Confirm the intended public-browser model is enforced:
   - one stable public URL
   - one account-home control-plane bay
   - direct project-host runtime connections remain separate
 - [ ] Audit login/bootstrap code for any remaining assumptions that the current
   bay is also the account home bay
-- [ ] Implement or finish wrong-bay sign-in handling:
+- [x] Implement or finish wrong-bay sign-in handling:
   - detect the mismatch early
   - redirect or recover without user confusion
   - avoid partial session state on the wrong bay
+- [x] Implement seed-managed public bay endpoints:
+  - stable bay hostnames derived from configured site `dns`
+  - attached bays provisioned through seed-managed Cloudflare tunnels
+  - seed bay alias served on the main launchpad tunnel
 - [ ] Validate registration / invite / login flow with an account homed on a
   non-seed bay
 
@@ -88,6 +101,11 @@ Notes:
 
 - use the existing real 3-way fixture project first
 - only create new fixtures if the current one becomes too messy to trust
+- public browser endpoints now exist for this topology:
+  - stable site URL, e.g. `lite4b.cocalc.ai`
+  - `bay-0-<dns>`
+  - `bay-1-<dns>`
+  - `bay-2-<dns>`
 - for every failure, record whether it is:
   - control-plane routing
   - direct project-host auth
@@ -199,7 +217,6 @@ block the above checklist:
 In order:
 
 1. Finish the browser-side 3-way validation matrix.
-2. Fix any remaining wrong-bay bootstrap/sign-in issues.
+2. Validate real sign-up / sign-in / invite flows for non-seed home bays.
 3. Add explicit CLI fixture helpers for account/project/host topology setup.
 4. Start the first real 3-bay load measurements.
-
