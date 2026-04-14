@@ -6,6 +6,7 @@
 import {
   createInterBayAuthTokenHandlers,
   createInterBayAccountProjectFeedHandlers,
+  createInterBayBayRegistryHandlers,
   createInterBayAccountDirectoryHandlers,
   createInterBayAccountLocalHandler,
   createInterBayProjectCollabInviteHandlers,
@@ -25,6 +26,7 @@ import {
   createInterBayProjectControlStopHandler,
   type InterBayAuthTokenApi,
   type InterBayAccountProjectFeedApi,
+  type InterBayBayRegistryApi,
   type InterBayAccountDirectoryApi,
   type InterBayAccountLocalApi,
   type InterBayDirectoryApi,
@@ -46,6 +48,11 @@ import {
 } from "@cocalc/server/auth/tokens/redeem";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
+import {
+  listBayRegistryLocal,
+  registerBayPresenceLocal,
+  startBayRegistrationHeartbeat,
+} from "@cocalc/server/bay-registry";
 import {
   applyAccountProjectFeedRemoveOnHomeBay,
   applyAccountProjectFeedUpsertOnHomeBay,
@@ -102,6 +109,7 @@ export async function initInterBayServices(): Promise<void> {
   try {
     await startDirectoryService();
     await startAuthTokenService();
+    await startBayRegistryService();
     await startAccountDirectoryService();
     await startAccountLocalService();
     await startAccountProjectFeedService();
@@ -113,10 +121,30 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectHostAuthTokenService();
     await startProjectLroService();
     await startProjectCollabInviteService();
+    startBayRegistrationHeartbeat();
   } catch (err) {
     serviceStarted = false;
     throw err;
   }
+}
+
+async function startBayRegistryService(): Promise<void> {
+  const role = getConfiguredClusterRole();
+  if (role === "attached") {
+    return;
+  }
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayBayRegistryApi = {
+    register: async (opts) => await registerBayPresenceLocal(opts),
+    list: async (opts) => await listBayRegistryLocal(opts),
+  };
+  services.push(
+    ...createInterBayBayRegistryHandlers({
+      client,
+      parallel: true,
+      impl,
+    }),
+  );
 }
 
 async function startAuthTokenService(): Promise<void> {

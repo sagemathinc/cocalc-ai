@@ -63,12 +63,14 @@ function parseKeyValueMapping(value: unknown): Record<string, string> {
   return out;
 }
 
-async function getConfiguredSiteDnsHostname(): Promise<string | undefined> {
+export async function getConfiguredSiteDnsHostname(): Promise<
+  string | undefined
+> {
   const settings = await getServerSettings();
   return normalizeHostname(settings.dns);
 }
 
-function deriveBayHostnameFromSiteDns({
+export function deriveBayHostnameFromSiteDns({
   bay_id,
   site_hostname,
 }: {
@@ -113,6 +115,15 @@ export async function getBayPublicOrigin(
   });
   if (!hostname) return;
   return `${defaultSchemeForHostname(hostname)}://${hostname}`;
+}
+
+export async function getDerivedBayPublicHostname(
+  bay_id: string,
+): Promise<string | undefined> {
+  return deriveBayHostnameFromSiteDns({
+    bay_id,
+    site_hostname: await getConfiguredSiteDnsHostname(),
+  });
 }
 
 export async function getClusterBayPublicOrigins(): Promise<
@@ -184,6 +195,19 @@ export async function getCurrentBayPublicOriginForRequest(
   const configured = await getBayPublicOrigin(getConfiguredBayId());
   if (configured) return configured;
   if (req) return detectRequestOrigin(req);
+  return;
+}
+
+export function getCurrentBayPublicTarget(): string | undefined {
+  const explicit = normalizeHostname(
+    process.env.COCALC_BAY_PUBLIC_TARGET ??
+      process.env.COCALC_BAY_PUBLIC_DNS_TARGET,
+  );
+  if (explicit) return explicit;
+  const fromPublicUrl = normalizeHostname(process.env.COCALC_BAY_PUBLIC_URL);
+  if (fromPublicUrl?.endsWith(".cfargotunnel.com")) {
+    return fromPublicUrl;
+  }
   return;
 }
 

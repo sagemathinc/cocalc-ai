@@ -200,6 +200,31 @@ export interface AccountDirectoryCreateRequest {
   customize?: any;
 }
 
+export interface BayRegistryRegisterRequest {
+  bay_id: string;
+  label?: string;
+  region?: string | null;
+  role?: string;
+  public_origin?: string | null;
+  public_target?: string | null;
+  public_target_kind?: string | null;
+}
+
+export interface BayRegistryListRequest {}
+
+export interface BayRegistryEntry {
+  bay_id: string;
+  label: string;
+  region?: string | null;
+  role: string;
+  public_origin?: string | null;
+  public_target?: string | null;
+  public_target_kind?: string | null;
+  dns_hostname?: string | null;
+  dns_record_id?: string | null;
+  last_seen: string;
+}
+
 export interface AuthTokenRequiresRequest {}
 
 export interface AuthTokenRedeemRequest {
@@ -287,6 +312,7 @@ export type AccountDirectoryMethod =
   | "create";
 export type AccountLocalMethod = "create";
 export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
+export type BayRegistryMethod = "register" | "list";
 export type ProjectCollabInviteMethod =
   | "upsert-inbox"
   | "delete-inbox"
@@ -457,6 +483,11 @@ export interface InterBayAccountLocalApi {
   create: (
     opts: AccountDirectoryCreateRequest,
   ) => Promise<AccountDirectoryEntry>;
+}
+
+export interface InterBayBayRegistryApi {
+  register: (opts: BayRegistryRegisterRequest) => Promise<BayRegistryEntry>;
+  list: (opts: BayRegistryListRequest) => Promise<BayRegistryEntry[]>;
 }
 
 export interface InterBayAuthTokenApi {
@@ -689,6 +720,14 @@ export function accountLocalSubject({
   method: AccountLocalMethod;
 }): string {
   return `bay.${dest_bay}.rpc.account-local.${method}`;
+}
+
+export function bayRegistrySubject({
+  method,
+}: {
+  method: BayRegistryMethod;
+}): string {
+  return `global.bay-registry.rpc.${method}`;
 }
 
 export function authTokenSubject({
@@ -1272,6 +1311,55 @@ export function createInterBayAccountLocalHandler({
       create: async (opts) => await impl.create(opts),
     },
   });
+}
+
+export function createInterBayBayRegistryClient({
+  client,
+  timeout,
+}: {
+  client: Client;
+  timeout?: number;
+}): InterBayBayRegistryApi {
+  const registerClient = createServiceClient<
+    Pick<InterBayBayRegistryApi, "register">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayRegistrySubject({ method: "register" }),
+  });
+  const listClient = createServiceClient<Pick<InterBayBayRegistryApi, "list">>({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayRegistrySubject({ method: "list" }),
+  });
+  return {
+    register: async (opts) => await registerClient.register(opts),
+    list: async (opts) => await listClient.list(opts),
+  };
+}
+
+export function createInterBayBayRegistryHandlers({
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  impl: InterBayBayRegistryApi;
+}): ConatService[] {
+  return [
+    createServiceHandler<Pick<InterBayBayRegistryApi, "register">>({
+      ...options,
+      service: "inter-bay-bay-registry",
+      subject: bayRegistrySubject({ method: "register" }),
+      impl: {
+        register: async (opts) => await impl.register(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayRegistryApi, "list">>({
+      ...options,
+      service: "inter-bay-bay-registry",
+      subject: bayRegistrySubject({ method: "list" }),
+      impl: {
+        list: async (opts) => await impl.list(opts),
+      },
+    }),
+  ];
 }
 
 export function createInterBayAuthTokenClient({
