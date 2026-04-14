@@ -544,13 +544,7 @@ export function ChatPanel({
     useState<ChatRoomThreadActionHandlers | null>(null);
   const submitMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
   const scrollToBottomRef = useRef<any>(null);
-  const lastScrollRequestRef = useRef<{
-    thread: string;
-    reason: "unread" | "allread";
-  } | null>(null);
-  const visitedThreadsRef = useRef<Set<string>>(new Set());
-  const unreadSeenRef = useRef<Map<string, number>>(new Map());
-  const newestSeenRef = useRef<Map<string, number>>(new Map());
+  const previousSelectedThreadKeyRef = useRef<string | null>(null);
   const indexedAgentSessionsRef = useRef<Map<string, string>>(new Map());
   const combinedReadSignatureRef = useRef<string | null>(null);
   useEffect(() => {
@@ -1416,9 +1410,8 @@ export function ChatPanel({
     if (scrollCacheIdOverride) {
       return scrollCacheIdOverride;
     }
-    const base = `${project_id ?? ""}${path ?? ""}`;
-    return `${base}-${selectedThreadKey ?? COMBINED_FEED_KEY}`;
-  }, [project_id, path, scrollCacheIdOverride, selectedThreadKey]);
+    return `${project_id ?? ""}${path ?? ""}`;
+  }, [project_id, path, scrollCacheIdOverride]);
 
   useEffect(() => {
     if (forceScrollToBottomToken == null) return;
@@ -1515,60 +1508,29 @@ export function ChatPanel({
   ]);
 
   useEffect(() => {
-    if (!singleThreadView || !selectedThreadKey) return;
-    const thread = threads.find((t) => t.key === selectedThreadKey);
-    if (!thread || !actions) return;
-
-    const unread = Math.max(thread.unreadCount ?? 0, 0);
-    const prevUnread = unreadSeenRef.current.get(thread.key) ?? 0;
-    const newest = Number.isFinite(thread.newestTime) ? thread.newestTime : 0;
-    const prevNewest = newestSeenRef.current.get(thread.key) ?? newest;
-    const visited = visitedThreadsRef.current.has(thread.key);
-    const hasNewUnread = unread > 0 && unread !== prevUnread;
-    const newestAdvanced = newest > prevNewest;
-
-    const scrollToFirstUnread = () => {
-      const total = thread.messageCount ?? 0;
-      const index = Math.max(0, Math.min(total - 1, total - unread));
-      lastScrollRequestRef.current = { thread: thread.key, reason: "unread" };
-      actions.scrollToIndex?.(index);
-    };
-
-    if (hasNewUnread || (!visited && unread > 0)) {
-      if (visited && hasNewUnread && !newestAdvanced) {
-        // Archived/history hydration can increase thread.messageCount (and thus
-        // unreadCount) without any new newest message. Keep viewport stable.
-        actions.markThreadRead?.(thread.key, thread.messageCount);
-        unreadSeenRef.current.set(thread.key, unread);
-        newestSeenRef.current.set(thread.key, newest);
-        return;
-      }
-      if (thread.isAI) {
-        lastScrollRequestRef.current = { thread: thread.key, reason: "unread" };
-        actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
-      } else {
-        scrollToFirstUnread();
-      }
-      actions.markThreadRead?.(thread.key, thread.messageCount);
-      visitedThreadsRef.current.add(thread.key);
-      unreadSeenRef.current.set(thread.key, unread);
-      newestSeenRef.current.set(thread.key, newest);
+    if (!singleThreadView) {
+      previousSelectedThreadKeyRef.current = null;
       return;
     }
-
-    if (!visited && unread === 0) {
-      lastScrollRequestRef.current = { thread: thread.key, reason: "allread" };
-      actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
-      visitedThreadsRef.current.add(thread.key);
-      unreadSeenRef.current.set(thread.key, unread);
-      newestSeenRef.current.set(thread.key, newest);
+    if (!selectedThreadKey) {
+      previousSelectedThreadKeyRef.current = null;
       return;
     }
-
-    // Already visited and no new unread: preserve existing scroll (cached per thread via virtuoso cacheId).
-    unreadSeenRef.current.set(thread.key, unread);
-    newestSeenRef.current.set(thread.key, newest);
-  }, [singleThreadView, selectedThreadKey, threads, actions]);
+    if (previousSelectedThreadKeyRef.current === selectedThreadKey) return;
+    previousSelectedThreadKeyRef.current = selectedThreadKey;
+    if (fragmentId || scrollToDate != null || scrollToIndex != null) return;
+    if (activityJumpDate || activityJumpToken) return;
+    actions?.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
+  }, [
+    singleThreadView,
+    selectedThreadKey,
+    fragmentId,
+    scrollToDate,
+    scrollToIndex,
+    activityJumpDate,
+    activityJumpToken,
+    actions,
+  ]);
 
   const totalUnread = useMemo(
     () => threadSections.reduce((sum, section) => sum + section.unreadCount, 0),

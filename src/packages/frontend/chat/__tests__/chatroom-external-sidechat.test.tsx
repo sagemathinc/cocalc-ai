@@ -153,6 +153,7 @@ describe("ChatPanel external side chat persistence", () => {
     opts?: { isVisible?: boolean; tabIsVisible?: boolean },
   ) {
     const actions = {
+      scrollToIndex: jest.fn(),
       getCodexConfig: jest.fn(),
       getThreadMetadata: jest.fn(),
       getMessagesInThread: jest.fn(() => []),
@@ -176,6 +177,8 @@ describe("ChatPanel external side chat persistence", () => {
         tabIsVisible={opts?.tabIsVisible}
       />,
     );
+
+    return actions;
   }
 
   it("persists selected threads for external side chat even when frame data is available", async () => {
@@ -215,6 +218,18 @@ describe("ChatPanel external side chat persistence", () => {
     expect(
       renderChatRoomThreadPanel.mock.lastCall?.[0]?.allowSidebarToggle,
     ).toBe(false);
+  });
+
+  it("opens selected threads at the newest message by default", () => {
+    const actions = renderPanel();
+
+    expect(actions.scrollToIndex).toHaveBeenCalledWith(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("does not override explicit fragment jumps when opening a thread", () => {
+    const actions = renderPanel({ "data-fragmentId": "1234" });
+
+    expect(actions.scrollToIndex).not.toHaveBeenCalled();
   });
 
   it("disables thread-search shortcuts when the backing tab is hidden", () => {
