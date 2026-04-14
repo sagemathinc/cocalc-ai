@@ -96,6 +96,9 @@ test("normalizeHubCluster supports structured three-bay config", async () => {
       cluster.bays[2].softwareBaseUrlForce,
       "http://127.0.0.1:13214/software",
     );
+    assert.equal(cluster.bays[0].publicUrl, "");
+    assert.equal(cluster.bays[1].publicUrl, "");
+    assert.equal(cluster.bays[2].publicUrl, "");
 
     const envLines = toEnvLines(cluster);
     assert.ok(envLines.includes("HUB_CLUSTER_BAY_COUNT=3"));
@@ -105,6 +108,7 @@ test("normalizeHubCluster supports structured three-bay config", async () => {
         "HUB_CLUSTER_BAY_2_SEED_CONAT_SERVER=http://localhost:9100",
       ),
     );
+    assert.ok(envLines.includes("HUB_CLUSTER_BAY_PUBLIC_URLS="));
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }

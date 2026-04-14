@@ -5,7 +5,10 @@
 
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getConfiguredClusterBayIds } from "@cocalc/server/cluster-config";
+import {
+  getConfiguredClusterBayIds,
+  getConfiguredClusterSeedBayId,
+} from "@cocalc/server/cluster-config";
 import type { Request, Response } from "express";
 
 function trim(value: unknown): string {
@@ -91,13 +94,24 @@ function defaultSchemeForHostname(hostname: string): "http" | "https" {
     : "https";
 }
 
+function isPublicHostname(hostname: string | undefined): boolean {
+  return !!hostname && hostname !== "localhost" && !looksLikeIp(hostname);
+}
+
+function isUsablePublicOrigin(origin: string | undefined): boolean {
+  return isPublicHostname(normalizeHostname(origin));
+}
+
 export async function getBayPublicOrigin(
   bay_id: string,
 ): Promise<string | undefined> {
   const requested = trim(bay_id);
   if (!requested) return;
   const explicitCurrent = normalizeOrigin(process.env.COCALC_BAY_PUBLIC_URL);
-  if (requested === getConfiguredBayId() && explicitCurrent) {
+  if (
+    requested === getConfiguredBayId() &&
+    isUsablePublicOrigin(explicitCurrent)
+  ) {
     return explicitCurrent;
   }
   const explicitCluster = parseKeyValueMapping(
@@ -105,8 +119,14 @@ export async function getBayPublicOrigin(
       process.env.HUB_CLUSTER_BAY_PUBLIC_URLS,
   );
   const explicit = normalizeOrigin(explicitCluster[requested]);
-  if (explicit) {
+  if (isUsablePublicOrigin(explicit)) {
     return explicit;
+  }
+  if (requested === getConfiguredClusterSeedBayId()) {
+    const siteOrigin = await getSitePublicOrigin();
+    if (siteOrigin) {
+      return siteOrigin;
+    }
   }
   const site = await getConfiguredSiteDnsHostname();
   const hostname = deriveBayHostnameFromSiteDns({
@@ -189,6 +209,24 @@ export function detectRequestOrigin(req: Request): string | undefined {
   return normalizeOrigin(`${proto}://${withPort}`);
 }
 
+function deriveSiteHostnameFromRequestOrigin(opts: {
+  request_origin?: string;
+  current_bay_id: string;
+}): string | undefined {
+  const hostname = normalizeHostname(opts.request_origin);
+  if (!hostname) return;
+  const currentBay = trim(opts.current_bay_id).toLowerCase();
+  const prefix = currentBay ? `${currentBay}-` : "";
+  if (
+    prefix &&
+    hostname.startsWith(prefix) &&
+    hostname.length > prefix.length
+  ) {
+    return hostname.slice(prefix.length);
+  }
+  return hostname;
+}
+
 export async function getCurrentBayPublicOriginForRequest(
   req?: Request,
 ): Promise<string | undefined> {
@@ -196,6 +234,38 @@ export async function getCurrentBayPublicOriginForRequest(
   if (configured) return configured;
   if (req) return detectRequestOrigin(req);
   return;
+}
+
+export async function getBayPublicOriginForRequest(
+  req: Request | undefined,
+  bay_id: string,
+): Promise<string | undefined> {
+  const requested = trim(bay_id);
+  if (!requested) return;
+  const configured = await getBayPublicOrigin(requested);
+  if (configured) {
+    return configured;
+  }
+  const request_origin = detectRequestOrigin(req as Request);
+  if (!request_origin) {
+    return;
+  }
+  if (requested === getConfiguredBayId()) {
+    return request_origin;
+  }
+  const site_hostname = deriveSiteHostnameFromRequestOrigin({
+    request_origin,
+    current_bay_id: getConfiguredBayId(),
+  });
+  const hostname = deriveBayHostnameFromSiteDns({
+    bay_id: requested,
+    site_hostname,
+  });
+  if (!hostname) {
+    return;
+  }
+  const scheme = request_origin.startsWith("https://") ? "https" : "http";
+  return `${scheme}://${hostname}`;
 }
 
 export function getCurrentBayPublicTarget(): string | undefined {

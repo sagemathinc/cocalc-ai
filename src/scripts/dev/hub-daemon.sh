@@ -241,7 +241,22 @@ detect_hub_postgres_data_dir() {
 }
 
 detect_hub_public_hostname() {
-  find_latest_in_log "$HUB_STDOUT_LOG" "s/.*hostname: '\\([^']*\\)'.*/\\1/p"
+  local idx explicit_url signup_url
+  for idx in $(seq 0 $((HUB_CLUSTER_BAY_COUNT - 1))); do
+    if [ "$(cluster_bay_value "$idx" ID)" = "$COCALC_BAY_ID" ]; then
+      explicit_url="$(cluster_bay_value "$idx" PUBLIC_URL)"
+      break
+    fi
+  done
+  if [ -n "$explicit_url" ]; then
+    printf '%s\n' "$explicit_url" | sed -n 's#^[a-zA-Z][a-zA-Z0-9+.-]*://\([^/:]*\).*$#\1#p'
+    return 0
+  fi
+  signup_url="$(detect_hub_bootstrap_signup_url || true)"
+  if [ -n "$signup_url" ]; then
+    printf '%s\n' "$signup_url" | sed -n 's#^[a-zA-Z][a-zA-Z0-9+.-]*://\([^/:]*\).*$#\1#p'
+    return 0
+  fi
 }
 
 detect_hub_bootstrap_signup_url() {

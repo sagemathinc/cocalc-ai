@@ -44,7 +44,7 @@ import redeemRegistrationToken, {
 import sendWelcomeEmail from "@cocalc/server/email/welcome-email";
 import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
+import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { issueHomeBayRetryToken } from "@cocalc/server/auth/home-bay-retry-token";
 import { selectSignupHomeBay } from "@cocalc/server/accounts/select-home-bay";
 import { createClusterAccount } from "@cocalc/server/inter-bay/accounts";
@@ -116,7 +116,9 @@ export async function signUp(req, res) {
         res.json({
           wrong_bay: true,
           home_bay_id: err.home_bay_id,
-          home_bay_url: err.home_bay_url,
+          home_bay_url:
+            (await getBayPublicOriginForRequest(req, err.home_bay_id)) ??
+            err.home_bay_url,
           retry_token: err.retry_token,
         });
         return;
@@ -335,7 +337,7 @@ export async function signUp(req, res) {
         res.json({
           wrong_bay: true,
           home_bay_id,
-          home_bay_url: await getBayPublicOrigin(home_bay_id),
+          home_bay_url: await getBayPublicOriginForRequest(req, home_bay_id),
           retry_token: issueHomeBayRetryToken({
             email,
             home_bay_id,
@@ -350,7 +352,7 @@ export async function signUp(req, res) {
     res.json({
       account_id,
       home_bay_id,
-      home_bay_url: await getBayPublicOrigin(home_bay_id),
+      home_bay_url: await getBayPublicOriginForRequest(req, home_bay_id),
     });
   } catch (err) {
     if (!res.headersSent) {

@@ -25,7 +25,7 @@ import { verify } from "password-hash";
 import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
+import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import {
   issueHomeBayRetryToken,
   verifyHomeBayRetryToken,
@@ -57,7 +57,9 @@ export default async function signIn(req: Request, res: Response) {
       res.json({
         wrong_bay: true,
         home_bay_id: err.home_bay_id,
-        home_bay_url: err.home_bay_url,
+        home_bay_url:
+          (await getBayPublicOriginForRequest(req, err.home_bay_id)) ??
+          err.home_bay_url,
         retry_token: err.retry_token,
       });
       return;
@@ -122,7 +124,6 @@ export async function getAccount(
     global.home_bay_id !== getConfiguredBayId()
   ) {
     const home_bay_id = global.home_bay_id;
-    const home_bay_url = await getBayPublicOrigin(home_bay_id);
     const retry = issueHomeBayRetryToken({
       email,
       home_bay_id,
@@ -136,7 +137,6 @@ export async function getAccount(
       retry_token?: string;
     };
     err.home_bay_id = home_bay_id;
-    err.home_bay_url = home_bay_url;
     err.retry_token = retry.token;
     throw err;
   }
@@ -182,7 +182,7 @@ export async function signUserIn(
   res.json({
     account_id,
     home_bay_id: getConfiguredBayId(),
-    home_bay_url: await getBayPublicOrigin(getConfiguredBayId()),
+    home_bay_url: await getBayPublicOriginForRequest(req, getConfiguredBayId()),
   });
 }
 
