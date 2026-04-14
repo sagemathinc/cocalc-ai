@@ -18,10 +18,11 @@ import {
   setConatServer,
   setConatPassword,
 } from "@cocalc/backend/data";
+import type { ConatServer } from "@cocalc/conat/core/server";
 import {
-  init as createConatServer,
-  type ConatServer,
-} from "@cocalc/conat/core/server";
+  connect as connectToConat,
+  type Client as ConatClient,
+} from "@cocalc/conat/core/client";
 import { setConatClient } from "@cocalc/conat/client";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { init as initRunner } from "@cocalc/project-runner/run";
@@ -66,7 +67,7 @@ import { startCopyWorker } from "./pending-copies";
 import { startOnPremTunnel } from "./onprem-tunnel";
 import { startDataPermissionHardener } from "./data-permissions";
 import { resolveProjectHostId } from "./host-id";
-import { createProjectHostConatAuth } from "./conat-auth";
+import { main as runConatRouterClusterNodeMain } from "./conat-router-cluster-node";
 import { startConatRevocationKickLoop } from "./conat-revocation-kick";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
@@ -83,6 +84,7 @@ import {
 import { createProjectHostHttpProxyAuth } from "./http-proxy-auth";
 import { isValidUUID } from "@cocalc/util/misc";
 import { main as runAcpWorkerMain } from "./acp-worker";
+import { main as runConatRouterDaemonMain } from "./conat-router-daemon";
 import {
   configureProjectHostAcpWorkerLauncher,
   ensureProjectHostAcpWorkerRunning,
@@ -96,6 +98,12 @@ import { initProjectStorageInfoService } from "./storage-info-service";
 import { initProjectDocumentActivityService } from "./document-activity-service";
 import { initProjectArchiveInfoService } from "./archive-info-service";
 import { startProjectHostEventLoopStallMonitor } from "./event-loop-stalls";
+import {
+  attachProjectHostConatRouterProxy,
+  isProjectHostExternalConatRouterEnabled,
+  resolveProjectHostConatRouterUrl,
+  startProjectHostConatRouterServer,
+} from "./conat-router";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -295,26 +303,38 @@ export async function main(
   initSqlite();
   startProjectHostEventLoopStallMonitor();
   const hostId = resolveProjectHostId(_config.hostId);
-  const conatAuth = createProjectHostConatAuth({ host_id: hostId });
 
   // 1) HTTP + conat server
   const { app, httpServer, isHttps } = await startHttpServer(port, host, tls);
-  const conatServer: ConatServer = createConatServer({
-    httpServer,
-    ssl: isHttps,
-    port,
-    getUser: conatAuth.getUser,
-    isAllowed: conatAuth.isAllowed,
-    systemAccountPassword: localConatPassword,
-  });
-  if (conatServer.state !== "ready") {
-    await once(conatServer, "ready");
+  const externalConatRouter = isProjectHostExternalConatRouterEnabled();
+  let conatServer: ConatServer | undefined;
+  let conatClient: ConatClient;
+  if (externalConatRouter) {
+    const conatRouterUrl = resolveProjectHostConatRouterUrl();
+    attachProjectHostConatRouterProxy({
+      app,
+      httpServer,
+      target: conatRouterUrl,
+    });
+    conatClient = connectToConat({
+      address: conatRouterUrl,
+      systemAccountPassword: localConatPassword,
+    });
+    setConatServer(conatRouterUrl);
+  } else {
+    conatServer = await startProjectHostConatRouterServer({
+      httpServer,
+      ssl: isHttps,
+      port,
+      hostId,
+      systemAccountPassword: localConatPassword,
+    });
+    conatClient = conatServer.client({
+      path: "/",
+      systemAccountPassword: localConatPassword,
+    });
+    setConatServer(conatServer.address());
   }
-  const conatClient = conatServer.client({
-    path: "/",
-    systemAccountPassword: localConatPassword,
-  });
-  setConatServer(conatServer.address());
   setConatClient({
     conat: () => conatClient,
     getLogger,
@@ -575,6 +595,10 @@ export async function main(
     stopCopyWorker?.();
     stopOnPremTunnel?.();
     stopHttpProxyRevocationKickLoop?.();
+    try {
+      conatClient?.close();
+    } catch {}
+    void conatServer?.close?.();
   };
   const closeWithSignal = async (signal: string) => {
     if (closed || shutdownInProgress) return;
@@ -600,7 +624,15 @@ export async function main(
 
 // Allow running directly via `node dist/main.js`.
 if (require.main === module) {
-  if (`${process.env.COCALC_PROJECT_HOST_ACP_WORKER ?? ""}`.trim() === "1") {
+  process.env.COCALC_CONAT_CLUSTER_NODE_ENTRYPOINT ??= __filename;
+  if (`${process.env.COCALC_CONAT_CLUSTER_NODE ?? ""}`.trim() === "1") {
+    runConatRouterClusterNodeMain().catch((err) => {
+      console.error("project-host conat router cluster node failed:", err);
+      process.exit(1);
+    });
+  } else if (
+    `${process.env.COCALC_PROJECT_HOST_ACP_WORKER ?? ""}`.trim() === "1"
+  ) {
     runAcpWorkerMain()
       .then(() => {
         process.exit(0);
@@ -609,6 +641,14 @@ if (require.main === module) {
         console.error("project-host ACP worker failed:", err);
         process.exit(1);
       });
+  } else if (
+    `${process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON ?? ""}`.trim() ===
+    "1"
+  ) {
+    runConatRouterDaemonMain().catch((err) => {
+      console.error("project-host conat router daemon failed:", err);
+      process.exit(1);
+    });
   } else {
     try {
       if (process.argv[2] === "privileged-rm-helper") {

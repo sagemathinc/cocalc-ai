@@ -88,11 +88,17 @@ export function upsertAcpWorker(row: AcpWorkerRow): AcpWorkerRow {
   return getAcpWorker(row.worker_id)!;
 }
 
-export function getAcpWorker(worker_id: string): AcpWorkerRow | undefined {
+export function getAcpWorker(
+  worker_id?: string | null,
+): AcpWorkerRow | undefined {
   ensureInit();
+  const workerId = `${worker_id ?? ""}`.trim();
+  if (!workerId) {
+    return undefined;
+  }
   return getAcpDatabase()
     .prepare(`SELECT * FROM ${TABLE} WHERE worker_id = ?`)
-    .get(worker_id) as AcpWorkerRow | undefined;
+    .get(workerId) as AcpWorkerRow | undefined;
 }
 
 export function listAcpWorkers({

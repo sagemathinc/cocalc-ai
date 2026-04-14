@@ -11,6 +11,7 @@ describe("project-host daemon stop", () => {
   beforeEach(() => {
     jest.restoreAllMocks();
     process.env = { ...originalEnv };
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "0";
     runtimeDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-runtime-"),
     );
@@ -256,6 +257,131 @@ describe("project-host daemon stop", () => {
       "project-host already running and healthy (pid 7474); leaving it running.",
     );
     expect(fs.existsSync(pidPath)).toBe(true);
+  });
+
+  it("starts a managed conat router before project-host in external router mode", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
+
+    jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 0 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockImplementation(((_command: any, _args: any, opts?: any) => {
+        const env = opts?.env ?? {};
+        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+          return { pid: 1111, unref: () => {} } as any;
+        }
+        return { pid: 2222, unref: () => {} } as any;
+      }) as typeof __test__.processRuntime.spawn);
+
+    startDaemon(0);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(2);
+    expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).toMatchObject({
+      COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON: "1",
+      HOST: "127.0.0.1",
+      PORT: "9102",
+    });
+    expect((spawnSpy.mock.calls[1]?.[2] as any)?.env).not.toHaveProperty(
+      "COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON",
+    );
+    expect(
+      fs.readFileSync(path.join(dataDir, "conat-router.pid"), "utf8"),
+    ).toBe("1111");
+    expect(fs.readFileSync(path.join(dataDir, "daemon.pid"), "utf8")).toBe(
+      "2222",
+    );
+  });
+
+  it("defaults project-host bootstrap to a managed external conat router", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    delete process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
+
+    jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 0 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockImplementation(((_command: any, _args: any, opts?: any) => {
+        const env = opts?.env ?? {};
+        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+          return { pid: 3333, unref: () => {} } as any;
+        }
+        return { pid: 4444, unref: () => {} } as any;
+      }) as typeof __test__.processRuntime.spawn);
+
+    startDaemon(0);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(2);
+    expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).toMatchObject({
+      COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER: "1",
+      COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON: "1",
+      HOST: "127.0.0.1",
+      PORT: "9102",
+    });
+    expect(
+      fs.readFileSync(path.join(dataDir, "conat-router.pid"), "utf8"),
+    ).toBe("3333");
+    expect(fs.readFileSync(path.join(dataDir, "daemon.pid"), "utf8")).toBe(
+      "4444",
+    );
+  });
+
+  it("stops the managed conat router when stopping project-host", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    fs.writeFileSync(path.join(dataDir, "daemon.pid"), "8181");
+    fs.writeFileSync(path.join(dataDir, "conat-router.pid"), "8282");
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
+    process.env.COCALC_PROJECT_HOST_DAEMON_STOP_TIMEOUT_MS = "50";
+    process.env.COCALC_PROJECT_HOST_DAEMON_STOP_POLL_MS = "1";
+
+    const alive = new Set([8181, 8282]);
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      if (signal === 0 || signal === undefined) {
+        if (alive.has(pid)) {
+          return true;
+        }
+        throw new Error("not running");
+      }
+      if (signal === "SIGTERM" || signal === "SIGKILL") {
+        alive.delete(pid);
+        return true;
+      }
+      throw new Error(`unexpected signal ${signal}`);
+    }) as typeof process.kill);
+
+    stopDaemon(0);
+
+    expect(killSpy).toHaveBeenCalledWith(8181, "SIGTERM");
+    expect(killSpy).toHaveBeenCalledWith(8282, "SIGTERM");
+    expect(fs.existsSync(path.join(dataDir, "daemon.pid"))).toBe(false);
+    expect(fs.existsSync(path.join(dataDir, "conat-router.pid"))).toBe(false);
   });
 
   it("restarts the daemon when the pid is running but health checks fail", () => {

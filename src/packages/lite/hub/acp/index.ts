@@ -670,14 +670,16 @@ function turnStillLikelyOwnedByLiveWorker(
     "owner_instance_id" | "pid" | "heartbeat_at" | "started_at"
   >,
 ): boolean {
-  const worker = getAcpWorker(turn.owner_instance_id);
+  const workerId = `${turn.owner_instance_id ?? ""}`.trim();
+  const worker = getAcpWorker(workerId);
   if (
     workerRowStillLikelyOwnsTurns({
-      worker_id: turn.owner_instance_id,
+      worker_id: workerId || "unknown-worker",
       pid: worker?.pid ?? turn.pid,
       heartbeat_at: Math.max(
         Number(worker?.last_heartbeat_at ?? 0),
         Number(turn.heartbeat_at ?? 0),
+        Number(turn.started_at ?? 0),
       ),
     })
   ) {
