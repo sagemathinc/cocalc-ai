@@ -40,6 +40,11 @@ export const ACCOUNT_ID_COOKIE_NAME = basePathCookieName({
   name: "account_id",
 });
 
+export const HOME_BAY_ID_COOKIE_NAME = basePathCookieName({
+  basePath,
+  name: "home_bay_id",
+});
+
 export const PROJECT_SECRET_COOKIE_NAME = basePathCookieName({
   basePath,
   name: "project_secret",

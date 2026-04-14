@@ -73,6 +73,26 @@ export async function getConfiguredSiteDnsHostname(): Promise<
   return normalizeHostname(settings.dns);
 }
 
+function deriveBrowserCookieDomain(
+  site: string | undefined,
+): string | undefined {
+  if (!site || site === "localhost" || looksLikeIp(site)) {
+    return;
+  }
+  const parts = site.split(".").filter(Boolean);
+  if (parts.length <= 2) {
+    return site;
+  }
+  if (parts.length >= 3) {
+    const last = parts[parts.length - 1];
+    const secondLast = parts[parts.length - 2];
+    if (last.length === 2 && secondLast.length <= 3) {
+      return parts.slice(-3).join(".");
+    }
+  }
+  return parts.slice(-2).join(".");
+}
+
 export function deriveBayHostnameFromSiteDns({
   bay_id,
   site_hostname,
@@ -165,6 +185,27 @@ export async function getSitePublicOrigin(): Promise<string | undefined> {
   return `${defaultSchemeForHostname(site)}://${site}`;
 }
 
+export async function getSitePublicOriginForRequest(
+  req?: Request,
+): Promise<string | undefined> {
+  const configured = await getSitePublicOrigin();
+  if (configured) return configured;
+  if (!req) return;
+  const request_origin = detectRequestOrigin(req);
+  if (!request_origin) {
+    return;
+  }
+  const site_hostname = deriveSiteHostnameFromRequestOrigin({
+    request_origin,
+    current_bay_id: getConfiguredBayId(),
+  });
+  if (!site_hostname) {
+    return request_origin;
+  }
+  const scheme = request_origin.startsWith("https://") ? "https" : "http";
+  return `${scheme}://${site_hostname}`;
+}
+
 function looksLikeIp(hostname: string): boolean {
   return /^[0-9.]+$/.test(hostname) || hostname.includes(":");
 }
@@ -176,22 +217,21 @@ function looksLikeIp(hostname: string): boolean {
 //   - launchpad.example.com -> example.com
 // For exotic multi-level public suffixes, this can be refined later.
 export async function getBrowserCookieDomain(): Promise<string | undefined> {
-  const site = await getConfiguredSiteDnsHostname();
-  if (!site || site === "localhost" || looksLikeIp(site)) {
-    return;
-  }
-  const parts = site.split(".").filter(Boolean);
-  if (parts.length <= 2) {
-    return site;
-  }
-  if (parts.length >= 3) {
-    const last = parts[parts.length - 1];
-    const secondLast = parts[parts.length - 2];
-    if (last.length === 2 && secondLast.length <= 3) {
-      return parts.slice(-3).join(".");
-    }
-  }
-  return parts.slice(-2).join(".");
+  return deriveBrowserCookieDomain(await getConfiguredSiteDnsHostname());
+}
+
+export async function getBrowserCookieDomainForRequest(
+  req?: Request,
+): Promise<string | undefined> {
+  const configured = await getBrowserCookieDomain();
+  if (configured) return configured;
+  if (!req) return;
+  const request_origin = detectRequestOrigin(req);
+  const site_hostname = deriveSiteHostnameFromRequestOrigin({
+    request_origin,
+    current_bay_id: getConfiguredBayId(),
+  });
+  return deriveBrowserCookieDomain(site_hostname);
 }
 
 export function detectRequestOrigin(req: Request): string | undefined {

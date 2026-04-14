@@ -4,7 +4,10 @@ import getPool from "@cocalc/database/pool";
 import basePath from "@cocalc/backend/base-path";
 import clientSideRedirect from "@cocalc/server/auth/client-side-redirect";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
+import {
+  getBayPublicOriginForRequest,
+  getSitePublicOriginForRequest,
+} from "@cocalc/server/bay-public-origin";
 import { isLocale } from "@cocalc/util/i18n/const";
 import {
   issueHomeBayRetryToken,
@@ -78,7 +81,8 @@ async function doIt({ req, res }) {
 
   const target = new URL(
     basePath === "/" ? "/app" : `${basePath}/app`,
-    (await getBayPublicOriginForRequest(req, home_bay_id)) ??
+    (await getSitePublicOriginForRequest(req)) ??
+      (await getBayPublicOriginForRequest(req, home_bay_id)) ??
       `${req.protocol === "https" ? "https" : "http"}://${req.headers.host}`,
   );
 
