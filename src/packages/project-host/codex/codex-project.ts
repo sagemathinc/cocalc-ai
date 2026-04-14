@@ -86,7 +86,6 @@ type OptionalBindMount = {
 const BUILTIN_LAUNCHPAD_SKILLS = ["cocalc"] as const;
 
 const OPENAI_PROVIDER_BASE_URL = "https://api.openai.com/v1";
-const AUTH_PROVIDER_ID = "cocalc-openai-auth";
 const API_KEY_PROVIDER_ID = "cocalc-openai-api-key";
 const EPHEMERAL_AUTH_STORE_CONFIG = 'cli_auth_credentials_store="ephemeral"';
 const PROJECT_RUNTIME_HOME = DEFAULT_PROJECT_RUNTIME_HOME;
@@ -212,14 +211,6 @@ function getManagedOpenAiProviderArgs(
       `model_providers.${API_KEY_PROVIDER_ID}={name="OpenAI",base_url="${OPENAI_PROVIDER_BASE_URL}",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false,supports_websockets=true,stream_idle_timeout_ms=${streamIdleTimeoutMs},websocket_connect_timeout_ms=${websocketConnectTimeoutMs}}`,
       "--config",
       `model_provider="${API_KEY_PROVIDER_ID}"`,
-    ];
-  }
-  if (authRuntime.source === "subscription") {
-    return [
-      "--config",
-      `model_providers.${AUTH_PROVIDER_ID}={name="OpenAI",base_url="${OPENAI_PROVIDER_BASE_URL}",wire_api="responses",requires_openai_auth=true,supports_websockets=true,stream_idle_timeout_ms=${streamIdleTimeoutMs},websocket_connect_timeout_ms=${websocketConnectTimeoutMs}}`,
-      "--config",
-      `model_provider="${AUTH_PROVIDER_ID}"`,
     ];
   }
   return;
@@ -1139,10 +1130,7 @@ export async function spawnCodexInProjectContainer({
       source: authRuntime.source,
       streamIdleTimeoutMs: getCodexProviderStreamIdleTimeoutMs(),
       websocketConnectTimeoutMs: getCodexProviderWebsocketConnectTimeoutMs(),
-      provider:
-        authRuntime.source === "subscription"
-          ? AUTH_PROVIDER_ID
-          : API_KEY_PROVIDER_ID,
+      provider: API_KEY_PROVIDER_ID,
     });
   }
   if (explicitAuthRuntime) {
@@ -1345,10 +1333,7 @@ async function spawnCodexAppServerInProjectRuntime({
         source: authRuntime.source,
         streamIdleTimeoutMs: getCodexProviderStreamIdleTimeoutMs(),
         websocketConnectTimeoutMs: getCodexProviderWebsocketConnectTimeoutMs(),
-        provider:
-          authRuntime.source === "subscription"
-            ? AUTH_PROVIDER_ID
-            : API_KEY_PROVIDER_ID,
+        provider: API_KEY_PROVIDER_ID,
       },
     );
   }

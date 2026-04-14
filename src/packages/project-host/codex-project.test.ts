@@ -646,15 +646,6 @@ describe("initCodexProjectRunner", () => {
       cwd: "/home/user",
     });
 
-    expect(spawnMock.mock.calls[0][1]).toEqual(
-      expect.arrayContaining([
-        "--config",
-        'model_providers.cocalc-openai-auth={name="OpenAI",base_url="https://api.openai.com/v1",wire_api="responses",requires_openai_auth=true,supports_websockets=true,stream_idle_timeout_ms=1800000,websocket_connect_timeout_ms=60000}',
-        "--config",
-        'model_provider="cocalc-openai-auth"',
-      ]),
-    );
-
     expect(spawned.appServerLogin).toEqual({
       type: "chatgptAuthTokens",
       accessToken: initialAccessToken,
