@@ -175,11 +175,13 @@ import {
 import {
   getAcpWorker,
   heartbeatAcpWorker,
+  listAcpWorkers,
   listLiveAcpWorkers,
   stopAcpWorker,
   upsertAcpWorker,
 } from "../sqlite/acp-workers";
 import type { AcpWorkerState } from "../sqlite/acp-workers";
+import type { AcpTurnLeaseRow } from "../sqlite/acp-turns";
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 import { astream, type AStream } from "@cocalc/conat/sync/astream";
@@ -342,6 +344,14 @@ const ACP_ORPHAN_RECOVERY_POLL_MS = envNumber(
 const ACP_CURRENT_WORKER_TURN_RECOVERY_GRACE_MS = envNumber(
   "COCALC_ACP_CURRENT_WORKER_TURN_RECOVERY_GRACE_MS",
   10_000,
+);
+const ACP_ORPHAN_TURN_RECOVERY_GRACE_MS = envNumber(
+  "COCALC_ACP_ORPHAN_TURN_RECOVERY_GRACE_MS",
+  2 * 60_000,
+);
+const ACP_ORPHAN_TURN_PID_ALIVE_GRACE_MS = envNumber(
+  "COCALC_ACP_ORPHAN_TURN_PID_ALIVE_GRACE_MS",
+  ACP_ORPHAN_TURN_RECOVERY_GRACE_MS,
 );
 // Detached workers establish acp_jobs state slightly before ChatStreamWriter
 // creates the matching acp_turns lease. If a worker dies in that narrow
@@ -556,12 +566,131 @@ function detachedWorkerCanClaimQueuedJobs(): boolean {
 }
 
 function liveWorkerOwnerIds(host_id: string): Set<string> {
-  return new Set(
+  const live = new Set(
     listLiveAcpWorkers({
       host_id,
       stale_after_ms: ACP_WORKER_STALE_MS,
     }).map((row) => row.worker_id),
   );
+  for (const row of listAcpWorkers({
+    host_id,
+    states: ["active", "draining"],
+  })) {
+    if (live.has(row.worker_id)) continue;
+    if (
+      workerRowStillLikelyOwnsTurns({
+        worker_id: row.worker_id,
+        pid: row.pid ?? undefined,
+        heartbeat_at: row.last_heartbeat_at,
+      })
+    ) {
+      live.add(row.worker_id);
+    }
+  }
+  return live;
+}
+
+function isPidAlive(pid?: number | null): boolean {
+  if (!Number.isInteger(pid) || (pid ?? 0) <= 0) return false;
+  try {
+    process.kill(pid as number, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function recoveryReferenceAt({
+  heartbeat_at,
+  started_at,
+}: {
+  heartbeat_at?: number | null;
+  started_at?: number | null;
+}): number {
+  const heartbeatAt = Number(heartbeat_at ?? 0);
+  if (Number.isFinite(heartbeatAt) && heartbeatAt > 0) {
+    return heartbeatAt;
+  }
+  const startedAt = Number(started_at ?? 0);
+  if (Number.isFinite(startedAt) && startedAt > 0) {
+    return startedAt;
+  }
+  return 0;
+}
+
+function workerRowStillLikelyOwnsTurns({
+  worker_id,
+  pid,
+  heartbeat_at,
+}: {
+  worker_id: string;
+  pid?: number | null;
+  heartbeat_at?: number | null;
+}): boolean {
+  const now = Date.now();
+  const referenceAt = recoveryReferenceAt({
+    heartbeat_at,
+  });
+  if (
+    isPidAlive(pid) &&
+    referenceAt > 0 &&
+    now - referenceAt < ACP_ORPHAN_TURN_PID_ALIVE_GRACE_MS
+  ) {
+    logger.debug(
+      "treating stale ACP worker as still live because its pid exists",
+      {
+        worker_id,
+        pid,
+        age_ms: now - referenceAt,
+        grace_ms: ACP_ORPHAN_TURN_PID_ALIVE_GRACE_MS,
+      },
+    );
+    return true;
+  }
+  return false;
+}
+
+function turnStillLikelyOwnedByLiveWorker(
+  turn: Pick<
+    AcpTurnLeaseRow,
+    "owner_instance_id" | "pid" | "heartbeat_at" | "started_at"
+  >,
+): boolean {
+  const worker = getAcpWorker(turn.owner_instance_id);
+  if (
+    workerRowStillLikelyOwnsTurns({
+      worker_id: turn.owner_instance_id,
+      pid: worker?.pid ?? turn.pid,
+      heartbeat_at: Math.max(
+        Number(worker?.last_heartbeat_at ?? 0),
+        Number(turn.heartbeat_at ?? 0),
+      ),
+    })
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function jobStillLikelyOwnedByLiveWorker({
+  worker_id,
+  started_at,
+}: {
+  worker_id?: string | null;
+  started_at?: number | null;
+}): boolean {
+  const workerId = `${worker_id ?? ""}`.trim();
+  if (!workerId) return false;
+  const worker = getAcpWorker(workerId);
+  if (!worker) return false;
+  return workerRowStillLikelyOwnsTurns({
+    worker_id: workerId,
+    pid: worker.pid,
+    heartbeat_at: Math.max(
+      Number(worker.last_heartbeat_at ?? 0),
+      Number(started_at ?? 0),
+    ),
+  });
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -4157,6 +4286,7 @@ export async function recoverOrphanedAcpTurns(
       (row) => row.owner_instance_id !== ACP_INSTANCE_ID,
     );
   }
+  running = running.filter((row) => !turnStillLikelyOwnedByLiveWorker(row));
   if (!running.length) return 0;
   const interruptedNotice =
     opts.interruptedNotice ?? RESTART_INTERRUPTED_NOTICE;
@@ -4534,6 +4664,9 @@ export async function recoverOrphanedRunningAcpJobsWithoutLease(
         }),
       )
     ) {
+      continue;
+    }
+    if (jobStillLikelyOwnedByLiveWorker(job)) {
       continue;
     }
     const startedAt = Number(job.started_at ?? 0);

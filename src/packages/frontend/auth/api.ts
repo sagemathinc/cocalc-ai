@@ -30,8 +30,9 @@ export function isWrongBayAuthResponse(
 }
 
 function apiUrl(endpoint: string, origin?: string): string {
-  const path = joinUrlPath(appBasePath, "api", endpoint);
-  return origin ? `${origin}${path}` : path;
+  const path = `/${joinUrlPath(appBasePath, "api", "v2", endpoint).replace(/^\/+/, "")}`;
+  const normalizedOrigin = `${origin ?? ""}`.replace(/\/+$/, "");
+  return normalizedOrigin ? `${normalizedOrigin}${path}` : path;
 }
 
 export async function postAuthApi<T = any>({
