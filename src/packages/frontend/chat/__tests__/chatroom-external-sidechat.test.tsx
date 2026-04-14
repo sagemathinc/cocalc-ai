@@ -196,6 +196,27 @@ describe("ChatPanel external side chat persistence", () => {
     expect(persistExternalSideChatSelectedThreadKey).not.toHaveBeenCalled();
   });
 
+  it("enables the sidebar toggle for ordinary full chatrooms", () => {
+    renderPanel();
+
+    expect(renderChatRoomThreadPanel).toHaveBeenCalled();
+    expect(
+      renderChatRoomThreadPanel.mock.lastCall?.[0]?.allowSidebarToggle,
+    ).toBe(true);
+    expect(renderChatRoomThreadPanel.mock.lastCall?.[0]?.sidebarHidden).toBe(
+      false,
+    );
+  });
+
+  it("does not enable the sidebar toggle for external side chat", () => {
+    renderPanel({ "data-externalSideChat": true });
+
+    expect(renderChatRoomThreadPanel).toHaveBeenCalled();
+    expect(
+      renderChatRoomThreadPanel.mock.lastCall?.[0]?.allowSidebarToggle,
+    ).toBe(false);
+  });
+
   it("disables thread-search shortcuts when the backing tab is hidden", () => {
     renderPanel(undefined, {
       isVisible: false,

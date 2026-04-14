@@ -276,6 +276,9 @@ interface ChatRoomThreadPanelProps {
   shortcutEnabled?: boolean;
   notifyOnTurnFinish?: boolean;
   onNotifyOnTurnFinishChange?: (checked: boolean) => void;
+  allowSidebarToggle?: boolean;
+  sidebarHidden?: boolean;
+  onToggleSidebar?: () => void;
   onOpenGitBrowser?: (request: {
     threadKey: string;
     cwdOverride?: string;
@@ -316,6 +319,9 @@ export function ChatRoomThreadPanel({
   shortcutEnabled = true,
   notifyOnTurnFinish = false,
   onNotifyOnTurnFinishChange,
+  allowSidebarToggle = false,
+  sidebarHidden = false,
+  onToggleSidebar,
   onOpenGitBrowser,
 }: ChatRoomThreadPanelProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
@@ -1324,6 +1330,7 @@ export function ChatRoomThreadPanel({
       isCodexModelName(`${selectedThreadMeta?.agent_model ?? ""}`) ||
       actions?.getCodexConfig?.(selectedThreadId) != null),
   );
+  const showTopControls = shouldShowCodexConfig || allowSidebarToggle;
   const selectedThreadForLog = selectedThreadKey ?? undefined;
   const threadMeta =
     selectedThread && "displayLabel" in selectedThread
@@ -1346,9 +1353,9 @@ export function ChatRoomThreadPanel({
   const threadImagePreview = showThreadImagePreview
     ? compactThreadImage?.trim()
     : undefined;
-  const runningStatusTop = shouldShowCodexConfig ? 52 : 8;
+  const runningStatusTop = showTopControls ? 52 : 8;
   const contentTopInset =
-    (shouldShowCodexConfig ? 44 : 0) + (selectedRunningCodexMessage ? 56 : 0);
+    (showTopControls ? 44 : 0) + (selectedRunningCodexMessage ? 56 : 0);
 
   return (
     <div
@@ -1361,19 +1368,42 @@ export function ChatRoomThreadPanel({
         flexDirection: "column",
       }}
     >
-      {shouldShowCodexConfig && (
+      {showTopControls && (
         <div style={{ position: "absolute", top: 8, left: 8, zIndex: 10 }}>
           <Space size={6}>
-            <CodexConfigButton
-              threadKey={selectedThreadKey}
-              chatPath={path ?? ""}
-              projectId={project_id}
-              actions={actions}
-              threadConfig={selectedThreadMeta?.acp_config ?? null}
-              paymentSource={codexPaymentSource}
-              paymentSourceLoading={codexPaymentSourceLoading}
-              refreshPaymentSource={refreshCodexPaymentSource}
-            />
+            {allowSidebarToggle ? (
+              <Tooltip
+                title={
+                  sidebarHidden ? "Show chats sidebar" : "Hide chats sidebar"
+                }
+              >
+                <Button
+                  size="small"
+                  type="text"
+                  aria-label={
+                    sidebarHidden ? "Show chats sidebar" : "Hide chats sidebar"
+                  }
+                  icon={
+                    <Icon
+                      name={sidebarHidden ? "chevron-right" : "chevron-left"}
+                    />
+                  }
+                  onClick={onToggleSidebar}
+                />
+              </Tooltip>
+            ) : null}
+            {shouldShowCodexConfig ? (
+              <CodexConfigButton
+                threadKey={selectedThreadKey}
+                chatPath={path ?? ""}
+                projectId={project_id}
+                actions={actions}
+                threadConfig={selectedThreadMeta?.acp_config ?? null}
+                paymentSource={codexPaymentSource}
+                paymentSourceLoading={codexPaymentSourceLoading}
+                refreshPaymentSource={refreshCodexPaymentSource}
+              />
+            ) : null}
           </Space>
         </div>
       )}

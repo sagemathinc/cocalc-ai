@@ -515,6 +515,7 @@ export function ChatPanel({
   );
   const hideChatTypeSelector = asBoolean(hideChatTypeSelectorRaw);
   const storedSidebarWidth = getDescValue(desc, "data-sidebarWidth");
+  const storedSidebarHiddenRaw = getDescValue(desc, "data-sidebarHidden");
   const preferLatestThreadFromDescRaw = getDescValue(
     desc,
     "data-preferLatestThread",
@@ -529,6 +530,9 @@ export function ChatPanel({
     typeof storedSidebarWidth === "number" && storedSidebarWidth > 50
       ? storedSidebarWidth
       : DEFAULT_SIDEBAR_WIDTH,
+  );
+  const [sidebarHidden, setSidebarHidden] = useState<boolean>(
+    asBoolean(storedSidebarHiddenRaw),
   );
   const [sidebarVisible, setSidebarVisible] = useState<boolean>(false);
   const isCompact = variant === "compact";
@@ -556,6 +560,13 @@ export function ChatPanel({
       sidebarWidth,
     });
   }, [sidebarWidth, actions?.frameTreeActions, actions?.frameId]);
+  useEffect(() => {
+    if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
+    actions.frameTreeActions.set_frame_data({
+      id: actions.frameId,
+      sidebarHidden,
+    });
+  }, [sidebarHidden, actions?.frameTreeActions, actions?.frameId]);
 
   const { threads, archivedThreads, combinedThread, threadSections } =
     useThreadSections({
@@ -2237,6 +2248,9 @@ export function ChatPanel({
         onOpenGitBrowser={openGitBrowserFromMessage}
         notifyOnTurnFinish={notifyOnSelectedTurnFinish}
         onNotifyOnTurnFinishChange={setNotifyOnSelectedTurnFinish}
+        allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}
+        sidebarHidden={sidebarHidden}
+        onToggleSidebar={() => setSidebarHidden((hidden) => !hidden)}
       />
       {loopBanner}
       {automationBanner}
@@ -2341,7 +2355,7 @@ export function ChatPanel({
         sidebarVisible={sidebarVisible}
         setSidebarVisible={setSidebarVisible}
         totalUnread={totalUnread}
-        hideSidebar={hideSidebar}
+        hideSidebar={hideSidebar || sidebarHidden}
         sidebarContent={
           <ChatRoomSidebarContent
             actions={actions}
