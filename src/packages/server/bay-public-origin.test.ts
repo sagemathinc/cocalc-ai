@@ -77,4 +77,40 @@ describe("bay-public-origin", () => {
       ),
     ).resolves.toBe("https://bay-2-lite4b.cocalc.ai");
   });
+
+  it("derives the stable site origin from an attached bay request when site dns is unavailable locally", async () => {
+    getServerSettingsMock = jest.fn(async () => ({}));
+    process.env.COCALC_BAY_ID = "bay-2";
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    const { getSitePublicOriginForRequest } =
+      await import("./bay-public-origin");
+    await expect(
+      getSitePublicOriginForRequest({
+        headers: {
+          host: "bay-2-lite4b.cocalc.ai",
+          "x-forwarded-proto": "https",
+        },
+        protocol: "https",
+        secure: true,
+      } as any),
+    ).resolves.toBe("https://lite4b.cocalc.ai");
+  });
+
+  it("derives the shared cookie domain from an attached bay request when site dns is unavailable locally", async () => {
+    getServerSettingsMock = jest.fn(async () => ({}));
+    process.env.COCALC_BAY_ID = "bay-2";
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    const { getBrowserCookieDomainForRequest } =
+      await import("./bay-public-origin");
+    await expect(
+      getBrowserCookieDomainForRequest({
+        headers: {
+          host: "bay-2-lite4b.cocalc.ai",
+          "x-forwarded-proto": "https",
+        },
+        protocol: "https",
+        secure: true,
+      } as any),
+    ).resolves.toBe("cocalc.ai");
+  });
 });

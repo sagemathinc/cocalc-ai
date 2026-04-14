@@ -4,6 +4,7 @@ let queryMock: jest.Mock;
 let setSignInCookiesMock: jest.Mock;
 let getClusterAccountByIdMock: jest.Mock;
 let getBayPublicOriginForRequestMock: jest.Mock;
+let getSitePublicOriginForRequestMock: jest.Mock;
 let clientSideRedirectMock: jest.Mock;
 let issueHomeBayRetryTokenMock: jest.Mock;
 let verifyHomeBayRetryTokenMock: jest.Mock;
@@ -27,6 +28,8 @@ jest.mock("@cocalc/server/bay-public-origin", () => ({
   __esModule: true,
   getBayPublicOriginForRequest: (...args: any[]) =>
     getBayPublicOriginForRequestMock(...args),
+  getSitePublicOriginForRequest: (...args: any[]) =>
+    getSitePublicOriginForRequestMock(...args),
 }));
 
 jest.mock("@cocalc/server/auth/client-side-redirect", () => ({
@@ -59,6 +62,9 @@ describe("auth/impersonate", () => {
     }));
     getBayPublicOriginForRequestMock = jest.fn(
       async () => "https://bay-2-lite4b.cocalc.ai",
+    );
+    getSitePublicOriginForRequestMock = jest.fn(
+      async () => "https://lite4b.cocalc.ai",
     );
     clientSideRedirectMock = jest.fn();
     issueHomeBayRetryTokenMock = jest.fn(() => ({
@@ -145,7 +151,7 @@ describe("auth/impersonate", () => {
     });
     expect(clientSideRedirectMock).toHaveBeenCalledWith({
       res,
-      target: "https://bay-2-lite4b.cocalc.ai/app?lang_temp=en",
+      target: "https://lite4b.cocalc.ai/app?lang_temp=en",
     });
   });
 });
