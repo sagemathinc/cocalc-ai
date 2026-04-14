@@ -76,7 +76,7 @@ function getTimeSyncClient(): TimeSyncClient {
 }
 
 export function init() {
-  syncLoop();
+  void syncLoop();
 }
 
 let state = "running";
@@ -90,10 +90,13 @@ async function syncLoop() {
     return;
   }
   syncLoopStarted = true;
-  const client = getTimeSyncClient();
   let d = INTERVAL_START;
-  while (state != "closed" && client.state != "closed") {
+  while (state != "closed") {
     try {
+      const client = getTimeSyncClient();
+      if (client.state == "closed") {
+        return;
+      }
       const lastSkew = skew ?? 0;
       await getSkew();
       if (state == "closed") return;
