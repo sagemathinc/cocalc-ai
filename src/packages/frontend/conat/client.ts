@@ -1037,6 +1037,7 @@ export class ConatClient extends EventEmitter {
   };
 
   private initConatClient = async () => {
+    await this.bootstrapControlPlaneOrigin();
     if (!this.remote) {
       // only initialize if not making a remote connection, since this is
       // the default connection to our local server
