@@ -626,14 +626,10 @@ export async function main(
 if (require.main === module) {
   process.env.COCALC_CONAT_CLUSTER_NODE_ENTRYPOINT ??= __filename;
   if (`${process.env.COCALC_CONAT_CLUSTER_NODE ?? ""}`.trim() === "1") {
-    runConatRouterClusterNodeMain()
-      .then(() => {
-        process.exit(0);
-      })
-      .catch((err) => {
-        console.error("project-host conat router cluster node failed:", err);
-        process.exit(1);
-      });
+    runConatRouterClusterNodeMain().catch((err) => {
+      console.error("project-host conat router cluster node failed:", err);
+      process.exit(1);
+    });
   } else if (
     `${process.env.COCALC_PROJECT_HOST_ACP_WORKER ?? ""}`.trim() === "1"
   ) {
@@ -649,14 +645,10 @@ if (require.main === module) {
     `${process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON ?? ""}`.trim() ===
     "1"
   ) {
-    runConatRouterDaemonMain()
-      .then(() => {
-        process.exit(0);
-      })
-      .catch((err) => {
-        console.error("project-host conat router daemon failed:", err);
-        process.exit(1);
-      });
+    runConatRouterDaemonMain().catch((err) => {
+      console.error("project-host conat router daemon failed:", err);
+      process.exit(1);
+    });
   } else {
     try {
       if (process.argv[2] === "privileged-rm-helper") {
