@@ -1,10 +1,11 @@
 import { Alert, Button, Input, Space } from "antd";
 import { useState } from "react";
 
-import api from "@cocalc/frontend/client/api";
+import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import type { AuthView } from "./types";
+import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
 import { appUrl } from "./util";
 
 interface SignInProps {
@@ -27,7 +28,18 @@ export default function SignInForm({ onNavigate }: SignInProps) {
     setError("");
     setSigningIn(true);
     try {
-      await api("auth/sign-in", { email, password });
+      let result = await postAuthApi<any>({
+        endpoint: "auth/sign-in",
+        body: { email, password },
+      });
+      if (isWrongBayAuthResponse(result)) {
+        result = await retryAuthOnHomeBay({
+          endpoint: "auth/sign-in",
+          wrongBay: result,
+          body: { email, password },
+        });
+      }
+      setStoredControlPlaneOrigin(result?.home_bay_url);
       window.location.href = appUrl("app?sign-in");
     } catch (err) {
       setError(`${err}`);

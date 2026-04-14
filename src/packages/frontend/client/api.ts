@@ -10,6 +10,7 @@ This doesn't know anything about types, etc.
 */
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { getControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import { delay } from "awaiting";
 import { trunc } from "@cocalc/util/misc";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -42,9 +43,18 @@ async function callApi(
   numRetriesOnFail?: number,
 ) {
   // console.log("callApi", { endpoint, args });
-  const url = joinUrlPath(appBasePath, "api", endpoint);
+  const origin = getControlPlaneOrigin();
+  const sameOrigin =
+    typeof window !== "undefined" &&
+    origin != null &&
+    origin === window.location.origin;
+  const url =
+    origin && !sameOrigin
+      ? `${origin}${joinUrlPath(appBasePath, "api", endpoint)}`
+      : joinUrlPath(appBasePath, "api", endpoint);
   const resp = await fetch(url, {
     method: "POST",
+    credentials: sameOrigin ? "same-origin" : "include",
     headers: {
       "Content-Type": "application/json",
     },

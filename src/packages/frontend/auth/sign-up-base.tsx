@@ -2,11 +2,13 @@ import { Alert, Button, Input, Space } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
 import api from "@cocalc/frontend/client/api";
+import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import {
   is_valid_email_address as isValidEmailAddress,
   len,
 } from "@cocalc/util/misc";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
+import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
 import type { AuthView } from "./types";
 import { appUrl } from "./util";
 
@@ -89,18 +91,32 @@ export default function SignUpFormBase({
     setError("");
     setSigningUp(true);
     try {
-      const result = await api("auth/sign-up", {
-        terms: true,
-        email,
-        password,
-        firstName,
-        lastName,
-        registrationToken: registrationToken.trim(),
+      let result = await postAuthApi<any>({
+        endpoint: "auth/sign-up",
+        body: {
+          terms: true,
+          email,
+          password,
+          firstName,
+          lastName,
+          registrationToken: registrationToken.trim(),
+        },
       });
+      if (isWrongBayAuthResponse(result)) {
+        result = await retryAuthOnHomeBay({
+          endpoint: "auth/sign-in",
+          wrongBay: result,
+          body: { email, password },
+        });
+      }
       if (result?.issues && len(result.issues) > 0) {
         setIssues(result.issues);
         return;
       }
+      if (result?.error) {
+        throw new Error(`${result.error}`);
+      }
+      setStoredControlPlaneOrigin(result?.home_bay_url);
       window.location.href = appUrl("app?sign-in");
     } catch (err) {
       setError(`${err}`);

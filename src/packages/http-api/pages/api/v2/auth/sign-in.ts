@@ -25,12 +25,18 @@ import { verify } from "password-hash";
 import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
+import {
+  issueHomeBayRetryToken,
+  verifyHomeBayRetryToken,
+} from "@cocalc/server/auth/home-bay-retry-token";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 
 export default async function signIn(req: Request, res: Response) {
-  let { email, password } = getParams(req);
+  let { email, password, retry_token } = getParams(req);
 
   email = email.toLowerCase().trim();
+  retry_token = `${retry_token ?? ""}`.trim();
   const requiresToken = await getRequiresToken();
 
   const check: string | undefined = await signInCheck(email, req.ip);
@@ -45,8 +51,17 @@ export default async function signIn(req: Request, res: Response) {
     // when large classes all sign in from one point.  Also, it's much less important
     // for sign in, than for sign up and payment.
     // await reCaptcha(req);
-    account_id = await getAccount(email, password);
+    account_id = await getAccount(email, password, retry_token);
   } catch (err) {
+    if (isWrongBayError(err)) {
+      res.json({
+        wrong_bay: true,
+        home_bay_id: err.home_bay_id,
+        home_bay_url: err.home_bay_url,
+        retry_token: err.retry_token,
+      });
+      return;
+    }
     res.json({ error: getSignInErrorMessage(err, { requiresToken }) });
     recordFail(email, req.ip);
     return;
@@ -85,6 +100,7 @@ function getSignInErrorMessage(
 export async function getAccount(
   email_address: string,
   password: string,
+  retry_token?: string,
 ): Promise<string> {
   const email = `${email_address ?? ""}`.trim().toLowerCase();
   if (password.length > MAX_PASSWORD_LENGTH) {
@@ -94,10 +110,35 @@ export async function getAccount(
   }
 
   const global = await getClusterAccountByEmail(email);
-  if (global?.home_bay_id && global.home_bay_id !== getConfiguredBayId()) {
-    throw Error(
-      `account home bay mismatch: '${email}' is homed on bay '${global.home_bay_id}'`,
-    );
+  if (retry_token) {
+    verifyHomeBayRetryToken({
+      token: retry_token,
+      home_bay_id: getConfiguredBayId(),
+      email,
+      purpose: "sign-in",
+    });
+  } else if (
+    global?.home_bay_id &&
+    global.home_bay_id !== getConfiguredBayId()
+  ) {
+    const home_bay_id = global.home_bay_id;
+    const home_bay_url = await getBayPublicOrigin(home_bay_id);
+    const retry = issueHomeBayRetryToken({
+      email,
+      home_bay_id,
+      purpose: "sign-in",
+    });
+    const err = new Error(
+      `account home bay mismatch: '${email}' is homed on bay '${home_bay_id}'`,
+    ) as Error & {
+      home_bay_id?: string;
+      home_bay_url?: string;
+      retry_token?: string;
+    };
+    err.home_bay_id = home_bay_id;
+    err.home_bay_url = home_bay_url;
+    err.retry_token = retry.token;
+    throw err;
   }
 
   const pool = getPool();
@@ -138,5 +179,21 @@ export async function signUserIn(
     res.json({ error: "Problem setting auth cookies." });
     return;
   }
-  res.json({ account_id });
+  res.json({
+    account_id,
+    home_bay_id: getConfiguredBayId(),
+    home_bay_url: await getBayPublicOrigin(getConfiguredBayId()),
+  });
+}
+
+export function isWrongBayError(err: unknown): err is Error & {
+  home_bay_id: string;
+  home_bay_url?: string;
+  retry_token: string;
+} {
+  return (
+    err instanceof Error &&
+    typeof (err as any).home_bay_id === "string" &&
+    typeof (err as any).retry_token === "string"
+  );
 }

@@ -178,6 +178,8 @@ export interface AccountDirectorySearchRequest {
   only_email?: boolean;
 }
 
+export interface AccountDirectoryHomeBayCountsRequest {}
+
 export interface AccountDirectoryEntry extends UserSearchResult {
   email_address?: string;
   home_bay_id?: string;
@@ -281,6 +283,7 @@ export type AccountDirectoryMethod =
   | "get-by-email"
   | "get-many"
   | "search"
+  | "home-bay-counts"
   | "create";
 export type AccountLocalMethod = "create";
 export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
@@ -380,7 +383,9 @@ export interface InterBayHostControlApi {
     host_id: string;
     get: HostControlArg<"getProjectRuntimeLog">;
   }) => Promise<HostProjectRuntimeLogResponse>;
-  listRootfsImages: (opts: { host_id: string }) => Promise<HostRootfsCacheEntry[]>;
+  listRootfsImages: (opts: {
+    host_id: string;
+  }) => Promise<HostRootfsCacheEntry[]>;
   pullRootfsImage: (opts: {
     host_id: string;
     pull: HostControlArg<"pullRootfsImage">;
@@ -440,6 +445,9 @@ export interface InterBayAccountDirectoryApi {
   search: (
     opts: AccountDirectorySearchRequest,
   ) => Promise<AccountDirectoryEntry[]>;
+  getHomeBayCounts: (
+    opts: AccountDirectoryHomeBayCountsRequest,
+  ) => Promise<Record<string, number>>;
   create: (
     opts: AccountDirectoryCreateRequest,
   ) => Promise<AccountDirectoryEntry>;
@@ -1145,6 +1153,12 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "search" }),
   });
+  const homeBayCountsClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "getHomeBayCounts">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "home-bay-counts" }),
+  });
   const createClient = createServiceClient<
     Pick<InterBayAccountDirectoryApi, "create">
   >({
@@ -1156,6 +1170,8 @@ export function createInterBayAccountDirectoryClient({
     getByEmail: async (opts) => await getByEmailClient.getByEmail(opts),
     getMany: async (opts) => await getManyClient.getMany(opts),
     search: async (opts) => await searchClient.search(opts),
+    getHomeBayCounts: async (opts) =>
+      await homeBayCountsClient.getHomeBayCounts(opts),
     create: async (opts) => await createClient.create(opts),
   };
 }
@@ -1199,6 +1215,16 @@ export function createInterBayAccountDirectoryHandlers({
         search: async (opts) => await impl.search(opts),
       },
     }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "getHomeBayCounts">>(
+      {
+        ...options,
+        service: "inter-bay-account-directory",
+        subject: accountDirectorySubject({ method: "home-bay-counts" }),
+        impl: {
+          getHomeBayCounts: async (opts) => await impl.getHomeBayCounts(opts),
+        },
+      },
+    ),
     createServiceHandler<Pick<InterBayAccountDirectoryApi, "create">>({
       ...options,
       service: "inter-bay-account-directory",

@@ -234,6 +234,9 @@ function normalizeBay(rawBay, idx, context) {
         ? trim(globalDefaults.primarySelfHostPairUrl) ||
           `http://127.0.0.1:${globalDefaults.primaryPort}`
         : localHubUrl(bindHost, port)),
+    publicUrl:
+      trim(rawBay.public_url || rawBay.publicUrl) ||
+      localHubUrl(bindHost, port),
   };
 }
 
@@ -376,7 +379,13 @@ function toEnvLines(cluster) {
     lines.push(`${prefix}SEED_CONAT_PASSWORD=${bay.seedConatPassword}`);
     lines.push(`${prefix}SOFTWARE_BASE_URL_FORCE=${bay.softwareBaseUrlForce}`);
     lines.push(`${prefix}SELF_HOST_PAIR_URL=${bay.selfHostPairUrl}`);
+    lines.push(`${prefix}PUBLIC_URL=${bay.publicUrl}`);
   }
+  lines.push(
+    `HUB_CLUSTER_BAY_PUBLIC_URLS=${cluster.bays
+      .map((bay) => `${bay.id}=${bay.publicUrl}`)
+      .join(",")}`,
+  );
   return lines;
 }
 

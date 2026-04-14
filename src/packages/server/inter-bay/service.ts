@@ -54,6 +54,7 @@ import {
   createClusterAccount,
   getClusterAccountByEmail,
   getClusterAccountById,
+  getClusterAccountHomeBayCounts,
   getClusterAccountsByIds,
   provisionLocalClusterAccount,
   searchClusterAccounts,
@@ -197,6 +198,7 @@ async function startAccountDirectoryService(): Promise<void> {
         admin,
         only_email,
       }),
+    getHomeBayCounts: async () => await getClusterAccountHomeBayCounts(),
     create: async (opts) => await createClusterAccount(opts),
   };
   services.push(
@@ -433,9 +435,9 @@ async function startHostControlService(): Promise<void> {
     deleteProjectData: async ({ host_id, del }) =>
       await (await getHostClient(host_id, 30_000)).deleteProjectData(del),
     upgradeSoftware: async ({ host_id, upgrade }) =>
-      await (await getHostClient(host_id, 10 * 60 * 1000)).upgradeSoftware(
-        upgrade,
-      ),
+      await (
+        await getHostClient(host_id, 10 * 60 * 1000)
+      ).upgradeSoftware(upgrade),
     growBtrfs: async ({ host_id, grow }) =>
       await (await getHostClient(host_id, 10 * 60 * 1000)).growBtrfs(grow),
     getRuntimeLog: async ({ host_id, get }) =>
@@ -445,9 +447,9 @@ async function startHostControlService(): Promise<void> {
     listRootfsImages: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).listRootfsImages(),
     pullRootfsImage: async ({ host_id, pull }) =>
-      await (await getHostClient(host_id, 10 * 60 * 1000)).pullRootfsImage(
-        pull,
-      ),
+      await (
+        await getHostClient(host_id, 10 * 60 * 1000)
+      ).pullRootfsImage(pull),
     deleteRootfsImage: async ({ host_id, del }) =>
       await (await getHostClient(host_id, 30_000)).deleteRootfsImage(del),
     listHostSshAuthorizedKeys: async ({ host_id }) =>
@@ -455,23 +457,23 @@ async function startHostControlService(): Promise<void> {
     addHostSshAuthorizedKey: async ({ host_id, add }) =>
       await (await getHostClient(host_id, 30_000)).addHostSshAuthorizedKey(add),
     removeHostSshAuthorizedKey: async ({ host_id, remove }) =>
-      await (await getHostClient(host_id, 30_000)).removeHostSshAuthorizedKey(
-        remove,
-      ),
+      await (
+        await getHostClient(host_id, 30_000)
+      ).removeHostSshAuthorizedKey(remove),
     getBackupExecutionStatus: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).getBackupExecutionStatus(),
     inspectStaticAppPath: async ({ host_id, inspect }) =>
-      await (await getHostClient(host_id, 30_000)).inspectStaticAppPath(
-        inspect,
-      ),
+      await (
+        await getHostClient(host_id, 30_000)
+      ).inspectStaticAppPath(inspect),
     buildRootfsImageManifest: async ({ host_id, build }) =>
-      await (await getHostClient(host_id, 10 * 60 * 1000)).buildRootfsImageManifest(
-        build,
-      ),
+      await (
+        await getHostClient(host_id, 10 * 60 * 1000)
+      ).buildRootfsImageManifest(build),
     buildProjectRootfsManifest: async ({ host_id, build }) =>
-      await (await getHostClient(host_id, 10 * 60 * 1000)).buildProjectRootfsManifest(
-        build,
-      ),
+      await (
+        await getHostClient(host_id, 10 * 60 * 1000)
+      ).buildProjectRootfsManifest(build),
   };
   services.push(
     ...createInterBayHostControlHandler({

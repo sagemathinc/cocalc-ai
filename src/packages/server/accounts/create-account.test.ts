@@ -61,4 +61,33 @@ describe("accounts.createAccount", () => {
       "11111111-1111-4111-8111-111111111111",
     );
   });
+
+  it("allows account creation to target a remote home bay", async () => {
+    const createAccount = (await import("./create-account")).default;
+    await createAccount({
+      email: "phase1-remote@test.local",
+      password: "secret",
+      firstName: "Phase",
+      lastName: "Remote",
+      account_id: "22222222-2222-4222-8222-222222222222",
+      home_bay_id: "bay-7",
+    });
+
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("home_bay_id"),
+      [
+        "phase1-remote@test.local",
+        "hashed-password",
+        "Phase",
+        "Remote",
+        "22222222-2222-4222-8222-222222222222",
+        undefined,
+        undefined,
+        undefined,
+        null,
+        null,
+        "bay-7",
+      ],
+    );
+  });
 });

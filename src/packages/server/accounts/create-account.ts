@@ -23,6 +23,7 @@ interface Params {
   tags?: string[];
   signupReason?: string;
   owner_id?: string;
+  home_bay_id?: string;
   // if set, do not do any of the various heuristics to create or start user's first project.
   // I added this to avoid leaks with unit testing, but it may be useful in other contexts, e.g.,
   // avoiding confusion with self-hosted installs.
@@ -40,6 +41,7 @@ export default async function createAccount({
   tags,
   signupReason,
   owner_id,
+  home_bay_id,
   noFirstProject,
   ephemeral,
   customize,
@@ -71,7 +73,7 @@ export default async function createAccount({
         owner_id,
         ephemeral ?? null,
         customize ?? null,
-        getConfiguredBayId(),
+        `${home_bay_id ?? ""}`.trim() || getConfiguredBayId(),
       ],
     );
     await accountCreationActions({
