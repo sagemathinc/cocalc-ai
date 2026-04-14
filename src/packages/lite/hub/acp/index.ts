@@ -16,6 +16,10 @@ import {
 } from "@cocalc/ai/acp";
 import { AgentTimeTravelRecorder } from "@cocalc/ai/sync";
 import { init as initConatAcp } from "@cocalc/conat/ai/acp/server";
+import {
+  initAcpDaemonControlService,
+  type AcpDaemonStatus,
+} from "@cocalc/conat/ai/acp/daemon-control";
 import type {
   AcpAutomationRequest,
   AcpAutomationResponse,
@@ -518,6 +522,11 @@ type DetachedWorkerContext = {
   bundle_version: string;
   bundle_path: string;
   state: AcpWorkerState;
+  started_at?: number;
+  last_heartbeat_at?: number;
+  last_seen_running_jobs?: number;
+  exit_requested_at?: number | null;
+  stop_reason?: string | null;
 };
 
 let currentDetachedWorkerContext: DetachedWorkerContext | null = null;
@@ -558,6 +567,11 @@ function projectHostWorkerContextFromEnv(): DetachedWorkerContext | null {
     bundle_version,
     bundle_path,
     state: requestedState,
+    started_at: 0,
+    last_heartbeat_at: 0,
+    last_seen_running_jobs: 0,
+    exit_requested_at: requestedState === "draining" ? Date.now() : null,
+    stop_reason: null,
   };
 }
 
@@ -4871,9 +4885,64 @@ export async function runDetachedAcpQueueWorker(
       : options.idleExitMs;
   const restartReason = options.restartReason ?? "worker restart";
   const workerContext = projectHostWorkerContextFromEnv();
+  if (workerContext) {
+    const now = Date.now();
+    workerContext.started_at = now;
+    workerContext.last_heartbeat_at = now;
+    workerContext.last_seen_running_jobs = 0;
+    workerContext.exit_requested_at ??=
+      workerContext.state === "draining" ? now : null;
+  }
   currentDetachedWorkerContext = workerContext ? { ...workerContext } : null;
   let workerStopReason: string | undefined;
   let workerHeartbeatTimer: NodeJS.Timeout | undefined;
+  let workerControlService:
+    | Awaited<ReturnType<typeof initAcpDaemonControlService>>
+    | undefined;
+  const snapshotDetachedWorkerState = (): AcpDaemonStatus | null => {
+    if (!workerContext || !currentDetachedWorkerContext) {
+      return null;
+    }
+    const runningTurnLeases = listRunningAcpTurnLeases().filter(
+      (row) => row.owner_instance_id === workerContext.worker_id,
+    ).length;
+    return {
+      worker_id: workerContext.worker_id,
+      host_id: workerContext.host_id,
+      pid: process.pid,
+      bundle_version: workerContext.bundle_version,
+      bundle_path: workerContext.bundle_path,
+      state: currentDetachedWorkerContext.state,
+      started_at: currentDetachedWorkerContext.started_at ?? Date.now(),
+      last_heartbeat_at:
+        currentDetachedWorkerContext.last_heartbeat_at ?? Date.now(),
+      last_seen_running_jobs:
+        currentDetachedWorkerContext.last_seen_running_jobs ?? 0,
+      running_turn_leases: runningTurnLeases,
+      exit_requested_at: currentDetachedWorkerContext.exit_requested_at ?? null,
+      stop_reason: currentDetachedWorkerContext.stop_reason ?? null,
+    };
+  };
+  const requestDetachedWorkerDrain = ({
+    reason,
+  }: {
+    reason?: string | null;
+  } = {}): AcpDaemonStatus => {
+    if (!workerContext || !currentDetachedWorkerContext) {
+      throw new Error("detached ACP worker context is not initialized");
+    }
+    currentDetachedWorkerContext.state = "draining";
+    currentDetachedWorkerContext.exit_requested_at ??= Date.now();
+    if (`${reason ?? ""}`.trim()) {
+      currentDetachedWorkerContext.stop_reason = reason ?? null;
+    }
+    syncDetachedWorkerState();
+    const status = snapshotDetachedWorkerState();
+    if (status == null) {
+      throw new Error("detached ACP worker status unavailable");
+    }
+    return status;
+  };
   const syncDetachedWorkerState = (): {
     state: AcpWorkerState;
     runningJobs: number;
@@ -4883,16 +4952,14 @@ export async function runDetachedAcpQueueWorker(
       return null;
     }
     const now = Date.now();
-    const persisted = getAcpWorker(workerContext.worker_id);
-    const nextState =
-      persisted?.state === "draining" || persisted?.state === "stopped"
-        ? "draining"
-        : currentDetachedWorkerContext.state;
+    const nextState = currentDetachedWorkerContext.state;
     currentDetachedWorkerContext.state = nextState;
     const runningJobs = countRunningAcpJobsForWorker(workerContext.worker_id);
     const runningTurnLeases = listRunningAcpTurnLeases().filter(
       (row) => row.owner_instance_id === workerContext.worker_id,
     ).length;
+    currentDetachedWorkerContext.last_heartbeat_at = now;
+    currentDetachedWorkerContext.last_seen_running_jobs = runningJobs;
     heartbeatAcpWorker({
       worker_id: workerContext.worker_id,
       pid: process.pid,
@@ -4904,19 +4971,18 @@ export async function runDetachedAcpQueueWorker(
         isDraining: nextState === "draining",
         runningJobs,
         runningTurnLeases,
-        exitRequestedAt: persisted?.exit_requested_at ?? null,
+        exitRequestedAt: currentDetachedWorkerContext.exit_requested_at ?? null,
         quiesceMs: ACP_WORKER_DRAIN_QUIESCE_MS,
         now,
       })
     ) {
       workerStopReason ??=
-        persisted?.state === "stopped" ? "stopped" : "drained";
+        currentDetachedWorkerContext.stop_reason ?? "drained";
     }
     return { state: nextState, runningJobs, runningTurnLeases };
   };
   try {
     if (workerContext) {
-      const now = Date.now();
       upsertAcpWorker({
         worker_id: workerContext.worker_id,
         host_id: workerContext.host_id,
@@ -4924,14 +4990,28 @@ export async function runDetachedAcpQueueWorker(
         bundle_path: workerContext.bundle_path,
         pid: process.pid,
         state: workerContext.state,
-        started_at: now,
-        last_heartbeat_at: now,
+        started_at: workerContext.started_at ?? Date.now(),
+        last_heartbeat_at: workerContext.last_heartbeat_at ?? Date.now(),
         last_seen_running_jobs: 0,
-        exit_requested_at: workerContext.state === "draining" ? now : null,
+        exit_requested_at: workerContext.exit_requested_at ?? null,
         stopped_at: null,
         stop_reason: null,
       });
       syncDetachedWorkerState();
+      workerControlService = await initAcpDaemonControlService({
+        client,
+        host_id: workerContext.host_id,
+        worker_id: workerContext.worker_id,
+        getStatus: () => {
+          const status = snapshotDetachedWorkerState();
+          if (status == null) {
+            throw new Error("detached ACP worker status unavailable");
+          }
+          return status;
+        },
+        requestDrain: ({ reason } = {}) =>
+          requestDetachedWorkerDrain({ reason }),
+      });
       workerHeartbeatTimer = setInterval(() => {
         try {
           syncDetachedWorkerState();
@@ -5015,6 +5095,7 @@ export async function runDetachedAcpQueueWorker(
     if (workerHeartbeatTimer != null) {
       clearInterval(workerHeartbeatTimer);
     }
+    workerControlService?.close();
     if (workerContext) {
       stopAcpWorker({
         worker_id: workerContext.worker_id,
