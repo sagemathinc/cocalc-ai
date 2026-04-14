@@ -184,7 +184,11 @@ export async function startStandaloneProjectHostConatRouter({
   httpServer: HttpServer;
   conatServer: ConatServer;
 }> {
-  const bindHost = host ?? process.env.HOST ?? "127.0.0.1";
+  const bindHost =
+    host ??
+    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST ??
+    process.env.HOST ??
+    "127.0.0.1";
   const bindPort =
     port ??
     parsePositiveInteger(

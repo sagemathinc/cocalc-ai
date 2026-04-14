@@ -20,6 +20,7 @@ const PODMAN_STALE_STATE_PATTERNS = [
   'try resetting the pause process with "podman system migrate"',
   "could not find any running process",
 ];
+const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 
 function parseIndex(arg: string | undefined): number {
   if (arg == null) {
@@ -118,6 +119,17 @@ function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return normalized;
 }
 
+function envIsTrue(value: string | undefined): boolean {
+  return TRUE_VALUES.has(`${value ?? ""}`.trim().toLowerCase());
+}
+
+function usesManagedLocalConatRouter(env: Record<string, string>): boolean {
+  return (
+    envIsTrue(env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER) &&
+    !`${env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim()
+  );
+}
+
 function ensureDefaults(env: Record<string, string>, index: number): void {
   if (!env.COCALC_DISABLE_BEES) {
     env.COCALC_DISABLE_BEES = "no";
@@ -155,6 +167,14 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
   if (!env.COCALC_SSH_SERVER) {
     env.COCALC_SSH_SERVER = `localhost:${2222 + index}`;
   }
+  if (usesManagedLocalConatRouter(env)) {
+    const basePort = parsePort(env.PORT) ?? 9002 + index;
+    env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST =
+      env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST ?? "127.0.0.1";
+    env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT =
+      env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT ?? String(basePort + 100);
+    env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = `http://${env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST}:${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT}`;
+  }
 }
 
 function resolveEnv(index: number): {
@@ -162,6 +182,13 @@ function resolveEnv(index: number): {
   dataDir: string;
   logPath: string;
   pidPath: string;
+  routerEnabled: boolean;
+  managedRouter: boolean;
+  routerHost: string;
+  routerPort?: number;
+  routerUrl?: string;
+  routerLogPath: string;
+  routerPidPath: string;
   httpPort?: number;
   sshPort?: number;
 } {
@@ -181,9 +208,17 @@ function resolveEnv(index: number): {
   if (env.COCALC_RUSTIC && !env.COCALC_RUSTIC_REPO) {
     env.COCALC_RUSTIC_REPO = path.join(env.COCALC_RUSTIC, "rustic");
   }
+  const routerEnabled = envIsTrue(
+    env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER,
+  );
+  const managedRouter =
+    routerEnabled &&
+    !`${env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim();
   ensureDefaults(env, index);
   const logPath = path.join(dataDir, "log");
   const pidPath = path.join(dataDir, "daemon.pid");
+  const routerLogPath = path.join(dataDir, "conat-router.log");
+  const routerPidPath = path.join(dataDir, "conat-router.pid");
   if (!env.DEBUG_FILE) {
     env.DEBUG_FILE = logPath;
   }
@@ -195,6 +230,14 @@ function resolveEnv(index: number): {
     dataDir,
     logPath,
     pidPath,
+    routerEnabled,
+    managedRouter,
+    routerHost: env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST ?? "127.0.0.1",
+    routerPort: parsePort(env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT),
+    routerUrl:
+      `${env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim() || undefined,
+    routerLogPath,
+    routerPidPath,
     httpPort: parsePort(env.PORT),
     sshPort: parsePort(env.PROJECT_HOST_SSH_SERVER ?? env.COCALC_SSH_SERVER),
   };
@@ -269,6 +312,10 @@ function matchesProjectHostCmdline(cmdline: string[]): boolean {
   );
 }
 
+function isRouterDaemonEnv(env: Record<string, string>): boolean {
+  return env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1";
+}
+
 function matchesSshpiperdCmdline(cmdline: string[], port: number): boolean {
   return (
     cmdline.some((arg) => /(?:^|\/)sshpiperd$/.test(arg)) &&
@@ -283,12 +330,39 @@ function matchingProjectHostPids(dataDir: string, httpPort?: number): number[] {
     const cmdline = readProcCmdline(pid);
     if (!matchesProjectHostCmdline(cmdline)) continue;
     const env = readProcEnv(pid);
+    if (isRouterDaemonEnv(env)) continue;
     const procData = env.COCALC_DATA ?? env.DATA;
     const procPort = Number(env.PORT);
     if (
       procData === dataDir ||
       (httpPort != null && procPort === httpPort) ||
       (!procData && !Number.isFinite(procPort))
+    ) {
+      matches.push(pid);
+    }
+  }
+  return matches;
+}
+
+function matchingConatRouterPids(
+  dataDir: string,
+  routerPort?: number,
+): number[] {
+  const matches: number[] = [];
+  for (const pid of listProcPids()) {
+    if (pid === process.pid) continue;
+    const cmdline = readProcCmdline(pid);
+    if (!matchesProjectHostCmdline(cmdline)) continue;
+    const env = readProcEnv(pid);
+    if (!isRouterDaemonEnv(env)) continue;
+    const procData = env.COCALC_DATA ?? env.DATA;
+    const procPort = parsePort(
+      env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT ?? env.PORT,
+    );
+    if (
+      procData === dataDir ||
+      (routerPort != null && procPort === routerPort) ||
+      (!procData && routerPort == null)
     ) {
       matches.push(pid);
     }
@@ -360,11 +434,21 @@ function healthCheckUrl(
   return `http://${localHost}:${port}/healthz`;
 }
 
-function checkHealthSync(
+function conatRouterHealthCheckUrl(
   env: Record<string, string>,
-  httpPort?: number,
-): boolean {
-  const url = healthCheckUrl(env, httpPort);
+  routerPort?: number,
+): string {
+  const host =
+    `${env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST ?? ""}`.trim() || "127.0.0.1";
+  const port =
+    routerPort ??
+    parsePort(env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT) ??
+    parsePort(env.PORT) ??
+    9102;
+  return `http://${host}:${port}/healthz`;
+}
+
+function checkHealthUrlSync(url: string): boolean {
   const timeoutSeconds = String(
     getPositiveIntEnv("COCALC_PROJECT_HOST_DAEMON_HEALTH_TIMEOUT_SEC", 5),
   );
@@ -391,6 +475,21 @@ function checkHealthSync(
     },
   );
   return result.status === 0;
+}
+
+function checkHealthSync(
+  env: Record<string, string>,
+  httpPort?: number,
+): boolean {
+  const url = healthCheckUrl(env, httpPort);
+  return checkHealthUrlSync(url);
+}
+
+function checkConatRouterHealthSync(
+  env: Record<string, string>,
+  routerPort?: number,
+): boolean {
+  return checkHealthUrlSync(conatRouterHealthCheckUrl(env, routerPort));
 }
 
 function spawnSyncText(
@@ -520,17 +619,22 @@ function terminatePids(pids: number[], label: string): number[] {
 function cleanupStrayProcesses(
   dataDir: string,
   httpPort?: number,
+  routerPort?: number,
   sshPort?: number,
 ): number {
   const projectHostPids = terminatePids(
     matchingProjectHostPids(dataDir, httpPort),
     "project-host",
   );
+  const routerPids = terminatePids(
+    matchingConatRouterPids(dataDir, routerPort),
+    "project-host conat router",
+  );
   const sshpiperdPids = terminatePids(
     matchingSshpiperdPids(sshPort),
     "sshpiperd",
   );
-  return projectHostPids.length + sshpiperdPids.length;
+  return projectHostPids.length + routerPids.length + sshpiperdPids.length;
 }
 
 function resolveExec(root: string): { command: string; args: string[] } {
@@ -548,12 +652,226 @@ function resolveExec(root: string): { command: string; args: string[] } {
   return { command, args };
 }
 
+function startManagedConatRouter(opts: {
+  env: Record<string, string>;
+  routerPidPath: string;
+  routerLogPath: string;
+  routerHost: string;
+  routerPort?: number;
+}): void {
+  const { env, routerPidPath, routerLogPath, routerHost, routerPort } = opts;
+  if (routerPort == null) {
+    throw new Error(
+      "managed conat router requires COCALC_PROJECT_HOST_CONAT_ROUTER_PORT",
+    );
+  }
+  if (fs.existsSync(routerPidPath)) {
+    const pid = Number(fs.readFileSync(routerPidPath, "utf8"));
+    if (pid && isRunning(pid)) {
+      if (checkConatRouterHealthSync(env, routerPort)) {
+        console.log(
+          `project-host conat router already running and healthy (pid ${pid}); leaving it running.`,
+        );
+        return;
+      }
+      throw new Error(
+        `project-host conat router already running (pid ${pid}); stop it first or remove ${routerPidPath}`,
+      );
+    }
+    fs.rmSync(routerPidPath, { force: true });
+  }
+  try {
+    if (fs.existsSync(routerLogPath)) {
+      fs.unlinkSync(routerLogPath);
+    }
+  } catch (err) {
+    console.error(`warning: unable to truncate log at ${routerLogPath}:`, err);
+  }
+  const stdout = fs.openSync(routerLogPath, "a");
+  const stderr = fs.openSync(routerLogPath, "a");
+  try {
+    fs.chmodSync(routerLogPath, 0o600);
+  } catch {
+    // best effort
+  }
+  const root = path.join(__dirname, "..");
+  const { command, args } = resolveExec(root);
+  const child = processRuntime.spawn(command, args, {
+    cwd: root,
+    env: {
+      ...env,
+      HOST: routerHost,
+      PORT: String(routerPort),
+      DEBUG_FILE: routerLogPath,
+      COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON: "1",
+    },
+    detached: true,
+    stdio: ["ignore", stdout, stderr],
+  });
+  child.unref();
+  fs.writeFileSync(routerPidPath, String(child.pid));
+  try {
+    fs.chmodSync(routerPidPath, 0o600);
+  } catch {
+    // best effort
+  }
+  console.log(
+    `project-host conat router started (pid ${child.pid}); log=${routerLogPath}`,
+  );
+}
+
+function ensureManagedConatRouter(opts: {
+  env: Record<string, string>;
+  dataDir: string;
+  routerPidPath: string;
+  routerLogPath: string;
+  routerHost: string;
+  routerPort?: number;
+}): void {
+  const { env, dataDir, routerPidPath, routerLogPath, routerHost, routerPort } =
+    opts;
+  const pid = fs.existsSync(routerPidPath)
+    ? Number(fs.readFileSync(routerPidPath, "utf8"))
+    : undefined;
+  if (pid && isRunning(pid)) {
+    if (checkConatRouterHealthSync(env, routerPort)) {
+      console.log(`project-host conat router healthy (pid ${pid})`);
+      return;
+    }
+    console.warn(
+      `project-host conat router pid ${pid} is running but unhealthy; restarting.`,
+    );
+    stopManagedConatRouter({
+      dataDir,
+      routerPidPath,
+      routerPort,
+    });
+    startManagedConatRouter({
+      env,
+      routerPidPath,
+      routerLogPath,
+      routerHost,
+      routerPort,
+    });
+    return;
+  }
+  if (fs.existsSync(routerPidPath)) {
+    console.warn(
+      `project-host conat router pid file is stale at ${routerPidPath}; recovering.`,
+    );
+  } else {
+    console.warn("project-host conat router is not running; starting it.");
+  }
+  fs.rmSync(routerPidPath, { force: true });
+  terminatePids(
+    matchingConatRouterPids(dataDir, routerPort),
+    "project-host conat router",
+  );
+  startManagedConatRouter({
+    env,
+    routerPidPath,
+    routerLogPath,
+    routerHost,
+    routerPort,
+  });
+}
+
+function stopManagedConatRouter({
+  dataDir,
+  routerPidPath,
+  routerPort,
+}: {
+  dataDir: string;
+  routerPidPath: string;
+  routerPort?: number;
+}): void {
+  if (!fs.existsSync(routerPidPath)) {
+    const cleaned = terminatePids(
+      matchingConatRouterPids(dataDir, routerPort),
+      "project-host conat router",
+    );
+    if (cleaned.length > 0) {
+      console.log(
+        `Stopped ${cleaned.length} stray project-host conat router process(es).`,
+      );
+    }
+    return;
+  }
+  const pid = Number(fs.readFileSync(routerPidPath, "utf8"));
+  if (!pid || !isRunning(pid)) {
+    fs.rmSync(routerPidPath, { force: true });
+    const cleaned = terminatePids(
+      matchingConatRouterPids(dataDir, routerPort),
+      "project-host conat router",
+    );
+    if (cleaned.length > 0) {
+      console.log(
+        `Removed stale router pid file and stopped ${cleaned.length} stray project-host conat router process(es).`,
+      );
+    }
+    return;
+  }
+  const stopTimeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_STOP_TIMEOUT_MS",
+    15_000,
+  );
+  const killTimeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_KILL_TIMEOUT_MS",
+    5_000,
+  );
+  const pollMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_STOP_POLL_MS",
+    100,
+  );
+  process.kill(pid, "SIGTERM");
+  if (!waitForExit(pid, stopTimeoutMs, pollMs)) {
+    process.kill(pid, "SIGKILL");
+    if (!waitForExit(pid, killTimeoutMs, pollMs)) {
+      throw new Error(
+        `project-host conat router pid ${pid} did not exit after SIGKILL`,
+      );
+    }
+    console.log(`Sent SIGKILL to project-host conat router (pid ${pid}).`);
+  } else {
+    console.log(`Sent SIGTERM to project-host conat router (pid ${pid}).`);
+  }
+  fs.rmSync(routerPidPath, { force: true });
+  terminatePids(
+    matchingConatRouterPids(dataDir, routerPort),
+    "project-host conat router",
+  );
+}
+
 export function startDaemon(index = 0): void {
-  const { env, dataDir, logPath, pidPath, httpPort } = resolveEnv(index);
+  const {
+    env,
+    dataDir,
+    logPath,
+    pidPath,
+    httpPort,
+    managedRouter,
+    routerHost,
+    routerLogPath,
+    routerPidPath,
+    routerPort,
+  } = resolveEnv(index);
+  if (managedRouter) {
+    ensureManagedConatRouter({
+      env,
+      dataDir,
+      routerPidPath,
+      routerLogPath,
+      routerHost,
+      routerPort,
+    });
+  }
   if (fs.existsSync(pidPath)) {
     const pid = Number(fs.readFileSync(pidPath, "utf8"));
     if (pid && isRunning(pid)) {
-      if (checkHealthSync(env, httpPort)) {
+      if (
+        checkHealthSync(env, httpPort) &&
+        (!managedRouter || checkConatRouterHealthSync(env, routerPort))
+      ) {
         console.log(
           `project-host already running and healthy (pid ${pid}); leaving it running.`,
         );
@@ -605,7 +923,28 @@ export function startDaemon(index = 0): void {
 }
 
 export function ensureDaemon(index = 0): void {
-  const { env, dataDir, pidPath, httpPort, sshPort } = resolveEnv(index);
+  const {
+    env,
+    dataDir,
+    pidPath,
+    httpPort,
+    sshPort,
+    managedRouter,
+    routerHost,
+    routerLogPath,
+    routerPidPath,
+    routerPort,
+  } = resolveEnv(index);
+  if (managedRouter) {
+    ensureManagedConatRouter({
+      env,
+      dataDir,
+      routerPidPath,
+      routerLogPath,
+      routerHost,
+      routerPort,
+    });
+  }
   const pid = fs.existsSync(pidPath)
     ? Number(fs.readFileSync(pidPath, "utf8"))
     : undefined;
@@ -638,7 +977,7 @@ export function ensureDaemon(index = 0): void {
     console.warn("project-host is not running; starting it.");
   }
   fs.rmSync(pidPath, { force: true });
-  const cleaned = cleanupStrayProcesses(dataDir, httpPort, sshPort);
+  const cleaned = cleanupStrayProcesses(dataDir, httpPort, routerPort, sshPort);
   if (cleaned > 0) {
     console.warn(
       `Stopped ${cleaned} stray project-host process(es) before restart.`,
@@ -648,11 +987,31 @@ export function ensureDaemon(index = 0): void {
 }
 
 export function stopDaemon(index = 0): void {
-  const { pidPath, dataDir, httpPort, sshPort } = resolveEnv(index);
+  const {
+    pidPath,
+    dataDir,
+    httpPort,
+    sshPort,
+    routerEnabled,
+    routerPidPath,
+    routerPort,
+  } = resolveEnv(index);
   if (!fs.existsSync(pidPath)) {
-    const cleaned = cleanupStrayProcesses(dataDir, httpPort, sshPort);
+    const cleaned = cleanupStrayProcesses(
+      dataDir,
+      httpPort,
+      routerPort,
+      sshPort,
+    );
     if (cleaned > 0) {
       console.log(`Stopped ${cleaned} stray project-host process(es).`);
+      if (routerEnabled) {
+        stopManagedConatRouter({
+          dataDir,
+          routerPidPath,
+          routerPort,
+        });
+      }
       return;
     }
     // Nothing to stop; treat as success for idempotent callers.
@@ -662,11 +1021,23 @@ export function stopDaemon(index = 0): void {
   const pid = Number(fs.readFileSync(pidPath, "utf8"));
   if (!pid || !isRunning(pid)) {
     fs.rmSync(pidPath, { force: true });
-    const cleaned = cleanupStrayProcesses(dataDir, httpPort, sshPort);
+    const cleaned = cleanupStrayProcesses(
+      dataDir,
+      httpPort,
+      routerPort,
+      sshPort,
+    );
     if (cleaned > 0) {
       console.log(
         `Removed stale pid file and stopped ${cleaned} stray project-host process(es).`,
       );
+      if (routerEnabled) {
+        stopManagedConatRouter({
+          dataDir,
+          routerPidPath,
+          routerPort,
+        });
+      }
       return;
     }
     throw new Error(`No running process for pid ${pid}; removed ${pidPath}`);
@@ -694,7 +1065,14 @@ export function stopDaemon(index = 0): void {
     console.log(`Sent SIGTERM to project-host (pid ${pid}).`);
   }
   fs.rmSync(pidPath, { force: true });
-  cleanupStrayProcesses(dataDir, httpPort, sshPort);
+  cleanupStrayProcesses(dataDir, httpPort, routerPort, sshPort);
+  if (routerEnabled) {
+    stopManagedConatRouter({
+      dataDir,
+      routerPidPath,
+      routerPort,
+    });
+  }
 }
 
 export function handleDaemonCli(argv: string[]): boolean {

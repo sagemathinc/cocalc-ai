@@ -83,6 +83,7 @@ import {
 import { createProjectHostHttpProxyAuth } from "./http-proxy-auth";
 import { isValidUUID } from "@cocalc/util/misc";
 import { main as runAcpWorkerMain } from "./acp-worker";
+import { main as runConatRouterDaemonMain } from "./conat-router-daemon";
 import {
   configureProjectHostAcpWorkerLauncher,
   ensureProjectHostAcpWorkerRunning,
@@ -629,6 +630,18 @@ if (require.main === module) {
       })
       .catch((err) => {
         console.error("project-host ACP worker failed:", err);
+        process.exit(1);
+      });
+  } else if (
+    `${process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON ?? ""}`.trim() ===
+    "1"
+  ) {
+    runConatRouterDaemonMain()
+      .then(() => {
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error("project-host conat router daemon failed:", err);
         process.exit(1);
       });
   } else {
