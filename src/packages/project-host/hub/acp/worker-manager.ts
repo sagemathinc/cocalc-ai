@@ -14,18 +14,21 @@ import {
 import getLogger from "@cocalc/backend/logger";
 import { conatPassword, conatServer, data } from "@cocalc/backend/data";
 import {
-  getAcpWorker,
-  listAcpWorkers,
-  setAcpWorkerState,
-  upsertAcpWorker,
-} from "@cocalc/lite/hub/sqlite/acp-workers";
+  acpDaemonControlClient,
+  type AcpDaemonStatus,
+} from "@cocalc/conat/ai/acp/daemon-control";
 import { getSoftwareVersions } from "../../software";
+import { getProjectHostConatClient } from "../../runtime-client";
 
 const logger = getLogger("project-host:hub:acp:worker-manager");
 const ACP_WORKER_PID_FILE = path.join(data, "acp-worker.pid");
 const ACP_WORKER_LOG_FILE = path.join(data, "logs", "acp-worker.log");
 const ACP_WORKER_SUPERVISOR_MS = 2000;
 const ACP_WORKER_ROLLING_CAPABILITY = "rolling-v1";
+const ACP_WORKER_CONTROL_TIMEOUT_MS = Math.max(
+  250,
+  Number(process.env.COCALC_ACP_WORKER_CONTROL_TIMEOUT_MS ?? 1500),
+);
 
 let supervisorStarted = false;
 let workerEntryPoint: string | undefined;
@@ -43,6 +46,10 @@ type WorkerProcessInfo = {
   pid: number;
   env: Record<string, string>;
   cmdline: string[];
+};
+
+type WorkerWithStatus = WorkerProcessInfo & {
+  status?: AcpDaemonStatus;
 };
 
 export type ProjectHostAcpWorkerRolloutPlan = {
@@ -199,6 +206,60 @@ function workerIdOf(worker: WorkerProcessInfo): string {
   return `${worker.env.COCALC_ACP_INSTANCE_ID ?? ""}`.trim();
 }
 
+async function getWorkerStatus(
+  worker: WorkerProcessInfo,
+): Promise<AcpDaemonStatus | undefined> {
+  const worker_id = workerIdOf(worker);
+  const host_id = `${worker.env.PROJECT_HOST_ID ?? ""}`.trim();
+  if (!worker_id || !host_id) {
+    return;
+  }
+  try {
+    return await acpDaemonControlClient({
+      client: getProjectHostConatClient(),
+      host_id,
+      worker_id,
+      timeout: ACP_WORKER_CONTROL_TIMEOUT_MS,
+      waitForInterest: false,
+    }).health();
+  } catch (err) {
+    logger.debug("failed reading ACP worker control status", {
+      pid: worker.pid,
+      worker_id,
+      host_id,
+      err: `${err}`,
+    });
+    return;
+  }
+}
+
+async function requestWorkerDrain(
+  worker: WorkerProcessInfo,
+): Promise<AcpDaemonStatus | undefined> {
+  const worker_id = workerIdOf(worker);
+  const host_id = `${worker.env.PROJECT_HOST_ID ?? ""}`.trim();
+  if (!worker_id || !host_id) {
+    return;
+  }
+  try {
+    return await acpDaemonControlClient({
+      client: getProjectHostConatClient(),
+      host_id,
+      worker_id,
+      timeout: ACP_WORKER_CONTROL_TIMEOUT_MS,
+      waitForInterest: false,
+    }).requestDrain({ reason: "rolling_restart" });
+  } catch (err) {
+    logger.warn("failed requesting ACP worker drain", {
+      pid: worker.pid,
+      worker_id,
+      host_id,
+      err: `${err}`,
+    });
+    return;
+  }
+}
+
 function workerBundleVersionOf(
   worker: WorkerProcessInfo,
   launch: WorkerLaunch,
@@ -323,7 +384,6 @@ async function terminateWorkerPid(pid: number): Promise<void> {
 
 async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
   const launch = workerLaunchSignature();
-  const host_id = `${process.env.PROJECT_HOST_ID ?? ""}`.trim();
   const observedWorkers = listProjectHostAcpWorkers();
   if (observedWorkers.length > 1) {
     logger.warn("multiple project-host ACP workers observed", {
@@ -336,101 +396,50 @@ async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
       })),
     });
   }
-  const workers: WorkerProcessInfo[] = [];
+  const workerStatuses = await Promise.all(
+    observedWorkers.map(async (worker) => ({
+      worker,
+      status: await getWorkerStatus(worker),
+    })),
+  );
+  const workers: WorkerWithStatus[] = [];
   for (const worker of observedWorkers) {
-    const worker_id = workerIdOf(worker);
-    if (worker_id) {
-      const existing = getAcpWorker(worker_id);
-      if (existing?.state === "stopped") {
-        logger.warn("terminating stale stopped project-host ACP worker", {
-          pid: worker.pid,
-          worker_id,
-          bundle_version: existing.bundle_version,
-          bundle_path: existing.bundle_path,
-        });
-        await terminateWorkerPid(worker.pid);
-        continue;
-      }
+    const status = workerStatuses.find(
+      (entry) => entry.worker.pid === worker.pid,
+    )?.status;
+    if (status?.state === "stopped") {
+      logger.warn("terminating stale stopped project-host ACP worker", {
+        pid: worker.pid,
+        worker_id: status.worker_id,
+        bundle_version: status.bundle_version,
+        bundle_path: status.bundle_path,
+      });
+      await terminateWorkerPid(worker.pid);
+      continue;
     }
-    workers.push(worker);
+    workers.push({ ...worker, status });
   }
   if (!workers.length) {
-    for (const row of listAcpWorkers({
-      host_id,
-      states: ["active", "draining"],
-    })) {
-      setAcpWorkerState({
-        worker_id: row.worker_id,
-        state: "stopped",
-        stop_reason: "process_missing",
-      });
-    }
     clearWorkerPidFile();
     return;
   }
   const { activePid, drainingPids, terminatePids } =
     planProjectHostAcpWorkerRollout({
-      workers,
+      workers: workers.map(({ status, ...worker }) => worker),
       launch,
       drainingWorkerIds: workers
         .map((worker) => {
-          const worker_id = workerIdOf(worker);
-          if (!worker_id) return;
-          return getAcpWorker(worker_id)?.state === "draining"
-            ? worker_id
+          return worker.status?.state === "draining"
+            ? worker.status.worker_id
             : undefined;
         })
         .filter((worker_id): worker_id is string => worker_id != null),
     });
-  const liveWorkerIds = new Set<string>();
-  for (const worker of workers) {
-    const worker_id = workerIdOf(worker);
-    const state =
-      worker.pid === activePid && isExpectedWorkerProcess(worker, launch)
-        ? "active"
-        : "draining";
-    if (!worker_id) continue;
-    liveWorkerIds.add(worker_id);
-    const existing = getAcpWorker(worker_id);
-    upsertAcpWorker({
-      worker_id,
-      host_id:
-        `${worker.env.PROJECT_HOST_ID ?? ""}`.trim() || host_id || "unknown",
-      bundle_version: workerBundleVersionOf(worker, launch),
-      bundle_path: workerBundlePathOf(worker, launch),
-      pid: worker.pid,
-      state,
-      started_at: existing?.started_at ?? Date.now(),
-      last_heartbeat_at: existing?.last_heartbeat_at ?? Date.now(),
-      last_seen_running_jobs: existing?.last_seen_running_jobs ?? 0,
-      exit_requested_at:
-        state === "draining"
-          ? (existing?.exit_requested_at ?? Date.now())
-          : null,
-      stopped_at: null,
-      stop_reason: null,
-    });
-  }
-  for (const row of listAcpWorkers({
-    host_id,
-    states: ["active", "draining"],
-  })) {
-    if (liveWorkerIds.has(row.worker_id)) continue;
-    setAcpWorkerState({
-      worker_id: row.worker_id,
-      state: "stopped",
-      stop_reason: "process_missing",
-    });
-  }
   for (const worker of workers) {
     if (!drainingPids.includes(worker.pid)) continue;
     if (!workerRollingCapable(worker)) continue;
-    const worker_id = workerIdOf(worker);
-    if (!worker_id) continue;
-    setAcpWorkerState({
-      worker_id,
-      state: "draining",
-    });
+    if (worker.status?.state === "draining") continue;
+    await requestWorkerDrain(worker);
   }
   for (const worker of workers) {
     if (!terminatePids.includes(worker.pid)) continue;
@@ -497,21 +506,6 @@ function spawnProjectHostAcpWorker({
   });
   closeSync(stdout);
   child.unref();
-  const now = Date.now();
-  upsertAcpWorker({
-    worker_id,
-    host_id: `${process.env.PROJECT_HOST_ID ?? ""}`.trim() || "unknown",
-    bundle_version,
-    bundle_path,
-    pid: child.pid,
-    state: "active",
-    started_at: now,
-    last_heartbeat_at: now,
-    last_seen_running_jobs: 0,
-    exit_requested_at: null,
-    stopped_at: null,
-    stop_reason: null,
-  });
   writeFileSync(ACP_WORKER_PID_FILE, `${child.pid}\n`);
   logger.warn("spawned project-host ACP worker", {
     pid: child.pid,
