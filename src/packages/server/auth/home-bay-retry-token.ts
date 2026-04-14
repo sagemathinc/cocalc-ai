@@ -3,20 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  createPrivateKey,
-  createPublicKey,
-  randomUUID,
-  sign as cryptoSign,
-  verify as cryptoVerify,
-} from "crypto";
-import {
-  getProjectHostAuthTokenPrivateKey,
-  getProjectHostAuthTokenPublicKey,
-} from "@cocalc/backend/data";
+import { createHmac, randomUUID, timingSafeEqual } from "crypto";
+import { conatPassword } from "@cocalc/backend/data";
+import { getClusterConfig } from "@cocalc/server/cluster-config";
 
 const TOKEN_TYPE = "JWT";
-const TOKEN_ALG = "EdDSA";
+const TOKEN_ALG = "HS256";
 const TOKEN_VERSION = "home-bay-retry-v1";
 const DEFAULT_TTL_SECONDS = 5 * 60;
 const MAX_TTL_SECONDS = 15 * 60;
@@ -33,9 +25,10 @@ export interface HomeBayRetryClaims {
   exp: number;
   jti: string;
   v: string;
-  email: string;
+  email?: string;
+  account_id?: string;
   home_bay_id: string;
-  purpose: "sign-in" | "sign-up";
+  purpose: "sign-in" | "sign-up" | "impersonate";
 }
 
 function base64UrlEncode(input: Buffer | string): string {
@@ -60,12 +53,22 @@ function normalizeTtlSeconds(ttl_seconds?: number): number {
   return Math.max(MIN_TTL_SECONDS, Math.min(MAX_TTL_SECONDS, Math.floor(ttl)));
 }
 
-function getPrivateKey() {
-  return createPrivateKey(getProjectHostAuthTokenPrivateKey());
+function getSharedSecret(): Buffer {
+  const explicit =
+    `${process.env.COCALC_HOME_BAY_RETRY_TOKEN_SECRET ?? ""}`.trim();
+  if (explicit) {
+    return Buffer.from(explicit, "utf8");
+  }
+  const cluster = getClusterConfig();
+  const shared = `${cluster.seed_conat_password ?? conatPassword ?? ""}`.trim();
+  if (!shared) {
+    throw new Error("missing home-bay retry token signing secret");
+  }
+  return Buffer.from(shared, "utf8");
 }
 
-function getPublicKey() {
-  return createPublicKey(getProjectHostAuthTokenPublicKey());
+function signPayload(signingInput: string): Buffer {
+  return createHmac("sha256", getSharedSecret()).update(signingInput).digest();
 }
 
 function parseClaims(token: string): {
@@ -90,14 +93,16 @@ function parseClaims(token: string): {
 
 export function issueHomeBayRetryToken({
   email,
+  account_id,
   home_bay_id,
   purpose,
   ttl_seconds,
   now_ms = Date.now(),
 }: {
-  email: string;
+  email?: string;
+  account_id?: string;
   home_bay_id: string;
-  purpose: "sign-in" | "sign-up";
+  purpose: "sign-in" | "sign-up" | "impersonate";
   ttl_seconds?: number;
   now_ms?: number;
 }): {
@@ -106,24 +111,30 @@ export function issueHomeBayRetryToken({
   claims: HomeBayRetryClaims;
 } {
   const normalizedEmail = `${email ?? ""}`.trim().toLowerCase();
+  const normalizedAccountId = `${account_id ?? ""}`.trim();
   const normalizedBay = `${home_bay_id ?? ""}`.trim();
-  if (!normalizedEmail) {
-    throw new Error("email is required");
-  }
   if (!normalizedBay) {
     throw new Error("home_bay_id is required");
+  }
+  if (purpose === "impersonate") {
+    if (!normalizedAccountId) {
+      throw new Error("account_id is required");
+    }
+  } else if (!normalizedEmail) {
+    throw new Error("email is required");
   }
   const iat = Math.floor(now_ms / 1000);
   const exp = iat + normalizeTtlSeconds(ttl_seconds);
   const claims: HomeBayRetryClaims = {
     iss: ISSUER,
-    sub: normalizedEmail,
+    sub: normalizedEmail || normalizedAccountId,
     aud: AUDIENCE,
     iat,
     exp,
     jti: randomUUID(),
     v: TOKEN_VERSION,
-    email: normalizedEmail,
+    ...(normalizedEmail ? { email: normalizedEmail } : {}),
+    ...(normalizedAccountId ? { account_id: normalizedAccountId } : {}),
     home_bay_id: normalizedBay,
     purpose,
   };
@@ -131,9 +142,7 @@ export function issueHomeBayRetryToken({
   const encHeader = base64UrlEncode(JSON.stringify(header));
   const encClaims = base64UrlEncode(JSON.stringify(claims));
   const signingInput = `${encHeader}.${encClaims}`;
-  const encSig = base64UrlEncode(
-    cryptoSign(null, Buffer.from(signingInput), getPrivateKey()),
-  );
+  const encSig = base64UrlEncode(signPayload(signingInput));
   return {
     token: `${signingInput}.${encSig}`,
     expires_at: exp * 1000,
@@ -145,21 +154,25 @@ export function verifyHomeBayRetryToken({
   token,
   home_bay_id,
   email,
+  account_id,
   purpose,
   now_ms = Date.now(),
 }: {
   token: string;
   home_bay_id: string;
   email?: string;
-  purpose?: "sign-in" | "sign-up";
+  account_id?: string;
+  purpose?: "sign-in" | "sign-up" | "impersonate";
   now_ms?: number;
 }): HomeBayRetryClaims {
   const { header, claims, signingInput, signature } = parseClaims(token);
   if (header?.typ !== TOKEN_TYPE || header?.alg !== TOKEN_ALG) {
     throw new Error("invalid token header");
   }
+  const expected = signPayload(signingInput);
   if (
-    !cryptoVerify(null, Buffer.from(signingInput), getPublicKey(), signature)
+    signature.length !== expected.length ||
+    !timingSafeEqual(signature, expected)
   ) {
     throw new Error("invalid token signature");
   }
@@ -188,6 +201,12 @@ export function verifyHomeBayRetryToken({
       `${email ?? ""}`.trim().toLowerCase()
   ) {
     throw new Error("retry token email mismatch");
+  }
+  if (
+    account_id &&
+    `${claims.account_id ?? ""}`.trim() !== `${account_id ?? ""}`.trim()
+  ) {
+    throw new Error("retry token account_id mismatch");
   }
   return claims;
 }
