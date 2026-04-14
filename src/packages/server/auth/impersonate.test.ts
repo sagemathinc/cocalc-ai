@@ -8,6 +8,7 @@ let getSitePublicOriginForRequestMock: jest.Mock;
 let clientSideRedirectMock: jest.Mock;
 let issueHomeBayRetryTokenMock: jest.Mock;
 let verifyHomeBayRetryTokenMock: jest.Mock;
+let clearAuthCookiesMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -17,6 +18,11 @@ jest.mock("@cocalc/database/pool", () => ({
 jest.mock("@cocalc/server/auth/set-sign-in-cookies", () => ({
   __esModule: true,
   default: (...args: any[]) => setSignInCookiesMock(...args),
+}));
+
+jest.mock("@cocalc/server/auth/clear-auth-cookies", () => ({
+  __esModule: true,
+  default: (...args: any[]) => clearAuthCookiesMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
@@ -71,6 +77,7 @@ describe("auth/impersonate", () => {
       token: "retry-token",
     }));
     verifyHomeBayRetryTokenMock = jest.fn();
+    clearAuthCookiesMock = jest.fn(async () => undefined);
   });
 
   afterEach(() => {
@@ -105,6 +112,7 @@ describe("auth/impersonate", () => {
       purpose: "impersonate",
     });
     expect(getBayPublicOriginForRequestMock).toHaveBeenCalledWith(req, "bay-2");
+    expect(clearAuthCookiesMock).toHaveBeenCalledWith({ req, res });
     expect(setSignInCookiesMock).not.toHaveBeenCalled();
     expect(clientSideRedirectMock).toHaveBeenCalledWith({
       res,
@@ -143,6 +151,7 @@ describe("auth/impersonate", () => {
       home_bay_id: "bay-2",
       purpose: "impersonate",
     });
+    expect(clearAuthCookiesMock).not.toHaveBeenCalled();
     expect(setSignInCookiesMock).toHaveBeenCalledWith({
       req,
       res,

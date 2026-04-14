@@ -32,18 +32,31 @@ export default async function setSignInCookies({
   ]);
 }
 
+function cookieOptionVariants<T extends Record<string, any>>(
+  opts: T,
+): Array<T | Omit<T, "domain">> {
+  const variants: Array<T | Omit<T, "domain">> = [opts];
+  if (opts.domain) {
+    const { domain: _domain, ...hostOnly } = opts;
+    variants.push(hostOnly);
+  }
+  return variants;
+}
+
 async function setRememberMeCookie({ req, res, account_id, maxAge }) {
   const { value } = await createRememberMeCookie(account_id, maxAge / 1000);
   const cookies = new Cookies(req, res);
   const { samesite_remember_me } = await getServerSettings();
   const sameSite = samesite_remember_me;
   const domain = await getBrowserCookieDomainForRequest(req);
-  cookies.set(REMEMBER_ME_COOKIE_NAME, value, {
+  for (const opts of cookieOptionVariants({
     ...(domain ? { domain } : {}),
     maxAge,
     sameSite,
     secure: req.protocol === "https",
-  });
+  })) {
+    cookies.set(REMEMBER_ME_COOKIE_NAME, value, opts);
+  }
 }
 
 async function setAccountIdCookie({ req, res, account_id, maxAge }) {
@@ -52,11 +65,13 @@ async function setAccountIdCookie({ req, res, account_id, maxAge }) {
   // for telling the user their own account_id.
   const cookies = new Cookies(req, res, { secure: false, httpOnly: false });
   const domain = await getBrowserCookieDomainForRequest(req);
-  cookies.set(ACCOUNT_ID_COOKIE_NAME, account_id, {
+  for (const opts of cookieOptionVariants({
     ...(domain ? { domain } : {}),
     maxAge,
     httpOnly: false,
-  });
+  })) {
+    cookies.set(ACCOUNT_ID_COOKIE_NAME, account_id, opts);
+  }
 }
 
 async function setHomeBayCookie({ req, res, account_id, maxAge }) {
@@ -65,11 +80,13 @@ async function setHomeBayCookie({ req, res, account_id, maxAge }) {
   const account = await getClusterAccountById(account_id);
   const home_bay_id =
     `${account?.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
-  cookies.set(HOME_BAY_ID_COOKIE_NAME, home_bay_id, {
+  for (const opts of cookieOptionVariants({
     ...(domain ? { domain } : {}),
     maxAge,
     sameSite: "lax",
     secure: req.protocol === "https",
     httpOnly: true,
-  });
+  })) {
+    cookies.set(HOME_BAY_ID_COOKIE_NAME, home_bay_id, opts);
+  }
 }
