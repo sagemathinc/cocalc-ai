@@ -26,6 +26,9 @@ import {
   hasHubCloudflareTunnel,
   type CloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getDerivedBayPublicHostname } from "@cocalc/server/bay-public-origin";
+import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 import { ensurePublicViewerDns } from "@cocalc/server/cloud/dns";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
@@ -1105,6 +1108,7 @@ async function writeCloudflaredConfig(opts: {
   origin: string;
   noTLSVerify: boolean;
   publicViewerHostname?: string;
+  additionalHostnames?: string[];
 }): Promise<boolean> {
   const yamlString = (value: string): string => JSON.stringify(value);
   const ingress: string[] = [
@@ -1112,16 +1116,28 @@ async function writeCloudflaredConfig(opts: {
     `  - hostname: ${yamlString(opts.tunnel.hostname)}`,
     `    service: ${yamlString(opts.origin)}`,
   ];
+  const seenHostnames = new Set<string>([opts.tunnel.hostname]);
   if (opts.noTLSVerify) {
     ingress.push("    originRequest:");
     ingress.push("      noTLSVerify: true");
   }
   if (
     opts.publicViewerHostname &&
-    opts.publicViewerHostname !== opts.tunnel.hostname
+    !seenHostnames.has(opts.publicViewerHostname)
   ) {
     ingress.push(`  - hostname: ${yamlString(opts.publicViewerHostname)}`);
     ingress.push(`    service: ${yamlString(opts.origin)}`);
+    seenHostnames.add(opts.publicViewerHostname);
+    if (opts.noTLSVerify) {
+      ingress.push("    originRequest:");
+      ingress.push("      noTLSVerify: true");
+    }
+  }
+  for (const hostname of opts.additionalHostnames ?? []) {
+    if (!hostname || seenHostnames.has(hostname)) continue;
+    ingress.push(`  - hostname: ${yamlString(hostname)}`);
+    ingress.push(`    service: ${yamlString(opts.origin)}`);
+    seenHostnames.add(hostname);
     if (opts.noTLSVerify) {
       ingress.push("    originRequest:");
       ingress.push("      noTLSVerify: true");
@@ -1275,6 +1291,13 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
       dns: settings.dns,
     }) ?? "",
   );
+  const additionalHostnames: string[] = [];
+  if (getConfiguredClusterRole() !== "standalone") {
+    const bayHostname = await getDerivedBayPublicHostname(getConfiguredBayId());
+    if (bayHostname) {
+      additionalHostnames.push(bayHostname);
+    }
+  }
   const credentialsChanged = await writeCloudflaredCredentials(
     credentialsPath,
     tunnel,
@@ -1286,6 +1309,7 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     origin,
     noTLSVerify,
     publicViewerHostname,
+    additionalHostnames,
   });
   const shouldRestartRunning =
     tunnelStateChanged || credentialsChanged || configChanged;
