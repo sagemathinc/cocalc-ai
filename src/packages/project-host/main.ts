@@ -67,6 +67,7 @@ import { startCopyWorker } from "./pending-copies";
 import { startOnPremTunnel } from "./onprem-tunnel";
 import { startDataPermissionHardener } from "./data-permissions";
 import { resolveProjectHostId } from "./host-id";
+import { main as runConatRouterClusterNodeMain } from "./conat-router-cluster-node";
 import { startConatRevocationKickLoop } from "./conat-revocation-kick";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
@@ -623,7 +624,19 @@ export async function main(
 
 // Allow running directly via `node dist/main.js`.
 if (require.main === module) {
-  if (`${process.env.COCALC_PROJECT_HOST_ACP_WORKER ?? ""}`.trim() === "1") {
+  process.env.COCALC_CONAT_CLUSTER_NODE_ENTRYPOINT ??= __filename;
+  if (`${process.env.COCALC_CONAT_CLUSTER_NODE ?? ""}`.trim() === "1") {
+    runConatRouterClusterNodeMain()
+      .then(() => {
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error("project-host conat router cluster node failed:", err);
+        process.exit(1);
+      });
+  } else if (
+    `${process.env.COCALC_PROJECT_HOST_ACP_WORKER ?? ""}`.trim() === "1"
+  ) {
     runAcpWorkerMain()
       .then(() => {
         process.exit(0);

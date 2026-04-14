@@ -201,8 +201,13 @@ export async function startStandaloneProjectHostConatRouter({
     serviceName: "project-host conat router listener",
   });
   const app = express();
+  let conatReady = false;
   app.get("/healthz", (_req, res) => {
-    res.json({ ok: true });
+    if (!conatReady) {
+      res.status(503).json({ ok: false, ready: false });
+      return;
+    }
+    res.json({ ok: true, ready: true });
   });
   const httpServer = createHttpServer(app);
   httpServer.listen(bindPort, bindHost);
@@ -214,6 +219,7 @@ export async function startStandaloneProjectHostConatRouter({
     hostId,
     systemAccountPassword,
   });
+  conatReady = true;
   return {
     app,
     host: bindHost,

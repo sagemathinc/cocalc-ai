@@ -414,6 +414,29 @@ function waitForExit(pid: number, timeoutMs: number, pollMs: number): boolean {
   return !isRunning(pid);
 }
 
+function waitForHealthCheckSync(
+  check: () => boolean,
+  opts: {
+    timeoutMs: number;
+    pollMs: number;
+    pid?: number;
+    label: string;
+  },
+): void {
+  const { timeoutMs, pollMs, pid, label } = opts;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) {
+      return;
+    }
+    if (pid != null && !isRunning(pid)) {
+      throw new Error(`${label} exited before becoming healthy`);
+    }
+    sleepMs(pollMs);
+  }
+  throw new Error(`${label} did not become healthy within ${timeoutMs}ms`);
+}
+
 function healthCheckUrl(
   env: Record<string, string>,
   httpPort?: number,
@@ -714,6 +737,30 @@ function startManagedConatRouter(opts: {
     fs.chmodSync(routerPidPath, 0o600);
   } catch {
     // best effort
+  }
+  try {
+    waitForHealthCheckSync(() => checkConatRouterHealthSync(env, routerPort), {
+      timeoutMs: getPositiveIntEnv(
+        "COCALC_PROJECT_HOST_CONAT_ROUTER_STARTUP_TIMEOUT_MS",
+        30_000,
+      ),
+      pollMs: getPositiveIntEnv(
+        "COCALC_PROJECT_HOST_CONAT_ROUTER_STARTUP_POLL_MS",
+        250,
+      ),
+      pid: child.pid,
+      label: "project-host conat router",
+    });
+  } catch (err) {
+    fs.rmSync(routerPidPath, { force: true });
+    try {
+      if (child.pid && isRunning(child.pid)) {
+        process.kill(child.pid, "SIGTERM");
+      }
+    } catch {
+      // ignore best-effort cleanup failures
+    }
+    throw err;
   }
   console.log(
     `project-host conat router started (pid ${child.pid}); log=${routerLogPath}`,
