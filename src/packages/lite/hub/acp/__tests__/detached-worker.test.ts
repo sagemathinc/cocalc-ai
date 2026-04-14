@@ -70,6 +70,7 @@ jest.mock("../../sqlite/acp-turns", () => ({
 jest.mock("../../sqlite/acp-workers", () => ({
   getAcpWorker: jest.fn(),
   heartbeatAcpWorker: jest.fn(),
+  listAcpWorkers: jest.fn(() => []),
   listLiveAcpWorkers: jest.fn(() => []),
   stopAcpWorker: jest.fn(),
   upsertAcpWorker: jest.fn(),
@@ -129,10 +130,17 @@ beforeAll(() => {
 
 beforeEach(() => {
   getDatabase().prepare("DELETE FROM acp_jobs").run();
+  (turns.startAcpTurnLease as any)?.mockReset?.();
+  (turns.heartbeatAcpTurnLease as any)?.mockReset?.();
+  (turns.finalizeAcpTurnLease as any)?.mockReset?.();
   (turns.getAcpTurnLease as any)?.mockReset?.();
   (turns.getAcpTurnLease as any)?.mockImplementation?.(() => undefined);
   (turns.listRunningAcpTurnLeases as any)?.mockReset?.();
   (turns.listRunningAcpTurnLeases as any)?.mockImplementation?.(() => []);
+  (workers.getAcpWorker as any)?.mockReset?.();
+  (workers.getAcpWorker as any)?.mockImplementation?.(() => undefined);
+  (workers.listAcpWorkers as any)?.mockReset?.();
+  (workers.listAcpWorkers as any)?.mockImplementation?.(() => []);
   (workers.listLiveAcpWorkers as any)?.mockReset?.();
   (workers.listLiveAcpWorkers as any)?.mockImplementation?.(() => []);
   (chatServer.acquireChatSyncDB as any)?.mockReset?.();
@@ -323,6 +331,101 @@ describe("recoverDetachedWorkerStartupState", () => {
     expect(repaired?.acp_interrupted_text).toContain(
       "backend server restarted",
     );
+  });
+
+  it("does not recover a host-managed turn when the owner pid is still alive", async () => {
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "00000000-1000-4000-8000-000000000000",
+        path: "/tmp/detached-worker.chat",
+        message_date: "2026-04-02T14:00:00.000Z",
+        sender_id: "openai-codex-agent",
+        message_id: "assistant-1",
+        thread_id: "thread-1",
+        owner_instance_id: "worker-live",
+        pid: process.pid,
+        started_at: Date.now() - 70_000,
+        heartbeat_at: Date.now() - 70_000,
+      },
+    ]);
+    (workers.getAcpWorker as any).mockReturnValue({
+      worker_id: "worker-live",
+      host_id: "host-1",
+      bundle_version: "bundle-1",
+      bundle_path: "/bundle",
+      pid: process.pid,
+      state: "active",
+      started_at: Date.now() - 70_000,
+      last_heartbeat_at: Date.now() - 70_000,
+      last_seen_running_jobs: 1,
+      exit_requested_at: null,
+      stopped_at: null,
+      stop_reason: null,
+    });
+
+    await recoverDetachedWorkerStartupState({} as ConatClient, {
+      workerContext: {
+        worker_id: "worker-new",
+        host_id: "host-1",
+        bundle_version: "bundle-1",
+        bundle_path: "/bundle",
+        state: "active",
+      },
+      restartReason: "ACP worker stopped unexpectedly",
+    });
+
+    expect(chatServer.acquireChatSyncDB).not.toHaveBeenCalled();
+    expect(turns.finalizeAcpTurnLease).not.toHaveBeenCalled();
+  });
+
+  it("does not requeue a running job without a lease while the worker pid is still alive", async () => {
+    const request = makeRequest();
+    const queued = enqueueAcpJob(request as any);
+    const running = claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-live",
+      worker_bundle_version: "bundle-a",
+    });
+    expect(running?.state).toBe("running");
+
+    getDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET started_at = ?, updated_at = ? WHERE op_id = ?",
+      )
+      .run(Date.now() - 60_000, Date.now() - 60_000, queued.op_id);
+    (workers.getAcpWorker as any).mockImplementation((workerId: string) =>
+      workerId === "worker-live"
+        ? {
+            worker_id: "worker-live",
+            host_id: "host-1",
+            bundle_version: "bundle-1",
+            bundle_path: "/bundle",
+            pid: process.pid,
+            state: "active",
+            started_at: Date.now() - 60_000,
+            last_heartbeat_at: Date.now() - 60_000,
+            last_seen_running_jobs: 1,
+            exit_requested_at: null,
+            stopped_at: null,
+            stop_reason: null,
+          }
+        : undefined,
+    );
+
+    await recoverDetachedWorkerStartupState({} as ConatClient, {
+      restartReason: "worker restart",
+    });
+
+    const after = getAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    });
+    expect(after?.state).toBe("running");
+    expect(after?.worker_id).toBe("worker-live");
+    expect(after?.error ?? null).toBeNull();
   });
 
   it("auto-enqueues a Codex recovery continuation after startup repair", async () => {

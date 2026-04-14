@@ -15,6 +15,7 @@ import {
 } from "@cocalc/server/auth/home-bay-retry-token";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
+import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
 
 export async function signInUsingImpersonateToken({ req, res }) {
   try {
@@ -58,6 +59,7 @@ async function doIt({ req, res }) {
   const home_bay_id = `${account?.home_bay_id ?? ""}`.trim() || local_bay_id;
 
   if (!`${retry_token ?? ""}`.trim() && home_bay_id !== local_bay_id) {
+    await clearAuthCookies({ req, res });
     const retry = issueHomeBayRetryToken({
       account_id,
       home_bay_id,

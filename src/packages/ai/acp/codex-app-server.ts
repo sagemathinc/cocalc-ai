@@ -681,6 +681,8 @@ function isRetryableBareTimeoutText(text: string): boolean {
 
 function hasObservableTurnSideEffects(opts: {
   startedTerminalMeta: Map<string, { command?: string; cwd?: string }>;
+  terminalOutputs: Map<string, string>;
+  completedTerminals: Set<string>;
   emittedFileWrites: Set<string>;
   emittedFileWritePaths: Set<string>;
   finalResponse: string;
@@ -688,6 +690,37 @@ function hasObservableTurnSideEffects(opts: {
 }): boolean {
   return (
     opts.startedTerminalMeta.size > 0 ||
+    Array.from(opts.terminalOutputs.values()).some((output) => !!output) ||
+    opts.completedTerminals.size > 0 ||
+    opts.emittedFileWrites.size > 0 ||
+    opts.emittedFileWritePaths.size > 0 ||
+    !!opts.finalResponse.trim() ||
+    !!`${opts.latestTurnDiffText ?? ""}`.trim()
+  );
+}
+
+function hasRetryBlockingTurnSideEffects(
+  kind: RetryableAppServerFailureKind,
+  opts: {
+    startedTerminalMeta: Map<string, { command?: string; cwd?: string }>;
+    terminalOutputs: Map<string, string>;
+    completedTerminals: Set<string>;
+    emittedFileWrites: Set<string>;
+    emittedFileWritePaths: Set<string>;
+    finalResponse: string;
+    latestTurnDiffText?: string;
+  },
+): boolean {
+  const base = hasObservableTurnSideEffects(opts);
+  if (!base) {
+    return false;
+  }
+  if (kind !== "timeout") {
+    return true;
+  }
+  return (
+    Array.from(opts.terminalOutputs.values()).some((output) => !!output) ||
+    opts.completedTerminals.size > 0 ||
     opts.emittedFileWrites.size > 0 ||
     opts.emittedFileWritePaths.size > 0 ||
     !!opts.finalResponse.trim() ||
@@ -1374,6 +1407,7 @@ export class CodexAppServerAgent implements AcpAgent {
       string,
       { command?: string; cwd?: string }
     >();
+    const completedTerminals = new Set<string>();
     const emittedFileWrites = new Set<string>();
     const emittedFileWritePaths = new Set<string>();
     let latestTurnDiffText: string | undefined;
@@ -1672,6 +1706,7 @@ export class CodexAppServerAgent implements AcpAgent {
               item.status === "failed" ||
               item.status === "declined"
             ) {
+              completedTerminals.add(terminalId);
               await stream({
                 type: "event",
                 event: {
@@ -2025,8 +2060,10 @@ export class CodexAppServerAgent implements AcpAgent {
       const retryKind = getRetryableFailureKind(error);
       if (
         retryKind &&
-        !hasObservableTurnSideEffects({
+        !hasRetryBlockingTurnSideEffects(retryKind, {
           startedTerminalMeta,
+          terminalOutputs,
+          completedTerminals,
           emittedFileWrites,
           emittedFileWritePaths,
           finalResponse,
@@ -2040,6 +2077,25 @@ export class CodexAppServerAgent implements AcpAgent {
           turnId,
           stderrTail,
         });
+      }
+      if (retryKind) {
+        logger.info(
+          "codex app-server: suppressing transient retry after side effects",
+          {
+            kind: retryKind,
+            threadId: currentThreadId,
+            turnId,
+            startedTerminals: startedTerminalMeta.size,
+            terminalsWithOutput: Array.from(terminalOutputs.values()).filter(
+              Boolean,
+            ).length,
+            completedTerminals: completedTerminals.size,
+            fileWrites: emittedFileWrites.size,
+            fileWritePaths: emittedFileWritePaths.size,
+            hasFinalResponse: !!finalResponse.trim(),
+            hasTurnDiff: !!`${latestTurnDiffText ?? ""}`.trim(),
+          },
+        );
       }
       throw new Error(error);
     } finally {

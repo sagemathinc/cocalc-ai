@@ -1132,6 +1132,124 @@ describe("CodexAppServerAgent", () => {
     );
   });
 
+  it("retries bare timeout failures after terminal start without output", async () => {
+    process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES = "1";
+    process.env.COCALC_CODEX_TIMEOUT_RETRY_DELAY_MS = "1000";
+
+    let spawnCount = 0;
+    const makeProc = (spawn: number) =>
+      new FakeCodexAppServerProc((fake, message) => {
+        switch (message.method) {
+          case "initialize":
+            fake.sendResponse(message.id, { ok: true });
+            break;
+          case "thread/start":
+            fake.sendResponse(message.id, {
+              thread: { id: "thr-timeout-side-effects-1" },
+            });
+            break;
+          case "turn/start": {
+            const turnId = `turn-timeout-side-effects-${spawn}`;
+            fake.sendResponse(message.id, { turn: { id: turnId } });
+            setImmediate(() => {
+              fake.sendNotification("turn/started", {
+                turn: { id: turnId, status: "inProgress" },
+              });
+              if (spawn === 1) {
+                fake.sendNotification("item/started", {
+                  threadId: "thr-timeout-side-effects-1",
+                  turnId,
+                  item: {
+                    type: "commandExecution",
+                    id: "cmd-timeout-side-effects-1",
+                    command: "sleep 60",
+                    cwd: "/tmp/project",
+                    processId: null,
+                    status: "inProgress",
+                    commandActions: [],
+                    aggregatedOutput: null,
+                    exitCode: null,
+                    durationMs: null,
+                  },
+                });
+                fake.sendNotification("error", {
+                  turnId,
+                  error: { message: "timeout" },
+                });
+                fake.sendNotification("turn/completed", {
+                  turn: {
+                    id: turnId,
+                    status: "failed",
+                    error: { message: "timeout" },
+                  },
+                });
+              } else {
+                fake.sendNotification("item/agentMessage/delta", {
+                  threadId: "thr-timeout-side-effects-1",
+                  turnId,
+                  itemId: "msg-timeout-side-effects-1",
+                  delta: "Recovered",
+                });
+                fake.sendNotification("turn/completed", {
+                  turn: { id: turnId, status: "completed" },
+                });
+              }
+            });
+            break;
+          }
+          default:
+            if (typeof message.id === "number") {
+              fake.sendResponse(message.id, {});
+            }
+        }
+      });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: makeProc(++spawnCount) as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) streamPayloads.push(payload);
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    expect(spawnCount).toBe(2);
+    expect(streamPayloads).toEqual(
+      expect.arrayContaining([
+        {
+          type: "event",
+          event: {
+            type: "thinking",
+            text: "Codex returned a transient timeout. Retrying in 1 second (1/1)... If this repeats, check the project-host ACP logs.",
+          },
+        },
+        {
+          type: "summary",
+          finalResponse: "Recovered",
+          usage: undefined,
+          threadId: "thr-timeout-side-effects-1",
+        },
+      ]),
+    );
+  });
+
   it("adds timeout guidance after retries are exhausted", async () => {
     process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES = "1";
     process.env.COCALC_CODEX_TIMEOUT_RETRY_DELAY_MS = "1000";

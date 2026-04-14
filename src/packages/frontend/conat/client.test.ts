@@ -1441,6 +1441,141 @@ describe("ConatClient routed project-host reconnect", () => {
   });
 });
 
+describe("ConatClient home-bay bootstrap", () => {
+  it("waits for auth bootstrap before creating the default control-plane client", async () => {
+    jest.resetModules();
+
+    const connectCalls: any[] = [];
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(),
+      emit: jest.fn(),
+    };
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn(),
+        getActions: jest.fn(),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn((opts?: any) => {
+        connectCalls.push(opts);
+        return hubClient;
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    jest.doMock("js-cookie", () => ({
+      __esModule: true,
+      default: {
+        get: jest.fn((name: string) =>
+          name === "account_id" ? "acct-remote" : undefined,
+        ),
+        set: jest.fn(),
+      },
+    }));
+
+    const setStoredControlPlaneOrigin = jest.fn();
+    jest.doMock("@cocalc/frontend/control-plane-origin", () => ({
+      clearStoredControlPlaneOrigin: jest.fn(),
+      getControlPlaneAppUrl: jest.fn(() => undefined),
+      getStoredControlPlaneOrigin: jest.fn(() => undefined),
+      normalizeControlPlaneOrigin: jest.fn((value: string) =>
+        value?.replace(/\/+$/, ""),
+      ),
+      setStoredControlPlaneOrigin,
+    }));
+
+    const getAuthBootstrap = jest.fn(async () => ({
+      signed_in: false,
+      home_bay_id: "bay-2",
+      home_bay_url: "https://bay-2-lite4b.cocalc.ai",
+    }));
+    jest.doMock("@cocalc/frontend/auth/api", () => ({
+      getAuthBootstrap,
+    }));
+
+    const { ConatClient } = require("./client");
+    new ConatClient(
+      {
+        account_id: "acct-remote",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "https://lite4b.cocalc.ai", remote: false },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(getAuthBootstrap).toHaveBeenCalledTimes(1);
+    expect(setStoredControlPlaneOrigin).toHaveBeenCalledWith(
+      "https://bay-2-lite4b.cocalc.ai",
+    );
+    expect(connectCalls[0]?.address).toBe("https://bay-2-lite4b.cocalc.ai");
+  });
+});
+
 describe("ConatClient sync wrapper client preservation", () => {
   it("preserves explicit clients for dkv, akv, and dko wrappers", async () => {
     jest.resetModules();
