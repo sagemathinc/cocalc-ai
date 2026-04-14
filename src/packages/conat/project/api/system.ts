@@ -1,6 +1,6 @@
 import type {
   ExecuteCodeOutput,
-  ExecuteCodeOptions,
+  ExecuteCodeRequest,
 } from "@cocalc/util/types/execute-code";
 import type { DirectoryListingEntry } from "@cocalc/util/types";
 import type {
@@ -65,7 +65,7 @@ export interface System {
 
   ping: () => Promise<{ now: number }>;
 
-  exec: (opts: ExecuteCodeOptions) => Promise<ExecuteCodeOutput>;
+  exec: (opts: ExecuteCodeRequest) => Promise<ExecuteCodeOutput>;
 
   signal: (opts: {
     signal: number;
