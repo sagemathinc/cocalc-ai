@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { getDatabase, initDatabase } from "../../sqlite/database";
+import { getAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
 import {
   deleteAcpAutomationsForProject,
   listAcpAutomationsForProject,
@@ -13,13 +13,13 @@ import {
 
 describe("ACP automation sqlite lifecycle", () => {
   beforeAll(() => {
-    initDatabase({ filename: ":memory:" });
+    initAcpDatabase({ filename: ":memory:" });
   });
 
   beforeEach(() => {
     deleteAcpAutomationsForProject("project-1");
     deleteAcpAutomationsForProject("project-2");
-    getDatabase().prepare("DELETE FROM acp_automations").run();
+    getAcpDatabase().prepare("DELETE FROM acp_automations").run();
   });
 
   it("serializes enough data to rebuild the local scheduler index", () => {

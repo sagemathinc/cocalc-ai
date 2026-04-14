@@ -1,10 +1,10 @@
 #!/usr/bin/env ts-node
 import { randomUUID } from "node:crypto";
 import {
-  closeDatabase,
-  getDatabase,
-  initDatabase,
-} from "../../sqlite/database";
+  closeAcpDatabase,
+  getAcpDatabase,
+  initAcpDatabase,
+} from "../../sqlite/acp-database";
 import {
   claimNextQueuedAcpJobForThread,
   cancelQueuedAcpJob,
@@ -55,17 +55,17 @@ function makeRequest({
 }
 
 beforeAll(() => {
-  closeDatabase();
-  initDatabase({ filename: ":memory:" });
+  closeAcpDatabase();
+  initAcpDatabase({ filename: ":memory:" });
   listQueuedAcpJobs();
 });
 
 beforeEach(() => {
-  getDatabase().prepare("DELETE FROM acp_jobs").run();
+  getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
 });
 
 afterAll(() => {
-  closeDatabase();
+  closeAcpDatabase();
 });
 
 describe("acp job queue ordering", () => {

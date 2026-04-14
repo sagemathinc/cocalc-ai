@@ -11,10 +11,10 @@ import * as turns from "../../sqlite/acp-turns";
 import * as workers from "../../sqlite/acp-workers";
 import * as chatServer from "@cocalc/chat/server";
 import {
-  closeDatabase,
-  getDatabase,
-  initDatabase,
-} from "../../sqlite/database";
+  closeAcpDatabase,
+  getAcpDatabase,
+  initAcpDatabase,
+} from "../../sqlite/acp-database";
 import {
   claimNextQueuedAcpJobForThread,
   decodeAcpJobRequest,
@@ -123,13 +123,13 @@ function makeCommandRequest() {
 }
 
 beforeAll(() => {
-  closeDatabase();
-  initDatabase({ filename: ":memory:" });
+  closeAcpDatabase();
+  initAcpDatabase({ filename: ":memory:" });
   listQueuedAcpJobs();
 });
 
 beforeEach(() => {
-  getDatabase().prepare("DELETE FROM acp_jobs").run();
+  getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
   (turns.startAcpTurnLease as any)?.mockReset?.();
   (turns.heartbeatAcpTurnLease as any)?.mockReset?.();
   (turns.finalizeAcpTurnLease as any)?.mockReset?.();
@@ -148,7 +148,7 @@ beforeEach(() => {
 });
 
 afterAll(() => {
-  closeDatabase();
+  closeAcpDatabase();
 });
 
 describe("recoverDetachedWorkerStartupState", () => {
@@ -189,7 +189,7 @@ describe("recoverDetachedWorkerStartupState", () => {
     });
     expect(running?.state).toBe("running");
 
-    getDatabase()
+    getAcpDatabase()
       .prepare(
         "UPDATE acp_jobs SET started_at = ?, updated_at = ? WHERE op_id = ?",
       )
@@ -221,7 +221,7 @@ describe("recoverDetachedWorkerStartupState", () => {
     });
     expect(running?.state).toBe("running");
 
-    getDatabase()
+    getAcpDatabase()
       .prepare(
         "UPDATE acp_jobs SET started_at = ?, updated_at = ? WHERE op_id = ?",
       )
@@ -390,7 +390,7 @@ describe("recoverDetachedWorkerStartupState", () => {
     });
     expect(running?.state).toBe("running");
 
-    getDatabase()
+    getAcpDatabase()
       .prepare(
         "UPDATE acp_jobs SET started_at = ?, updated_at = ? WHERE op_id = ?",
       )

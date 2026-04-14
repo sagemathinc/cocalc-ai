@@ -1,9 +1,9 @@
 #!/usr/bin/env ts-node
 import {
-  closeDatabase,
-  getDatabase,
-  initDatabase,
-} from "../../sqlite/database";
+  closeAcpDatabase,
+  getAcpDatabase,
+  initAcpDatabase,
+} from "../../sqlite/acp-database";
 import {
   decodeAcpInterruptCandidateIds,
   decodeAcpInterruptChat,
@@ -15,17 +15,17 @@ import {
 } from "../../sqlite/acp-interrupts";
 
 beforeAll(() => {
-  closeDatabase();
-  initDatabase({ filename: ":memory:" });
+  closeAcpDatabase();
+  initAcpDatabase({ filename: ":memory:" });
   listPendingAcpInterrupts();
 });
 
 beforeEach(() => {
-  getDatabase().prepare("DELETE FROM acp_interrupts").run();
+  getAcpDatabase().prepare("DELETE FROM acp_interrupts").run();
 });
 
 afterAll(() => {
-  closeDatabase();
+  closeAcpDatabase();
 });
 
 describe("acp interrupt queue", () => {

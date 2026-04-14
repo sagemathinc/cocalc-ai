@@ -89,6 +89,7 @@ export async function ensureAcpWorkerRunning({
     DATA: data,
     COCALC_DATA_DIR: data,
     COCALC_LITE_SQLITE_FILENAME: path.join(data, "hub.db"),
+    COCALC_LITE_ACP_SQLITE_FILENAME: path.join(data, "acp.sqlite"),
     COCALC_LITE_ACP_WORKER_CONAT_PASSWORD: conatPassword,
     COCALC_LITE_ACP_WORKER_PID_FILE: ACP_WORKER_PID_FILE,
     // The worker's stdout/stderr are already redirected to acp-worker.log.

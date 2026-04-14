@@ -115,7 +115,7 @@ import {
   listAcpPayloads,
   clearAcpPayloads,
 } from "../sqlite/acp-queue";
-import { initDatabase } from "../sqlite/database";
+import { initAcpDatabase } from "../sqlite/acp-database";
 import {
   finalizeAcpTurnLease,
   getAcpTurnLease,
@@ -4840,7 +4840,7 @@ function initializeAcpRuntime(client: ConatClient): void {
   const sqliteFilename =
     `${process.env.COCALC_LITE_SQLITE_FILENAME ?? ""}`.trim() ||
     path.join(data, "hub.db");
-  initDatabase({ filename: sqliteFilename });
+  initAcpDatabase({ legacyFilename: sqliteFilename });
   conatClient = client;
   blobStore = getBlobstore(client);
 }

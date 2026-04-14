@@ -325,6 +325,17 @@ async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
   const launch = workerLaunchSignature();
   const host_id = `${process.env.PROJECT_HOST_ID ?? ""}`.trim();
   const observedWorkers = listProjectHostAcpWorkers();
+  if (observedWorkers.length > 1) {
+    logger.warn("multiple project-host ACP workers observed", {
+      count: observedWorkers.length,
+      workers: observedWorkers.map((worker) => ({
+        pid: worker.pid,
+        worker_id: workerIdOf(worker) || null,
+        bundle_version: workerBundleVersionOf(worker, launch),
+        bundle_path: workerBundlePathOf(worker, launch),
+      })),
+    });
+  }
   const workers: WorkerProcessInfo[] = [];
   for (const worker of observedWorkers) {
     const worker_id = workerIdOf(worker);
@@ -463,6 +474,9 @@ function spawnProjectHostAcpWorker({
     COCALC_DATA_DIR: data,
     COCALC_LITE_SQLITE_FILENAME:
       process.env.COCALC_LITE_SQLITE_FILENAME ?? path.join(data, "sqlite.db"),
+    COCALC_LITE_ACP_SQLITE_FILENAME:
+      process.env.COCALC_LITE_ACP_SQLITE_FILENAME ??
+      path.join(data, "acp.sqlite"),
     COCALC_PROJECT_HOST_ACP_WORKER_CONAT_PASSWORD: conatPassword,
     COCALC_PROJECT_HOST_ACP_WORKER_PID_FILE: ACP_WORKER_PID_FILE,
     COCALC_PROJECT_HOST_ACP_WORKER: "1",
