@@ -9,6 +9,7 @@ import {
   type IncomingMessage,
   type Server as HttpServer,
 } from "node:http";
+import { availableParallelism } from "node:os";
 import express from "express";
 import type { Application } from "express";
 import getPort from "@cocalc/backend/get-port";
@@ -92,12 +93,15 @@ export function resolveProjectHostConatRouterUrl(): string {
 }
 
 export function resolveProjectHostConatRouterLocalClusterSize(): number {
-  return (
-    parsePositiveInteger(
-      process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_LOCAL_CLUSTER_SIZE,
-      "COCALC_PROJECT_HOST_CONAT_ROUTER_LOCAL_CLUSTER_SIZE",
-    ) ?? 1
+  const explicit = parsePositiveInteger(
+    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_LOCAL_CLUSTER_SIZE,
+    "COCALC_PROJECT_HOST_CONAT_ROUTER_LOCAL_CLUSTER_SIZE",
   );
+  if (explicit != null) {
+    return explicit;
+  }
+  const parallelism = Math.max(1, availableParallelism());
+  return Math.min(8, Math.max(1, Math.floor(parallelism / 4))) || 1;
 }
 
 export function resolveProjectHostConatRouterClusterName({
