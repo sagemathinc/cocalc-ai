@@ -238,7 +238,7 @@ export function rewriteProjectHostConatProxyUrl(
   if (!trimmedPath.endsWith("/conat") && trimmedPath !== "/conat") {
     return;
   }
-  parsed.pathname = "/conat";
+  parsed.pathname = "/conat/";
   return `${parsed.pathname}${parsed.search ?? ""}`;
 }
 

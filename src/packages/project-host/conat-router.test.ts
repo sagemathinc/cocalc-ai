@@ -76,10 +76,10 @@ describe("project-host conat router helpers", () => {
 
   it("rewrites proxied conat urls down to the router path", () => {
     expect(rewriteProjectHostConatProxyUrl("/conat/?EIO=4")).toBe(
-      "/conat?EIO=4",
+      "/conat/?EIO=4",
     );
     expect(rewriteProjectHostConatProxyUrl("/host/base/conat/?EIO=4")).toBe(
-      "/conat?EIO=4",
+      "/conat/?EIO=4",
     );
     expect(rewriteProjectHostConatProxyUrl("/api/not-conat")).toBeUndefined();
     expect(
