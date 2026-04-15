@@ -5111,6 +5111,21 @@ function normalizeManagedComponentKindsForDedupe(
   return [...new Set(components ?? [])].sort();
 }
 
+export function rolloutComponentsForUpgradeResults(
+  results: HostSoftwareUpgradeResponse["results"],
+): ManagedComponentKind[] {
+  const components = new Set<ManagedComponentKind>();
+  for (const result of results ?? []) {
+    if (
+      result.artifact === "project-host" &&
+      result.status === "updated"
+    ) {
+      components.add("project-host");
+    }
+  }
+  return [...components];
+}
+
 function hostManagedComponentRolloutDedupeKey({
   hostId,
   components,
@@ -5541,6 +5556,7 @@ export async function upgradeHostSoftwareInternal({
     response = await client.upgradeSoftware({
       targets,
       base_url: effectiveBaseUrl,
+      restart_project_host: false,
     });
   } catch (err) {
     if (!supportsBootstrapFallback) {
@@ -5570,9 +5586,6 @@ export async function upgradeHostSoftwareInternal({
       `UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
       [row.id, nextMetadata, nextVersion],
     );
-  }
-  if (requestedProjectHostUpgrade) {
-    await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
   }
   return response;
 }
