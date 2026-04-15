@@ -102,7 +102,7 @@ export class UsageMonitor extends EventEmitter {
       );
     }
     if (this.options.maxPerUser && count >= this.options.maxPerUser) {
-      this.emit("deny", this.options.maxPerUser, "per-user");
+      this.emit("deny", user, this.options.maxPerUser, "per-user");
       throw new ConatError(
         `There is a per user limit of ${this.options.maxPerUser} ${this.options.resource}.   Please close browser tabs or files or come back later.`,
         // http error code "429 Too Many Requests."
