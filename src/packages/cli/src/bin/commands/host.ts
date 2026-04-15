@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 
+import { printArrayTable } from "../core/cli-output";
+
 type HostRuntimeLogRow = any;
 type HostSoftwareVersionRow = any;
 type HostRow = any;
@@ -182,6 +184,98 @@ function parseRuntimeDeploymentTarget(opts: {
     target_type: "artifact" as const,
     target: artifact,
   };
+}
+
+function formatList(values: unknown): string {
+  if (!Array.isArray(values) || values.length === 0) return "";
+  return values.map((value) => `${value ?? ""}`.trim()).join(", ");
+}
+
+function formatRuntimeDeploymentRows(
+  deployments: Array<Record<string, unknown>> | undefined,
+): Record<string, unknown>[] {
+  return (deployments ?? []).map((deployment) => ({
+    scope: deployment.scope_type ?? "",
+    target_type: deployment.target_type ?? "",
+    target: deployment.target ?? "",
+    desired_version: deployment.desired_version ?? "",
+    policy: deployment.rollout_policy ?? "",
+    reason: deployment.rollout_reason ?? "",
+    drain_deadline_seconds: deployment.drain_deadline_seconds ?? "",
+    updated_at: deployment.updated_at ?? "",
+  }));
+}
+
+function formatObservedComponentRows(
+  components: Array<Record<string, unknown>> | undefined,
+): Record<string, unknown>[] {
+  return (components ?? []).map((component) => ({
+    component: component.component ?? "",
+    artifact: component.artifact ?? "",
+    runtime_state: component.runtime_state ?? "",
+    version_state: component.version_state ?? "",
+    desired_version: component.desired_version ?? "",
+    running_versions: formatList(component.running_versions),
+    running_pids: formatList(component.running_pids),
+    enabled: component.enabled ?? "",
+    managed: component.managed ?? "",
+  }));
+}
+
+function formatObservedTargetRows(
+  targets: Array<Record<string, unknown>> | undefined,
+): Record<string, unknown>[] {
+  return (targets ?? []).map((target) => ({
+    target_type: target.target_type ?? "",
+    target: target.target ?? "",
+    desired_version: target.desired_version ?? "",
+    policy: target.rollout_policy ?? "",
+    runtime_state: target.observed_runtime_state ?? "",
+    version_state: target.observed_version_state ?? "",
+    running_versions: formatList(target.running_versions),
+    running_pids: formatList(target.running_pids),
+    enabled: target.enabled ?? "",
+    managed: target.managed ?? "",
+  }));
+}
+
+function printNamedSection(
+  title: string,
+  rows: Record<string, unknown>[],
+): void {
+  console.log(title);
+  printArrayTable(rows);
+  console.log("");
+}
+
+function emitHostDeployStatusHuman(data: {
+  host_id: string;
+  name?: string | null;
+  configured?: Array<Record<string, unknown>>;
+  effective?: Array<Record<string, unknown>>;
+  observed_components?: Array<Record<string, unknown>>;
+  observed_targets?: Array<Record<string, unknown>>;
+  observation_error?: unknown;
+}): void {
+  console.log(`Host ID: ${data.host_id}`);
+  if (`${data.name ?? ""}`.trim()) {
+    console.log(`Name: ${data.name}`);
+  }
+  console.log("");
+  printNamedSection("Configured", formatRuntimeDeploymentRows(data.configured));
+  printNamedSection("Effective", formatRuntimeDeploymentRows(data.effective));
+  printNamedSection(
+    "Observed Components",
+    formatObservedComponentRows(data.observed_components),
+  );
+  printNamedSection(
+    "Observed Targets",
+    formatObservedTargetRows(data.observed_targets),
+  );
+  const observationError = `${data.observation_error ?? ""}`.trim();
+  if (observationError) {
+    console.log(`Observation Error: ${observationError}`);
+  }
 }
 
 export function registerHostCommand(
@@ -869,7 +963,7 @@ Status shows two views:
         const status = await ctx.hub.hosts.getHostRuntimeDeploymentStatus({
           id: host.id,
         });
-        return {
+        const data = {
           host_id: host.id,
           name: host.name ?? undefined,
           configured: status.configured,
@@ -878,6 +972,11 @@ Status shows two views:
           observed_targets: status.observed_targets,
           observation_error: status.observation_error,
         };
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          emitHostDeployStatusHuman(data);
+          return null;
+        }
+        return data;
       });
     });
 

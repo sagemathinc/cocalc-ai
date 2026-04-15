@@ -18,9 +18,27 @@ type Capture = {
   }>;
 };
 
+function withConsoleCapture(fn: () => Promise<void> | void): Promise<string> {
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (...args: any[]) => {
+    lines.push(args.map((x) => `${x ?? ""}`).join(" "));
+  };
+  return Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      console.log = original;
+    })
+    .then(() => lines.join("\n"));
+}
+
 function makeDeps(
   capture: Capture,
   overrides: Partial<HostCommandDeps> = {},
+  ctxGlobals: { json?: boolean; output?: "table" | "json" } = {
+    json: true,
+    output: "json",
+  },
 ): HostCommandDeps {
   return {
     withContext: async (_command, _label, fn) => {
@@ -28,7 +46,7 @@ function makeDeps(
         apiBaseUrl: "https://lite2.cocalc.ai",
         timeoutMs: 600_000,
         pollMs: 1,
-        globals: { json: true, output: "json" },
+        globals: ctxGlobals,
         hub: {
           hosts: {
             upgradeHostSoftware: async ({ id }) => {
@@ -626,6 +644,40 @@ test("host deploy status shows configured and effective desired state", async ()
     capture.data.observed_targets[0].observed_version_state,
     "aligned",
   );
+});
+
+test("host deploy status renders flattened human-readable sections", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(
+    program,
+    makeDeps(capture, {}, { json: false, output: "table" }),
+  );
+
+  const output = await withConsoleCapture(async () => {
+    await program.parseAsync([
+      "node",
+      "test",
+      "host",
+      "deploy",
+      "status",
+      "host-1",
+    ]);
+  });
+
+  assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
+  assert.match(output, /Host ID: host-1/);
+  assert.match(output, /Configured/);
+  assert.match(output, /Observed Components/);
+  assert.match(output, /Observed Targets/);
+  assert.match(output, /acp-worker/);
+  assert.doesNotMatch(output, /"scope_type":"host"/);
 });
 
 test("host deploy set upserts host-scoped desired state", async () => {
