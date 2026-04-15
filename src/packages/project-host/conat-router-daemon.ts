@@ -8,6 +8,7 @@ import { setConatPassword } from "@cocalc/backend/data";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { resolveProjectHostId } from "./host-id";
 import { startStandaloneProjectHostConatRouter } from "./conat-router";
+import { startEventLoopStallMonitor } from "./event-loop-stalls";
 
 const logger = getLogger("project-host:conat-router-daemon");
 
@@ -17,6 +18,10 @@ export interface ProjectHostConatRouterDaemonContext {
 }
 
 export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
+  const stopEventLoopStallMonitor = startEventLoopStallMonitor({
+    loggerName: "project-host:conat-router-daemon:event-loop-stalls",
+    label: "project-host conat router daemon",
+  });
   const hostId = resolveProjectHostId();
   const systemAccountPassword = getOrCreateProjectHostConatPassword();
   setConatPassword(systemAccountPassword);
@@ -36,10 +41,14 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
   const close = async () => {
     if (closed) return;
     closed = true;
-    await conatServer.close();
-    await new Promise<void>((resolve) => {
-      httpServer.close(() => resolve());
-    });
+    try {
+      await conatServer.close();
+    } finally {
+      stopEventLoopStallMonitor();
+      await new Promise<void>((resolve) => {
+        httpServer.close(() => resolve());
+      });
+    }
   };
   const closeWithSignal = (signal: string) => {
     logger.info("stopping project-host conat router daemon", { signal });

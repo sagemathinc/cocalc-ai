@@ -21,6 +21,7 @@ import { getProjectHostMasterConatToken } from "./master-conat-token";
 import { setMasterConatClient } from "./master-status";
 import { initSqlite } from "./sqlite/init";
 import { getLocalHostId } from "./sqlite/hosts";
+import { startEventLoopStallMonitor } from "./event-loop-stalls";
 
 const logger = getLogger("project-host:acp-worker");
 
@@ -116,6 +117,10 @@ function connectMasterClient() {
 }
 
 export async function main(): Promise<void> {
+  const stopEventLoopStallMonitor = startEventLoopStallMonitor({
+    loggerName: "project-host:acp-worker:event-loop-stalls",
+    label: "project-host acp-worker",
+  });
   const conatPassword = readRequiredEnv(
     "COCALC_PROJECT_HOST_ACP_WORKER_CONAT_PASSWORD",
   );
@@ -152,6 +157,7 @@ export async function main(): Promise<void> {
   initProjectRunnerFilesystem({ client });
   const masterClient = connectMasterClient();
   registerPidFile(pidFile, async () => {
+    stopEventLoopStallMonitor();
     await disposeAcpAgents();
     try {
       masterClient?.close();
@@ -171,6 +177,7 @@ export async function main(): Promise<void> {
       restartReason,
     });
   } finally {
+    stopEventLoopStallMonitor();
     setMasterConatClient(undefined);
     try {
       masterClient?.close();

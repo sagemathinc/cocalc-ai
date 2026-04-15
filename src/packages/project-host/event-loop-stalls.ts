@@ -1,7 +1,6 @@
 import getLogger from "@cocalc/backend/logger";
 import { performance } from "node:perf_hooks";
 
-const logger = getLogger("project-host:event-loop-stalls");
 const SAMPLE_INTERVAL_MS = 100;
 const WARN_THRESHOLDS_MS = [250, 1000, 4000] as const;
 
@@ -27,20 +26,40 @@ function snapshotForLag(lagMs: number) {
 }
 
 export function startProjectHostEventLoopStallMonitor(): () => void {
-  let expected = performance.now() + SAMPLE_INTERVAL_MS;
+  return startEventLoopStallMonitor({
+    loggerName: "project-host:event-loop-stalls",
+    label: "project-host",
+  });
+}
+
+export function startEventLoopStallMonitor({
+  loggerName,
+  label,
+  sampleIntervalMs = SAMPLE_INTERVAL_MS,
+  warnThresholdsMs = WARN_THRESHOLDS_MS,
+}: {
+  loggerName: string;
+  label: string;
+  sampleIntervalMs?: number;
+  warnThresholdsMs?: readonly number[];
+}): () => void {
+  const logger = getLogger(loggerName);
+  const thresholds = [...warnThresholdsMs].sort((a, b) => a - b);
+  let expected = performance.now() + sampleIntervalMs;
   const timer = setInterval(() => {
     const now = performance.now();
     const lagMs = Math.max(0, now - expected);
-    expected = now + SAMPLE_INTERVAL_MS;
-    const threshold = WARN_THRESHOLDS_MS.find((value) => lagMs >= value);
+    expected = now + sampleIntervalMs;
+    const threshold = thresholds.find((value) => lagMs >= value);
     if (threshold == null) {
       return;
     }
-    logger.warn("project-host event loop stall detected", {
+    logger.warn(`${label} event loop stall detected`, {
+      component: label,
       threshold_ms: threshold,
       ...snapshotForLag(lagMs),
     });
-  }, SAMPLE_INTERVAL_MS);
+  }, sampleIntervalMs);
   timer.unref?.();
   return () => clearInterval(timer);
 }

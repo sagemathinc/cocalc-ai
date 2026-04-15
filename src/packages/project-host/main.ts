@@ -306,7 +306,7 @@ export async function main(
 
   logger.info("Local sqlite + changefeeds for UI data");
   initSqlite();
-  startProjectHostEventLoopStallMonitor();
+  const stopEventLoopStallMonitor = startProjectHostEventLoopStallMonitor();
   const hostId = resolveProjectHostId(_config.hostId);
 
   // 1) HTTP + conat server
@@ -606,6 +606,7 @@ export async function main(
     stopRuntimeConformanceMonitor?.();
     stopRuntimePostureMonitor?.();
     stopSnapshotBackupMaintenance?.();
+    stopEventLoopStallMonitor?.();
     stopConatRevocationKickLoop?.();
     stopCodexSubscriptionCacheGc?.();
     stopCopyWorker?.();
