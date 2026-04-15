@@ -274,6 +274,7 @@ describe("project-host daemon stop", () => {
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
     process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "0";
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
@@ -365,16 +366,19 @@ describe("project-host daemon stop", () => {
     );
   });
 
-  it("defaults project-host bootstrap to a managed external conat router", () => {
+  it("defaults project-host bootstrap to managed external router and persist", () => {
     const dataDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
     );
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
     delete process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER;
+    delete process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST;
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST;
 
     jest
       .spyOn(__test__.processRuntime, "spawnSync")
@@ -386,23 +390,37 @@ describe("project-host daemon stop", () => {
         if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
           return { pid: 3333, unref: () => {} } as any;
         }
-        return { pid: 4444, unref: () => {} } as any;
+        if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
+          return { pid: 4444, unref: () => {} } as any;
+        }
+        return { pid: 5555, unref: () => {} } as any;
       }) as typeof __test__.processRuntime.spawn);
 
     startDaemon(0);
 
-    expect(spawnSpy).toHaveBeenCalledTimes(2);
+    expect(spawnSpy).toHaveBeenCalledTimes(3);
     expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).toMatchObject({
       COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER: "1",
+      COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST: "1",
       COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON: "1",
       HOST: "127.0.0.1",
       PORT: "9102",
     });
+    expect((spawnSpy.mock.calls[1]?.[2] as any)?.env).toMatchObject({
+      COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER: "1",
+      COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST: "1",
+      COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON: "1",
+      HOST: "127.0.0.1",
+      PORT: "9202",
+    });
     expect(
       fs.readFileSync(path.join(dataDir, "conat-router.pid"), "utf8"),
     ).toBe("3333");
+    expect(
+      fs.readFileSync(path.join(dataDir, "conat-persist.pid"), "utf8"),
+    ).toBe("4444");
     expect(fs.readFileSync(path.join(dataDir, "daemon.pid"), "utf8")).toBe(
-      "4444",
+      "5555",
     );
   });
 
@@ -415,6 +433,7 @@ describe("project-host daemon stop", () => {
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
     process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "0";
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;

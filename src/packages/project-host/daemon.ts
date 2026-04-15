@@ -162,6 +162,12 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
   if (!`${env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER ?? ""}`.trim()) {
     env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
   }
+  if (
+    !`${env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST ?? ""}`.trim() &&
+    isProjectHostExternalConatRouterEnabled(env)
+  ) {
+    env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "1";
+  }
   if (!env.COCALC_DISABLE_BEES) {
     env.COCALC_DISABLE_BEES = "no";
   }
