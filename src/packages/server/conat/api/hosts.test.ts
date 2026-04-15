@@ -25,6 +25,7 @@ let listProjectHostRuntimeDeploymentsMock: jest.Mock;
 let loadEffectiveProjectHostRuntimeDeploymentsMock: jest.Mock;
 let setProjectHostRuntimeDeploymentsMock: jest.Mock;
 let updateProjectUsersMock: jest.Mock;
+let createLroMock: jest.Mock;
 let createProjectHostBootstrapTokenMock: jest.Mock;
 let buildCloudInitStartupScriptMock: jest.Mock;
 let siteUrlMock: jest.Mock;
@@ -41,6 +42,21 @@ jest.mock("node:child_process", () => {
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({ query: queryMock })),
+}));
+
+jest.mock("@cocalc/server/lro/lro-db", () => ({
+  __esModule: true,
+  claimLroOps: jest.fn(async () => []),
+  createLro: (...args: any[]) => createLroMock(...args),
+  getLro: jest.fn(async () => null),
+  touchLro: jest.fn(async () => undefined),
+  updateLro: jest.fn(async () => null),
+}));
+
+jest.mock("@cocalc/server/lro/stream", () => ({
+  __esModule: true,
+  publishLroEvent: jest.fn(async () => undefined),
+  publishLroSummary: jest.fn(async () => undefined),
 }));
 
 jest.mock("@cocalc/backend/logger", () => {
@@ -175,6 +191,18 @@ const HOST_ID = "host-123";
 const ACCOUNT_ID = "acct-123";
 
 beforeEach(() => {
+  createLroMock = jest.fn(async (opts: any) => ({
+    op_id: "op-123",
+    kind: opts.kind,
+    scope_type: opts.scope_type,
+    scope_id: opts.scope_id,
+    status: opts.status ?? "queued",
+    created_by: opts.created_by ?? null,
+    owner_type: opts.owner_type ?? "hub",
+    owner_id: opts.owner_id ?? null,
+    routing: opts.routing ?? "hub",
+    input: opts.input ?? null,
+  }));
   spawnMock = jest.fn(() => {
     const child = new EventEmitter() as EventEmitter & {
       stdout: EventEmitter;
@@ -475,10 +503,10 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
           upgrade_policy: "drain_then_replace",
           enabled: true,
           managed: true,
-          desired_version: "ph-v2",
+          desired_version: "build-ph-v2",
           runtime_state: "running",
           version_state: "aligned",
-          running_versions: ["ph-v2"],
+          running_versions: ["build-ph-v2"],
           running_pids: [4321],
         },
       ],
@@ -638,6 +666,172 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     expect(result.reconcile_result).toMatchObject({
       host_id: HOST_ID,
     });
+  });
+});
+
+describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.LOGS = os.tmpdir();
+    isAdminMock = jest.fn(async () => true);
+    isBannedMock = jest.fn(async () => false);
+    moveProjectToHostMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: {},
+    }));
+    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    syncProjectUsersOnHostMock = jest.fn(async () => undefined);
+    issueProjectHostAuthTokenJwtMock = jest.fn(() => ({
+      token: "test-token",
+      expires_at: 1234567890,
+    }));
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(
+      async () => undefined,
+    );
+    assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
+    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    hostConnectionGetMock = jest.fn();
+    projectHostAuthTokenIssueMock = jest.fn();
+    projectReferenceGetMock = jest.fn(async () => null);
+    listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => [
+      {
+        scope_type: "host",
+        scope_id: HOST_ID,
+        host_id: HOST_ID,
+        target_type: "component",
+        target: "acp-worker",
+        desired_version: "ph-v2",
+        rollout_policy: "drain_then_replace",
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+      },
+    ]);
+    setProjectHostRuntimeDeploymentsMock = jest.fn(async ({ deployments }) =>
+      deployments.map((deployment: any) => ({
+        scope_type: "host",
+        scope_id: HOST_ID,
+        host_id: HOST_ID,
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+        ...deployment,
+      })),
+    );
+    updateProjectUsersMock = jest.fn(async () => undefined);
+    routedHostControlClientMock = jest.fn(async () => ({
+      getManagedComponentStatus: async () => [
+        {
+          component: "acp-worker",
+          artifact: "project-host",
+          upgrade_policy: "drain_then_replace",
+          enabled: true,
+          managed: true,
+          desired_version: "ph-v2",
+          runtime_state: "running",
+          version_state: "drifted",
+          running_versions: ["ph-v1"],
+          running_pids: [4321],
+        },
+      ],
+      getInstalledRuntimeArtifacts: async () => [
+        {
+          artifact: "project-host",
+          current_version: "ph-v2",
+          current_build_id: "build-ph-v2",
+          installed_versions: ["ph-v2", "ph-v1"],
+        },
+      ],
+      updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
+    }));
+    queryMock = jest.fn(async (sql: string, _params: any[]) => {
+      if (
+        sql.includes(
+          "SELECT id FROM project_hosts WHERE deleted IS NULL AND LOWER(COALESCE(status, '')) = ANY",
+        )
+      ) {
+        return { rows: [{ id: HOST_ID }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              metadata: {
+                owner: ACCOUNT_ID,
+                software: {
+                  project_host: "ph-v2",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+  });
+
+  it("queues automatic reconcile for a running host after a host-scoped deployment change", async () => {
+    const { setHostRuntimeDeployments } = await import("./hosts");
+    await setHostRuntimeDeployments({
+      account_id: ACCOUNT_ID,
+      scope_type: "host",
+      id: HOST_ID,
+      deployments: [
+        {
+          target_type: "component",
+          target: "acp-worker",
+          desired_version: "ph-v2",
+        },
+      ],
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-reconcile-runtime-deployments",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        input: expect.objectContaining({
+          id: HOST_ID,
+          components: ["acp-worker"],
+          reason: "automatic_runtime_deployment_reconcile",
+        }),
+      }),
+    );
+  });
+
+  it("fans out automatic reconcile to running hosts after a global deployment change", async () => {
+    const { setHostRuntimeDeployments } = await import("./hosts");
+    await setHostRuntimeDeployments({
+      account_id: ACCOUNT_ID,
+      scope_type: "global",
+      deployments: [
+        {
+          target_type: "component",
+          target: "acp-worker",
+          desired_version: "ph-v2",
+        },
+      ],
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-reconcile-runtime-deployments",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        input: expect.objectContaining({
+          components: ["acp-worker"],
+        }),
+      }),
+    );
   });
 });
 

@@ -14,6 +14,7 @@ import {
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { enqueueCloudVmWorkOnce } from "@cocalc/server/cloud/db";
 import { shouldAutoRestoreInterruptedSpotHost } from "@cocalc/server/cloud/spot-restore";
+import { ensureAutomaticHostRuntimeDeploymentsReconcile } from "@cocalc/server/conat/api/hosts";
 import { notifyProjectHostUpdate } from "./route-project";
 
 const logger = getLogger("server:conat:host-registry");
@@ -171,6 +172,18 @@ export async function initHostRegistryService() {
         if (previousRows[0] && previousSessionId !== nextSessionId) {
           await notifyProjectHostUpdate({ host_id: info.id });
         }
+        await ensureAutomaticHostRuntimeDeploymentsReconcile({
+          host_id: info.id,
+          reason: "host_register",
+        }).catch((err) => {
+          logger.warn(
+            "automatic runtime deployment reconcile failed on register",
+            {
+              host_id: info.id,
+              err: `${err}`,
+            },
+          );
+        });
         await publishKey(info);
       },
       async heartbeat(info: HostRegistration) {

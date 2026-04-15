@@ -200,6 +200,9 @@ const DEFAULT_RUNTIME_DEPLOYMENT_POLICY: Record<
   "acp-worker": "drain_then_replace",
 };
 
+const AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON =
+  "automatic_runtime_deployment_reconcile";
+
 function normalizeRuntimeArtifactTarget(
   artifact?: HostSoftwareArtifact | HostRuntimeArtifact,
 ): HostRuntimeArtifact | undefined {
@@ -5038,14 +5041,13 @@ export async function listHostRuntimeDeployments({
   });
 }
 
-export async function getHostRuntimeDeploymentStatus({
-  account_id,
+async function getHostRuntimeDeploymentStatusInternal({
   id,
+  row,
 }: {
-  account_id?: string;
   id: string;
+  row: any;
 }): Promise<HostRuntimeDeploymentStatus> {
-  const row = await loadHostForListing(id, account_id);
   const [configured, effective] = await Promise.all([
     listProjectHostRuntimeDeployments({
       scope_type: "host",
@@ -5109,6 +5111,17 @@ export async function getHostRuntimeDeploymentStatus({
   };
 }
 
+export async function getHostRuntimeDeploymentStatus({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<HostRuntimeDeploymentStatus> {
+  const row = await loadHostForListing(id, account_id);
+  return await getHostRuntimeDeploymentStatusInternal({ id, row });
+}
+
 export async function setHostRuntimeDeployments({
   account_id,
   scope_type,
@@ -5125,21 +5138,32 @@ export async function setHostRuntimeDeployments({
   const normalized = normalizeRuntimeDeploymentUpserts(deployments);
   if (scope_type === "global") {
     const requested_by = await assertRuntimeDeploymentGlobalAccess(account_id);
-    return await setProjectHostRuntimeDeployments({
+    const result = await setProjectHostRuntimeDeployments({
       scope_type: "global",
       deployments: normalized,
       requested_by,
       replace,
     });
+    await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
+      host_ids:
+        await listRunningHostIdsForAutomaticRuntimeDeploymentReconcile(),
+      reason: AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
+    });
+    return result;
   }
   const row = await loadHostForRootfsManagement(id ?? "", account_id);
-  return await setProjectHostRuntimeDeployments({
+  const result = await setProjectHostRuntimeDeployments({
     scope_type: "host",
     host_id: row.id,
     deployments: normalized,
     requested_by: requestedByForRuntimeDeployments({ account_id, row }),
     replace,
   });
+  await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
+    host_ids: [row.id],
+    reason: AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
+  });
+  return result;
 }
 
 export async function reconcileHostRuntimeDeployments({
@@ -5166,6 +5190,128 @@ export async function reconcileHostRuntimeDeployments({
         reason: `${reason ?? ""}`.trim() || null,
       },
     )}`,
+  });
+}
+
+export async function ensureAutomaticHostRuntimeDeploymentsReconcile({
+  host_id,
+  reason,
+}: {
+  host_id: string;
+  reason?: string;
+}): Promise<
+  | {
+      queued: false;
+      host_id: string;
+      reason:
+        | "host_missing"
+        | "host_not_running"
+        | "no_reconcile_needed"
+        | "observation_failed";
+      observation_error?: string;
+    }
+  | {
+      queued: true;
+      host_id: string;
+      components: ManagedComponentKind[];
+      op_id: string;
+    }
+> {
+  const row = await loadHostRowForRuntimeDeploymentsInternal(host_id);
+  if (!row) {
+    return { queued: false, host_id, reason: "host_missing" };
+  }
+  if (!HOST_RUNNING_STATUSES.has(`${row?.status ?? ""}`.toLowerCase())) {
+    return { queued: false, host_id: row.id, reason: "host_not_running" };
+  }
+  const status = await getHostRuntimeDeploymentStatusInternal({
+    id: row.id,
+    row,
+  });
+  if (status.observation_error && !(status.observed_components ?? []).length) {
+    return {
+      queued: false,
+      host_id: row.id,
+      reason: "observation_failed",
+      observation_error: status.observation_error,
+    };
+  }
+  const plan = computeHostRuntimeDeploymentReconcilePlan({
+    row,
+    status,
+  });
+  if (!plan.reconciled_components.length) {
+    return { queued: false, host_id: row.id, reason: "no_reconcile_needed" };
+  }
+  const op = await createHostLro({
+    kind: HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND,
+    row,
+    input: {
+      id: row.id,
+      components: plan.reconciled_components,
+      reason: reason ?? AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
+    },
+    dedupe_key: `${HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND}:${row.id}:${JSON.stringify(
+      {
+        components: normalizeManagedComponentKindsForDedupe(
+          plan.reconciled_components,
+        ),
+        reason:
+          `${reason ?? AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON}`.trim() ||
+          null,
+      },
+    )}`,
+  });
+  return {
+    queued: true,
+    host_id: row.id,
+    components: plan.reconciled_components,
+    op_id: op.op_id,
+  };
+}
+
+async function listRunningHostIdsForAutomaticRuntimeDeploymentReconcile(): Promise<
+  string[]
+> {
+  const { rows } = await pool().query<{ id: string }>(
+    `SELECT id
+     FROM project_hosts
+     WHERE deleted IS NULL
+       AND LOWER(COALESCE(status, '')) = ANY($1::text[])`,
+    [[...HOST_RUNNING_STATUSES]],
+  );
+  return rows
+    .map((row) => `${row?.id ?? ""}`.trim())
+    .filter((id) => id.length > 0);
+}
+
+async function bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
+  host_ids,
+  reason,
+}: {
+  host_ids: string[];
+  reason?: string;
+}): Promise<void> {
+  const uniqueHostIds = Array.from(
+    new Set(
+      (host_ids ?? [])
+        .map((host_id) => `${host_id ?? ""}`.trim())
+        .filter((host_id) => host_id.length > 0),
+    ),
+  );
+  if (!uniqueHostIds.length) return;
+  const settled = await Promise.allSettled(
+    uniqueHostIds.map((host_id) =>
+      ensureAutomaticHostRuntimeDeploymentsReconcile({ host_id, reason }),
+    ),
+  );
+  settled.forEach((result, index) => {
+    if (result.status === "rejected") {
+      logger.warn("automatic runtime deployment reconcile enqueue failed", {
+        host_id: uniqueHostIds[index],
+        reason: `${result.reason}`,
+      });
+    }
   });
 }
 
@@ -5344,6 +5490,42 @@ function deploymentObservedVersionState({
     return "mixed";
   }
   return running_versions[0] === desired_version ? "aligned" : "drifted";
+}
+
+function componentDeploymentObservedVersionState({
+  deployment,
+  observed_component,
+  observed_artifact,
+}: {
+  deployment: HostRuntimeDeploymentRecord;
+  observed_component: HostManagedComponentStatus;
+  observed_artifact?: HostRuntimeArtifactObservation;
+}): HostRuntimeDeploymentObservedVersionState {
+  const desiredArtifactVersion = `${deployment.desired_version ?? ""}`.trim();
+  if (
+    !desiredArtifactVersion ||
+    observed_component.running_versions.length === 0
+  ) {
+    return "unknown";
+  }
+  const currentArtifactVersion =
+    `${observed_artifact?.current_version ?? ""}`.trim();
+  const currentArtifactBuildId =
+    `${observed_artifact?.current_build_id ?? ""}`.trim();
+  if (
+    currentArtifactVersion &&
+    currentArtifactVersion === desiredArtifactVersion &&
+    currentArtifactBuildId
+  ) {
+    return deploymentObservedVersionState({
+      desired_version: currentArtifactBuildId,
+      running_versions: observed_component.running_versions,
+    });
+  }
+  return deploymentObservedVersionState({
+    desired_version: desiredArtifactVersion,
+    running_versions: observed_component.running_versions,
+  });
 }
 
 function sortVersionsDescending(values: string[]): string[] {
@@ -5624,15 +5806,19 @@ function summarizeObservedRuntimeDeployments({
         observed_version_state: "unobserved",
       };
     }
+    const observedArtifact = artifacts.get(
+      (observed.artifact ?? "project-host") as HostRuntimeArtifact,
+    );
     return {
       target_type: deployment.target_type,
       target: deployment.target,
       desired_version: deployment.desired_version,
       rollout_policy: deployment.rollout_policy,
       observed_runtime_state: observed.runtime_state,
-      observed_version_state: deploymentObservedVersionState({
-        desired_version: deployment.desired_version,
-        running_versions: observed.running_versions,
+      observed_version_state: componentDeploymentObservedVersionState({
+        deployment,
+        observed_component: observed,
+        observed_artifact: observedArtifact,
       }),
       running_versions: observed.running_versions,
       running_pids: observed.running_pids,
@@ -5757,20 +5943,18 @@ function targetKeyForRuntimeDeployment(opts: {
   return `${opts.target_type}:${opts.target}`;
 }
 
-export async function reconcileHostRuntimeDeploymentsInternal({
-  account_id,
-  id,
+function computeHostRuntimeDeploymentReconcilePlan({
+  row,
+  status,
   components,
-  reason,
 }: {
-  account_id?: string;
-  id: string;
+  row: any;
+  status: HostRuntimeDeploymentStatus;
   components?: ManagedComponentKind[];
-  reason?: string;
-}): Promise<HostRuntimeDeploymentReconcileResult> {
-  const row = await loadHostForStartStop(id, account_id);
-  assertHostRunningForUpgrade(row);
-  const status = await getHostRuntimeDeploymentStatus({ account_id, id });
+}): Pick<
+  HostRuntimeDeploymentReconcileResult,
+  "requested_components" | "reconciled_components" | "decisions"
+> {
   const effectiveComponentTargets = new Map(
     (status.effective ?? [])
       .filter(
@@ -5905,21 +6089,56 @@ export async function reconcileHostRuntimeDeploymentsInternal({
     reconciled_components.push(component);
   }
 
-  const result: HostRuntimeDeploymentReconcileResult = {
-    host_id: row.id,
+  return {
     ...(components?.length
       ? { requested_components: requestedComponents }
       : {}),
     reconciled_components,
     decisions,
   };
-  if (!reconciled_components.length) {
+}
+
+async function loadHostRowForRuntimeDeploymentsInternal(
+  host_id: string,
+): Promise<any | undefined> {
+  const { rows } = await pool().query(
+    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL LIMIT 1`,
+    [host_id],
+  );
+  return rows[0];
+}
+
+export async function reconcileHostRuntimeDeploymentsInternal({
+  account_id,
+  id,
+  components,
+  reason,
+}: {
+  account_id?: string;
+  id: string;
+  components?: ManagedComponentKind[];
+  reason?: string;
+}): Promise<HostRuntimeDeploymentReconcileResult> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  const status = await getHostRuntimeDeploymentStatus({ account_id, id });
+  const plan = computeHostRuntimeDeploymentReconcilePlan({
+    row,
+    status,
+    components,
+  });
+
+  const result: HostRuntimeDeploymentReconcileResult = {
+    host_id: row.id,
+    ...plan,
+  };
+  if (!plan.reconciled_components.length) {
     return result;
   }
   const rollout = await rolloutHostManagedComponentsInternal({
     account_id,
     id,
-    components: reconciled_components,
+    components: plan.reconciled_components,
     reason,
   });
   return {
