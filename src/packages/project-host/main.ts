@@ -85,6 +85,7 @@ import { createProjectHostHttpProxyAuth } from "./http-proxy-auth";
 import { isValidUUID } from "@cocalc/util/misc";
 import { main as runAcpWorkerMain } from "./acp-worker";
 import { main as runConatRouterDaemonMain } from "./conat-router-daemon";
+import { main as runConatPersistDaemonMain } from "./conat-persist-daemon";
 import {
   configureProjectHostAcpWorkerLauncher,
   ensureProjectHostAcpWorkerRunning,
@@ -104,6 +105,10 @@ import {
   resolveProjectHostConatRouterUrl,
   startProjectHostConatRouterServer,
 } from "./conat-router";
+import {
+  isProjectHostExternalConatPersistEnabled,
+  waitForProjectHostConatPersistReady,
+} from "./conat-persist";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -374,7 +379,18 @@ export async function main(
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
   // Local persist must exist before ACP startup so automation indexes can
   // republish into the project-scoped DKV stores on restart.
-  const persistServer = createPersistServer({ client: conatClient });
+  const externalPersist = isProjectHostExternalConatPersistEnabled();
+  if (externalPersist && !externalConatRouter) {
+    throw new Error(
+      "external conat persist mode requires external conat router mode",
+    );
+  }
+  const persistServer = externalPersist
+    ? undefined
+    : createPersistServer({ client: conatClient });
+  if (externalPersist) {
+    await waitForProjectHostConatPersistReady({ client: conatClient });
+  }
   configureAcpDetachedWorkerRunning(() =>
     // ACP uses `force: true` to mean "wake or ensure the detached worker now"
     // when new work arrives. That is not evidence of a backend restart, and
@@ -647,6 +663,14 @@ if (require.main === module) {
   ) {
     runConatRouterDaemonMain().catch((err) => {
       console.error("project-host conat router daemon failed:", err);
+      process.exit(1);
+    });
+  } else if (
+    `${process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON ?? ""}`.trim() ===
+    "1"
+  ) {
+    runConatPersistDaemonMain().catch((err) => {
+      console.error("project-host conat persist daemon failed:", err);
       process.exit(1);
     });
   } else {

@@ -21,6 +21,7 @@ const PODMAN_STALE_STATE_PATTERNS = [
   "could not find any running process",
 ];
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
+const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 
 function parseIndex(arg: string | undefined): number {
   if (arg == null) {
@@ -123,6 +124,10 @@ function envIsTrue(value: string | undefined): boolean {
   return TRUE_VALUES.has(`${value ?? ""}`.trim().toLowerCase());
 }
 
+function envIsFalse(value: string | undefined): boolean {
+  return FALSE_VALUES.has(`${value ?? ""}`.trim().toLowerCase());
+}
+
 function isProjectHostExternalConatRouterEnabled(
   env: Record<string, string>,
 ): boolean {
@@ -133,11 +138,24 @@ function isProjectHostExternalConatRouterEnabled(
   return envIsTrue(value);
 }
 
+function isProjectHostExternalConatPersistEnabled(
+  env: Record<string, string>,
+): boolean {
+  return envIsTrue(env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST);
+}
+
 function usesManagedLocalConatRouter(env: Record<string, string>): boolean {
   return (
     isProjectHostExternalConatRouterEnabled(env) &&
     !`${env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim()
   );
+}
+
+function usesManagedLocalConatPersist(env: Record<string, string>): boolean {
+  if (!isProjectHostExternalConatPersistEnabled(env)) {
+    return false;
+  }
+  return !envIsFalse(env.COCALC_PROJECT_HOST_MANAGE_CONAT_PERSIST);
 }
 
 function ensureDefaults(env: Record<string, string>, index: number): void {
@@ -188,6 +206,14 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
       env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT ?? String(basePort + 100);
     env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = `http://${env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST}:${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT}`;
   }
+  if (usesManagedLocalConatPersist(env)) {
+    const basePort = parsePort(env.PORT) ?? 9002 + index;
+    env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST =
+      env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST ?? "127.0.0.1";
+    env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT =
+      env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT ??
+      String(basePort + 200);
+  }
 }
 
 function resolveEnv(index: number): {
@@ -195,6 +221,12 @@ function resolveEnv(index: number): {
   dataDir: string;
   logPath: string;
   pidPath: string;
+  persistEnabled: boolean;
+  managedPersist: boolean;
+  persistHealthHost: string;
+  persistHealthPort?: number;
+  persistLogPath: string;
+  persistPidPath: string;
   routerEnabled: boolean;
   managedRouter: boolean;
   routerHost: string;
@@ -221,13 +253,24 @@ function resolveEnv(index: number): {
   if (env.COCALC_RUSTIC && !env.COCALC_RUSTIC_REPO) {
     env.COCALC_RUSTIC_REPO = path.join(env.COCALC_RUSTIC, "rustic");
   }
-  const routerEnabled = isProjectHostExternalConatRouterEnabled(env);
-  const managedRouter =
-    routerEnabled &&
-    !`${env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim();
+  const explicitRouterUrl =
+    `${env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim().length
+      ? env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL
+      : "";
   ensureDefaults(env, index);
+  const routerEnabled = isProjectHostExternalConatRouterEnabled(env);
+  const managedRouter = routerEnabled && !`${explicitRouterUrl}`.trim();
+  const persistEnabled = isProjectHostExternalConatPersistEnabled(env);
+  const managedPersist = usesManagedLocalConatPersist(env);
+  if (persistEnabled && !routerEnabled) {
+    throw new Error(
+      "external conat persist mode requires external conat router mode",
+    );
+  }
   const logPath = path.join(dataDir, "log");
   const pidPath = path.join(dataDir, "daemon.pid");
+  const persistLogPath = path.join(dataDir, "conat-persist.log");
+  const persistPidPath = path.join(dataDir, "conat-persist.pid");
   const routerLogPath = path.join(dataDir, "conat-router.log");
   const routerPidPath = path.join(dataDir, "conat-router.pid");
   if (!env.DEBUG_FILE) {
@@ -241,6 +284,15 @@ function resolveEnv(index: number): {
     dataDir,
     logPath,
     pidPath,
+    persistEnabled,
+    managedPersist,
+    persistHealthHost:
+      env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST ?? "127.0.0.1",
+    persistHealthPort: parsePort(
+      env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT,
+    ),
+    persistLogPath,
+    persistPidPath,
     routerEnabled,
     managedRouter,
     routerHost: env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST ?? "127.0.0.1",
@@ -327,6 +379,10 @@ function isRouterDaemonEnv(env: Record<string, string>): boolean {
   return env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1";
 }
 
+function isPersistDaemonEnv(env: Record<string, string>): boolean {
+  return env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1";
+}
+
 function matchesSshpiperdCmdline(cmdline: string[], port: number): boolean {
   return (
     cmdline.some((arg) => /(?:^|\/)sshpiperd$/.test(arg)) &&
@@ -341,7 +397,7 @@ function matchingProjectHostPids(dataDir: string, httpPort?: number): number[] {
     const cmdline = readProcCmdline(pid);
     if (!matchesProjectHostCmdline(cmdline)) continue;
     const env = readProcEnv(pid);
-    if (isRouterDaemonEnv(env)) continue;
+    if (isRouterDaemonEnv(env) || isPersistDaemonEnv(env)) continue;
     const procData = env.COCALC_DATA ?? env.DATA;
     const procPort = Number(env.PORT);
     if (
@@ -374,6 +430,32 @@ function matchingConatRouterPids(
       procData === dataDir ||
       (routerPort != null && procPort === routerPort) ||
       (!procData && routerPort == null)
+    ) {
+      matches.push(pid);
+    }
+  }
+  return matches;
+}
+
+function matchingConatPersistPids(
+  dataDir: string,
+  persistHealthPort?: number,
+): number[] {
+  const matches: number[] = [];
+  for (const pid of listProcPids()) {
+    if (pid === process.pid) continue;
+    const cmdline = readProcCmdline(pid);
+    if (!matchesProjectHostCmdline(cmdline)) continue;
+    const env = readProcEnv(pid);
+    if (!isPersistDaemonEnv(env)) continue;
+    const procData = env.COCALC_DATA ?? env.DATA;
+    const procPort = parsePort(
+      env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT ?? env.PORT,
+    );
+    if (
+      procData === dataDir ||
+      (persistHealthPort != null && procPort === persistHealthPort) ||
+      (!procData && persistHealthPort == null)
     ) {
       matches.push(pid);
     }
@@ -468,6 +550,20 @@ function healthCheckUrl(
   return `http://${localHost}:${port}/healthz`;
 }
 
+function conatPersistHealthCheckUrl(
+  env: Record<string, string>,
+  persistHealthPort?: number,
+): string {
+  const host =
+    `${env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST ?? ""}`.trim() ||
+    "127.0.0.1";
+  const port =
+    persistHealthPort ??
+    parsePort(env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT) ??
+    9202;
+  return `http://${host}:${port}/healthz`;
+}
+
 function conatRouterHealthCheckUrl(
   env: Record<string, string>,
   routerPort?: number,
@@ -524,6 +620,13 @@ function checkConatRouterHealthSync(
   routerPort?: number,
 ): boolean {
   return checkHealthUrlSync(conatRouterHealthCheckUrl(env, routerPort));
+}
+
+function checkConatPersistHealthSync(
+  env: Record<string, string>,
+  persistHealthPort?: number,
+): boolean {
+  return checkHealthUrlSync(conatPersistHealthCheckUrl(env, persistHealthPort));
 }
 
 function spawnSyncText(
@@ -654,6 +757,7 @@ function cleanupStrayProcesses(
   dataDir: string,
   httpPort?: number,
   routerPort?: number,
+  persistHealthPort?: number,
   sshPort?: number,
 ): number {
   const projectHostPids = terminatePids(
@@ -664,11 +768,20 @@ function cleanupStrayProcesses(
     matchingConatRouterPids(dataDir, routerPort),
     "project-host conat router",
   );
+  const persistPids = terminatePids(
+    matchingConatPersistPids(dataDir, persistHealthPort),
+    "project-host conat persist",
+  );
   const sshpiperdPids = terminatePids(
     matchingSshpiperdPids(sshPort),
     "sshpiperd",
   );
-  return projectHostPids.length + routerPids.length + sshpiperdPids.length;
+  return (
+    projectHostPids.length +
+    routerPids.length +
+    persistPids.length +
+    sshpiperdPids.length
+  );
 }
 
 function resolveExec(root: string): { command: string; args: string[] } {
@@ -900,6 +1013,235 @@ function stopManagedConatRouter({
   );
 }
 
+function startManagedConatPersist(opts: {
+  env: Record<string, string>;
+  persistPidPath: string;
+  persistLogPath: string;
+  persistHealthHost: string;
+  persistHealthPort?: number;
+}): void {
+  const {
+    env,
+    persistPidPath,
+    persistLogPath,
+    persistHealthHost,
+    persistHealthPort,
+  } = opts;
+  if (persistHealthPort == null) {
+    throw new Error(
+      "managed conat persist requires COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT",
+    );
+  }
+  if (fs.existsSync(persistPidPath)) {
+    const pid = Number(fs.readFileSync(persistPidPath, "utf8"));
+    if (pid && isRunning(pid)) {
+      if (checkConatPersistHealthSync(env, persistHealthPort)) {
+        console.log(
+          `project-host conat persist already running and healthy (pid ${pid}); leaving it running.`,
+        );
+        return;
+      }
+      throw new Error(
+        `project-host conat persist already running (pid ${pid}); stop it first or remove ${persistPidPath}`,
+      );
+    }
+    fs.rmSync(persistPidPath, { force: true });
+  }
+  try {
+    if (fs.existsSync(persistLogPath)) {
+      fs.unlinkSync(persistLogPath);
+    }
+  } catch (err) {
+    console.error(`warning: unable to truncate log at ${persistLogPath}:`, err);
+  }
+  const stdout = fs.openSync(persistLogPath, "a");
+  const stderr = fs.openSync(persistLogPath, "a");
+  try {
+    fs.chmodSync(persistLogPath, 0o600);
+  } catch {
+    // best effort
+  }
+  const root = path.join(__dirname, "..");
+  const { command, args } = resolveExec(root);
+  const child = processRuntime.spawn(command, args, {
+    cwd: root,
+    env: {
+      ...env,
+      HOST: persistHealthHost,
+      PORT: String(persistHealthPort),
+      DEBUG_FILE: persistLogPath,
+      COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON: "1",
+    },
+    detached: true,
+    stdio: ["ignore", stdout, stderr],
+  });
+  child.unref();
+  fs.writeFileSync(persistPidPath, String(child.pid));
+  try {
+    fs.chmodSync(persistPidPath, 0o600);
+  } catch {
+    // best effort
+  }
+  try {
+    waitForHealthCheckSync(
+      () => checkConatPersistHealthSync(env, persistHealthPort),
+      {
+        timeoutMs: getPositiveIntEnv(
+          "COCALC_PROJECT_HOST_CONAT_PERSIST_STARTUP_TIMEOUT_MS",
+          30_000,
+        ),
+        pollMs: getPositiveIntEnv(
+          "COCALC_PROJECT_HOST_CONAT_PERSIST_STARTUP_POLL_MS",
+          250,
+        ),
+        pid: child.pid,
+        label: "project-host conat persist",
+      },
+    );
+  } catch (err) {
+    fs.rmSync(persistPidPath, { force: true });
+    try {
+      if (child.pid && isRunning(child.pid)) {
+        process.kill(child.pid, "SIGTERM");
+      }
+    } catch {
+      // ignore best-effort cleanup failures
+    }
+    throw err;
+  }
+  console.log(
+    `project-host conat persist started (pid ${child.pid}); log=${persistLogPath}`,
+  );
+}
+
+function ensureManagedConatPersist(opts: {
+  env: Record<string, string>;
+  dataDir: string;
+  persistPidPath: string;
+  persistLogPath: string;
+  persistHealthHost: string;
+  persistHealthPort?: number;
+}): void {
+  const {
+    env,
+    dataDir,
+    persistPidPath,
+    persistLogPath,
+    persistHealthHost,
+    persistHealthPort,
+  } = opts;
+  const pid = fs.existsSync(persistPidPath)
+    ? Number(fs.readFileSync(persistPidPath, "utf8"))
+    : undefined;
+  if (pid && isRunning(pid)) {
+    if (checkConatPersistHealthSync(env, persistHealthPort)) {
+      console.log(`project-host conat persist healthy (pid ${pid})`);
+      return;
+    }
+    console.warn(
+      `project-host conat persist pid ${pid} is running but unhealthy; restarting.`,
+    );
+    stopManagedConatPersist({
+      dataDir,
+      persistPidPath,
+      persistHealthPort,
+    });
+    startManagedConatPersist({
+      env,
+      persistPidPath,
+      persistLogPath,
+      persistHealthHost,
+      persistHealthPort,
+    });
+    return;
+  }
+  if (fs.existsSync(persistPidPath)) {
+    console.warn(
+      `project-host conat persist pid file is stale at ${persistPidPath}; recovering.`,
+    );
+  } else {
+    console.warn("project-host conat persist is not running; starting it.");
+  }
+  fs.rmSync(persistPidPath, { force: true });
+  terminatePids(
+    matchingConatPersistPids(dataDir, persistHealthPort),
+    "project-host conat persist",
+  );
+  startManagedConatPersist({
+    env,
+    persistPidPath,
+    persistLogPath,
+    persistHealthHost,
+    persistHealthPort,
+  });
+}
+
+function stopManagedConatPersist({
+  dataDir,
+  persistPidPath,
+  persistHealthPort,
+}: {
+  dataDir: string;
+  persistPidPath: string;
+  persistHealthPort?: number;
+}): void {
+  if (!fs.existsSync(persistPidPath)) {
+    const cleaned = terminatePids(
+      matchingConatPersistPids(dataDir, persistHealthPort),
+      "project-host conat persist",
+    );
+    if (cleaned.length > 0) {
+      console.log(
+        `Stopped ${cleaned.length} stray project-host conat persist process(es).`,
+      );
+    }
+    return;
+  }
+  const pid = Number(fs.readFileSync(persistPidPath, "utf8"));
+  if (!pid || !isRunning(pid)) {
+    fs.rmSync(persistPidPath, { force: true });
+    const cleaned = terminatePids(
+      matchingConatPersistPids(dataDir, persistHealthPort),
+      "project-host conat persist",
+    );
+    if (cleaned.length > 0) {
+      console.log(
+        `Removed stale persist pid file and stopped ${cleaned.length} stray project-host conat persist process(es).`,
+      );
+    }
+    return;
+  }
+  const stopTimeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_STOP_TIMEOUT_MS",
+    15_000,
+  );
+  const killTimeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_KILL_TIMEOUT_MS",
+    5_000,
+  );
+  const pollMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_STOP_POLL_MS",
+    100,
+  );
+  process.kill(pid, "SIGTERM");
+  if (!waitForExit(pid, stopTimeoutMs, pollMs)) {
+    process.kill(pid, "SIGKILL");
+    if (!waitForExit(pid, killTimeoutMs, pollMs)) {
+      throw new Error(
+        `project-host conat persist pid ${pid} did not exit after SIGKILL`,
+      );
+    }
+    console.log(`Sent SIGKILL to project-host conat persist (pid ${pid}).`);
+  } else {
+    console.log(`Sent SIGTERM to project-host conat persist (pid ${pid}).`);
+  }
+  fs.rmSync(persistPidPath, { force: true });
+  terminatePids(
+    matchingConatPersistPids(dataDir, persistHealthPort),
+    "project-host conat persist",
+  );
+}
+
 export function startDaemon(index = 0): void {
   const {
     env,
@@ -907,6 +1249,11 @@ export function startDaemon(index = 0): void {
     logPath,
     pidPath,
     httpPort,
+    managedPersist,
+    persistHealthHost,
+    persistHealthPort,
+    persistLogPath,
+    persistPidPath,
     managedRouter,
     routerHost,
     routerLogPath,
@@ -923,12 +1270,23 @@ export function startDaemon(index = 0): void {
       routerPort,
     });
   }
+  if (managedPersist) {
+    ensureManagedConatPersist({
+      env,
+      dataDir,
+      persistPidPath,
+      persistLogPath,
+      persistHealthHost,
+      persistHealthPort,
+    });
+  }
   if (fs.existsSync(pidPath)) {
     const pid = Number(fs.readFileSync(pidPath, "utf8"));
     if (pid && isRunning(pid)) {
       if (
         checkHealthSync(env, httpPort) &&
-        (!managedRouter || checkConatRouterHealthSync(env, routerPort))
+        (!managedRouter || checkConatRouterHealthSync(env, routerPort)) &&
+        (!managedPersist || checkConatPersistHealthSync(env, persistHealthPort))
       ) {
         console.log(
           `project-host already running and healthy (pid ${pid}); leaving it running.`,
@@ -986,7 +1344,12 @@ export function ensureDaemon(index = 0): void {
     dataDir,
     pidPath,
     httpPort,
+    persistHealthHost,
+    persistHealthPort,
+    persistLogPath,
+    persistPidPath,
     sshPort,
+    managedPersist,
     managedRouter,
     routerHost,
     routerLogPath,
@@ -1001,6 +1364,16 @@ export function ensureDaemon(index = 0): void {
       routerLogPath,
       routerHost,
       routerPort,
+    });
+  }
+  if (managedPersist) {
+    ensureManagedConatPersist({
+      env,
+      dataDir,
+      persistPidPath,
+      persistLogPath,
+      persistHealthHost,
+      persistHealthPort,
     });
   }
   const pid = fs.existsSync(pidPath)
@@ -1035,7 +1408,13 @@ export function ensureDaemon(index = 0): void {
     console.warn("project-host is not running; starting it.");
   }
   fs.rmSync(pidPath, { force: true });
-  const cleaned = cleanupStrayProcesses(dataDir, httpPort, routerPort, sshPort);
+  const cleaned = cleanupStrayProcesses(
+    dataDir,
+    httpPort,
+    managedRouter ? routerPort : undefined,
+    managedPersist ? persistHealthPort : undefined,
+    sshPort,
+  );
   if (cleaned > 0) {
     console.warn(
       `Stopped ${cleaned} stray project-host process(es) before restart.`,
@@ -1049,8 +1428,11 @@ export function stopDaemon(index = 0): void {
     pidPath,
     dataDir,
     httpPort,
+    managedPersist,
+    persistPidPath,
+    persistHealthPort,
     sshPort,
-    routerEnabled,
+    managedRouter,
     routerPidPath,
     routerPort,
   } = resolveEnv(index);
@@ -1058,12 +1440,20 @@ export function stopDaemon(index = 0): void {
     const cleaned = cleanupStrayProcesses(
       dataDir,
       httpPort,
-      routerPort,
+      managedRouter ? routerPort : undefined,
+      managedPersist ? persistHealthPort : undefined,
       sshPort,
     );
     if (cleaned > 0) {
       console.log(`Stopped ${cleaned} stray project-host process(es).`);
-      if (routerEnabled) {
+      if (managedPersist) {
+        stopManagedConatPersist({
+          dataDir,
+          persistPidPath,
+          persistHealthPort,
+        });
+      }
+      if (managedRouter) {
         stopManagedConatRouter({
           dataDir,
           routerPidPath,
@@ -1082,14 +1472,22 @@ export function stopDaemon(index = 0): void {
     const cleaned = cleanupStrayProcesses(
       dataDir,
       httpPort,
-      routerPort,
+      managedRouter ? routerPort : undefined,
+      managedPersist ? persistHealthPort : undefined,
       sshPort,
     );
     if (cleaned > 0) {
       console.log(
         `Removed stale pid file and stopped ${cleaned} stray project-host process(es).`,
       );
-      if (routerEnabled) {
+      if (managedPersist) {
+        stopManagedConatPersist({
+          dataDir,
+          persistPidPath,
+          persistHealthPort,
+        });
+      }
+      if (managedRouter) {
         stopManagedConatRouter({
           dataDir,
           routerPidPath,
@@ -1123,8 +1521,21 @@ export function stopDaemon(index = 0): void {
     console.log(`Sent SIGTERM to project-host (pid ${pid}).`);
   }
   fs.rmSync(pidPath, { force: true });
-  cleanupStrayProcesses(dataDir, httpPort, routerPort, sshPort);
-  if (routerEnabled) {
+  cleanupStrayProcesses(
+    dataDir,
+    httpPort,
+    managedRouter ? routerPort : undefined,
+    managedPersist ? persistHealthPort : undefined,
+    sshPort,
+  );
+  if (managedPersist) {
+    stopManagedConatPersist({
+      dataDir,
+      persistPidPath,
+      persistHealthPort,
+    });
+  }
+  if (managedRouter) {
     stopManagedConatRouter({
       dataDir,
       routerPidPath,
