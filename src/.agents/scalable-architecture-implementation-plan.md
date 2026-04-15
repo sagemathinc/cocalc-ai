@@ -112,6 +112,24 @@ These workstreams span multiple phases.
 - capacity envelopes
 - bay sizing guidance
 
+### 7. Inter-Bay Fabric Connection Consolidation
+
+- attached bays must not keep tens of steady-state seed-bay Conat sockets just
+  because multiple service groups each create their own long-lived fabric
+  client
+- target invariant: one shared long-lived inter-bay fabric client per process,
+  and architecturally one logical bay-to-bay connection per destination bay at
+  most
+- current anti-pattern to remove: long-lived
+  `getInterBayFabricClient({ noCache: true })` fanout in backend inter-bay
+  service startup, especially in
+  [service.ts](/home/user/cocalc-ai/src/packages/server/inter-bay/service.ts)
+- client-creation audit logging is allowed as a temporary debugging aid, but it
+  is not the solution
+- this remains deferred work for a later focused change-set, but it must be
+  completed before treating current inter-bay connection counts as acceptable
+  for bay-scaling decisions
+
 ## Required Load Testing Program
 
 This is not optional. It must exist early and be maintained throughout the
