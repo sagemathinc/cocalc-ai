@@ -199,6 +199,7 @@ interface ThreadDerivationOptions {
   accountId?: string;
   actions?: ChatActions;
   version?: number;
+  readStateVersion?: number;
 }
 
 export function useThreadSections({
@@ -208,6 +209,7 @@ export function useThreadSections({
   accountId,
   actions,
   version,
+  readStateVersion,
 }: ThreadDerivationOptions): {
   threads: ThreadMeta[];
   archivedThreads: ThreadMeta[];
@@ -335,7 +337,7 @@ export function useThreadSections({
         lastActivityAt,
       };
     });
-  }, [allThreads, accountId, actions, activity, version]);
+  }, [allThreads, accountId, actions, activity, version, readStateVersion]);
 
   const visibleThreads = React.useMemo(
     () => threads.filter((thread) => !thread.isArchived),
