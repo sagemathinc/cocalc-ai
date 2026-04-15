@@ -21,6 +21,7 @@ import type {
   HostRuntimeArtifactObservation,
   HostRuntimeDeploymentRecord,
   HostRuntimeDeploymentObservedTarget,
+  HostRuntimeRollbackTarget,
   HostRuntimeDeploymentReconcileResult,
   HostRuntimeDeploymentObservedVersionState,
   HostRuntimeDeploymentScopeType,
@@ -5093,6 +5094,12 @@ export async function getHostRuntimeDeploymentStatus({
       observed_artifacts,
       observed_components,
     }),
+    rollback_targets: summarizeRollbackTargets({
+      row,
+      effective,
+      observed_artifacts,
+      observed_components,
+    }),
     observation_error: observation_errors.join("; ") || undefined,
   };
 }
@@ -5384,6 +5391,75 @@ function observedRuntimeArtifactVersionState({
     return "missing";
   }
   return "unobserved";
+}
+
+function deploymentArtifactForRollback({
+  deployment,
+  observed_components,
+}: {
+  deployment: HostRuntimeDeploymentRecord;
+  observed_components?: HostManagedComponentStatus[];
+}): HostRuntimeArtifact {
+  if (deployment.target_type === "artifact") {
+    return deployment.target as HostRuntimeArtifact;
+  }
+  const component = (observed_components ?? []).find(
+    (entry) => entry.component === deployment.target,
+  );
+  return (component?.artifact ?? "project-host") as HostRuntimeArtifact;
+}
+
+function lastKnownGoodArtifactVersion(
+  row: any,
+  artifact: HostRuntimeArtifact,
+): string | undefined {
+  const runtimeDeployments =
+    row?.metadata?.runtime_deployments?.last_known_good_versions ?? {};
+  const legacy = row?.metadata?.last_known_good_versions ?? {};
+  return (
+    `${runtimeDeployments?.[artifact] ?? legacy?.[artifact] ?? ""}`.trim() ||
+    undefined
+  );
+}
+
+function summarizeRollbackTargets({
+  row,
+  effective,
+  observed_artifacts,
+  observed_components,
+}: {
+  row: any;
+  effective: HostRuntimeDeploymentRecord[];
+  observed_artifacts?: HostRuntimeArtifactObservation[];
+  observed_components?: HostManagedComponentStatus[];
+}): HostRuntimeRollbackTarget[] {
+  const artifacts = new Map(
+    (observed_artifacts ?? []).map((artifact) => [artifact.artifact, artifact]),
+  );
+  return effective.map((deployment) => {
+    const artifact = deploymentArtifactForRollback({
+      deployment,
+      observed_components,
+    });
+    const observed = artifacts.get(artifact);
+    const retained_versions = sortVersionsDescending(
+      observed?.installed_versions ?? [],
+    );
+    const current_version = observed?.current_version;
+    const previous_version = retained_versions.find(
+      (version) => version !== current_version,
+    );
+    return {
+      target_type: deployment.target_type,
+      target: deployment.target,
+      artifact,
+      desired_version: deployment.desired_version,
+      current_version,
+      previous_version,
+      last_known_good_version: lastKnownGoodArtifactVersion(row, artifact),
+      retained_versions,
+    };
+  });
 }
 
 function summarizeObservedRuntimeDeployments({

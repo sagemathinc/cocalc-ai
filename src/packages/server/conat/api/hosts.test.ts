@@ -490,6 +490,28 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         observed_version_state: "aligned",
       }),
     ]);
+    expect(status.rollback_targets).toEqual([
+      {
+        target_type: "artifact",
+        target: "project-host",
+        artifact: "project-host",
+        desired_version: "ph-v3",
+        current_version: "ph-v2",
+        previous_version: "ph-v1",
+        last_known_good_version: undefined,
+        retained_versions: ["ph-v2", "ph-v1"],
+      },
+      {
+        target_type: "component",
+        target: "acp-worker",
+        artifact: "project-host",
+        desired_version: "ph-v2",
+        current_version: "ph-v2",
+        previous_version: "ph-v1",
+        last_known_good_version: undefined,
+        retained_versions: ["ph-v2", "ph-v1"],
+      },
+    ]);
     expect(status.observation_error).toBeUndefined();
   });
 });

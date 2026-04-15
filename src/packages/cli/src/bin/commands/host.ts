@@ -252,6 +252,21 @@ function formatObservedArtifactRows(
   }));
 }
 
+function formatRollbackTargetRows(
+  targets: Array<Record<string, unknown>> | undefined,
+): Record<string, unknown>[] {
+  return (targets ?? []).map((target) => ({
+    target_type: target.target_type ?? "",
+    target: target.target ?? "",
+    artifact: target.artifact ?? "",
+    desired_version: target.desired_version ?? "",
+    current_version: target.current_version ?? "",
+    previous_version: target.previous_version ?? "",
+    last_known_good_version: target.last_known_good_version ?? "",
+    retained_versions: formatList(target.retained_versions),
+  }));
+}
+
 function printNamedSection(
   title: string,
   rows: Record<string, unknown>[],
@@ -269,6 +284,7 @@ type HostDeployStatusData = {
   observed_artifacts?: Array<Record<string, unknown>>;
   observed_components?: Array<Record<string, unknown>>;
   observed_targets?: Array<Record<string, unknown>>;
+  rollback_targets?: Array<Record<string, unknown>>;
   observation_error?: unknown;
 };
 
@@ -313,6 +329,21 @@ function filterObservedTargetsForComponent(
   });
 }
 
+function filterRollbackTargetsForComponent(
+  targets: Array<Record<string, unknown>> | undefined,
+  component: (typeof MANAGED_COMPONENT_KINDS)[number],
+  data: HostDeployStatusData,
+): Array<Record<string, unknown>> {
+  const artifact = componentArtifact(component, data);
+  return (targets ?? []).filter((target) => {
+    const targetType = `${target.target_type ?? ""}`.trim();
+    const targetName = `${target.target ?? ""}`.trim();
+    if (targetType === "component") return targetName === component;
+    if (targetType === "artifact") return targetName === artifact;
+    return false;
+  });
+}
+
 function filterHostDeployStatusData(
   data: HostDeployStatusData,
   components?: (typeof MANAGED_COMPONENT_KINDS)[number][],
@@ -340,6 +371,7 @@ function filterHostDeployStatusData(
       selected.has(`${component.component ?? ""}`.trim() as any),
     ),
     observed_targets: (data.observed_targets ?? []).filter(keepTarget),
+    rollback_targets: (data.rollback_targets ?? []).filter(keepTarget),
   };
 }
 
@@ -426,6 +458,16 @@ function emitHostDeployStatusHuman(
       formatObservedTargetRows(
         filterObservedTargetsForComponent(
           data.observed_targets,
+          component,
+          data,
+        ),
+      ),
+    );
+    printNamedSection(
+      "Rollback Targets",
+      formatRollbackTargetRows(
+        filterRollbackTargetsForComponent(
+          data.rollback_targets,
           component,
           data,
         ),
@@ -1147,6 +1189,7 @@ Status shows two views:
               observed_artifacts: status.observed_artifacts,
               observed_components: status.observed_components,
               observed_targets: status.observed_targets,
+              rollback_targets: status.rollback_targets,
               observation_error: status.observation_error,
             },
             selectedComponents,

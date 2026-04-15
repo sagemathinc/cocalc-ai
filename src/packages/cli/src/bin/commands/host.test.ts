@@ -181,6 +181,28 @@ function makeDeps(
                     managed: true,
                   },
                 ],
+                rollback_targets: [
+                  {
+                    target_type: "artifact",
+                    target: "project-host",
+                    artifact: "project-host",
+                    desired_version: "bundle-v1",
+                    current_version: "bundle-v1",
+                    previous_version: "bundle-v0",
+                    last_known_good_version: "bundle-v0",
+                    retained_versions: ["bundle-v1", "bundle-v0"],
+                  },
+                  {
+                    target_type: "component",
+                    target: "acp-worker",
+                    artifact: "project-host",
+                    desired_version: "bundle-v1",
+                    current_version: "bundle-v1",
+                    previous_version: "bundle-v0",
+                    last_known_good_version: "bundle-v0",
+                    retained_versions: ["bundle-v1", "bundle-v0"],
+                  },
+                ],
               };
             },
             setHostRuntimeDeployments: async ({
@@ -730,11 +752,14 @@ test("host deploy status shows configured and effective desired state", async ()
   assert.equal(capture.data.observed_artifacts.length, 1);
   assert.equal(capture.data.observed_components.length, 1);
   assert.equal(capture.data.observed_targets.length, 2);
+  assert.equal(capture.data.rollback_targets.length, 2);
   assert.equal(
     capture.data.observed_targets[0].observed_version_state,
     "aligned",
   );
   assert.equal(capture.data.observed_targets[0].current_version, "bundle-v1");
+  assert.equal(capture.data.rollback_targets[0].target, "project-host");
+  assert.equal(capture.data.rollback_targets[0].previous_version, "bundle-v0");
 });
 
 test("host deploy status renders flattened human-readable sections", async () => {
@@ -770,6 +795,8 @@ test("host deploy status renders flattened human-readable sections", async () =>
   assert.match(output, /Configured Targets/);
   assert.match(output, /Effective Targets/);
   assert.match(output, /Observed Targets/);
+  assert.match(output, /Rollback Targets/);
+  assert.match(output, /last_known_good_version/);
   assert.match(output, /artifact_current_version/);
   assert.match(output, /acp-worker/);
   assert.doesNotMatch(output, /"scope_type":"host"/);
@@ -810,8 +837,11 @@ test("host deploy status filters by component", async () => {
   assert.equal(capture.data.observed_artifacts[0].current_version, "bundle-v1");
   assert.deepEqual(capture.data.observed_components, []);
   assert.equal(capture.data.observed_targets.length, 1);
+  assert.equal(capture.data.rollback_targets.length, 1);
   assert.equal(capture.data.observed_targets[0].target_type, "artifact");
   assert.equal(capture.data.observed_targets[0].target, "project-host");
+  assert.equal(capture.data.rollback_targets[0].target_type, "artifact");
+  assert.equal(capture.data.rollback_targets[0].target, "project-host");
   assert.equal(
     capture.data.observed_targets[0].observed_version_state,
     "aligned",

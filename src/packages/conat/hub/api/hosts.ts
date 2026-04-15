@@ -529,6 +529,7 @@ export interface HostRuntimeDeploymentStatus {
   observed_artifacts?: HostRuntimeArtifactObservation[];
   observed_components?: HostManagedComponentStatus[];
   observed_targets?: HostRuntimeDeploymentObservedTarget[];
+  rollback_targets?: HostRuntimeRollbackTarget[];
   observation_error?: string;
 }
 
@@ -559,6 +560,17 @@ export interface HostRuntimeDeploymentObservedTarget {
   running_pids?: number[];
   enabled?: boolean;
   managed?: boolean;
+}
+
+export interface HostRuntimeRollbackTarget {
+  target_type: HostRuntimeDeploymentTargetType;
+  target: HostRuntimeDeploymentTarget;
+  artifact: HostRuntimeArtifact;
+  desired_version?: string;
+  current_version?: string;
+  previous_version?: string;
+  last_known_good_version?: string;
+  retained_versions: string[];
 }
 
 export interface HostRuntimeDeploymentReconcileDecision {
