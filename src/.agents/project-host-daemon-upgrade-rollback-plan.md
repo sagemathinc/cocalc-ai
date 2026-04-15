@@ -1,9 +1,9 @@
-# Project-Host Daemon Upgrade And Rollback Plan
+# Project-Host Runtime Upgrade And Rollback Plan
 
 Status: proposed implementation plan
 
 Goal: evolve the current imperative host software upgrade and managed-component
-rollout work into a fully production-ready daemon lifecycle system for Linux
+rollout work into a fully production-ready runtime lifecycle system for Linux
 project hosts that is:
 
 - safe by default
@@ -18,12 +18,20 @@ not assume a clean-room controller rewrite.
 
 ## Scope
 
-This plan is for project-host runtime daemons on Linux project hosts:
+This plan is for host-local runtime software on Linux project hosts.
+
+Daemon components:
 
 - `project-host`
 - `conat-router`
 - `conat-persist`
 - `acp-worker`
+
+Runtime artifacts that also need first-class lifecycle management:
+
+- `project bundle`
+- `project tools`
+- `bootstrap environment`
 
 It is not a plan for:
 
@@ -63,7 +71,7 @@ The current implementation already has useful building blocks.
 
 ### Not Yet Implemented
 
-1. There is no persisted desired daemon version state in the hub.
+1. There is no persisted desired runtime version state in the hub.
 2. There is no per-host override vs global default desired state model.
 3. Offline hosts do not automatically converge to new daemon versions when they
    come back unless an operator manually upgrades them later.
@@ -128,6 +136,11 @@ controller:
    - one specific host
    - all online hosts
    - future global desired-state defaults
+9. `project bundle` and `project tools` versions must remain available as long
+   as any running or restorable project still references them.
+10. Standard recovery must not depend on manually pre-arranged ssh trust.
+11. The user impact of restarting or upgrading each component must be
+    documented explicitly.
 
 ## Core Design Principles
 
@@ -156,6 +169,13 @@ is fine, but the control model must still separate:
 That keeps the system usable if router or persist later become separately
 versioned artifacts.
 
+The same distinction also matters today for:
+
+- daemon components that all currently run from the `project-host` artifact
+- `project bundle`
+- `project tools`
+- `bootstrap environment`
+
 ### 4. Health Recovery And Upgrade Are Different State Machines
 
 The system must not use "component looks unhealthy" as a proxy for "upgrade
@@ -165,6 +185,20 @@ this component now". That coupling caused the ACP worker problems.
 
 Rollback is not an ssh-only disaster recovery trick. It is a standard operator
 workflow and must be visible in the same surfaces as upgrade.
+
+### 6. Low-Level Staging And High-Level Deploy Are Different
+
+The low-level operation that ensures an artifact is present on a host is not
+the same as the high-level operation that changes what should run.
+
+The current `host upgrade` command mostly performs staging plus some follow-up
+action. The end-state UX should make that distinction explicit.
+
+### 7. Multi-Bay Must Stay Mostly Invisible To Operators
+
+Different project hosts may be owned by different bays, but the operator model
+should remain "manage a host fleet", not "manually reason about bay-local
+plumbing" for routine upgrades and rollback.
 
 ## Target Operator Contract
 
@@ -176,8 +210,12 @@ The operator should be able to say:
 
 - upgrade `project-host` to version `V` on all hosts
 - upgrade `acp-worker` to version `V` on one host
+- upgrade `project bundle` to version `V` for new project starts on one host
+- upgrade `project tools` to version `V` on one host
+- upgrade `bootstrap environment` to version `V` on one host
 - canary `project-host` version `V` on `spot-utah`
 - roll back `project-host` on one host to the last known good version
+- restart `conat-persist` on one host without changing its version
 - set `acp-worker` drain deadline to `12h`
 - inspect which hosts are drifted, mixed, draining, or rolled back
 
@@ -190,6 +228,7 @@ An agent should be able to do the same with deterministic CLI output:
 - wait for reconciliation
 - inspect result
 - trigger rollback if needed
+- optionally issue a restart-only action without changing desired version
 
 ### Required End-State CLI Shape
 
@@ -214,11 +253,15 @@ cocalc host deploy rollback \
   --host spot-utah \
   --component project-host \
   --to previous
+
+cocalc host deploy restart \
+  --host spot-utah \
+  --component conat-persist
 ```
 
 The current `cocalc host upgrade` and `cocalc host rollout` commands can remain
-as ergonomic aliases or lower-level subcommands, but they should no longer be
-the only mental model.
+as compatibility aliases or advanced subcommands, but they should no longer be
+the primary operator mental model.
 
 ## Target Data Model
 
@@ -239,6 +282,13 @@ At minimum:
 - rollout reason
 - requested by
 - requested at
+
+This needs to be broadened to a generic host runtime deployment model that also
+covers:
+
+- `project bundle`
+- `project tools`
+- `bootstrap environment`
 
 ### 2. Observed Host Component State
 
@@ -272,6 +322,42 @@ Per host and artifact:
 - installed at
 - last used at
 
+### 4. Published Version Catalog
+
+Operators and agents need a first-class version list with metadata.
+
+At minimum:
+
+- artifact
+- version
+- channel
+- published at
+- source:
+  - owning hub
+  - `software.cocalc.ai`
+  - admin-configured external source
+- git commit
+- commit title
+- optional release description
+- sha256
+
+This catalog must be queryable through CLI and GUI.
+
+### 5. Runtime Version References
+
+For `project bundle` and `project tools`, the system must track which projects
+currently reference which retained version.
+
+At minimum:
+
+- host id
+- project id
+- pinned project bundle version
+- pinned tools version
+- when the version was bound to the project
+
+Without this, safe retention and rollback are not possible.
+
 ## Required Host-Side Model
 
 Each host needs a small local daemon deployment state file, separate from
@@ -286,6 +372,12 @@ bootstrap facts:
 This should align with the broader split-state bootstrap/reconcile model from
 [bootstrap-tool-lifecycle.md](/home/user/cocalc-ai/src/.agents/bootstrap-tool-lifecycle.md),
 not fight it.
+
+For `project bundle` and `project tools`, host-local state must also record:
+
+- which versions are currently pinned by active projects
+- which versions are safe to prune
+- which version is the desired default for newly started projects
 
 ## Health Gates
 
@@ -336,6 +428,33 @@ Success means:
 Importantly, ACP success must not require all long-running turns to finish
 before the rollout LRO can report that the replacement phase succeeded.
 
+### For `project bundle`
+
+Success means:
+
+- the target version is staged on the host
+- new project starts can use it
+- running projects pinned to older versions continue working
+
+### For `project tools`
+
+Success means:
+
+- the target version is staged on the host
+- the selected activation policy is applied correctly
+- existing projects do not silently lose required commands such as `open`
+
+This implies that tools version binding must stop being an unsafe global swap.
+
+### For `bootstrap environment`
+
+Success means:
+
+- the new bootstrap/reconcile environment is installed explicitly
+- future reconcile actions use it
+- ordinary `project-host` daemon upgrade does not implicitly and opaquely change
+  bootstrap behavior
+
 ## Rollback Model
 
 Rollback has to exist at three levels.
@@ -369,6 +488,25 @@ If a host comes back with a bad current bundle or drifted components, the
 controller must still know the desired and last-known-good targets so it can
 recover without ssh.
 
+## SSH Recovery Constraint
+
+Current ssh-based fallback is not a reliable control-plane assumption because
+seed/bay ssh keys are not yet guaranteed to be provisioned and trusted during
+host creation.
+
+The plan should therefore treat ssh in two layers:
+
+### Standard Path
+
+- no ssh required for normal upgrade or rollback
+
+### Emergency Path
+
+- if ssh fallback remains part of the recovery story, host provisioning must
+  explicitly install and trust the bay/seed recovery key at bootstrap time
+- this must be treated as a first-class provisioning requirement, not a manual
+  post-hoc operator step
+
 ## Retention Policy
 
 Current host-side bundle retention is too small.
@@ -380,7 +518,14 @@ Production target:
 - never prune:
   - current
   - last known good
-  - rollback target for any in-progress rollout
+- rollback target for any in-progress rollout
+
+Additional retention rules:
+
+- do not prune any `project bundle` version that any project still references
+- do not prune any `project tools` version that any project still references
+- allow rollback to any published version even if it is not currently staged on
+  the host by restaging it first
 
 This is a prerequisite for trustworthy rollback.
 
@@ -415,6 +560,136 @@ This is a prerequisite for trustworthy rollback.
 - explicit separation between:
   - health repair
   - desired-version rollout
+- support explicit force-replace / kill-now policy for emergency security or
+  corruption scenarios
+- if force-replaced, restart recovery behavior for interrupted turns must be
+  clearly documented and tested
+
+### `project bundle`
+
+- default effect: changes what newly started or restarted projects use
+- active projects pinned to older versions continue on those versions
+- canary and rollback must operate without breaking projects already running on
+  older retained versions
+
+### `project tools`
+
+- must stop behaving like an unsafe global current-symlink swap for active
+  projects
+- default effect should match `project bundle`: new or re-bound projects get
+  the new version, older projects keep their pinned version
+- retention must be reference-aware
+
+### `bootstrap environment`
+
+- explicit rare upgrade surface
+- not implicitly coupled to normal `project-host` daemon rollout
+- usually upgraded by explicit reconcile policy, not as a side effect
+
+## Upgrade Fences
+
+We should enforce one crucial safety rule:
+
+- when `project-host` daemon itself is being upgraded, no other host-local
+  runtime component or artifact should be upgraded concurrently on that same
+  host
+
+Reason:
+
+- if the host started healthy and only `project-host` changed, then rollback to
+  the previous `project-host` bundle has a high chance of restoring control
+- if `project-host`, tools, bundle selection, or bootstrap environment all
+  changed together, rollback confidence drops sharply
+
+This should be encoded as rollout admission logic, not only operator guidance.
+
+## User Impact Matrix
+
+Each managed runtime target must have explicit expected impact documentation.
+
+### `project-host`
+
+- likely impact today:
+  - control-plane interruption
+  - possible browser reconnects
+  - no running project container restart
+- target after later ingress split:
+  - minimal control-plane interruption
+
+### `conat-router`
+
+- likely impact:
+  - websocket reconnects
+  - brief collaboration/control-plane disruption
+  - no project container restart
+
+### `conat-persist`
+
+- likely impact:
+  - temporary persistence lag or failure
+  - document open/save/changefeed disruption
+  - no project container restart
+
+### `acp-worker`
+
+- drain rollout:
+  - existing turns continue
+  - new worker handles future work
+- force rollout:
+  - active turns may be interrupted
+  - automatic resume expectations must be documented
+
+### `project bundle`
+
+- affects newly started or restarted projects
+- must not silently mutate already running projects pinned to older versions
+
+### `project tools`
+
+- must not cause commands like `open` to vanish from already running projects
+- desired impact should be limited to newly started or explicitly re-bound
+  projects
+
+### `bootstrap environment`
+
+- should not directly impact active users
+- affects future reconcile, repair, and provisioning behavior
+
+## Restart-Only And Smoke Testing
+
+We need restart-only support independently of version change.
+
+Required capability:
+
+- restart one component on one host without changing desired version
+
+Why:
+
+- troubleshooting
+- validating component recovery behavior
+- smoke testing after deploy
+
+We also need a smoke test that, on a canary host:
+
+1. restarts each component one by one
+2. verifies host readiness afterward
+3. verifies key user flows afterward
+
+The smoke test should become invokable from CLI and usable by agents.
+
+## Multi-Bay Control Plane Constraints
+
+The plan must fit the bay architecture.
+
+Required behavior:
+
+- operators target hosts, not bays
+- CLI resolves host ownership and routes to the correct bay transparently
+- desired deployment state is stored in the owning bay's control plane
+- cross-bay operator workflows remain one logical host-fleet workflow
+
+This should feel operationally similar to one hub even when multiple bays own
+different hosts.
 
 ## End-State UX Requirements
 
@@ -492,7 +767,7 @@ Exit criteria:
   - install new artifact
   - roll out component
 
-### Phase 2: Persist Desired Component State In The Hub
+### Phase 2: Persist Desired Runtime Deployment State In The Hub
 
 Purpose:
 
@@ -500,19 +775,24 @@ Purpose:
 
 Work:
 
-- add hub tables for desired daemon deployment state
+- add hub tables for desired runtime deployment state
 - support:
   - global default
   - host override
 - add status queries that join desired vs observed state
 - add explicit rollout policy fields
+- cover:
+  - daemon components
+  - `project bundle`
+  - `project tools`
+  - `bootstrap environment`
 
 Exit criteria:
 
 - operators can ask "what should this host be running?" without inferring from
   LRO history
 
-### Phase 3: Add Host-Side Reconciler For Daemon Components
+### Phase 3: Add Host-Side Reconciler For Runtime Components
 
 Purpose:
 
@@ -520,17 +800,22 @@ Purpose:
 
 Work:
 
-- add a daemon deployment reconcile loop on the host
+- add a runtime deployment reconcile loop on the host
 - on host connect / heartbeat / periodic reconcile:
   - compare desired vs observed
   - schedule the appropriate component action
-- keep using existing component rollout implementations under the hood
+- keep using existing component rollout implementations under the hood where
+  they already exist
+- add version-pinning and activation handling for:
+  - `project bundle`
+  - `project tools`
+  - `bootstrap environment`
 
 Exit criteria:
 
 - an offline host that comes back automatically notices drift and converges
 
-### Phase 4: Introduce Retained Bundle Inventory And Rollback Checkpoints
+### Phase 4: Introduce Retained Artifact Inventory And Rollback Checkpoints
 
 Purpose:
 
@@ -538,10 +823,11 @@ Purpose:
 
 Work:
 
-- increase bundle retention
+- increase artifact retention
 - record per-host retained artifact inventory
 - add "last known good" tracking
 - add explicit rollback checkpoint creation before `project-host` rollout
+- enforce reference-aware retention for bundle/tools
 
 Exit criteria:
 
@@ -639,15 +925,94 @@ We should preserve user muscle memory where possible.
 - `cocalc host deploy set`
 - `cocalc host deploy rollback`
 - `cocalc host deploy history`
+- `cocalc host deploy restart`
+- `cocalc host versions`
+- `cocalc host stage`
 
 ### Reframe
 
-- `host upgrade`:
-  artifact install / publish / availability
+- `host stage`:
+  ensure artifacts are present on a host without changing desired state
 - `host rollout`:
-  immediate component action primitive
+  immediate advanced action primitive
 - `host deploy set`:
   durable desired-state workflow
+
+The existing `host upgrade` command should be retained only as a compatibility
+wrapper or advanced alias, because the name is misleading once deploy and
+rollback become first-class.
+
+## Why We Are Not Using MicroK8s / K3s / Similar
+
+This should be explicit because it is a reasonable question.
+
+Short version:
+
+- the project-host problem is not "we need generic container orchestration"
+- the hidden complexity of single-node Kubernetes here is high
+- it does not naturally solve our most important lifecycle problems
+
+More concretely, a microk8s-style design would still require us to solve:
+
+1. bootstrapping and upgrading the orchestrator itself on every host
+2. packaging current host-local components as OCI images with access to:
+   - `/mnt/cocalc`
+   - host btrfs state
+   - podman/runtime wrappers
+   - host-local privileged helpers
+3. modeling `project bundle` and `project tools` retention around active
+   project references, which is not the same as generic container image rollout
+4. preserving the direct visibility and debuggability we currently get from:
+   - pid files
+   - explicit logs
+   - health endpoints
+   - direct host process control
+5. integrating bay-aware host control, canary rollout, and automatic rollback
+   anyway
+
+In other words, even with microk8s we would still need substantial custom
+control-plane logic for:
+
+- project-host readiness
+- artifact staging
+- pinned project bundle and tools versions
+- rollback checkpoints
+- host-specific recovery behavior
+
+For the project-host runtime layer, a small explicit deployment controller is a
+better fit than importing a general container orchestrator plus all of its
+operational surface area.
+
+## Extensibility Constraint
+
+Today several code paths hardcode the current four daemon components. That is
+acceptable for early slices, but the end-state implementation should use a
+component/artifact registry rather than repeated hand-maintained lists.
+
+The registry should define:
+
+- component name
+- artifact
+- rollout policy options
+- health checks
+- restart command
+- rollback semantics
+- user-impact description
+
+That keeps the system maintainable if we add more host-local components later.
+
+## Clearly Out Of Scope
+
+This plan is not for:
+
+- upgrading software inside a running project container
+  - `apt-get update`
+  - `apt-get upgrade`
+- upgrading bay/hub software itself
+  - Rocket / Kubernetes clusters
+  - Launchpad on a laptop
+- upgrading Ubuntu on the project host machine
+- upgrading `cocalc-plus`
 
 ## Success Criteria
 
@@ -665,15 +1030,23 @@ This plan is complete when all of the following are true:
    `project-host` upgrades.
 8. Operators can inspect desired vs observed state and last known good version
    directly.
+9. `project bundle`, `project tools`, and `bootstrap environment` use the same
+   operator mental model.
+10. Restart-only actions and smoke tests exist.
+11. Version listing includes published metadata and source information.
 
 ## Immediate Next Steps
 
 The first implementation slice after this plan should be:
 
-1. add a durable desired daemon deployment data model in the hub
-2. expose desired vs observed daemon deployment status in CLI and GUI
-3. increase retained `project-host` bundle history and track last known good
-4. then implement manual rollback before automatic rollback
+1. add a durable desired runtime deployment data model in the hub
+2. broaden it immediately to include `project bundle`, `project tools`, and
+   `bootstrap environment`
+3. expose desired vs observed runtime deployment status in CLI and GUI
+4. add published version listing with metadata
+5. increase retained `project-host` bundle history and track last known good
+6. design and implement project reference tracking for bundle/tools retention
+7. then implement manual rollback before automatic rollback
 
 That order matters:
 
