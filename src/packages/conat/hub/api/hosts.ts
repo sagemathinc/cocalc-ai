@@ -1,5 +1,6 @@
 import { authFirstRequireAccount, authFirstRequireHost } from "./util";
 import type {
+  HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
   ManagedComponentKind,
   ManagedComponentRuntimeState,
@@ -36,6 +37,7 @@ export const HOST_LRO_KINDS = [
   "host-drain",
   "host-reconcile-software",
   "host-reconcile-runtime-deployments",
+  "host-rollback-runtime-deployments",
   "host-upgrade-software",
   "host-rollout-managed-components",
   "host-deprovision",
@@ -592,6 +594,19 @@ export interface HostRuntimeDeploymentReconcileResult {
   rollout_results?: any[];
 }
 
+export interface HostRuntimeDeploymentRollbackResult {
+  host_id: string;
+  target_type: HostRuntimeDeploymentTargetType;
+  target: HostRuntimeDeploymentTarget;
+  artifact: HostRuntimeArtifact;
+  rollback_version: string;
+  rollback_source: "explicit_version" | "previous_version" | "last_known_good";
+  deployment?: HostRuntimeDeploymentRecord;
+  upgrade_results?: HostSoftwareUpgradeResponse["results"];
+  reconcile_result?: HostRuntimeDeploymentReconcileResult;
+  managed_component_rollout?: HostManagedComponentRolloutResponse["results"];
+}
+
 export interface HostRuntimeDeploymentUpsert {
   target_type: HostRuntimeDeploymentTargetType;
   target: HostRuntimeDeploymentTarget;
@@ -666,6 +681,7 @@ export const hosts = {
   getHostRuntimeDeploymentStatus: authFirstRequireAccount,
   setHostRuntimeDeployments: authFirstRequireAccount,
   reconcileHostRuntimeDeployments: authFirstRequireAccount,
+  rollbackHostRuntimeDeployments: authFirstRequireAccount,
   getHostManagedComponentStatus: authFirstRequireAccount,
   rolloutHostManagedComponents: authFirstRequireAccount,
   upgradeHostConnector: authFirstRequireAccount,
@@ -799,6 +815,15 @@ export interface Hosts {
     account_id?: string;
     id: string;
     components?: ManagedComponentKind[];
+    reason?: string;
+  }) => Promise<HostLroResponse>;
+  rollbackHostRuntimeDeployments: (opts: {
+    account_id?: string;
+    id: string;
+    target_type: HostRuntimeDeploymentTargetType;
+    target: HostRuntimeDeploymentTarget;
+    version?: string;
+    last_known_good?: boolean;
     reason?: string;
   }) => Promise<HostLroResponse>;
 

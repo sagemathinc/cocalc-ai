@@ -22,6 +22,8 @@ import type {
   HostRuntimeDeploymentRecord,
   HostRuntimeDeploymentObservedTarget,
   HostRuntimeRollbackTarget,
+  HostRuntimeDeploymentTarget,
+  HostRuntimeDeploymentRollbackResult,
   HostRuntimeDeploymentReconcileResult,
   HostRuntimeDeploymentObservedVersionState,
   HostRuntimeDeploymentScopeType,
@@ -177,6 +179,8 @@ const HOST_DRAIN_LRO_KIND = "host-drain";
 const HOST_RECONCILE_LRO_KIND = "host-reconcile-software";
 const HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND =
   "host-reconcile-runtime-deployments";
+const HOST_ROLLBACK_RUNTIME_DEPLOYMENTS_LRO_KIND =
+  "host-rollback-runtime-deployments";
 const HOST_UPGRADE_LRO_KIND = "host-upgrade-software";
 const HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND =
   "host-rollout-managed-components";
@@ -5164,6 +5168,60 @@ export async function reconcileHostRuntimeDeployments({
   });
 }
 
+export async function rollbackHostRuntimeDeployments({
+  account_id,
+  id,
+  target_type,
+  target,
+  version,
+  last_known_good,
+  reason,
+}: {
+  account_id?: string;
+  id: string;
+  target_type: "component" | "artifact";
+  target: HostRuntimeDeploymentTarget;
+  version?: string;
+  last_known_good?: boolean;
+  reason?: string;
+}): Promise<HostLroResponse> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  const normalizedTarget =
+    target_type === "component"
+      ? normalizeManagedComponentKindsForDedupe([
+          target as ManagedComponentKind,
+        ])[0]
+      : normalizeRuntimeArtifactTarget(target as HostRuntimeArtifact);
+  if (!normalizedTarget) {
+    throw new Error("invalid rollback target");
+  }
+  const rollbackVersion = `${version ?? ""}`.trim() || null;
+  return await createHostLro({
+    kind: HOST_ROLLBACK_RUNTIME_DEPLOYMENTS_LRO_KIND,
+    row,
+    account_id,
+    input: {
+      id: row.id,
+      account_id,
+      target_type,
+      target: normalizedTarget,
+      version: rollbackVersion,
+      last_known_good: !!last_known_good,
+      reason,
+    },
+    dedupe_key: `${HOST_ROLLBACK_RUNTIME_DEPLOYMENTS_LRO_KIND}:${row.id}:${JSON.stringify(
+      {
+        target_type,
+        target: normalizedTarget,
+        version: rollbackVersion,
+        last_known_good: !!last_known_good,
+        reason: `${reason ?? ""}`.trim() || null,
+      },
+    )}`,
+  });
+}
+
 export async function getHostManagedComponentStatus({
   account_id,
   id,
@@ -5462,6 +5520,45 @@ function summarizeRollbackTargets({
   });
 }
 
+function resolveRollbackVersion({
+  rollbackTarget,
+  version,
+  last_known_good,
+}: {
+  rollbackTarget: HostRuntimeRollbackTarget;
+  version?: string;
+  last_known_good?: boolean;
+}): {
+  rollback_version: string;
+  rollback_source: HostRuntimeDeploymentRollbackResult["rollback_source"];
+} {
+  const explicit = `${version ?? ""}`.trim();
+  if (explicit) {
+    return {
+      rollback_version: explicit,
+      rollback_source: "explicit_version",
+    };
+  }
+  if (last_known_good) {
+    const candidate = `${rollbackTarget.last_known_good_version ?? ""}`.trim();
+    if (!candidate) {
+      throw new Error("last known good version is not available");
+    }
+    return {
+      rollback_version: candidate,
+      rollback_source: "last_known_good",
+    };
+  }
+  const previous = `${rollbackTarget.previous_version ?? ""}`.trim();
+  if (!previous) {
+    throw new Error("previous rollback version is not available");
+  }
+  return {
+    rollback_version: previous,
+    rollback_source: "previous_version",
+  };
+}
+
 function summarizeObservedRuntimeDeployments({
   effective,
   observed_artifacts,
@@ -5549,6 +5646,13 @@ function installedProjectHostArtifactVersion(row: any): string | undefined {
     `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
     undefined;
   return version;
+}
+
+function targetKeyForRuntimeDeployment(opts: {
+  target_type: HostRuntimeDeploymentRecord["target_type"];
+  target: HostRuntimeDeploymentRecord["target"];
+}): string {
+  return `${opts.target_type}:${opts.target}`;
 }
 
 export async function reconcileHostRuntimeDeploymentsInternal({
@@ -5719,6 +5823,136 @@ export async function reconcileHostRuntimeDeploymentsInternal({
   return {
     ...result,
     rollout_results: rollout.results ?? [],
+  };
+}
+
+export async function rollbackHostRuntimeDeploymentsInternal({
+  account_id,
+  id,
+  target_type,
+  target,
+  version,
+  last_known_good,
+  reason,
+}: {
+  account_id?: string;
+  id: string;
+  target_type: "component" | "artifact";
+  target: HostRuntimeDeploymentTarget;
+  version?: string;
+  last_known_good?: boolean;
+  reason?: string;
+}): Promise<HostRuntimeDeploymentRollbackResult> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  const status = await getHostRuntimeDeploymentStatus({ account_id, id });
+  const effectiveTargets = new Map(
+    (status.effective ?? []).map((deployment) => [
+      targetKeyForRuntimeDeployment({
+        target_type: deployment.target_type,
+        target: deployment.target,
+      }),
+      deployment,
+    ]),
+  );
+  const rollbackTargets = new Map(
+    (status.rollback_targets ?? []).map((rollbackTarget) => [
+      targetKeyForRuntimeDeployment({
+        target_type: rollbackTarget.target_type,
+        target: rollbackTarget.target,
+      }),
+      rollbackTarget,
+    ]),
+  );
+  const key = targetKeyForRuntimeDeployment({ target_type, target });
+  const deployment = effectiveTargets.get(key);
+  const rollbackTarget = rollbackTargets.get(key);
+  if (!deployment || !rollbackTarget) {
+    throw new Error("rollback target is not configured");
+  }
+  const { rollback_version, rollback_source } = resolveRollbackVersion({
+    rollbackTarget,
+    version,
+    last_known_good,
+  });
+  const artifact = rollbackTarget.artifact;
+  if (artifact === "bootstrap-environment") {
+    throw new Error("bootstrap-environment rollback is not implemented");
+  }
+  const requested_by = requestedByForRuntimeDeployments({ account_id, row });
+  const updatedDeployments = await setProjectHostRuntimeDeployments({
+    scope_type: "host",
+    host_id: row.id,
+    requested_by,
+    replace: false,
+    deployments: [
+      {
+        target_type: deployment.target_type,
+        target: deployment.target,
+        desired_version: rollback_version,
+        rollout_policy: deployment.rollout_policy,
+        drain_deadline_seconds: deployment.drain_deadline_seconds,
+        rollout_reason:
+          `${reason ?? deployment.rollout_reason ?? ""}`.trim() || undefined,
+        metadata: deployment.metadata,
+      },
+    ],
+  });
+  const updatedDeployment = updatedDeployments.find(
+    (entry) => entry.target_type === target_type && entry.target === target,
+  );
+  let upgrade_results: HostRuntimeDeploymentRollbackResult["upgrade_results"];
+  let reconcile_result:
+    | HostRuntimeDeploymentRollbackResult["reconcile_result"]
+    | undefined;
+  let managed_component_rollout:
+    | HostRuntimeDeploymentRollbackResult["managed_component_rollout"]
+    | undefined;
+  const currentArtifactVersion =
+    `${rollbackTarget.current_version ?? ""}`.trim();
+  if (currentArtifactVersion !== rollback_version) {
+    const upgrade = await upgradeHostSoftwareInternal({
+      account_id,
+      id: row.id,
+      targets: [{ artifact, version: rollback_version }],
+    });
+    upgrade_results = upgrade.results ?? [];
+  }
+  if (target_type === "artifact") {
+    if (
+      target === "project-host" &&
+      currentArtifactVersion !== rollback_version
+    ) {
+      const rollout = await rolloutHostManagedComponentsInternal({
+        account_id,
+        id: row.id,
+        components: ["project-host"],
+        reason: reason ?? "runtime_rollback",
+      });
+      managed_component_rollout = rollout.results ?? [];
+    }
+  } else {
+    if (artifact !== "project-host") {
+      throw new Error(`component rollback for ${artifact} is not implemented`);
+    }
+    reconcile_result = await reconcileHostRuntimeDeploymentsInternal({
+      account_id,
+      id: row.id,
+      components: [target as ManagedComponentKind],
+      reason: reason ?? "runtime_rollback",
+    });
+  }
+  return {
+    host_id: row.id,
+    target_type,
+    target,
+    artifact,
+    rollback_version,
+    rollback_source,
+    deployment: updatedDeployment,
+    ...(upgrade_results ? { upgrade_results } : {}),
+    ...(reconcile_result ? { reconcile_result } : {}),
+    ...(managed_component_rollout ? { managed_component_rollout } : {}),
   };
 }
 

@@ -14,6 +14,14 @@ type Capture = {
     components?: string[];
     reason?: string;
   }>;
+  runtimeDeploymentRollbacks?: Array<{
+    id: string;
+    target_type: string;
+    target: string;
+    version?: string;
+    last_known_good?: boolean;
+    reason?: string;
+  }>;
   runtimeDeploymentStatusRequests: string[];
   runtimeDeploymentSetRequests: Array<{
     scope_type: string;
@@ -45,6 +53,7 @@ function makeDeps(
     output: "json",
   },
 ): HostCommandDeps {
+  capture.runtimeDeploymentRollbacks ??= [];
   return {
     withContext: async (_command, _label, fn) => {
       const ctx = {
@@ -81,6 +90,24 @@ function makeDeps(
                 reason,
               });
               return { op_id: `deploy-reconcile-${id}` };
+            },
+            rollbackHostRuntimeDeployments: async ({
+              id,
+              target_type,
+              target,
+              version,
+              last_known_good,
+              reason,
+            }) => {
+              capture.runtimeDeploymentRollbacks!.push({
+                id,
+                target_type,
+                target,
+                version,
+                last_known_good,
+                reason,
+              });
+              return { op_id: `deploy-rollback-${id}` };
             },
             getHostRuntimeDeploymentStatus: async ({ id }) => {
               capture.runtimeDeploymentStatusRequests.push(id);
@@ -248,6 +275,18 @@ function makeDeps(
                 admission_allowed: true,
                 auto_grow_recommended: false,
               },
+            }),
+          },
+          lro: {
+            get: async ({ op_id }) => ({
+              result: `${op_id}`.startsWith("deploy-rollback-")
+                ? {
+                    host_id: `${op_id}`.replace(/^deploy-rollback-/, ""),
+                    target_type: "component",
+                    target: "acp-worker",
+                    rollback_version: "bundle-v0",
+                  }
+                : undefined,
             }),
           },
         },
@@ -886,6 +925,49 @@ test("host deploy reconcile queues desired-state component reconcile", async () 
   assert.equal(capture.data.status, "succeeded");
   assert.deepEqual(capture.data.requested_components, ["acp-worker"]);
   assert.deepEqual(capture.data.reconciled_components, ["acp-worker"]);
+});
+
+test("host deploy rollback queues runtime rollback and waits for completion", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "deploy",
+    "rollback",
+    "host-1",
+    "--component",
+    "acp-worker",
+    "--to-version",
+    "bundle-v0",
+    "--reason",
+    "test rollback",
+    "--wait",
+  ]);
+
+  assert.deepEqual(capture.runtimeDeploymentRollbacks, [
+    {
+      id: "host-1",
+      target_type: "component",
+      target: "acp-worker",
+      version: "bundle-v0",
+      last_known_good: false,
+      reason: "test rollback",
+    },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.op_id, "deploy-rollback-host-1");
+  assert.equal(capture.data.status, "succeeded");
 });
 
 test("host deploy set upserts host-scoped desired state", async () => {

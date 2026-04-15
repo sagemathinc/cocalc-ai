@@ -18,6 +18,7 @@ import {
   deleteHostInternal,
   drainHostInternal,
   forceDeprovisionHostInternal,
+  rollbackHostRuntimeDeploymentsInternal,
   reconcileHostRuntimeDeploymentsInternal,
   reconcileHostSoftwareInternal,
   removeSelfHostConnectorInternal,
@@ -51,6 +52,7 @@ const HOST_OP_KINDS = [
   "host-drain",
   "host-reconcile-software",
   "host-reconcile-runtime-deployments",
+  "host-rollback-runtime-deployments",
   "host-upgrade-software",
   "host-rollout-managed-components",
   "host-deprovision",
@@ -476,6 +478,8 @@ function opLabel(kind: HostOpKind, input: any): string {
       return "Reconcile";
     case "host-reconcile-runtime-deployments":
       return "Reconcile runtime deployments";
+    case "host-rollback-runtime-deployments":
+      return "Rollback runtime deployment";
     case "host-upgrade-software":
       return "Upgrade";
     case "host-rollout-managed-components":
@@ -958,6 +962,48 @@ async function handleOp(op: LroSummary): Promise<void> {
         host_id,
         reconciled_components: response.reconciled_components,
         decisions: response.decisions,
+      });
+      return;
+    }
+
+    if (kind === "host-rollback-runtime-deployments") {
+      await progressStep("waiting", "rolling back runtime deployment target", {
+        host_id,
+        target_type: input?.target_type,
+        target: input?.target,
+        version: input?.version,
+        last_known_good: !!input?.last_known_good,
+      });
+      const response = await rollbackHostRuntimeDeploymentsInternal({
+        account_id,
+        id: host_id,
+        target_type: input?.target_type,
+        target: input?.target,
+        version: input?.version,
+        last_known_good: !!input?.last_known_good,
+        reason: input?.reason,
+      });
+      const updated = await updateLro({
+        op_id,
+        status: "succeeded",
+        progress_summary: {
+          phase: "done",
+          host_id,
+          target_type: response.target_type,
+          target: response.target,
+          rollback_version: response.rollback_version,
+        },
+        result: response,
+        error: null,
+      });
+      if (updated) {
+        await publishSummary(updated);
+      }
+      await progressStep("done", "runtime deployment rollback complete", {
+        host_id,
+        target_type: response.target_type,
+        target: response.target,
+        rollback_version: response.rollback_version,
       });
       return;
     }

@@ -1279,6 +1279,100 @@ does not yet have the required runtime artifact version installed.
     );
 
   deploy
+    .command("rollback <host>")
+    .description(
+      "roll back one desired runtime target to an explicit, previous, or last-known-good version",
+    )
+    .option(
+      "--component <component>",
+      "component: project-host, conat-router, conat-persist, acp-worker",
+    )
+    .option(
+      "--artifact <artifact>",
+      "artifact: project-host, project-bundle, tools, bootstrap-environment",
+    )
+    .option("--to-version <version>", "explicit rollback version override")
+    .option(
+      "--last-known-good",
+      "use the recorded last-known-good version instead of the previous retained version",
+    )
+    .option("--reason <reason>", "optional rollback reason")
+    .option("--wait", "wait for completion")
+    .addHelpText(
+      "after",
+      `
+Rollback records the chosen desired version first, then reuses the existing
+host upgrade and managed rollout/reconcile primitives.
+
+By default rollback chooses the previous retained version from
+\`host deploy status\`. Use \`--last-known-good\` to prefer the stored recovery
+version when available, or \`--to-version\` to force a specific published version.
+`,
+    )
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: {
+          component?: string;
+          artifact?: string;
+          toVersion?: string;
+          lastKnownGood?: boolean;
+          reason?: string;
+          wait?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "host deploy rollback", async (ctx) => {
+          if (opts.lastKnownGood && `${opts.toVersion ?? ""}`.trim()) {
+            throw new Error(
+              "specify at most one of --to-version or --last-known-good",
+            );
+          }
+          const host = await resolveHost(ctx, hostIdentifier);
+          const parsedTarget = parseRuntimeDeploymentTarget(opts);
+          const op = await ctx.hub.hosts.rollbackHostRuntimeDeployments({
+            id: host.id,
+            target_type: parsedTarget.target_type,
+            target: parsedTarget.target,
+            version: `${opts.toVersion ?? ""}`.trim() || undefined,
+            last_known_good: !!opts.lastKnownGood,
+            reason: `${opts.reason ?? ""}`.trim() || undefined,
+          });
+          if (!opts.wait) {
+            return {
+              host_id: host.id,
+              op_id: op.op_id,
+              status: "queued",
+              target_type: parsedTarget.target_type,
+              target: parsedTarget.target,
+            };
+          }
+          const summary = await waitForLro(ctx, op.op_id, {
+            timeoutMs: ctx.timeoutMs,
+            pollMs: ctx.pollMs,
+          });
+          if (summary.timedOut) {
+            throw new Error(
+              `host deploy rollback timed out (op=${op.op_id}, last_status=${summary.status})`,
+            );
+          }
+          if (summary.status !== "succeeded") {
+            throw new Error(
+              `host deploy rollback failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+            );
+          }
+          const final = await ctx.hub.lro.get({ op_id: op.op_id });
+          return {
+            host_id: host.id,
+            op_id: op.op_id,
+            status: summary.status,
+            rollback: final?.result ?? null,
+          };
+        });
+      },
+    );
+
+  deploy
     .command("set")
     .description(
       "upsert desired runtime deployment state for one host or for the global default scope",

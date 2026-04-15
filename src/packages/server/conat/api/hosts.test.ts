@@ -21,6 +21,7 @@ let projectReferenceGetMock: jest.Mock;
 let routedHostControlClientMock: jest.Mock;
 let listProjectHostRuntimeDeploymentsMock: jest.Mock;
 let loadEffectiveProjectHostRuntimeDeploymentsMock: jest.Mock;
+let setProjectHostRuntimeDeploymentsMock: jest.Mock;
 let updateProjectUsersMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -76,7 +77,8 @@ jest.mock("@cocalc/database/postgres/project-host-runtime-deployments", () => ({
     listProjectHostRuntimeDeploymentsMock(...args),
   loadEffectiveProjectHostRuntimeDeployments: (...args: any[]) =>
     loadEffectiveProjectHostRuntimeDeploymentsMock(...args),
-  setProjectHostRuntimeDeployments: jest.fn(async () => []),
+  setProjectHostRuntimeDeployments: (...args: any[]) =>
+    setProjectHostRuntimeDeploymentsMock(...args),
 }));
 
 jest.mock("@cocalc/backend/data", () => {
@@ -229,6 +231,7 @@ describe("hosts.listHostProjects", () => {
     projectReferenceGetMock = jest.fn(async () => null);
     listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
     loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    setProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
     updateProjectUsersMock = jest.fn(async () => undefined);
     routedHostControlClientMock = jest.fn(async () => ({
       updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
@@ -388,8 +391,26 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () =>
       listProjectHostRuntimeDeploymentsMock(),
     );
+    setProjectHostRuntimeDeploymentsMock = jest.fn(async ({ deployments }) =>
+      deployments.map((deployment: any) => ({
+        scope_type: "host",
+        scope_id: HOST_ID,
+        host_id: HOST_ID,
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+        ...deployment,
+      })),
+    );
     updateProjectUsersMock = jest.fn(async () => undefined);
     routedHostControlClientMock = jest.fn(async () => ({
+      upgradeSoftware: async () => ({ results: [] }),
+      rolloutManagedComponents: async ({ components }: any) => ({
+        results: components.map((component: string) => ({
+          component,
+          action: "spawned",
+        })),
+      }),
       getManagedComponentStatus: async () => [
         {
           component: "acp-worker",
@@ -513,6 +534,48 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       },
     ]);
     expect(status.observation_error).toBeUndefined();
+  });
+
+  it("rolls back a component target to an explicit version and reconciles it", async () => {
+    const { rollbackHostRuntimeDeploymentsInternal } = await import("./hosts");
+    const result = await rollbackHostRuntimeDeploymentsInternal({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      target_type: "component",
+      target: "acp-worker",
+      version: "ph-v2",
+      reason: "test rollback",
+    });
+    expect(result).toMatchObject({
+      host_id: HOST_ID,
+      target_type: "component",
+      target: "acp-worker",
+      artifact: "project-host",
+      rollback_version: "ph-v2",
+      rollback_source: "explicit_version",
+      deployment: {
+        target_type: "component",
+        target: "acp-worker",
+        desired_version: "ph-v2",
+      },
+    });
+    expect(setProjectHostRuntimeDeploymentsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope_type: "host",
+        host_id: HOST_ID,
+        deployments: [
+          expect.objectContaining({
+            target_type: "component",
+            target: "acp-worker",
+            desired_version: "ph-v2",
+            rollout_reason: "test rollback",
+          }),
+        ],
+      }),
+    );
+    expect(result.reconcile_result).toMatchObject({
+      host_id: HOST_ID,
+    });
   });
 });
 
