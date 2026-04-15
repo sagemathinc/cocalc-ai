@@ -11,6 +11,7 @@ const logger = getLogger("monitor:usage");
 interface Options {
   resource: string;
   maxPerUser?: number;
+  getMaxPerUser?: (user: JSONValue) => number | undefined;
   max?: number;
   log?: (...args) => void;
 }
@@ -40,6 +41,10 @@ export class UsageMonitor extends EventEmitter {
   };
 
   private toJson = (user: JSONValue) => json(user) ?? "";
+
+  private getMaxPerUser = (user: JSONValue): number | undefined => {
+    return this.options.getMaxPerUser?.(user) ?? this.options.maxPerUser;
+  };
 
   private initLogging = () => {
     const { log } = this.options;
@@ -93,6 +98,7 @@ export class UsageMonitor extends EventEmitter {
   add = (user: JSONValue) => {
     const u = this.toJson(user);
     let count = this.perUser[u] ?? 0;
+    const maxPerUser = this.getMaxPerUser(user);
     if (this.options.max && this.total >= this.options.max) {
       this.emit("deny", user, this.options.max, "global");
       throw new ConatError(
@@ -101,10 +107,10 @@ export class UsageMonitor extends EventEmitter {
         { code: 429 },
       );
     }
-    if (this.options.maxPerUser && count >= this.options.maxPerUser) {
-      this.emit("deny", user, this.options.maxPerUser, "per-user");
+    if (maxPerUser && count >= maxPerUser) {
+      this.emit("deny", user, maxPerUser, "per-user");
       throw new ConatError(
-        `There is a per user limit of ${this.options.maxPerUser} ${this.options.resource}.   Please close browser tabs or files or come back later.`,
+        `There is a per user limit of ${maxPerUser} ${this.options.resource}.   Please close browser tabs or files or come back later.`,
         // http error code "429 Too Many Requests."
         { code: 429 },
       );
@@ -113,19 +119,20 @@ export class UsageMonitor extends EventEmitter {
     count++;
     this.perUser[u] = count;
     this.emit("total", this.total, this.options.max);
-    this.emit("add", user, count, this.options.maxPerUser);
+    this.emit("add", user, count, maxPerUser);
   };
 
   delete = (user: JSONValue) => {
     this.total -= 1;
     const u = this.toJson(user);
     let count = (this.perUser[u] ?? 0) - 1;
+    const maxPerUser = this.getMaxPerUser(user);
     if (count <= 0) {
       delete this.perUser[u];
     } else {
       this.perUser[u] = count;
     }
     this.emit("total", this.total);
-    this.emit("delete", user, count);
+    this.emit("delete", user, count, maxPerUser);
   };
 }

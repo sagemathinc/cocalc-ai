@@ -44,6 +44,7 @@ import {
 import {
   RESOURCE,
   MAX_CONNECTIONS_PER_USER,
+  MAX_CONNECTIONS_PER_HUB_USER,
   MAX_CONNECTIONS,
   MAX_PAYLOAD,
   MAX_SUBSCRIPTIONS_PER_CLIENT,
@@ -130,6 +131,10 @@ const AUTH_FAIL_BLOCK_MS = Math.max(
   5_000,
   envNumber("COCALC_CONAT_AUTH_FAIL_BLOCK_MS", 5 * 60_000),
 );
+
+function isHubUser(user: any): boolean {
+  return user != null && typeof user === "object" && user.hub_id === "hub";
+}
 
 export interface InterestUpdate {
   op: "add" | "delete";
@@ -370,6 +375,8 @@ export class ConatServer extends EventEmitter {
   private initUsage = () => {
     this.usage = new UsageMonitor({
       maxPerUser: MAX_CONNECTIONS_PER_USER,
+      getMaxPerUser: (user) =>
+        isHubUser(user) ? MAX_CONNECTIONS_PER_HUB_USER : undefined,
       max: MAX_CONNECTIONS,
       resource: RESOURCE,
       log: (...args) => this.log("usage", ...args),

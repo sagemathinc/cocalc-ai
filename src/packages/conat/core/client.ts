@@ -478,6 +478,51 @@ interface SubscriptionOptions {
 // JSON will turn Dates into strings, and we no longer fix that.  So unless you modify the
 // JsonCodec to handle Date's properly, don't change this!!
 const DEFAULT_ENCODING = DataEncoding.MsgPack;
+const LOG_CLIENT_CREATION =
+  process.env.COCALC_CONAT_LOG_CLIENT_CREATION === "1";
+const LOG_CLIENT_CREATION_STACK =
+  process.env.COCALC_CONAT_LOG_CLIENT_CREATION_STACK === "1";
+
+function summarizeClientOptions(opts: ClientOptions) {
+  const {
+    address,
+    path,
+    inboxPrefix,
+    routeSubject,
+    systemAccountPassword,
+    auth,
+    query,
+    extraHeaders,
+    transports,
+    noCache,
+    ...rest
+  } = opts as ClientOptions & {
+    auth?: unknown;
+    query?: unknown;
+    extraHeaders?: unknown;
+    transports?: unknown;
+  };
+  return {
+    address,
+    path,
+    inboxPrefix,
+    routeSubject: routeSubject != null,
+    systemAccountPassword:
+      systemAccountPassword != null ? "[redacted]" : undefined,
+    auth: auth != null ? "[present]" : undefined,
+    query: query != null ? "[present]" : undefined,
+    extraHeaders: extraHeaders != null ? "[present]" : undefined,
+    transports,
+    noCache,
+    ...rest,
+  };
+}
+
+function clientCacheKey(opts: ClientOptions): string {
+  const { routeSubject, ...rest } = opts as any;
+  const key = jsonStableStringify(rest) ?? "";
+  return routeSubject ? `route:${key}` : key;
+}
 
 function cocalcServerToSocketioAddress(url: string): {
   address: string;
@@ -491,13 +536,17 @@ function cocalcServerToSocketioAddress(url: string): {
 
 const cache = refCacheSync<ClientOptions, Client>({
   name: "conat-client",
-  createKey: (opts) => {
-    const { routeSubject, ...rest } = opts as any;
-    // routeSubject changes routing behavior, so it must participate in the cache key
-    const key = jsonStableStringify(rest) ?? "";
-    return routeSubject ? `route:${key}` : key;
-  },
+  createKey: clientCacheKey,
   createObject: (opts: ClientOptions) => {
+    if (LOG_CLIENT_CREATION) {
+      logger.debug("Conat: creating cached client", {
+        cacheKey: clientCacheKey(opts),
+        options: summarizeClientOptions(opts),
+        stack: LOG_CLIENT_CREATION_STACK
+          ? new Error("conat client creation").stack
+          : undefined,
+      });
+    }
     return new Client(opts);
   },
 });
