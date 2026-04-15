@@ -46,6 +46,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { inspectStaticAppRequest } from "./static-apps";
 import { startHostMetricsCollector } from "./host-metrics";
 import { applyPendingCopies } from "./pending-copies";
+import { getManagedComponentStatus } from "./managed-components";
 
 const logger = getLogger("project-host:master");
 
@@ -749,6 +750,9 @@ export async function startMasterRegistration({
       },
       async getBackupExecutionStatus() {
         return await getBackupExecutionStatus();
+      },
+      async getManagedComponentStatus() {
+        return getManagedComponentStatus();
       },
       async inspectStaticAppPath({ project_id, url }) {
         const match = await matchAppRequest({ project_id, url });

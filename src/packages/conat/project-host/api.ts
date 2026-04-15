@@ -87,6 +87,43 @@ export interface HostBackupExecutionStatus {
   config_source?: "env-legacy" | "db-override";
 }
 
+export type ManagedComponentKind =
+  | "project-host"
+  | "conat-router"
+  | "conat-persist"
+  | "acp-worker";
+
+export type ManagedComponentArtifact = "project-host";
+
+export type ManagedComponentUpgradePolicy =
+  | "restart_now"
+  | "drain_then_replace";
+
+export type ManagedComponentRuntimeState =
+  | "running"
+  | "stopped"
+  | "disabled"
+  | "unknown";
+
+export type ManagedComponentVersionState =
+  | "aligned"
+  | "drifted"
+  | "mixed"
+  | "unknown";
+
+export interface HostManagedComponentStatus {
+  component: ManagedComponentKind;
+  artifact: ManagedComponentArtifact;
+  upgrade_policy: ManagedComponentUpgradePolicy;
+  enabled: boolean;
+  managed: boolean;
+  desired_version?: string;
+  runtime_state: ManagedComponentRuntimeState;
+  version_state: ManagedComponentVersionState;
+  running_versions: string[];
+  running_pids: number[];
+}
+
 export interface HostStaticAppPathInspection {
   project_id: string;
   app_id: string;
@@ -157,6 +194,7 @@ export interface HostControlApi {
     public_key: string;
   }) => Promise<HostSshAuthorizedKeysResponse & { removed: boolean }>;
   getBackupExecutionStatus: () => Promise<HostBackupExecutionStatus>;
+  getManagedComponentStatus: () => Promise<HostManagedComponentStatus[]>;
   inspectStaticAppPath: (opts: {
     project_id: string;
     url: string;

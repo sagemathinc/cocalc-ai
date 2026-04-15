@@ -260,7 +260,7 @@ async function requestWorkerDrain(
   }
 }
 
-function workerBundleVersionOf(
+export function workerBundleVersionOf(
   worker: WorkerProcessInfo,
   launch: WorkerLaunch,
 ): string {
@@ -311,7 +311,7 @@ function readProcCmdline(pid: number): string[] {
     .filter((value) => value.length > 0);
 }
 
-function listProjectHostAcpWorkers(): WorkerProcessInfo[] {
+export function listProjectHostAcpWorkers(): WorkerProcessInfo[] {
   const hostId = `${process.env.PROJECT_HOST_ID ?? ""}`.trim();
   return readdirSync("/proc")
     .map((name) => Number(name))
