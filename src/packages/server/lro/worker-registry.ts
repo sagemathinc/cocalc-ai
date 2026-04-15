@@ -37,6 +37,7 @@ const HOST_OP_LRO_KINDS = [
   "host-drain",
   "host-reconcile-software",
   "host-upgrade-software",
+  "host-rollout-managed-components",
   "host-deprovision",
   "host-delete",
   "host-force-deprovision",

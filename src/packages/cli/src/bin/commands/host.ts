@@ -115,6 +115,31 @@ function parseMetricsWindowMinutes(window?: string): number {
   return value * 24 * 60;
 }
 
+function parseManagedComponentKindsOption(values?: string[]) {
+  const allowed = new Set([
+    "project-host",
+    "conat-router",
+    "conat-persist",
+    "acp-worker",
+  ]);
+  const normalized = (values ?? [])
+    .flatMap((value) => `${value ?? ""}`.split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (!normalized.length) {
+    throw new Error(
+      "specify at least one --component (project-host, conat-router, conat-persist, acp-worker)",
+    );
+  }
+  const invalid = normalized.filter((value) => !allowed.has(value));
+  if (invalid.length) {
+    throw new Error(
+      `invalid component(s): ${invalid.join(", ")}; expected one of project-host, conat-router, conat-persist, acp-worker`,
+    );
+  }
+  return [...new Set(normalized)];
+}
+
 export function registerHostCommand(
   program: Command,
   deps: HostCommandDeps,
@@ -686,6 +711,65 @@ export function registerHostCommand(
             status: "succeeded",
             count: waited.length,
             hosts: waited,
+          };
+        });
+      },
+    );
+
+  host
+    .command("rollout <host>")
+    .description("roll out one or more managed host components")
+    .requiredOption(
+      "--component <component...>",
+      "component(s): project-host, conat-router, conat-persist, acp-worker",
+    )
+    .option("--reason <reason>", "optional rollout reason")
+    .option("--wait", "wait for completion")
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: {
+          component?: string[];
+          reason?: string;
+          wait?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "host rollout", async (ctx) => {
+          const host = await resolveHost(ctx, hostIdentifier);
+          const components = parseManagedComponentKindsOption(opts.component);
+          const op = await ctx.hub.hosts.rolloutHostManagedComponents({
+            id: host.id,
+            components,
+            reason: `${opts.reason ?? ""}`.trim() || undefined,
+          });
+          if (!opts.wait) {
+            return {
+              host_id: host.id,
+              op_id: op.op_id,
+              status: "queued",
+              components,
+            };
+          }
+          const summary = await waitForLro(ctx, op.op_id, {
+            timeoutMs: ctx.timeoutMs,
+            pollMs: ctx.pollMs,
+          });
+          if (summary.timedOut) {
+            throw new Error(
+              `${host.name ?? host.id}: timed out (op=${op.op_id}, last_status=${summary.status})`,
+            );
+          }
+          if (summary.status !== "succeeded") {
+            throw new Error(
+              `${host.name ?? host.id}: status=${summary.status} error=${summary.error ?? "unknown"}`,
+            );
+          }
+          return {
+            host_id: host.id,
+            op_id: op.op_id,
+            status: summary.status,
+            components,
           };
         });
       },

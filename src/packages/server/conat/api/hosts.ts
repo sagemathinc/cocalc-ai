@@ -28,7 +28,13 @@ import type {
   HostInterruptionRestorePolicy,
   HostCurrentMetrics,
   HostMetricsHistory,
+  HostManagedComponentRolloutRequest,
 } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostManagedComponentRolloutResponse,
+  HostManagedComponentStatus,
+  ManagedComponentKind,
+} from "@cocalc/conat/project-host/api";
 import type {
   ProjectCopyRow,
   ProjectCopyState,
@@ -155,6 +161,8 @@ const HOST_RESTART_LRO_KIND = "host-restart";
 const HOST_DRAIN_LRO_KIND = "host-drain";
 const HOST_RECONCILE_LRO_KIND = "host-reconcile-software";
 const HOST_UPGRADE_LRO_KIND = "host-upgrade-software";
+const HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND =
+  "host-rollout-managed-components";
 const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const HOST_DELETE_LRO_KIND = "host-delete";
 const HOST_FORCE_DEPROVISION_LRO_KIND = "host-force-deprovision";
@@ -425,6 +433,34 @@ async function waitForHostBootstrapReconcile({
     await delay(HOST_BOOTSTRAP_RECONCILE_POLL_MS);
   }
   throw new Error("timeout waiting for host bootstrap reconcile");
+}
+
+async function waitForHostHeartbeatAfter({
+  host_id,
+  since,
+}: {
+  host_id: string;
+  since: number;
+}): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < HOST_BOOTSTRAP_RECONCILE_TIMEOUT_MS) {
+    const { rows } = await pool().query(
+      `SELECT deleted, last_seen FROM project_hosts WHERE id=$1 LIMIT 1`,
+      [host_id],
+    );
+    const row = rows[0];
+    if (!row || row.deleted) {
+      throw new Error("host not found");
+    }
+    const lastSeen = row.last_seen
+      ? new Date(row.last_seen as any).getTime()
+      : 0;
+    if (lastSeen && lastSeen >= since) {
+      return;
+    }
+    await delay(HOST_BOOTSTRAP_RECONCILE_POLL_MS);
+  }
+  throw new Error("timeout waiting for host heartbeat");
 }
 
 function cloudHostSshTarget(row: {
@@ -4850,6 +4886,45 @@ export async function reconcileHostSoftware({
   });
 }
 
+export async function getHostManagedComponentStatus({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<HostManagedComponentStatus[]> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  const client = await hostControlClient(id, 30_000);
+  return await client.getManagedComponentStatus();
+}
+
+export async function rolloutHostManagedComponents({
+  account_id,
+  id,
+  components,
+  reason,
+}: {
+  account_id?: string;
+  id: string;
+  components: ManagedComponentKind[];
+  reason?: string;
+}): Promise<HostLroResponse> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  return await createHostLro({
+    kind: HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND,
+    row,
+    account_id,
+    input: { id: row.id, account_id, components, reason },
+    dedupe_key: hostManagedComponentRolloutDedupeKey({
+      hostId: row.id,
+      components,
+      reason,
+    }),
+  });
+}
+
 export async function upgradeHostConnector({
   account_id,
   id,
@@ -5028,6 +5103,29 @@ function hostUpgradeDedupeKey({
     base_url: normalizedBaseUrl,
     targets: normalizeHostUpgradeTargetsForDedupe(targets),
   })}`;
+}
+
+function normalizeManagedComponentKindsForDedupe(
+  components: ManagedComponentKind[],
+): ManagedComponentKind[] {
+  return [...new Set(components ?? [])].sort();
+}
+
+function hostManagedComponentRolloutDedupeKey({
+  hostId,
+  components,
+  reason,
+}: {
+  hostId: string;
+  components: ManagedComponentKind[];
+  reason?: string;
+}): string {
+  return `${HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND}:${hostId}:${JSON.stringify(
+    {
+      components: normalizeManagedComponentKindsForDedupe(components),
+      reason: `${reason ?? ""}`.trim() || null,
+    },
+  )}`;
 }
 
 async function fetchSoftwareManifest(url: string): Promise<any> {
@@ -5475,6 +5573,35 @@ export async function upgradeHostSoftwareInternal({
   }
   if (requestedProjectHostUpgrade) {
     await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
+  }
+  return response;
+}
+
+export async function rolloutHostManagedComponentsInternal({
+  account_id,
+  id,
+  components,
+  reason,
+}: {
+  account_id?: string;
+  id: string;
+  components: HostManagedComponentRolloutRequest["components"];
+  reason?: string;
+}): Promise<HostManagedComponentRolloutResponse> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  const client = await hostControlClient(id, 60_000);
+  const rolloutStartedAt = Date.now();
+  const response = await client.rolloutManagedComponents({
+    components,
+    reason,
+  });
+  if (components.includes("project-host")) {
+    const baselineSeen = row?.last_seen
+      ? new Date(row.last_seen as any).getTime()
+      : 0;
+    const since = Math.max(baselineSeen, rolloutStartedAt);
+    await waitForHostHeartbeatAfter({ host_id: id, since });
   }
   return response;
 }

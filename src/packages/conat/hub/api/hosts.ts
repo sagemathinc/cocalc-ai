@@ -1,4 +1,8 @@
 import { authFirstRequireAccount, authFirstRequireHost } from "./util";
+import type {
+  HostManagedComponentStatus,
+  ManagedComponentKind,
+} from "@cocalc/conat/project-host/api";
 import {
   type ProjectCopyRow,
   type ProjectCopyState,
@@ -29,6 +33,7 @@ export const HOST_LRO_KINDS = [
   "host-drain",
   "host-reconcile-software",
   "host-upgrade-software",
+  "host-rollout-managed-components",
   "host-deprovision",
   "host-delete",
   "host-force-deprovision",
@@ -482,6 +487,12 @@ export interface HostSoftwareUpgradeResponse {
   }>;
 }
 
+export interface HostManagedComponentRolloutRequest {
+  id: string;
+  components: ManagedComponentKind[];
+  reason?: string;
+}
+
 export type ExternalCredentialScope =
   | "account"
   | "project"
@@ -536,6 +547,8 @@ export const hosts = {
   deleteHost: authFirstRequireAccount,
   upgradeHostSoftware: authFirstRequireAccount,
   reconcileHostSoftware: authFirstRequireAccount,
+  getHostManagedComponentStatus: authFirstRequireAccount,
+  rolloutHostManagedComponents: authFirstRequireAccount,
   upgradeHostConnector: authFirstRequireAccount,
   setHostStar: authFirstRequireAccount,
   getBackupConfig: authFirstRequireHost,
@@ -864,6 +877,16 @@ export interface Hosts {
   reconcileHostSoftware: (opts: {
     account_id?: string;
     id: string;
+  }) => Promise<HostLroResponse>;
+  getHostManagedComponentStatus: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<HostManagedComponentStatus[]>;
+  rolloutHostManagedComponents: (opts: {
+    account_id?: string;
+    id: string;
+    components: ManagedComponentKind[];
+    reason?: string;
   }) => Promise<HostLroResponse>;
   upgradeHostConnector: (opts: {
     account_id?: string;

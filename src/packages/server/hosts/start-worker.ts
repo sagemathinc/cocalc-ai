@@ -21,6 +21,7 @@ import {
   reconcileHostSoftwareInternal,
   removeSelfHostConnectorInternal,
   restartHostInternal,
+  rolloutHostManagedComponentsInternal,
   startHostInternal,
   stopHostInternal,
   upgradeHostSoftwareInternal,
@@ -48,6 +49,7 @@ const HOST_OP_KINDS = [
   "host-drain",
   "host-reconcile-software",
   "host-upgrade-software",
+  "host-rollout-managed-components",
   "host-deprovision",
   "host-delete",
   "host-force-deprovision",
@@ -471,6 +473,8 @@ function opLabel(kind: HostOpKind, input: any): string {
       return "Reconcile";
     case "host-upgrade-software":
       return "Upgrade";
+    case "host-rollout-managed-components":
+      return "Rollout managed components";
     case "host-deprovision":
       return "Deprovision";
     case "host-delete":
@@ -795,6 +799,40 @@ async function handleOp(op: LroSummary): Promise<void> {
       }
       await progressStep("done", "upgrade complete", {
         host_id,
+        results: response.results ?? [],
+      });
+      return;
+    }
+
+    if (kind === "host-rollout-managed-components") {
+      await progressStep("waiting", "rolling out managed components", {
+        host_id,
+        components: input?.components ?? [],
+      });
+      const response = await rolloutHostManagedComponentsInternal({
+        account_id,
+        id: host_id,
+        components: input?.components ?? [],
+        reason: input?.reason,
+      });
+      const updated = await updateLro({
+        op_id,
+        status: "succeeded",
+        progress_summary: {
+          phase: "done",
+          host_id,
+          components: input?.components ?? [],
+          results: response.results ?? [],
+        },
+        result: { host_id, ...response },
+        error: null,
+      });
+      if (updated) {
+        await publishSummary(updated);
+      }
+      await progressStep("done", "managed component rollout complete", {
+        host_id,
+        components: input?.components ?? [],
         results: response.results ?? [],
       });
       return;

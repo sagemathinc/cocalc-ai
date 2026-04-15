@@ -4,8 +4,15 @@ import { Command } from "commander";
 
 import { registerHostCommand, type HostCommandDeps } from "./host";
 
+type Capture = {
+  data?: any;
+  upgrades: string[];
+  reconciles: string[];
+  rollouts: Array<{ id: string; components: string[]; reason?: string }>;
+};
+
 function makeDeps(
-  capture: { data?: any; upgrades: string[]; reconciles: string[] },
+  capture: Capture,
   overrides: Partial<HostCommandDeps> = {},
 ): HostCommandDeps {
   return {
@@ -24,6 +31,14 @@ function makeDeps(
             reconcileHostSoftware: async ({ id }) => {
               capture.reconciles.push(id);
               return { op_id: `reconcile-${id}` };
+            },
+            rolloutHostManagedComponents: async ({
+              id,
+              components,
+              reason,
+            }) => {
+              capture.rollouts.push({ id, components, reason });
+              return { op_id: `rollout-${id}` };
             },
             getHostMetricsHistory: async (opts) => ({
               window_minutes: opts?.window_minutes ?? 60,
@@ -86,9 +101,10 @@ function makeDeps(
 }
 
 test("host upgrade --all-online targets only online running hosts", async () => {
-  const capture: { data?: any; upgrades: string[]; reconciles: string[] } = {
+  const capture: Capture = {
     upgrades: [],
     reconciles: [],
+    rollouts: [],
   };
   const deps = makeDeps(capture, {
     listHosts: async () => [
@@ -130,9 +146,10 @@ test("host upgrade --all-online targets only online running hosts", async () => 
 });
 
 test("host upgrade --all-online --wait returns all successful hosts", async () => {
-  const capture: { data?: any; upgrades: string[]; reconciles: string[] } = {
+  const capture: Capture = {
     upgrades: [],
     reconciles: [],
+    rollouts: [],
   };
   const deps = makeDeps(capture, {
     listHosts: async () => [
@@ -169,9 +186,10 @@ test("host upgrade --all-online --wait returns all successful hosts", async () =
 });
 
 test("host metrics returns current metrics and history", async () => {
-  const capture: { data?: any; upgrades: string[]; reconciles: string[] } = {
+  const capture: Capture = {
     upgrades: [],
     reconciles: [],
+    rollouts: [],
   };
   const deps = makeDeps(capture, {
     resolveHost: async () => ({
@@ -208,9 +226,10 @@ test("host metrics returns current metrics and history", async () => {
 });
 
 test("host where returns the bay for the resolved host", async () => {
-  const capture: { data?: any; upgrades: string[]; reconciles: string[] } = {
+  const capture: Capture = {
     upgrades: [],
     reconciles: [],
+    rollouts: [],
   };
   const deps = makeDeps(capture, {
     resolveHost: async () => ({
@@ -275,9 +294,10 @@ test("host where returns the bay for the resolved host", async () => {
 });
 
 test("host bootstrap-status returns lifecycle drift data", async () => {
-  const capture: { data?: any; upgrades: string[]; reconciles: string[] } = {
+  const capture: Capture = {
     upgrades: [],
     reconciles: [],
+    rollouts: [],
   };
   const deps = makeDeps(capture, {
     resolveHost: async () => ({
@@ -321,9 +341,10 @@ test("host bootstrap-status returns lifecycle drift data", async () => {
 });
 
 test("host reconcile queues and waits for completion", async () => {
-  const capture: { data?: any; upgrades: string[]; reconciles: string[] } = {
+  const capture: Capture = {
     upgrades: [],
     reconciles: [],
+    rollouts: [],
   };
   const program = new Command();
   registerHostCommand(program, makeDeps(capture));
@@ -344,9 +365,10 @@ test("host reconcile queues and waits for completion", async () => {
 });
 
 test("host reconcile --all-online targets only online running hosts", async () => {
-  const capture: { data?: any; upgrades: string[]; reconciles: string[] } = {
+  const capture: Capture = {
     upgrades: [],
     reconciles: [],
+    rollouts: [],
   };
   const deps = makeDeps(capture, {
     listHosts: async () => [
@@ -388,9 +410,10 @@ test("host reconcile --all-online targets only online running hosts", async () =
 });
 
 test("host reconcile --all-online --wait returns all successful hosts", async () => {
-  const capture: { data?: any; upgrades: string[]; reconciles: string[] } = {
+  const capture: Capture = {
     upgrades: [],
     reconciles: [],
+    rollouts: [],
   };
   const deps = makeDeps(capture, {
     listHosts: async () => [
@@ -424,4 +447,39 @@ test("host reconcile --all-online --wait returns all successful hosts", async ()
   assert.equal(capture.data.status, "succeeded");
   assert.equal(capture.data.count, 2);
   assert.equal(capture.data.hosts.length, 2);
+});
+
+test("host rollout queues managed component rollout and waits for completion", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "rollout",
+    "host-1",
+    "--component",
+    "acp-worker,project-host",
+    "--reason",
+    "bundle-upgrade",
+    "--wait",
+  ]);
+
+  assert.deepEqual(capture.rollouts, [
+    {
+      id: "host-1",
+      components: ["acp-worker", "project-host"],
+      reason: "bundle-upgrade",
+    },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.op_id, "rollout-host-1");
+  assert.equal(capture.data.status, "succeeded");
+  assert.deepEqual(capture.data.components, ["acp-worker", "project-host"]);
 });
