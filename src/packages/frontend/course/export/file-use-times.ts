@@ -5,6 +5,7 @@
 
 import { StudentsMap, StudentRecord } from "../store";
 import { getFileUseTimes as getProjectFileUseTimes } from "@cocalc/conat/project/document-activity";
+import { lite } from "@cocalc/frontend/lite";
 import {
   exec,
   write_text_file_to_project,
@@ -36,6 +37,15 @@ async function one_student_file_use_times(
   project_id = project_id;
   account_id = account_id;
   const times: { [path: string]: PathUseTimes } = {};
+  if (lite) {
+    for (const path of paths) {
+      times[path] = {
+        edit_times: [],
+        access_times: [],
+      };
+    }
+    return times;
+  }
   const requester_account_id = `${webapp_client.account_id ?? ""}`.trim();
   if (!requester_account_id) {
     throw Error("must be signed in");

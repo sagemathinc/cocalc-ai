@@ -5,6 +5,7 @@
 
 import type { Map as ImmutableMap } from "immutable";
 import { listRecent } from "@cocalc/conat/project/document-activity";
+import { lite } from "@cocalc/frontend/lite";
 import { MAX_FILENAME_SEARCH_RESULTS } from "@cocalc/util/db-schema/projects";
 import type { RecentDocumentActivityEntry } from "./types";
 import { webapp_client } from "../webapp-client";
@@ -189,6 +190,10 @@ export async function listRecentDocumentActivityBestEffort({
   firstWaveTimeout?: number;
   onRows?: (update: RecentDocumentActivityStageUpdate) => void;
 }): Promise<RecentDocumentActivityEntry[]> {
+  if (lite) {
+    onRows?.({ rows: [], complete: true });
+    return [];
+  }
   const requester_account_id = `${account_id ?? ""}`.trim();
   if (!requester_account_id || !project_map) {
     return [];
