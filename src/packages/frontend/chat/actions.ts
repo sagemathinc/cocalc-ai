@@ -829,7 +829,7 @@ export class ChatActions extends Actions<ChatState> {
     threadAgent?: NewThreadAgentOptions;
     // optional thread-level appearance defaults for new root threads
     threadAppearance?: NewThreadAppearanceOptions;
-    // if true, don't switch selected thread (e.g., combined feed)
+    // if true, keep the current selected thread after sending
     preserveSelectedThread?: boolean;
     // if true, append message but never dispatch to model/agent runtime
     skipModelDispatch?: boolean;

@@ -59,11 +59,9 @@ let currentThreads = [selectedThread];
 let currentArchivedThreads: any[] = [];
 
 jest.mock("../threads", () => ({
-  COMBINED_FEED_KEY: "__COMBINED_FEED__",
   useThreadSections: () => ({
     threads: currentThreads,
     archivedThreads: currentArchivedThreads,
-    combinedThread: undefined,
     threadSections: [],
   }),
 }));
@@ -73,7 +71,6 @@ jest.mock("../thread-selection", () => ({
     selectedThreadKey: "t1",
     setSelectedThreadKey: jest.fn(),
     setAllowAutoSelectThread: jest.fn(),
-    isCombinedFeedSelected: false,
     singleThreadView: true,
     selectedThread,
   }),

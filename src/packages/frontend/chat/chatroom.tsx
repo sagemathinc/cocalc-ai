@@ -1378,17 +1378,23 @@ export function ChatPanel({
       selectedThreadReadSignatureRef.current = null;
       return;
     }
-    const unreadCount = Math.max(thread.unreadCount ?? 0, 0);
     const messageCount = Math.max(thread.messageCount ?? 0, 0);
-    const signature = `${thread.key}:${messageCount}:${unreadCount}`;
-    if (selectedThreadReadSignatureRef.current === signature) {
+    const unreadCount = Math.max(thread.unreadCount ?? 0, 0);
+    const signature = `${thread.key}:${messageCount}`;
+    if (
+      selectedThreadReadSignatureRef.current === signature &&
+      unreadCount <= 0
+    ) {
       return;
     }
-    selectedThreadReadSignatureRef.current = signature;
-    if (unreadCount <= 0) {
+    if (messageCount <= 0) {
+      selectedThreadReadSignatureRef.current = signature;
       return;
     }
-    actions.markThreadRead(thread.key, messageCount);
+    const ok = actions.markThreadRead(thread.key, messageCount);
+    if (ok !== false) {
+      selectedThreadReadSignatureRef.current = signature;
+    }
   }, [singleThreadView, selectedThreadKey, threads, actions]);
 
   const mark_as_read = useCallback(() => {

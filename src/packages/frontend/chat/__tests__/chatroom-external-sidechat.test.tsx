@@ -43,11 +43,9 @@ const selectedThread = {
 };
 
 jest.mock("../threads", () => ({
-  COMBINED_FEED_KEY: "__COMBINED_FEED__",
   useThreadSections: () => ({
     threads: [selectedThread],
     archivedThreads: [],
-    combinedThread: undefined,
     threadSections: [],
   }),
 }));
@@ -57,7 +55,6 @@ jest.mock("../thread-selection", () => ({
     selectedThreadKey: "thread-1",
     setSelectedThreadKey: jest.fn(),
     setAllowAutoSelectThread: jest.fn(),
-    isCombinedFeedSelected: false,
     singleThreadView: true,
     selectedThread,
   }),

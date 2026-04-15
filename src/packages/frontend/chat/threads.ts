@@ -12,8 +12,6 @@ import { getMessageByLookup, newest_content } from "./utils";
 import { field } from "./access";
 import type { ChatActions } from "./actions";
 
-export const COMBINED_FEED_KEY = "__COMBINED_FEED__";
-
 export interface ThreadListItem {
   key: string;
   label: string;

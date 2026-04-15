@@ -29,7 +29,6 @@ describe("external side chat thread persistence", () => {
     expect(getExternalSideChatDesc("project-1", "notes.ipynb")).toEqual({
       "data-externalSideChat": true,
       "data-selectedThreadKey": "thread-123",
-      "data-preferLatestThread": false,
     });
     expect(local_storage).toHaveBeenCalledWith(
       "project-1",
@@ -61,7 +60,7 @@ describe("external side chat thread persistence", () => {
     );
   });
 
-  it("clears persisted selection when returning to the combined feed", () => {
+  it("clears persisted selection when no thread is selected", () => {
     persistExternalSideChatSelectedThreadKey({
       project_id: "project-1",
       path: ".notes.ipynb.sage-chat",

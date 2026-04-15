@@ -40,11 +40,9 @@ jest.mock("@cocalc/frontend/app-framework", () => {
 });
 
 jest.mock("../threads", () => ({
-  COMBINED_FEED_KEY: "__COMBINED_FEED__",
   useThreadSections: () => ({
     threads: [currentThread],
     archivedThreads: [],
-    combinedThread: undefined,
     threadSections: [],
   }),
 }));
@@ -54,7 +52,6 @@ jest.mock("../thread-selection", () => ({
     selectedThreadKey: "thread-1",
     setSelectedThreadKey: jest.fn(),
     setAllowAutoSelectThread: jest.fn(),
-    isCombinedFeedSelected: false,
     singleThreadView: true,
     selectedThread: currentThread,
   }),
@@ -203,5 +200,39 @@ describe("ChatPanel selected thread read tracking", () => {
 
     expect(actions.markThreadRead).toHaveBeenCalledTimes(1);
     expect(actions.markThreadRead).toHaveBeenCalledWith("thread-1", 3);
+  });
+
+  it("retries marking the selected thread read when the watermark is not ready yet", () => {
+    const { actions, rerender } = renderPanel();
+    actions.markThreadRead.mockReset();
+    actions.markThreadRead
+      .mockImplementationOnce(() => false)
+      .mockImplementation(() => true);
+
+    rerender(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/test.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={1}
+      />,
+    );
+
+    rerender(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/test.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={2}
+      />,
+    );
+
+    expect(actions.markThreadRead).toHaveBeenCalledTimes(2);
+    expect(actions.markThreadRead).toHaveBeenNthCalledWith(1, "thread-1", 2);
+    expect(actions.markThreadRead).toHaveBeenNthCalledWith(2, "thread-1", 2);
   });
 });
