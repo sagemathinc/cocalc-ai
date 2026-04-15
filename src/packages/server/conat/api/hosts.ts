@@ -4983,6 +4983,7 @@ export async function upgradeHostSoftware({
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
 }): Promise<HostLroResponse> {
+  assertProjectHostUpgradeIsExclusive(targets);
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -5648,6 +5649,107 @@ function installedProjectHostArtifactVersion(row: any): string | undefined {
   return version;
 }
 
+async function setLastKnownGoodArtifactVersionInternal({
+  host_id,
+  row,
+  artifact,
+  version,
+}: {
+  host_id: string;
+  row: any;
+  artifact: HostRuntimeArtifact;
+  version?: string;
+}): Promise<void> {
+  const normalizedVersion = `${version ?? ""}`.trim();
+  if (!normalizedVersion) return;
+  const metadata = { ...(row?.metadata ?? {}) };
+  const runtimeDeployments = { ...(metadata.runtime_deployments ?? {}) };
+  const lastKnownGoodVersions = {
+    ...(runtimeDeployments.last_known_good_versions ?? {}),
+  };
+  if (lastKnownGoodVersions[artifact] === normalizedVersion) return;
+  lastKnownGoodVersions[artifact] = normalizedVersion;
+  runtimeDeployments.last_known_good_versions = lastKnownGoodVersions;
+  metadata.runtime_deployments = runtimeDeployments;
+  await pool().query(
+    `UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+    [host_id, metadata],
+  );
+}
+
+export async function rollbackProjectHostOverSshInternal({
+  account_id,
+  id,
+  version,
+  reason,
+}: {
+  account_id?: string;
+  id: string;
+  version: string;
+  reason?: string;
+}): Promise<{
+  host_id: string;
+  rollback_version: string;
+}> {
+  const row = await loadHostForStartStop(id, account_id);
+  const rollbackVersion = `${version ?? ""}`.trim();
+  if (!rollbackVersion) {
+    throw new Error("rollback version is required");
+  }
+  const metadata = { ...(row?.metadata ?? {}) };
+  const software = { ...(metadata.software ?? {}) } as Record<string, string>;
+  software.project_host = rollbackVersion;
+  delete software.project_host_build_id;
+  metadata.software = software;
+  const requested_by = requestedByForRuntimeDeployments({ account_id, row });
+  await pool().query(
+    `UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+    [row.id, metadata, rollbackVersion],
+  );
+  await setLastKnownGoodArtifactVersionInternal({
+    host_id: row.id,
+    row: {
+      ...row,
+      metadata,
+    },
+    artifact: "project-host",
+    version: rollbackVersion,
+  });
+  await setProjectHostRuntimeDeployments({
+    scope_type: "host",
+    host_id: row.id,
+    requested_by,
+    replace: false,
+    deployments: [
+      {
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: rollbackVersion,
+        rollout_reason: reason,
+      },
+      {
+        target_type: "component",
+        target: "project-host",
+        desired_version: rollbackVersion,
+        rollout_policy: DEFAULT_RUNTIME_DEPLOYMENT_POLICY["project-host"],
+        rollout_reason: reason,
+      },
+    ],
+  });
+  await reconcileCloudHostBootstrapOverSsh({
+    host_id: row.id,
+    row: {
+      ...row,
+      version: rollbackVersion,
+      metadata,
+    },
+  });
+  return {
+    host_id: row.id,
+    rollback_version: rollbackVersion,
+  };
+}
+
 function targetKeyForRuntimeDeployment(opts: {
   target_type: HostRuntimeDeploymentRecord["target_type"];
   target: HostRuntimeDeploymentRecord["target"];
@@ -6050,6 +6152,21 @@ function normalizeHostUpgradeTargetsForDedupe(
         `${b.artifact}:${b.channel ?? ""}:${b.version ?? ""}`,
       ),
     );
+}
+
+function assertProjectHostUpgradeIsExclusive(
+  targets: HostSoftwareUpgradeTarget[],
+): void {
+  const normalizedTargets = normalizeHostUpgradeTargetsForDedupe(targets);
+  const includesProjectHost = normalizedTargets.some(
+    (target) => target.artifact === "project-host",
+  );
+  if (!includesProjectHost || normalizedTargets.length <= 1) {
+    return;
+  }
+  throw new Error(
+    "project-host upgrades must be requested separately from other artifacts",
+  );
 }
 
 function hostUpgradeDedupeKey({
@@ -6517,6 +6634,7 @@ export async function upgradeHostSoftwareInternal({
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
 }): Promise<HostSoftwareUpgradeResponse> {
+  assertProjectHostUpgradeIsExclusive(targets);
   const HOST_UPGRADE_RPC_TIMEOUT_MS = 10 * 60 * 1000;
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
@@ -6627,6 +6745,14 @@ export async function rolloutHostManagedComponentsInternal({
   const desiredVersion =
     `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
     undefined;
+  if (components.includes("project-host") && desiredVersion) {
+    await setLastKnownGoodArtifactVersionInternal({
+      host_id: row.id,
+      row,
+      artifact: "project-host",
+      version: desiredVersion,
+    });
+  }
   const runtimeDeployments = runtimeDeploymentsForComponentRollout({
     components,
     desired_version: desiredVersion,

@@ -1,7 +1,9 @@
 export {};
 
+import { EventEmitter } from "node:events";
 import os from "node:os";
 
+let spawnMock: jest.Mock;
 let queryMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let isBannedMock: jest.Mock;
@@ -23,6 +25,18 @@ let listProjectHostRuntimeDeploymentsMock: jest.Mock;
 let loadEffectiveProjectHostRuntimeDeploymentsMock: jest.Mock;
 let setProjectHostRuntimeDeploymentsMock: jest.Mock;
 let updateProjectUsersMock: jest.Mock;
+let createProjectHostBootstrapTokenMock: jest.Mock;
+let buildCloudInitStartupScriptMock: jest.Mock;
+let siteUrlMock: jest.Mock;
+
+jest.mock("node:child_process", () => {
+  const actual = jest.requireActual("node:child_process");
+  return {
+    __esModule: true,
+    ...actual,
+    spawn: (...args: any[]) => spawnMock(...args),
+  };
+});
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -96,6 +110,24 @@ jest.mock("@cocalc/server/project-host/control", () => ({
     syncProjectUsersOnHostMock(...args),
 }));
 
+jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
+  __esModule: true,
+  createProjectHostBootstrapToken: (...args: any[]) =>
+    createProjectHostBootstrapTokenMock(...args),
+  revokeProjectHostTokensForHost: jest.fn(async () => undefined),
+}));
+
+jest.mock("@cocalc/server/cloud/bootstrap-host", () => ({
+  __esModule: true,
+  buildCloudInitStartupScript: (...args: any[]) =>
+    buildCloudInitStartupScriptMock(...args),
+}));
+
+jest.mock("@cocalc/database/settings/site-url", () => ({
+  __esModule: true,
+  default: (...args: any[]) => siteUrlMock(...args),
+}));
+
 jest.mock("@cocalc/server/project-host/client", () => ({
   __esModule: true,
   getRoutedHostControlClient: (...args: any[]) =>
@@ -141,6 +173,31 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
 
 const HOST_ID = "host-123";
 const ACCOUNT_ID = "acct-123";
+
+beforeEach(() => {
+  spawnMock = jest.fn(() => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+      stdin: { end: (input?: string) => void };
+    };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = {
+      end: () => {
+        setImmediate(() => child.emit("close", 0));
+      },
+    };
+    return child;
+  });
+  createProjectHostBootstrapTokenMock = jest.fn(async () => ({
+    token: "bootstrap-token",
+  }));
+  buildCloudInitStartupScriptMock = jest.fn(
+    async () => "#!/usr/bin/env bash\necho bootstrap\n",
+  );
+  siteUrlMock = jest.fn(async () => "https://hub.example.test");
+});
 
 const SUMMARY_ROW = {
   host_id: HOST_ID,
@@ -461,6 +518,11 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
                   project_bundle_build_id: "build-bundle-v4",
                   tools: "tools-v7",
                 },
+                runtime_deployments: {
+                  last_known_good_versions: {
+                    "project-host": "ph-v0",
+                  },
+                },
               },
             },
           ],
@@ -519,7 +581,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         desired_version: "ph-v3",
         current_version: "ph-v2",
         previous_version: "ph-v1",
-        last_known_good_version: undefined,
+        last_known_good_version: "ph-v0",
         retained_versions: ["ph-v2", "ph-v1"],
       },
       {
@@ -529,7 +591,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         desired_version: "ph-v2",
         current_version: "ph-v2",
         previous_version: "ph-v1",
-        last_known_good_version: undefined,
+        last_known_good_version: "ph-v0",
         retained_versions: ["ph-v2", "ph-v1"],
       },
     ]);
@@ -576,6 +638,284 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     expect(result.reconcile_result).toMatchObject({
       host_id: HOST_ID,
     });
+  });
+});
+
+describe("hosts.upgradeHostSoftware", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.LOGS = os.tmpdir();
+    isAdminMock = jest.fn(async () => true);
+    isBannedMock = jest.fn(async () => false);
+    moveProjectToHostMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: {},
+    }));
+    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    syncProjectUsersOnHostMock = jest.fn(async () => undefined);
+    issueProjectHostAuthTokenJwtMock = jest.fn(() => ({
+      token: "test-token",
+      expires_at: 1234567890,
+    }));
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(
+      async () => undefined,
+    );
+    assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
+    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    hostConnectionGetMock = jest.fn();
+    projectHostAuthTokenIssueMock = jest.fn();
+    projectReferenceGetMock = jest.fn(async () => null);
+    listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    setProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    updateProjectUsersMock = jest.fn(async () => undefined);
+    routedHostControlClientMock = jest.fn(async () => ({
+      updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              metadata: { owner: ACCOUNT_ID },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+  });
+
+  it("rejects mixed project-host upgrades so rollback scope stays well-defined", async () => {
+    const { upgradeHostSoftware } = await import("./hosts");
+    await expect(
+      upgradeHostSoftware({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        targets: [
+          { artifact: "project-host", version: "ph-v2" },
+          { artifact: "tools", version: "tools-v5" },
+        ],
+      }),
+    ).rejects.toThrow(
+      "project-host upgrades must be requested separately from other artifacts",
+    );
+  });
+});
+
+describe("hosts.rollbackProjectHostOverSshInternal", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.LOGS = os.tmpdir();
+    isAdminMock = jest.fn(async () => true);
+    isBannedMock = jest.fn(async () => false);
+    moveProjectToHostMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: {},
+    }));
+    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    syncProjectUsersOnHostMock = jest.fn(async () => undefined);
+    issueProjectHostAuthTokenJwtMock = jest.fn(() => ({
+      token: "test-token",
+      expires_at: 1234567890,
+    }));
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(
+      async () => undefined,
+    );
+    assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
+    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    hostConnectionGetMock = jest.fn();
+    projectHostAuthTokenIssueMock = jest.fn();
+    projectReferenceGetMock = jest.fn(async () => null);
+    listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    setProjectHostRuntimeDeploymentsMock = jest.fn(async ({ deployments }) =>
+      deployments.map((deployment: any) => ({
+        scope_type: "host",
+        scope_id: HOST_ID,
+        host_id: HOST_ID,
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+        ...deployment,
+      })),
+    );
+    updateProjectUsersMock = jest.fn(async () => undefined);
+    routedHostControlClientMock = jest.fn(async () => ({
+      updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
+    }));
+  });
+
+  it("rewrites desired state and triggers bootstrap reconcile for project-host rollback", async () => {
+    const initialRow = {
+      id: HOST_ID,
+      status: "running",
+      version: "ph-v2",
+      metadata: {
+        owner: ACCOUNT_ID,
+        machine: {
+          cloud: "gcp",
+          metadata: {
+            public_ip: "34.1.2.3",
+            ssh_user: "ubuntu",
+          },
+        },
+        runtime: {
+          public_ip: "34.1.2.3",
+          ssh_user: "ubuntu",
+        },
+        software: {
+          project_host: "ph-v2",
+          project_host_build_id: "build-ph-v2",
+        },
+        bootstrap: {
+          status: "done",
+          updated_at: "2026-04-15T00:00:00.000Z",
+        },
+        bootstrap_lifecycle: {
+          summary_status: "in_sync",
+          summary_message: "ok",
+        },
+      },
+    };
+    let bootstrapPolls = 0;
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return { rows: [initialRow] };
+      }
+      if (
+        sql.includes(
+          "UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW()",
+        )
+      ) {
+        expect(params[0]).toBe(HOST_ID);
+        expect(params[2]).toBe("ph-v1");
+        expect(params[1]).toMatchObject({
+          software: {
+            project_host: "ph-v1",
+          },
+        });
+        expect(params[1]?.software?.project_host_build_id).toBeUndefined();
+        return { rows: [] };
+      }
+      if (sql.includes("UPDATE project_hosts SET metadata=$2, updated=NOW()")) {
+        expect(params[0]).toBe(HOST_ID);
+        expect(params[1]).toMatchObject({
+          runtime_deployments: {
+            last_known_good_versions: {
+              "project-host": "ph-v1",
+            },
+          },
+        });
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, metadata FROM project_hosts WHERE id=$1 LIMIT 1",
+        )
+      ) {
+        bootstrapPolls += 1;
+        if (bootstrapPolls === 1) {
+          return {
+            rows: [
+              {
+                status: "running",
+                deleted: false,
+                metadata: {
+                  bootstrap: {
+                    status: "pending",
+                    updated_at: "2026-04-15T00:00:00.000Z",
+                  },
+                  bootstrap_lifecycle: {
+                    summary_status: "drifted",
+                    current_operation: "idle",
+                  },
+                },
+              },
+            ],
+          };
+        }
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: false,
+              metadata: {
+                bootstrap: {
+                  status: "done",
+                  updated_at: "2026-04-15T00:01:00.000Z",
+                },
+                bootstrap_lifecycle: {
+                  summary_status: "in_sync",
+                  current_operation: "reconcile",
+                  last_reconcile_started_at: "2026-04-15T00:00:30.000Z",
+                  last_reconcile_finished_at: "2026-04-15T00:01:00.000Z",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { rollbackProjectHostOverSshInternal } = await import("./hosts");
+    const result = await rollbackProjectHostOverSshInternal({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      version: "ph-v1",
+      reason: "automatic_project_host_upgrade_rollback",
+    });
+
+    expect(result).toEqual({
+      host_id: HOST_ID,
+      rollback_version: "ph-v1",
+    });
+    expect(setProjectHostRuntimeDeploymentsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope_type: "host",
+        host_id: HOST_ID,
+        deployments: [
+          expect.objectContaining({
+            target_type: "artifact",
+            target: "project-host",
+            desired_version: "ph-v1",
+            rollout_reason: "automatic_project_host_upgrade_rollback",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "project-host",
+            desired_version: "ph-v1",
+            rollout_reason: "automatic_project_host_upgrade_rollback",
+          }),
+        ],
+      }),
+    );
+    expect(createProjectHostBootstrapTokenMock).toHaveBeenCalledWith(HOST_ID);
+    expect(buildCloudInitStartupScriptMock).toHaveBeenCalled();
+    expect(spawnMock).toHaveBeenCalledWith(
+      "ssh",
+      expect.arrayContaining(["ubuntu@34.1.2.3", "bash", "-se"]),
+      expect.any(Object),
+    );
   });
 });
 

@@ -19,6 +19,7 @@ import {
   drainHostInternal,
   forceDeprovisionHostInternal,
   rollbackHostRuntimeDeploymentsInternal,
+  rollbackProjectHostOverSshInternal,
   reconcileHostRuntimeDeploymentsInternal,
   reconcileHostSoftwareInternal,
   removeSelfHostConnectorInternal,
@@ -772,22 +773,30 @@ async function handleOp(op: LroSummary): Promise<void> {
     });
 
     if (kind === "host-upgrade-software") {
-      await progressStep("waiting", "running upgrade", {
-        host_id,
-        targets: input?.targets,
-      });
-      const response = await upgradeHostSoftwareInternal({
-        account_id,
-        id: host_id,
-        targets: input?.targets ?? [],
-        base_url: input?.base_url,
-      });
-      const rolloutComponents = rolloutComponentsForUpgradeResults(
-        response.results ?? [],
+      const preUpgradeRow = await loadHostStatus(host_id);
+      const knownGoodProjectHostVersion =
+        `${preUpgradeRow?.metadata?.software?.project_host ?? preUpgradeRow?.version ?? ""}`.trim() ||
+        undefined;
+      const requestedProjectHostUpgrade = (input?.targets ?? []).some(
+        (target: any) => target?.artifact === "project-host",
       );
+      let response;
       let rolloutResponse;
-      if (rolloutComponents.length > 0) {
-        try {
+      try {
+        await progressStep("waiting", "running upgrade", {
+          host_id,
+          targets: input?.targets,
+        });
+        response = await upgradeHostSoftwareInternal({
+          account_id,
+          id: host_id,
+          targets: input?.targets ?? [],
+          base_url: input?.base_url,
+        });
+        const rolloutComponents = rolloutComponentsForUpgradeResults(
+          response.results ?? [],
+        );
+        if (rolloutComponents.length > 0) {
           await progressStep(
             "waiting",
             "rolling out upgraded managed components",
@@ -802,33 +811,100 @@ async function handleOp(op: LroSummary): Promise<void> {
             components: rolloutComponents,
             reason: "host_software_upgrade",
           });
-        } catch (err) {
-          logger.warn(
-            "host upgrade: managed component rollout failed; retry via ssh reconcile",
-            {
-              host_id,
-              components: rolloutComponents,
-              err: `${err}`,
-            },
-          );
-          await progressStep(
-            "waiting",
-            "managed rollout failed; attempting ssh reconcile",
-            {
-              host_id,
-              components: rolloutComponents,
-            },
-          );
-          await reconcileHostSoftwareInternal({ account_id, id: host_id });
-          const row = await loadHostStatus(host_id);
-          const baselineSeen = row?.last_seen
-            ? new Date(row.last_seen as any).getTime()
-            : 0;
-          await waitForHostHeartbeat({
-            host_id,
-            since: baselineSeen,
-          });
         }
+      } catch (err) {
+        if (requestedProjectHostUpgrade && knownGoodProjectHostVersion) {
+          try {
+            await progressStep(
+              "waiting",
+              "project-host upgrade failed; attempting automatic rollback",
+              {
+                host_id,
+                rollback_version: knownGoodProjectHostVersion,
+              },
+            );
+            const rollbackStartedAt = Date.now();
+            const automaticRollback = await rollbackProjectHostOverSshInternal({
+              account_id,
+              id: host_id,
+              version: knownGoodProjectHostVersion,
+              reason: "automatic_project_host_upgrade_rollback",
+            });
+            await waitForHostHeartbeat({
+              host_id,
+              since: rollbackStartedAt,
+            });
+            const updated = await updateLro({
+              op_id,
+              status: "failed",
+              progress_summary: {
+                phase: "done",
+                host_id,
+                results: response?.results ?? [],
+                automatic_rollback: automaticRollback,
+              },
+              result: {
+                host_id,
+                ...(response ? response : {}),
+                automatic_rollback: automaticRollback,
+              },
+              error: `project-host upgrade failed and was automatically rolled back: ${err instanceof Error ? err.message : err}`,
+            });
+            if (updated) {
+              await publishSummary(updated);
+            }
+            await progressStep(
+              "done",
+              "project-host upgrade failed; automatic rollback completed",
+              {
+                host_id,
+                automatic_rollback: automaticRollback,
+              },
+            );
+            return;
+          } catch (rollbackErr) {
+            logger.error(
+              "host upgrade: automatic project-host rollback failed",
+              {
+                host_id,
+                rollback_version: knownGoodProjectHostVersion,
+                err: `${rollbackErr}`,
+              },
+            );
+            throw new Error(
+              `project-host upgrade failed (${err instanceof Error ? err.message : err}); automatic rollback also failed (${rollbackErr instanceof Error ? rollbackErr.message : rollbackErr})`,
+            );
+          }
+        }
+        logger.warn(
+          "host upgrade: managed component rollout failed; retry via ssh reconcile",
+          {
+            host_id,
+            components: rolloutComponentsForUpgradeResults(
+              response?.results ?? [],
+            ),
+            err: `${err}`,
+          },
+        );
+        await progressStep(
+          "waiting",
+          "managed rollout failed; attempting ssh reconcile",
+          {
+            host_id,
+            components: rolloutComponentsForUpgradeResults(
+              response?.results ?? [],
+            ),
+          },
+        );
+        await reconcileHostSoftwareInternal({ account_id, id: host_id });
+        const row = await loadHostStatus(host_id);
+        const baselineSeen = row?.last_seen
+          ? new Date(row.last_seen as any).getTime()
+          : 0;
+        await waitForHostHeartbeat({
+          host_id,
+          since: baselineSeen,
+        });
       }
       const updated = await updateLro({
         op_id,
@@ -836,14 +912,14 @@ async function handleOp(op: LroSummary): Promise<void> {
         progress_summary: {
           phase: "done",
           host_id,
-          results: response.results ?? [],
+          results: response?.results ?? [],
           ...(rolloutResponse
             ? { managed_component_rollout: rolloutResponse.results ?? [] }
             : {}),
         },
         result: {
           host_id,
-          ...response,
+          ...(response ? response : {}),
           ...(rolloutResponse
             ? { managed_component_rollout: rolloutResponse.results ?? [] }
             : {}),
@@ -855,7 +931,7 @@ async function handleOp(op: LroSummary): Promise<void> {
       }
       await progressStep("done", "upgrade complete", {
         host_id,
-        results: response.results ?? [],
+        results: response?.results ?? [],
         ...(rolloutResponse
           ? { managed_component_rollout: rolloutResponse.results ?? [] }
           : {}),
