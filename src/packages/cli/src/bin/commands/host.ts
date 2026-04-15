@@ -231,10 +231,24 @@ function formatObservedTargetRows(
     policy: target.rollout_policy ?? "",
     runtime_state: target.observed_runtime_state ?? "",
     version_state: target.observed_version_state ?? "",
+    current_version: target.current_version ?? "",
+    current_build_id: target.current_build_id ?? "",
+    installed_versions: formatList(target.installed_versions),
     running_versions: formatList(target.running_versions),
     running_pids: formatList(target.running_pids),
     enabled: target.enabled ?? "",
     managed: target.managed ?? "",
+  }));
+}
+
+function formatObservedArtifactRows(
+  artifacts: Array<Record<string, unknown>> | undefined,
+): Record<string, unknown>[] {
+  return (artifacts ?? []).map((artifact) => ({
+    artifact: artifact.artifact ?? "",
+    current_version: artifact.current_version ?? "",
+    current_build_id: artifact.current_build_id ?? "",
+    installed_versions: formatList(artifact.installed_versions),
   }));
 }
 
@@ -252,6 +266,7 @@ type HostDeployStatusData = {
   name?: string | null;
   configured?: Array<Record<string, unknown>>;
   effective?: Array<Record<string, unknown>>;
+  observed_artifacts?: Array<Record<string, unknown>>;
   observed_components?: Array<Record<string, unknown>>;
   observed_targets?: Array<Record<string, unknown>>;
   observation_error?: unknown;
@@ -318,6 +333,9 @@ function filterHostDeployStatusData(
     ...data,
     configured: (data.configured ?? []).filter(keepTarget),
     effective: (data.effective ?? []).filter(keepTarget),
+    observed_artifacts: (data.observed_artifacts ?? []).filter((artifact) =>
+      relevantArtifacts.has(`${artifact.artifact ?? ""}`.trim()),
+    ),
     observed_components: (data.observed_components ?? []).filter((component) =>
       selected.has(`${component.component ?? ""}`.trim() as any),
     ),
@@ -357,19 +375,30 @@ function emitHostDeployStatusHuman(
     console.log(`Name: ${data.name}`);
   }
   console.log("");
+  const artifactRows = formatObservedArtifactRows(data.observed_artifacts);
+  if (artifactRows.length) {
+    printNamedSection("Observed Artifacts", artifactRows);
+  }
   const components = resolveHumanStatusComponents(data, selectedComponents);
-  if (!components.length) {
-    console.log("No matching components.");
+  if (!components.length && !artifactRows.length) {
+    console.log("No matching components or artifacts.");
     console.log("");
   }
   for (const component of components) {
     const observed = (data.observed_components ?? []).find(
       (row) => row.component === component,
     );
+    const artifact = componentArtifact(component, data);
+    const observedArtifact = (data.observed_artifacts ?? []).find(
+      (row) => `${row.artifact ?? ""}`.trim() === artifact,
+    );
     console.log(`Component: ${component}`);
     printArrayTable(
       formatFieldValueRows({
-        artifact: componentArtifact(component, data),
+        artifact,
+        artifact_current_version: observedArtifact?.current_version ?? "",
+        artifact_current_build_id: observedArtifact?.current_build_id ?? "",
+        artifact_installed_versions: observedArtifact?.installed_versions ?? [],
         enabled: observed?.enabled ?? "",
         managed: observed?.managed ?? "",
         runtime_state: observed?.runtime_state ?? "",
@@ -1090,6 +1119,7 @@ Example:
 Status shows two views:
 - \`configured\`: host-specific overrides recorded for this host
 - \`effective\`: the merged desired state after applying global defaults and host overrides
+- \`observed_artifacts\`: host-local artifact inventory and current selections
 - \`observed_components\`: live component status reported by the host when it is online
 - \`observed_targets\`: desired-vs-observed comparison for each effective runtime target
 `,
@@ -1114,6 +1144,7 @@ Status shows two views:
               name: host.name ?? undefined,
               configured: status.configured,
               effective: status.effective,
+              observed_artifacts: status.observed_artifacts,
               observed_components: status.observed_components,
               observed_targets: status.observed_targets,
               observation_error: status.observation_error,

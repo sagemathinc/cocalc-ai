@@ -91,6 +91,17 @@ function makeDeps(
                     scope_type: "host",
                     scope_id: id,
                     host_id: id,
+                    target_type: "artifact",
+                    target: "project-host",
+                    desired_version: "bundle-v1",
+                    requested_by: "acct-1",
+                    requested_at: "2026-04-15T00:00:00.000Z",
+                    updated_at: "2026-04-15T00:00:00.000Z",
+                  },
+                  {
+                    scope_type: "host",
+                    scope_id: id,
+                    host_id: id,
                     target_type: "component",
                     target: "acp-worker",
                     desired_version: "bundle-v1",
@@ -101,6 +112,17 @@ function makeDeps(
                   },
                 ],
                 effective: [
+                  {
+                    scope_type: "host",
+                    scope_id: id,
+                    host_id: id,
+                    target_type: "artifact",
+                    target: "project-host",
+                    desired_version: "bundle-v1",
+                    requested_by: "acct-1",
+                    requested_at: "2026-04-15T00:00:00.000Z",
+                    updated_at: "2026-04-15T00:00:00.000Z",
+                  },
                   {
                     scope_type: "host",
                     scope_id: id,
@@ -128,7 +150,24 @@ function makeDeps(
                     running_pids: [1234],
                   },
                 ],
+                observed_artifacts: [
+                  {
+                    artifact: "project-host",
+                    current_version: "bundle-v1",
+                    current_build_id: "build-bundle-v1",
+                    installed_versions: ["bundle-v1", "bundle-v0"],
+                  },
+                ],
                 observed_targets: [
+                  {
+                    target_type: "artifact",
+                    target: "project-host",
+                    desired_version: "bundle-v1",
+                    observed_version_state: "aligned",
+                    current_version: "bundle-v1",
+                    current_build_id: "build-bundle-v1",
+                    installed_versions: ["bundle-v1", "bundle-v0"],
+                  },
                   {
                     target_type: "component",
                     target: "acp-worker",
@@ -684,15 +723,18 @@ test("host deploy status shows configured and effective desired state", async ()
   assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.name, "host-host-1");
-  assert.equal(capture.data.configured.length, 1);
-  assert.equal(capture.data.effective.length, 1);
-  assert.equal(capture.data.effective[0].target, "acp-worker");
+  assert.equal(capture.data.configured.length, 2);
+  assert.equal(capture.data.effective.length, 2);
+  assert.equal(capture.data.effective[0].target, "project-host");
+  assert.equal(capture.data.effective[1].target, "acp-worker");
+  assert.equal(capture.data.observed_artifacts.length, 1);
   assert.equal(capture.data.observed_components.length, 1);
-  assert.equal(capture.data.observed_targets.length, 1);
+  assert.equal(capture.data.observed_targets.length, 2);
   assert.equal(
     capture.data.observed_targets[0].observed_version_state,
     "aligned",
   );
+  assert.equal(capture.data.observed_targets[0].current_version, "bundle-v1");
 });
 
 test("host deploy status renders flattened human-readable sections", async () => {
@@ -723,10 +765,12 @@ test("host deploy status renders flattened human-readable sections", async () =>
 
   assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
   assert.match(output, /Host ID: host-1/);
+  assert.match(output, /Observed Artifacts/);
   assert.match(output, /Component: acp-worker/);
   assert.match(output, /Configured Targets/);
   assert.match(output, /Effective Targets/);
   assert.match(output, /Observed Targets/);
+  assert.match(output, /artifact_current_version/);
   assert.match(output, /acp-worker/);
   assert.doesNotMatch(output, /"scope_type":"host"/);
 });
@@ -755,10 +799,23 @@ test("host deploy status filters by component", async () => {
   ]);
 
   assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
-  assert.deepEqual(capture.data.configured, []);
-  assert.deepEqual(capture.data.effective, []);
+  assert.equal(capture.data.configured.length, 1);
+  assert.equal(capture.data.configured[0].target_type, "artifact");
+  assert.equal(capture.data.configured[0].target, "project-host");
+  assert.equal(capture.data.effective.length, 1);
+  assert.equal(capture.data.effective[0].target_type, "artifact");
+  assert.equal(capture.data.effective[0].target, "project-host");
+  assert.equal(capture.data.observed_artifacts.length, 1);
+  assert.equal(capture.data.observed_artifacts[0].artifact, "project-host");
+  assert.equal(capture.data.observed_artifacts[0].current_version, "bundle-v1");
   assert.deepEqual(capture.data.observed_components, []);
-  assert.deepEqual(capture.data.observed_targets, []);
+  assert.equal(capture.data.observed_targets.length, 1);
+  assert.equal(capture.data.observed_targets[0].target_type, "artifact");
+  assert.equal(capture.data.observed_targets[0].target, "project-host");
+  assert.equal(
+    capture.data.observed_targets[0].observed_version_state,
+    "aligned",
+  );
 });
 
 test("host deploy reconcile queues desired-state component reconcile", async () => {

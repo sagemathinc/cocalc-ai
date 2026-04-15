@@ -95,6 +95,18 @@ export type ManagedComponentKind =
 
 export type ManagedComponentArtifact = "project-host";
 
+export type HostInstalledRuntimeArtifact =
+  | "project-host"
+  | "project-bundle"
+  | "tools";
+
+export interface HostInstalledRuntimeArtifactStatus {
+  artifact: HostInstalledRuntimeArtifact;
+  current_version?: string;
+  current_build_id?: string;
+  installed_versions: string[];
+}
+
 export type ManagedComponentUpgradePolicy =
   | "restart_now"
   | "drain_then_replace";
@@ -220,6 +232,9 @@ export interface HostControlApi {
   }) => Promise<HostSshAuthorizedKeysResponse & { removed: boolean }>;
   getBackupExecutionStatus: () => Promise<HostBackupExecutionStatus>;
   getManagedComponentStatus: () => Promise<HostManagedComponentStatus[]>;
+  getInstalledRuntimeArtifacts: () => Promise<
+    HostInstalledRuntimeArtifactStatus[]
+  >;
   rolloutManagedComponents: (
     opts: HostManagedComponentRolloutRequest,
   ) => Promise<HostManagedComponentRolloutResponse>;

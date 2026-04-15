@@ -18,6 +18,7 @@ import type {
   HostSoftwareUpgradeTarget,
   HostSoftwareUpgradeResponse,
   HostRuntimeArtifact,
+  HostRuntimeArtifactObservation,
   HostRuntimeDeploymentRecord,
   HostRuntimeDeploymentObservedTarget,
   HostRuntimeDeploymentReconcileResult,
@@ -5046,28 +5047,53 @@ export async function getHostRuntimeDeploymentStatus({
     }),
     loadEffectiveProjectHostRuntimeDeployments({ host_id: row.id }),
   ]);
+  let observed_artifacts = observedRuntimeArtifactsFromMetadata(row);
   let observed_components: HostManagedComponentStatus[] | undefined;
-  let observation_error: string | undefined;
+  const observation_errors: string[] = [];
   if (HOST_RUNNING_STATUSES.has(`${row?.status ?? ""}`.toLowerCase())) {
     try {
       const client = await hostControlClient(id, 15_000);
-      observed_components = await client.getManagedComponentStatus();
+      const [componentsResult, artifactsResult] = await Promise.allSettled([
+        client.getManagedComponentStatus(),
+        client.getInstalledRuntimeArtifacts(),
+      ]);
+      if (componentsResult.status === "fulfilled") {
+        observed_components = componentsResult.value;
+      } else {
+        observation_errors.push(
+          `components: ${componentsResult.reason?.message ?? componentsResult.reason}`,
+        );
+      }
+      if (artifactsResult.status === "fulfilled") {
+        observed_artifacts = observedRuntimeArtifactsFromMetadata({
+          metadata: {
+            software_inventory: artifactsResult.value,
+            software: row?.metadata?.software,
+          },
+        });
+      } else if (observed_artifacts.length === 0) {
+        observation_errors.push(
+          `artifacts: ${artifactsResult.reason?.message ?? artifactsResult.reason}`,
+        );
+      }
     } catch (err) {
-      observation_error = `${(err as Error)?.message ?? err}`;
+      observation_errors.push(`${(err as Error)?.message ?? err}`);
     }
   } else {
-    observation_error = "host is not currently running";
+    observation_errors.push("host is not currently running");
   }
   return {
     host_id: row.id,
     configured,
     effective,
+    observed_artifacts,
     observed_components,
     observed_targets: summarizeObservedRuntimeDeployments({
       effective,
+      observed_artifacts,
       observed_components,
     }),
-    observation_error,
+    observation_error: observation_errors.join("; ") || undefined,
   };
 }
 
@@ -5254,11 +5280,119 @@ function deploymentObservedVersionState({
   return running_versions[0] === desired_version ? "aligned" : "drifted";
 }
 
+function sortVersionsDescending(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort((a, b) =>
+    a < b ? 1 : a > b ? -1 : 0,
+  );
+}
+
+function observedRuntimeArtifactsFromMetadata(
+  row: any,
+): HostRuntimeArtifactObservation[] {
+  const inventory = Array.isArray(row?.metadata?.software_inventory)
+    ? row.metadata.software_inventory
+    : [];
+  const normalizedInventory = inventory
+    .map((entry: any) => {
+      const artifact = `${entry?.artifact ?? ""}`.trim() as HostRuntimeArtifact;
+      if (
+        artifact !== "project-host" &&
+        artifact !== "project-bundle" &&
+        artifact !== "tools"
+      ) {
+        return undefined;
+      }
+      return {
+        artifact,
+        current_version: `${entry?.current_version ?? ""}`.trim() || undefined,
+        current_build_id:
+          `${entry?.current_build_id ?? ""}`.trim() || undefined,
+        installed_versions: sortVersionsDescending(
+          Array.isArray(entry?.installed_versions)
+            ? entry.installed_versions.map((value: any) =>
+                `${value ?? ""}`.trim(),
+              )
+            : [],
+        ),
+      } satisfies HostRuntimeArtifactObservation;
+    })
+    .filter((entry): entry is HostRuntimeArtifactObservation => entry != null);
+  const existing = new Map<HostRuntimeArtifact, HostRuntimeArtifactObservation>(
+    normalizedInventory.map((entry) => [entry.artifact, entry]),
+  );
+  const software = row?.metadata?.software ?? {};
+  const fallbacks: HostRuntimeArtifactObservation[] = [
+    {
+      artifact: "project-host",
+      current_version: `${software?.project_host ?? ""}`.trim() || undefined,
+      current_build_id:
+        `${software?.project_host_build_id ?? ""}`.trim() || undefined,
+      installed_versions: sortVersionsDescending(
+        `${software?.project_host ?? ""}`.trim()
+          ? [`${software.project_host}`.trim()]
+          : [],
+      ),
+    },
+    {
+      artifact: "project-bundle",
+      current_version: `${software?.project_bundle ?? ""}`.trim() || undefined,
+      current_build_id:
+        `${software?.project_bundle_build_id ?? ""}`.trim() || undefined,
+      installed_versions: sortVersionsDescending(
+        `${software?.project_bundle ?? ""}`.trim()
+          ? [`${software.project_bundle}`.trim()]
+          : [],
+      ),
+    },
+    {
+      artifact: "tools",
+      current_version: `${software?.tools ?? ""}`.trim() || undefined,
+      installed_versions: sortVersionsDescending(
+        `${software?.tools ?? ""}`.trim() ? [`${software.tools}`.trim()] : [],
+      ),
+    },
+  ];
+  for (const fallback of fallbacks) {
+    if (!existing.has(fallback.artifact)) {
+      existing.set(fallback.artifact, fallback);
+    }
+  }
+  return [...existing.values()].sort((a, b) =>
+    a.artifact < b.artifact ? -1 : a.artifact > b.artifact ? 1 : 0,
+  );
+}
+
+function observedRuntimeArtifactVersionState({
+  desired_version,
+  current_version,
+  installed_versions,
+}: {
+  desired_version: string;
+  current_version?: string;
+  installed_versions: string[];
+}): HostRuntimeDeploymentObservedVersionState {
+  if (!desired_version) {
+    return "unknown";
+  }
+  if (current_version && current_version === desired_version) {
+    return "aligned";
+  }
+  if (installed_versions.includes(desired_version)) {
+    return "drifted";
+  }
+  if (current_version || installed_versions.length > 0) {
+    return "missing";
+  }
+  return "unobserved";
+}
+
 function summarizeObservedRuntimeDeployments({
   effective,
+  observed_artifacts,
   observed_components,
 }: {
   effective: HostRuntimeDeploymentRecord[];
+  observed_artifacts?: HostRuntimeArtifactObservation[];
   observed_components?: HostManagedComponentStatus[];
 }): HostRuntimeDeploymentObservedTarget[] {
   const components = new Map(
@@ -5267,14 +5401,43 @@ function summarizeObservedRuntimeDeployments({
       component,
     ]),
   );
+  const artifacts = new Map(
+    (observed_artifacts ?? []).map((artifact) => [artifact.artifact, artifact]),
+  );
   return effective.map((deployment) => {
     if (deployment.target_type !== "component") {
+      if (deployment.target === "bootstrap-environment") {
+        return {
+          target_type: deployment.target_type,
+          target: deployment.target,
+          desired_version: deployment.desired_version,
+          rollout_policy: deployment.rollout_policy,
+          observed_version_state: "unsupported",
+        };
+      }
+      const observed = artifacts.get(deployment.target as HostRuntimeArtifact);
+      if (!observed) {
+        return {
+          target_type: deployment.target_type,
+          target: deployment.target,
+          desired_version: deployment.desired_version,
+          rollout_policy: deployment.rollout_policy,
+          observed_version_state: "unobserved",
+        };
+      }
       return {
         target_type: deployment.target_type,
         target: deployment.target,
         desired_version: deployment.desired_version,
         rollout_policy: deployment.rollout_policy,
-        observed_version_state: "unsupported",
+        observed_version_state: observedRuntimeArtifactVersionState({
+          desired_version: deployment.desired_version,
+          current_version: observed.current_version,
+          installed_versions: observed.installed_versions,
+        }),
+        current_version: observed.current_version,
+        current_build_id: observed.current_build_id,
+        installed_versions: observed.installed_versions,
       };
     }
     const observed = components.get(deployment.target as ManagedComponentKind);

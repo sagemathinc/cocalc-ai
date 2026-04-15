@@ -14,7 +14,7 @@ import { setSshpiperdPublicKey } from "./ssh/host-keys";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
 import { updateAuthorizedKeys, updateProjectUsers } from "./hub/projects";
 import { deleteVolume, getBackupExecutionStatus } from "./file-server";
-import { getSoftwareVersions } from "./software";
+import { getInstalledRuntimeArtifacts, getSoftwareVersions } from "./software";
 import { getBootstrapLifecycle } from "./bootstrap-lifecycle";
 import { upgradeSoftware } from "./upgrade";
 import { executeCode } from "@cocalc/backend/execute-code";
@@ -755,6 +755,9 @@ export async function startMasterRegistration({
       async getManagedComponentStatus() {
         return getManagedComponentStatus();
       },
+      async getInstalledRuntimeArtifacts() {
+        return getInstalledRuntimeArtifacts();
+      },
       async rolloutManagedComponents(opts) {
         return await rolloutManagedComponents(opts);
       },
@@ -810,6 +813,7 @@ export async function startMasterRegistration({
 
   const buildPayload = (): HostRegistration => {
     const versions = getSoftwareVersions();
+    const softwareInventory = getInstalledRuntimeArtifacts();
     const currentMetrics = hostMetrics.getCurrentSnapshot();
     const bootstrapLifecycle = getBootstrapLifecycle();
     return {
@@ -830,6 +834,7 @@ export async function startMasterRegistration({
             }
           : {}),
         software: versions,
+        software_inventory: softwareInventory,
       },
     };
   };

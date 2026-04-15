@@ -526,6 +526,7 @@ export interface HostRuntimeDeploymentStatus {
   host_id: string;
   configured: HostRuntimeDeploymentRecord[];
   effective: HostRuntimeDeploymentRecord[];
+  observed_artifacts?: HostRuntimeArtifactObservation[];
   observed_components?: HostManagedComponentStatus[];
   observed_targets?: HostRuntimeDeploymentObservedTarget[];
   observation_error?: string;
@@ -534,7 +535,15 @@ export interface HostRuntimeDeploymentStatus {
 export type HostRuntimeDeploymentObservedVersionState =
   | ManagedComponentVersionState
   | "unobserved"
+  | "missing"
   | "unsupported";
+
+export interface HostRuntimeArtifactObservation {
+  artifact: HostRuntimeArtifact;
+  current_version?: string;
+  current_build_id?: string;
+  installed_versions: string[];
+}
 
 export interface HostRuntimeDeploymentObservedTarget {
   target_type: HostRuntimeDeploymentTargetType;
@@ -543,6 +552,9 @@ export interface HostRuntimeDeploymentObservedTarget {
   rollout_policy?: HostRuntimeDeploymentPolicy;
   observed_runtime_state?: ManagedComponentRuntimeState;
   observed_version_state: HostRuntimeDeploymentObservedVersionState;
+  current_version?: string;
+  current_build_id?: string;
+  installed_versions?: string[];
   running_versions?: string[];
   running_pids?: number[];
   enabled?: boolean;

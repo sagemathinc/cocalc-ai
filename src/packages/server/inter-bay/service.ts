@@ -498,6 +498,10 @@ async function startHostControlService(): Promise<void> {
       await (await getHostClient(host_id, 30_000)).getBackupExecutionStatus(),
     getManagedComponentStatus: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).getManagedComponentStatus(),
+    getInstalledRuntimeArtifacts: async ({ host_id }) =>
+      await (
+        await getHostClient(host_id, 30_000)
+      ).getInstalledRuntimeArtifacts(),
     inspectStaticAppPath: async ({ host_id, inspect }) =>
       await (
         await getHostClient(host_id, 30_000)

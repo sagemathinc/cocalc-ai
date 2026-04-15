@@ -36,6 +36,7 @@ import type {
   HostCreateProjectRequest,
   HostCreateProjectResponse,
   HostBackupExecutionStatus,
+  HostInstalledRuntimeArtifactStatus,
   HostManagedComponentStatus,
   HostManagedComponentRolloutRequest,
   HostManagedComponentRolloutResponse,
@@ -317,6 +318,7 @@ export type HostControlMethod =
   | "remove-host-ssh-authorized-key"
   | "get-backup-execution-status"
   | "get-managed-component-status"
+  | "get-installed-runtime-artifacts"
   | "inspect-static-app-path"
   | "build-rootfs-image-manifest"
   | "build-project-rootfs-manifest";
@@ -460,6 +462,9 @@ export interface InterBayHostControlApi {
   getManagedComponentStatus: (opts: {
     host_id: string;
   }) => Promise<HostManagedComponentStatus[]>;
+  getInstalledRuntimeArtifacts: (opts: {
+    host_id: string;
+  }) => Promise<HostInstalledRuntimeArtifactStatus[]>;
   inspectStaticAppPath: (opts: {
     host_id: string;
     inspect: HostControlArg<"inspectStaticAppPath">;
@@ -637,6 +642,10 @@ const HOST_CONTROL_METHOD_SPECS = [
   {
     name: "getManagedComponentStatus",
     method: "get-managed-component-status",
+  },
+  {
+    name: "getInstalledRuntimeArtifacts",
+    method: "get-installed-runtime-artifacts",
   },
   { name: "inspectStaticAppPath", method: "inspect-static-app-path" },
   {

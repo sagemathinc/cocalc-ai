@@ -19,6 +19,8 @@ let hostConnectionGetMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let routedHostControlClientMock: jest.Mock;
+let listProjectHostRuntimeDeploymentsMock: jest.Mock;
+let loadEffectiveProjectHostRuntimeDeploymentsMock: jest.Mock;
 let updateProjectUsersMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -66,6 +68,15 @@ jest.mock("@cocalc/database/postgres/project-host-metrics", () => ({
   clearProjectHostMetrics: jest.fn(async () => undefined),
   loadProjectHostMetricsHistory: (...args: any[]) =>
     loadProjectHostMetricsHistoryMock(...args),
+}));
+
+jest.mock("@cocalc/database/postgres/project-host-runtime-deployments", () => ({
+  __esModule: true,
+  listProjectHostRuntimeDeployments: (...args: any[]) =>
+    listProjectHostRuntimeDeploymentsMock(...args),
+  loadEffectiveProjectHostRuntimeDeployments: (...args: any[]) =>
+    loadEffectiveProjectHostRuntimeDeploymentsMock(...args),
+  setProjectHostRuntimeDeployments: jest.fn(async () => []),
 }));
 
 jest.mock("@cocalc/backend/data", () => {
@@ -216,6 +227,8 @@ describe("hosts.listHostProjects", () => {
     hostConnectionGetMock = jest.fn();
     projectHostAuthTokenIssueMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => null);
+    listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
     updateProjectUsersMock = jest.fn(async () => undefined);
     routedHostControlClientMock = jest.fn(async () => ({
       updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
@@ -312,6 +325,172 @@ describe("hosts.listHostProjects", () => {
 
   afterEach(() => {
     delete process.env.LOGS;
+  });
+});
+
+describe("hosts.getHostRuntimeDeploymentStatus", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.LOGS = os.tmpdir();
+    isAdminMock = jest.fn(async () => true);
+    isBannedMock = jest.fn(async () => false);
+    moveProjectToHostMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: {},
+    }));
+    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    syncProjectUsersOnHostMock = jest.fn(async () => undefined);
+    issueProjectHostAuthTokenJwtMock = jest.fn(() => ({
+      token: "test-token",
+      expires_at: 1234567890,
+    }));
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(
+      async () => undefined,
+    );
+    assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
+    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    hostConnectionGetMock = jest.fn();
+    projectHostAuthTokenIssueMock = jest.fn();
+    projectReferenceGetMock = jest.fn(async () => null);
+    listProjectHostRuntimeDeploymentsMock = jest.fn(async () => [
+      {
+        scope_type: "host",
+        scope_id: HOST_ID,
+        host_id: HOST_ID,
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "ph-v3",
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+      },
+      {
+        scope_type: "host",
+        scope_id: HOST_ID,
+        host_id: HOST_ID,
+        target_type: "component",
+        target: "acp-worker",
+        desired_version: "ph-v2",
+        rollout_policy: "drain_then_replace",
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+      },
+    ]);
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () =>
+      listProjectHostRuntimeDeploymentsMock(),
+    );
+    updateProjectUsersMock = jest.fn(async () => undefined);
+    routedHostControlClientMock = jest.fn(async () => ({
+      getManagedComponentStatus: async () => [
+        {
+          component: "acp-worker",
+          artifact: "project-host",
+          upgrade_policy: "drain_then_replace",
+          enabled: true,
+          managed: true,
+          desired_version: "ph-v2",
+          runtime_state: "running",
+          version_state: "aligned",
+          running_versions: ["ph-v2"],
+          running_pids: [4321],
+        },
+      ],
+      getInstalledRuntimeArtifacts: async () => [
+        {
+          artifact: "project-host",
+          current_version: "ph-v2",
+          current_build_id: "build-ph-v2",
+          installed_versions: ["ph-v2", "ph-v1"],
+        },
+        {
+          artifact: "project-bundle",
+          current_version: "bundle-v4",
+          current_build_id: "build-bundle-v4",
+          installed_versions: ["bundle-v4"],
+        },
+        {
+          artifact: "tools",
+          current_version: "tools-v7",
+          installed_versions: ["tools-v7"],
+        },
+      ],
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              metadata: {
+                owner: ACCOUNT_ID,
+                software: {
+                  project_host: "ph-v2",
+                  project_host_build_id: "build-ph-v2",
+                  project_bundle: "bundle-v4",
+                  project_bundle_build_id: "build-bundle-v4",
+                  tools: "tools-v7",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+  });
+
+  it("tracks observed artifact inventory and compares artifact targets", async () => {
+    const { getHostRuntimeDeploymentStatus } = await import("./hosts");
+    const status = await getHostRuntimeDeploymentStatus({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(status.observed_artifacts).toEqual([
+      {
+        artifact: "project-bundle",
+        current_version: "bundle-v4",
+        current_build_id: "build-bundle-v4",
+        installed_versions: ["bundle-v4"],
+      },
+      {
+        artifact: "project-host",
+        current_version: "ph-v2",
+        current_build_id: "build-ph-v2",
+        installed_versions: ["ph-v2", "ph-v1"],
+      },
+      {
+        artifact: "tools",
+        current_version: "tools-v7",
+        installed_versions: ["tools-v7"],
+      },
+    ]);
+    expect(status.observed_targets).toEqual([
+      expect.objectContaining({
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "ph-v3",
+        observed_version_state: "missing",
+        current_version: "ph-v2",
+        installed_versions: ["ph-v2", "ph-v1"],
+      }),
+      expect.objectContaining({
+        target_type: "component",
+        target: "acp-worker",
+        desired_version: "ph-v2",
+        observed_version_state: "aligned",
+      }),
+    ]);
+    expect(status.observation_error).toBeUndefined();
   });
 });
 

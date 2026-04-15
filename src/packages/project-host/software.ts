@@ -9,6 +9,18 @@ export type SoftwareVersions = {
   tools?: string;
 };
 
+export type InstalledRuntimeArtifact =
+  | "project-host"
+  | "project-bundle"
+  | "tools";
+
+export type InstalledRuntimeArtifactStatus = {
+  artifact: InstalledRuntimeArtifact;
+  current_version?: string;
+  current_build_id?: string;
+  installed_versions: string[];
+};
+
 const DEFAULT_BUNDLE_ROOT = "/opt/cocalc/project-bundles";
 const DEFAULT_TOOLS_CURRENT = "/opt/cocalc/tools/current";
 const DEFAULT_PROJECT_HOST_CURRENT = "/opt/cocalc/project-host/current";
@@ -39,6 +51,92 @@ function readBuildIdFromCurrentPath(currentPath: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function uniqSortedDescending(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort((a, b) =>
+    a < b ? 1 : a > b ? -1 : 0,
+  );
+}
+
+function listInstalledVersionsInRoots(roots: string[]): string[] {
+  const versions: string[] = [];
+  for (const root of roots) {
+    try {
+      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+        if (entry.name === "current") continue;
+        const fullPath = path.join(root, entry.name);
+        try {
+          if (fs.statSync(fullPath).isDirectory()) {
+            versions.push(entry.name);
+          }
+        } catch {
+          // ignore broken or unreadable entries
+        }
+      }
+    } catch {
+      // ignore missing roots
+    }
+  }
+  return uniqSortedDescending(versions);
+}
+
+function realpathParent(currentPath: string): string | undefined {
+  try {
+    return path.dirname(fs.realpathSync(currentPath));
+  } catch {
+    return undefined;
+  }
+}
+
+function projectHostCurrentPath(): string {
+  if (process.env.COCALC_PROJECT_HOST_CURRENT?.trim()) {
+    return process.env.COCALC_PROJECT_HOST_CURRENT.trim();
+  }
+  if (process.env.COCALC_PROJECT_HOST_BUNDLE_ROOT?.trim()) {
+    return path.join(
+      process.env.COCALC_PROJECT_HOST_BUNDLE_ROOT.trim(),
+      "current",
+    );
+  }
+  return DEFAULT_PROJECT_HOST_CURRENT;
+}
+
+function projectHostInventoryRoots(currentPath: string): string[] {
+  const currentDir = path.dirname(currentPath);
+  return uniqSortedDescending(
+    [
+      realpathParent(currentPath),
+      process.env.COCALC_PROJECT_HOST_BUNDLE_ROOT?.trim(),
+      path.join(currentDir, "bundles"),
+      path.join(currentDir, "versions"),
+    ].filter((value): value is string => !!`${value ?? ""}`.trim()),
+  );
+}
+
+function siblingInventoryRoots(currentPath: string): string[] {
+  return uniqSortedDescending(
+    [realpathParent(currentPath), path.dirname(currentPath)].filter(
+      (value): value is string => !!`${value ?? ""}`.trim(),
+    ),
+  );
+}
+
+function describeInstalledArtifact({
+  artifact,
+  currentPath,
+  roots,
+}: {
+  artifact: InstalledRuntimeArtifact;
+  currentPath: string;
+  roots: string[];
+}): InstalledRuntimeArtifactStatus {
+  return {
+    artifact,
+    current_version: versionFromCurrentPath(currentPath),
+    current_build_id: readBuildIdFromCurrentPath(currentPath),
+    installed_versions: listInstalledVersionsInRoots(roots),
+  };
 }
 
 function getProjectBundleVersion(): string | undefined {
@@ -103,4 +201,30 @@ export function getSoftwareVersions(): SoftwareVersions {
     project_bundle_build_id: readBuildIdFromCurrentPath(projectBundleCurrent),
     tools: getToolsVersion(),
   };
+}
+
+export function getInstalledRuntimeArtifacts(): InstalledRuntimeArtifactStatus[] {
+  const projectHostCurrent = projectHostCurrentPath();
+  const projectBundlesRoot =
+    process.env.COCALC_PROJECT_BUNDLES ?? DEFAULT_BUNDLE_ROOT;
+  const projectBundleCurrent = path.join(projectBundlesRoot, "current");
+  const toolsCurrent =
+    process.env.COCALC_PROJECT_TOOLS ?? DEFAULT_TOOLS_CURRENT;
+  return [
+    describeInstalledArtifact({
+      artifact: "project-host",
+      currentPath: projectHostCurrent,
+      roots: projectHostInventoryRoots(projectHostCurrent),
+    }),
+    describeInstalledArtifact({
+      artifact: "project-bundle",
+      currentPath: projectBundleCurrent,
+      roots: siblingInventoryRoots(projectBundleCurrent),
+    }),
+    describeInstalledArtifact({
+      artifact: "tools",
+      currentPath: toolsCurrent,
+      roots: siblingInventoryRoots(toolsCurrent),
+    }),
+  ];
 }
