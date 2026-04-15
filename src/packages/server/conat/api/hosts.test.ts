@@ -835,6 +835,140 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
   });
 });
 
+describe("hosts.setHostRuntimeDeployments automatic artifact reconcile", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.LOGS = os.tmpdir();
+    isAdminMock = jest.fn(async () => true);
+    isBannedMock = jest.fn(async () => false);
+    moveProjectToHostMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: {},
+    }));
+    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    syncProjectUsersOnHostMock = jest.fn(async () => undefined);
+    issueProjectHostAuthTokenJwtMock = jest.fn(() => ({
+      token: "test-token",
+      expires_at: 1234567890,
+    }));
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(
+      async () => undefined,
+    );
+    assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
+    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    hostConnectionGetMock = jest.fn();
+    projectHostAuthTokenIssueMock = jest.fn();
+    projectReferenceGetMock = jest.fn(async () => null);
+    listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => [
+      {
+        scope_type: "host",
+        scope_id: HOST_ID,
+        host_id: HOST_ID,
+        target_type: "artifact",
+        target: "project-bundle",
+        desired_version: "bundle-v5",
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+      },
+    ]);
+    setProjectHostRuntimeDeploymentsMock = jest.fn(async ({ deployments }) =>
+      deployments.map((deployment: any) => ({
+        scope_type: "host",
+        scope_id: HOST_ID,
+        host_id: HOST_ID,
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+        ...deployment,
+      })),
+    );
+    updateProjectUsersMock = jest.fn(async () => undefined);
+    routedHostControlClientMock = jest.fn(async () => ({
+      getManagedComponentStatus: async () => [],
+      getInstalledRuntimeArtifacts: async () => [
+        {
+          artifact: "project-host",
+          current_version: "ph-v2",
+          current_build_id: "build-ph-v2",
+          installed_versions: ["ph-v2"],
+        },
+        {
+          artifact: "project-bundle",
+          current_version: "bundle-v4",
+          current_build_id: "build-bundle-v4",
+          installed_versions: ["bundle-v4"],
+        },
+      ],
+      updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
+    }));
+    queryMock = jest.fn(async (sql: string, _params: any[]) => {
+      if (
+        sql.includes(
+          "SELECT id FROM project_hosts WHERE deleted IS NULL AND LOWER(COALESCE(status, '')) = ANY",
+        )
+      ) {
+        return { rows: [{ id: HOST_ID }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              metadata: {
+                owner: ACCOUNT_ID,
+                software: {
+                  project_host: "ph-v2",
+                  project_bundle: "bundle-v4",
+                  project_bundle_build_id: "build-bundle-v4",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+  });
+
+  it("queues automatic artifact upgrade for a running host after a host-scoped artifact deployment change", async () => {
+    const { setHostRuntimeDeployments } = await import("./hosts");
+    await setHostRuntimeDeployments({
+      account_id: ACCOUNT_ID,
+      scope_type: "host",
+      id: HOST_ID,
+      deployments: [
+        {
+          target_type: "artifact",
+          target: "project-bundle",
+          desired_version: "bundle-v5",
+        },
+      ],
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-upgrade-software",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        input: expect.objectContaining({
+          id: HOST_ID,
+          targets: [{ artifact: "project-bundle", version: "bundle-v5" }],
+        }),
+      }),
+    );
+  });
+});
+
 describe("hosts.upgradeHostSoftware", () => {
   beforeEach(() => {
     jest.resetModules();
