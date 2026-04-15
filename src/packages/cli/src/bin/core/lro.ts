@@ -9,6 +9,8 @@ export type LroStatus = {
   op_id: string;
   status: string;
   error?: string | null;
+  result?: any;
+  progress_summary?: any;
   timedOut?: boolean;
 };
 
@@ -38,7 +40,13 @@ export async function waitForLro({
     lastError = summary?.error;
 
     if (terminalStatuses.has(status)) {
-      return { op_id: opId, status, error: summary?.error ?? null };
+      return {
+        op_id: opId,
+        status,
+        error: summary?.error ?? null,
+        result: (summary as any)?.result,
+        progress_summary: (summary as any)?.progress_summary,
+      };
     }
 
     await new Promise((resolve) => setTimeout(resolve, pollMs));

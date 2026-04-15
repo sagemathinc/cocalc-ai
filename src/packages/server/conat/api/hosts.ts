@@ -20,6 +20,7 @@ import type {
   HostRuntimeArtifact,
   HostRuntimeDeploymentRecord,
   HostRuntimeDeploymentObservedTarget,
+  HostRuntimeDeploymentReconcileResult,
   HostRuntimeDeploymentObservedVersionState,
   HostRuntimeDeploymentScopeType,
   HostRuntimeDeploymentStatus,
@@ -172,6 +173,8 @@ const HOST_STOP_LRO_KIND = "host-stop";
 const HOST_RESTART_LRO_KIND = "host-restart";
 const HOST_DRAIN_LRO_KIND = "host-drain";
 const HOST_RECONCILE_LRO_KIND = "host-reconcile-software";
+const HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND =
+  "host-reconcile-runtime-deployments";
 const HOST_UPGRADE_LRO_KIND = "host-upgrade-software";
 const HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND =
   "host-rollout-managed-components";
@@ -5101,6 +5104,33 @@ export async function setHostRuntimeDeployments({
   });
 }
 
+export async function reconcileHostRuntimeDeployments({
+  account_id,
+  id,
+  components,
+  reason,
+}: {
+  account_id?: string;
+  id: string;
+  components?: ManagedComponentKind[];
+  reason?: string;
+}): Promise<HostLroResponse> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  return await createHostLro({
+    kind: HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND,
+    row,
+    account_id,
+    input: { id: row.id, account_id, components, reason },
+    dedupe_key: `${HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND}:${row.id}:${JSON.stringify(
+      {
+        components: normalizeManagedComponentKindsForDedupe(components ?? []),
+        reason: `${reason ?? ""}`.trim() || null,
+      },
+    )}`,
+  });
+}
+
 export async function getHostManagedComponentStatus({
   account_id,
   id,
@@ -5273,6 +5303,184 @@ function summarizeObservedRuntimeDeployments({
       managed: observed.managed,
     };
   });
+}
+
+function installedProjectHostArtifactVersion(row: any): string | undefined {
+  const version =
+    `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
+    undefined;
+  return version;
+}
+
+export async function reconcileHostRuntimeDeploymentsInternal({
+  account_id,
+  id,
+  components,
+  reason,
+}: {
+  account_id?: string;
+  id: string;
+  components?: ManagedComponentKind[];
+  reason?: string;
+}): Promise<HostRuntimeDeploymentReconcileResult> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  const status = await getHostRuntimeDeploymentStatus({ account_id, id });
+  const effectiveComponentTargets = new Map(
+    (status.effective ?? [])
+      .filter(
+        (deployment) =>
+          deployment.target_type === "component" &&
+          DEFAULT_RUNTIME_DEPLOYMENT_POLICY[
+            deployment.target as ManagedComponentKind
+          ] != null,
+      )
+      .map((deployment) => [
+        deployment.target as ManagedComponentKind,
+        deployment,
+      ]),
+  );
+  const observedComponents = new Map(
+    (status.observed_components ?? []).map((component) => [
+      component.component,
+      component,
+    ]),
+  );
+  const observedTargets = new Map(
+    (status.observed_targets ?? [])
+      .filter((target) => target.target_type === "component")
+      .map((target) => [target.target as ManagedComponentKind, target]),
+  );
+  const requestedComponents = (components ?? []).length
+    ? normalizeManagedComponentKindsForDedupe(components ?? [])
+    : [...effectiveComponentTargets.keys()].sort();
+  const currentArtifactVersion = installedProjectHostArtifactVersion(row);
+  const decisions: HostRuntimeDeploymentReconcileResult["decisions"] = [];
+  const reconciled_components: ManagedComponentKind[] = [];
+
+  for (const component of requestedComponents) {
+    const deployment = effectiveComponentTargets.get(component);
+    if (!deployment) {
+      decisions.push({
+        component,
+        decision: "skip",
+        reason: "no_desired_component_target",
+      });
+      continue;
+    }
+    const observed = observedComponents.get(component);
+    const observedTarget = observedTargets.get(component);
+    const artifact = `${observed?.artifact ?? "project-host"}`.trim();
+    if (!observed) {
+      decisions.push({
+        component,
+        decision: "skip",
+        reason: "unobserved_component",
+        artifact,
+        desired_version: deployment.desired_version,
+      });
+      continue;
+    }
+    if (!observed.managed) {
+      decisions.push({
+        component,
+        decision: "skip",
+        reason: "unmanaged_component",
+        artifact,
+        desired_version: deployment.desired_version,
+      });
+      continue;
+    }
+    if (!observed.enabled) {
+      decisions.push({
+        component,
+        decision: "skip",
+        reason: "disabled_component",
+        artifact,
+        desired_version: deployment.desired_version,
+      });
+      continue;
+    }
+    if (artifact !== "project-host") {
+      decisions.push({
+        component,
+        decision: "skip",
+        reason: "unsupported_artifact",
+        artifact,
+        desired_version: deployment.desired_version,
+      });
+      continue;
+    }
+    if (!currentArtifactVersion) {
+      decisions.push({
+        component,
+        decision: "skip",
+        reason: "missing_installed_artifact_version",
+        artifact,
+        desired_version: deployment.desired_version,
+      });
+      continue;
+    }
+    if (deployment.desired_version !== currentArtifactVersion) {
+      decisions.push({
+        component,
+        decision: "skip",
+        reason: "artifact_version_mismatch",
+        artifact,
+        desired_version: deployment.desired_version,
+        current_artifact_version: currentArtifactVersion,
+        observed_version_state: observedTarget?.observed_version_state,
+        running_versions: observed.running_versions,
+      });
+      continue;
+    }
+    if (observedTarget?.observed_version_state === "aligned") {
+      decisions.push({
+        component,
+        decision: "skip",
+        reason: "already_aligned",
+        artifact,
+        desired_version: deployment.desired_version,
+        current_artifact_version: currentArtifactVersion,
+        observed_version_state: observedTarget.observed_version_state,
+        running_versions: observed.running_versions,
+      });
+      continue;
+    }
+    decisions.push({
+      component,
+      decision: "rollout",
+      reason: `${observedTarget?.observed_version_state ?? "drifted"}`,
+      artifact,
+      desired_version: deployment.desired_version,
+      current_artifact_version: currentArtifactVersion,
+      observed_version_state: observedTarget?.observed_version_state,
+      running_versions: observed.running_versions,
+    });
+    reconciled_components.push(component);
+  }
+
+  const result: HostRuntimeDeploymentReconcileResult = {
+    host_id: row.id,
+    ...(components?.length
+      ? { requested_components: requestedComponents }
+      : {}),
+    reconciled_components,
+    decisions,
+  };
+  if (!reconciled_components.length) {
+    return result;
+  }
+  const rollout = await rolloutHostManagedComponentsInternal({
+    account_id,
+    id,
+    components: reconciled_components,
+    reason,
+  });
+  return {
+    ...result,
+    rollout_results: rollout.results ?? [],
+  };
 }
 
 function mapUpgradeArtifact(

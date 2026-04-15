@@ -9,6 +9,11 @@ type Capture = {
   upgrades: string[];
   reconciles: string[];
   rollouts: Array<{ id: string; components: string[]; reason?: string }>;
+  runtimeDeploymentReconciles: Array<{
+    id: string;
+    components?: string[];
+    reason?: string;
+  }>;
   runtimeDeploymentStatusRequests: string[];
   runtimeDeploymentSetRequests: Array<{
     scope_type: string;
@@ -64,6 +69,18 @@ function makeDeps(
             }) => {
               capture.rollouts.push({ id, components, reason });
               return { op_id: `rollout-${id}` };
+            },
+            reconcileHostRuntimeDeployments: async ({
+              id,
+              components,
+              reason,
+            }) => {
+              capture.runtimeDeploymentReconciles.push({
+                id,
+                components,
+                reason,
+              });
+              return { op_id: `deploy-reconcile-${id}` };
             },
             getHostRuntimeDeploymentStatus: async ({ id }) => {
               capture.runtimeDeploymentStatusRequests.push(id);
@@ -189,12 +206,34 @@ function makeDeps(
     parseHostSoftwareArtifactsOption: (value) =>
       value && value.length ? value : ["project-host", "project", "tools"],
     parseHostSoftwareChannelsOption: (value) => value ?? ["latest"],
-    waitForLro: async (_ctx, op_id) => ({
-      op_id,
-      status: "succeeded",
-      timedOut: false,
-      error: undefined,
-    }),
+    waitForLro: async (_ctx, op_id) => {
+      if (`${op_id}`.startsWith("deploy-reconcile-")) {
+        return {
+          op_id,
+          status: "succeeded",
+          timedOut: false,
+          error: undefined,
+          result: {
+            host_id: `${op_id}`.replace(/^deploy-reconcile-/, ""),
+            requested_components: ["acp-worker"],
+            reconciled_components: ["acp-worker"],
+            decisions: [
+              {
+                component: "acp-worker",
+                decision: "rollout",
+                reason: "drifted",
+              },
+            ],
+          },
+        };
+      }
+      return {
+        op_id,
+        status: "succeeded",
+        timedOut: false,
+        error: undefined,
+      };
+    },
     ensureSyncKeyPair: async () => undefined,
     resolveHostSshEndpoint: async () => undefined,
     expandUserPath: (value) => value,
@@ -215,6 +254,7 @@ test("host upgrade --all-online targets only online running hosts", async () => 
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
@@ -262,6 +302,7 @@ test("host upgrade --all-online --wait returns all successful hosts", async () =
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
@@ -304,6 +345,7 @@ test("host metrics returns current metrics and history", async () => {
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
@@ -346,6 +388,7 @@ test("host where returns the bay for the resolved host", async () => {
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
@@ -416,6 +459,7 @@ test("host bootstrap-status returns lifecycle drift data", async () => {
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
@@ -465,6 +509,7 @@ test("host reconcile queues and waits for completion", async () => {
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
@@ -491,6 +536,7 @@ test("host reconcile --all-online targets only online running hosts", async () =
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
@@ -538,6 +584,7 @@ test("host reconcile --all-online --wait returns all successful hosts", async ()
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
@@ -580,6 +627,7 @@ test("host rollout queues managed component rollout and waits for completion", a
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
@@ -617,6 +665,7 @@ test("host deploy status shows configured and effective desired state", async ()
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
@@ -651,6 +700,7 @@ test("host deploy status renders flattened human-readable sections", async () =>
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
@@ -686,6 +736,7 @@ test("host deploy status filters by component", async () => {
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
@@ -710,11 +761,52 @@ test("host deploy status filters by component", async () => {
   assert.deepEqual(capture.data.observed_targets, []);
 });
 
+test("host deploy reconcile queues desired-state component reconcile", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "deploy",
+    "reconcile",
+    "host-1",
+    "--component",
+    "acp-worker",
+    "--reason",
+    "apply-desired-state",
+    "--wait",
+  ]);
+
+  assert.deepEqual(capture.runtimeDeploymentReconciles, [
+    {
+      id: "host-1",
+      components: ["acp-worker"],
+      reason: "apply-desired-state",
+    },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.op_id, "deploy-reconcile-host-1");
+  assert.equal(capture.data.status, "succeeded");
+  assert.deepEqual(capture.data.requested_components, ["acp-worker"]);
+  assert.deepEqual(capture.data.reconciled_components, ["acp-worker"]);
+});
+
 test("host deploy set upserts host-scoped desired state", async () => {
   const capture: Capture = {
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentReconciles: [],
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };

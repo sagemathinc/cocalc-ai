@@ -1130,6 +1130,81 @@ Status shows two views:
     );
 
   deploy
+    .command("reconcile <host>")
+    .description(
+      "apply desired runtime component state when the required artifact is already installed on the host",
+    )
+    .option(
+      "--component <component>",
+      "limit reconcile to one or more components (repeatable or comma-separated)",
+      (value, prev: string[] = []) => [...prev, value],
+      [],
+    )
+    .option("--reason <reason>", "optional reconcile reason")
+    .option("--wait", "wait for completion")
+    .addHelpText(
+      "after",
+      `
+This command only rolls out components whose desired component version already
+matches the currently installed runtime artifact on the host. It does not stage
+or download artifacts.
+
+Use \`cocalc host upgrade\` or future deploy artifact staging first when the host
+does not yet have the required runtime artifact version installed.
+`,
+    )
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: { component?: string[]; reason?: string; wait?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "host deploy reconcile", async (ctx) => {
+          const host = await resolveHost(ctx, hostIdentifier);
+          const components = opts.component?.length
+            ? parseManagedComponentKindsOption(opts.component)
+            : undefined;
+          const op = await ctx.hub.hosts.reconcileHostRuntimeDeployments({
+            id: host.id,
+            components,
+            reason: `${opts.reason ?? ""}`.trim() || undefined,
+          });
+          if (!opts.wait) {
+            return {
+              host_id: host.id,
+              op_id: op.op_id,
+              status: "queued",
+              requested_components: components ?? [],
+            };
+          }
+          const summary = await waitForLro(ctx, op.op_id, {
+            timeoutMs: ctx.timeoutMs,
+            pollMs: ctx.pollMs,
+          });
+          if (summary.timedOut) {
+            throw new Error(
+              `${host.name ?? host.id}: timed out (op=${op.op_id}, last_status=${summary.status})`,
+            );
+          }
+          if (summary.status !== "succeeded") {
+            throw new Error(
+              `${host.name ?? host.id}: status=${summary.status} error=${summary.error ?? "unknown"}`,
+            );
+          }
+          return {
+            host_id: host.id,
+            op_id: op.op_id,
+            status: summary.status,
+            requested_components: components ?? [],
+            ...(summary.result && typeof summary.result === "object"
+              ? summary.result
+              : {}),
+          };
+        });
+      },
+    );
+
+  deploy
     .command("set")
     .description(
       "upsert desired runtime deployment state for one host or for the global default scope",

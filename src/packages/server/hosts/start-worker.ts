@@ -18,6 +18,7 @@ import {
   deleteHostInternal,
   drainHostInternal,
   forceDeprovisionHostInternal,
+  reconcileHostRuntimeDeploymentsInternal,
   reconcileHostSoftwareInternal,
   removeSelfHostConnectorInternal,
   restartHostInternal,
@@ -49,6 +50,7 @@ const HOST_OP_KINDS = [
   "host-restart",
   "host-drain",
   "host-reconcile-software",
+  "host-reconcile-runtime-deployments",
   "host-upgrade-software",
   "host-rollout-managed-components",
   "host-deprovision",
@@ -472,6 +474,8 @@ function opLabel(kind: HostOpKind, input: any): string {
       return input?.force ? "Force drain" : "Drain";
     case "host-reconcile-software":
       return "Reconcile";
+    case "host-reconcile-runtime-deployments":
+      return "Reconcile runtime deployments";
     case "host-upgrade-software":
       return "Upgrade";
     case "host-rollout-managed-components":
@@ -529,6 +533,12 @@ function waitConfig(kind: HostOpKind) {
         desired: ["running"],
         failOn: ["error", "off", "deprovisioned"],
         message: "waiting for host to reconnect",
+      };
+    case "host-reconcile-runtime-deployments":
+      return {
+        desired: ["running"],
+        failOn: ["error", "off", "deprovisioned"],
+        message: "waiting for host to remain running",
       };
     case "host-deprovision":
       return {
@@ -915,6 +925,39 @@ async function handleOp(op: LroSummary): Promise<void> {
       }
       await progressStep("done", "reconcile complete", {
         host_id,
+      });
+      return;
+    }
+
+    if (kind === "host-reconcile-runtime-deployments") {
+      await progressStep("waiting", "reconciling runtime deployments", {
+        host_id,
+        components: input?.components ?? [],
+      });
+      const response = await reconcileHostRuntimeDeploymentsInternal({
+        account_id,
+        id: host_id,
+        components: input?.components ?? [],
+        reason: input?.reason,
+      });
+      const updated = await updateLro({
+        op_id,
+        status: "succeeded",
+        progress_summary: {
+          phase: "done",
+          host_id,
+          reconciled_components: response.reconciled_components,
+        },
+        result: response,
+        error: null,
+      });
+      if (updated) {
+        await publishSummary(updated);
+      }
+      await progressStep("done", "runtime deployment reconcile complete", {
+        host_id,
+        reconciled_components: response.reconciled_components,
+        decisions: response.decisions,
       });
       return;
     }

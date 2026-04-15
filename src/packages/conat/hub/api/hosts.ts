@@ -35,6 +35,7 @@ export const HOST_LRO_KINDS = [
   "host-restart",
   "host-drain",
   "host-reconcile-software",
+  "host-reconcile-runtime-deployments",
   "host-upgrade-software",
   "host-rollout-managed-components",
   "host-deprovision",
@@ -548,6 +549,25 @@ export interface HostRuntimeDeploymentObservedTarget {
   managed?: boolean;
 }
 
+export interface HostRuntimeDeploymentReconcileDecision {
+  component: ManagedComponentKind;
+  decision: "rollout" | "skip";
+  reason: string;
+  artifact?: string;
+  desired_version?: string;
+  current_artifact_version?: string;
+  observed_version_state?: HostRuntimeDeploymentObservedVersionState;
+  running_versions?: string[];
+}
+
+export interface HostRuntimeDeploymentReconcileResult {
+  host_id: string;
+  requested_components?: ManagedComponentKind[];
+  reconciled_components: ManagedComponentKind[];
+  decisions: HostRuntimeDeploymentReconcileDecision[];
+  rollout_results?: any[];
+}
+
 export interface HostRuntimeDeploymentUpsert {
   target_type: HostRuntimeDeploymentTargetType;
   target: HostRuntimeDeploymentTarget;
@@ -621,6 +641,7 @@ export const hosts = {
   listHostRuntimeDeployments: authFirstRequireAccount,
   getHostRuntimeDeploymentStatus: authFirstRequireAccount,
   setHostRuntimeDeployments: authFirstRequireAccount,
+  reconcileHostRuntimeDeployments: authFirstRequireAccount,
   getHostManagedComponentStatus: authFirstRequireAccount,
   rolloutHostManagedComponents: authFirstRequireAccount,
   upgradeHostConnector: authFirstRequireAccount,
@@ -750,6 +771,12 @@ export interface Hosts {
     deployments: HostRuntimeDeploymentUpsert[];
     replace?: boolean;
   }) => Promise<HostRuntimeDeploymentRecord[]>;
+  reconcileHostRuntimeDeployments: (opts: {
+    account_id?: string;
+    id: string;
+    components?: ManagedComponentKind[];
+    reason?: string;
+  }) => Promise<HostLroResponse>;
 
   // host calls getBackupConfig function to get backup configuration
   getBackupConfig: (opts: {
