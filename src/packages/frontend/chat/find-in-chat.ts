@@ -2,7 +2,6 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ChatActions } from "./actions";
 import { dateValue, field } from "./access";
 import { newest_content } from "./utils";
-import { COMBINED_FEED_KEY } from "./threads";
 
 const ALL_MESSAGES_KEY = "__all_messages__";
 
@@ -131,11 +130,7 @@ export async function findInChatAndOpenFirstResult({
   }
 
   const threadId = `${best.threadId ?? ""}`.trim();
-  if (
-    threadId &&
-    threadId !== COMBINED_FEED_KEY &&
-    threadId !== ALL_MESSAGES_KEY
-  ) {
+  if (threadId && threadId !== ALL_MESSAGES_KEY) {
     actions.clearAllFilters?.();
     actions.setSelectedThread?.(threadId);
   }

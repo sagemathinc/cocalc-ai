@@ -176,14 +176,6 @@ jest.mock("../external-side-chat-selection", () => ({
   persistExternalSideChatSelectedThreadKey: jest.fn(),
 }));
 
-jest.mock("../combined-composer-target", () => {
-  const actual = jest.requireActual("../combined-composer-target");
-  return {
-    ...actual,
-    resolveCombinedComposerTargetKey: () => null,
-  };
-});
-
 describe("ChatPanel loop submit behavior", () => {
   beforeEach(() => {
     setInput.mockClear();

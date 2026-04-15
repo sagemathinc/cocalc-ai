@@ -274,11 +274,8 @@ function ComposerHarness(): React.JSX.Element {
           submitMentionsRef={{ current: undefined }}
           hasInput={hasInput}
           isSelectedThreadAI={false}
-          combinedFeedSelected={false}
-          composerTargetKey={null}
           threads={[]}
           selectedThread={null}
-          onComposerTargetChange={() => undefined}
           onComposerFocusChange={() => undefined}
         />
       </div>

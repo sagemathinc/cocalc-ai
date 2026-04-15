@@ -225,7 +225,6 @@ interface ChatRoomSidebarContentProps {
   setSidebarVisible: (value: boolean) => void;
   threadSections: ThreadSectionWithUnread[];
   archivedThreads: ThreadMeta[];
-  combinedThread?: ThreadMeta;
   openAppearanceModal: (
     threadKey: string,
     plainLabel: string,
@@ -253,7 +252,6 @@ export function ChatRoomSidebarContent({
   setSidebarVisible,
   threadSections,
   archivedThreads,
-  combinedThread,
   openAppearanceModal,
   openBehaviorModal,
   openGitBrowser,
@@ -431,7 +429,7 @@ export function ChatRoomSidebarContent({
     const themeLineColor = threadColor ?? threadAccentColor;
     const isHovered = hoveredThread === key;
     const isMenuOpen = openThreadMenuKey === key;
-    const allowMenu = key !== combinedThread?.key;
+    const allowMenu = true;
     const showMenu =
       allowMenu && (isHovered || selectedThreadKey === key || isMenuOpen);
     const codexConfig = actions?.getCodexConfig?.(key);
@@ -671,26 +669,6 @@ export function ChatRoomSidebarContent({
           </>
         )}
       </div>
-      {combinedThread ? (
-        <div style={{ marginBottom: "18px" }}>
-          <Menu
-            mode="inline"
-            selectedKeys={selectedThreadKey ? [selectedThreadKey] : []}
-            onClick={({ key: menuKey }) => {
-              setAllowAutoSelectThread(true);
-              setSelectedThreadKey(String(menuKey));
-              if (isCompact) {
-                setSidebarVisible(false);
-              }
-            }}
-            items={[renderThreadRow(combinedThread)]}
-            style={{
-              border: "none",
-              background: "transparent",
-            }}
-          />
-        </div>
-      ) : null}
       {threadSections.length === 0 ? (
         <div style={{ color: "#999", fontSize: "12px", padding: "0 20px" }}>
           No chats yet.

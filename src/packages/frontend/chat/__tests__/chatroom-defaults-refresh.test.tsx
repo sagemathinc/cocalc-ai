@@ -143,15 +143,6 @@ jest.mock("../external-side-chat-selection", () => ({
   persistExternalSideChatSelectedThreadKey: jest.fn(),
 }));
 
-jest.mock("../combined-composer-target", () => {
-  const actual = jest.requireActual("../combined-composer-target");
-  return {
-    ...actual,
-    resolveCombinedComposerTargetKey: () => null,
-    combinedComposerTargetStorageKey: () => "combined-target:test",
-  };
-});
-
 describe("ChatPanel new thread defaults", () => {
   beforeEach(() => {
     renderChatRoomThreadPanel.mockClear();

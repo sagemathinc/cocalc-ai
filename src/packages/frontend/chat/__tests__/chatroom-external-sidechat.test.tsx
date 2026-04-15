@@ -133,15 +133,6 @@ jest.mock("../external-side-chat-selection", () => ({
     persistExternalSideChatSelectedThreadKey(...args),
 }));
 
-jest.mock("../combined-composer-target", () => {
-  const actual = jest.requireActual("../combined-composer-target");
-  return {
-    ...actual,
-    resolveCombinedComposerTargetKey: () => null,
-    combinedComposerTargetStorageKey: () => "combined-target:test",
-  };
-});
-
 describe("ChatPanel external side chat persistence", () => {
   beforeEach(() => {
     persistExternalSideChatSelectedThreadKey.mockClear();
