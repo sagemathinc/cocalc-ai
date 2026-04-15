@@ -1502,6 +1502,7 @@ export function ChatPanel({
     () => threads.filter((thread) => (thread.unreadCount ?? 0) > 0),
     [threads],
   );
+  const selectedThreadReadSignatureRef = useRef<string | null>(null);
   const combinedReadSignature = useMemo(
     () =>
       combinedUnreadThreads
@@ -1518,6 +1519,29 @@ export function ChatPanel({
       combinedReadSignatureRef.current = null;
     }
   }, [isCombinedFeedSelected]);
+
+  useEffect(() => {
+    if (!singleThreadView || !selectedThreadKey || !actions?.markThreadRead) {
+      selectedThreadReadSignatureRef.current = null;
+      return;
+    }
+    const thread = threads.find((item) => item.key === selectedThreadKey);
+    if (!thread) {
+      selectedThreadReadSignatureRef.current = null;
+      return;
+    }
+    const unreadCount = Math.max(thread.unreadCount ?? 0, 0);
+    const messageCount = Math.max(thread.messageCount ?? 0, 0);
+    const signature = `${thread.key}:${messageCount}:${unreadCount}`;
+    if (selectedThreadReadSignatureRef.current === signature) {
+      return;
+    }
+    selectedThreadReadSignatureRef.current = signature;
+    if (unreadCount <= 0) {
+      return;
+    }
+    actions.markThreadRead(thread.key, messageCount);
+  }, [singleThreadView, selectedThreadKey, threads, actions]);
 
   const mark_as_read = useCallback(() => {
     markChatAsReadIfUnseen(project_id, path);
