@@ -797,7 +797,10 @@ export function registerHostCommand(
       "artifact(s): project-host, project, tools (default: all)",
     )
     .option("--channel <channel>", "channel: latest or staging", "latest")
-    .option("--version <version>", "explicit version (overrides channel)")
+    .option(
+      "--artifact-version <version>",
+      "explicit artifact version (overrides channel)",
+    )
     .option(
       "--hub-source",
       "use this CoCalc site's /software endpoint as base URL",
@@ -811,7 +814,7 @@ export function registerHostCommand(
         opts: {
           artifact?: string[];
           channel?: string;
-          version?: string;
+          artifactVersion?: string;
           hubSource?: boolean;
           baseUrl?: string;
           allOnline?: boolean;
@@ -833,7 +836,7 @@ export function registerHostCommand(
           if (channelRaw !== "latest" && channelRaw !== "staging") {
             throw new Error("--channel must be one of: latest, staging");
           }
-          const version = `${opts.version ?? ""}`.trim() || undefined;
+          const version = `${opts.artifactVersion ?? ""}`.trim() || undefined;
           if (opts.baseUrl && opts.hubSource) {
             throw new Error("use either --base-url or --hub-source, not both");
           }
@@ -1377,7 +1380,7 @@ version when available, or \`--to-version\` to force a specific published versio
     .description(
       "upsert desired runtime deployment state for one host or for the global default scope",
     )
-    .requiredOption("--version <version>", "desired version")
+    .requiredOption("--desired-version <version>", "desired version")
     .option("--host <host>", "target one host by name or host_id")
     .option("--global", "target the global default scope (admin only)")
     .option(
@@ -1405,9 +1408,12 @@ This command records desired state. It does not itself publish software or
 restart anything. Existing \`host upgrade\` and \`host rollout\` remain the
 low-level imperative path while the desired-state flow is being built out.
 
+Use \`--desired-version\`, not \`--version\`. The CLI reserves \`--version\`
+globally for printing the CLI version.
+
 Examples:
-  cocalc host deploy set --host my-project-host --component acp-worker --version 20260415T061257Z-c97e9c71486d
-  cocalc host deploy set --global --artifact project-bundle --version 20260415T061257Z-c97e9c71486d
+  cocalc host deploy set --host my-project-host --component acp-worker --desired-version 20260415T061257Z-c97e9c71486d
+  cocalc host deploy set --global --artifact project-bundle --desired-version 20260415T061257Z-c97e9c71486d
 `,
     )
     .action(
@@ -1417,7 +1423,7 @@ Examples:
           global?: boolean;
           component?: string;
           artifact?: string;
-          version?: string;
+          desiredVersion?: string;
           policy?: string;
           drainDeadlineSeconds?: string;
           reason?: string;
@@ -1448,7 +1454,7 @@ Examples:
             deployments: [
               {
                 ...target,
-                desired_version: `${opts.version ?? ""}`.trim(),
+                desired_version: `${opts.desiredVersion ?? ""}`.trim(),
                 rollout_policy: policy,
                 drain_deadline_seconds,
                 rollout_reason: `${opts.reason ?? ""}`.trim() || undefined,

@@ -7,6 +7,11 @@ import { registerHostCommand, type HostCommandDeps } from "./host";
 type Capture = {
   data?: any;
   upgrades: string[];
+  upgradeRequests?: Array<{
+    id: string;
+    targets: any[];
+    base_url?: string;
+  }>;
   reconciles: string[];
   rollouts: Array<{ id: string; components: string[]; reason?: string }>;
   runtimeDeploymentReconciles: Array<{
@@ -54,6 +59,7 @@ function makeDeps(
   },
 ): HostCommandDeps {
   capture.runtimeDeploymentRollbacks ??= [];
+  capture.upgradeRequests ??= [];
   return {
     withContext: async (_command, _label, fn) => {
       const ctx = {
@@ -63,8 +69,13 @@ function makeDeps(
         globals: ctxGlobals,
         hub: {
           hosts: {
-            upgradeHostSoftware: async ({ id }) => {
+            upgradeHostSoftware: async ({ id, targets, base_url }) => {
               capture.upgrades.push(id);
+              capture.upgradeRequests!.push({
+                id,
+                targets,
+                base_url,
+              });
               return { op_id: `op-${id}` };
             },
             reconcileHostSoftware: async ({ id }) => {
@@ -395,6 +406,41 @@ test("host upgrade --all-online targets only online running hosts", async () => 
   assert.deepEqual(capture.upgrades, ["online-1"]);
   assert.equal(capture.data.status, "queued");
   assert.equal(capture.data.host_id, "online-1");
+});
+
+test("host upgrade accepts --artifact-version for explicit version pinning", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "upgrade",
+    "host-1",
+    "--artifact",
+    "project-host",
+    "--artifact-version",
+    "bundle-v2",
+  ]);
+
+  assert.deepEqual(capture.upgradeRequests, [
+    {
+      id: "host-1",
+      targets: [{ artifact: "project-host", version: "bundle-v2" }],
+      base_url: undefined,
+    },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.status, "queued");
 });
 
 test("host upgrade --all-online --wait returns all successful hosts", async () => {
@@ -992,7 +1038,7 @@ test("host deploy set upserts host-scoped desired state", async () => {
     "host-1",
     "--component",
     "acp-worker",
-    "--version",
+    "--desired-version",
     "bundle-v2",
     "--policy",
     "drain_then_replace",
