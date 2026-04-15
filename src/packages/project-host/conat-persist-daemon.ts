@@ -7,6 +7,7 @@ import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { startStandaloneProjectHostConatPersist } from "./conat-persist";
+import { startEventLoopStallMonitor } from "./event-loop-stalls";
 
 const logger = getLogger("project-host:conat-persist-daemon");
 
@@ -17,6 +18,10 @@ export interface ProjectHostConatPersistDaemonContext {
 }
 
 export async function main(): Promise<ProjectHostConatPersistDaemonContext> {
+  const stopEventLoopStallMonitor = startEventLoopStallMonitor({
+    loggerName: "project-host:conat-persist-daemon:event-loop-stalls",
+    label: "project-host conat persist daemon",
+  });
   const systemAccountPassword = getOrCreateProjectHostConatPassword();
   setConatPassword(systemAccountPassword);
   const { host, port, id, client, httpServer, persistServer } =
@@ -36,6 +41,7 @@ export async function main(): Promise<ProjectHostConatPersistDaemonContext> {
     try {
       await persistServer.end();
     } finally {
+      stopEventLoopStallMonitor();
       try {
         client.close();
       } catch {
