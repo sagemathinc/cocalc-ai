@@ -368,6 +368,28 @@ function isExpectedWorkerProcess(
   return path.resolve(entryPoint) === launch.resolvedEntryPoint;
 }
 
+export function partitionExpectedProjectHostAcpWorkers({
+  workers,
+  launch,
+}: {
+  workers: WorkerProcessInfo[];
+  launch: WorkerLaunch;
+}): {
+  expectedWorkers: WorkerProcessInfo[];
+  ignoredWorkers: WorkerProcessInfo[];
+} {
+  const expectedWorkers: WorkerProcessInfo[] = [];
+  const ignoredWorkers: WorkerProcessInfo[] = [];
+  for (const worker of workers) {
+    if (isExpectedWorkerProcess(worker, launch)) {
+      expectedWorkers.push(worker);
+    } else {
+      ignoredWorkers.push(worker);
+    }
+  }
+  return { expectedWorkers, ignoredWorkers };
+}
+
 async function terminateWorkerPid(pid: number): Promise<void> {
   if (!isPidAlive(pid)) return;
   try {
@@ -391,7 +413,24 @@ async function terminateWorkerPid(pid: number): Promise<void> {
 
 async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
   const launch = workerLaunchSignature();
-  const observedWorkers = listProjectHostAcpWorkers();
+  const { expectedWorkers: observedWorkers, ignoredWorkers } =
+    partitionExpectedProjectHostAcpWorkers({
+      workers: listProjectHostAcpWorkers(),
+      launch,
+    });
+  if (ignoredWorkers.length > 0) {
+    logger.debug(
+      "ignoring ACP-tagged processes that do not match the worker entrypoint",
+      {
+        count: ignoredWorkers.length,
+        workers: ignoredWorkers.map((worker) => ({
+          pid: worker.pid,
+          worker_id: workerIdOf(worker) || null,
+          cmdline: worker.cmdline,
+        })),
+      },
+    );
+  }
   if (observedWorkers.length > 1) {
     logger.warn("multiple project-host ACP workers observed", {
       count: observedWorkers.length,
@@ -564,7 +603,24 @@ export async function rolloutProjectHostAcpWorker({
   restartReason?: string;
 } = {}): Promise<ProjectHostAcpWorkerRolloutOutcome> {
   const launch = workerLaunchSignature();
-  const workers = listProjectHostAcpWorkers();
+  const { expectedWorkers: workers, ignoredWorkers } =
+    partitionExpectedProjectHostAcpWorkers({
+      workers: listProjectHostAcpWorkers(),
+      launch,
+    });
+  if (ignoredWorkers.length > 0) {
+    logger.debug(
+      "ignoring ACP-tagged processes during rollout because they do not match the worker entrypoint",
+      {
+        count: ignoredWorkers.length,
+        workers: ignoredWorkers.map((worker) => ({
+          pid: worker.pid,
+          worker_id: workerIdOf(worker) || null,
+          cmdline: worker.cmdline,
+        })),
+      },
+    );
+  }
   if (!workers.length) {
     const spawned = await ensureProjectHostAcpWorkerRunning({ restartReason });
     return spawned

@@ -1,4 +1,7 @@
-import { planProjectHostAcpWorkerRollout } from "./hub/acp/worker-manager";
+import {
+  partitionExpectedProjectHostAcpWorkers,
+  planProjectHostAcpWorkerRollout,
+} from "./hub/acp/worker-manager";
 
 describe("planProjectHostAcpWorkerRollout", () => {
   const launch = {
@@ -146,6 +149,42 @@ describe("planProjectHostAcpWorkerRollout", () => {
       drainingPids: [],
       terminatePids: [301],
       spawnNewActive: true,
+    });
+  });
+
+  it("ignores ACP-tagged descendant processes that do not match the worker entrypoint", () => {
+    const workers = [
+      {
+        pid: 501,
+        env: {
+          COCALC_PROJECT_HOST_ACP_WORKER: "1",
+          COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY: "rolling-v1",
+          COCALC_ACP_INSTANCE_ID: "worker-current",
+        },
+        cmdline: [
+          "/usr/bin/node",
+          "/opt/cocalc/project-host/bundles/current/main/index.js",
+        ],
+      },
+      {
+        pid: 777,
+        env: {
+          COCALC_PROJECT_HOST_ACP_WORKER: "1",
+          COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY: "rolling-v1",
+          COCALC_ACP_INSTANCE_ID: "worker-current",
+        },
+        cmdline: ["/usr/bin/git", "status"],
+      },
+    ];
+
+    expect(
+      partitionExpectedProjectHostAcpWorkers({
+        workers: workers as any,
+        launch: launch as any,
+      }),
+    ).toEqual({
+      expectedWorkers: [workers[0]],
+      ignoredWorkers: [workers[1]],
     });
   });
 });
