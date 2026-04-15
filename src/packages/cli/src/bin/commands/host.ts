@@ -737,6 +737,9 @@ project-host bundle, project bundle, or tools version. Rollout then applies
 component-specific lifecycle actions against whatever bundle/config is already
 current on that host.
 
+The \`<host>\` argument accepts either the operator-assigned host name or the
+\`host_id\`.
+
 Component behavior:
 - \`project-host\`: schedule a restart of the current project-host daemon.
 - \`conat-router\`: restart the managed local router from the current project-host bundle.
@@ -744,8 +747,9 @@ Component behavior:
 - \`acp-worker\`: request drain of the active ACP worker and ensure a replacement is running from the current project-host bundle. If no worker is running, spawn one. If the worker is not rolling-capable, terminate it and replace it.
 
 Example:
-  cocalc host upgrade alpha.cocalc.ai --artifact project-host --hub-source --wait
-  cocalc host rollout alpha.cocalc.ai --component acp-worker --wait
+  cocalc host upgrade my-project-host --artifact project-host --hub-source --wait
+  cocalc host rollout my-project-host --component acp-worker --wait
+  cocalc host rollout 8daeccaf-67dd-4f75-a1b1-61063710dcc9 --component acp-worker --wait
 `,
     )
     .action(
