@@ -859,6 +859,8 @@ Example:
 Status shows two views:
 - \`configured\`: host-specific overrides recorded for this host
 - \`effective\`: the merged desired state after applying global defaults and host overrides
+- \`observed_components\`: live component status reported by the host when it is online
+- \`observed_targets\`: desired-vs-observed comparison for each effective runtime target
 `,
     )
     .action(async (hostIdentifier: string, command: Command) => {
@@ -872,6 +874,9 @@ Status shows two views:
           name: host.name ?? undefined,
           configured: status.configured,
           effective: status.effective,
+          observed_components: status.observed_components,
+          observed_targets: status.observed_targets,
+          observation_error: status.observation_error,
         };
       });
     });

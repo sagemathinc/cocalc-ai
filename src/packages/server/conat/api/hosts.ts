@@ -19,6 +19,8 @@ import type {
   HostSoftwareUpgradeResponse,
   HostRuntimeArtifact,
   HostRuntimeDeploymentRecord,
+  HostRuntimeDeploymentObservedTarget,
+  HostRuntimeDeploymentObservedVersionState,
   HostRuntimeDeploymentScopeType,
   HostRuntimeDeploymentStatus,
   HostRuntimeDeploymentUpsert,
@@ -5041,10 +5043,28 @@ export async function getHostRuntimeDeploymentStatus({
     }),
     loadEffectiveProjectHostRuntimeDeployments({ host_id: row.id }),
   ]);
+  let observed_components: HostManagedComponentStatus[] | undefined;
+  let observation_error: string | undefined;
+  if (HOST_RUNNING_STATUSES.has(`${row?.status ?? ""}`.toLowerCase())) {
+    try {
+      const client = await hostControlClient(id, 15_000);
+      observed_components = await client.getManagedComponentStatus();
+    } catch (err) {
+      observation_error = `${(err as Error)?.message ?? err}`;
+    }
+  } else {
+    observation_error = "host is not currently running";
+  }
   return {
     host_id: row.id,
     configured,
     effective,
+    observed_components,
+    observed_targets: summarizeObservedRuntimeDeployments({
+      effective,
+      observed_components,
+    }),
+    observation_error,
   };
 }
 
@@ -5186,6 +5206,73 @@ function assertHostRunningForUpgrade(row: any) {
   if (status !== "active" && status !== "running") {
     throw new Error("host must be running to upgrade software");
   }
+}
+
+function deploymentObservedVersionState({
+  desired_version,
+  running_versions,
+}: {
+  desired_version: string;
+  running_versions: string[];
+}): HostRuntimeDeploymentObservedVersionState {
+  if (!desired_version || running_versions.length === 0) {
+    return "unknown";
+  }
+  if (running_versions.length > 1) {
+    return "mixed";
+  }
+  return running_versions[0] === desired_version ? "aligned" : "drifted";
+}
+
+function summarizeObservedRuntimeDeployments({
+  effective,
+  observed_components,
+}: {
+  effective: HostRuntimeDeploymentRecord[];
+  observed_components?: HostManagedComponentStatus[];
+}): HostRuntimeDeploymentObservedTarget[] {
+  const components = new Map(
+    (observed_components ?? []).map((component) => [
+      component.component,
+      component,
+    ]),
+  );
+  return effective.map((deployment) => {
+    if (deployment.target_type !== "component") {
+      return {
+        target_type: deployment.target_type,
+        target: deployment.target,
+        desired_version: deployment.desired_version,
+        rollout_policy: deployment.rollout_policy,
+        observed_version_state: "unsupported",
+      };
+    }
+    const observed = components.get(deployment.target as ManagedComponentKind);
+    if (!observed) {
+      return {
+        target_type: deployment.target_type,
+        target: deployment.target,
+        desired_version: deployment.desired_version,
+        rollout_policy: deployment.rollout_policy,
+        observed_version_state: "unobserved",
+      };
+    }
+    return {
+      target_type: deployment.target_type,
+      target: deployment.target,
+      desired_version: deployment.desired_version,
+      rollout_policy: deployment.rollout_policy,
+      observed_runtime_state: observed.runtime_state,
+      observed_version_state: deploymentObservedVersionState({
+        desired_version: deployment.desired_version,
+        running_versions: observed.running_versions,
+      }),
+      running_versions: observed.running_versions,
+      running_pids: observed.running_pids,
+      enabled: observed.enabled,
+      managed: observed.managed,
+    };
+  });
 }
 
 function mapUpgradeArtifact(

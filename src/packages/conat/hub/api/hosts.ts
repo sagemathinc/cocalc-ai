@@ -2,7 +2,9 @@ import { authFirstRequireAccount, authFirstRequireHost } from "./util";
 import type {
   HostManagedComponentStatus,
   ManagedComponentKind,
+  ManagedComponentRuntimeState,
   ManagedComponentUpgradePolicy,
+  ManagedComponentVersionState,
 } from "@cocalc/conat/project-host/api";
 import {
   type ProjectCopyRow,
@@ -523,6 +525,27 @@ export interface HostRuntimeDeploymentStatus {
   host_id: string;
   configured: HostRuntimeDeploymentRecord[];
   effective: HostRuntimeDeploymentRecord[];
+  observed_components?: HostManagedComponentStatus[];
+  observed_targets?: HostRuntimeDeploymentObservedTarget[];
+  observation_error?: string;
+}
+
+export type HostRuntimeDeploymentObservedVersionState =
+  | ManagedComponentVersionState
+  | "unobserved"
+  | "unsupported";
+
+export interface HostRuntimeDeploymentObservedTarget {
+  target_type: HostRuntimeDeploymentTargetType;
+  target: HostRuntimeDeploymentTarget;
+  desired_version: string;
+  rollout_policy?: HostRuntimeDeploymentPolicy;
+  observed_runtime_state?: ManagedComponentRuntimeState;
+  observed_version_state: HostRuntimeDeploymentObservedVersionState;
+  running_versions?: string[];
+  running_pids?: number[];
+  enabled?: boolean;
+  managed?: boolean;
 }
 
 export interface HostRuntimeDeploymentUpsert {

@@ -79,6 +79,34 @@ function makeDeps(
                     updated_at: "2026-04-15T00:00:00.000Z",
                   },
                 ],
+                observed_components: [
+                  {
+                    component: "acp-worker",
+                    artifact: "project-host",
+                    upgrade_policy: "drain_then_replace",
+                    enabled: true,
+                    managed: true,
+                    desired_version: "bundle-v1",
+                    runtime_state: "running",
+                    version_state: "aligned",
+                    running_versions: ["bundle-v1"],
+                    running_pids: [1234],
+                  },
+                ],
+                observed_targets: [
+                  {
+                    target_type: "component",
+                    target: "acp-worker",
+                    desired_version: "bundle-v1",
+                    rollout_policy: "drain_then_replace",
+                    observed_runtime_state: "running",
+                    observed_version_state: "aligned",
+                    running_versions: ["bundle-v1"],
+                    running_pids: [1234],
+                    enabled: true,
+                    managed: true,
+                  },
+                ],
               };
             },
             setHostRuntimeDeployments: async ({
@@ -592,6 +620,12 @@ test("host deploy status shows configured and effective desired state", async ()
   assert.equal(capture.data.configured.length, 1);
   assert.equal(capture.data.effective.length, 1);
   assert.equal(capture.data.effective[0].target, "acp-worker");
+  assert.equal(capture.data.observed_components.length, 1);
+  assert.equal(capture.data.observed_targets.length, 1);
+  assert.equal(
+    capture.data.observed_targets[0].observed_version_state,
+    "aligned",
+  );
 });
 
 test("host deploy set upserts host-scoped desired state", async () => {
