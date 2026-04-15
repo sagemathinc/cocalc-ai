@@ -610,6 +610,7 @@ export async function upgradeSoftware(
 ): Promise<UpgradeSoftwareResponse> {
   try {
     const targets = orderTargets(opts.targets ?? []);
+    const restartProjectHost = opts.restart_project_host !== false;
     if (!targets.length) {
       throw new Error("upgrade requires at least one target");
     }
@@ -633,7 +634,7 @@ export async function upgradeSoftware(
         restartHost = true;
       }
     }
-    if (restartHost) {
+    if (restartHost && restartProjectHost) {
       await scheduleProjectHostRestart();
     }
     return { results };

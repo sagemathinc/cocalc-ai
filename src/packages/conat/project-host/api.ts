@@ -322,6 +322,7 @@ export interface SoftwareUpgradeTarget {
 export interface UpgradeSoftwareRequest {
   targets: SoftwareUpgradeTarget[];
   base_url?: string;
+  restart_project_host?: boolean;
 }
 
 export interface UpgradeSoftwareResult {
