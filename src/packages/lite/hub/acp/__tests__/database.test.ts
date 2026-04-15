@@ -2,7 +2,11 @@ import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { closeDatabase, initDatabase } from "../../sqlite/database";
-import { closeAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
+import {
+  closeAcpDatabase,
+  getAcpDatabaseFilename,
+  initAcpDatabase,
+} from "../../sqlite/acp-database";
 import { getAcpWorker } from "../../sqlite/acp-workers";
 
 describe("lite sqlite database pragmas", () => {
@@ -30,16 +34,45 @@ describe("lite sqlite database pragmas", () => {
 
 describe("ACP sqlite database", () => {
   let tempDir: string;
+  let previousDataDir: string | undefined;
+  let previousLegacyDataDir: string | undefined;
+  let previousLiteSqliteFilename: string | undefined;
+  let previousLiteAcpSqliteFilename: string | undefined;
 
   beforeEach(async () => {
     closeDatabase();
     closeAcpDatabase();
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "lite-acp-sqlite-"));
+    previousDataDir = process.env.COCALC_DATA_DIR;
+    previousLegacyDataDir = process.env.DATA;
+    previousLiteSqliteFilename = process.env.COCALC_LITE_SQLITE_FILENAME;
+    previousLiteAcpSqliteFilename = process.env.COCALC_LITE_ACP_SQLITE_FILENAME;
   });
 
   afterEach(async () => {
     closeAcpDatabase();
     closeDatabase();
+    if (previousDataDir === undefined) {
+      delete process.env.COCALC_DATA_DIR;
+    } else {
+      process.env.COCALC_DATA_DIR = previousDataDir;
+    }
+    if (previousLegacyDataDir === undefined) {
+      delete process.env.DATA;
+    } else {
+      process.env.DATA = previousLegacyDataDir;
+    }
+    if (previousLiteSqliteFilename === undefined) {
+      delete process.env.COCALC_LITE_SQLITE_FILENAME;
+    } else {
+      process.env.COCALC_LITE_SQLITE_FILENAME = previousLiteSqliteFilename;
+    }
+    if (previousLiteAcpSqliteFilename === undefined) {
+      delete process.env.COCALC_LITE_ACP_SQLITE_FILENAME;
+    } else {
+      process.env.COCALC_LITE_ACP_SQLITE_FILENAME =
+        previousLiteAcpSqliteFilename;
+    }
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
@@ -50,6 +83,17 @@ describe("ACP sqlite database", () => {
     expect(db.prepare("PRAGMA journal_mode").get().journal_mode).toBe("wal");
     expect(db.prepare("PRAGMA synchronous").get().synchronous).toBe(1);
     expect(db.prepare("PRAGMA busy_timeout").get().timeout).toBe(5000);
+  });
+
+  it("defaults ACP sqlite to the lite data dir when no explicit ACP path is configured", () => {
+    delete process.env.COCALC_LITE_SQLITE_FILENAME;
+    delete process.env.COCALC_LITE_ACP_SQLITE_FILENAME;
+    process.env.COCALC_DATA_DIR = tempDir;
+    process.env.DATA = tempDir;
+
+    initAcpDatabase();
+
+    expect(getAcpDatabaseFilename()).toBe(path.join(tempDir, "acp.sqlite"));
   });
 
   it("migrates ACP tables from the legacy shared sqlite file on first use", () => {

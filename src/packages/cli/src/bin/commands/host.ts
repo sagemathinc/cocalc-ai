@@ -140,6 +140,50 @@ function parseManagedComponentKindsOption(values?: string[]) {
   return [...new Set(normalized)];
 }
 
+function parseRuntimeDeploymentPolicy(value?: string) {
+  const policy = `${value ?? ""}`.trim();
+  if (!policy) return undefined;
+  if (policy === "restart_now" || policy === "drain_then_replace") {
+    return policy;
+  }
+  throw new Error(
+    "invalid --policy; expected restart_now or drain_then_replace",
+  );
+}
+
+function parseRuntimeDeploymentTarget(opts: {
+  component?: string;
+  artifact?: string;
+}) {
+  const component = `${opts.component ?? ""}`.trim();
+  const artifact = `${opts.artifact ?? ""}`.trim();
+  if (!!component === !!artifact) {
+    throw new Error("specify exactly one of --component or --artifact");
+  }
+  if (component) {
+    const [parsed] = parseManagedComponentKindsOption([component]);
+    return {
+      target_type: "component" as const,
+      target: parsed,
+    };
+  }
+  const allowed = new Set([
+    "project-host",
+    "project-bundle",
+    "tools",
+    "bootstrap-environment",
+  ]);
+  if (!allowed.has(artifact)) {
+    throw new Error(
+      "invalid --artifact; expected project-host, project-bundle, tools, or bootstrap-environment",
+    );
+  }
+  return {
+    target_type: "artifact" as const,
+    target: artifact,
+  };
+}
+
 export function registerHostCommand(
   program: Command,
   deps: HostCommandDeps,
@@ -797,6 +841,130 @@ Example:
             op_id: op.op_id,
             status: summary.status,
             components,
+          };
+        });
+      },
+    );
+
+  const deploy = host
+    .command("deploy")
+    .description("inspect or set desired runtime deployment state");
+
+  deploy
+    .command("status <host>")
+    .description("show desired runtime deployment state for one host")
+    .addHelpText(
+      "after",
+      `
+Status shows two views:
+- \`configured\`: host-specific overrides recorded for this host
+- \`effective\`: the merged desired state after applying global defaults and host overrides
+`,
+    )
+    .action(async (hostIdentifier: string, command: Command) => {
+      await withContext(command, "host deploy status", async (ctx) => {
+        const host = await resolveHost(ctx, hostIdentifier);
+        const status = await ctx.hub.hosts.getHostRuntimeDeploymentStatus({
+          id: host.id,
+        });
+        return {
+          host_id: host.id,
+          name: host.name ?? undefined,
+          configured: status.configured,
+          effective: status.effective,
+        };
+      });
+    });
+
+  deploy
+    .command("set")
+    .description(
+      "upsert desired runtime deployment state for one host or for the global default scope",
+    )
+    .requiredOption("--version <version>", "desired version")
+    .option("--host <host>", "target one host by name or host_id")
+    .option("--global", "target the global default scope (admin only)")
+    .option(
+      "--component <component>",
+      "component: project-host, conat-router, conat-persist, acp-worker",
+    )
+    .option(
+      "--artifact <artifact>",
+      "artifact: project-host, project-bundle, tools, bootstrap-environment",
+    )
+    .option("--policy <policy>", "restart_now or drain_then_replace")
+    .option(
+      "--drain-deadline-seconds <seconds>",
+      "optional drain deadline in seconds",
+    )
+    .option("--reason <reason>", "optional rollout reason")
+    .option(
+      "--replace",
+      "replace the entire selected scope instead of upserting",
+    )
+    .addHelpText(
+      "after",
+      `
+This command records desired state. It does not itself publish software or
+restart anything. Existing \`host upgrade\` and \`host rollout\` remain the
+low-level imperative path while the desired-state flow is being built out.
+
+Examples:
+  cocalc host deploy set --host my-project-host --component acp-worker --version 20260415T061257Z-c97e9c71486d
+  cocalc host deploy set --global --artifact project-bundle --version 20260415T061257Z-c97e9c71486d
+`,
+    )
+    .action(
+      async (
+        opts: {
+          host?: string;
+          global?: boolean;
+          component?: string;
+          artifact?: string;
+          version?: string;
+          policy?: string;
+          drainDeadlineSeconds?: string;
+          reason?: string;
+          replace?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "host deploy set", async (ctx) => {
+          const scope_type = opts.global ? "global" : "host";
+          if (!!opts.global === !!opts.host) {
+            throw new Error("specify exactly one of --host or --global");
+          }
+          const target = parseRuntimeDeploymentTarget(opts);
+          const policy = parseRuntimeDeploymentPolicy(opts.policy);
+          const drain_deadline_seconds =
+            opts.drainDeadlineSeconds == null
+              ? undefined
+              : parseOptionalPositiveInteger(
+                  opts.drainDeadlineSeconds,
+                  "--drain-deadline-seconds",
+                );
+          const resolvedHost = opts.host
+            ? await resolveHost(ctx, opts.host)
+            : undefined;
+          const deployments = await ctx.hub.hosts.setHostRuntimeDeployments({
+            scope_type,
+            id: resolvedHost?.id,
+            deployments: [
+              {
+                ...target,
+                desired_version: `${opts.version ?? ""}`.trim(),
+                rollout_policy: policy,
+                drain_deadline_seconds,
+                rollout_reason: `${opts.reason ?? ""}`.trim() || undefined,
+              },
+            ],
+            replace: !!opts.replace,
+          });
+          return {
+            scope_type,
+            host_id: resolvedHost?.id,
+            host_name: resolvedHost?.name,
+            deployments,
           };
         });
       },

@@ -17,6 +17,11 @@ import type {
   HostSoftwareChannel,
   HostSoftwareUpgradeTarget,
   HostSoftwareUpgradeResponse,
+  HostRuntimeArtifact,
+  HostRuntimeDeploymentRecord,
+  HostRuntimeDeploymentScopeType,
+  HostRuntimeDeploymentStatus,
+  HostRuntimeDeploymentUpsert,
   HostLroResponse,
   HostLroKind,
   HostProjectRow,
@@ -113,6 +118,11 @@ import {
   loadProjectHostMetricsHistory,
 } from "@cocalc/database/postgres/project-host-metrics";
 import {
+  listProjectHostRuntimeDeployments,
+  loadEffectiveProjectHostRuntimeDeployments,
+  setProjectHostRuntimeDeployments,
+} from "@cocalc/database/postgres/project-host-runtime-deployments";
+import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
@@ -168,6 +178,116 @@ const HOST_DELETE_LRO_KIND = "host-delete";
 const HOST_FORCE_DEPROVISION_LRO_KIND = "host-force-deprovision";
 const HOST_REMOVE_CONNECTOR_LRO_KIND = "host-remove-connector";
 const logger = getLogger("server:conat:api:hosts");
+
+const DEFAULT_RUNTIME_DEPLOYMENT_POLICY: Record<
+  ManagedComponentKind,
+  HostRuntimeDeploymentRecord["rollout_policy"]
+> = {
+  "project-host": "restart_now",
+  "conat-router": "restart_now",
+  "conat-persist": "restart_now",
+  "acp-worker": "drain_then_replace",
+};
+
+function normalizeRuntimeArtifactTarget(
+  artifact?: HostSoftwareArtifact | HostRuntimeArtifact,
+): HostRuntimeArtifact | undefined {
+  if (artifact === "project" || artifact === "project-bundle") {
+    return "project-bundle";
+  }
+  if (
+    artifact === "project-host" ||
+    artifact === "tools" ||
+    artifact === "bootstrap-environment"
+  ) {
+    return artifact;
+  }
+  return;
+}
+
+function normalizeRuntimeDeploymentUpsert(
+  deployment: HostRuntimeDeploymentUpsert,
+): HostRuntimeDeploymentUpsert | undefined {
+  const desired_version = `${deployment?.desired_version ?? ""}`.trim();
+  if (!desired_version) return;
+  if (deployment?.target_type === "component") {
+    const target = deployment.target as ManagedComponentKind;
+    if (!(target in DEFAULT_RUNTIME_DEPLOYMENT_POLICY)) return;
+    return {
+      ...deployment,
+      target_type: "component",
+      target,
+      desired_version,
+      rollout_policy:
+        deployment.rollout_policy ?? DEFAULT_RUNTIME_DEPLOYMENT_POLICY[target],
+      rollout_reason: `${deployment?.rollout_reason ?? ""}`.trim() || undefined,
+      drain_deadline_seconds:
+        deployment.drain_deadline_seconds == null
+          ? undefined
+          : Math.max(0, Math.floor(Number(deployment.drain_deadline_seconds))),
+      metadata:
+        deployment.metadata && typeof deployment.metadata === "object"
+          ? deployment.metadata
+          : undefined,
+    };
+  }
+  if (deployment?.target_type === "artifact") {
+    const target = normalizeRuntimeArtifactTarget(
+      deployment.target as HostRuntimeArtifact,
+    );
+    if (!target) return;
+    return {
+      ...deployment,
+      target_type: "artifact",
+      target,
+      desired_version,
+      rollout_policy: deployment.rollout_policy,
+      rollout_reason: `${deployment?.rollout_reason ?? ""}`.trim() || undefined,
+      drain_deadline_seconds:
+        deployment.drain_deadline_seconds == null
+          ? undefined
+          : Math.max(0, Math.floor(Number(deployment.drain_deadline_seconds))),
+      metadata:
+        deployment.metadata && typeof deployment.metadata === "object"
+          ? deployment.metadata
+          : undefined,
+    };
+  }
+  return;
+}
+
+function normalizeRuntimeDeploymentUpserts(
+  deployments: HostRuntimeDeploymentUpsert[],
+): HostRuntimeDeploymentUpsert[] {
+  const deduped = new Map<string, HostRuntimeDeploymentUpsert>();
+  for (const deployment of deployments ?? []) {
+    const normalized = normalizeRuntimeDeploymentUpsert(deployment);
+    if (!normalized) continue;
+    deduped.set(`${normalized.target_type}:${normalized.target}`, normalized);
+  }
+  return [...deduped.values()];
+}
+
+async function assertRuntimeDeploymentGlobalAccess(account_id?: string) {
+  const owner = requireAccount(account_id);
+  if (!(await isAdmin(owner))) {
+    throw new Error("not authorized");
+  }
+  return owner;
+}
+
+function requestedByForRuntimeDeployments({
+  account_id,
+  row,
+}: {
+  account_id?: string;
+  row?: any;
+}): string {
+  return (
+    `${account_id ?? row?.metadata?.owner ?? row?.metadata?.owner_account_id ?? "system"}`.trim() ||
+    "system"
+  );
+}
 
 function normalizeHostPricingModel(
   value: unknown,
@@ -4886,6 +5006,81 @@ export async function reconcileHostSoftware({
   });
 }
 
+export async function listHostRuntimeDeployments({
+  account_id,
+  scope_type,
+  id,
+}: {
+  account_id?: string;
+  scope_type: HostRuntimeDeploymentScopeType;
+  id?: string;
+}): Promise<HostRuntimeDeploymentRecord[]> {
+  if (scope_type === "global") {
+    await assertRuntimeDeploymentGlobalAccess(account_id);
+    return await listProjectHostRuntimeDeployments({ scope_type: "global" });
+  }
+  const row = await loadHostForRootfsManagement(id ?? "", account_id);
+  return await listProjectHostRuntimeDeployments({
+    scope_type: "host",
+    host_id: row.id,
+  });
+}
+
+export async function getHostRuntimeDeploymentStatus({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<HostRuntimeDeploymentStatus> {
+  const row = await loadHostForListing(id, account_id);
+  const [configured, effective] = await Promise.all([
+    listProjectHostRuntimeDeployments({
+      scope_type: "host",
+      host_id: row.id,
+    }),
+    loadEffectiveProjectHostRuntimeDeployments({ host_id: row.id }),
+  ]);
+  return {
+    host_id: row.id,
+    configured,
+    effective,
+  };
+}
+
+export async function setHostRuntimeDeployments({
+  account_id,
+  scope_type,
+  id,
+  deployments,
+  replace,
+}: {
+  account_id?: string;
+  scope_type: HostRuntimeDeploymentScopeType;
+  id?: string;
+  deployments: HostRuntimeDeploymentUpsert[];
+  replace?: boolean;
+}): Promise<HostRuntimeDeploymentRecord[]> {
+  const normalized = normalizeRuntimeDeploymentUpserts(deployments);
+  if (scope_type === "global") {
+    const requested_by = await assertRuntimeDeploymentGlobalAccess(account_id);
+    return await setProjectHostRuntimeDeployments({
+      scope_type: "global",
+      deployments: normalized,
+      requested_by,
+      replace,
+    });
+  }
+  const row = await loadHostForRootfsManagement(id ?? "", account_id);
+  return await setProjectHostRuntimeDeployments({
+    scope_type: "host",
+    host_id: row.id,
+    deployments: normalized,
+    requested_by: requestedByForRuntimeDeployments({ account_id, row }),
+    replace,
+  });
+}
+
 export async function getHostManagedComponentStatus({
   account_id,
   id,
@@ -5116,14 +5311,49 @@ export function rolloutComponentsForUpgradeResults(
 ): ManagedComponentKind[] {
   const components = new Set<ManagedComponentKind>();
   for (const result of results ?? []) {
-    if (
-      result.artifact === "project-host" &&
-      result.status === "updated"
-    ) {
+    if (result.artifact === "project-host" && result.status === "updated") {
       components.add("project-host");
     }
   }
   return [...components];
+}
+
+function runtimeDeploymentsForUpgradeResults(
+  results: HostSoftwareUpgradeResponse["results"],
+): HostRuntimeDeploymentUpsert[] {
+  const deployments: HostRuntimeDeploymentUpsert[] = [];
+  for (const result of results ?? []) {
+    const target = normalizeRuntimeArtifactTarget(result.artifact);
+    if (!target || !`${result.version ?? ""}`.trim()) continue;
+    deployments.push({
+      target_type: "artifact",
+      target,
+      desired_version: result.version,
+    });
+  }
+  return normalizeRuntimeDeploymentUpserts(deployments);
+}
+
+function runtimeDeploymentsForComponentRollout({
+  components,
+  desired_version,
+  reason,
+}: {
+  components: ManagedComponentKind[];
+  desired_version?: string;
+  reason?: string;
+}): HostRuntimeDeploymentUpsert[] {
+  const version = `${desired_version ?? ""}`.trim();
+  if (!version) return [];
+  return normalizeRuntimeDeploymentUpserts(
+    (components ?? []).map((component) => ({
+      target_type: "component",
+      target: component,
+      desired_version: version,
+      rollout_policy: DEFAULT_RUNTIME_DEPLOYMENT_POLICY[component],
+      rollout_reason: reason,
+    })),
+  );
 }
 
 function hostManagedComponentRolloutDedupeKey({
@@ -5587,6 +5817,16 @@ export async function upgradeHostSoftwareInternal({
       [row.id, nextMetadata, nextVersion],
     );
   }
+  const runtimeDeployments = runtimeDeploymentsForUpgradeResults(results);
+  if (runtimeDeployments.length) {
+    await setProjectHostRuntimeDeployments({
+      scope_type: "host",
+      host_id: row.id,
+      requested_by: requestedByForRuntimeDeployments({ account_id, row }),
+      deployments: runtimeDeployments,
+      replace: false,
+    });
+  }
   return response;
 }
 
@@ -5615,6 +5855,23 @@ export async function rolloutHostManagedComponentsInternal({
       : 0;
     const since = Math.max(baselineSeen, rolloutStartedAt);
     await waitForHostHeartbeatAfter({ host_id: id, since });
+  }
+  const desiredVersion =
+    `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
+    undefined;
+  const runtimeDeployments = runtimeDeploymentsForComponentRollout({
+    components,
+    desired_version: desiredVersion,
+    reason,
+  });
+  if (runtimeDeployments.length) {
+    await setProjectHostRuntimeDeployments({
+      scope_type: "host",
+      host_id: row.id,
+      requested_by: requestedByForRuntimeDeployments({ account_id, row }),
+      deployments: runtimeDeployments,
+      replace: false,
+    });
   }
   return response;
 }

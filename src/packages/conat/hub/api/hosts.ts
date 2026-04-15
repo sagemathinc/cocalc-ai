@@ -2,6 +2,7 @@ import { authFirstRequireAccount, authFirstRequireHost } from "./util";
 import type {
   HostManagedComponentStatus,
   ManagedComponentKind,
+  ManagedComponentUpgradePolicy,
 } from "@cocalc/conat/project-host/api";
 import {
   type ProjectCopyRow,
@@ -487,6 +488,53 @@ export interface HostSoftwareUpgradeResponse {
   }>;
 }
 
+export const HOST_RUNTIME_ARTIFACTS = [
+  "project-host",
+  "project-bundle",
+  "tools",
+  "bootstrap-environment",
+] as const;
+
+export type HostRuntimeArtifact = (typeof HOST_RUNTIME_ARTIFACTS)[number];
+export type HostRuntimeDeploymentScopeType = "global" | "host";
+export type HostRuntimeDeploymentTargetType = "component" | "artifact";
+export type HostRuntimeDeploymentTarget =
+  | ManagedComponentKind
+  | HostRuntimeArtifact;
+export type HostRuntimeDeploymentPolicy = ManagedComponentUpgradePolicy;
+
+export interface HostRuntimeDeploymentRecord {
+  scope_type: HostRuntimeDeploymentScopeType;
+  scope_id: string;
+  host_id?: string;
+  target_type: HostRuntimeDeploymentTargetType;
+  target: HostRuntimeDeploymentTarget;
+  desired_version: string;
+  rollout_policy?: HostRuntimeDeploymentPolicy;
+  drain_deadline_seconds?: number;
+  rollout_reason?: string;
+  requested_by: string;
+  requested_at: string;
+  updated_at: string;
+  metadata?: Record<string, any>;
+}
+
+export interface HostRuntimeDeploymentStatus {
+  host_id: string;
+  configured: HostRuntimeDeploymentRecord[];
+  effective: HostRuntimeDeploymentRecord[];
+}
+
+export interface HostRuntimeDeploymentUpsert {
+  target_type: HostRuntimeDeploymentTargetType;
+  target: HostRuntimeDeploymentTarget;
+  desired_version: string;
+  rollout_policy?: HostRuntimeDeploymentPolicy;
+  drain_deadline_seconds?: number;
+  rollout_reason?: string;
+  metadata?: Record<string, any>;
+}
+
 export interface HostManagedComponentRolloutRequest {
   id: string;
   components: ManagedComponentKind[];
@@ -547,6 +595,9 @@ export const hosts = {
   deleteHost: authFirstRequireAccount,
   upgradeHostSoftware: authFirstRequireAccount,
   reconcileHostSoftware: authFirstRequireAccount,
+  listHostRuntimeDeployments: authFirstRequireAccount,
+  getHostRuntimeDeploymentStatus: authFirstRequireAccount,
+  setHostRuntimeDeployments: authFirstRequireAccount,
   getHostManagedComponentStatus: authFirstRequireAccount,
   rolloutHostManagedComponents: authFirstRequireAccount,
   upgradeHostConnector: authFirstRequireAccount,
@@ -660,6 +711,22 @@ export interface Hosts {
     arch?: "amd64" | "arm64";
     history_limit?: number;
   }) => Promise<HostSoftwareAvailableVersion[]>;
+  listHostRuntimeDeployments: (opts: {
+    account_id?: string;
+    scope_type: HostRuntimeDeploymentScopeType;
+    id?: string;
+  }) => Promise<HostRuntimeDeploymentRecord[]>;
+  getHostRuntimeDeploymentStatus: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<HostRuntimeDeploymentStatus>;
+  setHostRuntimeDeployments: (opts: {
+    account_id?: string;
+    scope_type: HostRuntimeDeploymentScopeType;
+    id?: string;
+    deployments: HostRuntimeDeploymentUpsert[];
+    replace?: boolean;
+  }) => Promise<HostRuntimeDeploymentRecord[]>;
 
   // host calls getBackupConfig function to get backup configuration
   getBackupConfig: (opts: {

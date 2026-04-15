@@ -1,6 +1,7 @@
 import { mkdirSync, existsSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { data } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
 
 type Statement = {
@@ -21,13 +22,6 @@ export interface AcpDatabaseOptions {
 }
 
 const logger = getLogger("lite:hub:sqlite:acp-database");
-const DEFAULT_SHARED_FILENAME = path.join(
-  process.cwd(),
-  "data",
-  "lite",
-  "hub",
-  "sqlite.db",
-);
 const LEGACY_ATTACH_ALIAS = "legacy_acp";
 const MIGRATION_META_TABLE = "acp_migration_meta";
 
@@ -46,10 +40,21 @@ function normalizeFilename(value?: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function defaultSharedFilename(): string {
+  const dataDir =
+    normalizeFilename(process.env.COCALC_DATA_DIR) ??
+    normalizeFilename(process.env.DATA) ??
+    normalizeFilename(data);
+  if (dataDir) {
+    return path.join(dataDir, "hub.db");
+  }
+  return path.join(process.cwd(), "data", "lite", "hub", "sqlite.db");
+}
+
 function resolveSharedFilename(): string {
   return (
     normalizeFilename(process.env.COCALC_LITE_SQLITE_FILENAME) ??
-    DEFAULT_SHARED_FILENAME
+    defaultSharedFilename()
   );
 }
 

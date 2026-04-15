@@ -9,6 +9,13 @@ type Capture = {
   upgrades: string[];
   reconciles: string[];
   rollouts: Array<{ id: string; components: string[]; reason?: string }>;
+  runtimeDeploymentStatusRequests: string[];
+  runtimeDeploymentSetRequests: Array<{
+    scope_type: string;
+    id?: string;
+    deployments: any[];
+    replace?: boolean;
+  }>;
 };
 
 function makeDeps(
@@ -39,6 +46,62 @@ function makeDeps(
             }) => {
               capture.rollouts.push({ id, components, reason });
               return { op_id: `rollout-${id}` };
+            },
+            getHostRuntimeDeploymentStatus: async ({ id }) => {
+              capture.runtimeDeploymentStatusRequests.push(id);
+              return {
+                host_id: id,
+                configured: [
+                  {
+                    scope_type: "host",
+                    scope_id: id,
+                    host_id: id,
+                    target_type: "component",
+                    target: "acp-worker",
+                    desired_version: "bundle-v1",
+                    rollout_policy: "drain_then_replace",
+                    requested_by: "acct-1",
+                    requested_at: "2026-04-15T00:00:00.000Z",
+                    updated_at: "2026-04-15T00:00:00.000Z",
+                  },
+                ],
+                effective: [
+                  {
+                    scope_type: "host",
+                    scope_id: id,
+                    host_id: id,
+                    target_type: "component",
+                    target: "acp-worker",
+                    desired_version: "bundle-v1",
+                    rollout_policy: "drain_then_replace",
+                    requested_by: "acct-1",
+                    requested_at: "2026-04-15T00:00:00.000Z",
+                    updated_at: "2026-04-15T00:00:00.000Z",
+                  },
+                ],
+              };
+            },
+            setHostRuntimeDeployments: async ({
+              scope_type,
+              id,
+              deployments,
+              replace,
+            }) => {
+              capture.runtimeDeploymentSetRequests.push({
+                scope_type,
+                id,
+                deployments,
+                replace,
+              });
+              return deployments.map((deployment) => ({
+                scope_type,
+                scope_id: scope_type === "global" ? "global" : id,
+                host_id: id,
+                requested_by: "acct-1",
+                requested_at: "2026-04-15T00:00:00.000Z",
+                updated_at: "2026-04-15T00:00:00.000Z",
+                ...deployment,
+              }));
             },
             getHostMetricsHistory: async (opts) => ({
               window_minutes: opts?.window_minutes ?? 60,
@@ -90,7 +153,8 @@ function makeDeps(
     resolveHostSshEndpoint: async () => undefined,
     expandUserPath: (value) => value,
     parseHostMachineJson: (value) => value,
-    parseOptionalPositiveInteger: (value) => value,
+    parseOptionalPositiveInteger: (value) =>
+      value == null ? undefined : Number(value),
     inferRegionFromZone: () => undefined,
     HOST_CREATE_DISK_TYPES: [],
     HOST_CREATE_STORAGE_MODES: [],
@@ -105,6 +169,8 @@ test("host upgrade --all-online targets only online running hosts", async () => 
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
   };
   const deps = makeDeps(capture, {
     listHosts: async () => [
@@ -150,6 +216,8 @@ test("host upgrade --all-online --wait returns all successful hosts", async () =
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
   };
   const deps = makeDeps(capture, {
     listHosts: async () => [
@@ -190,6 +258,8 @@ test("host metrics returns current metrics and history", async () => {
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
   };
   const deps = makeDeps(capture, {
     resolveHost: async () => ({
@@ -230,6 +300,8 @@ test("host where returns the bay for the resolved host", async () => {
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
   };
   const deps = makeDeps(capture, {
     resolveHost: async () => ({
@@ -298,6 +370,8 @@ test("host bootstrap-status returns lifecycle drift data", async () => {
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
   };
   const deps = makeDeps(capture, {
     resolveHost: async () => ({
@@ -345,6 +419,8 @@ test("host reconcile queues and waits for completion", async () => {
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
   };
   const program = new Command();
   registerHostCommand(program, makeDeps(capture));
@@ -369,6 +445,8 @@ test("host reconcile --all-online targets only online running hosts", async () =
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
   };
   const deps = makeDeps(capture, {
     listHosts: async () => [
@@ -414,6 +492,8 @@ test("host reconcile --all-online --wait returns all successful hosts", async ()
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
   };
   const deps = makeDeps(capture, {
     listHosts: async () => [
@@ -454,6 +534,8 @@ test("host rollout queues managed component rollout and waits for completion", a
     upgrades: [],
     reconciles: [],
     rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
   };
   const program = new Command();
   registerHostCommand(program, makeDeps(capture));
@@ -482,4 +564,85 @@ test("host rollout queues managed component rollout and waits for completion", a
   assert.equal(capture.data.op_id, "rollout-host-1");
   assert.equal(capture.data.status, "succeeded");
   assert.deepEqual(capture.data.components, ["acp-worker", "project-host"]);
+});
+
+test("host deploy status shows configured and effective desired state", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "deploy",
+    "status",
+    "host-1",
+  ]);
+
+  assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.name, "host-host-1");
+  assert.equal(capture.data.configured.length, 1);
+  assert.equal(capture.data.effective.length, 1);
+  assert.equal(capture.data.effective[0].target, "acp-worker");
+});
+
+test("host deploy set upserts host-scoped desired state", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "deploy",
+    "set",
+    "--host",
+    "host-1",
+    "--component",
+    "acp-worker",
+    "--version",
+    "bundle-v2",
+    "--policy",
+    "drain_then_replace",
+    "--drain-deadline-seconds",
+    "3600",
+    "--reason",
+    "canary",
+  ]);
+
+  assert.deepEqual(capture.runtimeDeploymentSetRequests, [
+    {
+      scope_type: "host",
+      id: "host-1",
+      replace: false,
+      deployments: [
+        {
+          target_type: "component",
+          target: "acp-worker",
+          desired_version: "bundle-v2",
+          rollout_policy: "drain_then_replace",
+          drain_deadline_seconds: 3600,
+          rollout_reason: "canary",
+        },
+      ],
+    },
+  ]);
+  assert.equal(capture.data.scope_type, "host");
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.deployments[0].desired_version, "bundle-v2");
 });
