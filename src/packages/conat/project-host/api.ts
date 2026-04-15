@@ -124,6 +124,28 @@ export interface HostManagedComponentStatus {
   running_pids: number[];
 }
 
+export type HostManagedComponentRolloutAction =
+  | "restart_scheduled"
+  | "restarted"
+  | "drain_requested"
+  | "spawned"
+  | "noop";
+
+export interface HostManagedComponentRolloutRequest {
+  components: ManagedComponentKind[];
+  reason?: string;
+}
+
+export interface HostManagedComponentRolloutResult {
+  component: ManagedComponentKind;
+  action: HostManagedComponentRolloutAction;
+  message?: string;
+}
+
+export interface HostManagedComponentRolloutResponse {
+  results: HostManagedComponentRolloutResult[];
+}
+
 export interface HostStaticAppPathInspection {
   project_id: string;
   app_id: string;
@@ -195,6 +217,9 @@ export interface HostControlApi {
   }) => Promise<HostSshAuthorizedKeysResponse & { removed: boolean }>;
   getBackupExecutionStatus: () => Promise<HostBackupExecutionStatus>;
   getManagedComponentStatus: () => Promise<HostManagedComponentStatus[]>;
+  rolloutManagedComponents: (
+    opts: HostManagedComponentRolloutRequest,
+  ) => Promise<HostManagedComponentRolloutResponse>;
   inspectStaticAppPath: (opts: {
     project_id: string;
     url: string;

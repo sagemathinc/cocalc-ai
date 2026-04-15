@@ -47,6 +47,7 @@ import { inspectStaticAppRequest } from "./static-apps";
 import { startHostMetricsCollector } from "./host-metrics";
 import { applyPendingCopies } from "./pending-copies";
 import { getManagedComponentStatus } from "./managed-components";
+import { rolloutManagedComponents } from "./managed-component-rollout";
 
 const logger = getLogger("project-host:master");
 
@@ -753,6 +754,9 @@ export async function startMasterRegistration({
       },
       async getManagedComponentStatus() {
         return getManagedComponentStatus();
+      },
+      async rolloutManagedComponents(opts) {
+        return await rolloutManagedComponents(opts);
       },
       async inspectStaticAppPath({ project_id, url }) {
         const match = await matchAppRequest({ project_id, url });

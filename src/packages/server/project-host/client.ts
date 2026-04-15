@@ -24,10 +24,7 @@ export async function getRoutedHostControlClient({
   account_id?: string;
 }): Promise<HostControlApi> {
   const hostOwnership = await resolveHostBayAcrossCluster(host_id);
-  if (
-    hostOwnership != null &&
-    hostOwnership.bay_id !== getConfiguredBayId()
-  ) {
+  if (hostOwnership != null && hostOwnership.bay_id !== getConfiguredBayId()) {
     const bridge = getInterBayBridge().hostControl(hostOwnership.bay_id, {
       timeout_ms: timeout,
     });
@@ -57,8 +54,11 @@ export async function getRoutedHostControlClient({
         await bridge.deleteProjectData({ host_id, del }),
       upgradeSoftware: async (upgrade) =>
         await bridge.upgradeSoftware({ host_id, upgrade }),
+      rolloutManagedComponents: async (rollout) =>
+        await bridge.rolloutManagedComponents({ host_id, rollout }),
       growBtrfs: async (grow) => await bridge.growBtrfs({ host_id, grow }),
-      getRuntimeLog: async (get) => await bridge.getRuntimeLog({ host_id, get }),
+      getRuntimeLog: async (get) =>
+        await bridge.getRuntimeLog({ host_id, get }),
       getProjectRuntimeLog: async (get) =>
         await bridge.getProjectRuntimeLog({ host_id, get }),
       listRootfsImages: async () => await bridge.listRootfsImages({ host_id }),
@@ -74,6 +74,8 @@ export async function getRoutedHostControlClient({
         await bridge.removeHostSshAuthorizedKey({ host_id, remove }),
       getBackupExecutionStatus: async () =>
         await bridge.getBackupExecutionStatus({ host_id }),
+      getManagedComponentStatus: async () =>
+        await bridge.getManagedComponentStatus({ host_id }),
       inspectStaticAppPath: async (inspect) =>
         await bridge.inspectStaticAppPath({ host_id, inspect }),
       buildRootfsImageManifest: async (build) =>

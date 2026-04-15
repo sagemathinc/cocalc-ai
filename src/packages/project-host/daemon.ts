@@ -1248,6 +1248,64 @@ function stopManagedConatPersist({
   );
 }
 
+export function restartManagedLocalConatRouter(index = 0): void {
+  const {
+    env,
+    dataDir,
+    managedRouter,
+    routerHost,
+    routerLogPath,
+    routerPidPath,
+    routerPort,
+  } = resolveEnv(index);
+  if (!managedRouter) {
+    throw new Error(
+      "project-host conat router is not using managed local mode",
+    );
+  }
+  stopManagedConatRouter({
+    dataDir,
+    routerPidPath,
+    routerPort,
+  });
+  startManagedConatRouter({
+    env,
+    routerPidPath,
+    routerLogPath,
+    routerHost,
+    routerPort,
+  });
+}
+
+export function restartManagedLocalConatPersist(index = 0): void {
+  const {
+    env,
+    dataDir,
+    managedPersist,
+    persistHealthHost,
+    persistHealthPort,
+    persistLogPath,
+    persistPidPath,
+  } = resolveEnv(index);
+  if (!managedPersist) {
+    throw new Error(
+      "project-host conat persist is not using managed local mode",
+    );
+  }
+  stopManagedConatPersist({
+    dataDir,
+    persistPidPath,
+    persistHealthPort,
+  });
+  startManagedConatPersist({
+    env,
+    persistPidPath,
+    persistLogPath,
+    persistHealthHost,
+    persistHealthPort,
+  });
+}
+
 export function startDaemon(index = 0): void {
   const {
     env,

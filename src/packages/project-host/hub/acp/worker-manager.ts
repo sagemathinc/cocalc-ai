@@ -59,6 +59,13 @@ export type ProjectHostAcpWorkerRolloutPlan = {
   spawnNewActive: boolean;
 };
 
+export type ProjectHostAcpWorkerRolloutOutcome = {
+  action: "spawned" | "drain_requested" | "noop";
+  pid?: number;
+  worker_id?: string;
+  message?: string;
+};
+
 function workerRollingCapable(worker: WorkerProcessInfo): boolean {
   return (
     `${worker.env.COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY ?? ""}`.trim() ===
@@ -549,6 +556,95 @@ export async function ensureProjectHostAcpWorkerRunning({
       ensureWorkerPromise = undefined;
     }
   }
+}
+
+export async function rolloutProjectHostAcpWorker({
+  restartReason = "managed_component_rollout",
+}: {
+  restartReason?: string;
+} = {}): Promise<ProjectHostAcpWorkerRolloutOutcome> {
+  const launch = workerLaunchSignature();
+  const workers = listProjectHostAcpWorkers();
+  if (!workers.length) {
+    const spawned = await ensureProjectHostAcpWorkerRunning({ restartReason });
+    return spawned
+      ? {
+          action: "spawned",
+          message: "spawned ACP worker because none were running",
+        }
+      : {
+          action: "noop",
+          message: "ACP worker spawn was skipped",
+        };
+  }
+  const workerStatuses = await Promise.all(
+    workers.map(async (worker) => ({
+      worker,
+      status: await getWorkerStatus(worker),
+    })),
+  );
+  const plan = planProjectHostAcpWorkerRollout({
+    workers,
+    launch,
+    drainingWorkerIds: workerStatuses
+      .map(({ worker, status }) =>
+        status?.state === "draining" ? workerIdOf(worker) : undefined,
+      )
+      .filter(
+        (worker_id): worker_id is string =>
+          worker_id != null && worker_id.length > 0,
+      ),
+  });
+  if (plan.activePid == null) {
+    const spawned = await ensureProjectHostAcpWorkerRunning({ restartReason });
+    return spawned
+      ? {
+          action: "spawned",
+          message: "spawned replacement ACP worker",
+        }
+      : {
+          action: "noop",
+          message: "ACP worker replacement spawn was skipped",
+        };
+  }
+  const activeWorker = workers.find((worker) => worker.pid === plan.activePid);
+  if (!activeWorker) {
+    throw new Error(`active ACP worker pid ${plan.activePid} disappeared`);
+  }
+  if (!workerRollingCapable(activeWorker)) {
+    logger.warn("forcing non-cooperative ACP worker replacement for rollout", {
+      pid: activeWorker.pid,
+      cmdline: activeWorker.cmdline,
+    });
+    await terminateWorkerPid(activeWorker.pid);
+    const spawned = await ensureProjectHostAcpWorkerRunning({ restartReason });
+    return spawned
+      ? {
+          action: "spawned",
+          pid: activeWorker.pid,
+          message:
+            "terminated non-cooperative ACP worker and spawned a replacement",
+        }
+      : {
+          action: "noop",
+          pid: activeWorker.pid,
+          message:
+            "terminated non-cooperative ACP worker but replacement spawn was skipped",
+        };
+  }
+  const status = await requestWorkerDrain(activeWorker);
+  if (!status) {
+    throw new Error(
+      `failed requesting drain for ACP worker ${workerIdOf(activeWorker) || activeWorker.pid}`,
+    );
+  }
+  await ensureProjectHostAcpWorkerRunning({ restartReason });
+  return {
+    action: "drain_requested",
+    pid: activeWorker.pid,
+    worker_id: status.worker_id,
+    message: "requested drain for active ACP worker and ensured replacement",
+  };
 }
 
 export function startProjectHostAcpWorkerSupervisor(): void {

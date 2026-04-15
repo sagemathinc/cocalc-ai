@@ -468,6 +468,10 @@ async function startHostControlService(): Promise<void> {
       await (
         await getHostClient(host_id, 10 * 60 * 1000)
       ).upgradeSoftware(upgrade),
+    rolloutManagedComponents: async ({ host_id, rollout }) =>
+      await (
+        await getHostClient(host_id, 30_000)
+      ).rolloutManagedComponents(rollout),
     growBtrfs: async ({ host_id, grow }) =>
       await (await getHostClient(host_id, 10 * 60 * 1000)).growBtrfs(grow),
     getRuntimeLog: async ({ host_id, get }) =>
@@ -492,6 +496,8 @@ async function startHostControlService(): Promise<void> {
       ).removeHostSshAuthorizedKey(remove),
     getBackupExecutionStatus: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).getBackupExecutionStatus(),
+    getManagedComponentStatus: async ({ host_id }) =>
+      await (await getHostClient(host_id, 30_000)).getManagedComponentStatus(),
     inspectStaticAppPath: async ({ host_id, inspect }) =>
       await (
         await getHostClient(host_id, 30_000)

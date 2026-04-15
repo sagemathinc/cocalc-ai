@@ -570,7 +570,7 @@ async function downloadAndInstall(
   };
 }
 
-async function scheduleHostRestart() {
+export async function scheduleProjectHostRestart() {
   const override = process.env.COCALC_PROJECT_HOST_BIN;
   const candidate = path.join(
     PROJECT_HOST_ROOT,
@@ -634,7 +634,7 @@ export async function upgradeSoftware(
       }
     }
     if (restartHost) {
-      await scheduleHostRestart();
+      await scheduleProjectHostRestart();
     }
     return { results };
   } catch (err) {

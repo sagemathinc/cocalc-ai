@@ -36,6 +36,9 @@ import type {
   HostCreateProjectRequest,
   HostCreateProjectResponse,
   HostBackupExecutionStatus,
+  HostManagedComponentStatus,
+  HostManagedComponentRolloutRequest,
+  HostManagedComponentRolloutResponse,
   HostProjectRuntimeLogResponse,
   HostRootfsCacheEntry,
   HostRootfsManifest,
@@ -302,6 +305,7 @@ export type HostControlMethod =
   | "apply-pending-copies"
   | "delete-project-data"
   | "upgrade-software"
+  | "rollout-managed-components"
   | "grow-btrfs"
   | "get-runtime-log"
   | "get-project-runtime-log"
@@ -312,6 +316,7 @@ export type HostControlMethod =
   | "add-host-ssh-authorized-key"
   | "remove-host-ssh-authorized-key"
   | "get-backup-execution-status"
+  | "get-managed-component-status"
   | "inspect-static-app-path"
   | "build-rootfs-image-manifest"
   | "build-project-rootfs-manifest";
@@ -411,6 +416,10 @@ export interface InterBayHostControlApi {
     host_id: string;
     upgrade: UpgradeSoftwareRequest;
   }) => Promise<UpgradeSoftwareResponse>;
+  rolloutManagedComponents: (opts: {
+    host_id: string;
+    rollout: HostManagedComponentRolloutRequest;
+  }) => Promise<HostManagedComponentRolloutResponse>;
   growBtrfs: (opts: {
     host_id: string;
     grow: HostControlArg<"growBtrfs">;
@@ -448,6 +457,9 @@ export interface InterBayHostControlApi {
   getBackupExecutionStatus: (opts: {
     host_id: string;
   }) => Promise<HostBackupExecutionStatus>;
+  getManagedComponentStatus: (opts: {
+    host_id: string;
+  }) => Promise<HostManagedComponentStatus[]>;
   inspectStaticAppPath: (opts: {
     host_id: string;
     inspect: HostControlArg<"inspectStaticAppPath">;
@@ -602,6 +614,7 @@ const HOST_CONTROL_METHOD_SPECS = [
   { name: "applyPendingCopies", method: "apply-pending-copies" },
   { name: "deleteProjectData", method: "delete-project-data" },
   { name: "upgradeSoftware", method: "upgrade-software" },
+  { name: "rolloutManagedComponents", method: "rollout-managed-components" },
   { name: "growBtrfs", method: "grow-btrfs" },
   { name: "getRuntimeLog", method: "get-runtime-log" },
   { name: "getProjectRuntimeLog", method: "get-project-runtime-log" },
@@ -620,6 +633,10 @@ const HOST_CONTROL_METHOD_SPECS = [
   {
     name: "getBackupExecutionStatus",
     method: "get-backup-execution-status",
+  },
+  {
+    name: "getManagedComponentStatus",
+    method: "get-managed-component-status",
   },
   { name: "inspectStaticAppPath", method: "inspect-static-app-path" },
   {

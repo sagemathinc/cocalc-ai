@@ -14,7 +14,8 @@ let bridgeStartProjectMock: jest.Mock;
 
 jest.mock("@cocalc/conat/project-host/api", () => ({
   __esModule: true,
-  createHostControlClient: (...args: any[]) => createHostControlClientMock(...args),
+  createHostControlClient: (...args: any[]) =>
+    createHostControlClientMock(...args),
 }));
 
 jest.mock("@cocalc/server/conat/route-client", () => ({
@@ -59,6 +60,7 @@ describe("project-host client routing", () => {
       applyPendingCopies: jest.fn(async () => ({ claimed: 0 })),
       deleteProjectData: jest.fn(async () => undefined),
       upgradeSoftware: jest.fn(async () => ({ results: [] })),
+      rolloutManagedComponents: jest.fn(async () => ({ results: [] })),
       growBtrfs: jest.fn(async () => ({ ok: true })),
       getRuntimeLog: jest.fn(async () => ({ source: "x", lines: 1, text: "" })),
       getProjectRuntimeLog: jest.fn(async () => ({
@@ -105,6 +107,7 @@ describe("project-host client routing", () => {
         queued: 0,
         project_lock_count: 0,
       })),
+      getManagedComponentStatus: jest.fn(async () => []),
       inspectStaticAppPath: jest.fn(async () => ({
         project_id: "p1",
         app_id: "app",
