@@ -10,6 +10,15 @@ type HostSshAuthorizedKeysRow = any;
 type HostMachine = any;
 type HostSoftwareChannel = any;
 
+const MANAGED_COMPONENT_KINDS = [
+  "project-host",
+  "conat-router",
+  "conat-persist",
+  "acp-worker",
+] as const;
+
+const DEFAULT_COMPONENT_ARTIFACT = "project-host";
+
 export type HostCommandDeps = {
   withContext: any;
   listHosts: any;
@@ -118,28 +127,25 @@ function parseMetricsWindowMinutes(window?: string): number {
 }
 
 function parseManagedComponentKindsOption(values?: string[]) {
-  const allowed = new Set([
-    "project-host",
-    "conat-router",
-    "conat-persist",
-    "acp-worker",
-  ]);
+  const allowed = new Set(MANAGED_COMPONENT_KINDS);
   const normalized = (values ?? [])
     .flatMap((value) => `${value ?? ""}`.split(","))
     .map((value) => value.trim())
     .filter(Boolean);
   if (!normalized.length) {
     throw new Error(
-      "specify at least one --component (project-host, conat-router, conat-persist, acp-worker)",
+      `specify at least one --component (${MANAGED_COMPONENT_KINDS.join(", ")})`,
     );
   }
-  const invalid = normalized.filter((value) => !allowed.has(value));
+  const invalid = normalized.filter(
+    (value) => !allowed.has(value as (typeof MANAGED_COMPONENT_KINDS)[number]),
+  );
   if (invalid.length) {
     throw new Error(
-      `invalid component(s): ${invalid.join(", ")}; expected one of project-host, conat-router, conat-persist, acp-worker`,
+      `invalid component(s): ${invalid.join(", ")}; expected one of ${MANAGED_COMPONENT_KINDS.join(", ")}`,
     );
   }
-  return [...new Set(normalized)];
+  return [...new Set(normalized)] as (typeof MANAGED_COMPONENT_KINDS)[number][];
 }
 
 function parseRuntimeDeploymentPolicy(value?: string) {
@@ -206,19 +212,12 @@ function formatRuntimeDeploymentRows(
   }));
 }
 
-function formatObservedComponentRows(
-  components: Array<Record<string, unknown>> | undefined,
+function formatFieldValueRows(
+  values: Record<string, unknown>,
 ): Record<string, unknown>[] {
-  return (components ?? []).map((component) => ({
-    component: component.component ?? "",
-    artifact: component.artifact ?? "",
-    runtime_state: component.runtime_state ?? "",
-    version_state: component.version_state ?? "",
-    desired_version: component.desired_version ?? "",
-    running_versions: formatList(component.running_versions),
-    running_pids: formatList(component.running_pids),
-    enabled: component.enabled ?? "",
-    managed: component.managed ?? "",
+  return Object.entries(values).map(([field, value]) => ({
+    field,
+    value: Array.isArray(value) ? formatList(value) : (value ?? ""),
   }));
 }
 
@@ -248,7 +247,7 @@ function printNamedSection(
   console.log("");
 }
 
-function emitHostDeployStatusHuman(data: {
+type HostDeployStatusData = {
   host_id: string;
   name?: string | null;
   configured?: Array<Record<string, unknown>>;
@@ -256,22 +255,154 @@ function emitHostDeployStatusHuman(data: {
   observed_components?: Array<Record<string, unknown>>;
   observed_targets?: Array<Record<string, unknown>>;
   observation_error?: unknown;
-}): void {
+};
+
+function componentArtifact(
+  component: (typeof MANAGED_COMPONENT_KINDS)[number],
+  data: HostDeployStatusData,
+): string {
+  const observed = (data.observed_components ?? []).find(
+    (row) => row.component === component,
+  );
+  const artifact = `${observed?.artifact ?? ""}`.trim();
+  return artifact || DEFAULT_COMPONENT_ARTIFACT;
+}
+
+function filterDeploymentsForComponent(
+  deployments: Array<Record<string, unknown>> | undefined,
+  component: (typeof MANAGED_COMPONENT_KINDS)[number],
+  data: HostDeployStatusData,
+): Array<Record<string, unknown>> {
+  const artifact = componentArtifact(component, data);
+  return (deployments ?? []).filter((deployment) => {
+    const targetType = `${deployment.target_type ?? ""}`.trim();
+    const target = `${deployment.target ?? ""}`.trim();
+    if (targetType === "component") return target === component;
+    if (targetType === "artifact") return target === artifact;
+    return false;
+  });
+}
+
+function filterObservedTargetsForComponent(
+  targets: Array<Record<string, unknown>> | undefined,
+  component: (typeof MANAGED_COMPONENT_KINDS)[number],
+  data: HostDeployStatusData,
+): Array<Record<string, unknown>> {
+  const artifact = componentArtifact(component, data);
+  return (targets ?? []).filter((target) => {
+    const targetType = `${target.target_type ?? ""}`.trim();
+    const targetName = `${target.target ?? ""}`.trim();
+    if (targetType === "component") return targetName === component;
+    if (targetType === "artifact") return targetName === artifact;
+    return false;
+  });
+}
+
+function filterHostDeployStatusData(
+  data: HostDeployStatusData,
+  components?: (typeof MANAGED_COMPONENT_KINDS)[number][],
+): HostDeployStatusData {
+  if (!components?.length) return data;
+  const selected = new Set(components);
+  const relevantArtifacts = new Set(
+    components.map((component) => componentArtifact(component, data)),
+  );
+  const keepTarget = (row: Record<string, unknown>) => {
+    const targetType = `${row.target_type ?? ""}`.trim();
+    const target = `${row.target ?? ""}`.trim();
+    if (targetType === "component") return selected.has(target as any);
+    if (targetType === "artifact") return relevantArtifacts.has(target);
+    return false;
+  };
+  return {
+    ...data,
+    configured: (data.configured ?? []).filter(keepTarget),
+    effective: (data.effective ?? []).filter(keepTarget),
+    observed_components: (data.observed_components ?? []).filter((component) =>
+      selected.has(`${component.component ?? ""}`.trim() as any),
+    ),
+    observed_targets: (data.observed_targets ?? []).filter(keepTarget),
+  };
+}
+
+function resolveHumanStatusComponents(
+  data: HostDeployStatusData,
+  selected?: (typeof MANAGED_COMPONENT_KINDS)[number][],
+): (typeof MANAGED_COMPONENT_KINDS)[number][] {
+  if (selected?.length) return selected;
+  const seen = new Set<string>();
+  for (const row of data.observed_components ?? []) {
+    const component = `${row.component ?? ""}`.trim();
+    if (component) seen.add(component);
+  }
+  for (const row of data.configured ?? []) {
+    if (`${row.target_type ?? ""}`.trim() !== "component") continue;
+    const component = `${row.target ?? ""}`.trim();
+    if (component) seen.add(component);
+  }
+  for (const row of data.effective ?? []) {
+    if (`${row.target_type ?? ""}`.trim() !== "component") continue;
+    const component = `${row.target ?? ""}`.trim();
+    if (component) seen.add(component);
+  }
+  return MANAGED_COMPONENT_KINDS.filter((component) => seen.has(component));
+}
+
+function emitHostDeployStatusHuman(
+  data: HostDeployStatusData,
+  selectedComponents?: (typeof MANAGED_COMPONENT_KINDS)[number][],
+): void {
   console.log(`Host ID: ${data.host_id}`);
   if (`${data.name ?? ""}`.trim()) {
     console.log(`Name: ${data.name}`);
   }
   console.log("");
-  printNamedSection("Configured", formatRuntimeDeploymentRows(data.configured));
-  printNamedSection("Effective", formatRuntimeDeploymentRows(data.effective));
-  printNamedSection(
-    "Observed Components",
-    formatObservedComponentRows(data.observed_components),
-  );
-  printNamedSection(
-    "Observed Targets",
-    formatObservedTargetRows(data.observed_targets),
-  );
+  const components = resolveHumanStatusComponents(data, selectedComponents);
+  if (!components.length) {
+    console.log("No matching components.");
+    console.log("");
+  }
+  for (const component of components) {
+    const observed = (data.observed_components ?? []).find(
+      (row) => row.component === component,
+    );
+    console.log(`Component: ${component}`);
+    printArrayTable(
+      formatFieldValueRows({
+        artifact: componentArtifact(component, data),
+        enabled: observed?.enabled ?? "",
+        managed: observed?.managed ?? "",
+        runtime_state: observed?.runtime_state ?? "",
+        version_state: observed?.version_state ?? "",
+        desired_version: observed?.desired_version ?? "",
+        running_versions: observed?.running_versions ?? [],
+        running_pids: observed?.running_pids ?? [],
+      }),
+    );
+    console.log("");
+    printNamedSection(
+      "Configured Targets",
+      formatRuntimeDeploymentRows(
+        filterDeploymentsForComponent(data.configured, component, data),
+      ),
+    );
+    printNamedSection(
+      "Effective Targets",
+      formatRuntimeDeploymentRows(
+        filterDeploymentsForComponent(data.effective, component, data),
+      ),
+    );
+    printNamedSection(
+      "Observed Targets",
+      formatObservedTargetRows(
+        filterObservedTargetsForComponent(
+          data.observed_targets,
+          component,
+          data,
+        ),
+      ),
+    );
+  }
   const observationError = `${data.observation_error ?? ""}`.trim();
   if (observationError) {
     console.log(`Observation Error: ${observationError}`);
@@ -947,6 +1078,12 @@ Example:
   deploy
     .command("status <host>")
     .description("show desired runtime deployment state for one host")
+    .option(
+      "--component <component>",
+      "limit output to one or more components (repeatable or comma-separated)",
+      (value, prev: string[] = []) => [...prev, value],
+      [],
+    )
     .addHelpText(
       "after",
       `
@@ -957,28 +1094,40 @@ Status shows two views:
 - \`observed_targets\`: desired-vs-observed comparison for each effective runtime target
 `,
     )
-    .action(async (hostIdentifier: string, command: Command) => {
-      await withContext(command, "host deploy status", async (ctx) => {
-        const host = await resolveHost(ctx, hostIdentifier);
-        const status = await ctx.hub.hosts.getHostRuntimeDeploymentStatus({
-          id: host.id,
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: { component?: string[] },
+        command: Command,
+      ) => {
+        const selectedComponents = opts.component?.length
+          ? parseManagedComponentKindsOption(opts.component)
+          : undefined;
+        await withContext(command, "host deploy status", async (ctx) => {
+          const host = await resolveHost(ctx, hostIdentifier);
+          const status = await ctx.hub.hosts.getHostRuntimeDeploymentStatus({
+            id: host.id,
+          });
+          const data = filterHostDeployStatusData(
+            {
+              host_id: host.id,
+              name: host.name ?? undefined,
+              configured: status.configured,
+              effective: status.effective,
+              observed_components: status.observed_components,
+              observed_targets: status.observed_targets,
+              observation_error: status.observation_error,
+            },
+            selectedComponents,
+          );
+          if (!ctx.globals.json && ctx.globals.output !== "json") {
+            emitHostDeployStatusHuman(data, selectedComponents);
+            return null;
+          }
+          return data;
         });
-        const data = {
-          host_id: host.id,
-          name: host.name ?? undefined,
-          configured: status.configured,
-          effective: status.effective,
-          observed_components: status.observed_components,
-          observed_targets: status.observed_targets,
-          observation_error: status.observation_error,
-        };
-        if (!ctx.globals.json && ctx.globals.output !== "json") {
-          emitHostDeployStatusHuman(data);
-          return null;
-        }
-        return data;
-      });
-    });
+      },
+    );
 
   deploy
     .command("set")

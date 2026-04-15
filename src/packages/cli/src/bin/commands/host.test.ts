@@ -673,11 +673,41 @@ test("host deploy status renders flattened human-readable sections", async () =>
 
   assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
   assert.match(output, /Host ID: host-1/);
-  assert.match(output, /Configured/);
-  assert.match(output, /Observed Components/);
+  assert.match(output, /Component: acp-worker/);
+  assert.match(output, /Configured Targets/);
+  assert.match(output, /Effective Targets/);
   assert.match(output, /Observed Targets/);
   assert.match(output, /acp-worker/);
   assert.doesNotMatch(output, /"scope_type":"host"/);
+});
+
+test("host deploy status filters by component", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "deploy",
+    "status",
+    "host-1",
+    "--component",
+    "conat-router",
+  ]);
+
+  assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
+  assert.deepEqual(capture.data.configured, []);
+  assert.deepEqual(capture.data.effective, []);
+  assert.deepEqual(capture.data.observed_components, []);
+  assert.deepEqual(capture.data.observed_targets, []);
 });
 
 test("host deploy set upserts host-scoped desired state", async () => {

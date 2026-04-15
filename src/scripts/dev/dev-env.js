@@ -818,6 +818,12 @@ function main() {
     exportsMap.COCALC_AGENT_TOKEN = "";
     exportsMap.COCALC_CLI_AGENT_MODE = "";
     exportsMap.COCALC_PROJECT_INFO_SCOPE = "";
+    // Clear stale project-scoped auth so generic hub CLI commands do not
+    // accidentally authenticate as a project when the shell previously came
+    // from Lite or a project runtime.
+    exportsMap.COCALC_PROJECT_SECRET = "";
+    exportsMap.COCALC_SECRET_TOKEN = "";
+    exportsMap.project_secret = "";
     copyIfPresent(exportsMap, source.selectedEnv, "COCALC_BAY_ID");
     copyIfPresent(exportsMap, source.selectedEnv, "COCALC_BAY_LABEL");
     copyIfPresent(exportsMap, source.selectedEnv, "COCALC_BAY_REGION");
