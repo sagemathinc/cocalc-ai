@@ -41,11 +41,9 @@ If the QA tooling is unreliable, fixing the tooling is a valid bug-hunt result.
    - `node scripts/bug-hunt/preflight.js --json`
 3. If browser automation matters, read the repo doc:
    - `docs/browser-debugging.md`
-4. If task files are mentioned, inspect them early:
-   - `/home/wstein/cocalc.com/work/wstein.tasks`
-5. To mine likely open bugs from `wstein.tasks`, use:
+4. To mine likely open bugs from mentioned task files, e.g., `wstein.tasks`, use:
    - `node scripts/bug-hunt/extract-open-bugs.js --fresh`
-6. If you are changing the workflow itself, read:
+5. If you are changing the workflow itself, read:
    - `src/.agents/bug-hunter.md`
 
 ## Iteration contract
