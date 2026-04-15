@@ -718,13 +718,36 @@ export function registerHostCommand(
 
   host
     .command("rollout <host>")
-    .description("roll out one or more managed host components")
+    .description(
+      "restart or drain managed host components using the software already installed on the host",
+    )
     .requiredOption(
       "--component <component...>",
       "component(s): project-host, conat-router, conat-persist, acp-worker",
     )
     .option("--reason <reason>", "optional rollout reason")
     .option("--wait", "wait for completion")
+    .addHelpText(
+      "after",
+      `
+Rollout does not publish or download new software.
+
+Use \`cocalc host upgrade\` first when you want a host to pick up a newer
+project-host bundle, project bundle, or tools version. Rollout then applies
+component-specific lifecycle actions against whatever bundle/config is already
+current on that host.
+
+Component behavior:
+- \`project-host\`: schedule a restart of the current project-host daemon.
+- \`conat-router\`: restart the managed local router from the current project-host bundle.
+- \`conat-persist\`: restart the managed local persist daemon from the current project-host bundle.
+- \`acp-worker\`: request drain of the active ACP worker and ensure a replacement is running from the current project-host bundle. If no worker is running, spawn one. If the worker is not rolling-capable, terminate it and replace it.
+
+Example:
+  cocalc host upgrade alpha.cocalc.ai --artifact project-host --hub-source --wait
+  cocalc host rollout alpha.cocalc.ai --component acp-worker --wait
+`,
+    )
     .action(
       async (
         hostIdentifier: string,

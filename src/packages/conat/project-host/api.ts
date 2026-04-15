@@ -131,6 +131,9 @@ export type HostManagedComponentRolloutAction =
   | "spawned"
   | "noop";
 
+// Rollout acts on the software already installed on the host. It does not
+// download or publish a new bundle; use host software upgrade first when
+// changing versions.
 export interface HostManagedComponentRolloutRequest {
   components: ManagedComponentKind[];
   reason?: string;
