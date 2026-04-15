@@ -1,6 +1,12 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import * as immutable from "immutable";
 import { ChatPanel } from "../chatroom";
 
@@ -401,5 +407,102 @@ describe("ChatPanel loop submit behavior", () => {
       ),
     );
     expect(lastThreadPanelProps?.activityJumpToken).toBeGreaterThan(0);
+  });
+
+  it("lets the completed-turn modal disable notify for the next turn", async () => {
+    currentAcpState = immutable.Map({
+      "thread:t1": "running",
+    });
+    const actions = {
+      sendChat: jest.fn(() => Date.now()),
+      getThreadMetadata: jest.fn(() => ({
+        agent_kind: "acp",
+        acp_config: { model: "gpt-5.4", sessionMode: "workspace-write" },
+      })),
+      getMessagesInThread: jest
+        .fn()
+        .mockReturnValueOnce([
+          {
+            date: new Date(1000),
+            thread_id: "t1",
+            message_id: "m1",
+            sender_id: "acct",
+            history: [{ author_id: "acct", content: "working" }],
+            acp_account_id: "acct",
+            generating: false,
+            acp_interrupted: false,
+          },
+        ])
+        .mockReturnValueOnce([
+          {
+            date: new Date(2000),
+            thread_id: "t1",
+            message_id: "m2",
+            sender_id: "acct",
+            history: [{ author_id: "acct", content: "done" }],
+            acp_account_id: "acct",
+            generating: false,
+            acp_interrupted: false,
+          },
+        ])
+        .mockReturnValue([]),
+      deleteDraft: jest.fn(),
+      getThreadLoopConfig: jest.fn(),
+      getThreadLoopState: jest.fn(),
+      frameTreeActions: undefined,
+      frameId: undefined,
+      languageModelStopGenerating: jest.fn(),
+      getCodexConfig: jest.fn(() => ({
+        model: "gpt-5.4",
+        sessionMode: "workspace-write",
+      })),
+    } as any;
+
+    const { rerender } = render(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/test.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={0}
+      />,
+    );
+
+    await act(async () => {
+      lastThreadPanelProps?.onNotifyOnTurnFinishChange?.(true);
+    });
+
+    await waitFor(() =>
+      expect(lastThreadPanelProps?.notifyOnTurnFinish).toBe(true),
+    );
+
+    currentAcpState = immutable.Map();
+    rerender(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/test.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={1}
+      />,
+    );
+
+    const notify = await screen.findByRole("checkbox", { name: "Notify" });
+    fireEvent.click(notify);
+
+    rerender(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/test.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={2}
+      />,
+    );
+
+    expect(lastThreadPanelProps?.notifyOnTurnFinish).toBe(false);
   });
 });

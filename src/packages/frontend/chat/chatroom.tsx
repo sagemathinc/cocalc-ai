@@ -4,7 +4,7 @@
  */
 
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { Alert, Button, Modal, Popconfirm, Space, Tag } from "antd";
+import { Alert, Button, Checkbox, Modal, Popconfirm, Space, Tag } from "antd";
 import {
   delete_local_storage,
   get_local_storage,
@@ -1094,6 +1094,45 @@ export function ChatPanel({
     },
     [selectedThread, selectedThreadId, selectedThreadKey],
   );
+  const setNotifyForThread = useCallback(
+    ({
+      checked,
+      threadKey,
+      threadId,
+      threadLabel,
+    }: {
+      checked: boolean;
+      threadKey: string;
+      threadId: string;
+      threadLabel: string;
+    }) => {
+      const normalizedThreadKey = `${threadKey ?? ""}`.trim();
+      const normalizedThreadId = `${threadId ?? ""}`.trim();
+      if (!normalizedThreadKey || !normalizedThreadId) return;
+      setCodexTurnNotifyDefaultEnabled(checked);
+      if (checked) {
+        set_local_storage(CODEX_TURN_NOTIFY_STORAGE_KEY, "true");
+      } else {
+        delete_local_storage(CODEX_TURN_NOTIFY_STORAGE_KEY);
+      }
+      if (!checked) {
+        setCodexTurnNotificationWatches((prev) =>
+          prev.filter((watch) => watch.threadKey !== normalizedThreadKey),
+        );
+        return;
+      }
+      const nextWatch = {
+        threadKey: normalizedThreadKey,
+        threadId: normalizedThreadId,
+        threadLabel: `${threadLabel ?? ""}`.trim() || "this chat",
+      } satisfies CodexTurnNotificationWatch;
+      setCodexTurnNotificationWatches((prev) => [
+        ...prev.filter((watch) => watch.threadKey !== nextWatch.threadKey),
+        nextWatch,
+      ]);
+    },
+    [],
+  );
   const hasRunningAcpTurn = useMemo(() => {
     return hasActiveAcpTurnForComposer({
       isSelectedThreadAI,
@@ -1775,6 +1814,19 @@ export function ChatPanel({
 
   const activeCompletedCodexTurnNotification =
     completedCodexTurnNotifications[0];
+  const notifyEnabledForCompletedCodexTurn = useMemo(() => {
+    const notification = activeCompletedCodexTurnNotification;
+    if (!notification) return codexTurnNotifyDefaultEnabled;
+    return (
+      codexTurnNotificationWatches.some(
+        (watch) => watch.threadKey === notification.threadKey,
+      ) || codexTurnNotifyDefaultEnabled
+    );
+  }, [
+    activeCompletedCodexTurnNotification,
+    codexTurnNotificationWatches,
+    codexTurnNotifyDefaultEnabled,
+  ]);
 
   const dismissCompletedCodexTurnNotification = useCallback(() => {
     setCompletedCodexTurnNotifications((prev) => prev.slice(1));
@@ -2269,6 +2321,23 @@ export function ChatPanel({
           </strong>
           .
         </p>
+        {activeCompletedCodexTurnNotification ? (
+          <div style={{ marginTop: 12 }}>
+            <Checkbox
+              checked={notifyEnabledForCompletedCodexTurn}
+              onChange={(e) =>
+                setNotifyForThread({
+                  checked: e.target.checked,
+                  threadKey: activeCompletedCodexTurnNotification.threadKey,
+                  threadId: activeCompletedCodexTurnNotification.threadId,
+                  threadLabel: activeCompletedCodexTurnNotification.threadLabel,
+                })
+              }
+            >
+              Notify
+            </Checkbox>
+          </div>
+        ) : null}
       </Modal>
       <Modal
         title="Thread automation"
