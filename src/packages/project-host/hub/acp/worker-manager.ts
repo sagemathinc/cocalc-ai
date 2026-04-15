@@ -413,24 +413,11 @@ async function terminateWorkerPid(pid: number): Promise<void> {
 
 async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
   const launch = workerLaunchSignature();
-  const { expectedWorkers: observedWorkers, ignoredWorkers } =
+  const { expectedWorkers: observedWorkers } =
     partitionExpectedProjectHostAcpWorkers({
       workers: listProjectHostAcpWorkers(),
       launch,
     });
-  if (ignoredWorkers.length > 0) {
-    logger.debug(
-      "ignoring ACP-tagged processes that do not match the worker entrypoint",
-      {
-        count: ignoredWorkers.length,
-        workers: ignoredWorkers.map((worker) => ({
-          pid: worker.pid,
-          worker_id: workerIdOf(worker) || null,
-          cmdline: worker.cmdline,
-        })),
-      },
-    );
-  }
   if (observedWorkers.length > 1) {
     logger.warn("multiple project-host ACP workers observed", {
       count: observedWorkers.length,
@@ -603,24 +590,11 @@ export async function rolloutProjectHostAcpWorker({
   restartReason?: string;
 } = {}): Promise<ProjectHostAcpWorkerRolloutOutcome> {
   const launch = workerLaunchSignature();
-  const { expectedWorkers: workers, ignoredWorkers } =
+  const { expectedWorkers: workers } =
     partitionExpectedProjectHostAcpWorkers({
       workers: listProjectHostAcpWorkers(),
       launch,
     });
-  if (ignoredWorkers.length > 0) {
-    logger.debug(
-      "ignoring ACP-tagged processes during rollout because they do not match the worker entrypoint",
-      {
-        count: ignoredWorkers.length,
-        workers: ignoredWorkers.map((worker) => ({
-          pid: worker.pid,
-          worker_id: workerIdOf(worker) || null,
-          cmdline: worker.cmdline,
-        })),
-      },
-    );
-  }
   if (!workers.length) {
     const spawned = await ensureProjectHostAcpWorkerRunning({ restartReason });
     return spawned
