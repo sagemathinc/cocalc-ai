@@ -358,6 +358,33 @@ At minimum:
 
 Without this, safe retention and rollback are not possible.
 
+### 6. Artifact Provenance And Deployment Hints
+
+We also need a way to answer:
+
+- which deployable artifact contains this code?
+- which component actually needs to be rolled out after a given change?
+
+This is especially important because a package name is not the same thing as a
+deployable runtime target. For example, host-side project startup code may live
+in `@cocalc/project-runner`, but the code is shipped as part of the
+`project-host` runtime artifact, not the `project bundle`.
+
+Each published artifact should therefore expose build provenance metadata:
+
+- artifact
+- version
+- git commit
+- included workspace packages
+- optional changed file list or source manifest
+- primary runtime targets affected
+
+This provenance should power operator and agent deploy hints such as:
+
+- "this change requires `project-host` rollout"
+- "this change requires staging a new `project bundle`"
+- "this change affects both host and project-side artifacts"
+
 ## Required Host-Side Model
 
 Each host needs a small local daemon deployment state file, separate from
