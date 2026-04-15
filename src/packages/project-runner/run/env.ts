@@ -16,6 +16,26 @@ export const COCALC_PROJECT_CACHE = ".cache/cocalc/project";
 
 const logger = getLogger("project-runner:run:env");
 
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
+  );
+}
+
+export function normalizeProjectContainerConatServer(raw: string): string {
+  const trimmed = `${raw ?? ""}`.trim();
+  if (!trimmed) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    if (isLoopbackHostname(parsed.hostname)) {
+      parsed.hostname = "host.containers.internal";
+    }
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return trimmed.replace("localhost", "host.containers.internal");
+  }
+}
+
 export function dataPath(HOME: string): string {
   return join(HOME, COCALC_PROJECT_CACHE);
 }
@@ -106,7 +126,7 @@ export async function getEnvironment({
     // Project containers connect to host-local conat through podman networking.
     // We use host.containers.internal (not a hardcoded IP), and networking mode
     // is selected in run/podman.ts.
-    CONAT_SERVER: conatServer.replace("localhost", "host.containers.internal"),
+    CONAT_SERVER: normalizeProjectContainerConatServer(conatServer),
     COCALC_SECRET_TOKEN: secretTokenPath(HOME),
     BASE_PATH: base_path,
     DEBIAN_FRONTEND: "noninteractive",
