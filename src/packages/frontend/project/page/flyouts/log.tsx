@@ -863,7 +863,6 @@ export function LogFlyout({
           align="center"
           gap="middle"
           style={{ marginRight: FLYOUT_PADDING }}
-          wrap="wrap"
         >
           <Input
             placeholder="Search..."
@@ -879,20 +878,20 @@ export function LogFlyout({
             prefix={<Icon name="search" />}
             style={{ minWidth: "5em", flex: "1" }}
           />
-          {workspaces.current ? (
-            <Space size={6}>
-              <Switch
-                size="small"
-                checked={workspaceOnly}
-                onChange={setWorkspaceOnly}
-              />
-              <span style={{ fontSize: "12px", color: COLORS.GRAY_M }}>
-                Only current workspace
-              </span>
-            </Space>
-          ) : null}
           {renderControls()}
         </Flex>
+        {workspaces.current ? (
+          <Space size={6}>
+            <Switch
+              size="small"
+              checked={workspaceOnly}
+              onChange={setWorkspaceOnly}
+            />
+            <span style={{ fontSize: "12px", color: COLORS.GRAY_M }}>
+              Only current workspace
+            </span>
+          </Space>
+        ) : null}
         {activeFilterWarning()}
       </Space>
       {wrap(list(), { marginTop: "10px" })}
