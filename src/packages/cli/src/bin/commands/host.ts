@@ -17,6 +17,13 @@ const MANAGED_COMPONENT_KINDS = [
   "acp-worker",
 ] as const;
 
+const HOST_PROJECT_STATE_FILTERS = [
+  "all",
+  "running",
+  "stopped",
+  "unprovisioned",
+] as const;
+
 const DEFAULT_COMPONENT_ARTIFACT = "project-host";
 
 export type HostCommandDeps = {
@@ -124,6 +131,31 @@ function parseMetricsWindowMinutes(window?: string): number {
   if (unit === "m") return value;
   if (unit === "h") return value * 60;
   return value * 24 * 60;
+}
+
+function parseHostProjectsStateFilter(opts: {
+  state?: string;
+  all?: boolean;
+}): (typeof HOST_PROJECT_STATE_FILTERS)[number] {
+  const rawState = `${opts.state ?? ""}`.trim().toLowerCase();
+  if (opts.all) {
+    if (rawState && rawState !== "all") {
+      throw new Error("cannot combine --all with --state other than 'all'");
+    }
+    return "all";
+  }
+  if (!rawState) return "running";
+  if (rawState === "deprovisioned") return "unprovisioned";
+  if (
+    HOST_PROJECT_STATE_FILTERS.includes(
+      rawState as (typeof HOST_PROJECT_STATE_FILTERS)[number],
+    )
+  ) {
+    return rawState as (typeof HOST_PROJECT_STATE_FILTERS)[number];
+  }
+  throw new Error(
+    `invalid --state; expected one of ${HOST_PROJECT_STATE_FILTERS.join(", ")}${", or deprovisioned as an alias for unprovisioned"}`,
+  );
 }
 
 function parseManagedComponentKindsOption(values?: string[]) {
@@ -672,9 +704,14 @@ export function registerHostCommand(
 
   host
     .command("projects <host>")
-    .description("list projects assigned to a host")
+    .description("list projects assigned to a host (running only by default)")
     .option("--limit <limit>", "max rows to return", "50")
     .option("--cursor <cursor>", "pagination cursor from a previous response")
+    .option("--all", "show all assigned projects")
+    .option(
+      "--state <state>",
+      "project filter: all, running, stopped, unprovisioned",
+    )
     .option(
       "--risk-only",
       "show only projects that are running or currently need backup attention",
@@ -685,6 +722,8 @@ export function registerHostCommand(
         opts: {
           limit?: string;
           cursor?: string;
+          all?: boolean;
+          state?: string;
           riskOnly?: boolean;
         },
         command: Command,
@@ -693,11 +732,13 @@ export function registerHostCommand(
           const h = await resolveHost(ctx, hostIdentifier);
           const limit =
             parseOptionalPositiveInteger(opts.limit, "--limit") ?? 50;
+          const state_filter = parseHostProjectsStateFilter(opts);
           const result = await ctx.hub.hosts.listHostProjects({
             id: h.id,
             limit,
             cursor: `${opts.cursor ?? ""}`.trim() || undefined,
             risk_only: !!opts.riskOnly,
+            state_filter,
           });
           if (!ctx.globals.json && ctx.globals.output !== "json") {
             console.log(`Host ID: ${h.id}`);
@@ -715,6 +756,7 @@ export function registerHostCommand(
                   result.summary?.provisioned_up_to_date ?? 0,
                 provisioned_needs_backup:
                   result.summary?.provisioned_needs_backup ?? 0,
+                state_filter,
                 host_last_seen: result.host_last_seen ?? "",
                 next_cursor: result.next_cursor ?? "",
               }),
@@ -727,6 +769,7 @@ export function registerHostCommand(
             name: h.name,
             rows: result.rows,
             summary: result.summary,
+            state_filter,
             next_cursor: result.next_cursor,
             host_last_seen: result.host_last_seen,
           };

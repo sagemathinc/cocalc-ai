@@ -3022,17 +3022,20 @@ export async function listHostProjects({
   limit,
   cursor,
   risk_only,
+  state_filter,
 }: {
   account_id?: string;
   id: string;
   limit?: number;
   cursor?: string;
   risk_only?: boolean;
+  state_filter?: "all" | "running" | "stopped" | "unprovisioned";
 }): Promise<HostProjectsResponse> {
   const host = await loadHostForListing(id, account_id);
   const cappedLimit = normalizeHostProjectsLimit(limit);
+  const runningStatesSql = `COALESCE(state->>'state', '') IN ('running','starting')`;
   const needsBackupSql = `
-    COALESCE(state->>'state', '') IN ('running','starting')
+    ${runningStatesSql}
     OR (
       provisioned IS TRUE
       AND (
@@ -3044,6 +3047,20 @@ export async function listHostProjects({
 
   const params: any[] = [id];
   const filters: string[] = ["deleted IS NOT true", "host_id = $1"];
+  const normalizedStateFilter =
+    `${state_filter ?? "all"}`.trim().toLowerCase() || "all";
+
+  if (normalizedStateFilter === "running") {
+    filters.push(`(${runningStatesSql})`);
+  } else if (normalizedStateFilter === "stopped") {
+    filters.push(`(provisioned IS TRUE AND NOT (${runningStatesSql}))`);
+  } else if (normalizedStateFilter === "unprovisioned") {
+    filters.push(`(provisioned IS NOT TRUE)`);
+  } else if (normalizedStateFilter !== "all") {
+    throw new Error(
+      "invalid state_filter; expected all, running, stopped, or unprovisioned",
+    );
+  }
 
   if (risk_only) {
     filters.push(`(${needsBackupSql})`);

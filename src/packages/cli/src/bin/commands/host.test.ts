@@ -12,6 +12,7 @@ type Capture = {
     limit?: number;
     cursor?: string;
     risk_only?: boolean;
+    state_filter?: string;
   }>;
   upgradeRequests?: Array<{
     id: string;
@@ -76,12 +77,19 @@ function makeDeps(
         globals: ctxGlobals,
         hub: {
           hosts: {
-            listHostProjects: async ({ id, limit, cursor, risk_only }) => {
+            listHostProjects: async ({
+              id,
+              limit,
+              cursor,
+              risk_only,
+              state_filter,
+            }) => {
               capture.hostProjectsRequests!.push({
                 id,
                 limit,
                 cursor,
                 risk_only,
+                state_filter,
               });
               return {
                 rows: [
@@ -722,6 +730,7 @@ test("host projects lists assigned projects", async () => {
       limit: 25,
       cursor: "cursor-0",
       risk_only: true,
+      state_filter: "running",
     },
   ]);
   assert.equal(capture.data.host_id, "host-1");
@@ -757,14 +766,65 @@ test("host projects renders human-readable summary and rows", async () => {
       limit: 50,
       cursor: undefined,
       risk_only: false,
+      state_filter: "running",
     },
   ]);
   assert.match(output, /Host ID: host-1/);
   assert.match(output, /Summary/);
   assert.match(output, /Projects/);
-  assert.match(output, /proj-1/);
+  assert.match(output, /state_filter/);
   assert.match(output, /running/);
+  assert.match(output, /proj-1/);
   assert.match(output, /needs_backup/);
+});
+
+test("host projects supports --all and explicit --state", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "projects",
+    "host-1",
+    "--all",
+  ]);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "projects",
+    "host-1",
+    "--state",
+    "deprovisioned",
+  ]);
+
+  assert.deepEqual(capture.hostProjectsRequests, [
+    {
+      id: "host-1",
+      limit: 50,
+      cursor: undefined,
+      risk_only: false,
+      state_filter: "all",
+    },
+    {
+      id: "host-1",
+      limit: 50,
+      cursor: undefined,
+      risk_only: false,
+      state_filter: "unprovisioned",
+    },
+  ]);
 });
 
 test("host reconcile queues and waits for completion", async () => {

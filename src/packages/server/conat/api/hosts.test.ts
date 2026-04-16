@@ -411,6 +411,55 @@ describe("hosts.listHostProjects", () => {
     expect(riskCount).toBeGreaterThan(baseCount);
   });
 
+  it("adds state filters when requested", async () => {
+    const listSqls: string[] = [];
+    queryMock.mockImplementation(async (sql: string, _params: any[]) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              metadata: { owner: ACCOUNT_ID },
+            },
+          ],
+        };
+      }
+      if (sql.includes("COUNT(*) AS total")) {
+        return { rows: [SUMMARY_ROW] };
+      }
+      if (sql.includes("LEFT(COALESCE(title")) {
+        listSqls.push(sql);
+        return { rows: PROJECT_ROWS_PAGE_1.slice(0, 1) };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { listHostProjects } = await import("./hosts");
+    await listHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      limit: 1,
+      state_filter: "running",
+    });
+    await listHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      limit: 1,
+      state_filter: "stopped",
+    });
+    await listHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      limit: 1,
+      state_filter: "unprovisioned",
+    });
+
+    const [runningSql, stoppedSql, unprovisionedSql] = listSqls;
+    expect(runningSql).toContain("IN ('running','starting')");
+    expect(stoppedSql).toContain("provisioned IS TRUE AND NOT");
+    expect(unprovisionedSql).toContain("provisioned IS NOT TRUE");
+  });
+
   afterEach(() => {
     delete process.env.LOGS;
   });

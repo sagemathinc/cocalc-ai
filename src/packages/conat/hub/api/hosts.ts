@@ -228,6 +228,12 @@ export interface HostProjectRow {
   collab_count: number;
 }
 
+export type HostProjectStateFilter =
+  | "all"
+  | "running"
+  | "stopped"
+  | "unprovisioned";
+
 export interface HostProjectsResponse {
   rows: HostProjectRow[];
   summary: HostBackupStatus;
@@ -729,6 +735,7 @@ export interface Hosts {
     limit?: number;
     cursor?: string;
     risk_only?: boolean;
+    state_filter?: HostProjectStateFilter;
   }) => Promise<HostProjectsResponse>;
   resolveHostConnection: (opts: {
     account_id?: string;
