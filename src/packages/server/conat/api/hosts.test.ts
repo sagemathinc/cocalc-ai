@@ -453,11 +453,18 @@ describe("hosts.listHostProjects", () => {
       limit: 1,
       state_filter: "unprovisioned",
     });
+    await listHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      limit: 1,
+      project_state: "opened",
+    });
 
-    const [runningSql, stoppedSql, unprovisionedSql] = listSqls;
+    const [runningSql, stoppedSql, unprovisionedSql, exactStateSql] = listSqls;
     expect(runningSql).toContain("IN ('running','starting')");
     expect(stoppedSql).toContain("provisioned IS TRUE AND NOT");
     expect(unprovisionedSql).toContain("provisioned IS NOT TRUE");
+    expect(exactStateSql).toContain("COALESCE(state->>'state', '') =");
   });
 
   afterEach(() => {

@@ -736,6 +736,7 @@ export interface Hosts {
     cursor?: string;
     risk_only?: boolean;
     state_filter?: HostProjectStateFilter;
+    project_state?: string;
   }) => Promise<HostProjectsResponse>;
   resolveHostConnection: (opts: {
     account_id?: string;

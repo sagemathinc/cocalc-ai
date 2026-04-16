@@ -3023,6 +3023,7 @@ export async function listHostProjects({
   cursor,
   risk_only,
   state_filter,
+  project_state,
 }: {
   account_id?: string;
   id: string;
@@ -3030,6 +3031,7 @@ export async function listHostProjects({
   cursor?: string;
   risk_only?: boolean;
   state_filter?: "all" | "running" | "stopped" | "unprovisioned";
+  project_state?: string;
 }): Promise<HostProjectsResponse> {
   const host = await loadHostForListing(id, account_id);
   const cappedLimit = normalizeHostProjectsLimit(limit);
@@ -3060,6 +3062,12 @@ export async function listHostProjects({
     throw new Error(
       "invalid state_filter; expected all, running, stopped, or unprovisioned",
     );
+  }
+
+  const normalizedProjectState = `${project_state ?? ""}`.trim();
+  if (normalizedProjectState) {
+    params.push(normalizedProjectState);
+    filters.push(`(COALESCE(state->>'state', '') = $${params.length})`);
   }
 
   if (risk_only) {

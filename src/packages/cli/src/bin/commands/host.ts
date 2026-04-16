@@ -136,7 +136,9 @@ function parseMetricsWindowMinutes(window?: string): number {
 function parseHostProjectsStateFilter(opts: {
   state?: string;
   all?: boolean;
+  status?: string;
 }): (typeof HOST_PROJECT_STATE_FILTERS)[number] {
+  const rawStatus = `${opts.status ?? ""}`.trim();
   const rawState = `${opts.state ?? ""}`.trim().toLowerCase();
   if (opts.all) {
     if (rawState && rawState !== "all") {
@@ -144,7 +146,7 @@ function parseHostProjectsStateFilter(opts: {
     }
     return "all";
   }
-  if (!rawState) return "running";
+  if (!rawState) return rawStatus ? "all" : "running";
   if (rawState === "deprovisioned") return "unprovisioned";
   if (
     HOST_PROJECT_STATE_FILTERS.includes(
@@ -710,7 +712,11 @@ export function registerHostCommand(
     .option("--all", "show all assigned projects")
     .option(
       "--state <state>",
-      "project filter: all, running, stopped, unprovisioned",
+      "project state bucket: all, running, stopped, unprovisioned",
+    )
+    .option(
+      "--status <status>",
+      "exact raw project state filter, e.g. opened, running, off",
     )
     .option(
       "--risk-only",
@@ -724,6 +730,7 @@ export function registerHostCommand(
           cursor?: string;
           all?: boolean;
           state?: string;
+          status?: string;
           riskOnly?: boolean;
         },
         command: Command,
@@ -739,6 +746,7 @@ export function registerHostCommand(
             cursor: `${opts.cursor ?? ""}`.trim() || undefined,
             risk_only: !!opts.riskOnly,
             state_filter,
+            project_state: `${opts.status ?? ""}`.trim() || undefined,
           });
           if (!ctx.globals.json && ctx.globals.output !== "json") {
             console.log(`Host ID: ${h.id}`);
@@ -757,6 +765,7 @@ export function registerHostCommand(
                 provisioned_needs_backup:
                   result.summary?.provisioned_needs_backup ?? 0,
                 state_filter,
+                status_filter: `${opts.status ?? ""}`.trim() || "",
                 host_last_seen: result.host_last_seen ?? "",
                 next_cursor: result.next_cursor ?? "",
               }),
@@ -770,6 +779,7 @@ export function registerHostCommand(
             rows: result.rows,
             summary: result.summary,
             state_filter,
+            project_state: `${opts.status ?? ""}`.trim() || undefined,
             next_cursor: result.next_cursor,
             host_last_seen: result.host_last_seen,
           };
