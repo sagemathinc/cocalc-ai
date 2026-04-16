@@ -176,6 +176,15 @@ function usesManagedLocalConatRouter(env: Record<string, string>): boolean {
   );
 }
 
+function publicIngressEnabledValue(env: Record<string, string>): boolean {
+  const value =
+    `${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS ?? ""}`.trim();
+  if (!value) {
+    return true;
+  }
+  return !envIsFalse(value);
+}
+
 function usesManagedLocalConatPersist(env: Record<string, string>): boolean {
   if (!isProjectHostExternalConatPersistEnabled(env)) {
     return false;
@@ -184,6 +193,8 @@ function usesManagedLocalConatPersist(env: Record<string, string>): boolean {
 }
 
 function ensureDefaults(env: Record<string, string>, index: number): void {
+  const managedRouter = usesManagedLocalConatRouter(env);
+  const managedPublicIngress = managedRouter && publicIngressEnabledValue(env);
   if (!`${env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER ?? ""}`.trim()) {
     env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
   }
@@ -226,19 +237,35 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
   if (!env.PORT) {
     env.PORT = String(9002 + index);
   }
+  const basePort = parsePort(env.PORT) ?? 9002 + index;
   if (!env.COCALC_SSH_SERVER) {
     env.COCALC_SSH_SERVER = `localhost:${2222 + index}`;
   }
-  if (usesManagedLocalConatRouter(env)) {
-    const basePort = parsePort(env.PORT) ?? 9002 + index;
+  if (managedRouter) {
     env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST =
       env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST ?? "127.0.0.1";
     env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT =
       env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT ?? String(basePort + 100);
     env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = `http://${env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST}:${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT}`;
+    if (
+      !`${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS ?? ""}`.trim()
+    ) {
+      env.COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS = "1";
+    }
+  }
+  if (managedPublicIngress) {
+    env.COCALC_PROJECT_HOST_APP_HOST =
+      env.COCALC_PROJECT_HOST_APP_HOST ?? "127.0.0.1";
+    env.COCALC_PROJECT_HOST_APP_PORT =
+      env.COCALC_PROJECT_HOST_APP_PORT ?? String(basePort + 1);
+    env.COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_HOST =
+      env.COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_HOST ??
+      env.HOST ??
+      "127.0.0.1";
+    env.COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_PORT =
+      env.COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_PORT ?? String(basePort);
   }
   if (usesManagedLocalConatPersist(env)) {
-    const basePort = parsePort(env.PORT) ?? 9002 + index;
     env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST =
       env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST ?? "127.0.0.1";
     env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT =
@@ -262,12 +289,17 @@ function resolveEnv(index: number): {
   persistPidPath: string;
   routerEnabled: boolean;
   managedRouter: boolean;
+  managedPublicIngress: boolean;
   routerHost: string;
   routerPort?: number;
   routerUrl?: string;
+  routerIngressHost: string;
+  routerIngressPort?: number;
   routerLogPath: string;
   routerPidPath: string;
   httpPort?: number;
+  projectHostHost: string;
+  projectHostPort?: number;
   sshPort?: number;
 } {
   const fileEnv = loadEnvFromFile(DEFAULT_ENV_FILE);
@@ -293,6 +325,7 @@ function resolveEnv(index: number): {
   ensureDefaults(env, index);
   const routerEnabled = isProjectHostExternalConatRouterEnabled(env);
   const managedRouter = routerEnabled && !`${explicitRouterUrl}`.trim();
+  const managedPublicIngress = managedRouter && publicIngressEnabledValue(env);
   const persistEnabled = isProjectHostExternalConatPersistEnabled(env);
   const managedPersist = usesManagedLocalConatPersist(env);
   if (persistEnabled && !routerEnabled) {
@@ -332,13 +365,25 @@ function resolveEnv(index: number): {
     persistPidPath,
     routerEnabled,
     managedRouter,
+    managedPublicIngress,
     routerHost: env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST ?? "127.0.0.1",
     routerPort: parsePort(env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT),
     routerUrl:
       `${env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim() || undefined,
+    routerIngressHost:
+      env.COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_HOST ??
+      env.HOST ??
+      "127.0.0.1",
+    routerIngressPort: parsePort(
+      env.COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_PORT,
+    ),
     routerLogPath,
     routerPidPath,
     httpPort: parsePort(env.PORT),
+    projectHostHost:
+      env.COCALC_PROJECT_HOST_APP_HOST ?? env.HOST ?? "127.0.0.1",
+    projectHostPort:
+      parsePort(env.COCALC_PROJECT_HOST_APP_PORT) ?? parsePort(env.PORT),
     sshPort: parsePort(env.PROJECT_HOST_SSH_SERVER ?? env.COCALC_SSH_SERVER),
   };
 }
@@ -954,8 +999,22 @@ function startManagedConatRouter(opts: {
   routerLogPath: string;
   routerHost: string;
   routerPort?: number;
+  routerIngressHost: string;
+  routerIngressPort?: number;
+  projectHostHost: string;
+  projectHostPort?: number;
 }): void {
-  const { env, routerPidPath, routerLogPath, routerHost, routerPort } = opts;
+  const {
+    env,
+    routerPidPath,
+    routerLogPath,
+    routerHost,
+    routerPort,
+    routerIngressHost,
+    routerIngressPort,
+    projectHostHost,
+    projectHostPort,
+  } = opts;
   if (routerPort == null) {
     throw new Error(
       "managed conat router requires COCALC_PROJECT_HOST_CONAT_ROUTER_PORT",
@@ -1001,6 +1060,15 @@ function startManagedConatRouter(opts: {
       PORT: String(routerPort),
       DEBUG_FILE: routerLogPath,
       COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON: "1",
+      ...(routerIngressPort != null && projectHostPort != null
+        ? {
+            COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS: "1",
+            COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_HOST: routerIngressHost,
+            COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_PORT:
+              String(routerIngressPort),
+            COCALC_PROJECT_HOST_CONAT_ROUTER_UPSTREAM_URL: `http://${projectHostHost}:${projectHostPort}`,
+          }
+        : {}),
     },
     detached: true,
     stdio: ["ignore", stdout, stderr],
@@ -1048,10 +1116,24 @@ function ensureManagedConatRouter(opts: {
   routerLogPath: string;
   routerHost: string;
   routerPort?: number;
+  routerIngressHost: string;
+  routerIngressPort?: number;
+  projectHostHost: string;
+  projectHostPort?: number;
   options?: EnsureOptions;
 }): void {
-  const { env, dataDir, routerPidPath, routerLogPath, routerHost, routerPort } =
-    opts;
+  const {
+    env,
+    dataDir,
+    routerPidPath,
+    routerLogPath,
+    routerHost,
+    routerPort,
+    routerIngressHost,
+    routerIngressPort,
+    projectHostHost,
+    projectHostPort,
+  } = opts;
   const pid = fs.existsSync(routerPidPath)
     ? Number(fs.readFileSync(routerPidPath, "utf8"))
     : undefined;
@@ -1076,6 +1158,10 @@ function ensureManagedConatRouter(opts: {
       routerLogPath,
       routerHost,
       routerPort,
+      routerIngressHost,
+      routerIngressPort,
+      projectHostHost,
+      projectHostPort,
     });
     return;
   }
@@ -1097,6 +1183,10 @@ function ensureManagedConatRouter(opts: {
     routerLogPath,
     routerHost,
     routerPort,
+    routerIngressHost,
+    routerIngressPort,
+    projectHostHost,
+    projectHostPort,
   });
 }
 
@@ -1405,9 +1495,13 @@ export function restartManagedLocalConatRouter(index = 0): void {
     dataDir,
     managedRouter,
     routerHost,
+    routerIngressHost,
+    routerIngressPort,
     routerLogPath,
     routerPidPath,
     routerPort,
+    projectHostHost,
+    projectHostPort,
   } = resolveEnv(index);
   if (!managedRouter) {
     throw new Error(
@@ -1425,6 +1519,10 @@ export function restartManagedLocalConatRouter(index = 0): void {
     routerLogPath,
     routerHost,
     routerPort,
+    routerIngressHost,
+    routerIngressPort,
+    projectHostHost,
+    projectHostPort,
   });
 }
 
@@ -1460,7 +1558,7 @@ export function restartManagedLocalConatPersist(index = 0): void {
 export function inspectProjectHostRuntime(
   index = 0,
 ): ProjectHostRuntimeInspection {
-  const { env, dataDir, pidPath, httpPort } = resolveEnv(index);
+  const { env, dataDir, pidPath, projectHostPort } = resolveEnv(index);
   const selectedVersion = selectedVersionFromLink(
     projectHostCurrentLinkPath(env),
   );
@@ -1478,7 +1576,7 @@ export function inspectProjectHostRuntime(
     runningVersion: alivePid
       ? inferProjectHostBundleVersionFromCmdline(readProcCmdline(alivePid))
       : undefined,
-    healthy: alivePid ? checkHealthSync(env, httpPort) : false,
+    healthy: alivePid ? checkHealthSync(env, projectHostPort) : false,
   };
 }
 
@@ -1494,6 +1592,8 @@ export function startDaemon(index = 0): void {
     logPath,
     pidPath,
     httpPort,
+    projectHostHost,
+    projectHostPort,
     managedPersist,
     persistHealthHost,
     persistHealthPort,
@@ -1501,6 +1601,8 @@ export function startDaemon(index = 0): void {
     persistPidPath,
     managedRouter,
     routerHost,
+    routerIngressHost,
+    routerIngressPort,
     routerLogPath,
     routerPidPath,
     routerPort,
@@ -1513,6 +1615,10 @@ export function startDaemon(index = 0): void {
       routerLogPath,
       routerHost,
       routerPort,
+      routerIngressHost,
+      routerIngressPort,
+      projectHostHost,
+      projectHostPort,
     });
   }
   if (managedPersist) {
@@ -1529,7 +1635,7 @@ export function startDaemon(index = 0): void {
     const pid = Number(fs.readFileSync(pidPath, "utf8"));
     if (pid && isRunning(pid)) {
       if (
-        checkHealthSync(env, httpPort) &&
+        checkHealthSync(env, projectHostPort) &&
         (!managedRouter || checkConatRouterHealthSync(env, routerPort)) &&
         (!managedPersist || checkConatPersistHealthSync(env, persistHealthPort))
       ) {
@@ -1570,7 +1676,16 @@ export function startDaemon(index = 0): void {
   const childEnv = withoutHostAgentEnv(env);
   const child = processRuntime.spawn(command, args, {
     cwd: root,
-    env: childEnv,
+    env: {
+      ...childEnv,
+      HOST: projectHostHost,
+      PORT: String(projectHostPort ?? httpPort ?? 9002),
+      ...(httpPort != null
+        ? {
+            COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT: String(httpPort),
+          }
+        : {}),
+    },
     detached: true,
     stdio: ["ignore", stdout, stderr],
   });
@@ -1593,7 +1708,8 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
     env,
     dataDir,
     pidPath,
-    httpPort,
+    projectHostHost,
+    projectHostPort,
     persistHealthHost,
     persistHealthPort,
     persistLogPath,
@@ -1602,6 +1718,8 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
     managedPersist,
     managedRouter,
     routerHost,
+    routerIngressHost,
+    routerIngressPort,
     routerLogPath,
     routerPidPath,
     routerPort,
@@ -1614,6 +1732,10 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
       routerLogPath,
       routerHost,
       routerPort,
+      routerIngressHost,
+      routerIngressPort,
+      projectHostHost,
+      projectHostPort,
       options,
     });
   }
@@ -1632,7 +1754,7 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
     ? Number(fs.readFileSync(pidPath, "utf8"))
     : undefined;
   if (pid && isRunning(pid)) {
-    if (checkHealthSync(env, httpPort)) {
+    if (checkHealthSync(env, projectHostPort)) {
       if (!options?.quietHealthy) {
         console.log(`project-host healthy (pid ${pid})`);
       }
@@ -1666,7 +1788,7 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
   fs.rmSync(pidPath, { force: true });
   const cleaned = cleanupStrayProcesses({
     dataDir,
-    httpPort,
+    httpPort: projectHostPort,
     routerPort,
     persistHealthPort,
     sshPort,
@@ -1858,7 +1980,7 @@ function stopDaemonWithOptions(index = 0, options?: StopOptions): void {
   const {
     pidPath,
     dataDir,
-    httpPort,
+    projectHostPort,
     managedPersist,
     persistPidPath,
     persistHealthPort,
@@ -1870,7 +1992,7 @@ function stopDaemonWithOptions(index = 0, options?: StopOptions): void {
   if (!fs.existsSync(pidPath)) {
     const cleaned = cleanupStrayProcesses({
       dataDir,
-      httpPort,
+      httpPort: projectHostPort,
       routerPort,
       persistHealthPort,
       sshPort,
@@ -1906,7 +2028,7 @@ function stopDaemonWithOptions(index = 0, options?: StopOptions): void {
     fs.rmSync(pidPath, { force: true });
     const cleaned = cleanupStrayProcesses({
       dataDir,
-      httpPort,
+      httpPort: projectHostPort,
       routerPort,
       persistHealthPort,
       sshPort,
@@ -1965,7 +2087,7 @@ function stopDaemonWithOptions(index = 0, options?: StopOptions): void {
   fs.rmSync(pidPath, { force: true });
   cleanupStrayProcesses({
     dataDir,
-    httpPort,
+    httpPort: projectHostPort,
     routerPort,
     persistHealthPort,
     sshPort,
