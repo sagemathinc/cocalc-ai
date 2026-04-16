@@ -38,11 +38,9 @@ jest.mock("@cocalc/frontend/app-framework", () => {
 });
 
 jest.mock("../threads", () => ({
-  COMBINED_FEED_KEY: "__COMBINED_FEED__",
   useThreadSections: () => ({
     threads: [],
     archivedThreads: [],
-    combinedThread: undefined,
     threadSections: [],
   }),
 }));
@@ -52,7 +50,6 @@ jest.mock("../thread-selection", () => ({
     selectedThreadKey: null,
     setSelectedThreadKey: jest.fn(),
     setAllowAutoSelectThread: jest.fn(),
-    isCombinedFeedSelected: false,
     singleThreadView: false,
     selectedThread: null,
   }),
@@ -142,15 +139,6 @@ jest.mock("../agent-session-index", () => ({
 jest.mock("../external-side-chat-selection", () => ({
   persistExternalSideChatSelectedThreadKey: jest.fn(),
 }));
-
-jest.mock("../combined-composer-target", () => {
-  const actual = jest.requireActual("../combined-composer-target");
-  return {
-    ...actual,
-    resolveCombinedComposerTargetKey: () => null,
-    combinedComposerTargetStorageKey: () => "combined-target:test",
-  };
-});
 
 describe("ChatPanel new thread defaults", () => {
   beforeEach(() => {

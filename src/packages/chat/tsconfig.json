@@ -9,9 +9,15 @@
     "baseUrl": "."
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["dist", "node_modules"],
-  "references": [
-    { "path": "../conat" },
-    { "path": "../sync" }
-  ]
+  "exclude": [
+    "dist",
+    "node_modules",
+    "src/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "jest.config.cjs"
+  ],
+  "references": [{ "path": "../conat" }, { "path": "../sync" }]
 }

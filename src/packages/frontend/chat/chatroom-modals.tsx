@@ -66,7 +66,6 @@ interface ChatRoomModalsProps {
   path: string;
   selectedThreadKey?: string | null;
   selectedThreadLabel?: string;
-  isCombinedFeedSelected?: boolean;
   onHandlers?: (handlers: ChatRoomModalHandlers) => void;
 }
 
@@ -84,7 +83,6 @@ export function ChatRoomModals({
   path,
   selectedThreadKey,
   selectedThreadLabel,
-  isCombinedFeedSelected = false,
   onHandlers,
 }: ChatRoomModalsProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
@@ -275,15 +273,9 @@ export function ChatRoomModals({
   const openExportModal = useCallback(
     (opts?: ChatExportOpenRequest) => {
       const requestThreadKey =
-        opts?.threadKey?.trim() ||
-        (!isCombinedFeedSelected
-          ? selectedThreadKey?.trim() || undefined
-          : undefined);
+        opts?.threadKey?.trim() || selectedThreadKey?.trim() || undefined;
       const requestLabel =
-        opts?.label?.trim() ||
-        (!isCombinedFeedSelected
-          ? selectedThreadLabel?.trim() || undefined
-          : undefined);
+        opts?.label?.trim() || selectedThreadLabel?.trim() || undefined;
       const scope =
         opts?.scope ??
         (requestThreadKey ? "current-thread" : "all-non-archived-threads");
@@ -293,7 +285,7 @@ export function ChatRoomModals({
         label: requestLabel,
       });
     },
-    [isCombinedFeedSelected, selectedThreadKey, selectedThreadLabel],
+    [selectedThreadKey, selectedThreadLabel],
   );
 
   const closeExportModal = () => {

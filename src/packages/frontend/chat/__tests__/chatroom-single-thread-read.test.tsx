@@ -1,10 +1,23 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import * as immutable from "immutable";
 import { ChatPanel } from "../chatroom";
 
-const markChatAsReadIfUnseen = jest.fn();
+let currentThread = {
+  key: "thread-1",
+  label: "Thread 1",
+  displayLabel: "Thread 1",
+  newestTime: 10,
+  messageCount: 2,
+  hasCustomName: false,
+  hasCustomAppearance: false,
+  readCount: 1,
+  unreadCount: 1,
+  isAI: false,
+  isPinned: false,
+  isArchived: false,
+};
 
 jest.mock("@cocalc/frontend/feature", () => ({
   IS_MOBILE: false,
@@ -27,65 +40,20 @@ jest.mock("@cocalc/frontend/app-framework", () => {
 });
 
 jest.mock("../threads", () => ({
-  COMBINED_FEED_KEY: "__COMBINED_FEED__",
   useThreadSections: () => ({
-    threads: [
-      {
-        key: "t1",
-        label: "Thread 1",
-        displayLabel: "Thread 1",
-        newestTime: 10,
-        messageCount: 5,
-        hasCustomName: false,
-        hasCustomAppearance: false,
-        readCount: 0,
-        unreadCount: 2,
-        isAI: false,
-        isPinned: false,
-        isArchived: false,
-      },
-      {
-        key: "t2",
-        label: "Thread 2",
-        displayLabel: "Thread 2",
-        newestTime: 9,
-        messageCount: 3,
-        hasCustomName: false,
-        hasCustomAppearance: false,
-        readCount: 0,
-        unreadCount: 1,
-        isAI: false,
-        isPinned: false,
-        isArchived: false,
-      },
-    ],
+    threads: [currentThread],
     archivedThreads: [],
-    combinedThread: {
-      key: "__COMBINED_FEED__",
-      label: "Combined",
-      displayLabel: "Combined",
-      newestTime: 10,
-      messageCount: 8,
-      hasCustomName: false,
-      hasCustomAppearance: false,
-      readCount: 0,
-      unreadCount: 3,
-      isAI: false,
-      isPinned: false,
-      isArchived: false,
-    },
     threadSections: [],
   }),
 }));
 
 jest.mock("../thread-selection", () => ({
   useChatThreadSelection: () => ({
-    selectedThreadKey: "__COMBINED_FEED__",
+    selectedThreadKey: "thread-1",
     setSelectedThreadKey: jest.fn(),
     setAllowAutoSelectThread: jest.fn(),
-    isCombinedFeedSelected: true,
-    singleThreadView: false,
-    selectedThread: null,
+    singleThreadView: true,
+    selectedThread: currentThread,
   }),
 }));
 
@@ -113,7 +81,7 @@ jest.mock("../drawer-overlay-state", () => ({
 
 jest.mock("../utils", () => ({
   getMessageByLookup: () => undefined,
-  markChatAsReadIfUnseen: (...args: any[]) => markChatAsReadIfUnseen(...args),
+  markChatAsReadIfUnseen: jest.fn(),
   stableDraftKeyFromThreadKey: (key: string) => key,
 }));
 
@@ -158,23 +126,28 @@ jest.mock("../external-side-chat-selection", () => ({
   persistExternalSideChatSelectedThreadKey: jest.fn(),
 }));
 
-jest.mock("../combined-composer-target", () => {
-  const actual = jest.requireActual("../combined-composer-target");
-  return {
-    ...actual,
-    resolveCombinedComposerTargetKey: () => null,
-    combinedComposerTargetStorageKey: () => "combined-target:test",
-  };
-});
-
-describe("ChatPanel combined feed read tracking", () => {
+describe("ChatPanel selected thread read tracking", () => {
   beforeEach(() => {
-    markChatAsReadIfUnseen.mockClear();
+    currentThread = {
+      key: "thread-1",
+      label: "Thread 1",
+      displayLabel: "Thread 1",
+      newestTime: 10,
+      messageCount: 2,
+      hasCustomName: false,
+      hasCustomAppearance: false,
+      readCount: 1,
+      unreadCount: 1,
+      isAI: false,
+      isPinned: false,
+      isArchived: false,
+    };
   });
 
   function renderPanel() {
     const actions = {
       markThreadRead: jest.fn(),
+      scrollToIndex: jest.fn(),
       getCodexConfig: jest.fn(),
       getThreadMetadata: jest.fn(),
       getMessagesInThread: jest.fn(() => []),
@@ -183,7 +156,7 @@ describe("ChatPanel combined feed read tracking", () => {
       frameId: undefined,
     } as any;
 
-    const { container } = render(
+    const result = render(
       <ChatPanel
         actions={actions}
         project_id="project-1"
@@ -193,34 +166,73 @@ describe("ChatPanel combined feed read tracking", () => {
         docVersion={0}
       />,
     );
-    return { actions, container };
+    return { actions, ...result };
   }
 
-  it("marks unread threads read when the combined feed is interacted with", () => {
-    const { actions, container } = renderPanel();
+  it("marks the selected thread read when it has unread messages", () => {
+    const { actions } = renderPanel();
 
-    fireEvent.mouseMove(container.firstChild as HTMLElement);
-
-    expect(markChatAsReadIfUnseen).toHaveBeenCalledWith(
-      "project-1",
-      "chat/test.chat",
-    );
-    expect(actions.markThreadRead).toHaveBeenCalledTimes(2);
-    expect(actions.markThreadRead).toHaveBeenNthCalledWith(1, "t1", 5, false);
-    expect(actions.markThreadRead).toHaveBeenNthCalledWith(2, "t2", 3, true);
+    expect(actions.markThreadRead).toHaveBeenCalledTimes(1);
+    expect(actions.markThreadRead).toHaveBeenCalledWith("thread-1", 2);
   });
 
-  it("marks unread threads read when the combined feed is scrolled with the wheel", () => {
-    const { actions, container } = renderPanel();
+  it("marks the selected thread read again when unread state advances", () => {
+    const { actions, rerender } = renderPanel();
+    actions.markThreadRead.mockClear();
 
-    fireEvent.wheel(container.firstChild as HTMLElement);
+    currentThread = {
+      ...currentThread,
+      messageCount: 3,
+      unreadCount: 1,
+      newestTime: 11,
+    };
 
-    expect(markChatAsReadIfUnseen).toHaveBeenCalledWith(
-      "project-1",
-      "chat/test.chat",
+    rerender(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/test.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={1}
+      />,
     );
+
+    expect(actions.markThreadRead).toHaveBeenCalledTimes(1);
+    expect(actions.markThreadRead).toHaveBeenCalledWith("thread-1", 3);
+  });
+
+  it("retries marking the selected thread read when the watermark is not ready yet", () => {
+    const { actions, rerender } = renderPanel();
+    actions.markThreadRead.mockReset();
+    actions.markThreadRead
+      .mockImplementationOnce(() => false)
+      .mockImplementation(() => true);
+
+    rerender(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/test.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={1}
+      />,
+    );
+
+    rerender(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/test.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={2}
+      />,
+    );
+
     expect(actions.markThreadRead).toHaveBeenCalledTimes(2);
-    expect(actions.markThreadRead).toHaveBeenNthCalledWith(1, "t1", 5, false);
-    expect(actions.markThreadRead).toHaveBeenNthCalledWith(2, "t2", 3, true);
+    expect(actions.markThreadRead).toHaveBeenNthCalledWith(1, "thread-1", 2);
+    expect(actions.markThreadRead).toHaveBeenNthCalledWith(2, "thread-1", 2);
   });
 });

@@ -1,9 +1,16 @@
 import { Map as ImmutableMap, fromJS } from "immutable";
 
 const listRecentMock = jest.fn();
+let mockLite = false;
 
 jest.mock("@cocalc/conat/project/document-activity", () => ({
   listRecent: (...args: any[]) => listRecentMock(...args),
+}));
+
+jest.mock("@cocalc/frontend/lite", () => ({
+  get lite() {
+    return mockLite;
+  },
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -25,6 +32,7 @@ function deferred<T>() {
 describe("listRecentDocumentActivityBestEffort", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockLite = false;
   });
 
   it("publishes a fast first wave before waiting on slower projects", async () => {
@@ -108,5 +116,28 @@ describe("listRecentDocumentActivityBestEffort", () => {
     ]);
     expect(updates).toHaveLength(2);
     expect(updates[1].complete).toBe(true);
+  });
+
+  it("returns immediately without querying document-activity in lite mode", async () => {
+    mockLite = true;
+    const updates: Array<{ rows: any[]; complete: boolean }> = [];
+    const project_map = fromJS({
+      "project-1": {
+        host_id: "host-1",
+        last_edited: 30,
+      },
+    }) as ImmutableMap<string, any>;
+
+    const { listRecentDocumentActivityBestEffort } =
+      await import("./project-host");
+    const rows = await listRecentDocumentActivityBestEffort({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      project_map,
+      onRows: (update) => updates.push(update),
+    });
+
+    expect(rows).toEqual([]);
+    expect(updates).toEqual([{ rows: [], complete: true }]);
+    expect(listRecentMock).not.toHaveBeenCalled();
   });
 });

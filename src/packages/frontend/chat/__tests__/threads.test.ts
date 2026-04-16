@@ -5,6 +5,7 @@ import {
   type ThreadMeta,
   useThreadSections,
 } from "../threads";
+import { act } from "react";
 
 function makeThread(
   key: string,
@@ -60,8 +61,10 @@ describe("useThreadSections read-state gating", () => {
     readReady: boolean;
     readCount?: number;
     accountId?: string;
+    readStateVersion?: number;
   }) {
     let value: ReturnType<typeof useThreadSections> | undefined;
+    let rerenderHook: ((next: typeof opts) => void) | undefined;
     const actions = {
       listThreadConfigRows: jest.fn(() => []),
       getThreadMetadata: jest.fn(() => undefined),
@@ -89,11 +92,22 @@ describe("useThreadSections read-state gating", () => {
         threadIndex: threadIndex as any,
         accountId: opts.accountId ?? "acct",
         actions,
+        readStateVersion: opts.readStateVersion,
       });
       return null;
     }
-    render(React.createElement(Probe));
-    return { value: value!, actions };
+    const rendered = render(React.createElement(Probe));
+    rerenderHook = (next) => {
+      opts = next;
+      rendered.rerender(React.createElement(Probe));
+    };
+    return {
+      get value() {
+        return value!;
+      },
+      actions,
+      rerender: rerenderHook,
+    };
   }
 
   it("suppresses unread counts while project read state is still loading", () => {
@@ -114,5 +128,26 @@ describe("useThreadSections read-state gating", () => {
     expect(actions.getThreadReadCount).toHaveBeenCalledWith("thread-1", "acct");
     expect(value.threads[0].readCount).toBe(2);
     expect(value.threads[0].unreadCount).toBe(3);
+  });
+
+  it("recomputes unread counts when only read state changes", () => {
+    const rendered = renderThreads({
+      readReady: true,
+      readCount: 4,
+      readStateVersion: 1,
+    });
+    expect(rendered.value.threads[0].readCount).toBe(4);
+    expect(rendered.value.threads[0].unreadCount).toBe(1);
+
+    act(() => {
+      rendered.rerender({
+        readReady: true,
+        readCount: 5,
+        readStateVersion: 2,
+      });
+    });
+
+    expect(rendered.value.threads[0].readCount).toBe(5);
+    expect(rendered.value.threads[0].unreadCount).toBe(0);
   });
 });

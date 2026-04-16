@@ -5,7 +5,23 @@
     "outDir": "./dist",
     "lib": ["ESNext"]
   },
-  "exclude": ["node_modules", "dist"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "**/test/**",
+    "**/__tests__/**",
+    "**/__test__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.test.js",
+    "**/*.test.jsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.spec.js",
+    "**/*.spec.jsx",
+    "jest.config.js"
+  ],
   "references": [
     { "path": "../backend" },
     { "path": "../conat" },

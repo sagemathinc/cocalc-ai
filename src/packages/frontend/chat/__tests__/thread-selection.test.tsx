@@ -5,7 +5,7 @@ import {
   resetThreadSelectionForNewChat,
   useChatThreadSelection,
 } from "../thread-selection";
-import { COMBINED_FEED_KEY, type ThreadMeta } from "../threads";
+import type { ThreadMeta } from "../threads";
 
 describe("useChatThreadSelection", () => {
   it("clears the selected message fragment when starting a new chat", () => {
@@ -83,7 +83,7 @@ describe("useChatThreadSelection", () => {
     expect(latest.selectedThreadKey).toBe("100");
   });
 
-  it("does not fall back to combined feed while a concrete selected thread is temporarily missing", () => {
+  it("does not fall back to a different thread while a concrete selected thread is temporarily missing", () => {
     const actions = {
       clearAllFilters: jest.fn(),
       setFragment: jest.fn(),
@@ -98,7 +98,7 @@ describe("useChatThreadSelection", () => {
         threads,
         messages: undefined,
         fragmentId: null,
-        storedThreadFromDesc: COMBINED_FEED_KEY,
+        storedThreadFromDesc: null,
       });
       return null;
     }
@@ -122,7 +122,7 @@ describe("useChatThreadSelection", () => {
     ];
 
     const { rerender } = render(<Harness threads={threads} />);
-    expect(latest.selectedThreadKey).toBe(COMBINED_FEED_KEY);
+    expect(latest.selectedThreadKey).toBe("100");
 
     act(() => {
       latest.setSelectedThreadKey("200");
@@ -136,7 +136,7 @@ describe("useChatThreadSelection", () => {
     expect(latest.selectedThreadKey).toBe("200");
   });
 
-  it("does not emit redundant combined-feed selections", () => {
+  it("auto-selects the latest thread only once", () => {
     const actions = {
       clearAllFilters: jest.fn(),
       setFragment: jest.fn(),
@@ -149,7 +149,7 @@ describe("useChatThreadSelection", () => {
         threads,
         messages: undefined,
         fragmentId: null,
-        storedThreadFromDesc: COMBINED_FEED_KEY,
+        storedThreadFromDesc: null,
       });
       return null;
     }
@@ -176,9 +176,10 @@ describe("useChatThreadSelection", () => {
     rerender(<Harness threads={threads} />);
     rerender(<Harness threads={threads} />);
 
-    expect(actions.setSelectedThread).not.toHaveBeenCalled();
-    expect(actions.clearAllFilters).not.toHaveBeenCalled();
-    expect(actions.setFragment).not.toHaveBeenCalled();
+    expect(actions.setSelectedThread).toHaveBeenCalledTimes(1);
+    expect(actions.setSelectedThread).toHaveBeenCalledWith("100");
+    expect(actions.clearAllFilters).toHaveBeenCalledTimes(1);
+    expect(actions.setFragment).toHaveBeenCalledTimes(1);
   });
 
   it("syncs external selected-thread changes without re-emitting selection side effects", () => {
