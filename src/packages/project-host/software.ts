@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { listRuntimeArtifactReferences } from "./sqlite/projects";
 
 export type SoftwareVersions = {
   project_host?: string;
@@ -19,6 +20,10 @@ export type InstalledRuntimeArtifactStatus = {
   current_version?: string;
   current_build_id?: string;
   installed_versions: string[];
+  referenced_versions?: Array<{
+    version: string;
+    project_count: number;
+  }>;
 };
 
 const DEFAULT_BUNDLE_ROOT = "/opt/cocalc/project-bundles";
@@ -126,16 +131,22 @@ function describeInstalledArtifact({
   artifact,
   currentPath,
   roots,
+  referenced_versions,
 }: {
   artifact: InstalledRuntimeArtifact;
   currentPath: string;
   roots: string[];
+  referenced_versions?: Array<{
+    version: string;
+    project_count: number;
+  }>;
 }): InstalledRuntimeArtifactStatus {
   return {
     artifact,
     current_version: versionFromCurrentPath(currentPath),
     current_build_id: readBuildIdFromCurrentPath(currentPath),
     installed_versions: listInstalledVersionsInRoots(roots),
+    referenced_versions,
   };
 }
 
@@ -210,6 +221,7 @@ export function getInstalledRuntimeArtifacts(): InstalledRuntimeArtifactStatus[]
   const projectBundleCurrent = path.join(projectBundlesRoot, "current");
   const toolsCurrent =
     process.env.COCALC_PROJECT_TOOLS ?? DEFAULT_TOOLS_CURRENT;
+  const references = listRuntimeArtifactReferences();
   return [
     describeInstalledArtifact({
       artifact: "project-host",
@@ -220,11 +232,13 @@ export function getInstalledRuntimeArtifacts(): InstalledRuntimeArtifactStatus[]
       artifact: "project-bundle",
       currentPath: projectBundleCurrent,
       roots: siblingInventoryRoots(projectBundleCurrent),
+      referenced_versions: references.project_bundle,
     }),
     describeInstalledArtifact({
       artifact: "tools",
       currentPath: toolsCurrent,
       roots: siblingInventoryRoots(toolsCurrent),
+      referenced_versions: references.tools,
     }),
   ];
 }

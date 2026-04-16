@@ -194,6 +194,9 @@ function makeDeps(
                     current_version: "bundle-v1",
                     current_build_id: "build-bundle-v1",
                     installed_versions: ["bundle-v1", "bundle-v0"],
+                    referenced_versions: [
+                      { version: "bundle-v1", project_count: 2 },
+                    ],
                   },
                 ],
                 observed_targets: [
@@ -876,6 +879,8 @@ test("host deploy status renders flattened human-readable sections", async () =>
   assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
   assert.match(output, /Host ID: host-1/);
   assert.match(output, /Observed Artifacts/);
+  assert.match(output, /referenced_versions/);
+  assert.match(output, /bundle-v1 x2/);
   assert.match(output, /Component: acp-worker/);
   assert.match(output, /Configured Targets/);
   assert.match(output, /Effective Targets/);

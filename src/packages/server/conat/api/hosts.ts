@@ -5692,6 +5692,29 @@ function observedRuntimeArtifactsFromMetadata(
               )
             : [],
         ),
+        referenced_versions: Array.isArray(entry?.referenced_versions)
+          ? entry.referenced_versions
+              .map((reference: any) => {
+                const version = `${reference?.version ?? ""}`.trim();
+                const project_count = Math.max(
+                  0,
+                  Math.floor(Number(reference?.project_count ?? 0) || 0),
+                );
+                if (!version || project_count <= 0) return undefined;
+                return {
+                  version,
+                  project_count,
+                };
+              })
+              .filter(
+                (
+                  reference,
+                ): reference is {
+                  version: string;
+                  project_count: number;
+                } => reference != null,
+              )
+          : undefined,
       } satisfies HostRuntimeArtifactObservation;
     })
     .filter((entry): entry is HostRuntimeArtifactObservation => entry != null);

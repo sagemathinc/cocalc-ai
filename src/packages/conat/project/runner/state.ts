@@ -21,6 +21,8 @@ export interface ProjectStatus {
   publicKey?: string;
   http_port?: number;
   ssh_port?: number;
+  project_bundle_version?: string;
+  tools_version?: string;
 }
 
 export default async function state({ client }) {

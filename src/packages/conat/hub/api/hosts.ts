@@ -546,6 +546,10 @@ export interface HostRuntimeArtifactObservation {
   current_version?: string;
   current_build_id?: string;
   installed_versions: string[];
+  referenced_versions?: Array<{
+    version: string;
+    project_count: number;
+  }>;
 }
 
 export interface HostRuntimeDeploymentObservedTarget {

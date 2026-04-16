@@ -522,11 +522,16 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
           current_version: "bundle-v4",
           current_build_id: "build-bundle-v4",
           installed_versions: ["bundle-v4"],
+          referenced_versions: [{ version: "bundle-v4", project_count: 2 }],
         },
         {
           artifact: "tools",
           current_version: "tools-v7",
           installed_versions: ["tools-v7"],
+          referenced_versions: [
+            { version: "tools-v7", project_count: 1 },
+            { version: "tools-v6", project_count: 1 },
+          ],
         },
       ],
     }));
@@ -572,6 +577,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         current_version: "bundle-v4",
         current_build_id: "build-bundle-v4",
         installed_versions: ["bundle-v4"],
+        referenced_versions: [{ version: "bundle-v4", project_count: 2 }],
       },
       {
         artifact: "project-host",
@@ -583,6 +589,10 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         artifact: "tools",
         current_version: "tools-v7",
         installed_versions: ["tools-v7"],
+        referenced_versions: [
+          { version: "tools-v7", project_count: 1 },
+          { version: "tools-v6", project_count: 1 },
+        ],
       },
     ]);
     expect(status.observed_targets).toEqual([

@@ -197,6 +197,19 @@ function formatList(values: unknown): string {
   return values.map((value) => `${value ?? ""}`.trim()).join(", ");
 }
 
+function formatArtifactReferences(value: unknown): string {
+  if (!Array.isArray(value) || value.length === 0) return "";
+  return value
+    .map((entry) => {
+      const version = `${(entry as any)?.version ?? ""}`.trim();
+      const projectCount = Number((entry as any)?.project_count ?? 0) || 0;
+      if (!version || projectCount <= 0) return "";
+      return `${version} x${projectCount}`;
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
 function formatRuntimeDeploymentRows(
   deployments: Array<Record<string, unknown>> | undefined,
 ): Record<string, unknown>[] {
@@ -249,6 +262,7 @@ function formatObservedArtifactRows(
     current_version: artifact.current_version ?? "",
     current_build_id: artifact.current_build_id ?? "",
     installed_versions: formatList(artifact.installed_versions),
+    referenced_versions: formatArtifactReferences(artifact.referenced_versions),
   }));
 }
 
@@ -1164,7 +1178,7 @@ Example:
 Status shows two views:
 - \`configured\`: host-specific overrides recorded for this host
 - \`effective\`: the merged desired state after applying global defaults and host overrides
-- \`observed_artifacts\`: host-local artifact inventory and current selections
+- \`observed_artifacts\`: host-local artifact inventory, current selections, and any bundle/tools versions still referenced by running projects
 - \`observed_components\`: live component status reported by the host when it is online
 - \`observed_targets\`: desired-vs-observed comparison for each effective runtime target
 `,

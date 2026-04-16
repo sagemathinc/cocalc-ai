@@ -150,6 +150,8 @@ export async function server(options: Options) {
         state: "running",
         ssh_port: (resp as any)?.ssh_port,
         http_port: (resp as any)?.http_port,
+        project_bundle_version: (resp as any)?.project_bundle_version,
+        tools_version: (resp as any)?.tools_version,
       } as const;
       projects.set(opts.project_id, s);
       return s;

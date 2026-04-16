@@ -16,7 +16,7 @@ Maybe.  Perhaps we'll have two modes.
 */
 
 import { mountArg } from "@cocalc/backend/podman";
-import { nodePath } from "./mounts";
+import { DEFAULT_PROJECT_TOOLS, nodePath } from "./mounts";
 import { isValidUUID } from "@cocalc/util/misc";
 import { ensureConfFilesExists, setupDataPath, writeSecretToken } from "./util";
 import { getEnvironment } from "./env";
@@ -31,7 +31,7 @@ import {
 import { getCoCalcMounts, COCALC_SRC } from "./mounts";
 import { fileServerClient, setQuota } from "./filesystem";
 import { type RestoreMode } from "@cocalc/conat/files/file-server";
-import { dirname, join, relative, isAbsolute } from "node:path";
+import { basename, dirname, join, relative, isAbsolute } from "node:path";
 import { mount as mountRootFs, unmountAll as unmountAllRootFs } from "./rootfs";
 import { type ProjectState } from "@cocalc/conat/project/runner/state";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
@@ -315,6 +315,12 @@ async function forceKillContainerProcesses(
 interface ScriptResolution {
   script: string;
   bundleMount?: { source: string; target: string };
+  bundleVersion?: string;
+}
+
+function versionFromPath(value?: string): string | undefined {
+  const version = basename(`${value ?? ""}`.trim());
+  return version && version !== "current" ? version : undefined;
 }
 
 function isSubPath(parent: string, child: string): boolean {
@@ -468,7 +474,32 @@ async function resolveProjectScript(): Promise<ScriptResolution> {
   return {
     script: containerScript,
     bundleMount: { source: bundleDir, target: PROJECT_BUNDLE_MOUNT_POINT },
+    bundleVersion: versionFromPath(bundleDir),
   };
+}
+
+async function resolveToolsVersion(
+  env: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  const toolsPath = `${
+    env.COCALC_PROJECT_TOOLS ?? DEFAULT_PROJECT_TOOLS
+  }`.trim();
+  if (toolsPath) {
+    try {
+      return versionFromPath(await realpath(toolsPath));
+    } catch {
+      // ignore missing tools path
+    }
+  }
+  const legacyBundle = `${env.COCALC_PROJECT_BUNDLE ?? ""}`.trim();
+  if (legacyBundle) {
+    try {
+      return versionFromPath(await realpath(legacyBundle));
+    } catch {
+      // ignore missing legacy bundle path
+    }
+  }
+  return undefined;
 }
 
 export function networkArgument() {
@@ -680,7 +711,13 @@ export async function start({
   config?: Configuration;
   localPath: LocalPathFunction;
   sshServers?: SshServersFunction;
-}): Promise<{ state: ProjectState; ssh_port: number; http_port: number }> {
+}): Promise<{
+  state: ProjectState;
+  ssh_port: number;
+  http_port: number;
+  project_bundle_version?: string;
+  tools_version?: string;
+}> {
   if (!isValidUUID(project_id)) {
     throw Error("start: project_id must be valid");
   }
@@ -744,7 +781,11 @@ export async function start({
     });
     logger.debug("start: got rootfs", { project_id, rootfs });
 
-    const { script: projectScript, bundleMount } = await resolveProjectScript();
+    const {
+      script: projectScript,
+      bundleMount,
+      bundleVersion,
+    } = await resolveProjectScript();
 
     const mounts = getCoCalcMounts();
     if (bundleMount != null) {
@@ -775,6 +816,7 @@ export async function start({
       HOME: DEFAULT_PROJECT_RUNTIME_HOME,
       image,
     });
+    const toolsVersion = await resolveToolsVersion(env);
 
     if (bundleMount != null) {
       env.PATH = env.PATH
@@ -1025,7 +1067,13 @@ export async function start({
       desc: "started",
     });
 
-    return { state: "running", ssh_port, http_port };
+    return {
+      state: "running",
+      ssh_port,
+      http_port,
+      project_bundle_version: bundleVersion,
+      tools_version: toolsVersion,
+    };
   } catch (err) {
     report({ type: "start-project", error: err });
     await unmountAllRootFs(project_id).catch((unmountErr) => {

@@ -71,9 +71,16 @@ export interface ProjectRow {
   users?: Record<string, any>;
   http_port?: number | null;
   ssh_port?: number | null;
+  project_bundle_version?: string | null;
+  tools_version?: string | null;
   secret_token?: string | null;
   authorized_keys?: string | null;
   run_quota?: any;
+}
+
+export interface ProjectRuntimeArtifactReference {
+  version: string;
+  project_count: number;
 }
 
 function ensureProjectsTable() {
@@ -93,6 +100,8 @@ function ensureProjectsTable() {
       updated_at INTEGER,
       http_port INTEGER,
       ssh_port INTEGER,
+      project_bundle_version TEXT,
+      tools_version TEXT,
       secret_token TEXT,
       authorized_keys TEXT,
       run_quota TEXT
@@ -109,6 +118,12 @@ function ensureProjectsTable() {
   } catch {}
   try {
     db.exec("ALTER TABLE projects ADD COLUMN ssh_port INTEGER");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE projects ADD COLUMN project_bundle_version TEXT");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE projects ADD COLUMN tools_version TEXT");
   } catch {}
   try {
     db.exec("ALTER TABLE projects ADD COLUMN secret_token TEXT");
@@ -134,7 +149,7 @@ export function upsertProject(row: ProjectRow) {
   const existingProjectsRow =
     db
       .prepare(
-        "SELECT state, state_reported, http_port, ssh_port, secret_token, authorized_keys, run_quota FROM projects WHERE project_id=?",
+        "SELECT state, state_reported, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota FROM projects WHERE project_id=?",
       )
       .get(row.project_id) || {};
   const existing = getRow("projects", pk) || {};
@@ -169,6 +184,24 @@ export function upsertProject(row: ProjectRow) {
   const ssh_port = hasSshPort
     ? (row.ssh_port ?? null)
     : ((existing as any).ssh_port ?? existingProjectsRow.ssh_port ?? null);
+  const hasExplicitProjectBundleVersion = Object.prototype.hasOwnProperty.call(
+    row,
+    "project_bundle_version",
+  );
+  const hasExplicitToolsVersion = Object.prototype.hasOwnProperty.call(
+    row,
+    "tools_version",
+  );
+  const project_bundle_version = hasExplicitProjectBundleVersion
+    ? (row.project_bundle_version ?? null)
+    : ((existing as any).project_bundle_version ??
+      (existingProjectsRow as any).project_bundle_version ??
+      null);
+  const tools_version = hasExplicitToolsVersion
+    ? (row.tools_version ?? null)
+    : ((existing as any).tools_version ??
+      (existingProjectsRow as any).tools_version ??
+      null);
   const secret_token =
     row.secret_token ?? (existingProjectsRow as any).secret_token ?? null;
   const authorized_keys =
@@ -198,8 +231,8 @@ export function upsertProject(row: ProjectRow) {
   }
 
   const stmt = db.prepare(`
-    INSERT INTO projects(project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, secret_token, authorized_keys, run_quota)
-    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO projects(project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota)
+    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(project_id) DO UPDATE SET
       title=excluded.title,
       state=excluded.state,
@@ -211,6 +244,8 @@ export function upsertProject(row: ProjectRow) {
       updated_at=excluded.updated_at,
       http_port=excluded.http_port,
       ssh_port=excluded.ssh_port,
+      project_bundle_version=excluded.project_bundle_version,
+      tools_version=excluded.tools_version,
       secret_token=excluded.secret_token,
       authorized_keys=excluded.authorized_keys,
       run_quota=excluded.run_quota
@@ -227,6 +262,8 @@ export function upsertProject(row: ProjectRow) {
     updated_at,
     http_port,
     ssh_port,
+    project_bundle_version,
+    tools_version,
     secret_token,
     authorized_keys,
     run_quota_json,
@@ -245,6 +282,8 @@ export function upsertProject(row: ProjectRow) {
     state_reported: state_reported ?? existingProjectsRow.state_reported,
     http_port,
     ssh_port,
+    project_bundle_version,
+    tools_version,
     authorized_keys,
     run_quota: run_quota ?? existing.run_quota,
   });
@@ -258,7 +297,7 @@ export function listProjects(): ProjectRow[] {
   ensureProjectsTable();
   const db = getDatabase();
   const stmt = db.prepare(
-    "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, secret_token, run_quota FROM projects",
+    "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, run_quota FROM projects",
   );
   return stmt.all() as ProjectRow[];
 }
@@ -267,7 +306,7 @@ export function getProject(project_id: string): ProjectRow | undefined {
   ensureProjectsTable();
   const db = getDatabase();
   const stmt = db.prepare(
-    "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, secret_token, authorized_keys, run_quota FROM projects WHERE project_id=?",
+    "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota FROM projects WHERE project_id=?",
   );
   const row = stmt.get(project_id) as any;
   if (row?.run_quota) {
@@ -334,4 +373,31 @@ export function getProjectPorts(project_id: string): {
     .prepare("SELECT http_port, ssh_port FROM projects WHERE project_id=?")
     .get(project_id) as { http_port?: number; ssh_port?: number } | undefined;
   return row ?? {};
+}
+
+function summarizeReferences(
+  rows: ProjectRow[],
+  field: "project_bundle_version" | "tools_version",
+): ProjectRuntimeArtifactReference[] {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    if (row.state !== "running" && row.state !== "starting") continue;
+    const version = `${row[field] ?? ""}`.trim();
+    if (!version) continue;
+    counts.set(version, (counts.get(version) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0))
+    .map(([version, project_count]) => ({ version, project_count }));
+}
+
+export function listRuntimeArtifactReferences(): {
+  project_bundle: ProjectRuntimeArtifactReference[];
+  tools: ProjectRuntimeArtifactReference[];
+} {
+  const rows = listProjects();
+  return {
+    project_bundle: summarizeReferences(rows, "project_bundle_version"),
+    tools: summarizeReferences(rows, "tools_version"),
+  };
 }

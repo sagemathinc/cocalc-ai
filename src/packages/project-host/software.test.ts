@@ -7,6 +7,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getInstalledRuntimeArtifacts } from "./software";
+import { closeDatabase } from "@cocalc/lite/hub/sqlite/database";
+import { upsertProject } from "./sqlite/projects";
 
 function makeVersionDir(root: string, version: string, build_id?: string) {
   const dir = path.join(root, version);
@@ -25,10 +27,16 @@ describe("getInstalledRuntimeArtifacts", () => {
 
   beforeEach(() => {
     process.env = { ...env };
+    process.env.COCALC_LITE_SQLITE_FILENAME = ":memory:";
+    closeDatabase();
   });
 
   afterAll(() => {
     process.env = env;
+  });
+
+  afterEach(() => {
+    closeDatabase();
   });
 
   it("tracks installed project-host bundle versions from bundle-layout roots", () => {
@@ -76,12 +84,54 @@ describe("getInstalledRuntimeArtifacts", () => {
       current_version: "bundle-b",
       current_build_id: "bundle-build-b",
       installed_versions: ["bundle-b", "bundle-a"],
+      referenced_versions: [],
     });
     expect(inventory.find((entry) => entry.artifact === "tools")).toEqual({
       artifact: "tools",
       current_version: "tools-b",
       current_build_id: "tools-build-b",
       installed_versions: ["tools-b", "tools-a"],
+      referenced_versions: [],
     });
+  });
+
+  it("includes referenced running project bundle and tools versions", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-software-"));
+    const bundlesRoot = path.join(root, "project-bundles");
+    const toolsRoot = path.join(root, "tools");
+    fs.mkdirSync(bundlesRoot, { recursive: true });
+    fs.mkdirSync(toolsRoot, { recursive: true });
+    const currentBundle = makeVersionDir(bundlesRoot, "bundle-b");
+    fs.symlinkSync(currentBundle, path.join(bundlesRoot, "current"));
+    const currentTools = makeVersionDir(toolsRoot, "tools-b");
+    fs.symlinkSync(currentTools, path.join(toolsRoot, "current"));
+    process.env.COCALC_PROJECT_BUNDLES = bundlesRoot;
+    process.env.COCALC_PROJECT_TOOLS = path.join(toolsRoot, "current");
+
+    upsertProject({
+      project_id: "0f5343d4-677f-4e99-aee7-19be2bd63f62",
+      state: "running",
+      project_bundle_version: "bundle-b",
+      tools_version: "tools-a",
+    });
+    upsertProject({
+      project_id: "f8cfb654-2547-4857-b72b-bc4015ce665b",
+      state: "running",
+      project_bundle_version: "bundle-b",
+      tools_version: "tools-b",
+    });
+
+    const inventory = getInstalledRuntimeArtifacts();
+    expect(
+      inventory.find((entry) => entry.artifact === "project-bundle")
+        ?.referenced_versions,
+    ).toEqual([{ version: "bundle-b", project_count: 2 }]);
+    expect(
+      inventory.find((entry) => entry.artifact === "tools")
+        ?.referenced_versions,
+    ).toEqual([
+      { version: "tools-b", project_count: 1 },
+      { version: "tools-a", project_count: 1 },
+    ]);
   });
 });

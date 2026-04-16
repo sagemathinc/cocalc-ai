@@ -366,6 +366,8 @@ export function ensureProjectRow({
   state = "opened",
   http_port,
   ssh_port,
+  project_bundle_version,
+  tools_version,
   authorized_keys,
 }: {
   project_id: string;
@@ -373,6 +375,8 @@ export function ensureProjectRow({
   state?: string;
   http_port?: number | null;
   ssh_port?: number | null;
+  project_bundle_version?: string | null;
+  tools_version?: string | null;
   authorized_keys?: string;
 }) {
   logger.debug("ensureProjectRow", {
@@ -407,6 +411,14 @@ export function ensureProjectRow({
     arguments[0] ?? {},
     "ssh_port",
   );
+  const hasExplicitProjectBundleVersion = Object.prototype.hasOwnProperty.call(
+    arguments[0] ?? {},
+    "project_bundle_version",
+  );
+  const hasExplicitToolsVersion = Object.prototype.hasOwnProperty.call(
+    arguments[0] ?? {},
+    "tools_version",
+  );
   if (hasExplicitHttpPort) {
     row.http_port = http_port ?? null;
   } else if (state !== "running") {
@@ -416,6 +428,16 @@ export function ensureProjectRow({
     row.ssh_port = ssh_port ?? null;
   } else if (state !== "running") {
     row.ssh_port = null;
+  }
+  if (hasExplicitProjectBundleVersion) {
+    row.project_bundle_version = project_bundle_version ?? null;
+  } else if (state !== "running") {
+    row.project_bundle_version = null;
+  }
+  if (hasExplicitToolsVersion) {
+    row.tools_version = tools_version ?? null;
+  } else if (state !== "running") {
+    row.tools_version = null;
   }
   if (authorized_keys !== undefined) {
     row.authorized_keys = authorized_keys;
@@ -629,6 +651,8 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         state: status?.state ?? "running",
         http_port: (status as any)?.http_port,
         ssh_port: (status as any)?.ssh_port,
+        project_bundle_version: (status as any)?.project_bundle_version,
+        tools_version: (status as any)?.tools_version,
       });
       kickOffAcpRehydrate(project_id, "createProject: post-start");
     }
@@ -766,6 +790,8 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         state: status?.state ?? "running",
         http_port: (status as any)?.http_port,
         ssh_port: (status as any)?.ssh_port,
+        project_bundle_version: (status as any)?.project_bundle_version,
+        tools_version: (status as any)?.tools_version,
       });
       // During move/restore the destination project root may not exist until
       // runnerApi.start has created or restored it, so ACP rehydrate must wait.
