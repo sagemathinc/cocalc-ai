@@ -636,6 +636,17 @@ export const useHostsPageViewModel = () => {
           ],
           replace: false,
         });
+        if (
+          artifact === "project-host" &&
+          host.status === "running" &&
+          hub.hosts.upgradeHostSoftware
+        ) {
+          const op = await hub.hosts.upgradeHostSoftware({
+            id: host.id,
+            targets: [{ artifact: "project-host", version: desired_version }],
+          });
+          trackHostOp(host.id, op);
+        }
         await Promise.all([
           refresh(),
           runtimeDeployments.refresh(),
