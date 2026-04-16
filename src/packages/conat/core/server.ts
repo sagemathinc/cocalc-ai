@@ -387,6 +387,19 @@ export class ConatServer extends EventEmitter {
     return this.usage.getMetrics();
   };
 
+  public getStatsSnapshot = (): { [id: string]: ConnectionStats } => {
+    const snapshot: { [id: string]: ConnectionStats } = {};
+    for (const [id, stats] of Object.entries(this.stats)) {
+      snapshot[id] = {
+        ...stats,
+        user: stats.user == null ? undefined : { ...stats.user },
+        send: { ...stats.send },
+        recv: { ...stats.recv },
+      };
+    }
+    return snapshot;
+  };
+
   // this is for the Kubernetes health check -- I haven't
   // thought at all about what to do here, really.
   // Hopefully experience can teach us.
@@ -1423,7 +1436,7 @@ export class ConatServer extends EventEmitter {
     });
 
     const stats = async () => {
-      return { [this.id]: this.stats };
+      return { [this.id]: this.getStatsSnapshot() };
     };
     const usage = async () => {
       return { [this.id]: this.usage.stats() };
