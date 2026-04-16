@@ -22,6 +22,7 @@ This plan is for host-local runtime software on Linux project hosts.
 
 Daemon components:
 
+- `host-agent` (new low-churn host lifecycle controller)
 - `project-host`
 - `conat-router`
 - `conat-persist`
@@ -103,6 +104,8 @@ The current implementation already has useful building blocks.
     - the frontend already surfaces rich rollout progress
     - the CLI should stream meaningful intermediate status instead of printing
       nothing until final completion
+12. The safety-critical host recovery path still lives inside `project-host`,
+    which is the same high-churn daemon we are trying to upgrade and roll back.
 
 ## Problem Statement
 
@@ -155,6 +158,8 @@ controller:
 10. Standard recovery must not depend on manually pre-arranged ssh trust.
 11. The user impact of restarting or upgrading each component must be
     documented explicitly.
+12. Standard recovery for `project-host` must not depend on `project-host`
+    itself being healthy enough to execute its own rollback.
 
 ## Core Design Principles
 
@@ -213,6 +218,138 @@ action. The end-state UX should make that distinction explicit.
 Different project hosts may be owned by different bays, but the operator model
 should remain "manage a host fleet", not "manually reason about bay-local
 plumbing" for routine upgrades and rollback.
+
+### 8. Separate System Control From Runtime Control
+
+The node-local process that stages artifacts, supervises critical daemons, and
+rolls back failed `project-host` upgrades should not itself be the same
+high-churn `project-host` runtime daemon.
+
+That control path should live in a separate low-churn process, even if the
+first implementation is mostly a code move from the current `project-host`
+package into a second Node.js process.
+
+## Architectural Decision: Split A Stable Host Agent From `project-host`
+
+We should explicitly separate the current node-local responsibilities into two
+host processes:
+
+- `host-agent`:
+  a small stable lifecycle controller, likely versioned with or delivered by
+  the bootstrap environment
+- `project-host`:
+  the higher-level runtime/control daemon that manages projects and other
+  frequently changing host-local behavior
+
+This is not a rejection of the hub-side design work already completed. The
+existing desired-state, observed-state, rollout, rollback-target, and CLI/RPC
+model remains useful almost unchanged. The main change is which host-local
+process executes the safety-critical lifecycle work.
+
+### Why Make This Split
+
+`project-host` is likely to be:
+
+- upgraded often
+- unstable during active development
+- closer to complex user/runtime behavior
+
+The node-local safety controller is supposed to recover from exactly those
+failures. If `project-host` is both the thing that breaks and the thing that
+must save us, the recovery story remains structurally weak and keeps dragging
+ssh back in as the only true escape hatch.
+
+Separating the processes gives us:
+
+- a smaller and lower-churn rollback controller
+- a standard recovery path that can work even when ssh is unavailable or
+  inconvenient
+- a cleaner system-vs-userspace boundary
+- less pressure to keep `project-host` artificially conservative just because
+  it is currently the only recovery path
+
+### Intended Responsibilities
+
+#### `host-agent`
+
+Own:
+
+- artifact staging and local inventory
+- current/desired selected version for host-local daemons and artifacts
+- process start/stop/restart for:
+  - `project-host`
+  - `conat-router`
+  - `conat-persist`
+  - `acp-worker`
+- health checks and readiness observation for those daemons
+- automatic rollback and last-known-good tracking
+- host-local deployment state file
+- a minimal outbound control channel to the hub
+
+Do not own:
+
+- general project lifecycle
+- high-level project runtime behavior
+- complex host business logic that is not needed for safe recovery
+
+#### `project-host`
+
+Own:
+
+- project lifecycle
+- project runner integration
+- higher-level runtime behavior for projects and host-local services
+- operational features that are useful when the host is healthy, but are not
+  part of the minimal safety-critical rollback path
+
+### Upgrade Model After The Split
+
+- `host-agent` is upgraded rarely and explicitly, probably together with the
+  bootstrap environment
+- `project-host` remains a high-churn runtime artifact
+- automatic `project-host` rollback is executed by `host-agent`, not by
+  `project-host`
+- `conat-router`, `conat-persist`, and `acp-worker` can also migrate under
+  `host-agent` supervision without changing the hub-side desired-state model
+
+### What Stays The Same
+
+The hub-side model we already built should stay substantially the same:
+
+- desired runtime deployment state
+- observed component and artifact state
+- rollback targets and last-known-good tracking
+- host-scoped and fleet-scoped CLI/RPC surfaces
+- rollout policy semantics
+- canary workflow
+
+In other words, this is primarily a host-local execution-plane split, not a
+control-plane rewrite.
+
+### What Changes
+
+The host-local code paths that currently live under `project-host` should move
+behind `host-agent`:
+
+- managed component status and rollout execution
+- artifact selection/current-version switching
+- daemon supervision
+- automatic `project-host` rollback
+- health-gated reconcile for host-local daemons
+
+`project-host` may still proxy or expose host operations when healthy, but the
+authoritative recovery path should no longer depend on it.
+
+### Standard Path vs Emergency Path
+
+After this split:
+
+- the standard upgrade and rollback path should go through `host-agent`
+- ssh becomes only an emergency path, not the normal control-plane assumption
+
+This matters for environments where inbound ssh is unavailable, awkward, or
+dependent on unstable addressing, even if full firewall-only support is still a
+"nice to have" rather than a hard requirement.
 
 ## Target Operator Contract
 
@@ -408,7 +545,8 @@ This provenance should power operator and agent deploy hints such as:
 ## Required Host-Side Model
 
 Each host needs a small local daemon deployment state file, separate from
-bootstrap facts:
+bootstrap facts. After the architectural split above, this state should belong
+to `host-agent`, not to `project-host`:
 
 - desired versions known to the host
 - last applied versions
@@ -525,7 +663,7 @@ Flow:
 2. switch to new bundle
 3. restart `project-host`
 4. wait for hub-observed readiness
-5. if readiness fails, revert symlink/state to checkpoint
+5. if readiness fails, `host-agent` reverts symlink/state to checkpoint
 6. restart old bundle
 7. mark rollout failed and rolled back
 
@@ -546,6 +684,8 @@ The plan should therefore treat ssh in two layers:
 ### Standard Path
 
 - no ssh required for normal upgrade or rollback
+- standard recovery flows should go through `host-agent`, not through
+  `project-host`
 
 ### Emergency Path
 
@@ -805,6 +945,30 @@ This means CLI output and RPC schemas must expose:
 
 This is the concrete path from the current implementation to the target system.
 
+### Phase 0: Split The Host-Local Execution Plane
+
+Purpose:
+
+- stop making `project-host` responsible for its own safety-critical rollback
+  and recovery
+
+Work:
+
+- introduce `host-agent` as a separate host-local Node.js process
+- move lifecycle supervision for host-local daemons under `host-agent`
+- move automatic `project-host` rollback execution under `host-agent`
+- keep the existing hub-side desired-state and rollout model intact where
+  possible
+- keep ssh as emergency-only fallback during migration, not as the intended
+  standard path
+
+Exit criteria:
+
+- `project-host` no longer has to be healthy in order for the host to roll
+  back `project-host`
+- the hub can still target the same desired-state and rollout APIs without
+  major operator-visible semantic changes
+
 ### Phase 1: Freeze The Current Primitive Surface
 
 Purpose:
@@ -922,8 +1086,8 @@ Work:
 - define rollout timeout and readiness gates
 - on failed `project-host` rollout:
   - mark failed
-  - revert current bundle link/state
-  - restart previous bundle
+  - `host-agent` reverts current bundle link/state
+  - `host-agent` restarts previous bundle
   - publish rollback result
 
 Exit criteria:
@@ -1096,25 +1260,23 @@ This plan is complete when all of the following are true:
 
 ## Immediate Next Steps
 
-The first implementation slice after this plan should be:
+The next implementation slice should change the host-local architecture before
+we invest more in hardening the old monolithic recovery path:
 
-1. add a durable desired runtime deployment data model in the hub
-2. broaden it immediately to include `project bundle`, `project tools`, and
-   `bootstrap environment`
-3. expose desired vs observed runtime deployment status in CLI and GUI
-4. add published version listing with metadata
-5. increase retained `project-host` bundle history and track last known good
-6. design and implement project reference tracking for bundle/tools retention
-7. then implement manual rollback before automatic rollback
+1. define the `host-agent` package/process boundary
+2. move daemon lifecycle and automatic `project-host` rollback execution under
+   `host-agent`
+3. keep the existing hub-side desired-state, rollout, and rollback model
+   stable during that move
+4. make the standard rollback path depend on `host-agent`, not ssh
+5. only then continue hardening emergency ssh recovery as a secondary path
 
-That order matters:
+After that architectural split, the next priorities remain:
 
-- desired state first
-- retained rollback target second
-- manual rollback third
-- automatic rollback fourth
-
-Automatic rollback without the first three pieces will be fragile.
+- CLI `--wait` progress streaming
+- explicit `projects-backup` host LRO
+- `bootstrap environment` as an explicit managed artifact
+- bundle/tools retention and pruning based on observed references
 
 ## Near-Term Operator Batch Controls
 
