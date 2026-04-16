@@ -2,6 +2,11 @@ import * as childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { podmanEnv } from "@cocalc/backend/podman/env";
+import {
+  appendSupervisionEvent,
+  type HealthCheckDiagnostic,
+  type SupervisionEvent,
+} from "./supervision-events";
 
 type DaemonAction = "start" | "stop" | "ensure";
 
@@ -697,6 +702,26 @@ function selectedVersionFromLink(linkPath: string): string | undefined {
   return undefined;
 }
 
+function selectedProjectHostVersion(
+  env: Record<string, string>,
+): string | undefined {
+  return selectedVersionFromLink(projectHostCurrentLinkPath(env));
+}
+
+function recordDaemonEvent(
+  dataDir: string,
+  event: Omit<SupervisionEvent, "source">,
+): void {
+  try {
+    appendSupervisionEvent(dataDir, {
+      source: "daemon",
+      ...event,
+    });
+  } catch {
+    // best effort
+  }
+}
+
 function projectHostRuntimeRoot(env: Record<string, string>): string {
   try {
     return fs.realpathSync(projectHostCurrentLinkPath(env));
@@ -747,33 +772,68 @@ function conatRouterHealthCheckUrl(
   return `http://${host}:${port}/healthz`;
 }
 
-function checkHealthUrlSync(url: string): boolean {
+function inspectHealthUrlSync(url: string): HealthCheckDiagnostic {
   const timeoutSeconds = String(
     getPositiveIntEnv("COCALC_PROJECT_HOST_DAEMON_HEALTH_TIMEOUT_SEC", 5),
   );
   const script = [
-    "import json, sys, urllib.request",
+    "import json, sys, urllib.request, urllib.error",
     "url = sys.argv[1]",
     "timeout = float(sys.argv[2])",
-    "with urllib.request.urlopen(url, timeout=timeout) as response:",
-    "    body = response.read().decode('utf-8', 'replace').strip()",
-    "    if response.status != 200:",
-    "        raise SystemExit(1)",
-    "    try:",
-    "        payload = json.loads(body) if body else {}",
-    "    except Exception:",
-    "        payload = {}",
-    "    if payload.get('ok') is False:",
-    "        raise SystemExit(1)",
+    "result = {'url': url, 'ok': False, 'timeout_seconds': timeout}",
+    "try:",
+    "    with urllib.request.urlopen(url, timeout=timeout) as response:",
+    "        body = response.read().decode('utf-8', 'replace').strip()",
+    "        result['status'] = int(response.status)",
+    "        if body:",
+    "            result['body'] = body",
+    "        try:",
+    "            payload = json.loads(body) if body else {}",
+    "        except Exception:",
+    "            payload = {}",
+    "        result['ok'] = response.status == 200 and payload.get('ok') is not False",
+    "except Exception as err:",
+    "    result['error'] = f'{type(err).__name__}: {err}'",
+    "print(json.dumps(result))",
+    "raise SystemExit(0 if result['ok'] else 1)",
   ].join("\n");
-  const result = processRuntime.spawnSync(
-    "python3",
-    ["-c", script, url, timeoutSeconds],
-    {
-      stdio: "ignore",
-    },
-  );
-  return result.status === 0;
+  const result = spawnSyncText("python3", ["-c", script, url, timeoutSeconds], {
+    timeout: getPositiveIntEnv(
+      "COCALC_PROJECT_HOST_DAEMON_HEALTH_PROBE_TIMEOUT_MS",
+      10_000,
+    ),
+  });
+  try {
+    const parsed = JSON.parse(
+      `${result.stdout ?? ""}`,
+    ) as HealthCheckDiagnostic;
+    return {
+      url,
+      ok: result.status === 0 && parsed.ok === true,
+      status: parsed.status,
+      body: parsed.body,
+      error:
+        parsed.error ??
+        (result.status === 0
+          ? undefined
+          : combinedSpawnOutput(result) || "health check failed"),
+      timeout_seconds: parsed.timeout_seconds,
+    };
+  } catch {
+    return {
+      url,
+      ok: result.status === 0,
+      error:
+        result.status === 0
+          ? undefined
+          : combinedSpawnOutput(result) || "health check failed",
+      timeout_seconds: Number(timeoutSeconds),
+    };
+  }
+}
+
+function checkHealthUrlSync(url: string): boolean {
+  return inspectHealthUrlSync(url).ok;
 }
 
 function checkHealthSync(
@@ -784,6 +844,13 @@ function checkHealthSync(
   return checkHealthUrlSync(url);
 }
 
+function inspectProjectHostHealthSync(
+  env: Record<string, string>,
+  httpPort?: number,
+): HealthCheckDiagnostic {
+  return inspectHealthUrlSync(healthCheckUrl(env, httpPort));
+}
+
 function checkConatRouterHealthSync(
   env: Record<string, string>,
   routerPort?: number,
@@ -791,11 +858,27 @@ function checkConatRouterHealthSync(
   return checkHealthUrlSync(conatRouterHealthCheckUrl(env, routerPort));
 }
 
+function inspectConatRouterHealthSync(
+  env: Record<string, string>,
+  routerPort?: number,
+): HealthCheckDiagnostic {
+  return inspectHealthUrlSync(conatRouterHealthCheckUrl(env, routerPort));
+}
+
 function checkConatPersistHealthSync(
   env: Record<string, string>,
   persistHealthPort?: number,
 ): boolean {
   return checkHealthUrlSync(conatPersistHealthCheckUrl(env, persistHealthPort));
+}
+
+function inspectConatPersistHealthSync(
+  env: Record<string, string>,
+  persistHealthPort?: number,
+): HealthCheckDiagnostic {
+  return inspectHealthUrlSync(
+    conatPersistHealthCheckUrl(env, persistHealthPort),
+  );
 }
 
 function spawnSyncText(
@@ -994,6 +1077,7 @@ function withoutHostAgentEnv(
 }
 
 function startManagedConatRouter(opts: {
+  dataDir: string;
   env: Record<string, string>;
   routerPidPath: string;
   routerLogPath: string;
@@ -1005,6 +1089,7 @@ function startManagedConatRouter(opts: {
   projectHostPort?: number;
 }): void {
   const {
+    dataDir,
     env,
     routerPidPath,
     routerLogPath,
@@ -1080,6 +1165,20 @@ function startManagedConatRouter(opts: {
   } catch {
     // best effort
   }
+  recordDaemonEvent(dataDir, {
+    component: "conat-router",
+    action: "started",
+    message: "started managed conat-router",
+    pid: child.pid,
+    metadata: {
+      router_host: routerHost,
+      router_port: routerPort,
+      ingress_host: routerIngressHost,
+      ingress_port: routerIngressPort,
+      upstream_host: projectHostHost,
+      upstream_port: projectHostPort,
+    },
+  });
   try {
     waitForHealthCheckSync(() => checkConatRouterHealthSync(env, routerPort), {
       timeoutMs: getPositiveIntEnv(
@@ -1138,7 +1237,8 @@ function ensureManagedConatRouter(opts: {
     ? Number(fs.readFileSync(routerPidPath, "utf8"))
     : undefined;
   if (pid && isRunning(pid)) {
-    if (checkConatRouterHealthSync(env, routerPort)) {
+    const diagnostic = inspectConatRouterHealthSync(env, routerPort);
+    if (diagnostic.ok) {
       if (!opts.options?.quietHealthy) {
         console.log(`project-host conat router healthy (pid ${pid})`);
       }
@@ -1146,13 +1246,22 @@ function ensureManagedConatRouter(opts: {
     }
     console.warn(
       `project-host conat router pid ${pid} is running but unhealthy; restarting.`,
+      diagnostic,
     );
+    recordDaemonEvent(dataDir, {
+      component: "conat-router",
+      action: "restart_requested",
+      message: "managed conat-router health check failed",
+      pid,
+      health: diagnostic,
+    });
     stopManagedConatRouter({
       dataDir,
       routerPidPath,
       routerPort,
     });
     startManagedConatRouter({
+      dataDir,
       env,
       routerPidPath,
       routerLogPath,
@@ -1169,8 +1278,19 @@ function ensureManagedConatRouter(opts: {
     console.warn(
       `project-host conat router pid file is stale at ${routerPidPath}; recovering.`,
     );
+    recordDaemonEvent(dataDir, {
+      component: "conat-router",
+      action: "stale_pid",
+      message: "managed conat-router pid file was stale",
+      metadata: { pid_path: routerPidPath },
+    });
   } else {
     console.warn("project-host conat router is not running; starting it.");
+    recordDaemonEvent(dataDir, {
+      component: "conat-router",
+      action: "missing_process",
+      message: "managed conat-router was not running",
+    });
   }
   fs.rmSync(routerPidPath, { force: true });
   terminatePids(
@@ -1178,6 +1298,7 @@ function ensureManagedConatRouter(opts: {
     "project-host conat router",
   );
   startManagedConatRouter({
+    dataDir,
     env,
     routerPidPath,
     routerLogPath,
@@ -1257,6 +1378,7 @@ function stopManagedConatRouter({
 }
 
 function startManagedConatPersist(opts: {
+  dataDir: string;
   env: Record<string, string>;
   persistPidPath: string;
   persistLogPath: string;
@@ -1264,6 +1386,7 @@ function startManagedConatPersist(opts: {
   persistHealthPort?: number;
 }): void {
   const {
+    dataDir,
     env,
     persistPidPath,
     persistLogPath,
@@ -1326,6 +1449,16 @@ function startManagedConatPersist(opts: {
   } catch {
     // best effort
   }
+  recordDaemonEvent(dataDir, {
+    component: "conat-persist",
+    action: "started",
+    message: "started managed conat-persist",
+    pid: child.pid,
+    metadata: {
+      health_host: persistHealthHost,
+      health_port: persistHealthPort,
+    },
+  });
   try {
     waitForHealthCheckSync(
       () => checkConatPersistHealthSync(env, persistHealthPort),
@@ -1379,7 +1512,8 @@ function ensureManagedConatPersist(opts: {
     ? Number(fs.readFileSync(persistPidPath, "utf8"))
     : undefined;
   if (pid && isRunning(pid)) {
-    if (checkConatPersistHealthSync(env, persistHealthPort)) {
+    const diagnostic = inspectConatPersistHealthSync(env, persistHealthPort);
+    if (diagnostic.ok) {
       if (!opts.options?.quietHealthy) {
         console.log(`project-host conat persist healthy (pid ${pid})`);
       }
@@ -1387,13 +1521,22 @@ function ensureManagedConatPersist(opts: {
     }
     console.warn(
       `project-host conat persist pid ${pid} is running but unhealthy; restarting.`,
+      diagnostic,
     );
+    recordDaemonEvent(dataDir, {
+      component: "conat-persist",
+      action: "restart_requested",
+      message: "managed conat-persist health check failed",
+      pid,
+      health: diagnostic,
+    });
     stopManagedConatPersist({
       dataDir,
       persistPidPath,
       persistHealthPort,
     });
     startManagedConatPersist({
+      dataDir,
       env,
       persistPidPath,
       persistLogPath,
@@ -1406,8 +1549,19 @@ function ensureManagedConatPersist(opts: {
     console.warn(
       `project-host conat persist pid file is stale at ${persistPidPath}; recovering.`,
     );
+    recordDaemonEvent(dataDir, {
+      component: "conat-persist",
+      action: "stale_pid",
+      message: "managed conat-persist pid file was stale",
+      metadata: { pid_path: persistPidPath },
+    });
   } else {
     console.warn("project-host conat persist is not running; starting it.");
+    recordDaemonEvent(dataDir, {
+      component: "conat-persist",
+      action: "missing_process",
+      message: "managed conat-persist was not running",
+    });
   }
   fs.rmSync(persistPidPath, { force: true });
   terminatePids(
@@ -1415,6 +1569,7 @@ function ensureManagedConatPersist(opts: {
     "project-host conat persist",
   );
   startManagedConatPersist({
+    dataDir,
     env,
     persistPidPath,
     persistLogPath,
@@ -1514,6 +1669,7 @@ export function restartManagedLocalConatRouter(index = 0): void {
     routerPort,
   });
   startManagedConatRouter({
+    dataDir,
     env,
     routerPidPath,
     routerLogPath,
@@ -1547,6 +1703,7 @@ export function restartManagedLocalConatPersist(index = 0): void {
     persistHealthPort,
   });
   startManagedConatPersist({
+    dataDir,
     env,
     persistPidPath,
     persistLogPath,
@@ -1672,6 +1829,7 @@ export function startDaemon(index = 0): void {
   }
   ensurePodmanHealthy(env);
   const root = projectHostRuntimeRoot(env);
+  const selectedVersion = selectedProjectHostVersion(env);
   const { command, args } = resolveExec(root);
   const childEnv = withoutHostAgentEnv(env);
   const child = processRuntime.spawn(command, args, {
@@ -1696,6 +1854,19 @@ export function startDaemon(index = 0): void {
   } catch {
     // best effort
   }
+  recordDaemonEvent(dataDir, {
+    component: "project-host",
+    action: "started",
+    message: "started project-host",
+    pid: child.pid,
+    selected_version: selectedVersion,
+    metadata: {
+      host: projectHostHost,
+      app_port: projectHostPort ?? httpPort ?? 9002,
+      public_http_port: httpPort,
+      log_path: logPath,
+    },
+  });
   console.log(`project-host started (pid ${child.pid}); log=${logPath}`);
 }
 
@@ -1754,7 +1925,12 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
     ? Number(fs.readFileSync(pidPath, "utf8"))
     : undefined;
   if (pid && isRunning(pid)) {
-    if (checkHealthSync(env, projectHostPort)) {
+    const selectedVersion = selectedProjectHostVersion(env);
+    const runningVersion = inferProjectHostBundleVersionFromCmdline(
+      readProcCmdline(pid),
+    );
+    const diagnostic = inspectProjectHostHealthSync(env, projectHostPort);
+    if (diagnostic.ok) {
       if (!options?.quietHealthy) {
         console.log(`project-host healthy (pid ${pid})`);
       }
@@ -1768,12 +1944,40 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
     if (ageMs != null && ageMs < warmupMs) {
       console.warn(
         `project-host pid ${pid} is still warming up (${Math.floor(ageMs / 1000)}s < ${Math.floor(warmupMs / 1000)}s); deferring restart.`,
+        diagnostic,
       );
+      recordDaemonEvent(dataDir, {
+        component: "project-host",
+        action: "warming_up",
+        message: "project-host is unhealthy during startup grace period",
+        pid,
+        selected_version: selectedVersion,
+        running_version: runningVersion,
+        health: diagnostic,
+        metadata: {
+          pid_file_age_ms: ageMs,
+          warmup_ms: warmupMs,
+        },
+      });
       return;
     }
     console.warn(
       `project-host pid ${pid} is running but unhealthy; restarting.`,
+      {
+        selected_version: selectedVersion,
+        running_version: runningVersion,
+        health: diagnostic,
+      },
     );
+    recordDaemonEvent(dataDir, {
+      component: "project-host",
+      action: "restart_requested",
+      message: "project-host health check failed",
+      pid,
+      selected_version: selectedVersion,
+      running_version: runningVersion,
+      health: diagnostic,
+    });
     stopDaemonWithOptions(index, {
       preserveManagedAuxiliaryDaemons: options?.preserveManagedAuxiliaryDaemons,
     });
@@ -1782,8 +1986,19 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
   }
   if (fs.existsSync(pidPath)) {
     console.warn(`project-host pid file is stale at ${pidPath}; recovering.`);
+    recordDaemonEvent(dataDir, {
+      component: "project-host",
+      action: "stale_pid",
+      message: "project-host pid file was stale",
+      metadata: { pid_path: pidPath },
+    });
   } else {
     console.warn("project-host is not running; starting it.");
+    recordDaemonEvent(dataDir, {
+      component: "project-host",
+      action: "missing_process",
+      message: "project-host was not running",
+    });
   }
   fs.rmSync(pidPath, { force: true });
   const cleaned = cleanupStrayProcesses({

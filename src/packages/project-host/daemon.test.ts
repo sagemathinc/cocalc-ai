@@ -977,11 +977,36 @@ describe("project-host daemon stop", () => {
 
     expect(warnSpy).toHaveBeenCalledWith(
       "project-host pid 8484 is running but unhealthy; restarting.",
+      expect.objectContaining({
+        health: expect.objectContaining({
+          ok: false,
+          url: "http://127.0.0.1:9002/healthz",
+        }),
+      }),
     );
     expect(killSpy).toHaveBeenCalledWith(8484, "SIGTERM");
     expect(spawnSpy).toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(
       "project-host started (pid 9494); log=" + path.join(dataDir, "log"),
+    );
+    const events = fs
+      .readFileSync(path.join(dataDir, "supervision-events.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component: "project-host",
+          action: "restart_requested",
+          pid: 8484,
+        }),
+        expect.objectContaining({
+          component: "project-host",
+          action: "started",
+          pid: 9494,
+        }),
+      ]),
     );
   });
 
@@ -1019,6 +1044,10 @@ describe("project-host daemon stop", () => {
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("project-host pid 8585 is still warming up"),
+      expect.objectContaining({
+        ok: false,
+        url: "http://127.0.0.1:9002/healthz",
+      }),
     );
   });
 

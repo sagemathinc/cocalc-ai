@@ -6,6 +6,10 @@ import {
   inspectProjectHostRuntime,
   restartProjectHost,
 } from "./daemon";
+import {
+  appendSupervisionEvent,
+  type SupervisionEvent,
+} from "./supervision-events";
 import { activateInstalledProjectHostVersion } from "./upgrade";
 
 const logger = getLogger("project-host:host-agent");
@@ -95,6 +99,20 @@ function writeState(dataDir: string, state: HostAgentState): void {
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
   fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
   fs.renameSync(tmp, file);
+}
+
+function recordHostAgentEvent(
+  dataDir: string,
+  event: Omit<SupervisionEvent, "source">,
+): void {
+  try {
+    appendSupervisionEvent(dataDir, {
+      source: "host-agent",
+      ...event,
+    });
+  } catch {
+    // best effort
+  }
 }
 
 function effectiveLastKnownGoodVersion(
@@ -219,6 +237,14 @@ async function reconcileProjectHostRollback({
       version: currentVersion,
       pid: status.runningPid,
     });
+    recordHostAgentEvent(status.dataDir, {
+      component: "project-host",
+      action: "rollback_accepted",
+      message: "accepted project-host candidate as healthy",
+      pid: status.runningPid,
+      current_version: currentVersion,
+      running_version: runningVersion,
+    });
     rememberSuccessfulVersion(state, currentVersion, pending);
     writeState(status.dataDir, state);
     return;
@@ -248,6 +274,19 @@ async function reconcileProjectHostRollback({
       healthy: status.healthy,
       pid: status.runningPid,
     });
+    recordHostAgentEvent(status.dataDir, {
+      component: "project-host",
+      action: "rollback_tracking",
+      message: "tracking project-host rollout candidate",
+      pid: status.runningPid,
+      target_version: currentVersion,
+      previous_version: lastKnownGood,
+      running_version: runningVersion,
+      deadline_at: activePending.deadline_at,
+      metadata: {
+        healthy: status.healthy,
+      },
+    });
     return;
   }
 
@@ -266,6 +305,19 @@ async function reconcileProjectHostRollback({
       healthy: status.healthy,
       pid: status.runningPid,
     });
+    recordHostAgentEvent(status.dataDir, {
+      component: "project-host",
+      action: "restart_requested",
+      message: "rolling back unhealthy project-host candidate",
+      pid: status.runningPid,
+      target_version: activePending.target_version,
+      previous_version: activePending.previous_version,
+      running_version: runningVersion,
+      deadline_at: activePending.deadline_at,
+      metadata: {
+        healthy: status.healthy,
+      },
+    });
     await activateInstalledProjectHostVersion(activePending.previous_version);
     restartProjectHost(index, {
       preserveManagedAuxiliaryDaemons: true,
@@ -282,6 +334,14 @@ async function reconcileProjectHostRollback({
       index,
       target_version: activePending.target_version,
       rollback_version: activePending.previous_version,
+    });
+    recordHostAgentEvent(status.dataDir, {
+      component: "project-host",
+      action: "rollback_completed",
+      message: "completed local project-host rollback",
+      target_version: activePending.target_version,
+      previous_version: activePending.previous_version,
+      current_version: activePending.previous_version,
     });
   }
 }
@@ -304,6 +364,18 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (stopping) return;
     stopping = true;
     logger.info("host-agent shutting down", { signal, index });
+    recordHostAgentEvent(
+      `${process.env.COCALC_DATA ?? process.env.DATA ?? "/mnt/cocalc/data"}`,
+      {
+        component: "host-agent",
+        action: "shutdown",
+        message: "host-agent shutting down",
+        metadata: {
+          signal,
+          index,
+        },
+      },
+    );
   };
 
   process.on("SIGTERM", () => stop("SIGTERM"));
@@ -314,6 +386,19 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     poll_ms: pollMs,
     project_host_rollback_timeout_ms: rollbackTimeoutMs,
   });
+  recordHostAgentEvent(
+    `${process.env.COCALC_DATA ?? process.env.DATA ?? "/mnt/cocalc/data"}`,
+    {
+      component: "host-agent",
+      action: "started",
+      message: "host-agent started",
+      metadata: {
+        index,
+        poll_ms: pollMs,
+        project_host_rollback_timeout_ms: rollbackTimeoutMs,
+      },
+    },
+  );
 
   while (!stopping) {
     try {
@@ -327,6 +412,18 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       });
     } catch (err) {
       logger.warn("host-agent reconcile failed", { index, err: `${err}` });
+      recordHostAgentEvent(
+        `${process.env.COCALC_DATA ?? process.env.DATA ?? "/mnt/cocalc/data"}`,
+        {
+          component: "host-agent",
+          action: "reconcile_failed",
+          message: "host-agent reconcile failed",
+          metadata: {
+            index,
+            error: `${err}`,
+          },
+        },
+      );
     }
     if (stopping) {
       break;
