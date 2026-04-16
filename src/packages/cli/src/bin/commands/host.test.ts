@@ -7,6 +7,12 @@ import { registerHostCommand, type HostCommandDeps } from "./host";
 type Capture = {
   data?: any;
   upgrades: string[];
+  hostProjectsRequests?: Array<{
+    id: string;
+    limit?: number;
+    cursor?: string;
+    risk_only?: boolean;
+  }>;
   upgradeRequests?: Array<{
     id: string;
     targets: any[];
@@ -60,6 +66,7 @@ function makeDeps(
 ): HostCommandDeps {
   capture.runtimeDeploymentRollbacks ??= [];
   capture.upgradeRequests ??= [];
+  capture.hostProjectsRequests ??= [];
   return {
     withContext: async (_command, _label, fn) => {
       const ctx = {
@@ -69,6 +76,37 @@ function makeDeps(
         globals: ctxGlobals,
         hub: {
           hosts: {
+            listHostProjects: async ({ id, limit, cursor, risk_only }) => {
+              capture.hostProjectsRequests!.push({
+                id,
+                limit,
+                cursor,
+                risk_only,
+              });
+              return {
+                rows: [
+                  {
+                    project_id: "proj-1",
+                    title: "Alpha Project",
+                    state: "running",
+                    provisioned: true,
+                    last_edited: "2026-04-15T01:00:00.000Z",
+                    last_backup: "2026-04-15T00:00:00.000Z",
+                    needs_backup: true,
+                    collab_count: 3,
+                  },
+                ],
+                summary: {
+                  total: 1,
+                  provisioned: 1,
+                  running: 1,
+                  provisioned_up_to_date: 0,
+                  provisioned_needs_backup: 1,
+                },
+                next_cursor: "cursor-1",
+                host_last_seen: "2026-04-15T02:00:00.000Z",
+              };
+            },
             upgradeHostSoftware: async ({ id, targets, base_url }) => {
               capture.upgrades.push(id);
               capture.upgradeRequests!.push({
@@ -651,6 +689,82 @@ test("host bootstrap-status returns lifecycle drift data", async () => {
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.bootstrap_lifecycle.summary_status, "drifted");
   assert.equal(capture.data.bootstrap_lifecycle.drift_count, 2);
+});
+
+test("host projects lists assigned projects", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "projects",
+    "host-1",
+    "--limit",
+    "25",
+    "--cursor",
+    "cursor-0",
+    "--risk-only",
+  ]);
+
+  assert.deepEqual(capture.hostProjectsRequests, [
+    {
+      id: "host-1",
+      limit: 25,
+      cursor: "cursor-0",
+      risk_only: true,
+    },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.name, "host-host-1");
+  assert.equal(capture.data.rows.length, 1);
+  assert.equal(capture.data.rows[0].project_id, "proj-1");
+  assert.equal(capture.data.summary.total, 1);
+  assert.equal(capture.data.next_cursor, "cursor-1");
+});
+
+test("host projects renders human-readable summary and rows", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(
+    program,
+    makeDeps(capture, {}, { json: false, output: "table" }),
+  );
+
+  const output = await withConsoleCapture(async () => {
+    await program.parseAsync(["node", "test", "host", "projects", "host-1"]);
+  });
+
+  assert.deepEqual(capture.hostProjectsRequests, [
+    {
+      id: "host-1",
+      limit: 50,
+      cursor: undefined,
+      risk_only: false,
+    },
+  ]);
+  assert.match(output, /Host ID: host-1/);
+  assert.match(output, /Summary/);
+  assert.match(output, /Projects/);
+  assert.match(output, /proj-1/);
+  assert.match(output, /running/);
+  assert.match(output, /needs_backup/);
 });
 
 test("host reconcile queues and waits for completion", async () => {

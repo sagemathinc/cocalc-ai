@@ -671,6 +671,70 @@ export function registerHostCommand(
     });
 
   host
+    .command("projects <host>")
+    .description("list projects assigned to a host")
+    .option("--limit <limit>", "max rows to return", "50")
+    .option("--cursor <cursor>", "pagination cursor from a previous response")
+    .option(
+      "--risk-only",
+      "show only projects that are running or currently need backup attention",
+    )
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: {
+          limit?: string;
+          cursor?: string;
+          riskOnly?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "host projects", async (ctx) => {
+          const h = await resolveHost(ctx, hostIdentifier);
+          const limit =
+            parseOptionalPositiveInteger(opts.limit, "--limit") ?? 50;
+          const result = await ctx.hub.hosts.listHostProjects({
+            id: h.id,
+            limit,
+            cursor: `${opts.cursor ?? ""}`.trim() || undefined,
+            risk_only: !!opts.riskOnly,
+          });
+          if (!ctx.globals.json && ctx.globals.output !== "json") {
+            console.log(`Host ID: ${h.id}`);
+            if (`${h.name ?? ""}`.trim()) {
+              console.log(`Name: ${h.name}`);
+            }
+            console.log("");
+            printNamedSection(
+              "Summary",
+              formatFieldValueRows({
+                total: result.summary?.total ?? 0,
+                provisioned: result.summary?.provisioned ?? 0,
+                running: result.summary?.running ?? 0,
+                provisioned_up_to_date:
+                  result.summary?.provisioned_up_to_date ?? 0,
+                provisioned_needs_backup:
+                  result.summary?.provisioned_needs_backup ?? 0,
+                host_last_seen: result.host_last_seen ?? "",
+                next_cursor: result.next_cursor ?? "",
+              }),
+            );
+            printNamedSection("Projects", result.rows ?? []);
+            return null;
+          }
+          return {
+            host_id: h.id,
+            name: h.name,
+            rows: result.rows,
+            summary: result.summary,
+            next_cursor: result.next_cursor,
+            host_last_seen: result.host_last_seen,
+          };
+        });
+      },
+    );
+
+  host
     .command("metrics <host>")
     .description("show current and recent host metrics")
     .option("--window <window>", "history window: 30m, 1h, 24h", "1h")
