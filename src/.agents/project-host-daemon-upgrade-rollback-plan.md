@@ -68,6 +68,11 @@ The current implementation already has useful building blocks.
    - `cocalc host rollout <host> --component ...`
 6. Bootstrap/reconcile already exists as the broader host software lifecycle:
    - [bootstrap-tool-lifecycle.md](/home/user/cocalc-ai/src/.agents/bootstrap-tool-lifecycle.md)
+7. Running-project artifact reference tracking now exists for bundle/tools:
+   - host deploy status exposes `referenced_versions` for `project bundle` and
+     `project tools`
+   - this is enough to prove the host can now observe which running projects
+     are still pinned to older retained versions
 
 ### Not Yet Implemented
 
@@ -89,6 +94,15 @@ The current implementation already has useful building blocks.
    - `acp-worker`: drain then replace
 9. Current rollout is still fundamentally "act now on whatever is installed on
    this host", not "make this host converge to the declared target state".
+10. LRO correctness and idempotency still have gaps:
+    - a repeated successful `host upgrade --wait` should converge quickly or
+      no-op, not hang indefinitely
+    - the control plane needs stronger guarantees that repeated deploy/upgrade
+      requests do not get stuck waiting on stale completion state
+11. CLI `--wait` mode is too silent today:
+    - the frontend already surfaces rich rollout progress
+    - the CLI should stream meaningful intermediate status instead of printing
+      nothing until final completion
 
 ## Problem Statement
 
@@ -356,7 +370,13 @@ At minimum:
 - pinned tools version
 - when the version was bound to the project
 
-Without this, safe retention and rollback are not possible.
+This is now partially implemented for running projects via
+`referenced_versions` in host deploy status. The remaining work is to:
+
+- consume those references in retention/rollback logic
+- distinguish "running reference" from broader "restorable project still needs
+  this artifact" cases
+- make the reference model authoritative enough for pruning decisions
 
 ### 6. Artifact Provenance And Deployment Hints
 
@@ -750,6 +770,18 @@ Required end-state traits:
 - `--json` support
 - no hidden ssh requirement for standard rollback
 - predictable error states
+- `--wait` must stream intermediate progress and status updates for long-running
+  operations instead of staying silent until the terminal result
+
+The CLI should not be materially worse than the frontend for LRO visibility.
+The frontend already surfaces useful rollout/progress state. The CLI should at
+least expose:
+
+- current phase
+- recent progress messages
+- whether the operation is queued, running, reconciling, draining, rolling
+  back, or stuck
+- the last known host/component status while waiting
 
 ### Agent-Friendly Requirements
 
