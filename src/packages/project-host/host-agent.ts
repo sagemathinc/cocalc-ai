@@ -10,14 +10,14 @@ import { activateInstalledProjectHostVersion } from "./upgrade";
 
 const logger = getLogger("project-host:host-agent");
 
-type ProjectHostRollbackPending = {
+export type ProjectHostRollbackPending = {
   target_version: string;
   previous_version: string;
   started_at: string;
   deadline_at: string;
 };
 
-type ProjectHostRollbackRecord = {
+export type ProjectHostRollbackRecord = {
   target_version: string;
   rollback_version: string;
   started_at: string;
@@ -25,7 +25,7 @@ type ProjectHostRollbackRecord = {
   reason: "health_deadline_exceeded";
 };
 
-type HostAgentState = {
+export type HostAgentState = {
   project_host?: {
     last_known_good_version?: string;
     pending_rollout?: ProjectHostRollbackPending;
@@ -81,6 +81,13 @@ function readState(dataDir: string): HostAgentState {
   } catch {
     return {};
   }
+}
+
+export function readHostAgentState(dataDir?: string): HostAgentState {
+  const resolved =
+    `${dataDir ?? process.env.COCALC_DATA ?? process.env.DATA ?? ""}`.trim() ||
+    "/mnt/cocalc/data";
+  return readState(resolved);
 }
 
 function writeState(dataDir: string, state: HostAgentState): void {

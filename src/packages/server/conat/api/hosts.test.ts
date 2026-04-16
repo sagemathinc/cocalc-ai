@@ -590,6 +590,24 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
           ],
         },
       ],
+      getHostAgentStatus: async () => ({
+        project_host: {
+          last_known_good_version: "ph-v1",
+          pending_rollout: {
+            target_version: "ph-v3",
+            previous_version: "ph-v1",
+            started_at: "2026-04-16T06:14:11.396Z",
+            deadline_at: "2026-04-16T06:14:31.396Z",
+          },
+          last_automatic_rollback: {
+            target_version: "ph-v2",
+            rollback_version: "ph-v1",
+            started_at: "2026-04-16T06:14:11.396Z",
+            finished_at: "2026-04-16T06:14:33.539Z",
+            reason: "health_deadline_exceeded",
+          },
+        },
+      }),
     }));
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("FROM project_hosts")) {
@@ -667,6 +685,24 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         observed_version_state: "aligned",
       }),
     ]);
+    expect(status.observed_host_agent).toEqual({
+      project_host: {
+        last_known_good_version: "ph-v1",
+        pending_rollout: {
+          target_version: "ph-v3",
+          previous_version: "ph-v1",
+          started_at: "2026-04-16T06:14:11.396Z",
+          deadline_at: "2026-04-16T06:14:31.396Z",
+        },
+        last_automatic_rollback: {
+          target_version: "ph-v2",
+          rollback_version: "ph-v1",
+          started_at: "2026-04-16T06:14:11.396Z",
+          finished_at: "2026-04-16T06:14:33.539Z",
+          reason: "health_deadline_exceeded",
+        },
+      },
+    });
     expect(status.rollback_targets).toEqual([
       {
         target_type: "artifact",
@@ -689,6 +725,59 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         retained_versions: ["ph-v2", "ph-v1"],
       },
     ]);
+    expect(status.observation_error).toBeUndefined();
+  });
+
+  it("ignores missing host-agent status support on older hosts", async () => {
+    routedHostControlClientMock.mockImplementationOnce(async () => ({
+      upgradeSoftware: async () => ({ results: [] }),
+      rolloutManagedComponents: async ({ components }: any) => ({
+        results: components.map((component: string) => ({
+          component,
+          action: "spawned",
+        })),
+      }),
+      getManagedComponentStatus: async () => [],
+      getInstalledRuntimeArtifacts: async () => [
+        {
+          artifact: "project-host",
+          current_version: "ph-v2",
+          current_build_id: "build-ph-v2",
+          installed_versions: ["ph-v2", "ph-v1"],
+        },
+      ],
+      getHostAgentStatus: async () => {
+        throw new Error(
+          "calling remote function 'getHostAgentStatus': TypeError: impl[mesg.name] is not a function",
+        );
+      },
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              metadata: {
+                owner: ACCOUNT_ID,
+                software: {
+                  project_host: "ph-v2",
+                  project_host_build_id: "build-ph-v2",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { getHostRuntimeDeploymentStatus } = await import("./hosts");
+    const status = await getHostRuntimeDeploymentStatus({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(status.observed_host_agent).toBeUndefined();
     expect(status.observation_error).toBeUndefined();
   });
 
@@ -817,6 +906,11 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
           installed_versions: ["ph-v2", "ph-v1"],
         },
       ],
+      getHostAgentStatus: async () => ({
+        project_host: {
+          last_known_good_version: "ph-v1",
+        },
+      }),
       updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
     }));
     queryMock = jest.fn(async (sql: string, _params: any[]) => {
@@ -975,6 +1069,11 @@ describe("hosts.setHostRuntimeDeployments automatic artifact reconcile", () => {
           installed_versions: ["bundle-v4"],
         },
       ],
+      getHostAgentStatus: async () => ({
+        project_host: {
+          last_known_good_version: "ph-v0",
+        },
+      }),
       updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
     }));
     queryMock = jest.fn(async (sql: string, _params: any[]) => {

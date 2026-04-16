@@ -19,6 +19,7 @@ import type {
   HostSoftwareUpgradeResponse,
   HostRuntimeArtifact,
   HostRuntimeArtifactObservation,
+  HostRuntimeHostAgentObservation,
   HostRuntimeDeploymentRecord,
   HostRuntimeDeploymentObservedTarget,
   HostRuntimeRollbackTarget,
@@ -5280,14 +5281,17 @@ async function getHostRuntimeDeploymentStatusInternal({
   ]);
   let observed_artifacts = observedRuntimeArtifactsFromMetadata(row);
   let observed_components: HostManagedComponentStatus[] | undefined;
+  let observed_host_agent = observedHostAgentFromMetadata(row);
   const observation_errors: string[] = [];
   if (HOST_RUNNING_STATUSES.has(`${row?.status ?? ""}`.toLowerCase())) {
     try {
       const client = await hostControlClient(id, 15_000);
-      const [componentsResult, artifactsResult] = await Promise.allSettled([
-        client.getManagedComponentStatus(),
-        client.getInstalledRuntimeArtifacts(),
-      ]);
+      const [componentsResult, artifactsResult, hostAgentResult] =
+        await Promise.allSettled([
+          client.getManagedComponentStatus(),
+          client.getInstalledRuntimeArtifacts(),
+          client.getHostAgentStatus(),
+        ]);
       if (componentsResult.status === "fulfilled") {
         observed_components = componentsResult.value;
       } else {
@@ -5307,6 +5311,20 @@ async function getHostRuntimeDeploymentStatusInternal({
           `artifacts: ${artifactsResult.reason?.message ?? artifactsResult.reason}`,
         );
       }
+      if (hostAgentResult.status === "fulfilled") {
+        observed_host_agent = observedHostAgentFromMetadata({
+          metadata: {
+            host_agent: hostAgentResult.value,
+          },
+        });
+      } else if (
+        !observed_host_agent &&
+        !isUnsupportedHostAgentStatusObservationError(hostAgentResult.reason)
+      ) {
+        observation_errors.push(
+          `host_agent: ${hostAgentResult.reason?.message ?? hostAgentResult.reason}`,
+        );
+      }
     } catch (err) {
       observation_errors.push(`${(err as Error)?.message ?? err}`);
     }
@@ -5319,6 +5337,7 @@ async function getHostRuntimeDeploymentStatusInternal({
     effective,
     observed_artifacts,
     observed_components,
+    observed_host_agent,
     observed_targets: summarizeObservedRuntimeDeployments({
       effective,
       observed_artifacts,
@@ -5983,6 +6002,86 @@ function observedRuntimeArtifactsFromMetadata(
   }
   return [...existing.values()].sort((a, b) =>
     a.artifact < b.artifact ? -1 : a.artifact > b.artifact ? 1 : 0,
+  );
+}
+
+function observedHostAgentFromMetadata(
+  row: any,
+): HostRuntimeHostAgentObservation | undefined {
+  const projectHost = row?.metadata?.host_agent?.project_host;
+  if (!projectHost || typeof projectHost !== "object") {
+    return undefined;
+  }
+  const lastKnownGoodVersion =
+    `${projectHost?.last_known_good_version ?? ""}`.trim() || undefined;
+  const pendingTargetVersion =
+    `${projectHost?.pending_rollout?.target_version ?? ""}`.trim() || undefined;
+  const pendingPreviousVersion =
+    `${projectHost?.pending_rollout?.previous_version ?? ""}`.trim() ||
+    undefined;
+  const pendingStartedAt =
+    `${projectHost?.pending_rollout?.started_at ?? ""}`.trim() || undefined;
+  const pendingDeadlineAt =
+    `${projectHost?.pending_rollout?.deadline_at ?? ""}`.trim() || undefined;
+  const rollbackTargetVersion =
+    `${projectHost?.last_automatic_rollback?.target_version ?? ""}`.trim() ||
+    undefined;
+  const rollbackVersion =
+    `${projectHost?.last_automatic_rollback?.rollback_version ?? ""}`.trim() ||
+    undefined;
+  const rollbackStartedAt =
+    `${projectHost?.last_automatic_rollback?.started_at ?? ""}`.trim() ||
+    undefined;
+  const rollbackFinishedAt =
+    `${projectHost?.last_automatic_rollback?.finished_at ?? ""}`.trim() ||
+    undefined;
+  const rollbackReason =
+    `${projectHost?.last_automatic_rollback?.reason ?? ""}`.trim() || undefined;
+  if (
+    !lastKnownGoodVersion &&
+    !pendingTargetVersion &&
+    !rollbackTargetVersion &&
+    !rollbackVersion
+  ) {
+    return undefined;
+  }
+  return {
+    project_host: {
+      last_known_good_version: lastKnownGoodVersion,
+      pending_rollout:
+        pendingTargetVersion && pendingPreviousVersion
+          ? {
+              target_version: pendingTargetVersion,
+              previous_version: pendingPreviousVersion,
+              started_at: pendingStartedAt ?? "",
+              deadline_at: pendingDeadlineAt ?? "",
+            }
+          : undefined,
+      last_automatic_rollback:
+        rollbackTargetVersion && rollbackVersion
+          ? {
+              target_version: rollbackTargetVersion,
+              rollback_version: rollbackVersion,
+              started_at: rollbackStartedAt ?? "",
+              finished_at: rollbackFinishedAt ?? "",
+              reason:
+                rollbackReason === "health_deadline_exceeded"
+                  ? "health_deadline_exceeded"
+                  : "health_deadline_exceeded",
+            }
+          : undefined,
+    },
+  };
+}
+
+function isUnsupportedHostAgentStatusObservationError(error: any): boolean {
+  const message = `${error?.message ?? error ?? ""}`.trim();
+  if (!message) {
+    return false;
+  }
+  return (
+    /getHostAgentStatus/.test(message) &&
+    /(unknown function|is not a function|not implemented)/i.test(message)
   );
 }
 

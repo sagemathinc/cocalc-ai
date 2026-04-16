@@ -502,6 +502,8 @@ async function startHostControlService(): Promise<void> {
       await (
         await getHostClient(host_id, 30_000)
       ).getInstalledRuntimeArtifacts(),
+    getHostAgentStatus: async ({ host_id }) =>
+      await (await getHostClient(host_id, 30_000)).getHostAgentStatus(),
     inspectStaticAppPath: async ({ host_id, inspect }) =>
       await (
         await getHostClient(host_id, 30_000)

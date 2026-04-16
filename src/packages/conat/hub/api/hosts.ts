@@ -566,6 +566,7 @@ export interface HostRuntimeDeploymentStatus {
   effective: HostRuntimeDeploymentRecord[];
   observed_artifacts?: HostRuntimeArtifactObservation[];
   observed_components?: HostManagedComponentStatus[];
+  observed_host_agent?: HostRuntimeHostAgentObservation;
   observed_targets?: HostRuntimeDeploymentObservedTarget[];
   rollback_targets?: HostRuntimeRollbackTarget[];
   observation_error?: string;
@@ -586,6 +587,31 @@ export interface HostRuntimeArtifactObservation {
     version: string;
     project_count: number;
   }>;
+}
+
+export interface HostRuntimeHostAgentProjectHostPendingRollout {
+  target_version: string;
+  previous_version: string;
+  started_at: string;
+  deadline_at: string;
+}
+
+export interface HostRuntimeHostAgentProjectHostAutomaticRollback {
+  target_version: string;
+  rollback_version: string;
+  started_at: string;
+  finished_at: string;
+  reason: "health_deadline_exceeded";
+}
+
+export interface HostRuntimeHostAgentProjectHostObservation {
+  last_known_good_version?: string;
+  pending_rollout?: HostRuntimeHostAgentProjectHostPendingRollout;
+  last_automatic_rollback?: HostRuntimeHostAgentProjectHostAutomaticRollback;
+}
+
+export interface HostRuntimeHostAgentObservation {
+  project_host?: HostRuntimeHostAgentProjectHostObservation;
 }
 
 export interface HostRuntimeDeploymentObservedTarget {

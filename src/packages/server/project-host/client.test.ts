@@ -108,6 +108,11 @@ describe("project-host client routing", () => {
         project_lock_count: 0,
       })),
       getManagedComponentStatus: jest.fn(async () => []),
+      getHostAgentStatus: jest.fn(async () => ({
+        project_host: {
+          last_known_good_version: "ph-v1",
+        },
+      })),
       inspectStaticAppPath: jest.fn(async () => ({
         project_id: "p1",
         app_id: "app",
