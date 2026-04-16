@@ -27,6 +27,20 @@ type Capture = {
     components?: string[];
     reason?: string;
   }>;
+  hostProjectStops?: Array<{
+    id: string;
+    state_filter?: string;
+    project_state?: string;
+    risk_only?: boolean;
+    parallel?: number;
+  }>;
+  hostProjectRestarts?: Array<{
+    id: string;
+    state_filter?: string;
+    project_state?: string;
+    risk_only?: boolean;
+    parallel?: number;
+  }>;
   runtimeDeploymentRollbacks?: Array<{
     id: string;
     target_type: string;
@@ -69,6 +83,8 @@ function makeDeps(
   capture.runtimeDeploymentRollbacks ??= [];
   capture.upgradeRequests ??= [];
   capture.hostProjectsRequests ??= [];
+  capture.hostProjectStops ??= [];
+  capture.hostProjectRestarts ??= [];
   return {
     withContext: async (_command, _label, fn) => {
       const ctx = {
@@ -150,6 +166,38 @@ function makeDeps(
                 reason,
               });
               return { op_id: `deploy-reconcile-${id}` };
+            },
+            stopHostProjects: async ({
+              id,
+              state_filter,
+              project_state,
+              risk_only,
+              parallel,
+            }) => {
+              capture.hostProjectStops!.push({
+                id,
+                state_filter,
+                project_state,
+                risk_only,
+                parallel,
+              });
+              return { op_id: `stop-projects-${id}` };
+            },
+            restartHostProjects: async ({
+              id,
+              state_filter,
+              project_state,
+              risk_only,
+              parallel,
+            }) => {
+              capture.hostProjectRestarts!.push({
+                id,
+                state_filter,
+                project_state,
+                risk_only,
+                parallel,
+              });
+              return { op_id: `restart-projects-${id}` };
             },
             rollbackHostRuntimeDeployments: async ({
               id,
@@ -370,6 +418,38 @@ function makeDeps(
       value && value.length ? value : ["project-host", "project", "tools"],
     parseHostSoftwareChannelsOption: (value) => value ?? ["latest"],
     waitForLro: async (_ctx, op_id) => {
+      if (`${op_id}`.startsWith("stop-projects-")) {
+        return {
+          op_id,
+          status: "succeeded",
+          timedOut: false,
+          error: undefined,
+          result: {
+            host_id: `${op_id}`.replace(/^stop-projects-/, ""),
+            action: "stop",
+            total: 2,
+            succeeded: 2,
+            failed: 0,
+            skipped: 0,
+          },
+        };
+      }
+      if (`${op_id}`.startsWith("restart-projects-")) {
+        return {
+          op_id,
+          status: "succeeded",
+          timedOut: false,
+          error: undefined,
+          result: {
+            host_id: `${op_id}`.replace(/^restart-projects-/, ""),
+            action: "restart",
+            total: 2,
+            succeeded: 2,
+            failed: 0,
+            skipped: 0,
+          },
+        };
+      }
       if (`${op_id}`.startsWith("deploy-reconcile-")) {
         return {
           op_id,
@@ -868,6 +948,82 @@ test("host projects supports exact raw status filtering", async () => {
   ]);
   assert.equal(capture.data.state_filter, "all");
   assert.equal(capture.data.project_state, "opened");
+});
+
+test("host projects-stop queues a host-scoped stop action", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "projects-stop",
+    "host-1",
+    "--status",
+    "opened",
+    "--parallel",
+    "2",
+    "--wait",
+  ]);
+
+  assert.deepEqual(capture.hostProjectStops, [
+    {
+      id: "host-1",
+      state_filter: "all",
+      project_state: "opened",
+      risk_only: false,
+      parallel: 2,
+    },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.action, "stop");
+  assert.equal(capture.data.status, "succeeded");
+  assert.equal(capture.data.total, 2);
+});
+
+test("host projects-restart queues a host-scoped restart action", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "projects-restart",
+    "host-1",
+    "--state",
+    "running",
+  ]);
+
+  assert.deepEqual(capture.hostProjectRestarts, [
+    {
+      id: "host-1",
+      state_filter: "running",
+      project_state: undefined,
+      risk_only: false,
+      parallel: undefined,
+    },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.action, "restart");
+  assert.equal(capture.data.status, "queued");
 });
 
 test("host reconcile queues and waits for completion", async () => {

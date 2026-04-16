@@ -1115,3 +1115,28 @@ That order matters:
 - automatic rollback fourth
 
 Automatic rollback without the first three pieces will be fragile.
+
+## Near-Term Operator Batch Controls
+
+In parallel with the software deploy/rollback work, the control plane should
+gain first-class host-scoped batch project operations for emergencies and load
+simulation:
+
+- stop all matching projects on one host
+- restart all matching projects on one host
+
+These should be implemented as server-side LROs, not CLI loops over per-project
+commands, so they survive operator disconnects and produce durable progress and
+results.
+
+Required semantics:
+
+- snapshot the exact project target set when the operation starts
+- support coarse filters such as `running` plus exact raw-status filters
+- default `stop` target set: running and starting projects
+- default `restart` target set: running projects
+- return per-project succeeded / failed / skipped results
+- stream useful progress during CLI `--wait`
+
+Once the single-host semantics are proven, fleet-wide `--all-hosts` variants
+can be added on top of the same primitive.

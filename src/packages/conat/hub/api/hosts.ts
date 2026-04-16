@@ -35,6 +35,8 @@ export const HOST_LRO_KINDS = [
   "host-stop",
   "host-restart",
   "host-drain",
+  "host-stop-projects",
+  "host-restart-projects",
   "host-reconcile-software",
   "host-reconcile-runtime-deployments",
   "host-rollback-runtime-deployments",
@@ -239,6 +241,34 @@ export interface HostProjectsResponse {
   summary: HostBackupStatus;
   next_cursor?: string;
   host_last_seen?: string;
+}
+
+export interface HostProjectsActionRequest {
+  id: string;
+  state_filter?: HostProjectStateFilter;
+  project_state?: string;
+  risk_only?: boolean;
+  parallel?: number;
+}
+
+export interface HostProjectsActionResultRow {
+  project_id: string;
+  status: "succeeded" | "failed" | "skipped";
+  state?: string;
+  error?: string;
+}
+
+export interface HostProjectsActionResult {
+  host_id: string;
+  action: "stop" | "restart";
+  state_filter: HostProjectStateFilter;
+  project_state?: string;
+  risk_only?: boolean;
+  total: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  projects: HostProjectsActionResultRow[];
 }
 
 export interface HostRootfsImage {
@@ -661,6 +691,8 @@ export interface ExternalCredentialRecord {
 export const hosts = {
   listHosts: authFirstRequireAccount,
   listHostProjects: authFirstRequireAccount,
+  stopHostProjects: authFirstRequireAccount,
+  restartHostProjects: authFirstRequireAccount,
   resolveHostConnection: authFirstRequireAccount,
   getCatalog: authFirstRequireAccount,
   updateCloudCatalog: authFirstRequireAccount,
@@ -738,6 +770,22 @@ export interface Hosts {
     state_filter?: HostProjectStateFilter;
     project_state?: string;
   }) => Promise<HostProjectsResponse>;
+  stopHostProjects: (opts: {
+    account_id?: string;
+    id: string;
+    state_filter?: HostProjectStateFilter;
+    project_state?: string;
+    risk_only?: boolean;
+    parallel?: number;
+  }) => Promise<HostLroResponse>;
+  restartHostProjects: (opts: {
+    account_id?: string;
+    id: string;
+    state_filter?: HostProjectStateFilter;
+    project_state?: string;
+    risk_only?: boolean;
+    parallel?: number;
+  }) => Promise<HostLroResponse>;
   resolveHostConnection: (opts: {
     account_id?: string;
     host_id: string;

@@ -1107,6 +1107,127 @@ describe("hosts.upgradeHostSoftware", () => {
   });
 });
 
+describe("hosts.stopHostProjects / restartHostProjects", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.LOGS = os.tmpdir();
+    isAdminMock = jest.fn(async () => true);
+    isBannedMock = jest.fn(async () => false);
+    moveProjectToHostMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: {},
+    }));
+    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    syncProjectUsersOnHostMock = jest.fn(async () => undefined);
+    issueProjectHostAuthTokenJwtMock = jest.fn(() => ({
+      token: "test-token",
+      expires_at: 1234567890,
+    }));
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(
+      async () => undefined,
+    );
+    assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
+    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    hostConnectionGetMock = jest.fn();
+    projectHostAuthTokenIssueMock = jest.fn();
+    projectReferenceGetMock = jest.fn(async () => null);
+    listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    setProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    updateProjectUsersMock = jest.fn(async () => undefined);
+    routedHostControlClientMock = jest.fn(async () => ({
+      updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              metadata: { owner: ACCOUNT_ID },
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT\n        project_id,")) {
+        return {
+          rows: [
+            {
+              project_id: "proj-1",
+              state: "running",
+            },
+            {
+              project_id: "proj-2",
+              state: "running",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+  });
+
+  it("queues host-scoped project stop/restart actions with a snapshot target set", async () => {
+    const { stopHostProjects, restartHostProjects } = await import("./hosts");
+
+    await stopHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      state_filter: "running",
+      parallel: 2,
+    });
+    await restartHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      project_state: "opened",
+    });
+
+    expect(createLroMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        kind: "host-stop-projects",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        input: expect.objectContaining({
+          id: HOST_ID,
+          state_filter: "running",
+          parallel: 2,
+          projects: [
+            { project_id: "proj-1", state: "running" },
+            { project_id: "proj-2", state: "running" },
+          ],
+        }),
+      }),
+    );
+    expect(createLroMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        kind: "host-restart-projects",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        input: expect.objectContaining({
+          id: HOST_ID,
+          state_filter: "all",
+          project_state: "opened",
+          projects: [
+            { project_id: "proj-1", state: "running" },
+            { project_id: "proj-2", state: "running" },
+          ],
+        }),
+      }),
+    );
+  });
+});
+
 describe("hosts.rollbackProjectHostOverSshInternal", () => {
   beforeEach(() => {
     jest.resetModules();

@@ -30,6 +30,10 @@ import {
   stopHostInternal,
   upgradeHostSoftwareInternal,
 } from "@cocalc/server/conat/api/hosts";
+import {
+  restart as restartProject,
+  stop as stopProject,
+} from "@cocalc/server/conat/api/projects";
 import { stopSelfHostReverseTunnel } from "@cocalc/server/self-host/ssh-target";
 
 const logger = getLogger("server:hosts:ops-worker");
@@ -51,6 +55,8 @@ const HOST_OP_KINDS = [
   "host-stop",
   "host-restart",
   "host-drain",
+  "host-stop-projects",
+  "host-restart-projects",
   "host-reconcile-software",
   "host-reconcile-runtime-deployments",
   "host-rollback-runtime-deployments",
@@ -86,6 +92,13 @@ type HostProjectRow = {
 type BackupCandidate = {
   project_id: string;
   reason: "running" | "dirty";
+};
+
+type HostProjectsActionResultRow = {
+  project_id: string;
+  status: "succeeded" | "failed" | "skipped";
+  state?: string;
+  error?: string;
 };
 
 class HostOpCanceledError extends Error {
@@ -245,6 +258,176 @@ async function loadHostProjects(host_id: string): Promise<HostProjectRow[]> {
     [host_id],
   );
   return rows;
+}
+
+async function loadProjectState(project_id: string): Promise<string> {
+  const { rows } = await getPool().query<{ state: { state?: string } | null }>(
+    "SELECT state FROM projects WHERE project_id=$1",
+    [project_id],
+  );
+  const rawState = rows[0]?.state ?? null;
+  if (rawState && typeof rawState === "object") {
+    return `${rawState.state ?? ""}`.trim();
+  }
+  return "";
+}
+
+async function waitForProjectStopped(project_id: string): Promise<string> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < MAX_WAIT_MS) {
+    const state = await loadProjectState(project_id);
+    if (!isProjectRunning(state)) {
+      return state || "stopped";
+    }
+    await delay(POLL_MS);
+  }
+  throw new Error(`timeout waiting for project ${project_id} to stop`);
+}
+
+async function runHostProjectsAction({
+  action,
+  account_id,
+  host_id,
+  input,
+  shouldCancel,
+  progressStep,
+}: {
+  action: "stop" | "restart";
+  account_id: string;
+  host_id: string;
+  input: any;
+  shouldCancel: () => Promise<boolean>;
+  progressStep: (
+    step: string,
+    message: string,
+    detail?: any,
+    progress?: number,
+  ) => Promise<void>;
+}) {
+  const requestedProjects = Array.isArray(input?.projects)
+    ? input.projects
+    : [];
+  const total = requestedProjects.length;
+  const parallel = Math.max(1, Math.min(32, Number(input?.parallel ?? 4) || 4));
+  const results: HostProjectsActionResultRow[] = [];
+  let completed = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  const updateProgress = async (message: string) => {
+    const done = completed + failed + skipped;
+    const progress = total ? Math.round((done / total) * 100) : 100;
+    await progressStep(
+      "projects",
+      message,
+      {
+        host_id,
+        action,
+        total,
+        completed,
+        failed,
+        skipped,
+      },
+      progress,
+    );
+  };
+
+  await updateProgress(
+    total
+      ? `${action} queued for ${total} project${total === 1 ? "" : "s"}`
+      : `no projects matched ${action} target set`,
+  );
+
+  if (!total) {
+    return {
+      host_id,
+      action,
+      state_filter: `${input?.state_filter ?? "running"}`,
+      project_state: `${input?.project_state ?? ""}`.trim() || undefined,
+      risk_only: !!input?.risk_only,
+      total,
+      succeeded: completed,
+      failed,
+      skipped,
+      projects: results,
+    };
+  }
+
+  const queue = [...requestedProjects];
+  const worker = async () => {
+    while (queue.length > 0) {
+      if (await shouldCancel()) {
+        throw new HostOpCanceledError();
+      }
+      const next = queue.shift();
+      if (!next) return;
+      const project_id = `${next.project_id ?? ""}`.trim();
+      const state = `${next.state ?? ""}`.trim();
+      if (!project_id) continue;
+      try {
+        await progressStep("projects", `${action} ${project_id}`, {
+          host_id,
+          action,
+          project_id,
+          state,
+        });
+        if (action === "stop") {
+          await stopProject({ account_id, project_id });
+          await waitForProjectStopped(project_id);
+        } else {
+          const op = await restartProject({
+            account_id,
+            project_id,
+            wait: false,
+          });
+          const summary = await waitForLroCompletion({
+            op_id: op.op_id,
+            scope_type: op.scope_type,
+            scope_id: op.scope_id,
+            client: conat(),
+            timeout_ms: MAX_WAIT_MS,
+          });
+          if (summary.status !== "succeeded") {
+            throw new Error(
+              summary.error ??
+                `restart ${summary.status} for project ${project_id}`,
+            );
+          }
+        }
+        completed += 1;
+        results.push({ project_id, status: "succeeded", state });
+      } catch (err) {
+        failed += 1;
+        results.push({
+          project_id,
+          status: "failed",
+          state,
+          error: `${err}`,
+        });
+      } finally {
+        await updateProgress(
+          `${action} ${completed + failed + skipped}/${total} project${total === 1 ? "" : "s"}`,
+        );
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(parallel, total) }, () => worker()),
+  );
+
+  return {
+    host_id,
+    action,
+    state_filter: `${input?.state_filter ?? "running"}`,
+    project_state: `${input?.project_state ?? ""}`.trim() || undefined,
+    risk_only: !!input?.risk_only,
+    total,
+    succeeded: completed,
+    failed,
+    skipped,
+    projects: results,
+  };
 }
 
 function isProjectRunning(state?: string | null): boolean {
@@ -475,6 +658,10 @@ function opLabel(kind: HostOpKind, input: any): string {
       return input?.mode === "hard" ? "Hard restart" : "Restart";
     case "host-drain":
       return input?.force ? "Force drain" : "Drain";
+    case "host-stop-projects":
+      return "Stop host projects";
+    case "host-restart-projects":
+      return "Restart host projects";
     case "host-reconcile-software":
       return "Reconcile";
     case "host-reconcile-runtime-deployments":
@@ -538,6 +725,13 @@ function waitConfig(kind: HostOpKind) {
         desired: ["running"],
         failOn: ["error", "off", "deprovisioned"],
         message: "waiting for host to reconnect",
+      };
+    case "host-stop-projects":
+    case "host-restart-projects":
+      return {
+        desired: ["running"],
+        failOn: ["error", "off", "deprovisioned"],
+        message: "waiting for host to remain running",
       };
     case "host-reconcile-runtime-deployments":
       return {
@@ -1081,6 +1275,45 @@ async function handleOp(op: LroSummary): Promise<void> {
         target: response.target,
         rollback_version: response.rollback_version,
       });
+      return;
+    }
+
+    if (kind === "host-stop-projects" || kind === "host-restart-projects") {
+      const action = kind === "host-stop-projects" ? "stop" : "restart";
+      const response = await runHostProjectsAction({
+        action,
+        account_id,
+        host_id,
+        input,
+        shouldCancel,
+        progressStep,
+      });
+      const updated = await updateLro({
+        op_id,
+        status: response.failed > 0 ? "failed" : "succeeded",
+        progress_summary: {
+          phase: "done",
+          host_id,
+          action,
+          total: response.total,
+          succeeded: response.succeeded,
+          failed: response.failed,
+          skipped: response.skipped,
+        },
+        result: response,
+        error:
+          response.failed > 0
+            ? `${response.failed} project action(s) failed`
+            : null,
+      });
+      if (updated) {
+        await publishSummary(updated);
+      }
+      await progressStep(
+        "done",
+        `${action} complete: ${response.succeeded} succeeded, ${response.failed} failed, ${response.skipped} skipped`,
+        response,
+      );
       return;
     }
 

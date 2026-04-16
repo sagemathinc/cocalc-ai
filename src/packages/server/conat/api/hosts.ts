@@ -33,6 +33,7 @@ import type {
   HostLroKind,
   HostProjectRow,
   HostProjectsResponse,
+  HostProjectStateFilter,
   HostManagedRootfsReleaseLifecycle,
   HostRootfsGcResult,
   HostRootfsImage,
@@ -3030,45 +3031,16 @@ export async function listHostProjects({
   limit?: number;
   cursor?: string;
   risk_only?: boolean;
-  state_filter?: "all" | "running" | "stopped" | "unprovisioned";
+  state_filter?: HostProjectStateFilter;
   project_state?: string;
 }): Promise<HostProjectsResponse> {
   const host = await loadHostForListing(id, account_id);
   const cappedLimit = normalizeHostProjectsLimit(limit);
-  const runningStatesSql = `COALESCE(state->>'state', '') IN ('running','starting')`;
-  const needsBackupSql = `
-    ${runningStatesSql}
-    OR (
-      provisioned IS TRUE
-      AND (
-        last_backup IS NULL
-        OR (last_edited IS NOT NULL AND last_edited > last_backup)
-      )
-    )
-  `;
-
-  const params: any[] = [id];
-  const filters: string[] = ["deleted IS NOT true", "host_id = $1"];
-  const normalizedStateFilter =
-    `${state_filter ?? "all"}`.trim().toLowerCase() || "all";
-
-  if (normalizedStateFilter === "running") {
-    filters.push(`(${runningStatesSql})`);
-  } else if (normalizedStateFilter === "stopped") {
-    filters.push(`(provisioned IS TRUE AND NOT (${runningStatesSql}))`);
-  } else if (normalizedStateFilter === "unprovisioned") {
-    filters.push(`(provisioned IS NOT TRUE)`);
-  } else if (normalizedStateFilter !== "all") {
-    throw new Error(
-      "invalid state_filter; expected all, running, stopped, or unprovisioned",
-    );
-  }
-
-  const normalizedProjectState = `${project_state ?? ""}`.trim();
-  if (normalizedProjectState) {
-    params.push(normalizedProjectState);
-    filters.push(`(COALESCE(state->>'state', '') = $${params.length})`);
-  }
+  const { params, filters, needsBackupSql } = buildHostProjectsBaseQuery({
+    host_id: id,
+    state_filter,
+    project_state,
+  });
 
   if (risk_only) {
     filters.push(`(${needsBackupSql})`);
@@ -3167,6 +3139,135 @@ export async function listHostProjects({
   };
 }
 
+const HOST_PROJECT_RUNNING_STATES_SQL = `COALESCE(state->>'state', '') IN ('running','starting')`;
+
+function normalizeHostProjectStateFilter(
+  state_filter?: HostProjectStateFilter,
+): HostProjectStateFilter {
+  const normalized = `${state_filter ?? "all"}`.trim().toLowerCase() || "all";
+  if (
+    normalized === "all" ||
+    normalized === "running" ||
+    normalized === "stopped" ||
+    normalized === "unprovisioned"
+  ) {
+    return normalized;
+  }
+  throw new Error(
+    "invalid state_filter; expected all, running, stopped, or unprovisioned",
+  );
+}
+
+function buildHostProjectsBaseQuery({
+  host_id,
+  state_filter,
+  project_state,
+}: {
+  host_id: string;
+  state_filter?: HostProjectStateFilter;
+  project_state?: string;
+}) {
+  const needsBackupSql = `
+    ${HOST_PROJECT_RUNNING_STATES_SQL}
+    OR (
+      provisioned IS TRUE
+      AND (
+        last_backup IS NULL
+        OR (last_edited IS NOT NULL AND last_edited > last_backup)
+      )
+    )
+  `;
+  const params: any[] = [host_id];
+  const filters: string[] = ["deleted IS NOT true", "host_id = $1"];
+  const normalizedStateFilter = normalizeHostProjectStateFilter(state_filter);
+
+  if (normalizedStateFilter === "running") {
+    filters.push(`(${HOST_PROJECT_RUNNING_STATES_SQL})`);
+  } else if (normalizedStateFilter === "stopped") {
+    filters.push(
+      `(provisioned IS TRUE AND NOT (${HOST_PROJECT_RUNNING_STATES_SQL}))`,
+    );
+  } else if (normalizedStateFilter === "unprovisioned") {
+    filters.push(`(provisioned IS NOT TRUE)`);
+  }
+
+  const normalizedProjectState = `${project_state ?? ""}`.trim();
+  if (normalizedProjectState) {
+    params.push(normalizedProjectState);
+    filters.push(`(COALESCE(state->>'state', '') = $${params.length})`);
+  }
+
+  return {
+    params,
+    filters,
+    needsBackupSql,
+    normalizedStateFilter,
+    normalizedProjectState,
+  };
+}
+
+async function selectHostProjectActionRows({
+  account_id,
+  id,
+  risk_only,
+  state_filter,
+  project_state,
+}: {
+  account_id?: string;
+  id: string;
+  risk_only?: boolean;
+  state_filter?: HostProjectStateFilter;
+  project_state?: string;
+}): Promise<{
+  host: Awaited<ReturnType<typeof loadHostForListing>>;
+  state_filter: HostProjectStateFilter;
+  project_state?: string;
+  rows: Array<{ project_id: string; state: string }>;
+}> {
+  const host = await loadHostForListing(id, account_id);
+  const {
+    params,
+    filters,
+    needsBackupSql,
+    normalizedStateFilter,
+    normalizedProjectState,
+  } = buildHostProjectsBaseQuery({
+    host_id: id,
+    state_filter,
+    project_state,
+  });
+
+  if (risk_only) {
+    filters.push(`(${needsBackupSql})`);
+  }
+
+  const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+  const { rows } = await pool().query<{
+    project_id: string;
+    state: string | null;
+  }>(
+    `
+      SELECT
+        project_id,
+        COALESCE(state->>'state', '') AS state
+      FROM projects
+      ${whereClause}
+      ORDER BY COALESCE(last_edited, to_timestamp(0)) DESC, project_id DESC
+    `,
+    params,
+  );
+
+  return {
+    host,
+    state_filter: normalizedStateFilter,
+    project_state: normalizedProjectState || undefined,
+    rows: rows.map((row) => ({
+      project_id: row.project_id,
+      state: row.state ?? "",
+    })),
+  };
+}
+
 export async function getCatalog({
   account_id,
   provider,
@@ -3253,6 +3354,103 @@ export async function getCatalog({
   };
 
   return catalog;
+}
+
+async function queueHostProjectsAction({
+  kind,
+  account_id,
+  id,
+  state_filter,
+  project_state,
+  risk_only,
+  parallel,
+}: {
+  kind: "host-stop-projects" | "host-restart-projects";
+  account_id?: string;
+  id: string;
+  state_filter?: HostProjectStateFilter;
+  project_state?: string;
+  risk_only?: boolean;
+  parallel?: number;
+}): Promise<HostLroResponse> {
+  const {
+    host,
+    rows,
+    state_filter: normalizedStateFilter,
+  } = await selectHostProjectActionRows({
+    account_id,
+    id,
+    state_filter,
+    project_state,
+    risk_only,
+  });
+  return await createHostLro({
+    kind,
+    row: host,
+    account_id,
+    input: {
+      id: host.id,
+      account_id,
+      state_filter: normalizedStateFilter,
+      project_state: `${project_state ?? ""}`.trim() || undefined,
+      risk_only: !!risk_only,
+      parallel,
+      projects: rows,
+    },
+    dedupe_key: `${kind}:${host.id}:${normalizedStateFilter}:${`${project_state ?? ""}`.trim()}:${!!risk_only}`,
+  });
+}
+
+export async function stopHostProjects({
+  account_id,
+  id,
+  state_filter,
+  project_state,
+  risk_only,
+  parallel,
+}: {
+  account_id?: string;
+  id: string;
+  state_filter?: HostProjectStateFilter;
+  project_state?: string;
+  risk_only?: boolean;
+  parallel?: number;
+}): Promise<HostLroResponse> {
+  return await queueHostProjectsAction({
+    kind: "host-stop-projects",
+    account_id,
+    id,
+    state_filter,
+    project_state,
+    risk_only,
+    parallel,
+  });
+}
+
+export async function restartHostProjects({
+  account_id,
+  id,
+  state_filter,
+  project_state,
+  risk_only,
+  parallel,
+}: {
+  account_id?: string;
+  id: string;
+  state_filter?: HostProjectStateFilter;
+  project_state?: string;
+  risk_only?: boolean;
+  parallel?: number;
+}): Promise<HostLroResponse> {
+  return await queueHostProjectsAction({
+    kind: "host-restart-projects",
+    account_id,
+    id,
+    state_filter,
+    project_state,
+    risk_only,
+    parallel,
+  });
 }
 
 export async function updateCloudCatalog({

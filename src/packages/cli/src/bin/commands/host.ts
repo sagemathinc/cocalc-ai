@@ -787,6 +787,155 @@ export function registerHostCommand(
       },
     );
 
+  async function runHostProjectsActionCommand(
+    action: "stop" | "restart",
+    hostIdentifier: string,
+    opts: {
+      all?: boolean;
+      state?: string;
+      status?: string;
+      riskOnly?: boolean;
+      parallel?: string;
+      wait?: boolean;
+    },
+    command: Command,
+  ) {
+    await withContext(command, `host projects-${action}`, async (ctx) => {
+      const h = await resolveHost(ctx, hostIdentifier);
+      const state_filter = parseHostProjectsStateFilter(opts);
+      const project_state = `${opts.status ?? ""}`.trim() || undefined;
+      const parallel =
+        parseOptionalPositiveInteger(opts.parallel, "--parallel") ?? undefined;
+      const op =
+        action === "stop"
+          ? await ctx.hub.hosts.stopHostProjects({
+              id: h.id,
+              state_filter,
+              project_state,
+              risk_only: !!opts.riskOnly,
+              parallel,
+            })
+          : await ctx.hub.hosts.restartHostProjects({
+              id: h.id,
+              state_filter,
+              project_state,
+              risk_only: !!opts.riskOnly,
+              parallel,
+            });
+
+      if (!opts.wait) {
+        return {
+          host_id: h.id,
+          op_id: op.op_id,
+          action,
+          status: "queued",
+          state_filter,
+          project_state,
+        };
+      }
+
+      const summary = await waitForLro(ctx, op.op_id, {
+        timeoutMs: ctx.timeoutMs,
+        pollMs: ctx.pollMs,
+      });
+      if (summary.timedOut) {
+        throw new Error(
+          `timeout waiting for ${action} op ${op.op_id}; last status=${summary.status}`,
+        );
+      }
+      if (summary.status !== "succeeded") {
+        throw new Error(
+          `${action} failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+        );
+      }
+      return {
+        host_id: h.id,
+        op_id: op.op_id,
+        action,
+        status: summary.status,
+        ...(summary.result ?? {}),
+      };
+    });
+  }
+
+  host
+    .command("projects-stop <host>")
+    .description("stop matching projects on one host")
+    .option("--all", "show all assigned projects")
+    .option(
+      "--state <state>",
+      "project state bucket: all, running, stopped, unprovisioned",
+    )
+    .option(
+      "--status <status>",
+      "exact raw project state filter, e.g. opened, running, off",
+    )
+    .option(
+      "--risk-only",
+      "limit the target set to projects that are running or need backup attention",
+    )
+    .option("--parallel <n>", "maximum projects to act on in parallel")
+    .option("--wait", "wait for completion")
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: {
+          all?: boolean;
+          state?: string;
+          status?: string;
+          riskOnly?: boolean;
+          parallel?: string;
+          wait?: boolean;
+        },
+        command: Command,
+      ) =>
+        await runHostProjectsActionCommand(
+          "stop",
+          hostIdentifier,
+          opts,
+          command,
+        ),
+    );
+
+  host
+    .command("projects-restart <host>")
+    .description("restart matching projects on one host")
+    .option("--all", "show all assigned projects")
+    .option(
+      "--state <state>",
+      "project state bucket: all, running, stopped, unprovisioned",
+    )
+    .option(
+      "--status <status>",
+      "exact raw project state filter, e.g. opened, running, off",
+    )
+    .option(
+      "--risk-only",
+      "limit the target set to projects that are running or need backup attention",
+    )
+    .option("--parallel <n>", "maximum projects to act on in parallel")
+    .option("--wait", "wait for completion")
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: {
+          all?: boolean;
+          state?: string;
+          status?: string;
+          riskOnly?: boolean;
+          parallel?: string;
+          wait?: boolean;
+        },
+        command: Command,
+      ) =>
+        await runHostProjectsActionCommand(
+          "restart",
+          hostIdentifier,
+          opts,
+          command,
+        ),
+    );
+
   host
     .command("metrics <host>")
     .description("show current and recent host metrics")
