@@ -2256,7 +2256,7 @@ describe("recoverOrphanedAcpTurns", () => {
     expect(final.acp_interrupted).toBe(true);
     expect(final.acp_interrupted_reason).toBe("server_restart");
     expect(final.history?.[0]?.content).toContain(
-      "Conversation interrupted because the backend server restarted.",
+      "Conversation interrupted because CoCalc had to recover the live Codex turn.",
     );
     expect(threadState).toBeTruthy();
     expect((queue.clearAcpPayloads as any).mock.calls.length).toBe(1);
