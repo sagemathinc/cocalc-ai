@@ -3,21 +3,29 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { Suspense, lazy } from "react";
 import type { JSX } from "react";
-import PublicViewerSlidesRenderer from "./renderers/slides";
 import { buildViewerFileContext } from "./viewer-file-context";
 import { mountPublicViewer } from "./shared";
+
+const PublicViewerSlidesRenderer = lazy(() => import("./renderers/slides"));
 
 export function init(): void {
   mountPublicViewer(
     ({ config, content }): JSX.Element => (
-      <PublicViewerSlidesRenderer
-        content={content}
-        fileContext={buildViewerFileContext({
-          path: config.path,
-          rawUrl: config.rawUrl,
-        })}
-      />
+      <Suspense fallback={<LoadingRenderer />}>
+        <PublicViewerSlidesRenderer
+          content={content}
+          fileContext={buildViewerFileContext({
+            path: config.path,
+            rawUrl: config.rawUrl,
+          })}
+        />
+      </Suspense>
     ),
   );
+}
+
+function LoadingRenderer(): JSX.Element {
+  return <div style={{ color: "#666" }}>Loading slides viewer...</div>;
 }
