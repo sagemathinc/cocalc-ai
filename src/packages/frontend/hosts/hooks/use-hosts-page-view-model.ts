@@ -636,19 +636,11 @@ export const useHostsPageViewModel = () => {
           ],
           replace: false,
         });
-        if (
-          artifact === "project-host" &&
-          host.status === "running" &&
-          hub.hosts.rolloutHostManagedComponents
-        ) {
-          const op = await hub.hosts.rolloutHostManagedComponents({
-            id: host.id,
-            components: ["project-host"],
-            reason: `frontend ${source} project-host deploy`,
-          });
-          trackHostOp(host.id, op);
-        }
-        await Promise.all([refresh(), runtimeDeployments.refresh()]);
+        await Promise.all([
+          refresh(),
+          runtimeDeployments.refresh(),
+          refreshHostOps(),
+        ]);
       } catch (err) {
         alert_message({
           type: "error",
@@ -660,7 +652,7 @@ export const useHostsPageViewModel = () => {
         console.error(err);
       }
     },
-    [hub, refresh, runtimeDeployments],
+    [hub, refresh, refreshHostOps, runtimeDeployments],
   );
   const rollbackRuntimeArtifact = React.useCallback(
     async ({

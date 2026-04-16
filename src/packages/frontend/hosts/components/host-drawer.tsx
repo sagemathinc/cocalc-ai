@@ -270,7 +270,7 @@ function observedVersionStateTag(
   if (state === "aligned") return <Tag color="green">aligned</Tag>;
   if (state === "drifted") return <Tag color="orange">drifted</Tag>;
   if (state === "mixed") return <Tag color="orange">mixed</Tag>;
-  if (state === "missing") return <Tag color="red">missing</Tag>;
+  if (state === "missing") return <Tag color="red">not installed</Tag>;
   if (state === "unsupported") return <Tag>unsupported</Tag>;
   if (state === "unobserved") return <Tag>unobserved</Tag>;
   return <Tag>unknown</Tag>;
@@ -319,7 +319,7 @@ function cliCommandsForArtifact({
   artifact: HostRuntimeArtifact;
 }): string[] {
   return [
-    `cocalc host deploy status ${host.id} --artifact ${artifact}`,
+    `cocalc host deploy status ${host.id}`,
     `cocalc host deploy set --host ${host.id} --artifact ${artifact} --desired-version <version>`,
     `cocalc host deploy rollback ${host.id} --artifact ${artifact} --last-known-good`,
     `cocalc host deploy rollback ${host.id} --artifact ${artifact} --to-version <version>`,
@@ -1117,6 +1117,15 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                     .join(", ")}
                                 </code>
                               </Typography.Text>
+                            )}
+                            {observedTarget?.observed_version_state ===
+                              "missing" && (
+                              <Alert
+                                type="warning"
+                                showIcon
+                                message="Desired version is not installed on this host yet"
+                                description="Setting a desired version queues the corresponding host artifact operation automatically. Use Refresh to watch that operation appear in the host activity panel."
+                              />
                             )}
                             {rollbackTarget && (
                               <Typography.Text>
