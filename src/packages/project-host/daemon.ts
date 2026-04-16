@@ -400,7 +400,10 @@ function matchesProjectHostCmdline(cmdline: string[]): boolean {
 }
 
 function matchesHostAgentCmdline(cmdline: string[]): boolean {
-  return cmdline.some((arg) => arg.endsWith("/dist/host-agent.js"));
+  return (
+    matchesProjectHostCmdline(cmdline) ||
+    cmdline.some((arg) => arg.endsWith("/dist/host-agent.js"))
+  );
 }
 
 function isRouterDaemonEnv(env: Record<string, string>): boolean {
@@ -832,23 +835,16 @@ function cleanupStrayProcesses(
   );
 }
 
-function resolveExec(
-  root: string,
-  entry: "main" | "host-agent" = "main",
-): { command: string; args: string[] } {
+function resolveExec(root: string): { command: string; args: string[] } {
   const command =
     process.env.COCALC_PROJECT_HOST_DAEMON_EXEC ?? process.execPath;
   const args: string[] = [];
   if (path.basename(command) === "node") {
-    if (entry === "main") {
-      const bundledMain = path.join(root, "main", "index.js");
-      if (fs.existsSync(bundledMain)) {
-        args.push(bundledMain);
-      } else {
-        args.push(path.join(root, "dist/main.js"));
-      }
+    const bundledMain = path.join(root, "main", "index.js");
+    if (fs.existsSync(bundledMain)) {
+      args.push(bundledMain);
     } else {
-      args.push(path.join(root, "dist/host-agent.js"));
+      args.push(path.join(root, "dist/main.js"));
     }
   }
   return { command, args };
@@ -1648,7 +1644,7 @@ export function startHostAgent(index = 0): void {
     // best effort
   }
   const root = packageRoot();
-  const { command, args } = resolveExec(root, "host-agent");
+  const { command, args } = resolveExec(root);
   const child = processRuntime.spawn(
     command,
     [...args, "--index", String(index)],

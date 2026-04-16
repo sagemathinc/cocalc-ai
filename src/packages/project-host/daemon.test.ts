@@ -252,7 +252,7 @@ describe("project-host daemon stop", () => {
 
     expect(spawnSpy).toHaveBeenCalledWith(
       process.execPath,
-      [path.join(__dirname, "dist/host-agent.js"), "--index", "0"],
+      [path.join(__dirname, "dist/main.js"), "--index", "0"],
       expect.objectContaining({
         env: expect.objectContaining({
           COCALC_PROJECT_HOST_AGENT: "1",
