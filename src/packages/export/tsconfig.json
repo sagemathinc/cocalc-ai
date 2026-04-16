@@ -1,7 +1,7 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "types": ["node", "jest"],
+    "types": ["node"],
     "rootDir": "./",
     "outDir": "dist",
     "module": "commonjs",
@@ -18,7 +18,22 @@
     }
   },
   "include": ["./**/*.ts"],
-  "exclude": ["dist", "node_modules"],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "**/test/**",
+    "**/__tests__/**",
+    "**/__test__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.test.js",
+    "**/*.test.jsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.spec.js",
+    "**/*.spec.jsx",
+    "jest.config.cjs"
+  ],
   "references": [
     { "path": "../ai" },
     { "path": "../backend" },

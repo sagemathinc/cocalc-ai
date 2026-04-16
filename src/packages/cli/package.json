@@ -22,7 +22,7 @@
     "publish:sea": "cd sea && ./publish-sea.sh",
     "publish:sea:signed": "pnpm sea:signed && pnpm publish:sea",
     "publish:site": "cd site && ./publish-site.sh",
-    "test": "pnpm build && node --test $(find dist -name '*.test.js' -print)"
+    "test": "pnpm build && rm -rf build/test && pnpm exec tsc -p tsconfig.test.json && node --test $(find build/test -name '*.test.js' -print)"
   },
   "files": [
     "dist/**",
