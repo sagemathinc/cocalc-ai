@@ -5,5 +5,21 @@
     "outDir": "dist"
   },
   "include": ["**/*.ts", "**/*.tsx", "**/*.js"],
-  "exclude": ["node_modules", "../node_modules", "dist", "test"]
+  "exclude": [
+    "node_modules",
+    "../node_modules",
+    "dist",
+    "test",
+    "**/__tests__/**",
+    "**/__test__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.test.js",
+    "**/*.test.jsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.spec.js",
+    "**/*.spec.jsx",
+    "jest.config.js"
+  ]
 }
