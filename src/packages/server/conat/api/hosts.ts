@@ -6211,6 +6211,24 @@ function installedProjectHostArtifactVersion(row: any): string | undefined {
   return version;
 }
 
+const PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE = "PROJECT_HOST_LOCAL_ROLLBACK";
+
+export function isProjectHostLocalRollbackError(err: any): err is Error & {
+  code: typeof PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE;
+  automaticRollback: {
+    host_id: string;
+    rollback_version: string;
+    source: "host-agent";
+  };
+} {
+  return (
+    err instanceof Error &&
+    `${(err as any)?.code ?? ""}` === PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE &&
+    `${(err as any)?.automaticRollback?.rollback_version ?? ""}`.trim().length >
+      0
+  );
+}
+
 async function setLastKnownGoodArtifactVersionInternal({
   host_id,
   row,
@@ -6239,6 +6257,96 @@ async function setLastKnownGoodArtifactVersionInternal({
   );
 }
 
+async function rewriteProjectHostDesiredVersionInternal({
+  account_id,
+  row,
+  version,
+  reason,
+}: {
+  account_id?: string;
+  row: any;
+  version: string;
+  reason?: string;
+}): Promise<void> {
+  const normalizedVersion = `${version ?? ""}`.trim();
+  if (!normalizedVersion) {
+    throw new Error("project-host version is required");
+  }
+  const metadata = { ...(row?.metadata ?? {}) };
+  const software = { ...(metadata.software ?? {}) } as Record<string, string>;
+  software.project_host = normalizedVersion;
+  delete software.project_host_build_id;
+  metadata.software = software;
+  await pool().query(
+    `UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+    [row.id, metadata, normalizedVersion],
+  );
+  await setLastKnownGoodArtifactVersionInternal({
+    host_id: row.id,
+    row: {
+      ...row,
+      metadata,
+      version: normalizedVersion,
+    },
+    artifact: "project-host",
+    version: normalizedVersion,
+  });
+  await setProjectHostRuntimeDeployments({
+    scope_type: "host",
+    host_id: row.id,
+    requested_by: requestedByForRuntimeDeployments({ account_id, row }),
+    replace: false,
+    deployments: [
+      {
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: normalizedVersion,
+        rollout_reason: reason,
+      },
+      {
+        target_type: "component",
+        target: "project-host",
+        desired_version: normalizedVersion,
+        rollout_policy: DEFAULT_RUNTIME_DEPLOYMENT_POLICY["project-host"],
+        rollout_reason: reason,
+      },
+    ],
+  });
+}
+
+async function recordProjectHostLocalRollbackInternal({
+  account_id,
+  id,
+  version,
+  reason,
+}: {
+  account_id?: string;
+  id: string;
+  version: string;
+  reason?: string;
+}): Promise<{
+  host_id: string;
+  rollback_version: string;
+  source: "host-agent";
+}> {
+  const row = await loadHostForStartStop(id, account_id);
+  const rollbackVersion = `${version ?? ""}`.trim();
+  if (!rollbackVersion) {
+    throw new Error("rollback version is required");
+  }
+  await rewriteProjectHostDesiredVersionInternal({
+    account_id,
+    row,
+    version: rollbackVersion,
+    reason: reason || "automatic_project_host_local_rollback",
+  });
+  return {
+    host_id: row.id,
+    rollback_version: rollbackVersion,
+    source: "host-agent",
+  };
+}
+
 export async function rollbackProjectHostOverSshInternal({
   account_id,
   id,
@@ -6258,46 +6366,20 @@ export async function rollbackProjectHostOverSshInternal({
   if (!rollbackVersion) {
     throw new Error("rollback version is required");
   }
-  const metadata = { ...(row?.metadata ?? {}) };
-  const software = { ...(metadata.software ?? {}) } as Record<string, string>;
-  software.project_host = rollbackVersion;
-  delete software.project_host_build_id;
-  metadata.software = software;
-  const requested_by = requestedByForRuntimeDeployments({ account_id, row });
-  await pool().query(
-    `UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-    [row.id, metadata, rollbackVersion],
-  );
-  await setLastKnownGoodArtifactVersionInternal({
-    host_id: row.id,
-    row: {
-      ...row,
-      metadata,
-    },
-    artifact: "project-host",
+  await rewriteProjectHostDesiredVersionInternal({
+    account_id,
+    row,
     version: rollbackVersion,
+    reason,
   });
-  await setProjectHostRuntimeDeployments({
-    scope_type: "host",
-    host_id: row.id,
-    requested_by,
-    replace: false,
-    deployments: [
-      {
-        target_type: "artifact",
-        target: "project-host",
-        desired_version: rollbackVersion,
-        rollout_reason: reason,
-      },
-      {
-        target_type: "component",
-        target: "project-host",
-        desired_version: rollbackVersion,
-        rollout_policy: DEFAULT_RUNTIME_DEPLOYMENT_POLICY["project-host"],
-        rollout_reason: reason,
-      },
-    ],
-  });
+  const metadata = {
+    ...(row?.metadata ?? {}),
+    software: {
+      ...((row?.metadata?.software ?? {}) as Record<string, string>),
+      project_host: rollbackVersion,
+    },
+  };
+  delete (metadata.software as Record<string, string>).project_host_build_id;
   await reconcileCloudHostBootstrapOverSsh({
     host_id: row.id,
     row: {
@@ -7324,28 +7406,54 @@ export async function rolloutHostManagedComponentsInternal({
 }): Promise<HostManagedComponentRolloutResponse> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
+  const requestedProjectHostRollout = components.includes("project-host");
   const client = await hostControlClient(id, 60_000);
   const rolloutStartedAt = Date.now();
   const response = await client.rolloutManagedComponents({
     components,
     reason,
   });
-  if (components.includes("project-host")) {
+  let refreshedRow = row;
+  if (requestedProjectHostRollout) {
     const baselineSeen = row?.last_seen
       ? new Date(row.last_seen as any).getTime()
       : 0;
     const since = Math.max(baselineSeen, rolloutStartedAt);
     await waitForHostHeartbeatAfter({ host_id: id, since });
+    refreshedRow = await loadHostForStartStop(id, account_id);
   }
   const desiredVersion =
     `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
     undefined;
-  if (components.includes("project-host") && desiredVersion) {
+  const observedProjectHostVersion =
+    installedProjectHostArtifactVersion(refreshedRow);
+  if (requestedProjectHostRollout && desiredVersion) {
+    if (
+      observedProjectHostVersion &&
+      observedProjectHostVersion !== desiredVersion
+    ) {
+      const automaticRollback = await recordProjectHostLocalRollbackInternal({
+        account_id,
+        id,
+        version: observedProjectHostVersion,
+        reason: "automatic_project_host_local_rollback",
+      });
+      const err = Object.assign(
+        new Error(
+          `project-host rollout converged to ${observedProjectHostVersion} instead of desired ${desiredVersion}`,
+        ),
+        {
+          code: PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE,
+          automaticRollback,
+        },
+      );
+      throw err;
+    }
     await setLastKnownGoodArtifactVersionInternal({
-      host_id: row.id,
-      row,
+      host_id: refreshedRow.id,
+      row: refreshedRow,
       artifact: "project-host",
-      version: desiredVersion,
+      version: observedProjectHostVersion ?? desiredVersion,
     });
   }
   const runtimeDeployments = runtimeDeploymentsForComponentRollout({

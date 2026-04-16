@@ -19,6 +19,14 @@ type StopOptions = {
   preserveManagedAuxiliaryDaemons?: boolean;
 };
 
+export type ProjectHostRuntimeInspection = {
+  dataDir: string;
+  currentVersion?: string;
+  runningPid?: number;
+  runningVersion?: string;
+  healthy: boolean;
+};
+
 const DEFAULT_ENV_FILE = "/etc/cocalc/project-host.env";
 const processRuntime = {
   spawn: childProcess.spawn,
@@ -617,6 +625,45 @@ function healthCheckUrl(
     host === "0.0.0.0" || host === "::" || host === "[::]" ? "127.0.0.1" : host;
   const port = httpPort ?? parsePort(env.PORT) ?? 9002;
   return `http://${localHost}:${port}/healthz`;
+}
+
+function projectHostCurrentLinkPath(env: Record<string, string>): string {
+  const explicit = `${env.COCALC_PROJECT_HOST_CURRENT ?? ""}`.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const bundleRoot = `${env.COCALC_PROJECT_HOST_BUNDLE_ROOT ?? ""}`.trim();
+  if (bundleRoot) {
+    return path.join(bundleRoot, "current");
+  }
+  return "/opt/cocalc/project-host/current";
+}
+
+function selectedVersionFromLink(linkPath: string): string | undefined {
+  try {
+    const resolved = fs.realpathSync(linkPath);
+    const base = path.basename(resolved);
+    if (base && base !== "current") {
+      return base;
+    }
+  } catch {
+    // ignore missing paths
+  }
+  return undefined;
+}
+
+function inferProjectHostBundleVersionFromCmdline(
+  cmdline: string[],
+): string | undefined {
+  for (const entry of cmdline) {
+    const match = entry.match(
+      /\/project-host\/(?:bundles|versions)\/([^/]+)\//,
+    );
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return;
 }
 
 function conatPersistHealthCheckUrl(
@@ -1387,6 +1434,36 @@ export function restartManagedLocalConatPersist(index = 0): void {
   });
 }
 
+export function inspectProjectHostRuntime(
+  index = 0,
+): ProjectHostRuntimeInspection {
+  const { env, dataDir, pidPath, httpPort } = resolveEnv(index);
+  const selectedVersion = selectedVersionFromLink(
+    projectHostCurrentLinkPath(env),
+  );
+  const runningPid = fs.existsSync(pidPath)
+    ? Number(fs.readFileSync(pidPath, "utf8"))
+    : undefined;
+  const alivePid =
+    runningPid && Number.isInteger(runningPid) && isRunning(runningPid)
+      ? runningPid
+      : undefined;
+  return {
+    dataDir,
+    currentVersion: selectedVersion,
+    runningPid: alivePid,
+    runningVersion: alivePid
+      ? inferProjectHostBundleVersionFromCmdline(readProcCmdline(alivePid))
+      : undefined,
+    healthy: alivePid ? checkHealthSync(env, httpPort) : false,
+  };
+}
+
+export function restartProjectHost(index = 0, options?: StopOptions): void {
+  stopDaemonWithOptions(index, options);
+  startDaemon(index);
+}
+
 export function startDaemon(index = 0): void {
   const {
     env,
@@ -1910,6 +1987,7 @@ export const __test__ = {
   cleanupStrayProcesses,
   ensurePodmanHealthy,
   healthCheckUrl,
+  inferProjectHostBundleVersionFromCmdline,
   isPodmanStalePauseState,
   isRunning,
   matchingHostAgentPids,
