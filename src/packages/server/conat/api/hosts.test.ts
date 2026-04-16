@@ -1593,7 +1593,7 @@ describe("hosts.rolloutHostManagedComponentsInternal local rollback", () => {
 
   it("records a host-agent project-host rollback instead of treating the candidate as successful", async () => {
     const baselineSeen = new Date(Date.now() - 1_000);
-    const refreshedSeen = new Date(Date.now() + 1_000);
+    const refreshedSeen = new Date(Date.now() + 60_000);
     const desiredRow = {
       id: HOST_ID,
       status: "running",
