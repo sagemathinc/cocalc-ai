@@ -1,7 +1,7 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "types": ["node", "jest"],
+    "types": ["node"],
     "rootDir": "./",
     "outDir": "dist",
     "paths": {
@@ -12,5 +12,21 @@
     }
   },
   "references": [{ "path": "../backend" }, { "path": "../util" }],
-  "exclude": ["node_modules", "dist", "build"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build",
+    "**/test/**",
+    "**/__tests__/**",
+    "**/__test__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.test.js",
+    "**/*.test.jsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.spec.js",
+    "**/*.spec.jsx",
+    "jest.config.cjs"
+  ]
 }
