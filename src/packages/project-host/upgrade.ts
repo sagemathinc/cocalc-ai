@@ -320,6 +320,18 @@ async function replaceSymlink(linkPath: string, target: string) {
   await fs.promises.rename(tmp, linkPath);
 }
 
+async function assertInstalledVersionDir(versionDir: string): Promise<void> {
+  let stat;
+  try {
+    stat = await fs.promises.stat(versionDir);
+  } catch {
+    throw new Error(`installed version not found at ${versionDir}`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`installed version is not a directory at ${versionDir}`);
+  }
+}
+
 async function pruneVersionDirs(opts: {
   root: string;
   currentLink: string;
@@ -589,6 +601,30 @@ export async function scheduleProjectHostRestart() {
   });
   child.unref();
   logger.info("upgrade: scheduled project-host restart");
+}
+
+export async function activateInstalledProjectHostVersion(
+  version: string,
+): Promise<void> {
+  const normalizedVersion = `${version ?? ""}`.trim();
+  if (!normalizedVersion) {
+    throw new Error("project-host version is required");
+  }
+  const resolved = await resolveArtifact(
+    {
+      artifact: "project-host",
+      version: normalizedVersion,
+    },
+    normalizeBaseUrl(),
+  );
+  await assertInstalledVersionDir(resolved.versionDir);
+  await ensureWritableDir(path.dirname(resolved.currentLink));
+  await replaceSymlink(resolved.currentLink, resolved.versionDir);
+  logger.info("upgrade: activated installed project-host version", {
+    version: normalizedVersion,
+    current: resolved.currentLink,
+    version_dir: resolved.versionDir,
+  });
 }
 
 function orderTargets(

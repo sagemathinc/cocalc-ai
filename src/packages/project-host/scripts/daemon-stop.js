@@ -1,10 +1,4 @@
 #!/usr/bin/env node
-// Stop the daemon started by daemon-start.js
-
-const fs = require("node:fs");
-const path = require("node:path");
-
-
 
 const indexArg = process.argv[2];
 const index = indexArg === undefined ? 0 : Number(indexArg);
@@ -14,33 +8,12 @@ if (!Number.isInteger(index) || index < 0) {
   );
   process.exit(1);
 }
-const root = path.join(__dirname, "..");
-const data = process.env.COCALC_DATA
-const pidPath = path.join(data, `daemon.pid`);
 
-function isRunning(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+const { stopHostAgent } = require("../dist/daemon.js");
+
+try {
+  stopHostAgent(index);
+} catch (err) {
+  console.error(`${err}`);
+  process.exit(1);
 }
-
-function stop() {
-  if (!fs.existsSync(pidPath)) {
-    console.warn(`No pid file found at ${pidPath}; nothing to stop.`);
-    process.exit(0);
-  }
-  const pid = Number(fs.readFileSync(pidPath, "utf8"));
-  if (!pid || !isRunning(pid)) {
-    console.error(`No running process for pid ${pid}; removing ${pidPath}`);
-    fs.rmSync(pidPath, { force: true });
-    process.exit(1);
-  }
-  process.kill(pid, "SIGTERM");
-  console.log(`Sent SIGTERM to project-host (pid ${pid}).`);
-  fs.rmSync(pidPath, { force: true });
-}
-
-stop();

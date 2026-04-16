@@ -91,6 +91,7 @@ import {
   ensureProjectHostAcpWorkerRunning,
   startProjectHostAcpWorkerSupervisor,
 } from "./hub/acp/worker-manager";
+import { main as runHostAgentMain } from "./host-agent";
 import { matchAppRequest } from "./app-public-access";
 import { maybeHandleStaticAppRequest } from "./static-apps";
 import { runPrivilegedRmHelper } from "./privileged-rm-helper";
@@ -672,6 +673,11 @@ if (require.main === module) {
   ) {
     runConatPersistDaemonMain().catch((err) => {
       console.error("project-host conat persist daemon failed:", err);
+      process.exit(1);
+    });
+  } else if (`${process.env.COCALC_PROJECT_HOST_AGENT ?? ""}`.trim() === "1") {
+    runHostAgentMain(process.argv.slice(2)).catch((err) => {
+      console.error("project-host host-agent failed:", err);
       process.exit(1);
     });
   } else {

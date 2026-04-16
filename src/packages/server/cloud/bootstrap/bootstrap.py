@@ -2897,6 +2897,7 @@ RUNTIME_ROOT="__RUNTIME_ROOT__"
 RUNTIME_USER="__RUNTIME_USER__"
 RUNTIME_BIN="$RUNTIME_ROOT/bin/project-host"
 PID_FILE="/mnt/cocalc/data/daemon.pid"
+HOST_AGENT_PID_FILE="/mnt/cocalc/data/host-agent.pid"
 OOM_ADJ="${COCALC_PROJECT_HOST_OOM_SCORE_ADJ:__OOM_ADJ_LITERAL__}"
 ENV_FILE="/etc/cocalc/project-host.env"
 PROJECT_POOL_CGROUP_DEFAULT="__PROJECT_POOL_CGROUP__"
@@ -2971,13 +2972,30 @@ attach_pid_to_project_pool() {
   printf '%s\n' "${pid}" > "${pool}/cgroup.procs"
 }
 
+read_pid_file() {
+  local file="$1"
+  if [ -r "${file}" ]; then
+    tr -d '[:space:]' < "${file}" 2>/dev/null || true
+  fi
+}
+
+first_running_pid() {
+  local pid=""
+  for file in "$@"; do
+    pid="$(read_pid_file "${file}")"
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+      printf '%s\n' "${pid}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 protect_pid() {
   local pid=""
-  if [ -r "${PID_FILE}" ]; then
-    pid="$(tr -d '[:space:]' < "${PID_FILE}" 2>/dev/null || true)"
-  fi
-  if [ -z "${pid}" ] || ! kill -0 "${pid}" 2>/dev/null; then
-    echo "project-host pid not found at ${PID_FILE}" >&2
+  pid="$(first_running_pid "${PID_FILE}" "${HOST_AGENT_PID_FILE}" || true)"
+  if [ -z "${pid}" ]; then
+    echo "project-host pid not found at ${PID_FILE} or ${HOST_AGENT_PID_FILE}" >&2
     exit 1
   fi
   if [ -x /usr/bin/choom ]; then
@@ -2990,10 +3008,8 @@ protect_pid() {
 attach_running_project_processes() {
   local runtime_dir cgroup_manager cid line project_pid conmon_pid pid
   configure_project_pool_cgroup
-  if [ -r "${PID_FILE}" ]; then
-    pid="$(tr -d '[:space:]' < "${PID_FILE}" 2>/dev/null || true)"
-    attach_pid_to_project_pool "${pid}" || true
-  fi
+  pid="$(first_running_pid "${PID_FILE}" "${HOST_AGENT_PID_FILE}" || true)"
+  attach_pid_to_project_pool "${pid}" || true
   runtime_dir="$(read_env_value COCALC_PODMAN_RUNTIME_DIR)"
   cgroup_manager="$(read_env_value CONTAINERS_CGROUP_MANAGER)"
   if [ -z "${cgroup_manager}" ]; then
@@ -3047,12 +3063,13 @@ case "${cmd}" in
     run_daemon stop "$@"
     ;;
   status)
-    pid=""
-    if [ -r "${PID_FILE}" ]; then
-      pid="$(tr -d '[:space:]' < "${PID_FILE}" 2>/dev/null || true)"
-    fi
-    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-      echo "project-host running (pid ${pid})"
+    pid="$(first_running_pid "${PID_FILE}" "${HOST_AGENT_PID_FILE}" || true)"
+    if [ -n "${pid}" ]; then
+      if [ -r "${PID_FILE}" ] && [ "$(read_pid_file "${PID_FILE}")" = "${pid}" ]; then
+        echo "project-host running (pid ${pid})"
+      else
+        echo "project-host host-agent running (pid ${pid})"
+      fi
     else
       echo "project-host not running"
       exit 1

@@ -9,7 +9,14 @@ process.env.DEBUG_FILE ??= path.join(
 );
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { __test__, ensureDaemon, startDaemon, stopDaemon } = require("./daemon");
+const {
+  __test__,
+  ensureDaemon,
+  ensureHostAgent,
+  startDaemon,
+  startHostAgent,
+  stopDaemon,
+} = require("./daemon");
 
 describe("project-host daemon stop", () => {
   const originalEnv = { ...process.env };
@@ -197,6 +204,34 @@ describe("project-host daemon stop", () => {
     expect(fs.existsSync(pidPath)).toBe(false);
   });
 
+  it("treats a stale daemon pid file with no live process as a successful stop", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const pidPath = path.join(dataDir, "daemon.pid");
+    fs.writeFileSync(pidPath, "9999");
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      expect(pid).toBe(9999);
+      expect(signal).toBe(0);
+      throw new Error("not running");
+    }) as typeof process.kill);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(() => stopDaemon(0)).not.toThrow();
+
+    expect(killSpy).toHaveBeenCalledWith(9999, 0);
+    expect(fs.existsSync(pidPath)).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      `No running process for pid 9999; removed stale ${pidPath} and treated stop as complete.`,
+    );
+  });
+
   it("does nothing when the daemon is healthy", () => {
     const dataDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
@@ -227,6 +262,263 @@ describe("project-host daemon stop", () => {
     expect(killSpy).toHaveBeenCalledWith(7373, 0);
     expect(killSpy).not.toHaveBeenCalledWith(7373, "SIGTERM");
     expect(logSpy).toHaveBeenCalledWith("project-host healthy (pid 7373)");
+  });
+
+  it("starts a separate host-agent process", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockReturnValue({ pid: 7878, unref: () => {} } as any);
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    startHostAgent(0);
+
+    expect(spawnSpy).toHaveBeenCalledWith(
+      process.execPath,
+      [path.join(__dirname, "dist/main.js"), "--index", "0"],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          COCALC_PROJECT_HOST_AGENT: "1",
+          COCALC_PROJECT_HOST_AGENT_INDEX: "0",
+        }),
+        detached: true,
+      }),
+    );
+    expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).not.toHaveProperty(
+      "COCALC_PROJECT_HOST_CONAT_ROUTER_URL",
+    );
+    expect(fs.readFileSync(path.join(dataDir, "host-agent.pid"), "utf8")).toBe(
+      "7878",
+    );
+    expect(logSpy).toHaveBeenCalledWith(
+      "project-host host-agent started (pid 7878); log=" +
+        path.join(dataDir, "host-agent.log"),
+    );
+  });
+
+  it("preserves an explicitly configured external router URL for host-agent", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = "https://router.example";
+
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockReturnValue({ pid: 7878, unref: () => {} } as any);
+
+    startHostAgent(0);
+
+    expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).toMatchObject({
+      COCALC_PROJECT_HOST_CONAT_ROUTER_URL: "https://router.example",
+      COCALC_PROJECT_HOST_AGENT: "1",
+    });
+  });
+
+  it("ensureHostAgent treats a running agent as healthy without a second reconcile", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const agentPidPath = path.join(dataDir, "host-agent.pid");
+    const pidPath = path.join(dataDir, "daemon.pid");
+    fs.writeFileSync(agentPidPath, "7374");
+    fs.writeFileSync(pidPath, "7373");
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      if (pid === 7374) {
+        if (signal === 0 || signal === undefined) {
+          return true;
+        }
+        throw new Error(`unexpected signal ${signal}`);
+      }
+      if (pid === 7373) {
+        if (signal === 0 || signal === undefined) {
+          return true;
+        }
+        throw new Error(`unexpected signal ${signal}`);
+      }
+      throw new Error(`unexpected pid ${pid}`);
+    }) as typeof process.kill);
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    ensureHostAgent(0);
+
+    expect(killSpy).toHaveBeenCalledWith(7374, 0);
+    expect(killSpy).not.toHaveBeenCalledWith(7373, 0);
+    expect(logSpy).toHaveBeenCalledWith(
+      "project-host host-agent healthy (pid 7374)",
+    );
+  });
+
+  it("does not treat a host-agent process as a stray project-host", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+
+    const realReaddirSync = fs.readdirSync;
+    const realReadFileSync = fs.readFileSync;
+    jest.spyOn(fs, "readdirSync").mockImplementation(((
+      file: any,
+      opts?: any,
+    ) => {
+      if (file === "/proc") {
+        return [{ name: "111", isDirectory: () => true }] as any;
+      }
+      return (realReaddirSync as any)(file, opts);
+    }) as typeof fs.readdirSync);
+    jest.spyOn(fs, "readFileSync").mockImplementation(((
+      file: any,
+      options?: any,
+    ) => {
+      if (file === "/proc/111/cmdline") {
+        return Buffer.from(
+          "node\u0000/opt/cocalc/project-host/bundles/cur/main/index.js\u0000--index\u00000\u0000",
+        ) as any;
+      }
+      if (file === "/proc/111/environ") {
+        return Buffer.from(
+          `COCALC_DATA=${dataDir}\u0000COCALC_PROJECT_HOST_AGENT=1\u0000COCALC_PROJECT_HOST_AGENT_INDEX=0\u0000`,
+        ) as any;
+      }
+      return (realReadFileSync as any)(file, options);
+    }) as typeof fs.readFileSync);
+
+    expect(__test__.matchingProjectHostPids(dataDir, 9002)).toEqual([]);
+  });
+
+  it("treats zombie processes as not running", () => {
+    const realReadFileSync = fs.readFileSync;
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      expect(pid).toBe(111);
+      expect(signal).toBe(0);
+      return true;
+    }) as typeof process.kill);
+    jest.spyOn(fs, "readFileSync").mockImplementation(((
+      file: any,
+      options?: any,
+    ) => {
+      if (file === "/proc/111/status") {
+        return Buffer.from("Name:\tnode\nState:\tZ (zombie)\n") as any;
+      }
+      return (realReadFileSync as any)(file, options);
+    }) as typeof fs.readFileSync);
+
+    expect(__test__.isRunning(111)).toBe(false);
+    expect(killSpy).toHaveBeenCalledWith(111, 0);
+  });
+
+  it("preserves managed router and persist while recovering project-host under host-agent supervision", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "1";
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST;
+
+    fs.writeFileSync(path.join(dataDir, "conat-router.pid"), "1111");
+    fs.writeFileSync(path.join(dataDir, "conat-persist.pid"), "2222");
+
+    const realReadFileSync = fs.readFileSync;
+    const realReaddirSync = fs.readdirSync;
+    jest.spyOn(fs, "readdirSync").mockImplementation(((
+      file: any,
+      opts?: any,
+    ) => {
+      if (file === "/proc") {
+        return [
+          { name: "1111", isDirectory: () => true },
+          { name: "2222", isDirectory: () => true },
+        ] as any;
+      }
+      return (realReaddirSync as any)(file, opts);
+    }) as typeof fs.readdirSync);
+    jest.spyOn(fs, "readFileSync").mockImplementation(((
+      file: any,
+      options?: any,
+    ) => {
+      if (file === "/proc/1111/cmdline") {
+        return Buffer.from(
+          "node\u0000/opt/cocalc/project-host/bundles/good/main/index.js\u0000",
+        ) as any;
+      }
+      if (file === "/proc/1111/environ") {
+        return Buffer.from(
+          `COCALC_DATA=${dataDir}\u0000COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON=1\u0000PORT=9102\u0000`,
+        ) as any;
+      }
+      if (file === "/proc/2222/cmdline") {
+        return Buffer.from(
+          "node\u0000/opt/cocalc/project-host/bundles/good/main/index.js\u0000",
+        ) as any;
+      }
+      if (file === "/proc/2222/environ") {
+        return Buffer.from(
+          `COCALC_DATA=${dataDir}\u0000COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON=1\u0000PORT=9202\u0000`,
+        ) as any;
+      }
+      return (realReadFileSync as any)(file, options);
+    }) as typeof fs.readFileSync);
+
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      if (pid === 1111 || pid === 2222) {
+        expect(signal).toBe(0);
+        return true;
+      }
+      throw new Error(`unexpected pid ${pid}`);
+    }) as typeof process.kill);
+    const healthSpy = jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 0 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockReturnValue({ pid: 3333, unref: () => {} } as any);
+
+    ensureDaemon(0, {
+      quietHealthy: true,
+      preserveManagedAuxiliaryDaemons: true,
+    });
+
+    expect(healthSpy).toHaveBeenCalled();
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).not.toHaveProperty(
+      "COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON",
+    );
+    expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).not.toHaveProperty(
+      "COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON",
+    );
+    expect(killSpy).toHaveBeenCalledWith(1111, 0);
+    expect(killSpy).toHaveBeenCalledWith(2222, 0);
+    expect(killSpy).not.toHaveBeenCalledWith(1111, "SIGTERM");
+    expect(killSpy).not.toHaveBeenCalledWith(2222, "SIGTERM");
+    expect(fs.readFileSync(path.join(dataDir, "daemon.pid"), "utf8")).toBe(
+      "3333",
+    );
   });
 
   it("treats start as idempotent when the daemon is already healthy", () => {
@@ -364,6 +656,98 @@ describe("project-host daemon stop", () => {
     expect(fs.readFileSync(path.join(dataDir, "daemon.pid"), "utf8")).toBe(
       "3333",
     );
+  });
+
+  it("does not propagate host-agent env markers to managed children", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "1";
+    process.env.COCALC_PROJECT_HOST_AGENT = "1";
+    process.env.COCALC_PROJECT_HOST_AGENT_INDEX = "0";
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST;
+
+    jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 0 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockImplementation(((_command: any, _args: any, opts?: any) => {
+        const env = opts?.env ?? {};
+        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+          return { pid: 1111, unref: () => {} } as any;
+        }
+        if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
+          return { pid: 2222, unref: () => {} } as any;
+        }
+        return { pid: 3333, unref: () => {} } as any;
+      }) as typeof __test__.processRuntime.spawn);
+
+    startDaemon(0);
+
+    for (const call of spawnSpy.mock.calls) {
+      expect((call[2] as any)?.env).not.toHaveProperty(
+        "COCALC_PROJECT_HOST_AGENT",
+      );
+      expect((call[2] as any)?.env).not.toHaveProperty(
+        "COCALC_PROJECT_HOST_AGENT_INDEX",
+      );
+    }
+  });
+
+  it("starts runtime daemons from the selected current bundle rather than the host-agent bundle", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const bundleRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-bundle-"),
+    );
+    const runtimeRoot = path.join(bundleRoot, "1776319000000");
+    fs.mkdirSync(path.join(runtimeRoot, "main"), { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, "main", "index.js"), "");
+    const currentLink = path.join(bundleRoot, "current");
+    fs.symlinkSync(runtimeRoot, currentLink);
+
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_CURRENT = currentLink;
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "1";
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST;
+
+    jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 0 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockImplementation(((_command: any, _args: any, opts?: any) => {
+        const env = opts?.env ?? {};
+        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+          return { pid: 4441, unref: () => {} } as any;
+        }
+        if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
+          return { pid: 4442, unref: () => {} } as any;
+        }
+        return { pid: 4443, unref: () => {} } as any;
+      }) as typeof __test__.processRuntime.spawn);
+
+    startDaemon(0);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(3);
+    for (const call of spawnSpy.mock.calls) {
+      expect(call[1]).toContain(path.join(runtimeRoot, "main", "index.js"));
+    }
   });
 
   it("defaults project-host bootstrap to managed external router and persist", () => {
