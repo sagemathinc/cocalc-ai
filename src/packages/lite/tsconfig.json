@@ -7,14 +7,27 @@
     "target": "ES2021",
     "baseUrl": ".",
     "isolatedModules": true,
-    "types": ["node", "jest"],
+    "types": ["node"],
     "paths": {
       "@langchain/core/*": ["../ai/node_modules/@langchain/core/dist/*"],
       "@cocalc/chat": ["../chat/dist/index"],
       "@cocalc/chat/*": ["../chat/dist/*"]
     }
   },
-  "exclude": ["dist", "node_modules", "build"],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "build",
+    "**/__tests__/**",
+    "**/__test__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "playwright/**",
+    "playwright.*.config.*",
+    "jest.config.js"
+  ],
   "references": [
     { "path": "../ai" },
     { "path": "../backend" },
