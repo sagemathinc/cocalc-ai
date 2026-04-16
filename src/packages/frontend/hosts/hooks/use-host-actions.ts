@@ -19,6 +19,20 @@ type HubClient = {
       allow_offline?: boolean;
       parallel?: number;
     }) => Promise<HostLroResponse>;
+    stopHostProjects?: (opts: {
+      id: string;
+      state_filter?: "all" | "running" | "stopped" | "unprovisioned";
+      project_state?: string;
+      risk_only?: boolean;
+      parallel?: number;
+    }) => Promise<HostLroResponse>;
+    restartHostProjects?: (opts: {
+      id: string;
+      state_filter?: "all" | "running" | "stopped" | "unprovisioned";
+      project_state?: string;
+      risk_only?: boolean;
+      parallel?: number;
+    }) => Promise<HostLroResponse>;
     deleteHost: (opts: {
       id: string;
       skip_backups?: boolean;
@@ -173,6 +187,54 @@ export const useHostActions = ({
     }
   };
 
+  const stopHostProjects = async (
+    id: string,
+    opts?: {
+      state_filter?: "all" | "running" | "stopped" | "unprovisioned";
+      project_state?: string;
+      risk_only?: boolean;
+      parallel?: number;
+    },
+  ) => {
+    if (!hub.hosts.stopHostProjects) {
+      return;
+    }
+    try {
+      const op = await hub.hosts.stopHostProjects({
+        id,
+        ...opts,
+      });
+      onHostOp?.(id, op);
+      await refresh();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const restartHostProjects = async (
+    id: string,
+    opts?: {
+      state_filter?: "all" | "running" | "stopped" | "unprovisioned";
+      project_state?: string;
+      risk_only?: boolean;
+      parallel?: number;
+    },
+  ) => {
+    if (!hub.hosts.restartHostProjects) {
+      return;
+    }
+    try {
+      const op = await hub.hosts.restartHostProjects({
+        id,
+        ...opts,
+      });
+      onHostOp?.(id, op);
+      await refresh();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const updateHostMachine = async (
     id: string,
     opts: {
@@ -242,5 +304,7 @@ export const useHostActions = ({
     updateHostMachine,
     forceDeprovision,
     removeSelfHostConnector,
+    stopHostProjects,
+    restartHostProjects,
   };
 };

@@ -2,12 +2,15 @@ import { React } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   HostBackupStatus,
+  HostProjectStateFilter,
   HostProjectRow,
 } from "@cocalc/conat/hub/api/hosts";
 
 type Options = {
   hostId?: string;
   riskOnly?: boolean;
+  stateFilter?: HostProjectStateFilter;
+  projectState?: string;
   limit?: number;
   enabled?: boolean;
 };
@@ -22,6 +25,8 @@ type HostProjectsState = {
 export function useHostProjects({
   hostId,
   riskOnly = false,
+  stateFilter = "running",
+  projectState,
   limit = 200,
   enabled = true,
 }: Options) {
@@ -43,6 +48,8 @@ export function useHostProjects({
           limit,
           cursor,
           risk_only: riskOnly,
+          state_filter: stateFilter,
+          ...(projectState ? { project_state: projectState } : {}),
         });
         setState((prev) => ({
           rows: append
@@ -58,7 +65,7 @@ export function useHostProjects({
         setError(err instanceof Error ? err.message : String(err));
       }
     },
-    [enabled, hostId, limit, riskOnly],
+    [enabled, hostId, limit, projectState, riskOnly, stateFilter],
   );
 
   const refresh = React.useCallback(async () => {
@@ -81,8 +88,7 @@ export function useHostProjects({
     refresh().catch((err) => {
       console.error("failed to refresh host projects", err);
     });
-  }, [enabled, hostId, refresh, riskOnly, limit]);
-
+  }, [enabled, hostId, limit, projectState, refresh, riskOnly, stateFilter]);
   return {
     ...state,
     loading,

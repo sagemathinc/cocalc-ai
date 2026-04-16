@@ -1,7 +1,11 @@
 import { Button, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { React } from "@cocalc/frontend/app-framework";
-import type { Host, HostProjectRow } from "@cocalc/conat/hub/api/hosts";
+import type {
+  Host,
+  HostProjectRow,
+  HostProjectStateFilter,
+} from "@cocalc/conat/hub/api/hosts";
 import { useHostProjects } from "../hooks/use-host-projects";
 
 function formatDate(value?: string | null): string {
@@ -20,6 +24,8 @@ function needsBackupLabel(row: HostProjectRow) {
 type Props = {
   host: Host;
   riskOnly?: boolean;
+  stateFilter?: HostProjectStateFilter;
+  projectState?: string;
   pageSize?: number;
   compact?: boolean;
   showSummary?: boolean;
@@ -29,6 +35,8 @@ type Props = {
 export function HostProjectsTable({
   host,
   riskOnly = false,
+  stateFilter = "running",
+  projectState,
   pageSize = 200,
   compact = false,
   showSummary = true,
@@ -47,6 +55,8 @@ export function HostProjectsTable({
   } = useHostProjects({
     hostId: host.id,
     riskOnly,
+    stateFilter,
+    projectState,
     limit: pageSize,
     enabled: !!host?.id,
   });

@@ -1,5 +1,7 @@
 import type {
   Host,
+  HostRuntimeArtifact,
+  HostRuntimeDeploymentStatus,
   HostRootfsGcResult,
   HostRootfsImage,
   HostSoftwareArtifact,
@@ -40,6 +42,25 @@ type UseHostDrawerViewModelArgs = {
     refresh: () => Promise<void>;
     hubSourceBaseUrl?: string;
   };
+  runtimeDeployments?: {
+    status?: HostRuntimeDeploymentStatus;
+    loading: boolean;
+    refreshing: boolean;
+    error?: string;
+    refresh: () => Promise<void>;
+  };
+  onSetRuntimeArtifactDeployment?: (opts: {
+    host: Host;
+    artifact: HostRuntimeArtifact;
+    desired_version: string;
+    source: "configured" | "hub";
+  }) => void | Promise<void>;
+  onRollbackRuntimeArtifact?: (opts: {
+    host: Host;
+    artifact: HostRuntimeArtifact;
+    version?: string;
+    last_known_good?: boolean;
+  }) => void | Promise<void>;
   rootfsInventory?: {
     entries: HostRootfsImage[];
     loading: boolean;
@@ -52,6 +73,8 @@ type UseHostDrawerViewModelArgs = {
     gcDeleted: () => Promise<HostRootfsGcResult | undefined>;
   };
   canManageRootfs?: boolean;
+  onStopRunningProjects?: (host: Host) => void | Promise<void>;
+  onRestartRunningProjects?: (host: Host) => void | Promise<void>;
   selfHost?: {
     connectorMap: Map<
       string,
@@ -95,8 +118,13 @@ export const useHostDrawerViewModel = ({
   hostLog,
   loadingLog,
   softwareVersions,
+  runtimeDeployments,
+  onSetRuntimeArtifactDeployment,
+  onRollbackRuntimeArtifact,
   rootfsInventory,
   canManageRootfs,
+  onStopRunningProjects,
+  onRestartRunningProjects,
   selfHost,
   parallelOps,
 }: UseHostDrawerViewModelArgs) => {
@@ -115,8 +143,13 @@ export const useHostDrawerViewModel = ({
     hostLog,
     loadingLog,
     softwareVersions,
+    runtimeDeployments,
+    onSetRuntimeArtifactDeployment,
+    onRollbackRuntimeArtifact,
     rootfsInventory,
     canManageRootfs,
+    onStopRunningProjects,
+    onRestartRunningProjects,
     selfHost,
     parallelOps,
   };

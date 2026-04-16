@@ -20,6 +20,7 @@ import { useHostProviders } from "./use-host-providers";
 import { useHostSelection } from "./use-host-selection";
 import { useHostRootfsImages } from "./use-host-rootfs-images";
 import { useHostSoftwareVersions } from "./use-host-software-versions";
+import { useHostRuntimeDeploymentStatus } from "./use-host-runtime-deployment-status";
 import { useParallelOps } from "./use-parallel-ops";
 import { formatHostUpgradeFailureMessage } from "./host-upgrade-errors";
 import { buildRegionGroupOptions } from "../utils/normalize-catalog";
@@ -39,6 +40,7 @@ import type {
   Host,
   HostInterruptionRestorePolicy,
   HostPricingModel,
+  HostRuntimeArtifact,
   HostSoftwareArtifact,
 } from "@cocalc/conat/hub/api/hosts";
 
@@ -280,6 +282,8 @@ export const useHostsPageViewModel = () => {
     updateHostMachine,
     forceDeprovision,
     removeSelfHostConnector,
+    stopHostProjects,
+    restartHostProjects,
   } = useHostActions({
     hub,
     setHosts,
@@ -564,6 +568,10 @@ export const useHostsPageViewModel = () => {
     enabled: drawerOpen && !!selected,
     hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
   });
+  const runtimeDeployments = useHostRuntimeDeploymentStatus(hub, {
+    hostId: drawerOpen ? selected?.id : undefined,
+    enabled: drawerOpen && !!selected,
+  });
   const canManageRootfs =
     !!selected && (selected.scope === "owned" || (isAdmin && showAdmin));
   const rootfsInventory = useHostRootfsImages(hub, {
@@ -598,6 +606,112 @@ export const useHostsPageViewModel = () => {
       });
     },
     [baseUrl, runUpgrade],
+  );
+  const setRuntimeArtifactDeployment = React.useCallback(
+    async ({
+      host,
+      artifact,
+      desired_version,
+      source,
+    }: {
+      host: Host;
+      artifact: HostRuntimeArtifact;
+      desired_version: string;
+      source: "configured" | "hub";
+    }) => {
+      if (!hub.hosts.setHostRuntimeDeployments) {
+        return;
+      }
+      try {
+        await hub.hosts.setHostRuntimeDeployments({
+          scope_type: "host",
+          id: host.id,
+          deployments: [
+            {
+              target_type: "artifact",
+              target: artifact,
+              desired_version,
+              rollout_reason: `frontend ${source} deploy`,
+            },
+          ],
+          replace: false,
+        });
+        if (
+          artifact === "project-host" &&
+          host.status === "running" &&
+          hub.hosts.rolloutHostManagedComponents
+        ) {
+          const op = await hub.hosts.rolloutHostManagedComponents({
+            id: host.id,
+            components: ["project-host"],
+            reason: `frontend ${source} project-host deploy`,
+          });
+          trackHostOp(host.id, op);
+        }
+        await Promise.all([refresh(), runtimeDeployments.refresh()]);
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `Failed to set ${artifact} on ${host.name}: ${
+            err instanceof Error ? err.message : `${err}`
+          }`,
+          timeout: 20,
+        });
+        console.error(err);
+      }
+    },
+    [hub, refresh, runtimeDeployments],
+  );
+  const rollbackRuntimeArtifact = React.useCallback(
+    async ({
+      host,
+      artifact,
+      version,
+      last_known_good,
+    }: {
+      host: Host;
+      artifact: HostRuntimeArtifact;
+      version?: string;
+      last_known_good?: boolean;
+    }) => {
+      if (!hub.hosts.rollbackHostRuntimeDeployments) {
+        return;
+      }
+      try {
+        const op = await hub.hosts.rollbackHostRuntimeDeployments({
+          id: host.id,
+          target_type: "artifact",
+          target: artifact,
+          ...(version ? { version } : {}),
+          ...(last_known_good ? { last_known_good: true } : {}),
+          reason: "frontend rollback",
+        });
+        trackHostOp(host.id, op);
+        await Promise.all([refresh(), runtimeDeployments.refresh()]);
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `Failed to roll back ${artifact} on ${host.name}: ${
+            err instanceof Error ? err.message : `${err}`
+          }`,
+          timeout: 20,
+        });
+        console.error(err);
+      }
+    },
+    [hub, refresh, runtimeDeployments, trackHostOp],
+  );
+  const stopRunningProjectsOnHost = React.useCallback(
+    async (host: Host) => {
+      await stopHostProjects(host.id, { state_filter: "running" });
+    },
+    [stopHostProjects],
+  );
+  const restartRunningProjectsOnHost = React.useCallback(
+    async (host: Host) => {
+      await restartHostProjects(host.id, { state_filter: "running" });
+    },
+    [restartHostProjects],
   );
   const [setupHost, setSetupHost] = React.useState<Host | undefined>();
   const [setupToken, setSetupToken] = React.useState<string | undefined>();
@@ -994,8 +1108,17 @@ export const useHostsPageViewModel = () => {
       ...softwareVersions,
       hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
     },
+    runtimeDeployments,
+    onSetRuntimeArtifactDeployment: isAdmin
+      ? setRuntimeArtifactDeployment
+      : undefined,
+    onRollbackRuntimeArtifact: isAdmin ? rollbackRuntimeArtifact : undefined,
     rootfsInventory,
     canManageRootfs,
+    onStopRunningProjects: isAdmin ? stopRunningProjectsOnHost : undefined,
+    onRestartRunningProjects: isAdmin
+      ? restartRunningProjectsOnHost
+      : undefined,
     selfHost: {
       connectorMap: selfHostConnectorMap,
       isConnectorOnline: isSelfHostConnectorOnline,
