@@ -366,6 +366,7 @@ type HostDeployStatusData = {
   effective?: Array<Record<string, unknown>>;
   observed_artifacts?: Array<Record<string, unknown>>;
   observed_components?: Array<Record<string, unknown>>;
+  observed_host_agent?: Record<string, unknown>;
   observed_targets?: Array<Record<string, unknown>>;
   rollback_targets?: Array<Record<string, unknown>>;
   observation_error?: unknown;
@@ -453,6 +454,9 @@ function filterHostDeployStatusData(
     observed_components: (data.observed_components ?? []).filter((component) =>
       selected.has(`${component.component ?? ""}`.trim() as any),
     ),
+    observed_host_agent: selected.has("project-host")
+      ? data.observed_host_agent
+      : undefined,
     observed_targets: (data.observed_targets ?? []).filter(keepTarget),
     rollback_targets: (data.rollback_targets ?? []).filter(keepTarget),
   };
@@ -503,6 +507,12 @@ function emitHostDeployStatusHuman(
     const observed = (data.observed_components ?? []).find(
       (row) => row.component === component,
     );
+    const hostAgentProjectHost =
+      component === "project-host"
+        ? (data.observed_host_agent?.project_host as
+            | Record<string, unknown>
+            | undefined)
+        : undefined;
     const artifact = componentArtifact(component, data);
     const observedArtifact = (data.observed_artifacts ?? []).find(
       (row) => `${row.artifact ?? ""}`.trim() === artifact,
@@ -521,6 +531,31 @@ function emitHostDeployStatusHuman(
         desired_version: observed?.desired_version ?? "",
         running_versions: observed?.running_versions ?? [],
         running_pids: observed?.running_pids ?? [],
+        host_agent_last_known_good_version:
+          hostAgentProjectHost?.last_known_good_version ?? "",
+        host_agent_pending_target_version:
+          (hostAgentProjectHost?.pending_rollout as any)?.target_version ?? "",
+        host_agent_pending_previous_version:
+          (hostAgentProjectHost?.pending_rollout as any)?.previous_version ??
+          "",
+        host_agent_pending_started_at:
+          (hostAgentProjectHost?.pending_rollout as any)?.started_at ?? "",
+        host_agent_pending_deadline_at:
+          (hostAgentProjectHost?.pending_rollout as any)?.deadline_at ?? "",
+        host_agent_last_automatic_rollback_target_version:
+          (hostAgentProjectHost?.last_automatic_rollback as any)
+            ?.target_version ?? "",
+        host_agent_last_automatic_rollback_version:
+          (hostAgentProjectHost?.last_automatic_rollback as any)
+            ?.rollback_version ?? "",
+        host_agent_last_automatic_rollback_started_at:
+          (hostAgentProjectHost?.last_automatic_rollback as any)?.started_at ??
+          "",
+        host_agent_last_automatic_rollback_finished_at:
+          (hostAgentProjectHost?.last_automatic_rollback as any)?.finished_at ??
+          "",
+        host_agent_last_automatic_rollback_reason:
+          (hostAgentProjectHost?.last_automatic_rollback as any)?.reason ?? "",
       }),
     );
     console.log("");
@@ -1467,6 +1502,7 @@ Status shows two views:
 - \`effective\`: the merged desired state after applying global defaults and host overrides
 - \`observed_artifacts\`: host-local artifact inventory, current selections, and any bundle/tools versions still referenced by running projects
 - \`observed_components\`: live component status reported by the host when it is online
+- \`observed_host_agent\`: local rollback / last-known-good state reported by host-agent
 - \`observed_targets\`: desired-vs-observed comparison for each effective runtime target
 `,
     )
@@ -1492,6 +1528,7 @@ Status shows two views:
               effective: status.effective,
               observed_artifacts: status.observed_artifacts,
               observed_components: status.observed_components,
+              observed_host_agent: status.observed_host_agent,
               observed_targets: status.observed_targets,
               rollback_targets: status.rollback_targets,
               observation_error: status.observation_error,
@@ -1708,6 +1745,14 @@ version when available, or \`--to-version\` to force a specific published versio
 This command records desired state. It does not itself publish software or
 restart anything. Existing \`host upgrade\` and \`host rollout\` remain the
 low-level imperative path while the desired-state flow is being built out.
+
+Global artifact targets also define the promoted defaults for newly provisioned
+hosts. A host created after:
+
+  cocalc host deploy set --global --artifact project-host --desired-version X
+
+will bootstrap with project-host artifact version \`X\`, even if a newer build
+has already been published to the software bucket.
 
 Use \`--desired-version\`, not \`--version\`. The CLI reserves \`--version\`
 globally for printing the CLI version.

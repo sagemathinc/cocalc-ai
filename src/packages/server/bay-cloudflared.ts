@@ -42,6 +42,9 @@ type CloudflaredState = {
 let cloudflaredState: CloudflaredState | null = null;
 let started = false;
 let lastError: string | null = null;
+let registryClient:
+  | ReturnType<typeof createInterBayBayRegistryClient>
+  | undefined;
 
 function trim(value: unknown): string {
   return `${value ?? ""}`.trim();
@@ -207,9 +210,12 @@ async function fetchManagedTunnel(): Promise<BayRegistryManagedTunnel | null> {
   if (getCurrentBayPublicTarget()) {
     return null;
   }
-  const client = createInterBayBayRegistryClient({
-    client: getInterBayFabricClient({ noCache: true }),
+  registryClient ??= createInterBayBayRegistryClient({
+    // This reconcile loop runs every minute on attached bays. Reusing the
+    // shared fabric client avoids leaking one inter-bay socket per tick.
+    client: getInterBayFabricClient(),
   });
+  const client = registryClient;
   const result = await client.register(await buildLocalBayRegistration());
   return result.managed_tunnel ?? null;
 }

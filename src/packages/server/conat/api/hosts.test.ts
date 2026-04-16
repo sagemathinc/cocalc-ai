@@ -29,6 +29,7 @@ let createLroMock: jest.Mock;
 let createProjectHostBootstrapTokenMock: jest.Mock;
 let buildCloudInitStartupScriptMock: jest.Mock;
 let siteUrlMock: jest.Mock;
+let getServerSettingsMock: jest.Mock;
 
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
@@ -144,6 +145,11 @@ jest.mock("@cocalc/database/settings/site-url", () => ({
   default: (...args: any[]) => siteUrlMock(...args),
 }));
 
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  __esModule: true,
+  getServerSettings: (...args: any[]) => getServerSettingsMock(...args),
+}));
+
 jest.mock("@cocalc/server/project-host/client", () => ({
   __esModule: true,
   getRoutedHostControlClient: (...args: any[]) =>
@@ -225,6 +231,7 @@ beforeEach(() => {
     async () => "#!/usr/bin/env bash\necho bootstrap\n",
   );
   siteUrlMock = jest.fn(async () => "https://hub.example.test");
+  getServerSettingsMock = jest.fn(async () => ({}));
 });
 
 const SUMMARY_ROW = {
@@ -472,6 +479,146 @@ describe("hosts.listHostProjects", () => {
   });
 });
 
+describe("hosts.createHost", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.LOGS = os.tmpdir();
+    isAdminMock = jest.fn(async () => true);
+    isBannedMock = jest.fn(async () => false);
+    moveProjectToHostMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: { features: { create_hosts: true } },
+    }));
+    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    syncProjectUsersOnHostMock = jest.fn(async () => undefined);
+    issueProjectHostAuthTokenJwtMock = jest.fn(() => ({
+      token: "test-token",
+      expires_at: 1234567890,
+    }));
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(
+      async () => undefined,
+    );
+    assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
+    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    hostConnectionGetMock = jest.fn();
+    projectHostAuthTokenIssueMock = jest.fn();
+    projectReferenceGetMock = jest.fn(async () => null);
+    listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    setProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    updateProjectUsersMock = jest.fn(async () => undefined);
+    routedHostControlClientMock = jest.fn(async () => ({
+      updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
+    }));
+  });
+
+  afterEach(() => {
+    delete process.env.LOGS;
+  });
+
+  it("does not snapshot site bootstrap defaults into new host metadata", async () => {
+    let insertedMetadata: any;
+    getServerSettingsMock = jest.fn(async () => ({
+      project_hosts_bootstrap_channel: "latest",
+      project_hosts_bootstrap_version: "bootstrap-v1",
+    }));
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("INSERT INTO project_hosts")) {
+        insertedMetadata = params[4];
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO cloud_vm_work")) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              name: "host-name",
+              region: "us-central1",
+              status: "starting",
+              metadata: insertedMetadata,
+              bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { createHost } = await import("./hosts");
+    await createHost({
+      account_id: ACCOUNT_ID,
+      name: "host-name",
+      region: "us-central1",
+      size: "small",
+      machine: { cloud: "gcp", metadata: {} },
+    });
+
+    expect(insertedMetadata.bootstrap_channel).toBeUndefined();
+    expect(insertedMetadata.bootstrap_version).toBeUndefined();
+  });
+
+  it("preserves explicit per-host bootstrap overrides", async () => {
+    let insertedMetadata: any;
+    getServerSettingsMock = jest.fn(async () => ({
+      project_hosts_bootstrap_channel: "latest",
+      project_hosts_bootstrap_version: "bootstrap-v1",
+    }));
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("INSERT INTO project_hosts")) {
+        insertedMetadata = params[4];
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO cloud_vm_work")) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              name: "host-name",
+              region: "us-central1",
+              status: "starting",
+              metadata: insertedMetadata,
+              bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { createHost } = await import("./hosts");
+    await createHost({
+      account_id: ACCOUNT_ID,
+      name: "host-name",
+      region: "us-central1",
+      size: "small",
+      machine: {
+        cloud: "gcp",
+        metadata: {
+          bootstrap_channel: "staging",
+          bootstrap_version: "bootstrap-v2",
+        },
+      },
+    });
+
+    expect(insertedMetadata.bootstrap_channel).toBe("staging");
+    expect(insertedMetadata.bootstrap_version).toBe("bootstrap-v2");
+  });
+});
+
 describe("hosts.getHostRuntimeDeploymentStatus", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -590,6 +737,24 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
           ],
         },
       ],
+      getHostAgentStatus: async () => ({
+        project_host: {
+          last_known_good_version: "ph-v1",
+          pending_rollout: {
+            target_version: "ph-v3",
+            previous_version: "ph-v1",
+            started_at: "2026-04-16T06:14:11.396Z",
+            deadline_at: "2026-04-16T06:14:31.396Z",
+          },
+          last_automatic_rollback: {
+            target_version: "ph-v2",
+            rollback_version: "ph-v1",
+            started_at: "2026-04-16T06:14:11.396Z",
+            finished_at: "2026-04-16T06:14:33.539Z",
+            reason: "health_deadline_exceeded",
+          },
+        },
+      }),
     }));
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("FROM project_hosts")) {
@@ -667,6 +832,24 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         observed_version_state: "aligned",
       }),
     ]);
+    expect(status.observed_host_agent).toEqual({
+      project_host: {
+        last_known_good_version: "ph-v1",
+        pending_rollout: {
+          target_version: "ph-v3",
+          previous_version: "ph-v1",
+          started_at: "2026-04-16T06:14:11.396Z",
+          deadline_at: "2026-04-16T06:14:31.396Z",
+        },
+        last_automatic_rollback: {
+          target_version: "ph-v2",
+          rollback_version: "ph-v1",
+          started_at: "2026-04-16T06:14:11.396Z",
+          finished_at: "2026-04-16T06:14:33.539Z",
+          reason: "health_deadline_exceeded",
+        },
+      },
+    });
     expect(status.rollback_targets).toEqual([
       {
         target_type: "artifact",
@@ -689,6 +872,59 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         retained_versions: ["ph-v2", "ph-v1"],
       },
     ]);
+    expect(status.observation_error).toBeUndefined();
+  });
+
+  it("ignores missing host-agent status support on older hosts", async () => {
+    routedHostControlClientMock.mockImplementationOnce(async () => ({
+      upgradeSoftware: async () => ({ results: [] }),
+      rolloutManagedComponents: async ({ components }: any) => ({
+        results: components.map((component: string) => ({
+          component,
+          action: "spawned",
+        })),
+      }),
+      getManagedComponentStatus: async () => [],
+      getInstalledRuntimeArtifacts: async () => [
+        {
+          artifact: "project-host",
+          current_version: "ph-v2",
+          current_build_id: "build-ph-v2",
+          installed_versions: ["ph-v2", "ph-v1"],
+        },
+      ],
+      getHostAgentStatus: async () => {
+        throw new Error(
+          "calling remote function 'getHostAgentStatus': TypeError: impl[mesg.name] is not a function",
+        );
+      },
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              metadata: {
+                owner: ACCOUNT_ID,
+                software: {
+                  project_host: "ph-v2",
+                  project_host_build_id: "build-ph-v2",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { getHostRuntimeDeploymentStatus } = await import("./hosts");
+    const status = await getHostRuntimeDeploymentStatus({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(status.observed_host_agent).toBeUndefined();
     expect(status.observation_error).toBeUndefined();
   });
 
@@ -817,6 +1053,11 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
           installed_versions: ["ph-v2", "ph-v1"],
         },
       ],
+      getHostAgentStatus: async () => ({
+        project_host: {
+          last_known_good_version: "ph-v1",
+        },
+      }),
       updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
     }));
     queryMock = jest.fn(async (sql: string, _params: any[]) => {
@@ -975,6 +1216,11 @@ describe("hosts.setHostRuntimeDeployments automatic artifact reconcile", () => {
           installed_versions: ["bundle-v4"],
         },
       ],
+      getHostAgentStatus: async () => ({
+        project_host: {
+          last_known_good_version: "ph-v0",
+        },
+      }),
       updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
     }));
     queryMock = jest.fn(async (sql: string, _params: any[]) => {
@@ -1494,7 +1740,7 @@ describe("hosts.rolloutHostManagedComponentsInternal local rollback", () => {
 
   it("records a host-agent project-host rollback instead of treating the candidate as successful", async () => {
     const baselineSeen = new Date(Date.now() - 1_000);
-    const refreshedSeen = new Date(Date.now() + 1_000);
+    const refreshedSeen = new Date(Date.now() + 60_000);
     const desiredRow = {
       id: HOST_ID,
       status: "running",

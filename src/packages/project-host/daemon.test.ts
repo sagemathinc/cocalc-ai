@@ -397,7 +397,7 @@ describe("project-host daemon stop", () => {
       return (realReadFileSync as any)(file, options);
     }) as typeof fs.readFileSync);
 
-    expect(__test__.matchingProjectHostPids(dataDir, 9002)).toEqual([]);
+    expect(__test__.matchingProjectHostPids(dataDir, 9003)).toEqual([]);
   });
 
   it("treats zombie processes as not running", () => {
@@ -589,8 +589,17 @@ describe("project-host daemon stop", () => {
     expect(spawnSpy).toHaveBeenCalledTimes(2);
     expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).toMatchObject({
       COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON: "1",
+      COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS: "1",
+      COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_HOST: "127.0.0.1",
+      COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_PORT: "9002",
+      COCALC_PROJECT_HOST_CONAT_ROUTER_UPSTREAM_URL: "http://127.0.0.1:9003",
       HOST: "127.0.0.1",
       PORT: "9102",
+    });
+    expect((spawnSpy.mock.calls[1]?.[2] as any)?.env).toMatchObject({
+      HOST: "127.0.0.1",
+      PORT: "9003",
+      COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT: "9002",
     });
     expect((spawnSpy.mock.calls[1]?.[2] as any)?.env).not.toHaveProperty(
       "COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON",
@@ -638,6 +647,8 @@ describe("project-host daemon stop", () => {
     expect(spawnSpy).toHaveBeenCalledTimes(3);
     expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).toMatchObject({
       COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON: "1",
+      COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_PORT: "9002",
+      COCALC_PROJECT_HOST_CONAT_ROUTER_UPSTREAM_URL: "http://127.0.0.1:9003",
       PORT: "9102",
     });
     expect((spawnSpy.mock.calls[1]?.[2] as any)?.env).toMatchObject({
@@ -647,6 +658,11 @@ describe("project-host daemon stop", () => {
     expect((spawnSpy.mock.calls[2]?.[2] as any)?.env).not.toHaveProperty(
       "COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON",
     );
+    expect((spawnSpy.mock.calls[2]?.[2] as any)?.env).toMatchObject({
+      HOST: "127.0.0.1",
+      PORT: "9003",
+      COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT: "9002",
+    });
     expect(
       fs.readFileSync(path.join(dataDir, "conat-router.pid"), "utf8"),
     ).toBe("1111");
@@ -787,6 +803,8 @@ describe("project-host daemon stop", () => {
       COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER: "1",
       COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST: "1",
       COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON: "1",
+      COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_PORT: "9002",
+      COCALC_PROJECT_HOST_CONAT_ROUTER_UPSTREAM_URL: "http://127.0.0.1:9003",
       HOST: "127.0.0.1",
       PORT: "9102",
     });
@@ -806,6 +824,11 @@ describe("project-host daemon stop", () => {
     expect(fs.readFileSync(path.join(dataDir, "daemon.pid"), "utf8")).toBe(
       "5555",
     );
+    expect((spawnSpy.mock.calls[2]?.[2] as any)?.env).toMatchObject({
+      HOST: "127.0.0.1",
+      PORT: "9003",
+      COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT: "9002",
+    });
   });
 
   it("stops the managed conat router when stopping project-host", () => {

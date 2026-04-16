@@ -47,6 +47,7 @@ const HEARTBEAT_INTERVAL_MS = 60_000;
 
 let ensureTablePromise: Promise<void> | undefined;
 let heartbeatStarted = false;
+let registryClient: InterBayBayRegistryApi | undefined;
 
 function trim(value: unknown): string {
   return `${value ?? ""}`.trim();
@@ -301,9 +302,12 @@ export async function listBayRegistryLocal(
 }
 
 function getRegistryClient(): InterBayBayRegistryApi {
-  return createInterBayBayRegistryClient({
-    client: getInterBayFabricClient({ noCache: true }),
+  registryClient ??= createInterBayBayRegistryClient({
+    // Heartbeat/list calls run for the life of the bay process. Reusing the
+    // shared fabric client avoids leaking one inter-bay socket per tick.
+    client: getInterBayFabricClient(),
   });
+  return registryClient;
 }
 
 export async function listClusterBayRegistry(): Promise<BayRegistryEntry[]> {

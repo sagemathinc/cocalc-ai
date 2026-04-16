@@ -32,6 +32,7 @@ import type {
   ProjectSnapshotSchedule,
 } from "@cocalc/conat/hub/api/projects";
 import type {
+  HostAgentStatus,
   HostControlApi,
   HostCreateProjectRequest,
   HostCreateProjectResponse,
@@ -319,6 +320,7 @@ export type HostControlMethod =
   | "get-backup-execution-status"
   | "get-managed-component-status"
   | "get-installed-runtime-artifacts"
+  | "get-host-agent-status"
   | "inspect-static-app-path"
   | "build-rootfs-image-manifest"
   | "build-project-rootfs-manifest";
@@ -465,6 +467,7 @@ export interface InterBayHostControlApi {
   getInstalledRuntimeArtifacts: (opts: {
     host_id: string;
   }) => Promise<HostInstalledRuntimeArtifactStatus[]>;
+  getHostAgentStatus: (opts: { host_id: string }) => Promise<HostAgentStatus>;
   inspectStaticAppPath: (opts: {
     host_id: string;
     inspect: HostControlArg<"inspectStaticAppPath">;
@@ -646,6 +649,10 @@ const HOST_CONTROL_METHOD_SPECS = [
   {
     name: "getInstalledRuntimeArtifacts",
     method: "get-installed-runtime-artifacts",
+  },
+  {
+    name: "getHostAgentStatus",
+    method: "get-host-agent-status",
   },
   { name: "inspectStaticAppPath", method: "inspect-static-app-path" },
   {

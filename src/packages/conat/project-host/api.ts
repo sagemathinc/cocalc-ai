@@ -111,6 +111,31 @@ export interface HostInstalledRuntimeArtifactStatus {
   }>;
 }
 
+export interface HostAgentProjectHostPendingRollout {
+  target_version: string;
+  previous_version: string;
+  started_at: string;
+  deadline_at: string;
+}
+
+export interface HostAgentProjectHostAutomaticRollback {
+  target_version: string;
+  rollback_version: string;
+  started_at: string;
+  finished_at: string;
+  reason: "health_deadline_exceeded";
+}
+
+export interface HostAgentProjectHostStatus {
+  last_known_good_version?: string;
+  pending_rollout?: HostAgentProjectHostPendingRollout;
+  last_automatic_rollback?: HostAgentProjectHostAutomaticRollback;
+}
+
+export interface HostAgentStatus {
+  project_host?: HostAgentProjectHostStatus;
+}
+
 export type ManagedComponentUpgradePolicy =
   | "restart_now"
   | "drain_then_replace";
@@ -239,6 +264,7 @@ export interface HostControlApi {
   getInstalledRuntimeArtifacts: () => Promise<
     HostInstalledRuntimeArtifactStatus[]
   >;
+  getHostAgentStatus: () => Promise<HostAgentStatus>;
   rolloutManagedComponents: (
     opts: HostManagedComponentRolloutRequest,
   ) => Promise<HostManagedComponentRolloutResponse>;

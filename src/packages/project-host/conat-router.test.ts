@@ -3,7 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
+import http from "node:http";
+import express from "express";
 import {
+  attachProjectHostHttpFallbackProxy,
   isProjectHostExternalConatRouterEnabled,
   resolveProjectHostConatRouterClusterName,
   resolveProjectHostConatRouterUrl,
@@ -85,5 +90,43 @@ describe("project-host conat router helpers", () => {
     expect(
       rewriteProjectHostConatProxyUrl("/host/base/conat/socket"),
     ).toBeUndefined();
+  });
+
+  it("proxies non-conat ingress traffic to the project-host app upstream", async () => {
+    const upstreamApp = express();
+    upstreamApp.get("/app", (_req, res) => {
+      res.json({ ok: true, source: "project-host-upstream" });
+    });
+    const upstreamServer = http.createServer(upstreamApp);
+    upstreamServer.listen(0, "127.0.0.1");
+    await once(upstreamServer, "listening");
+    const upstreamPort = (upstreamServer.address() as AddressInfo).port;
+
+    const ingressApp = express();
+    const ingressServer = http.createServer(ingressApp);
+    attachProjectHostHttpFallbackProxy({
+      app: ingressApp,
+      httpServer: ingressServer,
+      target: `http://127.0.0.1:${upstreamPort}`,
+    });
+    ingressServer.listen(0, "127.0.0.1");
+    await once(ingressServer, "listening");
+    const ingressPort = (ingressServer.address() as AddressInfo).port;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${ingressPort}/app`);
+      expect(res.ok).toBe(true);
+      expect(await res.json()).toEqual({
+        ok: true,
+        source: "project-host-upstream",
+      });
+    } finally {
+      await new Promise<void>((resolve) =>
+        ingressServer.close(() => resolve()),
+      );
+      await new Promise<void>((resolve) =>
+        upstreamServer.close(() => resolve()),
+      );
+    }
   });
 });

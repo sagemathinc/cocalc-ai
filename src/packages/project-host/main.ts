@@ -572,7 +572,11 @@ export async function main(
   let stopSnapshotBackupMaintenance: () => void = () => {};
   try {
     await initFileServer({ client: conatClient });
-    stopOnPremTunnel = await startOnPremTunnel({ localHttpPort: port });
+    const publicHttpPort =
+      Number(process.env.COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT) || port;
+    stopOnPremTunnel = await startOnPremTunnel({
+      localHttpPort: publicHttpPort,
+    });
     stopRuntimePostureMonitor = startRuntimePostureMonitor();
     stopSnapshotBackupMaintenance = startProjectSnapshotBackupMaintenance({
       hostId,
