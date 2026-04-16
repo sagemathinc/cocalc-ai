@@ -4,8 +4,7 @@
  */
 
 import LRU from "lru-cache";
-
-import CellOutput from "@cocalc/frontend/jupyter/nbviewer/cell-output";
+import PublicCellOutput from "@cocalc/frontend/jupyter/nbviewer/public-cell-output";
 import { Element } from "../../types";
 import Input from "./input-static";
 import getStyle from "./style";
@@ -17,9 +16,8 @@ export default function Code({ element }: { element: Element }) {
     <div style={getStyle(element)}>
       {!hideInput && <Input element={element} />}
       {!hideOutput && element.data?.output && (
-        <CellOutput
+        <PublicCellOutput
           cell={{ id: element.id, output: element.data?.output }}
-          more_output={moreOutput.get(element.id)}
         />
       )}
     </div>

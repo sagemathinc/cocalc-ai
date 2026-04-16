@@ -5,8 +5,8 @@ NOTE: This is probably also useful for printing.
 */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import { Button } from "antd";
 import { Element, ElementsMap, MainFrameType } from "../types";
 import { Map as iMap, fromJS } from "immutable";
