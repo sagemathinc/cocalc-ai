@@ -78,6 +78,8 @@ export async function getRoutedHostControlClient({
         await bridge.getManagedComponentStatus({ host_id }),
       getInstalledRuntimeArtifacts: async () =>
         await bridge.getInstalledRuntimeArtifacts({ host_id }),
+      getHostAgentStatus: async () =>
+        await bridge.getHostAgentStatus({ host_id }),
       inspectStaticAppPath: async (inspect) =>
         await bridge.inspectStaticAppPath({ host_id, inspect }),
       buildRootfsImageManifest: async (build) =>

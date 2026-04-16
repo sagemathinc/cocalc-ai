@@ -25,7 +25,7 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
   const hostId = resolveProjectHostId();
   const systemAccountPassword = getOrCreateProjectHostConatPassword();
   setConatPassword(systemAccountPassword);
-  const { host, port, httpServer, conatServer } =
+  const { host, port, httpServer, conatServer, ingressHttpServer } =
     await startStandaloneProjectHostConatRouter({
       hostId,
       systemAccountPassword,
@@ -45,6 +45,11 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
       await conatServer.close();
     } finally {
       stopEventLoopStallMonitor();
+      if (ingressHttpServer) {
+        await new Promise<void>((resolve) => {
+          ingressHttpServer.close(() => resolve());
+        });
+      }
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
       });

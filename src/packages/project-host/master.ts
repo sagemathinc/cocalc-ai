@@ -48,6 +48,7 @@ import { startHostMetricsCollector } from "./host-metrics";
 import { applyPendingCopies } from "./pending-copies";
 import { getManagedComponentStatus } from "./managed-components";
 import { rolloutManagedComponents } from "./managed-component-rollout";
+import { readHostAgentState } from "./host-agent";
 
 const logger = getLogger("project-host:master");
 
@@ -758,6 +759,9 @@ export async function startMasterRegistration({
       async getInstalledRuntimeArtifacts() {
         return getInstalledRuntimeArtifacts();
       },
+      async getHostAgentStatus() {
+        return readHostAgentState();
+      },
       async rolloutManagedComponents(opts) {
         return await rolloutManagedComponents(opts);
       },
@@ -814,6 +818,7 @@ export async function startMasterRegistration({
   const buildPayload = (): HostRegistration => {
     const versions = getSoftwareVersions();
     const softwareInventory = getInstalledRuntimeArtifacts();
+    const hostAgentState = readHostAgentState();
     const currentMetrics = hostMetrics.getCurrentSnapshot();
     const bootstrapLifecycle = getBootstrapLifecycle();
     return {
@@ -833,6 +838,7 @@ export async function startMasterRegistration({
               bootstrap_lifecycle: bootstrapLifecycle,
             }
           : {}),
+        host_agent: hostAgentState,
         software: versions,
         software_inventory: softwareInventory,
       },

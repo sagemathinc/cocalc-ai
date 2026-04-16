@@ -66,6 +66,12 @@ function parseProxyTarget(address: string): { host: string; port: number } {
   return { host: parsed.hostname, port };
 }
 
+function normalizeLoopbackHost(host: string): string {
+  return host === "0.0.0.0" || host === "::" || host === "[::]"
+    ? "127.0.0.1"
+    : host;
+}
+
 export function isProjectHostExternalConatRouterEnabled(): boolean {
   return envIsTrue("COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER");
 }
@@ -90,6 +96,32 @@ export function resolveProjectHostConatRouterUrl(): string {
   throw new Error(
     "external conat router mode requires COCALC_PROJECT_HOST_CONAT_ROUTER_URL or COCALC_PROJECT_HOST_CONAT_ROUTER_PORT",
   );
+}
+
+function resolveProjectHostConatRouterIngressHost(): string | undefined {
+  const raw =
+    `${process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_HOST ?? ""}`.trim();
+  return raw || undefined;
+}
+
+function resolveProjectHostConatRouterIngressPort(): number | undefined {
+  return parsePositiveInteger(
+    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_PORT,
+    "COCALC_PROJECT_HOST_CONAT_ROUTER_INGRESS_PORT",
+  );
+}
+
+function resolveProjectHostConatRouterUpstreamUrl(): string | undefined {
+  const explicit =
+    `${process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_UPSTREAM_URL ?? ""}`.trim();
+  if (!explicit) {
+    return;
+  }
+  assertSecureUrlOrLocal({
+    url: explicit,
+    urlName: "COCALC_PROJECT_HOST_CONAT_ROUTER_UPSTREAM_URL",
+  });
+  return explicit;
 }
 
 export function resolveProjectHostConatRouterLocalClusterSize(): number {
@@ -183,6 +215,9 @@ export async function startStandaloneProjectHostConatRouter({
   port: number;
   httpServer: HttpServer;
   conatServer: ConatServer;
+  ingressHttpServer?: HttpServer;
+  ingressHost?: string;
+  ingressPort?: number;
 }> {
   const bindHost =
     host ??
@@ -219,6 +254,39 @@ export async function startStandaloneProjectHostConatRouter({
     hostId,
     systemAccountPassword,
   });
+  const ingressHost = resolveProjectHostConatRouterIngressHost();
+  const ingressPort = resolveProjectHostConatRouterIngressPort();
+  const upstreamUrl = resolveProjectHostConatRouterUpstreamUrl();
+  let ingressHttpServer: HttpServer | undefined;
+  if (ingressHost && ingressPort != null && upstreamUrl) {
+    assertLocalBindOrInsecure({
+      bindHost: ingressHost,
+      serviceName: "project-host conat router ingress listener",
+    });
+    const ingressApp = express();
+    ingressApp.get("/healthz", (_req, res) => {
+      res.json({ ok: true, ready: true });
+    });
+    ingressHttpServer = createHttpServer(ingressApp);
+    attachProjectHostConatRouterProxy({
+      app: ingressApp,
+      httpServer: ingressHttpServer,
+      target: `http://${normalizeLoopbackHost(bindHost)}:${bindPort}`,
+    });
+    attachProjectHostHttpFallbackProxy({
+      app: ingressApp,
+      httpServer: ingressHttpServer,
+      target: upstreamUrl,
+    });
+    ingressHttpServer.listen(ingressPort, ingressHost);
+    await once(ingressHttpServer, "listening");
+    logger.info("project-host conat router ingress ready", {
+      ingressHost,
+      ingressPort,
+      upstreamUrl,
+      conatTarget: `http://${normalizeLoopbackHost(bindHost)}:${bindPort}`,
+    });
+  }
   conatReady = true;
   return {
     app,
@@ -226,6 +294,9 @@ export async function startStandaloneProjectHostConatRouter({
     port: bindPort,
     httpServer,
     conatServer,
+    ingressHttpServer,
+    ingressHost,
+    ingressPort,
   };
 }
 
@@ -275,6 +346,34 @@ export function attachProjectHostConatRouterProxy({
   });
   httpServer.prependListener("upgrade", (req, socket, head) => {
     if (!rewriteProjectHostConatProxyUrl(req.url)) {
+      return;
+    }
+    void handleUpgrade(req, socket as any, head);
+  });
+}
+
+export function attachProjectHostHttpFallbackProxy({
+  app,
+  httpServer,
+  target,
+}: {
+  app: Application;
+  httpServer: HttpServer;
+  target: string;
+}): void {
+  const proxyTarget = parseProxyTarget(target);
+  const { handleRequest, handleUpgrade } = createProxyHandlers({
+    resolveTarget: () => ({ handled: true, target: proxyTarget }),
+  });
+  logger.info("project-host ingress fallback proxy enabled", {
+    target,
+    proxyTarget,
+  });
+  app.use((req, res) => {
+    void handleRequest(req, res);
+  });
+  httpServer.on("upgrade", (req, socket, head) => {
+    if (rewriteProjectHostConatProxyUrl(req.url)) {
       return;
     }
     void handleUpgrade(req, socket as any, head);

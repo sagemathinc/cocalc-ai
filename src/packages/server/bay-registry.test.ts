@@ -3,6 +3,8 @@ let ensureHostnameCnameDnsMock: jest.Mock;
 let deleteAppSubdomainDnsMock: jest.Mock;
 let hasDnsMock: jest.Mock;
 let ensureCloudflareTunnelForBayMock: jest.Mock;
+let getInterBayFabricClientMock: jest.Mock;
+let createInterBayBayRegistryClientMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -21,6 +23,18 @@ jest.mock("@cocalc/server/cloud/cloudflare-tunnel", () => ({
   __esModule: true,
   ensureCloudflareTunnelForBay: (...args: any[]) =>
     ensureCloudflareTunnelForBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/fabric", () => ({
+  __esModule: true,
+  getInterBayFabricClient: (...args: any[]) =>
+    getInterBayFabricClientMock(...args),
+}));
+
+jest.mock("@cocalc/conat/inter-bay/api", () => ({
+  __esModule: true,
+  createInterBayBayRegistryClient: (...args: any[]) =>
+    createInterBayBayRegistryClientMock(...args),
 }));
 
 jest.mock("@cocalc/server/bay-public-origin", () => ({
@@ -59,6 +73,11 @@ describe("bay-registry", () => {
     deleteAppSubdomainDnsMock = jest.fn(async () => undefined);
     hasDnsMock = jest.fn(async () => true);
     ensureCloudflareTunnelForBayMock = jest.fn(async () => undefined);
+    getInterBayFabricClientMock = jest.fn(() => ({ id: "fabric-client" }));
+    createInterBayBayRegistryClientMock = jest.fn(() => ({
+      register: jest.fn(async () => ({})),
+      list: jest.fn(async () => []),
+    }));
 
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (
@@ -220,5 +239,23 @@ describe("bay-registry", () => {
       hostname: "bay-2-lite4b.cocalc.ai",
       token: "token-1",
     });
+  });
+
+  it("reuses one inter-bay registry client for repeated attached-bay reads", async () => {
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    const listMock = jest.fn(async () => []);
+    createInterBayBayRegistryClientMock = jest.fn(() => ({
+      register: jest.fn(async () => ({})),
+      list: listMock,
+    }));
+
+    const { listClusterBayRegistry } = await import("./bay-registry");
+
+    await listClusterBayRegistry();
+    await listClusterBayRegistry();
+
+    expect(getInterBayFabricClientMock).toHaveBeenCalledTimes(1);
+    expect(createInterBayBayRegistryClientMock).toHaveBeenCalledTimes(1);
+    expect(listMock).toHaveBeenCalledTimes(2);
   });
 });

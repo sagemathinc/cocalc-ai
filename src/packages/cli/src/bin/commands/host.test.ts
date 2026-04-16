@@ -290,6 +290,24 @@ function makeDeps(
                     ],
                   },
                 ],
+                observed_host_agent: {
+                  project_host: {
+                    last_known_good_version: "bundle-v1",
+                    pending_rollout: {
+                      target_version: "bundle-v2",
+                      previous_version: "bundle-v1",
+                      started_at: "2026-04-16T06:14:11.396Z",
+                      deadline_at: "2026-04-16T06:14:31.396Z",
+                    },
+                    last_automatic_rollback: {
+                      target_version: "bundle-v2",
+                      rollback_version: "bundle-v1",
+                      started_at: "2026-04-16T06:14:11.396Z",
+                      finished_at: "2026-04-16T06:14:33.539Z",
+                      reason: "health_deadline_exceeded",
+                    },
+                  },
+                },
                 observed_targets: [
                   {
                     target_type: "artifact",
@@ -1230,6 +1248,10 @@ test("host deploy status shows configured and effective desired state", async ()
   assert.equal(capture.data.effective[1].target, "acp-worker");
   assert.equal(capture.data.observed_artifacts.length, 1);
   assert.equal(capture.data.observed_components.length, 1);
+  assert.equal(
+    capture.data.observed_host_agent.project_host.last_known_good_version,
+    "bundle-v1",
+  );
   assert.equal(capture.data.observed_targets.length, 2);
   assert.equal(capture.data.rollback_targets.length, 2);
   assert.equal(
@@ -1278,6 +1300,8 @@ test("host deploy status renders flattened human-readable sections", async () =>
   assert.match(output, /Observed Targets/);
   assert.match(output, /Rollback Targets/);
   assert.match(output, /last_known_good_version/);
+  assert.match(output, /host_agent_last_known_good_version/);
+  assert.match(output, /host_agent_last_automatic_rollback_reason/);
   assert.match(output, /artifact_current_version/);
   assert.match(output, /acp-worker/);
   assert.doesNotMatch(output, /"scope_type":"host"/);
@@ -1316,6 +1340,7 @@ test("host deploy status filters by component", async () => {
   assert.equal(capture.data.observed_artifacts.length, 1);
   assert.equal(capture.data.observed_artifacts[0].artifact, "project-host");
   assert.equal(capture.data.observed_artifacts[0].current_version, "bundle-v1");
+  assert.equal(capture.data.observed_host_agent, undefined);
   assert.deepEqual(capture.data.observed_components, []);
   assert.equal(capture.data.observed_targets.length, 1);
   assert.equal(capture.data.rollback_targets.length, 1);

@@ -18,6 +18,7 @@ import {
   deleteHostInternal,
   drainHostInternal,
   forceDeprovisionHostInternal,
+  isProjectHostLocalRollbackError,
   rollbackHostRuntimeDeploymentsInternal,
   rollbackProjectHostOverSshInternal,
   reconcileHostRuntimeDeploymentsInternal,
@@ -1007,6 +1008,37 @@ async function handleOp(op: LroSummary): Promise<void> {
           });
         }
       } catch (err) {
+        if (isProjectHostLocalRollbackError(err)) {
+          const automaticRollback = err.automaticRollback;
+          const updated = await updateLro({
+            op_id,
+            status: "failed",
+            progress_summary: {
+              phase: "done",
+              host_id,
+              results: response?.results ?? [],
+              automatic_rollback: automaticRollback,
+            },
+            result: {
+              host_id,
+              ...(response ? response : {}),
+              automatic_rollback: automaticRollback,
+            },
+            error: `project-host upgrade failed and was automatically rolled back locally: ${err.message}`,
+          });
+          if (updated) {
+            await publishSummary(updated);
+          }
+          await progressStep(
+            "done",
+            "project-host upgrade failed; host-agent completed automatic rollback",
+            {
+              host_id,
+              automatic_rollback: automaticRollback,
+            },
+          );
+          return;
+        }
         if (requestedProjectHostUpgrade && knownGoodProjectHostVersion) {
           try {
             await progressStep(

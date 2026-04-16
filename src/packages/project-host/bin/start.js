@@ -19,6 +19,8 @@ Daemon:
   cocalc-project-host --daemon-stop [index]
 
 Notes:
+  Daemon commands manage the host-agent supervisor, which in turn supervises
+  project-host and the managed local daemon stack.
   Reads /etc/cocalc/project-host.env if present.
 `);
       return;
