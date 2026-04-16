@@ -31,14 +31,12 @@ type Capture = {
     id: string;
     state_filter?: string;
     project_state?: string;
-    risk_only?: boolean;
     parallel?: number;
   }>;
   hostProjectRestarts?: Array<{
     id: string;
     state_filter?: string;
     project_state?: string;
-    risk_only?: boolean;
     parallel?: number;
   }>;
   runtimeDeploymentRollbacks?: Array<{
@@ -171,14 +169,12 @@ function makeDeps(
               id,
               state_filter,
               project_state,
-              risk_only,
               parallel,
             }) => {
               capture.hostProjectStops!.push({
                 id,
                 state_filter,
                 project_state,
-                risk_only,
                 parallel,
               });
               return { op_id: `stop-projects-${id}` };
@@ -187,14 +183,12 @@ function makeDeps(
               id,
               state_filter,
               project_state,
-              risk_only,
               parallel,
             }) => {
               capture.hostProjectRestarts!.push({
                 id,
                 state_filter,
                 project_state,
-                risk_only,
                 parallel,
               });
               return { op_id: `restart-projects-${id}` };
@@ -980,7 +974,6 @@ test("host projects-stop queues a host-scoped stop action", async () => {
       id: "host-1",
       state_filter: "all",
       project_state: "opened",
-      risk_only: false,
       parallel: 2,
     },
   ]);
@@ -1017,13 +1010,38 @@ test("host projects-restart queues a host-scoped restart action", async () => {
       id: "host-1",
       state_filter: "running",
       project_state: undefined,
-      risk_only: false,
       parallel: undefined,
     },
   ]);
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.action, "restart");
   assert.equal(capture.data.status, "queued");
+});
+
+test("host projects-stop rejects non-actionable coarse state filters", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await assert.rejects(
+    program.parseAsync([
+      "node",
+      "test",
+      "host",
+      "projects-stop",
+      "host-1",
+      "--state",
+      "stopped",
+    ]),
+    /expected running or all/,
+  );
 });
 
 test("host reconcile queues and waits for completion", async () => {

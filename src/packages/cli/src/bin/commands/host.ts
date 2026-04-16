@@ -160,6 +160,41 @@ function parseHostProjectsStateFilter(opts: {
   );
 }
 
+function parseHostProjectsActionFilter(
+  opts: {
+    state?: string;
+    status?: string;
+  },
+  action: "stop" | "restart",
+): {
+  state_filter: "running" | "all";
+  project_state?: string;
+} {
+  const project_state = `${opts.status ?? ""}`.trim() || undefined;
+  const rawState = `${opts.state ?? ""}`.trim().toLowerCase();
+
+  if (project_state && rawState) {
+    throw new Error("use either --state or --status, not both");
+  }
+  if (project_state) {
+    return {
+      state_filter: "all",
+      project_state,
+    };
+  }
+  if (!rawState) {
+    return { state_filter: "running" };
+  }
+  if (rawState === "running" || rawState === "all") {
+    return {
+      state_filter: rawState,
+    };
+  }
+  throw new Error(
+    `invalid --state for host projects-${action}; expected running or all`,
+  );
+}
+
 function parseManagedComponentKindsOption(values?: string[]) {
   const allowed = new Set(MANAGED_COMPONENT_KINDS);
   const normalized = (values ?? [])
@@ -791,10 +826,8 @@ export function registerHostCommand(
     action: "stop" | "restart",
     hostIdentifier: string,
     opts: {
-      all?: boolean;
       state?: string;
       status?: string;
-      riskOnly?: boolean;
       parallel?: string;
       wait?: boolean;
     },
@@ -802,8 +835,10 @@ export function registerHostCommand(
   ) {
     await withContext(command, `host projects-${action}`, async (ctx) => {
       const h = await resolveHost(ctx, hostIdentifier);
-      const state_filter = parseHostProjectsStateFilter(opts);
-      const project_state = `${opts.status ?? ""}`.trim() || undefined;
+      const { state_filter, project_state } = parseHostProjectsActionFilter(
+        opts,
+        action,
+      );
       const parallel =
         parseOptionalPositiveInteger(opts.parallel, "--parallel") ?? undefined;
       const op =
@@ -812,14 +847,12 @@ export function registerHostCommand(
               id: h.id,
               state_filter,
               project_state,
-              risk_only: !!opts.riskOnly,
               parallel,
             })
           : await ctx.hub.hosts.restartHostProjects({
               id: h.id,
               state_filter,
               project_state,
-              risk_only: !!opts.riskOnly,
               parallel,
             });
 
@@ -860,19 +893,14 @@ export function registerHostCommand(
 
   host
     .command("projects-stop <host>")
-    .description("stop matching projects on one host")
-    .option("--all", "show all assigned projects")
+    .description("stop projects on one host (running and starting by default)")
     .option(
       "--state <state>",
-      "project state bucket: all, running, stopped, unprovisioned",
+      "target bucket: running or all (default: running)",
     )
     .option(
       "--status <status>",
-      "exact raw project state filter, e.g. opened, running, off",
-    )
-    .option(
-      "--risk-only",
-      "limit the target set to projects that are running or need backup attention",
+      "target one exact raw project status instead of the default running bucket",
     )
     .option("--parallel <n>", "maximum projects to act on in parallel")
     .option("--wait", "wait for completion")
@@ -880,10 +908,8 @@ export function registerHostCommand(
       async (
         hostIdentifier: string,
         opts: {
-          all?: boolean;
           state?: string;
           status?: string;
-          riskOnly?: boolean;
           parallel?: string;
           wait?: boolean;
         },
@@ -899,19 +925,16 @@ export function registerHostCommand(
 
   host
     .command("projects-restart <host>")
-    .description("restart matching projects on one host")
-    .option("--all", "show all assigned projects")
+    .description(
+      "restart projects on one host (running and starting by default)",
+    )
     .option(
       "--state <state>",
-      "project state bucket: all, running, stopped, unprovisioned",
+      "target bucket: running or all (default: running)",
     )
     .option(
       "--status <status>",
-      "exact raw project state filter, e.g. opened, running, off",
-    )
-    .option(
-      "--risk-only",
-      "limit the target set to projects that are running or need backup attention",
+      "target one exact raw project status instead of the default running bucket",
     )
     .option("--parallel <n>", "maximum projects to act on in parallel")
     .option("--wait", "wait for completion")
@@ -919,10 +942,8 @@ export function registerHostCommand(
       async (
         hostIdentifier: string,
         opts: {
-          all?: boolean;
           state?: string;
           status?: string;
-          riskOnly?: boolean;
           parallel?: string;
           wait?: boolean;
         },
