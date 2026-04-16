@@ -652,6 +652,14 @@ function selectedVersionFromLink(linkPath: string): string | undefined {
   return undefined;
 }
 
+function projectHostRuntimeRoot(env: Record<string, string>): string {
+  try {
+    return fs.realpathSync(projectHostCurrentLinkPath(env));
+  } catch {
+    return packageRoot();
+  }
+}
+
 function inferProjectHostBundleVersionFromCmdline(
   cmdline: string[],
 ): string | undefined {
@@ -967,7 +975,7 @@ function startManagedConatRouter(opts: {
   } catch {
     // best effort
   }
-  const root = packageRoot();
+  const root = projectHostRuntimeRoot(env);
   const { command, args } = resolveExec(root);
   const childEnv = withoutHostAgentEnv(env);
   const child = processRuntime.spawn(command, args, {
@@ -1191,7 +1199,7 @@ function startManagedConatPersist(opts: {
   } catch {
     // best effort
   }
-  const root = packageRoot();
+  const root = projectHostRuntimeRoot(env);
   const { command, args } = resolveExec(root);
   const childEnv = withoutHostAgentEnv(env);
   const child = processRuntime.spawn(command, args, {
@@ -1542,7 +1550,7 @@ export function startDaemon(index = 0): void {
     // best effort
   }
   ensurePodmanHealthy(env);
-  const root = packageRoot();
+  const root = projectHostRuntimeRoot(env);
   const { command, args } = resolveExec(root);
   const childEnv = withoutHostAgentEnv(env);
   const child = processRuntime.spawn(command, args, {

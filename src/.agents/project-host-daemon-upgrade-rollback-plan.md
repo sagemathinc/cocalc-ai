@@ -713,6 +713,14 @@ Additional retention rules:
 - do not prune any `project tools` version that any project still references
 - allow rollback to any published version even if it is not currently staged on
   the host by restaging it first
+- do not assume `/opt` is an acceptable long-term retention root:
+  - today both `project-host` bundles and `project bundle` versions are stored
+    extracted under `/opt`
+  - that uses root-disk space, not the larger deduped/compressed btrfs volume
+  - extracted trees are materially larger than the compressed bundle artifacts
+  - this is not the immediate optimization target, but later retention and GC
+    work must become storage-budget-aware and may need to move retained
+    versions onto btrfs-backed storage
 
 This is a prerequisite for trustworthy rollback.
 

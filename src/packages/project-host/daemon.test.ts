@@ -661,6 +661,54 @@ describe("project-host daemon stop", () => {
     }
   });
 
+  it("starts runtime daemons from the selected current bundle rather than the host-agent bundle", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const bundleRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-bundle-"),
+    );
+    const runtimeRoot = path.join(bundleRoot, "1776319000000");
+    fs.mkdirSync(path.join(runtimeRoot, "main"), { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, "main", "index.js"), "");
+    const currentLink = path.join(bundleRoot, "current");
+    fs.symlinkSync(runtimeRoot, currentLink);
+
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_CURRENT = currentLink;
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "1";
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST;
+
+    jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 0 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockImplementation(((_command: any, _args: any, opts?: any) => {
+        const env = opts?.env ?? {};
+        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+          return { pid: 4441, unref: () => {} } as any;
+        }
+        if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
+          return { pid: 4442, unref: () => {} } as any;
+        }
+        return { pid: 4443, unref: () => {} } as any;
+      }) as typeof __test__.processRuntime.spawn);
+
+    startDaemon(0);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(3);
+    for (const call of spawnSpy.mock.calls) {
+      expect(call[1]).toContain(path.join(runtimeRoot, "main", "index.js"));
+    }
+  });
+
   it("defaults project-host bootstrap to managed external router and persist", () => {
     const dataDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
