@@ -43,9 +43,13 @@ import https from "node:https";
 import { URL } from "node:url";
 import { buildHostSpec } from "./host-util";
 import { normalizeProviderId } from "@cocalc/cloud";
-import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostMachine,
+  HostRuntimeArtifact,
+} from "@cocalc/conat/hub/api/hosts";
 import type { HostRuntime } from "@cocalc/cloud/types";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { loadEffectiveProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import getPool from "@cocalc/database/pool";
 import siteURL from "@cocalc/database/settings/site-url";
@@ -88,6 +92,11 @@ type ProjectHostRow = {
 };
 
 const DEFAULT_SOFTWARE_BASE_URL = "https://software.cocalc.ai/software";
+type BootstrapManagedArtifact =
+  | "project-host"
+  | "project-bundle"
+  | "tools"
+  | "bootstrap-environment";
 
 function normalizeSoftwareBaseUrl(raw: string): string {
   const trimmed = (raw || "").trim();
@@ -224,12 +233,14 @@ async function resolveTargetPlatform({
 function resolveBootstrapSelector({
   metadata,
   settings,
+  promotedVersion,
 }: {
   metadata: HostMetadata;
   settings: {
     project_hosts_bootstrap_channel?: string;
     project_hosts_bootstrap_version?: string;
   };
+  promotedVersion?: string;
 }): { selector: string; source: string } {
   const metaChannel =
     typeof metadata.bootstrap_channel === "string"
@@ -243,13 +254,71 @@ function resolveBootstrapSelector({
     settings.project_hosts_bootstrap_channel?.trim() || "";
   const settingsVersion =
     settings.project_hosts_bootstrap_version?.trim() || "";
+  const deploymentVersion = `${promotedVersion ?? ""}`.trim();
   if (metaVersion) return { selector: metaVersion, source: "host-version" };
   if (metaChannel) return { selector: metaChannel, source: "host-channel" };
+  if (deploymentVersion) {
+    return { selector: deploymentVersion, source: "deployment-version" };
+  }
   if (settingsVersion)
     return { selector: settingsVersion, source: "site-version" };
   if (settingsChannel)
     return { selector: settingsChannel, source: "site-channel" };
   return { selector: "latest", source: "default" };
+}
+
+async function fetchText(url: string, redirects = 3): Promise<string> {
+  const target = new URL(url);
+  const client = target.protocol === "http:" ? http : https;
+  return await new Promise((resolve, reject) => {
+    const req = client.request(
+      {
+        method: "GET",
+        hostname: target.hostname,
+        port: target.port,
+        path: `${target.pathname}${target.search}`,
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", async () => {
+          const body = Buffer.concat(chunks).toString("utf8");
+          if (status >= 300 && status < 400 && res.headers.location) {
+            if (redirects <= 0) {
+              reject(new Error(`text fetch redirect limit exceeded: ${url}`));
+              return;
+            }
+            try {
+              resolve(await fetchText(res.headers.location, redirects - 1));
+            } catch (err) {
+              reject(err);
+            }
+            return;
+          }
+          if (status < 200 || status >= 300) {
+            reject(
+              new Error(`text fetch failed (${status}): ${body.slice(0, 200)}`),
+            );
+            return;
+          }
+          resolve(body);
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+async function fetchSha256(url: string): Promise<string | undefined> {
+  try {
+    const text = await fetchText(url);
+    const token = text.trim().split(/\s+/)[0];
+    return token || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function extractArtifactVersion(
@@ -329,6 +398,108 @@ export type BootstrapScripts = {
     credsJson?: string;
   };
 };
+
+async function loadBootstrapArtifactDesiredVersions(
+  host_id: string,
+): Promise<Partial<Record<BootstrapManagedArtifact, string>>> {
+  const deployments = await loadEffectiveProjectHostRuntimeDeployments({
+    host_id,
+  });
+  const versions: Partial<Record<BootstrapManagedArtifact, string>> = {};
+  for (const deployment of deployments ?? []) {
+    if (deployment.target_type !== "artifact") continue;
+    const target = deployment.target as HostRuntimeArtifact;
+    if (
+      target !== "project-host" &&
+      target !== "project-bundle" &&
+      target !== "tools" &&
+      target !== "bootstrap-environment"
+    ) {
+      continue;
+    }
+    const desired = `${deployment.desired_version ?? ""}`.trim();
+    if (!desired) continue;
+    versions[target] = desired;
+  }
+  return versions;
+}
+
+function versionedSoftwareArtifactUrl({
+  baseUrl,
+  artifact,
+  version,
+  os,
+  arch,
+}: {
+  baseUrl: string;
+  artifact: Exclude<BootstrapManagedArtifact, "bootstrap-environment">;
+  version: string;
+  os: SoftwareOs;
+  arch: SoftwareArch;
+}): string {
+  if (artifact === "project-host") {
+    return `${baseUrl}/project-host/${version}/bundle-${os}.tar.xz`;
+  }
+  if (artifact === "project-bundle") {
+    return `${baseUrl}/project/${version}/bundle-${os}.tar.xz`;
+  }
+  return `${baseUrl}/tools/${version}/tools-${os}-${arch}.tar.xz`;
+}
+
+async function resolveBootstrapArtifactBundle({
+  softwareBaseUrl,
+  artifact,
+  desiredVersion,
+  targetOs,
+  targetArch,
+}: {
+  softwareBaseUrl: string;
+  artifact: Exclude<BootstrapManagedArtifact, "bootstrap-environment">;
+  desiredVersion?: string;
+  targetOs: SoftwareOs;
+  targetArch: SoftwareArch;
+}): Promise<{
+  manifestUrl: string;
+  url: string;
+  sha256?: string;
+  version: string;
+}> {
+  const version = `${desiredVersion ?? ""}`.trim();
+  if (version) {
+    const url = versionedSoftwareArtifactUrl({
+      baseUrl: softwareBaseUrl,
+      artifact,
+      version,
+      os: targetOs,
+      arch: targetArch,
+    });
+    return {
+      manifestUrl: "",
+      url,
+      sha256: await fetchSha256(`${url}.sha256`),
+      version,
+    };
+  }
+  const manifestUrl =
+    artifact === "tools"
+      ? `${softwareBaseUrl}/tools/latest-${targetOs}-${targetArch}.json`
+      : `${softwareBaseUrl}/${artifact === "project-bundle" ? "project" : "project-host"}/latest-${targetOs}.json`;
+  const resolved = await resolveSoftwareArtifact(manifestUrl, {
+    os: targetOs,
+    ...(artifact === "tools" ? { arch: targetArch } : {}),
+  });
+  const resolvedVersion =
+    extractArtifactVersion(
+      resolved.url,
+      artifact === "project-bundle" ? "project" : artifact,
+    ) || "latest";
+  return {
+    manifestUrl,
+    url: resolved.url,
+    sha256: resolved.sha256,
+    version: resolvedVersion,
+  };
+}
 
 export function resolveBootstrapImageSizeGb({
   providerId,
@@ -416,31 +587,41 @@ export async function buildBootstrapScripts(
     runtime,
     machine,
   });
-  const projectHostManifestUrl = `${softwareBaseUrl}/project-host/latest-${targetPlatform.os}.json`;
-  const projectManifestUrl = `${softwareBaseUrl}/project/latest-${targetPlatform.os}.json`;
-  const toolsManifestUrl = `${softwareBaseUrl}/tools/latest-${targetPlatform.os}-${targetPlatform.arch}.json`;
-  const resolvedHostBundle = await resolveSoftwareArtifact(
-    projectHostManifestUrl,
-    { os: targetPlatform.os },
+  const desiredArtifactVersions = await loadBootstrapArtifactDesiredVersions(
+    row.id,
   );
+  const resolvedHostBundle = await resolveBootstrapArtifactBundle({
+    softwareBaseUrl,
+    artifact: "project-host",
+    desiredVersion: desiredArtifactVersions["project-host"],
+    targetOs: targetPlatform.os,
+    targetArch: targetPlatform.arch,
+  });
   const projectHostBundleUrl = resolvedHostBundle.url;
   const projectHostBundleSha256 = (resolvedHostBundle.sha256 ?? "").replace(
     /[^a-f0-9]/gi,
     "",
   );
-  const resolvedProjectBundle = await resolveSoftwareArtifact(
-    projectManifestUrl,
-    { os: targetPlatform.os },
-  );
+  const resolvedProjectBundle = await resolveBootstrapArtifactBundle({
+    softwareBaseUrl,
+    artifact: "project-bundle",
+    desiredVersion: desiredArtifactVersions["project-bundle"],
+    targetOs: targetPlatform.os,
+    targetArch: targetPlatform.arch,
+  });
   const projectBundleUrl = resolvedProjectBundle.url;
   const projectBundleSha256 = (resolvedProjectBundle.sha256 ?? "").replace(
     /[^a-f0-9]/gi,
     "",
   );
-  const resolvedTools = await resolveSoftwareArtifact(
-    toolsManifestUrl,
-    targetPlatform,
-  );
+  const resolvedTools = await resolveBootstrapArtifactBundle({
+    softwareBaseUrl,
+    artifact: "tools",
+    desiredVersion: desiredArtifactVersions.tools,
+    targetOs: targetPlatform.os,
+    targetArch: targetPlatform.arch,
+  });
+  const toolsManifestUrl = resolvedTools.manifestUrl;
   const toolsUrl = resolvedTools.url;
   const toolsSha256 = (resolvedTools.sha256 ?? "").replace(/[^a-f0-9]/gi, "");
   const { selector: bootstrapSelector } = resolveBootstrapSelector({
@@ -449,11 +630,11 @@ export async function buildBootstrapScripts(
       project_hosts_bootstrap_channel,
       project_hosts_bootstrap_version,
     },
+    promotedVersion: desiredArtifactVersions["bootstrap-environment"],
   });
   const bootstrapPyUrl = `${softwareBaseUrl}/bootstrap/${bootstrapSelector}/bootstrap.py`;
   const bootstrapPyShaUrl = `${bootstrapPyUrl}.sha256`;
-  const projectBundleVersion =
-    extractArtifactVersion(projectBundleUrl, "project") || "latest";
+  const projectBundleVersion = resolvedProjectBundle.version || "latest";
   const bootstrapHome = isSelfHostDirect
     ? "${BOOTSTRAP_HOME}"
     : bootstrapUser === "root"
@@ -463,10 +644,9 @@ export async function buildBootstrapScripts(
   const projectBundlesRoot = "/opt/cocalc/project-bundles";
   const projectBundleDir = `${projectBundlesRoot}/${projectBundleVersion}`;
   const projectBundleRemote = `${bootstrapRoot}/tmp/project-bundle.tar.xz`;
-  const projectHostVersion =
-    extractArtifactVersion(projectHostBundleUrl, "project-host") || "latest";
+  const projectHostVersion = resolvedHostBundle.version || "latest";
   const projectHostBundleRemote = `${bootstrapRoot}/tmp/project-host-bundle.tar.xz`;
-  const toolsVersion = extractArtifactVersion(toolsUrl, "tools") || "latest";
+  const toolsVersion = resolvedTools.version || "latest";
   const toolsRoot = "/opt/cocalc/tools";
   const toolsDir = `${toolsRoot}/${toolsVersion}`;
   const toolsRemote = `${bootstrapRoot}/tmp/tools.tar.xz`;

@@ -29,6 +29,7 @@ let createLroMock: jest.Mock;
 let createProjectHostBootstrapTokenMock: jest.Mock;
 let buildCloudInitStartupScriptMock: jest.Mock;
 let siteUrlMock: jest.Mock;
+let getServerSettingsMock: jest.Mock;
 
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
@@ -144,6 +145,11 @@ jest.mock("@cocalc/database/settings/site-url", () => ({
   default: (...args: any[]) => siteUrlMock(...args),
 }));
 
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  __esModule: true,
+  getServerSettings: (...args: any[]) => getServerSettingsMock(...args),
+}));
+
 jest.mock("@cocalc/server/project-host/client", () => ({
   __esModule: true,
   getRoutedHostControlClient: (...args: any[]) =>
@@ -225,6 +231,7 @@ beforeEach(() => {
     async () => "#!/usr/bin/env bash\necho bootstrap\n",
   );
   siteUrlMock = jest.fn(async () => "https://hub.example.test");
+  getServerSettingsMock = jest.fn(async () => ({}));
 });
 
 const SUMMARY_ROW = {
@@ -469,6 +476,146 @@ describe("hosts.listHostProjects", () => {
 
   afterEach(() => {
     delete process.env.LOGS;
+  });
+});
+
+describe("hosts.createHost", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.LOGS = os.tmpdir();
+    isAdminMock = jest.fn(async () => true);
+    isBannedMock = jest.fn(async () => false);
+    moveProjectToHostMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: { features: { create_hosts: true } },
+    }));
+    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    syncProjectUsersOnHostMock = jest.fn(async () => undefined);
+    issueProjectHostAuthTokenJwtMock = jest.fn(() => ({
+      token: "test-token",
+      expires_at: 1234567890,
+    }));
+    assertAccountProjectHostTokenProjectAccessMock = jest.fn(
+      async () => undefined,
+    );
+    assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
+    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    hostConnectionGetMock = jest.fn();
+    projectHostAuthTokenIssueMock = jest.fn();
+    projectReferenceGetMock = jest.fn(async () => null);
+    listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    setProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
+    updateProjectUsersMock = jest.fn(async () => undefined);
+    routedHostControlClientMock = jest.fn(async () => ({
+      updateProjectUsers: (...args: any[]) => updateProjectUsersMock(...args),
+    }));
+  });
+
+  afterEach(() => {
+    delete process.env.LOGS;
+  });
+
+  it("does not snapshot site bootstrap defaults into new host metadata", async () => {
+    let insertedMetadata: any;
+    getServerSettingsMock = jest.fn(async () => ({
+      project_hosts_bootstrap_channel: "latest",
+      project_hosts_bootstrap_version: "bootstrap-v1",
+    }));
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("INSERT INTO project_hosts")) {
+        insertedMetadata = params[4];
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO cloud_vm_work")) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              name: "host-name",
+              region: "us-central1",
+              status: "starting",
+              metadata: insertedMetadata,
+              bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { createHost } = await import("./hosts");
+    await createHost({
+      account_id: ACCOUNT_ID,
+      name: "host-name",
+      region: "us-central1",
+      size: "small",
+      machine: { cloud: "gcp", metadata: {} },
+    });
+
+    expect(insertedMetadata.bootstrap_channel).toBeUndefined();
+    expect(insertedMetadata.bootstrap_version).toBeUndefined();
+  });
+
+  it("preserves explicit per-host bootstrap overrides", async () => {
+    let insertedMetadata: any;
+    getServerSettingsMock = jest.fn(async () => ({
+      project_hosts_bootstrap_channel: "latest",
+      project_hosts_bootstrap_version: "bootstrap-v1",
+    }));
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("INSERT INTO project_hosts")) {
+        insertedMetadata = params[4];
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO cloud_vm_work")) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              name: "host-name",
+              region: "us-central1",
+              status: "starting",
+              metadata: insertedMetadata,
+              bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { createHost } = await import("./hosts");
+    await createHost({
+      account_id: ACCOUNT_ID,
+      name: "host-name",
+      region: "us-central1",
+      size: "small",
+      machine: {
+        cloud: "gcp",
+        metadata: {
+          bootstrap_channel: "staging",
+          bootstrap_version: "bootstrap-v2",
+        },
+      },
+    });
+
+    expect(insertedMetadata.bootstrap_channel).toBe("staging");
+    expect(insertedMetadata.bootstrap_version).toBe("bootstrap-v2");
   });
 });
 
