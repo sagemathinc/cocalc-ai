@@ -1,56 +1,21 @@
 import {
   DISABLE_INVENTORY_UPDATES_ENV,
+  inventory,
+  inventoryDisabledReason,
   inventoryUpdatesDisabled,
 } from "./inventory";
 
 describe("inventoryUpdatesDisabled", () => {
-  const originalEnv = process.env[DISABLE_INVENTORY_UPDATES_ENV];
-  const originalGlobal = (globalThis as any)[DISABLE_INVENTORY_UPDATES_ENV];
-  const originalLocalStorage = (globalThis as any).localStorage;
-
-  afterEach(() => {
-    if (originalEnv == null) {
-      delete process.env[DISABLE_INVENTORY_UPDATES_ENV];
-    } else {
-      process.env[DISABLE_INVENTORY_UPDATES_ENV] = originalEnv;
-    }
-    if (originalGlobal === undefined) {
-      delete (globalThis as any)[DISABLE_INVENTORY_UPDATES_ENV];
-    } else {
-      (globalThis as any)[DISABLE_INVENTORY_UPDATES_ENV] = originalGlobal;
-    }
-    if (originalLocalStorage === undefined) {
-      delete (globalThis as any).localStorage;
-    } else {
-      (globalThis as any).localStorage = originalLocalStorage;
-    }
-  });
-
-  it("uses the Node env switch when present", () => {
-    process.env[DISABLE_INVENTORY_UPDATES_ENV] = "1";
-    expect(inventoryUpdatesDisabled()).toBe(true);
+  it("is hard disabled regardless of the legacy env switch", () => {
     process.env[DISABLE_INVENTORY_UPDATES_ENV] = "0";
-    expect(inventoryUpdatesDisabled()).toBe(false);
+    expect(inventoryUpdatesDisabled()).toBe(true);
+    delete process.env[DISABLE_INVENTORY_UPDATES_ENV];
+    expect(inventoryUpdatesDisabled()).toBe(true);
   });
 
-  it("uses a browser global override when env is absent", () => {
-    delete process.env[DISABLE_INVENTORY_UPDATES_ENV];
-    (globalThis as any)[DISABLE_INVENTORY_UPDATES_ENV] = "true";
-    expect(inventoryUpdatesDisabled()).toBe(true);
-    (globalThis as any)[DISABLE_INVENTORY_UPDATES_ENV] = "false";
-    expect(inventoryUpdatesDisabled()).toBe(false);
-  });
-
-  it("uses localStorage when neither env nor global override is set", () => {
-    delete process.env[DISABLE_INVENTORY_UPDATES_ENV];
-    delete (globalThis as any)[DISABLE_INVENTORY_UPDATES_ENV];
-    (globalThis as any).localStorage = {
-      getItem: jest.fn().mockReturnValue("yes"),
-    };
-    expect(inventoryUpdatesDisabled()).toBe(true);
-    (globalThis as any).localStorage = {
-      getItem: jest.fn().mockReturnValue("off"),
-    };
-    expect(inventoryUpdatesDisabled()).toBe(false);
+  it("rejects inventory creation even with an explicit client", async () => {
+    await expect(
+      inventory({ project_id: "p", client: { id: "c" } as any }),
+    ).rejects.toThrow(inventoryDisabledReason());
   });
 });

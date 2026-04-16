@@ -21,7 +21,6 @@ import {
   trunc_middle,
 } from "@cocalc/util/misc";
 import { DKO_PREFIX } from "./dko";
-import { waitUntilTimeAvailable } from "@cocalc/conat/time";
 import {
   type Configuration,
   type PartialInventory,
@@ -33,38 +32,12 @@ export const INVENTORY_NAME = "CoCalc-Inventory";
 export const DISABLE_INVENTORY_UPDATES_ENV =
   "COCALC_DISABLE_CONAT_INVENTORY_UPDATES";
 
-function parseDisableFlag(v: unknown): boolean | undefined {
-  if (v == null) return undefined;
-  const s = `${v}`.trim().toLowerCase();
-  if (s === "") return undefined;
-  if (s === "1" || s === "true" || s === "yes" || s === "on") return true;
-  if (s === "0" || s === "false" || s === "no" || s === "off") return false;
-  return undefined;
+export function inventoryDisabledReason(): string {
+  return "conat inventory is disabled";
 }
 
 export function inventoryUpdatesDisabled(): boolean {
-  try {
-    const candidates = [
-      typeof process !== "undefined"
-        ? (process as any)?.env?.[DISABLE_INVENTORY_UPDATES_ENV]
-        : undefined,
-      typeof globalThis !== "undefined"
-        ? (globalThis as any)?.[DISABLE_INVENTORY_UPDATES_ENV]
-        : undefined,
-      typeof globalThis !== "undefined"
-        ? (globalThis as any)?.localStorage?.getItem?.(
-            DISABLE_INVENTORY_UPDATES_ENV,
-          )
-        : undefined,
-    ];
-    for (const candidate of candidates) {
-      const disabled = parseDisableFlag(candidate);
-      if (disabled != null) return disabled;
-    }
-    return false;
-  } catch {
-    return false;
-  }
+  return true;
 }
 
 type Sort =
@@ -128,11 +101,8 @@ export class Inventory {
   }
 
   init = async () => {
-    this.dkv = await dkv({
-      name: INVENTORY_NAME,
-      ...requireInventoryClient(this.options, "Inventory.init"),
-    });
-    await waitUntilTimeAvailable();
+    requireInventoryClient(this.options, "Inventory.init");
+    throw Error(inventoryDisabledReason());
   };
 
   // Set but with NO LIMITS and no MERGE conflict algorithm. Use with care!
@@ -410,5 +380,6 @@ export const cache = refCache<
 export async function inventory(
   options: Options & { client: Client },
 ): Promise<Inventory> {
-  return await cache(requireInventoryClient(options, "inventory"));
+  requireInventoryClient(options, "inventory");
+  throw Error(inventoryDisabledReason());
 }
