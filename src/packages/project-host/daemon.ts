@@ -12,6 +12,11 @@ type DaemonCommand = {
 
 type EnsureOptions = {
   quietHealthy?: boolean;
+  preserveManagedAuxiliaryDaemons?: boolean;
+};
+
+type StopOptions = {
+  preserveManagedAuxiliaryDaemons?: boolean;
 };
 
 const DEFAULT_ENV_FILE = "/etc/cocalc/project-host.env";
@@ -333,6 +338,13 @@ function resolveEnv(index: number): {
 function isRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
+    if (process.platform === "linux") {
+      const status = readProcFile(`/proc/${pid}/status`)?.toString("utf8");
+      const state = status?.match(/^State:\s+([A-Z])/m)?.[1];
+      if (state === "Z") {
+        return false;
+      }
+    }
     return true;
   } catch {
     return false;
@@ -432,7 +444,13 @@ function matchingProjectHostPids(dataDir: string, httpPort?: number): number[] {
     const cmdline = readProcCmdline(pid);
     if (!matchesProjectHostCmdline(cmdline)) continue;
     const env = readProcEnv(pid);
-    if (isRouterDaemonEnv(env) || isPersistDaemonEnv(env)) continue;
+    if (
+      isRouterDaemonEnv(env) ||
+      isPersistDaemonEnv(env) ||
+      isHostAgentEnv(env)
+    ) {
+      continue;
+    }
     const procData = env.COCALC_DATA ?? env.DATA;
     const procPort = Number(env.PORT);
     if (
@@ -754,7 +772,7 @@ function ensurePodmanHealthy(env: Record<string, string>): void {
 
 function terminatePids(pids: number[], label: string): number[] {
   const unique = [...new Set(pids)].filter(
-    (pid) => Number.isInteger(pid) && pid > 0,
+    (pid) => Number.isInteger(pid) && pid > 0 && isRunning(pid),
   );
   if (!unique.length) return [];
   for (const pid of unique) {
@@ -850,6 +868,16 @@ function resolveExec(root: string): { command: string; args: string[] } {
   return { command, args };
 }
 
+function withoutHostAgentEnv(
+  env: Record<string, string>,
+): Record<string, string> {
+  const next = { ...env };
+  delete next.COCALC_PROJECT_HOST_AGENT;
+  delete next.COCALC_PROJECT_HOST_AGENT_INDEX;
+  delete next.COCALC_PROJECT_HOST_AGENT_POLL_MS;
+  return next;
+}
+
 function startManagedConatRouter(opts: {
   env: Record<string, string>;
   routerPidPath: string;
@@ -894,10 +922,11 @@ function startManagedConatRouter(opts: {
   }
   const root = packageRoot();
   const { command, args } = resolveExec(root);
+  const childEnv = withoutHostAgentEnv(env);
   const child = processRuntime.spawn(command, args, {
     cwd: root,
     env: {
-      ...env,
+      ...childEnv,
       HOST: routerHost,
       PORT: String(routerPort),
       DEBUG_FILE: routerLogPath,
@@ -1117,10 +1146,11 @@ function startManagedConatPersist(opts: {
   }
   const root = packageRoot();
   const { command, args } = resolveExec(root);
+  const childEnv = withoutHostAgentEnv(env);
   const child = processRuntime.spawn(command, args, {
     cwd: root,
     env: {
-      ...env,
+      ...childEnv,
       HOST: persistHealthHost,
       PORT: String(persistHealthPort),
       DEBUG_FILE: persistLogPath,
@@ -1437,9 +1467,10 @@ export function startDaemon(index = 0): void {
   ensurePodmanHealthy(env);
   const root = packageRoot();
   const { command, args } = resolveExec(root);
+  const childEnv = withoutHostAgentEnv(env);
   const child = processRuntime.spawn(command, args, {
     cwd: root,
-    env,
+    env: childEnv,
     detached: true,
     stdio: ["ignore", stdout, stderr],
   });
@@ -1521,7 +1552,9 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
     console.warn(
       `project-host pid ${pid} is running but unhealthy; restarting.`,
     );
-    stopDaemon(index);
+    stopDaemonWithOptions(index, {
+      preserveManagedAuxiliaryDaemons: options?.preserveManagedAuxiliaryDaemons,
+    });
     startDaemon(index);
     return;
   }
@@ -1534,8 +1567,12 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
   const cleaned = cleanupStrayProcesses(
     dataDir,
     httpPort,
-    managedRouter ? routerPort : undefined,
-    managedPersist ? persistHealthPort : undefined,
+    managedRouter && !options?.preserveManagedAuxiliaryDaemons
+      ? routerPort
+      : undefined,
+    managedPersist && !options?.preserveManagedAuxiliaryDaemons
+      ? persistHealthPort
+      : undefined,
     sshPort,
   );
   if (cleaned > 0) {
@@ -1608,7 +1645,8 @@ function stopHostAgentProcess({
 }
 
 export function startHostAgent(index = 0): void {
-  const { env, dataDir, agentLogPath, agentPidPath } = resolveEnv(index);
+  const { env, dataDir, agentLogPath, agentPidPath, managedRouter } =
+    resolveEnv(index);
   if (fs.existsSync(agentPidPath)) {
     const pid = Number(fs.readFileSync(agentPidPath, "utf8"));
     if (pid && isRunning(pid)) {
@@ -1645,16 +1683,24 @@ export function startHostAgent(index = 0): void {
   }
   const root = packageRoot();
   const { command, args } = resolveExec(root);
+  const agentEnv: Record<string, string> = {
+    ...env,
+    COCALC_PROJECT_HOST_AGENT: "1",
+    COCALC_PROJECT_HOST_AGENT_INDEX: String(index),
+  };
+  // The host-agent must see the original router-management intent, not the
+  // derived local router URL that resolveEnv synthesizes for project-host
+  // children. Otherwise it misclassifies the router as externally managed and
+  // never supervises it.
+  if (managedRouter) {
+    delete agentEnv.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+  }
   const child = processRuntime.spawn(
     command,
     [...args, "--index", String(index)],
     {
       cwd: root,
-      env: {
-        ...env,
-        COCALC_PROJECT_HOST_AGENT: "1",
-        COCALC_PROJECT_HOST_AGENT_INDEX: String(index),
-      },
+      env: agentEnv,
       detached: true,
       stdio: ["ignore", stdout, stderr],
     },
@@ -1677,7 +1723,6 @@ export function ensureHostAgent(index = 0): void {
     ? Number(fs.readFileSync(agentPidPath, "utf8"))
     : undefined;
   if (pid && isRunning(pid)) {
-    ensureDaemonWithOptions(index, { quietHealthy: true });
     console.log(`project-host host-agent healthy (pid ${pid})`);
     return;
   }
@@ -1706,6 +1751,10 @@ export function stopHostAgent(index = 0): void {
 }
 
 export function stopDaemon(index = 0): void {
+  stopDaemonWithOptions(index);
+}
+
+function stopDaemonWithOptions(index = 0, options?: StopOptions): void {
   const {
     pidPath,
     dataDir,
@@ -1722,20 +1771,24 @@ export function stopDaemon(index = 0): void {
     const cleaned = cleanupStrayProcesses(
       dataDir,
       httpPort,
-      managedRouter ? routerPort : undefined,
-      managedPersist ? persistHealthPort : undefined,
+      managedRouter && !options?.preserveManagedAuxiliaryDaemons
+        ? routerPort
+        : undefined,
+      managedPersist && !options?.preserveManagedAuxiliaryDaemons
+        ? persistHealthPort
+        : undefined,
       sshPort,
     );
     if (cleaned > 0) {
       console.log(`Stopped ${cleaned} stray project-host process(es).`);
-      if (managedPersist) {
+      if (managedPersist && !options?.preserveManagedAuxiliaryDaemons) {
         stopManagedConatPersist({
           dataDir,
           persistPidPath,
           persistHealthPort,
         });
       }
-      if (managedRouter) {
+      if (managedRouter && !options?.preserveManagedAuxiliaryDaemons) {
         stopManagedConatRouter({
           dataDir,
           routerPidPath,
@@ -1754,22 +1807,26 @@ export function stopDaemon(index = 0): void {
     const cleaned = cleanupStrayProcesses(
       dataDir,
       httpPort,
-      managedRouter ? routerPort : undefined,
-      managedPersist ? persistHealthPort : undefined,
+      managedRouter && !options?.preserveManagedAuxiliaryDaemons
+        ? routerPort
+        : undefined,
+      managedPersist && !options?.preserveManagedAuxiliaryDaemons
+        ? persistHealthPort
+        : undefined,
       sshPort,
     );
     if (cleaned > 0) {
       console.log(
         `Removed stale pid file and stopped ${cleaned} stray project-host process(es).`,
       );
-      if (managedPersist) {
+      if (managedPersist && !options?.preserveManagedAuxiliaryDaemons) {
         stopManagedConatPersist({
           dataDir,
           persistPidPath,
           persistHealthPort,
         });
       }
-      if (managedRouter) {
+      if (managedRouter && !options?.preserveManagedAuxiliaryDaemons) {
         stopManagedConatRouter({
           dataDir,
           routerPidPath,
@@ -1806,18 +1863,22 @@ export function stopDaemon(index = 0): void {
   cleanupStrayProcesses(
     dataDir,
     httpPort,
-    managedRouter ? routerPort : undefined,
-    managedPersist ? persistHealthPort : undefined,
+    managedRouter && !options?.preserveManagedAuxiliaryDaemons
+      ? routerPort
+      : undefined,
+    managedPersist && !options?.preserveManagedAuxiliaryDaemons
+      ? persistHealthPort
+      : undefined,
     sshPort,
   );
-  if (managedPersist) {
+  if (managedPersist && !options?.preserveManagedAuxiliaryDaemons) {
     stopManagedConatPersist({
       dataDir,
       persistPidPath,
       persistHealthPort,
     });
   }
-  if (managedRouter) {
+  if (managedRouter && !options?.preserveManagedAuxiliaryDaemons) {
     stopManagedConatRouter({
       dataDir,
       routerPidPath,
@@ -1847,6 +1908,7 @@ export const __test__ = {
   ensurePodmanHealthy,
   healthCheckUrl,
   isPodmanStalePauseState,
+  isRunning,
   matchingHostAgentPids,
   matchingProjectHostPids,
   matchingSshpiperdPids,

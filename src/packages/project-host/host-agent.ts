@@ -48,7 +48,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 
   while (!stopping) {
     try {
-      ensureDaemon(index, { quietHealthy: true });
+      ensureDaemon(index, {
+        quietHealthy: true,
+        preserveManagedAuxiliaryDaemons: true,
+      });
     } catch (err) {
       logger.warn("host-agent reconcile failed", { index, err: `${err}` });
     }
