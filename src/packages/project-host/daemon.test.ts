@@ -9,7 +9,14 @@ process.env.DEBUG_FILE ??= path.join(
 );
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { __test__, ensureDaemon, startDaemon, stopDaemon } = require("./daemon");
+const {
+  __test__,
+  ensureDaemon,
+  ensureHostAgent,
+  startDaemon,
+  startHostAgent,
+  stopDaemon,
+} = require("./daemon");
 
 describe("project-host daemon stop", () => {
   const originalEnv = { ...process.env };
@@ -227,6 +234,84 @@ describe("project-host daemon stop", () => {
     expect(killSpy).toHaveBeenCalledWith(7373, 0);
     expect(killSpy).not.toHaveBeenCalledWith(7373, "SIGTERM");
     expect(logSpy).toHaveBeenCalledWith("project-host healthy (pid 7373)");
+  });
+
+  it("starts a separate host-agent process", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockReturnValue({ pid: 7878, unref: () => {} } as any);
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    startHostAgent(0);
+
+    expect(spawnSpy).toHaveBeenCalledWith(
+      process.execPath,
+      [path.join(__dirname, "dist/host-agent.js"), "--index", "0"],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          COCALC_PROJECT_HOST_AGENT: "1",
+          COCALC_PROJECT_HOST_AGENT_INDEX: "0",
+        }),
+        detached: true,
+      }),
+    );
+    expect(fs.readFileSync(path.join(dataDir, "host-agent.pid"), "utf8")).toBe(
+      "7878",
+    );
+    expect(logSpy).toHaveBeenCalledWith(
+      "project-host host-agent started (pid 7878); log=" +
+        path.join(dataDir, "host-agent.log"),
+    );
+  });
+
+  it("ensureHostAgent treats a running agent as healthy and reconciles quietly", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const agentPidPath = path.join(dataDir, "host-agent.pid");
+    const pidPath = path.join(dataDir, "daemon.pid");
+    fs.writeFileSync(agentPidPath, "7374");
+    fs.writeFileSync(pidPath, "7373");
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      if (pid === 7374) {
+        if (signal === 0 || signal === undefined) {
+          return true;
+        }
+        throw new Error(`unexpected signal ${signal}`);
+      }
+      if (pid === 7373) {
+        if (signal === 0 || signal === undefined) {
+          return true;
+        }
+        throw new Error(`unexpected signal ${signal}`);
+      }
+      throw new Error(`unexpected pid ${pid}`);
+    }) as typeof process.kill);
+    const healthSpy = jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 0 } as any);
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    ensureHostAgent(0);
+
+    expect(killSpy).toHaveBeenCalledWith(7374, 0);
+    expect(killSpy).toHaveBeenCalledWith(7373, 0);
+    expect(healthSpy).toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(
+      "project-host host-agent healthy (pid 7374)",
+    );
   });
 
   it("treats start as idempotent when the daemon is already healthy", () => {

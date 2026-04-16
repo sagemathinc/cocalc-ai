@@ -10,6 +10,10 @@ type DaemonCommand = {
   index: number;
 };
 
+type EnsureOptions = {
+  quietHealthy?: boolean;
+};
+
 const DEFAULT_ENV_FILE = "/etc/cocalc/project-host.env";
 const processRuntime = {
   spawn: childProcess.spawn,
@@ -22,6 +26,14 @@ const PODMAN_STALE_STATE_PATTERNS = [
 ];
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
+
+function packageRoot(): string {
+  const direct = path.join(__dirname, "package.json");
+  if (fs.existsSync(direct)) {
+    return __dirname;
+  }
+  return path.join(__dirname, "..");
+}
 
 function parseIndex(arg: string | undefined): number {
   if (arg == null) {
@@ -225,6 +237,8 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
 function resolveEnv(index: number): {
   env: Record<string, string>;
   dataDir: string;
+  agentLogPath: string;
+  agentPidPath: string;
   logPath: string;
   pidPath: string;
   persistEnabled: boolean;
@@ -275,6 +289,8 @@ function resolveEnv(index: number): {
   }
   const logPath = path.join(dataDir, "log");
   const pidPath = path.join(dataDir, "daemon.pid");
+  const agentLogPath = path.join(dataDir, "host-agent.log");
+  const agentPidPath = path.join(dataDir, "host-agent.pid");
   const persistLogPath = path.join(dataDir, "conat-persist.log");
   const persistPidPath = path.join(dataDir, "conat-persist.pid");
   const routerLogPath = path.join(dataDir, "conat-router.log");
@@ -288,6 +304,8 @@ function resolveEnv(index: number): {
   return {
     env,
     dataDir,
+    agentLogPath,
+    agentPidPath,
     logPath,
     pidPath,
     persistEnabled,
@@ -381,12 +399,20 @@ function matchesProjectHostCmdline(cmdline: string[]): boolean {
   );
 }
 
+function matchesHostAgentCmdline(cmdline: string[]): boolean {
+  return cmdline.some((arg) => arg.endsWith("/dist/host-agent.js"));
+}
+
 function isRouterDaemonEnv(env: Record<string, string>): boolean {
   return env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1";
 }
 
 function isPersistDaemonEnv(env: Record<string, string>): boolean {
   return env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1";
+}
+
+function isHostAgentEnv(env: Record<string, string>): boolean {
+  return env.COCALC_PROJECT_HOST_AGENT === "1";
 }
 
 function matchesSshpiperdCmdline(cmdline: string[], port: number): boolean {
@@ -411,6 +437,22 @@ function matchingProjectHostPids(dataDir: string, httpPort?: number): number[] {
       (httpPort != null && procPort === httpPort) ||
       (!procData && !Number.isFinite(procPort))
     ) {
+      matches.push(pid);
+    }
+  }
+  return matches;
+}
+
+function matchingHostAgentPids(dataDir: string): number[] {
+  const matches: number[] = [];
+  for (const pid of listProcPids()) {
+    if (pid === process.pid) continue;
+    const cmdline = readProcCmdline(pid);
+    if (!matchesHostAgentCmdline(cmdline)) continue;
+    const env = readProcEnv(pid);
+    if (!isHostAgentEnv(env)) continue;
+    const procData = env.COCALC_DATA ?? env.DATA;
+    if (procData === dataDir || !procData) {
       matches.push(pid);
     }
   }
@@ -790,16 +832,23 @@ function cleanupStrayProcesses(
   );
 }
 
-function resolveExec(root: string): { command: string; args: string[] } {
+function resolveExec(
+  root: string,
+  entry: "main" | "host-agent" = "main",
+): { command: string; args: string[] } {
   const command =
     process.env.COCALC_PROJECT_HOST_DAEMON_EXEC ?? process.execPath;
   const args: string[] = [];
   if (path.basename(command) === "node") {
-    const bundledMain = path.join(root, "main", "index.js");
-    if (fs.existsSync(bundledMain)) {
-      args.push(bundledMain);
+    if (entry === "main") {
+      const bundledMain = path.join(root, "main", "index.js");
+      if (fs.existsSync(bundledMain)) {
+        args.push(bundledMain);
+      } else {
+        args.push(path.join(root, "dist/main.js"));
+      }
     } else {
-      args.push(path.join(root, "dist/main.js"));
+      args.push(path.join(root, "dist/host-agent.js"));
     }
   }
   return { command, args };
@@ -847,7 +896,7 @@ function startManagedConatRouter(opts: {
   } catch {
     // best effort
   }
-  const root = path.join(__dirname, "..");
+  const root = packageRoot();
   const { command, args } = resolveExec(root);
   const child = processRuntime.spawn(command, args, {
     cwd: root,
@@ -904,6 +953,7 @@ function ensureManagedConatRouter(opts: {
   routerLogPath: string;
   routerHost: string;
   routerPort?: number;
+  options?: EnsureOptions;
 }): void {
   const { env, dataDir, routerPidPath, routerLogPath, routerHost, routerPort } =
     opts;
@@ -912,7 +962,9 @@ function ensureManagedConatRouter(opts: {
     : undefined;
   if (pid && isRunning(pid)) {
     if (checkConatRouterHealthSync(env, routerPort)) {
-      console.log(`project-host conat router healthy (pid ${pid})`);
+      if (!opts.options?.quietHealthy) {
+        console.log(`project-host conat router healthy (pid ${pid})`);
+      }
       return;
     }
     console.warn(
@@ -1067,7 +1119,7 @@ function startManagedConatPersist(opts: {
   } catch {
     // best effort
   }
-  const root = path.join(__dirname, "..");
+  const root = packageRoot();
   const { command, args } = resolveExec(root);
   const child = processRuntime.spawn(command, args, {
     cwd: root,
@@ -1127,6 +1179,7 @@ function ensureManagedConatPersist(opts: {
   persistLogPath: string;
   persistHealthHost: string;
   persistHealthPort?: number;
+  options?: EnsureOptions;
 }): void {
   const {
     env,
@@ -1141,7 +1194,9 @@ function ensureManagedConatPersist(opts: {
     : undefined;
   if (pid && isRunning(pid)) {
     if (checkConatPersistHealthSync(env, persistHealthPort)) {
-      console.log(`project-host conat persist healthy (pid ${pid})`);
+      if (!opts.options?.quietHealthy) {
+        console.log(`project-host conat persist healthy (pid ${pid})`);
+      }
       return;
     }
     console.warn(
@@ -1384,7 +1439,7 @@ export function startDaemon(index = 0): void {
     // best effort
   }
   ensurePodmanHealthy(env);
-  const root = path.join(__dirname, "..");
+  const root = packageRoot();
   const { command, args } = resolveExec(root);
   const child = processRuntime.spawn(command, args, {
     cwd: root,
@@ -1402,7 +1457,11 @@ export function startDaemon(index = 0): void {
   console.log(`project-host started (pid ${child.pid}); log=${logPath}`);
 }
 
-export function ensureDaemon(index = 0): void {
+export function ensureDaemon(index = 0, options?: EnsureOptions): void {
+  ensureDaemonWithOptions(index, options);
+}
+
+function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
   const {
     env,
     dataDir,
@@ -1428,6 +1487,7 @@ export function ensureDaemon(index = 0): void {
       routerLogPath,
       routerHost,
       routerPort,
+      options,
     });
   }
   if (managedPersist) {
@@ -1438,6 +1498,7 @@ export function ensureDaemon(index = 0): void {
       persistLogPath,
       persistHealthHost,
       persistHealthPort,
+      options,
     });
   }
   const pid = fs.existsSync(pidPath)
@@ -1445,7 +1506,9 @@ export function ensureDaemon(index = 0): void {
     : undefined;
   if (pid && isRunning(pid)) {
     if (checkHealthSync(env, httpPort)) {
-      console.log(`project-host healthy (pid ${pid})`);
+      if (!options?.quietHealthy) {
+        console.log(`project-host healthy (pid ${pid})`);
+      }
       return;
     }
     const warmupMs = getPositiveIntEnv(
@@ -1485,6 +1548,165 @@ export function ensureDaemon(index = 0): void {
     );
   }
   startDaemon(index);
+}
+
+function stopHostAgentProcess({
+  dataDir,
+  agentPidPath,
+}: {
+  dataDir: string;
+  agentPidPath: string;
+}): void {
+  if (!fs.existsSync(agentPidPath)) {
+    const cleaned = terminatePids(
+      matchingHostAgentPids(dataDir),
+      "project-host host-agent",
+    );
+    if (cleaned.length > 0) {
+      console.log(
+        `Stopped ${cleaned.length} stray project-host host-agent process(es).`,
+      );
+    }
+    return;
+  }
+  const pid = Number(fs.readFileSync(agentPidPath, "utf8"));
+  if (!pid || !isRunning(pid)) {
+    fs.rmSync(agentPidPath, { force: true });
+    const cleaned = terminatePids(
+      matchingHostAgentPids(dataDir),
+      "project-host host-agent",
+    );
+    if (cleaned.length > 0) {
+      console.log(
+        `Removed stale host-agent pid file and stopped ${cleaned.length} stray project-host host-agent process(es).`,
+      );
+    }
+    return;
+  }
+  const stopTimeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_STOP_TIMEOUT_MS",
+    15_000,
+  );
+  const killTimeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_KILL_TIMEOUT_MS",
+    5_000,
+  );
+  const pollMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_STOP_POLL_MS",
+    100,
+  );
+  process.kill(pid, "SIGTERM");
+  if (!waitForExit(pid, stopTimeoutMs, pollMs)) {
+    process.kill(pid, "SIGKILL");
+    if (!waitForExit(pid, killTimeoutMs, pollMs)) {
+      throw new Error(
+        `project-host host-agent pid ${pid} did not exit after SIGKILL`,
+      );
+    }
+    console.log(`Sent SIGKILL to project-host host-agent (pid ${pid}).`);
+  } else {
+    console.log(`Sent SIGTERM to project-host host-agent (pid ${pid}).`);
+  }
+  fs.rmSync(agentPidPath, { force: true });
+  terminatePids(matchingHostAgentPids(dataDir), "project-host host-agent");
+}
+
+export function startHostAgent(index = 0): void {
+  const { env, dataDir, agentLogPath, agentPidPath } = resolveEnv(index);
+  if (fs.existsSync(agentPidPath)) {
+    const pid = Number(fs.readFileSync(agentPidPath, "utf8"));
+    if (pid && isRunning(pid)) {
+      console.log(
+        `project-host host-agent already running (pid ${pid}); leaving it running.`,
+      );
+      return;
+    }
+    fs.rmSync(agentPidPath, { force: true });
+  }
+  const cleaned = terminatePids(
+    matchingHostAgentPids(dataDir),
+    "project-host host-agent",
+  );
+  if (cleaned.length > 0) {
+    console.warn(
+      `Stopped ${cleaned.length} stray project-host host-agent process(es) before start.`,
+    );
+  }
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  try {
+    if (fs.existsSync(agentLogPath)) {
+      fs.unlinkSync(agentLogPath);
+    }
+  } catch (err) {
+    console.error(`warning: unable to truncate log at ${agentLogPath}:`, err);
+  }
+  const stdout = fs.openSync(agentLogPath, "a");
+  const stderr = fs.openSync(agentLogPath, "a");
+  try {
+    fs.chmodSync(agentLogPath, 0o600);
+  } catch {
+    // best effort
+  }
+  const root = packageRoot();
+  const { command, args } = resolveExec(root, "host-agent");
+  const child = processRuntime.spawn(
+    command,
+    [...args, "--index", String(index)],
+    {
+      cwd: root,
+      env: {
+        ...env,
+        COCALC_PROJECT_HOST_AGENT: "1",
+        COCALC_PROJECT_HOST_AGENT_INDEX: String(index),
+      },
+      detached: true,
+      stdio: ["ignore", stdout, stderr],
+    },
+  );
+  child.unref();
+  fs.writeFileSync(agentPidPath, String(child.pid));
+  try {
+    fs.chmodSync(agentPidPath, 0o600);
+  } catch {
+    // best effort
+  }
+  console.log(
+    `project-host host-agent started (pid ${child.pid}); log=${agentLogPath}`,
+  );
+}
+
+export function ensureHostAgent(index = 0): void {
+  const { dataDir, agentPidPath } = resolveEnv(index);
+  const pid = fs.existsSync(agentPidPath)
+    ? Number(fs.readFileSync(agentPidPath, "utf8"))
+    : undefined;
+  if (pid && isRunning(pid)) {
+    ensureDaemonWithOptions(index, { quietHealthy: true });
+    console.log(`project-host host-agent healthy (pid ${pid})`);
+    return;
+  }
+  if (fs.existsSync(agentPidPath)) {
+    console.warn(
+      `project-host host-agent pid file is stale at ${agentPidPath}; recovering.`,
+    );
+    fs.rmSync(agentPidPath, { force: true });
+  }
+  const cleaned = terminatePids(
+    matchingHostAgentPids(dataDir),
+    "project-host host-agent",
+  );
+  if (cleaned.length > 0) {
+    console.warn(
+      `Stopped ${cleaned.length} stray project-host host-agent process(es) before restart.`,
+    );
+  }
+  startHostAgent(index);
+}
+
+export function stopHostAgent(index = 0): void {
+  const { dataDir, agentPidPath } = resolveEnv(index);
+  stopHostAgentProcess({ dataDir, agentPidPath });
+  stopDaemon(index);
 }
 
 export function stopDaemon(index = 0): void {
@@ -1614,11 +1836,11 @@ export function handleDaemonCli(argv: string[]): boolean {
     return false;
   }
   if (cmd.action === "start") {
-    startDaemon(cmd.index);
+    startHostAgent(cmd.index);
   } else if (cmd.action === "stop") {
-    stopDaemon(cmd.index);
+    stopHostAgent(cmd.index);
   } else {
-    ensureDaemon(cmd.index);
+    ensureHostAgent(cmd.index);
   }
   return true;
 }
@@ -1629,6 +1851,7 @@ export const __test__ = {
   ensurePodmanHealthy,
   healthCheckUrl,
   isPodmanStalePauseState,
+  matchingHostAgentPids,
   matchingProjectHostPids,
   matchingSshpiperdPids,
   parsePort,
