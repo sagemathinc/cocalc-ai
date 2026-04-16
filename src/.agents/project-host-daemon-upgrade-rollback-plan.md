@@ -425,6 +425,10 @@ At minimum:
 - scope:
   - global default
   - host override
+- default provisioning behavior:
+  - newly provisioned hosts inherit the promoted global default for each
+    component/artifact
+  - this must be distinct from "newest published version"
 - component
 - artifact
 - desired version
@@ -482,6 +486,10 @@ At minimum:
 - artifact
 - version
 - channel
+- promotion state:
+  - published but not promoted
+  - promoted as the default for newly provisioned hosts
+  - optionally promoted for narrower scopes such as canary bays or regions
 - published at
 - source:
   - owning hub
@@ -493,6 +501,16 @@ At minimum:
 - sha256
 
 This catalog must be queryable through CLI and GUI.
+
+Critical rule:
+
+- the highest/newest published version must not automatically become the
+  default for new hosts
+- operators need an explicit promotion step that marks which version a newly
+  provisioned host should use for each artifact/component
+- this is the desired-state equivalent of a Kubernetes Deployment template:
+  scaling up or provisioning new replicas should use the promoted target, not
+  merely the newest artifact present in the registry
 
 ### 5. Runtime Version References
 
