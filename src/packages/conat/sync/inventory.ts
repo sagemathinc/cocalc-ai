@@ -33,15 +33,35 @@ export const INVENTORY_NAME = "CoCalc-Inventory";
 export const DISABLE_INVENTORY_UPDATES_ENV =
   "COCALC_DISABLE_CONAT_INVENTORY_UPDATES";
 
+function parseDisableFlag(v: unknown): boolean | undefined {
+  if (v == null) return undefined;
+  const s = `${v}`.trim().toLowerCase();
+  if (s === "") return undefined;
+  if (s === "1" || s === "true" || s === "yes" || s === "on") return true;
+  if (s === "0" || s === "false" || s === "no" || s === "off") return false;
+  return undefined;
+}
+
 export function inventoryUpdatesDisabled(): boolean {
   try {
-    const v =
+    const candidates = [
       typeof process !== "undefined"
         ? (process as any)?.env?.[DISABLE_INVENTORY_UPDATES_ENV]
-        : undefined;
-    if (v == null) return false;
-    const s = `${v}`.trim().toLowerCase();
-    return s === "1" || s === "true" || s === "yes" || s === "on";
+        : undefined,
+      typeof globalThis !== "undefined"
+        ? (globalThis as any)?.[DISABLE_INVENTORY_UPDATES_ENV]
+        : undefined,
+      typeof globalThis !== "undefined"
+        ? (globalThis as any)?.localStorage?.getItem?.(
+            DISABLE_INVENTORY_UPDATES_ENV,
+          )
+        : undefined,
+    ];
+    for (const candidate of candidates) {
+      const disabled = parseDisableFlag(candidate);
+      if (disabled != null) return disabled;
+    }
+    return false;
   } catch {
     return false;
   }
