@@ -1835,7 +1835,10 @@ function stopDaemonWithOptions(index = 0, options?: StopOptions): void {
       }
       return;
     }
-    throw new Error(`No running process for pid ${pid}; removed ${pidPath}`);
+    console.warn(
+      `No running process for pid ${pid}; removed stale ${pidPath} and treated stop as complete.`,
+    );
+    return;
   }
   const stopTimeoutMs = getPositiveIntEnv(
     "COCALC_PROJECT_HOST_DAEMON_STOP_TIMEOUT_MS",

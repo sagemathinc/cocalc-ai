@@ -204,6 +204,34 @@ describe("project-host daemon stop", () => {
     expect(fs.existsSync(pidPath)).toBe(false);
   });
 
+  it("treats a stale daemon pid file with no live process as a successful stop", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const pidPath = path.join(dataDir, "daemon.pid");
+    fs.writeFileSync(pidPath, "9999");
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      expect(pid).toBe(9999);
+      expect(signal).toBe(0);
+      throw new Error("not running");
+    }) as typeof process.kill);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(() => stopDaemon(0)).not.toThrow();
+
+    expect(killSpy).toHaveBeenCalledWith(9999, 0);
+    expect(fs.existsSync(pidPath)).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      `No running process for pid 9999; removed stale ${pidPath} and treated stop as complete.`,
+    );
+  });
+
   it("does nothing when the daemon is healthy", () => {
     const dataDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
