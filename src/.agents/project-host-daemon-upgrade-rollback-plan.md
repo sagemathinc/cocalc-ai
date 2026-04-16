@@ -1140,3 +1140,28 @@ Required semantics:
 
 Once the single-host semantics are proven, fleet-wide `--all-hosts` variants
 can be added on top of the same primitive.
+
+Another near-term operator command should be:
+
+- `cocalc host projects-backup <host>`
+
+This should expose the backup phase of `host drain` as a standalone host-scoped
+LRO for peace-of-mind checks, pre-maintenance workflows, and backup throughput
+tuning.
+
+Required semantics:
+
+- scan every project assigned to the host at operation start
+- select every project whose latest backup is older than its `last_edited`
+  timestamp
+- back up the selected projects in parallel, without stopping them
+- treat the freshness guarantee as:
+  `backup_time >= min(command_start_time, last_edited)`
+- continue after per-project failures instead of aborting the whole operation
+- return the full failed project id list in the final result
+- expose `--parallel` and `--wait`
+
+This is intentionally weaker than a fully quiesced backup barrier, because
+projects continue running during the operation. The value is operational: an
+admin can quickly reduce the known data-loss window on one host and see which
+projects, if any, still failed to back up.
