@@ -877,25 +877,40 @@ function terminatePids(pids: number[], label: string): number[] {
   );
 }
 
-function cleanupStrayProcesses(
-  dataDir: string,
-  httpPort?: number,
-  routerPort?: number,
-  persistHealthPort?: number,
-  sshPort?: number,
-): number {
+function cleanupStrayProcesses(opts: {
+  dataDir: string;
+  httpPort?: number;
+  routerPort?: number;
+  persistHealthPort?: number;
+  sshPort?: number;
+  includeManagedRouter?: boolean;
+  includeManagedPersist?: boolean;
+}): number {
+  const {
+    dataDir,
+    httpPort,
+    routerPort,
+    persistHealthPort,
+    sshPort,
+    includeManagedRouter = true,
+    includeManagedPersist = true,
+  } = opts;
   const projectHostPids = terminatePids(
     matchingProjectHostPids(dataDir, httpPort),
     "project-host",
   );
-  const routerPids = terminatePids(
-    matchingConatRouterPids(dataDir, routerPort),
-    "project-host conat router",
-  );
-  const persistPids = terminatePids(
-    matchingConatPersistPids(dataDir, persistHealthPort),
-    "project-host conat persist",
-  );
+  const routerPids = includeManagedRouter
+    ? terminatePids(
+        matchingConatRouterPids(dataDir, routerPort),
+        "project-host conat router",
+      )
+    : [];
+  const persistPids = includeManagedPersist
+    ? terminatePids(
+        matchingConatPersistPids(dataDir, persistHealthPort),
+        "project-host conat persist",
+      )
+    : [];
   const sshpiperdPids = terminatePids(
     matchingSshpiperdPids(sshPort),
     "sshpiperd",
@@ -1649,17 +1664,17 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
     console.warn("project-host is not running; starting it.");
   }
   fs.rmSync(pidPath, { force: true });
-  const cleaned = cleanupStrayProcesses(
+  const cleaned = cleanupStrayProcesses({
     dataDir,
     httpPort,
-    managedRouter && !options?.preserveManagedAuxiliaryDaemons
-      ? routerPort
-      : undefined,
-    managedPersist && !options?.preserveManagedAuxiliaryDaemons
-      ? persistHealthPort
-      : undefined,
+    routerPort,
+    persistHealthPort,
     sshPort,
-  );
+    includeManagedRouter:
+      !managedRouter || !options?.preserveManagedAuxiliaryDaemons,
+    includeManagedPersist:
+      !managedPersist || !options?.preserveManagedAuxiliaryDaemons,
+  });
   if (cleaned > 0) {
     console.warn(
       `Stopped ${cleaned} stray project-host process(es) before restart.`,
@@ -1853,17 +1868,17 @@ function stopDaemonWithOptions(index = 0, options?: StopOptions): void {
     routerPort,
   } = resolveEnv(index);
   if (!fs.existsSync(pidPath)) {
-    const cleaned = cleanupStrayProcesses(
+    const cleaned = cleanupStrayProcesses({
       dataDir,
       httpPort,
-      managedRouter && !options?.preserveManagedAuxiliaryDaemons
-        ? routerPort
-        : undefined,
-      managedPersist && !options?.preserveManagedAuxiliaryDaemons
-        ? persistHealthPort
-        : undefined,
+      routerPort,
+      persistHealthPort,
       sshPort,
-    );
+      includeManagedRouter:
+        !managedRouter || !options?.preserveManagedAuxiliaryDaemons,
+      includeManagedPersist:
+        !managedPersist || !options?.preserveManagedAuxiliaryDaemons,
+    });
     if (cleaned > 0) {
       console.log(`Stopped ${cleaned} stray project-host process(es).`);
       if (managedPersist && !options?.preserveManagedAuxiliaryDaemons) {
@@ -1889,17 +1904,17 @@ function stopDaemonWithOptions(index = 0, options?: StopOptions): void {
   const pid = Number(fs.readFileSync(pidPath, "utf8"));
   if (!pid || !isRunning(pid)) {
     fs.rmSync(pidPath, { force: true });
-    const cleaned = cleanupStrayProcesses(
+    const cleaned = cleanupStrayProcesses({
       dataDir,
       httpPort,
-      managedRouter && !options?.preserveManagedAuxiliaryDaemons
-        ? routerPort
-        : undefined,
-      managedPersist && !options?.preserveManagedAuxiliaryDaemons
-        ? persistHealthPort
-        : undefined,
+      routerPort,
+      persistHealthPort,
       sshPort,
-    );
+      includeManagedRouter:
+        !managedRouter || !options?.preserveManagedAuxiliaryDaemons,
+      includeManagedPersist:
+        !managedPersist || !options?.preserveManagedAuxiliaryDaemons,
+    });
     if (cleaned > 0) {
       console.log(
         `Removed stale pid file and stopped ${cleaned} stray project-host process(es).`,
@@ -1948,17 +1963,17 @@ function stopDaemonWithOptions(index = 0, options?: StopOptions): void {
     console.log(`Sent SIGTERM to project-host (pid ${pid}).`);
   }
   fs.rmSync(pidPath, { force: true });
-  cleanupStrayProcesses(
+  cleanupStrayProcesses({
     dataDir,
     httpPort,
-    managedRouter && !options?.preserveManagedAuxiliaryDaemons
-      ? routerPort
-      : undefined,
-    managedPersist && !options?.preserveManagedAuxiliaryDaemons
-      ? persistHealthPort
-      : undefined,
+    routerPort,
+    persistHealthPort,
     sshPort,
-  );
+    includeManagedRouter:
+      !managedRouter || !options?.preserveManagedAuxiliaryDaemons,
+    includeManagedPersist:
+      !managedPersist || !options?.preserveManagedAuxiliaryDaemons,
+  });
   if (managedPersist && !options?.preserveManagedAuxiliaryDaemons) {
     stopManagedConatPersist({
       dataDir,

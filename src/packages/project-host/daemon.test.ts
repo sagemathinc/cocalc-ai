@@ -441,6 +441,47 @@ describe("project-host daemon stop", () => {
     fs.writeFileSync(path.join(dataDir, "conat-router.pid"), "1111");
     fs.writeFileSync(path.join(dataDir, "conat-persist.pid"), "2222");
 
+    const realReadFileSync = fs.readFileSync;
+    const realReaddirSync = fs.readdirSync;
+    jest.spyOn(fs, "readdirSync").mockImplementation(((
+      file: any,
+      opts?: any,
+    ) => {
+      if (file === "/proc") {
+        return [
+          { name: "1111", isDirectory: () => true },
+          { name: "2222", isDirectory: () => true },
+        ] as any;
+      }
+      return (realReaddirSync as any)(file, opts);
+    }) as typeof fs.readdirSync);
+    jest.spyOn(fs, "readFileSync").mockImplementation(((
+      file: any,
+      options?: any,
+    ) => {
+      if (file === "/proc/1111/cmdline") {
+        return Buffer.from(
+          "node\u0000/opt/cocalc/project-host/bundles/good/main/index.js\u0000",
+        ) as any;
+      }
+      if (file === "/proc/1111/environ") {
+        return Buffer.from(
+          `COCALC_DATA=${dataDir}\u0000COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON=1\u0000PORT=9102\u0000`,
+        ) as any;
+      }
+      if (file === "/proc/2222/cmdline") {
+        return Buffer.from(
+          "node\u0000/opt/cocalc/project-host/bundles/good/main/index.js\u0000",
+        ) as any;
+      }
+      if (file === "/proc/2222/environ") {
+        return Buffer.from(
+          `COCALC_DATA=${dataDir}\u0000COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON=1\u0000PORT=9202\u0000`,
+        ) as any;
+      }
+      return (realReadFileSync as any)(file, options);
+    }) as typeof fs.readFileSync);
+
     const killSpy = jest.spyOn(process, "kill").mockImplementation(((
       pid: number,
       signal?: NodeJS.Signals | number,
