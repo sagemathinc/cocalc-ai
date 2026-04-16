@@ -831,6 +831,49 @@ describe("project-host daemon stop", () => {
     });
   });
 
+  it("treats a derived local router URL as managed when running inside host-agent", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_AGENT = "1";
+    process.env.COCALC_PROJECT_HOST_AGENT_INDEX = "0";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "1";
+    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = "http://127.0.0.1:9102";
+    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST = "127.0.0.1";
+    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT = "9102";
+
+    jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 0 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockImplementation(((_command: any, _args: any, opts?: any) => {
+        const env = opts?.env ?? {};
+        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+          return { pid: 3333, unref: () => {} } as any;
+        }
+        if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
+          return { pid: 4444, unref: () => {} } as any;
+        }
+        return { pid: 5555, unref: () => {} } as any;
+      }) as typeof __test__.processRuntime.spawn);
+
+    startDaemon(0);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(3);
+    expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).toMatchObject({
+      COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON: "1",
+      PORT: "9102",
+    });
+    expect((spawnSpy.mock.calls[1]?.[2] as any)?.env).toMatchObject({
+      COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON: "1",
+      PORT: "9202",
+    });
+  });
+
   it("stops the managed conat router when stopping project-host", () => {
     const dataDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-daemon-"),

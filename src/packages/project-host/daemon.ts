@@ -158,6 +158,12 @@ function envIsFalse(value: string | undefined): boolean {
   return FALSE_VALUES.has(`${value ?? ""}`.trim().toLowerCase());
 }
 
+function normalizeLoopbackHost(host: string): string {
+  return host === "0.0.0.0" || host === "::" || host === "[::]"
+    ? "127.0.0.1"
+    : host;
+}
+
 function isProjectHostExternalConatRouterEnabled(
   env: Record<string, string>,
 ): boolean {
@@ -279,6 +285,46 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
   }
 }
 
+function isDerivedLocalRouterUrlForHostAgent(
+  env: Record<string, string>,
+  explicitRouterUrl: string,
+  index: number,
+): boolean {
+  if (env.COCALC_PROJECT_HOST_AGENT !== "1") {
+    return false;
+  }
+  const trimmed = explicitRouterUrl.trim();
+  if (!trimmed) {
+    return false;
+  }
+  const basePort = parsePort(env.PORT) ?? 9002 + index;
+  const expectedHost = normalizeLoopbackHost(
+    `${env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST ?? "127.0.0.1"}`.trim() ||
+      "127.0.0.1",
+  );
+  const expectedPort =
+    parsePort(env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT) ?? basePort + 100;
+  try {
+    const parsed = new URL(trimmed);
+    const actualHost = normalizeLoopbackHost(parsed.hostname);
+    const actualPort =
+      parsePort(parsed.port) ??
+      (parsed.protocol === "http:"
+        ? 80
+        : parsed.protocol === "https:"
+          ? 443
+          : undefined);
+    return (
+      parsed.protocol === "http:" &&
+      (parsed.pathname === "" || parsed.pathname === "/") &&
+      actualHost === expectedHost &&
+      actualPort === expectedPort
+    );
+  } catch {
+    return false;
+  }
+}
+
 function resolveEnv(index: number): {
   env: Record<string, string>;
   dataDir: string;
@@ -329,7 +375,10 @@ function resolveEnv(index: number): {
       : "";
   ensureDefaults(env, index);
   const routerEnabled = isProjectHostExternalConatRouterEnabled(env);
-  const managedRouter = routerEnabled && !`${explicitRouterUrl}`.trim();
+  const managedRouter =
+    routerEnabled &&
+    (!`${explicitRouterUrl}`.trim() ||
+      isDerivedLocalRouterUrlForHostAgent(env, explicitRouterUrl, index));
   const managedPublicIngress = managedRouter && publicIngressEnabledValue(env);
   const persistEnabled = isProjectHostExternalConatPersistEnabled(env);
   const managedPersist = usesManagedLocalConatPersist(env);
