@@ -58,6 +58,7 @@
     "zeromq": "^6.4.2"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "expect": "^26.6.2",
     "@types/node": "^22.10.10",
     "@types/node-cleanup": "^2.1.2"
