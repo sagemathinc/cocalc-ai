@@ -261,6 +261,18 @@ function parseRuntimeDeploymentTarget(opts: {
   };
 }
 
+function deploymentUpsertFromRecord(record: any) {
+  return {
+    target_type: record.target_type,
+    target: record.target,
+    desired_version: record.desired_version,
+    rollout_policy: record.rollout_policy,
+    drain_deadline_seconds: record.drain_deadline_seconds,
+    rollout_reason: record.rollout_reason,
+    metadata: record.metadata,
+  };
+}
+
 function formatList(values: unknown): string {
   if (!Array.isArray(values) || values.length === 0) return "";
   return values.map((value) => `${value ?? ""}`.trim()).join(", ");
@@ -1710,6 +1722,85 @@ version when available, or \`--to-version\` to force a specific published versio
             rollback: final?.result ?? null,
           };
         });
+      },
+    );
+
+  deploy
+    .command("resume-default <host>")
+    .description(
+      "remove one host-scoped deployment override so the host follows the global default again",
+    )
+    .option(
+      "--component <component>",
+      "component: project-host, conat-router, conat-persist, acp-worker",
+    )
+    .option(
+      "--artifact <artifact>",
+      "artifact: project-host, project-bundle, tools, bootstrap-environment",
+    )
+    .addHelpText(
+      "after",
+      `
+This removes the selected host-scoped desired-state record and replaces the
+host scope with the remaining records unchanged. After that, the effective
+desired state for the selected target falls back to the global default.
+
+If the host is running, the backend may immediately queue the corresponding
+automatic reconcile or artifact upgrade work.
+`,
+    )
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: { component?: string; artifact?: string },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "host deploy resume-default",
+          async (ctx) => {
+            const host = await resolveHost(ctx, hostIdentifier);
+            const parsedTarget = parseRuntimeDeploymentTarget(opts);
+            if (
+              !ctx.hub.hosts.listHostRuntimeDeployments ||
+              !ctx.hub.hosts.setHostRuntimeDeployments
+            ) {
+              throw new Error(
+                "hub does not support listing or setting runtime deployments",
+              );
+            }
+            const current = await ctx.hub.hosts.listHostRuntimeDeployments({
+              scope_type: "host",
+              id: host.id,
+            });
+            const remaining = current
+              .filter(
+                (deployment: any) =>
+                  !(
+                    deployment.target_type === parsedTarget.target_type &&
+                    deployment.target === parsedTarget.target
+                  ),
+              )
+              .map(deploymentUpsertFromRecord);
+            const removed = current.length !== remaining.length;
+            const deployments = removed
+              ? await ctx.hub.hosts.setHostRuntimeDeployments({
+                  scope_type: "host",
+                  id: host.id,
+                  deployments: remaining,
+                  replace: true,
+                })
+              : current;
+            return {
+              host_id: host.id,
+              host_name: host.name,
+              target_type: parsedTarget.target_type,
+              target: parsedTarget.target,
+              removed,
+              deployments,
+            };
+          },
+        );
       },
     );
 

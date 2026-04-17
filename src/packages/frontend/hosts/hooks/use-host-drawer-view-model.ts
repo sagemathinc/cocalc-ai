@@ -61,6 +61,10 @@ type UseHostDrawerViewModelArgs = {
     version?: string;
     last_known_good?: boolean;
   }) => void | Promise<void>;
+  onResumeRuntimeArtifactClusterDefault?: (opts: {
+    host: Host;
+    artifact: HostRuntimeArtifact;
+  }) => void | Promise<void>;
   rootfsInventory?: {
     entries: HostRootfsImage[];
     loading: boolean;
@@ -121,6 +125,7 @@ export const useHostDrawerViewModel = ({
   runtimeDeployments,
   onSetRuntimeArtifactDeployment,
   onRollbackRuntimeArtifact,
+  onResumeRuntimeArtifactClusterDefault,
   rootfsInventory,
   canManageRootfs,
   onStopRunningProjects,
@@ -146,6 +151,7 @@ export const useHostDrawerViewModel = ({
     runtimeDeployments,
     onSetRuntimeArtifactDeployment,
     onRollbackRuntimeArtifact,
+    onResumeRuntimeArtifactClusterDefault,
     rootfsInventory,
     canManageRootfs,
     onStopRunningProjects,

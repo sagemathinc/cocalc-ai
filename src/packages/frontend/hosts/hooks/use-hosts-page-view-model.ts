@@ -811,6 +811,79 @@ export const useHostsPageViewModel = () => {
     },
     [hub, refresh, runtimeDeployments, trackHostOp],
   );
+  const resumeRuntimeArtifactClusterDefault = React.useCallback(
+    async ({
+      host,
+      artifact,
+    }: {
+      host: Host;
+      artifact: HostRuntimeArtifact;
+    }) => {
+      if (
+        !hub.hosts.listHostRuntimeDeployments ||
+        !hub.hosts.setHostRuntimeDeployments
+      ) {
+        return;
+      }
+      try {
+        const current = await hub.hosts.listHostRuntimeDeployments({
+          scope_type: "host",
+          id: host.id,
+        });
+        const remaining = current
+          .filter(
+            (deployment) =>
+              !(
+                deployment.target_type === "artifact" &&
+                deployment.target === artifact
+              ),
+          )
+          .map((deployment) => ({
+            target_type: deployment.target_type,
+            target: deployment.target,
+            desired_version: deployment.desired_version,
+            rollout_policy: deployment.rollout_policy,
+            drain_deadline_seconds: deployment.drain_deadline_seconds,
+            rollout_reason: deployment.rollout_reason,
+            metadata: deployment.metadata,
+          }));
+        if (remaining.length === current.length) {
+          alert_message({
+            type: "info",
+            message: `${host.name} is already following the cluster default for ${artifact}.`,
+            timeout: 6,
+          });
+          return;
+        }
+        await hub.hosts.setHostRuntimeDeployments({
+          scope_type: "host",
+          id: host.id,
+          deployments: remaining,
+          replace: true,
+        });
+        await Promise.all([
+          refresh(),
+          runtimeDeployments.refresh(),
+          refreshHostOps(),
+        ]);
+        alert_message({
+          type: "success",
+          message: `Removed the host override for ${artifact} on ${host.name}. It will now follow the cluster default.`,
+          timeout: 6,
+        });
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `Failed to resume cluster default for ${artifact} on ${host.name}: ${
+            err instanceof Error ? err.message : `${err}`
+          }`,
+          timeout: 20,
+        });
+        console.error(err);
+      }
+    },
+    [hub, refresh, refreshHostOps, runtimeDeployments],
+  );
   const stopRunningProjectsOnHost = React.useCallback(
     async (host: Host) => {
       await stopHostProjects(host.id, { state_filter: "running" });
@@ -1233,6 +1306,9 @@ export const useHostsPageViewModel = () => {
       ? setRuntimeArtifactDeployment
       : undefined,
     onRollbackRuntimeArtifact: isAdmin ? rollbackRuntimeArtifact : undefined,
+    onResumeRuntimeArtifactClusterDefault: isAdmin
+      ? resumeRuntimeArtifactClusterDefault
+      : undefined,
     rootfsInventory,
     canManageRootfs,
     onStopRunningProjects: isAdmin ? stopRunningProjectsOnHost : undefined,

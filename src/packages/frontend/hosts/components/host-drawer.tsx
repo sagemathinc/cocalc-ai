@@ -110,6 +110,10 @@ type HostDrawerViewModel = {
     version?: string;
     last_known_good?: boolean;
   }) => void | Promise<void>;
+  onResumeRuntimeArtifactClusterDefault?: (opts: {
+    host: Host;
+    artifact: HostRuntimeArtifact;
+  }) => void | Promise<void>;
   rootfsInventory?: {
     entries: HostRootfsImage[];
     loading: boolean;
@@ -455,6 +459,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     runtimeDeployments,
     onSetRuntimeArtifactDeployment,
     onRollbackRuntimeArtifact,
+    onResumeRuntimeArtifactClusterDefault,
     rootfsInventory,
     canManageRootfs,
     onStopRunningProjects,
@@ -1032,6 +1037,28 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               )}
                             {canUpgrade &&
                               !host.deleted &&
+                              deployment?.scope_type === "host" &&
+                              onResumeRuntimeArtifactClusterDefault && (
+                                <Popconfirm
+                                  title={`Resume following the cluster default for ${label.toLowerCase()}?`}
+                                  description={`This deletes the host-specific desired version for ${label.toLowerCase()}. After that, this host will inherit the cluster default again, and if the host is running the backend may immediately queue the corresponding reconcile/upgrade work.`}
+                                  okText="Resume default"
+                                  cancelText="Cancel"
+                                  onConfirm={() =>
+                                    onResumeRuntimeArtifactClusterDefault({
+                                      host,
+                                      artifact,
+                                    })
+                                  }
+                                  disabled={hostOpActive}
+                                >
+                                  <Button size="small" disabled={hostOpActive}>
+                                    Resume cluster default
+                                  </Button>
+                                </Popconfirm>
+                              )}
+                            {canUpgrade &&
+                              !host.deleted &&
                               onRollbackRuntimeArtifact &&
                               rollbackVersion && (
                                 <Popconfirm
@@ -1136,6 +1163,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                     "none"}
                                 </code>
                               </Typography.Text>
+                            )}
+                            {deployment?.scope_type === "host" && (
+                              <Alert
+                                type="info"
+                                showIcon
+                                message="This host is pinned by a host-specific override"
+                                description={`Reason: ${deployment.rollout_reason ?? "manual override"}. Use “Resume cluster default” to remove the override and inherit the fleet default again.`}
+                              />
                             )}
                             <Space wrap>
                               {canUpgrade &&
