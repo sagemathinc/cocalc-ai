@@ -7,6 +7,7 @@ import type {
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
 } from "@cocalc/conat/hub/api/hosts";
+import type { ManagedComponentKind } from "@cocalc/conat/project-host/api";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLogEntry } from "./use-host-log";
 import type { HostLroState } from "./use-host-ops";
@@ -64,6 +65,22 @@ type UseHostDrawerViewModelArgs = {
   onResumeRuntimeArtifactClusterDefault?: (opts: {
     host: Host;
     artifact: HostRuntimeArtifact;
+  }) => void | Promise<void>;
+  onSetRuntimeComponentDeployment?: (opts: {
+    host: Host;
+    component: ManagedComponentKind;
+    desired_version: string;
+    source: "configured" | "hub";
+  }) => void | Promise<void>;
+  onRollbackRuntimeComponent?: (opts: {
+    host: Host;
+    component: ManagedComponentKind;
+    version?: string;
+    last_known_good?: boolean;
+  }) => void | Promise<void>;
+  onResumeRuntimeComponentClusterDefault?: (opts: {
+    host: Host;
+    component: ManagedComponentKind;
   }) => void | Promise<void>;
   rootfsInventory?: {
     entries: HostRootfsImage[];
@@ -126,6 +143,9 @@ export const useHostDrawerViewModel = ({
   onSetRuntimeArtifactDeployment,
   onRollbackRuntimeArtifact,
   onResumeRuntimeArtifactClusterDefault,
+  onSetRuntimeComponentDeployment,
+  onRollbackRuntimeComponent,
+  onResumeRuntimeComponentClusterDefault,
   rootfsInventory,
   canManageRootfs,
   onStopRunningProjects,
@@ -152,6 +172,9 @@ export const useHostDrawerViewModel = ({
     onSetRuntimeArtifactDeployment,
     onRollbackRuntimeArtifact,
     onResumeRuntimeArtifactClusterDefault,
+    onSetRuntimeComponentDeployment,
+    onRollbackRuntimeComponent,
+    onResumeRuntimeComponentClusterDefault,
     rootfsInventory,
     canManageRootfs,
     onStopRunningProjects,
