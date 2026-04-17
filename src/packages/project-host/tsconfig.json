@@ -10,6 +10,7 @@
     "build",
     "node_modules",
     "bin",
+    "scripts",
     "data",
     "data-0",
     "data-1",
