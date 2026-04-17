@@ -19,6 +19,7 @@ import {
   set_local_storage,
 } from "@cocalc/frontend/misc/local-storage";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { RegisteredReconnectResource } from "@cocalc/frontend/conat/reconnect-coordinator";
 import { JupyterActions as JupyterActions0 } from "@cocalc/jupyter/redux/actions";
 import {
   CellToolbarName,
@@ -187,6 +188,12 @@ export class JupyterActions extends JupyterActions0 {
   private liveRunReplayPoll?: ReturnType<typeof setInterval>;
   private kernelStatusRefreshTimeout?: ReturnType<typeof setTimeout>;
   private completedLiveRunIds = new globalThis.Map<string, number>();
+  private reconnectResource?: RegisteredReconnectResource;
+  private handleSyncdbDisconnected = () => {
+    this.reconnectResource?.requestReconnect({
+      reason: "jupyter_syncdb_disconnected",
+    });
+  };
   private reconcileRunCellOverlay = (id: string, newCell: Map<string, any>) => {
     const overlays = this.store?.get("runCellOverlays") as
       | Map<string, Map<string, any>>
@@ -1064,6 +1071,7 @@ export class JupyterActions extends JupyterActions0 {
 
   protected init2(): void {
     this.noteOpenInitPhase("init2.start");
+    this.initReconnectResource();
     this.syncdbPath = syncdbPath(this.path);
     this.liveRunPath = canonicalJupyterLiveRunPath(this.path);
     this.setState({
@@ -1091,6 +1099,7 @@ export class JupyterActions extends JupyterActions0 {
     this.set_save_status = debounce(f, 1000, { leading: true, trailing: true });
     this.syncdb.on("metadata-change", this.set_save_status);
     this.syncdb.on("connected", this.set_save_status);
+    this.syncdb.on("disconnected", this.handleSyncdbDisconnected);
     this.syncdb.on("open-phase", this.handleSyncdbOpenPhase);
 
     // Also maintain read_only state.
@@ -1339,6 +1348,12 @@ export class JupyterActions extends JupyterActions0 {
   public async close(): Promise<void> {
     try {
       if (this.isClosed()) return;
+      this.reconnectResource?.close();
+      this.reconnectResource = undefined;
+      this.syncdb?.removeListener?.(
+        "disconnected",
+        this.handleSyncdbDisconnected,
+      );
       if (window != null && this.workspaceRecordsChange != null) {
         window.removeEventListener(
           WORKSPACE_RECORDS_EVENT,
@@ -1380,6 +1395,37 @@ export class JupyterActions extends JupyterActions0 {
   private activity(): void {
     if (this._state === "closed") return;
     this.redux.getProjectActions(this.project_id).flag_file_activity(this.path);
+  }
+
+  private initReconnectResource(): void {
+    if (this.reconnectResource != null) {
+      return;
+    }
+    this.reconnectResource =
+      webapp_client.conat_client.registerReconnectResource({
+        canReconnect: () => !this.isClosed() && this.syncdb != null,
+        isConnected: () => this.isSyncdbLiveConnected(),
+        priority: () => "foreground",
+        reconnect: async () => {
+          if (typeof this.syncdb.wait_until_live_connected === "function") {
+            await this.syncdb.wait_until_live_connected();
+          }
+          await this.wait_until_ready();
+          if (this.isClosed()) {
+            throw Error("jupyter_closed");
+          }
+        },
+      });
+  }
+
+  private isSyncdbLiveConnected(): boolean {
+    if (this.syncdb == null) {
+      return false;
+    }
+    if (typeof this.syncdb.is_live_connected === "function") {
+      return this.syncdb.is_live_connected();
+    }
+    return this.syncdb.get_state() === "ready";
   }
 
   focus = (wait?: any) => {
