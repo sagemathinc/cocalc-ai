@@ -98,6 +98,16 @@ export interface ConatConnectionStatus {
   stats: ConnectionStats;
 }
 
+export type ConnectionTargetKind = "hub" | "project-host";
+
+export interface ConnectionTargetSnapshot {
+  id: string;
+  kind: ConnectionTargetKind;
+  label: string;
+  address?: string;
+  status: ConatConnectionStatus;
+}
+
 const DEFAULT_TIMEOUT = 15000;
 const AGENT_MANIFEST_TIMEOUT = 60_000;
 const AGENT_EXECUTE_TIMEOUT = 10 * 60_000;
@@ -138,6 +148,13 @@ const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK = new Set<string>([
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [3_000, 10_000, 30_000] as const;
 const ROUTED_HOST_REBUILD_AFTER_ATTEMPTS = 3;
+const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
+const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
+const EMPTY_CONNECTION_STATS: ConnectionStats = {
+  send: { messages: 0, bytes: 0 },
+  recv: { messages: 0, bytes: 0 },
+  subs: 0,
+};
 type RoutedHubClientState = {
   address: string;
   host_session_id?: string;
@@ -169,10 +186,19 @@ export class ConatClient extends EventEmitter {
   private routedHostRecoveryTimer?: ReturnType<typeof setTimeout>;
   private browserSessionAutomation: BrowserSessionAutomation;
   private reconnectCoordinator: ReconnectCoordinator;
+  private lastBackgroundAt?: number;
+  private foregroundWakeRecovery?: Promise<void>;
   public numConnectionAttempts = 0;
   private automaticallyReconnect;
   public address: string;
   private remote: boolean;
+  private readonly foregroundWakeHandler = () => {
+    if (this.tabReconnectPriority() !== "foreground") {
+      this.lastBackgroundAt = Date.now();
+      return;
+    }
+    void this.maybeRecoverForegroundWake();
+  };
   constructor(
     client: WebappClient,
     { address, remote }: { address?: string; remote?: boolean } = {},
@@ -214,6 +240,11 @@ export class ConatClient extends EventEmitter {
     this.on("state", (state) => {
       this.emit(state);
     });
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.foregroundWakeHandler);
+      window.addEventListener("focus", this.foregroundWakeHandler);
+      window.addEventListener("blur", this.foregroundWakeHandler);
+    }
   }
 
   private updateAddress = (address: string | undefined) => {
@@ -264,6 +295,52 @@ export class ConatClient extends EventEmitter {
     }
   });
 
+  private maybeRecoverForegroundWake = async () => {
+    if (this.remote || this.permanentlyDisconnected) {
+      return;
+    }
+    if (!this.automaticallyReconnect || !this.is_signed_in()) {
+      return;
+    }
+    if (this.tabReconnectPriority() !== "foreground") {
+      return;
+    }
+    const hiddenForMs =
+      this.lastBackgroundAt == null ? 0 : Date.now() - this.lastBackgroundAt;
+    if (hiddenForMs < FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS) {
+      return;
+    }
+    this.lastBackgroundAt = undefined;
+    if (this.foregroundWakeRecovery != null) {
+      return await this.foregroundWakeRecovery;
+    }
+    this.foregroundWakeRecovery = (async () => {
+      try {
+        await this.callHub({
+          name: "system.ping",
+          args: [],
+          timeout: FOREGROUND_WAKE_PING_TIMEOUT_MS,
+        });
+      } catch (err) {
+        if (
+          this.permanentlyDisconnected ||
+          !this.automaticallyReconnect ||
+          this.tabReconnectPriority() !== "foreground"
+        ) {
+          return;
+        }
+        console.warn(
+          `foreground wake probe failed after ${hiddenForMs}ms hidden; forcing reconnect`,
+          err,
+        );
+        this.reconnect();
+      } finally {
+        this.foregroundWakeRecovery = undefined;
+      }
+    })();
+    await this.foregroundWakeRecovery;
+  };
+
   private setConnectionStatus = (status: Partial<ConatConnectionStatus>) => {
     const actions = redux?.getActions("page");
     const store = redux?.getStore("page");
@@ -272,6 +349,117 @@ export class ConatClient extends EventEmitter {
     }
     const cur = store.get("conat")?.toJS();
     actions.setState({ conat: { ...cur, ...status } } as any);
+  };
+
+  private getHubLabel = (): string => {
+    const hubId =
+      `${this._conatClient?.info?.id ?? redux.getStore("account")?.get("hub") ?? ""}`.trim();
+    return hubId ? `hub ${hubId}` : "hub";
+  };
+
+  private getProjectHostLabel = (host_id: string): string => {
+    const hostName =
+      `${redux.getStore("projects")?.get("host_info")?.get(host_id)?.get?.("name") ?? ""}`.trim();
+    if (hostName) {
+      return `project-host ${hostName}`;
+    }
+    return `project-host ${host_id.slice(0, 8)}`;
+  };
+
+  private getHubConnectionStatusSnapshot = (): ConatConnectionStatus => {
+    const connected = !!this._conatClient?.conn?.connected;
+    return {
+      state: connected ? "connected" : "disconnected",
+      reason: connected ? "" : "transport unavailable",
+      details: connected
+        ? { address: this.address }
+        : {
+            address: this.address,
+            automaticallyReconnect: !!this.automaticallyReconnect,
+          },
+      stats: this._conatClient?.stats ?? EMPTY_CONNECTION_STATS,
+    };
+  };
+
+  private getRoutedHostConnectionStatusSnapshot = (
+    host_id: string,
+    state: RoutedHubClientState,
+  ): ConatConnectionStatus => {
+    const connected = !!state.client?.conn?.connected;
+    return {
+      state: connected
+        ? "connected"
+        : state.reconnectTimer != null
+          ? "connecting"
+          : "disconnected",
+      reason: connected
+        ? ""
+        : state.reconnectTimer != null
+          ? "reconnecting"
+          : "transport unavailable",
+      details: {
+        host_id,
+        address: state.address,
+        host_session_id: state.host_session_id,
+        project_ids: Array.from(state.project_ids),
+      },
+      stats: state.client?.stats ?? EMPTY_CONNECTION_STATS,
+    };
+  };
+
+  getConnectionTargets = (): ConnectionTargetSnapshot[] => {
+    const targets: ConnectionTargetSnapshot[] = [
+      {
+        id: "hub",
+        kind: "hub",
+        label: this.getHubLabel(),
+        address: this.address,
+        status: this.getHubConnectionStatusSnapshot(),
+      },
+    ];
+    for (const [host_id, state] of Object.entries(this.routedHubClients)) {
+      if (!state.client?.conn?.connected) {
+        continue;
+      }
+      targets.push({
+        id: `project-host:${host_id}`,
+        kind: "project-host",
+        label: this.getProjectHostLabel(host_id),
+        address: state.address,
+        status: this.getRoutedHostConnectionStatusSnapshot(host_id, state),
+      });
+    }
+    return targets;
+  };
+
+  probeConnectionTarget = async (
+    targetId: string,
+    timeout = FOREGROUND_WAKE_PING_TIMEOUT_MS,
+  ): Promise<number | undefined> => {
+    const started = Date.now();
+    if (targetId === "hub") {
+      await this.callHub({
+        name: "system.ping",
+        args: [],
+        timeout,
+      });
+      return Date.now() - started;
+    }
+    const prefix = "project-host:";
+    if (!targetId.startsWith(prefix)) {
+      return;
+    }
+    const host_id = targetId.slice(prefix.length);
+    const state = this.routedHubClients[host_id];
+    if (!state?.client?.conn?.connected) {
+      return;
+    }
+    await state.client.request(
+      `hub.account.${this.client.account_id}.api`,
+      { name: "system.ping", args: [] },
+      { timeout },
+    );
+    return Date.now() - started;
   };
 
   conat = () => {
