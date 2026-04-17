@@ -125,9 +125,9 @@ function ensureSessionListeners() {
     closeSharedStreams();
     leaseManager = createLeaseManager();
   };
-  webapp_client.on("signed_in", signedInListener);
-  webapp_client.on("signed_out", signedOutListener);
-  webapp_client.on("remember_me_failed", rememberMeFailedListener);
+  webapp_client.on?.("signed_in", signedInListener);
+  webapp_client.on?.("signed_out", signedOutListener);
+  webapp_client.on?.("remember_me_failed", rememberMeFailedListener);
 }
 
 async function ensureSharedProjectDStream<T>(
