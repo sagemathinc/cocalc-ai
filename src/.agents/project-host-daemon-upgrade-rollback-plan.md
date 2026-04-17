@@ -1,6 +1,7 @@
 # Project-Host Runtime Upgrade And Rollback Plan
 
-Status: proposed implementation plan
+Status: partially implemented; this document is now primarily the remaining-work
+plan and architecture reference
 
 Goal: evolve the current imperative host software upgrade and managed-component
 rollout work into a fully production-ready runtime lifecycle system for Linux
@@ -45,67 +46,79 @@ It is not a plan for:
 
 ## Where We Are Now
 
-The current implementation already has useful building blocks.
+This document started as a proposal. A substantial part of the base system now
+exists, so the useful question is no longer "is this architecture plausible?"
+but "which parts are finished, partial, or still missing?"
 
-### Implemented
+### Landed
 
-1. Host software artifacts can be upgraded through the hub control plane:
-   - `cocalc host upgrade ...`
-   - [host.ts](/home/user/cocalc-ai/src/packages/cli/src/bin/commands/host.ts)
-   - [hosts.ts](/home/user/cocalc-ai/src/packages/server/conat/api/hosts.ts)
-   - [upgrade.ts](/home/user/cocalc-ai/src/packages/project-host/upgrade.ts)
-2. `project-host` bundle install and `project-host` restart are now separated.
-   - host artifact install can happen without immediate self-restart
-   - server-side upgrade path can explicitly roll out `project-host` afterward
-3. Managed-component status exists:
-   - [managed-components.ts](/home/user/cocalc-ai/src/packages/project-host/managed-components.ts)
-4. Managed-component rollout exists:
-   - [managed-component-rollout.ts](/home/user/cocalc-ai/src/packages/project-host/managed-component-rollout.ts)
+1. Host-local safety-critical recovery is no longer just a design idea.
+   - `host-agent` exists as the separate low-churn supervisor for the critical
+     host-local daemons.
+   - automatic `project-host` rollback now exists and is executed through that
+     host-local control path instead of remaining only an ssh/manual recovery
+     story.
+2. Desired runtime deployment state exists in the hub.
+   - global desired versions exist
+   - host-scoped overrides exist
+   - the effective target for a host can now differ from the cluster default
+3. Managed-component status and rollout exist for the daemon components:
    - `project-host`
    - `conat-router`
    - `conat-persist`
    - `acp-worker`
-5. A routed host-control RPC and CLI exist:
-   - `cocalc host rollout <host> --component ...`
-6. Bootstrap/reconcile already exists as the broader host software lifecycle:
-   - [bootstrap-tool-lifecycle.md](/home/user/cocalc-ai/src/.agents/bootstrap-tool-lifecycle.md)
-7. Running-project artifact reference tracking now exists for bundle/tools:
-   - host deploy status exposes `referenced_versions` for `project bundle` and
+4. The host software control surface is now broader than imperative
+   `host upgrade`.
+   - routed host rollout RPC/CLI exists
+   - host-scoped desired state can be resumed back to the cluster default
+   - the control plane can now explain some automatic rollback cases instead of
+     only exposing stale failed upgrades
+5. The GUI is no longer purely fire-and-forget.
+   - `/hosts` has a runtime versions catalog
+   - cluster default can be changed from the UI
+   - per-host rollback pins are surfaced more explicitly
+   - `Resume cluster default` exists in both UI and CLI
+6. Artifact metadata/catalog work has started.
+   - published runtime versions now carry operator-facing metadata such as
+     build message
+   - the `/hosts` runtime versions panel can show recent published versions and
+     current fleet adoption
+7. Running-project artifact reference tracking exists for bundle/tools.
+   - deploy status exposes `referenced_versions` for `project bundle` and
      `project tools`
-   - this is enough to prove the host can now observe which running projects
-     are still pinned to older retained versions
+   - this is enough to make retention/rollback decisions data-driven later
 
-### Not Yet Implemented
+### Partial / Still Missing
 
-1. There is no persisted desired runtime version state in the hub.
-2. There is no per-host override vs global default desired state model.
-3. Offline hosts do not automatically converge to new daemon versions when they
-   come back unless an operator manually upgrades them later.
-4. There is no first-class rollback command.
-5. There is no automatic rollback for `project-host` if control-plane health
-   disappears after an upgrade.
-6. Bundle retention is too small for safe rollback workflows.
-7. The GUI still presents upgrade mainly as a fire-and-forget imperative action
-   instead of a desired-state workflow with explicit policy and rollback.
-8. Component policy exists conceptually, but not yet as durable control-plane
-   state:
-   - `project-host`: restart now
-   - `conat-router`: restart now
-   - `conat-persist`: restart now
-   - `acp-worker`: drain then replace
-9. Current rollout is still fundamentally "act now on whatever is installed on
-   this host", not "make this host converge to the declared target state".
-10. LRO correctness and idempotency still have gaps:
-    - a repeated successful `host upgrade --wait` should converge quickly or
-      no-op, not hang indefinitely
-    - the control plane needs stronger guarantees that repeated deploy/upgrade
-      requests do not get stuck waiting on stale completion state
-11. CLI `--wait` mode is too silent today:
-    - the frontend already surfaces rich rollout progress
-    - the CLI should stream meaningful intermediate status instead of printing
-      nothing until final completion
-12. The safety-critical host recovery path still lives inside `project-host`,
-    which is the same high-churn daemon we are trying to upgrade and roll back.
+1. The plan document itself is stale.
+   - it still reads as if desired-state, host overrides, automatic rollback,
+     and the runtime versions UI do not exist
+2. The `/hosts` UI is still too artifact-centric.
+   - the host drawer still does not expose daemon components as first-class
+     rows for `conat-router`, `conat-persist`, and `acp-worker`
+3. Fleet-scale exception visibility is still missing.
+   - there is no good fleet-wide view of hosts pinned away from the cluster
+     default
+   - there is no central "these hosts auto-rolled back" table/filter for large
+     fleets
+4. Explicit rollback to a chosen prior version is still not a first-class
+   standard workflow in the UI.
+   - we can explain automatic rollback pins
+   - we can resume following the cluster default
+   - but normal operator-facing rollback-to-version still needs better affordances
+5. Retained rollback inventory and pruning policy are still incomplete.
+   - the system can now observe referenced bundle/tools versions
+   - but local rollback inventory, retention policy, and rollback candidate
+     surfacing are not operator-friendly yet
+6. Some desired-state semantics are still incomplete or only partially proven.
+   - offline host convergence needs more end-to-end validation
+   - component policy is not yet exposed as durable central control-plane state
+   - rollout is still partly framed as "act now" instead of uniformly
+     "converge to declared target state"
+7. LRO and CLI ergonomics still have gaps.
+   - `--wait` output is still too quiet in some paths
+   - repeated deploy/upgrade requests still need stronger idempotency and stale
+     state handling
 
 ## Problem Statement
 
