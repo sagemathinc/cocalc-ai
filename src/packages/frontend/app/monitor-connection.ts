@@ -115,7 +115,11 @@ export function init_connection(): void {
       if (!recent_wakeup_from_standby()) {
         alert_message(msg);
       }
-      webapp_client.conat_client.reconnect();
+      webapp_client.conat_client.requestReconnect({
+        reason: "monitor_connection",
+        priority: "foreground",
+        resetBackoff: true,
+      });
       // Wait a half second, then remove one extra reconnect added by the call in the above line.
       await delay(500);
       recent_disconnects.pop();

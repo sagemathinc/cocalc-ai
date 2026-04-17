@@ -83,6 +83,10 @@ import {
   type BrowserSessionAutomation,
 } from "./browser-session";
 import { routeProjectHostHttpUrl } from "./project-host-route";
+import {
+  ReconnectCoordinator,
+  type ReconnectPriority,
+} from "./reconnect-coordinator";
 
 export interface ConatConnectionStatus {
   state: "connected" | "connecting" | "disconnected";
@@ -130,12 +134,6 @@ const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK = new Set<string>([
 ]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 const ROUTED_HOST_REBUILD_AFTER_ATTEMPTS = 3;
-const MAIN_RECONNECT_DELAY_MS = 1_000;
-const MAIN_RECONNECT_DELAY_MAX_MS = 30_000;
-const MAIN_RECONNECT_DELAY_DECAY = 2;
-const MAIN_RECONNECT_DELAY_JITTER = 0.2;
-const MAIN_RECONNECT_STABLE_RESET_MS = 60_000;
-
 type RoutedHubClientState = {
   address: string;
   host_session_id?: string;
@@ -162,11 +160,9 @@ export class ConatClient extends EventEmitter {
   private projectHostTokens: { [host_id: string]: ProjectHostTokenState } = {};
   private routedHostRecoveryTimer?: ReturnType<typeof setTimeout>;
   private browserSessionAutomation: BrowserSessionAutomation;
+  private reconnectCoordinator: ReconnectCoordinator;
   public numConnectionAttempts = 0;
   private automaticallyReconnect;
-  private reconnectTimer?: ReturnType<typeof setTimeout>;
-  private reconnectStableTimer?: ReturnType<typeof setTimeout>;
-  private reconnectAttempt = 0;
   public address: string;
   private remote: boolean;
   constructor(
@@ -184,6 +180,27 @@ export class ConatClient extends EventEmitter {
       client: this.client,
       hub: this.hub,
       conat: this.conat,
+    });
+    this.reconnectCoordinator = new ReconnectCoordinator({
+      canReconnect: () =>
+        !this.permanentlyDisconnected && !!this.automaticallyReconnect,
+      connect: async () => {
+        await this.connect();
+      },
+      isConnected: () => !!this._conatClient?.conn?.connected,
+      onReconnectScheduled: ({ delay_ms, attempt, priority, reason }) => {
+        this.numConnectionAttempts = attempt;
+        this.client.emit("connecting");
+        this.setConnectionStatus({
+          state: "connecting",
+          reason,
+          details: { delay_ms, attempt, priority },
+          stats: this._conatClient?.stats,
+        });
+      },
+      onReconnectStable: () => {
+        this.numConnectionAttempts = 0;
+      },
     });
     this.initConatClient();
     this.on("state", (state) => {
@@ -279,8 +296,7 @@ export class ConatClient extends EventEmitter {
         reconnection: false,
       });
       this._conatClient.on("connected", () => {
-        this.clearReconnectTimer();
-        this.scheduleReconnectStableReset();
+        this.reconnectCoordinator.noteConnected();
         this.setConnectionStatus({
           state: "connected",
           reason: "",
@@ -299,7 +315,10 @@ export class ConatClient extends EventEmitter {
         });
         this.client.emit("disconnected", "offline");
         if (this.automaticallyReconnect) {
-          this.scheduleReconnect();
+          this.reconnectCoordinator.requestReconnect({
+            reason: `transport_disconnected:${reason ?? "unknown"}`,
+            priority: this.tabReconnectPriority(),
+          });
         }
       });
       this._conatClient.conn.on("connect_error", (err) => {
@@ -312,101 +331,20 @@ export class ConatClient extends EventEmitter {
           details: err,
           stats: this._conatClient?.stats,
         });
-        this.scheduleReconnect();
+        this.reconnectCoordinator.requestReconnect({
+          reason: "connect_error",
+          priority: this.tabReconnectPriority(),
+        });
       });
     }
     return this._conatClient!;
   };
 
-  private clearReconnectTimer = () => {
-    if (this.reconnectTimer != null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = undefined;
+  private tabReconnectPriority = (): ReconnectPriority => {
+    if (typeof document === "undefined") {
+      return "foreground";
     }
-  };
-
-  private cancelReconnectStableReset = () => {
-    if (this.reconnectStableTimer != null) {
-      clearTimeout(this.reconnectStableTimer);
-      this.reconnectStableTimer = undefined;
-    }
-  };
-
-  private resetReconnectBackoff = () => {
-    this.clearReconnectTimer();
-    this.cancelReconnectStableReset();
-    this.reconnectAttempt = 0;
-    this.numConnectionAttempts = 0;
-  };
-
-  private scheduleReconnectStableReset = () => {
-    if (this.reconnectAttempt == 0) {
-      return;
-    }
-    this.cancelReconnectStableReset();
-    const attempt = this.reconnectAttempt;
-    this.reconnectStableTimer = setTimeout(() => {
-      if (
-        this._conatClient?.conn?.connected &&
-        this.reconnectAttempt === attempt &&
-        !this.permanentlyDisconnected
-      ) {
-        this.reconnectAttempt = 0;
-        this.numConnectionAttempts = 0;
-      }
-    }, MAIN_RECONNECT_STABLE_RESET_MS);
-  };
-
-  private nextReconnectDelay = () => {
-    const base = Math.max(1, MAIN_RECONNECT_DELAY_MS);
-    const max = Math.max(base, MAIN_RECONNECT_DELAY_MAX_MS);
-    const decay = Math.max(1, MAIN_RECONNECT_DELAY_DECAY);
-    const jitter = Math.max(0, MAIN_RECONNECT_DELAY_JITTER);
-    this.reconnectAttempt += 1;
-    this.numConnectionAttempts = this.reconnectAttempt;
-    const raw = Math.min(
-      max,
-      Math.round(base * decay ** Math.max(0, this.reconnectAttempt - 1)),
-    );
-    const factor = jitter == 0 ? 1 : 1 + (Math.random() * 2 - 1) * jitter;
-    return Math.max(base, Math.round(raw * factor));
-  };
-
-  private scheduleReconnect = (delayMs?: number) => {
-    if (this.permanentlyDisconnected || !this.automaticallyReconnect) {
-      return;
-    }
-    this.cancelReconnectStableReset();
-    if (this._conatClient?.conn?.connected) {
-      this.resetReconnectBackoff();
-      return;
-    }
-    if (this.reconnectTimer != null) {
-      return;
-    }
-    const delay =
-      delayMs != null ? Math.max(0, delayMs) : this.nextReconnectDelay();
-    if (delayMs != null && delayMs === 0) {
-      this.reconnectAttempt = Math.max(this.reconnectAttempt, 1);
-      this.numConnectionAttempts = this.reconnectAttempt;
-    }
-    this.client.emit("connecting");
-    this.setConnectionStatus({
-      state: "connecting",
-      reason: "reconnect_scheduled",
-      details: { delay_ms: delay, attempt: this.numConnectionAttempts },
-      stats: this._conatClient?.stats,
-    });
-    this.reconnectTimer = setTimeout(async () => {
-      delete this.reconnectTimer;
-      if (this.permanentlyDisconnected || this._conatClient?.conn?.connected) {
-        return;
-      }
-      await this.connect();
-      if (!this._conatClient?.conn?.connected) {
-        this.scheduleReconnect();
-      }
-    }, delay);
+    return document.visibilityState === "hidden" ? "background" : "foreground";
   };
 
   // Match project subjects in the same way the server auth does:
@@ -1147,10 +1085,7 @@ export class ConatClient extends EventEmitter {
     if (this.permanentlyDisconnected) {
       return;
     }
-    this.clearReconnectTimer();
-    this.cancelReconnectStableReset();
-    this.reconnectAttempt = 0;
-    this.numConnectionAttempts = 0;
+    this.reconnectCoordinator.standby();
     void this.browserSessionAutomation.stop();
     if (this.routedHostRecoveryTimer != null) {
       clearTimeout(this.routedHostRecoveryTimer);
@@ -1175,14 +1110,38 @@ export class ConatClient extends EventEmitter {
       this._conatClient?.conn?.io?.engine?.close();
     } catch {}
     this.automaticallyReconnect = true;
-    this.scheduleReconnect(0);
+    this.reconnectCoordinator.requestReconnect({
+      reason: "manual_reconnect",
+      priority: "foreground",
+      resetBackoff: true,
+    });
+  };
+
+  requestReconnect = ({
+    reason = "coordinated_reconnect",
+    priority = this.tabReconnectPriority(),
+    resetBackoff = false,
+  }: {
+    reason?: string;
+    priority?: ReconnectPriority;
+    resetBackoff?: boolean;
+  } = {}) => {
+    if (this.permanentlyDisconnected) {
+      return;
+    }
+    this.automaticallyReconnect = true;
+    this.reconnectCoordinator.requestReconnect({
+      reason,
+      priority,
+      resetBackoff,
+    });
   };
 
   // if there is a connection, put it in standby
   standby = () => {
     // @ts-ignore
     this.automaticallyReconnect = false;
-    this.resetReconnectBackoff();
+    this.reconnectCoordinator.standby();
     void this.browserSessionAutomation.stop();
     if (this.routedHostRecoveryTimer != null) {
       clearTimeout(this.routedHostRecoveryTimer);
@@ -1206,7 +1165,7 @@ export class ConatClient extends EventEmitter {
   // if there is a connection, resume it
   resume = () => {
     this.automaticallyReconnect = true;
-    this.scheduleReconnect(0);
+    this.reconnectCoordinator.resume();
   };
 
   // keep trying until connected.
