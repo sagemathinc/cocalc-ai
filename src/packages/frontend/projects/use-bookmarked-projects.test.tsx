@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { redux } from "@cocalc/frontend/app-framework";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -16,12 +16,8 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   },
 }));
 
-jest.mock("@cocalc/frontend/webapp-client", () => ({
-  webapp_client: {
-    conat_client: {
-      dkv: jest.fn(),
-    },
-  },
+jest.mock("@cocalc/frontend/conat/account-dkv", () => ({
+  getSharedAccountDkv: jest.fn(),
 }));
 
 class FakeBookmarks extends EventEmitter {
@@ -62,7 +58,7 @@ function TestComponent() {
 
 describe("useBookmarkedProjects", () => {
   const getStoreMock = redux.getStore as jest.Mock;
-  const dkvMock = webapp_client.conat_client.dkv as jest.Mock;
+  const dkvMock = getSharedAccountDkv as jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();

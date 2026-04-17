@@ -1,4 +1,5 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 
 const REVIEW_STORE_V2 = "cocalc-git-review-v2";
 const REVIEW_STORE_V1 = "cocalc-commit-review-v1";
@@ -206,7 +207,7 @@ function getReviewStore(accountId: string) {
 }
 
 async function getReviewBulkStore(accountId: string) {
-  return await webapp_client.conat_client.dkv<GitReviewRecordV2>({
+  return await getSharedAccountDkv<GitReviewRecordV2>({
     account_id: accountId,
     name: REVIEW_STORE_V2,
   });

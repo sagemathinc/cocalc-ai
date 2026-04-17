@@ -6,9 +6,9 @@
 import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { ActiveFileSort } from "@cocalc/frontend/project_store";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { waitForPersistAccountId } from "./persist-account-id";
 
 interface ExplorerSettings {
@@ -69,12 +69,11 @@ function useSettingsDKV(
       const account_id = await waitForPersistAccountId();
       if (!isMounted) return;
       try {
-        conatDkv = (await webapp_client.conat_client.dkv<ExplorerSettings>({
+        conatDkv = (await getSharedAccountDkv<ExplorerSettings>({
           account_id,
           name: DKV_NAME,
         })) as unknown as SettingsDKV;
         if (!isMounted) {
-          conatDkv.close?.();
           return;
         }
 
@@ -87,15 +86,12 @@ function useSettingsDKV(
       } finally {
         if (isMounted) {
           initializedRef.current = true;
-        } else {
-          conatDkv?.close?.();
         }
       }
     })();
 
     return () => {
       isMounted = false;
-      dkvRef.current?.close?.();
       dkvRef.current = null;
       initializedRef.current = false;
       dirtyRef.current = false;

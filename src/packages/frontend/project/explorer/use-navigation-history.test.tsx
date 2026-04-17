@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 import { useNavigationHistory } from "./use-navigation-history";
 import { waitForPersistAccountId } from "./persist-account-id";
 
@@ -9,12 +9,8 @@ jest.mock("./persist-account-id", () => ({
   waitForPersistAccountId: jest.fn(),
 }));
 
-jest.mock("@cocalc/frontend/webapp-client", () => ({
-  webapp_client: {
-    conat_client: {
-      dkv: jest.fn(),
-    },
-  },
+jest.mock("@cocalc/frontend/conat/account-dkv", () => ({
+  getSharedAccountDkv: jest.fn(),
 }));
 
 class FakeNavDkv {
@@ -62,7 +58,7 @@ function TestComponent() {
 
 describe("useNavigationHistory", () => {
   const waitForPersistAccountIdMock = waitForPersistAccountId as jest.Mock;
-  const dkvMock = webapp_client.conat_client.dkv as jest.Mock;
+  const dkvMock = getSharedAccountDkv as jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();

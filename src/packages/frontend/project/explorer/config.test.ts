@@ -13,29 +13,23 @@ describe("explorer config persistence", () => {
       .mockReturnValueOnce("account-1")
       .mockReturnValueOnce("account-2")
       .mockReturnValue("account-2");
-    const dkv = jest
+    const getSharedAccountDkv = jest
       .fn()
       .mockResolvedValueOnce({
         get: () => undefined,
         set: jest.fn(),
-        close: jest.fn(),
       })
       .mockResolvedValueOnce({
         get: () => undefined,
         set: jest.fn(),
-        close: jest.fn(),
       });
 
     jest.doMock("./persist-account-id", () => ({
       getPersistAccountId,
       waitForPersistAccountId,
     }));
-    jest.doMock("@cocalc/frontend/webapp-client", () => ({
-      webapp_client: {
-        conat_client: {
-          dkv,
-        },
-      },
+    jest.doMock("@cocalc/frontend/conat/account-dkv", () => ({
+      getSharedAccountDkv,
     }));
 
     await jest.isolateModulesAsync(async () => {
@@ -46,11 +40,11 @@ describe("explorer config persistence", () => {
     });
 
     expect(waitForPersistAccountId).toHaveBeenCalled();
-    expect(dkv).toHaveBeenNthCalledWith(1, {
+    expect(getSharedAccountDkv).toHaveBeenNthCalledWith(1, {
       name: "cocalc-explorer-config",
       account_id: "account-1",
     });
-    expect(dkv).toHaveBeenNthCalledWith(2, {
+    expect(getSharedAccountDkv).toHaveBeenNthCalledWith(2, {
       name: "cocalc-explorer-config",
       account_id: "account-2",
     });

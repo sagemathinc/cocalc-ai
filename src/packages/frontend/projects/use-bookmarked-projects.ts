@@ -20,8 +20,8 @@ bm.on('change', (e) => console.log('Bookmark change:', e))
 import { uniq } from "lodash";
 import { useEffect, useRef, useState } from "react";
 
+import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 import { redux } from "@cocalc/frontend/app-framework";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const CONAT_BOOKMARKS_KEY = "bookmarks";
 const PROJECTS_KEY = "projects";
@@ -62,11 +62,10 @@ export function useBookmarkedProjects() {
         });
 
         const account_id = store.get_account_id();
-        conatBookmarks = await webapp_client.conat_client.dkv<
-          Record<string, any>
-        >({
+        conatBookmarks = await getSharedAccountDkv<Record<string, any>>({
           account_id,
           name: CONAT_BOOKMARKS_KEY,
+          maxListeners: 100,
         });
 
         // Check if component was unmounted while we were waiting

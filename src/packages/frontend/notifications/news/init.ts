@@ -20,6 +20,7 @@ import {
   redux,
 } from "@cocalc/frontend/app-framework";
 import { getAntdNotificationInstance } from "@cocalc/frontend/app/antd-notification";
+import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { NewsItemWebapp, SYSTEM_CHANNEL } from "@cocalc/util/types/news";
@@ -114,7 +115,6 @@ function closeSystemNewsSeenState(): void {
     systemNewsSeenState.off("change", systemNewsSeenStateListener);
   }
   systemNewsSeenStateListener = undefined;
-  systemNewsSeenState?.close();
   systemNewsSeenState = undefined;
   systemNewsSeenStateInit = undefined;
 }
@@ -153,14 +153,11 @@ async function ensureSystemNewsSeenState(): Promise<void> {
       closeSystemNewsSeenState();
       return;
     }
-    const dkv = await webapp_client.conat_client.dkv<number>({
+    const dkv = await getSharedAccountDkv<number>({
       account_id,
       name: SEEN_STATE_DKV_NAME,
       merge: ({ local, remote }) => local ?? remote,
     });
-    if (systemNewsSeenState != null && systemNewsSeenState !== dkv) {
-      systemNewsSeenState.close();
-    }
     systemNewsSeenState = dkv;
     seenSystemNewsIds.clear();
     for (const [key, value] of Object.entries(dkv.getAll())) {

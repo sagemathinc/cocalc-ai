@@ -20,7 +20,7 @@ bm.on('change', (e) => console.log('Bookmark change:', e))
 import { sortBy, uniq } from "lodash";
 import { useEffect, useRef, useState } from "react";
 
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 import { waitForPersistAccountId } from "@cocalc/frontend/project/explorer/persist-account-id";
 import { CONAT_BOOKMARKS_KEY } from "@cocalc/util/consts/bookmarks";
 import { path_split, path_to_file } from "@cocalc/util/misc";
@@ -88,12 +88,11 @@ export function useStarredFilesManager(
 
   async function initializeConatBookmarks(account_id: string) {
     try {
-      const conatBookmarks = await webapp_client.conat_client.dkv<string[]>({
+      const conatBookmarks = await getSharedAccountDkv<string[]>({
         account_id,
         name: CONAT_BOOKMARKS_KEY,
+        maxListeners: 100,
       });
-
-      conatBookmarks.setMaxListeners(100);
 
       setBookmarks(conatBookmarks);
 
@@ -162,9 +161,10 @@ export async function migrateStarsOnMove(
   try {
     const account_id = await waitForPersistAccountId();
 
-    const bookmarks = await webapp_client.conat_client.dkv<string[]>({
+    const bookmarks = await getSharedAccountDkv<string[]>({
       account_id,
       name: CONAT_BOOKMARKS_KEY,
+      maxListeners: 100,
     });
     const current: string[] = bookmarks.get(project_id) ?? [];
     if (current.length === 0) return;

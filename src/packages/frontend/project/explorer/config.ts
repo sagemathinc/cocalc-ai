@@ -2,11 +2,11 @@
 Store how a user has configured the view of a given directory.
 */
 
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { type DKV } from "@cocalc/conat/sync/dkv";
 import { type SortField } from "@cocalc/frontend/project/listing/use-listing";
 import { dirname } from "path";
 import { redux } from "@cocalc/frontend/app-framework";
+import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 import {
   getPersistAccountId,
   waitForPersistAccountId,
@@ -18,7 +18,6 @@ let kv: DKV | null = null;
 let kvAccountId: string | null = null;
 
 function closeKv() {
-  kv?.close?.();
   kv = null;
   kvAccountId = null;
 }
@@ -42,7 +41,7 @@ async function init() {
     return;
   }
   closeKv();
-  kv = await webapp_client.conat_client.dkv({
+  kv = await getSharedAccountDkv({
     name: NAME,
     account_id,
   });

@@ -6,7 +6,7 @@
 import { useCallback, useRef, useState } from "react";
 import useAsyncEffect from "use-async-effect";
 
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 import { waitForPersistAccountId } from "./persist-account-id";
 
 const DKV_NAME = "explorer-search-history";
@@ -96,12 +96,11 @@ export function useExplorerSearchHistory(project_id: string): {
       }
 
       try {
-        const conatDkv = await webapp_client.conat_client.dkv<string[]>({
+        const conatDkv = await getSharedAccountDkv<string[]>({
           account_id,
           name: DKV_NAME,
         });
         if (!isMounted()) {
-          conatDkv.close?.();
           return;
         }
 
@@ -122,7 +121,6 @@ export function useExplorerSearchHistory(project_id: string): {
       }
     },
     () => {
-      dkvRef.current?.close?.();
       dkvRef.current = null;
       setHistory([]);
       setInitialized(false);

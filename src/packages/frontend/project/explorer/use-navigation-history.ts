@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 import { waitForPersistAccountId } from "./persist-account-id";
 
 const MAX_HISTORY = 100;
@@ -89,12 +89,11 @@ export function useNavigationHistory(
       const account_id = await waitForPersistAccountId();
       if (!isMounted) return;
       try {
-        conatDkv = (await webapp_client.conat_client.dkv<PersistedState>({
+        conatDkv = (await getSharedAccountDkv<PersistedState>({
           account_id,
           name: DKV_NAME,
         })) as unknown as NavDKV;
         if (!isMounted) {
-          conatDkv.close?.();
           return;
         }
 
@@ -128,15 +127,12 @@ export function useNavigationHistory(
       } finally {
         if (isMounted) {
           setInitialized(true);
-        } else {
-          conatDkv?.close?.();
         }
       }
     })();
 
     return () => {
       isMounted = false;
-      dkvRef.current?.close?.();
       dkvRef.current = null;
       setInitialized(false);
     };

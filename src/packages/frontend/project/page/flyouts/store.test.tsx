@@ -2,7 +2,7 @@ import { EventEmitter } from "events";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { useStarredFilesManager } from "./store";
 import { redux } from "@cocalc/frontend/app-framework";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 import { waitForPersistAccountId } from "@cocalc/frontend/project/explorer/persist-account-id";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -11,12 +11,8 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   },
 }));
 
-jest.mock("@cocalc/frontend/webapp-client", () => ({
-  webapp_client: {
-    conat_client: {
-      dkv: jest.fn(),
-    },
-  },
+jest.mock("@cocalc/frontend/conat/account-dkv", () => ({
+  getSharedAccountDkv: jest.fn(),
 }));
 
 jest.mock("@cocalc/frontend/project/explorer/persist-account-id", () => ({
@@ -51,7 +47,7 @@ function TestComponent({
 
 describe("useStarredFilesManager", () => {
   const getStoreMock = redux.getStore as jest.Mock;
-  const dkvMock = webapp_client.conat_client.dkv as jest.Mock;
+  const dkvMock = getSharedAccountDkv as jest.Mock;
   const waitForPersistAccountIdMock = waitForPersistAccountId as jest.Mock;
 
   beforeEach(() => {
