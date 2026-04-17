@@ -9,6 +9,7 @@ import { chmod, rm } from "node:fs/promises";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { RUSTIC } from "./subvolume-rustic";
 import { SYNC_STATE } from "./sync";
+import { btrfsQuotasDisabled } from "./config";
 
 const RESERVED = new Set([RUSTIC, SNAPSHOTS, SYNC_STATE]);
 
@@ -56,11 +57,13 @@ export class Subvolumes {
     // ensure qgroup exists for the clone (snapshot does not create it)
     const clonedPath = join(this.filesystem.opts.mount, dest);
     const id = await this.get(dest).then((sv) => sv.getSubvolumeId());
-    await btrfs({
-      args: ["qgroup", "create", `1/${id}`, clonedPath],
-    }).catch(() => {
-      /* ignore if it already exists */
-    });
+    if (!btrfsQuotasDisabled()) {
+      await btrfs({
+        args: ["qgroup", "create", `1/${id}`, clonedPath],
+      }).catch(() => {
+        /* ignore if it already exists */
+      });
+    }
     const snapdir = join(this.filesystem.opts.mount, dest, SNAPSHOTS);
     if (await exists(snapdir)) {
       await chmod(snapdir, "0700");
@@ -72,7 +75,7 @@ export class Subvolumes {
     const src = await this.get(source);
     const dst = await this.get(dest);
     const { size } = await src.quota.get();
-    if (size) {
+    if (!btrfsQuotasDisabled() && size) {
       await dst.quota.set(size);
     }
     return dst;

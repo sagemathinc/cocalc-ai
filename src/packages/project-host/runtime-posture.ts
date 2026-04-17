@@ -163,6 +163,11 @@ async function postureSweep(context: "startup" | "periodic"): Promise<void> {
       logger.debug("runtime posture: quota queue not initialized yet", {
         context,
       });
+    } else if (!quotaQueue.enabled) {
+      logger.warn("runtime posture: btrfs quota queue disabled", {
+        context,
+        status: quotaQueue,
+      });
     } else if (quotaQueue.failed_count > 0) {
       logger.warn("runtime posture: btrfs quota queue has failed work", {
         context,

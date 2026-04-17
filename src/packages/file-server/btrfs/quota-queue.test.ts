@@ -2,6 +2,7 @@ describe("btrfs quota queue rescan logging", () => {
   const originalSqlite = process.env.COCALC_LITE_SQLITE_FILENAME;
   const originalLogMs = process.env.COCALC_BTRFS_QUOTA_RESCAN_LOG_MS;
   const originalWarnMs = process.env.COCALC_BTRFS_QUOTA_RESCAN_WARN_MS;
+  const originalDisableQuotas = process.env.COCALC_DISABLE_BTRFS_QUOTAS;
 
   beforeEach(() => {
     jest.resetModules();
@@ -25,6 +26,11 @@ describe("btrfs quota queue rescan logging", () => {
       delete process.env.COCALC_BTRFS_QUOTA_RESCAN_WARN_MS;
     } else {
       process.env.COCALC_BTRFS_QUOTA_RESCAN_WARN_MS = originalWarnMs;
+    }
+    if (originalDisableQuotas == null) {
+      delete process.env.COCALC_DISABLE_BTRFS_QUOTAS;
+    } else {
+      process.env.COCALC_DISABLE_BTRFS_QUOTAS = originalDisableQuotas;
     }
   });
 
@@ -90,5 +96,33 @@ describe("btrfs quota queue rescan logging", () => {
       "btrfs quota rescan completed",
       expect.anything(),
     );
+  });
+
+  it("returns a disabled status and no-ops when quotas are disabled", async () => {
+    process.env.COCALC_DISABLE_BTRFS_QUOTAS = "1";
+
+    const {
+      startBtrfsQuotaQueue,
+      queueSetSubvolumeQuota,
+      getBtrfsQuotaQueueStatus,
+    } = await import("./quota-queue");
+
+    startBtrfsQuotaQueue();
+    await queueSetSubvolumeQuota({
+      mount: "/mnt/test",
+      path: "/mnt/test/project-1",
+      size: "10M",
+      wait: true,
+    });
+
+    expect(getBtrfsQuotaQueueStatus("/mnt/test")).toEqual({
+      enabled: false,
+      queued_count: 0,
+      running_count: 0,
+      failed_count: 0,
+      retrying_count: 0,
+      oldest_queued_ms: null,
+      oldest_failed_ms: null,
+    });
   });
 });

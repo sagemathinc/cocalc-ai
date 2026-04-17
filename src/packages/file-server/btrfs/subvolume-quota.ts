@@ -2,6 +2,7 @@ import { type Subvolume } from "./subvolume";
 import { btrfs } from "./util";
 import { queueSetSubvolumeQuota } from "./quota-queue";
 import getLogger from "@cocalc/backend/logger";
+import { btrfsQuotasDisabled } from "./config";
 
 const logger = getLogger("file-server:btrfs:subvolume-quota");
 
@@ -138,6 +139,14 @@ export class SubvolumeQuota {
   };
 
   get = async (): Promise<SubvolumeQuotaInfo> => {
+    if (btrfsQuotasDisabled()) {
+      return {
+        used: 0,
+        size: 0,
+        warning:
+          "Btrfs quota operations are disabled by configuration on this host.",
+      };
+    }
     const {
       match: { max_referenced: rawSize, referenced: used, qgroupid },
       scope,
@@ -159,6 +168,13 @@ export class SubvolumeQuota {
   set = async (size: string | number) => {
     if (!size) {
       throw Error("size must be specified");
+    }
+    if (btrfsQuotasDisabled()) {
+      logger.debug("setQuota skipped because btrfs quotas are disabled", {
+        path: this.subvolume.path,
+        size,
+      });
+      return;
     }
     logger.debug("setQuota ", this.subvolume.path, size);
     await queueSetSubvolumeQuota({

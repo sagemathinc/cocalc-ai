@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { btrfs } from "./util";
+import { btrfsQuotasDisabled } from "./config";
 
 const logger = getLogger("file-server:btrfs:quota-queue");
 const DEFAULT_RESCAN_LOG_MS = 250;
@@ -51,6 +52,7 @@ type QueueRow = {
 };
 
 export type BtrfsQuotaQueueStatus = {
+  enabled: boolean;
   queued_count: number;
   running_count: number;
   failed_count: number;
@@ -662,6 +664,9 @@ function enqueueRow(
   payload: QuotaWorkPayload,
   { wait }: { wait: boolean },
 ): Promise<void> | void {
+  if (btrfsQuotasDisabled()) {
+    return wait ? Promise.resolve() : undefined;
+  }
   ensureQueueTable();
   const id = randomUUID();
   const now = Date.now();
@@ -683,6 +688,9 @@ function enqueueRow(
 }
 
 export function startBtrfsQuotaQueue(): void {
+  if (btrfsQuotasDisabled()) {
+    return;
+  }
   ensureQueueTable();
   scheduleWake(0);
 }
@@ -739,6 +747,17 @@ export function queueSetSubvolumeQuota(opts: {
 export function getBtrfsQuotaQueueStatus(
   mount?: string,
 ): BtrfsQuotaQueueStatus | undefined {
+  if (btrfsQuotasDisabled()) {
+    return {
+      enabled: false,
+      queued_count: 0,
+      running_count: 0,
+      failed_count: 0,
+      retrying_count: 0,
+      oldest_queued_ms: null,
+      oldest_failed_ms: null,
+    };
+  }
   if (!queueInitialized) return undefined;
   const where = mount ? `WHERE mount = ${quoteIdent(mount)}` : "";
   const rows = db()
@@ -808,6 +827,7 @@ export function getBtrfsQuotaQueueStatus(
     }
   }
   return {
+    enabled: true,
     queued_count,
     running_count,
     failed_count,

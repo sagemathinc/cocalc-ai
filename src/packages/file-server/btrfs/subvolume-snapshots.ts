@@ -9,6 +9,7 @@ import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { getSubvolumeField } from "./subvolume";
 import { parsePlainQgroupShow } from "./subvolume-quota";
 import { queueAssignSnapshotQgroup } from "./quota-queue";
+import { btrfsQuotasDisabled } from "./config";
 
 const logger = getLogger("file-server:btrfs:subvolume-snapshots");
 const SNAPSHOT_QGROUP_ASSIGN_ENV = "COCALC_BTRFS_ENABLE_SNAPSHOT_QGROUP_ASSIGN";
@@ -185,6 +186,9 @@ export class SubvolumeSnapshots {
   };
 
   usage = async (name: string): Promise<SnapshotUsage> => {
+    if (btrfsQuotasDisabled()) {
+      return { name, used: 0, quota: 0, exclusive: 0 };
+    }
     const snapshotPath = join(this.snapshotsDir, name);
     let row;
     try {

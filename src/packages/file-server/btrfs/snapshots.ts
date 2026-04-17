@@ -7,10 +7,12 @@ import {
 } from "@cocalc/util/consts/snapshots";
 import getLogger from "@cocalc/backend/logger";
 import { isISODate } from "@cocalc/util/misc";
+import { btrfsRollingSnapshotsDisabled } from "./config";
 
 export { type SnapshotCounts };
 
 const logger = getLogger("file-server:btrfs:snapshots");
+let loggedRollingSnapshotsDisabled = false;
 
 export async function updateRollingSnapshots({
   snapshots,
@@ -22,6 +24,13 @@ export async function updateRollingSnapshots({
   // options to create
   opts?;
 }) {
+  if (btrfsRollingSnapshotsDisabled()) {
+    if (!loggedRollingSnapshotsDisabled) {
+      loggedRollingSnapshotsDisabled = true;
+      logger.warn("rolling btrfs snapshots disabled by configuration");
+    }
+    return;
+  }
   counts = { ...DEFAULT_SNAPSHOT_COUNTS, ...counts };
 
   const changed = await snapshots.hasUnsavedChanges();

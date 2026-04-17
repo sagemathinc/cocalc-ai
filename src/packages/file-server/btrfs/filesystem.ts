@@ -24,6 +24,7 @@ import bees from "./bees";
 import { type ChildProcess } from "node:child_process";
 import { install } from "@cocalc/backend/sandbox/install";
 import { getBtrfsQuotaQueueStatus, startBtrfsQuotaQueue } from "./quota-queue";
+import { btrfsQuotasDisabled } from "./config";
 
 import getLogger from "@cocalc/backend/logger";
 
@@ -92,10 +93,16 @@ export class Filesystem {
     // 'quota enable --simple' has a lot of subtle issues, and maybe isn't for us.
     // It also resets to zero when you disable then enable, and there is no efficient
     // way to get the numbers.
-    await btrfs({
-      args: ["quota", "enable", this.opts.mount],
-    });
-    startBtrfsQuotaQueue();
+    if (btrfsQuotasDisabled()) {
+      logger.warn("Btrfs quota operations disabled by configuration", {
+        mount: this.opts.mount,
+      });
+    } else {
+      await btrfs({
+        args: ["quota", "enable", this.opts.mount],
+      });
+      startBtrfsQuotaQueue();
+    }
     try {
       await this.initRustic();
     } catch (err) {
