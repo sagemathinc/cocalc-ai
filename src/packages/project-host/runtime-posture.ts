@@ -166,21 +166,25 @@ async function postureSweep(context: "startup" | "periodic"): Promise<void> {
     } else if (!quotaQueue.enabled) {
       logger.warn("runtime posture: btrfs quota queue disabled", {
         context,
+        mode: quotaQueue.mode,
         status: quotaQueue,
       });
     } else if (quotaQueue.failed_count > 0) {
       logger.warn("runtime posture: btrfs quota queue has failed work", {
         context,
+        mode: quotaQueue.mode,
         status: quotaQueue,
       });
     } else if (quotaQueue.queued_count > 0 || quotaQueue.running_count > 0) {
       logger.info("runtime posture: btrfs quota queue backlog", {
         context,
+        mode: quotaQueue.mode,
         status: quotaQueue,
       });
     } else {
       logger.debug("runtime posture: btrfs quota queue idle", {
         context,
+        mode: quotaQueue.mode,
         status: quotaQueue,
       });
     }

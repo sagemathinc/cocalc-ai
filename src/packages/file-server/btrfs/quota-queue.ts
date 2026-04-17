@@ -5,7 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { btrfs } from "./util";
-import { btrfsQuotasDisabled } from "./config";
+import { btrfsQuotaMode, btrfsQuotasDisabled } from "./config";
+import { ensureBtrfsQuotaMode } from "./quota-mode";
 
 const logger = getLogger("file-server:btrfs:quota-queue");
 const DEFAULT_RESCAN_LOG_MS = 250;
@@ -53,6 +54,7 @@ type QueueRow = {
 
 export type BtrfsQuotaQueueStatus = {
   enabled: boolean;
+  mode: "disabled" | "qgroup" | "simple";
   queued_count: number;
   running_count: number;
   failed_count: number;
@@ -258,6 +260,9 @@ async function waitForRescan(
   mount: string,
   context?: Omit<QuotaWorkLogContext, "mount">,
 ): Promise<void> {
+  if (btrfsQuotaMode() !== "qgroup") {
+    return;
+  }
   const started = Date.now();
   const result = await btrfs({
     args: ["quota", "rescan", "-W", mount],
@@ -303,12 +308,10 @@ async function enableQuota(
   mount: string,
   context?: Omit<QuotaWorkLogContext, "mount">,
 ): Promise<void> {
-  await btrfs({
-    args: ["quota", "enable", mount],
-    err_on_exit: true,
-    verbose: false,
-  });
-  await waitForRescan(mount, { ...context, phase: "enable-quota" });
+  const status = await ensureBtrfsQuotaMode(mount);
+  if (status.mode === "qgroup") {
+    await waitForRescan(mount, { ...context, phase: "enable-quota" });
+  }
 }
 
 async function withRescanBarrier(
@@ -750,6 +753,7 @@ export function getBtrfsQuotaQueueStatus(
   if (btrfsQuotasDisabled()) {
     return {
       enabled: false,
+      mode: "disabled",
       queued_count: 0,
       running_count: 0,
       failed_count: 0,
@@ -759,6 +763,7 @@ export function getBtrfsQuotaQueueStatus(
     };
   }
   if (!queueInitialized) return undefined;
+  const mode = btrfsQuotaMode();
   const where = mount ? `WHERE mount = ${quoteIdent(mount)}` : "";
   const rows = db()
     .prepare(
@@ -828,6 +833,7 @@ export function getBtrfsQuotaQueueStatus(
   }
   return {
     enabled: true,
+    mode: mode === "simple" ? "simple" : "qgroup",
     queued_count,
     running_count,
     failed_count,

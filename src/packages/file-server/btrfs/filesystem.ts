@@ -24,7 +24,7 @@ import bees from "./bees";
 import { type ChildProcess } from "node:child_process";
 import { install } from "@cocalc/backend/sandbox/install";
 import { getBtrfsQuotaQueueStatus, startBtrfsQuotaQueue } from "./quota-queue";
-import { btrfsQuotasDisabled } from "./config";
+import { ensureBtrfsQuotaMode } from "./quota-mode";
 
 import getLogger from "@cocalc/backend/logger";
 
@@ -90,16 +90,18 @@ export class Filesystem {
         err,
       );
     }
-    // 'quota enable --simple' has a lot of subtle issues, and maybe isn't for us.
-    // It also resets to zero when you disable then enable, and there is no efficient
-    // way to get the numbers.
-    if (btrfsQuotasDisabled()) {
+    // Reconcile the filesystem to the configured quota mode on startup so
+    // ablation flags and squota experiments affect the mounted filesystem,
+    // not just our own queue behavior.
+    const quotaStatus = await ensureBtrfsQuotaMode(this.opts.mount);
+    if (!quotaStatus.enabled) {
       logger.warn("Btrfs quota operations disabled by configuration", {
         mount: this.opts.mount,
       });
     } else {
-      await btrfs({
-        args: ["quota", "enable", this.opts.mount],
+      logger.info("Btrfs quota mode enabled", {
+        mount: this.opts.mount,
+        mode: quotaStatus.mode,
       });
       startBtrfsQuotaQueue();
     }
