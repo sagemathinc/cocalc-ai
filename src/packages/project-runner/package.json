@@ -12,22 +12,15 @@
     "tsc": "pnpm exec tsc  --pretty --preserveWatchOutput",
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores @vercel/ncc",
     "clean": "rm -rf node_modules dist build tsconfig.tsbuildinfo",
-    "start": "pnpm exec cocalc-project-runner"
+    "start": "pnpm exec cocalc-project-runner",
+    "test": "pnpm exec jest"
   },
   "bin": {
     "cocalc-project-runner": "./bin/start.js"
   },
-  "files": [
-    "dist/**",
-    "README.md",
-    "package.json"
-  ],
+  "files": ["dist/**", "README.md", "package.json"],
   "author": "SageMath, Inc.",
-  "keywords": [
-    "utilities",
-    "btrfs",
-    "cocalc"
-  ],
+  "keywords": ["utilities", "btrfs", "cocalc"],
   "license": "SEE LICENSE.md",
   "dependencies": {
     "@cocalc/backend": "workspace:*",

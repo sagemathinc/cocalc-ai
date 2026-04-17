@@ -26,7 +26,6 @@ export function getExternalSideChatDesc(project_id: string, path: string) {
   };
   if (selectedThreadKey) {
     desc["data-selectedThreadKey"] = selectedThreadKey;
-    desc["data-preferLatestThread"] = false;
   }
   return desc;
 }

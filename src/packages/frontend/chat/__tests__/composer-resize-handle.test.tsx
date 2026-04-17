@@ -62,10 +62,7 @@ function renderComposer(
     submitMentionsRef: { current: undefined },
     hasInput: false,
     isSelectedThreadAI: false,
-    combinedFeedSelected: false,
-    composerTargetKey: null,
     threads: [],
-    onComposerTargetChange: jest.fn(),
     onComposerFocusChange: jest.fn(),
     ...overrides,
   };

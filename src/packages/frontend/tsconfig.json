@@ -31,8 +31,16 @@
     "editors/slate/slate-react/hooks/**",
     "editors/slate/slate-react/plugin",
     "editors/slate/slate-react/plugin/**",
-    "*__tests__*",
-    "*__test__*"
+    "**/__tests__/**",
+    "**/__test__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.test.js",
+    "**/*.test.jsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.spec.js",
+    "**/*.spec.jsx"
   ],
   "references": [
     { "path": "../apps/tasks" },
@@ -43,5 +51,5 @@
     { "path": "../sync" },
     { "path": "../util" }
   ],
-  "types": ["jest", "@testing-library/jest-dom"]
+  "types": []
 }

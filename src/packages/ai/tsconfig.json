@@ -17,7 +17,23 @@
     }
   },
   "include": ["./**/*.ts"],
-  "exclude": ["dist", "node_modules", "__tests__"],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "__tests__",
+    "**/test/**",
+    "**/__tests__/**",
+    "**/__test__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.test.js",
+    "**/*.test.jsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.spec.js",
+    "**/*.spec.jsx",
+    "jest.config.cjs"
+  ],
   "references": [
     { "path": "../backend" },
     { "path": "../conat" },

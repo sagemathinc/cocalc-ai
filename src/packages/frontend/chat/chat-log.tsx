@@ -43,7 +43,6 @@ import {
   orderLinearThreadMessages,
 } from "./utils";
 import { dateValue, field, parentMessageId } from "./access";
-import { COMBINED_FEED_KEY } from "./threads";
 
 // you can use this to quickly disabled virtuoso, but rendering large chatrooms will
 // become basically impossible.
@@ -164,11 +163,6 @@ const MESSAGE_LIST_CONTAINER_STYLE: CSSProperties = {
   minHeight: 0,
 } as const;
 
-function stripHtml(value: string): string {
-  if (!value) return "";
-  return value.replace(/<[^>]*>/g, "");
-}
-
 function isEditableOrOverlayInteractionTarget(
   target: EventTarget | null,
 ): boolean {
@@ -216,8 +210,6 @@ interface Props {
   selectedDate?: string;
   scrollCacheId?: string;
   acpState?;
-  composerTargetKey?: string | null;
-  composerFocused?: boolean;
   searchJumpDate?: string;
   searchJumpToken?: number;
   searchQuery?: string;
@@ -250,8 +242,6 @@ export function ChatLog({
   selectedDate,
   scrollCacheId,
   acpState,
-  composerTargetKey,
-  composerFocused,
   searchJumpDate,
   searchJumpToken,
   searchQuery,
@@ -265,15 +255,10 @@ export function ChatLog({
 }: Props) {
   const singleThreadView = selectedThread != null;
   const messages = messagesProp ?? new Map();
-  const showThreadHeaders = selectedThread === COMBINED_FEED_KEY;
   const visibleKeys = useMemo<Set<string> | undefined>(() => {
     if (!selectedThread || !threadIndex) return undefined;
     return threadIndex.get(selectedThread)?.messageKeys;
   }, [selectedThread, threadIndex]);
-  const combinedKeys = useMemo<string[] | undefined>(() => {
-    if (!showThreadHeaders || !threadIndex) return undefined;
-    return threadIndex.get(COMBINED_FEED_KEY)?.orderedKeys;
-  }, [showThreadHeaders, threadIndex]);
   const user_map = useTypedRedux("users", "user_map");
   const account_id = useTypedRedux("account", "account_id");
   const attachedSteersByParentMessageId = useMemo(
@@ -289,27 +274,10 @@ export function ChatLog({
     !anyOverlayOpen && (mode === "sidechat" || isForegroundChatTab);
   const canAutoScrollRef = useRef(canAutoScroll);
   canAutoScrollRef.current = canAutoScroll;
-  const handleSelectThread = useCallback(
-    (threadKey: string) => {
-      actions.clearAllFilters?.();
-      actions.setSelectedThread?.(threadKey);
-    },
-    [actions],
-  );
   const { dates: sortedDates, numChildren } = useMemo<{
     dates: string[];
     numChildren: NumChildren;
   }>(() => {
-    if (combinedKeys) {
-      setTimeout(() => {
-        setLastVisible?.(
-          combinedKeys.length === 0
-            ? null
-            : new Date(parseFloat(combinedKeys[combinedKeys.length - 1])),
-        );
-      }, 1);
-      return { dates: combinedKeys, numChildren: {} };
-    }
     const { dates, numChildren } = getSortedDates(
       messages,
       account_id!,
@@ -326,7 +294,7 @@ export function ChatLog({
       );
     }, 1);
     return { dates, numChildren };
-  }, [messages, account_id, singleThreadView, visibleKeys, combinedKeys]);
+  }, [messages, account_id, singleThreadView, visibleKeys]);
 
   useEffect(() => {
     if (!canAutoScroll) {
@@ -468,10 +436,6 @@ export function ChatLog({
           scrollToBottomRef,
           acpState,
           attachedSteersByParentMessageId,
-          showThreadHeaders,
-          onSelectThread: showThreadHeaders ? handleSelectThread : undefined,
-          composerTargetKey,
-          composerFocused,
           searchQuery,
           onAtTopStateChange,
           activityJumpDate,
@@ -639,8 +603,6 @@ export function getUserName(userMap, accountId: string): string {
 export function MessageList({
   messages,
   account_id,
-  composerTargetKey,
-  composerFocused,
   virtuosoRef,
   sortedDates,
   user_map,
@@ -659,8 +621,6 @@ export function MessageList({
   scrollToBottomRef,
   acpState,
   attachedSteersByParentMessageId,
-  showThreadHeaders,
-  onSelectThread,
   searchQuery,
   onAtTopStateChange,
   activityJumpDate,
@@ -674,8 +634,6 @@ export function MessageList({
 }: {
   messages: ChatMessages;
   account_id: string;
-  composerTargetKey?: string | null;
-  composerFocused?: boolean;
   user_map;
   mode;
   sortedDates;
@@ -694,8 +652,6 @@ export function MessageList({
   scrollToBottomRef?: MutableRefObject<(force?: boolean) => void>;
   acpState?;
   attachedSteersByParentMessageId?: Map<string, AttachedSteerMessage[]>;
-  showThreadHeaders?: boolean;
-  onSelectThread?: (threadKey: string) => void;
   searchQuery?: string;
   onAtTopStateChange?: (atTop: boolean) => void;
   activityJumpDate?: string;
@@ -719,9 +675,7 @@ export function MessageList({
   const endRef = useRef<HTMLDivElement | null>(null);
   const blockScrollInput = anyOverlayOpen === true;
   const canNotifyForRunningTurn =
-    selectedThread != null &&
-    selectedThread !== COMBINED_FEED_KEY &&
-    onNotifyOnTurnFinishChange != null;
+    selectedThread != null && onNotifyOnTurnFinishChange != null;
 
   const maybeBlockScrollEvent = (event: {
     preventDefault: () => void;
@@ -766,43 +720,6 @@ export function MessageList({
     scrollToBottomRef?.current?.(true);
   }, [manualScrollRef, scrollToBottomRef, setManualScroll]);
 
-  const renderThreadHeader = (
-    message: ChatMessageTyped,
-    currentThreadKey?: string,
-    prevThreadKey?: string,
-  ) => {
-    if (
-      !showThreadHeaders ||
-      !currentThreadKey ||
-      currentThreadKey === prevThreadKey
-    ) {
-      return null;
-    }
-    const threadKey = currentThreadKey;
-    const metadata = actions?.getThreadMetadata?.(threadKey, {
-      threadId: threadKey,
-    });
-    const rawTitle =
-      `${metadata?.name ?? ""}`.trim() || newest_content(message) || "Thread";
-    const threadTitle = stripHtml(rawTitle);
-    return (
-      <div
-        style={{
-          padding: "6px 8px",
-          margin: 8,
-          borderRadius: 6,
-          background: "#dadada",
-          cursor: onSelectThread ? "pointer" : "default",
-          fontSize: "90%",
-          color: "#333",
-        }}
-        onClick={onSelectThread ? () => onSelectThread(threadKey) : undefined}
-      >
-        {threadTitle}
-      </div>
-    );
-  };
-
   const renderMessage = (index: number) => {
     const date = sortedDates[index];
     const message: ChatMessageTyped | undefined = getMessageAtDate({
@@ -813,21 +730,6 @@ export function MessageList({
       console.warn("empty message", { date, index, sortedDates });
       return <div style={{ height: "30px" }} />;
     }
-    const currentThreadKey = showThreadHeaders
-      ? `${field<string>(message, "thread_id") ?? date}`
-      : undefined;
-    const prevThreadKey =
-      showThreadHeaders && index > 0
-        ? `${
-            field<string>(
-              getMessageAtDate({
-                messages,
-                date: parseFloat(sortedDates[index - 1]),
-              }),
-              "thread_id",
-            ) ?? sortedDates[index - 1]
-          }`
-        : undefined;
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
     const messageAcpState = messageId
       ? acpState?.get?.(`message:${messageId}`)
@@ -838,12 +740,7 @@ export function MessageList({
 
     const is_thread = numChildren != null && isThread(message, numChildren);
     const h = virtuosoHeightsRef.current?.[index];
-    const shouldDim =
-      showThreadHeaders &&
-      composerFocused === true &&
-      composerTargetKey != null &&
-      currentThreadKey != null &&
-      currentThreadKey !== composerTargetKey;
+    const shouldDim = false;
 
     const wrapperStyle: CSSProperties = {
       overflow: "hidden",
@@ -853,7 +750,6 @@ export function MessageList({
 
     return (
       <div style={wrapperStyle}>
-        {renderThreadHeader(message, currentThreadKey, prevThreadKey)}
         <DivTempHeight height={h ? `${h}px` : undefined}>
           <Message
             messages={messages}

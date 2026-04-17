@@ -44,11 +44,7 @@ import type { ChatActions } from "./actions";
 import type { ChatMessages } from "./types";
 import type * as immutable from "immutable";
 import type { ThreadIndexEntry } from "./message-cache";
-import {
-  COMBINED_FEED_KEY,
-  type ThreadListItem,
-  type ThreadMeta,
-} from "./threads";
+import type { ThreadListItem, ThreadMeta } from "./threads";
 import { dateValue, field } from "./access";
 import { getThreadRootDate, newest_content } from "./utils";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
@@ -239,7 +235,7 @@ function getLatestCodexActivityAtMs(
 
 function normalizeThreadKey(value?: string | null): string | undefined {
   const key = `${value ?? ""}`.trim();
-  if (!key || key === COMBINED_FEED_KEY) return undefined;
+  if (!key) return undefined;
   return key;
 }
 
@@ -261,8 +257,6 @@ interface ChatRoomThreadPanelProps {
   fragmentId: string | null;
   threadsCount: number;
   onNewChat: () => void;
-  composerTargetKey?: string | null;
-  composerFocused?: boolean;
   codexPaymentSource?: CodexPaymentSourceInfo;
   codexPaymentSourceLoading?: boolean;
   refreshCodexPaymentSource?: () => void;
@@ -304,8 +298,6 @@ export function ChatRoomThreadPanel({
   fragmentId,
   threadsCount,
   onNewChat,
-  composerTargetKey,
-  composerFocused,
   codexPaymentSource,
   codexPaymentSourceLoading,
   refreshCodexPaymentSource,
@@ -2154,8 +2146,6 @@ export function ChatRoomThreadPanel({
           scrollToIndex={scrollToIndex}
           scrollToDate={scrollToDate}
           selectedDate={activeSearchMatchDate ?? fragmentId ?? undefined}
-          composerTargetKey={composerTargetKey}
-          composerFocused={composerFocused}
           searchJumpDate={activeSearchMatchDate}
           searchJumpToken={threadSearchJumpToken}
           searchQuery={threadSearchHighlightQuery}

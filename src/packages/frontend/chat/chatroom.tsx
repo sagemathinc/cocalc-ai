@@ -4,7 +4,7 @@
  */
 
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { Alert, Button, Modal, Popconfirm, Space, Tag } from "antd";
+import { Alert, Button, Checkbox, Modal, Popconfirm, Space, Tag } from "antd";
 import {
   delete_local_storage,
   get_local_storage,
@@ -41,12 +41,8 @@ import {
 import type { ChatState } from "./store";
 import type { ChatMessage, ChatMessages, SubmitMentionsFn } from "./types";
 import type { ThreadIndexEntry } from "./message-cache";
-import {
-  getMessageByLookup,
-  markChatAsReadIfUnseen,
-  stableDraftKeyFromThreadKey,
-} from "./utils";
-import { COMBINED_FEED_KEY, useThreadSections } from "./threads";
+import { markChatAsReadIfUnseen, stableDraftKeyFromThreadKey } from "./utils";
+import { useThreadSections } from "./threads";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
 import { useChatComposerDraft } from "./use-chat-composer-draft";
 import * as immutable from "immutable";
@@ -104,11 +100,6 @@ import {
 } from "@cocalc/util/ai/codex";
 import { tab_to_path } from "@cocalc/util/misc";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
-import {
-  combinedComposerTargetStorageKey,
-  readStoredCombinedComposerTargetKey,
-  resolveCombinedComposerTargetKey,
-} from "./combined-composer-target";
 import type { ChatInputControl } from "./input";
 
 const GRID_STYLE: React.CSSProperties = {
@@ -121,13 +112,12 @@ const GRID_STYLE: React.CSSProperties = {
 } as const;
 
 const DEFAULT_SIDEBAR_WIDTH = 260;
-const COMBINED_FEED_MAX_PER_THREAD = 5;
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
 const CODEX_TURN_NOTIFY_STORAGE_KEY = "cocalc:chat:codex-turn-notify";
 
 function normalizeThreadKey(value?: string | null): string | undefined {
   const key = `${value ?? ""}`.trim();
-  if (!key || key === COMBINED_FEED_KEY) return undefined;
+  if (!key) return undefined;
   return key;
 }
 
@@ -389,48 +379,6 @@ function parseDateISOString(value: unknown): string | undefined {
   return d.toISOString();
 }
 
-type MessageKeyWithTime = { key: string; time: number };
-
-function pickNewestMessageKeys(
-  entry: ThreadIndexEntry,
-  messages: ChatMessages | undefined,
-  limit: number,
-): MessageKeyWithTime[] {
-  if (!messages || limit <= 0) return [];
-  const newest: MessageKeyWithTime[] = [];
-  for (const key of entry.messageKeys) {
-    const message = getMessageByLookup({ messages, key });
-    if (!message) continue;
-    const d = dateValue(message);
-    if (!d) continue;
-    const time = d.valueOf();
-    if (!Number.isFinite(time)) continue;
-    if (newest.length < limit) {
-      newest.push({ key, time });
-      newest.sort((a, b) => a.time - b.time);
-      continue;
-    }
-    if (time <= newest[0].time) continue;
-    newest[0] = { key, time };
-    newest.sort((a, b) => a.time - b.time);
-  }
-  return newest;
-}
-
-function buildCombinedFeedKeys(
-  threadIndex: Map<string, ThreadIndexEntry>,
-  messages: ChatMessages | undefined,
-  limitPerThread: number,
-): string[] {
-  const collected: MessageKeyWithTime[] = [];
-  for (const entry of threadIndex.values()) {
-    if (!entry.messageCount) continue;
-    collected.push(...pickNewestMessageKeys(entry, messages, limitPerThread));
-  }
-  collected.sort((a, b) => a.time - b.time);
-  return collected.map((item) => item.key);
-}
-
 export interface ChatPanelProps {
   actions: ChatActions;
   project_id: string;
@@ -438,6 +386,7 @@ export interface ChatPanelProps {
   messages?: ChatMessages;
   threadIndex?: Map<string, ThreadIndexEntry>;
   docVersion?: number;
+  readStateVersion?: number;
   fontSize?: number;
   desc?: NodeDesc;
   variant?: "default" | "compact";
@@ -479,6 +428,7 @@ export function ChatPanel({
   messages,
   threadIndex,
   docVersion,
+  readStateVersion,
   fontSize = 13,
   desc,
   variant = "default",
@@ -516,15 +466,7 @@ export function ChatPanel({
   const hideChatTypeSelector = asBoolean(hideChatTypeSelectorRaw);
   const storedSidebarWidth = getDescValue(desc, "data-sidebarWidth");
   const storedSidebarHiddenRaw = getDescValue(desc, "data-sidebarHidden");
-  const preferLatestThreadFromDescRaw = getDescValue(
-    desc,
-    "data-preferLatestThread",
-  );
   const externalSideChatRaw = getDescValue(desc, "data-externalSideChat");
-  const preferLatestThreadFromDesc =
-    preferLatestThreadFromDescRaw === true ||
-    preferLatestThreadFromDescRaw === "true" ||
-    preferLatestThreadFromDescRaw === 1;
   const isExternalSideChat = asBoolean(externalSideChatRaw);
   const [sidebarWidth, setSidebarWidth] = useState<number>(
     typeof storedSidebarWidth === "number" && storedSidebarWidth > 50
@@ -546,7 +488,6 @@ export function ChatPanel({
   const scrollToBottomRef = useRef<any>(null);
   const previousSelectedThreadKeyRef = useRef<string | null>(null);
   const indexedAgentSessionsRef = useRef<Map<string, string>>(new Map());
-  const combinedReadSignatureRef = useRef<string | null>(null);
   useEffect(() => {
     if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
     actions.frameTreeActions.set_frame_data({
@@ -562,21 +503,20 @@ export function ChatPanel({
     });
   }, [sidebarHidden, actions?.frameTreeActions, actions?.frameId]);
 
-  const { threads, archivedThreads, combinedThread, threadSections } =
-    useThreadSections({
-      messages,
-      threadIndex,
-      activity,
-      accountId: account_id,
-      actions,
-      version: docVersion,
-    });
+  const { threads, archivedThreads, threadSections } = useThreadSections({
+    messages,
+    threadIndex,
+    activity,
+    accountId: account_id,
+    actions,
+    version: docVersion,
+    readStateVersion,
+  });
 
   const {
     selectedThreadKey,
     setSelectedThreadKey,
     setAllowAutoSelectThread,
-    isCombinedFeedSelected,
     singleThreadView,
     selectedThread,
   } = useChatThreadSelection({
@@ -585,14 +525,9 @@ export function ChatPanel({
     messages,
     fragmentId,
     storedThreadFromDesc,
-    preferLatestThread: preferLatestThreadFromDesc,
   });
 
   useEffect(() => {
-    const persistedSelectedThreadKey =
-      selectedThreadKey != null && selectedThreadKey !== COMBINED_FEED_KEY
-        ? selectedThreadKey
-        : null;
     if (
       !isExternalSideChat &&
       actions?.frameTreeActions?.set_frame_data &&
@@ -603,7 +538,7 @@ export function ChatPanel({
     persistExternalSideChatSelectedThreadKey({
       project_id,
       path,
-      selectedThreadKey: persistedSelectedThreadKey,
+      selectedThreadKey,
     });
   }, [
     project_id,
@@ -614,10 +549,6 @@ export function ChatPanel({
     actions?.frameId,
   ]);
 
-  const [composerTargetKey, setComposerTargetKey] = useState<string | null>(
-    null,
-  );
-  const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
   const [codexTurnNotificationWatches, setCodexTurnNotificationWatches] =
     useState<CodexTurnNotificationWatch[]>([]);
@@ -693,18 +624,6 @@ export function ChatPanel({
     () => `${project_id ?? "no-project"}:${path ?? "no-path"}:git-browser`,
     [project_id, path],
   );
-  const combinedComposerTargetStorage = useMemo(
-    () => combinedComposerTargetStorageKey(project_id, path),
-    [project_id, path],
-  );
-  const storedCombinedComposerTargetKey = useMemo(
-    () =>
-      readStoredCombinedComposerTargetKey(
-        get_local_storage(combinedComposerTargetStorage),
-      ),
-    [combinedComposerTargetStorage],
-  );
-
   const composerDraftKey = useMemo(() => {
     if (!singleThreadView || !selectedThreadKey) return 0;
     return stableDraftKeyFromThreadKey(selectedThreadKey);
@@ -1094,6 +1013,45 @@ export function ChatPanel({
     },
     [selectedThread, selectedThreadId, selectedThreadKey],
   );
+  const setNotifyForThread = useCallback(
+    ({
+      checked,
+      threadKey,
+      threadId,
+      threadLabel,
+    }: {
+      checked: boolean;
+      threadKey: string;
+      threadId: string;
+      threadLabel: string;
+    }) => {
+      const normalizedThreadKey = `${threadKey ?? ""}`.trim();
+      const normalizedThreadId = `${threadId ?? ""}`.trim();
+      if (!normalizedThreadKey || !normalizedThreadId) return;
+      setCodexTurnNotifyDefaultEnabled(checked);
+      if (checked) {
+        set_local_storage(CODEX_TURN_NOTIFY_STORAGE_KEY, "true");
+      } else {
+        delete_local_storage(CODEX_TURN_NOTIFY_STORAGE_KEY);
+      }
+      if (!checked) {
+        setCodexTurnNotificationWatches((prev) =>
+          prev.filter((watch) => watch.threadKey !== normalizedThreadKey),
+        );
+        return;
+      }
+      const nextWatch = {
+        threadKey: normalizedThreadKey,
+        threadId: normalizedThreadId,
+        threadLabel: `${threadLabel ?? ""}`.trim() || "this chat",
+      } satisfies CodexTurnNotificationWatch;
+      setCodexTurnNotificationWatches((prev) => [
+        ...prev.filter((watch) => watch.threadKey !== nextWatch.threadKey),
+        nextWatch,
+      ]);
+    },
+    [],
+  );
   const hasRunningAcpTurn = useMemo(() => {
     return hasActiveAcpTurnForComposer({
       isSelectedThreadAI,
@@ -1371,27 +1329,9 @@ export function ChatPanel({
     enabled: isSelectedThreadAI,
   });
 
-  const combinedFeedIndex = useMemo(() => {
+  const indexedThreads = useMemo(() => {
     if (!threadIndex) return undefined;
-    const combinedKeys = buildCombinedFeedKeys(
-      threadIndex,
-      messages,
-      COMBINED_FEED_MAX_PER_THREAD,
-    );
     const next = new Map(threadIndex);
-    if (combinedThread) {
-      const entry: ThreadIndexEntry = {
-        key: COMBINED_FEED_KEY,
-        newestTime: combinedThread.newestTime,
-        messageCount: combinedKeys.length,
-        messageKeys: new Set(combinedKeys),
-        orderedKeys: combinedKeys,
-        rootMessage: undefined,
-      };
-      next.set(COMBINED_FEED_KEY, entry);
-    }
-    // Ensure config-only threads have explicit empty index entries so selecting
-    // them doesn't fall back to rendering all messages.
     for (const thread of threads) {
       if (next.has(thread.key)) continue;
       next.set(thread.key, {
@@ -1404,7 +1344,7 @@ export function ChatPanel({
       });
     }
     return next;
-  }, [threadIndex, messages, combinedThread, threads]);
+  }, [threadIndex, threads]);
 
   const scrollCacheId = useMemo(() => {
     if (scrollCacheIdOverride) {
@@ -1429,83 +1369,40 @@ export function ChatPanel({
     };
   }, [forceScrollToBottomToken]);
 
-  useEffect(() => {
-    const nextTargetKey = resolveCombinedComposerTargetKey(
-      composerTargetKey,
-      storedCombinedComposerTargetKey,
-      threads,
-      isCombinedFeedSelected,
-    );
-    if (nextTargetKey !== composerTargetKey) {
-      setComposerTargetKey(nextTargetKey);
-    }
-  }, [
-    isCombinedFeedSelected,
-    threads,
-    composerTargetKey,
-    storedCombinedComposerTargetKey,
-  ]);
+  const selectedThreadReadSignatureRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!isCombinedFeedSelected) return;
-    if (composerTargetKey == null) {
-      delete_local_storage(combinedComposerTargetStorage);
+    if (!singleThreadView || !selectedThreadKey || !actions?.markThreadRead) {
+      selectedThreadReadSignatureRef.current = null;
       return;
     }
-    set_local_storage(combinedComposerTargetStorage, composerTargetKey);
-  }, [
-    isCombinedFeedSelected,
-    composerTargetKey,
-    combinedComposerTargetStorage,
-  ]);
-
-  const combinedUnreadThreads = useMemo(
-    () => threads.filter((thread) => (thread.unreadCount ?? 0) > 0),
-    [threads],
-  );
-  const combinedReadSignature = useMemo(
-    () =>
-      combinedUnreadThreads
-        .map(
-          (thread) =>
-            `${thread.key}:${thread.unreadCount ?? 0}:${thread.messageCount ?? 0}:${Number.isFinite(thread.newestTime) ? thread.newestTime : 0}`,
-        )
-        .join("|"),
-    [combinedUnreadThreads],
-  );
-
-  useEffect(() => {
-    if (!isCombinedFeedSelected) {
-      combinedReadSignatureRef.current = null;
+    const thread = threads.find((item) => item.key === selectedThreadKey);
+    if (!thread) {
+      selectedThreadReadSignatureRef.current = null;
+      return;
     }
-  }, [isCombinedFeedSelected]);
-
-  const mark_as_read = useCallback(() => {
-    markChatAsReadIfUnseen(project_id, path);
-    if (!isCombinedFeedSelected || !actions?.markThreadRead) return;
+    const messageCount = Math.max(thread.messageCount ?? 0, 0);
+    const unreadCount = Math.max(thread.unreadCount ?? 0, 0);
+    const signature = `${thread.key}:${messageCount}`;
     if (
-      combinedUnreadThreads.length === 0 ||
-      combinedReadSignatureRef.current === combinedReadSignature
+      selectedThreadReadSignatureRef.current === signature &&
+      unreadCount <= 0
     ) {
       return;
     }
-    combinedReadSignatureRef.current = combinedReadSignature;
-    for (let i = 0; i < combinedUnreadThreads.length; i++) {
-      const thread = combinedUnreadThreads[i];
-      actions.markThreadRead(
-        thread.key,
-        thread.messageCount,
-        i === combinedUnreadThreads.length - 1,
-      );
+    if (messageCount <= 0) {
+      selectedThreadReadSignatureRef.current = signature;
+      return;
     }
-  }, [
-    project_id,
-    path,
-    isCombinedFeedSelected,
-    actions,
-    combinedUnreadThreads,
-    combinedReadSignature,
-  ]);
+    const ok = actions.markThreadRead(thread.key, messageCount);
+    if (ok !== false) {
+      selectedThreadReadSignatureRef.current = signature;
+    }
+  }, [singleThreadView, selectedThreadKey, threads, actions]);
+
+  const mark_as_read = useCallback(() => {
+    markChatAsReadIfUnseen(project_id, path);
+  }, [project_id, path]);
 
   useEffect(() => {
     if (!singleThreadView) {
@@ -1550,13 +1447,9 @@ export function ChatPanel({
       inputRef.current = "";
       // Clear current composer draft before send switches selected thread context.
       actions.deleteDraft(draftKey);
-      if (draftKey === 0) {
-        delete_local_storage(combinedComposerTargetStorage);
-        setComposerTargetKey(null);
-      }
       void clearInput();
     },
-    [actions, clearInput, combinedComposerTargetStorage],
+    [actions, clearInput],
   );
 
   function resolveReplyTarget(): {
@@ -1586,9 +1479,6 @@ export function ChatPanel({
         lookup,
       };
     };
-    if (isCombinedFeedSelected) {
-      return resolveFromThreadKey(composerTargetKey ?? threads[0]?.key);
-    }
     return resolveFromThreadKey(selectedThreadKey);
   }
 
@@ -1610,10 +1500,6 @@ export function ChatPanel({
           })
         : undefined;
     if (!reply_thread_id) {
-      // Creating a new thread should never auto-fallback to Combined while
-      // thread metadata is hydrating.
-      setAllowAutoSelectThread(false);
-    } else if (isCombinedFeedSelected) {
       setAllowAutoSelectThread(false);
     }
 
@@ -1678,9 +1564,6 @@ export function ChatPanel({
             image: newThreadSetup.image?.trim(),
           }
         : undefined,
-      // Replies sent from Combined should keep Combined selected.
-      // Brand new threads should always switch to the newly created thread.
-      preserveSelectedThread: isCombinedFeedSelected && reply_thread_id != null,
       acp_loop_config:
         composerLoopConfig?.enabled === true &&
         (isSelectedThreadCodex ||
@@ -1762,8 +1645,6 @@ export function ChatPanel({
     inputRef.current = "";
     setInput("");
     actions.deleteDraft(0);
-    delete_local_storage(combinedComposerTargetStorage);
-    setComposerTargetKey(null);
     void clearComposerDraft(0);
     resetThreadSelectionForNewChat({
       actions,
@@ -1775,6 +1656,19 @@ export function ChatPanel({
 
   const activeCompletedCodexTurnNotification =
     completedCodexTurnNotifications[0];
+  const notifyEnabledForCompletedCodexTurn = useMemo(() => {
+    const notification = activeCompletedCodexTurnNotification;
+    if (!notification) return codexTurnNotifyDefaultEnabled;
+    return (
+      codexTurnNotificationWatches.some(
+        (watch) => watch.threadKey === notification.threadKey,
+      ) || codexTurnNotifyDefaultEnabled
+    );
+  }, [
+    activeCompletedCodexTurnNotification,
+    codexTurnNotificationWatches,
+    codexTurnNotifyDefaultEnabled,
+  ]);
 
   const dismissCompletedCodexTurnNotification = useCallback(() => {
     setCompletedCodexTurnNotifications((prev) => prev.slice(1));
@@ -1852,19 +1746,11 @@ export function ChatPanel({
       if (normalized !== selectedThreadKey) {
         setSelectedThreadKey(normalized);
       }
-      if (isCombinedFeedSelected) {
-        setComposerTargetKey(normalized);
-      }
       setAllowAutoSelectThread(false);
       setAutomationModalThreadKey(normalized);
       setAutomationModalOpen(true);
     },
-    [
-      selectedThreadKey,
-      isCombinedFeedSelected,
-      setSelectedThreadKey,
-      setAllowAutoSelectThread,
-    ],
+    [selectedThreadKey, setSelectedThreadKey, setAllowAutoSelectThread],
   );
 
   const openGitBrowserFromMessage = useCallback(
@@ -1895,8 +1781,7 @@ export function ChatPanel({
     async (prompt: string) => {
       const trimmed = `${prompt ?? ""}`.trim();
       if (!trimmed) return;
-      const targetThreadKey =
-        gitBrowserThreadKey ?? selectedThreadKey ?? composerTargetKey;
+      const targetThreadKey = gitBrowserThreadKey ?? selectedThreadKey;
       const thread_id = normalizeThreadKey(targetThreadKey);
       actions.sendChat({
         extraInput: trimmed,
@@ -1907,15 +1792,14 @@ export function ChatPanel({
         preserveSelectedThread: true,
       });
     },
-    [actions, gitBrowserThreadKey, selectedThreadKey, composerTargetKey],
+    [actions, gitBrowserThreadKey, selectedThreadKey],
   );
 
   const logGitBrowserDirectCommit = useCallback(
     async ({ hash, subject }: { hash: string; subject: string }) => {
       const commit = `${hash ?? ""}`.trim();
       if (!commit) return;
-      const targetThreadKey =
-        gitBrowserThreadKey ?? selectedThreadKey ?? composerTargetKey;
+      const targetThreadKey = gitBrowserThreadKey ?? selectedThreadKey;
       const thread_id = normalizeThreadKey(targetThreadKey);
       const lines = ["Committed manually.", `Commit: ${commit}`];
       if (`${subject ?? ""}`.trim()) {
@@ -1931,7 +1815,7 @@ export function ChatPanel({
         skipModelDispatch: true,
       });
     },
-    [actions, gitBrowserThreadKey, selectedThreadKey, composerTargetKey],
+    [actions, gitBrowserThreadKey, selectedThreadKey],
   );
 
   const findCommitInCurrentChat = useCallback(
@@ -1944,8 +1828,7 @@ export function ChatPanel({
   );
 
   const openActivityFromGitBrowser = useCallback(() => {
-    const targetThreadKey =
-      gitBrowserThreadKey ?? selectedThreadKey ?? composerTargetKey;
+    const targetThreadKey = gitBrowserThreadKey ?? selectedThreadKey;
     const thread_id = normalizeThreadKey(targetThreadKey);
     if (!thread_id) return;
     const threadMessages = actions.getMessagesInThread(thread_id) ?? [];
@@ -1966,13 +1849,7 @@ export function ChatPanel({
     setGitBrowserThreadKey(undefined);
     setActivityJumpDate(`${newestCodexDate}`);
     setActivityJumpToken((n) => n + 1);
-  }, [
-    actions,
-    gitBrowserThreadKey,
-    selectedThreadKey,
-    composerTargetKey,
-    setSelectedThreadKey,
-  ]);
+  }, [actions, gitBrowserThreadKey, selectedThreadKey, setSelectedThreadKey]);
 
   const activeLoopState =
     isSelectedThreadCodex &&
@@ -2179,7 +2056,7 @@ export function ChatPanel({
         project_id={project_id}
         path={path}
         messages={messages as ChatMessages}
-        threadIndex={combinedFeedIndex ?? threadIndex}
+        threadIndex={indexedThreads ?? threadIndex}
         acpState={acpState}
         scrollToBottomRef={scrollToBottomRef}
         scrollCacheId={scrollCacheId}
@@ -2194,8 +2071,6 @@ export function ChatPanel({
         onNewChat={() => {
           onNewChat();
         }}
-        composerTargetKey={composerTargetKey}
-        composerFocused={composerFocused}
         codexPaymentSource={codexPaymentSource}
         codexPaymentSourceLoading={codexPaymentSourceLoading}
         refreshCodexPaymentSource={refreshCodexPaymentSource}
@@ -2231,12 +2106,9 @@ export function ChatPanel({
         hasInput={hasInput}
         isSelectedThreadAI={isSelectedThreadAI}
         hasActiveAcpTurn={hasRunningAcpTurn}
-        combinedFeedSelected={isCombinedFeedSelected}
-        composerTargetKey={composerTargetKey}
         threads={threads}
         selectedThread={selectedThread}
-        onComposerTargetChange={setComposerTargetKey}
-        onComposerFocusChange={setComposerFocused}
+        onComposerFocusChange={() => undefined}
         onComposerReady={onComposerReady}
         codexPaymentSource={codexPaymentSource}
         codexPaymentSourceLoading={codexPaymentSourceLoading}
@@ -2269,6 +2141,23 @@ export function ChatPanel({
           </strong>
           .
         </p>
+        {activeCompletedCodexTurnNotification ? (
+          <div style={{ marginTop: 12 }}>
+            <Checkbox
+              checked={notifyEnabledForCompletedCodexTurn}
+              onChange={(e) =>
+                setNotifyForThread({
+                  checked: e.target.checked,
+                  threadKey: activeCompletedCodexTurnNotification.threadKey,
+                  threadId: activeCompletedCodexTurnNotification.threadId,
+                  threadLabel: activeCompletedCodexTurnNotification.threadLabel,
+                })
+              }
+            >
+              Notify
+            </Checkbox>
+          </div>
+        ) : null}
       </Modal>
       <Modal
         title="Thread automation"
@@ -2329,7 +2218,6 @@ export function ChatPanel({
             setSidebarVisible={setSidebarVisible}
             threadSections={threadSections}
             archivedThreads={archivedThreads}
-            combinedThread={combinedThread}
             openAppearanceModal={
               modalHandlers?.openAppearanceModal ??
               ((_threadKey, _label, _useCurrentLabel, _color, _icon) =>
@@ -2365,10 +2253,7 @@ export function ChatPanel({
         actions={actions}
         path={path}
         selectedThreadKey={selectedThreadKey}
-        selectedThreadLabel={
-          !isCombinedFeedSelected ? selectedThread?.label : undefined
-        }
-        isCombinedFeedSelected={isCombinedFeedSelected}
+        selectedThreadLabel={selectedThread?.label}
         onHandlers={setModalHandlers}
       />
       <ChatRoomThreadActions
@@ -2412,7 +2297,7 @@ function ChatRoomInner({
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   // subscribe to syncdbReady to force re-render when sync attaches
   useEditor("syncdbReady");
-  useEditor("readStateVersion");
+  const readStateVersion = useEditor("readStateVersion");
   return (
     <ChatPanel
       actions={actions}
@@ -2421,6 +2306,7 @@ function ChatRoomInner({
       messages={messages}
       threadIndex={threadIndex}
       docVersion={version}
+      readStateVersion={readStateVersion}
       fontSize={font_size}
       desc={desc}
       variant="default"

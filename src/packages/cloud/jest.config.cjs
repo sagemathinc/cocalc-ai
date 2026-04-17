@@ -6,6 +6,6 @@ module.exports = {
   testMatch: ["**/?(*.)+(spec|test).[jt]s?(x)"],
   testPathIgnorePatterns: ["<rootDir>/dist/"],
   transform: {
-    "^.+\\.ts$": ["ts-jest", { tsconfig: "./tsconfig.json" }],
+    "^.+\\.ts$": ["ts-jest", { tsconfig: "./tsconfig.test.json" }],
   },
 };

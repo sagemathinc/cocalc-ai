@@ -7,6 +7,10 @@ const loadRootfsPreflightMetadata = jest.fn();
 const requireCurrentRootfsPreflightMetadata = jest.fn();
 const writeRootfsPreflightMetadata = jest.fn();
 const rsyncProgressReporter = jest.fn();
+const spawn = jest.fn();
+const podmanEnv = jest.fn();
+const rm = jest.fn();
+const writeFile = jest.fn();
 
 jest.mock("@cocalc/backend/data", () => ({
   data: "/mnt/cocalc/data",
@@ -20,8 +24,21 @@ jest.mock("@cocalc/backend/execute-code", () => ({
   executeCode: (...args: any[]) => executeCode(...args),
 }));
 
+jest.mock("@cocalc/backend/podman/env", () => ({
+  podmanEnv: (...args: any[]) => podmanEnv(...args),
+}));
+
+jest.mock("fs/promises", () => ({
+  rm: (...args: any[]) => rm(...args),
+  writeFile: (...args: any[]) => writeFile(...args),
+}));
+
 jest.mock("@cocalc/util/reuse-in-flight", () => ({
   reuseInFlight: (fn: any) => fn,
+}));
+
+jest.mock("node:child_process", () => ({
+  spawn: (...args: any[]) => spawn(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => {
@@ -70,6 +87,10 @@ describe("extractBaseImage OCI preflight", () => {
     );
     executeCode.mockResolvedValue({ stdout: "", stderr: "", exit_code: 0 });
     rsyncProgressReporter.mockResolvedValue(undefined);
+    spawn.mockReturnValue({} as any);
+    podmanEnv.mockReturnValue({ XDG_RUNTIME_DIR: "/tmp/podman-test" });
+    rm.mockResolvedValue(undefined);
+    writeFile.mockResolvedValue(undefined);
   });
 
   it("removes the pulled image when mounted-image preflight rejects it", async () => {
@@ -90,10 +111,13 @@ describe("extractBaseImage OCI preflight", () => {
       }),
     );
     expect(preflightRootfsInPlace).not.toHaveBeenCalled();
-    expect(executeCode).toHaveBeenCalledWith({
-      command: "podman",
-      args: ["image", "rm", "docker.io/library/alpine:latest"],
-    });
+    expect(executeCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "podman",
+        args: ["image", "rm", "docker.io/library/alpine:latest"],
+        env: { XDG_RUNTIME_DIR: "/tmp/podman-test" },
+      }),
+    );
   });
 
   it("marks raw OCI extracts as oci-extract ownership layout", async () => {
@@ -123,9 +147,9 @@ describe("extractBaseImage OCI preflight", () => {
     executeCode.mockResolvedValue({ stdout: "{}", stderr: "", exit_code: 0 });
 
     const { extractBaseImage } = await import("./run/rootfs-base");
-    await expect(
-      extractBaseImage("quay.io/centos/centos:stream9"),
-    ).rejects.toThrow();
+    await expect(extractBaseImage("quay.io/centos/centos:stream9")).resolves.toBe(
+      "/mnt/cocalc/data/cache/images/quay.io%2Fcentos%2Fcentos%3Astream9",
+    );
 
     expect(preflightRootfsInPlace).toHaveBeenCalledWith(
       expect.objectContaining({

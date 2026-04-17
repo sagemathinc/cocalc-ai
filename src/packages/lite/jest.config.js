@@ -1,6 +1,9 @@
 /** @type {import('jest').Config} */
 module.exports = {
   preset: "ts-jest",
+  transform: {
+    "^.+\\.tsx?$": ["ts-jest", { tsconfig: "<rootDir>/tsconfig.test.json" }],
+  },
   testEnvironment: "node",
   moduleNameMapper: {
     "^@cocalc/util/(.*)$": "<rootDir>/../util/dist/$1",

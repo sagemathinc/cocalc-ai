@@ -829,7 +829,7 @@ export class ChatActions extends Actions<ChatState> {
     threadAgent?: NewThreadAgentOptions;
     // optional thread-level appearance defaults for new root threads
     threadAppearance?: NewThreadAppearanceOptions;
-    // if true, don't switch selected thread (e.g., combined feed)
+    // if true, keep the current selected thread after sending
     preserveSelectedThread?: boolean;
     // if true, append message but never dispatch to model/agent runtime
     skipModelDispatch?: boolean;
@@ -1555,16 +1555,15 @@ export class ChatActions extends Actions<ChatState> {
     if (!watermark) {
       return false;
     }
+    this.pendingThreadReads.set(watermark.threadId, {
+      count: watermark.count,
+      messageId: watermark.messageId,
+      at: watermark.at,
+    });
     const store = this.ensureProjectReadState();
     if (store != null) {
       store.markChatThreadRead(path, watermark.threadId, {
         message_id: watermark.messageId,
-        at: watermark.at,
-      });
-    } else {
-      this.pendingThreadReads.set(watermark.threadId, {
-        count: watermark.count,
-        messageId: watermark.messageId,
         at: watermark.at,
       });
     }
@@ -1884,15 +1883,12 @@ export class ChatActions extends Actions<ChatState> {
     if (!account_id) return 0;
     const threadId = this.normalizeThreadId(threadKey);
     if (!threadId) return 0;
-    const pending = this.pendingThreadReads.get(threadId);
-    if (pending != null) {
-      return pending.count;
-    }
     const path = this.store?.get("path");
     const store = this.ensureProjectReadState();
     const messageId = path
       ? store?.getChatThread(path, threadId)?.m
       : undefined;
+    let storeCount = 0;
     if (messageId) {
       const threadMessages = this.getMessagesInThread(threadId) ?? [];
       const index = threadMessages.findIndex(
@@ -1900,8 +1896,19 @@ export class ChatActions extends Actions<ChatState> {
           `${(message as any)?.message_id ?? ""}`.trim() === messageId,
       );
       if (index >= 0) {
-        return index + 1;
+        storeCount = index + 1;
       }
+    }
+    const pending = this.pendingThreadReads.get(threadId);
+    if (pending != null) {
+      if (storeCount >= pending.count) {
+        this.pendingThreadReads.delete(threadId);
+      } else {
+        return pending.count;
+      }
+    }
+    if (storeCount > 0) {
+      return storeCount;
     }
     const readKey = `read-${account_id}`;
     const cfgRow = this.getThreadConfigRecordById(threadId);

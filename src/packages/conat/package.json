@@ -68,6 +68,7 @@
     "utf-8-validate": "^6.0.5"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/lodash": "^4.17.20",
     "@types/node": "^22.10.10"
   },

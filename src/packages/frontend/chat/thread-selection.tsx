@@ -10,7 +10,7 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "./actions";
-import { COMBINED_FEED_KEY, type ThreadMeta } from "./threads";
+import type { ThreadMeta } from "./threads";
 import type { ChatMessages } from "./types";
 import { getMessageAtDate } from "./utils";
 import { field } from "./access";
@@ -21,7 +21,6 @@ interface ThreadSelectionOptions {
   messages?: ChatMessages;
   fragmentId?: string | null;
   storedThreadFromDesc?: string | null;
-  preferLatestThread?: boolean;
 }
 
 export function resetThreadSelectionForNewChat({
@@ -44,10 +43,9 @@ export function useChatThreadSelection({
   messages,
   fragmentId,
   storedThreadFromDesc,
-  preferLatestThread = false,
 }: ThreadSelectionOptions) {
   const [selectedThreadKey, setSelectedThreadKey0] = useState<string | null>(
-    storedThreadFromDesc ?? COMBINED_FEED_KEY,
+    storedThreadFromDesc ?? null,
   );
   const [allowAutoSelectThread, setAllowAutoSelectThread] =
     useState<boolean>(true);
@@ -64,18 +62,15 @@ export function useChatThreadSelection({
     if (x === selectedThreadKey) {
       return;
     }
-    if (x != null && x != COMBINED_FEED_KEY) {
+    if (x != null) {
       actions.clearAllFilters();
       actions.setFragment();
     }
     setSelectedThreadKey0(x);
-    actions.setSelectedThread?.(
-      x != null && x !== COMBINED_FEED_KEY ? x : null,
-    );
+    actions.setSelectedThread?.(x);
   };
 
-  const isCombinedFeedSelected = selectedThreadKey === COMBINED_FEED_KEY;
-  const singleThreadView = selectedThreadKey != null && !isCombinedFeedSelected;
+  const singleThreadView = selectedThreadKey != null;
   useEffect(() => {
     if (
       storedThreadFromDesc != null &&
@@ -89,9 +84,7 @@ export function useChatThreadSelection({
   useEffect(() => {
     if (threads.length === 0) {
       const explicitRequestedThread =
-        storedThreadFromDesc != null &&
-        storedThreadFromDesc !== "" &&
-        storedThreadFromDesc !== COMBINED_FEED_KEY;
+        storedThreadFromDesc != null && storedThreadFromDesc !== "";
       if (explicitRequestedThread) {
         if (selectedThreadKey !== storedThreadFromDesc) {
           syncSelectedThreadKeyFromExternal(storedThreadFromDesc);
@@ -102,11 +95,7 @@ export function useChatThreadSelection({
       // Preserve a concrete selected thread while metadata hydrates.
       // Embedded/flyout agent views pass a specific thread key and should not
       // briefly fall back to "new chat" during transient empty-thread states.
-      if (
-        selectedThreadKey != null &&
-        selectedThreadKey !== "" &&
-        selectedThreadKey !== COMBINED_FEED_KEY
-      ) {
+      if (selectedThreadKey != null && selectedThreadKey !== "") {
         return;
       }
       if (selectedThreadKey !== null) {
@@ -128,10 +117,10 @@ export function useChatThreadSelection({
     // If a concrete thread key is selected, don't immediately force a fallback
     // when thread metadata is transiently stale. This happens right after send:
     // selection moves to the new root before threadIndex has caught up.
-    if (selectedThreadKey != null && selectedThreadKey !== COMBINED_FEED_KEY) {
+    if (selectedThreadKey != null) {
       return;
     }
-    if (preferLatestThread && allowAutoSelectThread) {
+    if (allowAutoSelectThread) {
       const latestThreadKey = threads[0]?.key;
       if (latestThreadKey && latestThreadKey !== selectedThreadKey) {
         setSelectedThreadKey(latestThreadKey);
@@ -139,21 +128,7 @@ export function useChatThreadSelection({
       }
       return;
     }
-    const exists = threads.some((thread) => thread.key === selectedThreadKey);
-    if (
-      !exists &&
-      allowAutoSelectThread &&
-      selectedThreadKey !== COMBINED_FEED_KEY
-    ) {
-      setSelectedThreadKey(COMBINED_FEED_KEY);
-    }
-  }, [
-    threads,
-    selectedThreadKey,
-    allowAutoSelectThread,
-    preferLatestThread,
-    storedThreadFromDesc,
-  ]);
+  }, [threads, selectedThreadKey, allowAutoSelectThread, storedThreadFromDesc]);
 
   useEffect(() => {
     if (!fragmentId || messages == null) {
@@ -190,7 +165,6 @@ export function useChatThreadSelection({
     selectedThreadKey,
     setSelectedThreadKey,
     setAllowAutoSelectThread,
-    isCombinedFeedSelected,
     singleThreadView,
     selectedThread,
   };

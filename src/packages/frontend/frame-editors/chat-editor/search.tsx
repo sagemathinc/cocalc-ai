@@ -12,15 +12,12 @@ import type { ChatMessages } from "@cocalc/frontend/chat/types";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import type { ChatStoreSearchHit } from "@cocalc/conat/hub/api/projects";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import {
-  COMBINED_FEED_KEY,
-  deriveThreadLabel,
-} from "@cocalc/frontend/chat/threads";
+import { deriveThreadLabel } from "@cocalc/frontend/chat/threads";
 import useSearchIndex from "@cocalc/frontend/frame-editors/generic/search/use-search-index";
 
-const COMBINED_FEED_LABEL = "Combined feed";
 const ALL_MESSAGES_LABEL = "All messages";
 const ALL_MESSAGES_KEY = "__all_messages__";
+const LEGACY_COMBINED_FEED_KEY = "__COMBINED_FEED__";
 
 interface MatchHit {
   id: string;
@@ -91,7 +88,11 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
   const [cacheVersion, setCacheVersion] = useState<number>(0);
   const [selectedThreadKey, setSelectedThreadKey] = useState<
     string | undefined
-  >(externalSearchThread || undefined);
+  >(
+    externalSearchThread === LEGACY_COMBINED_FEED_KEY
+      ? ALL_MESSAGES_KEY
+      : externalSearchThread || undefined,
+  );
   const [result, setResult] = useState<MatchHit[]>([]);
   const [archivedResult, setArchivedResult] = useState<MatchHit[]>([]);
   const [archivedTotalCount, setArchivedTotalCount] = useState<number>(0);
@@ -141,7 +142,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
       const threadId = `${row?.thread_id ?? ""}`.trim();
       if (
         !threadId ||
-        threadId === COMBINED_FEED_KEY ||
+        threadId === LEGACY_COMBINED_FEED_KEY ||
         threadId === ALL_MESSAGES_KEY ||
         archivedByThreadId.get(threadId) === true
       ) {
@@ -221,7 +222,6 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     }
     if (
       selectedThreadKey &&
-      selectedThreadKey !== COMBINED_FEED_KEY &&
       selectedThreadKey !== ALL_MESSAGES_KEY &&
       !threadOptions.some((thread) => thread.key === selectedThreadKey)
     ) {
@@ -236,8 +236,12 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
 
   useEffect(() => {
     if (!externalSearchThread) return;
-    if (selectedThreadKey === externalSearchThread) return;
-    setSelectedThreadKey(externalSearchThread);
+    const normalizedThreadKey =
+      externalSearchThread === LEGACY_COMBINED_FEED_KEY
+        ? ALL_MESSAGES_KEY
+        : externalSearchThread;
+    if (selectedThreadKey === normalizedThreadKey) return;
+    setSelectedThreadKey(normalizedThreadKey);
   }, [externalSearchThread, selectedThreadKey]);
 
   const searchScope = selectedThreadKey ?? threadOptions[0]?.key;
@@ -246,12 +250,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     if (!messages) {
       return [];
     }
-    if (
-      searchScope &&
-      searchScope !== COMBINED_FEED_KEY &&
-      searchScope !== ALL_MESSAGES_KEY &&
-      threadIndex
-    ) {
+    if (searchScope && searchScope !== ALL_MESSAGES_KEY && threadIndex) {
       return Array.from(threadIndex.get(searchScope)?.messageKeys ?? []);
     }
     return Array.from(messages.keys()).filter((key) => {
@@ -264,7 +263,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
 
   const scopeHasArchivedRows = useMemo(() => {
     if (!chatActions || !searchScope) return false;
-    if (searchScope === COMBINED_FEED_KEY || searchScope === ALL_MESSAGES_KEY) {
+    if (searchScope === ALL_MESSAGES_KEY) {
       // Cross-thread backend search should include only non-archived threads.
       const rows = chatActions?.listThreadConfigRows?.() ?? [];
       for (const row0 of rows) {
@@ -345,10 +344,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
       setArchivedTotalCount(0);
       return;
     }
-    const threadId =
-      searchScope === COMBINED_FEED_KEY || searchScope === ALL_MESSAGES_KEY
-        ? undefined
-        : searchScope;
+    const threadId = searchScope === ALL_MESSAGES_KEY ? undefined : searchScope;
     const excludedThreadIds =
       threadId == null ? Array.from(archivedThreadIds) : undefined;
     let cancelled = false;
@@ -443,10 +439,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
       if (hit.source === "archived" && hit.threadId) {
         // In cross-thread scopes, lock onto the hit's thread first so follow-up
         // navigation/search context is coherent.
-        if (
-          searchScope === COMBINED_FEED_KEY ||
-          searchScope === ALL_MESSAGES_KEY
-        ) {
+        if (searchScope === ALL_MESSAGES_KEY) {
           setSelectedThreadKey(hit.threadId);
         }
         try {
@@ -520,7 +513,6 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
             }}
             options={[
               { value: ALL_MESSAGES_KEY, label: ALL_MESSAGES_LABEL },
-              { value: COMBINED_FEED_KEY, label: COMBINED_FEED_LABEL },
               ...threadOptions.map((thread) => ({
                 value: thread.key,
                 label: thread.label,

@@ -1,6 +1,9 @@
 /** @type {import('ts-jest').JestConfigWithTsJest} */
 module.exports = {
   preset: "ts-jest",
+  transform: {
+    "^.+\\.tsx?$": ["ts-jest", { tsconfig: "<rootDir>/tsconfig.test.json" }],
+  },
   testEnvironment: "jsdom",
   testEnvironmentOptions: {
     // needed or jest imports the ts directly rather than the compiled

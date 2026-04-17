@@ -9,7 +9,7 @@ import type {
   MouseEvent as ReactMouseEvent,
 } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, InputNumber, Modal, Select, Switch } from "antd";
+import { Button, InputNumber, Modal, Switch } from "antd";
 import { FormattedMessage } from "react-intl";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
@@ -47,11 +47,8 @@ export interface ChatRoomComposerProps {
   hasInput: boolean;
   isSelectedThreadAI: boolean;
   hasActiveAcpTurn?: boolean;
-  combinedFeedSelected: boolean;
-  composerTargetKey: string | null;
   threads: ThreadMeta[];
   selectedThread?: ThreadMeta | null;
-  onComposerTargetChange: (key: string | null) => void;
   onComposerFocusChange: (focused: boolean) => void;
   onComposerReady?: (
     control: ChatInputControl | null,
@@ -81,11 +78,8 @@ export function ChatRoomComposer({
   hasInput,
   isSelectedThreadAI,
   hasActiveAcpTurn = false,
-  combinedFeedSelected,
-  composerTargetKey,
-  threads,
+  threads: _threads,
   selectedThread,
-  onComposerTargetChange,
   onComposerFocusChange,
   onComposerReady,
   codexPaymentSource: _codexPaymentSource,
@@ -116,15 +110,6 @@ export function ChatRoomComposer({
   const stripHtml = (value: string): string =>
     value.replace(/<[^>]*>/g, "").trim();
 
-  const targetOptions = threads.map((thread) => ({
-    value: thread.key,
-    label: stripHtml(thread.displayLabel ?? thread.label),
-  }));
-  const targetValue =
-    composerTargetKey &&
-    targetOptions.some((opt) => opt.value === composerTargetKey)
-      ? composerTargetKey
-      : undefined;
   const threadLabel = selectedThread?.displayLabel ?? selectedThread?.label;
   const threadColor = selectedThread?.threadColor;
   const threadAccentColor = selectedThread?.threadAccentColor;
@@ -132,17 +117,11 @@ export function ChatRoomComposer({
   const threadImage = selectedThread?.threadImage;
   const hasCustomAppearance = selectedThread?.hasCustomAppearance ?? false;
   const themeLineColor = threadColor ?? threadAccentColor;
-  const contextThread = useMemo(() => {
-    if (combinedFeedSelected) {
-      if (!targetValue) return undefined;
-      return threads.find((thread) => thread.key === targetValue);
-    }
-    return selectedThread ?? undefined;
-  }, [combinedFeedSelected, targetValue, threads, selectedThread]);
+  const contextThread = useMemo(
+    () => selectedThread ?? undefined,
+    [selectedThread],
+  );
   const composerPlaceholder = useMemo(() => {
-    if (combinedFeedSelected && targetOptions.length > 0 && !contextThread) {
-      return "Write a message (choose a target chat)...";
-    }
     if (!contextThread) {
       return "Ask anything...";
     }
@@ -169,13 +148,11 @@ export function ChatRoomComposer({
       return model ? `Ask ${model}...` : "Ask AI...";
     }
     return "Write a message...";
-  }, [combinedFeedSelected, targetOptions.length, contextThread, actions]);
-  const presenceThreadKey = useMemo(() => {
-    if (combinedFeedSelected) {
-      return composerTargetKey ?? null;
-    }
-    return selectedThread?.key ?? null;
-  }, [combinedFeedSelected, composerTargetKey, selectedThread?.key]);
+  }, [contextThread, actions]);
+  const presenceThreadKey = useMemo(
+    () => selectedThread?.key ?? null,
+    [selectedThread?.key],
+  );
 
   const [viewportHeight, setViewportHeight] = useState<number>(() => {
     if (typeof window === "undefined") return 900;
@@ -494,21 +471,6 @@ export function ChatRoomComposer({
               />
             </div>
           </Tooltip>
-        )}
-        {combinedFeedSelected && targetOptions.length > 0 && (
-          <div style={{ marginBottom: 6 }}>
-            <span style={{ marginRight: 8, color: "#666" }}>Replying to:</span>
-            <Select
-              size="small"
-              style={{ minWidth: 220, maxWidth: 420 }}
-              options={targetOptions}
-              value={targetValue}
-              onChange={(value) => onComposerTargetChange(value ?? null)}
-              placeholder="Choose a thread"
-              showSearch
-              optionFilterProp="label"
-            />
-          </div>
         )}
         {hasCustomAppearance && threadLabel && (
           <div

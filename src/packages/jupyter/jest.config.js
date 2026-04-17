@@ -12,6 +12,9 @@ function hasJupyter() {
 
 module.exports = {
   preset: "ts-jest",
+  transform: {
+    "^.+\\.tsx?$": ["ts-jest", { tsconfig: "<rootDir>/tsconfig.test.json" }],
+  },
   testEnvironment: "node",
   testMatch: ["**/?(*.)+(spec|test).ts?(x)"],
   setupFiles: ["./test/setup.js"],
