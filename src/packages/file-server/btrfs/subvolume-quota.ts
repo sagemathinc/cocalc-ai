@@ -166,15 +166,15 @@ export class SubvolumeQuota {
   };
 
   set = async (size: string | number) => {
-    if (!size) {
-      throw Error("size must be specified");
-    }
     if (btrfsQuotasDisabled()) {
       logger.debug("setQuota skipped because btrfs quotas are disabled", {
         path: this.subvolume.path,
         size,
       });
       return;
+    }
+    if (!size) {
+      throw Error("size must be specified");
     }
     logger.debug("setQuota ", this.subvolume.path, size);
     await queueSetSubvolumeQuota({

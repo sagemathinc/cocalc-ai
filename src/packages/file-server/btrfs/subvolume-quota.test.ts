@@ -54,4 +54,14 @@ describe("SubvolumeQuota kill switch", () => {
     expect(queueSetSubvolumeQuotaMock).not.toHaveBeenCalled();
     expect(btrfsMock).not.toHaveBeenCalled();
   });
+
+  it("ignores even zero or missing quota writes when disabled", async () => {
+    const quota = createQuota();
+
+    await expect(quota.set(0 as any)).resolves.toBeUndefined();
+    await expect(quota.set(undefined as any)).resolves.toBeUndefined();
+
+    expect(queueSetSubvolumeQuotaMock).not.toHaveBeenCalled();
+    expect(btrfsMock).not.toHaveBeenCalled();
+  });
 });

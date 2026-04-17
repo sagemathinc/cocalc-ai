@@ -48,6 +48,22 @@ export async function setQuota(project_id: string, size: number | string) {
 // running on the same compute as the file server, e.g., dev mode.
 let fs: Filesystem | null = null;
 
+function hasPositiveQuotaValue(
+  size?: number | string | null,
+): size is number | string {
+  if (size == null) return false;
+  if (typeof size === "number") {
+    return Number.isFinite(size) && size > 0;
+  }
+  const trimmed = `${size}`.trim();
+  if (!trimmed) return false;
+  const parsed = Number(trimmed);
+  if (Number.isFinite(parsed)) {
+    return parsed > 0;
+  }
+  return true;
+}
+
 function volumeName(project_id: string): string {
   return `project-${project_id}`;
 }
@@ -115,7 +131,7 @@ export async function localPath({
     }
 
     const homeVol = await fs.subvolumes.ensure(homeVolName);
-    if (disk != null) {
+    if (hasPositiveQuotaValue(disk)) {
       logger.debug("localPath: setting home quota", { project_id, disk });
       await homeVol.quota.set(disk);
     } else {
@@ -137,7 +153,7 @@ export async function localPath({
       if (effectiveScratchQuota == null) {
         try {
           const { size } = await homeVol.quota.get();
-          if (size != null) {
+          if (hasPositiveQuotaValue(size)) {
             effectiveScratchQuota = size;
             scratchQuotaSource = "home";
           }
@@ -149,7 +165,7 @@ export async function localPath({
           });
         }
       }
-      if (effectiveScratchQuota != null) {
+      if (hasPositiveQuotaValue(effectiveScratchQuota)) {
         logger.debug("localPath: setting scratch quota", {
           project_id,
           effectiveScratchQuota,
@@ -210,7 +226,7 @@ export async function localPath({
   if (ensure) {
     logger.debug("localPath: ensuring remote home volume", { project_id });
     await c.ensureVolume({ project_id });
-    if (disk != null) {
+    if (hasPositiveQuotaValue(disk)) {
       logger.debug("localPath: setting remote home quota", {
         project_id,
         disk,
@@ -230,7 +246,7 @@ export async function localPath({
       if (effectiveScratchQuota == null) {
         try {
           const { size } = await c.getQuota({ project_id });
-          if (size != null) {
+          if (hasPositiveQuotaValue(size)) {
             effectiveScratchQuota = size;
             scratchQuotaSource = "home";
           }
@@ -244,7 +260,7 @@ export async function localPath({
           );
         }
       }
-      if (effectiveScratchQuota != null) {
+      if (hasPositiveQuotaValue(effectiveScratchQuota)) {
         logger.debug("localPath: setting remote scratch quota", {
           project_id,
           effectiveScratchQuota,
