@@ -617,6 +617,13 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 text,
             )
             self.assertIn("COCALC_PROJECT_POOL_MEMORY_RESERVE_MB=4096", text)
+            local_env_text = env_path.with_name("project-host.local.env").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("# Local project-host overrides.", local_env_text)
+            self.assertIn(
+                "COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS=1", local_env_text
+            )
 
     def test_write_wrapper_uses_runtime_home_for_node_lookup(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

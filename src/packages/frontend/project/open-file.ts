@@ -20,6 +20,7 @@ import {
   required,
   uuid,
 } from "@cocalc/util/misc";
+import { until } from "@cocalc/util/async-utils";
 import { isChatExtension } from "@cocalc/frontend/chat/paths";
 import { getRuntimeWorkspaceRecords } from "@cocalc/frontend/project/workspaces/records-runtime";
 import {
@@ -88,6 +89,23 @@ type SyncIdentityFs = {
   canonicalSyncIdentityPath?: (path: string) => Promise<string>;
 };
 
+const SYNC_IDENTITY_RETRY_START_MS = 150;
+const SYNC_IDENTITY_RETRY_MAX_MS = 1500;
+
+export function isTransientSyncIdentityResolutionError(err: unknown): boolean {
+  const message = `${err}`;
+  return (
+    message.includes("file server not initialized") ||
+    message.includes("socket has been disconnected") ||
+    message.includes("code=408") ||
+    message.includes('timeout of 30000ms waiting for "ready"')
+  );
+}
+
+export function isCancelledSyncIdentityResolutionError(err: unknown): boolean {
+  return `${err}`.includes("canonical sync identity open was cancelled");
+}
+
 export function applyWorkspaceSelectionForForegroundOpen(
   project_id: string,
   path: string,
@@ -133,6 +151,40 @@ export async function resolveSyncPath(
   // Map resolved paths to canonical sync identities used by specific editors
   // (e.g. ipynb syncdb path, terminal path key).
   return canonicalPath(syncPath, projectHome);
+}
+
+export async function resolveSyncPathWithRetry(
+  fs: SyncIdentityFs,
+  displayPath: string,
+  projectHome: string,
+  {
+    isOpen = () => true,
+  }: {
+    isOpen?: () => boolean;
+  } = {},
+): Promise<string> {
+  let syncPath = "";
+  await until(
+    async () => {
+      if (!isOpen()) {
+        throw new Error("canonical sync identity open was cancelled");
+      }
+      try {
+        syncPath = await resolveSyncPath(fs, displayPath, projectHome);
+        return true;
+      } catch (err) {
+        if (!isTransientSyncIdentityResolutionError(err)) {
+          throw err;
+        }
+        return false;
+      }
+    },
+    {
+      start: SYNC_IDENTITY_RETRY_START_MS,
+      max: SYNC_IDENTITY_RETRY_MAX_MS,
+    },
+  );
+  return syncPath;
 }
 
 export async function open_file(
@@ -252,12 +304,18 @@ export async function open_file(
 
   let syncPath: string;
   try {
-    syncPath = await resolveSyncPath(
+    syncPath = await resolveSyncPathWithRetry(
       actions.fs() as SyncIdentityFs,
       displayPath,
       projectHome,
+      {
+        isOpen: tabIsOpened,
+      },
     );
   } catch (err) {
+    if (isCancelledSyncIdentityResolutionError(err)) {
+      return;
+    }
     if (!alreadyOpened && actions.open_files?.has(displayPath)) {
       actions.open_files.delete(displayPath);
       redux.getActions("page").save_session();
