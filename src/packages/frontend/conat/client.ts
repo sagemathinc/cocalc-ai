@@ -695,12 +695,17 @@ export class ConatClient extends EventEmitter {
         state!.expiresAt = expires_at;
         return token;
       })
+      .catch((err) => {
+        delete state!.token;
+        delete state!.expiresAt;
+        throw err;
+      })
       .finally(() => {
         if (state?.inFlight) {
           delete state.inFlight;
         }
       });
-    return await request.then(({ token }) => token);
+    return await state.inFlight;
   };
 
   // Mint a short-lived project-host auth token for ACP/Codex runtime use.
@@ -825,38 +830,6 @@ export class ConatClient extends EventEmitter {
     if (current) {
       this.removeRoutedHubClient(host_id);
     }
-    const state: RoutedHubClientState = {
-      address,
-      host_session_id,
-      project_ids: new Set<string>(),
-      reconnectAttempts: 0,
-      client: connectToConat({
-        address,
-        inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
-        auth: async (cb) => {
-          try {
-            const authProjectId = this.pickTrackedProjectForHost(
-              host_id,
-              state,
-              project_id,
-            );
-            const token = await this.getProjectHostToken({
-              host_id,
-              project_id: authProjectId,
-            });
-            cb({ bearer: token });
-          } catch (err) {
-            console.warn(
-              `failed issuing project-host auth token for host ${host_id}`,
-              err,
-            );
-            cb({});
-          }
-        },
-        reconnection: false,
-        forceNew: true,
-      }),
-    };
     const reconnectRouted = () => {
       if (this.permanentlyDisconnected) {
         return;
@@ -933,6 +906,41 @@ export class ConatClient extends EventEmitter {
           reconnectRouted();
         }
       }, delayMs);
+    };
+    const state: RoutedHubClientState = {
+      address,
+      host_session_id,
+      project_ids: new Set<string>(),
+      reconnectAttempts: 0,
+      client: connectToConat({
+        address,
+        inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
+        auth: (cb) => {
+          const authProjectId = this.pickTrackedProjectForHost(
+            host_id,
+            state,
+            project_id,
+          );
+          void this.getProjectHostToken({
+            host_id,
+            project_id: authProjectId,
+          })
+            .then((token) => {
+              cb({ bearer: token });
+            })
+            .catch((err) => {
+              this.invalidateProjectHostToken(host_id);
+              reconnectRouted();
+              console.warn(
+                `failed issuing project-host auth token for host ${host_id}`,
+                err,
+              );
+              cb({});
+            });
+        },
+        reconnection: false,
+        forceNew: true,
+      }),
     };
     state.client.on("connected", () => {
       state.reconnectAttempts = 0;
