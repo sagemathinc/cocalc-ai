@@ -16,7 +16,6 @@ import * as workspaceSelectionRuntime from "./workspaces/selection-runtime";
 import { termPath } from "@cocalc/util/terminal/names";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import * as asyncUtils from "@cocalc/util/async-utils";
 
 describe("canonicalPath", () => {
   const HOME = "/home/wstein/work";
@@ -147,14 +146,10 @@ describe("resolveSyncPathWithRetry", () => {
         .mockRejectedValueOnce(new Error("file server not initialized"))
         .mockResolvedValue("/root/file.txt"),
     };
-    const sleepSpy = jest
-      .spyOn(asyncUtils, "sleep")
-      .mockResolvedValue(undefined);
     await expect(
       resolveSyncPathWithRetry(fs, "/root/file.txt", HOME),
     ).resolves.toBe("/root/file.txt");
     expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledTimes(2);
-    expect(sleepSpy).toHaveBeenCalled();
   });
 
   it("stops retrying when the open is cancelled", async () => {
@@ -163,7 +158,6 @@ describe("resolveSyncPathWithRetry", () => {
         .fn()
         .mockRejectedValue(new Error("file server not initialized")),
     };
-    jest.spyOn(asyncUtils, "sleep").mockResolvedValue(undefined);
     let open = true;
     const promise = resolveSyncPathWithRetry(fs, "/root/file.txt", HOME, {
       isOpen: () => open,
@@ -176,12 +170,10 @@ describe("resolveSyncPathWithRetry", () => {
     const fs = {
       canonicalSyncIdentityPath: jest.fn().mockRejectedValue(new Error("boom")),
     };
-    const sleepSpy = jest.spyOn(asyncUtils, "sleep");
     await expect(
       resolveSyncPathWithRetry(fs, "/root/file.txt", HOME),
     ).rejects.toThrow("boom");
     expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledTimes(1);
-    expect(sleepSpy).not.toHaveBeenCalled();
   });
 });
 

@@ -20,7 +20,7 @@ import {
   required,
   uuid,
 } from "@cocalc/util/misc";
-import { sleep } from "@cocalc/util/async-utils";
+import { until } from "@cocalc/util/async-utils";
 import { isChatExtension } from "@cocalc/frontend/chat/paths";
 import { getRuntimeWorkspaceRecords } from "@cocalc/frontend/project/workspaces/records-runtime";
 import {
@@ -91,7 +91,6 @@ type SyncIdentityFs = {
 
 const SYNC_IDENTITY_RETRY_START_MS = 150;
 const SYNC_IDENTITY_RETRY_MAX_MS = 1500;
-const SYNC_IDENTITY_RETRY_TIMEOUT_MS = 10_000;
 
 export function isTransientSyncIdentityResolutionError(err: unknown): boolean {
   const message = `${err}`;
@@ -101,6 +100,10 @@ export function isTransientSyncIdentityResolutionError(err: unknown): boolean {
     message.includes("code=408") ||
     message.includes('timeout of 30000ms waiting for "ready"')
   );
+}
+
+export function isCancelledSyncIdentityResolutionError(err: unknown): boolean {
+  return `${err}`.includes("canonical sync identity open was cancelled");
 }
 
 export function applyWorkspaceSelectionForForegroundOpen(
@@ -160,25 +163,28 @@ export async function resolveSyncPathWithRetry(
     isOpen?: () => boolean;
   } = {},
 ): Promise<string> {
-  const deadline = Date.now() + SYNC_IDENTITY_RETRY_TIMEOUT_MS;
-  let delayMs = SYNC_IDENTITY_RETRY_START_MS;
-  while (true) {
-    if (!isOpen()) {
-      throw new Error(`open of '${displayPath}' was cancelled`);
-    }
-    try {
-      return await resolveSyncPath(fs, displayPath, projectHome);
-    } catch (err) {
-      if (
-        !isTransientSyncIdentityResolutionError(err) ||
-        Date.now() + delayMs > deadline
-      ) {
-        throw err;
+  let syncPath = "";
+  await until(
+    async () => {
+      if (!isOpen()) {
+        throw new Error("canonical sync identity open was cancelled");
       }
-    }
-    await sleep(delayMs);
-    delayMs = Math.min(SYNC_IDENTITY_RETRY_MAX_MS, Math.round(delayMs * 1.8));
-  }
+      try {
+        syncPath = await resolveSyncPath(fs, displayPath, projectHome);
+        return true;
+      } catch (err) {
+        if (!isTransientSyncIdentityResolutionError(err)) {
+          throw err;
+        }
+        return false;
+      }
+    },
+    {
+      start: SYNC_IDENTITY_RETRY_START_MS,
+      max: SYNC_IDENTITY_RETRY_MAX_MS,
+    },
+  );
+  return syncPath;
 }
 
 export async function open_file(
@@ -307,6 +313,9 @@ export async function open_file(
       },
     );
   } catch (err) {
+    if (isCancelledSyncIdentityResolutionError(err)) {
+      return;
+    }
     if (!alreadyOpened && actions.open_files?.has(displayPath)) {
       actions.open_files.delete(displayPath);
       redux.getActions("page").save_session();
