@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { delay } from "awaiting";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LRUCache from "lru-cache";
 import { appendStreamMessage } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import type { DStream } from "@cocalc/conat/sync/dstream";
+import type { RegisteredReconnectResource } from "@cocalc/frontend/conat/reconnect-coordinator";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 // Backend batches live ACP log pubsub at 100ms and AKV persistence at 250ms in
@@ -132,8 +134,24 @@ export function useCodexLog({
     if (!cacheKey) return [];
     return recentLogCache.get(cacheKey) ?? [];
   });
+  const [liveReconnectToken, setLiveReconnectToken] = useState(0);
   const liveBufferRef = useRef<any[]>([]);
   const liveFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveConnectedRef = useRef<boolean>(false);
+  const reconnectResourceRef = useRef<RegisteredReconnectResource | null>(null);
+  const mountedRef = useRef<boolean>(true);
+  const hasLiveSource =
+    generating === true && Boolean(projectId && (liveLogStream || logSubject));
+  const canReconnectLive =
+    enabled === true &&
+    Boolean(projectId) &&
+    Boolean(liveLogStream || logSubject);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const mergeLogs = useMemo(() => {
     return (a: any[] | null, b: any[]): any[] => {
@@ -202,27 +220,46 @@ export function useCodexLog({
     }
   }, [cacheKey, logSubject]);
 
+  const fetchPersistedLog = useCallback(
+    async ({
+      allowDuringGeneration = false,
+    }: { allowDuringGeneration?: boolean } = {}): Promise<
+      any[] | null | undefined
+    > => {
+      if (!enabled || !hasLogRef || !projectId || !logStore || !logKey) {
+        return undefined;
+      }
+      if (!allowDuringGeneration && generating && liveLogStream) {
+        return undefined;
+      }
+      const cn = webapp_client.conat_client.conat();
+      const kv = cn.sync.akv<any[]>({
+        project_id: projectId,
+        name: logStore,
+      });
+      return await kv.get(logKey);
+    },
+    [
+      enabled,
+      generating,
+      hasLogRef,
+      liveLogStream,
+      logKey,
+      logStore,
+      projectId,
+    ],
+  );
+
   // Load from AKV once per key.
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     async function fetchLog() {
-      if (
-        !enabled ||
-        !hasLogRef ||
-        !projectId ||
-        akvLoaded ||
-        (generating && liveLogStream)
-      ) {
+      if (!enabled || !hasLogRef || !projectId || akvLoaded) {
         return;
       }
       try {
-        const cn = webapp_client.conat_client.conat();
-        const kv = cn.sync.akv<any[]>({
-          project_id: projectId,
-          name: logStore!,
-        });
-        const data = await kv.get(logKey!);
+        const data = await fetchPersistedLog();
         if (!cancelled) {
           // If the log has not yet been persisted, leave fetchedLog as null so
           // we will retry (immediately below and on the delayed retry).
@@ -254,10 +291,87 @@ export function useCodexLog({
     logStore,
     logKey,
     enabled,
+    fetchPersistedLog,
     akvLoaded,
     generating,
     liveLogStream,
   ]);
+
+  const waitForLiveReconnect = useCallback(async () => {
+    if (!canReconnectLive || !hasLiveSource) {
+      return;
+    }
+    const started = Date.now();
+    while (mountedRef.current && canReconnectLive && hasLiveSource) {
+      if (liveConnectedRef.current) {
+        return;
+      }
+      if (Date.now() - started > 30_000) {
+        throw Error("timed out waiting for codex log reconnect");
+      }
+      await delay(100);
+    }
+  }, [canReconnectLive, hasLiveSource]);
+
+  useEffect(() => {
+    if (!canReconnectLive) {
+      reconnectResourceRef.current?.close();
+      reconnectResourceRef.current = null;
+      return;
+    }
+    reconnectResourceRef.current?.close();
+    reconnectResourceRef.current =
+      webapp_client.conat_client.registerReconnectResource({
+        canReconnect: () => canReconnectLive,
+        isConnected: () => !hasLiveSource || liveConnectedRef.current,
+        priority: () => "foreground",
+        reconnect: async () => {
+          liveConnectedRef.current = false;
+          try {
+            const persisted = await fetchPersistedLog({
+              allowDuringGeneration: true,
+            });
+            if (mountedRef.current && persisted != null) {
+              setFetchedLog(persisted);
+              setAkvLoaded(true);
+            }
+          } catch (err) {
+            console.warn("codex log reconnect fetch failed", err);
+          }
+          if (!mountedRef.current || !hasLiveSource) {
+            return;
+          }
+          setLiveReconnectToken((n) => n + 1);
+          await waitForLiveReconnect();
+        },
+      });
+    return () => {
+      reconnectResourceRef.current?.close();
+      reconnectResourceRef.current = null;
+    };
+  }, [
+    canReconnectLive,
+    fetchPersistedLog,
+    hasLiveSource,
+    waitForLiveReconnect,
+  ]);
+
+  useEffect(() => {
+    if (!canReconnectLive) {
+      liveConnectedRef.current = false;
+      return;
+    }
+    const handleDisconnected = () => {
+      liveConnectedRef.current = false;
+      reconnectResourceRef.current?.requestReconnect({
+        reason: "codex_log_disconnected",
+      });
+    };
+    webapp_client.conat_client.on("disconnected", handleDisconnected);
+    return () => {
+      webapp_client.conat_client.off("disconnected", handleDisconnected);
+    };
+  }, [canReconnectLive]);
 
   // Subscribe to live events while generating.
   useEffect(() => {
@@ -290,6 +404,7 @@ export function useCodexLog({
     };
     async function subscribe() {
       if (!enabled || !generating || !projectId) return;
+      liveConnectedRef.current = false;
       try {
         const cn = webapp_client.conat_client.conat();
         if (liveLogStream) {
@@ -303,6 +418,7 @@ export function useCodexLog({
             liveStream.close();
             return;
           }
+          liveConnectedRef.current = true;
           liveStream.setMaxListeners(
             Math.max(liveStream.getMaxListeners(), 50),
           );
@@ -339,6 +455,7 @@ export function useCodexLog({
         }
         if (!logSubject) return;
         sub = await cn.subscribe(logSubject);
+        liveConnectedRef.current = true;
         for await (const mesg of sub) {
           if (stopped) break;
           const payload = normalizeIncomingLogPayload(mesg?.data);
@@ -354,13 +471,26 @@ export function useCodexLog({
           }
           scheduleBufferedFlush(immediate);
         }
+        if (!stopped) {
+          liveConnectedRef.current = false;
+          reconnectResourceRef.current?.requestReconnect({
+            reason: "codex_log_subscription_closed",
+          });
+        }
       } catch (err) {
+        liveConnectedRef.current = false;
         console.warn("live log subscribe failed", err);
+        if (!stopped) {
+          reconnectResourceRef.current?.requestReconnect({
+            reason: "codex_log_subscribe_failed",
+          });
+        }
       }
     }
     void subscribe();
     return () => {
       stopped = true;
+      liveConnectedRef.current = false;
       if (liveFlushTimerRef.current != null) {
         clearTimeout(liveFlushTimerRef.current);
         liveFlushTimerRef.current = null;
@@ -384,7 +514,15 @@ export function useCodexLog({
         // ignore
       }
     };
-  }, [enabled, generating, projectId, liveLogStream, logSubject, mergeLogs]);
+  }, [
+    enabled,
+    generating,
+    liveReconnectToken,
+    projectId,
+    liveLogStream,
+    logSubject,
+    mergeLogs,
+  ]);
 
   const events = useMemo(() => {
     if (!hasLogRef) return generating ? liveLog : undefined;
