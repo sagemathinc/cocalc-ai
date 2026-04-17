@@ -176,6 +176,15 @@ import {
   rolloutComponentsForUpgradeResults as rolloutComponentsForUpgradeResultsInternal,
 } from "./hosts-software";
 import {
+  computeAutomaticArtifactUpgradeTargets,
+  computeHostRuntimeDeploymentReconcilePlan,
+  DEFAULT_RUNTIME_DEPLOYMENT_POLICY,
+  normalizeRuntimeArtifactTarget,
+  normalizeRuntimeDeploymentUpserts,
+  runtimeDeploymentsForComponentRollout,
+  runtimeDeploymentsForUpgradeResults,
+} from "./hosts-runtime-deployment-planning";
+import {
   installedProjectHostArtifactVersion,
   isProjectHostLocalRollbackError as isProjectHostLocalRollbackErrorInternal,
   isUnsupportedHostAgentStatusObservationError,
@@ -213,97 +222,8 @@ const PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE = "PROJECT_HOST_LOCAL_ROLLBACK";
 export const isProjectHostLocalRollbackError =
   isProjectHostLocalRollbackErrorInternal;
 
-const DEFAULT_RUNTIME_DEPLOYMENT_POLICY: Record<
-  ManagedComponentKind,
-  HostRuntimeDeploymentRecord["rollout_policy"]
-> = {
-  "project-host": "restart_now",
-  "conat-router": "restart_now",
-  "conat-persist": "restart_now",
-  "acp-worker": "drain_then_replace",
-};
-
 const AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON =
   "automatic_runtime_deployment_reconcile";
-
-function normalizeRuntimeArtifactTarget(
-  artifact?: HostSoftwareArtifact | HostRuntimeArtifact,
-): HostRuntimeArtifact | undefined {
-  if (artifact === "project" || artifact === "project-bundle") {
-    return "project-bundle";
-  }
-  if (
-    artifact === "project-host" ||
-    artifact === "tools" ||
-    artifact === "bootstrap-environment"
-  ) {
-    return artifact;
-  }
-  return;
-}
-
-function normalizeRuntimeDeploymentUpsert(
-  deployment: HostRuntimeDeploymentUpsert,
-): HostRuntimeDeploymentUpsert | undefined {
-  const desired_version = `${deployment?.desired_version ?? ""}`.trim();
-  if (!desired_version) return;
-  if (deployment?.target_type === "component") {
-    const target = deployment.target as ManagedComponentKind;
-    if (!(target in DEFAULT_RUNTIME_DEPLOYMENT_POLICY)) return;
-    return {
-      ...deployment,
-      target_type: "component",
-      target,
-      desired_version,
-      rollout_policy:
-        deployment.rollout_policy ?? DEFAULT_RUNTIME_DEPLOYMENT_POLICY[target],
-      rollout_reason: `${deployment?.rollout_reason ?? ""}`.trim() || undefined,
-      drain_deadline_seconds:
-        deployment.drain_deadline_seconds == null
-          ? undefined
-          : Math.max(0, Math.floor(Number(deployment.drain_deadline_seconds))),
-      metadata:
-        deployment.metadata && typeof deployment.metadata === "object"
-          ? deployment.metadata
-          : undefined,
-    };
-  }
-  if (deployment?.target_type === "artifact") {
-    const target = normalizeRuntimeArtifactTarget(
-      deployment.target as HostRuntimeArtifact,
-    );
-    if (!target) return;
-    return {
-      ...deployment,
-      target_type: "artifact",
-      target,
-      desired_version,
-      rollout_policy: deployment.rollout_policy,
-      rollout_reason: `${deployment?.rollout_reason ?? ""}`.trim() || undefined,
-      drain_deadline_seconds:
-        deployment.drain_deadline_seconds == null
-          ? undefined
-          : Math.max(0, Math.floor(Number(deployment.drain_deadline_seconds))),
-      metadata:
-        deployment.metadata && typeof deployment.metadata === "object"
-          ? deployment.metadata
-          : undefined,
-    };
-  }
-  return;
-}
-
-function normalizeRuntimeDeploymentUpserts(
-  deployments: HostRuntimeDeploymentUpsert[],
-): HostRuntimeDeploymentUpsert[] {
-  const deduped = new Map<string, HostRuntimeDeploymentUpsert>();
-  for (const deployment of deployments ?? []) {
-    const normalized = normalizeRuntimeDeploymentUpsert(deployment);
-    if (!normalized) continue;
-    deduped.set(`${normalized.target_type}:${normalized.target}`, normalized);
-  }
-  return [...deduped.values()];
-}
 
 async function assertRuntimeDeploymentGlobalAccess(account_id?: string) {
   const owner = requireAccount(account_id);
@@ -5534,36 +5454,6 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcile({
   };
 }
 
-function computeAutomaticArtifactUpgradeTargets({
-  status,
-}: {
-  status: HostRuntimeDeploymentStatus;
-}): HostSoftwareUpgradeTarget[] {
-  const observedTargets = new Map(
-    (status.observed_targets ?? [])
-      .filter((target) => target.target_type === "artifact")
-      .map((target) => [target.target as HostRuntimeArtifact, target]),
-  );
-  const targets: HostSoftwareUpgradeTarget[] = [];
-  for (const deployment of status.effective ?? []) {
-    if (deployment.target_type !== "artifact") continue;
-    const target = deployment.target as HostRuntimeArtifact;
-    if (target === "project-host" || target === "bootstrap-environment") {
-      continue;
-    }
-    const observed = observedTargets.get(target);
-    const observedState = observed?.observed_version_state;
-    if (observedState === "aligned" || observedState === "unsupported") {
-      continue;
-    }
-    targets.push({
-      artifact: target,
-      version: deployment.desired_version,
-    });
-  }
-  return targets;
-}
-
 export async function ensureAutomaticHostArtifactDeploymentsReconcile({
   host_id,
 }: {
@@ -6028,161 +5918,6 @@ export async function rollbackProjectHostOverSshInternal({
   };
 }
 
-function computeHostRuntimeDeploymentReconcilePlan({
-  row,
-  status,
-  components,
-}: {
-  row: any;
-  status: HostRuntimeDeploymentStatus;
-  components?: ManagedComponentKind[];
-}): Pick<
-  HostRuntimeDeploymentReconcileResult,
-  "requested_components" | "reconciled_components" | "decisions"
-> {
-  const effectiveComponentTargets = new Map(
-    (status.effective ?? [])
-      .filter(
-        (deployment) =>
-          deployment.target_type === "component" &&
-          DEFAULT_RUNTIME_DEPLOYMENT_POLICY[
-            deployment.target as ManagedComponentKind
-          ] != null,
-      )
-      .map((deployment) => [
-        deployment.target as ManagedComponentKind,
-        deployment,
-      ]),
-  );
-  const observedComponents = new Map(
-    (status.observed_components ?? []).map((component) => [
-      component.component,
-      component,
-    ]),
-  );
-  const observedTargets = new Map(
-    (status.observed_targets ?? [])
-      .filter((target) => target.target_type === "component")
-      .map((target) => [target.target as ManagedComponentKind, target]),
-  );
-  const requestedComponents = (components ?? []).length
-    ? normalizeManagedComponentKindsForDedupe(components ?? [])
-    : [...effectiveComponentTargets.keys()].sort();
-  const currentArtifactVersion = installedProjectHostArtifactVersion(row);
-  const decisions: HostRuntimeDeploymentReconcileResult["decisions"] = [];
-  const reconciled_components: ManagedComponentKind[] = [];
-
-  for (const component of requestedComponents) {
-    const deployment = effectiveComponentTargets.get(component);
-    if (!deployment) {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "no_desired_component_target",
-      });
-      continue;
-    }
-    const observed = observedComponents.get(component);
-    const observedTarget = observedTargets.get(component);
-    const artifact = `${observed?.artifact ?? "project-host"}`.trim();
-    if (!observed) {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "unobserved_component",
-        artifact,
-        desired_version: deployment.desired_version,
-      });
-      continue;
-    }
-    if (!observed.managed) {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "unmanaged_component",
-        artifact,
-        desired_version: deployment.desired_version,
-      });
-      continue;
-    }
-    if (!observed.enabled) {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "disabled_component",
-        artifact,
-        desired_version: deployment.desired_version,
-      });
-      continue;
-    }
-    if (artifact !== "project-host") {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "unsupported_artifact",
-        artifact,
-        desired_version: deployment.desired_version,
-      });
-      continue;
-    }
-    if (!currentArtifactVersion) {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "missing_installed_artifact_version",
-        artifact,
-        desired_version: deployment.desired_version,
-      });
-      continue;
-    }
-    if (deployment.desired_version !== currentArtifactVersion) {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "artifact_version_mismatch",
-        artifact,
-        desired_version: deployment.desired_version,
-        current_artifact_version: currentArtifactVersion,
-        observed_version_state: observedTarget?.observed_version_state,
-        running_versions: observed.running_versions,
-      });
-      continue;
-    }
-    if (observedTarget?.observed_version_state === "aligned") {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "already_aligned",
-        artifact,
-        desired_version: deployment.desired_version,
-        current_artifact_version: currentArtifactVersion,
-        observed_version_state: observedTarget.observed_version_state,
-        running_versions: observed.running_versions,
-      });
-      continue;
-    }
-    decisions.push({
-      component,
-      decision: "rollout",
-      reason: `${observedTarget?.observed_version_state ?? "drifted"}`,
-      artifact,
-      desired_version: deployment.desired_version,
-      current_artifact_version: currentArtifactVersion,
-      observed_version_state: observedTarget?.observed_version_state,
-      running_versions: observed.running_versions,
-    });
-    reconciled_components.push(component);
-  }
-
-  return {
-    ...(components?.length
-      ? { requested_components: requestedComponents }
-      : {}),
-    reconciled_components,
-    decisions,
-  };
-}
-
 async function loadHostRowForRuntimeDeploymentsInternal(
   host_id: string,
 ): Promise<any | undefined> {
@@ -6360,44 +6095,6 @@ export async function rollbackHostRuntimeDeploymentsInternal({
     ...(reconcile_result ? { reconcile_result } : {}),
     ...(managed_component_rollout ? { managed_component_rollout } : {}),
   };
-}
-
-function runtimeDeploymentsForUpgradeResults(
-  results: HostSoftwareUpgradeResponse["results"],
-): HostRuntimeDeploymentUpsert[] {
-  const deployments: HostRuntimeDeploymentUpsert[] = [];
-  for (const result of results ?? []) {
-    const target = normalizeRuntimeArtifactTarget(result.artifact);
-    if (!target || !`${result.version ?? ""}`.trim()) continue;
-    deployments.push({
-      target_type: "artifact",
-      target,
-      desired_version: result.version,
-    });
-  }
-  return normalizeRuntimeDeploymentUpserts(deployments);
-}
-
-function runtimeDeploymentsForComponentRollout({
-  components,
-  desired_version,
-  reason,
-}: {
-  components: ManagedComponentKind[];
-  desired_version?: string;
-  reason?: string;
-}): HostRuntimeDeploymentUpsert[] {
-  const version = `${desired_version ?? ""}`.trim();
-  if (!version) return [];
-  return normalizeRuntimeDeploymentUpserts(
-    (components ?? []).map((component) => ({
-      target_type: "component",
-      target: component,
-      desired_version: version,
-      rollout_policy: DEFAULT_RUNTIME_DEPLOYMENT_POLICY[component],
-      rollout_reason: reason,
-    })),
-  );
 }
 
 export async function listHostSoftwareVersions({
