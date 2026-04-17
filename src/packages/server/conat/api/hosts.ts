@@ -1,16 +1,10 @@
-import { spawn } from "node:child_process";
-import { randomUUID } from "crypto";
 import { delay } from "awaiting";
 import type {
   Host,
   HostBackupStatus,
-  HostBootstrapStatus,
-  HostBootstrapLifecycle,
-  HostBootstrapLifecycleItem,
   HostConnectionInfo,
   HostDrainResult,
   HostMachine,
-  HostStatus,
   HostCatalog,
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
@@ -18,15 +12,10 @@ import type {
   HostSoftwareUpgradeTarget,
   HostSoftwareUpgradeResponse,
   HostRuntimeArtifact,
-  HostRuntimeArtifactObservation,
-  HostRuntimeHostAgentObservation,
   HostRuntimeDeploymentRecord,
-  HostRuntimeDeploymentObservedTarget,
-  HostRuntimeRollbackTarget,
   HostRuntimeDeploymentTarget,
   HostRuntimeDeploymentRollbackResult,
   HostRuntimeDeploymentReconcileResult,
-  HostRuntimeDeploymentObservedVersionState,
   HostRuntimeDeploymentScopeType,
   HostRuntimeDeploymentStatus,
   HostRuntimeDeploymentUpsert,
@@ -40,7 +29,6 @@ import type {
   HostRootfsImage,
   HostPricingModel,
   HostInterruptionRestorePolicy,
-  HostCurrentMetrics,
   HostMetricsHistory,
   HostManagedComponentRolloutRequest,
 } from "@cocalc/conat/hub/api/hosts";
@@ -53,9 +41,7 @@ import type {
   ProjectCopyRow,
   ProjectCopyState,
 } from "@cocalc/conat/hub/api/projects";
-import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@cocalc/conat/auth/project-host-token";
 import getLogger from "@cocalc/backend/logger";
-import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
@@ -75,7 +61,6 @@ import {
 } from "@cocalc/server/cloud";
 import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import isBanned from "@cocalc/server/accounts/is-banned";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import {
   gcpSafeName,
@@ -85,11 +70,7 @@ import {
 } from "@cocalc/server/cloud/providers";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import siteURL from "@cocalc/database/settings/site-url";
-import {
-  createProjectHostBootstrapToken,
-  revokeProjectHostTokensForHost,
-} from "@cocalc/server/project-host/bootstrap-token";
+import { revokeProjectHostTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
 import {
   claimPendingCopies as claimPendingCopiesDb,
   updateCopyStatus as updateCopyStatusDb,
@@ -104,10 +85,7 @@ import {
   machineHasGpu,
   normalizeMachineGpuInPlace,
 } from "@cocalc/server/cloud/host-gpu";
-import { desiredHostState } from "@cocalc/server/cloud/spot-restore";
 import {
-  createConnectorRecord,
-  ensureConnectorRecord,
   revokeConnector,
   createPairingTokenForHost,
 } from "@cocalc/server/self-host/connector-tokens";
@@ -128,14 +106,12 @@ import {
 } from "@cocalc/database/postgres/project-host-metrics";
 import {
   listProjectHostRuntimeDeployments,
-  loadEffectiveProjectHostRuntimeDeployments,
   setProjectHostRuntimeDeployments,
 } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
-import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { getLLMUsageStatus } from "@cocalc/server/llm/usage-status";
 import { computeUsageUnits } from "@cocalc/server/llm/usage-units";
@@ -144,31 +120,102 @@ import {
   isCoreLanguageModel,
   type LanguageModelCore,
 } from "@cocalc/util/db-schema/llm-utils";
-import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
-import { moveProjectToHost } from "@cocalc/server/projects/move";
-import { notifyProjectHostUpdate } from "@cocalc/server/conat/route-project";
-import {
-  issueRootfsReleaseArtifactAccess,
-  recordManagedRootfsRusticReplica,
-} from "@cocalc/server/rootfs/releases";
-import {
-  isManagedRootfsImageName,
-  type RootfsReleaseGcStatus,
-  type RootfsUploadedArtifactResult,
-} from "@cocalc/util/rootfs-images";
-import { buildCloudInitStartupScript } from "@cocalc/server/cloud/bootstrap-host";
+import { type RootfsUploadedArtifactResult } from "@cocalc/util/rootfs-images";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import {
-  resolveHostBay,
-  resolveProjectBay,
-} from "@cocalc/server/inter-bay/directory";
+import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
-  assertAccountProjectHostTokenProjectAccess,
-  assertProjectHostAgentTokenAccess,
-  hasAccountProjectHostTokenHostAccess,
-} from "./project-host-token-auth";
+  assertProjectHostUpgradeIsExclusive,
+  hostManagedComponentRolloutDedupeKey,
+  hostUpgradeDedupeKey,
+  listHostSoftwareVersions as listHostSoftwareVersionsInternal,
+  mapUpgradeArtifact,
+  normalizeManagedComponentKindsForDedupe,
+  resolveHostSoftwareBaseUrl,
+  resolveReachableUpgradeBaseUrl,
+  rolloutComponentsForUpgradeResults as rolloutComponentsForUpgradeResultsInternal,
+} from "./hosts-software";
+import {
+  computeAutomaticArtifactUpgradeTargets,
+  computeHostRuntimeDeploymentReconcilePlan,
+  normalizeRuntimeArtifactTarget,
+  normalizeRuntimeDeploymentUpserts,
+  runtimeDeploymentsForComponentRollout,
+  runtimeDeploymentsForUpgradeResults,
+} from "./hosts-runtime-deployment-planning";
+import {
+  installedProjectHostArtifactVersion,
+  isProjectHostLocalRollbackError as isProjectHostLocalRollbackErrorInternal,
+  resolveRollbackVersion,
+  targetKeyForRuntimeDeployment,
+} from "./hosts-runtime-observation";
+import {
+  recordProjectHostLocalRollbackInternal as recordProjectHostLocalRollbackInternalHelper,
+  rollbackProjectHostOverSshInternal as rollbackProjectHostOverSshInternalHelper,
+  setLastKnownGoodArtifactVersionInternal,
+} from "./hosts-project-host-rollbacks";
+import {
+  getHostRuntimeDeploymentStatusInternal,
+  listRunningHostIdsForAutomaticRuntimeDeploymentReconcile,
+  loadHostRowForRuntimeDeploymentsInternal,
+} from "./hosts-runtime-deployment-status";
+import {
+  bestEffortQueueAutomaticArtifactDeploymentReconcileForHostsInternal,
+  bestEffortQueueAutomaticRuntimeDeploymentReconcileForHostsInternal,
+  ensureAutomaticHostArtifactDeploymentsReconcileInternal,
+  ensureAutomaticHostRuntimeDeploymentsReconcileInternal,
+} from "./hosts-runtime-deployment-queue";
+import {
+  reconcileHostRuntimeDeploymentsInternalHelper,
+  rollbackHostRuntimeDeploymentsInternalHelper,
+} from "./hosts-runtime-deployment-execution";
+import {
+  rolloutHostManagedComponentsInternalHelper,
+  upgradeHostSoftwareInternalHelper,
+} from "./hosts-software-execution";
+import {
+  deleteHostInternalHelper,
+  forceDeprovisionHostInternalHelper,
+  markHostDeprovisionedInternal as markHostDeprovisionedInternalHelper,
+  removeSelfHostConnectorInternalHelper,
+  setHostDesiredStateInternal as setHostDesiredStateInternalHelper,
+} from "./hosts-teardown";
+import { upgradeHostConnectorInternalHelper } from "./hosts-self-host-connectors";
+import {
+  assertCloudHostBootstrapReconcileSupported,
+  reconcileCloudHostBootstrapOverSsh,
+} from "./hosts-bootstrap-reconcile";
+import {
+  createHostInternalHelper,
+  restartHostInternalHelper,
+  startHostInternalHelper,
+  stopHostInternalHelper,
+} from "./hosts-cloud-lifecycle";
+import {
+  drainHostInternalHelper,
+  loadHostForDrainInternal,
+  resolveDrainParallelInternal,
+} from "./hosts-drain";
+import {
+  issueProjectHostAgentAuthTokenInternalHelper,
+  issueProjectHostAuthTokenLocalHelper,
+  resolveHostConnectionLocalHelper,
+} from "./hosts-connection-auth";
+import {
+  computeHostOperationalAvailability,
+  defaultInterruptionRestorePolicy,
+  normalizeHostInterruptionRestorePolicy,
+  normalizeHostPricingModel,
+  normalizeHostTier,
+  parseRow,
+} from "./hosts-normalization";
+import {
+  enrichHostRootfsImages,
+  getManagedRootfsReleaseArtifactInternal,
+  listManagedRootfsReleaseLifecycleInternal,
+  recordManagedRootfsReleaseReplicaInternal,
+} from "./hosts-rootfs-releases";
 function pool() {
   return getPool();
 }
@@ -191,98 +238,13 @@ const HOST_DELETE_LRO_KIND = "host-delete";
 const HOST_FORCE_DEPROVISION_LRO_KIND = "host-force-deprovision";
 const HOST_REMOVE_CONNECTOR_LRO_KIND = "host-remove-connector";
 const logger = getLogger("server:conat:api:hosts");
+const PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE = "PROJECT_HOST_LOCAL_ROLLBACK";
 
-const DEFAULT_RUNTIME_DEPLOYMENT_POLICY: Record<
-  ManagedComponentKind,
-  HostRuntimeDeploymentRecord["rollout_policy"]
-> = {
-  "project-host": "restart_now",
-  "conat-router": "restart_now",
-  "conat-persist": "restart_now",
-  "acp-worker": "drain_then_replace",
-};
+export const isProjectHostLocalRollbackError =
+  isProjectHostLocalRollbackErrorInternal;
 
 const AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON =
   "automatic_runtime_deployment_reconcile";
-
-function normalizeRuntimeArtifactTarget(
-  artifact?: HostSoftwareArtifact | HostRuntimeArtifact,
-): HostRuntimeArtifact | undefined {
-  if (artifact === "project" || artifact === "project-bundle") {
-    return "project-bundle";
-  }
-  if (
-    artifact === "project-host" ||
-    artifact === "tools" ||
-    artifact === "bootstrap-environment"
-  ) {
-    return artifact;
-  }
-  return;
-}
-
-function normalizeRuntimeDeploymentUpsert(
-  deployment: HostRuntimeDeploymentUpsert,
-): HostRuntimeDeploymentUpsert | undefined {
-  const desired_version = `${deployment?.desired_version ?? ""}`.trim();
-  if (!desired_version) return;
-  if (deployment?.target_type === "component") {
-    const target = deployment.target as ManagedComponentKind;
-    if (!(target in DEFAULT_RUNTIME_DEPLOYMENT_POLICY)) return;
-    return {
-      ...deployment,
-      target_type: "component",
-      target,
-      desired_version,
-      rollout_policy:
-        deployment.rollout_policy ?? DEFAULT_RUNTIME_DEPLOYMENT_POLICY[target],
-      rollout_reason: `${deployment?.rollout_reason ?? ""}`.trim() || undefined,
-      drain_deadline_seconds:
-        deployment.drain_deadline_seconds == null
-          ? undefined
-          : Math.max(0, Math.floor(Number(deployment.drain_deadline_seconds))),
-      metadata:
-        deployment.metadata && typeof deployment.metadata === "object"
-          ? deployment.metadata
-          : undefined,
-    };
-  }
-  if (deployment?.target_type === "artifact") {
-    const target = normalizeRuntimeArtifactTarget(
-      deployment.target as HostRuntimeArtifact,
-    );
-    if (!target) return;
-    return {
-      ...deployment,
-      target_type: "artifact",
-      target,
-      desired_version,
-      rollout_policy: deployment.rollout_policy,
-      rollout_reason: `${deployment?.rollout_reason ?? ""}`.trim() || undefined,
-      drain_deadline_seconds:
-        deployment.drain_deadline_seconds == null
-          ? undefined
-          : Math.max(0, Math.floor(Number(deployment.drain_deadline_seconds))),
-      metadata:
-        deployment.metadata && typeof deployment.metadata === "object"
-          ? deployment.metadata
-          : undefined,
-    };
-  }
-  return;
-}
-
-function normalizeRuntimeDeploymentUpserts(
-  deployments: HostRuntimeDeploymentUpsert[],
-): HostRuntimeDeploymentUpsert[] {
-  const deduped = new Map<string, HostRuntimeDeploymentUpsert>();
-  for (const deployment of deployments ?? []) {
-    const normalized = normalizeRuntimeDeploymentUpsert(deployment);
-    if (!normalized) continue;
-    deduped.set(`${normalized.target_type}:${normalized.target}`, normalized);
-  }
-  return [...deduped.values()];
-}
 
 async function assertRuntimeDeploymentGlobalAccess(account_id?: string) {
   const owner = requireAccount(account_id);
@@ -305,44 +267,11 @@ function requestedByForRuntimeDeployments({
   );
 }
 
-function normalizeHostPricingModel(
-  value: unknown,
-): HostPricingModel | undefined {
-  if (value == null) return undefined;
-  const normalized = `${value}`.trim().toLowerCase();
-  if (normalized === "spot") return "spot";
-  if (normalized === "on_demand" || normalized === "on-demand") {
-    return "on_demand";
-  }
-  return undefined;
-}
-
-function normalizeHostInterruptionRestorePolicy(
-  value: unknown,
-): HostInterruptionRestorePolicy | undefined {
-  if (value == null) return undefined;
-  const normalized = `${value}`.trim().toLowerCase();
-  if (normalized === "immediate") return "immediate";
-  if (normalized === "none") return "none";
-  return undefined;
-}
-
-function defaultInterruptionRestorePolicy(
-  pricingModel?: HostPricingModel,
-): HostInterruptionRestorePolicy {
-  return pricingModel === "spot" ? "immediate" : "none";
-}
-
 const HOST_PROJECTS_DEFAULT_LIMIT = 200;
 const HOST_PROJECTS_MAX_LIMIT = 5000;
-const DEFAULT_SOFTWARE_BASE_URL = "https://software.cocalc.ai/software";
-const SOFTWARE_HISTORY_MAX_LIMIT = 50;
-const SOFTWARE_HISTORY_DEFAULT_LIMIT = 1;
-const SOFTWARE_FETCH_TIMEOUT_MS = 8_000;
 const HOST_ROOTFS_RPC_TIMEOUT_MS = 30 * 60 * 1000;
 const HOST_DRAIN_DEFAULT_PARALLEL = 10;
 const HOST_DRAIN_OWNER_MAX_PARALLEL = 15;
-const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const HOST_BOOTSTRAP_RECONCILE_TIMEOUT_MS = 20 * 60 * 1000;
 const HOST_BOOTSTRAP_RECONCILE_POLL_MS = 5_000;
 const HOST_RUNNING_STATUSES = new Set(["running", "active"]);
@@ -352,223 +281,6 @@ async function hostControlClient(host_id: string, timeout?: number) {
     host_id,
     timeout,
   });
-}
-
-type RootfsReleaseLifecycleRow = {
-  release_id: string;
-  runtime_image: string;
-  gc_status: RootfsReleaseGcStatus | null;
-};
-
-async function runSshScript({
-  target,
-  script,
-}: {
-  target: string;
-  script: string;
-}): Promise<{ stdout: string; stderr: string }> {
-  const args = [
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "StrictHostKeyChecking=accept-new",
-    "-o",
-    "ConnectTimeout=10",
-    target,
-    "bash",
-    "-se",
-  ];
-  return await new Promise((resolve, reject) => {
-    const child = spawn("ssh", args, { stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve({ stdout, stderr });
-      } else {
-        reject(
-          new Error(
-            `ssh ${target} failed with code ${code ?? "?"}: ${stderr || stdout}`,
-          ),
-        );
-      }
-    });
-    child.stdin.end(script);
-  });
-}
-
-type HostBootstrapReconcileState = {
-  deleted: boolean;
-  status: string;
-  bootstrap_status?: string;
-  bootstrap_updated_at?: string;
-  bootstrap_message?: string;
-  lifecycle_summary_status?: string;
-  lifecycle_summary_message?: string;
-  lifecycle_current_operation?: string;
-  lifecycle_last_error?: string;
-  lifecycle_last_reconcile_started_at?: string;
-  lifecycle_last_reconcile_finished_at?: string;
-};
-
-function parseTimestampMs(value?: string): number | undefined {
-  const text = `${value ?? ""}`.trim();
-  if (!text) return undefined;
-  const ms = new Date(text).getTime();
-  return Number.isFinite(ms) ? ms : undefined;
-}
-
-function bootstrapErrorIsStale(state: HostBootstrapReconcileState): boolean {
-  if (state.bootstrap_status !== "error") return false;
-  const bootstrapUpdatedMs = parseTimestampMs(state.bootstrap_updated_at);
-  if (state.lifecycle_summary_status === "in_sync") {
-    const finishedMs = parseTimestampMs(
-      state.lifecycle_last_reconcile_finished_at,
-    );
-    return (
-      finishedMs != null &&
-      (bootstrapUpdatedMs == null || bootstrapUpdatedMs <= finishedMs)
-    );
-  }
-  if (state.lifecycle_summary_status === "reconciling") {
-    const startedMs = parseTimestampMs(
-      state.lifecycle_last_reconcile_started_at,
-    );
-    return (
-      startedMs != null &&
-      (bootstrapUpdatedMs == null || bootstrapUpdatedMs < startedMs)
-    );
-  }
-  return false;
-}
-
-async function loadHostBootstrapReconcileState(
-  host_id: string,
-): Promise<HostBootstrapReconcileState | undefined> {
-  const { rows } = await pool().query(
-    `SELECT status, deleted, metadata FROM project_hosts WHERE id=$1 LIMIT 1`,
-    [host_id],
-  );
-  const row = rows[0];
-  if (!row) return undefined;
-  const metadata = row.metadata ?? {};
-  const bootstrap = metadata.bootstrap ?? {};
-  const lifecycle = metadata.bootstrap_lifecycle ?? {};
-  return {
-    deleted: !!row.deleted,
-    status: `${row.status ?? ""}`.trim(),
-    bootstrap_status: `${bootstrap.status ?? ""}`.trim() || undefined,
-    bootstrap_updated_at: `${bootstrap.updated_at ?? ""}`.trim() || undefined,
-    bootstrap_message: `${bootstrap.message ?? ""}`.trim() || undefined,
-    lifecycle_summary_status:
-      `${lifecycle.summary_status ?? ""}`.trim() || undefined,
-    lifecycle_summary_message:
-      `${lifecycle.summary_message ?? ""}`.trim() || undefined,
-    lifecycle_current_operation:
-      `${lifecycle.current_operation ?? ""}`.trim() || undefined,
-    lifecycle_last_error: `${lifecycle.last_error ?? ""}`.trim() || undefined,
-    lifecycle_last_reconcile_started_at:
-      `${lifecycle.last_reconcile_started_at ?? ""}`.trim() || undefined,
-    lifecycle_last_reconcile_finished_at:
-      `${lifecycle.last_reconcile_finished_at ?? ""}`.trim() || undefined,
-  };
-}
-
-function hostBootstrapActivityChanged(
-  baseline: HostBootstrapReconcileState,
-  current: HostBootstrapReconcileState,
-): boolean {
-  return (
-    current.bootstrap_status !== baseline.bootstrap_status ||
-    current.bootstrap_updated_at !== baseline.bootstrap_updated_at ||
-    current.bootstrap_message !== baseline.bootstrap_message ||
-    current.lifecycle_summary_status !== baseline.lifecycle_summary_status ||
-    current.lifecycle_summary_message !== baseline.lifecycle_summary_message ||
-    current.lifecycle_current_operation !==
-      baseline.lifecycle_current_operation ||
-    current.lifecycle_last_error !== baseline.lifecycle_last_error ||
-    current.lifecycle_last_reconcile_started_at !==
-      baseline.lifecycle_last_reconcile_started_at ||
-    current.lifecycle_last_reconcile_finished_at !==
-      baseline.lifecycle_last_reconcile_finished_at
-  );
-}
-
-function hostBootstrapReconcileSucceeded(
-  state: HostBootstrapReconcileState,
-): boolean {
-  if (state.lifecycle_summary_status === "in_sync") {
-    return true;
-  }
-  return state.bootstrap_status === "done";
-}
-
-function hostBootstrapReconcileFailure(
-  state: HostBootstrapReconcileState,
-): string | undefined {
-  if (state.bootstrap_status === "error" && !bootstrapErrorIsStale(state)) {
-    return (
-      state.bootstrap_message ??
-      state.lifecycle_last_error ??
-      "bootstrap reconcile failed"
-    );
-  }
-  if (state.lifecycle_summary_status === "error") {
-    return (
-      state.lifecycle_last_error ??
-      state.lifecycle_summary_message ??
-      "bootstrap reconcile failed"
-    );
-  }
-  if (
-    state.lifecycle_summary_status === "drifted" &&
-    state.bootstrap_status === "done" &&
-    state.lifecycle_current_operation !== "reconcile"
-  ) {
-    return (
-      state.lifecycle_summary_message ??
-      state.lifecycle_last_error ??
-      "host software remains drifted after reconcile"
-    );
-  }
-  return undefined;
-}
-
-async function waitForHostBootstrapReconcile({
-  host_id,
-  baseline,
-}: {
-  host_id: string;
-  baseline: HostBootstrapReconcileState;
-}): Promise<void> {
-  const startedAt = Date.now();
-  let sawActivity = false;
-  while (Date.now() - startedAt < HOST_BOOTSTRAP_RECONCILE_TIMEOUT_MS) {
-    const state = await loadHostBootstrapReconcileState(host_id);
-    if (!state) {
-      throw new Error("host not found");
-    }
-    if (state.deleted) {
-      throw new Error("host deleted during bootstrap reconcile");
-    }
-    sawActivity ||= hostBootstrapActivityChanged(baseline, state);
-    const failure = hostBootstrapReconcileFailure(state);
-    if (failure) {
-      throw new Error(failure);
-    }
-    if (sawActivity && hostBootstrapReconcileSucceeded(state)) {
-      return;
-    }
-    await delay(HOST_BOOTSTRAP_RECONCILE_POLL_MS);
-  }
-  throw new Error("timeout waiting for host bootstrap reconcile");
 }
 
 async function waitForHostHeartbeatAfter({
@@ -599,116 +311,6 @@ async function waitForHostHeartbeatAfter({
   throw new Error("timeout waiting for host heartbeat");
 }
 
-function cloudHostSshTarget(row: {
-  metadata?: Record<string, any>;
-}): string | undefined {
-  const runtime = row.metadata?.runtime ?? {};
-  const machine = row.metadata?.machine ?? {};
-  const publicIp =
-    `${runtime.public_ip ?? machine.metadata?.public_ip ?? ""}`.trim();
-  if (!publicIp) return undefined;
-  const sshUser =
-    `${runtime.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu"}`.trim();
-  if (!sshUser) return undefined;
-  return `${sshUser}@${publicIp}`;
-}
-
-function assertCloudHostBootstrapReconcileSupported(row: any): void {
-  const machineCloud = normalizeProviderId(row?.metadata?.machine?.cloud);
-  if (!machineCloud || machineCloud === "self-host") {
-    throw new Error(
-      "bootstrap reconcile is only supported for cloud hosts with ssh access",
-    );
-  }
-  if (!cloudHostSshTarget(row)) {
-    throw new Error(
-      "bootstrap reconcile requires a reachable cloud ssh target for this host",
-    );
-  }
-}
-
-async function reconcileCloudHostBootstrapOverSsh(opts: {
-  host_id: string;
-  row: any;
-}): Promise<void> {
-  const target = cloudHostSshTarget(opts.row);
-  if (!target) {
-    logger.debug(
-      "host upgrade: skip bootstrap reconcile (missing ssh target)",
-      {
-        host_id: opts.host_id,
-      },
-    );
-    return;
-  }
-  const bootstrapBaseUrl = await siteURL();
-  const bootstrapToken = await createProjectHostBootstrapToken(opts.host_id);
-  const bootstrapScript = await buildCloudInitStartupScript(
-    opts.row,
-    bootstrapToken.token,
-    bootstrapBaseUrl,
-  );
-  const baseline = await loadHostBootstrapReconcileState(opts.host_id);
-  if (!baseline) {
-    throw new Error("host not found");
-  }
-  const encodedBootstrapScript = Buffer.from(bootstrapScript, "utf8").toString(
-    "base64",
-  );
-  const script = `
-set -euo pipefail
-BOOTSTRAP_DIR=""
-for candidate in /mnt/cocalc/data/.host-bootstrap/bootstrap /home/ubuntu/cocalc-host/bootstrap /root/cocalc-host/bootstrap
-do
-  if [ -d "$candidate" ]; then
-    BOOTSTRAP_DIR="$candidate"
-    break
-  fi
-done
-if [ -z "$BOOTSTRAP_DIR" ]; then
-  echo "bootstrap directory not found" >&2
-  exit 1
-fi
-BOOTSTRAP_SH="$BOOTSTRAP_DIR/bootstrap.sh"
-python3 - "$BOOTSTRAP_SH" <<'PY'
-import base64, sys
-body = base64.b64decode("""${encodedBootstrapScript}""")
-with open(sys.argv[1], "wb") as handle:
-    handle.write(body)
-PY
-chmod 700 "$BOOTSTRAP_SH"
-LOG_DIR="/mnt/cocalc/data/logs"
-BOOTSTRAP_LOG="$LOG_DIR/bootstrap-reconcile.log"
-sudo -n install -d -m 0755 "$LOG_DIR"
-sudo -n touch "$BOOTSTRAP_LOG"
-BOOTSTRAP_PID="$(sudo -n bash -lc 'nohup bash "$1" >>"$2" 2>&1 </dev/null & echo $!' -- "$BOOTSTRAP_SH" "$BOOTSTRAP_LOG")"
-echo "started bootstrap reconcile pid=$BOOTSTRAP_PID log=$BOOTSTRAP_LOG"
-`;
-  logger.info("host upgrade: reconciling host bootstrap over ssh", {
-    host_id: opts.host_id,
-    target,
-  });
-  const { stdout, stderr } = await runSshScript({ target, script });
-  if (stdout.trim()) {
-    logger.info("host upgrade: bootstrap reconcile stdout", {
-      host_id: opts.host_id,
-      target,
-      stdout,
-    });
-  }
-  if (stderr.trim()) {
-    logger.info("host upgrade: bootstrap reconcile stderr", {
-      host_id: opts.host_id,
-      target,
-      stderr,
-    });
-  }
-  await waitForHostBootstrapReconcile({
-    host_id: opts.host_id,
-    baseline,
-  });
-}
-
 function logStatusUpdate(id: string, status: string, source: string) {
   const stack = new Error().stack;
   logger.debug("status update", {
@@ -719,714 +321,11 @@ function logStatusUpdate(id: string, status: string, source: string) {
   });
 }
 
-async function loadRootfsReleaseLifecycleByImage(
-  images: string[],
-): Promise<Map<string, RootfsReleaseLifecycleRow>> {
-  const managedImages = Array.from(
-    new Set(images.filter((image) => isManagedRootfsImageName(image))),
-  );
-  if (managedImages.length === 0) {
-    return new Map();
-  }
-  const { rows } = await pool().query<RootfsReleaseLifecycleRow>(
-    `SELECT release_id, runtime_image, gc_status
-     FROM rootfs_releases
-     WHERE runtime_image = ANY($1::TEXT[])`,
-    [managedImages],
-  );
-  return new Map(
-    rows.map((row) => [
-      `${row.runtime_image ?? ""}`.trim(),
-      {
-        ...row,
-        runtime_image: `${row.runtime_image ?? ""}`.trim(),
-        gc_status: row.gc_status ?? "active",
-      },
-    ]),
-  );
-}
-
-async function enrichHostRootfsImages(
-  entries: HostRootfsImage[],
-): Promise<HostRootfsImage[]> {
-  const lifecycleByImage = await loadRootfsReleaseLifecycleByImage(
-    entries.map((entry) => entry.image),
-  );
-  return entries.map((entry) => {
-    const lifecycle = lifecycleByImage.get(`${entry.image ?? ""}`.trim());
-    const managed = isManagedRootfsImageName(entry.image);
-    const release_gc_status = lifecycle?.gc_status ?? undefined;
-    const centrally_deleted = release_gc_status === "deleted";
-    const host_gc_eligible =
-      centrally_deleted &&
-      (entry.project_count ?? 0) === 0 &&
-      (entry.running_project_count ?? 0) === 0;
-    return {
-      ...entry,
-      managed,
-      release_id: lifecycle?.release_id ?? entry.release_id,
-      release_gc_status,
-      centrally_deleted,
-      host_gc_eligible,
-    };
-  });
-}
-
-function hostStatusValue(row: any): string {
-  return `${row?.status ?? ""}`.trim().toLowerCase();
-}
-
-function hostLastSeenMs(row: any): number | undefined {
-  if (!row?.last_seen) return undefined;
-  const ts = new Date(row.last_seen as any).getTime();
-  return Number.isFinite(ts) ? ts : undefined;
-}
-
-function computeHostOperationalAvailability(row: any): {
-  operational: boolean;
-  online: boolean;
-  status: string;
-  reason_unavailable?: string;
-} {
-  if (!row || row.deleted) {
-    return {
-      operational: false,
-      online: false,
-      status: hostStatusValue(row),
-      reason_unavailable: "Host is deleted.",
-    };
-  }
-
-  const status = hostStatusValue(row);
-  if (!HOST_RUNNING_STATUSES.has(status)) {
-    return {
-      operational: false,
-      online: false,
-      status,
-      reason_unavailable: `Host is ${status || "unknown"}; it must be running.`,
-    };
-  }
-
-  const seenMs = hostLastSeenMs(row);
-  if (seenMs == null) {
-    return {
-      operational: false,
-      online: false,
-      status,
-      reason_unavailable: "Host has not sent a heartbeat recently.",
-    };
-  }
-
-  const online = Date.now() - seenMs <= HOST_ONLINE_WINDOW_MS;
-  if (!online) {
-    return {
-      operational: false,
-      online: false,
-      status,
-      reason_unavailable: "Host heartbeat is stale; host appears offline.",
-    };
-  }
-
-  return { operational: true, online: true, status };
-}
-
 function requireAccount(account_id?: string): string {
   if (!account_id) {
     throw new Error("must be signed in to manage hosts");
   }
   return account_id;
-}
-
-function parseDrainParallel(parallel?: number): number {
-  if (parallel == null) {
-    return HOST_DRAIN_DEFAULT_PARALLEL;
-  }
-  const n = Math.floor(Number(parallel));
-  if (!Number.isFinite(n) || n < 1) {
-    throw new Error("drain parallel must be a positive integer");
-  }
-  return n;
-}
-
-async function resolveDrainParallel(
-  owner: string,
-  parallel?: number,
-): Promise<number> {
-  const requested = parseDrainParallel(parallel);
-  if (!(await isAdmin(owner)) && requested > HOST_DRAIN_OWNER_MAX_PARALLEL) {
-    throw new Error(
-      `drain parallel cannot exceed ${HOST_DRAIN_OWNER_MAX_PARALLEL} for non-admin users`,
-    );
-  }
-  return requested;
-}
-
-async function resolveDrainMoveAccount({
-  project_id,
-  fallback_account_id,
-}: {
-  project_id: string;
-  fallback_account_id: string;
-}): Promise<string> {
-  const { rows } = await pool().query<{ account_id: string }>(
-    `
-      SELECT u.key AS account_id
-      FROM projects p
-      JOIN LATERAL jsonb_each(COALESCE(p.users, '{}'::jsonb)) u(key, value) ON true
-      WHERE p.project_id=$1
-        AND p.deleted IS NOT true
-        AND (u.value ->> 'group') IN ('owner', 'collaborator')
-      ORDER BY
-        CASE (u.value ->> 'group')
-          WHEN 'owner' THEN 0
-          WHEN 'collaborator' THEN 1
-          ELSE 2
-        END,
-        u.key
-      LIMIT 1
-    `,
-    [project_id],
-  );
-  const account_id = `${rows[0]?.account_id ?? ""}`.trim();
-  return account_id || fallback_account_id;
-}
-
-function parseRow(
-  row: any,
-  opts: {
-    scope?: Host["scope"];
-    can_start?: boolean;
-    can_place?: boolean;
-    reason_unavailable?: string;
-    backup_status?: HostBackupStatus;
-    starred?: boolean;
-    metrics_history?: HostMetricsHistory;
-  } = {},
-): Host {
-  const parsePositiveInt = (value: unknown): number | undefined => {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
-    return Math.floor(parsed);
-  };
-  const parseNonNegativeNumber = (value: unknown): number | undefined => {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed < 0) return undefined;
-    return parsed;
-  };
-  const normalizeBootstrap = (
-    bootstrap: HostBootstrapStatus | undefined,
-    lifecycle: HostBootstrapLifecycle | undefined,
-  ): HostBootstrapStatus | undefined => {
-    if (!bootstrap || !lifecycle) return bootstrap;
-    const bootstrapUpdatedMs = parseTimestampMs(bootstrap.updated_at);
-    const lifecycleStartedMs = parseTimestampMs(
-      lifecycle.last_reconcile_started_at,
-    );
-    const lifecycleFinishedMs = parseTimestampMs(
-      lifecycle.last_reconcile_finished_at,
-    );
-    if (
-      lifecycle.summary_status === "in_sync" &&
-      lifecycleFinishedMs != null &&
-      (bootstrapUpdatedMs == null || bootstrapUpdatedMs <= lifecycleFinishedMs)
-    ) {
-      return {
-        ...bootstrap,
-        status: "done",
-        updated_at:
-          lifecycle.last_reconcile_finished_at ?? bootstrap.updated_at,
-        message:
-          lifecycle.summary_message ??
-          bootstrap.message ??
-          "Host software is in sync",
-      };
-    }
-    if (
-      lifecycle.summary_status === "reconciling" &&
-      lifecycleStartedMs != null &&
-      (bootstrapUpdatedMs == null || bootstrapUpdatedMs < lifecycleStartedMs)
-    ) {
-      return {
-        ...bootstrap,
-        status: "running",
-        updated_at: lifecycle.last_reconcile_started_at ?? bootstrap.updated_at,
-        message:
-          lifecycle.summary_message ??
-          bootstrap.message ??
-          "Reconciling host software",
-      };
-    }
-    return bootstrap;
-  };
-  const metadata = row.metadata ?? {};
-  const software = metadata.software ?? {};
-  const machine: HostMachine | undefined = metadata.machine;
-  const rawCurrentMetrics = metadata.metrics?.current;
-  const currentMetrics: HostCurrentMetrics | undefined =
-    rawCurrentMetrics && typeof rawCurrentMetrics === "object"
-      ? {
-          ...(typeof rawCurrentMetrics.collected_at === "string"
-            ? { collected_at: rawCurrentMetrics.collected_at }
-            : {}),
-          ...(parseNonNegativeNumber(rawCurrentMetrics.cpu_percent) != null
-            ? {
-                cpu_percent: parseNonNegativeNumber(
-                  rawCurrentMetrics.cpu_percent,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(rawCurrentMetrics.load_1) != null
-            ? { load_1: parseNonNegativeNumber(rawCurrentMetrics.load_1) }
-            : {}),
-          ...(parseNonNegativeNumber(rawCurrentMetrics.load_5) != null
-            ? { load_5: parseNonNegativeNumber(rawCurrentMetrics.load_5) }
-            : {}),
-          ...(parseNonNegativeNumber(rawCurrentMetrics.load_15) != null
-            ? { load_15: parseNonNegativeNumber(rawCurrentMetrics.load_15) }
-            : {}),
-          ...(parseNonNegativeNumber(rawCurrentMetrics.memory_total_bytes) !=
-          null
-            ? {
-                memory_total_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.memory_total_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(rawCurrentMetrics.memory_used_bytes) !=
-          null
-            ? {
-                memory_used_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.memory_used_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.memory_available_bytes,
-          ) != null
-            ? {
-                memory_available_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.memory_available_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(rawCurrentMetrics.memory_used_percent) !=
-          null
-            ? {
-                memory_used_percent: parseNonNegativeNumber(
-                  rawCurrentMetrics.memory_used_percent,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(rawCurrentMetrics.swap_total_bytes) != null
-            ? {
-                swap_total_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.swap_total_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(rawCurrentMetrics.swap_used_bytes) != null
-            ? {
-                swap_used_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.swap_used_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.disk_device_total_bytes,
-          ) != null
-            ? {
-                disk_device_total_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.disk_device_total_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.disk_device_used_bytes,
-          ) != null
-            ? {
-                disk_device_used_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.disk_device_used_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.disk_unallocated_bytes,
-          ) != null
-            ? {
-                disk_unallocated_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.disk_unallocated_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.btrfs_data_total_bytes,
-          ) != null
-            ? {
-                btrfs_data_total_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.btrfs_data_total_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(rawCurrentMetrics.btrfs_data_used_bytes) !=
-          null
-            ? {
-                btrfs_data_used_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.btrfs_data_used_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.btrfs_metadata_total_bytes,
-          ) != null
-            ? {
-                btrfs_metadata_total_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.btrfs_metadata_total_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.btrfs_metadata_used_bytes,
-          ) != null
-            ? {
-                btrfs_metadata_used_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.btrfs_metadata_used_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.btrfs_system_total_bytes,
-          ) != null
-            ? {
-                btrfs_system_total_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.btrfs_system_total_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.btrfs_system_used_bytes,
-          ) != null
-            ? {
-                btrfs_system_used_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.btrfs_system_used_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.btrfs_global_reserve_total_bytes,
-          ) != null
-            ? {
-                btrfs_global_reserve_total_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.btrfs_global_reserve_total_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.btrfs_global_reserve_used_bytes,
-          ) != null
-            ? {
-                btrfs_global_reserve_used_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.btrfs_global_reserve_used_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.disk_available_conservative_bytes,
-          ) != null
-            ? {
-                disk_available_conservative_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.disk_available_conservative_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.disk_available_for_admission_bytes,
-          ) != null
-            ? {
-                disk_available_for_admission_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.disk_available_for_admission_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(rawCurrentMetrics.reservation_bytes) !=
-          null
-            ? {
-                reservation_bytes: parseNonNegativeNumber(
-                  rawCurrentMetrics.reservation_bytes,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.assigned_project_count,
-          ) != null
-            ? {
-                assigned_project_count: parseNonNegativeNumber(
-                  rawCurrentMetrics.assigned_project_count,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(rawCurrentMetrics.running_project_count) !=
-          null
-            ? {
-                running_project_count: parseNonNegativeNumber(
-                  rawCurrentMetrics.running_project_count,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.starting_project_count,
-          ) != null
-            ? {
-                starting_project_count: parseNonNegativeNumber(
-                  rawCurrentMetrics.starting_project_count,
-                ),
-              }
-            : {}),
-          ...(parseNonNegativeNumber(
-            rawCurrentMetrics.stopping_project_count,
-          ) != null
-            ? {
-                stopping_project_count: parseNonNegativeNumber(
-                  rawCurrentMetrics.stopping_project_count,
-                ),
-              }
-            : {}),
-        }
-      : undefined;
-  const rawBootstrap = metadata.bootstrap;
-  const bootstrap: HostBootstrapStatus | undefined =
-    rawBootstrap && typeof rawBootstrap === "object"
-      ? {
-          ...(typeof rawBootstrap.status === "string"
-            ? { status: rawBootstrap.status }
-            : {}),
-          ...(typeof rawBootstrap.updated_at === "string"
-            ? { updated_at: rawBootstrap.updated_at }
-            : {}),
-          ...(typeof rawBootstrap.message === "string"
-            ? { message: rawBootstrap.message }
-            : {}),
-        }
-      : undefined;
-  const rawBootstrapLifecycle = metadata.bootstrap_lifecycle;
-  const bootstrapLifecycle: HostBootstrapLifecycle | undefined =
-    rawBootstrapLifecycle && typeof rawBootstrapLifecycle === "object"
-      ? (() => {
-          const parseLifecycleValue = (
-            value: unknown,
-          ): string | boolean | number | null | undefined => {
-            if (typeof value === "string") {
-              const trimmed = value.trim();
-              return trimmed || undefined;
-            }
-            if (typeof value === "boolean") return value;
-            if (typeof value === "number" && Number.isFinite(value)) {
-              return value;
-            }
-            if (value === null) return null;
-            return undefined;
-          };
-          const parseLifecycleStatus = (
-            value: unknown,
-          ):
-            | HostBootstrapLifecycle["summary_status"]
-            | HostBootstrapLifecycleItem["status"]
-            | undefined => {
-            const status = `${value ?? ""}`.trim();
-            if (
-              status === "in_sync" ||
-              status === "drifted" ||
-              status === "reconciling" ||
-              status === "error" ||
-              status === "unknown" ||
-              status === "match" ||
-              status === "drift" ||
-              status === "missing" ||
-              status === "disabled"
-            ) {
-              return status as
-                | HostBootstrapLifecycle["summary_status"]
-                | HostBootstrapLifecycleItem["status"];
-            }
-            return undefined;
-          };
-          const items = Array.isArray(rawBootstrapLifecycle.items)
-            ? rawBootstrapLifecycle.items
-                .map((item): HostBootstrapLifecycleItem | undefined => {
-                  if (!item || typeof item !== "object") return undefined;
-                  const key =
-                    typeof item.key === "string" ? item.key.trim() : "";
-                  const label =
-                    typeof item.label === "string" ? item.label.trim() : "";
-                  const status = parseLifecycleStatus(item.status);
-                  if (!key || !label || !status) return undefined;
-                  return {
-                    key,
-                    label,
-                    status: status as HostBootstrapLifecycleItem["status"],
-                    ...(parseLifecycleValue(item.desired) !== undefined
-                      ? { desired: parseLifecycleValue(item.desired) }
-                      : {}),
-                    ...(parseLifecycleValue(item.installed) !== undefined
-                      ? { installed: parseLifecycleValue(item.installed) }
-                      : {}),
-                    ...(typeof item.message === "string" && item.message.trim()
-                      ? { message: item.message.trim() }
-                      : {}),
-                  };
-                })
-                .filter(
-                  (item): item is HostBootstrapLifecycleItem =>
-                    item !== undefined,
-                )
-            : [];
-          const summaryStatus = parseLifecycleStatus(
-            rawBootstrapLifecycle.summary_status,
-          ) as HostBootstrapLifecycle["summary_status"] | undefined;
-          if (!summaryStatus) return undefined;
-          return {
-            ...(typeof rawBootstrapLifecycle.bootstrap_dir === "string" &&
-            rawBootstrapLifecycle.bootstrap_dir.trim()
-              ? { bootstrap_dir: rawBootstrapLifecycle.bootstrap_dir.trim() }
-              : {}),
-            ...(typeof rawBootstrapLifecycle.desired_recorded_at === "string"
-              ? {
-                  desired_recorded_at:
-                    rawBootstrapLifecycle.desired_recorded_at,
-                }
-              : {}),
-            ...(typeof rawBootstrapLifecycle.installed_recorded_at === "string"
-              ? {
-                  installed_recorded_at:
-                    rawBootstrapLifecycle.installed_recorded_at,
-                }
-              : {}),
-            ...(typeof rawBootstrapLifecycle.current_operation === "string"
-              ? { current_operation: rawBootstrapLifecycle.current_operation }
-              : {}),
-            ...(typeof rawBootstrapLifecycle.last_provision_result === "string"
-              ? {
-                  last_provision_result:
-                    rawBootstrapLifecycle.last_provision_result,
-                }
-              : {}),
-            ...(typeof rawBootstrapLifecycle.last_provision_started_at ===
-            "string"
-              ? {
-                  last_provision_started_at:
-                    rawBootstrapLifecycle.last_provision_started_at,
-                }
-              : {}),
-            ...(typeof rawBootstrapLifecycle.last_provision_finished_at ===
-            "string"
-              ? {
-                  last_provision_finished_at:
-                    rawBootstrapLifecycle.last_provision_finished_at,
-                }
-              : {}),
-            ...(typeof rawBootstrapLifecycle.last_reconcile_result === "string"
-              ? {
-                  last_reconcile_result:
-                    rawBootstrapLifecycle.last_reconcile_result,
-                }
-              : {}),
-            ...(typeof rawBootstrapLifecycle.last_reconcile_started_at ===
-            "string"
-              ? {
-                  last_reconcile_started_at:
-                    rawBootstrapLifecycle.last_reconcile_started_at,
-                }
-              : {}),
-            ...(typeof rawBootstrapLifecycle.last_reconcile_finished_at ===
-            "string"
-              ? {
-                  last_reconcile_finished_at:
-                    rawBootstrapLifecycle.last_reconcile_finished_at,
-                }
-              : {}),
-            ...(typeof rawBootstrapLifecycle.last_error === "string" &&
-            rawBootstrapLifecycle.last_error.trim()
-              ? { last_error: rawBootstrapLifecycle.last_error.trim() }
-              : {}),
-            summary_status: summaryStatus,
-            ...(typeof rawBootstrapLifecycle.summary_message === "string" &&
-            rawBootstrapLifecycle.summary_message.trim()
-              ? {
-                  summary_message: rawBootstrapLifecycle.summary_message.trim(),
-                }
-              : {}),
-            drift_count:
-              parseNonNegativeNumber(rawBootstrapLifecycle.drift_count) ?? 0,
-            items,
-          };
-        })()
-      : undefined;
-  const rawStatus = String(row.status ?? "");
-  const normalizedStatus =
-    rawStatus === "active" ? "running" : rawStatus || "off";
-  const normalizedBootstrap = normalizeBootstrap(bootstrap, bootstrapLifecycle);
-  const pricingModel =
-    normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand";
-  const interruptionRestorePolicy =
-    normalizeHostInterruptionRestorePolicy(
-      metadata.interruption_restore_policy,
-    ) ?? defaultInterruptionRestorePolicy(pricingModel);
-  const desiredState = desiredHostState({
-    status: normalizedStatus,
-    metadata,
-  });
-  return {
-    id: row.id,
-    name: row.name ?? "Host",
-    owner: metadata.owner ?? "",
-    region: row.region ?? "",
-    size: metadata.size ?? "",
-    host_cpu_count: parsePositiveInt(metadata.host_cpu_count),
-    host_ram_gb: parsePositiveInt(metadata.host_ram_gb),
-    gpu: !!metadata.gpu,
-    status: normalizedStatus as HostStatus,
-    reprovision_required: !!metadata.reprovision_required,
-    version: row.version ?? software.project_host,
-    project_host_build_id: software.project_host_build_id,
-    project_bundle_version: software.project_bundle,
-    project_bundle_build_id: software.project_bundle_build_id,
-    tools_version: software.tools,
-    host_session_id: metadata.host_session_id,
-    host_session_started_at: metadata.host_session_started_at,
-    metrics:
-      currentMetrics || opts.metrics_history
-        ? {
-            ...(currentMetrics ? { current: currentMetrics } : {}),
-            ...(opts.metrics_history ? { history: opts.metrics_history } : {}),
-          }
-        : undefined,
-    machine,
-    public_ip: metadata.runtime?.public_ip,
-    last_error: metadata.last_error,
-    last_error_at: metadata.last_error_at,
-    projects: row.capacity?.projects ?? 0,
-    last_seen: row.last_seen
-      ? new Date(row.last_seen).toISOString()
-      : undefined,
-    tier: normalizeHostTier(row.tier),
-    scope: opts.scope,
-    can_start: opts.can_start,
-    can_place: opts.can_place,
-    reason_unavailable: opts.reason_unavailable,
-    starred: opts.starred,
-    pricing_model: pricingModel,
-    interruption_restore_policy: interruptionRestorePolicy,
-    desired_state: desiredState,
-    last_action: metadata.last_action,
-    last_action_at: metadata.last_action_at,
-    last_action_status: metadata.last_action_status,
-    last_action_error: metadata.last_action_error,
-    provider_observed_at: metadata.runtime?.observed_at,
-    observed_host_agent: observedHostAgentFromMetadata(row),
-    deleted: row.deleted ? new Date(row.deleted).toISOString() : undefined,
-    backup_status: opts.backup_status,
-    bootstrap: normalizedBootstrap,
-    bootstrap_lifecycle: bootstrapLifecycle,
-  };
 }
 
 async function loadHostBackupStatus(
@@ -1483,22 +382,6 @@ async function loadHostBackupStatus(
   return map;
 }
 
-async function loadProjectIdsAssignedToHost(
-  host_id: string,
-): Promise<string[]> {
-  const { rows } = await pool().query<{ project_id: string }>(
-    `
-      SELECT project_id
-      FROM projects
-      WHERE host_id=$1
-        AND deleted IS NOT true
-      ORDER BY COALESCE(last_edited, created) DESC NULLS LAST, project_id DESC
-    `,
-    [host_id],
-  );
-  return rows.map((row) => row.project_id);
-}
-
 async function loadOwnedHost(id: string, account_id?: string): Promise<any> {
   const owner = requireAccount(account_id);
   const { rows } = await pool().query(
@@ -1519,25 +402,6 @@ async function loadHostForRootfsManagement(
   id: string,
   account_id?: string,
 ): Promise<any> {
-  const owner = requireAccount(account_id);
-  const { rows } = await pool().query(
-    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
-    [id],
-  );
-  const row = rows[0];
-  if (!row) {
-    throw new Error("host not found");
-  }
-  if (await isAdmin(owner)) {
-    return row;
-  }
-  if (row.metadata?.owner && row.metadata.owner !== owner) {
-    throw new Error("not authorized");
-  }
-  return row;
-}
-
-async function loadHostForDrain(id: string, account_id?: string): Promise<any> {
   const owner = requireAccount(account_id);
   const { rows } = await pool().query(
     `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
@@ -1676,67 +540,55 @@ async function setHostDesiredState(
   id: string,
   desiredState: "running" | "stopped",
 ) {
-  await pool().query(
-    `
-      UPDATE project_hosts
-      SET metadata = jsonb_set(
-            COALESCE(metadata, '{}'::jsonb),
-            '{desired_state}',
-            to_jsonb($2::text)
-          ),
-          updated = NOW()
-      WHERE id=$1 AND deleted IS NULL
-    `,
-    [id, desiredState],
-  );
+  await setHostDesiredStateInternalHelper({
+    id,
+    desiredState,
+    updateHostDesiredState: async (id, desiredState) => {
+      await pool().query(
+        `
+          UPDATE project_hosts
+          SET metadata = jsonb_set(
+                COALESCE(metadata, '{}'::jsonb),
+                '{desired_state}',
+                to_jsonb($2::text)
+              ),
+              updated = NOW()
+          WHERE id=$1 AND deleted IS NULL
+        `,
+        [id, desiredState],
+      );
+    },
+  });
 }
 
 async function markHostDeprovisioned(row: any, action: string) {
-  const machine: HostMachine = row.metadata?.machine ?? {};
-  const runtime = row.metadata?.runtime;
-  const nextMetadata = { ...(row.metadata ?? {}) };
-  nextMetadata.desired_state = "stopped";
-  delete nextMetadata.runtime;
-  delete nextMetadata.dns;
-  delete nextMetadata.cloudflare_tunnel;
-  delete nextMetadata.metrics;
-
-  logStatusUpdate(row.id, "deprovisioned", "api");
-  await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
-  await revokeProjectHostTokensForHost(row.id, { purpose: "master-conat" });
-  try {
-    if (await hasCloudflareTunnel()) {
-      await deleteCloudflareTunnel({
-        host_id: row.id,
-        tunnel: row.metadata?.cloudflare_tunnel,
-      });
-    } else if (await hasDns()) {
-      await deleteHostDns({ record_id: row.metadata?.dns?.record_id });
-    }
-  } catch (err) {
-    console.warn("force deprovision cleanup failed", err);
-  }
-
-  await pool().query(
-    `UPDATE project_hosts
-       SET status=$2,
-           public_url=NULL,
-           internal_url=NULL,
-           ssh_server=NULL,
-           last_seen=$3,
-           metadata=$4,
-           updated=NOW()
-    WHERE id=$1 AND deleted IS NULL`,
-    [row.id, "deprovisioned", new Date(), nextMetadata],
-  );
-  await clearProjectHostMetrics({ host_id: row.id });
-  await logCloudVmEvent({
-    vm_id: row.id,
+  await markHostDeprovisionedInternalHelper({
+    row,
     action,
-    status: "success",
-    provider: normalizeProviderId(machine.cloud) ?? machine.cloud,
-    spec: machine,
-    runtime,
+    logStatusUpdate,
+    revokeProjectHostTokensForHost,
+    hasCloudflareTunnel,
+    deleteCloudflareTunnel,
+    hasDns,
+    deleteHostDns,
+    logWarn: (message, payload) => logger.warn(message, payload),
+    updateHostDeprovisionedRecord: async ({ row, nextMetadata }) => {
+      await pool().query(
+        `UPDATE project_hosts
+           SET status=$2,
+               public_url=NULL,
+               internal_url=NULL,
+               ssh_server=NULL,
+               last_seen=$3,
+               metadata=$4,
+               updated=NOW()
+        WHERE id=$1 AND deleted IS NULL`,
+        [row.id, "deprovisioned", new Date(), nextMetadata],
+      );
+    },
+    clearProjectHostMetrics,
+    logCloudVmEvent,
+    normalizeProviderId,
   });
 }
 
@@ -1758,16 +610,6 @@ async function loadHostForView(id: string, account_id?: string): Promise<any> {
   throw new Error("not authorized");
 }
 
-function normalizeHostTier(value: unknown): number | undefined {
-  if (value == null) return undefined;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return undefined;
-}
-
 async function loadMembership(account_id: string) {
   return await resolveMembershipForAccount(account_id);
 }
@@ -1783,6 +625,7 @@ export {
   getBackupConfig,
   recordProjectBackup,
 } from "@cocalc/server/project-backup";
+export { rolloutComponentsForUpgradeResultsInternal as rolloutComponentsForUpgradeResults };
 
 export async function touchProject({
   host_id,
@@ -1835,7 +678,7 @@ export async function getManagedRootfsReleaseArtifact({
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
-  return await issueRootfsReleaseArtifactAccess({
+  return await getManagedRootfsReleaseArtifactInternal({
     host_id,
     image,
   });
@@ -1853,7 +696,7 @@ export async function recordManagedRootfsReleaseReplica({
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
-  return await recordManagedRootfsRusticReplica({ image, upload });
+  return await recordManagedRootfsReleaseReplicaInternal({ image, upload });
 }
 
 export async function listManagedRootfsReleaseLifecycle({
@@ -1866,14 +709,9 @@ export async function listManagedRootfsReleaseLifecycle({
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
-  const lifecycleByImage = await loadRootfsReleaseLifecycleByImage(
-    images ?? [],
-  );
-  return Array.from(lifecycleByImage.values()).map((row) => ({
-    image: row.runtime_image,
-    release_id: row.release_id,
-    gc_status: row.gc_status ?? undefined,
-  }));
+  return await listManagedRootfsReleaseLifecycleInternal({
+    images: images ?? [],
+  });
 }
 
 export async function claimPendingCopies({
@@ -2006,106 +844,6 @@ async function assertHostCredentialProjectAccess({
   }
 }
 
-async function assertAccountCanIssueProjectHostToken({
-  account_id,
-  host_id,
-  project_id,
-}: {
-  account_id: string;
-  host_id: string;
-  project_id?: string;
-}): Promise<void> {
-  if (await isAdmin(account_id)) {
-    return;
-  }
-
-  // If project_id is supplied, require collaborator access and verify placement.
-  if (project_id) {
-    await assertAccountProjectHostTokenProjectAccess({
-      account_id,
-      host_id,
-      project_id,
-    });
-    return;
-  }
-
-  // Host owner/collaborator controls are also valid authorization paths.
-  try {
-    await loadHostForListing(host_id, account_id);
-    return;
-  } catch {
-    // continue to project-based fallback check
-  }
-
-  // Fallback: allow if this account collaborates on any project hosted here.
-  if (
-    !(await hasAccountProjectHostTokenHostAccess({
-      account_id,
-      host_id,
-    }))
-  ) {
-    throw new Error("not authorized for project-host access token");
-  }
-}
-
-async function assertHostCanIssueProjectHostAgentToken({
-  host_id,
-  account_id,
-  project_id,
-}: {
-  host_id: string;
-  account_id: string;
-  project_id: string;
-}) {
-  await assertProjectHostAgentTokenAccess({
-    host_id,
-    account_id,
-    project_id,
-  });
-}
-
-async function syncProjectUsersOnHostForBrowserAccess({
-  account_id,
-  project_id,
-  expected_host_id,
-}: {
-  account_id: string;
-  project_id: string;
-  expected_host_id: string;
-}): Promise<void> {
-  const hostBay = await resolveHostBay(expected_host_id);
-  if (hostBay && hostBay.bay_id !== getConfiguredBayId()) {
-    return;
-  }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership && ownership.bay_id !== getConfiguredBayId()) {
-    const remote = await getInterBayBridge()
-      .projectReference(ownership.bay_id, {
-        timeout_ms: 15_000,
-      })
-      .get({
-        account_id,
-        project_id,
-      });
-    if (!remote) {
-      throw new Error("not authorized for project-host access token");
-    }
-    if (remote.host_id !== expected_host_id) {
-      throw new Error("project is not assigned to the requested host");
-    }
-    const client = await hostControlClient(expected_host_id);
-    await client.updateProjectUsers({
-      project_id,
-      users: remote.users ?? {},
-    });
-    return;
-  }
-  await syncProjectUsersOnHost({
-    project_id,
-    expected_host_id,
-  });
-}
-
 export async function issueProjectHostAuthToken({
   account_id,
   host_id,
@@ -2157,36 +895,13 @@ export async function issueProjectHostAuthTokenLocal({
   expires_at: number;
 }> {
   const owner = requireAccount(account_id);
-  if (!host_id) {
-    throw new Error("host_id must be specified");
-  }
-  if (await isBanned(owner)) {
-    throw new Error("account is banned");
-  }
-
-  await assertAccountCanIssueProjectHostToken({
+  return await issueProjectHostAuthTokenLocalHelper({
     account_id: owner,
     host_id,
     project_id,
-  });
-  if (project_id) {
-    // Keep project-host local ACL up to date before issuing browser token.
-    // This is best-effort fast path for grant/revoke propagation.
-    await syncProjectUsersOnHostForBrowserAccess({
-      account_id: owner,
-      project_id,
-      expected_host_id: host_id,
-    });
-  }
-
-  const { token, expires_at } = issueProjectHostAuthTokenJwt({
-    account_id: owner,
-    host_id,
     ttl_seconds,
-    // Hub signs with Ed25519 private key; project-host verifies with public key.
-    private_key: getProjectHostAuthTokenPrivateKey(),
+    loadHostForListing,
   });
-  return { host_id, token, expires_at };
 }
 
 export async function issueProjectHostAgentAuthToken({
@@ -2208,22 +923,12 @@ export async function issueProjectHostAgentAuthToken({
   if (!resolvedHostId) {
     throw new Error("host_id must be specified");
   }
-  await assertHostCanIssueProjectHostAgentToken({
+  return await issueProjectHostAgentAuthTokenInternalHelper({
     host_id: resolvedHostId,
     account_id,
     project_id,
-  });
-  await syncProjectUsersOnHost({
-    project_id,
-    expected_host_id: resolvedHostId,
-  });
-  const { token, expires_at } = issueProjectHostAuthTokenJwt({
-    account_id,
-    host_id: resolvedHostId,
     ttl_seconds,
-    private_key: getProjectHostAuthTokenPrivateKey(),
   });
-  return { host_id: resolvedHostId, token, expires_at };
 }
 
 function normalizeExternalCredentialSelector({
@@ -2905,118 +1610,12 @@ export async function resolveHostConnectionLocal({
   allowMissing?: boolean;
 }): Promise<HostConnectionInfo | undefined> {
   const owner = requireAccount(account_id);
-  if (!host_id) {
-    throw new Error("host_id must be specified");
-  }
-  const { rows } = await pool().query(
-    `SELECT id, bay_id, name, public_url, internal_url, ssh_server, metadata, tier, status, last_seen
-     FROM project_hosts
-     WHERE id=$1 AND deleted IS NULL`,
-    [host_id],
-  );
-  const row = rows[0];
-  if (!row) {
-    if (allowMissing) {
-      return undefined;
-    }
-    throw new Error("host not found");
-  }
-  const metadata = row.metadata ?? {};
-  const rowOwner = metadata.owner ?? "";
-  const collaborators = (metadata.collaborators ?? []) as string[];
-  const isOwner = rowOwner === owner;
-  const isCollab = collaborators.includes(owner);
-  const isShared = row.tier != null;
-  const membership = await loadMembership(owner);
-  const userTier = getUserHostTier(membership.entitlements);
-  const placement = computePlacementPermission({
-    tier: row.tier,
-    userTier,
-    isOwner,
-    isCollab,
+  return await resolveHostConnectionLocalHelper({
+    account_id: owner,
+    host_id,
+    allowMissing,
+    loadMembership,
   });
-  if (!isOwner && !isCollab && !isShared) {
-    const { rows: projectRows } = await pool().query(
-      `SELECT 1
-       FROM projects
-       WHERE host_id=$1 AND users ? $2
-       LIMIT 1`,
-      [host_id, owner],
-    );
-    if (!projectRows.length) {
-      throw new Error("not authorized");
-    }
-  }
-  const machine = metadata?.machine ?? {};
-  const selfHostMode = machine?.metadata?.self_host_mode;
-  const effectiveSelfHostMode =
-    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
-  const isLocalSelfHost =
-    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
-
-  let connect_url: string | null = null;
-  let ssh_server: string | null = row.ssh_server ?? null;
-  let local_proxy = false;
-  let ready = false;
-  const availability = computeHostOperationalAvailability(row);
-  const normalizedStatus =
-    row.status === "active" ? "running" : (row.status ?? null);
-  const pricingModel =
-    normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand";
-  const interruptionRestorePolicy =
-    normalizeHostInterruptionRestorePolicy(
-      metadata.interruption_restore_policy,
-    ) ?? defaultInterruptionRestorePolicy(pricingModel);
-  const lastSeenIso = row.last_seen
-    ? new Date(row.last_seen).toISOString()
-    : undefined;
-  if (isLocalSelfHost) {
-    local_proxy = true;
-    ready = !!metadata?.self_host?.http_tunnel_port;
-    const sshPort = metadata?.self_host?.ssh_tunnel_port;
-    if (sshPort) {
-      const sshHost = resolveOnPremHost();
-      ssh_server = `${sshHost}:${sshPort}`;
-    }
-  } else {
-    connect_url = row.public_url ?? row.internal_url ?? null;
-    ready = !!connect_url;
-  }
-
-  const response = {
-    host_id: row.id,
-    bay_id:
-      typeof row.bay_id === "string" && row.bay_id.trim()
-        ? row.bay_id.trim()
-        : null,
-    name: row.name ?? null,
-    can_place: placement.can_place,
-    region: row.region ?? null,
-    size: typeof metadata?.size === "string" ? metadata.size : null,
-    ssh_server,
-    connect_url,
-    host_session_id:
-      typeof metadata?.host_session_id === "string" &&
-      metadata.host_session_id.trim()
-        ? metadata.host_session_id.trim()
-        : undefined,
-    local_proxy,
-    ready,
-    status: normalizedStatus,
-    tier: typeof row.tier === "number" ? row.tier : null,
-    pricing_model: pricingModel,
-    interruption_restore_policy: interruptionRestorePolicy,
-    desired_state: desiredHostState({
-      status: normalizedStatus ?? undefined,
-      metadata,
-    }),
-    last_seen: lastSeenIso,
-    online: availability.online,
-    reason_unavailable: availability.operational
-      ? undefined
-      : availability.reason_unavailable,
-  };
-  return response as HostConnectionInfo;
 }
 
 export async function listHostProjects({
@@ -3793,144 +2392,19 @@ export async function createHost({
   const owner = requireAccount(account_id);
   const membership = await loadMembership(owner);
   requireCreateHosts(membership.entitlements);
-  const id = randomUUID();
-  const machineCloud = normalizeProviderId(machine?.cloud);
-  const isSelfHost = machineCloud === "self-host";
-  const normalizedPricingModel = normalizeHostPricingModel(pricing_model);
-  if (pricing_model != null && !normalizedPricingModel) {
-    throw new Error(`invalid pricing_model '${pricing_model}'`);
-  }
-  const normalizedRestorePolicy = normalizeHostInterruptionRestorePolicy(
-    interruption_restore_policy,
-  );
-  if (interruption_restore_policy != null && !normalizedRestorePolicy) {
-    throw new Error(
-      `invalid interruption_restore_policy '${interruption_restore_policy}'`,
-    );
-  }
-  const pricingModel = normalizedPricingModel ?? "on_demand";
-  const interruptionRestorePolicy =
-    normalizedRestorePolicy ?? defaultInterruptionRestorePolicy(pricingModel);
-  const initialStatus = machineCloud && !isSelfHost ? "starting" : "off";
-  const initialDesiredState: "running" | "stopped" =
-    machineCloud && !isSelfHost ? "running" : "stopped";
-  const rawSelfHostMode = machine?.metadata?.self_host_mode;
-  const selfHostMode =
-    rawSelfHostMode === "cloudflare" || rawSelfHostMode === "local"
-      ? rawSelfHostMode
-      : undefined;
-  if (isSelfHost && rawSelfHostMode && !selfHostMode) {
-    throw new Error(`invalid self_host_mode '${rawSelfHostMode}'`);
-  }
-  const rawSelfHostKind = machine?.metadata?.self_host_kind;
-  const selfHostKind =
-    rawSelfHostKind === "direct" || rawSelfHostKind === "multipass"
-      ? rawSelfHostKind
-      : undefined;
-  if (isSelfHost && rawSelfHostKind && !selfHostKind) {
-    throw new Error(`invalid self_host_kind '${rawSelfHostKind}'`);
-  }
-  const effectiveSelfHostKind = isSelfHost
-    ? (selfHostKind ?? "direct")
-    : undefined;
-  if (isSelfHost && selfHostMode === "cloudflare") {
-    if (!(await hasCloudflareTunnel())) {
-      throw new Error("cloudflare tunnel is not configured");
-    }
-  }
-  const requestedBootstrapChannel =
-    typeof machine?.metadata?.bootstrap_channel === "string"
-      ? machine.metadata.bootstrap_channel.trim()
-      : "";
-  const requestedBootstrapVersion =
-    typeof machine?.metadata?.bootstrap_version === "string"
-      ? machine.metadata.bootstrap_version.trim()
-      : "";
-  let resolvedRegion = region;
-  let connectorId: string | undefined;
-  if (isSelfHost) {
-    const connector = await createConnectorRecord({
-      account_id: owner,
-      host_id: id,
-      name,
-    });
-    connectorId = connector.connector_id;
-    resolvedRegion = connectorId;
-  }
-  const normalizedMachine = normalizeMachineGpuInPlace(
-    {
-      ...(machine ?? {}),
-      ...(machineCloud ? { cloud: machineCloud } : {}),
-      ...(connectorId
-        ? {
-            metadata: {
-              ...(machine?.metadata ?? {}),
-              connector_id: connectorId,
-              ...(selfHostMode ? { self_host_mode: selfHostMode } : {}),
-              ...(effectiveSelfHostKind
-                ? { self_host_kind: effectiveSelfHostKind }
-                : {}),
-            },
-          }
-        : {}),
-    },
+  return await createHostInternalHelper({
+    owner,
+    name,
+    region,
+    size,
     gpu,
-  );
-  const gpuEnabled = machineHasGpu(normalizedMachine);
-
-  await pool().query(
-    `INSERT INTO project_hosts (id, name, region, status, metadata, created, updated, last_seen, bay_id)
-     VALUES ($1,$2,$3,$4,$5,NOW(),NOW(),$6,$7)`,
-    [
-      id,
-      name,
-      resolvedRegion,
-      initialStatus,
-      {
-        owner,
-        size,
-        gpu: gpuEnabled,
-        pricing_model: pricingModel,
-        interruption_restore_policy: interruptionRestorePolicy,
-        desired_state: initialDesiredState,
-        machine: normalizedMachine,
-        ...(machineCloud && !isSelfHost
-          ? {
-              bootstrap: {
-                status: "queued",
-                updated_at: new Date().toISOString(),
-                message: "Waiting for cloud host bootstrap",
-              },
-            }
-          : {}),
-        ...(requestedBootstrapChannel
-          ? { bootstrap_channel: requestedBootstrapChannel }
-          : {}),
-        ...(requestedBootstrapVersion
-          ? { bootstrap_version: requestedBootstrapVersion }
-          : {}),
-      },
-      null,
-      getConfiguredBayId(),
-    ],
-  );
-  if (machineCloud && !isSelfHost) {
-    await enqueueCloudVmWork({
-      vm_id: id,
-      action: "provision",
-      payload: { provider: machineCloud },
-    });
-  }
-  const { rows } = await pool().query(
-    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
-    [id],
-  );
-  const row = rows[0];
-  if (!row) throw new Error("host not found after create");
-  return parseRow(row, {
-    scope: "owned",
-    can_start: true,
-    can_place: true,
+    pricing_model,
+    interruption_restore_policy,
+    machine,
+    normalizeHostPricingModel,
+    normalizeHostInterruptionRestorePolicy,
+    defaultInterruptionRestorePolicy,
+    parseRow,
   });
 }
 
@@ -4009,121 +2483,14 @@ export async function startHostInternal({
   account_id?: string;
   id: string;
 }): Promise<Host> {
-  const row = await loadHostForStartStop(id, account_id);
-  const metadata = row.metadata ?? {};
-  const owner = metadata.owner ?? account_id;
-  const machine: HostMachine = metadata.machine ?? {};
-  const machineCloud = normalizeProviderId(machine.cloud);
-  const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
-  if (machineCloud === "self-host" && sshTarget && owner) {
-    await ensureSelfHostReverseTunnel({
-      host_id: row.id,
-      ssh_target: sshTarget,
-    });
-    const { rows: connectorRows } = await pool().query<{
-      connector_id: string;
-      last_seen: Date | null;
-    }>(
-      `SELECT connector_id, last_seen
-         FROM self_host_connectors
-        WHERE host_id=$1 AND revoked IS NOT TRUE
-        ORDER BY last_seen DESC NULLS LAST
-        LIMIT 1`,
-      [row.id],
-    );
-    const connectorRow = connectorRows[0];
-    const lastSeen = connectorRow?.last_seen;
-    const connectorOnline =
-      !!lastSeen && Date.now() - lastSeen.getTime() < 2 * 60 * 1000;
-    if (!connectorOnline) {
-      const tokenInfo = await createPairingTokenForHost({
-        account_id: owner,
-        host_id: row.id,
-        ttlMs: 30 * 60 * 1000,
-      });
-      const { project_hosts_self_host_connector_version } =
-        await getServerSettings();
-      const connectorVersion =
-        project_hosts_self_host_connector_version?.trim() || undefined;
-      const { rows: metaRows } = await pool().query<{ metadata: any }>(
-        `SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
-        [row.id],
-      );
-      const updatedMetadata = metaRows[0]?.metadata ?? metadata;
-      const reversePort = Number(
-        updatedMetadata?.self_host?.ssh_reverse_port ?? 0,
-      );
-      if (!reversePort) {
-        throw new Error("self-host ssh reverse port missing");
-      }
-      await runConnectorInstallOverSsh({
-        host_id: row.id,
-        ssh_target: sshTarget,
-        pairing_token: tokenInfo.token,
-        name: row.name ?? undefined,
-        ssh_port: reversePort,
-        version: connectorVersion,
-      });
-    }
-  }
-  if (machineCloud === "self-host" && row.region && owner) {
-    await ensureConnectorRecord({
-      connector_id: row.region,
-      account_id: owner,
-      host_id: row.id,
-      name: row.name ?? undefined,
-    });
-  }
-  const { rows: metaRowsFinal } = await pool().query<{ metadata: any }>(
-    `SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
-    [row.id],
-  );
-  const nextMetadata = metaRowsFinal[0]?.metadata ?? metadata;
-  nextMetadata.desired_state = "running";
-  if (nextMetadata?.self_host?.auto_start_pending) {
-    const nextSelfHost = {
-      ...(nextMetadata.self_host ?? {}),
-      auto_start_pending: false,
-      auto_start_cleared_at: new Date().toISOString(),
-    };
-    nextMetadata.self_host = nextSelfHost;
-  }
-  if (nextMetadata?.bootstrap) {
-    // bootstrap should be idempotent and we bootstrap on EVERY start
-    delete nextMetadata.bootstrap;
-  }
-  if (machineCloud && machineCloud !== "self-host") {
-    nextMetadata.bootstrap = {
-      status: "queued",
-      updated_at: new Date().toISOString(),
-      message: "Waiting for cloud host bootstrap",
-    };
-  }
-  logStatusUpdate(id, "starting", "api");
-  await pool().query(
-    `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-    [id, "starting", null, nextMetadata],
-  );
-  if (!machineCloud) {
-    logStatusUpdate(id, "running", "api");
-    await pool().query(
-      `UPDATE project_hosts SET status=$2, last_seen=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-      [id, "running", new Date()],
-    );
-  } else {
-    await markHostActionPending(id, "start");
-    await enqueueCloudVmWork({
-      vm_id: id,
-      action: "start",
-      payload: { provider: machineCloud },
-    });
-  }
-  const { rows } = await pool().query(
-    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
-    [id],
-  );
-  if (!rows[0]) throw new Error("host not found");
-  return parseRow(rows[0]);
+  return await startHostInternalHelper({
+    account_id,
+    id,
+    loadHostForStartStop,
+    markHostActionPending,
+    logStatusUpdate,
+    parseRow,
+  });
 }
 
 export async function stopHost({
@@ -4152,36 +2519,14 @@ export async function stopHostInternal({
   account_id?: string;
   id: string;
 }): Promise<Host> {
-  const row = await loadHostForStartStop(id, account_id);
-  const metadata = row.metadata ?? {};
-  const nextMetadata = { ...metadata, desired_state: "stopped" };
-  const machine: HostMachine = metadata.machine ?? {};
-  const machineCloud = normalizeProviderId(machine.cloud);
-  logStatusUpdate(id, "stopping", "api");
-  await pool().query(
-    `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-    [id, "stopping", null, nextMetadata],
-  );
-  if (!machineCloud) {
-    logStatusUpdate(id, "off", "api");
-    await pool().query(
-      `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-      [id, "off", null, nextMetadata],
-    );
-  } else {
-    await markHostActionPending(id, "stop");
-    await enqueueCloudVmWork({
-      vm_id: id,
-      action: "stop",
-      payload: { provider: machineCloud },
-    });
-  }
-  const { rows } = await pool().query(
-    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
-    [id],
-  );
-  if (!rows[0]) throw new Error("host not found");
-  return parseRow(rows[0]);
+  return await stopHostInternalHelper({
+    account_id,
+    id,
+    loadHostForStartStop,
+    markHostActionPending,
+    logStatusUpdate,
+    parseRow,
+  });
 }
 
 export async function restartHost({
@@ -4212,67 +2557,15 @@ export async function restartHostInternal({
   id: string;
   mode?: "reboot" | "hard";
 }): Promise<Host> {
-  const row = await loadHostForStartStop(id, account_id);
-  if (row.status === "deprovisioned") {
-    throw new Error("host is not provisioned");
-  }
-  if (!["running", "error"].includes(row.status)) {
-    throw new Error("host must be running to restart");
-  }
-  const metadata = row.metadata ?? {};
-  metadata.desired_state = "running";
-  const owner = metadata.owner ?? account_id;
-  const machine: HostMachine = metadata.machine ?? {};
-  const machineCloud = normalizeProviderId(machine.cloud);
-  const provider = machineCloud ? getServerProvider(machineCloud) : undefined;
-  const caps = provider?.entry.capabilities;
-  const wantsHard = mode === "hard";
-  if (machineCloud && caps) {
-    const supported = wantsHard
-      ? caps.supportsHardRestart
-      : caps.supportsRestart;
-    if (!supported) {
-      throw new Error(
-        wantsHard ? "hard reboot is not supported" : "reboot is not supported",
-      );
-    }
-  }
-  if (machineCloud === "self-host" && row.region && owner) {
-    await ensureConnectorRecord({
-      connector_id: row.region,
-      account_id: owner,
-      host_id: row.id,
-      name: row.name ?? undefined,
-    });
-  }
-  logStatusUpdate(id, "restarting", "api");
-  await pool().query(
-    `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-    [id, "restarting", null, metadata],
-  );
-  if (!machineCloud) {
-    logStatusUpdate(id, "running", "api");
-    await pool().query(
-      `UPDATE project_hosts SET status=$2, last_seen=$3, metadata=$4, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-      [id, "running", new Date(), metadata],
-    );
-  } else {
-    await markHostActionPending(
-      id,
-      mode === "hard" ? "hard_restart" : "restart",
-    );
-    await enqueueCloudVmWork({
-      vm_id: id,
-      action: mode === "hard" ? "hard_restart" : "restart",
-      payload: { provider: machineCloud },
-    });
-  }
-  const { rows } = await pool().query(
-    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
-    [id],
-  );
-  if (!rows[0]) throw new Error("host not found");
-  return parseRow(rows[0]);
+  return await restartHostInternalHelper({
+    account_id,
+    id,
+    mode,
+    loadHostForStartStop,
+    markHostActionPending,
+    logStatusUpdate,
+    parseRow,
+  });
 }
 
 export async function drainHost({
@@ -4291,9 +2584,14 @@ export async function drainHost({
   parallel?: number;
 }): Promise<HostLroResponse> {
   const owner = requireAccount(account_id);
-  const row = await loadHostForDrain(id, owner);
+  const row = await loadHostForDrainInternal({ id, owner });
   const destination = `${dest_host_id ?? ""}`.trim() || undefined;
-  const drainParallel = await resolveDrainParallel(owner, parallel);
+  const drainParallel = await resolveDrainParallelInternal({
+    owner,
+    parallel,
+    defaultParallel: HOST_DRAIN_DEFAULT_PARALLEL,
+    ownerMaxParallel: HOST_DRAIN_OWNER_MAX_PARALLEL,
+  });
   if (destination === row.id) {
     throw new Error("destination host must differ from source host");
   }
@@ -4340,195 +2638,19 @@ export async function drainHostInternal({
   }) => Promise<void> | void;
 }): Promise<HostDrainResult> {
   const owner = requireAccount(account_id);
-  const row = await loadHostForDrain(id, owner);
-  const drainParallel = await resolveDrainParallel(owner, parallel);
-  const destination = `${dest_host_id ?? ""}`.trim() || undefined;
-  if (destination === row.id) {
-    throw new Error("destination host must differ from source host");
-  }
-  if (destination) {
-    await loadHostForListing(destination, owner);
-  }
-
-  const projectIds = await loadProjectIdsAssignedToHost(row.id);
-  const total = projectIds.length;
-  const resultBase = {
-    host_id: row.id,
-    mode: force ? "force" : "move",
-    total,
-    moved: 0,
-    unassigned: 0,
-    failed: 0,
-    parallel: drainParallel,
-    ...(destination ? { dest_host_id: destination } : {}),
-  } satisfies HostDrainResult;
-
-  if (!total) {
-    await onProgress?.({
-      message: "host already drained",
-      detail: { host_id: row.id, total: 0 },
-      progress: 100,
-    });
-    return resultBase;
-  }
-
-  const canceled = async () => {
-    if (!shouldCancel) return false;
-    return await shouldCancel();
-  };
-
-  if (force) {
-    if (await canceled()) {
-      throw new Error("host drain canceled");
-    }
-    await onProgress?.({
-      message: "force-unassigning workspaces",
-      detail: { host_id: row.id, total },
-      progress: 20,
-    });
-    const { rows } = await pool().query<{ project_id: string }>(
-      `
-        UPDATE projects
-        SET host_id=NULL
-        WHERE host_id=$1
-          AND deleted IS NOT true
-        RETURNING project_id
-      `,
-      [row.id],
-    );
-    for (const moved of rows) {
-      await notifyProjectHostUpdate({ project_id: moved.project_id });
-    }
-    await onProgress?.({
-      message: "force-unassign complete",
-      detail: { host_id: row.id, total, unassigned: rows.length },
-      progress: 100,
-    });
-    return {
-      ...resultBase,
-      unassigned: rows.length,
-      failed: Math.max(0, total - rows.length),
-    };
-  }
-
-  const maxParallel = Math.max(1, Math.min(drainParallel, total));
-  let moved = 0;
-  let completed = 0;
-  let nextIndex = 0;
-  let firstError: Error | undefined;
-
-  await onProgress?.({
-    message: "starting host drain",
-    detail: {
-      host_id: row.id,
-      total,
-      parallel: maxParallel,
-      dest_host_id: destination,
-    },
-    progress: 5,
+  return await drainHostInternalHelper({
+    owner,
+    id,
+    dest_host_id,
+    force,
+    allow_offline,
+    parallel,
+    defaultParallel: HOST_DRAIN_DEFAULT_PARALLEL,
+    ownerMaxParallel: HOST_DRAIN_OWNER_MAX_PARALLEL,
+    loadHostForListing,
+    shouldCancel,
+    onProgress,
   });
-
-  const worker = async () => {
-    while (true) {
-      if (firstError) return;
-      if (await canceled()) {
-        firstError = new Error("host drain canceled");
-        return;
-      }
-      const index = nextIndex;
-      nextIndex += 1;
-      if (index >= total) return;
-      const project_id = projectIds[index];
-      try {
-        const moveAccountId = await resolveDrainMoveAccount({
-          project_id,
-          fallback_account_id: owner,
-        });
-        await moveProjectToHost(
-          {
-            project_id,
-            account_id: moveAccountId,
-            dest_host_id: destination,
-            allow_offline: !!allow_offline,
-            start_dest: true,
-            stop_dest_after_start: true,
-          },
-          { shouldCancel },
-        );
-        moved += 1;
-        completed += 1;
-        const started = Math.min(total, nextIndex);
-        const in_flight = Math.max(0, started - completed);
-        await onProgress?.({
-          message: `drained ${completed}/${total}`,
-          detail: {
-            host_id: row.id,
-            project_id,
-            moved,
-            completed,
-            total,
-            parallel: maxParallel,
-            in_flight,
-            dest_host_id: destination,
-          },
-          progress: Math.min(
-            95,
-            Math.max(5, Math.round((completed / total) * 95)),
-          ),
-        });
-      } catch (err) {
-        completed += 1;
-        if (await canceled()) {
-          firstError = new Error("host drain canceled");
-        } else if (!firstError) {
-          firstError = new Error(
-            `failed to drain workspace ${project_id}: ${
-              err instanceof Error ? err.message : `${err}`
-            }`,
-          );
-        }
-        await onProgress?.({
-          message: "host drain failed",
-          detail: {
-            host_id: row.id,
-            project_id,
-            completed,
-            total,
-            parallel: maxParallel,
-            error: `${err}`,
-          },
-          progress: Math.min(
-            95,
-            Math.max(5, Math.round((completed / total) * 95)),
-          ),
-        });
-        return;
-      }
-    }
-  };
-
-  await Promise.all(Array.from({ length: maxParallel }, () => worker()));
-
-  if (firstError) {
-    throw firstError;
-  }
-
-  await onProgress?.({
-    message: "host drain complete",
-    detail: {
-      host_id: row.id,
-      total,
-      moved,
-      parallel: maxParallel,
-      dest_host_id: destination,
-    },
-    progress: 100,
-  });
-  return {
-    ...resultBase,
-    moved,
-    failed: Math.max(0, total - moved),
-  };
 }
 
 export async function forceDeprovisionHost({
@@ -4559,12 +2681,14 @@ export async function forceDeprovisionHostInternal({
   account_id?: string;
   id: string;
 }): Promise<void> {
-  const row = await loadOwnedHost(id, account_id);
-  const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
-  if (machineCloud !== "self-host") {
-    throw new Error("force deprovision is only supported for self-hosted VMs");
-  }
-  await markHostDeprovisioned(row, "force_deprovision");
+  await forceDeprovisionHostInternalHelper({
+    account_id,
+    id,
+    loadOwnedHost,
+    normalizeProviderId,
+    markHostDeprovisionedInternal: async ({ row, action }) =>
+      await markHostDeprovisioned(row, action),
+  });
 }
 
 export async function removeSelfHostConnector({
@@ -4595,22 +2719,15 @@ export async function removeSelfHostConnectorInternal({
   account_id?: string;
   id: string;
 }): Promise<void> {
-  const row = await loadOwnedHost(id, account_id);
-  const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
-  if (machineCloud !== "self-host") {
-    throw new Error("host is not self-hosted");
-  }
-  await markHostDeprovisioned(row, "remove_connector");
-  const connectorId =
-    row.region ??
-    row.metadata?.machine?.metadata?.connector_id ??
-    row.metadata?.machine?.metadata?.connectorId;
-  if (typeof connectorId === "string" && connectorId) {
-    await revokeConnector({
-      connector_id: connectorId,
-      account_id,
-    });
-  }
+  await removeSelfHostConnectorInternalHelper({
+    account_id,
+    id,
+    loadOwnedHost,
+    normalizeProviderId,
+    markHostDeprovisionedInternal: async ({ row, action }) =>
+      await markHostDeprovisioned(row, action),
+    revokeConnector,
+  });
 }
 
 export async function renameHost({
@@ -5262,94 +3379,6 @@ export async function listHostRuntimeDeployments({
   });
 }
 
-async function getHostRuntimeDeploymentStatusInternal({
-  id,
-  row,
-}: {
-  id: string;
-  row: any;
-}): Promise<HostRuntimeDeploymentStatus> {
-  const [configured, effective] = await Promise.all([
-    listProjectHostRuntimeDeployments({
-      scope_type: "host",
-      host_id: row.id,
-    }),
-    loadEffectiveProjectHostRuntimeDeployments({ host_id: row.id }),
-  ]);
-  let observed_artifacts = observedRuntimeArtifactsFromMetadata(row);
-  let observed_components: HostManagedComponentStatus[] | undefined;
-  let observed_host_agent = observedHostAgentFromMetadata(row);
-  const observation_errors: string[] = [];
-  if (HOST_RUNNING_STATUSES.has(`${row?.status ?? ""}`.toLowerCase())) {
-    try {
-      const client = await hostControlClient(id, 15_000);
-      const [componentsResult, artifactsResult, hostAgentResult] =
-        await Promise.allSettled([
-          client.getManagedComponentStatus(),
-          client.getInstalledRuntimeArtifacts(),
-          client.getHostAgentStatus(),
-        ]);
-      if (componentsResult.status === "fulfilled") {
-        observed_components = componentsResult.value;
-      } else {
-        observation_errors.push(
-          `components: ${componentsResult.reason?.message ?? componentsResult.reason}`,
-        );
-      }
-      if (artifactsResult.status === "fulfilled") {
-        observed_artifacts = observedRuntimeArtifactsFromMetadata({
-          metadata: {
-            software_inventory: artifactsResult.value,
-            software: row?.metadata?.software,
-          },
-        });
-      } else if (observed_artifacts.length === 0) {
-        observation_errors.push(
-          `artifacts: ${artifactsResult.reason?.message ?? artifactsResult.reason}`,
-        );
-      }
-      if (hostAgentResult.status === "fulfilled") {
-        observed_host_agent = observedHostAgentFromMetadata({
-          metadata: {
-            host_agent: hostAgentResult.value,
-          },
-        });
-      } else if (
-        !observed_host_agent &&
-        !isUnsupportedHostAgentStatusObservationError(hostAgentResult.reason)
-      ) {
-        observation_errors.push(
-          `host_agent: ${hostAgentResult.reason?.message ?? hostAgentResult.reason}`,
-        );
-      }
-    } catch (err) {
-      observation_errors.push(`${(err as Error)?.message ?? err}`);
-    }
-  } else {
-    observation_errors.push("host is not currently running");
-  }
-  return {
-    host_id: row.id,
-    configured,
-    effective,
-    observed_artifacts,
-    observed_components,
-    observed_host_agent,
-    observed_targets: summarizeObservedRuntimeDeployments({
-      effective,
-      observed_artifacts,
-      observed_components,
-    }),
-    rollback_targets: summarizeRollbackTargets({
-      row,
-      effective,
-      observed_artifacts,
-      observed_components,
-    }),
-    observation_error: observation_errors.join("; ") || undefined,
-  };
-}
-
 export async function getHostRuntimeDeploymentStatus({
   account_id,
   id,
@@ -5358,7 +3387,12 @@ export async function getHostRuntimeDeploymentStatus({
   id: string;
 }): Promise<HostRuntimeDeploymentStatus> {
   const row = await loadHostForListing(id, account_id);
-  return await getHostRuntimeDeploymentStatusInternal({ id, row });
+  return await getHostRuntimeDeploymentStatusInternal({
+    id,
+    row,
+    running_statuses: HOST_RUNNING_STATUSES,
+    hostControlClient,
+  });
 }
 
 export async function setHostRuntimeDeployments({
@@ -5384,7 +3418,9 @@ export async function setHostRuntimeDeployments({
       replace,
     });
     const runningHostIds =
-      await listRunningHostIdsForAutomaticRuntimeDeploymentReconcile();
+      await listRunningHostIdsForAutomaticRuntimeDeploymentReconcile({
+        running_statuses: HOST_RUNNING_STATUSES,
+      });
     await bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
       host_ids: runningHostIds,
     });
@@ -5463,87 +3499,24 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcile({
       op_id: string;
     }
 > {
-  const row = await loadHostRowForRuntimeDeploymentsInternal(host_id);
-  if (!row) {
-    return { queued: false, host_id, reason: "host_missing" };
-  }
-  if (!HOST_RUNNING_STATUSES.has(`${row?.status ?? ""}`.toLowerCase())) {
-    return { queued: false, host_id: row.id, reason: "host_not_running" };
-  }
-  const status = await getHostRuntimeDeploymentStatusInternal({
-    id: row.id,
-    row,
+  return await ensureAutomaticHostRuntimeDeploymentsReconcileInternal({
+    host_id,
+    reason,
+    running_statuses: HOST_RUNNING_STATUSES,
+    loadHostRowForRuntimeDeploymentsInternal,
+    getHostRuntimeDeploymentStatusInternal: ({ id, row }) =>
+      getHostRuntimeDeploymentStatusInternal({
+        id,
+        row,
+        running_statuses: HOST_RUNNING_STATUSES,
+        hostControlClient,
+      }),
+    computeHostRuntimeDeploymentReconcilePlan,
+    createHostLro,
+    normalizeManagedComponentKindsForDedupe,
+    reconcile_lro_kind: HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND,
+    automatic_reason: AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
   });
-  if (status.observation_error && !(status.observed_components ?? []).length) {
-    return {
-      queued: false,
-      host_id: row.id,
-      reason: "observation_failed",
-      observation_error: status.observation_error,
-    };
-  }
-  const plan = computeHostRuntimeDeploymentReconcilePlan({
-    row,
-    status,
-  });
-  if (!plan.reconciled_components.length) {
-    return { queued: false, host_id: row.id, reason: "no_reconcile_needed" };
-  }
-  const op = await createHostLro({
-    kind: HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND,
-    row,
-    input: {
-      id: row.id,
-      components: plan.reconciled_components,
-      reason: reason ?? AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
-    },
-    dedupe_key: `${HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND}:${row.id}:${JSON.stringify(
-      {
-        components: normalizeManagedComponentKindsForDedupe(
-          plan.reconciled_components,
-        ),
-        reason:
-          `${reason ?? AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON}`.trim() ||
-          null,
-      },
-    )}`,
-  });
-  return {
-    queued: true,
-    host_id: row.id,
-    components: plan.reconciled_components,
-    op_id: op.op_id,
-  };
-}
-
-function computeAutomaticArtifactUpgradeTargets({
-  status,
-}: {
-  status: HostRuntimeDeploymentStatus;
-}): HostSoftwareUpgradeTarget[] {
-  const observedTargets = new Map(
-    (status.observed_targets ?? [])
-      .filter((target) => target.target_type === "artifact")
-      .map((target) => [target.target as HostRuntimeArtifact, target]),
-  );
-  const targets: HostSoftwareUpgradeTarget[] = [];
-  for (const deployment of status.effective ?? []) {
-    if (deployment.target_type !== "artifact") continue;
-    const target = deployment.target as HostRuntimeArtifact;
-    if (target === "project-host" || target === "bootstrap-environment") {
-      continue;
-    }
-    const observed = observedTargets.get(target);
-    const observedState = observed?.observed_version_state;
-    if (observedState === "aligned" || observedState === "unsupported") {
-      continue;
-    }
-    targets.push({
-      artifact: target,
-      version: deployment.desired_version,
-    });
-  }
-  return targets;
 }
 
 export async function ensureAutomaticHostArtifactDeploymentsReconcile({
@@ -5568,62 +3541,22 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcile({
       op_id: string;
     }
 > {
-  const row = await loadHostRowForRuntimeDeploymentsInternal(host_id);
-  if (!row) {
-    return { queued: false, host_id, reason: "host_missing" };
-  }
-  if (!HOST_RUNNING_STATUSES.has(`${row?.status ?? ""}`.toLowerCase())) {
-    return { queued: false, host_id: row.id, reason: "host_not_running" };
-  }
-  const status = await getHostRuntimeDeploymentStatusInternal({
-    id: row.id,
-    row,
+  return await ensureAutomaticHostArtifactDeploymentsReconcileInternal({
+    host_id,
+    running_statuses: HOST_RUNNING_STATUSES,
+    loadHostRowForRuntimeDeploymentsInternal,
+    getHostRuntimeDeploymentStatusInternal: ({ id, row }) =>
+      getHostRuntimeDeploymentStatusInternal({
+        id,
+        row,
+        running_statuses: HOST_RUNNING_STATUSES,
+        hostControlClient,
+      }),
+    computeAutomaticArtifactUpgradeTargets,
+    createHostLro,
+    hostUpgradeDedupeKey,
+    upgrade_lro_kind: HOST_UPGRADE_LRO_KIND,
   });
-  if (status.observation_error && !(status.observed_artifacts ?? []).length) {
-    return {
-      queued: false,
-      host_id: row.id,
-      reason: "observation_failed",
-      observation_error: status.observation_error,
-    };
-  }
-  const targets = computeAutomaticArtifactUpgradeTargets({ status });
-  if (!targets.length) {
-    return { queued: false, host_id: row.id, reason: "no_reconcile_needed" };
-  }
-  const op = await createHostLro({
-    kind: HOST_UPGRADE_LRO_KIND,
-    row,
-    input: {
-      id: row.id,
-      targets,
-    },
-    dedupe_key: hostUpgradeDedupeKey({
-      hostId: row.id,
-      targets,
-    }),
-  });
-  return {
-    queued: true,
-    host_id: row.id,
-    targets,
-    op_id: op.op_id,
-  };
-}
-
-async function listRunningHostIdsForAutomaticRuntimeDeploymentReconcile(): Promise<
-  string[]
-> {
-  const { rows } = await pool().query<{ id: string }>(
-    `SELECT id
-     FROM project_hosts
-     WHERE deleted IS NULL
-       AND LOWER(COALESCE(status, '')) = ANY($1::text[])`,
-    [[...HOST_RUNNING_STATUSES]],
-  );
-  return rows
-    .map((row) => `${row?.id ?? ""}`.trim())
-    .filter((id) => id.length > 0);
 }
 
 async function bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
@@ -5633,26 +3566,11 @@ async function bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
   host_ids: string[];
   reason?: string;
 }): Promise<void> {
-  const uniqueHostIds = Array.from(
-    new Set(
-      (host_ids ?? [])
-        .map((host_id) => `${host_id ?? ""}`.trim())
-        .filter((host_id) => host_id.length > 0),
-    ),
-  );
-  if (!uniqueHostIds.length) return;
-  const settled = await Promise.allSettled(
-    uniqueHostIds.map((host_id) =>
-      ensureAutomaticHostRuntimeDeploymentsReconcile({ host_id, reason }),
-    ),
-  );
-  settled.forEach((result, index) => {
-    if (result.status === "rejected") {
-      logger.warn("automatic runtime deployment reconcile enqueue failed", {
-        host_id: uniqueHostIds[index],
-        reason: `${result.reason}`,
-      });
-    }
+  await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHostsInternal({
+    host_ids,
+    reason,
+    ensureAutomaticHostRuntimeDeploymentsReconcile,
+    logWarn: (message, payload) => logger.warn(message, payload),
   });
 }
 
@@ -5661,26 +3579,10 @@ async function bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
 }: {
   host_ids: string[];
 }): Promise<void> {
-  const uniqueHostIds = Array.from(
-    new Set(
-      (host_ids ?? [])
-        .map((host_id) => `${host_id ?? ""}`.trim())
-        .filter((host_id) => host_id.length > 0),
-    ),
-  );
-  if (!uniqueHostIds.length) return;
-  const settled = await Promise.allSettled(
-    uniqueHostIds.map((host_id) =>
-      ensureAutomaticHostArtifactDeploymentsReconcile({ host_id }),
-    ),
-  );
-  settled.forEach((result, index) => {
-    if (result.status === "rejected") {
-      logger.warn("automatic artifact deployment reconcile enqueue failed", {
-        host_id: uniqueHostIds[index],
-        reason: `${result.reason}`,
-      });
-    }
+  await bestEffortQueueAutomaticArtifactDeploymentReconcileForHostsInternal({
+    host_ids,
+    ensureAutomaticHostArtifactDeploymentsReconcile,
+    logWarn: (message, payload) => logger.warn(message, payload),
   });
 }
 
@@ -5786,42 +3688,15 @@ export async function upgradeHostConnector({
   id: string;
   version?: string;
 }): Promise<void> {
-  const row = await loadHostForStartStop(id, account_id);
-  const metadata = row.metadata ?? {};
-  const machine = metadata.machine ?? {};
-  if (machine.cloud !== "self-host") {
-    throw new Error("host is not self-hosted");
-  }
-  const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
-  if (!sshTarget) {
-    throw new Error("missing self-host ssh target");
-  }
-  const owner = metadata.owner ?? account_id;
-  if (!owner) {
-    throw new Error("missing host owner");
-  }
-  const reversePort = await ensureSelfHostReverseTunnel({
-    host_id: row.id,
-    ssh_target: sshTarget,
-  });
-  const tokenInfo = await createPairingTokenForHost({
-    account_id: owner,
-    host_id: row.id,
-    ttlMs: 30 * 60 * 1000,
-  });
-  const { project_hosts_self_host_connector_version } =
-    await getServerSettings();
-  const connectorVersion =
-    version?.trim() ||
-    project_hosts_self_host_connector_version?.trim() ||
-    undefined;
-  await runConnectorInstallOverSsh({
-    host_id: row.id,
-    ssh_target: sshTarget,
-    pairing_token: tokenInfo.token,
-    name: row.name ?? undefined,
-    ssh_port: reversePort,
-    version: connectorVersion,
+  await upgradeHostConnectorInternalHelper({
+    account_id,
+    id,
+    version,
+    loadHostForStartStop,
+    ensureSelfHostReverseTunnel,
+    createPairingTokenForHost,
+    getServerSettings,
+    runConnectorInstallOverSsh,
   });
 }
 
@@ -5845,571 +3720,6 @@ function assertHostRunningForUpgrade(row: any) {
   }
 }
 
-function deploymentObservedVersionState({
-  desired_version,
-  running_versions,
-}: {
-  desired_version: string;
-  running_versions: string[];
-}): HostRuntimeDeploymentObservedVersionState {
-  if (!desired_version || running_versions.length === 0) {
-    return "unknown";
-  }
-  if (running_versions.length > 1) {
-    return "mixed";
-  }
-  return running_versions[0] === desired_version ? "aligned" : "drifted";
-}
-
-function componentDeploymentObservedVersionState({
-  deployment,
-  observed_component,
-  observed_artifact,
-}: {
-  deployment: HostRuntimeDeploymentRecord;
-  observed_component: HostManagedComponentStatus;
-  observed_artifact?: HostRuntimeArtifactObservation;
-}): HostRuntimeDeploymentObservedVersionState {
-  const desiredArtifactVersion = `${deployment.desired_version ?? ""}`.trim();
-  if (
-    !desiredArtifactVersion ||
-    observed_component.running_versions.length === 0
-  ) {
-    return "unknown";
-  }
-  const currentArtifactVersion =
-    `${observed_artifact?.current_version ?? ""}`.trim();
-  const currentArtifactBuildId =
-    `${observed_artifact?.current_build_id ?? ""}`.trim();
-  if (
-    currentArtifactVersion &&
-    currentArtifactVersion === desiredArtifactVersion &&
-    currentArtifactBuildId
-  ) {
-    return deploymentObservedVersionState({
-      desired_version: currentArtifactBuildId,
-      running_versions: observed_component.running_versions,
-    });
-  }
-  return deploymentObservedVersionState({
-    desired_version: desiredArtifactVersion,
-    running_versions: observed_component.running_versions,
-  });
-}
-
-function sortVersionsDescending(values: string[]): string[] {
-  return [...new Set(values.filter(Boolean))].sort((a, b) =>
-    a < b ? 1 : a > b ? -1 : 0,
-  );
-}
-
-function observedRuntimeArtifactsFromMetadata(
-  row: any,
-): HostRuntimeArtifactObservation[] {
-  const inventory = Array.isArray(row?.metadata?.software_inventory)
-    ? row.metadata.software_inventory
-    : [];
-  const normalizedInventory = inventory
-    .map((entry: any) => {
-      const artifact = `${entry?.artifact ?? ""}`.trim() as HostRuntimeArtifact;
-      if (
-        artifact !== "project-host" &&
-        artifact !== "project-bundle" &&
-        artifact !== "tools"
-      ) {
-        return undefined;
-      }
-      return {
-        artifact,
-        current_version: `${entry?.current_version ?? ""}`.trim() || undefined,
-        current_build_id:
-          `${entry?.current_build_id ?? ""}`.trim() || undefined,
-        installed_versions: sortVersionsDescending(
-          Array.isArray(entry?.installed_versions)
-            ? entry.installed_versions.map((value: any) =>
-                `${value ?? ""}`.trim(),
-              )
-            : [],
-        ),
-        referenced_versions: Array.isArray(entry?.referenced_versions)
-          ? entry.referenced_versions
-              .map((reference: any) => {
-                const version = `${reference?.version ?? ""}`.trim();
-                const project_count = Math.max(
-                  0,
-                  Math.floor(Number(reference?.project_count ?? 0) || 0),
-                );
-                if (!version || project_count <= 0) return undefined;
-                return {
-                  version,
-                  project_count,
-                };
-              })
-              .filter(
-                (
-                  reference,
-                ): reference is {
-                  version: string;
-                  project_count: number;
-                } => reference != null,
-              )
-          : undefined,
-      } satisfies HostRuntimeArtifactObservation;
-    })
-    .filter((entry): entry is HostRuntimeArtifactObservation => entry != null);
-  const existing = new Map<HostRuntimeArtifact, HostRuntimeArtifactObservation>(
-    normalizedInventory.map((entry) => [entry.artifact, entry]),
-  );
-  const software = row?.metadata?.software ?? {};
-  const fallbacks: HostRuntimeArtifactObservation[] = [
-    {
-      artifact: "project-host",
-      current_version: `${software?.project_host ?? ""}`.trim() || undefined,
-      current_build_id:
-        `${software?.project_host_build_id ?? ""}`.trim() || undefined,
-      installed_versions: sortVersionsDescending(
-        `${software?.project_host ?? ""}`.trim()
-          ? [`${software.project_host}`.trim()]
-          : [],
-      ),
-    },
-    {
-      artifact: "project-bundle",
-      current_version: `${software?.project_bundle ?? ""}`.trim() || undefined,
-      current_build_id:
-        `${software?.project_bundle_build_id ?? ""}`.trim() || undefined,
-      installed_versions: sortVersionsDescending(
-        `${software?.project_bundle ?? ""}`.trim()
-          ? [`${software.project_bundle}`.trim()]
-          : [],
-      ),
-    },
-    {
-      artifact: "tools",
-      current_version: `${software?.tools ?? ""}`.trim() || undefined,
-      installed_versions: sortVersionsDescending(
-        `${software?.tools ?? ""}`.trim() ? [`${software.tools}`.trim()] : [],
-      ),
-    },
-  ];
-  for (const fallback of fallbacks) {
-    if (!existing.has(fallback.artifact)) {
-      existing.set(fallback.artifact, fallback);
-    }
-  }
-  return [...existing.values()].sort((a, b) =>
-    a.artifact < b.artifact ? -1 : a.artifact > b.artifact ? 1 : 0,
-  );
-}
-
-function observedHostAgentFromMetadata(
-  row: any,
-): HostRuntimeHostAgentObservation | undefined {
-  const projectHost = row?.metadata?.host_agent?.project_host;
-  if (!projectHost || typeof projectHost !== "object") {
-    return undefined;
-  }
-  const lastKnownGoodVersion =
-    `${projectHost?.last_known_good_version ?? ""}`.trim() || undefined;
-  const pendingTargetVersion =
-    `${projectHost?.pending_rollout?.target_version ?? ""}`.trim() || undefined;
-  const pendingPreviousVersion =
-    `${projectHost?.pending_rollout?.previous_version ?? ""}`.trim() ||
-    undefined;
-  const pendingStartedAt =
-    `${projectHost?.pending_rollout?.started_at ?? ""}`.trim() || undefined;
-  const pendingDeadlineAt =
-    `${projectHost?.pending_rollout?.deadline_at ?? ""}`.trim() || undefined;
-  const rollbackTargetVersion =
-    `${projectHost?.last_automatic_rollback?.target_version ?? ""}`.trim() ||
-    undefined;
-  const rollbackVersion =
-    `${projectHost?.last_automatic_rollback?.rollback_version ?? ""}`.trim() ||
-    undefined;
-  const rollbackStartedAt =
-    `${projectHost?.last_automatic_rollback?.started_at ?? ""}`.trim() ||
-    undefined;
-  const rollbackFinishedAt =
-    `${projectHost?.last_automatic_rollback?.finished_at ?? ""}`.trim() ||
-    undefined;
-  const rollbackReason =
-    `${projectHost?.last_automatic_rollback?.reason ?? ""}`.trim() || undefined;
-  if (
-    !lastKnownGoodVersion &&
-    !pendingTargetVersion &&
-    !rollbackTargetVersion &&
-    !rollbackVersion
-  ) {
-    return undefined;
-  }
-  return {
-    project_host: {
-      last_known_good_version: lastKnownGoodVersion,
-      pending_rollout:
-        pendingTargetVersion && pendingPreviousVersion
-          ? {
-              target_version: pendingTargetVersion,
-              previous_version: pendingPreviousVersion,
-              started_at: pendingStartedAt ?? "",
-              deadline_at: pendingDeadlineAt ?? "",
-            }
-          : undefined,
-      last_automatic_rollback:
-        rollbackTargetVersion && rollbackVersion
-          ? {
-              target_version: rollbackTargetVersion,
-              rollback_version: rollbackVersion,
-              started_at: rollbackStartedAt ?? "",
-              finished_at: rollbackFinishedAt ?? "",
-              reason:
-                rollbackReason === "health_deadline_exceeded"
-                  ? "health_deadline_exceeded"
-                  : "health_deadline_exceeded",
-            }
-          : undefined,
-    },
-  };
-}
-
-function isUnsupportedHostAgentStatusObservationError(error: any): boolean {
-  const message = `${error?.message ?? error ?? ""}`.trim();
-  if (!message) {
-    return false;
-  }
-  return (
-    /getHostAgentStatus/.test(message) &&
-    /(unknown function|is not a function|not implemented)/i.test(message)
-  );
-}
-
-function observedRuntimeArtifactVersionState({
-  desired_version,
-  current_version,
-  installed_versions,
-}: {
-  desired_version: string;
-  current_version?: string;
-  installed_versions: string[];
-}): HostRuntimeDeploymentObservedVersionState {
-  if (!desired_version) {
-    return "unknown";
-  }
-  if (current_version && current_version === desired_version) {
-    return "aligned";
-  }
-  if (installed_versions.includes(desired_version)) {
-    return "drifted";
-  }
-  if (current_version || installed_versions.length > 0) {
-    return "missing";
-  }
-  return "unobserved";
-}
-
-function deploymentArtifactForRollback({
-  deployment,
-  observed_components,
-}: {
-  deployment: HostRuntimeDeploymentRecord;
-  observed_components?: HostManagedComponentStatus[];
-}): HostRuntimeArtifact {
-  if (deployment.target_type === "artifact") {
-    return deployment.target as HostRuntimeArtifact;
-  }
-  const component = (observed_components ?? []).find(
-    (entry) => entry.component === deployment.target,
-  );
-  return (component?.artifact ?? "project-host") as HostRuntimeArtifact;
-}
-
-function lastKnownGoodArtifactVersion(
-  row: any,
-  artifact: HostRuntimeArtifact,
-): string | undefined {
-  const runtimeDeployments =
-    row?.metadata?.runtime_deployments?.last_known_good_versions ?? {};
-  const legacy = row?.metadata?.last_known_good_versions ?? {};
-  return (
-    `${runtimeDeployments?.[artifact] ?? legacy?.[artifact] ?? ""}`.trim() ||
-    undefined
-  );
-}
-
-function summarizeRollbackTargets({
-  row,
-  effective,
-  observed_artifacts,
-  observed_components,
-}: {
-  row: any;
-  effective: HostRuntimeDeploymentRecord[];
-  observed_artifacts?: HostRuntimeArtifactObservation[];
-  observed_components?: HostManagedComponentStatus[];
-}): HostRuntimeRollbackTarget[] {
-  const artifacts = new Map(
-    (observed_artifacts ?? []).map((artifact) => [artifact.artifact, artifact]),
-  );
-  return effective.map((deployment) => {
-    const artifact = deploymentArtifactForRollback({
-      deployment,
-      observed_components,
-    });
-    const observed = artifacts.get(artifact);
-    const retained_versions = sortVersionsDescending(
-      observed?.installed_versions ?? [],
-    );
-    const current_version = observed?.current_version;
-    const previous_version = retained_versions.find(
-      (version) => version !== current_version,
-    );
-    return {
-      target_type: deployment.target_type,
-      target: deployment.target,
-      artifact,
-      desired_version: deployment.desired_version,
-      current_version,
-      previous_version,
-      last_known_good_version: lastKnownGoodArtifactVersion(row, artifact),
-      retained_versions,
-    };
-  });
-}
-
-function resolveRollbackVersion({
-  rollbackTarget,
-  version,
-  last_known_good,
-}: {
-  rollbackTarget: HostRuntimeRollbackTarget;
-  version?: string;
-  last_known_good?: boolean;
-}): {
-  rollback_version: string;
-  rollback_source: HostRuntimeDeploymentRollbackResult["rollback_source"];
-} {
-  const explicit = `${version ?? ""}`.trim();
-  if (explicit) {
-    return {
-      rollback_version: explicit,
-      rollback_source: "explicit_version",
-    };
-  }
-  if (last_known_good) {
-    const candidate = `${rollbackTarget.last_known_good_version ?? ""}`.trim();
-    if (!candidate) {
-      throw new Error("last known good version is not available");
-    }
-    return {
-      rollback_version: candidate,
-      rollback_source: "last_known_good",
-    };
-  }
-  const previous = `${rollbackTarget.previous_version ?? ""}`.trim();
-  if (!previous) {
-    throw new Error("previous rollback version is not available");
-  }
-  return {
-    rollback_version: previous,
-    rollback_source: "previous_version",
-  };
-}
-
-function summarizeObservedRuntimeDeployments({
-  effective,
-  observed_artifacts,
-  observed_components,
-}: {
-  effective: HostRuntimeDeploymentRecord[];
-  observed_artifacts?: HostRuntimeArtifactObservation[];
-  observed_components?: HostManagedComponentStatus[];
-}): HostRuntimeDeploymentObservedTarget[] {
-  const components = new Map(
-    (observed_components ?? []).map((component) => [
-      component.component,
-      component,
-    ]),
-  );
-  const artifacts = new Map(
-    (observed_artifacts ?? []).map((artifact) => [artifact.artifact, artifact]),
-  );
-  return effective.map((deployment) => {
-    if (deployment.target_type !== "component") {
-      if (deployment.target === "bootstrap-environment") {
-        return {
-          target_type: deployment.target_type,
-          target: deployment.target,
-          desired_version: deployment.desired_version,
-          rollout_policy: deployment.rollout_policy,
-          observed_version_state: "unsupported",
-        };
-      }
-      const observed = artifacts.get(deployment.target as HostRuntimeArtifact);
-      if (!observed) {
-        return {
-          target_type: deployment.target_type,
-          target: deployment.target,
-          desired_version: deployment.desired_version,
-          rollout_policy: deployment.rollout_policy,
-          observed_version_state: "unobserved",
-        };
-      }
-      return {
-        target_type: deployment.target_type,
-        target: deployment.target,
-        desired_version: deployment.desired_version,
-        rollout_policy: deployment.rollout_policy,
-        observed_version_state: observedRuntimeArtifactVersionState({
-          desired_version: deployment.desired_version,
-          current_version: observed.current_version,
-          installed_versions: observed.installed_versions,
-        }),
-        current_version: observed.current_version,
-        current_build_id: observed.current_build_id,
-        installed_versions: observed.installed_versions,
-      };
-    }
-    const observed = components.get(deployment.target as ManagedComponentKind);
-    if (!observed) {
-      return {
-        target_type: deployment.target_type,
-        target: deployment.target,
-        desired_version: deployment.desired_version,
-        rollout_policy: deployment.rollout_policy,
-        observed_version_state: "unobserved",
-      };
-    }
-    const observedArtifact = artifacts.get(
-      (observed.artifact ?? "project-host") as HostRuntimeArtifact,
-    );
-    return {
-      target_type: deployment.target_type,
-      target: deployment.target,
-      desired_version: deployment.desired_version,
-      rollout_policy: deployment.rollout_policy,
-      observed_runtime_state: observed.runtime_state,
-      observed_version_state: componentDeploymentObservedVersionState({
-        deployment,
-        observed_component: observed,
-        observed_artifact: observedArtifact,
-      }),
-      running_versions: observed.running_versions,
-      running_pids: observed.running_pids,
-      enabled: observed.enabled,
-      managed: observed.managed,
-    };
-  });
-}
-
-function installedProjectHostArtifactVersion(row: any): string | undefined {
-  const version =
-    `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
-    undefined;
-  return version;
-}
-
-const PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE = "PROJECT_HOST_LOCAL_ROLLBACK";
-
-export function isProjectHostLocalRollbackError(err: any): err is Error & {
-  code: typeof PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE;
-  automaticRollback: {
-    host_id: string;
-    rollback_version: string;
-    source: "host-agent";
-  };
-} {
-  return (
-    err instanceof Error &&
-    `${(err as any)?.code ?? ""}` === PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE &&
-    `${(err as any)?.automaticRollback?.rollback_version ?? ""}`.trim().length >
-      0
-  );
-}
-
-async function setLastKnownGoodArtifactVersionInternal({
-  host_id,
-  row,
-  artifact,
-  version,
-}: {
-  host_id: string;
-  row: any;
-  artifact: HostRuntimeArtifact;
-  version?: string;
-}): Promise<void> {
-  const normalizedVersion = `${version ?? ""}`.trim();
-  if (!normalizedVersion) return;
-  const metadata = { ...(row?.metadata ?? {}) };
-  const runtimeDeployments = { ...(metadata.runtime_deployments ?? {}) };
-  const lastKnownGoodVersions = {
-    ...(runtimeDeployments.last_known_good_versions ?? {}),
-  };
-  if (lastKnownGoodVersions[artifact] === normalizedVersion) return;
-  lastKnownGoodVersions[artifact] = normalizedVersion;
-  runtimeDeployments.last_known_good_versions = lastKnownGoodVersions;
-  metadata.runtime_deployments = runtimeDeployments;
-  await pool().query(
-    `UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-    [host_id, metadata],
-  );
-}
-
-async function rewriteProjectHostDesiredVersionInternal({
-  account_id,
-  row,
-  version,
-  reason,
-}: {
-  account_id?: string;
-  row: any;
-  version: string;
-  reason?: string;
-}): Promise<void> {
-  const normalizedVersion = `${version ?? ""}`.trim();
-  if (!normalizedVersion) {
-    throw new Error("project-host version is required");
-  }
-  const metadata = { ...(row?.metadata ?? {}) };
-  const software = { ...(metadata.software ?? {}) } as Record<string, string>;
-  software.project_host = normalizedVersion;
-  delete software.project_host_build_id;
-  metadata.software = software;
-  await pool().query(
-    `UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-    [row.id, metadata, normalizedVersion],
-  );
-  await setLastKnownGoodArtifactVersionInternal({
-    host_id: row.id,
-    row: {
-      ...row,
-      metadata,
-      version: normalizedVersion,
-    },
-    artifact: "project-host",
-    version: normalizedVersion,
-  });
-  await setProjectHostRuntimeDeployments({
-    scope_type: "host",
-    host_id: row.id,
-    requested_by: requestedByForRuntimeDeployments({ account_id, row }),
-    replace: false,
-    deployments: [
-      {
-        target_type: "artifact",
-        target: "project-host",
-        desired_version: normalizedVersion,
-        rollout_reason: reason,
-      },
-      {
-        target_type: "component",
-        target: "project-host",
-        desired_version: normalizedVersion,
-        rollout_policy: DEFAULT_RUNTIME_DEPLOYMENT_POLICY["project-host"],
-        rollout_reason: reason,
-      },
-    ],
-  });
-}
-
 async function recordProjectHostLocalRollbackInternal({
   account_id,
   id,
@@ -6426,21 +3736,12 @@ async function recordProjectHostLocalRollbackInternal({
   source: "host-agent";
 }> {
   const row = await loadHostForStartStop(id, account_id);
-  const rollbackVersion = `${version ?? ""}`.trim();
-  if (!rollbackVersion) {
-    throw new Error("rollback version is required");
-  }
-  await rewriteProjectHostDesiredVersionInternal({
-    account_id,
+  return await recordProjectHostLocalRollbackInternalHelper({
     row,
-    version: rollbackVersion,
-    reason: reason || "automatic_project_host_local_rollback",
+    requested_by: requestedByForRuntimeDeployments({ account_id, row }),
+    version,
+    reason,
   });
-  return {
-    host_id: row.id,
-    rollback_version: rollbackVersion,
-    source: "host-agent",
-  };
 }
 
 export async function rollbackProjectHostOverSshInternal({
@@ -6458,208 +3759,13 @@ export async function rollbackProjectHostOverSshInternal({
   rollback_version: string;
 }> {
   const row = await loadHostForStartStop(id, account_id);
-  const rollbackVersion = `${version ?? ""}`.trim();
-  if (!rollbackVersion) {
-    throw new Error("rollback version is required");
-  }
-  await rewriteProjectHostDesiredVersionInternal({
-    account_id,
+  return await rollbackProjectHostOverSshInternalHelper({
     row,
-    version: rollbackVersion,
+    requested_by: requestedByForRuntimeDeployments({ account_id, row }),
+    version,
     reason,
+    reconcileCloudHostBootstrapOverSsh,
   });
-  const metadata = {
-    ...(row?.metadata ?? {}),
-    software: {
-      ...((row?.metadata?.software ?? {}) as Record<string, string>),
-      project_host: rollbackVersion,
-    },
-  };
-  delete (metadata.software as Record<string, string>).project_host_build_id;
-  await reconcileCloudHostBootstrapOverSsh({
-    host_id: row.id,
-    row: {
-      ...row,
-      version: rollbackVersion,
-      metadata,
-    },
-  });
-  return {
-    host_id: row.id,
-    rollback_version: rollbackVersion,
-  };
-}
-
-function targetKeyForRuntimeDeployment(opts: {
-  target_type: HostRuntimeDeploymentRecord["target_type"];
-  target: HostRuntimeDeploymentRecord["target"];
-}): string {
-  return `${opts.target_type}:${opts.target}`;
-}
-
-function computeHostRuntimeDeploymentReconcilePlan({
-  row,
-  status,
-  components,
-}: {
-  row: any;
-  status: HostRuntimeDeploymentStatus;
-  components?: ManagedComponentKind[];
-}): Pick<
-  HostRuntimeDeploymentReconcileResult,
-  "requested_components" | "reconciled_components" | "decisions"
-> {
-  const effectiveComponentTargets = new Map(
-    (status.effective ?? [])
-      .filter(
-        (deployment) =>
-          deployment.target_type === "component" &&
-          DEFAULT_RUNTIME_DEPLOYMENT_POLICY[
-            deployment.target as ManagedComponentKind
-          ] != null,
-      )
-      .map((deployment) => [
-        deployment.target as ManagedComponentKind,
-        deployment,
-      ]),
-  );
-  const observedComponents = new Map(
-    (status.observed_components ?? []).map((component) => [
-      component.component,
-      component,
-    ]),
-  );
-  const observedTargets = new Map(
-    (status.observed_targets ?? [])
-      .filter((target) => target.target_type === "component")
-      .map((target) => [target.target as ManagedComponentKind, target]),
-  );
-  const requestedComponents = (components ?? []).length
-    ? normalizeManagedComponentKindsForDedupe(components ?? [])
-    : [...effectiveComponentTargets.keys()].sort();
-  const currentArtifactVersion = installedProjectHostArtifactVersion(row);
-  const decisions: HostRuntimeDeploymentReconcileResult["decisions"] = [];
-  const reconciled_components: ManagedComponentKind[] = [];
-
-  for (const component of requestedComponents) {
-    const deployment = effectiveComponentTargets.get(component);
-    if (!deployment) {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "no_desired_component_target",
-      });
-      continue;
-    }
-    const observed = observedComponents.get(component);
-    const observedTarget = observedTargets.get(component);
-    const artifact = `${observed?.artifact ?? "project-host"}`.trim();
-    if (!observed) {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "unobserved_component",
-        artifact,
-        desired_version: deployment.desired_version,
-      });
-      continue;
-    }
-    if (!observed.managed) {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "unmanaged_component",
-        artifact,
-        desired_version: deployment.desired_version,
-      });
-      continue;
-    }
-    if (!observed.enabled) {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "disabled_component",
-        artifact,
-        desired_version: deployment.desired_version,
-      });
-      continue;
-    }
-    if (artifact !== "project-host") {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "unsupported_artifact",
-        artifact,
-        desired_version: deployment.desired_version,
-      });
-      continue;
-    }
-    if (!currentArtifactVersion) {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "missing_installed_artifact_version",
-        artifact,
-        desired_version: deployment.desired_version,
-      });
-      continue;
-    }
-    if (deployment.desired_version !== currentArtifactVersion) {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "artifact_version_mismatch",
-        artifact,
-        desired_version: deployment.desired_version,
-        current_artifact_version: currentArtifactVersion,
-        observed_version_state: observedTarget?.observed_version_state,
-        running_versions: observed.running_versions,
-      });
-      continue;
-    }
-    if (observedTarget?.observed_version_state === "aligned") {
-      decisions.push({
-        component,
-        decision: "skip",
-        reason: "already_aligned",
-        artifact,
-        desired_version: deployment.desired_version,
-        current_artifact_version: currentArtifactVersion,
-        observed_version_state: observedTarget.observed_version_state,
-        running_versions: observed.running_versions,
-      });
-      continue;
-    }
-    decisions.push({
-      component,
-      decision: "rollout",
-      reason: `${observedTarget?.observed_version_state ?? "drifted"}`,
-      artifact,
-      desired_version: deployment.desired_version,
-      current_artifact_version: currentArtifactVersion,
-      observed_version_state: observedTarget?.observed_version_state,
-      running_versions: observed.running_versions,
-    });
-    reconciled_components.push(component);
-  }
-
-  return {
-    ...(components?.length
-      ? { requested_components: requestedComponents }
-      : {}),
-    reconciled_components,
-    decisions,
-  };
-}
-
-async function loadHostRowForRuntimeDeploymentsInternal(
-  host_id: string,
-): Promise<any | undefined> {
-  const { rows } = await pool().query(
-    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL LIMIT 1`,
-    [host_id],
-  );
-  return rows[0];
 }
 
 export async function reconcileHostRuntimeDeploymentsInternal({
@@ -6673,32 +3779,17 @@ export async function reconcileHostRuntimeDeploymentsInternal({
   components?: ManagedComponentKind[];
   reason?: string;
 }): Promise<HostRuntimeDeploymentReconcileResult> {
-  const row = await loadHostForStartStop(id, account_id);
-  assertHostRunningForUpgrade(row);
-  const status = await getHostRuntimeDeploymentStatus({ account_id, id });
-  const plan = computeHostRuntimeDeploymentReconcilePlan({
-    row,
-    status,
-    components,
-  });
-
-  const result: HostRuntimeDeploymentReconcileResult = {
-    host_id: row.id,
-    ...plan,
-  };
-  if (!plan.reconciled_components.length) {
-    return result;
-  }
-  const rollout = await rolloutHostManagedComponentsInternal({
+  return await reconcileHostRuntimeDeploymentsInternalHelper({
     account_id,
     id,
-    components: plan.reconciled_components,
+    components,
     reason,
+    loadHostForStartStop,
+    assertHostRunningForUpgrade,
+    getHostRuntimeDeploymentStatus,
+    computeHostRuntimeDeploymentReconcilePlan,
+    rolloutHostManagedComponentsInternal,
   });
-  return {
-    ...result,
-    rollout_results: rollout.results ?? [],
-  };
 }
 
 export async function rollbackHostRuntimeDeploymentsInternal({
@@ -6718,641 +3809,44 @@ export async function rollbackHostRuntimeDeploymentsInternal({
   last_known_good?: boolean;
   reason?: string;
 }): Promise<HostRuntimeDeploymentRollbackResult> {
-  const row = await loadHostForStartStop(id, account_id);
-  assertHostRunningForUpgrade(row);
-  const status = await getHostRuntimeDeploymentStatus({ account_id, id });
-  const effectiveTargets = new Map(
-    (status.effective ?? []).map((deployment) => [
-      targetKeyForRuntimeDeployment({
-        target_type: deployment.target_type,
-        target: deployment.target,
-      }),
-      deployment,
-    ]),
-  );
-  const rollbackTargets = new Map(
-    (status.rollback_targets ?? []).map((rollbackTarget) => [
-      targetKeyForRuntimeDeployment({
-        target_type: rollbackTarget.target_type,
-        target: rollbackTarget.target,
-      }),
-      rollbackTarget,
-    ]),
-  );
-  const key = targetKeyForRuntimeDeployment({ target_type, target });
-  const deployment = effectiveTargets.get(key);
-  const rollbackTarget = rollbackTargets.get(key);
-  if (!deployment || !rollbackTarget) {
-    throw new Error("rollback target is not configured");
-  }
-  const { rollback_version, rollback_source } = resolveRollbackVersion({
-    rollbackTarget,
-    version,
-    last_known_good,
-  });
-  const artifact = rollbackTarget.artifact;
-  if (artifact === "bootstrap-environment") {
-    throw new Error("bootstrap-environment rollback is not implemented");
-  }
-  const requested_by = requestedByForRuntimeDeployments({ account_id, row });
-  const updatedDeployments = await setProjectHostRuntimeDeployments({
-    scope_type: "host",
-    host_id: row.id,
-    requested_by,
-    replace: false,
-    deployments: [
-      {
-        target_type: deployment.target_type,
-        target: deployment.target,
-        desired_version: rollback_version,
-        rollout_policy: deployment.rollout_policy,
-        drain_deadline_seconds: deployment.drain_deadline_seconds,
-        rollout_reason:
-          `${reason ?? deployment.rollout_reason ?? ""}`.trim() || undefined,
-        metadata: deployment.metadata,
-      },
-    ],
-  });
-  const updatedDeployment = updatedDeployments.find(
-    (entry) => entry.target_type === target_type && entry.target === target,
-  );
-  let upgrade_results: HostRuntimeDeploymentRollbackResult["upgrade_results"];
-  let reconcile_result:
-    | HostRuntimeDeploymentRollbackResult["reconcile_result"]
-    | undefined;
-  let managed_component_rollout:
-    | HostRuntimeDeploymentRollbackResult["managed_component_rollout"]
-    | undefined;
-  const currentArtifactVersion =
-    `${rollbackTarget.current_version ?? ""}`.trim();
-  if (currentArtifactVersion !== rollback_version) {
-    const upgrade = await upgradeHostSoftwareInternal({
-      account_id,
-      id: row.id,
-      targets: [{ artifact, version: rollback_version }],
-    });
-    upgrade_results = upgrade.results ?? [];
-  }
-  if (target_type === "artifact") {
-    if (
-      target === "project-host" &&
-      currentArtifactVersion !== rollback_version
-    ) {
-      const rollout = await rolloutHostManagedComponentsInternal({
-        account_id,
-        id: row.id,
-        components: ["project-host"],
-        reason: reason ?? "runtime_rollback",
-      });
-      managed_component_rollout = rollout.results ?? [];
-    }
-  } else {
-    if (artifact !== "project-host") {
-      throw new Error(`component rollback for ${artifact} is not implemented`);
-    }
-    reconcile_result = await reconcileHostRuntimeDeploymentsInternal({
-      account_id,
-      id: row.id,
-      components: [target as ManagedComponentKind],
-      reason: reason ?? "runtime_rollback",
-    });
-  }
-  return {
-    host_id: row.id,
+  return await rollbackHostRuntimeDeploymentsInternalHelper({
+    account_id,
+    id,
     target_type,
     target,
-    artifact,
-    rollback_version,
-    rollback_source,
-    deployment: updatedDeployment,
-    ...(upgrade_results ? { upgrade_results } : {}),
-    ...(reconcile_result ? { reconcile_result } : {}),
-    ...(managed_component_rollout ? { managed_component_rollout } : {}),
-  };
-}
-
-function mapUpgradeArtifact(
-  artifact: string,
-): "project_host" | "project_bundle" | "tools" | undefined {
-  if (artifact === "project-host") return "project_host";
-  if (artifact === "project" || artifact === "project-bundle") {
-    return "project_bundle";
-  }
-  if (artifact === "tools") return "tools";
-  return undefined;
-}
-
-function canonicalizeSoftwareArtifact(
-  artifact: HostSoftwareArtifact,
-): "project-host" | "project" | "tools" {
-  if (artifact === "project-bundle") return "project";
-  return artifact;
-}
-
-function extractVersionFromSoftwareUrl(
-  artifact: "project-host" | "project" | "tools",
-  url?: string,
-): string | undefined {
-  if (!url) return undefined;
-  try {
-    const pathname = new URL(url).pathname;
-    const match = pathname.match(new RegExp(`/${artifact}/([^/]+)/`));
-    return match?.[1];
-  } catch {
-    return undefined;
-  }
-}
-
-function normalizeSoftwareOs(value?: string): "linux" | "darwin" {
-  const raw = `${value ?? "linux"}`.trim().toLowerCase();
-  if (raw === "darwin" || raw === "macos" || raw === "osx") return "darwin";
-  return "linux";
-}
-
-function normalizeSoftwareArch(value?: string): "amd64" | "arm64" {
-  const raw = `${value ?? "amd64"}`.trim().toLowerCase();
-  if (raw === "arm64" || raw === "aarch64") return "arm64";
-  return "amd64";
-}
-
-function normalizeSoftwareChannels(
-  channels?: HostSoftwareChannel[],
-): HostSoftwareChannel[] {
-  const values = (channels ?? ["latest"]).map((channel) =>
-    channel === "staging" ? "staging" : "latest",
-  );
-  return Array.from(new Set(values));
-}
-
-function normalizeSoftwareArtifacts(
-  artifacts?: HostSoftwareArtifact[],
-): HostSoftwareArtifact[] {
-  const defaults: HostSoftwareArtifact[] = ["project-host", "project", "tools"];
-  if (!artifacts?.length) return defaults;
-  const out: HostSoftwareArtifact[] = [];
-  for (const artifact of artifacts) {
-    if (
-      artifact === "project-host" ||
-      artifact === "project" ||
-      artifact === "project-bundle" ||
-      artifact === "tools"
-    ) {
-      out.push(artifact);
-    }
-  }
-  return out.length ? Array.from(new Set(out)) : defaults;
-}
-
-function normalizeHostUpgradeTargetsForDedupe(
-  targets: HostSoftwareUpgradeTarget[],
-): Array<{
-  artifact: HostSoftwareArtifact;
-  channel: HostSoftwareChannel | null;
-  version: string | null;
-}> {
-  return [...(targets ?? [])]
-    .map((target) => ({
-      artifact: canonicalizeSoftwareArtifact(target.artifact),
-      channel: target.version
-        ? null
-        : ((target.channel === "staging"
-            ? "staging"
-            : "latest") as HostSoftwareChannel),
-      version: target.version?.trim() || null,
-    }))
-    .sort((a, b) =>
-      `${a.artifact}:${a.channel ?? ""}:${a.version ?? ""}`.localeCompare(
-        `${b.artifact}:${b.channel ?? ""}:${b.version ?? ""}`,
-      ),
-    );
-}
-
-function assertProjectHostUpgradeIsExclusive(
-  targets: HostSoftwareUpgradeTarget[],
-): void {
-  const normalizedTargets = normalizeHostUpgradeTargetsForDedupe(targets);
-  const includesProjectHost = normalizedTargets.some(
-    (target) => target.artifact === "project-host",
-  );
-  if (!includesProjectHost || normalizedTargets.length <= 1) {
-    return;
-  }
-  throw new Error(
-    "project-host upgrades must be requested separately from other artifacts",
-  );
-}
-
-function hostUpgradeDedupeKey({
-  hostId,
-  targets,
-  baseUrl,
-}: {
-  hostId: string;
-  targets: HostSoftwareUpgradeTarget[];
-  baseUrl?: string;
-}): string {
-  const normalizedBaseUrl = `${baseUrl ?? ""}`.trim() || null;
-  return `${HOST_UPGRADE_LRO_KIND}:${hostId}:${JSON.stringify({
-    base_url: normalizedBaseUrl,
-    targets: normalizeHostUpgradeTargetsForDedupe(targets),
-  })}`;
-}
-
-function normalizeManagedComponentKindsForDedupe(
-  components: ManagedComponentKind[],
-): ManagedComponentKind[] {
-  return [...new Set(components ?? [])].sort();
-}
-
-export function rolloutComponentsForUpgradeResults(
-  results: HostSoftwareUpgradeResponse["results"],
-): ManagedComponentKind[] {
-  const components = new Set<ManagedComponentKind>();
-  for (const result of results ?? []) {
-    if (result.artifact === "project-host" && result.status === "updated") {
-      components.add("project-host");
-    }
-  }
-  return [...components];
-}
-
-function runtimeDeploymentsForUpgradeResults(
-  results: HostSoftwareUpgradeResponse["results"],
-): HostRuntimeDeploymentUpsert[] {
-  const deployments: HostRuntimeDeploymentUpsert[] = [];
-  for (const result of results ?? []) {
-    const target = normalizeRuntimeArtifactTarget(result.artifact);
-    if (!target || !`${result.version ?? ""}`.trim()) continue;
-    deployments.push({
-      target_type: "artifact",
-      target,
-      desired_version: result.version,
-    });
-  }
-  return normalizeRuntimeDeploymentUpserts(deployments);
-}
-
-function runtimeDeploymentsForComponentRollout({
-  components,
-  desired_version,
-  reason,
-}: {
-  components: ManagedComponentKind[];
-  desired_version?: string;
-  reason?: string;
-}): HostRuntimeDeploymentUpsert[] {
-  const version = `${desired_version ?? ""}`.trim();
-  if (!version) return [];
-  return normalizeRuntimeDeploymentUpserts(
-    (components ?? []).map((component) => ({
-      target_type: "component",
-      target: component,
-      desired_version: version,
-      rollout_policy: DEFAULT_RUNTIME_DEPLOYMENT_POLICY[component],
-      rollout_reason: reason,
-    })),
-  );
-}
-
-function hostManagedComponentRolloutDedupeKey({
-  hostId,
-  components,
-  reason,
-}: {
-  hostId: string;
-  components: ManagedComponentKind[];
-  reason?: string;
-}): string {
-  return `${HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND}:${hostId}:${JSON.stringify(
-    {
-      components: normalizeManagedComponentKindsForDedupe(components),
-      reason: `${reason ?? ""}`.trim() || null,
-    },
-  )}`;
-}
-
-async function fetchSoftwareManifest(url: string): Promise<any> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SOFTWARE_FETCH_TIMEOUT_MS);
-  let response: Response;
-  try {
-    response = await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  return await response.json();
-}
-
-async function fetchSoftwareManifestMaybe(
-  url: string,
-): Promise<any | undefined> {
-  try {
-    return await fetchSoftwareManifest(url);
-  } catch {
-    return undefined;
-  }
-}
-
-function softwareVersionsIndexUrl({
-  baseUrl,
-  artifact,
-  channel,
-  os,
-  arch,
-}: {
-  baseUrl: string;
-  artifact: "project-host" | "project" | "tools";
-  channel: HostSoftwareChannel;
-  os: "linux" | "darwin";
-  arch: "amd64" | "arm64";
-}): string {
-  if (artifact === "tools") {
-    return `${baseUrl}/${artifact}/versions-${channel}-${os}-${arch}.json`;
-  }
-  return `${baseUrl}/${artifact}/versions-${channel}-${os}.json`;
-}
-
-function normalizePublishedVersionRows(index: any): any[] {
-  if (Array.isArray(index?.versions)) {
-    return index.versions;
-  }
-  if (Array.isArray(index)) {
-    return index;
-  }
-  return [];
-}
-
-function softwareVersionRowKey({
-  version,
-  url,
-}: {
-  version?: string;
-  url?: string;
-}): string {
-  const v = `${version ?? ""}`.trim();
-  if (v) return `v:${v}`;
-  const u = `${url ?? ""}`.trim();
-  if (u) return `u:${u}`;
-  return "";
-}
-
-function mapPublishedVersionRow({
-  artifact,
-  channel,
-  os,
-  arch,
-  canonical,
-  row,
-}: {
-  artifact: HostSoftwareArtifact;
-  channel: HostSoftwareChannel;
-  os: "linux" | "darwin";
-  arch: "amd64" | "arm64";
-  canonical: "project-host" | "project" | "tools";
-  row: any;
-}): HostSoftwareAvailableVersion | undefined {
-  const url = typeof row?.url === "string" ? row.url : undefined;
-  let version = typeof row?.version === "string" ? row.version : undefined;
-  if (!version && url) {
-    version = extractVersionFromSoftwareUrl(canonical, url);
-  }
-  const available = !!url;
-  if (!available && !version) return undefined;
-  return {
-    artifact,
-    channel,
-    os,
-    arch,
     version,
-    url,
-    sha256: typeof row?.sha256 === "string" ? row.sha256 : undefined,
-    size_bytes:
-      typeof row?.size_bytes === "number" && Number.isFinite(row.size_bytes)
-        ? Math.floor(row.size_bytes)
-        : undefined,
-    built_at: typeof row?.built_at === "string" ? row.built_at : undefined,
-    message: typeof row?.message === "string" ? row.message : undefined,
-    available,
-    error: available ? undefined : "version entry missing url",
-  };
-}
-
-async function resolvePublishedSoftwareRows({
-  baseUrl,
-  artifact,
-  channel,
-  os,
-  arch,
-  limit,
-  latest,
-}: {
-  baseUrl: string;
-  artifact: HostSoftwareArtifact;
-  channel: HostSoftwareChannel;
-  os: "linux" | "darwin";
-  arch: "amd64" | "arm64";
-  limit: number;
-  latest: HostSoftwareAvailableVersion;
-}): Promise<HostSoftwareAvailableVersion[]> {
-  if (limit <= 1) return [latest];
-  const canonical = canonicalizeSoftwareArtifact(artifact);
-  const indexUrl = softwareVersionsIndexUrl({
-    baseUrl,
-    artifact: canonical,
-    channel,
-    os,
-    arch,
+    last_known_good,
+    reason,
+    loadHostForStartStop,
+    assertHostRunningForUpgrade,
+    getHostRuntimeDeploymentStatus,
+    targetKeyForRuntimeDeployment,
+    resolveRollbackVersion,
+    requestedByForRuntimeDeployments,
+    setProjectHostRuntimeDeployments,
+    upgradeHostSoftwareInternal,
+    reconcileProjectHostComponent: async ({
+      account_id,
+      id,
+      component,
+      reason,
+    }) =>
+      await reconcileHostRuntimeDeploymentsInternal({
+        account_id,
+        id,
+        components: [component],
+        reason,
+      }),
+    rolloutProjectHostArtifact: async ({ account_id, id, reason }) =>
+      (
+        await rolloutHostManagedComponentsInternal({
+          account_id,
+          id,
+          components: ["project-host"],
+          reason,
+        })
+      ).results ?? [],
   });
-  const index = await fetchSoftwareManifestMaybe(indexUrl);
-  if (!index) return [latest];
-  const rows: HostSoftwareAvailableVersion[] = [latest];
-  const seen = new Set<string>();
-  const latestKey = softwareVersionRowKey(latest);
-  if (latestKey) seen.add(latestKey);
-  for (const candidate of normalizePublishedVersionRows(index)) {
-    const mapped = mapPublishedVersionRow({
-      artifact,
-      channel,
-      os,
-      arch,
-      canonical,
-      row: candidate,
-    });
-    if (!mapped) continue;
-    const key = softwareVersionRowKey(mapped);
-    if (key && seen.has(key)) continue;
-    if (key) seen.add(key);
-    rows.push(mapped);
-    if (rows.length >= limit) break;
-  }
-  return rows;
-}
-
-async function resolveLatestSoftwareRow({
-  softwareBaseUrl,
-  artifact,
-  channel,
-  targetOs,
-  targetArch,
-}: {
-  softwareBaseUrl: string;
-  artifact: HostSoftwareArtifact;
-  channel: HostSoftwareChannel;
-  targetOs: "linux" | "darwin";
-  targetArch: "amd64" | "arm64";
-}): Promise<HostSoftwareAvailableVersion> {
-  const canonical = canonicalizeSoftwareArtifact(artifact);
-  const manifestUrl =
-    canonical === "tools"
-      ? `${softwareBaseUrl}/${canonical}/${channel}-${targetOs}-${targetArch}.json`
-      : `${softwareBaseUrl}/${canonical}/${channel}-${targetOs}.json`;
-  try {
-    const manifest = await fetchSoftwareManifest(manifestUrl);
-    const resolvedUrl =
-      typeof manifest?.url === "string" ? manifest.url : undefined;
-    const resolvedVersion = extractVersionFromSoftwareUrl(
-      canonical,
-      resolvedUrl,
-    );
-    return {
-      artifact,
-      channel,
-      os: targetOs,
-      arch: targetArch,
-      version: resolvedVersion,
-      url: resolvedUrl,
-      sha256:
-        typeof manifest?.sha256 === "string" ? manifest.sha256 : undefined,
-      size_bytes:
-        typeof manifest?.size_bytes === "number" &&
-        Number.isFinite(manifest.size_bytes)
-          ? Math.floor(manifest.size_bytes)
-          : undefined,
-      built_at:
-        typeof manifest?.built_at === "string" ? manifest.built_at : undefined,
-      message:
-        typeof manifest?.message === "string" ? manifest.message : undefined,
-      available: !!resolvedUrl,
-      error: resolvedUrl ? undefined : "manifest missing url",
-    };
-  } catch (err) {
-    return {
-      artifact,
-      channel,
-      os: targetOs,
-      arch: targetArch,
-      available: false,
-      error: `${err instanceof Error ? err.message : err}`,
-    };
-  }
-}
-
-function normalizeSoftwareHistoryLimit(value?: number): number {
-  const n = Number(value ?? SOFTWARE_HISTORY_DEFAULT_LIMIT);
-  if (!Number.isFinite(n)) return SOFTWARE_HISTORY_DEFAULT_LIMIT;
-  return Math.max(1, Math.min(SOFTWARE_HISTORY_MAX_LIMIT, Math.floor(n)));
-}
-
-async function resolveHostSoftwareBaseUrl(base_url?: string): Promise<string> {
-  let requestedBaseUrl = base_url;
-  if (requestedBaseUrl) {
-    try {
-      const parsed = new URL(requestedBaseUrl);
-      const host = parsed.hostname.toLowerCase();
-      if (
-        host === "localhost" ||
-        host === "127.0.0.1" ||
-        host === "::1" ||
-        host === "[::1]"
-      ) {
-        const publicSite = (await siteURL()).replace(/\/+$/, "");
-        requestedBaseUrl = `${publicSite}/software`;
-      } else {
-        const path = parsed.pathname.replace(/\/+$/, "");
-        if (!path) {
-          parsed.pathname = "/software";
-          parsed.search = "";
-          parsed.hash = "";
-          requestedBaseUrl = parsed.toString();
-        }
-      }
-    } catch {
-      // keep provided value as-is if it is not a valid URL
-    }
-  }
-  const { project_hosts_software_base_url } = await getServerSettings();
-  const forcedSoftwareBaseUrl =
-    process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE?.trim() ||
-    undefined;
-  return (
-    requestedBaseUrl ??
-    forcedSoftwareBaseUrl ??
-    project_hosts_software_base_url ??
-    process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ??
-    DEFAULT_SOFTWARE_BASE_URL
-  );
-}
-
-function isLoopbackHostName(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  return (
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "::1" ||
-    host === "[::1]"
-  );
-}
-
-function isLoopbackSoftwareBaseUrl(value: string): boolean {
-  try {
-    return isLoopbackHostName(new URL(value).hostname);
-  } catch {
-    return false;
-  }
-}
-
-function isLocalSelfHost(row: any): boolean {
-  const machine: HostMachine = row?.metadata?.machine ?? {};
-  if (machine.cloud !== "self-host") return false;
-  const mode = machine.metadata?.self_host_mode;
-  return !mode || mode === "local";
-}
-
-async function resolveReachableUpgradeBaseUrl({
-  row,
-  baseUrl,
-}: {
-  row: any;
-  baseUrl: string;
-}): Promise<string> {
-  if (!isLoopbackSoftwareBaseUrl(baseUrl)) {
-    return baseUrl;
-  }
-  if (isLocalSelfHost(row)) {
-    return baseUrl;
-  }
-  let replacement = DEFAULT_SOFTWARE_BASE_URL;
-  try {
-    const publicSite = (await siteURL()).replace(/\/+$/, "");
-    const candidate = `${publicSite}/software`;
-    if (!isLoopbackSoftwareBaseUrl(candidate)) {
-      replacement = candidate;
-    }
-  } catch {
-    // keep default replacement
-  }
-  logger.warn(
-    "upgrade host software: replaced loopback base url for remote host",
-    {
-      host_id: row.id,
-      requested: baseUrl,
-      effective: replacement,
-    },
-  );
-  return replacement;
 }
 
 export async function listHostSoftwareVersions({
@@ -7373,42 +3867,14 @@ export async function listHostSoftwareVersions({
   history_limit?: number;
 }): Promise<HostSoftwareAvailableVersion[]> {
   requireAccount(account_id);
-  const softwareBaseUrl = (await resolveHostSoftwareBaseUrl(base_url)).replace(
-    /\/+$/,
-    "",
-  );
-  const targetOs = normalizeSoftwareOs(os);
-  const targetArch = normalizeSoftwareArch(arch);
-  const artifactList = normalizeSoftwareArtifacts(artifacts);
-  const channelList = normalizeSoftwareChannels(channels);
-  const historyLimit = normalizeSoftwareHistoryLimit(history_limit);
-  const rows: HostSoftwareAvailableVersion[] = [];
-  for (const artifact of artifactList) {
-    for (const channel of channelList) {
-      const latest = await resolveLatestSoftwareRow({
-        softwareBaseUrl,
-        artifact,
-        channel,
-        targetOs,
-        targetArch,
-      });
-      if (!latest.available) {
-        rows.push(latest);
-        continue;
-      }
-      const resolved = await resolvePublishedSoftwareRows({
-        baseUrl: softwareBaseUrl,
-        artifact,
-        channel,
-        os: targetOs,
-        arch: targetArch,
-        limit: historyLimit,
-        latest,
-      });
-      rows.push(...resolved);
-    }
-  }
-  return rows;
+  return await listHostSoftwareVersionsInternal({
+    base_url,
+    artifacts,
+    channels,
+    os,
+    arch,
+    history_limit,
+  });
 }
 
 export async function upgradeHostSoftwareInternal({
@@ -7422,86 +3888,43 @@ export async function upgradeHostSoftwareInternal({
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
 }): Promise<HostSoftwareUpgradeResponse> {
-  assertProjectHostUpgradeIsExclusive(targets);
-  const HOST_UPGRADE_RPC_TIMEOUT_MS = 10 * 60 * 1000;
-  const row = await loadHostForStartStop(id, account_id);
-  assertHostRunningForUpgrade(row);
-  const availability = computeHostOperationalAvailability(row);
-  const requestedProjectHostUpgrade = targets.some(
-    (target) => target.artifact === "project-host",
-  );
-  const supportsBootstrapFallback =
-    requestedProjectHostUpgrade &&
-    targets.every(
-      (target) =>
-        !target.version &&
-        ((target.channel ?? "latest") as HostSoftwareChannel) === "latest",
-    );
-  const resolvedBaseUrl = await resolveHostSoftwareBaseUrl(base_url);
-  const effectiveBaseUrl = await resolveReachableUpgradeBaseUrl({
-    row,
-    baseUrl: resolvedBaseUrl,
-  });
-  if (!availability.online && supportsBootstrapFallback) {
-    logger.warn(
-      "host upgrade: host heartbeat is stale; using bootstrap reconcile fallback",
-      {
-        host_id: id,
-        targets,
-        reason: availability.reason_unavailable,
-      },
-    );
-    await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
-    return { results: [] };
-  }
-  const client = await hostControlClient(id, HOST_UPGRADE_RPC_TIMEOUT_MS);
-  let response: HostSoftwareUpgradeResponse;
-  try {
-    response = await client.upgradeSoftware({
-      targets,
-      base_url: effectiveBaseUrl,
-      restart_project_host: false,
-    });
-  } catch (err) {
-    if (!supportsBootstrapFallback) {
-      throw err;
-    }
-    logger.warn("host upgrade: host control upgrade failed; retry via ssh", {
-      host_id: id,
-      targets,
-      err: `${err}`,
-    });
-    await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
-    return { results: [] };
-  }
-  const results = response.results ?? [];
-  if (results.length) {
-    const metadata = row.metadata ?? {};
-    const software = { ...(metadata.software ?? {}) } as Record<string, string>;
-    for (const result of results) {
-      const key = mapUpgradeArtifact(result.artifact);
-      if (key) {
-        software[key] = result.version;
+  return await upgradeHostSoftwareInternalHelper({
+    account_id,
+    id,
+    targets,
+    base_url,
+    assertProjectHostUpgradeIsExclusive,
+    loadHostForStartStop,
+    assertHostRunningForUpgrade,
+    computeHostOperationalAvailability,
+    resolveHostSoftwareBaseUrl,
+    resolveReachableUpgradeBaseUrl,
+    logWarn: (message, payload) => logger.warn(message, payload),
+    reconcileCloudHostBootstrapOverSsh,
+    hostControlClient,
+    updateProjectHostSoftwareRecord: async ({ row, results }) => {
+      const metadata = row.metadata ?? {};
+      const software = { ...(metadata.software ?? {}) } as Record<
+        string,
+        string
+      >;
+      for (const result of results) {
+        const key = mapUpgradeArtifact(result.artifact);
+        if (key) {
+          software[key] = result.version;
+        }
       }
-    }
-    const nextMetadata = { ...metadata, software };
-    const nextVersion = software.project_host ?? row.version ?? null;
-    await pool().query(
-      `UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-      [row.id, nextMetadata, nextVersion],
-    );
-  }
-  const runtimeDeployments = runtimeDeploymentsForUpgradeResults(results);
-  if (runtimeDeployments.length) {
-    await setProjectHostRuntimeDeployments({
-      scope_type: "host",
-      host_id: row.id,
-      requested_by: requestedByForRuntimeDeployments({ account_id, row }),
-      deployments: runtimeDeployments,
-      replace: false,
-    });
-  }
-  return response;
+      const nextMetadata = { ...metadata, software };
+      const nextVersion = software.project_host ?? row.version ?? null;
+      await pool().query(
+        `UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+        [row.id, nextMetadata, nextVersion],
+      );
+    },
+    runtimeDeploymentsForUpgradeResults,
+    requestedByForRuntimeDeployments,
+    setProjectHostRuntimeDeployments,
+  });
 }
 
 export async function rolloutHostManagedComponentsInternal({
@@ -7515,73 +3938,24 @@ export async function rolloutHostManagedComponentsInternal({
   components: HostManagedComponentRolloutRequest["components"];
   reason?: string;
 }): Promise<HostManagedComponentRolloutResponse> {
-  const row = await loadHostForStartStop(id, account_id);
-  assertHostRunningForUpgrade(row);
-  const requestedProjectHostRollout = components.includes("project-host");
-  const client = await hostControlClient(id, 60_000);
-  const rolloutStartedAt = Date.now();
-  const response = await client.rolloutManagedComponents({
+  return await rolloutHostManagedComponentsInternalHelper({
+    account_id,
+    id,
     components,
     reason,
+    loadHostForStartStop,
+    assertHostRunningForUpgrade,
+    hostControlClient,
+    waitForHostHeartbeatAfter,
+    installedProjectHostArtifactVersion,
+    recordProjectHostLocalRollbackInternal,
+    project_host_local_rollback_error_code:
+      PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE,
+    setLastKnownGoodArtifactVersionInternal,
+    runtimeDeploymentsForComponentRollout,
+    requestedByForRuntimeDeployments,
+    setProjectHostRuntimeDeployments,
   });
-  let refreshedRow = row;
-  if (requestedProjectHostRollout) {
-    const baselineSeen = row?.last_seen
-      ? new Date(row.last_seen as any).getTime()
-      : 0;
-    const since = Math.max(baselineSeen, rolloutStartedAt);
-    await waitForHostHeartbeatAfter({ host_id: id, since });
-    refreshedRow = await loadHostForStartStop(id, account_id);
-  }
-  const desiredVersion =
-    `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
-    undefined;
-  const observedProjectHostVersion =
-    installedProjectHostArtifactVersion(refreshedRow);
-  if (requestedProjectHostRollout && desiredVersion) {
-    if (
-      observedProjectHostVersion &&
-      observedProjectHostVersion !== desiredVersion
-    ) {
-      const automaticRollback = await recordProjectHostLocalRollbackInternal({
-        account_id,
-        id,
-        version: observedProjectHostVersion,
-        reason: "automatic_project_host_local_rollback",
-      });
-      const err = Object.assign(
-        new Error(
-          `project-host rollout converged to ${observedProjectHostVersion} instead of desired ${desiredVersion}`,
-        ),
-        {
-          code: PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE,
-          automaticRollback,
-        },
-      );
-      throw err;
-    }
-    await setLastKnownGoodArtifactVersionInternal({
-      host_id: refreshedRow.id,
-      row: refreshedRow,
-      artifact: "project-host",
-      version: observedProjectHostVersion ?? desiredVersion,
-    });
-  }
-  const runtimeDeployments = runtimeDeploymentsForComponentRollout({
-    components,
-    desired_version: desiredVersion,
-    reason,
-  });
-  if (runtimeDeployments.length) {
-    await setProjectHostRuntimeDeployments({
-      scope_type: "host",
-      host_id: row.id,
-      requested_by: requestedByForRuntimeDeployments({ account_id, row }),
-      deployments: runtimeDeployments,
-      replace: false,
-    });
-  }
-  return response;
 }
 
 export async function deleteHost({
@@ -7614,37 +3988,38 @@ export async function deleteHostInternal({
   account_id?: string;
   id: string;
 }): Promise<void> {
-  const row = await loadOwnedHost(id, account_id);
-  const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
-  if (row.status === "deprovisioned") {
-    await setHostDesiredState(id, "stopped");
-    await pool().query(
-      `UPDATE project_hosts SET deleted=NOW(), updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-      [id],
-    );
-    return;
-  }
-  if (machineCloud) {
-    await setHostDesiredState(id, "stopped");
-    await enqueueCloudVmWork({
-      vm_id: id,
-      action: "delete",
-      payload: { provider: machineCloud },
-    });
-    logStatusUpdate(id, "deprovisioning", "api");
-    await pool().query(
-      `UPDATE project_hosts SET status=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-      [id, "deprovisioning"],
-    );
-    return;
-  }
-  logStatusUpdate(id, "deprovisioned", "api");
-  await pool().query(
-    `UPDATE project_hosts
-       SET status=$2,
-           metadata=jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', to_jsonb($3::text)),
-           updated=NOW()
-     WHERE id=$1 AND deleted IS NULL`,
-    [id, "deprovisioned", "stopped"],
-  );
+  await deleteHostInternalHelper({
+    account_id,
+    id,
+    loadOwnedHost,
+    normalizeProviderId,
+    setHostDesiredStateInternal: async ({ id, desiredState }) =>
+      await setHostDesiredState(id, desiredState),
+    enqueueCloudVmWork: async (opts) => {
+      await enqueueCloudVmWork(opts);
+    },
+    logStatusUpdate,
+    markHostDeleted: async (id) => {
+      await pool().query(
+        `UPDATE project_hosts SET deleted=NOW(), updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+        [id],
+      );
+    },
+    markHostDeprovisioning: async (id) => {
+      await pool().query(
+        `UPDATE project_hosts SET status=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+        [id, "deprovisioning"],
+      );
+    },
+    markHostStoppedDeprovisioned: async (id) => {
+      await pool().query(
+        `UPDATE project_hosts
+           SET status=$2,
+               metadata=jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', to_jsonb($3::text)),
+               updated=NOW()
+         WHERE id=$1 AND deleted IS NULL`,
+        [id, "deprovisioned", "stopped"],
+      );
+    },
+  });
 }

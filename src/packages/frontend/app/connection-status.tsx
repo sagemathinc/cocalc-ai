@@ -1,4 +1,5 @@
 import { Badge, Progress, Descriptions, Typography, Space, Alert } from "antd";
+import type { ReactNode } from "react";
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -24,15 +25,25 @@ function bytesToStr(bytes: number): string {
 
 export function ConnectionStatsDisplay({
   status,
-  hub,
+  targetLabel,
+  address,
 }: {
   status: ConatConnectionStatus;
-  hub?: string;
+  targetLabel?: ReactNode;
+  address?: string;
 }) {
   const connected = status.state === "connected";
-  const statusText = connected
-    ? `Connected${hub ? " to hub " + hub : ""}`
-    : "Disconnected";
+  const statusText = targetLabel ? (
+    connected ? (
+      <>Connected to {targetLabel}</>
+    ) : (
+      <>Disconnected from {targetLabel}</>
+    )
+  ) : connected ? (
+    "Connected"
+  ) : (
+    "Disconnected"
+  );
   const statusColor = connected ? "green" : "red";
 
   const icon = connected ? <CheckCircleOutlined /> : <CloseCircleOutlined />;
@@ -170,6 +181,11 @@ export function ConnectionStatsDisplay({
           style={{ maxHeight: 120, overflow: "auto", marginTop: 12 }}
         >
           {JSON.stringify(status.details, null, 2)}
+        </Typography.Paragraph>
+      )}
+      {address && (
+        <Typography.Paragraph copyable code style={{ marginTop: 0 }}>
+          {address}
         </Typography.Paragraph>
       )}
     </Space>
