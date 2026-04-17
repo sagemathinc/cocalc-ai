@@ -1,4 +1,5 @@
 import getLogger from "@cocalc/backend/logger";
+import { readFile } from "node:fs/promises";
 import { type BtrfsQuotaMode, btrfsQuotaMode } from "./config";
 import { btrfs } from "./util";
 
@@ -22,6 +23,53 @@ function quotasNotEnabled(text: string): boolean {
     normalized.includes("quota not enabled") ||
     normalized.includes("quotas not enabled")
   );
+}
+
+function parseBtrfsFilesystemUuid(stdout: string): string | undefined {
+  const match = stdout.match(/\buuid:\s*([0-9a-f-]{36})\b/i);
+  return match?.[1]?.toLowerCase();
+}
+
+async function getBtrfsQuotaSysfsStatus(
+  mount: string,
+): Promise<BtrfsQuotaRuntimeStatus | undefined> {
+  const { stdout } = await btrfs({
+    args: ["filesystem", "show", mount],
+    verbose: false,
+  });
+  const uuid = parseBtrfsFilesystemUuid(stdout);
+  if (!uuid) {
+    logger.warn("unable to parse btrfs filesystem UUID", {
+      mount,
+      stdout: stdout.trim(),
+    });
+    return;
+  }
+  const base = `/sys/fs/btrfs/${uuid}/qgroups`;
+  try {
+    const enabled = (await readFile(`${base}/enabled`, "utf8"))
+      .trim()
+      .toLowerCase();
+    if (enabled === "0" || enabled === "no" || enabled === "false") {
+      return { enabled: false, mode: "disabled" };
+    }
+  } catch (err: any) {
+    if (err?.code === "ENOENT") {
+      return { enabled: false, mode: "disabled" };
+    }
+    throw err;
+  }
+  try {
+    const mode = (await readFile(`${base}/mode`, "utf8")).trim().toLowerCase();
+    if (mode.includes("simple") || mode.includes("squota")) {
+      return { enabled: true, mode: "simple" };
+    }
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      throw err;
+    }
+  }
+  return { enabled: true, mode: "qgroup" };
 }
 
 export function parseBtrfsQuotaStatus(
@@ -52,8 +100,12 @@ export function btrfsQuotaEnableArgs(
 export async function getBtrfsQuotaRuntimeStatus(
   mount: string,
 ): Promise<BtrfsQuotaRuntimeStatus> {
+  const sysfsStatus = await getBtrfsQuotaSysfsStatus(mount);
+  if (sysfsStatus) {
+    return sysfsStatus;
+  }
   const result = await btrfs({
-    args: ["quota", "status", mount],
+    args: ["qgroup", "show", "-pcre", mount],
     err_on_exit: false,
     verbose: false,
   });

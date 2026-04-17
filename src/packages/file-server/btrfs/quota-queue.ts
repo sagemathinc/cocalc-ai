@@ -346,6 +346,9 @@ async function createQgroupNow({
   path: string;
   context?: Omit<QuotaWorkLogContext, "mount" | "path">;
 }): Promise<void> {
+  if (btrfsQuotaMode() === "simple") {
+    return;
+  }
   if (!(await exists(path))) return;
   const id = await getSubvolumeIdAtPath(path);
   const tryCreate = async () => {
@@ -385,6 +388,9 @@ async function assignSnapshotQgroupNow({
     "mount" | "snapshotPath" | "subvolumePath"
   >;
 }): Promise<void> {
+  if (btrfsQuotaMode() === "simple") {
+    return;
+  }
   if (!(await exists(snapshotPath)) || !(await exists(subvolumePath))) return;
   const snapshotId = await getSubvolumeIdAtPath(snapshotPath);
   const subvolumeId = await getSubvolumeIdAtPath(subvolumePath);
@@ -434,12 +440,16 @@ async function setQgroupLimitNow({
 }): Promise<void> {
   if (!(await exists(path))) return;
   const id = await getSubvolumeIdAtPath(path);
+  const quotaMode = btrfsQuotaMode();
   const tryLimit = async () => {
     await withRescanBarrier(mount, { ...context, path }, async () => {
       await btrfs({
         args: ["qgroup", "limit", `${size}`, path],
         verbose: false,
       });
+      if (quotaMode === "simple") {
+        return;
+      }
       await btrfs({
         args: ["qgroup", "limit", `${size}`, `1/${id}`, path],
         verbose: false,
@@ -450,7 +460,9 @@ async function setQgroupLimitNow({
     await tryLimit();
   } catch (err) {
     await enableQuota(mount, { ...context, path });
-    await createQgroupNow({ mount, path, context });
+    if (quotaMode !== "simple") {
+      await createQgroupNow({ mount, path, context });
+    }
     await tryLimit();
   }
 }

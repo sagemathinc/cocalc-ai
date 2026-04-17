@@ -59,29 +59,23 @@ Quotas on /mnt/test:
 
   it("switches an already-enabled filesystem from qgroup to simple", async () => {
     process.env.COCALC_BTRFS_QUOTA_MODE = "simple";
-    const btrfsMock = jest.fn(async ({ args }: { args: string[] }) => {
-      if (args.join(" ") === "quota status /mnt/test") {
-        const count = btrfsMock.mock.calls.filter(
-          ([call]) => call.args.join(" ") === "quota status /mnt/test",
+    const readFileMock = jest.fn(async (path: string) => {
+      if (path.endsWith("/enabled")) {
+        return "1\n";
+      }
+      if (path.endsWith("/mode")) {
+        const count = readFileMock.mock.calls.filter(([value]) =>
+          `${value}`.endsWith("/mode"),
         ).length;
-        if (count === 1) {
-          return {
-            exit_code: 0,
-            stdout: `
-Quotas on /mnt/test:
-  Enabled:                 yes
-  Mode:                    qgroup (full accounting)
-`,
-            stderr: "",
-          };
-        }
+        return count === 1 ? "qgroup\n" : "simple\n";
+      }
+      throw new Error(`unexpected readFile path: ${path}`);
+    });
+    const btrfsMock = jest.fn(async ({ args }: { args: string[] }) => {
+      if (args.join(" ") === "filesystem show /mnt/test") {
         return {
           exit_code: 0,
-          stdout: `
-Quotas on /mnt/test:
-  Enabled:                 yes
-  Mode:                    squota (simple accounting)
-`,
+          stdout: "Label: none  uuid: 11111111-2222-4333-8444-555555555555\n",
           stderr: "",
         };
       }
@@ -96,6 +90,10 @@ Quotas on /mnt/test:
 
     jest.doMock("./util", () => ({
       btrfs: (opts: { args: string[] }) => btrfsMock(opts),
+    }));
+    jest.doMock("node:fs/promises", () => ({
+      readFile: (path: string, encoding: string) =>
+        readFileMock(path, encoding),
     }));
 
     const { ensureBtrfsQuotaMode } = await import("./quota-mode");
