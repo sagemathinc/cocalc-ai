@@ -416,6 +416,9 @@ export function ChatLog({
       // so we do it again in the next render loop.  This seems needed mainly
       // for side chat when there is little vertical space.
       setTimeout(doScroll, 1);
+      // Images and other late-layout content can still increase message height
+      // after the immediate scrolls above, so do one delayed follow-up as well.
+      setTimeout(doScroll, 500);
     };
   }, [scrollToBottomRef, setManualScroll]);
 
