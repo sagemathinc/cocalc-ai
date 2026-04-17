@@ -156,6 +156,9 @@ export class ConatSocketClient extends ConatSocketBase {
   };
 
   private handleConnected = (mesg) => {
+    if (this.state !== "connecting") {
+      return;
+    }
     const rawAttempt = mesg.headers?.[SOCKET_HEADER_CONNECT_ATTEMPT];
     const attempt =
       typeof rawAttempt == "number"
@@ -180,9 +183,6 @@ export class ConatSocketClient extends ConatSocketBase {
       wait_for_client_interest_ms: waitForClientInterestMs,
     };
     this.connectAttempts.clear();
-    if (this.state == "ready") {
-      return;
-    }
     this.setState("ready");
     this.lifecycleReporter?.("connect_command_done", details);
     this.lifecycleReporter?.("ready");
@@ -218,7 +218,7 @@ export class ConatSocketClient extends ConatSocketBase {
   private waitForConnected = async () => {
     this.connectAttempts.clear();
     let timeout = 500;
-    while (this.state != "closed" && this.state != "ready") {
+    while (this.state == "connecting") {
       this.lifecycleReporter?.("connect_command_start");
       this.sendConnectCommand();
       try {

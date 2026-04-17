@@ -157,7 +157,7 @@ export function resolveProjectHostAcpWorkerLaunch({
   const base = path.basename(command).toLowerCase();
   const nodeLike = base === "node" || base.startsWith("node");
   if (nodeLike) {
-    const entry = entryPoint ?? require.resolve("@cocalc/project-host/main");
+    const entry = entryPoint ?? require.resolve("../../main");
     return { command, args: [entry] };
   }
   return { command, args: [] };
@@ -590,11 +590,10 @@ export async function rolloutProjectHostAcpWorker({
   restartReason?: string;
 } = {}): Promise<ProjectHostAcpWorkerRolloutOutcome> {
   const launch = workerLaunchSignature();
-  const { expectedWorkers: workers } =
-    partitionExpectedProjectHostAcpWorkers({
-      workers: listProjectHostAcpWorkers(),
-      launch,
-    });
+  const { expectedWorkers: workers } = partitionExpectedProjectHostAcpWorkers({
+    workers: listProjectHostAcpWorkers(),
+    launch,
+  });
   if (!workers.length) {
     const spawned = await ensureProjectHostAcpWorkerRunning({ restartReason });
     return spawned

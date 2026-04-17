@@ -6,7 +6,11 @@
 import { useEffect } from "react";
 import type { ProjectActiveOperationSummary } from "@cocalc/conat/hub/api/projects";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { createProjectFieldState, useProjectField } from "./use-project-field";
+import {
+  createProjectFieldState,
+  getCachedProjectFieldValue,
+  useProjectField,
+} from "./use-project-field";
 
 const POLL_MS = 4000;
 
@@ -22,10 +26,22 @@ export function useProjectActiveOperation(project_id: string) {
     state: activeOpFieldState,
     project_id,
     projectMapField: "active_op",
-    fetch: async (project_id0) =>
-      await webapp_client.conat_client.hub.projects.getProjectActiveOperation({
-        project_id: project_id0,
-      }),
+    fetch: async (project_id0) => {
+      try {
+        return await webapp_client.conat_client.hub.projects.getProjectActiveOperation(
+          {
+            project_id: project_id0,
+          },
+        );
+      } catch {
+        return (
+          getCachedProjectFieldValue({
+            state: activeOpFieldState,
+            project_id: project_id0,
+          }) ?? null
+        );
+      }
+    },
   });
 
   useEffect(() => {

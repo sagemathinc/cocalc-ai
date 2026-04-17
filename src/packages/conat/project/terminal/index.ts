@@ -624,14 +624,18 @@ export class TerminalClient extends EventEmitter {
     client,
     subject,
     getSize,
+    reconnection,
   }: {
     client: ConatClient;
     subject: string;
     getSize?: () => undefined | { rows: number; cols: number };
+    reconnection?: boolean;
   }) {
     super();
     this.getSize = getSize;
-    this.socket = client.socket.connect(subject);
+    this.socket = client.socket.connect(subject, {
+      reconnection,
+    });
 
     const handleRequest = ({ data }) => {
       switch (data.cmd) {
@@ -722,6 +726,7 @@ export function terminalClient(opts: {
   project_id: string;
   client: ConatClient;
   getSize?: () => undefined | { rows: number; cols: number };
+  reconnection?: boolean;
 }): TerminalClient {
   return new TerminalClient({ ...opts, subject: getSubject(opts) });
 }

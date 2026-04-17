@@ -531,6 +531,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
             return this.fitAddon.proposeDimensions();
           }
         },
+        reconnection: false,
       });
       this.pty = pty;
       pty.socket.on("data", (data) => {
