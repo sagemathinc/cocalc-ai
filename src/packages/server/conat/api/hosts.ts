@@ -199,6 +199,12 @@ import {
   listRunningHostIdsForAutomaticRuntimeDeploymentReconcile,
   loadHostRowForRuntimeDeploymentsInternal,
 } from "./hosts-runtime-deployment-status";
+import {
+  bestEffortQueueAutomaticArtifactDeploymentReconcileForHostsInternal,
+  bestEffortQueueAutomaticRuntimeDeploymentReconcileForHostsInternal,
+  ensureAutomaticHostArtifactDeploymentsReconcileInternal,
+  ensureAutomaticHostRuntimeDeploymentsReconcileInternal,
+} from "./hosts-runtime-deployment-queue";
 function pool() {
   return getPool();
 }
@@ -5324,59 +5330,24 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcile({
       op_id: string;
     }
 > {
-  const row = await loadHostRowForRuntimeDeploymentsInternal(host_id);
-  if (!row) {
-    return { queued: false, host_id, reason: "host_missing" };
-  }
-  if (!HOST_RUNNING_STATUSES.has(`${row?.status ?? ""}`.toLowerCase())) {
-    return { queued: false, host_id: row.id, reason: "host_not_running" };
-  }
-  const status = await getHostRuntimeDeploymentStatusInternal({
-    id: row.id,
-    row,
+  return await ensureAutomaticHostRuntimeDeploymentsReconcileInternal({
+    host_id,
+    reason,
     running_statuses: HOST_RUNNING_STATUSES,
-    hostControlClient,
+    loadHostRowForRuntimeDeploymentsInternal,
+    getHostRuntimeDeploymentStatusInternal: ({ id, row }) =>
+      getHostRuntimeDeploymentStatusInternal({
+        id,
+        row,
+        running_statuses: HOST_RUNNING_STATUSES,
+        hostControlClient,
+      }),
+    computeHostRuntimeDeploymentReconcilePlan,
+    createHostLro,
+    normalizeManagedComponentKindsForDedupe,
+    reconcile_lro_kind: HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND,
+    automatic_reason: AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
   });
-  if (status.observation_error && !(status.observed_components ?? []).length) {
-    return {
-      queued: false,
-      host_id: row.id,
-      reason: "observation_failed",
-      observation_error: status.observation_error,
-    };
-  }
-  const plan = computeHostRuntimeDeploymentReconcilePlan({
-    row,
-    status,
-  });
-  if (!plan.reconciled_components.length) {
-    return { queued: false, host_id: row.id, reason: "no_reconcile_needed" };
-  }
-  const op = await createHostLro({
-    kind: HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND,
-    row,
-    input: {
-      id: row.id,
-      components: plan.reconciled_components,
-      reason: reason ?? AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
-    },
-    dedupe_key: `${HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND}:${row.id}:${JSON.stringify(
-      {
-        components: normalizeManagedComponentKindsForDedupe(
-          plan.reconciled_components,
-        ),
-        reason:
-          `${reason ?? AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON}`.trim() ||
-          null,
-      },
-    )}`,
-  });
-  return {
-    queued: true,
-    host_id: row.id,
-    components: plan.reconciled_components,
-    op_id: op.op_id,
-  };
 }
 
 export async function ensureAutomaticHostArtifactDeploymentsReconcile({
@@ -5401,49 +5372,22 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcile({
       op_id: string;
     }
 > {
-  const row = await loadHostRowForRuntimeDeploymentsInternal(host_id);
-  if (!row) {
-    return { queued: false, host_id, reason: "host_missing" };
-  }
-  if (!HOST_RUNNING_STATUSES.has(`${row?.status ?? ""}`.toLowerCase())) {
-    return { queued: false, host_id: row.id, reason: "host_not_running" };
-  }
-  const status = await getHostRuntimeDeploymentStatusInternal({
-    id: row.id,
-    row,
+  return await ensureAutomaticHostArtifactDeploymentsReconcileInternal({
+    host_id,
     running_statuses: HOST_RUNNING_STATUSES,
-    hostControlClient,
+    loadHostRowForRuntimeDeploymentsInternal,
+    getHostRuntimeDeploymentStatusInternal: ({ id, row }) =>
+      getHostRuntimeDeploymentStatusInternal({
+        id,
+        row,
+        running_statuses: HOST_RUNNING_STATUSES,
+        hostControlClient,
+      }),
+    computeAutomaticArtifactUpgradeTargets,
+    createHostLro,
+    hostUpgradeDedupeKey,
+    upgrade_lro_kind: HOST_UPGRADE_LRO_KIND,
   });
-  if (status.observation_error && !(status.observed_artifacts ?? []).length) {
-    return {
-      queued: false,
-      host_id: row.id,
-      reason: "observation_failed",
-      observation_error: status.observation_error,
-    };
-  }
-  const targets = computeAutomaticArtifactUpgradeTargets({ status });
-  if (!targets.length) {
-    return { queued: false, host_id: row.id, reason: "no_reconcile_needed" };
-  }
-  const op = await createHostLro({
-    kind: HOST_UPGRADE_LRO_KIND,
-    row,
-    input: {
-      id: row.id,
-      targets,
-    },
-    dedupe_key: hostUpgradeDedupeKey({
-      hostId: row.id,
-      targets,
-    }),
-  });
-  return {
-    queued: true,
-    host_id: row.id,
-    targets,
-    op_id: op.op_id,
-  };
 }
 
 async function bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
@@ -5453,26 +5397,11 @@ async function bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
   host_ids: string[];
   reason?: string;
 }): Promise<void> {
-  const uniqueHostIds = Array.from(
-    new Set(
-      (host_ids ?? [])
-        .map((host_id) => `${host_id ?? ""}`.trim())
-        .filter((host_id) => host_id.length > 0),
-    ),
-  );
-  if (!uniqueHostIds.length) return;
-  const settled = await Promise.allSettled(
-    uniqueHostIds.map((host_id) =>
-      ensureAutomaticHostRuntimeDeploymentsReconcile({ host_id, reason }),
-    ),
-  );
-  settled.forEach((result, index) => {
-    if (result.status === "rejected") {
-      logger.warn("automatic runtime deployment reconcile enqueue failed", {
-        host_id: uniqueHostIds[index],
-        reason: `${result.reason}`,
-      });
-    }
+  await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHostsInternal({
+    host_ids,
+    reason,
+    ensureAutomaticHostRuntimeDeploymentsReconcile,
+    logWarn: (message, payload) => logger.warn(message, payload),
   });
 }
 
@@ -5481,26 +5410,10 @@ async function bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
 }: {
   host_ids: string[];
 }): Promise<void> {
-  const uniqueHostIds = Array.from(
-    new Set(
-      (host_ids ?? [])
-        .map((host_id) => `${host_id ?? ""}`.trim())
-        .filter((host_id) => host_id.length > 0),
-    ),
-  );
-  if (!uniqueHostIds.length) return;
-  const settled = await Promise.allSettled(
-    uniqueHostIds.map((host_id) =>
-      ensureAutomaticHostArtifactDeploymentsReconcile({ host_id }),
-    ),
-  );
-  settled.forEach((result, index) => {
-    if (result.status === "rejected") {
-      logger.warn("automatic artifact deployment reconcile enqueue failed", {
-        host_id: uniqueHostIds[index],
-        reason: `${result.reason}`,
-      });
-    }
+  await bestEffortQueueAutomaticArtifactDeploymentReconcileForHostsInternal({
+    host_ids,
+    ensureAutomaticHostArtifactDeploymentsReconcile,
+    logWarn: (message, payload) => logger.warn(message, payload),
   });
 }
 
