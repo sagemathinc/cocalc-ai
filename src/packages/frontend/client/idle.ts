@@ -8,12 +8,9 @@ import { throttle } from "lodash";
 import { delay } from "awaiting";
 import { redux } from "../app-framework";
 import { IS_TOUCH } from "../feature";
-import { WebappClient } from "./client";
+import type { WebappClient } from "./client";
 import { disconnect_from_all_projects } from "../project/websocket/connect";
 import { lite } from "@cocalc/frontend/lite";
-
-// set to true when there are no load issues.
-const NEVER_TIMEOUT_VISIBLE = false;
 
 const CHECK_INTERVAL = 30 * 1000;
 //const CHECK_INTERVAL = 7 * 1000;
@@ -84,19 +81,15 @@ export class IdleClient {
       this.idle_reset,
     );
 
-    if (NEVER_TIMEOUT_VISIBLE) {
-      // If the document is visible right now, then we
-      // reset the idle timeout, just as if the mouse moved.  This means
-      // that users never get the standby timeout if their current browser
-      // tab is considered visible according to the Page Visibility API
-      // https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API
-      // See also https://github.com/sagemathinc/cocalc/issues/6371
-      setInterval(() => {
-        if (!document.hidden) {
-          this.idle_reset();
-        }
-      }, CHECK_INTERVAL / 2);
-    }
+    // Keep visible pages alive. Passive viewing is a legitimate use case:
+    // presentations, dashboards, second-monitor watching, and following live
+    // project output should not trigger hard standby just because there was no
+    // recent input event.
+    setInterval(() => {
+      if (!document.hidden) {
+        this.idle_reset();
+      }
+    }, CHECK_INTERVAL / 2);
   };
 
   private idle_check = (): void => {
