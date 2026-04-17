@@ -11,6 +11,7 @@ const BACKGROUND_RESOURCE_RECONNECT_DELAY_MS = 5_000;
 const MAX_RESOURCE_RECONNECT_DELAY_MS = 30_000;
 
 export type ReconnectPriority = "foreground" | "background";
+export type StandbyStage = "active" | "soft" | "hard";
 
 export interface ReconnectScheduleEvent {
   reason: string;
@@ -64,7 +65,11 @@ export class ReconnectCoordinator extends EventEmitter {
   private readonly resources = new Map<string, PendingReconnectResource>();
   private resourceReconnectInFlight = false;
   private resourceReconnectTimer?: ReturnType<typeof setTimeout>;
+  private standbyStage: StandbyStage = "active";
   private readonly foregroundStateHandler = () => {
+    if (this.standbyStage !== "active") {
+      return;
+    }
     if (this.tabPriority() !== "foreground") {
       return;
     }
@@ -107,17 +112,40 @@ export class ReconnectCoordinator extends EventEmitter {
     this.removeAllListeners();
   };
 
+  softStandby = () => {
+    if (this.standbyStage === "soft") {
+      return;
+    }
+    this.standbyStage = "soft";
+    this.clearResourceReconnectTimer();
+    this.emit("standby_stage", this.standbyStage);
+  };
+
   standby = () => {
+    this.standbyStage = "hard";
+    this.clearResourceReconnectTimer();
+    this.resetReconnectBackoff();
+    this.emit("standby_stage", this.standbyStage);
+  };
+
+  prepareForTransportRestart = () => {
     this.clearResourceReconnectTimer();
     this.resetReconnectBackoff();
   };
 
   resume = () => {
-    this.requestReconnect({
-      reason: "resume",
-      priority: this.tabPriority(),
-      resetBackoff: true,
-    });
+    const previousStage = this.standbyStage;
+    this.standbyStage = "active";
+    this.emit("standby_stage", this.standbyStage);
+    if (previousStage === "hard" || !this.options.isConnected()) {
+      this.requestReconnect({
+        reason: "resume",
+        priority: this.tabPriority(),
+        resetBackoff: true,
+      });
+      return;
+    }
+    this.schedulePendingResourceReconnects();
   };
 
   noteConnected = () => {
@@ -272,6 +300,9 @@ export class ReconnectCoordinator extends EventEmitter {
     if (this.resourceReconnectInFlight) {
       return;
     }
+    if (this.standbyStage !== "active") {
+      return;
+    }
     if (!this.options.canReconnect() || !this.options.isConnected()) {
       return;
     }
@@ -327,6 +358,9 @@ export class ReconnectCoordinator extends EventEmitter {
 
   private runNextPendingResourceReconnect = async () => {
     if (this.resourceReconnectInFlight) {
+      return;
+    }
+    if (this.standbyStage !== "active") {
       return;
     }
     if (!this.options.canReconnect() || !this.options.isConnected()) {
@@ -394,6 +428,7 @@ export class ReconnectCoordinator extends EventEmitter {
   };
 
   getReconnectAttempt = () => this.reconnectAttempt;
+  getStandbyStage = (): StandbyStage => this.standbyStage;
 
   private resourcePriority = (
     resource: PendingReconnectResource,

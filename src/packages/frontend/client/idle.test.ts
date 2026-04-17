@@ -1,5 +1,3 @@
-const disconnectFromAllProjects = jest.fn();
-
 type JQueryStub = {
   length: number;
   on: jest.Mock;
@@ -50,10 +48,6 @@ jest.mock("jquery", () => {
   };
 });
 
-jest.mock("../project/websocket/connect", () => ({
-  disconnect_from_all_projects: () => disconnectFromAllProjects(),
-}));
-
 jest.mock("../app-framework", () => ({
   redux: {
     getStore: jest.fn(() => ({
@@ -97,27 +91,29 @@ describe("IdleClient", () => {
   });
 
   it("does not enter standby while the page remains visible", async () => {
+    const softStandby = jest.fn();
     const standby = jest.fn();
     const resume = jest.fn();
     const { IdleClient } = await import("./idle");
     const idle = new IdleClient({
-      conat_client: { standby, resume },
+      conat_client: { softStandby, standby, resume },
     } as any);
 
     await jest.advanceTimersByTimeAsync(10_000);
     idle.set_standby_timeout_m(1 / 3);
     await jest.advanceTimersByTimeAsync(120_000);
 
+    expect(softStandby).not.toHaveBeenCalled();
     expect(standby).not.toHaveBeenCalled();
-    expect(disconnectFromAllProjects).not.toHaveBeenCalled();
   });
 
-  it("enters standby when the page is hidden long enough", async () => {
+  it("enters soft standby before hard standby when the page is hidden", async () => {
+    const softStandby = jest.fn();
     const standby = jest.fn();
     const resume = jest.fn();
     const { IdleClient } = await import("./idle");
     const idle = new IdleClient({
-      conat_client: { standby, resume },
+      conat_client: { softStandby, standby, resume },
     } as any);
 
     await jest.advanceTimersByTimeAsync(10_000);
@@ -125,7 +121,25 @@ describe("IdleClient", () => {
     (document as any).hidden = true;
     await jest.advanceTimersByTimeAsync(45_000);
 
+    expect(softStandby).toHaveBeenCalledTimes(1);
+    expect(standby).toHaveBeenCalledTimes(0);
+  });
+
+  it("escalates hidden idle tabs to hard standby after the soft standby grace period", async () => {
+    const softStandby = jest.fn();
+    const standby = jest.fn();
+    const resume = jest.fn();
+    const { IdleClient } = await import("./idle");
+    const idle = new IdleClient({
+      conat_client: { softStandby, standby, resume },
+    } as any);
+
+    await jest.advanceTimersByTimeAsync(10_000);
+    idle.set_standby_timeout_m(1 / 3);
+    (document as any).hidden = true;
+    await jest.advanceTimersByTimeAsync(45_000 + 5 * 60 * 1000);
+
+    expect(softStandby).toHaveBeenCalledTimes(1);
     expect(standby).toHaveBeenCalledTimes(1);
-    expect(disconnectFromAllProjects).toHaveBeenCalledTimes(1);
   });
 });
