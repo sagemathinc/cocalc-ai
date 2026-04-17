@@ -1421,6 +1421,7 @@ function parseRow(
     last_action_status: metadata.last_action_status,
     last_action_error: metadata.last_action_error,
     provider_observed_at: metadata.runtime?.observed_at,
+    observed_host_agent: observedHostAgentFromMetadata(row),
     deleted: row.deleted ? new Date(row.deleted).toISOString() : undefined,
     backup_status: opts.backup_status,
     bootstrap: normalizedBootstrap,

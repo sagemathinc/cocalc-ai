@@ -31,6 +31,11 @@ import {
 import { COLORS } from "@cocalc/util/theme";
 import { getHostSizeDisplay } from "../utils/format";
 import { HostCurrentMetrics } from "./host-current-metrics";
+import {
+  currentProjectHostAutomaticRollback,
+  projectHostRollbackReasonLabel,
+  shouldSuppressProjectHostFailedOp,
+} from "../utils/project-host-rollout";
 
 type HostCardProps = {
   host: Host;
@@ -83,7 +88,19 @@ export const HostCard: React.FC<HostCardProps> = ({
   const showSpinner = isHostTransitioning(host.status);
   const statusLabel = host.deleted ? "deleted" : host.status;
   const size = getHostSizeDisplay(host);
-  const hostOpActive = isHostOpActive(hostOp);
+  const projectHostObservation = host.observed_host_agent?.project_host;
+  const projectHostRollback = currentProjectHostAutomaticRollback({
+    observation: projectHostObservation,
+    currentVersion: host.version,
+  });
+  const displayHostOp = shouldSuppressProjectHostFailedOp({
+    op: hostOp,
+    currentVersion: host.version,
+    observation: projectHostObservation,
+  })
+    ? undefined
+    : hostOp;
+  const hostOpActive = isHostOpActive(displayHostOp);
   const startDisabled =
     isDeleted ||
     host.status === "running" ||
@@ -126,9 +143,12 @@ export const HostCard: React.FC<HostCardProps> = ({
   const deleteOkText =
     host.status === "deprovisioned" ? "Delete" : "Deprovision";
   const isDeprovisioned = host.status === "deprovisioned";
-  const opPhase = getHostOpPhase(hostOp);
+  const opPhase = getHostOpPhase(displayHostOp);
   const canCancelBackups =
-    !!hostOp?.op_id && hostOpActive && opPhase === "backups" && !!onCancelOp;
+    !!displayHostOp?.op_id &&
+    hostOpActive &&
+    opPhase === "backups" &&
+    !!onCancelOp;
   const actions = [
     <Button
       key="start"
@@ -192,13 +212,13 @@ export const HostCard: React.FC<HostCardProps> = ({
     >
       Drain
     </Button>,
-    canCancelBackups && hostOp ? (
+    canCancelBackups && displayHostOp ? (
       <Popconfirm
         key="cancel"
         title="Cancel backups for this host?"
         okText="Cancel backups"
         cancelText="Keep running"
-        onConfirm={() => onCancelOp?.(hostOp.op_id)}
+        onConfirm={() => onCancelOp?.(displayHostOp.op_id)}
       >
         <Button type="link">Cancel</Button>
       </Popconfirm>
@@ -310,7 +330,23 @@ export const HostCard: React.FC<HostCardProps> = ({
             <Tag color="orange">Reprovision on next start</Tag>
           </Tooltip>
         )}
-        <HostOpProgress op={hostOp} compact />
+        <HostOpProgress op={displayHostOp} compact />
+        {projectHostRollback && (
+          <Tooltip
+            title={`Project-host rollout to ${projectHostRollback.target_version} was rolled back to ${projectHostRollback.rollback_version}${
+              projectHostRollback.finished_at
+                ? ` on ${new Date(projectHostRollback.finished_at).toLocaleString()}`
+                : ""
+            } because ${projectHostRollbackReasonLabel(
+              projectHostRollback.reason,
+            )}.`}
+          >
+            <Typography.Text type="warning" style={{ fontSize: 12 }}>
+              Project-host auto-rolled back to{" "}
+              <code>{projectHostRollback.rollback_version}</code>
+            </Typography.Text>
+          </Tooltip>
+        )}
         <HostBootstrapProgress host={host} />
         <HostBootstrapLifecycle host={host} />
         <HostProjectStatus host={host} fontSize={14} />

@@ -61,6 +61,10 @@ import {
   getHostRamGiB,
   getHostSizeDisplay,
 } from "../utils/format";
+import {
+  projectHostRollbackReasonLabel,
+  shouldSuppressProjectHostFailedOp,
+} from "../utils/project-host-rollout";
 
 type HostDrawerViewModel = {
   open: boolean;
@@ -386,6 +390,32 @@ function rollbackTargetForArtifact(
   );
 }
 
+function componentDeploymentRecord(
+  status: HostRuntimeDeploymentStatus | undefined,
+  component: string,
+) {
+  return status?.effective.find(
+    (record) =>
+      record.target_type === "component" && record.target === component,
+  );
+}
+
+function formatRuntimeTimestamp(value?: string): string | undefined {
+  if (!value) return undefined;
+  const ts = Date.parse(value);
+  if (!Number.isFinite(ts)) return undefined;
+  return new Date(ts).toLocaleString();
+}
+
+function formatRolloutReason(reason?: string): string {
+  switch (`${reason ?? ""}`.trim()) {
+    case "automatic_project_host_local_rollback":
+      return "automatic local rollback after a failed project-host rollout";
+    default:
+      return reason?.trim() || "manual override";
+  }
+}
+
 const normalizeSpecValue = (
   key: keyof HostConfigSpec,
   value: HostConfigSpec[keyof HostConfigSpec],
@@ -522,20 +552,38 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const showStaleTag = host?.status === "running" && !hostOnline;
   const showSpinner = host ? isHostTransitioning(host.status) : false;
   const statusLabel = host ? (host.deleted ? "deleted" : host.status) : "";
+  const deploymentStatus = runtimeDeployments?.status;
+  const projectHostObservation =
+    deploymentStatus?.observed_host_agent?.project_host ??
+    host?.observed_host_agent?.project_host;
+  const projectHostComponentDeployment = componentDeploymentRecord(
+    deploymentStatus,
+    "project-host",
+  );
   const activeOp = host ? hostOps?.[host.id] : undefined;
-  const hostOpActive = host ? isHostOpActive(activeOp) : false;
-  const opPhase = getHostOpPhase(activeOp);
+  const displayActiveOp = shouldSuppressProjectHostFailedOp({
+    op: activeOp,
+    currentVersion: host?.version,
+    observation: projectHostObservation,
+  })
+    ? undefined
+    : activeOp;
+  const hostOpActive = host ? isHostOpActive(displayActiveOp) : false;
+  const opPhase = getHostOpPhase(displayActiveOp);
   const canCancelBackups =
-    !!activeOp?.op_id && hostOpActive && opPhase === "backups" && !!onCancelOp;
+    !!displayActiveOp?.op_id &&
+    hostOpActive &&
+    opPhase === "backups" &&
+    !!onCancelOp;
   const showUpgradeProgress =
-    activeOp?.summary?.kind === "host-upgrade-software" ||
-    activeOp?.kind === "host-upgrade-software" ||
-    activeOp?.summary?.kind === "host-reconcile-software" ||
-    activeOp?.kind === "host-reconcile-software" ||
-    activeOp?.summary?.kind === "host-reconcile-runtime-deployments" ||
-    activeOp?.kind === "host-reconcile-runtime-deployments" ||
-    activeOp?.summary?.kind === "host-rollback-runtime-deployments" ||
-    activeOp?.kind === "host-rollback-runtime-deployments";
+    displayActiveOp?.summary?.kind === "host-upgrade-software" ||
+    displayActiveOp?.kind === "host-upgrade-software" ||
+    displayActiveOp?.summary?.kind === "host-reconcile-software" ||
+    displayActiveOp?.kind === "host-reconcile-software" ||
+    displayActiveOp?.summary?.kind === "host-reconcile-runtime-deployments" ||
+    displayActiveOp?.kind === "host-reconcile-runtime-deployments" ||
+    displayActiveOp?.summary?.kind === "host-rollback-runtime-deployments" ||
+    displayActiveOp?.kind === "host-rollback-runtime-deployments";
   const upgradeConfirmContent = upgradeTitle({
     label: "all software",
     source: "the configured source",
@@ -575,7 +623,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     !!onReconcile &&
     !!host.machine?.cloud &&
     host.machine.cloud !== "self-host";
-  const deploymentStatus = runtimeDeployments?.status;
   const softwareSummary = React.useMemo(() => {
     if (!host) {
       return { upToDate: 0, updatesAvailable: 0, unknown: 0 };
@@ -670,7 +717,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           </Space>
           {!showUpgradeProgress && (
             <Space orientation="vertical" size="small">
-              <HostOpProgress op={activeOp} />
+              <HostOpProgress op={displayActiveOp} />
               <HostBootstrapProgress host={host} />
               <HostBootstrapLifecycle host={host} detailed />
               {canCancelBackups && (
@@ -678,7 +725,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   title="Cancel backups for this host?"
                   okText="Cancel backups"
                   cancelText="Keep running"
-                  onConfirm={() => onCancelOp?.(activeOp!.op_id)}
+                  onConfirm={() => onCancelOp?.(displayActiveOp!.op_id)}
                 >
                   <Button size="small" type="link">
                     Cancel backups
@@ -843,6 +890,48 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               {deploymentStatus?.observed_host_agent?.project_host && (
                 <Card size="small" title="Host agent rollback state">
                   <Space orientation="vertical" size="small">
+                    {projectHostComponentDeployment?.scope_type === "host" && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message="Project-host is pinned away from the cluster default"
+                        description={
+                          <span>
+                            This host currently overrides the cluster default
+                            and stays on{" "}
+                            <code>
+                              {projectHostComponentDeployment.desired_version}
+                            </code>
+                            {observedTargetForArtifact(
+                              deploymentStatus,
+                              "project-host",
+                            )?.desired_version ? (
+                              <>
+                                {" "}
+                                while the fleet target is{" "}
+                                <code>
+                                  {
+                                    observedTargetForArtifact(
+                                      deploymentStatus,
+                                      "project-host",
+                                    )?.desired_version
+                                  }
+                                </code>
+                                .
+                              </>
+                            ) : (
+                              "."
+                            )}{" "}
+                            Reason:{" "}
+                            {formatRolloutReason(
+                              projectHostComponentDeployment.rollout_reason,
+                            )}
+                            . Use <strong>Resume cluster default</strong> when
+                            you are ready to retry the fleet version.
+                          </span>
+                        }
+                      />
+                    )}
                     {deploymentStatus.observed_host_agent.project_host
                       .last_known_good_version && (
                       <Typography.Text>
@@ -877,6 +966,32 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                   .project_host.pending_rollout.previous_version
                               }
                             </code>
+                            {formatRuntimeTimestamp(
+                              deploymentStatus.observed_host_agent.project_host
+                                .pending_rollout.started_at,
+                            ) && (
+                              <>
+                                {" "}
+                                · started{" "}
+                                {formatRuntimeTimestamp(
+                                  deploymentStatus.observed_host_agent
+                                    .project_host.pending_rollout.started_at,
+                                )}
+                              </>
+                            )}
+                            {formatRuntimeTimestamp(
+                              deploymentStatus.observed_host_agent.project_host
+                                .pending_rollout.deadline_at,
+                            ) && (
+                              <>
+                                {" "}
+                                · deadline{" "}
+                                {formatRuntimeTimestamp(
+                                  deploymentStatus.observed_host_agent
+                                    .project_host.pending_rollout.deadline_at,
+                                )}
+                              </>
+                            )}
                           </span>
                         }
                       />
@@ -905,6 +1020,25 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                   .rollback_version
                               }
                             </code>
+                            {formatRuntimeTimestamp(
+                              deploymentStatus.observed_host_agent.project_host
+                                .last_automatic_rollback.finished_at,
+                            ) && (
+                              <>
+                                {" "}
+                                · finished{" "}
+                                {formatRuntimeTimestamp(
+                                  deploymentStatus.observed_host_agent
+                                    .project_host.last_automatic_rollback
+                                    .finished_at,
+                                )}
+                              </>
+                            )}{" "}
+                            ·{" "}
+                            {projectHostRollbackReasonLabel(
+                              deploymentStatus.observed_host_agent.project_host
+                                .last_automatic_rollback.reason,
+                            )}
                           </span>
                         }
                       />
@@ -912,7 +1046,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   </Space>
                 </Card>
               )}
-              {showUpgradeProgress && <HostOpProgress op={activeOp} />}
+              {showUpgradeProgress && <HostOpProgress op={displayActiveOp} />}
               <Space
                 orientation="vertical"
                 size="small"
@@ -947,6 +1081,19 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                     deploymentStatus,
                     artifact,
                   );
+                  const componentOverride =
+                    artifact === "project-host"
+                      ? projectHostComponentDeployment
+                      : undefined;
+                  const hasHostOverride =
+                    componentOverride?.scope_type === "host" ||
+                    deployment?.scope_type === "host";
+                  const effectiveDesiredVersion =
+                    componentOverride?.desired_version ??
+                    deployment?.desired_version;
+                  const effectiveOverrideReason =
+                    componentOverride?.rollout_reason ??
+                    deployment?.rollout_reason;
                   const currentVersion =
                     observedTarget?.current_version ??
                     observedArtifact?.current_version ??
@@ -982,7 +1129,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                           >
                             {desiredLabel}
                           </Typography.Text>
-                          {deployment?.scope_type === "host" && (
+                          {hasHostOverride && (
                             <Tag color="blue">host override</Tag>
                           )}
                         </Space>
@@ -996,8 +1143,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                         >
                           <Typography.Text type="secondary">
                             desired{" "}
-                            <code>{deployment?.desired_version ?? "n/a"}</code>{" "}
-                            | observed <code>{currentVersion ?? "n/a"}</code> |
+                            <code>{effectiveDesiredVersion ?? "n/a"}</code> |
+                            observed <code>{currentVersion ?? "n/a"}</code> |
                             latest{" "}
                             <code>{configured?.version ?? "unknown"}</code>
                           </Typography.Text>
@@ -1037,7 +1184,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               )}
                             {canUpgrade &&
                               !host.deleted &&
-                              deployment?.scope_type === "host" &&
+                              hasHostOverride &&
                               onResumeRuntimeArtifactClusterDefault && (
                                 <Popconfirm
                                   title={`Resume following the cluster default for ${label.toLowerCase()}?`}
@@ -1164,12 +1311,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 </code>
                               </Typography.Text>
                             )}
-                            {deployment?.scope_type === "host" && (
+                            {hasHostOverride && (
                               <Alert
                                 type="info"
                                 showIcon
                                 message="This host is pinned by a host-specific override"
-                                description={`Reason: ${deployment.rollout_reason ?? "manual override"}. Use “Resume cluster default” to remove the override and inherit the fleet default again.`}
+                                description={`Reason: ${formatRolloutReason(effectiveOverrideReason)}. Use “Resume cluster default” to remove the override and inherit the fleet default again.`}
                               />
                             )}
                             <Space wrap>

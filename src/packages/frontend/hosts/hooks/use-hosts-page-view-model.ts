@@ -834,8 +834,11 @@ export const useHostsPageViewModel = () => {
           .filter(
             (deployment) =>
               !(
-                deployment.target_type === "artifact" &&
-                deployment.target === artifact
+                (deployment.target_type === "artifact" &&
+                  deployment.target === artifact) ||
+                (artifact === "project-host" &&
+                  deployment.target_type === "component" &&
+                  deployment.target === "project-host")
               ),
           )
           .map((deployment) => ({

@@ -1777,8 +1777,12 @@ automatic reconcile or artifact upgrade work.
               .filter(
                 (deployment: any) =>
                   !(
-                    deployment.target_type === parsedTarget.target_type &&
-                    deployment.target === parsedTarget.target
+                    (deployment.target_type === parsedTarget.target_type &&
+                      deployment.target === parsedTarget.target) ||
+                    (parsedTarget.target_type === "artifact" &&
+                      parsedTarget.target === "project-host" &&
+                      deployment.target_type === "component" &&
+                      deployment.target === "project-host")
                   ),
               )
               .map(deploymentUpsertFromRecord);

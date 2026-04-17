@@ -66,6 +66,11 @@ import type {
   HostDrainOptions,
 } from "../types";
 import { getHostSizeDisplay } from "../utils/format";
+import {
+  currentProjectHostAutomaticRollback,
+  projectHostRollbackReasonLabel,
+  shouldSuppressProjectHostFailedOp,
+} from "../utils/project-host-rollout";
 
 const STATUS_ORDER = [
   "running",
@@ -779,6 +784,17 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const showSpinner = isHostTransitioning(host.status);
         const statusLabel = host.deleted ? "deleted" : host.status;
         const op = hostOps?.[host.id];
+        const projectHostRollback = currentProjectHostAutomaticRollback({
+          observation: host.observed_host_agent?.project_host,
+          currentVersion: host.version,
+        });
+        const displayOp = shouldSuppressProjectHostFailedOp({
+          op,
+          currentVersion: host.version,
+          observation: host.observed_host_agent?.project_host,
+        })
+          ? undefined
+          : op;
         return (
           <Space orientation="vertical" size={2}>
             <Space size="small">
@@ -814,7 +830,25 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                 </Tooltip>
               )}
             </Space>
-            <HostOpProgress op={op} compact />
+            <HostOpProgress op={displayOp} compact />
+            {projectHostRollback && (
+              <Tooltip
+                title={`Project-host rollout to ${
+                  projectHostRollback.target_version
+                } was rolled back to ${projectHostRollback.rollback_version}${
+                  projectHostRollback.finished_at
+                    ? ` on ${new Date(projectHostRollback.finished_at).toLocaleString()}`
+                    : ""
+                } because ${projectHostRollbackReasonLabel(
+                  projectHostRollback.reason,
+                )}.`}
+              >
+                <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                  Project-host auto-rolled back to{" "}
+                  <code>{projectHostRollback.rollback_version}</code>
+                </Typography.Text>
+              </Tooltip>
+            )}
             <HostBootstrapProgress host={host} compact />
             <HostBootstrapLifecycle host={host} compact />
             <HostProjectStatus host={host} compact />

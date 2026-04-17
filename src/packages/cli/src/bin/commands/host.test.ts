@@ -1577,3 +1577,86 @@ test("host deploy resume-default removes one host-scoped override", async () => 
   assert.equal(capture.data.removed, true);
   assert.equal(capture.data.target, "project-host");
 });
+
+test("host deploy resume-default removes a project-host component pin when resuming the artifact default", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture);
+  const originalWithContext = deps.withContext;
+  deps.withContext = async (command, label, fn) =>
+    await originalWithContext(command, label, async (ctx) => {
+      const originalList = ctx.hub.hosts.listHostRuntimeDeployments;
+      ctx.hub.hosts.listHostRuntimeDeployments = async (opts) => {
+        if (opts.scope_type === "host") {
+          return [
+            {
+              scope_type: "host",
+              scope_id: opts.id,
+              host_id: opts.id,
+              target_type: "component",
+              target: "project-host",
+              desired_version: "bundle-v1",
+              rollout_reason: "automatic_project_host_local_rollback",
+              requested_by: "acct-1",
+              requested_at: "2026-04-15T00:00:00.000Z",
+              updated_at: "2026-04-15T00:00:00.000Z",
+            },
+            {
+              scope_type: "host",
+              scope_id: opts.id,
+              host_id: opts.id,
+              target_type: "component",
+              target: "acp-worker",
+              desired_version: "bundle-v1",
+              requested_by: "acct-1",
+              requested_at: "2026-04-15T00:00:00.000Z",
+              updated_at: "2026-04-15T00:00:00.000Z",
+            },
+          ];
+        }
+        return await originalList(opts);
+      };
+      return await fn(ctx);
+    });
+
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "deploy",
+    "resume-default",
+    "host-1",
+    "--artifact",
+    "project-host",
+  ]);
+
+  assert.deepEqual(capture.runtimeDeploymentSetRequests, [
+    {
+      scope_type: "host",
+      id: "host-1",
+      replace: true,
+      deployments: [
+        {
+          target_type: "component",
+          target: "acp-worker",
+          desired_version: "bundle-v1",
+          rollout_policy: undefined,
+          drain_deadline_seconds: undefined,
+          rollout_reason: undefined,
+          metadata: undefined,
+        },
+      ],
+    },
+  ]);
+  assert.equal(capture.data.removed, true);
+  assert.equal(capture.data.target, "project-host");
+});
