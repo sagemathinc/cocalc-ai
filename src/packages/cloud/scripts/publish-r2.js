@@ -6,7 +6,7 @@
  *
  * Uploads a build artifact to Cloudflare R2 (S3-compatible) using SigV4.
  * - Uploads the file and a sibling .sha256 file.
- * - Optionally writes a "latest" manifest JSON (url, sha256, size, built_at, os, arch, version).
+ * - Optionally writes a "latest" manifest JSON (url, sha256, size, built_at, os, arch, version, message).
  * - Can also copy an existing object (e.g., staging -> latest) without
  *   uploading a new file.
  *
@@ -37,7 +37,7 @@ const path = require("node:path");
 
 function usage() {
   console.error(
-    "Usage: publish-r2.js --file <path> --bucket <bucket> [--key <key>] [--prefix <prefix>] [--public-base-url <url>] [--latest-key <key>] [--versions-key <key>] [--versions-limit <n>] [--os <os>] [--arch <arch>] [--version <semver>] [--cache-control <value>] [--latest-cache-control <value>] [--copy-from <key> --copy-to <key>]",
+    "Usage: publish-r2.js --file <path> --bucket <bucket> [--key <key>] [--prefix <prefix>] [--public-base-url <url>] [--latest-key <key>] [--versions-key <key>] [--versions-limit <n>] [--os <os>] [--arch <arch>] [--version <semver>] [--message <text>] [--cache-control <value>] [--latest-cache-control <value>] [--copy-from <key> --copy-to <key>]",
   );
   process.exit(2);
 }
@@ -140,6 +140,9 @@ function normalizeVersionEntry(value) {
   }
   if (typeof value.built_at === "string" && value.built_at.trim()) {
     out.built_at = value.built_at.trim();
+  }
+  if (typeof value.message === "string" && value.message.trim()) {
+    out.message = value.message.trim();
   }
   return out;
 }
@@ -501,6 +504,9 @@ async function main() {
     process.env.VERSION ||
     extractVersion(key) ||
     extractVersion(filename);
+  const manifestMessage =
+    `${args.message || process.env.COCALC_R2_MESSAGE || ""}`.trim() ||
+    undefined;
 
   const host = `${accountId}.r2.cloudflarestorage.com`;
   const contentType =
@@ -556,6 +562,9 @@ async function main() {
     }
     if (manifestVersion) {
       manifest.version = manifestVersion;
+    }
+    if (manifestMessage) {
+      manifest.message = manifestMessage;
     }
     const manifestBody = Buffer.from(JSON.stringify(manifest, null, 2));
     await putObject({

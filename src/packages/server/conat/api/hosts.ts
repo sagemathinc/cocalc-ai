@@ -7128,6 +7128,12 @@ function mapPublishedVersionRow({
     version,
     url,
     sha256: typeof row?.sha256 === "string" ? row.sha256 : undefined,
+    size_bytes:
+      typeof row?.size_bytes === "number" && Number.isFinite(row.size_bytes)
+        ? Math.floor(row.size_bytes)
+        : undefined,
+    built_at: typeof row?.built_at === "string" ? row.built_at : undefined,
+    message: typeof row?.message === "string" ? row.message : undefined,
     available,
     error: available ? undefined : "version entry missing url",
   };
@@ -7219,6 +7225,15 @@ async function resolveLatestSoftwareRow({
       url: resolvedUrl,
       sha256:
         typeof manifest?.sha256 === "string" ? manifest.sha256 : undefined,
+      size_bytes:
+        typeof manifest?.size_bytes === "number" &&
+        Number.isFinite(manifest.size_bytes)
+          ? Math.floor(manifest.size_bytes)
+          : undefined,
+      built_at:
+        typeof manifest?.built_at === "string" ? manifest.built_at : undefined,
+      message:
+        typeof manifest?.message === "string" ? manifest.message : undefined,
       available: !!resolvedUrl,
       error: resolvedUrl ? undefined : "manifest missing url",
     };
