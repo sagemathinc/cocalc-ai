@@ -172,6 +172,7 @@ import { misspelled_words } from "../code-editor/spell-check";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { lite } from "@cocalc/frontend/lite";
 import { isEqual } from "lodash";
+import type { RegisteredReconnectResource } from "@cocalc/frontend/conat/reconnect-coordinator";
 
 interface gutterMarkerParams {
   line: number;
@@ -238,6 +239,7 @@ export class BaseEditorActions<
 
   protected terminals: TerminalManager<T>;
   private code_editors: CodeEditorManager<T>;
+  private reconnectResource?: RegisteredReconnectResource;
 
   protected doctype: string = "syncstring";
 
@@ -274,6 +276,11 @@ export class BaseEditorActions<
   };
   private readonly handleSyncdbClosed = () => {
     this.close();
+  };
+  private readonly handleSyncdocDisconnected = () => {
+    this.reconnectResource?.requestReconnect({
+      reason: "editor_syncdoc_disconnected",
+    });
   };
 
   // Centralized merge state between local CM buffer and remote syncstring.
@@ -464,6 +471,7 @@ export class BaseEditorActions<
     });
 
     this._init_syncstring();
+    this.initReconnectResource();
 
     this.setState({
       value: "Loading...",
@@ -564,6 +572,7 @@ export class BaseEditorActions<
         throw Error(`invalid doctype="${this.doctype}"`);
       }
     }
+    this._syncstring.on("disconnected", this.handleSyncdocDisconnected);
 
     // File-open timing starts when live sync initialization actually begins,
     // not when a tab was created in the background.
@@ -746,6 +755,7 @@ export class BaseEditorActions<
       string_cols,
       document_activity_interval: 0, // disable document-activity tracking for syncdb auxiliary files
     });
+    this._syncdb.on("disconnected", this.handleSyncdocDisconnected);
     this._syncdb.once("error", (err) => {
       this.set_error(`${err}.\nFix this, then try opening the file again.`);
     });
@@ -769,6 +779,79 @@ export class BaseEditorActions<
 
   public not_ready(): boolean {
     return this._syncstring == null || this._syncstring.get_state() != "ready";
+  }
+
+  private initReconnectResource(): void {
+    if (this.reconnectResource != null || this.doctype === "none") {
+      return;
+    }
+    this.reconnectResource =
+      webapp_client.conat_client.registerReconnectResource({
+        canReconnect: () =>
+          !this.isClosed() &&
+          this._syncstring != null &&
+          !this.isFakeSyncdoc(this._syncstring),
+        isConnected: () => this.areSyncdocsLiveConnected(),
+        priority: () =>
+          this.store?.get("visible") ? "foreground" : "background",
+        reconnect: async () => {
+          if (
+            !(await this.wait_until_syncdoc_live_connected(this._syncstring))
+          ) {
+            throw Error("syncstring_not_live_connected");
+          }
+          if (!(await this.wait_until_syncdoc_live_connected(this._syncdb))) {
+            throw Error("syncdb_not_live_connected");
+          }
+        },
+      });
+  }
+
+  private isSyncdocLiveConnected(syncdoc?): boolean {
+    if (syncdoc == null || this.isFakeSyncdoc(syncdoc)) {
+      return true;
+    }
+    if (typeof syncdoc.is_live_connected === "function") {
+      return syncdoc.is_live_connected();
+    }
+    return syncdoc.get_state() === "ready";
+  }
+
+  private areSyncdocsLiveConnected(): boolean {
+    return (
+      this.isSyncdocLiveConnected(this._syncstring) &&
+      this.isSyncdocLiveConnected(this._syncdb)
+    );
+  }
+
+  private async wait_until_syncdoc_live_connected(syncdoc?): Promise<boolean> {
+    if (!(await this.wait_until_syncdoc_ready(syncdoc))) {
+      return false;
+    }
+    if (syncdoc == null || this.isFakeSyncdoc(syncdoc)) {
+      return true;
+    }
+    if (typeof syncdoc.wait_until_live_connected === "function") {
+      try {
+        await syncdoc.wait_until_live_connected();
+      } catch {
+        return false;
+      }
+      return !this.isClosed();
+    }
+    if (this.isSyncdocLiveConnected(syncdoc)) {
+      return true;
+    }
+    try {
+      await once(syncdoc, "connected");
+    } catch {
+      return false;
+    }
+    return !this.isClosed() && this.isSyncdocLiveConnected(syncdoc);
+  }
+
+  private isFakeSyncdoc(syncdoc): boolean {
+    return !!(syncdoc as any)?.is_fake;
   }
 
   // could be overloaded...
@@ -838,6 +921,8 @@ export class BaseEditorActions<
     if (this.isClosed()) {
       return;
     }
+    this.reconnectResource?.close();
+    this.reconnectResource = undefined;
     this._state = "closed";
     window.removeEventListener("resize", this.set_resize);
     this.__save_local_view_state();
@@ -869,6 +954,7 @@ export class BaseEditorActions<
     }
     // @ts-ignore
     delete this._syncstring;
+    s.removeListener?.("disconnected", this.handleSyncdocDisconnected);
     s.removeListener?.("closed", this.handleSyncstringClosed);
     s.close(); // this should save synctables in syncstring
   }
@@ -877,6 +963,7 @@ export class BaseEditorActions<
     if (this._syncdb == null) return;
     const s = this._syncdb;
     delete this._syncdb;
+    s.removeListener?.("disconnected", this.handleSyncdocDisconnected);
     s.removeListener?.("closed", this.handleSyncdbClosed);
     s.close();
   }
@@ -2997,6 +3084,12 @@ export class BaseEditorActions<
     this.setState({
       visible: true,
     });
+    if (!this.areSyncdocsLiveConnected()) {
+      this.reconnectResource?.requestReconnect({
+        reason: "editor_became_visible",
+        resetBackoff: true,
+      });
+    }
 
     await delay(0); // wait until next render loop
     if (this.isClosed()) return;

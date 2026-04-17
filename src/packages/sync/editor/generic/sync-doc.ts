@@ -259,6 +259,7 @@ export class SyncDoc extends EventEmitter {
   public doctype: DocType;
 
   private state: State = "init";
+  private liveConnected = false;
 
   private syncstring_table?: SyncTable;
   public patches_table: SyncTable;
@@ -613,9 +614,11 @@ export class SyncDoc extends EventEmitter {
 
   isClosed = () => (this.state ?? "closed") == "closed";
   isReady = () => this.state == "ready";
+  is_live_connected = () => this.liveConnected;
 
   private set_state = (state: State): void => {
     this.state = state;
+    this.refreshLiveConnectionState();
     this.emit(state);
   };
 
@@ -1182,6 +1185,48 @@ export class SyncDoc extends EventEmitter {
     }
   }
 
+  private tableConnectionStateChanged = (): void => {
+    this.refreshLiveConnectionState();
+  };
+
+  private registerTableConnectionState(table?: SyncTable): void {
+    if (table == null) return;
+    table.on("connected", this.tableConnectionStateChanged);
+    table.on("disconnected", this.tableConnectionStateChanged);
+    table.on("closed", this.tableConnectionStateChanged);
+    this.refreshLiveConnectionState();
+  }
+
+  private unregisterTableConnectionState(table?: SyncTable): void {
+    if (table == null) return;
+    table.removeListener("connected", this.tableConnectionStateChanged);
+    table.removeListener("disconnected", this.tableConnectionStateChanged);
+    table.removeListener("closed", this.tableConnectionStateChanged);
+  }
+
+  private connectedTables(): SyncTable[] {
+    return [this.syncstring_table, this.patches_table].filter(
+      (table): table is SyncTable => table != null,
+    );
+  }
+
+  private refreshLiveConnectionState(): void {
+    const next =
+      this.state === "ready" &&
+      this.connectedTables().length > 0 &&
+      this.connectedTables().every(
+        (table) => table.get_state() === "connected",
+      );
+    if (next === this.liveConnected) {
+      return;
+    }
+    this.liveConnected = next;
+    if (this.state === "closed") {
+      return;
+    }
+    this.emit(next ? "connected" : "disconnected");
+  }
+
   // more gentle version -- this can cause the project actions
   // to be *created* etc.
   end = reuseInFlight(async () => {
@@ -1280,6 +1325,8 @@ export class SyncDoc extends EventEmitter {
   };
 
   private closeTables = async () => {
+    this.unregisterTableConnectionState(this.syncstring_table);
+    this.unregisterTableConnectionState(this.patches_table);
     await this.syncstring_table?.close();
     await this.patches_table?.close();
     await this.ipywidgets_state?.close();
@@ -1479,6 +1526,7 @@ export class SyncDoc extends EventEmitter {
 
     dbg("getting table...");
     this.syncstring_table = await this.synctable(query, []);
+    this.registerTableConnectionState(this.syncstring_table);
     dbg("handling the first update...");
     await this.handle_syncstring_update();
     this.syncstring_table.on("change", this.handle_syncstring_update);
@@ -1589,6 +1637,15 @@ export class SyncDoc extends EventEmitter {
     }
   };
 
+  wait_until_live_connected = async (): Promise<void> => {
+    this.assert_not_closed("wait_until_live_connected");
+    await this.wait_until_ready();
+    if (this.liveConnected) {
+      return;
+    }
+    await once(this, "connected");
+  };
+
   /* Calls wait for the corresponding patches SyncTable, if
      it has been defined.  If it hasn't been defined, it waits
      until it is defined, then calls wait.  Timeout only starts
@@ -1648,6 +1705,7 @@ export class SyncDoc extends EventEmitter {
       ],
     };
     this.patches_table = await this.synctable(query, [], this.patch_interval);
+    this.registerTableConnectionState(this.patches_table);
     this.emitOpenPhase("patches_table_done");
     this.assert_not_closed("init_patchflow -- after making synctable");
     if (this.useConat) {
