@@ -24,6 +24,7 @@
  *   - Mounts /mnt/cocalc and creates /mnt/cocalc/data subvolume.
  * - Configures podman storage to live on /mnt/cocalc (via storage.conf).
  * - Writes /etc/cocalc/project-host.env with runtime config.
+ * - Creates /etc/cocalc/project-host.local.env for durable local overrides.
  * - Fetches and installs:
  *   - project-host bundle
  *   - project bundle
@@ -1420,6 +1421,8 @@ Deprovision:
 Notes:
   - /mnt/cocalc holds project data and snapshots.
   - /etc/cocalc/project-host.env contains runtime settings.
+  - /etc/cocalc/project-host.local.env is for durable local overrides and is
+    not overwritten by bootstrap.
 
 ACP worker (Codex turn runner):
   - Project-host ACP turns run in a separate worker process.

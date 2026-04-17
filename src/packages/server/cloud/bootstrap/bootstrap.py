@@ -2283,8 +2283,26 @@ def configure_podman(cfg: BootstrapConfig) -> None:
 def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
     log_line(cfg, f"bootstrap: writing project-host env to {cfg.env_file}")
     substitute_public_ip(cfg)
-    Path(cfg.env_file).parent.mkdir(parents=True, exist_ok=True)
-    Path(cfg.env_file).write_text("\n".join(cfg.env_lines) + "\n", encoding="utf-8")
+    env_path = Path(cfg.env_file)
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text("\n".join(cfg.env_lines) + "\n", encoding="utf-8")
+    local_env_path = env_path.with_name(
+        env_path.name[:-4] + ".local.env"
+        if env_path.name.endswith(".env")
+        else "project-host.local.env"
+    )
+    if not local_env_path.exists():
+        local_env_path.write_text(
+            (
+                "# Local project-host overrides.\n"
+                "#\n"
+                "# Bootstrap manages project-host.env and does not overwrite this file.\n"
+                "# Put durable site-specific settings here, for example:\n"
+                "# COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS=1\n"
+                "# COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS_SEC=10\n"
+            ),
+            encoding="utf-8",
+        )
     uid = pwd.getpwnam(cfg.ssh_user).pw_uid if cfg.ssh_user else None
     if uid is not None:
         runtime_dir = f"/mnt/cocalc/data/tmp/cocalc-podman-runtime-{uid}"
