@@ -4,14 +4,26 @@ import { getLatestEventLineText, getLiveResponseMarkdown } from "@cocalc/chat";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useCodexLog } from "../use-codex-log";
 
-jest.mock("@cocalc/frontend/webapp-client", () => ({
-  webapp_client: {
-    conat_client: {
-      conat: jest.fn(),
-      dstream: jest.fn(),
+jest.mock("@cocalc/frontend/webapp-client", () => {
+  const conatClientEvents = new EventEmitter();
+  const reconnectResource = {
+    requestReconnect: jest.fn(),
+    close: jest.fn(),
+  };
+  return {
+    webapp_client: {
+      conat_client: {
+        on: (...args: any[]) => (conatClientEvents.on as any)(...args),
+        off: (...args: any[]) => (conatClientEvents.off as any)(...args),
+        emit: (...args: any[]) => (conatClientEvents.emit as any)(...args),
+        reconnectResource,
+        registerReconnectResource: jest.fn(() => reconnectResource),
+        conat: jest.fn(),
+        dstream: jest.fn(),
+      },
     },
-  },
-}));
+  };
+});
 
 class FakeSubscription {
   private closed = false;
@@ -142,6 +154,13 @@ function LiveResponseComponent({
 }
 
 describe("useCodexLog", () => {
+  const reconnectRegisterMock = (webapp_client.conat_client as any)
+    .registerReconnectResource as jest.Mock;
+  const reconnectResource = (webapp_client.conat_client as any)
+    .reconnectResource as {
+    requestReconnect: jest.Mock;
+    close: jest.Mock;
+  };
   const conatMock = webapp_client.conat_client.conat as jest.Mock;
   const dstreamMock = webapp_client.conat_client.dstream as jest.Mock;
 
@@ -149,6 +168,10 @@ describe("useCodexLog", () => {
     jest.clearAllMocks();
     jest.useRealTimers();
     dstreamMock.mockReset();
+    reconnectResource.requestReconnect.mockReset();
+    reconnectResource.close.mockReset();
+    reconnectRegisterMock.mockReset();
+    reconnectRegisterMock.mockReturnValue(reconnectResource);
   });
 
   it("does not subscribe to live events when the turn is idle", async () => {
@@ -533,6 +556,87 @@ describe("useCodexLog", () => {
 
     await waitFor(() => {
       expect(stream.close).toHaveBeenCalled();
+    });
+  });
+
+  it("requests coordinated reconnect when the transport disconnects", async () => {
+    const stream = new FakeDstream();
+    const get = jest.fn().mockResolvedValue(null);
+    dstreamMock.mockResolvedValue(stream);
+    conatMock.mockReturnValue({
+      subscribe: jest.fn(),
+      sync: {
+        akv: () => ({ get }),
+      },
+    });
+
+    render(
+      <TestComponent
+        generating={true}
+        logKey="log-key-live-disconnect"
+        liveLogStream="live-stream-disconnect"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(reconnectRegisterMock).toHaveBeenCalledTimes(1);
+      expect(dstreamMock).toHaveBeenCalled();
+    });
+
+    act(() => {
+      (webapp_client.conat_client as any).emit("disconnected");
+    });
+
+    expect(reconnectResource.requestReconnect).toHaveBeenCalledWith({
+      reason: "codex_log_disconnected",
+    });
+  });
+
+  it("reconnect resource refetches persisted log and resubscribes", async () => {
+    const first = new FakeDstream();
+    const second = new FakeDstream();
+    const get = jest.fn().mockResolvedValue([
+      {
+        type: "event",
+        seq: 1,
+        time: 10,
+        event: { type: "message", text: "Hello" },
+      },
+    ]);
+    dstreamMock.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    conatMock.mockReturnValue({
+      subscribe: jest.fn(),
+      sync: {
+        akv: () => ({ get }),
+      },
+    });
+
+    render(
+      <TestComponent
+        generating={true}
+        logKey="log-key-live-reconnect"
+        liveLogStream="live-stream-reconnect"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(reconnectRegisterMock).toHaveBeenCalledTimes(1);
+      expect(dstreamMock).toHaveBeenCalledTimes(1);
+    });
+
+    const options = reconnectRegisterMock.mock.calls[0][0];
+
+    let reconnectPromise: Promise<void>;
+    await act(async () => {
+      reconnectPromise = options.reconnect();
+    });
+
+    expect(get).toHaveBeenCalledWith("log-key-live-reconnect");
+    await waitFor(() => {
+      expect(dstreamMock).toHaveBeenCalledTimes(2);
+    });
+    await act(async () => {
+      await reconnectPromise;
     });
   });
 });
