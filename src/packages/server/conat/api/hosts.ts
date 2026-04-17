@@ -209,6 +209,10 @@ import {
   reconcileHostRuntimeDeploymentsInternalHelper,
   rollbackHostRuntimeDeploymentsInternalHelper,
 } from "./hosts-runtime-deployment-execution";
+import {
+  rolloutHostManagedComponentsInternalHelper,
+  upgradeHostSoftwareInternalHelper,
+} from "./hosts-software-execution";
 function pool() {
   return getPool();
 }
@@ -5750,86 +5754,43 @@ export async function upgradeHostSoftwareInternal({
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
 }): Promise<HostSoftwareUpgradeResponse> {
-  assertProjectHostUpgradeIsExclusive(targets);
-  const HOST_UPGRADE_RPC_TIMEOUT_MS = 10 * 60 * 1000;
-  const row = await loadHostForStartStop(id, account_id);
-  assertHostRunningForUpgrade(row);
-  const availability = computeHostOperationalAvailability(row);
-  const requestedProjectHostUpgrade = targets.some(
-    (target) => target.artifact === "project-host",
-  );
-  const supportsBootstrapFallback =
-    requestedProjectHostUpgrade &&
-    targets.every(
-      (target) =>
-        !target.version &&
-        ((target.channel ?? "latest") as HostSoftwareChannel) === "latest",
-    );
-  const resolvedBaseUrl = await resolveHostSoftwareBaseUrl(base_url);
-  const effectiveBaseUrl = await resolveReachableUpgradeBaseUrl({
-    row,
-    baseUrl: resolvedBaseUrl,
-  });
-  if (!availability.online && supportsBootstrapFallback) {
-    logger.warn(
-      "host upgrade: host heartbeat is stale; using bootstrap reconcile fallback",
-      {
-        host_id: id,
-        targets,
-        reason: availability.reason_unavailable,
-      },
-    );
-    await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
-    return { results: [] };
-  }
-  const client = await hostControlClient(id, HOST_UPGRADE_RPC_TIMEOUT_MS);
-  let response: HostSoftwareUpgradeResponse;
-  try {
-    response = await client.upgradeSoftware({
-      targets,
-      base_url: effectiveBaseUrl,
-      restart_project_host: false,
-    });
-  } catch (err) {
-    if (!supportsBootstrapFallback) {
-      throw err;
-    }
-    logger.warn("host upgrade: host control upgrade failed; retry via ssh", {
-      host_id: id,
-      targets,
-      err: `${err}`,
-    });
-    await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
-    return { results: [] };
-  }
-  const results = response.results ?? [];
-  if (results.length) {
-    const metadata = row.metadata ?? {};
-    const software = { ...(metadata.software ?? {}) } as Record<string, string>;
-    for (const result of results) {
-      const key = mapUpgradeArtifact(result.artifact);
-      if (key) {
-        software[key] = result.version;
+  return await upgradeHostSoftwareInternalHelper({
+    account_id,
+    id,
+    targets,
+    base_url,
+    assertProjectHostUpgradeIsExclusive,
+    loadHostForStartStop,
+    assertHostRunningForUpgrade,
+    computeHostOperationalAvailability,
+    resolveHostSoftwareBaseUrl,
+    resolveReachableUpgradeBaseUrl,
+    logWarn: (message, payload) => logger.warn(message, payload),
+    reconcileCloudHostBootstrapOverSsh,
+    hostControlClient,
+    updateProjectHostSoftwareRecord: async ({ row, results }) => {
+      const metadata = row.metadata ?? {};
+      const software = { ...(metadata.software ?? {}) } as Record<
+        string,
+        string
+      >;
+      for (const result of results) {
+        const key = mapUpgradeArtifact(result.artifact);
+        if (key) {
+          software[key] = result.version;
+        }
       }
-    }
-    const nextMetadata = { ...metadata, software };
-    const nextVersion = software.project_host ?? row.version ?? null;
-    await pool().query(
-      `UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-      [row.id, nextMetadata, nextVersion],
-    );
-  }
-  const runtimeDeployments = runtimeDeploymentsForUpgradeResults(results);
-  if (runtimeDeployments.length) {
-    await setProjectHostRuntimeDeployments({
-      scope_type: "host",
-      host_id: row.id,
-      requested_by: requestedByForRuntimeDeployments({ account_id, row }),
-      deployments: runtimeDeployments,
-      replace: false,
-    });
-  }
-  return response;
+      const nextMetadata = { ...metadata, software };
+      const nextVersion = software.project_host ?? row.version ?? null;
+      await pool().query(
+        `UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+        [row.id, nextMetadata, nextVersion],
+      );
+    },
+    runtimeDeploymentsForUpgradeResults,
+    requestedByForRuntimeDeployments,
+    setProjectHostRuntimeDeployments,
+  });
 }
 
 export async function rolloutHostManagedComponentsInternal({
@@ -5843,73 +5804,24 @@ export async function rolloutHostManagedComponentsInternal({
   components: HostManagedComponentRolloutRequest["components"];
   reason?: string;
 }): Promise<HostManagedComponentRolloutResponse> {
-  const row = await loadHostForStartStop(id, account_id);
-  assertHostRunningForUpgrade(row);
-  const requestedProjectHostRollout = components.includes("project-host");
-  const client = await hostControlClient(id, 60_000);
-  const rolloutStartedAt = Date.now();
-  const response = await client.rolloutManagedComponents({
+  return await rolloutHostManagedComponentsInternalHelper({
+    account_id,
+    id,
     components,
     reason,
+    loadHostForStartStop,
+    assertHostRunningForUpgrade,
+    hostControlClient,
+    waitForHostHeartbeatAfter,
+    installedProjectHostArtifactVersion,
+    recordProjectHostLocalRollbackInternal,
+    project_host_local_rollback_error_code:
+      PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE,
+    setLastKnownGoodArtifactVersionInternal,
+    runtimeDeploymentsForComponentRollout,
+    requestedByForRuntimeDeployments,
+    setProjectHostRuntimeDeployments,
   });
-  let refreshedRow = row;
-  if (requestedProjectHostRollout) {
-    const baselineSeen = row?.last_seen
-      ? new Date(row.last_seen as any).getTime()
-      : 0;
-    const since = Math.max(baselineSeen, rolloutStartedAt);
-    await waitForHostHeartbeatAfter({ host_id: id, since });
-    refreshedRow = await loadHostForStartStop(id, account_id);
-  }
-  const desiredVersion =
-    `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
-    undefined;
-  const observedProjectHostVersion =
-    installedProjectHostArtifactVersion(refreshedRow);
-  if (requestedProjectHostRollout && desiredVersion) {
-    if (
-      observedProjectHostVersion &&
-      observedProjectHostVersion !== desiredVersion
-    ) {
-      const automaticRollback = await recordProjectHostLocalRollbackInternal({
-        account_id,
-        id,
-        version: observedProjectHostVersion,
-        reason: "automatic_project_host_local_rollback",
-      });
-      const err = Object.assign(
-        new Error(
-          `project-host rollout converged to ${observedProjectHostVersion} instead of desired ${desiredVersion}`,
-        ),
-        {
-          code: PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE,
-          automaticRollback,
-        },
-      );
-      throw err;
-    }
-    await setLastKnownGoodArtifactVersionInternal({
-      host_id: refreshedRow.id,
-      row: refreshedRow,
-      artifact: "project-host",
-      version: observedProjectHostVersion ?? desiredVersion,
-    });
-  }
-  const runtimeDeployments = runtimeDeploymentsForComponentRollout({
-    components,
-    desired_version: desiredVersion,
-    reason,
-  });
-  if (runtimeDeployments.length) {
-    await setProjectHostRuntimeDeployments({
-      scope_type: "host",
-      host_id: row.id,
-      requested_by: requestedByForRuntimeDeployments({ account_id, row }),
-      deployments: runtimeDeployments,
-      replace: false,
-    });
-  }
-  return response;
 }
 
 export async function deleteHost({
