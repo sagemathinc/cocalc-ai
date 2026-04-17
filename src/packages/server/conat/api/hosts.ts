@@ -41,9 +41,7 @@ import type {
   ProjectCopyRow,
   ProjectCopyState,
 } from "@cocalc/conat/hub/api/projects";
-import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@cocalc/conat/auth/project-host-token";
 import getLogger from "@cocalc/backend/logger";
-import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
@@ -63,7 +61,6 @@ import {
 } from "@cocalc/server/cloud";
 import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import isBanned from "@cocalc/server/accounts/is-banned";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import {
   gcpSafeName,
@@ -88,7 +85,6 @@ import {
   machineHasGpu,
   normalizeMachineGpuInPlace,
 } from "@cocalc/server/cloud/host-gpu";
-import { desiredHostState } from "@cocalc/server/cloud/spot-restore";
 import {
   revokeConnector,
   createPairingTokenForHost,
@@ -116,7 +112,6 @@ import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
-import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { getLLMUsageStatus } from "@cocalc/server/llm/usage-status";
 import { computeUsageUnits } from "@cocalc/server/llm/usage-units";
@@ -125,20 +120,11 @@ import {
   isCoreLanguageModel,
   type LanguageModelCore,
 } from "@cocalc/util/db-schema/llm-utils";
-import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { type RootfsUploadedArtifactResult } from "@cocalc/util/rootfs-images";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import {
-  resolveHostBay,
-  resolveProjectBay,
-} from "@cocalc/server/inter-bay/directory";
+import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
-import {
-  assertAccountProjectHostTokenProjectAccess,
-  assertProjectHostAgentTokenAccess,
-  hasAccountProjectHostTokenHostAccess,
-} from "./project-host-token-auth";
 import {
   assertProjectHostUpgradeIsExclusive,
   hostManagedComponentRolloutDedupeKey,
@@ -211,6 +197,11 @@ import {
   loadHostForDrainInternal,
   resolveDrainParallelInternal,
 } from "./hosts-drain";
+import {
+  issueProjectHostAgentAuthTokenInternalHelper,
+  issueProjectHostAuthTokenLocalHelper,
+  resolveHostConnectionLocalHelper,
+} from "./hosts-connection-auth";
 import {
   computeHostOperationalAvailability,
   defaultInterruptionRestorePolicy,
@@ -853,106 +844,6 @@ async function assertHostCredentialProjectAccess({
   }
 }
 
-async function assertAccountCanIssueProjectHostToken({
-  account_id,
-  host_id,
-  project_id,
-}: {
-  account_id: string;
-  host_id: string;
-  project_id?: string;
-}): Promise<void> {
-  if (await isAdmin(account_id)) {
-    return;
-  }
-
-  // If project_id is supplied, require collaborator access and verify placement.
-  if (project_id) {
-    await assertAccountProjectHostTokenProjectAccess({
-      account_id,
-      host_id,
-      project_id,
-    });
-    return;
-  }
-
-  // Host owner/collaborator controls are also valid authorization paths.
-  try {
-    await loadHostForListing(host_id, account_id);
-    return;
-  } catch {
-    // continue to project-based fallback check
-  }
-
-  // Fallback: allow if this account collaborates on any project hosted here.
-  if (
-    !(await hasAccountProjectHostTokenHostAccess({
-      account_id,
-      host_id,
-    }))
-  ) {
-    throw new Error("not authorized for project-host access token");
-  }
-}
-
-async function assertHostCanIssueProjectHostAgentToken({
-  host_id,
-  account_id,
-  project_id,
-}: {
-  host_id: string;
-  account_id: string;
-  project_id: string;
-}) {
-  await assertProjectHostAgentTokenAccess({
-    host_id,
-    account_id,
-    project_id,
-  });
-}
-
-async function syncProjectUsersOnHostForBrowserAccess({
-  account_id,
-  project_id,
-  expected_host_id,
-}: {
-  account_id: string;
-  project_id: string;
-  expected_host_id: string;
-}): Promise<void> {
-  const hostBay = await resolveHostBay(expected_host_id);
-  if (hostBay && hostBay.bay_id !== getConfiguredBayId()) {
-    return;
-  }
-  const ownership = await resolveProjectBay(project_id);
-  if (ownership && ownership.bay_id !== getConfiguredBayId()) {
-    const remote = await getInterBayBridge()
-      .projectReference(ownership.bay_id, {
-        timeout_ms: 15_000,
-      })
-      .get({
-        account_id,
-        project_id,
-      });
-    if (!remote) {
-      throw new Error("not authorized for project-host access token");
-    }
-    if (remote.host_id !== expected_host_id) {
-      throw new Error("project is not assigned to the requested host");
-    }
-    const client = await hostControlClient(expected_host_id);
-    await client.updateProjectUsers({
-      project_id,
-      users: remote.users ?? {},
-    });
-    return;
-  }
-  await syncProjectUsersOnHost({
-    project_id,
-    expected_host_id,
-  });
-}
-
 export async function issueProjectHostAuthToken({
   account_id,
   host_id,
@@ -1004,36 +895,13 @@ export async function issueProjectHostAuthTokenLocal({
   expires_at: number;
 }> {
   const owner = requireAccount(account_id);
-  if (!host_id) {
-    throw new Error("host_id must be specified");
-  }
-  if (await isBanned(owner)) {
-    throw new Error("account is banned");
-  }
-
-  await assertAccountCanIssueProjectHostToken({
+  return await issueProjectHostAuthTokenLocalHelper({
     account_id: owner,
     host_id,
     project_id,
-  });
-  if (project_id) {
-    // Keep project-host local ACL up to date before issuing browser token.
-    // This is best-effort fast path for grant/revoke propagation.
-    await syncProjectUsersOnHostForBrowserAccess({
-      account_id: owner,
-      project_id,
-      expected_host_id: host_id,
-    });
-  }
-
-  const { token, expires_at } = issueProjectHostAuthTokenJwt({
-    account_id: owner,
-    host_id,
     ttl_seconds,
-    // Hub signs with Ed25519 private key; project-host verifies with public key.
-    private_key: getProjectHostAuthTokenPrivateKey(),
+    loadHostForListing,
   });
-  return { host_id, token, expires_at };
 }
 
 export async function issueProjectHostAgentAuthToken({
@@ -1055,22 +923,12 @@ export async function issueProjectHostAgentAuthToken({
   if (!resolvedHostId) {
     throw new Error("host_id must be specified");
   }
-  await assertHostCanIssueProjectHostAgentToken({
+  return await issueProjectHostAgentAuthTokenInternalHelper({
     host_id: resolvedHostId,
     account_id,
     project_id,
-  });
-  await syncProjectUsersOnHost({
-    project_id,
-    expected_host_id: resolvedHostId,
-  });
-  const { token, expires_at } = issueProjectHostAuthTokenJwt({
-    account_id,
-    host_id: resolvedHostId,
     ttl_seconds,
-    private_key: getProjectHostAuthTokenPrivateKey(),
   });
-  return { host_id: resolvedHostId, token, expires_at };
 }
 
 function normalizeExternalCredentialSelector({
@@ -1752,118 +1610,12 @@ export async function resolveHostConnectionLocal({
   allowMissing?: boolean;
 }): Promise<HostConnectionInfo | undefined> {
   const owner = requireAccount(account_id);
-  if (!host_id) {
-    throw new Error("host_id must be specified");
-  }
-  const { rows } = await pool().query(
-    `SELECT id, bay_id, name, public_url, internal_url, ssh_server, metadata, tier, status, last_seen
-     FROM project_hosts
-     WHERE id=$1 AND deleted IS NULL`,
-    [host_id],
-  );
-  const row = rows[0];
-  if (!row) {
-    if (allowMissing) {
-      return undefined;
-    }
-    throw new Error("host not found");
-  }
-  const metadata = row.metadata ?? {};
-  const rowOwner = metadata.owner ?? "";
-  const collaborators = (metadata.collaborators ?? []) as string[];
-  const isOwner = rowOwner === owner;
-  const isCollab = collaborators.includes(owner);
-  const isShared = row.tier != null;
-  const membership = await loadMembership(owner);
-  const userTier = getUserHostTier(membership.entitlements);
-  const placement = computePlacementPermission({
-    tier: row.tier,
-    userTier,
-    isOwner,
-    isCollab,
+  return await resolveHostConnectionLocalHelper({
+    account_id: owner,
+    host_id,
+    allowMissing,
+    loadMembership,
   });
-  if (!isOwner && !isCollab && !isShared) {
-    const { rows: projectRows } = await pool().query(
-      `SELECT 1
-       FROM projects
-       WHERE host_id=$1 AND users ? $2
-       LIMIT 1`,
-      [host_id, owner],
-    );
-    if (!projectRows.length) {
-      throw new Error("not authorized");
-    }
-  }
-  const machine = metadata?.machine ?? {};
-  const selfHostMode = machine?.metadata?.self_host_mode;
-  const effectiveSelfHostMode =
-    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
-  const isLocalSelfHost =
-    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
-
-  let connect_url: string | null = null;
-  let ssh_server: string | null = row.ssh_server ?? null;
-  let local_proxy = false;
-  let ready = false;
-  const availability = computeHostOperationalAvailability(row);
-  const normalizedStatus =
-    row.status === "active" ? "running" : (row.status ?? null);
-  const pricingModel =
-    normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand";
-  const interruptionRestorePolicy =
-    normalizeHostInterruptionRestorePolicy(
-      metadata.interruption_restore_policy,
-    ) ?? defaultInterruptionRestorePolicy(pricingModel);
-  const lastSeenIso = row.last_seen
-    ? new Date(row.last_seen).toISOString()
-    : undefined;
-  if (isLocalSelfHost) {
-    local_proxy = true;
-    ready = !!metadata?.self_host?.http_tunnel_port;
-    const sshPort = metadata?.self_host?.ssh_tunnel_port;
-    if (sshPort) {
-      const sshHost = resolveOnPremHost();
-      ssh_server = `${sshHost}:${sshPort}`;
-    }
-  } else {
-    connect_url = row.public_url ?? row.internal_url ?? null;
-    ready = !!connect_url;
-  }
-
-  const response = {
-    host_id: row.id,
-    bay_id:
-      typeof row.bay_id === "string" && row.bay_id.trim()
-        ? row.bay_id.trim()
-        : null,
-    name: row.name ?? null,
-    can_place: placement.can_place,
-    region: row.region ?? null,
-    size: typeof metadata?.size === "string" ? metadata.size : null,
-    ssh_server,
-    connect_url,
-    host_session_id:
-      typeof metadata?.host_session_id === "string" &&
-      metadata.host_session_id.trim()
-        ? metadata.host_session_id.trim()
-        : undefined,
-    local_proxy,
-    ready,
-    status: normalizedStatus,
-    tier: typeof row.tier === "number" ? row.tier : null,
-    pricing_model: pricingModel,
-    interruption_restore_policy: interruptionRestorePolicy,
-    desired_state: desiredHostState({
-      status: normalizedStatus ?? undefined,
-      metadata,
-    }),
-    last_seen: lastSeenIso,
-    online: availability.online,
-    reason_unavailable: availability.operational
-      ? undefined
-      : availability.reason_unavailable,
-  };
-  return response as HostConnectionInfo;
 }
 
 export async function listHostProjects({
