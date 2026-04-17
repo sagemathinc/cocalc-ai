@@ -20,6 +20,7 @@ import { useHostProviders } from "./use-host-providers";
 import { useHostSelection } from "./use-host-selection";
 import { useHostRootfsImages } from "./use-host-rootfs-images";
 import { useHostSoftwareVersions } from "./use-host-software-versions";
+import { useHostSoftwareVersionCatalog } from "./use-host-software-version-catalog";
 import { useHostRuntimeDeploymentStatus } from "./use-host-runtime-deployment-status";
 import { useParallelOps } from "./use-parallel-ops";
 import { formatHostUpgradeFailureMessage } from "./host-upgrade-errors";
@@ -49,11 +50,13 @@ const HOSTS_SORT_FIELD_STORAGE_KEY = "cocalc:hosts:sortField";
 const HOSTS_SORT_DIRECTION_STORAGE_KEY = "cocalc:hosts:sortDirection";
 const HOSTS_AUTO_RESORT_STORAGE_KEY = "cocalc:hosts:autoResort";
 const HOSTS_PARALLEL_LIMITS_STORAGE_KEY = "cocalc:hosts:parallelLimits";
+const HOSTS_RUNTIME_VERSIONS_STORAGE_KEY = "cocalc:hosts:runtimeVersions";
 const DEFAULT_HOSTS_VIEW_MODE: HostListViewMode = "grid";
 const DEFAULT_SORT_FIELD: HostSortField = "name";
 const DEFAULT_SORT_DIRECTION: HostSortDirection = "asc";
 const DEFAULT_AUTO_RESORT = false;
 const DEFAULT_SHOW_PARALLEL_LIMITS = false;
+const DEFAULT_SHOW_RUNTIME_VERSIONS = false;
 const HOST_UPGRADE_RECOVERY_WINDOW_MS = 2 * 60 * 1000;
 
 function normalizeUpgradeBaseUrl(base_url?: string): string | null {
@@ -220,6 +223,26 @@ function persistShowParallelLimits(value: boolean) {
   );
 }
 
+function readShowRuntimeVersions(): boolean {
+  if (typeof window === "undefined") {
+    return DEFAULT_SHOW_RUNTIME_VERSIONS;
+  }
+  const raw = window.localStorage.getItem(HOSTS_RUNTIME_VERSIONS_STORAGE_KEY);
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return DEFAULT_SHOW_RUNTIME_VERSIONS;
+}
+
+function persistShowRuntimeVersions(value: boolean) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(
+    HOSTS_RUNTIME_VERSIONS_STORAGE_KEY,
+    value ? "true" : "false",
+  );
+}
+
 export const useHostsPageViewModel = () => {
   const hub = webapp_client.conat_client.hub;
   const [form] = Form.useForm();
@@ -230,6 +253,9 @@ export const useHostsPageViewModel = () => {
   const [showParallelLimits, setShowParallelLimits] = React.useState(
     readShowParallelLimits,
   );
+  const [showRuntimeVersions, setShowRuntimeVersions] = React.useState(
+    readShowRuntimeVersions,
+  );
   const parallelOps = useParallelOps(hub, {
     enabled: isAdmin && showParallelLimits,
   });
@@ -237,6 +263,9 @@ export const useHostsPageViewModel = () => {
   React.useEffect(() => {
     persistShowParallelLimits(showParallelLimits);
   }, [showParallelLimits]);
+  React.useEffect(() => {
+    persistShowRuntimeVersions(showRuntimeVersions);
+  }, [showRuntimeVersions]);
 
   const [fastPoll, setFastPoll] = React.useState(false);
   const [setupOpen, setSetupOpen] = React.useState(false);
@@ -566,6 +595,10 @@ export const useHostsPageViewModel = () => {
   }, []);
   const softwareVersions = useHostSoftwareVersions(hub, {
     enabled: drawerOpen && !!selected,
+    hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
+  });
+  const runtimeVersionCatalog = useHostSoftwareVersionCatalog(hub, {
+    enabled: isAdmin && showRuntimeVersions,
     hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
   });
   const runtimeDeployments = useHostRuntimeDeploymentStatus(hub, {
@@ -1081,6 +1114,8 @@ export const useHostsPageViewModel = () => {
     setShowAdmin,
     showParallelLimits,
     setShowParallelLimits,
+    showRuntimeVersions,
+    setShowRuntimeVersions,
     showDeleted,
     setShowDeleted,
     sortField,
@@ -1092,6 +1127,12 @@ export const useHostsPageViewModel = () => {
     providerCapabilities:
       catalog?.provider_capabilities ?? selfHostCatalog?.provider_capabilities,
     parallelOps: showParallelLimits ? parallelOps : undefined,
+    runtimeVersions: showRuntimeVersions
+      ? {
+          ...runtimeVersionCatalog,
+          hubSourceLabel: baseUrl ? `${baseUrl}/software` : undefined,
+        }
+      : undefined,
   });
   const hostDrawerVm = useHostDrawerViewModel({
     open: drawerOpen,

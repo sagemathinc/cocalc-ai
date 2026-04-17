@@ -21,7 +21,11 @@ import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
-import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
+import type {
+  Host,
+  HostCatalog,
+  HostSoftwareAvailableVersion,
+} from "@cocalc/conat/hub/api/hosts";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import { HostCard } from "./host-card";
 import {
@@ -50,6 +54,7 @@ import { isHostOpActive } from "../hooks/use-host-ops";
 import { UpgradeConfirmContent } from "./upgrade-confirmation";
 import { HostParallelOpsSummary } from "./host-parallel-ops-summary";
 import { HostCurrentMetrics } from "./host-current-metrics";
+import { HostRuntimeVersionsPanel } from "./host-runtime-versions-panel";
 import { search_match, search_split } from "@cocalc/util/misc";
 import type {
   HostListViewMode,
@@ -235,6 +240,8 @@ type HostListViewModel = {
   setShowAdmin: (value: boolean) => void;
   showParallelLimits: boolean;
   setShowParallelLimits: (value: boolean) => void;
+  showRuntimeVersions: boolean;
+  setShowRuntimeVersions: (value: boolean) => void;
   showDeleted: boolean;
   setShowDeleted: (value: boolean) => void;
   sortField: HostSortField;
@@ -261,6 +268,15 @@ type HostListViewModel = {
       scope_type?: "global" | "provider" | "project_host";
       scope_id?: string;
     }) => void | Promise<void>;
+  };
+  runtimeVersions?: {
+    loading?: boolean;
+    configured: HostSoftwareAvailableVersion[];
+    configuredError?: string;
+    hub: HostSoftwareAvailableVersion[];
+    hubError?: string;
+    hubSourceLabel?: string;
+    refresh: () => void | Promise<void>;
   };
 };
 
@@ -293,6 +309,8 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     setShowAdmin,
     showParallelLimits,
     setShowParallelLimits,
+    showRuntimeVersions,
+    setShowRuntimeVersions,
     showDeleted,
     setShowDeleted,
     sortField,
@@ -303,6 +321,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     setAutoResort,
     providerCapabilities,
     parallelOps,
+    runtimeVersions,
   } = vm;
 
   const [selectedRowKeys, setSelectedRowKeys] = React.useState<string[]>([]);
@@ -1203,6 +1222,18 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             <Space size="small" align="center" wrap>
               <Switch
                 size="small"
+                checked={showRuntimeVersions}
+                onChange={setShowRuntimeVersions}
+              />
+              <Typography.Text style={{ whiteSpace: "nowrap" }}>
+                Runtime Versions
+              </Typography.Text>
+            </Space>
+          )}
+          {isAdmin && (
+            <Space size="small" align="center" wrap>
+              <Switch
+                size="small"
                 checked={showAdmin}
                 onChange={setShowAdmin}
               />
@@ -1322,6 +1353,18 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           onRefresh={parallelOps.refresh}
           onSetLimit={parallelOps.setLimit}
           onClearLimit={parallelOps.clearLimit}
+        />
+      ) : null}
+      {isAdmin && showRuntimeVersions && runtimeVersions ? (
+        <HostRuntimeVersionsPanel
+          hosts={hosts}
+          loading={runtimeVersions.loading}
+          configured={runtimeVersions.configured}
+          configuredError={runtimeVersions.configuredError}
+          hub={runtimeVersions.hub}
+          hubError={runtimeVersions.hubError}
+          hubSourceLabel={runtimeVersions.hubSourceLabel}
+          onRefresh={runtimeVersions.refresh}
         />
       ) : null}
       {bulkActions}

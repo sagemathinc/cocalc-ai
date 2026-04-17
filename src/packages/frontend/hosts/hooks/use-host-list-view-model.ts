@@ -1,4 +1,8 @@
-import type { Host } from "@cocalc/conat/hub/api/hosts";
+import type {
+  Host,
+  HostCatalog,
+  HostSoftwareAvailableVersion,
+} from "@cocalc/conat/hub/api/hosts";
 import type {
   HostListViewMode,
   HostSortDirection,
@@ -7,7 +11,6 @@ import type {
   HostDeleteOptions,
   HostDrainOptions,
 } from "../types";
-import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLroState } from "./use-host-ops";
 
@@ -44,6 +47,8 @@ type UseHostListViewModelArgs = {
   setShowAdmin: (value: boolean) => void;
   showParallelLimits: boolean;
   setShowParallelLimits: (value: boolean) => void;
+  showRuntimeVersions: boolean;
+  setShowRuntimeVersions: (value: boolean) => void;
   showDeleted: boolean;
   setShowDeleted: (value: boolean) => void;
   sortField: HostSortField;
@@ -70,6 +75,15 @@ type UseHostListViewModelArgs = {
       scope_type?: "global" | "provider" | "project_host";
       scope_id?: string;
     }) => void | Promise<void>;
+  };
+  runtimeVersions?: {
+    loading?: boolean;
+    configured: HostSoftwareAvailableVersion[];
+    configuredError?: string;
+    hub: HostSoftwareAvailableVersion[];
+    hubError?: string;
+    hubSourceLabel?: string;
+    refresh: () => void | Promise<void>;
   };
 };
 
@@ -99,6 +113,8 @@ export const useHostListViewModel = ({
   setShowAdmin,
   showParallelLimits,
   setShowParallelLimits,
+  showRuntimeVersions,
+  setShowRuntimeVersions,
   showDeleted,
   setShowDeleted,
   sortField,
@@ -109,6 +125,7 @@ export const useHostListViewModel = ({
   setAutoResort,
   providerCapabilities,
   parallelOps,
+  runtimeVersions,
 }: UseHostListViewModelArgs) => {
   return {
     hosts,
@@ -136,6 +153,8 @@ export const useHostListViewModel = ({
     setShowAdmin,
     showParallelLimits,
     setShowParallelLimits,
+    showRuntimeVersions,
+    setShowRuntimeVersions,
     showDeleted,
     setShowDeleted,
     sortField,
@@ -146,5 +165,6 @@ export const useHostListViewModel = ({
     setAutoResort,
     providerCapabilities,
     parallelOps,
+    runtimeVersions,
   };
 };
