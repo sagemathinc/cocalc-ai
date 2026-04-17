@@ -90,6 +90,22 @@ function normalizeUpgradeArtifacts(
   ).sort();
 }
 
+function runtimeArtifactForSoftwareArtifact(
+  artifact: HostSoftwareArtifact,
+): HostRuntimeArtifact {
+  switch (artifact) {
+    case "project":
+    case "project-bundle":
+      return "project-bundle";
+    case "project-host":
+      return "project-host";
+    case "tools":
+      return "tools";
+    default:
+      return "project-bundle";
+  }
+}
+
 function lroTimestampMs(value?: Date | string | null): number {
   if (!value) return 0;
   const ts = new Date(value).getTime();
@@ -601,6 +617,8 @@ export const useHostsPageViewModel = () => {
     enabled: isAdmin && showRuntimeVersions,
     hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
   });
+  const [settingClusterDefaultKey, setSettingClusterDefaultKey] =
+    React.useState<string>();
   const runtimeDeployments = useHostRuntimeDeploymentStatus(hub, {
     hostId: drawerOpen ? selected?.id : undefined,
     enabled: drawerOpen && !!selected,
@@ -697,6 +715,62 @@ export const useHostsPageViewModel = () => {
       }
     },
     [hub, refresh, refreshHostOps, runtimeDeployments],
+  );
+  const setClusterRuntimeArtifactDeployment = React.useCallback(
+    async ({
+      artifact,
+      desired_version,
+      source,
+    }: {
+      artifact: HostSoftwareArtifact;
+      desired_version: string;
+      source: "configured" | "hub";
+    }) => {
+      if (!hub.hosts.setHostRuntimeDeployments) {
+        return;
+      }
+      const runtimeArtifact = runtimeArtifactForSoftwareArtifact(artifact);
+      const actionKey = `${runtimeArtifact}:${desired_version}`;
+      setSettingClusterDefaultKey(actionKey);
+      try {
+        await hub.hosts.setHostRuntimeDeployments({
+          scope_type: "global",
+          deployments: [
+            {
+              target_type: "artifact",
+              target: runtimeArtifact,
+              desired_version,
+              rollout_reason: `frontend ${source} cluster default`,
+            },
+          ],
+          replace: false,
+        });
+        await Promise.all([
+          refresh(),
+          runtimeVersionCatalog.refresh(),
+          refreshHostOps(),
+        ]);
+        alert_message({
+          type: "success",
+          message: `Set cluster default for ${runtimeArtifact} to ${desired_version}. Running hosts will reconcile automatically.`,
+          timeout: 6,
+        });
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `Failed to set cluster default for ${runtimeArtifact}: ${
+            err instanceof Error ? err.message : `${err}`
+          }`,
+          timeout: 20,
+        });
+        console.error(err);
+      } finally {
+        setSettingClusterDefaultKey((current) =>
+          current === actionKey ? undefined : current,
+        );
+      }
+    },
+    [hub, refresh, refreshHostOps, runtimeVersionCatalog],
   );
   const rollbackRuntimeArtifact = React.useCallback(
     async ({
@@ -1131,6 +1205,8 @@ export const useHostsPageViewModel = () => {
       ? {
           ...runtimeVersionCatalog,
           hubSourceLabel: baseUrl ? `${baseUrl}/software` : undefined,
+          onSetClusterDefault: setClusterRuntimeArtifactDeployment,
+          settingClusterDefaultKey,
         }
       : undefined,
   });

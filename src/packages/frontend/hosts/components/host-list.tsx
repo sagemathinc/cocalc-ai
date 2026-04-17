@@ -24,6 +24,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import type {
   Host,
   HostCatalog,
+  HostRuntimeDeploymentRecord,
   HostSoftwareAvailableVersion,
 } from "@cocalc/conat/hub/api/hosts";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
@@ -275,8 +276,16 @@ type HostListViewModel = {
     configuredError?: string;
     hub: HostSoftwareAvailableVersion[];
     hubError?: string;
+    globalDeployments: HostRuntimeDeploymentRecord[];
+    globalDeploymentsError?: string;
     hubSourceLabel?: string;
     refresh: () => void | Promise<void>;
+    onSetClusterDefault?: (opts: {
+      artifact: HostSoftwareAvailableVersion["artifact"];
+      desired_version: string;
+      source: "configured" | "hub";
+    }) => void | Promise<void>;
+    settingClusterDefaultKey?: string;
   };
 };
 
@@ -1363,8 +1372,12 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           configuredError={runtimeVersions.configuredError}
           hub={runtimeVersions.hub}
           hubError={runtimeVersions.hubError}
+          globalDeployments={runtimeVersions.globalDeployments}
+          globalDeploymentsError={runtimeVersions.globalDeploymentsError}
           hubSourceLabel={runtimeVersions.hubSourceLabel}
           onRefresh={runtimeVersions.refresh}
+          onSetClusterDefault={runtimeVersions.onSetClusterDefault}
+          settingClusterDefaultKey={runtimeVersions.settingClusterDefaultKey}
         />
       ) : null}
       {bulkActions}

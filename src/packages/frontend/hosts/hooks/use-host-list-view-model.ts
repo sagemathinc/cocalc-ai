@@ -1,6 +1,7 @@
 import type {
   Host,
   HostCatalog,
+  HostRuntimeDeploymentRecord,
   HostSoftwareAvailableVersion,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -82,8 +83,16 @@ type UseHostListViewModelArgs = {
     configuredError?: string;
     hub: HostSoftwareAvailableVersion[];
     hubError?: string;
+    globalDeployments: HostRuntimeDeploymentRecord[];
+    globalDeploymentsError?: string;
     hubSourceLabel?: string;
     refresh: () => void | Promise<void>;
+    onSetClusterDefault?: (opts: {
+      artifact: HostSoftwareAvailableVersion["artifact"];
+      desired_version: string;
+      source: "configured" | "hub";
+    }) => void | Promise<void>;
+    settingClusterDefaultKey?: string;
   };
 };
 

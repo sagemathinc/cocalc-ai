@@ -1,9 +1,20 @@
-import { Alert, Button, Card, Space, Table, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Popconfirm,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components";
 import type {
   Host,
+  HostRuntimeArtifact,
+  HostRuntimeDeploymentRecord,
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
 } from "@cocalc/conat/hub/api/hosts";
@@ -17,8 +28,16 @@ type HostRuntimeVersionsPanelProps = {
   configuredError?: string;
   hub: HostSoftwareAvailableVersion[];
   hubError?: string;
+  globalDeployments: HostRuntimeDeploymentRecord[];
+  globalDeploymentsError?: string;
   hubSourceLabel?: string;
   onRefresh: () => void | Promise<void>;
+  onSetClusterDefault?: (opts: {
+    artifact: HostSoftwareArtifact;
+    desired_version: string;
+    source: "configured" | "hub";
+  }) => void | Promise<void>;
+  settingClusterDefaultKey?: string;
 };
 
 type VersionRow = HostSoftwareAvailableVersion & {
@@ -39,6 +58,22 @@ function artifactLabel(artifact: HostSoftwareArtifact): string {
       return "Project bundle";
     default:
       return artifact;
+  }
+}
+
+function toRuntimeArtifact(
+  artifact: HostSoftwareArtifact,
+): HostRuntimeArtifact {
+  switch (artifact) {
+    case "project":
+    case "project-bundle":
+      return "project-bundle";
+    case "project-host":
+      return "project-host";
+    case "tools":
+      return "tools";
+    default:
+      return "project-bundle";
   }
 }
 
@@ -110,6 +145,25 @@ function buildRows({
   );
 }
 
+function buildGlobalDefaultMap(
+  deployments: HostRuntimeDeploymentRecord[],
+): Map<HostRuntimeArtifact, HostRuntimeDeploymentRecord> {
+  const map = new Map<HostRuntimeArtifact, HostRuntimeDeploymentRecord>();
+  for (const deployment of deployments) {
+    if (deployment.target_type !== "artifact") continue;
+    const target = deployment.target as HostRuntimeArtifact;
+    if (
+      target !== "project-host" &&
+      target !== "project-bundle" &&
+      target !== "tools"
+    ) {
+      continue;
+    }
+    map.set(target, deployment);
+  }
+  return map;
+}
+
 export const HostRuntimeVersionsPanel: React.FC<
   HostRuntimeVersionsPanelProps
 > = ({
@@ -119,12 +173,20 @@ export const HostRuntimeVersionsPanel: React.FC<
   configuredError,
   hub,
   hubError,
+  globalDeployments,
+  globalDeploymentsError,
   hubSourceLabel,
   onRefresh,
+  onSetClusterDefault,
+  settingClusterDefaultKey,
 }) => {
   const rows = React.useMemo(
     () => buildRows({ hosts, configured, hub }),
     [configured, hosts, hub],
+  );
+  const globalDefaultMap = React.useMemo(
+    () => buildGlobalDefaultMap(globalDeployments),
+    [globalDeployments],
   );
 
   const columns: ColumnsType<VersionRow> = React.useMemo(
@@ -197,8 +259,60 @@ export const HostRuntimeVersionsPanel: React.FC<
             <Typography.Text type="secondary">No message</Typography.Text>
           ),
       },
+      {
+        title: "Cluster Default",
+        key: "cluster_default",
+        width: 220,
+        render: (_value, row) => {
+          const runtimeArtifact = toRuntimeArtifact(row.artifact);
+          const current = globalDefaultMap.get(runtimeArtifact);
+          const isCurrentDefault =
+            current?.desired_version != null &&
+            current.desired_version === row.version;
+          const actionKey = `${runtimeArtifact}:${row.version}`;
+          if (isCurrentDefault) {
+            return (
+              <Space size={4} direction="vertical">
+                <Tag color="green">Cluster default</Tag>
+                <Typography.Text type="secondary">
+                  since <TimeAgo date={current.updated_at} />
+                </Typography.Text>
+              </Space>
+            );
+          }
+          if (!onSetClusterDefault || !row.version) {
+            return <Typography.Text type="secondary">Not set</Typography.Text>;
+          }
+          return (
+            <Popconfirm
+              title={`Set ${artifactLabel(row.artifact)} cluster default?`}
+              description={`Promote ${row.version} from ${row.source === "configured" ? "configured catalog" : "hub /software"} and queue automatic reconcile on running hosts.`}
+              okText="Set default"
+              onConfirm={() =>
+                onSetClusterDefault({
+                  artifact: row.artifact,
+                  desired_version: row.version!,
+                  source: row.source,
+                })
+              }
+            >
+              <Button
+                size="small"
+                loading={settingClusterDefaultKey === actionKey}
+              >
+                Set cluster default
+              </Button>
+            </Popconfirm>
+          );
+        },
+      },
     ],
-    [hubSourceLabel],
+    [
+      globalDefaultMap,
+      hubSourceLabel,
+      onSetClusterDefault,
+      settingClusterDefaultKey,
+    ],
   );
 
   return (
@@ -229,10 +343,19 @@ export const HostRuntimeVersionsPanel: React.FC<
             description={hubError}
           />
         ) : null}
+        {globalDeploymentsError ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Unable to load cluster runtime defaults"
+            description={globalDeploymentsError}
+          />
+        ) : null}
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Published runtime versions across the configured catalog and the local
           hub software feed, annotated with how many running hosts are currently
-          on each version.
+          on each version. Use Set cluster default to promote a version for the
+          fleet; running hosts will reconcile automatically.
           {hubSourceLabel ? ` Hub source: ${hubSourceLabel}.` : ""}
         </Typography.Paragraph>
         <Table<VersionRow>
@@ -247,7 +370,7 @@ export const HostRuntimeVersionsPanel: React.FC<
               ? "Loading runtime versions..."
               : "No published runtime versions found.",
           }}
-          scroll={{ x: 900 }}
+          scroll={{ x: 1120 }}
         />
       </Space>
     </Card>

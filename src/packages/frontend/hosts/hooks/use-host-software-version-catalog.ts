@@ -5,6 +5,7 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import type {
+  HostRuntimeDeploymentRecord,
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
   HostSoftwareChannel,
@@ -20,6 +21,10 @@ type HubClient = {
       arch?: "amd64" | "arm64";
       history_limit?: number;
     }) => Promise<HostSoftwareAvailableVersion[]>;
+    listHostRuntimeDeployments?: (opts: {
+      scope_type: "global" | "host";
+      id?: string;
+    }) => Promise<HostRuntimeDeploymentRecord[]>;
   };
 };
 
@@ -37,6 +42,8 @@ type UseHostSoftwareVersionCatalogResult = {
   configuredError?: string;
   hub: HostSoftwareAvailableVersion[];
   hubError?: string;
+  globalDeployments: HostRuntimeDeploymentRecord[];
+  globalDeploymentsError?: string;
   refresh: () => Promise<void>;
 };
 
@@ -80,6 +87,11 @@ export function useHostSoftwareVersionCatalog(
     HostSoftwareAvailableVersion[]
   >([]);
   const [hubError, setHubError] = useState<string>();
+  const [globalDeployments, setGlobalDeployments] = useState<
+    HostRuntimeDeploymentRecord[]
+  >([]);
+  const [globalDeploymentsError, setGlobalDeploymentsError] =
+    useState<string>();
   const refreshTokenRef = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -88,21 +100,27 @@ export function useHostSoftwareVersionCatalog(
     }
     const token = ++refreshTokenRef.current;
     setLoading(true);
-    const [configuredResult, hubResult] = await Promise.allSettled([
-      hub.hosts.listHostSoftwareVersions({
-        artifacts,
-        channels,
-        history_limit: historyLimit,
-      }),
-      hubSourceBaseUrl
-        ? hub.hosts.listHostSoftwareVersions({
-            base_url: hubSourceBaseUrl,
-            artifacts,
-            channels,
-            history_limit: historyLimit,
-          })
-        : Promise.resolve([]),
-    ]);
+    const [configuredResult, hubResult, globalResult] =
+      await Promise.allSettled([
+        hub.hosts.listHostSoftwareVersions({
+          artifacts,
+          channels,
+          history_limit: historyLimit,
+        }),
+        hubSourceBaseUrl
+          ? hub.hosts.listHostSoftwareVersions({
+              base_url: hubSourceBaseUrl,
+              artifacts,
+              channels,
+              history_limit: historyLimit,
+            })
+          : Promise.resolve([]),
+        hub.hosts.listHostRuntimeDeployments
+          ? hub.hosts.listHostRuntimeDeployments({
+              scope_type: "global",
+            })
+          : Promise.resolve([]),
+      ]);
     if (refreshTokenRef.current !== token) {
       return;
     }
@@ -119,6 +137,13 @@ export function useHostSoftwareVersionCatalog(
     } else {
       setHubVersions([]);
       setHubError(getErrorMessage(hubResult.reason));
+    }
+    if (globalResult.status === "fulfilled") {
+      setGlobalDeployments(globalResult.value);
+      setGlobalDeploymentsError(undefined);
+    } else {
+      setGlobalDeployments([]);
+      setGlobalDeploymentsError(getErrorMessage(globalResult.reason));
     }
     setLoading(false);
   }, [artifacts, channels, enabled, historyLimit, hub, hubSourceBaseUrl]);
@@ -139,6 +164,8 @@ export function useHostSoftwareVersionCatalog(
     configuredError,
     hub: hubVersions,
     hubError,
+    globalDeployments,
+    globalDeploymentsError,
     refresh,
   };
 }
