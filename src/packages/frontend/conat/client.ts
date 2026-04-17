@@ -86,6 +86,8 @@ import { routeProjectHostHttpUrl } from "./project-host-route";
 import {
   ReconnectCoordinator,
   type ReconnectPriority,
+  type ReconnectResourceOptions,
+  type RegisteredReconnectResource,
 } from "./reconnect-coordinator";
 
 export interface ConatConnectionStatus {
@@ -1141,6 +1143,12 @@ export class ConatClient extends EventEmitter {
       priority,
       resetBackoff,
     });
+  };
+
+  registerReconnectResource = (
+    options: ReconnectResourceOptions,
+  ): RegisteredReconnectResource => {
+    return this.reconnectCoordinator.registerResource(options);
   };
 
   // if there is a connection, put it in standby
