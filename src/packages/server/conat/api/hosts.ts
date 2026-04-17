@@ -133,15 +133,7 @@ import {
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { moveProjectToHost } from "@cocalc/server/projects/move";
 import { notifyProjectHostUpdate } from "@cocalc/server/conat/route-project";
-import {
-  issueRootfsReleaseArtifactAccess,
-  recordManagedRootfsRusticReplica,
-} from "@cocalc/server/rootfs/releases";
-import {
-  isManagedRootfsImageName,
-  type RootfsReleaseGcStatus,
-  type RootfsUploadedArtifactResult,
-} from "@cocalc/util/rootfs-images";
+import { type RootfsUploadedArtifactResult } from "@cocalc/util/rootfs-images";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   resolveHostBay,
@@ -222,6 +214,12 @@ import {
   startHostInternalHelper,
   stopHostInternalHelper,
 } from "./hosts-cloud-lifecycle";
+import {
+  enrichHostRootfsImages,
+  getManagedRootfsReleaseArtifactInternal,
+  listManagedRootfsReleaseLifecycleInternal,
+  recordManagedRootfsReleaseReplicaInternal,
+} from "./hosts-rootfs-releases";
 function pool() {
   return getPool();
 }
@@ -318,12 +316,6 @@ async function hostControlClient(host_id: string, timeout?: number) {
   });
 }
 
-type RootfsReleaseLifecycleRow = {
-  release_id: string;
-  runtime_image: string;
-  gc_status: RootfsReleaseGcStatus | null;
-};
-
 function parseTimestampMs(value?: string): number | undefined {
   const text = `${value ?? ""}`.trim();
   if (!text) return undefined;
@@ -366,59 +358,6 @@ function logStatusUpdate(id: string, status: string, source: string) {
     status,
     source,
     stack,
-  });
-}
-
-async function loadRootfsReleaseLifecycleByImage(
-  images: string[],
-): Promise<Map<string, RootfsReleaseLifecycleRow>> {
-  const managedImages = Array.from(
-    new Set(images.filter((image) => isManagedRootfsImageName(image))),
-  );
-  if (managedImages.length === 0) {
-    return new Map();
-  }
-  const { rows } = await pool().query<RootfsReleaseLifecycleRow>(
-    `SELECT release_id, runtime_image, gc_status
-     FROM rootfs_releases
-     WHERE runtime_image = ANY($1::TEXT[])`,
-    [managedImages],
-  );
-  return new Map(
-    rows.map((row) => [
-      `${row.runtime_image ?? ""}`.trim(),
-      {
-        ...row,
-        runtime_image: `${row.runtime_image ?? ""}`.trim(),
-        gc_status: row.gc_status ?? "active",
-      },
-    ]),
-  );
-}
-
-async function enrichHostRootfsImages(
-  entries: HostRootfsImage[],
-): Promise<HostRootfsImage[]> {
-  const lifecycleByImage = await loadRootfsReleaseLifecycleByImage(
-    entries.map((entry) => entry.image),
-  );
-  return entries.map((entry) => {
-    const lifecycle = lifecycleByImage.get(`${entry.image ?? ""}`.trim());
-    const managed = isManagedRootfsImageName(entry.image);
-    const release_gc_status = lifecycle?.gc_status ?? undefined;
-    const centrally_deleted = release_gc_status === "deleted";
-    const host_gc_eligible =
-      centrally_deleted &&
-      (entry.project_count ?? 0) === 0 &&
-      (entry.running_project_count ?? 0) === 0;
-    return {
-      ...entry,
-      managed,
-      release_id: lifecycle?.release_id ?? entry.release_id,
-      release_gc_status,
-      centrally_deleted,
-      host_gc_eligible,
-    };
   });
 }
 
@@ -1474,7 +1413,7 @@ export async function getManagedRootfsReleaseArtifact({
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
-  return await issueRootfsReleaseArtifactAccess({
+  return await getManagedRootfsReleaseArtifactInternal({
     host_id,
     image,
   });
@@ -1492,7 +1431,7 @@ export async function recordManagedRootfsReleaseReplica({
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
-  return await recordManagedRootfsRusticReplica({ image, upload });
+  return await recordManagedRootfsReleaseReplicaInternal({ image, upload });
 }
 
 export async function listManagedRootfsReleaseLifecycle({
@@ -1505,14 +1444,9 @@ export async function listManagedRootfsReleaseLifecycle({
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
-  const lifecycleByImage = await loadRootfsReleaseLifecycleByImage(
-    images ?? [],
-  );
-  return Array.from(lifecycleByImage.values()).map((row) => ({
-    image: row.runtime_image,
-    release_id: row.release_id,
-    gc_status: row.gc_status ?? undefined,
-  }));
+  return await listManagedRootfsReleaseLifecycleInternal({
+    images: images ?? [],
+  });
 }
 
 export async function claimPendingCopies({
