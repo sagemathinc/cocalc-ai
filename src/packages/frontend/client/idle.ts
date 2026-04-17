@@ -18,7 +18,7 @@ const CHECK_INTERVAL = 30 * 1000;
 export class IdleClient {
   private notification_is_visible: boolean = false;
   private client: WebappClient;
-  private idle_timeout: number = 5 * 60 * 1000; // default -- 5 minutes
+  private idle_timeout: number = 30 * 60 * 1000; // default -- 30 minutes
   private idle_time: number = 0;
   private delayed_disconnect?;
   private standbyMode = false;

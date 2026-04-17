@@ -22,7 +22,7 @@ import {
   Text,
 } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
-import { IS_MOBILE, IS_TOUCH } from "@cocalc/frontend/feature";
+import { IS_MOBILE } from "@cocalc/frontend/feature";
 import LLMSelector from "@cocalc/frontend/frame-editors/llm/llm-selector";
 import { labels, LOCALIZATIONS } from "@cocalc/frontend/i18n";
 import {
@@ -121,28 +121,6 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
         </Switch>
       );
     }
-  }
-
-  function render_standby_timeout(): Rendered {
-    if (IS_TOUCH || lite) {
-      return;
-    }
-    return (
-      <LabeledRow
-        label={intl.formatMessage({
-          id: "account.other-settings.standby_timeout",
-          defaultMessage: "Standby timeout",
-        })}
-      >
-        <NumberInput
-          on_change={(n) => on_change("standby_timeout_m", n)}
-          min={1}
-          max={180}
-          unit="minutes"
-          number={props.other_settings.get("standby_timeout_m") ?? 30}
-        />
-      </LabeledRow>
-    );
   }
 
   function render_mask_files(): Rendered {
@@ -473,7 +451,6 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
           }
         >
           {render_confirm()}
-          {render_standby_timeout()}
         </Panel>
 
         <Panel
