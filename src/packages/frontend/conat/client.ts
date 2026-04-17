@@ -344,7 +344,13 @@ export class ConatClient extends EventEmitter {
     if (typeof document === "undefined") {
       return "foreground";
     }
-    return document.visibilityState === "hidden" ? "background" : "foreground";
+    if (document.visibilityState === "hidden") {
+      return "background";
+    }
+    if (typeof document.hasFocus === "function" && !document.hasFocus()) {
+      return "background";
+    }
+    return "foreground";
   };
 
   // Match project subjects in the same way the server auth does:

@@ -32,15 +32,15 @@ export class ReconnectCoordinator extends EventEmitter {
   private pendingDelayMs?: number;
   private pendingPriority?: ReconnectPriority;
   private pendingReason?: string;
-  private readonly visibilityHandler = () => {
-    if (this.visibilityPriority() !== "foreground") {
+  private readonly foregroundStateHandler = () => {
+    if (this.tabPriority() !== "foreground") {
       return;
     }
     if (!this.options.canReconnect() || this.options.isConnected()) {
       return;
     }
     this.requestReconnect({
-      reason: "tab_became_visible",
+      reason: "tab_became_foreground",
       priority: "foreground",
       resetBackoff: true,
     });
@@ -49,7 +49,12 @@ export class ReconnectCoordinator extends EventEmitter {
   constructor(private readonly options: ReconnectCoordinatorOptions) {
     super();
     if (typeof document !== "undefined") {
-      document.addEventListener("visibilitychange", this.visibilityHandler);
+      document.addEventListener(
+        "visibilitychange",
+        this.foregroundStateHandler,
+      );
+      window.addEventListener("focus", this.foregroundStateHandler);
+      window.addEventListener("blur", this.foregroundStateHandler);
     }
   }
 
@@ -57,7 +62,12 @@ export class ReconnectCoordinator extends EventEmitter {
     this.clearReconnectTimer();
     this.cancelReconnectStableReset();
     if (typeof document !== "undefined") {
-      document.removeEventListener("visibilitychange", this.visibilityHandler);
+      document.removeEventListener(
+        "visibilitychange",
+        this.foregroundStateHandler,
+      );
+      window.removeEventListener("focus", this.foregroundStateHandler);
+      window.removeEventListener("blur", this.foregroundStateHandler);
     }
     this.removeAllListeners();
   };
@@ -69,7 +79,7 @@ export class ReconnectCoordinator extends EventEmitter {
   resume = () => {
     this.requestReconnect({
       reason: "resume",
-      priority: this.visibilityPriority(),
+      priority: this.tabPriority(),
       resetBackoff: true,
     });
   };
@@ -81,7 +91,7 @@ export class ReconnectCoordinator extends EventEmitter {
 
   requestReconnect = ({
     reason,
-    priority = this.visibilityPriority(),
+    priority = this.tabPriority(),
     resetBackoff = false,
   }: {
     reason: string;
@@ -116,7 +126,7 @@ export class ReconnectCoordinator extends EventEmitter {
       delay_ms: delay,
       attempt: this.reconnectAttempt,
       priority,
-      visibility: this.visibilityPriority(),
+      visibility: this.tabPriority(),
     });
     this.reconnectTimer = setTimeout(async () => {
       this.clearReconnectTimer();
@@ -134,11 +144,17 @@ export class ReconnectCoordinator extends EventEmitter {
     this.reconnectTimer.unref?.();
   };
 
-  private visibilityPriority = (): ReconnectPriority => {
+  private tabPriority = (): ReconnectPriority => {
     if (typeof document === "undefined") {
       return "foreground";
     }
-    return document.visibilityState === "hidden" ? "background" : "foreground";
+    if (document.visibilityState === "hidden") {
+      return "background";
+    }
+    if (typeof document.hasFocus === "function" && !document.hasFocus()) {
+      return "background";
+    }
+    return "foreground";
   };
 
   private clearReconnectTimer = () => {
