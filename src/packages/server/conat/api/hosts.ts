@@ -220,6 +220,7 @@ import {
   removeSelfHostConnectorInternalHelper,
   setHostDesiredStateInternal as setHostDesiredStateInternalHelper,
 } from "./hosts-teardown";
+import { upgradeHostConnectorInternalHelper } from "./hosts-self-host-connectors";
 function pool() {
   return getPool();
 }
@@ -5517,42 +5518,15 @@ export async function upgradeHostConnector({
   id: string;
   version?: string;
 }): Promise<void> {
-  const row = await loadHostForStartStop(id, account_id);
-  const metadata = row.metadata ?? {};
-  const machine = metadata.machine ?? {};
-  if (machine.cloud !== "self-host") {
-    throw new Error("host is not self-hosted");
-  }
-  const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
-  if (!sshTarget) {
-    throw new Error("missing self-host ssh target");
-  }
-  const owner = metadata.owner ?? account_id;
-  if (!owner) {
-    throw new Error("missing host owner");
-  }
-  const reversePort = await ensureSelfHostReverseTunnel({
-    host_id: row.id,
-    ssh_target: sshTarget,
-  });
-  const tokenInfo = await createPairingTokenForHost({
-    account_id: owner,
-    host_id: row.id,
-    ttlMs: 30 * 60 * 1000,
-  });
-  const { project_hosts_self_host_connector_version } =
-    await getServerSettings();
-  const connectorVersion =
-    version?.trim() ||
-    project_hosts_self_host_connector_version?.trim() ||
-    undefined;
-  await runConnectorInstallOverSsh({
-    host_id: row.id,
-    ssh_target: sshTarget,
-    pairing_token: tokenInfo.token,
-    name: row.name ?? undefined,
-    ssh_port: reversePort,
-    version: connectorVersion,
+  await upgradeHostConnectorInternalHelper({
+    account_id,
+    id,
+    version,
+    loadHostForStartStop,
+    ensureSelfHostReverseTunnel,
+    createPairingTokenForHost,
+    getServerSettings,
+    runConnectorInstallOverSsh,
   });
 }
 
