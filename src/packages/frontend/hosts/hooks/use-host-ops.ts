@@ -8,6 +8,11 @@ import type { DStream } from "@cocalc/conat/sync/dstream";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
 import {
+  bootstrapAccountLroScope,
+  getAccountLroSummaries,
+  subscribeAccountLroSummaryFeed,
+} from "@cocalc/frontend/lro/account-summary-feed";
+import {
   applyLroEvents,
   isDismissed,
   isTerminal,
@@ -15,7 +20,6 @@ import {
 } from "@cocalc/frontend/lro/utils";
 import { lite } from "@cocalc/frontend/lite";
 
-const HOST_LRO_REFRESH_MS = 60_000;
 const HOST_LRO_FULL_REFRESH_MS = 5 * 60_000;
 const TRANSITION_STATUSES = new Set([
   "starting",
@@ -191,6 +195,95 @@ export function useHostOps({
     [getLroStream, updateFromStream],
   );
 
+  const syncFromSummaryCache = useCallback(() => {
+    if (lite) {
+      return;
+    }
+    const hostStatusMap = new Map(
+      hostMetaRef.current.map((host) => [host.id, host.status]),
+    );
+    const visibleHostIds = new Set(hostIdsRef.current);
+    const latestByHost = new Map<string, LroSummary>();
+    for (const summary of getAccountLroSummaries()) {
+      if (
+        summary.scope_type !== "host" ||
+        !visibleHostIds.has(summary.scope_id) ||
+        !summary.kind?.startsWith("host-") ||
+        isDismissed(summary)
+      ) {
+        continue;
+      }
+      const current = latestByHost.get(summary.scope_id);
+      if (!current || toTime(summary) > toTime(current)) {
+        latestByHost.set(summary.scope_id, summary);
+      }
+    }
+    const next: Record<string, HostLroState> = {};
+    const activeOpIds = new Set<string>();
+    for (const [host_id, latest] of latestByHost.entries()) {
+      if (latest.status === "succeeded") {
+        continue;
+      }
+      const status = hostStatusMap.get(host_id);
+      if (
+        status &&
+        !TRANSITION_STATUSES.has(status) &&
+        status !== "error" &&
+        latest.status &&
+        isTerminal(latest.status) &&
+        latest.status !== "failed"
+      ) {
+        continue;
+      }
+      next[host_id] = {
+        op_id: latest.op_id,
+        summary: latest,
+        kind: latest.kind,
+      };
+      if (latest.status === "failed" && !failedRef.current.has(latest.op_id)) {
+        failedRef.current.add(latest.op_id);
+      }
+      if (!isTerminal(latest.status)) {
+        activeOpIds.add(latest.op_id);
+        void ensureStream(host_id, latest.op_id, latest.scope_id);
+      } else {
+        closeStream(latest.op_id);
+      }
+    }
+    setHostOps((prev) => {
+      const merged: Record<string, HostLroState> = {};
+      for (const [hostId, entry] of Object.entries(next)) {
+        const previous = prev[hostId];
+        if (previous && previous.op_id === entry.op_id) {
+          merged[hostId] = {
+            ...entry,
+            last_progress: previous.last_progress ?? entry.last_progress,
+            last_event: previous.last_event ?? entry.last_event,
+            kind: entry.kind ?? previous.kind,
+          };
+        } else {
+          merged[hostId] = entry;
+        }
+      }
+      for (const [hostId, entry] of Object.entries(prev)) {
+        if (
+          merged[hostId] == null &&
+          entry.summary == null &&
+          (streamsRef.current.has(entry.op_id) ||
+            streamInitRef.current.has(entry.op_id))
+        ) {
+          merged[hostId] = entry;
+        }
+      }
+      return merged;
+    });
+    for (const op_id of streamsRef.current.keys()) {
+      if (!activeOpIds.has(op_id)) {
+        closeStream(op_id);
+      }
+    }
+  }, [closeStream, ensureStream]);
+
   const refresh = useCallback(
     async ({ force = false }: { force?: boolean } = {}) => {
       if (lite) {
@@ -203,9 +296,6 @@ export function useHostOps({
         const now = Date.now();
         const ids = hostIdsRef.current;
         const hostMeta = hostMetaRef.current;
-        const hostStatusMap = new Map(
-          hostMeta.map((host) => [host.id, host.status]),
-        );
         const activeHostIds = new Set(Object.keys(hostOpsRef.current));
         const candidates = hostMeta
           .filter((host) => {
@@ -224,88 +314,39 @@ export function useHostOps({
         if (shouldFull) {
           lastFullRefreshRef.current = now;
         }
-        const next: Record<string, HostLroState> = {};
-        const activeOpIds = new Set<string>();
         await Promise.all(
           idsToCheck.map(async (id) => {
             try {
-              const ops = await listLro({
+              await bootstrapAccountLroScope({
                 scope_type: "host",
                 scope_id: id,
                 include_completed: true,
+                listLro,
               });
-              const hostOps = ops
-                .filter(
-                  (op) => op.kind?.startsWith("host-") && !isDismissed(op),
-                )
-                .sort((a, b) => toTime(b) - toTime(a));
-              if (!hostOps.length) {
-                return;
-              }
-              const latest = hostOps[0];
-              if (!latest) return;
-              // If the newest host op succeeded, suppress stale older failures.
-              if (latest.status === "succeeded") {
-                return;
-              }
-              const status = hostStatusMap.get(id);
-              if (
-                status &&
-                !TRANSITION_STATUSES.has(status) &&
-                status !== "error" &&
-                latest.status &&
-                isTerminal(latest.status) &&
-                latest.status !== "failed"
-              ) {
-                return;
-              }
-              next[id] = {
-                op_id: latest.op_id,
-                summary: latest,
-                kind: latest.kind,
-              };
-              if (
-                latest.status === "failed" &&
-                !failedRef.current.has(latest.op_id)
-              ) {
-                failedRef.current.add(latest.op_id);
-              }
-              activeOpIds.add(latest.op_id);
-              await ensureStream(id, latest.op_id, latest.scope_id);
             } catch (err) {
               console.warn("unable to refresh host operations", { id, err });
             }
           }),
         );
-        setHostOps((prev) => {
-          const merged: Record<string, HostLroState> = {};
-          for (const [hostId, entry] of Object.entries(next)) {
-            const previous = prev[hostId];
-            if (previous && previous.op_id === entry.op_id) {
-              merged[hostId] = {
-                ...entry,
-                last_progress: previous.last_progress ?? entry.last_progress,
-                last_event: previous.last_event ?? entry.last_event,
-                kind: entry.kind ?? previous.kind,
-              };
-            } else {
-              merged[hostId] = entry;
-            }
-          }
-          return merged;
-        });
-        for (const op_id of streamsRef.current.keys()) {
-          if (!activeOpIds.has(op_id)) {
-            closeStream(op_id);
-          }
-        }
+        syncFromSummaryCache();
       })();
       refreshInFlight.current = run.finally(() => {
         refreshInFlight.current = null;
       });
       return refreshInFlight.current;
     },
-    [closeStream, ensureStream, listLro],
+    [listLro, syncFromSummaryCache],
+  );
+
+  const handleSummaryFeedUpdate = useCallback(
+    (reason: "change" | "reset") => {
+      if (reason === "reset") {
+        refresh({ force: true }).catch(() => {});
+        return;
+      }
+      syncFromSummaryCache();
+    },
+    [refresh, syncFromSummaryCache],
   );
 
   useEffect(() => {
@@ -334,19 +375,18 @@ export function useHostOps({
       return;
     }
     closedRef.current = false;
-    const timer = setInterval(() => {
-      refresh().catch(() => {});
-    }, HOST_LRO_REFRESH_MS);
+    const unsubscribe = subscribeAccountLroSummaryFeed(handleSummaryFeedUpdate);
+    syncFromSummaryCache();
     return () => {
+      unsubscribe();
       closedRef.current = true;
-      clearInterval(timer);
       for (const stream of streamsRef.current.values()) {
         stream.close();
       }
       streamsRef.current.clear();
       streamInitRef.current.clear();
     };
-  }, [refresh]);
+  }, [handleSummaryFeedUpdate, syncFromSummaryCache]);
 
   const trackHostOp = useCallback(
     (
