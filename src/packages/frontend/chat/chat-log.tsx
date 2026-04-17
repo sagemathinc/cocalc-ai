@@ -274,6 +274,7 @@ export function ChatLog({
     !anyOverlayOpen && (mode === "sidechat" || isForegroundChatTab);
   const canAutoScrollRef = useRef(canAutoScroll);
   canAutoScrollRef.current = canAutoScroll;
+  const keepBottomAnchoredRef = useRef(false);
   const { dates: sortedDates, numChildren } = useMemo<{
     dates: string[];
     numChildren: NumChildren;
@@ -304,12 +305,14 @@ export function ChatLog({
       return;
     }
     if (scrollToIndex == -1) {
+      keepBottomAnchoredRef.current = true;
       scrollToBottomRef?.current?.(true);
     } else {
+      keepBottomAnchoredRef.current = false;
       virtuosoRef.current?.scrollToIndex({ index: scrollToIndex });
     }
     actions.clearScrollRequest();
-  }, [scrollToIndex, canAutoScroll]);
+  }, [scrollToIndex, canAutoScroll, actions]);
 
   useEffect(() => {
     if (!canAutoScroll) {
@@ -334,15 +337,17 @@ export function ChatLog({
       actions.clearScrollRequest();
       return;
     }
+    keepBottomAnchoredRef.current = false;
     virtuosoRef.current?.scrollToIndex({ index });
     actions.clearScrollRequest();
-  }, [scrollToDate, canAutoScroll]);
+  }, [scrollToDate, canAutoScroll, sortedDates, messages, actions]);
 
   useEffect(() => {
     if (!canAutoScroll) return;
     if (searchJumpDate == null || searchJumpDate === "") return;
     const index = sortedDates.indexOf(searchJumpDate);
     if (index < 0) return;
+    keepBottomAnchoredRef.current = false;
     if (USE_VIRTUOSO) {
       virtuosoRef.current?.scrollToIndex({ index, align: "center" });
     } else if (scrollToBottomRef?.current) {
@@ -391,6 +396,7 @@ export function ChatLog({
     if (!generating) return;
     manualScrollRef.current = false;
     setManualScroll(false);
+    keepBottomAnchoredRef.current = true;
     scrollToBottomRef?.current?.(true);
   }, [generating, scrollToBottomRef, canAutoScroll]);
 
@@ -401,6 +407,7 @@ export function ChatLog({
       if (manualScrollRef.current && !force) return;
       manualScrollRef.current = false;
       setManualScroll(false);
+      keepBottomAnchoredRef.current = true;
       const doScroll = () =>
         virtuosoRef.current?.scrollToIndex({ index: Number.MAX_SAFE_INTEGER });
 
@@ -434,6 +441,7 @@ export function ChatLog({
           singleThreadView,
           scrollCacheId,
           scrollToBottomRef,
+          keepBottomAnchoredRef,
           acpState,
           attachedSteersByParentMessageId,
           searchQuery,
@@ -619,6 +627,7 @@ export function MessageList({
   singleThreadView,
   scrollCacheId,
   scrollToBottomRef,
+  keepBottomAnchoredRef,
   acpState,
   attachedSteersByParentMessageId,
   searchQuery,
@@ -650,6 +659,7 @@ export function MessageList({
   singleThreadView?: boolean;
   scrollCacheId?: string;
   scrollToBottomRef?: MutableRefObject<(force?: boolean) => void>;
+  keepBottomAnchoredRef?: MutableRefObject<boolean>;
   acpState?;
   attachedSteersByParentMessageId?: Map<string, AttachedSteerMessage[]>;
   searchQuery?: string;
@@ -713,12 +723,20 @@ export function MessageList({
   };
 
   const forceScrollToBottom = useCallback(() => {
+    if (keepBottomAnchoredRef) {
+      keepBottomAnchoredRef.current = true;
+    }
     if (manualScrollRef) {
       manualScrollRef.current = false;
     }
     setManualScroll?.(false);
     scrollToBottomRef?.current?.(true);
-  }, [manualScrollRef, scrollToBottomRef, setManualScroll]);
+  }, [
+    keepBottomAnchoredRef,
+    manualScrollRef,
+    scrollToBottomRef,
+    setManualScroll,
+  ]);
 
   const renderMessage = (index: number) => {
     const date = sortedDates[index];
@@ -820,6 +838,73 @@ export function MessageList({
 
   useEffect(() => {
     if (!USE_VIRTUOSO) return;
+    const host = listContainerRef.current;
+    if (!host || !scrollToBottomRef || !keepBottomAnchoredRef) return;
+    let frameId: number | undefined;
+    const scheduleBottomRestore = () => {
+      if (manualScrollRef?.current) return;
+      if (!keepBottomAnchoredRef.current) return;
+      if (anyOverlayOpen) return;
+      if (frameId != null) {
+        cancelAnimationFrame(frameId);
+      }
+      frameId = requestAnimationFrame(() => {
+        frameId = undefined;
+        if (manualScrollRef?.current) return;
+        if (!keepBottomAnchoredRef.current) return;
+        if (anyOverlayOpen) return;
+        scrollToBottomRef.current?.(true);
+      });
+    };
+    const onLoad = (event: Event) => {
+      if (!(event.target instanceof HTMLImageElement)) return;
+      scheduleBottomRestore();
+    };
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver((entries) => {
+            for (const entry of entries) {
+              const target = entry.target as HTMLElement | undefined;
+              if (target?.dataset?.itemIndex == null) continue;
+              scheduleBottomRestore();
+              break;
+            }
+          });
+    const observed = new Set<HTMLElement>();
+    const observeVisibleItems = () => {
+      if (!resizeObserver) return;
+      const items = host.querySelectorAll<HTMLElement>("[data-item-index]");
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i];
+        if (observed.has(item)) continue;
+        observed.add(item);
+        resizeObserver.observe(item);
+      }
+    };
+    const mutationObserver = new MutationObserver(() => {
+      observeVisibleItems();
+    });
+    observeVisibleItems();
+    mutationObserver.observe(host, { childList: true, subtree: true });
+    host.addEventListener("load", onLoad, true);
+    return () => {
+      host.removeEventListener("load", onLoad, true);
+      mutationObserver.disconnect();
+      resizeObserver?.disconnect();
+      if (frameId != null) {
+        cancelAnimationFrame(frameId);
+      }
+    };
+  }, [
+    anyOverlayOpen,
+    keepBottomAnchoredRef,
+    manualScrollRef,
+    scrollToBottomRef,
+  ]);
+
+  useEffect(() => {
+    if (!USE_VIRTUOSO) return;
     if (!sortedDates.length) return;
     const id = setTimeout(() => {
       const host = listContainerRef.current;
@@ -892,6 +977,9 @@ export function MessageList({
           manualScrollRef
             ? ({ endIndex }) => {
                 if (endIndex < sortedDates.length - 1) {
+                  if (keepBottomAnchoredRef) {
+                    keepBottomAnchoredRef.current = false;
+                  }
                   manualScrollRef.current = true;
                   setManualScroll?.(true);
                 }
@@ -901,6 +989,9 @@ export function MessageList({
         atBottomStateChange={
           manualScrollRef
             ? (atBottom: boolean) => {
+                if (keepBottomAnchoredRef) {
+                  keepBottomAnchoredRef.current = atBottom;
+                }
                 if (!atBottom) {
                   manualScrollRef.current = true;
                   setManualScroll?.(true);
