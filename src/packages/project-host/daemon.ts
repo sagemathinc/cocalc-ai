@@ -33,6 +33,7 @@ export type ProjectHostRuntimeInspection = {
 };
 
 const DEFAULT_ENV_FILE = "/etc/cocalc/project-host.env";
+const DEFAULT_LOCAL_ENV_FILE = "/etc/cocalc/project-host.local.env";
 const processRuntime = {
   spawn: childProcess.spawn,
   spawnSync: childProcess.spawnSync,
@@ -42,6 +43,7 @@ const PODMAN_STALE_STATE_PATTERNS = [
   'try resetting the pause process with "podman system migrate"',
   "could not find any running process",
 ];
+const FORENSICS_DIR = "forensics";
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 
@@ -140,6 +142,20 @@ function loadEnvFromFile(envFile: string): Record<string, string> {
   }
 }
 
+function daemonEnvFilePath(): string {
+  return (
+    `${process.env.COCALC_PROJECT_HOST_DAEMON_ENV_FILE ?? ""}`.trim() ||
+    DEFAULT_ENV_FILE
+  );
+}
+
+function daemonLocalEnvFilePath(): string {
+  return (
+    `${process.env.COCALC_PROJECT_HOST_DAEMON_LOCAL_ENV_FILE ?? ""}`.trim() ||
+    DEFAULT_LOCAL_ENV_FILE
+  );
+}
+
 function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   const normalized: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
@@ -162,6 +178,192 @@ function normalizeLoopbackHost(host: string): string {
   return host === "0.0.0.0" || host === "::" || host === "[::]"
     ? "127.0.0.1"
     : host;
+}
+
+function forensicsEnabled(): boolean {
+  return envIsTrue(process.env.COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS);
+}
+
+function forensicsDurationSeconds(): number {
+  const raw = Number(
+    process.env.COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS_SEC ?? 10,
+  );
+  if (!Number.isFinite(raw) || raw < 1) {
+    return 10;
+  }
+  return Math.min(30, Math.floor(raw));
+}
+
+function safeTimestampForPath(iso = new Date().toISOString()): string {
+  return iso.replace(/[:.]/g, "-");
+}
+
+function writeForensicsFile(file: string, content: string): void {
+  fs.writeFileSync(file, content);
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    // best effort
+  }
+}
+
+function readFileOrError(file: string): string {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch (err) {
+    return `ERROR: ${err instanceof Error ? err.message : `${err}`}\n`;
+  }
+}
+
+function captureTaskStacks(pid: number): string {
+  const taskDir = `/proc/${pid}/task`;
+  try {
+    const tids = fs
+      .readdirSync(taskDir)
+      .filter((value) => /^\d+$/.test(value))
+      .sort((a, b) => Number(a) - Number(b));
+    return tids
+      .map(
+        (tid) =>
+          `===== ${tid} =====\n${readFileOrError(`/proc/${pid}/task/${tid}/stack`)}`,
+      )
+      .join("\n");
+  } catch (err) {
+    return `ERROR: ${err instanceof Error ? err.message : `${err}`}\n`;
+  }
+}
+
+function captureProcessForensics({
+  dataDir,
+  component,
+  pid,
+  health,
+  selectedVersion,
+  runningVersion,
+}: {
+  dataDir: string;
+  component: "project-host" | "conat-router" | "conat-persist";
+  pid: number;
+  health?: HealthCheckDiagnostic;
+  selectedVersion?: string;
+  runningVersion?: string;
+}): void {
+  if (!forensicsEnabled() || !Number.isInteger(pid) || pid <= 0) {
+    return;
+  }
+  const startedAt = new Date().toISOString();
+  const captureDir = path.join(
+    dataDir,
+    FORENSICS_DIR,
+    `${component}-${safeTimestampForPath(startedAt)}-pid${pid}`,
+  );
+  fs.mkdirSync(captureDir, { recursive: true });
+  try {
+    fs.chmodSync(captureDir, 0o700);
+  } catch {
+    // best effort
+  }
+  writeForensicsFile(
+    path.join(captureDir, "context.json"),
+    `${JSON.stringify(
+      {
+        started_at: startedAt,
+        component,
+        pid,
+        selected_version: selectedVersion,
+        running_version: runningVersion,
+        health,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  writeForensicsFile(
+    path.join(captureDir, "cmdline.txt"),
+    readFileOrError(`/proc/${pid}/cmdline`)
+      .replace(/\u0000/g, " ")
+      .trimEnd() + "\n",
+  );
+  writeForensicsFile(
+    path.join(captureDir, "proc-stack.txt"),
+    readFileOrError(`/proc/${pid}/stack`),
+  );
+  writeForensicsFile(
+    path.join(captureDir, "task-stacks.txt"),
+    captureTaskStacks(pid),
+  );
+
+  const psResult = spawnSyncText(
+    "ps",
+    ["-L", "-p", String(pid), "-o", "pid,tid,pcpu,pmem,stat,wchan,comm"],
+    { timeout: 10_000 },
+  );
+  writeForensicsFile(
+    path.join(captureDir, "ps-threads.txt"),
+    `${combinedSpawnOutput(psResult)}\n`,
+  );
+
+  const lsofResult = spawnSyncText("lsof", ["-p", String(pid)], {
+    timeout: 10_000,
+  });
+  writeForensicsFile(
+    path.join(captureDir, "lsof.txt"),
+    `${combinedSpawnOutput(lsofResult)}\n`,
+  );
+
+  const durationSeconds = forensicsDurationSeconds();
+  const straceResult = spawnSyncText(
+    "timeout",
+    [
+      `${durationSeconds}s`,
+      "strace",
+      "-ff",
+      "-ttt",
+      "-T",
+      "-s",
+      "256",
+      "-yy",
+      "-o",
+      path.join(captureDir, "strace"),
+      "-p",
+      String(pid),
+    ],
+    { timeout: (durationSeconds + 5) * 1000 },
+  );
+  writeForensicsFile(
+    path.join(captureDir, "strace-run.txt"),
+    `${combinedSpawnOutput(straceResult)}\n`,
+  );
+  if (straceResult.error) {
+    recordDaemonEvent(dataDir, {
+      component,
+      action: "forensics_failed",
+      message: "failed to capture unhealthy process forensics",
+      pid,
+      selected_version: selectedVersion,
+      running_version: runningVersion,
+      health,
+      metadata: {
+        capture_dir: captureDir,
+        error: `${straceResult.error}`,
+      },
+    });
+    return;
+  }
+  recordDaemonEvent(dataDir, {
+    component,
+    action: "forensics_captured",
+    message: "captured unhealthy process forensics",
+    pid,
+    selected_version: selectedVersion,
+    running_version: runningVersion,
+    health,
+    metadata: {
+      capture_dir: captureDir,
+      strace_status: straceResult.status,
+      duration_seconds: durationSeconds,
+    },
+  });
 }
 
 function isProjectHostExternalConatRouterEnabled(
@@ -353,12 +555,13 @@ function resolveEnv(index: number): {
   projectHostPort?: number;
   sshPort?: number;
 } {
-  const fileEnv = loadEnvFromFile(DEFAULT_ENV_FILE);
-  const env = { ...fileEnv, ...normalizeEnv(process.env) };
+  const fileEnv = loadEnvFromFile(daemonEnvFilePath());
+  const localFileEnv = loadEnvFromFile(daemonLocalEnvFilePath());
+  const env = { ...fileEnv, ...localFileEnv, ...normalizeEnv(process.env) };
   const dataDir = env.COCALC_DATA ?? env.DATA;
   if (!dataDir) {
     throw new Error(
-      "COCALC_DATA (or DATA) must be set, or provide /etc/cocalc/project-host.env",
+      "COCALC_DATA (or DATA) must be set, or provide a project-host env file",
     );
   }
   env.COCALC_DATA = env.COCALC_DATA ?? dataDir;
@@ -1304,6 +1507,12 @@ function ensureManagedConatRouter(opts: {
       pid,
       health: diagnostic,
     });
+    captureProcessForensics({
+      dataDir,
+      component: "conat-router",
+      pid,
+      health: diagnostic,
+    });
     stopManagedConatRouter({
       dataDir,
       routerPidPath,
@@ -1576,6 +1785,12 @@ function ensureManagedConatPersist(opts: {
       component: "conat-persist",
       action: "restart_requested",
       message: "managed conat-persist health check failed",
+      pid,
+      health: diagnostic,
+    });
+    captureProcessForensics({
+      dataDir,
+      component: "conat-persist",
       pid,
       health: diagnostic,
     });
@@ -2027,6 +2242,14 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
       running_version: runningVersion,
       health: diagnostic,
     });
+    captureProcessForensics({
+      dataDir,
+      component: "project-host",
+      pid,
+      health: diagnostic,
+      selectedVersion,
+      runningVersion,
+    });
     stopDaemonWithOptions(index, {
       preserveManagedAuxiliaryDaemons: options?.preserveManagedAuxiliaryDaemons,
     });
@@ -2392,8 +2615,11 @@ export function handleDaemonCli(argv: string[]): boolean {
 }
 
 export const __test__ = {
+  captureProcessForensics,
   checkHealthSync,
   cleanupStrayProcesses,
+  daemonEnvFilePath,
+  daemonLocalEnvFilePath,
   ensurePodmanHealthy,
   healthCheckUrl,
   inferProjectHostBundleVersionFromCmdline,
@@ -2404,4 +2630,5 @@ export const __test__ = {
   matchingSshpiperdPids,
   parsePort,
   processRuntime,
+  resolveEnv,
 };

@@ -21,7 +21,8 @@ Daemon:
 Notes:
   Daemon commands manage the host-agent supervisor, which in turn supervises
   project-host and the managed local daemon stack.
-  Reads /etc/cocalc/project-host.env if present.
+  Reads /etc/cocalc/project-host.env and /etc/cocalc/project-host.local.env
+  if present.
 `);
       return;
     }

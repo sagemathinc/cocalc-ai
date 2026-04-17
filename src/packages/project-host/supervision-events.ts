@@ -23,6 +23,8 @@ export type SupervisionEvent = {
     | "started"
     | "healthy"
     | "warming_up"
+    | "forensics_captured"
+    | "forensics_failed"
     | "restart_requested"
     | "restart_completed"
     | "missing_process"

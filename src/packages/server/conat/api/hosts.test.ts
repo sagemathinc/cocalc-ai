@@ -30,6 +30,8 @@ let createProjectHostBootstrapTokenMock: jest.Mock;
 let buildCloudInitStartupScriptMock: jest.Mock;
 let siteUrlMock: jest.Mock;
 let getServerSettingsMock: jest.Mock;
+let fetchMock: jest.Mock;
+const originalFetch = global.fetch;
 
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
@@ -232,6 +234,12 @@ beforeEach(() => {
   );
   siteUrlMock = jest.fn(async () => "https://hub.example.test");
   getServerSettingsMock = jest.fn(async () => ({}));
+  fetchMock = jest.fn();
+  global.fetch = fetchMock as any;
+});
+
+afterAll(() => {
+  global.fetch = originalFetch;
 });
 
 const SUMMARY_ROW = {
@@ -2259,4 +2267,86 @@ describe("hosts.drainHostInternal", () => {
     });
     expect(moveProjectToHostMock).toHaveBeenCalledTimes(5);
   }, 15000);
+
+  it("preserves published software metadata fields in version listings", async () => {
+    getServerSettingsMock.mockResolvedValue({
+      project_hosts_software_base_url: "https://software.example.test/software",
+    });
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/project-host/latest-linux.json")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            url: "https://software.example.test/software/project-host/v3/bundle-linux.tar.xz",
+            sha256: "sha-latest",
+            size_bytes: 3456,
+            built_at: "2026-04-17T05:00:00.000Z",
+            version: "v3",
+            message: "Fix reconnect recovery for host daemons",
+          }),
+        };
+      }
+      if (url.endsWith("/project-host/versions-latest-linux.json")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            artifact: "project-host",
+            channel: "latest",
+            os: "linux",
+            generated_at: "2026-04-17T05:01:00.000Z",
+            versions: [
+              {
+                version: "v2",
+                url: "https://software.example.test/software/project-host/v2/bundle-linux.tar.xz",
+                sha256: "sha-v2",
+                size_bytes: 2345,
+                built_at: "2026-04-16T01:02:03.000Z",
+                message: "Known stable reconnect baseline",
+              },
+            ],
+          }),
+        };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+
+    const { listHostSoftwareVersions } = await import("./hosts");
+    const rows = await listHostSoftwareVersions({
+      account_id: ACCOUNT_ID,
+      artifacts: ["project-host"],
+      channels: ["latest"],
+      history_limit: 2,
+    });
+
+    expect(rows).toEqual([
+      {
+        artifact: "project-host",
+        channel: "latest",
+        os: "linux",
+        arch: "amd64",
+        version: "v3",
+        url: "https://software.example.test/software/project-host/v3/bundle-linux.tar.xz",
+        sha256: "sha-latest",
+        size_bytes: 3456,
+        built_at: "2026-04-17T05:00:00.000Z",
+        message: "Fix reconnect recovery for host daemons",
+        available: true,
+      },
+      {
+        artifact: "project-host",
+        channel: "latest",
+        os: "linux",
+        arch: "amd64",
+        version: "v2",
+        url: "https://software.example.test/software/project-host/v2/bundle-linux.tar.xz",
+        sha256: "sha-v2",
+        size_bytes: 2345,
+        built_at: "2026-04-16T01:02:03.000Z",
+        message: "Known stable reconnect baseline",
+        available: true,
+      },
+    ]);
+  });
 });

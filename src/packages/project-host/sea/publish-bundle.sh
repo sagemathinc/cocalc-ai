@@ -7,6 +7,7 @@ BUILD_DIR="../build"
 OS="linux"
 TARGET="bundle-linux.tar.xz"
 FILE="${BUILD_DIR}/${TARGET}"
+METADATA_FILE="${BUILD_DIR}/bundle-linux.metadata.json"
 
 if [ ! -f "$FILE" ]; then
   echo "Bundle artifact not found: $FILE" >&2
@@ -16,11 +17,26 @@ fi
 
 LATEST_KEY="${COCALC_R2_LATEST_KEY:-software/project-host/latest-${OS}.json}"
 PREFIX="${COCALC_R2_PREFIX:-software/project-host/$VERSION}"
+MESSAGE="${COCALC_ARTIFACT_MESSAGE:-}"
+if [ -z "${MESSAGE// }" ] && [ -f "$METADATA_FILE" ]; then
+  MESSAGE="$(node -e '
+    const fs = require("node:fs");
+    const file = process.argv[1];
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    process.stdout.write(`${typeof parsed?.message === "string" ? parsed.message : ""}`);
+  ' "$METADATA_FILE")"
+fi
 
-node ../../cloud/scripts/publish-r2.js \
-  --file "$FILE" \
-  --bucket "${COCALC_R2_BUCKET:-}" \
-  --prefix "$PREFIX" \
-  --latest-key "$LATEST_KEY" \
-  --public-base-url "${COCALC_R2_PUBLIC_BASE_URL:-}" \
+ARGS=(
+  --file "$FILE"
+  --bucket "${COCALC_R2_BUCKET:-}"
+  --prefix "$PREFIX"
+  --latest-key "$LATEST_KEY"
+  --public-base-url "${COCALC_R2_PUBLIC_BASE_URL:-}"
   --os "$OS"
+)
+if [ -n "${MESSAGE// }" ]; then
+  ARGS+=(--message "$MESSAGE")
+fi
+
+node ../../cloud/scripts/publish-r2.js "${ARGS[@]}"

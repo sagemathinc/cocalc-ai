@@ -6,7 +6,7 @@
 # single archive.
 #
 # Usage:
-#   ./build-bundle.sh [output-directory] [tarball-path]
+#   ./build-bundle.sh [output-directory] [tarball-path] [--message <text>]
 #
 # You should have already installed workspace dependencies. The script will
 # build the TypeScript sources for @cocalc/project-host and the static assets.
@@ -14,8 +14,37 @@
 set -euo pipefail
 
 ROOT="$(realpath "$(dirname "$0")/../../..")"
-OUT="$(realpath -m "${1:-$ROOT/packages/project-host/build/bundle}")"
-TARBALL="${2:-}"
+DEFAULT_OUT="$ROOT/packages/project-host/build/bundle"
+OUT_ARG="${1:-}"
+if [ -n "$OUT_ARG" ] && [[ "$OUT_ARG" != --* ]]; then
+  OUT="$(realpath -m "$OUT_ARG")"
+  shift
+else
+  OUT="$(realpath -m "$DEFAULT_OUT")"
+fi
+TARBALL="${1:-}"
+if [ -n "$TARBALL" ] && [[ "$TARBALL" != --* ]]; then
+  shift
+else
+  TARBALL=""
+fi
+ARTIFACT_MESSAGE="${COCALC_ARTIFACT_MESSAGE:-}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --message)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --message requires a value" >&2
+        exit 2
+      fi
+      ARTIFACT_MESSAGE="$2"
+      shift 2
+      ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 if [ -n "$TARBALL" ]; then
   TARBALL="$(realpath -m "$TARBALL")"
 fi
@@ -91,6 +120,19 @@ node "$ROOT/scripts/dev/write-build-identity.js" \
   --package-root "$ROOT/packages/project-host" \
   --artifact-kind "project-host-bundle" \
   --out "$OUT/build-identity.json"
+
+if [ -n "${ARTIFACT_MESSAGE// }" ]; then
+  echo "- Write artifact metadata"
+  node -e '
+    const fs = require("node:fs");
+    const path = process.argv[1];
+    const message = process.argv[2];
+    fs.writeFileSync(
+      path,
+      JSON.stringify({ message }, null, 2) + "\n",
+    );
+  ' "$OUT/artifact-metadata.json" "$ARTIFACT_MESSAGE"
+fi
 
 # zeromq expects its build manifest next to the native addon; ncc copies the
 # compiled .node file but not the manifest.json, so copy it manually.
@@ -299,6 +341,21 @@ if [ -n "$FINAL_TARBALL" ]; then
   tar -tJf "$TMP_TARBALL" >/dev/null
   mv "$TMP_TARBALL" "$FINAL_TARBALL"
   TMP_TARBALL=""
+  if [ -n "${ARTIFACT_MESSAGE// }" ]; then
+    case "$FINAL_TARBALL" in
+      *.tar.xz) METADATA_PATH="${FINAL_TARBALL%.tar.xz}.metadata.json" ;;
+      *) METADATA_PATH="${FINAL_TARBALL}.metadata.json" ;;
+    esac
+    node -e '
+      const fs = require("node:fs");
+      const path = process.argv[1];
+      const message = process.argv[2];
+      fs.writeFileSync(
+        path,
+        JSON.stringify({ message }, null, 2) + "\n",
+      );
+    ' "$METADATA_PATH" "$ARTIFACT_MESSAGE"
+  fi
 fi
 
 echo "- Bundle created at $OUT"

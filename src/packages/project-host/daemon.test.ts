@@ -1053,6 +1053,117 @@ describe("project-host daemon stop", () => {
     );
   });
 
+  it("captures unhealthy process forensics when enabled", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS = "1";
+    process.env.COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS_SEC = "1";
+    const spawnSyncSpy = jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockImplementation(((command: string, args: string[]) => {
+        if (command === "ps") {
+          return { status: 0, stdout: "ps ok\n", stderr: "" } as any;
+        }
+        if (command === "lsof") {
+          return { status: 0, stdout: "lsof ok\n", stderr: "" } as any;
+        }
+        if (command === "timeout") {
+          expect(args).toEqual(
+            expect.arrayContaining([
+              "1s",
+              "strace",
+              "-ff",
+              "-ttt",
+              "-T",
+              "-s",
+              "256",
+              "-yy",
+              "-p",
+              "4242",
+            ]),
+          );
+          return { status: 124, stdout: "", stderr: "" } as any;
+        }
+        throw new Error(`unexpected command ${command}`);
+      }) as typeof __test__.processRuntime.spawnSync);
+
+    __test__.captureProcessForensics({
+      dataDir,
+      component: "project-host",
+      pid: 4242,
+      health: {
+        url: "http://127.0.0.1:9003/healthz",
+        ok: false,
+        error: "TimeoutError: timed out",
+      },
+      selectedVersion: "1776387302658",
+      runningVersion: "1776387302658",
+    });
+
+    const forensicsRoot = path.join(dataDir, "forensics");
+    const captures = fs.readdirSync(forensicsRoot);
+    expect(captures).toHaveLength(1);
+    const captureDir = path.join(forensicsRoot, captures[0]);
+    expect(
+      fs.readFileSync(path.join(captureDir, "context.json"), "utf8"),
+    ).toContain('"component": "project-host"');
+    expect(
+      fs.readFileSync(path.join(captureDir, "ps-threads.txt"), "utf8"),
+    ).toContain("ps ok");
+    expect(
+      fs.readFileSync(path.join(captureDir, "lsof.txt"), "utf8"),
+    ).toContain("lsof ok");
+    const events = fs
+      .readFileSync(path.join(dataDir, "supervision-events.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component: "project-host",
+          action: "forensics_captured",
+          pid: 4242,
+          metadata: expect.objectContaining({
+            capture_dir: expect.stringContaining("/forensics/project-host-"),
+            strace_status: 124,
+            duration_seconds: 1,
+          }),
+        }),
+      ]),
+    );
+    expect(spawnSyncSpy).toHaveBeenCalled();
+  });
+
+  it("loads a local env overlay after the bootstrap env file", () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-env-"),
+    );
+    const envFile = path.join(tempDir, "project-host.env");
+    const localEnvFile = path.join(tempDir, "project-host.local.env");
+    fs.writeFileSync(
+      envFile,
+      ["COCALC_DATA=/tmp/project-host-data", "DEBUG_CONSOLE=no"].join("\n") +
+        "\n",
+    );
+    fs.writeFileSync(
+      localEnvFile,
+      [
+        "DEBUG_CONSOLE=yes",
+        "COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS=1",
+      ].join("\n") + "\n",
+    );
+    process.env.COCALC_PROJECT_HOST_DAEMON_ENV_FILE = envFile;
+    process.env.COCALC_PROJECT_HOST_DAEMON_LOCAL_ENV_FILE = localEnvFile;
+
+    const resolved = __test__.resolveEnv(0);
+
+    expect(resolved.dataDir).toBe("/tmp/project-host-data");
+    expect(resolved.env.DEBUG_CONSOLE).toBe("yes");
+    expect(resolved.env.COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS).toBe("1");
+  });
+
   it("does not restart an unhealthy daemon during the startup grace window", () => {
     const dataDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-daemon-"),

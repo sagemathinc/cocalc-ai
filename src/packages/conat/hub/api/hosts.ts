@@ -497,6 +497,9 @@ export interface HostSoftwareAvailableVersion {
   version?: string;
   url?: string;
   sha256?: string;
+  size_bytes?: number;
+  built_at?: string;
+  message?: string;
   available: boolean;
   error?: string;
 }
