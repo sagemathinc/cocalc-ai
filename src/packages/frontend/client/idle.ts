@@ -9,19 +9,22 @@ import { delay } from "awaiting";
 import { redux } from "../app-framework";
 import { IS_TOUCH } from "../feature";
 import type { WebappClient } from "./client";
-import { disconnect_from_all_projects } from "../project/websocket/connect";
 import { lite } from "@cocalc/frontend/lite";
 
 const CHECK_INTERVAL = 30 * 1000;
+const SOFT_STANDBY_WARNING_DELAY_MS = CHECK_INTERVAL / 2;
+const HARD_STANDBY_DELAY_MS = 5 * 60 * 1000;
 //const CHECK_INTERVAL = 7 * 1000;
+type IdleStandbyStage = "active" | "soft" | "hard";
 
 export class IdleClient {
   private notification_is_visible: boolean = false;
   private client: WebappClient;
   private idle_timeout: number = 30 * 60 * 1000; // default -- 30 minutes
   private idle_time: number = 0;
-  private delayed_disconnect?;
-  private standbyMode = false;
+  private delayedSoftStandby?;
+  private delayedHardStandby?;
+  private standbyStage: IdleStandbyStage = "active";
 
   constructor(client: WebappClient) {
     this.client = client;
@@ -29,7 +32,7 @@ export class IdleClient {
   }
 
   inStandby = () => {
-    return this.standbyMode;
+    return this.standbyStage !== "active";
   };
 
   reset = (): void => {};
@@ -90,6 +93,8 @@ export class IdleClient {
         this.idle_reset();
       }
     }, CHECK_INTERVAL / 2);
+    document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    window.addEventListener("focus", this.handleVisibilityChange);
   };
 
   private idle_check = (): void => {
@@ -100,18 +105,14 @@ export class IdleClient {
       return;
     }
     this.show_notification();
-    if (!this.delayed_disconnect) {
-      // We actually disconnect 15s after appearing to
-      // so that if the user sees the idle banner and immediately
-      // dismisses it, then the experience is less disruptive.
-      this.delayed_disconnect = setTimeout(() => {
-        this.delayed_disconnect = undefined;
-        console.log("Entering standby mode");
-        this.standbyMode = true;
-        // console.log("idle timeout: disconnect!");
-        this.client.conat_client.standby();
-        disconnect_from_all_projects();
-      }, CHECK_INTERVAL / 2);
+    if (!this.delayedSoftStandby && this.standbyStage === "active") {
+      // Give the user a brief warning window before we shed project-local
+      // resources. Hidden idle tabs first enter a soft standby that keeps the
+      // main account connection alive for notifications and presence.
+      this.delayedSoftStandby = setTimeout(() => {
+        this.delayedSoftStandby = undefined;
+        this.enterSoftStandby();
+      }, SOFT_STANDBY_WARNING_DELAY_MS);
     }
   };
 
@@ -120,13 +121,16 @@ export class IdleClient {
   public idle_reset = (): void => {
     this.hide_notification();
     this.idle_time = Date.now() + this.idle_timeout + 1000;
-    if (this.delayed_disconnect) {
-      clearTimeout(this.delayed_disconnect);
-      this.delayed_disconnect = undefined;
+    if (this.delayedSoftStandby) {
+      clearTimeout(this.delayedSoftStandby);
+      this.delayedSoftStandby = undefined;
     }
-    // console.log("idle timeout: reconnect");
-    if (this.standbyMode) {
-      this.standbyMode = false;
+    if (this.delayedHardStandby) {
+      clearTimeout(this.delayedHardStandby);
+      this.delayedHardStandby = undefined;
+    }
+    if (this.standbyStage !== "active") {
+      this.standbyStage = "active";
       console.log("Leaving standby mode");
       this.client.conat_client.resume();
     }
@@ -137,6 +141,40 @@ export class IdleClient {
   public set_standby_timeout_m = (time_m: number): void => {
     this.idle_timeout = time_m * 60 * 1000;
     this.idle_reset();
+  };
+
+  private handleVisibilityChange = (): void => {
+    if (!document.hidden) {
+      this.idle_reset();
+    }
+  };
+
+  private enterSoftStandby = (): void => {
+    if (this.standbyStage !== "active") {
+      return;
+    }
+    console.log("Entering soft standby mode");
+    this.standbyStage = "soft";
+    if (typeof this.client.conat_client.softStandby === "function") {
+      this.client.conat_client.softStandby();
+    } else {
+      this.client.conat_client.standby();
+    }
+    if (!this.delayedHardStandby) {
+      this.delayedHardStandby = setTimeout(() => {
+        this.delayedHardStandby = undefined;
+        this.enterHardStandby();
+      }, HARD_STANDBY_DELAY_MS);
+    }
+  };
+
+  private enterHardStandby = (): void => {
+    if (this.standbyStage === "hard") {
+      return;
+    }
+    console.log("Escalating to hard standby mode");
+    this.standbyStage = "hard";
+    this.client.conat_client.standby();
   };
 
   private notification_html = (): string => {

@@ -89,6 +89,7 @@ import {
   type ReconnectResourceOptions,
   type RegisteredReconnectResource,
 } from "./reconnect-coordinator";
+import { disconnect_from_all_projects } from "@cocalc/frontend/project/websocket/connect";
 
 export interface ConatConnectionStatus {
   state: "connected" | "connecting" | "disconnected";
@@ -1169,7 +1170,7 @@ export class ConatClient extends EventEmitter {
     if (this.permanentlyDisconnected) {
       return;
     }
-    this.reconnectCoordinator.standby();
+    this.reconnectCoordinator.prepareForTransportRestart();
     void this.browserSessionAutomation.stop();
     if (this.routedHostRecoveryTimer != null) {
       clearTimeout(this.routedHostRecoveryTimer);
@@ -1227,28 +1228,37 @@ export class ConatClient extends EventEmitter {
     return this.reconnectCoordinator.registerResource(options);
   };
 
+  private shedProjectConnections = ({
+    clearTokens = false,
+  }: {
+    clearTokens?: boolean;
+  } = {}) => {
+    if (this.routedHostRecoveryTimer != null) {
+      clearTimeout(this.routedHostRecoveryTimer);
+      delete this.routedHostRecoveryTimer;
+    }
+    for (const host_id of Object.keys(this.routedHubClients)) {
+      this.removeRoutedHubClient(host_id);
+    }
+    this.routedHubClients = {};
+    if (clearTokens) {
+      this.projectHostTokens = {};
+    }
+    disconnect_from_all_projects();
+  };
+
+  softStandby = () => {
+    this.reconnectCoordinator.softStandby();
+    this.shedProjectConnections();
+  };
+
   // if there is a connection, put it in standby
   standby = () => {
     // @ts-ignore
     this.automaticallyReconnect = false;
     this.reconnectCoordinator.standby();
     void this.browserSessionAutomation.stop();
-    if (this.routedHostRecoveryTimer != null) {
-      clearTimeout(this.routedHostRecoveryTimer);
-      delete this.routedHostRecoveryTimer;
-    }
-    for (const host_id in this.routedHubClients) {
-      try {
-        this.routedHubClients[host_id]?.client?.close();
-      } catch (err) {
-        console.warn(
-          `failed closing routed hub client for host ${host_id}`,
-          err,
-        );
-      }
-    }
-    this.routedHubClients = {};
-    this.projectHostTokens = {};
+    this.shedProjectConnections({ clearTokens: true });
     this._conatClient?.disconnect();
   };
 
