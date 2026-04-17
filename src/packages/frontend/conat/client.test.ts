@@ -889,6 +889,303 @@ describe("ConatClient routed project-host reconnect", () => {
     jest.useRealTimers();
   });
 
+  it("single-flights project-host auth token requests per host", async () => {
+    let resolveDeferred: ((value: any) => void) | undefined;
+    const deferred = new Promise((resolve) => {
+      resolveDeferred = resolve;
+    });
+
+    jest.resetModules();
+
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => {
+        if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+          return await deferred;
+        }
+        return { data: null };
+      }),
+    };
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn(),
+        getActions: jest.fn(() => ({})),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn(() => hubClient),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/util/async-utils", () => {
+      const actual = jest.requireActual("@cocalc/util/async-utils");
+      return {
+        ...actual,
+        until: jest.fn(),
+      };
+    });
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    const p1 = client.getProjectHostToken({
+      host_id: "host-1",
+      project_id: "00000000-0000-4000-8000-000000000001",
+    });
+    const p2 = client.getProjectHostToken({
+      host_id: "host-1",
+      project_id: "00000000-0000-4000-8000-000000000002",
+    });
+
+    expect(hubClient.request).toHaveBeenCalledTimes(1);
+
+    resolveDeferred?.({
+      data: {
+        token: "token-1",
+        expires_at: Date.now() + 5 * 60_000,
+      },
+    });
+
+    await expect(p1).resolves.toBe("token-1");
+    await expect(p2).resolves.toBe("token-1");
+    expect(hubClient.request).toHaveBeenCalledTimes(1);
+  });
+
+  it("backs off repeated project-host auth token retries per host after a timeout", async () => {
+    jest.useFakeTimers();
+    jest.resetModules();
+
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => {
+        if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+          const count = hubClient.request.mock.calls.filter(
+            ([, data]) => data?.name === "hosts.issueProjectHostAuthToken",
+          ).length;
+          if (count === 1) {
+            const err: any = new Error("timeout");
+            err.code = "408";
+            throw err;
+          }
+          return {
+            data: {
+              token: "token-2",
+              expires_at: Date.now() + 5 * 60_000,
+            },
+          };
+        }
+        return { data: null };
+      }),
+    };
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn(),
+        getActions: jest.fn(() => ({})),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn(() => hubClient),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/util/async-utils", () => {
+      const actual = jest.requireActual("@cocalc/util/async-utils");
+      return {
+        ...actual,
+        until: jest.fn(),
+      };
+    });
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    await expect(
+      client.getProjectHostToken({
+        host_id: "host-1",
+        project_id: "00000000-0000-4000-8000-000000000001",
+      }),
+    ).rejects.toThrow("timeout");
+    expect(hubClient.request).toHaveBeenCalledTimes(1);
+
+    await expect(
+      client.getProjectHostToken({
+        host_id: "host-1",
+        project_id: "00000000-0000-4000-8000-000000000001",
+      }),
+    ).rejects.toThrow("cooldown active");
+    await expect(
+      client.getProjectHostToken({
+        host_id: "host-1",
+        project_id: "00000000-0000-4000-8000-000000000002",
+      }),
+    ).rejects.toThrow("cooldown active");
+    expect(hubClient.request).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(3_000);
+
+    await expect(
+      client.getProjectHostToken({
+        host_id: "host-1",
+        project_id: "00000000-0000-4000-8000-000000000002",
+      }),
+    ).resolves.toBe("token-2");
+    expect(hubClient.request).toHaveBeenCalledTimes(2);
+
+    jest.useRealTimers();
+  });
+
   it("rebuilds the routed host client after a host session change", async () => {
     jest.useFakeTimers();
 

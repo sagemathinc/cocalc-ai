@@ -135,6 +135,7 @@ const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK = new Set<string>([
   "projects.codexUploadAuthFile",
 ]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
+const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [3_000, 10_000, 30_000] as const;
 const ROUTED_HOST_REBUILD_AFTER_ATTEMPTS = 3;
 type RoutedHubClientState = {
   address: string;
@@ -150,6 +151,10 @@ type ProjectHostTokenState = {
   token?: string;
   expiresAt?: number;
   inFlight?: Promise<string>;
+  failureCount?: number;
+  retryAfter?: number;
+  lastError?: any;
+  lastProjectId?: string;
 };
 
 export class ConatClient extends EventEmitter {
@@ -507,8 +512,48 @@ export class ConatClient extends EventEmitter {
     );
   };
 
-  private invalidateProjectHostToken = (host_id: string) => {
-    delete this.projectHostTokens[host_id];
+  private isProjectHostAuthBackoffError = (err: any): boolean => {
+    return !!err?.projectHostAuthBackoff;
+  };
+
+  private projectHostTokenBackoffMs = (failureCount: number): number => {
+    return PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS[
+      Math.min(
+        Math.max(0, failureCount - 1),
+        PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS.length - 1,
+      )
+    ];
+  };
+
+  private getProjectHostTokenCooldownError = (
+    state: ProjectHostTokenState,
+  ): Error => {
+    const remainingMs = Math.max(0, (state.retryAfter ?? 0) - Date.now());
+    const err: any = new Error(
+      `project-host auth token retry cooldown active (${remainingMs}ms remaining)`,
+    );
+    err.projectHostAuthBackoff = true;
+    err.retry_after = state.retryAfter;
+    err.cause = state.lastError;
+    if (state.lastError?.code != null) {
+      err.code = state.lastError.code;
+    }
+    return err;
+  };
+
+  private invalidateProjectHostToken = (
+    host_id: string,
+    { resetFailureState = false }: { resetFailureState?: boolean } = {},
+  ) => {
+    const state = this.projectHostTokens[host_id];
+    if (!state) {
+      return;
+    }
+    delete state.token;
+    delete state.expiresAt;
+    if (resetFailureState) {
+      delete this.projectHostTokens[host_id];
+    }
   };
 
   private getOpenProjectIdsForHost = (host_id: string): Set<string> => {
@@ -610,7 +655,7 @@ export class ConatClient extends EventEmitter {
     if (this.syncTrackedProjectsForHost(host_id, current).size !== 0) {
       return;
     }
-    this.invalidateProjectHostToken(host_id);
+    this.invalidateProjectHostToken(host_id, { resetFailureState: true });
     this.removeRoutedHubClient(host_id, { expectedClient: current.client });
   };
 
@@ -639,7 +684,7 @@ export class ConatClient extends EventEmitter {
   }) => {
     for (const host_id of [source_host_id, dest_host_id]) {
       if (!host_id) continue;
-      this.invalidateProjectHostToken(host_id);
+      this.invalidateProjectHostToken(host_id, { resetFailureState: true });
       this.removeRoutedHubClient(host_id);
     }
   };
@@ -680,32 +725,48 @@ export class ConatClient extends EventEmitter {
       state = {};
       this.projectHostTokens[host_id] = state;
     }
+    if (project_id) {
+      state.lastProjectId = project_id;
+    }
     if (state.inFlight) {
       return await state.inFlight;
     }
-    const request = this.callHub({
-      service: "api",
-      name: "hosts.issueProjectHostAuthToken",
-      args: [{ host_id, project_id }],
-      timeout: DEFAULT_TIMEOUT,
-    }) as Promise<{ token: string; expires_at: number }>;
-    state.inFlight = request
+    if (state.retryAfter != null && now < state.retryAfter) {
+      throw this.getProjectHostTokenCooldownError(state);
+    }
+    const authProjectId = project_id ?? state.lastProjectId;
+    const request = (
+      this.callHub({
+        service: "api",
+        name: "hosts.issueProjectHostAuthToken",
+        args: [{ host_id, project_id: authProjectId }],
+        timeout: DEFAULT_TIMEOUT,
+      }) as Promise<{ token: string; expires_at: number }>
+    )
       .then(({ token, expires_at }) => {
         state!.token = token;
         state!.expiresAt = expires_at;
+        state!.failureCount = 0;
+        delete state!.retryAfter;
+        delete state!.lastError;
         return token;
       })
       .catch((err) => {
         delete state!.token;
         delete state!.expiresAt;
+        state!.failureCount = (state!.failureCount ?? 0) + 1;
+        state!.retryAfter =
+          Date.now() + this.projectHostTokenBackoffMs(state!.failureCount);
+        state!.lastError = err;
         throw err;
       })
       .finally(() => {
-        if (state?.inFlight) {
+        if (state?.inFlight === request) {
           delete state.inFlight;
         }
       });
-    return await state.inFlight;
+    state.inFlight = request;
+    return await request;
   };
 
   // Mint a short-lived project-host auth token for ACP/Codex runtime use.
@@ -861,7 +922,9 @@ export class ConatClient extends EventEmitter {
           (refreshed.address !== state.address ||
             refreshed.host_session_id !== state.host_session_id)
         ) {
-          this.invalidateProjectHostToken(host_id);
+          this.invalidateProjectHostToken(host_id, {
+            resetFailureState: true,
+          });
           this.removeRoutedHubClient(host_id, { expectedClient: state.client });
           const replacement = this.getOrCreateRoutedHubClient({
             ...refreshed,
@@ -931,10 +994,12 @@ export class ConatClient extends EventEmitter {
             .catch((err) => {
               this.invalidateProjectHostToken(host_id);
               reconnectRouted();
-              console.warn(
-                `failed issuing project-host auth token for host ${host_id}`,
-                err,
-              );
+              if (!this.isProjectHostAuthBackoffError(err)) {
+                console.warn(
+                  `failed issuing project-host auth token for host ${host_id}`,
+                  err,
+                );
+              }
               cb({});
             });
         },
