@@ -204,7 +204,8 @@ describe("connected terminal resizing", () => {
   });
 
   it("routes terminal socket reconnects through the shared reconnect coordinator", async () => {
-    const { Terminal, ptys, reconnectResources } = loadTerminalModule();
+    const { Terminal, ptys, reconnectResources, terminalClient } =
+      loadTerminalModule();
     const parent = document.createElement("div");
     document.body.appendChild(parent);
     const actions = {
@@ -228,6 +229,13 @@ describe("connected terminal resizing", () => {
 
     const terminal = new Terminal(actions, 0, "term-1", parent);
     await terminal.connect();
+
+    expect(terminalClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "project-1",
+        reconnection: false,
+      }),
+    );
 
     const disconnectedHandler = ptys
       .flatMap((pty) =>

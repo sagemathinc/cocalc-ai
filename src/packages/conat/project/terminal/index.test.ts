@@ -1,4 +1,5 @@
 import { mergeTerminalEnv0 } from "./index";
+import { terminalClient } from "./index";
 
 describe("mergeTerminalEnv0", () => {
   it("does not leak ambient COCALC_* vars into generic terminals", () => {
@@ -46,6 +47,29 @@ describe("mergeTerminalEnv0", () => {
       PATH: "/explicit/bin",
       COCALC_API_URL: "http://should-be-allowed-if-explicit",
       LANG: "C.UTF-8",
+    });
+  });
+
+  it("forwards socket reconnection settings to the terminal socket", () => {
+    const connect = jest.fn(() => ({
+      on: jest.fn(),
+      request: jest.fn(),
+      close: jest.fn(),
+    }));
+    const client = {
+      socket: {
+        connect,
+      },
+    } as any;
+
+    terminalClient({
+      client,
+      project_id: "project-1",
+      reconnection: false,
+    });
+
+    expect(connect).toHaveBeenCalledWith("terminal.project-project-1.0", {
+      reconnection: false,
     });
   });
 });
