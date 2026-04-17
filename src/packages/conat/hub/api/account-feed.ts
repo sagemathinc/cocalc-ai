@@ -1,4 +1,5 @@
 import type { Configuration } from "@cocalc/conat/persist/storage";
+import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type { ProjectTheme } from "@cocalc/util/db-schema/projects";
 
 export interface AccountFeedAccountRow {
@@ -180,6 +181,13 @@ export interface AccountFeedProjectDetailInvalidateEvent {
   fields: string[];
 }
 
+export interface AccountFeedLroSummaryEvent {
+  type: "lro.summary";
+  ts: number;
+  account_id: string;
+  summary: LroSummary;
+}
+
 export type AccountFeedEvent =
   | AccountFeedAccountUpsertEvent
   | AccountFeedNotificationUpsertEvent
@@ -190,7 +198,8 @@ export type AccountFeedEvent =
   | AccountFeedCollaboratorUpsertEvent
   | AccountFeedCollaboratorRemoveEvent
   | AccountFeedNewsRefreshEvent
-  | AccountFeedProjectDetailInvalidateEvent;
+  | AccountFeedProjectDetailInvalidateEvent
+  | AccountFeedLroSummaryEvent;
 
 export function accountFeedStreamName(): string {
   return "account-feed";

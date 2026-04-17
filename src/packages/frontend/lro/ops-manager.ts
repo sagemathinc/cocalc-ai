@@ -8,6 +8,11 @@ import {
   type LroOpState,
   toTime,
 } from "./utils";
+import {
+  bootstrapAccountLroScope,
+  getAccountLroSummaries,
+  subscribeAccountLroSummaryFeed,
+} from "./account-summary-feed";
 import { lite } from "@cocalc/frontend/lite";
 
 type BaseOptions = {
@@ -42,11 +47,11 @@ type MultiOptions = BaseOptions & {
 
 export class SingleLroOpsManager {
   private initialized = false;
-  private refreshTimer?: number;
   private stream?: DStream<LroEvent>;
   private streamInit?: Promise<void>;
   private currentOpId?: string;
   private state?: LroOpState;
+  private summaryFeedUnsubscribe?: () => void;
 
   constructor(private opts: SingleOptions) {}
 
@@ -59,15 +64,13 @@ export class SingleLroOpsManager {
       return;
     }
     this.initialized = true;
-    this.refresh().catch((err) => {
-      this.log("unable to refresh lro operation", err);
+    this.summaryFeedUnsubscribe = subscribeAccountLroSummaryFeed(
+      this.handleSummaryFeedUpdate,
+    );
+    this.syncFromSummaryCache();
+    this.bootstrap().catch((err) => {
+      this.log("unable to bootstrap lro operation", err);
     });
-    const refreshMs = this.opts.refreshMs ?? 30_000;
-    this.refreshTimer = window.setInterval(() => {
-      this.refresh().catch((err) => {
-        this.log("unable to refresh lro operation", err);
-      });
-    }, refreshMs);
   };
 
   close = () => {
@@ -75,9 +78,9 @@ export class SingleLroOpsManager {
       return;
     }
     this.initialized = false;
-    if (this.refreshTimer != null) {
-      window.clearInterval(this.refreshTimer);
-      this.refreshTimer = undefined;
+    if (this.summaryFeedUnsubscribe != null) {
+      this.summaryFeedUnsubscribe();
+      this.summaryFeedUnsubscribe = undefined;
     }
     this.closeStream();
     this.state = undefined;
@@ -125,31 +128,69 @@ export class SingleLroOpsManager {
       })
       .catch((err) => {
         this.log("unable to dismiss lro operation", err);
-        this.refresh().catch((refreshErr) => {
-          this.log("unable to refresh lro operation", refreshErr);
+        this.bootstrap().catch((bootstrapErr) => {
+          this.log("unable to bootstrap lro operation", bootstrapErr);
         });
       });
   };
 
-  private refresh = reuseInFlight(async () => {
+  private bootstrap = reuseInFlight(async () => {
     if (lite) {
       return;
     }
     if (!this.initialized || this.opts.isClosed()) {
       return;
     }
-    const ops = await this.opts.listLro({
+    await bootstrapAccountLroScope({
       scope_type: this.opts.scope_type,
       scope_id: this.opts.scope_id,
       include_completed: this.opts.include_completed,
+      listLro: this.opts.listLro,
     });
     if (!this.initialized || this.opts.isClosed()) {
       return;
     }
-    const candidates = ops.filter(
-      (op) => op.kind === this.opts.kind && !isDismissed(op),
-    );
+    this.syncFromSummaryCache();
+  });
+
+  private handleSummaryFeedUpdate = (reason: "change" | "reset") => {
+    if (!this.initialized || this.opts.isClosed()) {
+      return;
+    }
+    if (reason === "reset") {
+      this.bootstrap().catch((err) => {
+        this.log("unable to bootstrap lro operation", err);
+      });
+      return;
+    }
+    this.syncFromSummaryCache();
+  };
+
+  private syncFromSummaryCache = () => {
+    const ops = getAccountLroSummaries({
+      scope_type: this.opts.scope_type,
+      scope_id: this.opts.scope_id,
+    });
+    if (!this.initialized || this.opts.isClosed()) {
+      return;
+    }
+    const candidates = ops.filter((op) => {
+      if (op.kind !== this.opts.kind || isDismissed(op)) {
+        return false;
+      }
+      if (!this.opts.include_completed && isTerminal(op.status)) {
+        return false;
+      }
+      return true;
+    });
     if (!candidates.length) {
+      if (
+        this.currentOpId &&
+        this.state?.op_id === this.currentOpId &&
+        this.state.summary == null
+      ) {
+        return;
+      }
       this.clearState();
       return;
     }
@@ -179,7 +220,7 @@ export class SingleLroOpsManager {
         this.clearState();
       }
     }
-  });
+  };
 
   private ensureStream = ({
     op_id,
@@ -312,10 +353,10 @@ export class SingleLroOpsManager {
 
 export class MultiLroOpsManager {
   private initialized = false;
-  private refreshTimer?: number;
   private streams = new globalThis.Map<string, DStream<LroEvent>>();
   private streamInit = new globalThis.Map<string, Promise<void>>();
   private state: Record<string, LroOpState> = {};
+  private summaryFeedUnsubscribe?: () => void;
 
   constructor(private opts: MultiOptions) {}
 
@@ -328,15 +369,13 @@ export class MultiLroOpsManager {
       return;
     }
     this.initialized = true;
-    this.refresh().catch((err) => {
-      this.log("unable to refresh lro operations", err);
+    this.summaryFeedUnsubscribe = subscribeAccountLroSummaryFeed(
+      this.handleSummaryFeedUpdate,
+    );
+    this.syncFromSummaryCache();
+    this.bootstrap().catch((err) => {
+      this.log("unable to bootstrap lro operations", err);
     });
-    const refreshMs = this.opts.refreshMs ?? 30_000;
-    this.refreshTimer = window.setInterval(() => {
-      this.refresh().catch((err) => {
-        this.log("unable to refresh lro operations", err);
-      });
-    }, refreshMs);
   };
 
   close = () => {
@@ -344,9 +383,9 @@ export class MultiLroOpsManager {
       return;
     }
     this.initialized = false;
-    if (this.refreshTimer != null) {
-      window.clearInterval(this.refreshTimer);
-      this.refreshTimer = undefined;
+    if (this.summaryFeedUnsubscribe != null) {
+      this.summaryFeedUnsubscribe();
+      this.summaryFeedUnsubscribe = undefined;
     }
     for (const stream of this.streams.values()) {
       stream.close();
@@ -396,32 +435,63 @@ export class MultiLroOpsManager {
       })
       .catch((err) => {
         this.log("unable to dismiss lro operation", err);
-        this.refresh().catch((refreshErr) => {
-          this.log("unable to refresh lro operations", refreshErr);
+        this.bootstrap().catch((bootstrapErr) => {
+          this.log("unable to bootstrap lro operations", bootstrapErr);
         });
       });
   };
 
-  private refresh = reuseInFlight(async () => {
+  private bootstrap = reuseInFlight(async () => {
     if (lite) {
       return;
     }
     if (!this.initialized || this.opts.isClosed()) {
       return;
     }
-    const ops = await this.opts.listLro({
+    await bootstrapAccountLroScope({
       scope_type: this.opts.scope_type,
       scope_id: this.opts.scope_id,
       include_completed: this.opts.include_completed,
+      listLro: this.opts.listLro,
     });
     if (!this.initialized || this.opts.isClosed()) {
       return;
     }
-    const filtered = ops.filter(
-      (op) => op.kind === this.opts.kind && !isDismissed(op),
-    );
-    this.sync(filtered);
+    this.syncFromSummaryCache();
   });
+
+  private handleSummaryFeedUpdate = (reason: "change" | "reset") => {
+    if (!this.initialized || this.opts.isClosed()) {
+      return;
+    }
+    if (reason === "reset") {
+      this.bootstrap().catch((err) => {
+        this.log("unable to bootstrap lro operations", err);
+      });
+      return;
+    }
+    this.syncFromSummaryCache();
+  };
+
+  private syncFromSummaryCache = () => {
+    const ops = getAccountLroSummaries({
+      scope_type: this.opts.scope_type,
+      scope_id: this.opts.scope_id,
+    });
+    if (!this.initialized || this.opts.isClosed()) {
+      return;
+    }
+    const filtered = ops.filter((op) => {
+      if (op.kind !== this.opts.kind || isDismissed(op)) {
+        return false;
+      }
+      if (!this.opts.include_completed && isTerminal(op.status)) {
+        return false;
+      }
+      return true;
+    });
+    this.sync(filtered);
+  };
 
   private sync = (ops: LroSummary[]) => {
     const next: Record<string, LroOpState> = {};
@@ -439,6 +509,15 @@ export class MultiLroOpsManager {
         });
       } else {
         this.closeStream(op.op_id);
+      }
+    }
+    for (const [op_id, prev] of Object.entries(this.state)) {
+      if (
+        !next[op_id] &&
+        prev.summary == null &&
+        (this.streams.has(op_id) || this.streamInit.has(op_id))
+      ) {
+        next[op_id] = prev;
       }
     }
     for (const op_id of Object.keys(this.state)) {
