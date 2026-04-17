@@ -234,3 +234,4 @@ log.md
 log.txt
 src/log*
 src/g.sh
+src/packages/project-host/tmp/stress-build-bundle/**
