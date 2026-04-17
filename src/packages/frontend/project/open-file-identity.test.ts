@@ -4,16 +4,19 @@ import {
   applyWorkspaceSelectionForForegroundOpen,
   canonicalPath,
   findOpenDisplayPathForSyncPath,
+  isTransientSyncIdentityResolutionError,
   log_file_open,
   log_opened_time,
   mark_open_phase,
   resolveSyncPath,
+  resolveSyncPathWithRetry,
 } from "./open-file";
 import * as workspaceRecordsRuntime from "./workspaces/records-runtime";
 import * as workspaceSelectionRuntime from "./workspaces/selection-runtime";
 import { termPath } from "@cocalc/util/terminal/names";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import * as asyncUtils from "@cocalc/util/async-utils";
 
 describe("canonicalPath", () => {
   const HOME = "/home/wstein/work";
@@ -109,6 +112,76 @@ describe("resolveSyncPath", () => {
     await expect(resolveSyncPath(fs, "/root/link.txt", HOME)).rejects.toThrow(
       "boom",
     );
+  });
+});
+
+describe("isTransientSyncIdentityResolutionError", () => {
+  it("treats file-server init failures as retryable", () => {
+    expect(
+      isTransientSyncIdentityResolutionError(
+        new Error("file server not initialized"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat permanent support failures as retryable", () => {
+    expect(
+      isTransientSyncIdentityResolutionError(
+        new Error("canonicalSyncIdentityPath unavailable"),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("resolveSyncPathWithRetry", () => {
+  const HOME = "/root";
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("retries transient file-server initialization failures", async () => {
+    const fs = {
+      canonicalSyncIdentityPath: jest
+        .fn()
+        .mockRejectedValueOnce(new Error("file server not initialized"))
+        .mockResolvedValue("/root/file.txt"),
+    };
+    const sleepSpy = jest
+      .spyOn(asyncUtils, "sleep")
+      .mockResolvedValue(undefined);
+    await expect(
+      resolveSyncPathWithRetry(fs, "/root/file.txt", HOME),
+    ).resolves.toBe("/root/file.txt");
+    expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledTimes(2);
+    expect(sleepSpy).toHaveBeenCalled();
+  });
+
+  it("stops retrying when the open is cancelled", async () => {
+    const fs = {
+      canonicalSyncIdentityPath: jest
+        .fn()
+        .mockRejectedValue(new Error("file server not initialized")),
+    };
+    jest.spyOn(asyncUtils, "sleep").mockResolvedValue(undefined);
+    let open = true;
+    const promise = resolveSyncPathWithRetry(fs, "/root/file.txt", HOME, {
+      isOpen: () => open,
+    });
+    open = false;
+    await expect(promise).rejects.toThrow("cancelled");
+  });
+
+  it("fails immediately on permanent canonical identity errors", async () => {
+    const fs = {
+      canonicalSyncIdentityPath: jest.fn().mockRejectedValue(new Error("boom")),
+    };
+    const sleepSpy = jest.spyOn(asyncUtils, "sleep");
+    await expect(
+      resolveSyncPathWithRetry(fs, "/root/file.txt", HOME),
+    ).rejects.toThrow("boom");
+    expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledTimes(1);
+    expect(sleepSpy).not.toHaveBeenCalled();
   });
 });
 

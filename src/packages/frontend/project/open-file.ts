@@ -20,6 +20,7 @@ import {
   required,
   uuid,
 } from "@cocalc/util/misc";
+import { sleep } from "@cocalc/util/async-utils";
 import { isChatExtension } from "@cocalc/frontend/chat/paths";
 import { getRuntimeWorkspaceRecords } from "@cocalc/frontend/project/workspaces/records-runtime";
 import {
@@ -88,6 +89,20 @@ type SyncIdentityFs = {
   canonicalSyncIdentityPath?: (path: string) => Promise<string>;
 };
 
+const SYNC_IDENTITY_RETRY_START_MS = 150;
+const SYNC_IDENTITY_RETRY_MAX_MS = 1500;
+const SYNC_IDENTITY_RETRY_TIMEOUT_MS = 10_000;
+
+export function isTransientSyncIdentityResolutionError(err: unknown): boolean {
+  const message = `${err}`;
+  return (
+    message.includes("file server not initialized") ||
+    message.includes("socket has been disconnected") ||
+    message.includes("code=408") ||
+    message.includes('timeout of 30000ms waiting for "ready"')
+  );
+}
+
 export function applyWorkspaceSelectionForForegroundOpen(
   project_id: string,
   path: string,
@@ -133,6 +148,37 @@ export async function resolveSyncPath(
   // Map resolved paths to canonical sync identities used by specific editors
   // (e.g. ipynb syncdb path, terminal path key).
   return canonicalPath(syncPath, projectHome);
+}
+
+export async function resolveSyncPathWithRetry(
+  fs: SyncIdentityFs,
+  displayPath: string,
+  projectHome: string,
+  {
+    isOpen = () => true,
+  }: {
+    isOpen?: () => boolean;
+  } = {},
+): Promise<string> {
+  const deadline = Date.now() + SYNC_IDENTITY_RETRY_TIMEOUT_MS;
+  let delayMs = SYNC_IDENTITY_RETRY_START_MS;
+  while (true) {
+    if (!isOpen()) {
+      throw new Error(`open of '${displayPath}' was cancelled`);
+    }
+    try {
+      return await resolveSyncPath(fs, displayPath, projectHome);
+    } catch (err) {
+      if (
+        !isTransientSyncIdentityResolutionError(err) ||
+        Date.now() + delayMs > deadline
+      ) {
+        throw err;
+      }
+    }
+    await sleep(delayMs);
+    delayMs = Math.min(SYNC_IDENTITY_RETRY_MAX_MS, Math.round(delayMs * 1.8));
+  }
 }
 
 export async function open_file(
@@ -252,10 +298,13 @@ export async function open_file(
 
   let syncPath: string;
   try {
-    syncPath = await resolveSyncPath(
+    syncPath = await resolveSyncPathWithRetry(
       actions.fs() as SyncIdentityFs,
       displayPath,
       projectHome,
+      {
+        isOpen: tabIsOpened,
+      },
     );
   } catch (err) {
     if (!alreadyOpened && actions.open_files?.has(displayPath)) {
