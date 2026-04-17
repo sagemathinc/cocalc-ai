@@ -213,6 +213,13 @@ import {
   rolloutHostManagedComponentsInternalHelper,
   upgradeHostSoftwareInternalHelper,
 } from "./hosts-software-execution";
+import {
+  deleteHostInternalHelper,
+  forceDeprovisionHostInternalHelper,
+  markHostDeprovisionedInternal as markHostDeprovisionedInternalHelper,
+  removeSelfHostConnectorInternalHelper,
+  setHostDesiredStateInternal as setHostDesiredStateInternalHelper,
+} from "./hosts-teardown";
 function pool() {
   return getPool();
 }
@@ -1631,67 +1638,55 @@ async function setHostDesiredState(
   id: string,
   desiredState: "running" | "stopped",
 ) {
-  await pool().query(
-    `
-      UPDATE project_hosts
-      SET metadata = jsonb_set(
-            COALESCE(metadata, '{}'::jsonb),
-            '{desired_state}',
-            to_jsonb($2::text)
-          ),
-          updated = NOW()
-      WHERE id=$1 AND deleted IS NULL
-    `,
-    [id, desiredState],
-  );
+  await setHostDesiredStateInternalHelper({
+    id,
+    desiredState,
+    updateHostDesiredState: async (id, desiredState) => {
+      await pool().query(
+        `
+          UPDATE project_hosts
+          SET metadata = jsonb_set(
+                COALESCE(metadata, '{}'::jsonb),
+                '{desired_state}',
+                to_jsonb($2::text)
+              ),
+              updated = NOW()
+          WHERE id=$1 AND deleted IS NULL
+        `,
+        [id, desiredState],
+      );
+    },
+  });
 }
 
 async function markHostDeprovisioned(row: any, action: string) {
-  const machine: HostMachine = row.metadata?.machine ?? {};
-  const runtime = row.metadata?.runtime;
-  const nextMetadata = { ...(row.metadata ?? {}) };
-  nextMetadata.desired_state = "stopped";
-  delete nextMetadata.runtime;
-  delete nextMetadata.dns;
-  delete nextMetadata.cloudflare_tunnel;
-  delete nextMetadata.metrics;
-
-  logStatusUpdate(row.id, "deprovisioned", "api");
-  await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
-  await revokeProjectHostTokensForHost(row.id, { purpose: "master-conat" });
-  try {
-    if (await hasCloudflareTunnel()) {
-      await deleteCloudflareTunnel({
-        host_id: row.id,
-        tunnel: row.metadata?.cloudflare_tunnel,
-      });
-    } else if (await hasDns()) {
-      await deleteHostDns({ record_id: row.metadata?.dns?.record_id });
-    }
-  } catch (err) {
-    console.warn("force deprovision cleanup failed", err);
-  }
-
-  await pool().query(
-    `UPDATE project_hosts
-       SET status=$2,
-           public_url=NULL,
-           internal_url=NULL,
-           ssh_server=NULL,
-           last_seen=$3,
-           metadata=$4,
-           updated=NOW()
-    WHERE id=$1 AND deleted IS NULL`,
-    [row.id, "deprovisioned", new Date(), nextMetadata],
-  );
-  await clearProjectHostMetrics({ host_id: row.id });
-  await logCloudVmEvent({
-    vm_id: row.id,
+  await markHostDeprovisionedInternalHelper({
+    row,
     action,
-    status: "success",
-    provider: normalizeProviderId(machine.cloud) ?? machine.cloud,
-    spec: machine,
-    runtime,
+    logStatusUpdate,
+    revokeProjectHostTokensForHost,
+    hasCloudflareTunnel,
+    deleteCloudflareTunnel,
+    hasDns,
+    deleteHostDns,
+    logWarn: (message, payload) => logger.warn(message, payload),
+    updateHostDeprovisionedRecord: async ({ row, nextMetadata }) => {
+      await pool().query(
+        `UPDATE project_hosts
+           SET status=$2,
+               public_url=NULL,
+               internal_url=NULL,
+               ssh_server=NULL,
+               last_seen=$3,
+               metadata=$4,
+               updated=NOW()
+        WHERE id=$1 AND deleted IS NULL`,
+        [row.id, "deprovisioned", new Date(), nextMetadata],
+      );
+    },
+    clearProjectHostMetrics,
+    logCloudVmEvent,
+    normalizeProviderId,
   });
 }
 
@@ -4515,12 +4510,14 @@ export async function forceDeprovisionHostInternal({
   account_id?: string;
   id: string;
 }): Promise<void> {
-  const row = await loadOwnedHost(id, account_id);
-  const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
-  if (machineCloud !== "self-host") {
-    throw new Error("force deprovision is only supported for self-hosted VMs");
-  }
-  await markHostDeprovisioned(row, "force_deprovision");
+  await forceDeprovisionHostInternalHelper({
+    account_id,
+    id,
+    loadOwnedHost,
+    normalizeProviderId,
+    markHostDeprovisionedInternal: async ({ row, action }) =>
+      await markHostDeprovisioned(row, action),
+  });
 }
 
 export async function removeSelfHostConnector({
@@ -4551,22 +4548,15 @@ export async function removeSelfHostConnectorInternal({
   account_id?: string;
   id: string;
 }): Promise<void> {
-  const row = await loadOwnedHost(id, account_id);
-  const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
-  if (machineCloud !== "self-host") {
-    throw new Error("host is not self-hosted");
-  }
-  await markHostDeprovisioned(row, "remove_connector");
-  const connectorId =
-    row.region ??
-    row.metadata?.machine?.metadata?.connector_id ??
-    row.metadata?.machine?.metadata?.connectorId;
-  if (typeof connectorId === "string" && connectorId) {
-    await revokeConnector({
-      connector_id: connectorId,
-      account_id,
-    });
-  }
+  await removeSelfHostConnectorInternalHelper({
+    account_id,
+    id,
+    loadOwnedHost,
+    normalizeProviderId,
+    markHostDeprovisionedInternal: async ({ row, action }) =>
+      await markHostDeprovisioned(row, action),
+    revokeConnector,
+  });
 }
 
 export async function renameHost({
@@ -5854,37 +5844,38 @@ export async function deleteHostInternal({
   account_id?: string;
   id: string;
 }): Promise<void> {
-  const row = await loadOwnedHost(id, account_id);
-  const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
-  if (row.status === "deprovisioned") {
-    await setHostDesiredState(id, "stopped");
-    await pool().query(
-      `UPDATE project_hosts SET deleted=NOW(), updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-      [id],
-    );
-    return;
-  }
-  if (machineCloud) {
-    await setHostDesiredState(id, "stopped");
-    await enqueueCloudVmWork({
-      vm_id: id,
-      action: "delete",
-      payload: { provider: machineCloud },
-    });
-    logStatusUpdate(id, "deprovisioning", "api");
-    await pool().query(
-      `UPDATE project_hosts SET status=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-      [id, "deprovisioning"],
-    );
-    return;
-  }
-  logStatusUpdate(id, "deprovisioned", "api");
-  await pool().query(
-    `UPDATE project_hosts
-       SET status=$2,
-           metadata=jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', to_jsonb($3::text)),
-           updated=NOW()
-     WHERE id=$1 AND deleted IS NULL`,
-    [id, "deprovisioned", "stopped"],
-  );
+  await deleteHostInternalHelper({
+    account_id,
+    id,
+    loadOwnedHost,
+    normalizeProviderId,
+    setHostDesiredStateInternal: async ({ id, desiredState }) =>
+      await setHostDesiredState(id, desiredState),
+    enqueueCloudVmWork: async (opts) => {
+      await enqueueCloudVmWork(opts);
+    },
+    logStatusUpdate,
+    markHostDeleted: async (id) => {
+      await pool().query(
+        `UPDATE project_hosts SET deleted=NOW(), updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+        [id],
+      );
+    },
+    markHostDeprovisioning: async (id) => {
+      await pool().query(
+        `UPDATE project_hosts SET status=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
+        [id, "deprovisioning"],
+      );
+    },
+    markHostStoppedDeprovisioned: async (id) => {
+      await pool().query(
+        `UPDATE project_hosts
+           SET status=$2,
+               metadata=jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', to_jsonb($3::text)),
+               updated=NOW()
+         WHERE id=$1 AND deleted IS NULL`,
+        [id, "deprovisioned", "stopped"],
+      );
+    },
+  });
 }
