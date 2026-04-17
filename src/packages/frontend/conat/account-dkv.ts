@@ -87,8 +87,8 @@ function ensureSessionListeners() {
   rememberMeFailedListener = () => {
     closeSharedDkvs();
   };
-  webapp_client.on("signed_in", signedInListener);
-  webapp_client.on("remember_me_failed", rememberMeFailedListener);
+  webapp_client.on?.("signed_in", signedInListener);
+  webapp_client.on?.("remember_me_failed", rememberMeFailedListener);
 }
 
 export function resetSharedAccountDkvCacheForTests() {
