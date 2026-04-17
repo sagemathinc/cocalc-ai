@@ -1136,6 +1136,34 @@ describe("project-host daemon stop", () => {
     expect(spawnSyncSpy).toHaveBeenCalled();
   });
 
+  it("loads a local env overlay after the bootstrap env file", () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-env-"),
+    );
+    const envFile = path.join(tempDir, "project-host.env");
+    const localEnvFile = path.join(tempDir, "project-host.local.env");
+    fs.writeFileSync(
+      envFile,
+      ["COCALC_DATA=/tmp/project-host-data", "DEBUG_CONSOLE=no"].join("\n") +
+        "\n",
+    );
+    fs.writeFileSync(
+      localEnvFile,
+      [
+        "DEBUG_CONSOLE=yes",
+        "COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS=1",
+      ].join("\n") + "\n",
+    );
+    process.env.COCALC_PROJECT_HOST_DAEMON_ENV_FILE = envFile;
+    process.env.COCALC_PROJECT_HOST_DAEMON_LOCAL_ENV_FILE = localEnvFile;
+
+    const resolved = __test__.resolveEnv(0);
+
+    expect(resolved.dataDir).toBe("/tmp/project-host-data");
+    expect(resolved.env.DEBUG_CONSOLE).toBe("yes");
+    expect(resolved.env.COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS).toBe("1");
+  });
+
   it("does not restart an unhealthy daemon during the startup grace window", () => {
     const dataDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-daemon-"),

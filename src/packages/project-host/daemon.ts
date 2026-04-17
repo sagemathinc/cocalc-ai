@@ -33,6 +33,7 @@ export type ProjectHostRuntimeInspection = {
 };
 
 const DEFAULT_ENV_FILE = "/etc/cocalc/project-host.env";
+const DEFAULT_LOCAL_ENV_FILE = "/etc/cocalc/project-host.local.env";
 const processRuntime = {
   spawn: childProcess.spawn,
   spawnSync: childProcess.spawnSync,
@@ -139,6 +140,20 @@ function loadEnvFromFile(envFile: string): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+function daemonEnvFilePath(): string {
+  return (
+    `${process.env.COCALC_PROJECT_HOST_DAEMON_ENV_FILE ?? ""}`.trim() ||
+    DEFAULT_ENV_FILE
+  );
+}
+
+function daemonLocalEnvFilePath(): string {
+  return (
+    `${process.env.COCALC_PROJECT_HOST_DAEMON_LOCAL_ENV_FILE ?? ""}`.trim() ||
+    DEFAULT_LOCAL_ENV_FILE
+  );
 }
 
 function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
@@ -540,12 +555,13 @@ function resolveEnv(index: number): {
   projectHostPort?: number;
   sshPort?: number;
 } {
-  const fileEnv = loadEnvFromFile(DEFAULT_ENV_FILE);
-  const env = { ...fileEnv, ...normalizeEnv(process.env) };
+  const fileEnv = loadEnvFromFile(daemonEnvFilePath());
+  const localFileEnv = loadEnvFromFile(daemonLocalEnvFilePath());
+  const env = { ...fileEnv, ...localFileEnv, ...normalizeEnv(process.env) };
   const dataDir = env.COCALC_DATA ?? env.DATA;
   if (!dataDir) {
     throw new Error(
-      "COCALC_DATA (or DATA) must be set, or provide /etc/cocalc/project-host.env",
+      "COCALC_DATA (or DATA) must be set, or provide a project-host env file",
     );
   }
   env.COCALC_DATA = env.COCALC_DATA ?? dataDir;
@@ -2602,6 +2618,8 @@ export const __test__ = {
   captureProcessForensics,
   checkHealthSync,
   cleanupStrayProcesses,
+  daemonEnvFilePath,
+  daemonLocalEnvFilePath,
   ensurePodmanHealthy,
   healthCheckUrl,
   inferProjectHostBundleVersionFromCmdline,
@@ -2612,4 +2630,5 @@ export const __test__ = {
   matchingSshpiperdPids,
   parsePort,
   processRuntime,
+  resolveEnv,
 };
