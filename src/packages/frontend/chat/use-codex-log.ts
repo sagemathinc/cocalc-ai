@@ -4,6 +4,10 @@ import LRUCache from "lru-cache";
 import { appendStreamMessage } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import type { DStream } from "@cocalc/conat/sync/dstream";
+import {
+  acquireSharedProjectDStream,
+  type SharedProjectDStreamRelease,
+} from "@cocalc/frontend/conat/project-dstream";
 import type { RegisteredReconnectResource } from "@cocalc/frontend/conat/reconnect-coordinator";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
@@ -377,6 +381,7 @@ export function useCodexLog({
   useEffect(() => {
     let sub: any;
     let liveStream: DStream<AcpStreamMessage | AcpStreamMessage[]> | undefined;
+    let releaseLiveStream: SharedProjectDStreamRelease | undefined;
     let liveStreamListener:
       | ((event: AcpStreamMessage | AcpStreamMessage[], seq?: number) => void)
       | undefined;
@@ -408,14 +413,16 @@ export function useCodexLog({
       try {
         const cn = webapp_client.conat_client.conat();
         if (liveLogStream) {
-          liveStream =
-            await webapp_client.conat_client.dstream<AcpStreamMessage>({
-              project_id: projectId,
-              name: liveLogStream,
-              ephemeral: true,
-            });
+          const lease = await acquireSharedProjectDStream<AcpStreamMessage>({
+            project_id: projectId,
+            name: liveLogStream,
+            ephemeral: true,
+            maxListeners: 50,
+          });
+          liveStream = lease.stream;
+          releaseLiveStream = lease.release;
           if (stopped) {
-            liveStream.close();
+            await releaseLiveStream({ immediate: true });
             return;
           }
           liveConnectedRef.current = true;
@@ -479,6 +486,14 @@ export function useCodexLog({
         }
       } catch (err) {
         liveConnectedRef.current = false;
+        try {
+          if (liveStream && liveStreamListener) {
+            liveStream.off("change", liveStreamListener);
+          }
+        } catch {
+          // ignore
+        }
+        void releaseLiveStream?.({ immediate: true });
         console.warn("live log subscribe failed", err);
         if (!stopped) {
           reconnectResourceRef.current?.requestReconnect({
@@ -508,11 +523,7 @@ export function useCodexLog({
       } catch {
         // ignore
       }
-      try {
-        liveStream?.close?.();
-      } catch {
-        // ignore
-      }
+      void releaseLiveStream?.();
     };
   }, [
     enabled,

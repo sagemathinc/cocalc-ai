@@ -1,8 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { EventEmitter } from "events";
 import { getLatestEventLineText, getLiveResponseMarkdown } from "@cocalc/chat";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { useCodexLog } from "../use-codex-log";
 
 jest.mock("@cocalc/frontend/webapp-client", () => {
   const conatClientEvents = new EventEmitter();
@@ -24,6 +22,26 @@ jest.mock("@cocalc/frontend/webapp-client", () => {
     },
   };
 });
+
+jest.mock("@cocalc/frontend/conat/project-dstream", () => ({
+  acquireSharedProjectDStream: jest.fn(async (opts: any) => {
+    const { webapp_client } = require("@cocalc/frontend/webapp-client");
+    const stream = await webapp_client.conat_client.dstream(opts);
+    return {
+      stream,
+      release: async () => {
+        stream.close?.();
+      },
+    };
+  }),
+  resetSharedProjectDStreamCacheForTests: jest.fn(),
+}));
+
+const { webapp_client } = require("@cocalc/frontend/webapp-client");
+const {
+  resetSharedProjectDStreamCacheForTests,
+} = require("@cocalc/frontend/conat/project-dstream");
+const { useCodexLog } = require("../use-codex-log");
 
 class FakeSubscription {
   private closed = false;
@@ -167,6 +185,7 @@ describe("useCodexLog", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useRealTimers();
+    resetSharedProjectDStreamCacheForTests();
     dstreamMock.mockReset();
     reconnectResource.requestReconnect.mockReset();
     reconnectResource.close.mockReset();
@@ -347,6 +366,7 @@ describe("useCodexLog", () => {
         project_id: "project-1",
         name: "live-stream-1",
         ephemeral: true,
+        maxListeners: 50,
       });
     });
 

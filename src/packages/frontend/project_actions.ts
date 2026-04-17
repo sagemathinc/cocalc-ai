@@ -85,6 +85,10 @@ import {
 } from "@cocalc/frontend/project_store";
 import track from "@cocalc/frontend/user-tracking";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  acquireSharedProjectDStream,
+  type SharedProjectDStreamRelease,
+} from "@cocalc/frontend/conat/project-dstream";
 import { once, retry_until_success } from "@cocalc/util/async-utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import * as misc from "@cocalc/util/misc";
@@ -428,6 +432,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   public open_files?: OpenFiles;
   private projectStatusSub?;
   private projectLogStream?: DStream<ProjectLogRow>;
+  private releaseProjectLogStream?: SharedProjectDStreamRelease;
   private copyOpsManager: CopyOpsManager;
   private backupOpsManager: BackupOpsManager;
   private restoreOpsManager: RestoreOpsManager;
@@ -597,8 +602,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.moveOpsManager.close();
     this.projectStatusSub?.close();
     delete this.projectStatusSub;
-    this.projectLogStream?.close();
+    void this.releaseProjectLogStream?.({ immediate: true });
     delete this.projectLogStream;
+    delete this.releaseProjectLogStream;
     must_define(this.redux);
     this.close_all_files();
     for (const table in QUERIES) {
@@ -618,16 +624,19 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       if (this.projectLogStream && !this.projectLogStream.isClosed()) {
         return this.projectLogStream;
       }
-      const stream = await webapp_client.conat_client.dstream<ProjectLogRow>({
+      const lease = await acquireSharedProjectDStream<ProjectLogRow>({
         project_id: this.project_id,
         name: PROJECT_LOG_STREAM_NAME,
         noInventory: true,
+        maxListeners: 50,
       });
+      const stream = lease.stream;
       if (this.isClosed()) {
-        stream.close();
+        await lease.release({ immediate: true });
         throw Error("project closed");
       }
       this.projectLogStream = stream;
+      this.releaseProjectLogStream = lease.release;
       return stream;
     },
     { createKey: () => "project-log" },
@@ -3439,9 +3448,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     try {
       const stream = await this.getProjectLogStream();
       await stream.delete({ all: true });
-      stream.close();
+      await this.releaseProjectLogStream?.({ immediate: true });
       if (this.projectLogStream === stream) {
         this.projectLogStream = undefined;
+        this.releaseProjectLogStream = undefined;
       }
       this.setState({
         project_log: buildProjectLogMap([]),
