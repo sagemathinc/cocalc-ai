@@ -101,4 +101,117 @@ describe("ReconnectCoordinator", () => {
       randomSpy.mockRestore();
     }
   });
+
+  it("queues resource reconnects until the transport is connected", async () => {
+    const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
+    let connected = false;
+    const connect = jest.fn(async () => {});
+    const resourceReconnect = jest.fn(async () => {});
+    const coordinator = new ReconnectCoordinator({
+      canReconnect: () => true,
+      connect,
+      isConnected: () => connected,
+    });
+    const resource = coordinator.registerResource({
+      isConnected: () => false,
+      priority: () => "foreground",
+      reconnect: resourceReconnect,
+    });
+
+    try {
+      resource.requestReconnect({ reason: "socket_closed" });
+      await jest.runOnlyPendingTimersAsync();
+      expect(resourceReconnect).toHaveBeenCalledTimes(0);
+
+      connected = true;
+      coordinator.noteConnected();
+      await jest.advanceTimersByTimeAsync(999);
+      expect(resourceReconnect).toHaveBeenCalledTimes(0);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(resourceReconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      resource.close();
+      coordinator.close();
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("reconnects foreground resources before background ones", async () => {
+    const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
+    const order: string[] = [];
+    let connected = true;
+    const connect = jest.fn(async () => {});
+    const coordinator = new ReconnectCoordinator({
+      canReconnect: () => true,
+      connect,
+      isConnected: () => connected,
+    });
+    const foreground = coordinator.registerResource({
+      isConnected: () => false,
+      priority: () => "foreground",
+      reconnect: async () => {
+        order.push("foreground");
+      },
+    });
+    const background = coordinator.registerResource({
+      isConnected: () => false,
+      priority: () => "background",
+      reconnect: async () => {
+        order.push("background");
+      },
+    });
+
+    try {
+      background.requestReconnect({ reason: "socket_closed" });
+      foreground.requestReconnect({ reason: "socket_closed" });
+
+      await jest.advanceTimersByTimeAsync(999);
+      expect(order).toEqual([]);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(order).toEqual(["foreground"]);
+
+      await jest.advanceTimersByTimeAsync(3_999);
+      expect(order).toEqual(["foreground"]);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(order).toEqual(["foreground", "background"]);
+
+      connected = false;
+    } finally {
+      foreground.close();
+      background.close();
+      coordinator.close();
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("caps resource priority when the tab itself is in the background", async () => {
+    const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    const reconnect = jest.fn(async () => {});
+    const coordinator = new ReconnectCoordinator({
+      canReconnect: () => true,
+      connect: jest.fn(async () => {}),
+      isConnected: () => true,
+    });
+    const resource = coordinator.registerResource({
+      isConnected: () => false,
+      priority: () => "foreground",
+      reconnect,
+    });
+
+    try {
+      resource.requestReconnect({ reason: "socket_closed" });
+      await jest.advanceTimersByTimeAsync(4_999);
+      expect(reconnect).toHaveBeenCalledTimes(0);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(reconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      resource.close();
+      coordinator.close();
+      randomSpy.mockRestore();
+    }
+  });
 });

@@ -20,6 +20,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ProjectActions, redux } from "@cocalc/frontend/app-framework";
+import type { RegisteredReconnectResource } from "@cocalc/frontend/conat/reconnect-coordinator";
 import { get_buffer, set_buffer } from "@cocalc/frontend/copy-paste-buffer";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { isCoCalcURL } from "@cocalc/frontend/lib/cocalc-urls";
@@ -130,7 +131,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private historyReplayDepth: number = 0;
   private historyBufferIncludesReplay: boolean = false;
 
-  public is_visible: boolean = false;
+  private reconnectResource?: RegisteredReconnectResource;
+  private _is_visible = false;
   public element: HTMLElement;
 
   private command?: string;
@@ -229,6 +231,15 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.init_settings();
     this.initProjectStatusWatcher();
     this.set_connection_status("disconnected");
+    this.reconnectResource =
+      webapp_client.conat_client.registerReconnectResource({
+        canReconnect: () => !this.isClosed() && !this.ptyExited,
+        isConnected: () => this.pty?.socket.state === "ready",
+        priority: () => (this.is_visible ? "foreground" : "background"),
+        reconnect: async () => {
+          await this.connect();
+        },
+      });
 
     const handleData = (data: string, kind: TerminalMessageKind) => {
       this.sendMessage({ data, kind }, { touch: kind === "user" });
@@ -262,6 +273,28 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.connect();
   }
 
+  get is_visible(): boolean {
+    return this._is_visible;
+  }
+
+  set is_visible(value: boolean) {
+    const next = !!value;
+    if (this._is_visible === next) {
+      return;
+    }
+    this._is_visible = next;
+    if (
+      next &&
+      !this.isClosed() &&
+      (this.pty == null || this.pty.socket.state !== "ready")
+    ) {
+      this.reconnectResource?.requestReconnect({
+        reason: "terminal_became_visible",
+        resetBackoff: true,
+      });
+    }
+  }
+
   // If the pty is configured and the socket is connected, but
   // for some reason the actual process is dead, then connect
   // again, which will start the process or reconnect to it.
@@ -279,12 +312,18 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       try {
         // make a call to the backend to check on the pty itself
         if ((await this.pty.state()) != "running") {
-          this.connect();
+          this.reconnectResource?.requestReconnect({
+            reason: "terminal_not_running",
+            resetBackoff: true,
+          });
         }
       } catch {
         // The socket can briefly target a stale terminal server subject
         // during project startup/restart. Force reconnect immediately.
-        this.connect();
+        this.reconnectResource?.requestReconnect({
+          reason: "terminal_state_check_failed",
+          resetBackoff: true,
+        });
       }
     },
     5000,
@@ -350,7 +389,10 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
     if (this.ptyExited) {
       this.ptyExited = false;
-      this.connect();
+      this.reconnectResource?.requestReconnect({
+        reason: "terminal_input_after_exit",
+        resetBackoff: true,
+      });
       return;
     }
     if (!this.pty || this.pty.socket.state != "ready") {
@@ -378,12 +420,17 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     if (this.isClosed()) {
       return;
     }
+    this.reconnectResource?.close();
+    this.reconnectResource = undefined;
     this.pty?.close();
     this.pty = null;
     this.set_connection_status("disconnected");
     this.state = "closed";
     this.account_store.removeListener("change", this.update_settings);
-    this.projectsStore?.removeListener("change", this.handleProjectsStoreChange);
+    this.projectsStore?.removeListener(
+      "change",
+      this.handleProjectsStoreChange,
+    );
     this.terminal.dispose();
     close(this);
     this.state = "closed";
@@ -419,7 +466,10 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
 
     if (prevState !== "running" && nextState === "running") {
-      void this.connect();
+      this.reconnectResource?.requestReconnect({
+        reason: "project_became_running",
+        resetBackoff: true,
+      });
     }
   };
 
@@ -517,11 +567,17 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       pty.on("update-cwd", this.setCwd);
 
       pty.socket.on("disconnected", async () => {
-        setTimeout(this.connect, 1);
+        this.set_connection_status("disconnected");
+        this.reconnectResource?.requestReconnect({
+          reason: "terminal_socket_disconnected",
+        });
       });
 
       pty.socket.on("closed", async () => {
-        setTimeout(this.connect, 1);
+        this.set_connection_status("disconnected");
+        this.reconnectResource?.requestReconnect({
+          reason: "terminal_socket_closed",
+        });
       });
 
       pty.on("resize", ({ rows, cols }) => {
@@ -597,7 +653,10 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       // This will happen regularly, of course, when the project
       // is not running or offline.
       //      console.log("error spawning pty", err);
-      setTimeout(this.connect, 2000);
+      this.set_connection_status("disconnected");
+      this.reconnectResource?.requestReconnect({
+        reason: "terminal_connect_failed",
+      });
     }
   });
 
@@ -1187,7 +1246,10 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       try {
         sizes = await this.pty?.sizes(2000);
       } catch {
-        this.connect();
+        this.reconnectResource?.requestReconnect({
+          reason: "terminal_resize_sync_failed",
+          resetBackoff: true,
+        });
         return;
       }
       if (sizes == null || sizes.length < 2) {

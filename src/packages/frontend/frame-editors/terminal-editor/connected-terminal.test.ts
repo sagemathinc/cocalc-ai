@@ -41,6 +41,18 @@ function loadTerminalModule() {
   const availablePtys = [makePty(), makePty(), makePty()];
   const createdPtys = [...availablePtys];
   const terminalClient = jest.fn(() => availablePtys.shift() ?? makePty());
+  const reconnectResources: {
+    requestReconnect: jest.Mock;
+    close: jest.Mock;
+  }[] = [];
+  const registerReconnectResource = jest.fn(() => {
+    const resource = {
+      requestReconnect: jest.fn(),
+      close: jest.fn(),
+    };
+    reconnectResources.push(resource);
+    return resource;
+  });
 
   jest.resetModules();
 
@@ -81,6 +93,7 @@ function loadTerminalModule() {
   jest.doMock("@cocalc/frontend/webapp-client", () => ({
     webapp_client: {
       conat_client: {
+        registerReconnectResource,
         terminalClient,
       },
     },
@@ -127,7 +140,14 @@ function loadTerminalModule() {
   }));
 
   const { Terminal } = require("./connected-terminal");
-  return { Terminal, ptys: createdPtys, projectStore, terminalClient };
+  return {
+    Terminal,
+    ptys: createdPtys,
+    projectStore,
+    terminalClient,
+    reconnectResources,
+    registerReconnectResource,
+  };
 }
 
 describe("connected terminal resizing", () => {
@@ -181,5 +201,86 @@ describe("connected terminal resizing", () => {
     );
 
     warn.mockRestore();
+  });
+
+  it("routes terminal socket reconnects through the shared reconnect coordinator", async () => {
+    const { Terminal, ptys, reconnectResources } = loadTerminalModule();
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const actions = {
+      project_id: "project-1",
+      path: "/tmp/example.term",
+      get_term_env: jest.fn(() => ({})),
+      set_connection_status: jest.fn(),
+      set_title: jest.fn(),
+      set_error: jest.fn(),
+      _tree_is_single_leaf: jest.fn(() => false),
+      close_frame: jest.fn(),
+      open_code_editor_frame: jest.fn(),
+      _get_project_actions: jest.fn(() => ({
+        flag_file_activity: jest.fn(),
+        open_file: jest.fn(),
+        close_tab: jest.fn(),
+        isTabClosed: jest.fn(() => false),
+        open_directory: jest.fn(),
+      })),
+    } as any;
+
+    const terminal = new Terminal(actions, 0, "term-1", parent);
+    await terminal.connect();
+
+    const disconnectedHandler = ptys
+      .flatMap((pty) =>
+        pty.socket.on.mock.calls
+          .filter(([event]: [string]) => event === "disconnected")
+          .map(([, handler]) => handler),
+      )
+      .at(0);
+
+    expect(disconnectedHandler).toBeInstanceOf(Function);
+    disconnectedHandler?.();
+
+    expect(reconnectResources[0].requestReconnect).toHaveBeenCalledWith({
+      reason: "terminal_socket_disconnected",
+    });
+
+    terminal.close();
+  });
+
+  it("expedites reconnect when a disconnected terminal becomes visible", async () => {
+    const { Terminal, reconnectResources } = loadTerminalModule();
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const actions = {
+      project_id: "project-1",
+      path: "/tmp/example.term",
+      get_term_env: jest.fn(() => ({})),
+      set_connection_status: jest.fn(),
+      set_title: jest.fn(),
+      set_error: jest.fn(),
+      _tree_is_single_leaf: jest.fn(() => false),
+      close_frame: jest.fn(),
+      open_code_editor_frame: jest.fn(),
+      _get_project_actions: jest.fn(() => ({
+        flag_file_activity: jest.fn(),
+        open_file: jest.fn(),
+        close_tab: jest.fn(),
+        isTabClosed: jest.fn(() => false),
+        open_directory: jest.fn(),
+      })),
+    } as any;
+
+    const terminal = new Terminal(actions, 0, "term-1", parent);
+    await terminal.connect();
+    terminal["pty"] = null;
+
+    terminal.is_visible = true;
+
+    expect(reconnectResources[0].requestReconnect).toHaveBeenCalledWith({
+      reason: "terminal_became_visible",
+      resetBackoff: true,
+    });
+
+    terminal.close();
   });
 });
