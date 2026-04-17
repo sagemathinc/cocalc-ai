@@ -22,14 +22,19 @@ export function createBrowserSessionHeartbeat({
   getAccountId: () => string | undefined;
   activate: (accountId: string) => void;
   deactivate: () => string | undefined;
+  suspend: () => void;
+  resume: () => void;
   heartbeat: () => Promise<void>;
   schedule: (delayMs?: number) => void;
 } {
   let accountId: string | undefined;
   let timer: NodeJS.Timeout | undefined;
   let closed = false;
+  let suspended = false;
   let inFlight: Promise<void> | undefined;
   let consecutiveFailures = 0;
+
+  const canRun = () => !closed && !suspended && !!accountId;
 
   const clearTimer = () => {
     if (timer) {
@@ -39,7 +44,7 @@ export function createBrowserSessionHeartbeat({
   };
 
   const heartbeat = async () => {
-    if (closed || !accountId) return;
+    if (!canRun()) return;
     if (inFlight) {
       await inFlight;
       return;
@@ -67,13 +72,19 @@ export function createBrowserSessionHeartbeat({
   };
 
   const schedule = (delayMs = intervalMs) => {
-    if (closed || !accountId) return;
+    if (!canRun()) return;
     clearTimer();
     timer = setTimeout(async () => {
+      if (!canRun()) {
+        return;
+      }
       try {
         await heartbeat();
         schedule(intervalMs);
       } catch (err) {
+        if (!canRun()) {
+          return;
+        }
         consecutiveFailures += 1;
         onWarn?.(`browser-session heartbeat failed: ${err}`);
         schedule(nextRetryDelay());
@@ -83,12 +94,14 @@ export function createBrowserSessionHeartbeat({
 
   const activate = (nextAccountId: string) => {
     closed = false;
+    suspended = false;
     accountId = nextAccountId;
     consecutiveFailures = 0;
   };
 
   const deactivate = (): string | undefined => {
     closed = true;
+    suspended = false;
     clearTimer();
     const currentAccountId = accountId;
     accountId = undefined;
@@ -96,10 +109,29 @@ export function createBrowserSessionHeartbeat({
     return currentAccountId;
   };
 
+  const suspend = () => {
+    if (closed || !accountId) {
+      return;
+    }
+    suspended = true;
+    clearTimer();
+  };
+
+  const resume = () => {
+    if (closed || !accountId) {
+      return;
+    }
+    suspended = false;
+    consecutiveFailures = 0;
+    schedule(0);
+  };
+
   return {
     getAccountId: () => accountId,
     activate,
     deactivate,
+    suspend,
+    resume,
     heartbeat,
     schedule,
   };

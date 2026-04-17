@@ -304,6 +304,7 @@ export class ConatClient extends EventEmitter {
       });
       this._conatClient.on("connected", () => {
         this.reconnectCoordinator.noteConnected();
+        this.browserSessionAutomation.noteConnected?.();
         this.setConnectionStatus({
           state: "connected",
           reason: "",
@@ -314,6 +315,7 @@ export class ConatClient extends EventEmitter {
         this.automaticallyReconnect = true;
       });
       this._conatClient.on("disconnected", (reason, details) => {
+        this.browserSessionAutomation.noteDisconnected?.();
         this.setConnectionStatus({
           state: "disconnected",
           reason,
@@ -329,6 +331,7 @@ export class ConatClient extends EventEmitter {
         }
       });
       this._conatClient.conn.on("connect_error", (err) => {
+        this.browserSessionAutomation.noteDisconnected?.();
         if (!this.automaticallyReconnect) {
           return;
         }

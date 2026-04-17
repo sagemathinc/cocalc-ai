@@ -132,6 +132,8 @@ const getQuickJSAsyncifyModule = memoizePromiseFactory(async () => {
 export type BrowserSessionAutomation = {
   start: (account_id: string) => Promise<void>;
   stop: () => Promise<void>;
+  noteConnected?: () => void;
+  noteDisconnected?: () => void;
 };
 
 export function createBrowserSessionAutomation({
@@ -2130,6 +2132,12 @@ export function createBrowserSessionAutomation({
       } catch {
         // ignore disconnect races and best-effort cleanup failures.
       }
+    },
+    noteConnected: () => {
+      heartbeatController.resume();
+    },
+    noteDisconnected: () => {
+      heartbeatController.suspend();
     },
   };
 }

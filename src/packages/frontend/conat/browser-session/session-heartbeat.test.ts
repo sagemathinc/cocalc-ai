@@ -48,4 +48,46 @@ describe("browser session heartbeat backoff", () => {
       10_000,
     );
   });
+
+  it("suspends retries while disconnected and resumes immediately on reconnect", async () => {
+    const upsertBrowserSession = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(undefined);
+    const setTimeoutSpy = jest.spyOn(global, "setTimeout");
+
+    const { createBrowserSessionHeartbeat } = require("./session-heartbeat");
+    const heartbeat = createBrowserSessionHeartbeat({
+      hub: {
+        system: {
+          upsertBrowserSession,
+        },
+      },
+      getSnapshot: () => ({ browser_id: "browser-1" }),
+      intervalMs: 10_000,
+      retryMs: 4_000,
+      maxRetryMs: 60_000,
+      retryBackoff: 2,
+      retryJitter: 0,
+    });
+
+    heartbeat.activate("acct-1");
+    heartbeat.schedule(0);
+
+    await jest.runOnlyPendingTimersAsync();
+    expect(upsertBrowserSession).toHaveBeenCalledTimes(1);
+    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 4_000);
+
+    heartbeat.suspend();
+    await jest.advanceTimersByTimeAsync(4_000);
+    expect(upsertBrowserSession).toHaveBeenCalledTimes(1);
+
+    heartbeat.resume();
+    await jest.runOnlyPendingTimersAsync();
+    expect(upsertBrowserSession).toHaveBeenCalledTimes(2);
+    expect(setTimeoutSpy).toHaveBeenLastCalledWith(
+      expect.any(Function),
+      10_000,
+    );
+  });
 });
