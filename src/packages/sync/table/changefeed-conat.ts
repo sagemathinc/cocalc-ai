@@ -99,6 +99,9 @@ export class ConatChangefeed extends EventEmitter {
       }
     } catch (err) {
       this.log("got error", err);
+      if (`${err ?? ""}`.toLowerCase().includes("disconnect")) {
+        this.emit("disconnect", err);
+      }
     }
     this.log("watch ended", this.query);
     this.close();

@@ -55,4 +55,33 @@ describe("ConatChangefeed", () => {
     );
     expect(init).toEqual([{ account_id: "a" }]);
   });
+
+  it("emits disconnect when the underlying iterator disconnects", async () => {
+    const explicitClient = { id: "explicit" } as any;
+    const cf = Object.assign(new EventEmitter(), {
+      next: jest.fn().mockResolvedValue({
+        done: false,
+        value: { accounts: [{ account_id: "a" }] },
+      }),
+      close: jest.fn(),
+      [Symbol.asyncIterator]: async function* () {
+        throw Error("disconnected");
+      },
+    });
+    changefeedMock.mockReturnValue(cf);
+
+    const changefeed = new ConatChangefeed({
+      account_id: "6aae57c6-08f1-4bb5-848b-3ceb53e61ede",
+      query: { accounts: [{ account_id: null }] },
+      client: explicitClient,
+    });
+
+    const disconnect = jest.fn();
+    changefeed.on("disconnect", disconnect);
+    await changefeed.connect();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(disconnect).toHaveBeenCalledWith(expect.any(Error));
+    expect(cf.close).toHaveBeenCalled();
+  });
 });

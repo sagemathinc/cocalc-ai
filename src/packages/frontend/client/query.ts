@@ -69,6 +69,18 @@ export class QueryClient {
         };
         this.changefeeds[id] = changefeed;
         cb(undefined, { query, id });
+        changefeed.on("disconnect", () => {
+          if (this.changefeeds[id] !== changefeed) {
+            return;
+          }
+          delete this.changefeeds[id];
+          cb("disconnect");
+        });
+        changefeed.on("close", () => {
+          if (this.changefeeds[id] === changefeed) {
+            delete this.changefeeds[id];
+          }
+        });
         changefeed.on("update", (change) => {
           cb(undefined, change);
         });
