@@ -115,15 +115,4 @@ export function init(redux) {
       init_autosave(interval_s);
     }
   });
-
-  // Standby timeout
-  let last_set_standby_timeout_m = undefined;
-  store.on("change", function () {
-    // NOTE: we call this on any change to account settings, which is maybe too extreme.
-    const x = store.getIn(["other_settings", "standby_timeout_m"]);
-    if (last_set_standby_timeout_m !== x) {
-      last_set_standby_timeout_m = x;
-      webapp_client.idle_client.set_standby_timeout_m(x);
-    }
-  });
 }

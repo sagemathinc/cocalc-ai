@@ -214,4 +214,39 @@ describe("ReconnectCoordinator", () => {
       randomSpy.mockRestore();
     }
   });
+
+  it("suppresses resource reconnects during soft standby until resume", async () => {
+    const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
+    const connect = jest.fn(async () => {});
+    const reconnect = jest.fn(async () => {});
+    const coordinator = new ReconnectCoordinator({
+      canReconnect: () => true,
+      connect,
+      isConnected: () => true,
+    });
+    const resource = coordinator.registerResource({
+      isConnected: () => false,
+      priority: () => "foreground",
+      reconnect,
+    });
+
+    try {
+      coordinator.softStandby();
+      resource.requestReconnect({ reason: "socket_closed" });
+      await jest.advanceTimersByTimeAsync(10_000);
+      expect(reconnect).toHaveBeenCalledTimes(0);
+
+      coordinator.resume();
+      await jest.advanceTimersByTimeAsync(0);
+      expect(connect).toHaveBeenCalledTimes(0);
+      expect(reconnect).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(connect).toHaveBeenCalledTimes(0);
+      expect(reconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      resource.close();
+      coordinator.close();
+      randomSpy.mockRestore();
+    }
+  });
 });

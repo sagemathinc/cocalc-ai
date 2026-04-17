@@ -51,7 +51,7 @@ export function init_connection(): void {
   function record_heartbeat() {
     heartbeats.push(+new Date());
     if (heartbeats.length > heartbeat_N) {
-      heartbeats.slice(0, 1);
+      heartbeats.splice(0, 1);
     }
   }
   setInterval(record_heartbeat, heartbeat_interval_ms);
@@ -105,24 +105,14 @@ export function init_connection(): void {
     }
 
     const attempt = webapp_client.conat_client.numConnectionAttempts;
-    async function reconnect(msg) {
-      // reset recent disconnects, and hope that after the reconnection the situation will be better
-      recent_disconnects.length = 0; // see https://stackoverflow.com/questions/1232040/how-do-i-empty-an-array-in-javascript
+    function warn(msg) {
       reconnection_warning = +new Date();
       console.log(
-        `ALERT: connection unstable, notification + attempting to fix it -- ${attempt} attempts and ${num_recent_disconnects()} disconnects`,
+        `ALERT: connection unstable -- ${attempt} attempts and ${num_recent_disconnects()} disconnects`,
       );
       if (!recent_wakeup_from_standby()) {
         alert_message(msg);
       }
-      webapp_client.conat_client.requestReconnect({
-        reason: "monitor_connection",
-        priority: "foreground",
-        resetBackoff: true,
-      });
-      // Wait a half second, then remove one extra reconnect added by the call in the above line.
-      await delay(500);
-      recent_disconnects.pop();
     }
 
     console.log(
@@ -146,14 +136,14 @@ export function init_connection(): void {
       ) {
         if (num_recent_disconnects() >= 7 || attempt >= 20) {
           actions.set_connection_quality("bad");
-          reconnect({
+          warn({
             type: "error",
             timeout: 10,
             message: `Your connection is unstable or ${SiteName} is temporarily not available.  You may need to refresh your browser or completely quit and restart it (see https://github.com/sagemathinc/cocalc/issues/6642).`,
           });
         } else if (attempt >= 10) {
           actions.set_connection_quality("flaky");
-          reconnect({
+          warn({
             type: "info",
             timeout: 10,
             message: `Your connection could be weak or the ${SiteName} service is temporarily unstable. Proceed with caution.`,
