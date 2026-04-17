@@ -20,6 +20,12 @@ import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type {
   Host,
+  HostRuntimeArtifact,
+  HostRuntimeArtifactObservation,
+  HostRuntimeDeploymentObservedTarget,
+  HostRuntimeDeploymentObservedVersionState,
+  HostRuntimeDeploymentStatus,
+  HostRuntimeRollbackTarget,
   HostRootfsGcResult,
   HostRootfsImage,
   HostSoftwareArtifact,
@@ -85,6 +91,25 @@ type HostDrawerViewModel = {
     refresh: () => Promise<void>;
     hubSourceBaseUrl?: string;
   };
+  runtimeDeployments?: {
+    status?: HostRuntimeDeploymentStatus;
+    loading: boolean;
+    refreshing: boolean;
+    error?: string;
+    refresh: () => Promise<void>;
+  };
+  onSetRuntimeArtifactDeployment?: (opts: {
+    host: Host;
+    artifact: HostRuntimeArtifact;
+    desired_version: string;
+    source: "configured" | "hub";
+  }) => void | Promise<void>;
+  onRollbackRuntimeArtifact?: (opts: {
+    host: Host;
+    artifact: HostRuntimeArtifact;
+    version?: string;
+    last_known_good?: boolean;
+  }) => void | Promise<void>;
   rootfsInventory?: {
     entries: HostRootfsImage[];
     loading: boolean;
@@ -97,6 +122,8 @@ type HostDrawerViewModel = {
     gcDeleted: () => Promise<HostRootfsGcResult | undefined>;
   };
   canManageRootfs?: boolean;
+  onStopRunningProjects?: (host: Host) => void | Promise<void>;
+  onRestartRunningProjects?: (host: Host) => void | Promise<void>;
   selfHost?: {
     connectorMap: Map<
       string,
@@ -164,24 +191,28 @@ const DRAWER_SIZE_STORAGE_KEY = "cocalc:hosts:drawerWidth";
 const MIN_DRAWER_WIDTH = 360;
 const MAX_DRAWER_WIDTH = 960;
 const SOFTWARE_ARTIFACTS: Array<{
-  artifact: HostSoftwareArtifact;
+  artifact: HostRuntimeArtifact;
+  sourceArtifact?: HostSoftwareArtifact;
   label: string;
-  runningLabel: string;
+  desiredLabel: string;
 }> = [
   {
     artifact: "project-host",
+    sourceArtifact: "project-host",
     label: "Project host",
-    runningLabel: "Host runtime",
+    desiredLabel: "Host runtime",
   },
   {
-    artifact: "project",
+    artifact: "project-bundle",
+    sourceArtifact: "project",
     label: "Project bundle",
-    runningLabel: "New projects",
+    desiredLabel: "New projects",
   },
   {
     artifact: "tools",
+    sourceArtifact: "tools",
     label: "Tools",
-    runningLabel: "Tool archive",
+    desiredLabel: "Tool archive",
   },
 ];
 
@@ -216,23 +247,36 @@ function persistDrawerWidth(width: number) {
 
 function runningVersion(
   host: Host,
-  artifact: HostSoftwareArtifact,
+  artifact: HostRuntimeArtifact,
 ): string | undefined {
   if (artifact === "project-host") return host.version;
-  if (artifact === "project") return host.project_bundle_version;
+  if (artifact === "project-bundle") return host.project_bundle_version;
   return host.tools_version;
 }
 
 function runningBuildId(
   host: Host,
-  artifact: HostSoftwareArtifact,
+  artifact: HostRuntimeArtifact,
 ): string | undefined {
   if (artifact === "project-host") return host.project_host_build_id;
-  if (artifact === "project") return host.project_bundle_build_id;
+  if (artifact === "project-bundle") return host.project_bundle_build_id;
   return undefined;
 }
 
-function artifactStatusTag({
+function observedVersionStateTag(
+  state?: HostRuntimeDeploymentObservedVersionState,
+) {
+  if (!state) return <Tag>unknown</Tag>;
+  if (state === "aligned") return <Tag color="green">aligned</Tag>;
+  if (state === "drifted") return <Tag color="orange">drifted</Tag>;
+  if (state === "mixed") return <Tag color="orange">mixed</Tag>;
+  if (state === "missing") return <Tag color="red">not installed</Tag>;
+  if (state === "unsupported") return <Tag>unsupported</Tag>;
+  if (state === "unobserved") return <Tag>unobserved</Tag>;
+  return <Tag>unknown</Tag>;
+}
+
+function availableVersionTag({
   running,
   latest,
   error,
@@ -272,14 +316,70 @@ function cliCommandsForArtifact({
   artifact,
 }: {
   host: Host;
-  artifact: HostSoftwareArtifact;
+  artifact: HostRuntimeArtifact;
 }): string[] {
   return [
-    `cocalc host versions --artifact ${artifact}`,
-    `cocalc host versions --artifact ${artifact} --hub-source`,
-    `cocalc host upgrade ${host.id} --artifact ${artifact} --channel latest`,
-    `cocalc host upgrade ${host.id} --artifact ${artifact} --channel latest --hub-source`,
+    `cocalc host deploy status ${host.id}`,
+    `cocalc host deploy set --host ${host.id} --artifact ${artifact} --desired-version <version>`,
+    `cocalc host deploy rollback ${host.id} --artifact ${artifact} --last-known-good`,
+    `cocalc host deploy rollback ${host.id} --artifact ${artifact} --to-version <version>`,
   ];
+}
+
+function sourceVersionForArtifact({
+  artifact,
+  softwareVersions,
+  source,
+}: {
+  artifact: HostRuntimeArtifact;
+  softwareVersions: HostDrawerViewModel["softwareVersions"] | undefined;
+  source: "configured" | "hub";
+}): HostSoftwareAvailableVersion | undefined {
+  const sourceArtifact = SOFTWARE_ARTIFACTS.find(
+    (entry) => entry.artifact === artifact,
+  )?.sourceArtifact;
+  if (!sourceArtifact || !softwareVersions) {
+    return undefined;
+  }
+  return source === "configured"
+    ? softwareVersions.configured?.[sourceArtifact]
+    : softwareVersions.hub?.[sourceArtifact];
+}
+
+function deploymentRecordForArtifact(
+  status: HostRuntimeDeploymentStatus | undefined,
+  artifact: HostRuntimeArtifact,
+) {
+  return status?.effective.find(
+    (record) => record.target_type === "artifact" && record.target === artifact,
+  );
+}
+
+function observedTargetForArtifact(
+  status: HostRuntimeDeploymentStatus | undefined,
+  artifact: HostRuntimeArtifact,
+): HostRuntimeDeploymentObservedTarget | undefined {
+  return status?.observed_targets?.find(
+    (record) => record.target_type === "artifact" && record.target === artifact,
+  );
+}
+
+function observedArtifactForArtifact(
+  status: HostRuntimeDeploymentStatus | undefined,
+  artifact: HostRuntimeArtifact,
+): HostRuntimeArtifactObservation | undefined {
+  return status?.observed_artifacts?.find(
+    (record) => record.artifact === artifact,
+  );
+}
+
+function rollbackTargetForArtifact(
+  status: HostRuntimeDeploymentStatus | undefined,
+  artifact: HostRuntimeArtifact,
+): HostRuntimeRollbackTarget | undefined {
+  return status?.rollback_targets?.find(
+    (record) => record.target_type === "artifact" && record.target === artifact,
+  );
 }
 
 const normalizeSpecValue = (
@@ -329,7 +429,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   );
   const [showProjects, setShowProjects] = React.useState(false);
   const [expandedArtifacts, setExpandedArtifacts] = React.useState<
-    Partial<Record<HostSoftwareArtifact, boolean>>
+    Partial<Record<HostRuntimeArtifact, boolean>>
   >({});
   const handleResize = React.useCallback((next: number) => {
     const clamped = clampDrawerWidth(next);
@@ -347,14 +447,18 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     onUpgrade,
     onReconcile,
     onUpgradeFromHub,
-    onUpgradeArtifact,
     canUpgrade,
     onCancelOp,
     hostLog,
     loadingLog,
     softwareVersions,
+    runtimeDeployments,
+    onSetRuntimeArtifactDeployment,
+    onRollbackRuntimeArtifact,
     rootfsInventory,
     canManageRootfs,
+    onStopRunningProjects,
+    onRestartRunningProjects,
     selfHost,
     parallelOps,
   } = vm;
@@ -422,7 +526,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     activeOp?.summary?.kind === "host-upgrade-software" ||
     activeOp?.kind === "host-upgrade-software" ||
     activeOp?.summary?.kind === "host-reconcile-software" ||
-    activeOp?.kind === "host-reconcile-software";
+    activeOp?.kind === "host-reconcile-software" ||
+    activeOp?.summary?.kind === "host-reconcile-runtime-deployments" ||
+    activeOp?.kind === "host-reconcile-runtime-deployments" ||
+    activeOp?.summary?.kind === "host-rollback-runtime-deployments" ||
+    activeOp?.kind === "host-rollback-runtime-deployments";
   const upgradeConfirmContent = upgradeTitle({
     label: "all software",
     source: "the configured source",
@@ -462,6 +570,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     !!onReconcile &&
     !!host.machine?.cloud &&
     host.machine.cloud !== "self-host";
+  const deploymentStatus = runtimeDeployments?.status;
   const softwareSummary = React.useMemo(() => {
     if (!host) {
       return { upToDate: 0, updatesAvailable: 0, unknown: 0 };
@@ -470,19 +579,22 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     let updatesAvailable = 0;
     let unknown = 0;
     for (const { artifact } of SOFTWARE_ARTIFACTS) {
-      const running = runningVersion(host, artifact);
-      const latest = softwareVersions?.configured?.[artifact]?.version;
-      const error = softwareVersions?.configured?.[artifact]?.error;
-      if (!running || !latest || error) {
+      const observed = observedTargetForArtifact(deploymentStatus, artifact);
+      const latest = sourceVersionForArtifact({
+        artifact,
+        softwareVersions,
+        source: "configured",
+      });
+      if (!observed || !latest?.version || latest.error) {
         unknown += 1;
-      } else if (running === latest) {
+      } else if (observed.observed_version_state === "aligned") {
         upToDate += 1;
       } else {
         updatesAvailable += 1;
       }
     }
     return { upToDate, updatesAvailable, unknown };
-  }, [host, softwareVersions]);
+  }, [deploymentStatus, host, softwareVersions]);
   React.useEffect(() => {
     setShowProjects(false);
     setExpandedArtifacts({});
@@ -628,7 +740,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               onClearLimit={parallelOps.clearLimit}
             />
           ) : null}
-          {(host.version ||
+          {(deploymentStatus ||
+            host.version ||
             host.project_bundle_version ||
             host.tools_version ||
             softwareVersions) && (
@@ -646,15 +759,26 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                     icon={<QuestionCircleOutlined />}
                   />
                 </Popover>
-                {softwareVersions && (
+                {(softwareVersions || runtimeDeployments) && (
                   <Button
                     type="text"
                     size="small"
-                    icon={<SyncOutlined spin={softwareVersions.loading} />}
+                    icon={
+                      <SyncOutlined
+                        spin={
+                          !!softwareVersions?.loading ||
+                          !!runtimeDeployments?.loading ||
+                          !!runtimeDeployments?.refreshing
+                        }
+                      />
+                    }
                     onClick={() => {
-                      softwareVersions.refresh().catch((err) => {
+                      Promise.all([
+                        softwareVersions?.refresh?.(),
+                        runtimeDeployments?.refresh?.(),
+                      ]).catch((err) => {
                         console.error(
-                          "failed to refresh host software versions",
+                          "failed to refresh runtime software",
                           err,
                         );
                       });
@@ -679,6 +803,22 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   <Tag>{softwareSummary.unknown} unknown</Tag>
                 )}
               </Space>
+              {runtimeDeployments?.error && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  title="Runtime deployment status unavailable"
+                  description={runtimeDeployments.error}
+                />
+              )}
+              {deploymentStatus?.observation_error && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  title="Host observation warning"
+                  description={deploymentStatus.observation_error}
+                />
+              )}
               {softwareVersions?.configuredError && (
                 <Alert
                   type="warning"
@@ -695,17 +835,124 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   description={softwareVersions.hubError}
                 />
               )}
+              {deploymentStatus?.observed_host_agent?.project_host && (
+                <Card size="small" title="Host agent rollback state">
+                  <Space orientation="vertical" size="small">
+                    {deploymentStatus.observed_host_agent.project_host
+                      .last_known_good_version && (
+                      <Typography.Text>
+                        Last known good:{" "}
+                        <code>
+                          {
+                            deploymentStatus.observed_host_agent.project_host
+                              .last_known_good_version
+                          }
+                        </code>
+                      </Typography.Text>
+                    )}
+                    {deploymentStatus.observed_host_agent.project_host
+                      .pending_rollout && (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="Project-host rollout in progress"
+                        description={
+                          <span>
+                            Target{" "}
+                            <code>
+                              {
+                                deploymentStatus.observed_host_agent
+                                  .project_host.pending_rollout.target_version
+                              }
+                            </code>{" "}
+                            from{" "}
+                            <code>
+                              {
+                                deploymentStatus.observed_host_agent
+                                  .project_host.pending_rollout.previous_version
+                              }
+                            </code>
+                          </span>
+                        }
+                      />
+                    )}
+                    {deploymentStatus.observed_host_agent.project_host
+                      .last_automatic_rollback && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message="Last automatic rollback"
+                        description={
+                          <span>
+                            Target{" "}
+                            <code>
+                              {
+                                deploymentStatus.observed_host_agent
+                                  .project_host.last_automatic_rollback
+                                  .target_version
+                              }
+                            </code>{" "}
+                            rolled back to{" "}
+                            <code>
+                              {
+                                deploymentStatus.observed_host_agent
+                                  .project_host.last_automatic_rollback
+                                  .rollback_version
+                              }
+                            </code>
+                          </span>
+                        }
+                      />
+                    )}
+                  </Space>
+                </Card>
+              )}
               {showUpgradeProgress && <HostOpProgress op={activeOp} />}
               <Space
                 orientation="vertical"
                 size="small"
                 style={{ width: "100%" }}
               >
-                {SOFTWARE_ARTIFACTS.map(({ artifact, label, runningLabel }) => {
+                {SOFTWARE_ARTIFACTS.map(({ artifact, label, desiredLabel }) => {
                   const running = runningVersion(host, artifact);
                   const buildId = runningBuildId(host, artifact);
-                  const configured = softwareVersions?.configured?.[artifact];
-                  const hubVersion = softwareVersions?.hub?.[artifact];
+                  const configured = sourceVersionForArtifact({
+                    artifact,
+                    softwareVersions,
+                    source: "configured",
+                  });
+                  const hubVersion = sourceVersionForArtifact({
+                    artifact,
+                    softwareVersions,
+                    source: "hub",
+                  });
+                  const deployment = deploymentRecordForArtifact(
+                    deploymentStatus,
+                    artifact,
+                  );
+                  const observedTarget = observedTargetForArtifact(
+                    deploymentStatus,
+                    artifact,
+                  );
+                  const observedArtifact = observedArtifactForArtifact(
+                    deploymentStatus,
+                    artifact,
+                  );
+                  const rollbackTarget = rollbackTargetForArtifact(
+                    deploymentStatus,
+                    artifact,
+                  );
+                  const currentVersion =
+                    observedTarget?.current_version ??
+                    observedArtifact?.current_version ??
+                    running;
+                  const installedVersions =
+                    observedTarget?.installed_versions ??
+                    observedArtifact?.installed_versions ??
+                    [];
+                  const rollbackVersion =
+                    rollbackTarget?.last_known_good_version ??
+                    rollbackTarget?.previous_version;
                   const commands = cliCommandsForArtifact({ host, artifact });
                   const expanded = !!expandedArtifacts[artifact];
                   return (
@@ -721,17 +968,18 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                       >
                         <Space wrap align="center">
                           <Typography.Text strong>{label}</Typography.Text>
-                          {artifactStatusTag({
-                            running,
-                            latest: configured?.version,
-                            error: configured?.error,
-                          })}
+                          {observedVersionStateTag(
+                            observedTarget?.observed_version_state,
+                          )}
                           <Typography.Text
                             type="secondary"
                             style={{ fontSize: 12 }}
                           >
-                            {runningLabel}
+                            {desiredLabel}
                           </Typography.Text>
+                          {deployment?.scope_type === "host" && (
+                            <Tag color="blue">host override</Tag>
+                          )}
                         </Space>
                         <Space
                           wrap
@@ -742,25 +990,30 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                           }}
                         >
                           <Typography.Text type="secondary">
-                            running <code>{running ?? "n/a"}</code> | latest
-                            available{" "}
+                            desired{" "}
+                            <code>{deployment?.desired_version ?? "n/a"}</code>{" "}
+                            | observed <code>{currentVersion ?? "n/a"}</code> |
+                            latest{" "}
                             <code>{configured?.version ?? "unknown"}</code>
                           </Typography.Text>
                           <Space wrap>
                             {canUpgrade &&
                               !host.deleted &&
-                              onUpgradeArtifact && (
+                              onSetRuntimeArtifactDeployment &&
+                              configured?.version && (
                                 <Popconfirm
                                   title={upgradeTitle({
                                     label,
                                     source: "the configured source",
                                   })}
-                                  okText="Upgrade"
+                                  okText="Deploy"
                                   cancelText="Cancel"
                                   onConfirm={() =>
-                                    onUpgradeArtifact({
+                                    onSetRuntimeArtifactDeployment({
                                       host,
                                       artifact,
+                                      desired_version: configured.version!,
+                                      source: "configured",
                                     })
                                   }
                                   disabled={
@@ -773,7 +1026,31 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                       hostOpActive || host.status !== "running"
                                     }
                                   >
-                                    Upgrade
+                                    Deploy latest
+                                  </Button>
+                                </Popconfirm>
+                              )}
+                            {canUpgrade &&
+                              !host.deleted &&
+                              onRollbackRuntimeArtifact &&
+                              rollbackVersion && (
+                                <Popconfirm
+                                  title={`Roll back ${label.toLowerCase()} on this host?`}
+                                  okText="Rollback"
+                                  cancelText="Cancel"
+                                  onConfirm={() =>
+                                    onRollbackRuntimeArtifact({
+                                      host,
+                                      artifact,
+                                      ...(rollbackTarget?.last_known_good_version
+                                        ? { last_known_good: true }
+                                        : { version: rollbackVersion }),
+                                    })
+                                  }
+                                  disabled={hostOpActive}
+                                >
+                                  <Button size="small" disabled={hostOpActive}>
+                                    Rollback
                                   </Button>
                                 </Popconfirm>
                               )}
@@ -802,31 +1079,82 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 Build ID: <code>{buildId}</code>
                               </Typography.Text>
                             )}
+                            {observedArtifact?.current_build_id && !buildId && (
+                              <Typography.Text
+                                copyable={{
+                                  text: observedArtifact.current_build_id,
+                                }}
+                              >
+                                Build ID:{" "}
+                                <code>{observedArtifact.current_build_id}</code>
+                              </Typography.Text>
+                            )}
                             <Typography.Text>
                               Latest hub source:{" "}
                               <code>{hubVersion?.version ?? "unknown"}</code>{" "}
-                              {artifactStatusTag({
-                                running,
+                              {availableVersionTag({
+                                running: currentVersion,
                                 latest: hubVersion?.version,
                                 error: hubVersion?.error,
                               })}
                             </Typography.Text>
+                            {!!installedVersions.length && (
+                              <Typography.Text>
+                                Installed versions:{" "}
+                                <code>{installedVersions.join(", ")}</code>
+                              </Typography.Text>
+                            )}
+                            {!!observedArtifact?.referenced_versions
+                              ?.length && (
+                              <Typography.Text>
+                                Referenced by running projects:{" "}
+                                <code>
+                                  {observedArtifact.referenced_versions
+                                    .map(
+                                      ({ version, project_count }) =>
+                                        `${version} x${project_count}`,
+                                    )
+                                    .join(", ")}
+                                </code>
+                              </Typography.Text>
+                            )}
+                            {observedTarget?.observed_version_state ===
+                              "missing" && (
+                              <Alert
+                                type="warning"
+                                showIcon
+                                message="Desired version is not installed on this host yet"
+                                description="Setting a desired version queues the corresponding host artifact operation automatically. Use Refresh to watch that operation appear in the host activity panel."
+                              />
+                            )}
+                            {rollbackTarget && (
+                              <Typography.Text>
+                                Rollback candidate:{" "}
+                                <code>
+                                  {rollbackTarget.last_known_good_version ??
+                                    rollbackTarget.previous_version ??
+                                    "none"}
+                                </code>
+                              </Typography.Text>
+                            )}
                             <Space wrap>
                               {canUpgrade &&
                                 !host.deleted &&
-                                onUpgradeArtifact && (
+                                onSetRuntimeArtifactDeployment &&
+                                hubVersion?.version && (
                                   <Popconfirm
                                     title={upgradeTitle({
                                       label,
                                       source: "this hub source",
                                     })}
-                                    okText="Upgrade"
+                                    okText="Deploy"
                                     cancelText="Cancel"
                                     onConfirm={() =>
-                                      onUpgradeArtifact({
+                                      onSetRuntimeArtifactDeployment({
                                         host,
                                         artifact,
-                                        useHubSource: true,
+                                        desired_version: hubVersion.version!,
+                                        source: "hub",
                                       })
                                     }
                                     disabled={
@@ -840,7 +1168,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                         host.status !== "running"
                                       }
                                     >
-                                      Upgrade from hub
+                                      Deploy hub latest
                                     </Button>
                                   </Popconfirm>
                                 )}
@@ -893,7 +1221,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 )}
                 {canUpgrade && host && !host.deleted && onUpgrade && (
                   <Popconfirm
-                    title={upgradeConfirmContent}
+                    title="Legacy direct upgrade"
+                    description={upgradeConfirmContent}
                     okText="Upgrade"
                     cancelText="Cancel"
                     onConfirm={() => onUpgrade(host)}
@@ -903,13 +1232,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                       size="small"
                       disabled={hostOpActive || host.status !== "running"}
                     >
-                      Upgrade all
+                      Upgrade all now
                     </Button>
                   </Popconfirm>
                 )}
                 {canUpgrade && host && !host.deleted && onUpgradeFromHub && (
                   <Popconfirm
-                    title={upgradeFromHubConfirmContent}
+                    title="Legacy direct hub upgrade"
+                    description={upgradeFromHubConfirmContent}
                     okText="Upgrade"
                     cancelText="Cancel"
                     onConfirm={() => onUpgradeFromHub(host)}
@@ -919,7 +1249,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                       size="small"
                       disabled={hostOpActive || host.status !== "running"}
                     >
-                      Upgrade all from hub
+                      Upgrade all from hub now
                     </Button>
                   </Popconfirm>
                 )}
@@ -1072,6 +1402,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             host={host}
             open={showProjects}
             onClose={() => setShowProjects(false)}
+            hostOpActive={hostOpActive}
+            onStopRunningProjects={onStopRunningProjects}
+            onRestartRunningProjects={onRestartRunningProjects}
           />
           <Divider />
           <Typography.Title level={5}>Activity</Typography.Title>

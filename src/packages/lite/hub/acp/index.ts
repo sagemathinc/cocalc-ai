@@ -243,9 +243,9 @@ const automationStores = new Map<string, Promise<DKV<AcpAutomationRecord>>>();
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
-  "**Conversation interrupted because the backend server restarted.**";
+  "**Conversation interrupted because CoCalc had to recover the live Codex turn.**";
 const STALE_TURN_INTERRUPTED_NOTICE =
-  "**Conversation interrupted because the backend lost the live Codex turn.**";
+  "**Conversation interrupted because CoCalc lost the live Codex turn.**";
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const THREAD_STATE_EVENT = "chat-thread-state";
 const THREAD_STATE_SCHEMA_VERSION = 2;
@@ -417,7 +417,7 @@ function buildRecoveryContinuationPrompt({
   originalPrompt: string;
 }): string {
   return [
-    "The previous Codex turn in this same session was interrupted because the project host or backend restarted.",
+    "The previous Codex turn in this same session was interrupted.",
     `Recovery attempt: ${recoveryCount}.`,
     `Interruption summary: ${`${interruptedNotice ?? ""}`.replace(/\*\*/g, "").trim()}`,
     "Resume the work from the current workspace state.",

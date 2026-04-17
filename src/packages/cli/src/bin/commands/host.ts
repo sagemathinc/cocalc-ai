@@ -1746,6 +1746,14 @@ This command records desired state. It does not itself publish software or
 restart anything. Existing \`host upgrade\` and \`host rollout\` remain the
 low-level imperative path while the desired-state flow is being built out.
 
+Global artifact targets also define the promoted defaults for newly provisioned
+hosts. A host created after:
+
+  cocalc host deploy set --global --artifact project-host --desired-version X
+
+will bootstrap with project-host artifact version \`X\`, even if a newer build
+has already been published to the software bucket.
+
 Use \`--desired-version\`, not \`--version\`. The CLI reserves \`--version\`
 globally for printing the CLI version.
 

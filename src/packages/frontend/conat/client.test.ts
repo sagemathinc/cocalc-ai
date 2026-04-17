@@ -1716,6 +1716,7 @@ describe("ConatClient main reconnect scheduling", () => {
       configurable: true,
       value: true,
     });
+    const hasFocusSpy = jest.spyOn(document, "hasFocus").mockReturnValue(true);
     const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
 
     try {
@@ -1816,6 +1817,7 @@ describe("ConatClient main reconnect scheduling", () => {
       await jest.advanceTimersByTimeAsync(1_000);
       expect(hubClient.connect).toHaveBeenCalledTimes(1);
     } finally {
+      hasFocusSpy.mockRestore();
       randomSpy.mockRestore();
     }
   });

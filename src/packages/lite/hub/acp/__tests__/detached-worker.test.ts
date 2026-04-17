@@ -329,7 +329,7 @@ describe("recoverDetachedWorkerStartupState", () => {
       (row: any) => row.event === "chat" && row.generating === false,
     );
     expect(repaired?.acp_interrupted_text).toContain(
-      "backend server restarted",
+      "recover the live Codex turn",
     );
   });
 

@@ -589,7 +589,7 @@ export async function main(
   const stopCopyWorker = startCopyWorker();
   startProjectHostAcpWorkerSupervisor();
   await ensureProjectHostAcpWorkerRunning({
-    restartReason: "backend server restarted",
+    restartReason: "backend lost live Codex turn",
   });
 
   logger.info("project-host ready");

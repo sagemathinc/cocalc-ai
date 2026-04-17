@@ -8,6 +8,7 @@ import { setConatPassword } from "@cocalc/backend/data";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { resolveProjectHostId } from "./host-id";
 import { startStandaloneProjectHostConatRouter } from "./conat-router";
+import { startConatRouterTrafficMetricsLoop } from "./conat-router-metrics";
 import { startEventLoopStallMonitor } from "./event-loop-stalls";
 
 const logger = getLogger("project-host:conat-router-daemon");
@@ -30,6 +31,9 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
       hostId,
       systemAccountPassword,
     });
+  const stopTrafficMetricsLoop = startConatRouterTrafficMetricsLoop({
+    conatServer,
+  });
   logger.info("project-host conat router daemon ready", {
     hostId,
     host,
@@ -44,6 +48,7 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
     try {
       await conatServer.close();
     } finally {
+      stopTrafficMetricsLoop();
       stopEventLoopStallMonitor();
       if (ingressHttpServer) {
         await new Promise<void>((resolve) => {
