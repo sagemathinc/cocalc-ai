@@ -10,6 +10,7 @@ import { alert_message } from "@cocalc/frontend/alerts";
 import { Actions, redux } from "@cocalc/frontend/app-framework";
 import { set_window_title } from "@cocalc/frontend/browser";
 import api from "@cocalc/frontend/client/api";
+import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
 import { COCALC_MINIMAL } from "@cocalc/frontend/fullscreen";
 import { markdown_to_html } from "@cocalc/frontend/markdown";
 import { notifyCollabInvitesChanged } from "@cocalc/frontend/collaborators/invite-events";
@@ -236,7 +237,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
         "history-gap",
         this.handleRealtimeFeedHistoryGap,
       );
-      this.realtimeFeed.close();
       this.realtimeFeed = undefined;
     }
     this.realtimeFeedAccountId = undefined;
@@ -321,10 +321,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     this.closeRealtimeFeed();
     try {
-      const feed = await webapp_client.conat_client.dstream<AccountFeedEvent>({
+      const feed = await getSharedAccountDStream<AccountFeedEvent>({
         account_id,
         name: accountFeedStreamName(),
         ephemeral: true,
+        maxListeners: 100,
       });
       feed.on("change", this.handleRealtimeFeedChange);
       feed.on("history-gap", this.handleRealtimeFeedHistoryGap);

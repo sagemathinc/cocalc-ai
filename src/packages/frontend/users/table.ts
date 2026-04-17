@@ -13,6 +13,7 @@ import {
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { once } from "@cocalc/util/async-utils";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
+import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
 import { Table, redux } from "../app-framework";
 import { COCALC_MINIMAL } from "../fullscreen";
 import { webapp_client } from "../webapp-client";
@@ -140,7 +141,6 @@ function closeRealtimeFeed(): void {
   if (realtimeFeed != null) {
     realtimeFeed.removeListener("change", handleRealtimeFeedChange);
     realtimeFeed.removeListener("history-gap", handleRealtimeFeedHistoryGap);
-    realtimeFeed.close();
     realtimeFeed = undefined;
   }
   realtimeFeedAccountId = undefined;
@@ -164,10 +164,11 @@ async function ensureRealtimeFeedForCurrentAccount(): Promise<void> {
   }
   closeRealtimeFeed();
   try {
-    const feed = await webapp_client.conat_client.dstream<AccountFeedEvent>({
+    const feed = await getSharedAccountDStream<AccountFeedEvent>({
       account_id,
       name: accountFeedStreamName(),
       ephemeral: true,
+      maxListeners: 100,
     });
     feed.on("change", handleRealtimeFeedChange);
     feed.on("history-gap", handleRealtimeFeedHistoryGap);

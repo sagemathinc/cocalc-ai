@@ -20,7 +20,10 @@ import { useEffect, useRef, useState } from "react";
 
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { redux } from "@cocalc/frontend/app-framework";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  getSharedAccountDStream,
+  resetSharedAccountDStreamCacheForTests,
+} from "@cocalc/frontend/conat/account-dstream";
 import { CONAT_LLM_HISTORY_KEY } from "@cocalc/util/consts";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
@@ -36,8 +39,6 @@ interface LLMHistoryEntry {
   prompt: string;
 }
 
-// Single cache for the shared dstream
-let streamCache: DStream<LLMHistoryEntry> | null = null;
 const streamResetListeners = new Set<() => void>();
 
 function notifyStreamReset() {
@@ -47,16 +48,12 @@ function notifyStreamReset() {
 }
 
 export function resetLLMHistoryForTests() {
-  streamCache = null;
   streamResetListeners.clear();
+  resetSharedAccountDStreamCacheForTests();
 }
 
 // Get or create the single shared dstream
 const getDStream = reuseInFlight(async () => {
-  if (streamCache) {
-    return streamCache;
-  }
-
   try {
     // Wait until account is authenticated
     const store = redux.getStore("account");
@@ -66,7 +63,7 @@ const getDStream = reuseInFlight(async () => {
     });
 
     const account_id = store.get_account_id();
-    const stream = await webapp_client.conat_client.dstream<LLMHistoryEntry>({
+    const stream = await getSharedAccountDStream<LLMHistoryEntry>({
       account_id,
       name: CONAT_LLM_HISTORY_KEY,
       config: {
@@ -74,13 +71,8 @@ const getDStream = reuseInFlight(async () => {
         max_msgs: MAX_PROMPTS_NUM,
         max_bytes: MAX_PROMPTS_BYTES,
       },
+      maxListeners: SHARED_STREAM_MAX_LISTENERS,
     });
-    // This stream is intentionally shared across many mounted assistant surfaces.
-    // The default EventEmitter limit of 10 is too low and causes noisy warnings
-    // in normal use even when listeners are cleaned up correctly.
-    stream.setMaxListeners(SHARED_STREAM_MAX_LISTENERS);
-
-    streamCache = stream;
     return stream;
   } catch (err) {
     console.warn(`dstream LLM history initialization error -- ${err}`);
@@ -198,8 +190,6 @@ export function useLLMHistory(type: LLMHistoryType = "general") {
       // Delete the stream to clear all history
       await stream.delete();
 
-      // Remove from cache so a new stream will be created
-      streamCache = null;
       notifyStreamReset();
     } catch (err) {
       console.warn(`Error clearing LLM history -- ${err}`);

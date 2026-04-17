@@ -11,6 +11,7 @@ import {
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { Table } from "@cocalc/frontend/app-framework/Table";
+import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { redux as appRedux } from "@cocalc/frontend/app-framework";
 import { lite } from "@cocalc/frontend/lite";
@@ -141,7 +142,6 @@ function closeRealtimeFeed(): void {
   if (realtimeFeed != null) {
     realtimeFeed.removeListener("change", handleRealtimeFeedChange);
     realtimeFeed.removeListener("history-gap", handleRealtimeFeedHistoryGap);
-    realtimeFeed.close();
     realtimeFeed = undefined;
   }
   realtimeFeedAccountId = undefined;
@@ -165,10 +165,11 @@ async function ensureRealtimeFeedForCurrentAccount(): Promise<void> {
   }
   closeRealtimeFeed();
   try {
-    const feed = await webapp_client.conat_client.dstream<AccountFeedEvent>({
+    const feed = await getSharedAccountDStream<AccountFeedEvent>({
       account_id,
       name: accountFeedStreamName(),
       ephemeral: true,
+      maxListeners: 100,
     });
     feed.on("change", handleRealtimeFeedChange);
     feed.on("history-gap", handleRealtimeFeedHistoryGap);
@@ -201,10 +202,7 @@ function handleRealtimeFeedChange(event?: AccountFeedEvent): void {
 }
 
 function handleRealtimeFeedHistoryGap(): void {
-  closeRealtimeFeed();
-  void refreshAccountSnapshot().then(() =>
-    ensureRealtimeFeedForCurrentAccount(),
-  );
+  void refreshAccountSnapshot();
 }
 
 export function initAccountRealtime(opts: {

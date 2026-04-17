@@ -8,7 +8,7 @@ import {
 import { EventEmitter } from "events";
 import { resetLLMHistoryForTests, useLLMHistory } from "./use-llm-history";
 import { redux } from "@cocalc/frontend/app-framework";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -16,12 +16,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   },
 }));
 
-jest.mock("@cocalc/frontend/webapp-client", () => ({
-  webapp_client: {
-    conat_client: {
-      dstream: jest.fn(),
-    },
-  },
+jest.mock("@cocalc/frontend/conat/account-dstream", () => ({
+  getSharedAccountDStream: jest.fn(),
+  resetSharedAccountDStreamCacheForTests: jest.fn(),
 }));
 
 class FakeDStream extends EventEmitter {
@@ -60,7 +57,7 @@ function TestComponent() {
 
 describe("useLLMHistory", () => {
   const getStoreMock = redux.getStore as jest.Mock;
-  const dstreamMock = webapp_client.conat_client.dstream as jest.Mock;
+  const dstreamMock = getSharedAccountDStream as jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -71,10 +68,9 @@ describe("useLLMHistory", () => {
     });
   });
 
-  it("re-subscribes to a new shared stream after clearing history", async () => {
-    const first = new FakeDStream();
-    const second = new FakeDStream();
-    dstreamMock.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+  it("keeps using the shared stream after clearing history", async () => {
+    const stream = new FakeDStream();
+    dstreamMock.mockResolvedValue(stream);
 
     render(<TestComponent />);
 
@@ -98,5 +94,6 @@ describe("useLLMHistory", () => {
     await waitFor(() => {
       expect(screen.getByTestId("prompts").textContent).toBe("beta");
     });
+    expect(dstreamMock).toHaveBeenCalled();
   });
 });

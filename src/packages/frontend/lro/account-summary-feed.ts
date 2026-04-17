@@ -1,4 +1,8 @@
 import { redux as appRedux } from "@cocalc/frontend/app-framework";
+import {
+  getSharedAccountDStream,
+  resetSharedAccountDStreamCacheForTests,
+} from "@cocalc/frontend/conat/account-dstream";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   accountFeedStreamName,
@@ -44,7 +48,6 @@ function closeRealtimeFeed(): void {
   if (realtimeFeed != null) {
     realtimeFeed.removeListener("change", handleRealtimeFeedChange);
     realtimeFeed.removeListener("history-gap", handleRealtimeFeedHistoryGap);
-    realtimeFeed.close();
     realtimeFeed = undefined;
   }
   realtimeFeedAccountId = undefined;
@@ -80,13 +83,13 @@ async function ensureRealtimeFeedForCurrentAccount(): Promise<void> {
   }
   closeRealtimeFeed();
   try {
-    const feed = await webapp_client.conat_client.dstream<AccountFeedEvent>({
+    const feed = await getSharedAccountDStream<AccountFeedEvent>({
       account_id,
       name: accountFeedStreamName(),
       ephemeral: true,
+      maxListeners: 100,
     });
     if (listeners.size === 0) {
-      feed.close();
       return;
     }
     feed.on("change", handleRealtimeFeedChange);
@@ -107,9 +110,7 @@ function handleRealtimeFeedChange(event?: AccountFeedEvent): void {
 }
 
 function handleRealtimeFeedHistoryGap(): void {
-  closeRealtimeFeed();
   notify("reset");
-  void ensureRealtimeFeedForCurrentAccount();
 }
 
 function installHooks(): void {
@@ -249,6 +250,7 @@ export async function bootstrapAccountLroScope(opts: {
 
 export function resetAccountLroSummaryFeedForTests(): void {
   closeRealtimeFeed();
+  resetSharedAccountDStreamCacheForTests();
   bootstrapInFlight.clear();
   summaries.clear();
   listeners.clear();

@@ -6,6 +6,7 @@
 import { fromJS, Map } from "immutable";
 
 import { Actions } from "@cocalc/frontend/app-framework";
+import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { once } from "@cocalc/util/async-utils";
 import type {
@@ -253,7 +254,6 @@ export class MentionsActions extends Actions<MentionsState> {
         "history-gap",
         this.handleRealtimeFeedHistoryGap,
       );
-      this.realtimeFeed.close();
       this.realtimeFeed = undefined;
     }
     this.realtimeFeedAccountId = undefined;
@@ -261,7 +261,11 @@ export class MentionsActions extends Actions<MentionsState> {
 
   private handleRealtimeFeedChange = (event?: AccountFeedEvent): void => {
     const account_id = this.getAccountId();
-    if (event == null || account_id == null || event.account_id !== account_id) {
+    if (
+      event == null ||
+      account_id == null ||
+      event.account_id !== account_id
+    ) {
       return;
     }
     switch (event.type) {
@@ -306,7 +310,9 @@ export class MentionsActions extends Actions<MentionsState> {
     }
 
     const attachStore = (
-      store = this.redux.getStore("account") as typeof this.observedAccountStore,
+      store = this.redux.getStore(
+        "account",
+      ) as typeof this.observedAccountStore,
     ): void => {
       if (store === this.observedAccountStore) {
         return;
@@ -338,10 +344,11 @@ export class MentionsActions extends Actions<MentionsState> {
     }
     this.closeRealtimeFeed();
     try {
-      const feed = await webapp_client.conat_client.dstream<AccountFeedEvent>({
+      const feed = await getSharedAccountDStream<AccountFeedEvent>({
         account_id,
         name: accountFeedStreamName(),
         ephemeral: true,
+        maxListeners: 100,
       });
       feed.on("change", this.handleRealtimeFeedChange);
       feed.on("history-gap", this.handleRealtimeFeedHistoryGap);

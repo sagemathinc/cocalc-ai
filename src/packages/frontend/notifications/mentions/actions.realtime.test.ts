@@ -2,21 +2,13 @@ import { EventEmitter } from "events";
 import { Map as ImmutableMap } from "immutable";
 
 import { accountFeedStreamName } from "../../../conat/hub/api/account-feed";
+import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
+
+jest.mock("@cocalc/frontend/conat/account-dstream", () => ({
+  getSharedAccountDStream: jest.fn(),
+}));
 
 jest.mock("@cocalc/frontend/webapp-client", () => {
-  class MockFeed extends EventEmitter {
-    private closed = false;
-
-    close() {
-      this.closed = true;
-      this.removeAllListeners();
-    }
-
-    isClosed() {
-      return this.closed;
-    }
-  }
-
   const webappClient = Object.assign(new EventEmitter(), {
     is_signed_in: jest.fn(() => true),
     conat_client: Object.assign(new EventEmitter(), {
@@ -40,7 +32,6 @@ jest.mock("@cocalc/frontend/webapp-client", () => {
           })),
         },
       },
-      dstream: jest.fn(async () => new MockFeed()),
     }),
   });
 
@@ -53,7 +44,6 @@ import { MentionsActions } from "./actions";
 const mockedWebappClient = webapp_client as unknown as EventEmitter & {
   is_signed_in: jest.Mock;
   conat_client: EventEmitter & {
-    dstream: jest.Mock;
     hub: {
       notifications: {
         list: jest.Mock;
@@ -62,6 +52,20 @@ const mockedWebappClient = webapp_client as unknown as EventEmitter & {
     };
   };
 };
+const getSharedAccountDStreamMock = getSharedAccountDStream as jest.Mock;
+
+class MockFeed extends EventEmitter {
+  private closed = false;
+
+  close() {
+    this.closed = true;
+    this.removeAllListeners();
+  }
+
+  isClosed() {
+    return this.closed;
+  }
+}
 
 async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -78,6 +82,7 @@ describe("MentionsActions realtime feed", () => {
     jest.clearAllMocks();
     jest.useRealTimers();
     mockedWebappClient.is_signed_in.mockReturnValue(true);
+    getSharedAccountDStreamMock.mockResolvedValue(new MockFeed());
     mockedWebappClient.conat_client.hub.notifications.list.mockResolvedValue(
       [],
     );
@@ -109,17 +114,17 @@ describe("MentionsActions realtime feed", () => {
     actions._init();
     await flush();
 
-    expect(mockedWebappClient.conat_client.dstream).toHaveBeenCalledWith({
+    expect(getSharedAccountDStreamMock).toHaveBeenCalledWith({
       account_id: "acct-1",
       name: accountFeedStreamName(),
       ephemeral: true,
+      maxListeners: 100,
     });
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
     ).toHaveBeenCalledTimes(1);
 
-    const feed =
-      await mockedWebappClient.conat_client.dstream.mock.results[0].value;
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
     feed.emit("change", {
       type: "notification.upsert",
       account_id: "acct-1",
@@ -228,7 +233,7 @@ describe("MentionsActions realtime feed", () => {
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
     ).not.toHaveBeenCalled();
-    expect(mockedWebappClient.conat_client.dstream).not.toHaveBeenCalled();
+    expect(getSharedAccountDStreamMock).not.toHaveBeenCalled();
     expect(reduxSubscriber).toBeDefined();
 
     accountStore.setReady();
@@ -237,10 +242,11 @@ describe("MentionsActions realtime feed", () => {
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
     ).toHaveBeenCalledTimes(1);
-    expect(mockedWebappClient.conat_client.dstream).toHaveBeenCalledWith({
+    expect(getSharedAccountDStreamMock).toHaveBeenCalledWith({
       account_id: "acct-1",
       name: accountFeedStreamName(),
       ephemeral: true,
+      maxListeners: 100,
     });
   });
 
@@ -301,10 +307,11 @@ describe("MentionsActions realtime feed", () => {
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
     ).toHaveBeenCalledTimes(1);
-    expect(mockedWebappClient.conat_client.dstream).toHaveBeenCalledWith({
+    expect(getSharedAccountDStreamMock).toHaveBeenCalledWith({
       account_id: "acct-2",
       name: accountFeedStreamName(),
       ephemeral: true,
+      maxListeners: 100,
     });
   });
 

@@ -21,6 +21,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { getAntdNotificationInstance } from "@cocalc/frontend/app/antd-notification";
 import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
+import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { NewsItemWebapp, SYSTEM_CHANNEL } from "@cocalc/util/types/news";
@@ -416,7 +417,6 @@ function closeRealtimeFeed(): void {
   if (realtimeFeed == null) return;
   realtimeFeed.removeListener("change", handleRealtimeFeedChange);
   realtimeFeed.removeListener("history-gap", handleRealtimeFeedHistoryGap);
-  realtimeFeed.close();
   realtimeFeed = undefined;
   realtimeFeedAccountId = undefined;
 }
@@ -440,10 +440,11 @@ async function ensureRealtimeFeed(): Promise<void> {
   }
   closeRealtimeFeed();
   try {
-    const feed = await webapp_client.conat_client.dstream<AccountFeedEvent>({
+    const feed = await getSharedAccountDStream<AccountFeedEvent>({
       account_id,
       name: accountFeedStreamName(),
       ephemeral: true,
+      maxListeners: 100,
     });
     feed.on("change", handleRealtimeFeedChange);
     feed.on("history-gap", handleRealtimeFeedHistoryGap);
@@ -462,8 +463,7 @@ function handleRealtimeFeedChange(event?: AccountFeedEvent): void {
 }
 
 function handleRealtimeFeedHistoryGap(): void {
-  closeRealtimeFeed();
-  void actions.refresh().then(() => ensureRealtimeFeed());
+  void actions.refresh();
 }
 
 export function init(): void {

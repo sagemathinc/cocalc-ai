@@ -2,6 +2,11 @@ import { EventEmitter } from "events";
 import { List, Map as ImmutableMap } from "immutable";
 
 import { accountFeedStreamName } from "../../conat/hub/api/account-feed";
+import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
+
+jest.mock("@cocalc/frontend/conat/account-dstream", () => ({
+  getSharedAccountDStream: jest.fn(),
+}));
 
 const refreshProjectsTableMock = jest.fn(async () => undefined);
 
@@ -44,27 +49,12 @@ jest.mock("@cocalc/frontend/project/use-project-course", () => ({
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => {
-  class MockFeed extends EventEmitter {
-    private closed = false;
-
-    close() {
-      this.closed = true;
-      this.removeAllListeners();
-    }
-
-    isClosed() {
-      return this.closed;
-    }
-  }
-
   const webappClient = Object.assign(new EventEmitter(), {
     is_signed_in: jest.fn(() => true),
     async_query: jest.fn(async () => ({
       query: { account_project_index: [] },
     })),
-    conat_client: Object.assign(new EventEmitter(), {
-      dstream: jest.fn(async () => new MockFeed()),
-    }),
+    conat_client: Object.assign(new EventEmitter(), {}),
   });
 
   return { webapp_client: webappClient };
@@ -77,11 +67,23 @@ import { ProjectsActions } from "./actions";
 const mockedStore = store as jest.Mocked<typeof store>;
 const mockedWebappClient = webapp_client as unknown as EventEmitter & {
   is_signed_in: jest.Mock;
-  conat_client: EventEmitter & {
-    dstream: jest.Mock;
-  };
+  conat_client: EventEmitter;
   async_query: jest.Mock;
 };
+const getSharedAccountDStreamMock = getSharedAccountDStream as jest.Mock;
+
+class MockFeed extends EventEmitter {
+  private closed = false;
+
+  close() {
+    this.closed = true;
+    this.removeAllListeners();
+  }
+
+  isClosed() {
+    return this.closed;
+  }
+}
 
 async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -96,6 +98,7 @@ describe("ProjectsActions realtime feed", () => {
     refreshProjectsTableMock.mockResolvedValue(undefined);
     projectMap = ImmutableMap<string, any>();
     mockedWebappClient.is_signed_in.mockReturnValue(true);
+    getSharedAccountDStreamMock.mockResolvedValue(new MockFeed());
     mockedStore.get.mockImplementation((key: string) => {
       switch (key) {
         case "project_map":
@@ -130,14 +133,14 @@ describe("ProjectsActions realtime feed", () => {
     actions._init();
     await flush();
 
-    expect(mockedWebappClient.conat_client.dstream).toHaveBeenCalledWith({
+    expect(getSharedAccountDStreamMock).toHaveBeenCalledWith({
       account_id: "acct-1",
       name: accountFeedStreamName(),
       ephemeral: true,
+      maxListeners: 100,
     });
 
-    const feed =
-      await mockedWebappClient.conat_client.dstream.mock.results[0].value;
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
     feed.emit("change", {
       type: "project.upsert",
       ts: Date.now(),
@@ -259,8 +262,7 @@ describe("ProjectsActions realtime feed", () => {
     actions._init();
     await flush();
 
-    const feed =
-      await mockedWebappClient.conat_client.dstream.mock.results[0].value;
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
     feed.emit("history-gap", {
       requested_start_seq: 1,
       effective_start_seq: 5,
@@ -292,8 +294,7 @@ describe("ProjectsActions realtime feed", () => {
     actions._init();
     await flush();
 
-    const feed =
-      await mockedWebappClient.conat_client.dstream.mock.results[0].value;
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
     feed.emit("change", {
       type: "project.detail.invalidate",
       ts: Date.now(),
@@ -356,16 +357,17 @@ describe("ProjectsActions realtime feed", () => {
     actions._init();
     await flush();
 
-    expect(mockedWebappClient.conat_client.dstream).not.toHaveBeenCalled();
+    expect(getSharedAccountDStreamMock).not.toHaveBeenCalled();
 
     accountStore.setReady();
     reduxSubscriber?.();
     await flush();
 
-    expect(mockedWebappClient.conat_client.dstream).toHaveBeenCalledWith({
+    expect(getSharedAccountDStreamMock).toHaveBeenCalledWith({
       account_id: "acct-1",
       name: accountFeedStreamName(),
       ephemeral: true,
+      maxListeners: 100,
     });
   });
 });
