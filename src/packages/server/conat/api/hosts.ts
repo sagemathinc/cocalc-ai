@@ -123,7 +123,6 @@ import {
 } from "@cocalc/database/postgres/project-host-metrics";
 import {
   listProjectHostRuntimeDeployments,
-  loadEffectiveProjectHostRuntimeDeployments,
   setProjectHostRuntimeDeployments,
 } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import {
@@ -186,12 +185,8 @@ import {
 import {
   installedProjectHostArtifactVersion,
   isProjectHostLocalRollbackError as isProjectHostLocalRollbackErrorInternal,
-  isUnsupportedHostAgentStatusObservationError,
   observedHostAgentFromMetadata,
-  observedRuntimeArtifactsFromMetadata,
   resolveRollbackVersion,
-  summarizeObservedRuntimeDeployments,
-  summarizeRollbackTargets,
   targetKeyForRuntimeDeployment,
 } from "./hosts-runtime-observation";
 import {
@@ -199,6 +194,11 @@ import {
   rollbackProjectHostOverSshInternal as rollbackProjectHostOverSshInternalHelper,
   setLastKnownGoodArtifactVersionInternal,
 } from "./hosts-project-host-rollbacks";
+import {
+  getHostRuntimeDeploymentStatusInternal,
+  listRunningHostIdsForAutomaticRuntimeDeploymentReconcile,
+  loadHostRowForRuntimeDeploymentsInternal,
+} from "./hosts-runtime-deployment-status";
 function pool() {
   return getPool();
 }
@@ -5204,94 +5204,6 @@ export async function listHostRuntimeDeployments({
   });
 }
 
-async function getHostRuntimeDeploymentStatusInternal({
-  id,
-  row,
-}: {
-  id: string;
-  row: any;
-}): Promise<HostRuntimeDeploymentStatus> {
-  const [configured, effective] = await Promise.all([
-    listProjectHostRuntimeDeployments({
-      scope_type: "host",
-      host_id: row.id,
-    }),
-    loadEffectiveProjectHostRuntimeDeployments({ host_id: row.id }),
-  ]);
-  let observed_artifacts = observedRuntimeArtifactsFromMetadata(row);
-  let observed_components: HostManagedComponentStatus[] | undefined;
-  let observed_host_agent = observedHostAgentFromMetadata(row);
-  const observation_errors: string[] = [];
-  if (HOST_RUNNING_STATUSES.has(`${row?.status ?? ""}`.toLowerCase())) {
-    try {
-      const client = await hostControlClient(id, 15_000);
-      const [componentsResult, artifactsResult, hostAgentResult] =
-        await Promise.allSettled([
-          client.getManagedComponentStatus(),
-          client.getInstalledRuntimeArtifacts(),
-          client.getHostAgentStatus(),
-        ]);
-      if (componentsResult.status === "fulfilled") {
-        observed_components = componentsResult.value;
-      } else {
-        observation_errors.push(
-          `components: ${componentsResult.reason?.message ?? componentsResult.reason}`,
-        );
-      }
-      if (artifactsResult.status === "fulfilled") {
-        observed_artifacts = observedRuntimeArtifactsFromMetadata({
-          metadata: {
-            software_inventory: artifactsResult.value,
-            software: row?.metadata?.software,
-          },
-        });
-      } else if (observed_artifacts.length === 0) {
-        observation_errors.push(
-          `artifacts: ${artifactsResult.reason?.message ?? artifactsResult.reason}`,
-        );
-      }
-      if (hostAgentResult.status === "fulfilled") {
-        observed_host_agent = observedHostAgentFromMetadata({
-          metadata: {
-            host_agent: hostAgentResult.value,
-          },
-        });
-      } else if (
-        !observed_host_agent &&
-        !isUnsupportedHostAgentStatusObservationError(hostAgentResult.reason)
-      ) {
-        observation_errors.push(
-          `host_agent: ${hostAgentResult.reason?.message ?? hostAgentResult.reason}`,
-        );
-      }
-    } catch (err) {
-      observation_errors.push(`${(err as Error)?.message ?? err}`);
-    }
-  } else {
-    observation_errors.push("host is not currently running");
-  }
-  return {
-    host_id: row.id,
-    configured,
-    effective,
-    observed_artifacts,
-    observed_components,
-    observed_host_agent,
-    observed_targets: summarizeObservedRuntimeDeployments({
-      effective,
-      observed_artifacts,
-      observed_components,
-    }),
-    rollback_targets: summarizeRollbackTargets({
-      row,
-      effective,
-      observed_artifacts,
-      observed_components,
-    }),
-    observation_error: observation_errors.join("; ") || undefined,
-  };
-}
-
 export async function getHostRuntimeDeploymentStatus({
   account_id,
   id,
@@ -5300,7 +5212,12 @@ export async function getHostRuntimeDeploymentStatus({
   id: string;
 }): Promise<HostRuntimeDeploymentStatus> {
   const row = await loadHostForListing(id, account_id);
-  return await getHostRuntimeDeploymentStatusInternal({ id, row });
+  return await getHostRuntimeDeploymentStatusInternal({
+    id,
+    row,
+    running_statuses: HOST_RUNNING_STATUSES,
+    hostControlClient,
+  });
 }
 
 export async function setHostRuntimeDeployments({
@@ -5326,7 +5243,9 @@ export async function setHostRuntimeDeployments({
       replace,
     });
     const runningHostIds =
-      await listRunningHostIdsForAutomaticRuntimeDeploymentReconcile();
+      await listRunningHostIdsForAutomaticRuntimeDeploymentReconcile({
+        running_statuses: HOST_RUNNING_STATUSES,
+      });
     await bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
       host_ids: runningHostIds,
     });
@@ -5415,6 +5334,8 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcile({
   const status = await getHostRuntimeDeploymentStatusInternal({
     id: row.id,
     row,
+    running_statuses: HOST_RUNNING_STATUSES,
+    hostControlClient,
   });
   if (status.observation_error && !(status.observed_components ?? []).length) {
     return {
@@ -5490,6 +5411,8 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcile({
   const status = await getHostRuntimeDeploymentStatusInternal({
     id: row.id,
     row,
+    running_statuses: HOST_RUNNING_STATUSES,
+    hostControlClient,
   });
   if (status.observation_error && !(status.observed_artifacts ?? []).length) {
     return {
@@ -5521,21 +5444,6 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcile({
     targets,
     op_id: op.op_id,
   };
-}
-
-async function listRunningHostIdsForAutomaticRuntimeDeploymentReconcile(): Promise<
-  string[]
-> {
-  const { rows } = await pool().query<{ id: string }>(
-    `SELECT id
-     FROM project_hosts
-     WHERE deleted IS NULL
-       AND LOWER(COALESCE(status, '')) = ANY($1::text[])`,
-    [[...HOST_RUNNING_STATUSES]],
-  );
-  return rows
-    .map((row) => `${row?.id ?? ""}`.trim())
-    .filter((id) => id.length > 0);
 }
 
 async function bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
@@ -5803,16 +5711,6 @@ export async function rollbackProjectHostOverSshInternal({
     reason,
     reconcileCloudHostBootstrapOverSsh,
   });
-}
-
-async function loadHostRowForRuntimeDeploymentsInternal(
-  host_id: string,
-): Promise<any | undefined> {
-  const { rows } = await pool().query(
-    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL LIMIT 1`,
-    [host_id],
-  );
-  return rows[0];
 }
 
 export async function reconcileHostRuntimeDeploymentsInternal({
