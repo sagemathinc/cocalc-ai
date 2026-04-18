@@ -39,6 +39,14 @@ function setShadow(key: string, value: ShadowState): void {
   }
 }
 
+function storeLocalDraftSnapshot(localStorageKey: string, text: string): void {
+  if (text.trim().length === 0 || text.length > MAX_LOCAL_DRAFT_CHARS) {
+    delete_local_storage(localStorageKey);
+    return;
+  }
+  set_local_storage(localStorageKey, text);
+}
+
 interface UseChatComposerDraftOptions {
   account_id?: string;
   project_id: string;
@@ -92,11 +100,6 @@ export function useChatComposerDraft({
 
   useEffect(() => {
     let closed = false;
-    const prev = controllerRef.current;
-    controllerRef.current = null;
-    if (prev) {
-      void prev.dispose({ flush: true });
-    }
     if (!adapter) {
       setInputState("");
       return;
@@ -136,12 +139,24 @@ export function useChatComposerDraft({
     return () => {
       closed = true;
       unsub();
+      const snapshot = controller.getSnapshot();
+      setShadow(storageKey, {
+        text: snapshot.text,
+        updatedAt: snapshot.updatedAt,
+      });
+      storeLocalDraftSnapshot(localStorageKey, snapshot.text);
       if (controllerRef.current === controller) {
         controllerRef.current = null;
       }
-      void controller.dispose({ flush: true });
+      void controller.dispose();
     };
   }, [adapter, storageKey, debounceMs, localStorageKey]);
+
+  useEffect(() => {
+    return () => {
+      adapter?.close();
+    };
+  }, [adapter]);
 
   const cancelPendingLocalWrite = useCallback(() => {
     const pending = pendingLocalWriteRef.current;
