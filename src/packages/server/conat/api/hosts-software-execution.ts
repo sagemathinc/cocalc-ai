@@ -39,7 +39,6 @@ export async function upgradeHostSoftwareInternalHelper({
   id,
   targets,
   base_url,
-  assertProjectHostUpgradeIsExclusive,
   loadHostForStartStop,
   assertHostRunningForUpgrade,
   computeHostOperationalAvailability,
@@ -57,9 +56,6 @@ export async function upgradeHostSoftwareInternalHelper({
   id: string;
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
-  assertProjectHostUpgradeIsExclusive: (
-    targets: HostSoftwareUpgradeTarget[],
-  ) => void;
   loadHostForStartStop: (id: string, account_id?: string) => Promise<any>;
   assertHostRunningForUpgrade: (row: any) => void;
   computeHostOperationalAvailability: (row: any) => {
@@ -107,7 +103,6 @@ export async function upgradeHostSoftwareInternalHelper({
     replace: boolean;
   }) => Promise<any>;
 }): Promise<HostSoftwareUpgradeResponse> {
-  assertProjectHostUpgradeIsExclusive(targets);
   const HOST_UPGRADE_RPC_TIMEOUT_MS = 10 * 60 * 1000;
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);

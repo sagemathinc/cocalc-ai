@@ -126,7 +126,6 @@ import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
-  assertProjectHostUpgradeIsExclusive,
   hostManagedComponentRolloutDedupeKey,
   hostUpgradeDedupeKey,
   listHostSoftwareVersions as listHostSoftwareVersionsInternal,
@@ -3324,7 +3323,6 @@ export async function upgradeHostSoftware({
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
 }): Promise<HostLroResponse> {
-  assertProjectHostUpgradeIsExclusive(targets);
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -3893,7 +3891,6 @@ export async function upgradeHostSoftwareInternal({
     id,
     targets,
     base_url,
-    assertProjectHostUpgradeIsExclusive,
     loadHostForStartStop,
     assertHostRunningForUpgrade,
     computeHostOperationalAvailability,
