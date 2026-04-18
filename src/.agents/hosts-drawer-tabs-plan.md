@@ -1,5 +1,7 @@
 # Hosts Drawer Tabs Plan
 
+Status: completed on 2026-04-18
+
 ## Goal
 
 Refactor the overloaded host drawer in
@@ -309,12 +311,23 @@ The refactor is successful if:
 - destructive actions are isolated
 - the default `Overview` tab is short and readable
 
-## Recommended Next Task
+## Completion Notes
 
-Implement Phase 1 only:
+Completed phases:
 
-- add tabs to `host-drawer.tsx`
-- move current sections into the new tab layout
-- keep all existing controls working
+- Phase 1: tab shell and section split
+- Phase 2: overview compression
+- Phase 3: runtime cleanup
+- Phase 4: logs simplification and danger isolation
 
-Do not try to fully redesign card internals in the same change-set.
+Result:
+
+- the drawer is now organized by tab responsibility
+- runtime controls are grouped under `Runtime`
+- diagnostics live under `Logs`
+- destructive actions live under `Danger`
+
+Follow-up work that remains intentionally out of scope for this plan:
+
+- optional per-host destructive lock phrase for deprovision/delete
+- any deeper visual redesign beyond the tabbed information architecture
