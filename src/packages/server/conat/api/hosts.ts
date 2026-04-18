@@ -3960,6 +3960,8 @@ export async function rollbackHostRuntimeDeploymentsInternal({
           reason,
         })
       ).results ?? [],
+    assertCloudHostBootstrapReconcileSupported,
+    reconcileCloudHostBootstrapOverSsh,
   });
 }
 

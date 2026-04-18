@@ -6,6 +6,7 @@ import {
   Drawer,
   Popover,
   Popconfirm,
+  Select,
   Space,
   Tag,
   Tabs,
@@ -517,6 +518,36 @@ function rollbackTargetForComponent(
   );
 }
 
+function rollbackVersionOptions(
+  rollbackTarget: HostRuntimeRollbackTarget | undefined,
+): string[] {
+  return Array.from(
+    new Set(
+      [
+        rollbackTarget?.last_known_good_version,
+        rollbackTarget?.previous_version,
+        ...(rollbackTarget?.retained_versions ?? []),
+      ]
+        .map((value) => `${value ?? ""}`.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function rollbackVersionLabel(
+  rollbackTarget: HostRuntimeRollbackTarget | undefined,
+  version: string,
+): string {
+  const badges: string[] = [];
+  if (version === rollbackTarget?.last_known_good_version) {
+    badges.push("last known good");
+  }
+  if (version === rollbackTarget?.previous_version) {
+    badges.push("previous");
+  }
+  return badges.length ? `${version} (${badges.join(", ")})` : version;
+}
+
 function componentDeploymentRecord(
   status: HostRuntimeDeploymentStatus | undefined,
   component: string,
@@ -663,6 +694,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const [expandedComponents, setExpandedComponents] = React.useState<
     Partial<Record<ManagedComponentKind, boolean>>
   >({});
+  const [artifactRollbackSelection, setArtifactRollbackSelection] =
+    React.useState<Partial<Record<HostRuntimeArtifact, string>>>({});
+  const [componentRollbackSelection, setComponentRollbackSelection] =
+    React.useState<Partial<Record<ManagedComponentKind, string>>>({});
+  React.useEffect(() => {
+    setArtifactRollbackSelection({});
+    setComponentRollbackSelection({});
+  }, [vm.host?.id]);
   const handleResize = React.useCallback((next: number) => {
     const clamped = clampDrawerWidth(next);
     setDrawerWidth(clamped);
@@ -1573,6 +1612,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 const rollbackVersion =
                   rollbackTarget?.last_known_good_version ??
                   rollbackTarget?.previous_version;
+                const rollbackOptions = rollbackVersionOptions(rollbackTarget);
+                const selectedRollbackVersion =
+                  artifactRollbackSelection[artifact] ??
+                  rollbackVersion ??
+                  rollbackOptions[0];
                 const commands = cliCommandsForArtifact({ host, artifact });
                 const expanded = !!expandedArtifacts[artifact];
                 return (
@@ -1814,6 +1858,61 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               </code>
                             </Typography.Text>
                           )}
+                          {canUpgrade &&
+                            !host.deleted &&
+                            onRollbackRuntimeArtifact &&
+                            rollbackOptions.length > 0 && (
+                              <Space wrap align="center">
+                                <Typography.Text>
+                                  Roll back to retained version:
+                                </Typography.Text>
+                                <Select
+                                  size="small"
+                                  style={{ minWidth: 260 }}
+                                  value={selectedRollbackVersion}
+                                  onChange={(value) =>
+                                    setArtifactRollbackSelection((prev) => ({
+                                      ...prev,
+                                      [artifact]: value,
+                                    }))
+                                  }
+                                  options={rollbackOptions.map((value) => ({
+                                    value,
+                                    label: rollbackVersionLabel(
+                                      rollbackTarget,
+                                      value,
+                                    ),
+                                  }))}
+                                  disabled={hostOpActive}
+                                />
+                                <Popconfirm
+                                  title={`Roll back ${label.toLowerCase()} to ${selectedRollbackVersion}?`}
+                                  okText="Rollback"
+                                  cancelText="Cancel"
+                                  onConfirm={() =>
+                                    selectedRollbackVersion
+                                      ? onRollbackRuntimeArtifact({
+                                          host,
+                                          artifact,
+                                          version: selectedRollbackVersion,
+                                        })
+                                      : undefined
+                                  }
+                                  disabled={
+                                    hostOpActive || !selectedRollbackVersion
+                                  }
+                                >
+                                  <Button
+                                    size="small"
+                                    disabled={
+                                      hostOpActive || !selectedRollbackVersion
+                                    }
+                                  >
+                                    Rollback to version
+                                  </Button>
+                                </Popconfirm>
+                              </Space>
+                            )}
                           {hasHostOverride && (
                             <Alert
                               type="info"
@@ -1891,6 +1990,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 const rollbackVersion =
                   rollbackTarget?.last_known_good_version ??
                   rollbackTarget?.previous_version;
+                const rollbackOptions = rollbackVersionOptions(rollbackTarget);
+                const selectedRollbackVersion =
+                  componentRollbackSelection[component] ??
+                  rollbackVersion ??
+                  rollbackOptions[0];
                 const hasHostOverride = deployment?.scope_type === "host";
                 const enabled =
                   observedTarget?.enabled ?? observedComponent?.enabled;
@@ -2117,6 +2221,62 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               </code>
                             </Typography.Text>
                           )}
+                          {canUpgrade &&
+                            !host.deleted &&
+                            !modeDetails.externallyManaged &&
+                            onRollbackRuntimeComponent &&
+                            rollbackOptions.length > 0 && (
+                              <Space wrap align="center">
+                                <Typography.Text>
+                                  Roll back to retained version:
+                                </Typography.Text>
+                                <Select
+                                  size="small"
+                                  style={{ minWidth: 260 }}
+                                  value={selectedRollbackVersion}
+                                  onChange={(value) =>
+                                    setComponentRollbackSelection((prev) => ({
+                                      ...prev,
+                                      [component]: value,
+                                    }))
+                                  }
+                                  options={rollbackOptions.map((value) => ({
+                                    value,
+                                    label: rollbackVersionLabel(
+                                      rollbackTarget,
+                                      value,
+                                    ),
+                                  }))}
+                                  disabled={hostOpActive}
+                                />
+                                <Popconfirm
+                                  title={`Roll back ${label.toLowerCase()} to ${selectedRollbackVersion}?`}
+                                  okText="Rollback"
+                                  cancelText="Cancel"
+                                  onConfirm={() =>
+                                    selectedRollbackVersion
+                                      ? onRollbackRuntimeComponent({
+                                          host,
+                                          component,
+                                          version: selectedRollbackVersion,
+                                        })
+                                      : undefined
+                                  }
+                                  disabled={
+                                    hostOpActive || !selectedRollbackVersion
+                                  }
+                                >
+                                  <Button
+                                    size="small"
+                                    disabled={
+                                      hostOpActive || !selectedRollbackVersion
+                                    }
+                                  >
+                                    Rollback to version
+                                  </Button>
+                                </Popconfirm>
+                              </Space>
+                            )}
                           {hasHostOverride && (
                             <Alert
                               type="info"

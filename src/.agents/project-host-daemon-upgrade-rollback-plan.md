@@ -95,6 +95,8 @@ but "which parts are finished, partial, or still missing?"
    - `cocalc host deploy rollback` exists
    - explicit CLI version selection via `--to-version` exists
    - rollback targets and retained versions are exposed in deploy status
+   - `bootstrap-environment` rollback now follows the same desired-state path
+     and applies via bootstrap reconcile over ssh
 9. Host upgrade semantics now distinguish low-disruption `project-host`
    updates from explicit full-stack alignment.
    - ordinary `project-host` upgrade preserves the lower-disruption path
@@ -111,25 +113,16 @@ but "which parts are finished, partial, or still missing?"
      default
    - there is no central "these hosts auto-rolled back" table/filter for large
      fleets
-3. Explicit rollback to a chosen prior version is still incomplete in the UI.
-   - CLI already supports explicit rollback version selection
-   - deploy status already exposes rollback candidates
-   - but a direct operator-facing rollback-to-version picker still needs to be
-     added to the runtime UI
-4. Retained rollback inventory and pruning policy are still incomplete.
+3. Retained rollback inventory and pruning policy are still incomplete.
    - the system can now observe referenced bundle/tools versions
    - but local rollback inventory, retention policy, and rollback candidate
      surfacing are not operator-friendly yet
-   - `bootstrap-environment` rollback is still explicitly unimplemented in the
-     server execution path
-5. Some desired-state semantics are still incomplete or only partially proven.
+4. Some desired-state semantics are still incomplete or only partially proven.
    - offline host convergence needs more end-to-end validation
    - component policy is not yet exposed as durable central control-plane state
    - rollout is still partly framed as "act now" instead of uniformly
      "converge to declared target state"
-6. LRO and CLI ergonomics still have gaps.
-   - `--wait` output is still too quiet in some paths
-   - `cocalc host deploy history` does not exist yet
+5. LRO and CLI ergonomics still have gaps.
    - `cocalc host deploy restart` does not exist yet
    - repeated deploy/upgrade requests still need stronger idempotency and stale
      state handling
