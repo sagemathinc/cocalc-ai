@@ -1474,7 +1474,12 @@ export class ConatClient extends EventEmitter {
             address: state.address,
             host_session_id: state.host_session_id,
           });
-          state.client.connect();
+          const socket: any = state.client.conn;
+          if (typeof socket?.connect === "function") {
+            socket.connect();
+          } else {
+            state.client.connect();
+          }
           return true;
         } catch (err) {
           console.warn(
