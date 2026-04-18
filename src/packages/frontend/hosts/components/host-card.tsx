@@ -22,6 +22,7 @@ import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
+import { HostDaemonHealthSummary } from "./host-daemon-health-summary";
 import { HostProjectStatus } from "./host-project-status";
 import {
   confirmHostDeprovision,
@@ -351,6 +352,7 @@ export const HostCard: React.FC<HostCardProps> = ({
         <HostBootstrapLifecycle host={host} />
         <HostProjectStatus host={host} fontSize={14} />
         <HostBackupStatus host={host} />
+        <HostDaemonHealthSummary host={host} />
         <Typography.Text>
           Provider:{" "}
           {host.machine?.cloud

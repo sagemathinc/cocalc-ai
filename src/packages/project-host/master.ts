@@ -818,6 +818,7 @@ export async function startMasterRegistration({
   const buildPayload = (): HostRegistration => {
     const versions = getSoftwareVersions();
     const softwareInventory = getInstalledRuntimeArtifacts();
+    const observedComponents = getManagedComponentStatus();
     const hostAgentState = readHostAgentState();
     const currentMetrics = hostMetrics.getCurrentSnapshot();
     const bootstrapLifecycle = getBootstrapLifecycle();
@@ -839,6 +840,7 @@ export async function startMasterRegistration({
             }
           : {}),
         host_agent: hostAgentState,
+        observed_components: observedComponents,
         software: versions,
         software_inventory: softwareInventory,
       },

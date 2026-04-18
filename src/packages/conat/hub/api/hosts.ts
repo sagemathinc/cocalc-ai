@@ -436,6 +436,7 @@ export interface Host {
   last_action_error?: string;
   provider_observed_at?: string;
   observed_host_agent?: HostRuntimeHostAgentObservation;
+  observed_components?: HostManagedComponentStatus[];
   deleted?: string;
   backup_status?: HostBackupStatus;
   bootstrap?: HostBootstrapStatus;
