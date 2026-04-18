@@ -1,10 +1,12 @@
 import { EventEmitter } from "events";
+import { AdaptiveWindow } from "./adaptive-window";
 
 const DEFAULT_BASE_DELAY_MS = 1_000;
 const DEFAULT_MAX_DELAY_MS = 30_000;
 const DEFAULT_DELAY_DECAY = 1.8;
 const DEFAULT_DELAY_JITTER = 0.25;
-const DEFAULT_MAX_CONCURRENT_RECOVERIES = 1;
+const DEFAULT_MAX_CONCURRENT_RECOVERIES = 16;
+const DEFAULT_INITIAL_CONCURRENT_RECOVERIES = 4;
 
 export type RecoveryPriority = "foreground" | "background";
 
@@ -29,6 +31,7 @@ export interface RecoverySchedulerOptions {
   canRun: () => boolean;
   isTransportReady: () => boolean;
   maxConcurrentRecoveries?: number;
+  initialConcurrentRecoveries?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
   delayDecay?: number;
@@ -45,12 +48,23 @@ interface PendingRecoverableResource {
 
 export class RecoveryScheduler extends EventEmitter {
   private readonly resources = new Map<string, PendingRecoverableResource>();
+  private readonly concurrencyWindow: AdaptiveWindow;
   private nextResourceId = 0;
   private runTimer?: ReturnType<typeof setTimeout>;
   private recoveriesInFlight = 0;
 
   constructor(private readonly options: RecoverySchedulerOptions) {
     super();
+    this.concurrencyWindow = new AdaptiveWindow({
+      min: 1,
+      initial:
+        options.initialConcurrentRecoveries ??
+        Math.min(
+          DEFAULT_INITIAL_CONCURRENT_RECOVERIES,
+          options.maxConcurrentRecoveries ?? DEFAULT_MAX_CONCURRENT_RECOVERIES,
+        ),
+      max: options.maxConcurrentRecoveries ?? DEFAULT_MAX_CONCURRENT_RECOVERIES,
+    });
   }
 
   close = () => {
@@ -120,11 +134,7 @@ export class RecoveryScheduler extends EventEmitter {
     if (!this.options.canRun() || !this.options.isTransportReady()) {
       return;
     }
-    if (
-      this.recoveriesInFlight >=
-      (this.options.maxConcurrentRecoveries ??
-        DEFAULT_MAX_CONCURRENT_RECOVERIES)
-    ) {
+    if (this.recoveriesInFlight >= this.concurrencyWindow.capacity()) {
       return;
     }
     const next = this.pickNextPendingResource();
@@ -143,11 +153,7 @@ export class RecoveryScheduler extends EventEmitter {
     if (!this.options.canRun() || !this.options.isTransportReady()) {
       return;
     }
-    while (
-      this.recoveriesInFlight <
-      (this.options.maxConcurrentRecoveries ??
-        DEFAULT_MAX_CONCURRENT_RECOVERIES)
-    ) {
+    while (this.recoveriesInFlight < this.concurrencyWindow.capacity()) {
       const resource = this.pickNextPendingResource();
       if (!resource || resource.readyAt == null) {
         break;
@@ -168,9 +174,11 @@ export class RecoveryScheduler extends EventEmitter {
       resource.pendingAt = undefined;
       resource.pendingReason = undefined;
       resource.attempts = 0;
+      this.concurrencyWindow.noteSuccess();
     } catch {
       resource.attempts += 1;
       resource.readyAt = Date.now() + this.computeDelay(resource);
+      this.concurrencyWindow.noteFailure();
     } finally {
       this.recoveriesInFlight = Math.max(0, this.recoveriesInFlight - 1);
       this.schedulePendingRecoveries();

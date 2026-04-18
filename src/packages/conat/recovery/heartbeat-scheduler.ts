@@ -1,10 +1,13 @@
 import { EventEmitter } from "events";
+import { AdaptiveWindow } from "./adaptive-window";
 
-const DEFAULT_MAX_CONCURRENT_HEARTBEATS = 1;
+const DEFAULT_MAX_CONCURRENT_HEARTBEATS = 8;
+const DEFAULT_INITIAL_CONCURRENT_HEARTBEATS = 2;
 
 export interface HeartbeatSchedulerOptions {
   canRun: () => boolean;
   maxConcurrentHeartbeats?: number;
+  initialConcurrentHeartbeats?: number;
 }
 
 export interface HeartbeatProbeOptions {
@@ -26,12 +29,23 @@ interface HeartbeatProbeEntry {
 
 export class HeartbeatScheduler extends EventEmitter {
   private readonly probes = new Map<string, HeartbeatProbeEntry>();
+  private readonly concurrencyWindow: AdaptiveWindow;
   private nextProbeId = 0;
   private timer?: ReturnType<typeof setTimeout>;
   private pingsInFlight = 0;
 
   constructor(private readonly options: HeartbeatSchedulerOptions) {
     super();
+    this.concurrencyWindow = new AdaptiveWindow({
+      min: 1,
+      initial:
+        options.initialConcurrentHeartbeats ??
+        Math.min(
+          DEFAULT_INITIAL_CONCURRENT_HEARTBEATS,
+          options.maxConcurrentHeartbeats ?? DEFAULT_MAX_CONCURRENT_HEARTBEATS,
+        ),
+      max: options.maxConcurrentHeartbeats ?? DEFAULT_MAX_CONCURRENT_HEARTBEATS,
+    });
   }
 
   close = () => {
@@ -68,11 +82,7 @@ export class HeartbeatScheduler extends EventEmitter {
     if (!this.options.canRun()) {
       return;
     }
-    if (
-      this.pingsInFlight >=
-      (this.options.maxConcurrentHeartbeats ??
-        DEFAULT_MAX_CONCURRENT_HEARTBEATS)
-    ) {
+    if (this.pingsInFlight >= this.concurrencyWindow.capacity()) {
       return;
     }
     const nextProbe = this.pickNextProbe();
@@ -94,11 +104,7 @@ export class HeartbeatScheduler extends EventEmitter {
     if (!this.options.canRun()) {
       return;
     }
-    while (
-      this.pingsInFlight <
-      (this.options.maxConcurrentHeartbeats ??
-        DEFAULT_MAX_CONCURRENT_HEARTBEATS)
-    ) {
+    while (this.pingsInFlight < this.concurrencyWindow.capacity()) {
       const probe = this.pickNextProbe();
       if (probe == null) {
         break;
@@ -117,8 +123,10 @@ export class HeartbeatScheduler extends EventEmitter {
     try {
       await probe.options.ping();
       probe.options.onPingSuccess?.();
+      this.concurrencyWindow.noteSuccess();
     } catch (err) {
       probe.options.onPingFailure?.(err);
+      this.concurrencyWindow.noteFailure();
     } finally {
       this.pingsInFlight = Math.max(0, this.pingsInFlight - 1);
       this.scheduleDueProbes();
