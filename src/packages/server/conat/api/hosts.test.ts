@@ -2166,6 +2166,20 @@ describe("hosts.listHosts bootstrap normalization", () => {
               last_seen: new Date("2026-04-01T21:03:00Z"),
               metadata: {
                 owner: ACCOUNT_ID,
+                observed_components: [
+                  {
+                    component: "conat-router",
+                    artifact: "project-host",
+                    upgrade_policy: "restart_now",
+                    enabled: true,
+                    managed: true,
+                    desired_version: "build-ph-v2",
+                    runtime_state: "running",
+                    version_state: "aligned",
+                    running_versions: ["build-ph-v2"],
+                    running_pids: [3210],
+                  },
+                ],
                 bootstrap: {
                   status: "error",
                   updated_at: "2026-04-01T20:50:00Z",
@@ -2200,6 +2214,14 @@ describe("hosts.listHosts bootstrap normalization", () => {
     expect(hosts).toHaveLength(1);
     expect(hosts[0].bootstrap?.status).toBe("done");
     expect(hosts[0].bootstrap?.message).toBe("Host software is in sync");
+    expect(hosts[0].observed_components).toEqual([
+      expect.objectContaining({
+        component: "conat-router",
+        runtime_state: "running",
+        version_state: "aligned",
+        running_versions: ["build-ph-v2"],
+      }),
+    ]);
   });
 });
 

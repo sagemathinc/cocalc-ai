@@ -36,11 +36,116 @@ import type {
   HostStatus,
   HostMachine,
 } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostManagedComponentStatus,
+  ManagedComponentKind,
+  ManagedComponentRuntimeState,
+  ManagedComponentUpgradePolicy,
+  ManagedComponentVersionState,
+} from "@cocalc/conat/project-host/api";
 import { desiredHostState } from "@cocalc/server/cloud/spot-restore";
 import { observedHostAgentFromMetadata } from "./hosts-runtime-observation";
 
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const HOST_RUNNING_STATUSES = new Set(["running", "active"]);
+const MANAGED_COMPONENT_KINDS = new Set<ManagedComponentKind>([
+  "project-host",
+  "conat-router",
+  "conat-persist",
+  "acp-worker",
+]);
+
+function normalizeManagedComponentUpgradePolicy(
+  value: unknown,
+): ManagedComponentUpgradePolicy | undefined {
+  switch (`${value ?? ""}`.trim()) {
+    case "restart_now":
+    case "drain_then_replace":
+      return `${value}`.trim() as ManagedComponentUpgradePolicy;
+    default:
+      return undefined;
+  }
+}
+
+function normalizeManagedComponentRuntimeState(
+  value: unknown,
+): ManagedComponentRuntimeState | undefined {
+  switch (`${value ?? ""}`.trim()) {
+    case "running":
+    case "stopped":
+    case "disabled":
+    case "unknown":
+      return `${value}`.trim() as ManagedComponentRuntimeState;
+    default:
+      return undefined;
+  }
+}
+
+function normalizeManagedComponentVersionState(
+  value: unknown,
+): ManagedComponentVersionState | undefined {
+  switch (`${value ?? ""}`.trim()) {
+    case "aligned":
+    case "drifted":
+    case "mixed":
+    case "unknown":
+      return `${value}`.trim() as ManagedComponentVersionState;
+    default:
+      return undefined;
+  }
+}
+
+function normalizeObservedComponents(
+  value: unknown,
+): HostManagedComponentStatus[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const components: HostManagedComponentStatus[] = [];
+  for (const entry of value) {
+    const normalized = (() => {
+      const component =
+        `${entry?.component ?? ""}`.trim() as ManagedComponentKind;
+      if (!MANAGED_COMPONENT_KINDS.has(component)) {
+        return undefined;
+      }
+      const upgrade_policy = normalizeManagedComponentUpgradePolicy(
+        entry?.upgrade_policy,
+      );
+      const runtime_state = normalizeManagedComponentRuntimeState(
+        entry?.runtime_state,
+      );
+      const version_state = normalizeManagedComponentVersionState(
+        entry?.version_state,
+      );
+      if (!upgrade_policy || !runtime_state || !version_state) {
+        return undefined;
+      }
+      return {
+        component,
+        artifact: "project-host",
+        upgrade_policy,
+        enabled: entry?.enabled !== false,
+        managed: entry?.managed !== false,
+        desired_version: `${entry?.desired_version ?? ""}`.trim() || undefined,
+        runtime_state,
+        version_state,
+        running_versions: Array.isArray(entry?.running_versions)
+          ? entry.running_versions
+              .map((version: any) => `${version ?? ""}`.trim())
+              .filter((version: string) => !!version)
+          : [],
+        running_pids: Array.isArray(entry?.running_pids)
+          ? entry.running_pids
+              .map((pid: any) => Number(pid))
+              .filter((pid: number) => Number.isInteger(pid) && pid > 0)
+          : [],
+      } satisfies HostManagedComponentStatus;
+    })();
+    if (normalized) {
+      components.push(normalized);
+    }
+  }
+  return components.length ? components : undefined;
+}
 
 export function normalizeHostPricingModel(
   value: unknown,
@@ -676,6 +781,9 @@ export function parseRow(
     last_action_error: metadata.last_action_error,
     provider_observed_at: metadata.runtime?.observed_at,
     observed_host_agent: observedHostAgentFromMetadata(row),
+    observed_components: normalizeObservedComponents(
+      metadata.observed_components,
+    ),
     deleted: row.deleted ? new Date(row.deleted).toISOString() : undefined,
     backup_status: opts.backup_status,
     bootstrap: normalizedBootstrap,
