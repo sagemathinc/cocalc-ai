@@ -1,6 +1,16 @@
 import { hubApi } from "@cocalc/lite/hub/api";
 import { account_id } from "@cocalc/backend/data";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
+import {
+  deleteChatStoreData,
+  getChatStoreStats,
+  listChatStoreSegments,
+  readChatStoreArchived,
+  readChatStoreArchivedHit,
+  rotateChatStore,
+  searchChatStoreArchived,
+  vacuumChatStore,
+} from "@cocalc/backend/chat-store/sqlite-offload";
 import { uuid, isValidUUID } from "@cocalc/util/misc";
 import {
   getProject,
@@ -8,6 +18,15 @@ import {
   upsertProject,
 } from "../sqlite/projects";
 import { type CreateProjectOptions } from "@cocalc/util/db-schema/projects";
+import type {
+  ChatStoreArchivedRow,
+  ChatStoreDeleteResult,
+  ChatStoreRotateResult,
+  ChatStoreScope,
+  ChatStoreSearchHit,
+  ChatStoreSegment,
+  ChatStoreStats,
+} from "@cocalc/conat/hub/api/projects";
 import type { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import {
   DEFAULT_PROJECT_IMAGE,
@@ -27,6 +46,7 @@ import {
   getVolume,
   ensureVolume,
   getMountPoint,
+  resolveProjectContainerPath,
 } from "../file-server";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import type { Configuration } from "@cocalc/conat/project/runner/types";
@@ -1177,6 +1197,304 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     return { ok: true as const, synced: synced.ok, ...result };
   }
 
+  function assertHostedProjectAccess({
+    account_id,
+    project_id,
+  }: {
+    account_id?: string;
+    project_id: string;
+  }) {
+    if (!account_id) {
+      throw Error("user must be signed in");
+    }
+    if (!isValidUUID(project_id)) {
+      throw Error("invalid project_id");
+    }
+    if (!getProject(project_id)) {
+      throw Error("project is not hosted on this project-host");
+    }
+  }
+
+  async function resolveChatStorePaths({
+    account_id,
+    project_id,
+    chat_path,
+    db_path,
+  }: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+  }): Promise<{ chat_path: string; db_path?: string }> {
+    assertHostedProjectAccess({ account_id, project_id });
+    return {
+      chat_path: await resolveProjectContainerPath(project_id, chat_path),
+      ...(db_path
+        ? { db_path: await resolveProjectContainerPath(project_id, db_path) }
+        : {}),
+    };
+  }
+
+  async function chatStoreStats({
+    account_id,
+    project_id,
+    chat_path,
+    db_path,
+  }: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+  }): Promise<ChatStoreStats> {
+    const paths = await resolveChatStorePaths({
+      account_id,
+      project_id,
+      chat_path,
+      db_path,
+    });
+    return await getChatStoreStats(paths);
+  }
+
+  async function chatStoreRotate({
+    account_id,
+    project_id,
+    chat_path,
+    db_path,
+    keep_recent_messages,
+    max_head_bytes,
+    max_head_messages,
+    require_idle,
+    force,
+    dry_run,
+  }: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+    keep_recent_messages?: number;
+    max_head_bytes?: number;
+    max_head_messages?: number;
+    require_idle?: boolean;
+    force?: boolean;
+    dry_run?: boolean;
+  }): Promise<ChatStoreRotateResult> {
+    const paths = await resolveChatStorePaths({
+      account_id,
+      project_id,
+      chat_path,
+      db_path,
+    });
+    return await rotateChatStore({
+      ...paths,
+      keep_recent_messages,
+      max_head_bytes,
+      max_head_messages,
+      require_idle,
+      force,
+      dry_run,
+    });
+  }
+
+  async function chatStoreListSegments({
+    account_id,
+    project_id,
+    chat_path,
+    db_path,
+    limit,
+    offset,
+  }: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ chat_id: string; segments: ChatStoreSegment[] }> {
+    const paths = await resolveChatStorePaths({
+      account_id,
+      project_id,
+      chat_path,
+      db_path,
+    });
+    return await listChatStoreSegments({
+      ...paths,
+      limit,
+      offset,
+    });
+  }
+
+  async function chatStoreReadArchived({
+    account_id,
+    project_id,
+    chat_path,
+    db_path,
+    before_date_ms,
+    thread_id,
+    limit,
+    offset,
+  }: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+    before_date_ms?: number;
+    thread_id?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    chat_id: string;
+    rows: ChatStoreArchivedRow[];
+    offset: number;
+    next_offset?: number;
+  }> {
+    const paths = await resolveChatStorePaths({
+      account_id,
+      project_id,
+      chat_path,
+      db_path,
+    });
+    return await readChatStoreArchived({
+      ...paths,
+      before_date_ms,
+      thread_id,
+      limit,
+      offset,
+    });
+  }
+
+  async function chatStoreReadArchivedHit({
+    account_id,
+    project_id,
+    chat_path,
+    db_path,
+    row_id,
+    message_id,
+    thread_id,
+  }: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+    row_id?: number;
+    message_id?: string;
+    thread_id?: string;
+  }): Promise<{ chat_id: string; row?: ChatStoreArchivedRow }> {
+    const paths = await resolveChatStorePaths({
+      account_id,
+      project_id,
+      chat_path,
+      db_path,
+    });
+    return await readChatStoreArchivedHit({
+      ...paths,
+      row_id,
+      message_id,
+      thread_id,
+    });
+  }
+
+  async function chatStoreSearch({
+    account_id,
+    project_id,
+    chat_path,
+    query,
+    db_path,
+    thread_id,
+    exclude_thread_ids,
+    limit,
+    offset,
+  }: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    query: string;
+    db_path?: string;
+    thread_id?: string;
+    exclude_thread_ids?: string[];
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    chat_id: string;
+    hits: ChatStoreSearchHit[];
+    offset: number;
+    total_hits: number;
+    next_offset?: number;
+  }> {
+    const paths = await resolveChatStorePaths({
+      account_id,
+      project_id,
+      chat_path,
+      db_path,
+    });
+    return await searchChatStoreArchived({
+      ...paths,
+      query,
+      thread_id,
+      exclude_thread_ids,
+      limit,
+      offset,
+    });
+  }
+
+  async function chatStoreDelete({
+    account_id,
+    project_id,
+    chat_path,
+    db_path,
+    scope,
+    before_date_ms,
+    thread_id,
+    message_ids,
+  }: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+    scope: ChatStoreScope;
+    before_date_ms?: number;
+    thread_id?: string;
+    message_ids?: string[];
+  }): Promise<ChatStoreDeleteResult> {
+    const paths = await resolveChatStorePaths({
+      account_id,
+      project_id,
+      chat_path,
+      db_path,
+    });
+    return await deleteChatStoreData({
+      ...paths,
+      scope,
+      before_date_ms,
+      thread_id,
+      message_ids,
+    });
+  }
+
+  async function chatStoreVacuum({
+    account_id,
+    project_id,
+    chat_path,
+    db_path,
+  }: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+  }): Promise<{
+    chat_id: string;
+    db_path: string;
+    before_bytes: number;
+    after_bytes: number;
+  }> {
+    const paths = await resolveChatStorePaths({
+      account_id,
+      project_id,
+      chat_path,
+      db_path,
+    });
+    return await vacuumChatStore(paths);
+  }
+
   // Create a project locally and optionally start it.
   hubApi.projects.createProject = createProject;
   hubApi.projects.start = start;
@@ -1198,6 +1516,14 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.codexDeviceAuthStatus = codexDeviceAuthStatus;
   hubApi.projects.codexDeviceAuthCancel = codexDeviceAuthCancel;
   hubApi.projects.codexUploadAuthFile = codexUploadAuthFile;
+  hubApi.projects.chatStoreStats = chatStoreStats;
+  hubApi.projects.chatStoreRotate = chatStoreRotate;
+  hubApi.projects.chatStoreListSegments = chatStoreListSegments;
+  hubApi.projects.chatStoreReadArchived = chatStoreReadArchived;
+  hubApi.projects.chatStoreReadArchivedHit = chatStoreReadArchivedHit;
+  hubApi.projects.chatStoreSearch = chatStoreSearch;
+  hubApi.projects.chatStoreDelete = chatStoreDelete;
+  hubApi.projects.chatStoreVacuum = chatStoreVacuum;
 }
 
 // Update managed SSH keys for a project without restarting it.

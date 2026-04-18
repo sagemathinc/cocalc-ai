@@ -129,7 +129,12 @@ const PROJECT_HOST_ROUTED_HUB_METHODS = new Set<string>([
   "projects.chatStoreDelete",
   "projects.chatStoreVacuum",
 ]);
-const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK = new Set<string>([
+const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK = new Set<string>([]);
+const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK = new Set<string>([
+  "projects.codexDeviceAuthStart",
+  "projects.codexDeviceAuthStatus",
+  "projects.codexDeviceAuthCancel",
+  "projects.codexUploadAuthFile",
   "projects.chatStoreStats",
   "projects.chatStoreRotate",
   "projects.chatStoreListSegments",
@@ -138,12 +143,6 @@ const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK = new Set<string>([
   "projects.chatStoreSearch",
   "projects.chatStoreDelete",
   "projects.chatStoreVacuum",
-]);
-const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK = new Set<string>([
-  "projects.codexDeviceAuthStart",
-  "projects.codexDeviceAuthStatus",
-  "projects.codexDeviceAuthCancel",
-  "projects.codexUploadAuthFile",
 ]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [3_000, 10_000, 30_000] as const;

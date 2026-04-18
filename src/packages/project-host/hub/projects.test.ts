@@ -17,6 +17,15 @@ const callHub = jest.fn();
 const getLocalHostId = jest.fn(() => "host-1");
 const getMasterConatClient = jest.fn();
 const getVolume = jest.fn(async () => ({ path: "/mnt/cocalc/project-test" }));
+const resolveProjectContainerPath = jest.fn(async (_project_id, p) => p);
+const getChatStoreStats = jest.fn();
+const rotateChatStore = jest.fn();
+const listChatStoreSegments = jest.fn();
+const readChatStoreArchived = jest.fn();
+const readChatStoreArchivedHit = jest.fn();
+const searchChatStoreArchived = jest.fn();
+const deleteChatStoreData = jest.fn();
+const vacuumChatStore = jest.fn();
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
 jest.mock("@cocalc/backend/data", () => ({
@@ -62,6 +71,19 @@ jest.mock("../file-server", () => ({
   getVolume: (...args: any[]) => getVolume(...args),
   ensureVolume: jest.fn(),
   getMountPoint: jest.fn(() => "/mnt/cocalc"),
+  resolveProjectContainerPath: (...args: any[]) =>
+    resolveProjectContainerPath(...args),
+}));
+jest.mock("@cocalc/backend/chat-store/sqlite-offload", () => ({
+  getChatStoreStats: (...args: any[]) => getChatStoreStats(...args),
+  rotateChatStore: (...args: any[]) => rotateChatStore(...args),
+  listChatStoreSegments: (...args: any[]) => listChatStoreSegments(...args),
+  readChatStoreArchived: (...args: any[]) => readChatStoreArchived(...args),
+  readChatStoreArchivedHit: (...args: any[]) =>
+    readChatStoreArchivedHit(...args),
+  searchChatStoreArchived: (...args: any[]) => searchChatStoreArchived(...args),
+  deleteChatStoreData: (...args: any[]) => deleteChatStoreData(...args),
+  vacuumChatStore: (...args: any[]) => vacuumChatStore(...args),
 }));
 jest.mock("../pending-copies", () => ({
   applyPendingCopies: (...args: any[]) => applyPendingCopies(...args),
@@ -104,6 +126,17 @@ describe("project host start ACP rehydrate ordering", () => {
     readFile.mockResolvedValue("");
     callHub.mockReset();
     getMasterConatClient.mockReturnValue(undefined);
+    resolveProjectContainerPath.mockImplementation(
+      async (_project_id: string, p: string) => `/projects/host${p}`,
+    );
+    getChatStoreStats.mockReset();
+    rotateChatStore.mockReset();
+    listChatStoreSegments.mockReset();
+    readChatStoreArchived.mockReset();
+    readChatStoreArchivedHit.mockReset();
+    searchChatStoreArchived.mockReset();
+    deleteChatStoreData.mockReset();
+    vacuumChatStore.mockReset();
   });
 
   it("does not rehydrate ACP automations before runner start on start()", async () => {
@@ -421,6 +454,87 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(runnerApi.start).toHaveBeenCalledWith({
       project_id,
       config: expect.objectContaining({ image: managedImage }),
+    });
+  });
+
+  it("translates chat store paths on project-host before rotating", async () => {
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(),
+    } as any;
+    rotateChatStore.mockResolvedValue({
+      rotated: true,
+      chat_id: "chat-1",
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.chatStoreRotate({
+      account_id: "acct-1",
+      project_id,
+      chat_path: "/home/user/cocalc-ai/lite4.chat",
+      db_path: "/home/user/.local/share/cocalc/chat.sqlite",
+      keep_recent_messages: 200,
+    });
+
+    expect(resolveProjectContainerPath).toHaveBeenNthCalledWith(
+      1,
+      project_id,
+      "/home/user/cocalc-ai/lite4.chat",
+    );
+    expect(resolveProjectContainerPath).toHaveBeenNthCalledWith(
+      2,
+      project_id,
+      "/home/user/.local/share/cocalc/chat.sqlite",
+    );
+    expect(rotateChatStore).toHaveBeenCalledWith({
+      chat_path: "/projects/host/home/user/cocalc-ai/lite4.chat",
+      db_path: "/projects/host/home/user/.local/share/cocalc/chat.sqlite",
+      keep_recent_messages: 200,
+      max_head_bytes: undefined,
+      max_head_messages: undefined,
+      require_idle: undefined,
+      force: undefined,
+      dry_run: undefined,
+    });
+  });
+
+  it("translates chat store paths on project-host before reading archived rows", async () => {
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(),
+    } as any;
+    readChatStoreArchived.mockResolvedValue({
+      chat_id: "chat-1",
+      rows: [{ row_id: 1, segment_id: "seg-1", row: {} }],
+      offset: 0,
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    const result = await hubApi.projects.chatStoreReadArchived({
+      account_id: "acct-1",
+      project_id,
+      chat_path: "/home/user/cocalc-ai/lite4.chat",
+      thread_id: "rocket-raccoon",
+      limit: 100,
+      offset: 20,
+    });
+
+    expect(readChatStoreArchived).toHaveBeenCalledWith({
+      chat_path: "/projects/host/home/user/cocalc-ai/lite4.chat",
+      before_date_ms: undefined,
+      db_path: undefined,
+      thread_id: "rocket-raccoon",
+      limit: 100,
+      offset: 20,
+    });
+    expect(result).toEqual({
+      chat_id: "chat-1",
+      rows: [{ row_id: 1, segment_id: "seg-1", row: {} }],
+      offset: 0,
     });
   });
 });
