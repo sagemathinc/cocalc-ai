@@ -14,6 +14,7 @@ Options:
 Daemon:
   cocalc-project-host daemon start [index]
   cocalc-project-host daemon stop [index]
+  cocalc-project-host daemon restart-project-host [index]
   cocalc-project-host --daemon [index]
   cocalc-project-host --daemon-start [index]
   cocalc-project-host --daemon-stop [index]
