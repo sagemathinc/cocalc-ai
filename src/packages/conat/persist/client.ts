@@ -25,6 +25,7 @@ import { getLogger } from "@cocalc/conat/logger";
 import { until } from "@cocalc/util/async-utils";
 import { getPersistServerId } from "./load-balancer";
 import type { JSONValue } from "@cocalc/util/types";
+import type { RegisteredRecoverableResource } from "@cocalc/conat/recovery/scheduler";
 
 let DEFAULT_RECONNECT_DELAY = 1500;
 let DEFAULT_RECONNECT_DELAY_MAX = 30_000;
@@ -82,6 +83,12 @@ const logger = getLogger("persist:client");
 
 export type ChangefeedEvent = ChangefeedOperation[];
 export type Changefeed = EventIterator<ChangefeedEvent>;
+export type PersistRecoveryState =
+  | "ready"
+  | "disconnected"
+  | "recovering"
+  | "paused"
+  | "closed";
 
 export interface GetAllInfo<
   TMetadata extends JSONValue = JSONValue,
@@ -184,6 +191,10 @@ class PersistStreamClient extends EventEmitter {
   private recoveryPromise?: Promise<void>;
   private readonly storageKey: string;
   private readonly initReporter?: PersistClientInitReporter;
+  private readonly registerRecoveryWithScheduler: boolean;
+  private recoveryState: PersistRecoveryState = "ready";
+  private recoveryPaused = false;
+  private recoveryRegistration?: RegisteredRecoverableResource;
 
   constructor(
     private client: Client,
@@ -191,18 +202,103 @@ class PersistStreamClient extends EventEmitter {
     private user: User,
     private service = SERVICE,
     initReporter?: PersistClientInitReporter,
+    registerRecoveryWithScheduler: boolean = true,
   ) {
     super();
     this.setMaxListeners(100);
     this.storageKey = storage.path;
     this.initReporter = initReporter;
+    this.registerRecoveryWithScheduler = registerRecoveryWithScheduler;
     stats.created += 1;
     stats.active += 1;
     bumpCounterByStorage(activeByStorage, this.storageKey, 1);
     // paths.add(this.storage.path);
     logger.debug("constructor", this.storage);
+    if (this.registerRecoveryWithScheduler) {
+      this.recoveryRegistration =
+        this.client.recoveryScheduler.registerResource({
+          canRecover: () => !this.recoveryPaused && !this.isClosed(),
+          isConnected: () => this.getRecoveryState() === "ready",
+          recover: async () => {
+            await this.recoverNow({ reason: "scheduler" });
+          },
+        });
+    }
     this.init();
   }
+
+  private setRecoveryState = (next: PersistRecoveryState) => {
+    if (this.recoveryState === next) {
+      return;
+    }
+    this.recoveryState = next;
+    this.emit("recovery-state", next);
+    if (next === "disconnected") {
+      this.emit("disconnected");
+    } else if (next === "recovering") {
+      this.emit("recovering");
+    } else if (next === "paused") {
+      this.emit("paused");
+    } else if (next === "ready") {
+      this.emit("recovered");
+    }
+  };
+
+  getRecoveryState = (): PersistRecoveryState => this.recoveryState;
+
+  pauseRecovery = (_reason = "paused") => {
+    this.recoveryPaused = true;
+    if (this.reconnectTimer != null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (!this.isClosed()) {
+      this.setRecoveryState("paused");
+    }
+  };
+
+  resumeRecovery = async (
+    _opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+    } = {},
+  ) => {
+    this.recoveryPaused = false;
+    await this.recoverNow(_opts);
+  };
+
+  recoverNow = async (
+    _opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
+    if (this.isClosed()) {
+      return;
+    }
+    this.recoveryPaused = false;
+    if (this.reconnectTimer != null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (
+      this.socket == null ||
+      this.socket.state === "closed" ||
+      this.socket.state === "disconnected"
+    ) {
+      this.reconnecting = true;
+      this.setRecoveryState("recovering");
+      this.init();
+      return;
+    }
+    if (this.reconnecting) {
+      this.setRecoveryState("recovering");
+      await this.getMissed();
+      return;
+    }
+    this.setRecoveryState("ready");
+  };
 
   private emitInitPhase = (
     phase: string,
@@ -247,6 +343,7 @@ class PersistStreamClient extends EventEmitter {
       this.reconnecting = true;
       this.cancelStableReconnectReset();
       this.socket.removeAllListeners();
+      this.setRecoveryState("disconnected");
       this.scheduleReconnect();
     });
     this.socket.once("closed", () => {
@@ -254,6 +351,7 @@ class PersistStreamClient extends EventEmitter {
       this.reconnecting = true;
       this.cancelStableReconnectReset();
       this.socket.removeAllListeners();
+      this.setRecoveryState("disconnected");
       this.scheduleReconnect();
     });
 
@@ -279,7 +377,18 @@ class PersistStreamClient extends EventEmitter {
     this.emitInitPhase("persist_socket_ready");
     this.scheduleStableReconnectReset();
     if (this.reconnecting) {
+      if (this.recoveryPaused) {
+        this.setRecoveryState("paused");
+        return;
+      }
+      if (this.changefeeds.length == 0) {
+        this.reconnecting = false;
+        this.setRecoveryState("ready");
+        return;
+      }
       void this.getMissed();
+    } else {
+      this.setRecoveryState("ready");
     }
   };
 
@@ -306,9 +415,13 @@ class PersistStreamClient extends EventEmitter {
     try {
       this.gettingMissed = true;
       this.changesWhenGettingMissed.length = 0;
+      this.setRecoveryState("recovering");
 
       await until(
         async () => {
+          if (this.recoveryPaused || this.isClosed()) {
+            return true;
+          }
           if (this.changefeeds.length == 0 || this.state != "ready") {
             return true;
           }
@@ -345,6 +458,7 @@ class PersistStreamClient extends EventEmitter {
         if (recovered) {
           this.reconnecting = false;
           stats.getMissedSuccess += 1;
+          this.setRecoveryState("ready");
         }
         this.gettingMissed = false;
         for (const updates of this.changesWhenGettingMissed) {
@@ -381,12 +495,29 @@ class PersistStreamClient extends EventEmitter {
     if (this.state == "closed") {
       return;
     }
+    if (this.recoveryPaused) {
+      this.setRecoveryState("paused");
+      return;
+    }
     stats.reconnectScheduled += 1;
     bumpCounterByStorage(reconnectByStorage, this.storageKey, 1);
     if (this.reconnectTimer != null) {
       clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (this.recoveryRegistration != null) {
+      this.setRecoveryState("recovering");
+      this.recoveryRegistration.requestRecovery({
+        reason: "persist_reconnect",
+      });
+      return;
+    }
+    if (!this.registerRecoveryWithScheduler) {
+      this.setRecoveryState("disconnected");
+      return;
     }
     const delay = this.nextReconnectDelay();
+    this.setRecoveryState("recovering");
     this.reconnectTimer = setTimeout(this.init, delay);
     this.reconnectTimer.unref?.();
   };
@@ -445,6 +576,7 @@ class PersistStreamClient extends EventEmitter {
     logger.debug("close", this.storage);
     // paths.delete(this.storage.path);
     this.state = "closed";
+    this.setRecoveryState("closed");
     stats.closed += 1;
     stats.active = Math.max(0, stats.active - 1);
     bumpCounterByStorage(activeByStorage, this.storageKey, -1);
@@ -459,6 +591,8 @@ class PersistStreamClient extends EventEmitter {
       this.changefeeds.length = 0;
     }
     this.reconnecting = false;
+    this.recoveryRegistration?.close();
+    this.recoveryRegistration = undefined;
     this.socket.close();
   };
 
@@ -1079,12 +1213,25 @@ interface Options {
   noCache?: boolean;
   service?: string;
   initReporter?: PersistClientInitReporter;
+  registerRecoveryWithScheduler?: boolean;
 }
 
 export const stream = refCacheSync<Options, PersistStreamClient>({
   name: "persistent-stream-client",
-  createKey: ({ user, storage, client, service = SERVICE }: Options) => {
-    return JSON.stringify([user, storage, client.id, service]);
+  createKey: ({
+    user,
+    storage,
+    client,
+    service = SERVICE,
+    registerRecoveryWithScheduler = true,
+  }: Options) => {
+    return JSON.stringify([
+      user,
+      storage,
+      client.id,
+      service,
+      registerRecoveryWithScheduler,
+    ]);
   },
   createObject: ({
     client,
@@ -1092,6 +1239,7 @@ export const stream = refCacheSync<Options, PersistStreamClient>({
     storage,
     service = SERVICE,
     initReporter,
+    registerRecoveryWithScheduler = true,
   }: Options) => {
     // avoid wasting server resources, etc., by always checking permissions client side first
     assertHasWritePermission({ user, storage, service });
@@ -1101,6 +1249,7 @@ export const stream = refCacheSync<Options, PersistStreamClient>({
       user,
       service,
       initReporter,
+      registerRecoveryWithScheduler,
     );
   },
 });

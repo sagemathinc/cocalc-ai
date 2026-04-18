@@ -225,6 +225,8 @@ import * as msgpack from "@msgpack/msgpack";
 import { randomId } from "@cocalc/conat/names";
 import type { JSONValue } from "@cocalc/util/types";
 import { EventEmitter } from "events";
+import { RecoveryScheduler } from "@cocalc/conat/recovery/scheduler";
+import { HeartbeatScheduler } from "@cocalc/conat/recovery/heartbeat-scheduler";
 import {
   isValidSubject,
   isValidSubjectWithoutWildcards,
@@ -334,6 +336,8 @@ interface Options {
 
 export type ClientOptions = Options & {
   noCache?: boolean;
+  recoveryConcurrency?: number;
+  heartbeatConcurrency?: number;
 } & Partial<SocketOptions> &
   Partial<ManagerOptions>;
 
@@ -607,6 +611,8 @@ export class Client extends EventEmitter {
   private scheduledSyncSubscriptionsTimer?: ReturnType<typeof setTimeout>;
   private statsLoopTimer?: ReturnType<typeof setTimeout>;
   private statsLoopResolve?: () => void;
+  public readonly recoveryScheduler: RecoveryScheduler;
+  public readonly heartbeatScheduler: HeartbeatScheduler;
 
   constructor(options: ClientOptions) {
     super();
@@ -625,6 +631,17 @@ export class Client extends EventEmitter {
     this.routeSubjectFn = routeSubject;
     this.options = rest as ClientOptions;
     this.setMaxListeners(1000);
+    this.recoveryScheduler = new RecoveryScheduler({
+      canRun: () => !this.isClosed(),
+      isTransportReady: () => this.isConnected(),
+      maxConcurrentRecoveries: this.options.recoveryConcurrency ?? 1,
+    });
+    this.heartbeatScheduler = new HeartbeatScheduler({
+      canRun: () => !this.isClosed(),
+      maxConcurrentHeartbeats: this.options.heartbeatConcurrency ?? 1,
+    });
+    this.on("connected", this.recoveryScheduler.noteTransportConnected);
+    this.on("disconnected", this.recoveryScheduler.noteTransportDisconnected);
 
     // for socket.io the address has no base url
     const { address, path } = cocalcServerToSocketioAddress(
@@ -979,6 +996,8 @@ export class Client extends EventEmitter {
       clearTimeout(this.statsLoopTimer);
       this.statsLoopTimer = undefined;
     }
+    this.recoveryScheduler.close();
+    this.heartbeatScheduler.close();
     this.statsLoopResolve?.();
     delete this.statsLoopResolve;
     for (const addr in this.routedClients) {

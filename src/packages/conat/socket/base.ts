@@ -16,6 +16,14 @@ import {
   DEFAULT_KEEP_ALIVE_TIMEOUT,
 } from "./util";
 import { type ServerSocket } from "./server-socket";
+import type { RegisteredRecoverableResource } from "@cocalc/conat/recovery/scheduler";
+
+export type SocketRecoveryState =
+  | "ready"
+  | "disconnected"
+  | "recovering"
+  | "paused"
+  | "closed";
 
 export abstract class ConatSocketBase extends EventEmitter {
   public readonly desc?: string;
@@ -37,6 +45,10 @@ export abstract class ConatSocketBase extends EventEmitter {
   maxQueueSize: number;
   keepAlive: number;
   keepAliveTimeout: number;
+  private recoveryState: SocketRecoveryState = "disconnected";
+  private recoveryPaused = false;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private recoveryRegistration?: RegisteredRecoverableResource;
 
   // the following is all for compat with primus's api and has no meaning here.
   address = { ip: "" };
@@ -68,6 +80,16 @@ export abstract class ConatSocketBase extends EventEmitter {
     this.keepAliveTimeout = keepAliveTimeout;
     this.desc = desc;
     this.conn = { id };
+    if (this.reconnection) {
+      this.recoveryRegistration =
+        this.client.recoveryScheduler.registerResource({
+          canRecover: () => !this.recoveryPaused && this.state !== "closed",
+          isConnected: () => this.state === "ready",
+          recover: async () => {
+            await this.recoverNow({ reason: "scheduler" });
+          },
+        });
+    }
     this.connect();
     this.setMaxListeners(100);
   }
@@ -83,6 +105,116 @@ export abstract class ConatSocketBase extends EventEmitter {
   protected setState = (state: State) => {
     this.state = state;
     this.emit(state);
+    if (state === "ready") {
+      this.setRecoveryState("ready");
+    } else if (state === "connecting") {
+      this.setRecoveryState("recovering");
+    } else if (state === "disconnected") {
+      this.setRecoveryState(this.recoveryPaused ? "paused" : "disconnected");
+    } else if (state === "closed") {
+      this.setRecoveryState("closed");
+    }
+  };
+
+  protected setRecoveryState = (next: SocketRecoveryState) => {
+    if (this.recoveryState === next) {
+      return;
+    }
+    this.recoveryState = next;
+    this.emit("recovery-state", next);
+    if (next === "recovering") {
+      this.emit("recovering");
+    } else if (next === "paused") {
+      this.emit("paused");
+    } else if (next === "ready") {
+      this.emit("recovered");
+    }
+  };
+
+  protected onRecoveryPaused() {}
+
+  protected onRecoveryResumed() {}
+
+  protected onDisconnecting() {}
+
+  getRecoveryState = (): SocketRecoveryState => this.recoveryState;
+
+  pauseRecovery = (_reason = "paused") => {
+    this.recoveryPaused = true;
+    this.onRecoveryPaused();
+    if (this.reconnectTimer != null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (this.state !== "closed") {
+      this.setRecoveryState("paused");
+    }
+  };
+
+  resumeRecovery = async (
+    _opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+    } = {},
+  ) => {
+    this.recoveryPaused = false;
+    this.onRecoveryResumed();
+    await this.recoverNow(_opts);
+  };
+
+  recoverNow = async (
+    _opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
+    this.recoveryPaused = false;
+    if (this.reconnectTimer != null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (this.state === "closed") {
+      return;
+    }
+    if (this.state === "disconnected") {
+      void this.connect();
+      return;
+    }
+    if (this.state === "connecting") {
+      this.setRecoveryState("recovering");
+      return;
+    }
+    this.setRecoveryState("ready");
+  };
+
+  protected scheduleReconnect = () => {
+    if (!this.reconnection || this.state === "closed") {
+      return;
+    }
+    if (this.reconnectTimer != null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (this.recoveryPaused) {
+      this.setRecoveryState("paused");
+      return;
+    }
+    if (this.recoveryRegistration != null) {
+      this.setRecoveryState("recovering");
+      this.recoveryRegistration.requestRecovery({
+        reason: "socket_disconnect",
+      });
+      return;
+    }
+    this.setRecoveryState("recovering");
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      if (this.state != "closed") {
+        void this.connect();
+      }
+    }, RECONNECT_DELAY);
+    this.reconnectTimer.unref?.();
   };
 
   destroy = () => this.close();
@@ -91,6 +223,12 @@ export abstract class ConatSocketBase extends EventEmitter {
     if (this.state == "closed") {
       return;
     }
+    if (this.reconnectTimer != null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    this.recoveryRegistration?.close();
+    this.recoveryRegistration = undefined;
     this.setState("closed");
     this.removeAllListeners();
 
@@ -108,19 +246,14 @@ export abstract class ConatSocketBase extends EventEmitter {
     if (this.state == "closed") {
       return;
     }
+    this.onDisconnecting();
     this.setState("disconnected");
     this.sub?.close();
     delete this.sub;
     for (const id in this.sockets) {
       this.sockets[id].disconnect();
     }
-    if (this.reconnection) {
-      setTimeout(() => {
-        if (this.state != "closed") {
-          this.connect();
-        }
-      }, RECONNECT_DELAY);
-    }
+    this.scheduleReconnect();
   };
 
   connect = async () => {
