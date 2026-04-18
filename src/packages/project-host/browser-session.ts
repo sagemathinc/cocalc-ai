@@ -93,6 +93,37 @@ function sessionSignature(payload: string): string {
     .digest("base64url");
 }
 
+function isLoopbackOrigin(origin: string | undefined): boolean {
+  if (!origin) return false;
+  try {
+    const { hostname } = new URL(origin);
+    const normalized = hostname.trim().toLowerCase();
+    return (
+      normalized === "localhost" ||
+      normalized === "127.0.0.1" ||
+      normalized === "[::1]" ||
+      normalized.endsWith(".localhost")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function browserSessionSameSite(req: IncomingMessage): "Lax" | "None" {
+  // Local hub dev serves the main app from localhost while project-host
+  // traffic lands on a hosted cocalc.ai domain. Chrome rejects SameSite=Lax
+  // cookies on that cross-site bootstrap fetch, so opt into None+Secure for
+  // loopback-origin development only. Normal same-site production traffic
+  // keeps the stricter Lax behavior.
+  if (
+    isSecureRequest(req) &&
+    isLoopbackOrigin(`${req.headers.origin ?? ""}`.trim() || undefined)
+  ) {
+    return "None";
+  }
+  return "Lax";
+}
+
 export function createProjectHostBrowserSessionToken({
   account_id,
   now_ms = Date.now(),
@@ -177,7 +208,7 @@ export function buildProjectHostBrowserSessionCookie({
     `${PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME}=${encodeURIComponent(sessionToken)}`,
     "Path=/",
     "HttpOnly",
-    "SameSite=Lax",
+    `SameSite=${browserSessionSameSite(req)}`,
     `Max-Age=${BROWSER_SESSION_TTL_SECONDS}`,
   ];
   if (isSecureRequest(req)) {
@@ -195,7 +226,7 @@ export function buildProjectHostBrowserSessionCookieDeletion({
     `${PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME}=`,
     "Path=/",
     "HttpOnly",
-    "SameSite=Lax",
+    `SameSite=${browserSessionSameSite(req)}`,
     "Max-Age=0",
   ];
   if (isSecureRequest(req)) {

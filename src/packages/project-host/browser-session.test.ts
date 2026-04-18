@@ -41,6 +41,22 @@ describe("project-host shared browser session", () => {
     expect(cookie).toContain("Secure");
   });
 
+  it("uses SameSite=None for secure localhost-dev bootstrap origins", () => {
+    const cookie = buildProjectHostBrowserSessionCookie({
+      req: {
+        headers: {
+          "x-forwarded-proto": "https",
+          origin: "http://localhost:9100",
+        },
+        socket: {},
+      } as any,
+      sessionToken: "browser-session-token",
+    });
+
+    expect(cookie).toContain("SameSite=None");
+    expect(cookie).toContain("Secure");
+  });
+
   it("resolves the first valid shared browser session from a cookie header", () => {
     const valid = createProjectHostBrowserSessionToken({
       account_id: "00000000-1000-4000-8000-000000000001",
