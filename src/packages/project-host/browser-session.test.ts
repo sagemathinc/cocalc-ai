@@ -47,6 +47,24 @@ describe("project-host shared browser session", () => {
         headers: {
           "x-forwarded-proto": "https",
           origin: "http://localhost:9100",
+          host: "host-fe625be4-c86f-4fc4-b324-fda2f895e448-lite4b.cocalc.ai",
+        },
+        socket: {},
+      } as any,
+      sessionToken: "browser-session-token",
+    });
+
+    expect(cookie).toContain("SameSite=None");
+    expect(cookie).toContain("Secure");
+  });
+
+  it("uses SameSite=None for secure cross-origin hosted bootstrap requests", () => {
+    const cookie = buildProjectHostBrowserSessionCookie({
+      req: {
+        headers: {
+          "x-forwarded-proto": "https",
+          origin: "https://lite4b.cocalc.ai",
+          host: "host-fe625be4-c86f-4fc4-b324-fda2f895e448-lite4b.cocalc.ai",
         },
         socket: {},
       } as any,
