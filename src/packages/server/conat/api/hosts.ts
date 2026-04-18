@@ -146,6 +146,7 @@ import {
 import {
   installedProjectHostArtifactVersion,
   isProjectHostLocalRollbackError as isProjectHostLocalRollbackErrorInternal,
+  observedRuntimeArtifactsFromMetadata,
   resolveRollbackVersion,
   targetKeyForRuntimeDeployment,
 } from "./hosts-runtime-observation";
@@ -3347,7 +3348,6 @@ export async function reconcileHostSoftware({
 }): Promise<HostLroResponse> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
-  assertCloudHostBootstrapReconcileSupported(row);
   return await createHostLro({
     kind: HOST_RECONCILE_LRO_KIND,
     row,
@@ -3355,6 +3355,48 @@ export async function reconcileHostSoftware({
     input: { id: row.id, account_id },
     dedupe_key: `${HOST_RECONCILE_LRO_KIND}:${row.id}`,
   });
+}
+
+function bootstrapLifecycleSummaryStatus(row: any): string | undefined {
+  const summary = `${row?.metadata?.bootstrap_lifecycle?.summary_status ?? ""}`
+    .trim()
+    .toLowerCase();
+  return summary || undefined;
+}
+
+function desiredSoftwareTargetsForReconcile(
+  row: any,
+): HostSoftwareUpgradeTarget[] {
+  const software = row?.metadata?.software ?? {};
+  const observed = new Map(
+    observedRuntimeArtifactsFromMetadata(row).map((artifact) => [
+      artifact.artifact,
+      `${artifact.current_version ?? ""}`.trim() || undefined,
+    ]),
+  );
+  const targets: HostSoftwareUpgradeTarget[] = [];
+  const maybePush = (
+    artifact: HostSoftwareArtifact,
+    observedArtifact: HostRuntimeArtifact,
+    desiredVersion?: string,
+  ) => {
+    const desired = `${desiredVersion ?? ""}`.trim();
+    if (!desired) return;
+    if ((observed.get(observedArtifact) ?? "") === desired) return;
+    targets.push({ artifact, version: desired });
+  };
+  maybePush(
+    "project-host",
+    "project-host",
+    `${software.project_host ?? row?.version ?? ""}`.trim() || undefined,
+  );
+  maybePush(
+    "project",
+    "project-bundle",
+    `${software.project_bundle ?? ""}`.trim() || undefined,
+  );
+  maybePush("tools", "tools", `${software.tools ?? ""}`.trim() || undefined);
+  return targets;
 }
 
 export async function listHostRuntimeDeployments({
@@ -3707,6 +3749,77 @@ export async function reconcileHostSoftwareInternal({
 }): Promise<void> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
+  const availability = computeHostOperationalAvailability(row);
+  let fallbackReason: string | undefined;
+
+  if (availability.online) {
+    try {
+      const targets = desiredSoftwareTargetsForReconcile(row);
+      const shouldRollManagedComponents = targets.some(
+        (target) => target.artifact === "project-host",
+      );
+      const touchedHostControl =
+        targets.length > 0 || shouldRollManagedComponents;
+      const startedAt = touchedHostControl ? Date.now() : 0;
+      if (targets.length > 0) {
+        await upgradeHostSoftwareInternal({
+          account_id,
+          id,
+          targets,
+        });
+      }
+      if (shouldRollManagedComponents) {
+        await rolloutHostManagedComponentsInternal({
+          account_id,
+          id,
+          components: [
+            "project-host",
+            "conat-router",
+            "conat-persist",
+            "acp-worker",
+          ],
+          reason: "host_software_reconcile",
+        });
+      }
+      let refreshedRow = row;
+      if (touchedHostControl) {
+        await waitForHostHeartbeatAfter({ host_id: id, since: startedAt });
+        refreshedRow = await loadHostForStartStop(id, account_id);
+      }
+      if (bootstrapLifecycleSummaryStatus(refreshedRow) === "in_sync") {
+        return;
+      }
+      fallbackReason =
+        `${bootstrapLifecycleSummaryStatus(refreshedRow) ?? "unknown"}`.trim() ||
+        "bootstrap_lifecycle_not_in_sync";
+      logger.warn(
+        "host software reconcile: runtime reconcile did not converge bootstrap lifecycle; falling back to ssh",
+        {
+          host_id: id,
+          reason: fallbackReason,
+        },
+      );
+    } catch (err) {
+      fallbackReason = `${err}`;
+      logger.warn(
+        "host software reconcile: host-agent path failed; falling back to ssh",
+        {
+          host_id: id,
+          err: `${err}`,
+        },
+      );
+    }
+  } else {
+    fallbackReason = availability.reason_unavailable ?? "host_offline";
+    logger.warn(
+      "host software reconcile: host heartbeat is stale; using bootstrap reconcile fallback",
+      {
+        host_id: id,
+        reason: fallbackReason,
+      },
+    );
+  }
+
   assertCloudHostBootstrapReconcileSupported(row);
   await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
 }
