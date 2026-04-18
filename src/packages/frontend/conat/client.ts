@@ -191,6 +191,27 @@ export class ConatClient extends EventEmitter {
   private automaticallyReconnect;
   public address: string;
   private remote: boolean;
+  private readonly browserOnlineHandler = () => {
+    if (this.permanentlyDisconnected || !this.automaticallyReconnect) {
+      return;
+    }
+    const priority = this.tabReconnectPriority();
+    if (
+      priority === "foreground" &&
+      Object.keys(this.routedHubClients).length > 0
+    ) {
+      console.log(
+        "browser online event; forcing reconnect to rebuild routed host connections",
+      );
+      this.reconnect();
+      return;
+    }
+    this.requestReconnect({
+      reason: "browser_online",
+      priority,
+      resetBackoff: true,
+    });
+  };
   private readonly foregroundWakeHandler = () => {
     if (this.tabReconnectPriority() !== "foreground") {
       this.lastBackgroundAt = Date.now();
@@ -243,6 +264,7 @@ export class ConatClient extends EventEmitter {
       document.addEventListener("visibilitychange", this.foregroundWakeHandler);
       window.addEventListener("focus", this.foregroundWakeHandler);
       window.addEventListener("blur", this.foregroundWakeHandler);
+      window.addEventListener("online", this.browserOnlineHandler);
     }
   }
 
@@ -1098,10 +1120,28 @@ export class ConatClient extends EventEmitter {
         if (this.permanentlyDisconnected) {
           return;
         }
+        try {
+          await waitForOnline();
+        } catch {
+          reconnectRouted();
+          return;
+        }
         if (this.routedHubClients[host_id]?.client !== state.client) {
           return;
         }
-        const refreshed = await this.refreshHostRoutingInfo(host_id);
+        let refreshed:
+          | { host_id: string; address: string; host_session_id?: string }
+          | undefined;
+        try {
+          refreshed = await this.refreshHostRoutingInfo(host_id);
+        } catch (err) {
+          console.warn(
+            `failed refreshing routed host info for host ${host_id}; will retry`,
+            err,
+          );
+          reconnectRouted();
+          return;
+        }
         if (this.permanentlyDisconnected) {
           return;
         }
@@ -1926,7 +1966,7 @@ export class ConatClient extends EventEmitter {
 }
 
 async function waitForOnline(): Promise<void> {
-  if (navigator.onLine) return;
+  if (typeof navigator === "undefined" || navigator.onLine !== false) return;
   await new Promise<void>((resolve) => {
     const handler = () => {
       window.removeEventListener("online", handler);

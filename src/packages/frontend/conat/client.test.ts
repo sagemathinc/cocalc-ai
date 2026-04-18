@@ -7,6 +7,10 @@ let historyPushStateSpy: jest.SpyInstance;
 let historyReplaceStateSpy: jest.SpyInstance;
 
 beforeEach(() => {
+  Object.defineProperty(window.navigator, "onLine", {
+    configurable: true,
+    value: true,
+  });
   historyPushStateSpy = jest
     .spyOn(window.history, "pushState")
     .mockImplementation(() => undefined);
@@ -738,12 +742,355 @@ describe("ConatClient routed project-host reconnect", () => {
 
     expect(client.projectHostTokens["host-1"]?.token).toBeUndefined();
 
-    jest.advanceTimersByTime(1_000);
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(1_000);
     expect(connect).toHaveBeenCalledTimes(1);
 
     jest.useRealTimers();
+  });
+
+  it("retries routed host reconnect after a host-info refresh failure once the browser is back online", async () => {
+    jest.useFakeTimers();
+
+    Object.defineProperty(window.navigator, "onLine", {
+      configurable: true,
+      value: false,
+    });
+
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+    };
+
+    const connect = jest.fn();
+    const close = jest.fn();
+    const eventHandlers: Record<string, Function> = {};
+    const routedClient = {
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn((event: string, cb: Function) => {
+        eventHandlers[event] = cb;
+      }),
+      connect,
+      close,
+      request: jest.fn(),
+    };
+
+    let hostInfo = immutable.Map({
+      "host-1": immutable.Map({
+        bay_id: "bay-1",
+        connect_url: "http://project-host",
+        host_session_id: "session-1",
+        updated_at: Date.now(),
+      }),
+    });
+    let refreshAttempts = 0;
+    const ensureHostInfo = jest.fn(async () => {
+      refreshAttempts += 1;
+      if (refreshAttempts === 1) {
+        throw Error("temporary routing refresh failure");
+      }
+      return hostInfo.get("host-1");
+    });
+
+    jest.resetModules();
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            project_map: immutable.Map({
+              "00000000-0000-4000-8000-000000000001": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+            }),
+            host_info: hostInfo,
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: ensureHostInfo,
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn((opts?: any) =>
+        opts?.address === "http://project-host" ? routedClient : hubClient,
+      ),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    client.getOrCreateRoutedHubClient({
+      host_id: "host-1",
+      address: "http://project-host",
+      host_session_id: "session-1",
+      project_id: "00000000-0000-4000-8000-000000000001",
+    });
+
+    eventHandlers.disconnected?.();
+
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(ensureHostInfo).toHaveBeenCalledTimes(0);
+
+    client.automaticallyReconnect = false;
+    Object.defineProperty(window.navigator, "onLine", {
+      configurable: true,
+      value: true,
+    });
+    window.dispatchEvent(new Event("online"));
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(ensureHostInfo).toHaveBeenCalledTimes(1);
+    expect(connect).toHaveBeenCalledTimes(0);
+
+    await jest.advanceTimersByTimeAsync(3_500);
+
+    expect(ensureHostInfo).toHaveBeenCalledTimes(2);
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(0);
+
+    jest.useRealTimers();
+  });
+
+  it("forces a reconnect on browser online when routed host sessions are active", async () => {
+    Object.defineProperty(window.navigator, "onLine", {
+      configurable: true,
+      value: true,
+    });
+    const hasFocusSpy = jest.spyOn(document, "hasFocus").mockReturnValue(true);
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+    };
+
+    const routedClient = {
+      conn: {
+        connected: true,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      request: jest.fn(),
+    };
+
+    jest.resetModules();
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            project_map: immutable.Map({
+              "00000000-0000-4000-8000-000000000001": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+            }),
+            host_info: immutable.Map({
+              "host-1": immutable.Map({
+                bay_id: "bay-1",
+                connect_url: "http://project-host",
+                host_session_id: "session-1",
+                updated_at: Date.now(),
+              }),
+            }),
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: jest.fn(),
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn((opts?: any) =>
+        opts?.address === "http://project-host" ? routedClient : hubClient,
+      ),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    client.getOrCreateRoutedHubClient({
+      host_id: "host-1",
+      address: "http://project-host",
+      host_session_id: "session-1",
+      project_id: "00000000-0000-4000-8000-000000000001",
+    });
+    client.automaticallyReconnect = true;
+    const reconnectSpy = jest
+      .spyOn(client, "reconnect")
+      .mockImplementation(() => undefined);
+
+    window.dispatchEvent(new Event("online"));
+
+    expect(reconnectSpy).toHaveBeenCalledTimes(1);
+    reconnectSpy.mockRestore();
+    hasFocusSpy.mockRestore();
   });
 
   it("retries routed host connection after a project-host auth token timeout", async () => {
@@ -1648,19 +1995,13 @@ describe("ConatClient routed project-host reconnect", () => {
     });
 
     eventHandlers1.disconnected?.();
-    jest.advanceTimersByTime(1_000);
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(1_000);
 
     eventHandlers1.disconnected?.();
-    jest.advanceTimersByTime(3_500);
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(3_500);
 
     eventHandlers1.disconnected?.();
-    jest.advanceTimersByTime(10_000);
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(10_000);
 
     expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
     expect(connect1).toHaveBeenCalledTimes(2);
