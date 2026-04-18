@@ -57,6 +57,7 @@ import { UpgradeConfirmContent } from "./upgrade-confirmation";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
 import { HostParallelOpsPanel } from "./host-parallel-ops-panel";
+import { HostDaemonHealthSummary } from "./host-daemon-health-summary";
 import { HostProjectStatus } from "./host-project-status";
 import { HostProjectsBrowser } from "./host-projects-browser";
 import { HostRootfsCachePanel } from "./host-rootfs-cache-panel";
@@ -770,6 +771,10 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     }
     return { upToDate, updatesAvailable, unknown };
   }, [deploymentStatus, host, softwareVersions]);
+  const latestLogEntry = hostLog[0];
+  const latestLogChange = latestLogEntry
+    ? describeSpecChange(latestLogEntry.spec)
+    : undefined;
   React.useEffect(() => {
     setActiveTab("overview");
     setShowProjects(false);
@@ -815,43 +820,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           )}
         </Space>
       )}
-      <Typography.Text copyable={{ text: host.id }}>
-        Host ID: {host.id}
-      </Typography.Text>
-      {isSelfHost && host.region && (
-        <Typography.Text copyable={{ text: host.region }}>
-          Connector ID: {host.region}
-        </Typography.Text>
-      )}
-      <Space orientation="vertical" size="small">
-        {host.machine?.cloud && host.public_ip && (
-          <Typography.Text copyable={{ text: host.public_ip }}>
-            Public IP: {host.public_ip}
-          </Typography.Text>
-        )}
-        {host.machine?.zone && (
-          <Typography.Text>Zone: {host.machine.zone}</Typography.Text>
-        )}
-        {host.machine?.machine_type && (
-          <Typography.Text>
-            Machine type: {host.machine.machine_type}
-          </Typography.Text>
-        )}
-        {host.machine?.gpu_type && (
-          <Typography.Text>GPU type: {host.machine.gpu_type}</Typography.Text>
-        )}
-        {showHostResources && (
-          <Typography.Text>
-            Resources: {hostCpu ?? "?"} vCPU / {hostRam ?? "?"} GiB RAM /{" "}
-            {hostDisk ?? "?"} disk
-          </Typography.Text>
-        )}
-        {isSelfHost && host.machine?.metadata?.self_host_ssh_target && (
-          <Typography.Text>
-            SSH target: {host.machine.metadata.self_host_ssh_target}
-          </Typography.Text>
-        )}
-      </Space>
       {showConnectorWarning && selfHost && (
         <Alert
           type="warning"
@@ -878,31 +846,121 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           </Space>
         </Space>
       )}
-      <Card size="small" title="Current metrics">
-        <HostCurrentMetrics host={host} />
+      <Card size="small" title="Summary">
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+          <Typography.Text copyable={{ text: host.id }}>
+            Host ID: {host.id}
+          </Typography.Text>
+          {isSelfHost && host.region && (
+            <Typography.Text copyable={{ text: host.region }}>
+              Connector ID: {host.region}
+            </Typography.Text>
+          )}
+          {host.machine?.cloud && host.public_ip && (
+            <Typography.Text copyable={{ text: host.public_ip }}>
+              Public IP: {host.public_ip}
+            </Typography.Text>
+          )}
+          <Typography.Text type="secondary">
+            {[
+              host.machine?.zone ? `Zone ${host.machine.zone}` : null,
+              host.machine?.machine_type
+                ? `Machine ${host.machine.machine_type}`
+                : null,
+              host.machine?.gpu_type ? `GPU ${host.machine.gpu_type}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "No machine details reported yet."}
+          </Typography.Text>
+          {showHostResources && (
+            <Typography.Text type="secondary">
+              Resources {hostCpu ?? "?"} vCPU · {hostRam ?? "?"} GiB RAM ·{" "}
+              {hostDisk ?? "?"} disk
+            </Typography.Text>
+          )}
+          {isSelfHost && host.machine?.metadata?.self_host_ssh_target && (
+            <Typography.Text type="secondary">
+              SSH target: {host.machine.metadata.self_host_ssh_target}
+            </Typography.Text>
+          )}
+          <Typography.Text type="secondary">
+            Last seen:{" "}
+            {host.last_seen ? new Date(host.last_seen).toLocaleString() : "n/a"}
+          </Typography.Text>
+        </Space>
       </Card>
-      {parallelOps ? (
-        <HostParallelOpsPanel
-          host_id={host.id}
-          status={parallelOps.status}
-          loading={parallelOps.loading}
-          savingKey={parallelOps.savingKey}
-          onSetLimit={parallelOps.setLimit}
-          onClearLimit={parallelOps.clearLimit}
-        />
-      ) : null}
-      <Typography.Text type="secondary">
-        Last seen:{" "}
-        {host.last_seen ? new Date(host.last_seen).toLocaleString() : "n/a"}
-      </Typography.Text>
-      {host.status === "error" && host.last_error && (
-        <Alert
-          type="error"
-          showIcon
-          title="Provisioning error"
-          description={host.last_error}
-        />
-      )}
+      <Card size="small" title="Daemon health">
+        <HostDaemonHealthSummary host={host} />
+      </Card>
+      <Card size="small" title="Current metrics">
+        <HostCurrentMetrics host={host} compact dense />
+      </Card>
+      <Card
+        size="small"
+        title="Projects"
+        extra={
+          <Button
+            size="small"
+            type="link"
+            onClick={() => setActiveTab("projects")}
+          >
+            Open projects
+          </Button>
+        }
+      >
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+          <HostProjectStatus host={host} fontSize={13} />
+          <Typography.Text type="secondary">
+            Backups{" "}
+            {host.backup_status
+              ? `${host.backup_status.provisioned_up_to_date}/${host.backup_status.provisioned} provisioned up to date · ${host.backup_status.provisioned_needs_backup} need backup`
+              : "n/a"}
+          </Typography.Text>
+        </Space>
+      </Card>
+      <Card
+        size="small"
+        title="Recent activity"
+        extra={
+          <Button size="small" type="link" onClick={() => setActiveTab("logs")}>
+            Open logs
+          </Button>
+        }
+      >
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            Last action:{" "}
+            {host.last_action
+              ? `${host.last_action}${
+                  host.last_action_at
+                    ? ` · ${new Date(host.last_action_at).toLocaleString()}`
+                    : ""
+                }`
+              : "n/a"}
+          </Typography.Text>
+          {latestLogEntry && (
+            <Typography.Text type="secondary">
+              Latest log: {latestLogEntry.action} — {latestLogEntry.status}
+              {latestLogEntry.ts
+                ? ` · ${new Date(latestLogEntry.ts).toLocaleString()}`
+                : ""}
+            </Typography.Text>
+          )}
+          {latestLogChange?.summary && (
+            <Typography.Text type="secondary">
+              Config update: {latestLogChange.summary}
+            </Typography.Text>
+          )}
+          {host.status === "error" && host.last_error && (
+            <Alert
+              type="error"
+              showIcon
+              message="Provisioning error"
+              description={host.last_error}
+            />
+          )}
+        </Space>
+      </Card>
     </Space>
   ) : null;
   const projectsContent = host ? (
@@ -1998,6 +2056,19 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 </Popconfirm>
               )}
             </Space>
+            {parallelOps ? (
+              <>
+                <Divider style={{ margin: "4px 0" }} />
+                <HostParallelOpsPanel
+                  host_id={host.id}
+                  status={parallelOps.status}
+                  loading={parallelOps.loading}
+                  savingKey={parallelOps.savingKey}
+                  onSetLimit={parallelOps.setLimit}
+                  onClearLimit={parallelOps.clearLimit}
+                />
+              </>
+            ) : null}
           </Space>
         ) : (
           <Typography.Text type="secondary">
