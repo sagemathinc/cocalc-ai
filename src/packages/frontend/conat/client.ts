@@ -65,7 +65,6 @@ import {
   deleteRememberMe,
   setRememberMe,
 } from "@cocalc/frontend/misc/remember-me";
-import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
 import {
   get as getLroStream,
@@ -1570,25 +1569,12 @@ export class ConatClient extends EventEmitter {
       url,
       routingAddress: routing.address,
     });
-    // Project-host HTTP/WS proxy auth is enforced on the target host, including
-    // local-proxy paths through the hub. Always attach a short-lived bootstrap
-    // token so project-host can mint its own HttpOnly session cookie.
-    const token = await this.getProjectHostToken({
+    await this.ensureProjectHostBrowserSession({
       host_id: routing.host_id,
+      address: routing.address,
       project_id,
     });
-    const isAbsolute = /^https?:\/\//i.test(routedUrl);
-    const parsed = new URL(
-      routedUrl,
-      typeof window !== "undefined"
-        ? window.location.origin
-        : "http://localhost",
-    );
-    parsed.searchParams.set(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM, token);
-    if (isAbsolute) {
-      return parsed.toString();
-    }
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return routedUrl;
   };
 
   public touchProjectHost = async ({

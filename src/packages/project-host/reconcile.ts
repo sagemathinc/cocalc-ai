@@ -45,11 +45,16 @@ function parsePorts(ports?: string): {
     if (Number.isNaN(host) || Number.isNaN(container)) continue;
     if (container === 22) {
       ssh_port = host;
-    } else if (http_port == null || container === 8080 || container === 80) {
+    } else if (
+      http_port == null ||
+      container === 18080 ||
+      container === 8080 ||
+      container === 80
+    ) {
       // Project containers always publish SSH on 22 and their main HTTP proxy
-      // on one non-SSH TCP port (currently 8080). Preserve compatibility with
-      // any older 80/tcp layouts, but otherwise treat the first non-22 tcp
-      // mapping as the project HTTP port.
+      // on one non-SSH TCP port (currently 18080). Preserve compatibility with
+      // older 8080/tcp and 80/tcp layouts, but otherwise treat the first
+      // non-22 tcp mapping as the project HTTP port.
       http_port = host;
     }
   }
