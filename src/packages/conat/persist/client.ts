@@ -191,6 +191,7 @@ class PersistStreamClient extends EventEmitter {
   private recoveryPromise?: Promise<void>;
   private readonly storageKey: string;
   private readonly initReporter?: PersistClientInitReporter;
+  private readonly registerRecoveryWithScheduler: boolean;
   private recoveryState: PersistRecoveryState = "ready";
   private recoveryPaused = false;
   private recoveryRegistration?: RegisteredRecoverableResource;
@@ -201,23 +202,28 @@ class PersistStreamClient extends EventEmitter {
     private user: User,
     private service = SERVICE,
     initReporter?: PersistClientInitReporter,
+    registerRecoveryWithScheduler: boolean = true,
   ) {
     super();
     this.setMaxListeners(100);
     this.storageKey = storage.path;
     this.initReporter = initReporter;
+    this.registerRecoveryWithScheduler = registerRecoveryWithScheduler;
     stats.created += 1;
     stats.active += 1;
     bumpCounterByStorage(activeByStorage, this.storageKey, 1);
     // paths.add(this.storage.path);
     logger.debug("constructor", this.storage);
-    this.recoveryRegistration = this.client.recoveryScheduler.registerResource({
-      canRecover: () => !this.recoveryPaused && !this.isClosed(),
-      isConnected: () => this.getRecoveryState() === "ready",
-      recover: async () => {
-        await this.recoverNow({ reason: "scheduler" });
-      },
-    });
+    if (this.registerRecoveryWithScheduler) {
+      this.recoveryRegistration =
+        this.client.recoveryScheduler.registerResource({
+          canRecover: () => !this.recoveryPaused && !this.isClosed(),
+          isConnected: () => this.getRecoveryState() === "ready",
+          recover: async () => {
+            await this.recoverNow({ reason: "scheduler" });
+          },
+        });
+    }
     this.init();
   }
 
@@ -504,6 +510,10 @@ class PersistStreamClient extends EventEmitter {
       this.recoveryRegistration.requestRecovery({
         reason: "persist_reconnect",
       });
+      return;
+    }
+    if (!this.registerRecoveryWithScheduler) {
+      this.setRecoveryState("disconnected");
       return;
     }
     const delay = this.nextReconnectDelay();
@@ -1203,12 +1213,25 @@ interface Options {
   noCache?: boolean;
   service?: string;
   initReporter?: PersistClientInitReporter;
+  registerRecoveryWithScheduler?: boolean;
 }
 
 export const stream = refCacheSync<Options, PersistStreamClient>({
   name: "persistent-stream-client",
-  createKey: ({ user, storage, client, service = SERVICE }: Options) => {
-    return JSON.stringify([user, storage, client.id, service]);
+  createKey: ({
+    user,
+    storage,
+    client,
+    service = SERVICE,
+    registerRecoveryWithScheduler = true,
+  }: Options) => {
+    return JSON.stringify([
+      user,
+      storage,
+      client.id,
+      service,
+      registerRecoveryWithScheduler,
+    ]);
   },
   createObject: ({
     client,
@@ -1216,6 +1239,7 @@ export const stream = refCacheSync<Options, PersistStreamClient>({
     storage,
     service = SERVICE,
     initReporter,
+    registerRecoveryWithScheduler = true,
   }: Options) => {
     // avoid wasting server resources, etc., by always checking permissions client side first
     assertHasWritePermission({ user, storage, service });
@@ -1225,6 +1249,7 @@ export const stream = refCacheSync<Options, PersistStreamClient>({
       user,
       service,
       initReporter,
+      registerRecoveryWithScheduler,
     );
   },
 });

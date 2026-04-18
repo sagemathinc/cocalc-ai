@@ -70,7 +70,7 @@ describe("process-level recovery scheduler", () => {
     cn1.close();
   });
 
-  it("serializes persist recovery across many streams on one client", async () => {
+  it("serializes core-stream recovery across many streams on one client", async () => {
     const client = connect({ recoveryConcurrency: 1 });
     const streams = await Promise.all(
       Array.from({ length: 5 }, (_, i) =>
@@ -92,9 +92,9 @@ describe("process-level recovery scheduler", () => {
     let inFlight = 0;
     let maxInFlight = 0;
     for (const stream of streams) {
-      const persistClient = (stream as any).stream.persistClient;
-      const recoverNow0 = persistClient.recoverNow.bind(persistClient);
-      persistClient.recoverNow = async (opts) => {
+      const coreStream = (stream as any).stream;
+      const recoverNow0 = coreStream.recoverNow.bind(coreStream);
+      coreStream.recoverNow = async (opts) => {
         inFlight += 1;
         maxInFlight = Math.max(maxInFlight, inFlight);
         await delay(40);

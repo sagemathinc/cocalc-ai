@@ -56,10 +56,11 @@ import {
   type GetAllInfo,
 } from "@cocalc/conat/persist/client";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
-import { until } from "@cocalc/util/async-utils";
+import { once, until } from "@cocalc/util/async-utils";
 import { type PartialInventory } from "@cocalc/conat/persist/storage";
 import { getLogger } from "@cocalc/conat/logger";
 import type { JSONValue } from "@cocalc/util/types";
+import type { RegisteredRecoverableResource } from "@cocalc/conat/recovery/scheduler";
 
 const logger = getLogger("sync:core-stream");
 
@@ -272,6 +273,9 @@ export class CoreStream<T = any> extends EventEmitter {
   private initPhaseReporter?: CoreStreamInitPhaseReporter;
   private initStartedAtMs?: number;
   private recoveryState: RecoveryState = "recovering";
+  private recoveryPaused = false;
+  private listening = false;
+  private recoveryRegistration?: RegisteredRecoverableResource;
 
   constructor({
     name,
@@ -307,6 +311,13 @@ export class CoreStream<T = any> extends EventEmitter {
     this._start_checkpoint = start_checkpoint;
     this.pendingConfigOptions = config;
     this.initPhaseReporter = initPhaseReporter;
+    this.recoveryRegistration = this.client.recoveryScheduler.registerResource({
+      canRecover: () => !this.recoveryPaused && !this.isClosed(),
+      isConnected: () => this.getRecoveryState() === "ready",
+      recover: async () => {
+        await this.recoverNow({ reason: "scheduler" });
+      },
+    });
     return new Proxy(this, {
       get(target, prop) {
         return typeof prop == "string" && isNumericString(prop)
@@ -354,6 +365,28 @@ export class CoreStream<T = any> extends EventEmitter {
 
   getRecoveryState = (): RecoveryState => this.recoveryState;
 
+  private requestRecovery = ({
+    reason = "recover",
+    resetBackoff = false,
+  }: {
+    reason?: string;
+    resetBackoff?: boolean;
+  } = {}) => {
+    if (this.recoveryPaused || this.isClosed()) {
+      return;
+    }
+    this.setRecoveryState("recovering");
+    this.recoveryRegistration?.requestRecovery({ reason, resetBackoff });
+  };
+
+  private startListen = () => {
+    if (this.listening || this.isClosed()) {
+      return;
+    }
+    this.listening = true;
+    void this.listen();
+  };
+
   init = async () => {
     if (this.initialized) {
       throw Error("init can only be called once");
@@ -369,6 +402,7 @@ export class CoreStream<T = any> extends EventEmitter {
       user: this.user,
       storage: this.storage,
       service: this.service,
+      registerRecoveryWithScheduler: false,
       initReporter: (phase, details) => {
         this.emitInitPhase(phase as CoreStreamInitPhase, details);
       },
@@ -380,22 +414,30 @@ export class CoreStream<T = any> extends EventEmitter {
       }
     });
     this.persistClient.on("disconnected", () => {
+      if (this.isClosed()) {
+        return;
+      }
       this.setRecoveryState("disconnected");
+      if (this.recoveryPaused) {
+        this.setRecoveryState("paused");
+        return;
+      }
+      this.requestRecovery({ reason: "persist_disconnected" });
     });
     this.persistClient.on("recovering", () => {
-      this.setRecoveryState("recovering");
+      if (!this.isClosed() && !this.recoveryPaused) {
+        this.setRecoveryState("recovering");
+      }
     });
     this.persistClient.on("paused", () => {
       this.setRecoveryState("paused");
-    });
-    this.persistClient.on("recovered", () => {
-      this.setRecoveryState("ready");
     });
     const bootstrap = await this.getAllFromPersist({
       start_seq: this._start_seq,
       start_checkpoint: this._start_checkpoint,
       noEmit: true,
       includeConfig: !this.hasPendingConfigChanges(),
+      retry: true,
     });
     if (!this.hasPendingConfigChanges() && bootstrap.config != null) {
       this.currentConfig = bootstrap.config;
@@ -427,12 +469,13 @@ export class CoreStream<T = any> extends EventEmitter {
       );
     }
     this.emitInitPhase("listen_started");
-    void this.listen();
+    this.startListen();
     this.setRecoveryState("ready");
     this.emitInitPhase("init_done");
   };
 
   pauseRecovery = (reason: string) => {
+    this.recoveryPaused = true;
     this.persistClient?.pauseRecovery(reason);
     if (!this.isClosed()) {
       this.setRecoveryState("paused");
@@ -445,9 +488,9 @@ export class CoreStream<T = any> extends EventEmitter {
       priority?: "foreground" | "background";
     } = {},
   ) => {
-    await this.persistClient?.resumeRecovery(opts);
+    this.recoveryPaused = false;
     if (!this.isClosed()) {
-      this.setRecoveryState(this.persistClient?.getRecoveryState() ?? "ready");
+      await this.recoverNow(opts);
     }
   };
 
@@ -458,9 +501,30 @@ export class CoreStream<T = any> extends EventEmitter {
       reason?: string;
     } = {},
   ) => {
+    if (this.isClosed()) {
+      return;
+    }
+    this.recoveryPaused = false;
+    this.setRecoveryState("recovering");
     await this.persistClient?.recoverNow(opts);
+    if (this.isClosed()) {
+      return;
+    }
+    if (this.persistClient?.getRecoveryState() !== "ready") {
+      await once(this.persistClient, "recovered", DEFAULT_GET_ALL_TIMEOUT);
+      if (this.isClosed()) {
+        return;
+      }
+    }
+    await this.getAllFromPersist({
+      start_seq: this.lastSeq + 1,
+      noEmit: false,
+      retry: false,
+    });
+    await this.getAllMissingMessages({ retry: false });
     if (!this.isClosed()) {
-      this.setRecoveryState(this.persistClient?.getRecoveryState() ?? "ready");
+      this.startListen();
+      this.setRecoveryState("ready");
     }
   };
 
@@ -539,7 +603,10 @@ export class CoreStream<T = any> extends EventEmitter {
     logger.debug("close", this.name);
     stats.closed += 1;
     stats.active = Math.max(0, stats.active - 1);
+    this.listening = false;
     this.setRecoveryState("closed");
+    this.recoveryRegistration?.close();
+    this.recoveryRegistration = undefined;
     delete this.client;
     this.removeAllListeners();
     this.persistClient?.close();
@@ -561,19 +628,18 @@ export class CoreStream<T = any> extends EventEmitter {
     return await this.persistClient.inventory();
   };
 
-  // NOTE: It's assumed elsewhere that getAllFromPersist will not throw,
-  // and will keep retrying until (1) it works, or (2) self is closed,
-  // or (3) there is a fatal failure, e.g., lack of permissions.
   private getAllFromPersist = async ({
     start_seq = 0,
     start_checkpoint,
     noEmit,
     includeConfig,
+    retry = false,
   }: {
     start_seq?: number;
     start_checkpoint?: string;
     noEmit?: boolean;
     includeConfig?: boolean;
+    retry?: boolean;
   } = {}): Promise<
     Pick<
       GetAllInfo,
@@ -590,6 +656,24 @@ export class CoreStream<T = any> extends EventEmitter {
     }
     stats.syncFromPersistRuns += 1;
     let attempt = 0;
+    const runOnce = async () => {
+      attempt += 1;
+      const result = await this.fetchAllFromPersist({
+        attempt,
+        start_seq,
+        start_checkpoint,
+        includeConfig,
+      });
+      this.processPersistentMessages(result.messages, {
+        noEmit,
+        noSeqCheck: true,
+      });
+      this.applyPersistentBootstrap(result.bootstrap, { noEmit });
+      return result.bootstrap;
+    };
+    if (!retry) {
+      return await runOnce();
+    }
     let bootstrap: Pick<
       GetAllInfo,
       | "config"
@@ -601,81 +685,12 @@ export class CoreStream<T = any> extends EventEmitter {
     > = {};
     await until(
       async () => {
-        attempt += 1;
-        let messages: StoredMessage[] = [];
         try {
           if (this.isClosed()) {
             return true;
           }
-          if (this.changefeed == null) {
-            this.emitInitPhase("persist_changefeed_start", {
-              attempt,
-              piggybacked_on_get_all: true,
-            });
-            this.changefeed = await this.persistClient.changefeed({
-              activateRemote: false,
-            });
-            this.emitInitPhase("persist_changefeed_done", {
-              attempt,
-              piggybacked_on_get_all: true,
-            });
-          }
-          // console.log("get persistent stream", { start_seq }, this.storage);
-          this.emitInitPhase("persist_get_all_start", {
-            attempt,
-            start_seq,
-            start_checkpoint,
-            changefeed: true,
-            include_config: includeConfig,
-            include_metadata: true,
-            include_checkpoints: true,
-          });
-          const result = await this.persistClient.getAllWithInfo({
-            start_seq,
-            start_checkpoint,
-            timeout: DEFAULT_GET_ALL_TIMEOUT,
-            changefeed: true,
-            includeConfig,
-          });
-          messages = result.messages;
-          bootstrap = {
-            effective_start_seq: result.effective_start_seq,
-            oldest_retained_seq: result.oldest_retained_seq,
-            newest_retained_seq: result.newest_retained_seq,
-            config: result.config,
-            metadata: result.metadata,
-            checkpoints: result.checkpoints,
-          };
-          if (
-            typeof start_seq == "number" &&
-            start_seq > 0 &&
-            typeof result.effective_start_seq == "number" &&
-            result.effective_start_seq > start_seq
-          ) {
-            this.emit("history-gap", {
-              requested_start_seq: start_seq,
-              effective_start_seq: result.effective_start_seq,
-              oldest_retained_seq: result.oldest_retained_seq,
-              newest_retained_seq: result.newest_retained_seq,
-            } satisfies HistoryGapEvent);
-          }
-          let bytes = 0;
-          for (const mesg of messages) {
-            bytes += mesg.raw?.length ?? 0;
-          }
-          this.emitInitPhase("persist_get_all_done", {
-            attempt,
-            start_seq,
-            start_checkpoint,
-            messages: messages.length,
-            bytes,
-            effective_start_seq: bootstrap.effective_start_seq,
-            oldest_retained_seq: bootstrap.oldest_retained_seq,
-            newest_retained_seq: bootstrap.newest_retained_seq,
-            received_config: bootstrap.config != null,
-            received_metadata: bootstrap.metadata !== undefined,
-            received_checkpoints: bootstrap.checkpoints != null,
-          });
+          bootstrap = await runOnce();
+          return true;
         } catch (err) {
           if (this.isClosed()) {
             return true;
@@ -686,31 +701,11 @@ export class CoreStream<T = any> extends EventEmitter {
             );
           }
           stats.syncFromPersistRetries += 1;
-          if (err.code == 503 || err.code == 408) {
-            // 503: temporary error due to messages being dropped,
-            // so return false to try again. This is expected to
-            // sometimes happen under heavy load, automatic failover, etc.
-            // 408: timeout waiting to be connected/ready
-            return false;
-          }
-          if (err.code == 403) {
-            // fatal permission error
+          if (err.code == 403 || err.code == 429) {
             throw err;
           }
-          if (err.code == 429) {
-            // too many users
-            throw err;
-          }
-          // any other error that we might not address above -- just try again in a while.
           return false;
         }
-        this.processPersistentMessages(messages, {
-          noEmit,
-          noSeqCheck: true,
-        });
-        this.applyPersistentBootstrap(bootstrap, { noEmit });
-        // success!
-        return true;
       },
       {
         start: GET_ALL_RETRY_START,
@@ -720,6 +715,90 @@ export class CoreStream<T = any> extends EventEmitter {
       },
     );
     return bootstrap;
+  };
+
+  private fetchAllFromPersist = async ({
+    attempt,
+    start_seq,
+    start_checkpoint,
+    includeConfig,
+  }: {
+    attempt: number;
+    start_seq?: number;
+    start_checkpoint?: string;
+    includeConfig?: boolean;
+  }) => {
+    if (this.isClosed()) {
+      return { messages: [], bootstrap: {} };
+    }
+    if (this.changefeed == null) {
+      this.emitInitPhase("persist_changefeed_start", {
+        attempt,
+        piggybacked_on_get_all: true,
+      });
+      this.changefeed = await this.persistClient.changefeed({
+        activateRemote: false,
+      });
+      this.emitInitPhase("persist_changefeed_done", {
+        attempt,
+        piggybacked_on_get_all: true,
+      });
+    }
+    this.emitInitPhase("persist_get_all_start", {
+      attempt,
+      start_seq,
+      start_checkpoint,
+      changefeed: true,
+      include_config: includeConfig,
+      include_metadata: true,
+      include_checkpoints: true,
+    });
+    const result = await this.persistClient.getAllWithInfo({
+      start_seq,
+      start_checkpoint,
+      timeout: DEFAULT_GET_ALL_TIMEOUT,
+      changefeed: true,
+      includeConfig,
+    });
+    const bootstrap = {
+      effective_start_seq: result.effective_start_seq,
+      oldest_retained_seq: result.oldest_retained_seq,
+      newest_retained_seq: result.newest_retained_seq,
+      config: result.config,
+      metadata: result.metadata,
+      checkpoints: result.checkpoints,
+    };
+    if (
+      typeof start_seq == "number" &&
+      start_seq > 0 &&
+      typeof result.effective_start_seq == "number" &&
+      result.effective_start_seq > start_seq
+    ) {
+      this.emit("history-gap", {
+        requested_start_seq: start_seq,
+        effective_start_seq: result.effective_start_seq,
+        oldest_retained_seq: result.oldest_retained_seq,
+        newest_retained_seq: result.newest_retained_seq,
+      } satisfies HistoryGapEvent);
+    }
+    let bytes = 0;
+    for (const mesg of result.messages) {
+      bytes += mesg.raw?.length ?? 0;
+    }
+    this.emitInitPhase("persist_get_all_done", {
+      attempt,
+      start_seq,
+      start_checkpoint,
+      messages: result.messages.length,
+      bytes,
+      effective_start_seq: bootstrap.effective_start_seq,
+      oldest_retained_seq: bootstrap.oldest_retained_seq,
+      newest_retained_seq: bootstrap.newest_retained_seq,
+      received_config: bootstrap.config != null,
+      received_metadata: bootstrap.metadata !== undefined,
+      received_checkpoints: bootstrap.checkpoints != null,
+    });
+    return { messages: result.messages, bootstrap };
   };
 
   private processPersistentMessages = (
@@ -883,8 +962,11 @@ export class CoreStream<T = any> extends EventEmitter {
         // We record that some are missing.
         for (let s = expected; s <= seq - 1; s++) {
           this.missingMessages.add(s);
-          this.getAllMissingMessages();
         }
+        this.requestRecovery({
+          reason: "missing_messages",
+          resetBackoff: true,
+        });
       }
     }
 
@@ -977,53 +1059,44 @@ export class CoreStream<T = any> extends EventEmitter {
 
   private listen = async () => {
     stats.listenLoops += 1;
-    while (!this.isClosed()) {
-      try {
-        if (this.changefeed == null) {
-          this.changefeed = await this.persistClient.changefeed({
-            activateRemote: false,
-          });
-          if (this.isClosed()) {
-            return;
-          }
-        }
-
-        for await (const updates of this.changefeed) {
-          this.processPersistentMessages(updates, {
-            noEmit: false,
-            noSeqCheck: false,
-          });
-          if (this.isClosed()) {
-            return;
-          }
-        }
-      } catch (err) {
-        // There should never be a case where the changefeed throws
-        // an error or ends without this whole streaming being closed.
-        // If that happens its an unexpected bug. Instead of failing,
-        // we log this, loop around, and make a new changefeed.
-        // This normally doesn't happen but could if a persist server is being restarted
-        // frequently or things are seriously broken.  We cause this in
-        //    backend/conat/test/core/core-stream-break.test.ts
-        if (!process.env.COCALC_TEST_MODE) {
-          log(`WARNING: core-stream changefeed error -- ${err}`, this.storage);
+    try {
+      if (this.changefeed == null) {
+        this.changefeed = await this.persistClient.changefeed({
+          activateRemote: false,
+        });
+        if (this.isClosed()) {
+          return;
         }
       }
 
-      delete this.changefeed;
-
-      // Above loop exits when the persistent server
-      // stops sending messages for some reason. In that
-      // case we reconnect, picking up where we left off.
-      if (this.client == null) {
-        return;
+      for await (const updates of this.changefeed) {
+        this.processPersistentMessages(updates, {
+          noEmit: false,
+          noSeqCheck: false,
+        });
+        if (this.isClosed()) {
+          return;
+        }
       }
-      stats.listenRecoveries += 1;
-      await this.getAllFromPersist({
-        start_seq: this.lastSeq + 1,
-        noEmit: false,
-      });
+    } catch (err) {
+      // There should never be a case where the changefeed throws
+      // an error or ends without this whole streaming being closed.
+      // If that happens its an unexpected bug. Instead of failing,
+      // we log this and schedule a coordinated recovery.
+      if (!process.env.COCALC_TEST_MODE) {
+        log(`WARNING: core-stream changefeed error -- ${err}`, this.storage);
+      }
+    } finally {
+      this.listening = false;
     }
+
+    delete this.changefeed;
+
+    if (this.client == null) {
+      return;
+    }
+    stats.listenRecoveries += 1;
+    this.requestRecovery({ reason: "changefeed_ended", resetBackoff: true });
   };
 
   publish = async (
@@ -1266,45 +1339,58 @@ export class CoreStream<T = any> extends EventEmitter {
     this.processPersistentMessages(messages, { noEmit, noSeqCheck: true });
   };
 
-  private getAllMissingMessages = reuseInFlight(async () => {
-    stats.missingRecoveryRuns += 1;
-    await until(
-      async () => {
+  private getAllMissingMessages = reuseInFlight(
+    async ({ retry = false }: { retry?: boolean } = {}) => {
+      stats.missingRecoveryRuns += 1;
+      const fetchMissingOnce = async () => {
         if (this.client == null || this.missingMessages.size == 0) {
-          return true;
+          return;
         }
-        try {
-          const missing = Array.from(this.missingMessages);
-          missing.sort();
-          log("core-stream: getMissingSeq", missing, this.storage);
-          const messages = await this.persistClient.getAll({
-            start_seq: missing[0],
-            end_seq: missing[missing.length - 1],
-          });
-          this.processPersistentMessages(messages, {
-            noEmit: false,
-            noSeqCheck: true,
-          });
-          for (const seq of missing) {
-            this.missingMessages.delete(seq);
+        const missing = Array.from(this.missingMessages);
+        missing.sort();
+        log("core-stream: getMissingSeq", missing, this.storage);
+        const messages = await this.persistClient.getAll({
+          start_seq: missing[0],
+          end_seq: missing[missing.length - 1],
+        });
+        this.processPersistentMessages(messages, {
+          noEmit: false,
+          noSeqCheck: true,
+        });
+        for (const seq of missing) {
+          this.missingMessages.delete(seq);
+        }
+      };
+      if (!retry) {
+        await fetchMissingOnce();
+        return;
+      }
+      await until(
+        async () => {
+          if (this.client == null || this.missingMessages.size == 0) {
+            return true;
           }
-        } catch (err) {
-          stats.missingRecoveryRetries += 1;
-          log(
-            "core-stream: WARNING -- issue getting missing updates",
-            err,
-            this.storage,
-          );
-        }
-        return false;
-      },
-      {
-        start: GET_ALL_RETRY_START,
-        max: GET_ALL_RETRY_MAX,
-        decay: GET_ALL_RETRY_DECAY,
-      },
-    );
-  });
+          try {
+            await fetchMissingOnce();
+            return true;
+          } catch (err) {
+            stats.missingRecoveryRetries += 1;
+            log(
+              "core-stream: WARNING -- issue getting missing updates",
+              err,
+              this.storage,
+            );
+            return false;
+          }
+        },
+        {
+          start: GET_ALL_RETRY_START,
+          max: GET_ALL_RETRY_MAX,
+          decay: GET_ALL_RETRY_DECAY,
+        },
+      );
+    },
+  );
 
   // get server assigned time of n-th message in stream
   time = (n: number): Date | undefined => {
