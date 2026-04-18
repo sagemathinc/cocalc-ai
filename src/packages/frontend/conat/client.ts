@@ -152,6 +152,7 @@ const PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS = 5_000;
 const ROUTED_HOST_REBUILD_AFTER_ATTEMPTS = 3;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
 const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
+const STALE_HUB_FORCE_RECONNECT_GRACE_MS = 5_000;
 const EMPTY_CONNECTION_STATS: ConnectionStats = {
   send: { messages: 0, bytes: 0 },
   recv: { messages: 0, bytes: 0 },
@@ -189,6 +190,7 @@ export class ConatClient extends EventEmitter {
   private routedHostRecoveryTimer?: ReturnType<typeof setTimeout>;
   private browserSessionAutomation: BrowserSessionAutomation;
   private reconnectCoordinator: ReconnectCoordinator;
+  private lastHealthyHubResponseAt = 0;
   private lastBackgroundAt?: number;
   private foregroundWakeRecovery?: Promise<void>;
   private staleHubProbe?: Promise<void>;
@@ -556,6 +558,7 @@ export class ConatClient extends EventEmitter {
       });
       this._conatClient.on("connected", () => {
         console.log("hub transport connected", this.reconnectDebugContext());
+        this.noteHealthyHubResponse();
         this.reconnectCoordinator.noteConnected();
         this.browserSessionAutomation.noteConnected?.();
         this.setConnectionStatus({
@@ -828,6 +831,10 @@ export class ConatClient extends EventEmitter {
     );
   };
 
+  private noteHealthyHubResponse = (): void => {
+    this.lastHealthyHubResponseAt = Date.now();
+  };
+
   private maybeProbeStaleHubTransport = (reason: string, err: any): void => {
     if (this.staleHubProbe != null || this.permanentlyDisconnected) {
       return;
@@ -858,6 +865,7 @@ export class ConatClient extends EventEmitter {
           { timeout: 2_000 },
         );
         console.warn(`stale hub transport probe succeeded after ${reason}`);
+        this.noteHealthyHubResponse();
       } catch (probeErr) {
         if (
           this.permanentlyDisconnected ||
@@ -866,6 +874,17 @@ export class ConatClient extends EventEmitter {
             document.visibilityState === "hidden") ||
           !this._conatClient?.conn?.connected
         ) {
+          return;
+        }
+        const healthyAgeMs = Date.now() - this.lastHealthyHubResponseAt;
+        if (
+          this.lastHealthyHubResponseAt > 0 &&
+          healthyAgeMs < STALE_HUB_FORCE_RECONNECT_GRACE_MS
+        ) {
+          console.warn(
+            `stale hub transport probe failed after ${reason}, but recent hub traffic succeeded ${healthyAgeMs}ms ago; skipping forced reconnect`,
+            probeErr,
+          );
           return;
         }
         console.warn(
@@ -1871,6 +1890,9 @@ export class ConatClient extends EventEmitter {
     try {
       const data = { name, args };
       const resp = await cn.request(subject, data, { timeout });
+      if (!routeToProjectHost) {
+        this.noteHealthyHubResponse();
+      }
       return resp.data;
     } catch (err) {
       if (routeToProjectHost && project_id) {
@@ -1888,6 +1910,7 @@ export class ConatClient extends EventEmitter {
               { name, args },
               { timeout },
             );
+            this.noteHealthyHubResponse();
             return retryResp.data;
           } catch (retryErr) {
             err = retryErr;
