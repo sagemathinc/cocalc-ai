@@ -187,6 +187,7 @@ export class ConatClient extends EventEmitter {
   private reconnectCoordinator: ReconnectCoordinator;
   private lastBackgroundAt?: number;
   private foregroundWakeRecovery?: Promise<void>;
+  private staleHubProbe?: Promise<void>;
   public numConnectionAttempts = 0;
   private automaticallyReconnect;
   public address: string;
@@ -780,6 +781,67 @@ export class ConatClient extends EventEmitter {
 
   private isProjectHostAuthBackoffError = (err: any): boolean => {
     return !!err?.projectHostAuthBackoff;
+  };
+
+  private isTimeoutLikeError = (err: any): boolean => {
+    const code = `${err?.code ?? ""}`.trim();
+    const message = `${err?.message ?? err ?? ""}`.toLowerCase();
+    return (
+      code === "408" ||
+      message.includes("timeout") ||
+      message.includes("timed out")
+    );
+  };
+
+  private maybeProbeStaleHubTransport = (reason: string, err: any): void => {
+    if (this.staleHubProbe != null || this.permanentlyDisconnected) {
+      return;
+    }
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      return;
+    }
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "hidden"
+    ) {
+      return;
+    }
+    if (!this._conatClient?.conn?.connected || !this.client.account_id) {
+      return;
+    }
+    const subject = `hub.account.${this.client.account_id}.api`;
+    this.staleHubProbe = (async () => {
+      try {
+        console.warn(`probing stale hub transport after ${reason}`, {
+          reason,
+          err,
+          ...this.reconnectDebugContext(),
+        });
+        await this._conatClient!.request(
+          subject,
+          { name: "system.ping", args: [] },
+          { timeout: 2_000 },
+        );
+        console.warn(`stale hub transport probe succeeded after ${reason}`);
+      } catch (probeErr) {
+        if (
+          this.permanentlyDisconnected ||
+          (typeof navigator !== "undefined" && navigator.onLine === false) ||
+          (typeof document !== "undefined" &&
+            document.visibilityState === "hidden") ||
+          !this._conatClient?.conn?.connected
+        ) {
+          return;
+        }
+        console.warn(
+          `stale hub transport probe failed after ${reason}; forcing reconnect`,
+          probeErr,
+        );
+        this.reconnect();
+      } finally {
+        this.staleHubProbe = undefined;
+      }
+    })();
   };
 
   private projectHostTokenBackoffMs = (failureCount: number): number => {
@@ -1740,6 +1802,9 @@ export class ConatClient extends EventEmitter {
             err = retryErr;
           }
         }
+      }
+      if (!routeToProjectHost && this.isTimeoutLikeError(err)) {
+        this.maybeProbeStaleHubTransport(`callHub:${name}`, err);
       }
       try {
         err.message = `${err.message} - callHub: subject='${subject}', name='${name}', code='${err.code}'`;
