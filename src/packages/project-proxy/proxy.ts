@@ -14,6 +14,7 @@ const CACHE_TTL = 1000;
 const PROJECT_HOST_HTTP_AUTH_COOKIE_NAME = "cocalc_project_host_http_bearer";
 const PROJECT_HOST_HTTP_SESSION_COOKIE_NAME =
   "cocalc_project_host_http_session";
+const PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME = "cocalc_project_host_session";
 const cache = new TTLCache<string, { proxy?: number; err? }>({
   max: 100000,
   ttl: CACHE_TTL,
@@ -56,7 +57,8 @@ function stripProjectHostProxyAuthCookies(
       const name = idx === -1 ? part : part.slice(0, idx).trim();
       return (
         name !== PROJECT_HOST_HTTP_AUTH_COOKIE_NAME &&
-        name !== PROJECT_HOST_HTTP_SESSION_COOKIE_NAME
+        name !== PROJECT_HOST_HTTP_SESSION_COOKIE_NAME &&
+        name !== PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME
       );
     });
   return kept.length > 0 ? kept.join("; ") : undefined;

@@ -104,6 +104,11 @@ import {
   attachProjectHostConatRouterProxy,
   resolveProjectHostConatRouterUrl,
 } from "./conat-router";
+import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
+import {
+  clearProjectHostBrowserSessionCookie,
+  issueProjectHostBrowserSessionFromBearer,
+} from "./browser-session";
 import {
   isProjectHostExternalConatPersistEnabled,
   waitForProjectHostConatPersistReady,
@@ -390,6 +395,50 @@ export async function main(
   const httpProxyAuth = createProjectHostHttpProxyAuth({ host_id: hostId });
   const stopHttpProxyRevocationKickLoop =
     httpProxyAuth.startUpgradeRevocationKickLoop();
+  const setBrowserSessionCorsHeaders = (
+    req: IncomingMessage,
+    res: express.Response,
+  ) => {
+    const origin = `${req.headers.origin ?? ""}`.trim();
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+    }
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Authorization, Content-Type",
+    );
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  };
+  app.options(PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH, (req, res) => {
+    setBrowserSessionCorsHeaders(req, res);
+    res.status(204).end();
+  });
+  app.post(PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH, (req, res) => {
+    setBrowserSessionCorsHeaders(req, res);
+    const authHeader = `${req.headers.authorization ?? ""}`;
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    if (!match?.[1]?.trim()) {
+      clearProjectHostBrowserSessionCookie({ req, res });
+      res.status(401).json({ error: "missing project-host bearer token" });
+      return;
+    }
+    try {
+      issueProjectHostBrowserSessionFromBearer({
+        req,
+        res,
+        host_id: hostId,
+        token: match[1].trim(),
+      });
+      res.status(204).end();
+    } catch (err: any) {
+      clearProjectHostBrowserSessionCookie({ req, res });
+      const message = `${err?.message ?? err ?? "invalid browser session bootstrap"}`;
+      const status = message === "session revoked" ? 401 : 403;
+      res.status(status).json({ error: message });
+    }
+  });
   const publicAppRouteCache = new TTL<string, PublicHostnameRoute | null>({
     max: 20_000,
     ttl: PUBLIC_APP_ROUTE_CACHE_MS,

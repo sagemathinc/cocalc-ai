@@ -66,6 +66,7 @@ import {
   setRememberMe,
 } from "@cocalc/frontend/misc/remember-me";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
+import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
 import {
   get as getLroStream,
   waitForCompletion as waitForLroCompletion,
@@ -181,6 +182,12 @@ type ProjectHostTokenState = {
   lastProjectId?: string;
 };
 
+type ProjectHostBrowserSessionState = {
+  address?: string;
+  establishedAt?: number;
+  inFlight?: Promise<void>;
+};
+
 export class ConatClient extends EventEmitter {
   client: WebappClient;
   public hub: HubApi;
@@ -189,6 +196,9 @@ export class ConatClient extends EventEmitter {
   private _conatClient: null | ReturnType<typeof connectToConat>;
   private routedHubClients: { [host_id: string]: RoutedHubClientState } = {};
   private projectHostTokens: { [host_id: string]: ProjectHostTokenState } = {};
+  private projectHostBrowserSessions: {
+    [host_id: string]: ProjectHostBrowserSessionState;
+  } = {};
   private routedHostRecoveryTimer?: ReturnType<typeof setTimeout>;
   private browserSessionAutomation: BrowserSessionAutomation;
   private reconnectCoordinator: ReconnectCoordinator;
@@ -940,6 +950,16 @@ export class ConatClient extends EventEmitter {
     }
   };
 
+  private invalidateProjectHostBrowserSession = (host_id: string) => {
+    const state = this.projectHostBrowserSessions[host_id];
+    if (!state) {
+      return;
+    }
+    delete state.address;
+    delete state.establishedAt;
+    delete state.inFlight;
+  };
+
   private getOpenProjectIdsForHost = (host_id: string): Set<string> => {
     const result = new Set<string>();
     const projectsStore = redux.getStore("projects");
@@ -1183,6 +1203,77 @@ export class ConatClient extends EventEmitter {
     return await request;
   };
 
+  private ensureProjectHostBrowserSession = async ({
+    host_id,
+    address,
+    project_id,
+  }: {
+    host_id: string;
+    address: string;
+    project_id?: string;
+  }): Promise<void> => {
+    let state = this.projectHostBrowserSessions[host_id];
+    if (!state) {
+      state = {};
+      this.projectHostBrowserSessions[host_id] = state;
+    }
+    if (state.address === address && state.establishedAt != null) {
+      return;
+    }
+    if (state.inFlight) {
+      return await state.inFlight;
+    }
+    const request = (async () => {
+      const routedState = this.routedHubClients[host_id];
+      const authProjectId =
+        project_id ??
+        (routedState
+          ? this.pickTrackedProjectForHost(host_id, routedState)
+          : undefined);
+      const token = await this.getProjectHostToken({
+        host_id,
+        project_id: authProjectId,
+      });
+      const url = new URL(
+        PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH,
+        address,
+      ).toString();
+      console.log(`bootstrapping project-host browser session for ${host_id}`, {
+        host_id,
+        project_id: authProjectId,
+        address,
+      });
+      const response = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        this.invalidateProjectHostToken(host_id);
+        this.invalidateProjectHostBrowserSession(host_id);
+        const message = await response.text().catch(() => "");
+        throw new Error(
+          `project-host browser session bootstrap failed: status=${response.status}${message ? ` body=${message}` : ""}`,
+        );
+      }
+      state!.address = address;
+      state!.establishedAt = Date.now();
+      console.log(`bootstrapped project-host browser session for ${host_id}`, {
+        host_id,
+        project_id: authProjectId,
+        address,
+      });
+    })().finally(() => {
+      if (state?.inFlight === request) {
+        delete state.inFlight;
+      }
+    });
+    state.inFlight = request;
+    return await request;
+  };
+
   // Mint a short-lived project-host auth token for ACP/Codex runtime use.
   // Returns undefined when this project is not project-host routed.
   public getProjectHostAcpBearer = async ({
@@ -1419,31 +1510,7 @@ export class ConatClient extends EventEmitter {
         address,
         inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
         autoConnect: false,
-        auth: (cb) => {
-          const authProjectId = this.pickTrackedProjectForHost(
-            host_id,
-            state,
-            project_id,
-          );
-          void this.getProjectHostToken({
-            host_id,
-            project_id: authProjectId,
-          })
-            .then((token) => {
-              cb({ bearer: token });
-            })
-            .catch((err) => {
-              this.invalidateProjectHostToken(host_id);
-              reconnectRouted();
-              if (!this.isProjectHostAuthBackoffError(err)) {
-                console.warn(
-                  `failed issuing project-host auth token for host ${host_id}`,
-                  err,
-                );
-              }
-              cb({});
-            });
-        },
+        withCredentials: true,
         reconnection: false,
         forceNew: true,
       }),
@@ -1468,15 +1535,15 @@ export class ConatClient extends EventEmitter {
           project_id,
         );
         try {
-          await this.getProjectHostToken({
+          await this.ensureProjectHostBrowserSession({
             host_id,
+            address: state.address,
             project_id: authProjectId,
           });
         } catch (err) {
-          this.invalidateProjectHostToken(host_id);
           if (!this.isProjectHostAuthBackoffError(err)) {
             console.warn(
-              `failed preparing project-host auth token for host ${host_id}`,
+              `failed preparing project-host browser session for host ${host_id}`,
               err,
             );
           }
@@ -1540,16 +1607,21 @@ export class ConatClient extends EventEmitter {
         address: state.address,
         host_session_id: state.host_session_id,
       });
-      this.invalidateProjectHostToken(host_id);
       reconnectRouted();
     });
-    state.client.conn.on("connect_error", (_err) => {
+    state.client.conn.on("connect_error", (err) => {
       console.warn(`routed host connect_error ${host_id}`, {
         host_id,
         address: state.address,
         host_session_id: state.host_session_id,
+        err,
       });
-      this.invalidateProjectHostToken(host_id);
+      if (this.isProjectHostAuthError(err)) {
+        this.invalidateProjectHostBrowserSession(host_id);
+      }
+      if (this.isProjectHostAuthError(err)) {
+        this.invalidateProjectHostToken(host_id);
+      }
       reconnectRouted();
     });
     this.registerTrackedProjectForHost(host_id, state, project_id);
