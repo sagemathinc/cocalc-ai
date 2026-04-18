@@ -3,7 +3,15 @@ import { CoreStream } from "./core-stream";
 function createStream() {
   return new CoreStream({
     name: "history-gap-test",
-    client: { state: "ready" } as any,
+    client: {
+      state: "ready",
+      recoveryScheduler: {
+        registerResource: jest.fn(() => ({
+          requestRecovery: jest.fn(),
+          close: jest.fn(),
+        })),
+      },
+    } as any,
   });
 }
 
