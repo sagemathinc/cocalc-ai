@@ -82,6 +82,12 @@ const logger = getLogger("persist:client");
 
 export type ChangefeedEvent = ChangefeedOperation[];
 export type Changefeed = EventIterator<ChangefeedEvent>;
+export type PersistRecoveryState =
+  | "ready"
+  | "disconnected"
+  | "recovering"
+  | "paused"
+  | "closed";
 
 export interface GetAllInfo<
   TMetadata extends JSONValue = JSONValue,
@@ -184,6 +190,8 @@ class PersistStreamClient extends EventEmitter {
   private recoveryPromise?: Promise<void>;
   private readonly storageKey: string;
   private readonly initReporter?: PersistClientInitReporter;
+  private recoveryState: PersistRecoveryState = "ready";
+  private recoveryPaused = false;
 
   constructor(
     private client: Client,
@@ -203,6 +211,79 @@ class PersistStreamClient extends EventEmitter {
     logger.debug("constructor", this.storage);
     this.init();
   }
+
+  private setRecoveryState = (next: PersistRecoveryState) => {
+    if (this.recoveryState === next) {
+      return;
+    }
+    this.recoveryState = next;
+    this.emit("recovery-state", next);
+    if (next === "disconnected") {
+      this.emit("disconnected");
+    } else if (next === "recovering") {
+      this.emit("recovering");
+    } else if (next === "paused") {
+      this.emit("paused");
+    } else if (next === "ready") {
+      this.emit("recovered");
+    }
+  };
+
+  getRecoveryState = (): PersistRecoveryState => this.recoveryState;
+
+  pauseRecovery = (_reason = "paused") => {
+    this.recoveryPaused = true;
+    if (this.reconnectTimer != null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (!this.isClosed()) {
+      this.setRecoveryState("paused");
+    }
+  };
+
+  resumeRecovery = async (
+    _opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+    } = {},
+  ) => {
+    this.recoveryPaused = false;
+    await this.recoverNow(_opts);
+  };
+
+  recoverNow = async (
+    _opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
+    if (this.isClosed()) {
+      return;
+    }
+    this.recoveryPaused = false;
+    if (this.reconnectTimer != null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (
+      this.socket == null ||
+      this.socket.state === "closed" ||
+      this.socket.state === "disconnected"
+    ) {
+      this.reconnecting = true;
+      this.setRecoveryState("recovering");
+      this.init();
+      return;
+    }
+    if (this.reconnecting) {
+      this.setRecoveryState("recovering");
+      await this.getMissed();
+      return;
+    }
+    this.setRecoveryState("ready");
+  };
 
   private emitInitPhase = (
     phase: string,
@@ -247,6 +328,7 @@ class PersistStreamClient extends EventEmitter {
       this.reconnecting = true;
       this.cancelStableReconnectReset();
       this.socket.removeAllListeners();
+      this.setRecoveryState("disconnected");
       this.scheduleReconnect();
     });
     this.socket.once("closed", () => {
@@ -254,6 +336,7 @@ class PersistStreamClient extends EventEmitter {
       this.reconnecting = true;
       this.cancelStableReconnectReset();
       this.socket.removeAllListeners();
+      this.setRecoveryState("disconnected");
       this.scheduleReconnect();
     });
 
@@ -279,7 +362,18 @@ class PersistStreamClient extends EventEmitter {
     this.emitInitPhase("persist_socket_ready");
     this.scheduleStableReconnectReset();
     if (this.reconnecting) {
+      if (this.recoveryPaused) {
+        this.setRecoveryState("paused");
+        return;
+      }
+      if (this.changefeeds.length == 0) {
+        this.reconnecting = false;
+        this.setRecoveryState("ready");
+        return;
+      }
       void this.getMissed();
+    } else {
+      this.setRecoveryState("ready");
     }
   };
 
@@ -306,9 +400,13 @@ class PersistStreamClient extends EventEmitter {
     try {
       this.gettingMissed = true;
       this.changesWhenGettingMissed.length = 0;
+      this.setRecoveryState("recovering");
 
       await until(
         async () => {
+          if (this.recoveryPaused || this.isClosed()) {
+            return true;
+          }
           if (this.changefeeds.length == 0 || this.state != "ready") {
             return true;
           }
@@ -345,6 +443,7 @@ class PersistStreamClient extends EventEmitter {
         if (recovered) {
           this.reconnecting = false;
           stats.getMissedSuccess += 1;
+          this.setRecoveryState("ready");
         }
         this.gettingMissed = false;
         for (const updates of this.changesWhenGettingMissed) {
@@ -381,12 +480,17 @@ class PersistStreamClient extends EventEmitter {
     if (this.state == "closed") {
       return;
     }
+    if (this.recoveryPaused) {
+      this.setRecoveryState("paused");
+      return;
+    }
     stats.reconnectScheduled += 1;
     bumpCounterByStorage(reconnectByStorage, this.storageKey, 1);
     if (this.reconnectTimer != null) {
       clearTimeout(this.reconnectTimer);
     }
     const delay = this.nextReconnectDelay();
+    this.setRecoveryState("recovering");
     this.reconnectTimer = setTimeout(this.init, delay);
     this.reconnectTimer.unref?.();
   };
@@ -445,6 +549,7 @@ class PersistStreamClient extends EventEmitter {
     logger.debug("close", this.storage);
     // paths.delete(this.storage.path);
     this.state = "closed";
+    this.setRecoveryState("closed");
     stats.closed += 1;
     stats.active = Math.max(0, stats.active - 1);
     bumpCounterByStorage(activeByStorage, this.storageKey, -1);

@@ -22,6 +22,7 @@ import {
   type HistoryGapEvent,
   type PublishOptions,
   type Configuration,
+  type RecoveryState,
 } from "./core-stream";
 import type {
   CheckpointUpdate,
@@ -137,6 +138,11 @@ export class DStream<T = any> extends EventEmitter {
     this.stream.on("metadata-change", this.handleMetadataChange);
     this.stream.on("checkpoints-change", this.handleCheckpointsChange);
     this.stream.on("history-gap", this.handleHistoryGap);
+    this.stream.on("recovery-state", this.handleRecoveryState);
+    this.stream.on("disconnected", this.handleDisconnected);
+    this.stream.on("recovering", this.handleRecovering);
+    this.stream.on("paused", this.handlePaused);
+    this.stream.on("recovered", this.handleRecovered);
     this.stream.on("reset", () => {
       this.local = {};
       this.saved = {};
@@ -176,6 +182,26 @@ export class DStream<T = any> extends EventEmitter {
     this.emit("history-gap", info);
   };
 
+  private handleRecoveryState = (state: RecoveryState) => {
+    this.emit("recovery-state", state);
+  };
+
+  private handleDisconnected = () => {
+    this.emit("disconnected");
+  };
+
+  private handleRecovering = () => {
+    this.emit("recovering");
+  };
+
+  private handlePaused = () => {
+    this.emit("paused");
+  };
+
+  private handleRecovered = () => {
+    this.emit("recovered");
+  };
+
   isStable = () => {
     for (const _ in this.saved) {
       return false;
@@ -201,6 +227,11 @@ export class DStream<T = any> extends EventEmitter {
     stream.removeListener("metadata-change", this.handleMetadataChange);
     stream.removeListener("checkpoints-change", this.handleCheckpointsChange);
     stream.removeListener("history-gap", this.handleHistoryGap);
+    stream.removeListener("recovery-state", this.handleRecoveryState);
+    stream.removeListener("disconnected", this.handleDisconnected);
+    stream.removeListener("recovering", this.handleRecovering);
+    stream.removeListener("paused", this.handlePaused);
+    stream.removeListener("recovered", this.handleRecovered);
     // @ts-ignore
     delete this.stream;
     stream.close();
@@ -314,6 +345,45 @@ export class DStream<T = any> extends EventEmitter {
       return;
     }
     await this.stream.deleteCheckpoint(name);
+  };
+
+  getRecoveryState = (): RecoveryState => {
+    if (this.isClosed()) {
+      return "closed";
+    }
+    return this.stream.getRecoveryState();
+  };
+
+  pauseRecovery = (reason: string) => {
+    if (this.isClosed()) {
+      return;
+    }
+    this.stream.pauseRecovery(reason);
+  };
+
+  resumeRecovery = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+    } = {},
+  ) => {
+    if (this.isClosed()) {
+      return;
+    }
+    await this.stream.resumeRecovery(opts);
+  };
+
+  recoverNow = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
+    if (this.isClosed()) {
+      return;
+    }
+    await this.stream.recoverNow(opts);
   };
 
   time = (n: number): Date | undefined => {

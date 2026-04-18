@@ -110,6 +110,13 @@ export interface HistoryGapEvent {
   newest_retained_seq?: number;
 }
 
+export type RecoveryState =
+  | "ready"
+  | "disconnected"
+  | "recovering"
+  | "paused"
+  | "closed";
+
 export type CoreStreamInitPhase =
   | "init_start"
   | "persist_client_created"
@@ -264,6 +271,7 @@ export class CoreStream<T = any> extends EventEmitter {
   private service?: string;
   private initPhaseReporter?: CoreStreamInitPhaseReporter;
   private initStartedAtMs?: number;
+  private recoveryState: RecoveryState = "recovering";
 
   constructor({
     name,
@@ -327,6 +335,25 @@ export class CoreStream<T = any> extends EventEmitter {
     });
   };
 
+  private setRecoveryState = (next: RecoveryState) => {
+    if (this.recoveryState === next) {
+      return;
+    }
+    this.recoveryState = next;
+    this.emit("recovery-state", next);
+    if (next === "disconnected") {
+      this.emit("disconnected");
+    } else if (next === "recovering") {
+      this.emit("recovering");
+    } else if (next === "paused") {
+      this.emit("paused");
+    } else if (next === "ready") {
+      this.emit("recovered");
+    }
+  };
+
+  getRecoveryState = (): RecoveryState => this.recoveryState;
+
   init = async () => {
     if (this.initialized) {
       throw Error("init can only be called once");
@@ -351,6 +378,18 @@ export class CoreStream<T = any> extends EventEmitter {
       if (!process.env.COCALC_TEST_MODE) {
         console.log(`WARNING: persistent stream issue -- ${err}`);
       }
+    });
+    this.persistClient.on("disconnected", () => {
+      this.setRecoveryState("disconnected");
+    });
+    this.persistClient.on("recovering", () => {
+      this.setRecoveryState("recovering");
+    });
+    this.persistClient.on("paused", () => {
+      this.setRecoveryState("paused");
+    });
+    this.persistClient.on("recovered", () => {
+      this.setRecoveryState("ready");
     });
     const bootstrap = await this.getAllFromPersist({
       start_seq: this._start_seq,
@@ -389,7 +428,40 @@ export class CoreStream<T = any> extends EventEmitter {
     }
     this.emitInitPhase("listen_started");
     void this.listen();
+    this.setRecoveryState("ready");
     this.emitInitPhase("init_done");
+  };
+
+  pauseRecovery = (reason: string) => {
+    this.persistClient?.pauseRecovery(reason);
+    if (!this.isClosed()) {
+      this.setRecoveryState("paused");
+    }
+  };
+
+  resumeRecovery = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+    } = {},
+  ) => {
+    await this.persistClient?.resumeRecovery(opts);
+    if (!this.isClosed()) {
+      this.setRecoveryState(this.persistClient?.getRecoveryState() ?? "ready");
+    }
+  };
+
+  recoverNow = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
+    await this.persistClient?.recoverNow(opts);
+    if (!this.isClosed()) {
+      this.setRecoveryState(this.persistClient?.getRecoveryState() ?? "ready");
+    }
   };
 
   debugStats = () => {
@@ -467,6 +539,7 @@ export class CoreStream<T = any> extends EventEmitter {
     logger.debug("close", this.name);
     stats.closed += 1;
     stats.active = Math.max(0, stats.active - 1);
+    this.setRecoveryState("closed");
     delete this.client;
     this.removeAllListeners();
     this.persistClient?.close();

@@ -74,6 +74,7 @@ import {
   type CoreStreamInitPhaseReporter,
   type Configuration,
   type ChangeEvent,
+  type RecoveryState,
 } from "./core-stream";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { isEqual } from "lodash";
@@ -247,6 +248,11 @@ export class DKV<T = any> extends EventEmitter {
       throw Error("closed");
     }
     this.kv.on("change", this.handleRemoteChange);
+    this.kv.on("recovery-state", this.handleRecoveryState);
+    this.kv.on("disconnected", this.handleDisconnected);
+    this.kv.on("recovering", this.handleRecovering);
+    this.kv.on("paused", this.handlePaused);
+    this.kv.on("recovered", this.handleRecovered);
     await this.kv.init();
     // allow_msg_ttl is used for deleting tombstones so MUST be enabled for dkv.
     this.emitInitPhase("dkv_allow_msg_ttl_config_start");
@@ -268,6 +274,11 @@ export class DKV<T = any> extends EventEmitter {
     delete this.kv;
     if (kv != null) {
       kv.removeListener("change", this.handleRemoteChange);
+      kv.removeListener("recovery-state", this.handleRecoveryState);
+      kv.removeListener("disconnected", this.handleDisconnected);
+      kv.removeListener("recovering", this.handleRecovering);
+      kv.removeListener("paused", this.handlePaused);
+      kv.removeListener("recovered", this.handleRecovered);
       kv.close();
     }
     this.emit("closed");
@@ -290,6 +301,56 @@ export class DKV<T = any> extends EventEmitter {
     if (this.isStable()) {
       this.emit("stable");
     }
+  };
+
+  private handleRecoveryState = (state: RecoveryState) => {
+    this.emit("recovery-state", state);
+  };
+
+  private handleDisconnected = () => {
+    this.emit("disconnected");
+  };
+
+  private handleRecovering = () => {
+    this.emit("recovering");
+  };
+
+  private handlePaused = () => {
+    this.emit("paused");
+  };
+
+  private handleRecovered = () => {
+    this.emit("recovered");
+  };
+
+  getRecoveryState = (): RecoveryState => {
+    if (this.isClosed()) {
+      return "closed";
+    }
+    return this.kv?.getRecoveryState() ?? "closed";
+  };
+
+  pauseRecovery = (reason: string) => {
+    this.kv?.pauseRecovery(reason);
+  };
+
+  resumeRecovery = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+    } = {},
+  ) => {
+    await this.kv?.resumeRecovery(opts);
+  };
+
+  recoverNow = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
+    await this.kv?.recoverNow(opts);
   };
 
   // stable = everything is saved *and* also echoed back from the server as confirmation.
