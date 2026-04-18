@@ -213,12 +213,22 @@ export class ConatClient extends EventEmitter {
       }),
     ),
   });
+  private browserOnlinePriority = (): ReconnectPriority => {
+    if (typeof document === "undefined") {
+      return "foreground";
+    }
+    return document.visibilityState === "hidden" ? "background" : "foreground";
+  };
   private readonly browserOnlineHandler = () => {
-    console.log("browser online event", this.reconnectDebugContext());
+    const priority = this.browserOnlinePriority();
+    console.log("browser online event", {
+      priority,
+      tabPriority: this.tabReconnectPriority(),
+      ...this.reconnectDebugContext(),
+    });
     if (this.permanentlyDisconnected || !this.automaticallyReconnect) {
       return;
     }
-    const priority = this.tabReconnectPriority();
     if (
       priority === "foreground" &&
       Object.keys(this.routedHubClients).length > 0

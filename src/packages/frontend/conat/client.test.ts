@@ -937,12 +937,12 @@ describe("ConatClient routed project-host reconnect", () => {
     jest.useRealTimers();
   });
 
-  it("forces a reconnect on browser online when routed host sessions are active", async () => {
+  it("forces a reconnect on browser online when routed host sessions are visible but unfocused", async () => {
     Object.defineProperty(window.navigator, "onLine", {
       configurable: true,
       value: true,
     });
-    const hasFocusSpy = jest.spyOn(document, "hasFocus").mockReturnValue(true);
+    const hasFocusSpy = jest.spyOn(document, "hasFocus").mockReturnValue(false);
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
       value: "visible",
