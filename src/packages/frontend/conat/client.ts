@@ -151,6 +151,7 @@ const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 const PROJECT_HOST_AUTH_TIMEOUT_MS = 4_000;
 const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [1_000, 3_000, 7_000] as const;
 const PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS = 5_000;
+const PROJECT_HOST_BROWSER_SESSION_SETTLE_MS = 100;
 const ROUTED_HOST_RECONNECT_DELAYS_MS = [750, 2_000, 5_000] as const;
 const ROUTED_HOST_REBUILD_AFTER_ATTEMPTS = 3;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
@@ -822,8 +823,12 @@ export class ConatClient extends EventEmitter {
   private isProjectHostAuthError = (err: any): boolean => {
     const mesg = `${err?.message ?? ""}`.toLowerCase();
     return (
+      mesg.includes("failed to sign in") ||
       mesg.includes("missing project-host bearer token") ||
       mesg.includes("project-host auth token") ||
+      mesg.includes("project-host browser session") ||
+      mesg.includes("session revoked") ||
+      mesg.includes("authentication failures from") ||
       mesg.includes("jwt") ||
       mesg.includes("unauthorized")
     );
@@ -1559,6 +1564,9 @@ export class ConatClient extends EventEmitter {
         if (state.client.conn?.connected) {
           return true;
         }
+        if (PROJECT_HOST_BROWSER_SESSION_SETTLE_MS > 0) {
+          await delay(PROJECT_HOST_BROWSER_SESSION_SETTLE_MS);
+        }
         try {
           console.log(`calling connect() on routed host client ${host_id}`, {
             host_id,
@@ -1600,6 +1608,20 @@ export class ConatClient extends EventEmitter {
         clearTimeout(state.reconnectTimer);
         delete state.reconnectTimer;
       }
+    });
+    state.client.on("info", (info) => {
+      const error = `${info?.user?.error ?? ""}`.trim();
+      if (!error || !this.isProjectHostAuthError({ message: error })) {
+        return;
+      }
+      console.warn(`routed host sign-in auth failure ${host_id}`, {
+        host_id,
+        address: state.address,
+        host_session_id: state.host_session_id,
+        error,
+      });
+      this.invalidateProjectHostBrowserSession(host_id);
+      this.invalidateProjectHostToken(host_id);
     });
     state.client.on("disconnected", () => {
       console.warn(`routed host disconnected ${host_id}`, {
