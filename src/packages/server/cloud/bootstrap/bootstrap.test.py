@@ -586,6 +586,15 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 f'PROJECT_POOL_MEMORY_RESERVE_MB_DEFAULT="{bootstrap.DEFAULT_PROJECT_POOL_MEMORY_RESERVE_MB}"',
                 rootctl.read_text(encoding="utf-8"),
             )
+            self.assertIn(
+                "capture-forensics)",
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "allow_forensics_capture_dir",
+                rootctl.read_text(encoding="utf-8"),
+            )
+            subprocess.run(["bash", "-n", str(rootctl)], check=True)
 
     def test_write_env_sets_project_pool_defaults_without_overriding_existing_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -44,8 +44,11 @@ const PODMAN_STALE_STATE_PATTERNS = [
   "could not find any running process",
 ];
 const FORENSICS_DIR = "forensics";
+const DEFAULT_PROJECT_HOST_ROOTCTL =
+  "/usr/local/sbin/cocalc-project-host-rootctl";
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
+const healthFailureStreaks = new Map<string, number>();
 
 function packageRoot(): string {
   const direct = path.join(__dirname, "package.json");
@@ -194,6 +197,49 @@ function forensicsDurationSeconds(): number {
   return Math.min(30, Math.floor(raw));
 }
 
+function rootctlPath(): string {
+  return (
+    `${process.env.COCALC_PROJECT_HOST_ROOTCTL ?? ""}`.trim() ||
+    DEFAULT_PROJECT_HOST_ROOTCTL
+  );
+}
+
+function healthFailureThreshold(): number {
+  return getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_HEALTH_FAILS_BEFORE_RESTART",
+    3,
+  );
+}
+
+function healthFailureKey(
+  dataDir: string,
+  component: "project-host" | "conat-router" | "conat-persist",
+): string {
+  return `${dataDir}:${component}`;
+}
+
+function resetHealthFailureStreak(
+  dataDir: string,
+  component: "project-host" | "conat-router" | "conat-persist",
+): void {
+  healthFailureStreaks.delete(healthFailureKey(dataDir, component));
+}
+
+function noteHealthFailure(
+  dataDir: string,
+  component: "project-host" | "conat-router" | "conat-persist",
+): { failures: number; allowedFailures: number; shouldRestart: boolean } {
+  const key = healthFailureKey(dataDir, component);
+  const failures = (healthFailureStreaks.get(key) ?? 0) + 1;
+  healthFailureStreaks.set(key, failures);
+  const allowedFailures = healthFailureThreshold();
+  return {
+    failures,
+    allowedFailures,
+    shouldRestart: failures >= allowedFailures,
+  };
+}
+
 function safeTimestampForPath(iso = new Date().toISOString()): string {
   return iso.replace(/[:.]/g, "-");
 }
@@ -204,32 +250,6 @@ function writeForensicsFile(file: string, content: string): void {
     fs.chmodSync(file, 0o600);
   } catch {
     // best effort
-  }
-}
-
-function readFileOrError(file: string): string {
-  try {
-    return fs.readFileSync(file, "utf8");
-  } catch (err) {
-    return `ERROR: ${err instanceof Error ? err.message : `${err}`}\n`;
-  }
-}
-
-function captureTaskStacks(pid: number): string {
-  const taskDir = `/proc/${pid}/task`;
-  try {
-    const tids = fs
-      .readdirSync(taskDir)
-      .filter((value) => /^\d+$/.test(value))
-      .sort((a, b) => Number(a) - Number(b));
-    return tids
-      .map(
-        (tid) =>
-          `===== ${tid} =====\n${readFileOrError(`/proc/${pid}/task/${tid}/stack`)}`,
-      )
-      .join("\n");
-  } catch (err) {
-    return `ERROR: ${err instanceof Error ? err.message : `${err}`}\n`;
   }
 }
 
@@ -278,63 +298,30 @@ function captureProcessForensics({
       2,
     )}\n`,
   );
-  writeForensicsFile(
-    path.join(captureDir, "cmdline.txt"),
-    readFileOrError(`/proc/${pid}/cmdline`)
-      .replace(/\u0000/g, " ")
-      .trimEnd() + "\n",
-  );
-  writeForensicsFile(
-    path.join(captureDir, "proc-stack.txt"),
-    readFileOrError(`/proc/${pid}/stack`),
-  );
-  writeForensicsFile(
-    path.join(captureDir, "task-stacks.txt"),
-    captureTaskStacks(pid),
-  );
-
-  const psResult = spawnSyncText(
-    "ps",
-    ["-L", "-p", String(pid), "-o", "pid,tid,pcpu,pmem,stat,wchan,comm"],
-    { timeout: 10_000 },
-  );
-  writeForensicsFile(
-    path.join(captureDir, "ps-threads.txt"),
-    `${combinedSpawnOutput(psResult)}\n`,
-  );
-
-  const lsofResult = spawnSyncText("lsof", ["-p", String(pid)], {
-    timeout: 10_000,
-  });
-  writeForensicsFile(
-    path.join(captureDir, "lsof.txt"),
-    `${combinedSpawnOutput(lsofResult)}\n`,
-  );
-
   const durationSeconds = forensicsDurationSeconds();
-  const straceResult = spawnSyncText(
-    "timeout",
+  const captureResult = spawnSyncText(
+    "sudo",
     [
-      `${durationSeconds}s`,
-      "strace",
-      "-ff",
-      "-ttt",
-      "-T",
-      "-s",
-      "256",
-      "-yy",
-      "-o",
-      path.join(captureDir, "strace"),
-      "-p",
+      "-n",
+      rootctlPath(),
+      "capture-forensics",
+      component,
       String(pid),
+      captureDir,
+      String(durationSeconds),
     ],
-    { timeout: (durationSeconds + 5) * 1000 },
+    { timeout: (durationSeconds + 10) * 1000 },
   );
-  writeForensicsFile(
-    path.join(captureDir, "strace-run.txt"),
-    `${combinedSpawnOutput(straceResult)}\n`,
-  );
-  if (straceResult.error) {
+  if (
+    captureResult.error ||
+    (captureResult.status != null &&
+      captureResult.status !== 0 &&
+      captureResult.status !== 124)
+  ) {
+    writeForensicsFile(
+      path.join(captureDir, "capture-run.txt"),
+      `${combinedSpawnOutput(captureResult)}\n`,
+    );
     recordDaemonEvent(dataDir, {
       component,
       action: "forensics_failed",
@@ -345,7 +332,10 @@ function captureProcessForensics({
       health,
       metadata: {
         capture_dir: captureDir,
-        error: `${straceResult.error}`,
+        status: captureResult.status,
+        error: captureResult.error
+          ? `${captureResult.error}`
+          : combinedSpawnOutput(captureResult) || undefined,
       },
     });
     return;
@@ -360,7 +350,7 @@ function captureProcessForensics({
     health,
     metadata: {
       capture_dir: captureDir,
-      strace_status: straceResult.status,
+      strace_status: captureResult.status,
       duration_seconds: durationSeconds,
     },
   });
@@ -1026,7 +1016,7 @@ function conatRouterHealthCheckUrl(
 
 function inspectHealthUrlSync(url: string): HealthCheckDiagnostic {
   const timeoutSeconds = String(
-    getPositiveIntEnv("COCALC_PROJECT_HOST_DAEMON_HEALTH_TIMEOUT_SEC", 5),
+    getPositiveIntEnv("COCALC_PROJECT_HOST_DAEMON_HEALTH_TIMEOUT_SEC", 7),
   );
   const script = [
     "import json, sys, urllib.request, urllib.error",
@@ -1491,21 +1481,43 @@ function ensureManagedConatRouter(opts: {
   if (pid && isRunning(pid)) {
     const diagnostic = inspectConatRouterHealthSync(env, routerPort);
     if (diagnostic.ok) {
+      resetHealthFailureStreak(dataDir, "conat-router");
       if (!opts.options?.quietHealthy) {
         console.log(`project-host conat router healthy (pid ${pid})`);
       }
       return;
     }
+    const failure = noteHealthFailure(dataDir, "conat-router");
     console.warn(
-      `project-host conat router pid ${pid} is running but unhealthy; restarting.`,
+      failure.shouldRestart
+        ? `project-host conat router pid ${pid} failed health checks ${failure.failures}/${failure.allowedFailures}; restarting.`
+        : `project-host conat router pid ${pid} failed health check ${failure.failures}/${failure.allowedFailures}; deferring restart.`,
       diagnostic,
     );
+    recordDaemonEvent(dataDir, {
+      component: "conat-router",
+      action: "health_check_failed",
+      message: "managed conat-router health check failed",
+      pid,
+      health: diagnostic,
+      metadata: {
+        consecutive_failures: failure.failures,
+        restart_after_failures: failure.allowedFailures,
+      },
+    });
+    if (!failure.shouldRestart) {
+      return;
+    }
     recordDaemonEvent(dataDir, {
       component: "conat-router",
       action: "restart_requested",
       message: "managed conat-router health check failed",
       pid,
       health: diagnostic,
+      metadata: {
+        consecutive_failures: failure.failures,
+        restart_after_failures: failure.allowedFailures,
+      },
     });
     captureProcessForensics({
       dataDir,
@@ -1513,6 +1525,7 @@ function ensureManagedConatRouter(opts: {
       pid,
       health: diagnostic,
     });
+    resetHealthFailureStreak(dataDir, "conat-router");
     stopManagedConatRouter({
       dataDir,
       routerPidPath,
@@ -1532,6 +1545,7 @@ function ensureManagedConatRouter(opts: {
     });
     return;
   }
+  resetHealthFailureStreak(dataDir, "conat-router");
   if (fs.existsSync(routerPidPath)) {
     console.warn(
       `project-host conat router pid file is stale at ${routerPidPath}; recovering.`,
@@ -1772,21 +1786,43 @@ function ensureManagedConatPersist(opts: {
   if (pid && isRunning(pid)) {
     const diagnostic = inspectConatPersistHealthSync(env, persistHealthPort);
     if (diagnostic.ok) {
+      resetHealthFailureStreak(dataDir, "conat-persist");
       if (!opts.options?.quietHealthy) {
         console.log(`project-host conat persist healthy (pid ${pid})`);
       }
       return;
     }
+    const failure = noteHealthFailure(dataDir, "conat-persist");
     console.warn(
-      `project-host conat persist pid ${pid} is running but unhealthy; restarting.`,
+      failure.shouldRestart
+        ? `project-host conat persist pid ${pid} failed health checks ${failure.failures}/${failure.allowedFailures}; restarting.`
+        : `project-host conat persist pid ${pid} failed health check ${failure.failures}/${failure.allowedFailures}; deferring restart.`,
       diagnostic,
     );
+    recordDaemonEvent(dataDir, {
+      component: "conat-persist",
+      action: "health_check_failed",
+      message: "managed conat-persist health check failed",
+      pid,
+      health: diagnostic,
+      metadata: {
+        consecutive_failures: failure.failures,
+        restart_after_failures: failure.allowedFailures,
+      },
+    });
+    if (!failure.shouldRestart) {
+      return;
+    }
     recordDaemonEvent(dataDir, {
       component: "conat-persist",
       action: "restart_requested",
       message: "managed conat-persist health check failed",
       pid,
       health: diagnostic,
+      metadata: {
+        consecutive_failures: failure.failures,
+        restart_after_failures: failure.allowedFailures,
+      },
     });
     captureProcessForensics({
       dataDir,
@@ -1794,6 +1830,7 @@ function ensureManagedConatPersist(opts: {
       pid,
       health: diagnostic,
     });
+    resetHealthFailureStreak(dataDir, "conat-persist");
     stopManagedConatPersist({
       dataDir,
       persistPidPath,
@@ -1809,6 +1846,7 @@ function ensureManagedConatPersist(opts: {
     });
     return;
   }
+  resetHealthFailureStreak(dataDir, "conat-persist");
   if (fs.existsSync(persistPidPath)) {
     console.warn(
       `project-host conat persist pid file is stale at ${persistPidPath}; recovering.`,
@@ -2195,6 +2233,7 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
     );
     const diagnostic = inspectProjectHostHealthSync(env, projectHostPort);
     if (diagnostic.ok) {
+      resetHealthFailureStreak(dataDir, "project-host");
       if (!options?.quietHealthy) {
         console.log(`project-host healthy (pid ${pid})`);
       }
@@ -2206,6 +2245,7 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
     );
     const ageMs = pidFileAgeMs(pidPath);
     if (ageMs != null && ageMs < warmupMs) {
+      resetHealthFailureStreak(dataDir, "project-host");
       console.warn(
         `project-host pid ${pid} is still warming up (${Math.floor(ageMs / 1000)}s < ${Math.floor(warmupMs / 1000)}s); deferring restart.`,
         diagnostic,
@@ -2225,8 +2265,11 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
       });
       return;
     }
+    const failure = noteHealthFailure(dataDir, "project-host");
     console.warn(
-      `project-host pid ${pid} is running but unhealthy; restarting.`,
+      failure.shouldRestart
+        ? `project-host pid ${pid} failed health checks ${failure.failures}/${failure.allowedFailures}; restarting.`
+        : `project-host pid ${pid} failed health check ${failure.failures}/${failure.allowedFailures}; deferring restart.`,
       {
         selected_version: selectedVersion,
         running_version: runningVersion,
@@ -2235,12 +2278,32 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
     );
     recordDaemonEvent(dataDir, {
       component: "project-host",
+      action: "health_check_failed",
+      message: "project-host health check failed",
+      pid,
+      selected_version: selectedVersion,
+      running_version: runningVersion,
+      health: diagnostic,
+      metadata: {
+        consecutive_failures: failure.failures,
+        restart_after_failures: failure.allowedFailures,
+      },
+    });
+    if (!failure.shouldRestart) {
+      return;
+    }
+    recordDaemonEvent(dataDir, {
+      component: "project-host",
       action: "restart_requested",
       message: "project-host health check failed",
       pid,
       selected_version: selectedVersion,
       running_version: runningVersion,
       health: diagnostic,
+      metadata: {
+        consecutive_failures: failure.failures,
+        restart_after_failures: failure.allowedFailures,
+      },
     });
     captureProcessForensics({
       dataDir,
@@ -2250,12 +2313,14 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
       selectedVersion,
       runningVersion,
     });
+    resetHealthFailureStreak(dataDir, "project-host");
     stopDaemonWithOptions(index, {
       preserveManagedAuxiliaryDaemons: options?.preserveManagedAuxiliaryDaemons,
     });
     startDaemon(index);
     return;
   }
+  resetHealthFailureStreak(dataDir, "project-host");
   if (fs.existsSync(pidPath)) {
     console.warn(`project-host pid file is stale at ${pidPath}; recovering.`);
     recordDaemonEvent(dataDir, {
@@ -2622,6 +2687,7 @@ export const __test__ = {
   daemonLocalEnvFilePath,
   ensurePodmanHealthy,
   healthCheckUrl,
+  healthFailureThreshold,
   inferProjectHostBundleVersionFromCmdline,
   isPodmanStalePauseState,
   isRunning,
@@ -2630,5 +2696,7 @@ export const __test__ = {
   matchingSshpiperdPids,
   parsePort,
   processRuntime,
+  resetHealthFailureStreaks: () => healthFailureStreaks.clear(),
   resolveEnv,
+  rootctlPath,
 };
