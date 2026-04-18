@@ -44,6 +44,7 @@ import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
+import { HostDaemonHealthSummary } from "./host-daemon-health-summary";
 import { HostProjectStatus } from "./host-project-status";
 import {
   confirmBulkHostDeprovision,
@@ -853,6 +854,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             <HostBootstrapLifecycle host={host} compact />
             <HostProjectStatus host={host} compact />
             <HostBackupStatus host={host} compact />
+            <HostDaemonHealthSummary host={host} compact />
           </Space>
         );
       },
