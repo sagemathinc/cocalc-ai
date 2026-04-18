@@ -76,6 +76,27 @@ function withConsoleCapture(fn: () => Promise<void> | void): Promise<string> {
     .then(() => lines.join("\n"));
 }
 
+function withStderrCapture(fn: () => Promise<void> | void): Promise<string> {
+  const lines: string[] = [];
+  const original = process.stderr.write.bind(process.stderr);
+  (process.stderr.write as any) = (
+    chunk: any,
+    encoding?: BufferEncoding | ((err?: Error | null) => void),
+    cb?: (err?: Error | null) => void,
+  ) => {
+    lines.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : `${chunk}`);
+    const callback = typeof encoding === "function" ? encoding : cb;
+    callback?.(null);
+    return true;
+  };
+  return Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      (process.stderr.write as any) = original;
+    })
+    .then(() => lines.join(""));
+}
+
 function makeDeps(
   capture: Capture,
   overrides: Partial<HostCommandDeps> = {},
@@ -1605,6 +1626,90 @@ test("host deploy history lists host-scoped runtime deployment operations", asyn
   assert.equal(capture.data.rows[1].kind, "rollback");
   assert.equal(capture.data.rows[1].requested, "component:acp-worker");
   assert.equal(capture.data.rows[1].version, "bundle-v0");
+});
+
+test("host deploy rollback --wait emits deduplicated progress lines in human output", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(
+    program,
+    makeDeps(
+      capture,
+      {
+        waitForLro: async (_ctx, op_id, opts) => {
+          await opts?.onUpdate?.({
+            op_id,
+            status: "running",
+            progress_summary: {
+              phase: "waiting",
+              target_type: "component",
+              target: "acp-worker",
+            },
+            error: null,
+          });
+          await opts?.onUpdate?.({
+            op_id,
+            status: "running",
+            progress_summary: {
+              phase: "waiting",
+              target_type: "component",
+              target: "acp-worker",
+            },
+            error: null,
+          });
+          await opts?.onUpdate?.({
+            op_id,
+            status: "succeeded",
+            progress_summary: {
+              phase: "done",
+              target_type: "component",
+              target: "acp-worker",
+              rollback_version: "bundle-v0",
+            },
+            error: null,
+          });
+          return {
+            op_id,
+            status: "succeeded",
+            timedOut: false,
+            error: undefined,
+          };
+        },
+      },
+      { json: false, output: "table" },
+    ),
+  );
+
+  const stderr = await withStderrCapture(async () => {
+    await program.parseAsync([
+      "node",
+      "test",
+      "host",
+      "deploy",
+      "rollback",
+      "host-1",
+      "--component",
+      "acp-worker",
+      "--wait",
+    ]);
+  });
+
+  assert.match(
+    stderr,
+    /host host-host-1 op=deploy-rollback-host-1 status=running phase=waiting target=component:acp-worker/,
+  );
+  assert.match(
+    stderr,
+    /host host-host-1 op=deploy-rollback-host-1 status=succeeded phase=done target=component:acp-worker rollback=bundle-v0/,
+  );
+  assert.equal((stderr.match(/status=running/g) ?? []).length, 1);
 });
 
 test("host deploy set upserts host-scoped desired state", async () => {

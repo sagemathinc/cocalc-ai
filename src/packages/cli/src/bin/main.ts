@@ -2000,9 +2000,11 @@ async function waitForLro(
   {
     timeoutMs,
     pollMs,
+    onUpdate,
   }: {
     timeoutMs: number;
     pollMs: number;
+    onUpdate?: Parameters<typeof waitForLroCore>[0]["onUpdate"];
   },
 ): Promise<LroStatus> {
   return await waitForLroCore({
@@ -2011,6 +2013,7 @@ async function waitForLro(
     timeoutMs,
     pollMs,
     terminalStatuses: TERMINAL_LRO_STATUSES,
+    onUpdate,
   });
 }
 

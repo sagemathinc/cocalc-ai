@@ -106,6 +106,105 @@ function createHostProgressReporter(ctx: {
   };
 }
 
+function formatHostUpgradeTargets(
+  targets: Array<Record<string, any>> | undefined,
+): string {
+  return formatList(
+    (targets ?? []).map((target) => {
+      const artifact = `${target?.artifact ?? ""}`.trim();
+      const channel = `${target?.channel ?? ""}`.trim();
+      const version = `${target?.version ?? ""}`.trim();
+      return `${artifact}${channel ? `@${channel}` : version ? `=${version}` : ""}`;
+    }),
+  );
+}
+
+function formatHostLroProgressDetail(progressSummary: Record<string, any>) {
+  const parts: string[] = [];
+  const phase = `${progressSummary.phase ?? ""}`.trim();
+  if (phase) {
+    parts.push(`phase=${phase}`);
+  }
+  if (Number.isFinite(progressSummary.progress)) {
+    parts.push(`progress=${Math.round(Number(progressSummary.progress))}%`);
+  }
+  const targets = formatHostUpgradeTargets(progressSummary.targets);
+  if (targets) {
+    parts.push(`targets=${targets}`);
+  }
+  const components = formatList(progressSummary.components);
+  if (components) {
+    parts.push(`components=${components}`);
+  }
+  const reconciled = formatList(progressSummary.reconciled_components);
+  if (reconciled) {
+    parts.push(`reconciled=${reconciled}`);
+  }
+  const action = `${progressSummary.action ?? ""}`.trim();
+  if (action) {
+    parts.push(`action=${action}`);
+  }
+  const targetType = `${progressSummary.target_type ?? ""}`.trim();
+  const target = `${progressSummary.target ?? ""}`.trim();
+  if (targetType || target) {
+    parts.push(`target=${`${targetType}:${target}`.replace(/^:/, "")}`);
+  }
+  const rollbackVersion = `${progressSummary.rollback_version ?? ""}`.trim();
+  if (rollbackVersion) {
+    parts.push(`rollback=${rollbackVersion}`);
+  }
+  const automaticRollbackVersion =
+    `${progressSummary.automatic_rollback?.rollback_version ?? ""}`.trim();
+  if (automaticRollbackVersion) {
+    parts.push(`auto_rollback=${automaticRollbackVersion}`);
+  }
+  const message = `${progressSummary.message ?? ""}`.trim();
+  if (message) {
+    parts.push(`message=${JSON.stringify(message)}`);
+  }
+  return parts.join(" ");
+}
+
+function createHostLroProgressReporter(
+  ctx: { globals: { json?: boolean; output?: string } },
+  entry: { host_id: string; name?: string | null; op_id: string },
+) {
+  if (ctx.globals.json || ctx.globals.output === "json") {
+    return undefined;
+  }
+  let lastLine = "";
+  return async (update: {
+    status?: string;
+    error?: string | null;
+    progress_summary?: any;
+  }) => {
+    const prefix = entry.name?.trim() || entry.host_id;
+    const parts = [
+      `host ${prefix}`,
+      `op=${entry.op_id}`,
+      `status=${`${update.status ?? "unknown"}`.trim() || "unknown"}`,
+    ];
+    const progressSummary =
+      update.progress_summary && typeof update.progress_summary === "object"
+        ? update.progress_summary
+        : undefined;
+    if (progressSummary) {
+      const detail = formatHostLroProgressDetail(progressSummary);
+      if (detail) {
+        parts.push(detail);
+      }
+    }
+    const error = `${update.error ?? ""}`.trim();
+    if (error) {
+      parts.push(`error=${JSON.stringify(error)}`);
+    }
+    const line = parts.join(" ");
+    if (line === lastLine) return;
+    lastLine = line;
+    process.stderr.write(`${line}\n`);
+  };
+}
+
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 
 function isHostOnlineForUpgrade(host: {
@@ -375,14 +474,7 @@ function formatHostDeployHistoryRequested(
   const input = summary.input ?? {};
   switch (`${summary.kind ?? ""}`) {
     case "host-upgrade-software":
-      return formatList(
-        (input.targets ?? []).map((target: any) => {
-          const artifact = `${target?.artifact ?? ""}`.trim();
-          const channel = `${target?.channel ?? ""}`.trim();
-          const version = `${target?.version ?? ""}`.trim();
-          return `${artifact}${channel ? `@${channel}` : version ? `=${version}` : ""}`;
-        }),
-      );
+      return formatHostUpgradeTargets(input.targets ?? []);
     case "host-rollout-managed-components":
     case "host-reconcile-runtime-deployments":
       return formatList(input.components);
@@ -1365,6 +1457,7 @@ Examples:
               const summary = await waitForLro(ctx, entry.op_id, {
                 timeoutMs: ctx.timeoutMs,
                 pollMs: ctx.pollMs,
+                onUpdate: createHostLroProgressReporter(ctx, entry),
               });
               return {
                 ...entry,
@@ -1479,6 +1572,7 @@ Examples:
               const summary = await waitForLro(ctx, entry.op_id, {
                 timeoutMs: ctx.timeoutMs,
                 pollMs: ctx.pollMs,
+                onUpdate: createHostLroProgressReporter(ctx, entry),
               });
               return {
                 ...entry,
@@ -1585,6 +1679,11 @@ Example:
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            onUpdate: createHostLroProgressReporter(ctx, {
+              host_id: host.id,
+              name: host.name,
+              op_id: op.op_id,
+            }),
           });
           if (summary.timedOut) {
             throw new Error(
@@ -1762,6 +1861,11 @@ does not yet have the required runtime artifact version installed.
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            onUpdate: createHostLroProgressReporter(ctx, {
+              host_id: host.id,
+              name: host.name,
+              op_id: op.op_id,
+            }),
           });
           if (summary.timedOut) {
             throw new Error(
@@ -1858,6 +1962,11 @@ version when available, or \`--to-version\` to force a specific published versio
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            onUpdate: createHostLroProgressReporter(ctx, {
+              host_id: host.id,
+              name: host.name,
+              op_id: op.op_id,
+            }),
           });
           if (summary.timedOut) {
             throw new Error(
@@ -2444,6 +2553,11 @@ Examples:
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            onUpdate: createHostLroProgressReporter(ctx, {
+              host_id: h.id,
+              name: h.name,
+              op_id: op.op_id,
+            }),
           });
           if (summary.timedOut) {
             throw new Error(
