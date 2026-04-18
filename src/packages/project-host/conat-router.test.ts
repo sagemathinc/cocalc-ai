@@ -24,6 +24,7 @@ describe("project-host conat router helpers", () => {
     delete process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER;
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
     delete process.env.COCALC_PROJECT_HOST_CONAT_CLUSTER_NAME;
   });
 
@@ -31,40 +32,37 @@ describe("project-host conat router helpers", () => {
     process.env = originalEnv;
   });
 
-  it("detects external router mode from env", () => {
+  it("always uses the managed local router daemon", () => {
     delete process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER;
-    expect(isProjectHostExternalConatRouterEnabled()).toBe(false);
+    expect(isProjectHostExternalConatRouterEnabled()).toBe(true);
 
-    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "0";
     expect(isProjectHostExternalConatRouterEnabled()).toBe(true);
   });
 
-  it("resolves the external router url from explicit url or local port", () => {
-    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = "http://127.0.0.1:9911";
-    expect(resolveProjectHostConatRouterUrl()).toBe("http://127.0.0.1:9911");
-
-    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+  it("resolves the managed local router url from the local port", () => {
     process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT = "9922";
     expect(resolveProjectHostConatRouterUrl()).toBe("http://127.0.0.1:9922");
   });
 
-  it("treats localhost router url plus matching port as managed local router mode", () => {
-    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+  it("allows only the derived local router url", () => {
     process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST = "127.0.0.1";
     process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT = "9922";
     process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = "http://127.0.0.1:9922";
     expect(isProjectHostManagedLocalConatRouter()).toBe(true);
 
     process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL =
-      "http://router.example:9922";
-    expect(isProjectHostManagedLocalConatRouter()).toBe(false);
+      "https://router.example:9922";
+    expect(() => resolveProjectHostConatRouterUrl()).toThrow(
+      /does not support an external conat router/i,
+    );
   });
 
-  it("requires explicit external router bootstrap config", () => {
+  it("requires managed local router port bootstrap config", () => {
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
     expect(() => resolveProjectHostConatRouterUrl()).toThrow(
-      /external conat router mode requires/i,
+      /requires COCALC_PROJECT_HOST_CONAT_ROUTER_PORT/i,
     );
   });
 
