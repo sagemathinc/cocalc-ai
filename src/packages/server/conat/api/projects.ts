@@ -55,13 +55,7 @@ import {
   PROJECT_NOT_FOUND_ERROR,
 } from "@cocalc/server/conat/project-local-access";
 import type {
-  ChatStoreDeleteResult,
   ChatStoreScope,
-  ChatStoreStats,
-  ChatStoreRotateResult,
-  ChatStoreSegment,
-  ChatStoreArchivedRow,
-  ChatStoreSearchHit,
   ImportPublicUrlResult,
   ImportPublicPathResult,
   PublicPathInspectionResult,
@@ -81,16 +75,6 @@ import type {
   ProjectRunQuota,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
-import {
-  deleteChatStoreData,
-  getChatStoreStats,
-  listChatStoreSegments,
-  readChatStoreArchived,
-  readChatStoreArchivedHit,
-  rotateChatStore,
-  searchChatStoreArchived,
-  vacuumChatStore,
-} from "@cocalc/backend/chat-store/sqlite-offload";
 import {
   deleteProjectSshKeyInDb,
   upsertProjectSshKeyInDb,
@@ -1656,29 +1640,21 @@ export async function codexUploadAuthFile({
 export async function chatStoreStats({
   account_id,
   project_id,
-  chat_path,
-  db_path,
 }: {
   account_id?: string;
   project_id: string;
   chat_path: string;
   db_path?: string;
-}): Promise<ChatStoreStats> {
+}): Promise<never> {
   await assertCollab({ account_id, project_id });
-  return await getChatStoreStats({ chat_path, db_path });
+  throw Error(
+    "chat store maintenance is not implemented on central hub; call a project-host endpoint via project routing",
+  );
 }
 
 export async function chatStoreRotate({
   account_id,
   project_id,
-  chat_path,
-  db_path,
-  keep_recent_messages,
-  max_head_bytes,
-  max_head_messages,
-  require_idle,
-  force,
-  dry_run,
 }: {
   account_id?: string;
   project_id: string;
@@ -1690,27 +1666,16 @@ export async function chatStoreRotate({
   require_idle?: boolean;
   force?: boolean;
   dry_run?: boolean;
-}): Promise<ChatStoreRotateResult> {
+}): Promise<never> {
   await assertCollab({ account_id, project_id });
-  return await rotateChatStore({
-    chat_path,
-    db_path,
-    keep_recent_messages,
-    max_head_bytes,
-    max_head_messages,
-    require_idle,
-    force,
-    dry_run,
-  });
+  throw Error(
+    "chat store maintenance is not implemented on central hub; call a project-host endpoint via project routing",
+  );
 }
 
 export async function chatStoreListSegments({
   account_id,
   project_id,
-  chat_path,
-  db_path,
-  limit,
-  offset,
 }: {
   account_id?: string;
   project_id: string;
@@ -1718,25 +1683,16 @@ export async function chatStoreListSegments({
   db_path?: string;
   limit?: number;
   offset?: number;
-}): Promise<{ chat_id: string; segments: ChatStoreSegment[] }> {
+}): Promise<never> {
   await assertCollab({ account_id, project_id });
-  return listChatStoreSegments({
-    chat_path,
-    db_path,
-    limit,
-    offset,
-  });
+  throw Error(
+    "chat store maintenance is not implemented on central hub; call a project-host endpoint via project routing",
+  );
 }
 
 export async function chatStoreReadArchived({
   account_id,
   project_id,
-  chat_path,
-  db_path,
-  before_date_ms,
-  thread_id,
-  limit,
-  offset,
 }: {
   account_id?: string;
   project_id: string;
@@ -1746,31 +1702,16 @@ export async function chatStoreReadArchived({
   thread_id?: string;
   limit?: number;
   offset?: number;
-}): Promise<{
-  chat_id: string;
-  rows: ChatStoreArchivedRow[];
-  offset: number;
-  next_offset?: number;
-}> {
+}): Promise<never> {
   await assertCollab({ account_id, project_id });
-  return readChatStoreArchived({
-    chat_path,
-    db_path,
-    before_date_ms,
-    thread_id,
-    limit,
-    offset,
-  });
+  throw Error(
+    "chat store maintenance is not implemented on central hub; call a project-host endpoint via project routing",
+  );
 }
 
 export async function chatStoreReadArchivedHit({
   account_id,
   project_id,
-  chat_path,
-  db_path,
-  row_id,
-  message_id,
-  thread_id,
 }: {
   account_id?: string;
   project_id: string;
@@ -1779,27 +1720,16 @@ export async function chatStoreReadArchivedHit({
   row_id?: number;
   message_id?: string;
   thread_id?: string;
-}): Promise<{ chat_id: string; row?: ChatStoreArchivedRow }> {
+}): Promise<never> {
   await assertCollab({ account_id, project_id });
-  return readChatStoreArchivedHit({
-    chat_path,
-    db_path,
-    row_id,
-    message_id,
-    thread_id,
-  });
+  throw Error(
+    "chat store maintenance is not implemented on central hub; call a project-host endpoint via project routing",
+  );
 }
 
 export async function chatStoreSearch({
   account_id,
   project_id,
-  chat_path,
-  query,
-  db_path,
-  thread_id,
-  exclude_thread_ids,
-  limit,
-  offset,
 }: {
   account_id?: string;
   project_id: string;
@@ -1810,34 +1740,16 @@ export async function chatStoreSearch({
   exclude_thread_ids?: string[];
   limit?: number;
   offset?: number;
-}): Promise<{
-  chat_id: string;
-  hits: ChatStoreSearchHit[];
-  offset: number;
-  total_hits: number;
-  next_offset?: number;
-}> {
+}): Promise<never> {
   await assertCollab({ account_id, project_id });
-  return searchChatStoreArchived({
-    chat_path,
-    query,
-    db_path,
-    thread_id,
-    exclude_thread_ids,
-    limit,
-    offset,
-  });
+  throw Error(
+    "chat store maintenance is not implemented on central hub; call a project-host endpoint via project routing",
+  );
 }
 
 export async function chatStoreDelete({
   account_id,
   project_id,
-  chat_path,
-  db_path,
-  scope,
-  before_date_ms,
-  thread_id,
-  message_ids,
 }: {
   account_id?: string;
   project_id: string;
@@ -1847,37 +1759,24 @@ export async function chatStoreDelete({
   before_date_ms?: number;
   thread_id?: string;
   message_ids?: string[];
-}): Promise<ChatStoreDeleteResult> {
+}): Promise<never> {
   await assertCollab({ account_id, project_id });
-  return deleteChatStoreData({
-    chat_path,
-    db_path,
-    scope,
-    before_date_ms,
-    thread_id,
-    message_ids,
-  });
+  throw Error(
+    "chat store maintenance is not implemented on central hub; call a project-host endpoint via project routing",
+  );
 }
 
 export async function chatStoreVacuum({
   account_id,
   project_id,
-  chat_path,
-  db_path,
 }: {
   account_id?: string;
   project_id: string;
   chat_path: string;
   db_path?: string;
-}): Promise<{
-  chat_id: string;
-  db_path: string;
-  before_bytes: number;
-  after_bytes: number;
-}> {
+}): Promise<never> {
   await assertCollab({ account_id, project_id });
-  return vacuumChatStore({
-    chat_path,
-    db_path,
-  });
+  throw Error(
+    "chat store maintenance is not implemented on central hub; call a project-host endpoint via project routing",
+  );
 }
