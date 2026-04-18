@@ -1118,6 +1118,60 @@ export function registerHostCommand(
     });
   }
 
+  async function runManagedComponentRolloutCommand(
+    contextLabel: string,
+    hostIdentifier: string,
+    opts: {
+      component?: string[];
+      reason?: string;
+      wait?: boolean;
+    },
+    command: Command,
+  ) {
+    await withContext(command, contextLabel, async (ctx) => {
+      const host = await resolveHost(ctx, hostIdentifier);
+      const components = parseManagedComponentKindsOption(opts.component);
+      const op = await ctx.hub.hosts.rolloutHostManagedComponents({
+        id: host.id,
+        components,
+        reason: `${opts.reason ?? ""}`.trim() || undefined,
+      });
+      if (!opts.wait) {
+        return {
+          host_id: host.id,
+          op_id: op.op_id,
+          status: "queued",
+          components,
+        };
+      }
+      const summary = await waitForLro(ctx, op.op_id, {
+        timeoutMs: ctx.timeoutMs,
+        pollMs: ctx.pollMs,
+        onUpdate: createHostLroProgressReporter(ctx, {
+          host_id: host.id,
+          name: host.name,
+          op_id: op.op_id,
+        }),
+      });
+      if (summary.timedOut) {
+        throw new Error(
+          `${host.name ?? host.id}: timed out (op=${op.op_id}, last_status=${summary.status})`,
+        );
+      }
+      if (summary.status !== "succeeded") {
+        throw new Error(
+          `${host.name ?? host.id}: status=${summary.status} error=${summary.error ?? "unknown"}`,
+        );
+      }
+      return {
+        host_id: host.id,
+        op_id: op.op_id,
+        status: summary.status,
+        components,
+      };
+    });
+  }
+
   host
     .command("projects-stop <host>")
     .description("stop projects on one host (running and starting by default)")
@@ -1659,55 +1713,59 @@ Example:
           wait?: boolean;
         },
         command: Command,
-      ) => {
-        await withContext(command, "host rollout", async (ctx) => {
-          const host = await resolveHost(ctx, hostIdentifier);
-          const components = parseManagedComponentKindsOption(opts.component);
-          const op = await ctx.hub.hosts.rolloutHostManagedComponents({
-            id: host.id,
-            components,
-            reason: `${opts.reason ?? ""}`.trim() || undefined,
-          });
-          if (!opts.wait) {
-            return {
-              host_id: host.id,
-              op_id: op.op_id,
-              status: "queued",
-              components,
-            };
-          }
-          const summary = await waitForLro(ctx, op.op_id, {
-            timeoutMs: ctx.timeoutMs,
-            pollMs: ctx.pollMs,
-            onUpdate: createHostLroProgressReporter(ctx, {
-              host_id: host.id,
-              name: host.name,
-              op_id: op.op_id,
-            }),
-          });
-          if (summary.timedOut) {
-            throw new Error(
-              `${host.name ?? host.id}: timed out (op=${op.op_id}, last_status=${summary.status})`,
-            );
-          }
-          if (summary.status !== "succeeded") {
-            throw new Error(
-              `${host.name ?? host.id}: status=${summary.status} error=${summary.error ?? "unknown"}`,
-            );
-          }
-          return {
-            host_id: host.id,
-            op_id: op.op_id,
-            status: summary.status,
-            components,
-          };
-        });
-      },
+      ) =>
+        await runManagedComponentRolloutCommand(
+          "host rollout",
+          hostIdentifier,
+          opts,
+          command,
+        ),
     );
 
   const deploy = host
     .command("deploy")
     .description("inspect or set desired runtime deployment state");
+
+  deploy
+    .command("restart <host>")
+    .description(
+      "restart one or more managed runtime components without changing desired versions",
+    )
+    .requiredOption(
+      "--component <component...>",
+      "component(s): project-host, conat-router, conat-persist, acp-worker",
+    )
+    .option("--reason <reason>", "optional restart reason")
+    .option("--wait", "wait for completion")
+    .addHelpText(
+      "after",
+      `
+This is the restart-only deploy-surface command. It restarts the currently
+desired managed components in place and does not change desired version state.
+
+Use \`cocalc host deploy set\` or \`cocalc host deploy rollback\` when you want
+to change desired versions. Use \`cocalc host deploy reconcile\` when desired
+versions have already changed and you want the backend to apply any required
+runtime actions.
+`,
+    )
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: {
+          component?: string[];
+          reason?: string;
+          wait?: boolean;
+        },
+        command: Command,
+      ) =>
+        await runManagedComponentRolloutCommand(
+          "host deploy restart",
+          hostIdentifier,
+          opts,
+          command,
+        ),
+    );
 
   deploy
     .command("status <host>")

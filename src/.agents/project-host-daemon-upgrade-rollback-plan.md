@@ -1191,6 +1191,7 @@ We should preserve user muscle memory where possible.
 
 ### Landed Under `host deploy`
 
+- `cocalc host deploy restart`
 - `cocalc host deploy status`
 - `cocalc host deploy set`
 - `cocalc host deploy rollback`
@@ -1199,8 +1200,6 @@ We should preserve user muscle memory where possible.
 
 ### Still Missing
 
-- `cocalc host deploy history`
-- `cocalc host deploy restart`
 - `cocalc host stage`
 
 ### Reframe

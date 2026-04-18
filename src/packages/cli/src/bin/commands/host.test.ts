@@ -1374,6 +1374,44 @@ test("host rollout queues managed component rollout and waits for completion", a
   assert.deepEqual(capture.data.components, ["acp-worker", "project-host"]);
 });
 
+test("host deploy restart reuses managed component rollout without changing desired state", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "deploy",
+    "restart",
+    "host-1",
+    "--component",
+    "conat-persist",
+    "--wait",
+  ]);
+
+  assert.deepEqual(capture.rollouts, [
+    {
+      id: "host-1",
+      components: ["conat-persist"],
+      reason: undefined,
+    },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.op_id, "rollout-host-1");
+  assert.equal(capture.data.status, "succeeded");
+  assert.deepEqual(capture.data.components, ["conat-persist"]);
+  assert.deepEqual(capture.runtimeDeploymentSetRequests, []);
+});
+
 test("host deploy status shows configured and effective desired state", async () => {
   const capture: Capture = {
     upgrades: [],
