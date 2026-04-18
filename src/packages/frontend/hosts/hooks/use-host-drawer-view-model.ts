@@ -11,6 +11,7 @@ import type { ManagedComponentKind } from "@cocalc/conat/project-host/api";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLogEntry } from "./use-host-log";
 import type { HostLroState } from "./use-host-ops";
+import type { HostDeleteOptions } from "../types";
 
 type HostSoftwareMap = Partial<
   Record<HostSoftwareArtifact, HostSoftwareAvailableVersion>
@@ -22,9 +23,12 @@ type UseHostDrawerViewModelArgs = {
   hostOps?: Record<string, HostLroState>;
   onClose: () => void;
   onEdit: (host: Host) => void;
+  onDelete?: (id: string, opts?: HostDeleteOptions) => void | Promise<void>;
   onUpgrade?: (host: Host) => void;
+  onUpgradeAll?: (host: Host) => void;
   onReconcile?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
+  onUpgradeAllFromHub?: (host: Host) => void;
   onUpgradeArtifact?: (opts: {
     host: Host;
     artifact: HostSoftwareArtifact;
@@ -130,9 +134,12 @@ export const useHostDrawerViewModel = ({
   hostOps,
   onClose,
   onEdit,
+  onDelete,
   onUpgrade,
+  onUpgradeAll,
   onReconcile,
   onUpgradeFromHub,
+  onUpgradeAllFromHub,
   onUpgradeArtifact,
   canUpgrade,
   onCancelOp,
@@ -159,9 +166,12 @@ export const useHostDrawerViewModel = ({
     hostOps,
     onClose,
     onEdit,
+    onDelete,
     onUpgrade,
+    onUpgradeAll,
     onReconcile,
     onUpgradeFromHub,
+    onUpgradeAllFromHub,
     onUpgradeArtifact,
     canUpgrade,
     onCancelOp,

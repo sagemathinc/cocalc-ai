@@ -53,20 +53,26 @@ import {
 } from "../constants";
 import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
-import { UpgradeConfirmContent } from "./upgrade-confirmation";
+import {
+  UpgradeAllConfirmContent,
+  UpgradeConfirmContent,
+} from "./upgrade-confirmation";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
 import { HostParallelOpsPanel } from "./host-parallel-ops-panel";
+import { HostDaemonHealthSummary } from "./host-daemon-health-summary";
 import { HostProjectStatus } from "./host-project-status";
 import { HostProjectsBrowser } from "./host-projects-browser";
 import { HostRootfsCachePanel } from "./host-rootfs-cache-panel";
 import { HostCurrentMetrics } from "./host-current-metrics";
+import { confirmHostDeprovision } from "./host-confirm";
 import {
   formatBinaryBytes,
   getHostCpuCount,
   getHostRamGiB,
   getHostSizeDisplay,
 } from "../utils/format";
+import type { HostDeleteOptions } from "../types";
 import {
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
@@ -78,9 +84,12 @@ type HostDrawerViewModel = {
   hostOps?: Record<string, HostLroState>;
   onClose: () => void;
   onEdit: (host: Host) => void;
+  onDelete?: (id: string, opts?: HostDeleteOptions) => void | Promise<void>;
   onUpgrade?: (host: Host) => void;
+  onUpgradeAll?: (host: Host) => void;
   onReconcile?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
+  onUpgradeAllFromHub?: (host: Host) => void;
   onUpgradeArtifact?: (opts: {
     host: Host;
     artifact: HostSoftwareArtifact;
@@ -350,6 +359,17 @@ function upgradeTitle({ label, source }: { label: string; source: string }) {
   );
 }
 
+function upgradeAllTitle({ label, source }: { label: string; source: string }) {
+  return (
+    <div>
+      <div>
+        Upgrade {label.toLowerCase()} from {source} and align the runtime stack?
+      </div>
+      <UpgradeAllConfirmContent />
+    </div>
+  );
+}
+
 function cliCommandsForArtifact({
   host,
   artifact,
@@ -363,6 +383,38 @@ function cliCommandsForArtifact({
     `cocalc host deploy rollback ${host.id} --artifact ${artifact} --last-known-good`,
     `cocalc host deploy rollback ${host.id} --artifact ${artifact} --to-version <version>`,
   ];
+}
+
+function RuntimeCliButton({
+  title,
+  commands,
+}: {
+  title: string;
+  commands: string[];
+}) {
+  return (
+    <Popover
+      trigger="click"
+      title={title}
+      content={
+        <div style={{ maxWidth: 520 }}>
+          {commands.map((command) => (
+            <Typography.Paragraph
+              key={command}
+              copyable={{ text: command }}
+              style={{ marginBottom: 8 }}
+            >
+              <code>{command}</code>
+            </Typography.Paragraph>
+          ))}
+        </div>
+      }
+    >
+      <Button size="small" type="text" icon={<CodeOutlined />}>
+        CLI
+      </Button>
+    </Popover>
+  );
 }
 
 function sourceVersionForArtifact({
@@ -532,6 +584,32 @@ function formatUpgradePolicy(policy?: ManagedComponentUpgradePolicy): string {
   }
 }
 
+function componentModeDetails({
+  managed,
+  runningVersions,
+  runningPids,
+}: {
+  managed?: boolean;
+  runningVersions: string[];
+  runningPids: number[];
+}): { tag?: React.ReactNode; summary?: string; externallyManaged: boolean } {
+  if (managed !== false) {
+    return { externallyManaged: false };
+  }
+  if (runningVersions.length > 0 || runningPids.length > 0) {
+    return {
+      tag: <Tag>shared</Tag>,
+      summary: "shared with project-host",
+      externallyManaged: false,
+    };
+  }
+  return {
+    tag: <Tag>external</Tag>,
+    summary: "external endpoint",
+    externallyManaged: true,
+  };
+}
+
 const normalizeSpecValue = (
   key: keyof HostConfigSpec,
   value: HostConfigSpec[keyof HostConfigSpec],
@@ -598,9 +676,10 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     hostOps,
     onClose,
     onEdit,
-    onUpgrade,
+    onDelete,
+    onUpgradeAll,
     onReconcile,
-    onUpgradeFromHub,
+    onUpgradeAllFromHub,
     canUpgrade,
     onCancelOp,
     hostLog,
@@ -707,11 +786,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     displayActiveOp?.kind === "host-reconcile-runtime-deployments" ||
     displayActiveOp?.summary?.kind === "host-rollback-runtime-deployments" ||
     displayActiveOp?.kind === "host-rollback-runtime-deployments";
-  const upgradeConfirmContent = upgradeTitle({
+  const upgradeAllConfirmContent = upgradeAllTitle({
     label: "all software",
     source: "the configured source",
   });
-  const upgradeFromHubConfirmContent = upgradeTitle({
+  const upgradeAllFromHubConfirmContent = upgradeAllTitle({
     label: "all software",
     source: "this hub source",
   });
@@ -770,6 +849,10 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     }
     return { upToDate, updatesAvailable, unknown };
   }, [deploymentStatus, host, softwareVersions]);
+  const latestLogEntry = hostLog[0];
+  const latestLogChange = latestLogEntry
+    ? describeSpecChange(latestLogEntry.spec)
+    : undefined;
   React.useEffect(() => {
     setActiveTab("overview");
     setShowProjects(false);
@@ -795,6 +878,18 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       </Drawer>
     );
   }
+  const deleteLabel = host.deleted
+    ? "Deleted"
+    : host.status === "deprovisioned"
+      ? "Delete"
+      : "Deprovision";
+  const deleteTitle =
+    host.status === "deprovisioned"
+      ? "Delete this host?"
+      : "Deprovision this host?";
+  const deleteOkText =
+    host.status === "deprovisioned" ? "Delete" : "Deprovision";
+  const isDeprovisioned = host.status === "deprovisioned";
   const overviewContent = host ? (
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
       {!showUpgradeProgress && (
@@ -815,43 +910,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           )}
         </Space>
       )}
-      <Typography.Text copyable={{ text: host.id }}>
-        Host ID: {host.id}
-      </Typography.Text>
-      {isSelfHost && host.region && (
-        <Typography.Text copyable={{ text: host.region }}>
-          Connector ID: {host.region}
-        </Typography.Text>
-      )}
-      <Space orientation="vertical" size="small">
-        {host.machine?.cloud && host.public_ip && (
-          <Typography.Text copyable={{ text: host.public_ip }}>
-            Public IP: {host.public_ip}
-          </Typography.Text>
-        )}
-        {host.machine?.zone && (
-          <Typography.Text>Zone: {host.machine.zone}</Typography.Text>
-        )}
-        {host.machine?.machine_type && (
-          <Typography.Text>
-            Machine type: {host.machine.machine_type}
-          </Typography.Text>
-        )}
-        {host.machine?.gpu_type && (
-          <Typography.Text>GPU type: {host.machine.gpu_type}</Typography.Text>
-        )}
-        {showHostResources && (
-          <Typography.Text>
-            Resources: {hostCpu ?? "?"} vCPU / {hostRam ?? "?"} GiB RAM /{" "}
-            {hostDisk ?? "?"} disk
-          </Typography.Text>
-        )}
-        {isSelfHost && host.machine?.metadata?.self_host_ssh_target && (
-          <Typography.Text>
-            SSH target: {host.machine.metadata.self_host_ssh_target}
-          </Typography.Text>
-        )}
-      </Space>
       {showConnectorWarning && selfHost && (
         <Alert
           type="warning"
@@ -878,31 +936,121 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           </Space>
         </Space>
       )}
-      <Card size="small" title="Current metrics">
-        <HostCurrentMetrics host={host} />
+      <Card size="small" title="Summary">
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+          <Typography.Text copyable={{ text: host.id }}>
+            Host ID: {host.id}
+          </Typography.Text>
+          {isSelfHost && host.region && (
+            <Typography.Text copyable={{ text: host.region }}>
+              Connector ID: {host.region}
+            </Typography.Text>
+          )}
+          {host.machine?.cloud && host.public_ip && (
+            <Typography.Text copyable={{ text: host.public_ip }}>
+              Public IP: {host.public_ip}
+            </Typography.Text>
+          )}
+          <Typography.Text type="secondary">
+            {[
+              host.machine?.zone ? `Zone ${host.machine.zone}` : null,
+              host.machine?.machine_type
+                ? `Machine ${host.machine.machine_type}`
+                : null,
+              host.machine?.gpu_type ? `GPU ${host.machine.gpu_type}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "No machine details reported yet."}
+          </Typography.Text>
+          {showHostResources && (
+            <Typography.Text type="secondary">
+              Resources {hostCpu ?? "?"} vCPU · {hostRam ?? "?"} GiB RAM ·{" "}
+              {hostDisk ?? "?"} disk
+            </Typography.Text>
+          )}
+          {isSelfHost && host.machine?.metadata?.self_host_ssh_target && (
+            <Typography.Text type="secondary">
+              SSH target: {host.machine.metadata.self_host_ssh_target}
+            </Typography.Text>
+          )}
+          <Typography.Text type="secondary">
+            Last seen:{" "}
+            {host.last_seen ? new Date(host.last_seen).toLocaleString() : "n/a"}
+          </Typography.Text>
+        </Space>
       </Card>
-      {parallelOps ? (
-        <HostParallelOpsPanel
-          host_id={host.id}
-          status={parallelOps.status}
-          loading={parallelOps.loading}
-          savingKey={parallelOps.savingKey}
-          onSetLimit={parallelOps.setLimit}
-          onClearLimit={parallelOps.clearLimit}
-        />
-      ) : null}
-      <Typography.Text type="secondary">
-        Last seen:{" "}
-        {host.last_seen ? new Date(host.last_seen).toLocaleString() : "n/a"}
-      </Typography.Text>
-      {host.status === "error" && host.last_error && (
-        <Alert
-          type="error"
-          showIcon
-          title="Provisioning error"
-          description={host.last_error}
-        />
-      )}
+      <Card size="small" title="Daemon health">
+        <HostDaemonHealthSummary host={host} />
+      </Card>
+      <Card size="small" title="Current metrics">
+        <HostCurrentMetrics host={host} compact dense />
+      </Card>
+      <Card
+        size="small"
+        title="Projects"
+        extra={
+          <Button
+            size="small"
+            type="link"
+            onClick={() => setActiveTab("projects")}
+          >
+            Open projects
+          </Button>
+        }
+      >
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+          <HostProjectStatus host={host} fontSize={13} />
+          <Typography.Text type="secondary">
+            Backups{" "}
+            {host.backup_status
+              ? `${host.backup_status.provisioned_up_to_date}/${host.backup_status.provisioned} provisioned up to date · ${host.backup_status.provisioned_needs_backup} need backup`
+              : "n/a"}
+          </Typography.Text>
+        </Space>
+      </Card>
+      <Card
+        size="small"
+        title="Recent activity"
+        extra={
+          <Button size="small" type="link" onClick={() => setActiveTab("logs")}>
+            Open logs
+          </Button>
+        }
+      >
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            Last action:{" "}
+            {host.last_action
+              ? `${host.last_action}${
+                  host.last_action_at
+                    ? ` · ${new Date(host.last_action_at).toLocaleString()}`
+                    : ""
+                }`
+              : "n/a"}
+          </Typography.Text>
+          {latestLogEntry && (
+            <Typography.Text type="secondary">
+              Latest log: {latestLogEntry.action} — {latestLogEntry.status}
+              {latestLogEntry.ts
+                ? ` · ${new Date(latestLogEntry.ts).toLocaleString()}`
+                : ""}
+            </Typography.Text>
+          )}
+          {latestLogChange?.summary && (
+            <Typography.Text type="secondary">
+              Config update: {latestLogChange.summary}
+            </Typography.Text>
+          )}
+          {host.status === "error" && host.last_error && (
+            <Alert
+              type="error"
+              showIcon
+              message="Provisioning error"
+              description={host.last_error}
+            />
+          )}
+        </Space>
+      </Card>
     </Space>
   ) : null;
   const projectsContent = host ? (
@@ -924,9 +1072,18 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   ) : null;
   const logsContent = host ? (
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
-      <HostBootstrapLifecycle host={host} detailed />
-      <div>
-        <Typography.Title level={5}>Recent actions</Typography.Title>
+      <Card
+        size="small"
+        title="Bootstrap lifecycle"
+        styles={{ body: { padding: 12 } }}
+      >
+        <HostBootstrapLifecycle host={host} detailed />
+      </Card>
+      <Card
+        size="small"
+        title="Recent actions"
+        styles={{ body: { padding: 12 } }}
+      >
         {loadingLog ? (
           <Typography.Text type="secondary">Loading…</Typography.Text>
         ) : hostLog.length === 0 ? (
@@ -999,44 +1156,98 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             ))}
           </Space>
         )}
-      </div>
+      </Card>
     </Space>
   ) : null;
   const dangerContent = host ? (
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
-      {isSelfHost && selfHost && !host.deleted ? (
-        <Space orientation="vertical" size="small">
-          <Typography.Text strong>Connector actions</Typography.Text>
-          <Space wrap>
-            <Button
-              size="small"
-              danger
-              disabled={hostOpActive}
-              onClick={() => selfHost.onRemove(host)}
-            >
-              Remove connector
-            </Button>
-            {canForceDeprovision && (
+      {!host.deleted ? (
+        <Card
+          size="small"
+          title="Host lifecycle"
+          styles={{ body: { padding: 12 } }}
+        >
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            <Typography.Text type="secondary">
+              Deprovisioning removes the host from service. Permanently deleting
+              is only available after the host is already deprovisioned.
+            </Typography.Text>
+            {isDeprovisioned ? (
               <Popconfirm
-                title="Force deprovision this host without contacting your machine?"
-                okText="Force deprovision"
+                title={deleteTitle}
+                okText={deleteOkText}
                 cancelText="Cancel"
-                onConfirm={() => selfHost.onForceDeprovision(host)}
+                onConfirm={() => onDelete?.(host.id)}
                 okButtonProps={{ danger: true }}
               >
-                <Button size="small" disabled={hostOpActive}>
-                  Force deprovision
+                <Button
+                  size="small"
+                  danger
+                  disabled={hostOpActive || !onDelete}
+                >
+                  {deleteLabel}
                 </Button>
               </Popconfirm>
+            ) : (
+              <Button
+                size="small"
+                danger
+                disabled={hostOpActive || !onDelete}
+                onClick={() =>
+                  onDelete &&
+                  confirmHostDeprovision({
+                    host,
+                    onConfirm: (opts) => onDelete(host.id, opts),
+                  })
+                }
+              >
+                {deleteLabel}
+              </Button>
             )}
           </Space>
-        </Space>
+        </Card>
       ) : (
         <Typography.Text type="secondary">
-          High-risk connector actions only. Start/stop/deprovision controls
-          remain on the main hosts list for now.
+          Deleted hosts do not expose further destructive actions.
         </Typography.Text>
       )}
+      {isSelfHost && selfHost && !host.deleted ? (
+        <Card
+          size="small"
+          title="Connector actions"
+          styles={{ body: { padding: 12 } }}
+        >
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            <Typography.Text type="secondary">
+              These actions affect the self-host connector relationship rather
+              than the cloud host lifecycle itself.
+            </Typography.Text>
+            <Space wrap>
+              <Button
+                size="small"
+                danger
+                disabled={hostOpActive}
+                onClick={() => selfHost.onRemove(host)}
+              >
+                Remove connector
+              </Button>
+              {canForceDeprovision && (
+                <Popconfirm
+                  title="Force deprovision this host without contacting your machine?"
+                  okText="Force deprovision"
+                  cancelText="Cancel"
+                  onConfirm={() => selfHost.onForceDeprovision(host)}
+                  okButtonProps={{ danger: true }}
+                >
+                  <Button size="small" disabled={hostOpActive}>
+                    Force deprovision
+                  </Button>
+                </Popconfirm>
+              )}
+            </Space>
+          </Space>
+        </Card>
+      ) : null}
     </Space>
   ) : null;
   const tabItems = [
@@ -1300,6 +1511,15 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               size="small"
               style={{ width: "100%" }}
             >
+              <Space wrap align="center">
+                <Typography.Text strong>
+                  Runtime software artifacts
+                </Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Desired versions, observed versions, and rollout controls for
+                  host software artifacts.
+                </Typography.Text>
+              </Space>
               {SOFTWARE_ARTIFACTS.map(({ artifact, label, desiredLabel }) => {
                 const running = runningVersion(host, artifact);
                 const buildId = runningBuildId(host, artifact);
@@ -1392,7 +1612,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                         <Typography.Text type="secondary">
                           desired{" "}
                           <code>{effectiveDesiredVersion ?? "n/a"}</code> |
-                          observed <code>{currentVersion ?? "n/a"}</code> |
+                          current <code>{currentVersion ?? "n/a"}</code> |
                           latest <code>{configured?.version ?? "unknown"}</code>
                         </Typography.Text>
                         <Space wrap>
@@ -1426,6 +1646,39 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                   }
                                 >
                                   Deploy latest
+                                </Button>
+                              </Popconfirm>
+                            )}
+                          {canUpgrade &&
+                            !host.deleted &&
+                            onSetRuntimeArtifactDeployment &&
+                            hubVersion?.version && (
+                              <Popconfirm
+                                title={upgradeTitle({
+                                  label,
+                                  source: "this hub source",
+                                })}
+                                okText="Deploy"
+                                cancelText="Cancel"
+                                onConfirm={() =>
+                                  onSetRuntimeArtifactDeployment({
+                                    host,
+                                    artifact,
+                                    desired_version: hubVersion.version!,
+                                    source: "hub",
+                                  })
+                                }
+                                disabled={
+                                  hostOpActive || host.status !== "running"
+                                }
+                              >
+                                <Button
+                                  size="small"
+                                  disabled={
+                                    hostOpActive || host.status !== "running"
+                                  }
+                                >
+                                  Deploy hub latest
                                 </Button>
                               </Popconfirm>
                             )}
@@ -1475,6 +1728,10 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 </Button>
                               </Popconfirm>
                             )}
+                          <RuntimeCliButton
+                            title={`${label} CLI`}
+                            commands={commands}
+                          />
                           <Button
                             size="small"
                             type="link"
@@ -1485,7 +1742,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               }))
                             }
                           >
-                            {expanded ? "Hide details" : "Details"}
+                            {expanded ? "Hide details" : "Show details"}
                           </Button>
                         </Space>
                       </Space>
@@ -1565,66 +1822,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               description={`Reason: ${formatRolloutReason(effectiveOverrideReason)}. Use “Resume cluster default” to remove the override and inherit the fleet default again.`}
                             />
                           )}
-                          <Space wrap>
-                            {canUpgrade &&
-                              !host.deleted &&
-                              onSetRuntimeArtifactDeployment &&
-                              hubVersion?.version && (
-                                <Popconfirm
-                                  title={upgradeTitle({
-                                    label,
-                                    source: "this hub source",
-                                  })}
-                                  okText="Deploy"
-                                  cancelText="Cancel"
-                                  onConfirm={() =>
-                                    onSetRuntimeArtifactDeployment({
-                                      host,
-                                      artifact,
-                                      desired_version: hubVersion.version!,
-                                      source: "hub",
-                                    })
-                                  }
-                                  disabled={
-                                    hostOpActive || host.status !== "running"
-                                  }
-                                >
-                                  <Button
-                                    size="small"
-                                    disabled={
-                                      hostOpActive || host.status !== "running"
-                                    }
-                                  >
-                                    Deploy hub latest
-                                  </Button>
-                                </Popconfirm>
-                              )}
-                            <Popover
-                              trigger="click"
-                              title={`${label} CLI`}
-                              content={
-                                <div style={{ maxWidth: 520 }}>
-                                  {commands.map((command) => (
-                                    <Typography.Paragraph
-                                      key={command}
-                                      copyable={{ text: command }}
-                                      style={{ marginBottom: 8 }}
-                                    >
-                                      <code>{command}</code>
-                                    </Typography.Paragraph>
-                                  ))}
-                                </div>
-                              }
-                            >
-                              <Button
-                                size="small"
-                                type="text"
-                                icon={<CodeOutlined />}
-                              >
-                                CLI
-                              </Button>
-                            </Popover>
-                          </Space>
                         </Space>
                       )}
                     </Space>
@@ -1639,7 +1836,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               style={{ width: "100%" }}
             >
               <Space wrap align="center">
-                <Typography.Text strong>Daemon components</Typography.Text>
+                <Typography.Text strong>
+                  Managed daemon components
+                </Typography.Text>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   Runtime state and desired versions for managed host daemons.
                 </Typography.Text>
@@ -1697,6 +1896,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   observedTarget?.enabled ?? observedComponent?.enabled;
                 const managed =
                   observedTarget?.managed ?? observedComponent?.managed;
+                const modeDetails = componentModeDetails({
+                  managed,
+                  runningVersions,
+                  runningPids,
+                });
                 const commands = cliCommandsForComponent({ host, component });
                 const expanded = !!expandedComponents[component];
                 return (
@@ -1712,8 +1916,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                     >
                       <Space wrap align="center">
                         <Typography.Text strong>{label}</Typography.Text>
-                        {runtimeStateTag(runtimeState)}
-                        {observedVersionStateTag(versionState)}
+                        {modeDetails.tag}
+                        {!modeDetails.externallyManaged &&
+                          runtimeStateTag(runtimeState)}
+                        {!modeDetails.externallyManaged &&
+                          observedVersionStateTag(versionState)}
                         {hasHostOverride && (
                           <Tag color="blue">host override</Tag>
                         )}
@@ -1728,12 +1935,17 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                       >
                         <Typography.Text type="secondary">
                           desired <code>{desiredVersion ?? "n/a"}</code> |
-                          running <code>{currentVersion ?? "n/a"}</code> |
-                          latest <code>{configured?.version ?? "unknown"}</code>
+                          current{" "}
+                          <code>
+                            {modeDetails.summary ?? currentVersion ?? "n/a"}
+                          </code>{" "}
+                          | latest{" "}
+                          <code>{configured?.version ?? "unknown"}</code>
                         </Typography.Text>
                         <Space wrap>
                           {canUpgrade &&
                             !host.deleted &&
+                            !modeDetails.externallyManaged &&
                             onSetRuntimeComponentDeployment &&
                             configured?.version && (
                               <Popconfirm
@@ -1767,6 +1979,40 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                             )}
                           {canUpgrade &&
                             !host.deleted &&
+                            !modeDetails.externallyManaged &&
+                            onSetRuntimeComponentDeployment &&
+                            hubVersion?.version && (
+                              <Popconfirm
+                                title={upgradeTitle({
+                                  label,
+                                  source: "this hub source",
+                                })}
+                                okText="Deploy"
+                                cancelText="Cancel"
+                                onConfirm={() =>
+                                  onSetRuntimeComponentDeployment({
+                                    host,
+                                    component,
+                                    desired_version: hubVersion.version!,
+                                    source: "hub",
+                                  })
+                                }
+                                disabled={
+                                  hostOpActive || host.status !== "running"
+                                }
+                              >
+                                <Button
+                                  size="small"
+                                  disabled={
+                                    hostOpActive || host.status !== "running"
+                                  }
+                                >
+                                  Deploy hub latest
+                                </Button>
+                              </Popconfirm>
+                            )}
+                          {canUpgrade &&
+                            !host.deleted &&
                             hasHostOverride &&
                             onResumeRuntimeComponentClusterDefault && (
                               <Popconfirm
@@ -1789,6 +2035,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                             )}
                           {canUpgrade &&
                             !host.deleted &&
+                            !modeDetails.externallyManaged &&
                             onRollbackRuntimeComponent &&
                             rollbackVersion && (
                               <Popconfirm
@@ -1811,6 +2058,10 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 </Button>
                               </Popconfirm>
                             )}
+                          <RuntimeCliButton
+                            title={`${label} CLI`}
+                            commands={commands}
+                          />
                           <Button
                             size="small"
                             type="link"
@@ -1821,7 +2072,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               }))
                             }
                           >
-                            {expanded ? "Hide details" : "Details"}
+                            {expanded ? "Hide details" : "Show details"}
                           </Button>
                         </Space>
                       </Space>
@@ -1874,6 +2125,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               description={`Reason: ${formatRolloutReason(deployment?.rollout_reason)}. Use “Resume cluster default” to remove the override and inherit the fleet default again.`}
                             />
                           )}
+                          {modeDetails.externallyManaged && (
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="This component is using an external endpoint"
+                              description="This host is not running or observing a local daemon for this component, so the current runtime version is not available from host telemetry."
+                            />
+                          )}
                           {versionState === "missing" && (
                             <Alert
                               type="warning"
@@ -1882,66 +2141,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               description="Setting a desired version queues the corresponding reconcile automatically. Use Refresh to watch the host activity panel for the rollout."
                             />
                           )}
-                          <Space wrap>
-                            {canUpgrade &&
-                              !host.deleted &&
-                              onSetRuntimeComponentDeployment &&
-                              hubVersion?.version && (
-                                <Popconfirm
-                                  title={upgradeTitle({
-                                    label,
-                                    source: "this hub source",
-                                  })}
-                                  okText="Deploy"
-                                  cancelText="Cancel"
-                                  onConfirm={() =>
-                                    onSetRuntimeComponentDeployment({
-                                      host,
-                                      component,
-                                      desired_version: hubVersion.version!,
-                                      source: "hub",
-                                    })
-                                  }
-                                  disabled={
-                                    hostOpActive || host.status !== "running"
-                                  }
-                                >
-                                  <Button
-                                    size="small"
-                                    disabled={
-                                      hostOpActive || host.status !== "running"
-                                    }
-                                  >
-                                    Deploy hub latest
-                                  </Button>
-                                </Popconfirm>
-                              )}
-                            <Popover
-                              trigger="click"
-                              title={`${label} CLI`}
-                              content={
-                                <div style={{ maxWidth: 520 }}>
-                                  {commands.map((command) => (
-                                    <Typography.Paragraph
-                                      key={command}
-                                      copyable={{ text: command }}
-                                      style={{ marginBottom: 8 }}
-                                    >
-                                      <code>{command}</code>
-                                    </Typography.Paragraph>
-                                  ))}
-                                </div>
-                              }
-                            >
-                              <Button
-                                size="small"
-                                type="text"
-                                icon={<CodeOutlined />}
-                              >
-                                CLI
-                              </Button>
-                            </Popover>
-                          </Space>
                         </Space>
                       )}
                     </Space>
@@ -1963,13 +2162,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   </Button>
                 </Popconfirm>
               )}
-              {canUpgrade && host && !host.deleted && onUpgrade && (
+              {canUpgrade && host && !host.deleted && onUpgradeAll && (
                 <Popconfirm
-                  title="Legacy direct upgrade"
-                  description={upgradeConfirmContent}
+                  title="Upgrade all runtime components"
+                  description={upgradeAllConfirmContent}
                   okText="Upgrade"
                   cancelText="Cancel"
-                  onConfirm={() => onUpgrade(host)}
+                  onConfirm={() => onUpgradeAll(host)}
                   disabled={hostOpActive || host.status !== "running"}
                 >
                   <Button
@@ -1980,13 +2179,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   </Button>
                 </Popconfirm>
               )}
-              {canUpgrade && host && !host.deleted && onUpgradeFromHub && (
+              {canUpgrade && host && !host.deleted && onUpgradeAllFromHub && (
                 <Popconfirm
-                  title="Legacy direct hub upgrade"
-                  description={upgradeFromHubConfirmContent}
+                  title="Upgrade all runtime components from hub"
+                  description={upgradeAllFromHubConfirmContent}
                   okText="Upgrade"
                   cancelText="Cancel"
-                  onConfirm={() => onUpgradeFromHub(host)}
+                  onConfirm={() => onUpgradeAllFromHub(host)}
                   disabled={hostOpActive || host.status !== "running"}
                 >
                   <Button
@@ -1998,6 +2197,19 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 </Popconfirm>
               )}
             </Space>
+            {parallelOps ? (
+              <>
+                <Divider style={{ margin: "4px 0" }} />
+                <HostParallelOpsPanel
+                  host_id={host.id}
+                  status={parallelOps.status}
+                  loading={parallelOps.loading}
+                  savingKey={parallelOps.savingKey}
+                  onSetLimit={parallelOps.setLimit}
+                  onClearLimit={parallelOps.clearLimit}
+                />
+              </>
+            ) : null}
           </Space>
         ) : (
           <Typography.Text type="secondary">

@@ -13,7 +13,7 @@ import type {
   ManagedComponentVersionState,
 } from "@cocalc/conat/project-host/api";
 import { getSoftwareVersions } from "./software";
-import { isProjectHostExternalConatRouterEnabled } from "./conat-router";
+import { isProjectHostManagedLocalConatRouter } from "./conat-router";
 import { isProjectHostExternalConatPersistEnabled } from "./conat-persist";
 import {
   listProjectHostAcpWorkers,
@@ -175,18 +175,7 @@ export function summarizeManagedComponentStatus({
 
 function routerSnapshot(): ManagedComponentSnapshot {
   const desired_version = currentProjectHostVersion();
-  if (!isProjectHostExternalConatRouterEnabled()) {
-    return {
-      enabled: true,
-      managed: false,
-      desired_version,
-      running_versions: uniqueNonEmpty([desired_version]),
-      running_pids: [process.pid],
-    };
-  }
-  const explicitUrl =
-    `${process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim();
-  if (explicitUrl) {
+  if (!isProjectHostManagedLocalConatRouter()) {
     return {
       enabled: true,
       managed: false,

@@ -99,6 +99,26 @@ const DEFAULT_CODEX_MODEL =
 const ARCHIVED_SEARCH_LIMIT = 20;
 const ARCHIVED_HISTORY_LIMIT = 50;
 const ARCHIVED_INLINE_PREVIEW_LIMIT = 6;
+const CHAT_ARCHIVE_DEBUG_STORAGE_KEY = "cocalc.debug.chatArchive";
+
+function isLocalStorageFlagEnabled(key: string): boolean {
+  try {
+    const value = globalThis.localStorage?.getItem(key)?.trim().toLowerCase();
+    if (!value) return false;
+    return !["0", "false", "off", "no"].includes(value);
+  } catch {
+    return false;
+  }
+}
+
+function logChatArchiveDiagnostic(
+  message: string,
+  details: Record<string, unknown>,
+): void {
+  if (!isLocalStorageFlagEnabled(CHAT_ARCHIVE_DEBUG_STORAGE_KEY)) return;
+  console.log(`[chat-archive] ${message}`, details);
+}
+
 export type NewThreadAgentMode = "codex" | "human" | "model";
 export interface NewThreadSetup {
   title: string;
@@ -380,6 +400,13 @@ export function ChatRoomThreadPanel({
     if (typeof value !== "number" || !Number.isFinite(value)) return 0;
     return Math.max(0, Math.floor(value));
   })();
+  const archivedRowsLogRef = useRef<{
+    projectId?: string;
+    path?: string;
+    threadId?: string;
+    archivedRowsCount: number;
+    selectedThreadMessageCount: number;
+  } | null>(null);
   const selectedThreadLookup = selectedThreadId;
   const selectedThreadMessages = useMemo(
     () =>
@@ -782,8 +809,23 @@ export function ChatRoomThreadPanel({
       setMaintenanceBusy(label);
       setMaintenanceError("");
       setMaintenanceStatus("");
+      logChatArchiveDiagnostic("maintenance started", {
+        action: label,
+        project_id,
+        chat_path: path,
+        thread_id: selectedThreadId,
+        archived_chat_rows: archivedRowsCount,
+      });
       try {
         const result = await action();
+        logChatArchiveDiagnostic("maintenance finished", {
+          action: label,
+          project_id,
+          chat_path: path,
+          thread_id: selectedThreadId,
+          archived_chat_rows: archivedRowsCount,
+          result,
+        });
         setMaintenanceStatus(
           typeof result?.reason === "string" && result.reason.trim().length > 0
             ? `${label}: ${result.reason}`
@@ -791,12 +833,26 @@ export function ChatRoomThreadPanel({
         );
         await loadMaintenanceStats();
       } catch (err) {
+        logChatArchiveDiagnostic("maintenance failed", {
+          action: label,
+          project_id,
+          chat_path: path,
+          thread_id: selectedThreadId,
+          archived_chat_rows: archivedRowsCount,
+          error: `${err}`,
+        });
         setMaintenanceError(`${err}`);
       } finally {
         setMaintenanceBusy(null);
       }
     },
-    [loadMaintenanceStats],
+    [
+      archivedRowsCount,
+      loadMaintenanceStats,
+      path,
+      project_id,
+      selectedThreadId,
+    ],
   );
 
   const setSearchQueryDebounced = useMemo(
@@ -812,6 +868,64 @@ export function ChatRoomThreadPanel({
       setSearchQueryDebounced.cancel();
     };
   }, [setSearchQueryDebounced]);
+
+  useEffect(() => {
+    if (!project_id || !path || !selectedThreadId) {
+      archivedRowsLogRef.current = null;
+      return;
+    }
+    const next = {
+      projectId: project_id,
+      path,
+      threadId: selectedThreadId,
+      archivedRowsCount,
+      selectedThreadMessageCount: selectedThreadMessages.length,
+    };
+    const prev = archivedRowsLogRef.current;
+    archivedRowsLogRef.current = next;
+    if (prev == null) return;
+    if (
+      prev.projectId !== project_id ||
+      prev.path !== path ||
+      prev.threadId !== selectedThreadId
+    ) {
+      return;
+    }
+    if (prev.archivedRowsCount !== archivedRowsCount) {
+      logChatArchiveDiagnostic("archived row count changed", {
+        project_id,
+        chat_path: path,
+        thread_id: selectedThreadId,
+        previous_archived_chat_rows: prev.archivedRowsCount,
+        archived_chat_rows: archivedRowsCount,
+        delta_archived_chat_rows: archivedRowsCount - prev.archivedRowsCount,
+        previous_visible_thread_rows: prev.selectedThreadMessageCount,
+        visible_thread_rows: selectedThreadMessages.length,
+      });
+    }
+    if (
+      archivedRowsCount > prev.archivedRowsCount &&
+      selectedThreadMessages.length < prev.selectedThreadMessageCount
+    ) {
+      logChatArchiveDiagnostic("possible archive head rewrite observed", {
+        project_id,
+        chat_path: path,
+        thread_id: selectedThreadId,
+        previous_archived_chat_rows: prev.archivedRowsCount,
+        archived_chat_rows: archivedRowsCount,
+        previous_visible_thread_rows: prev.selectedThreadMessageCount,
+        visible_thread_rows: selectedThreadMessages.length,
+        removed_visible_thread_rows:
+          prev.selectedThreadMessageCount - selectedThreadMessages.length,
+      });
+    }
+  }, [
+    archivedRowsCount,
+    path,
+    project_id,
+    selectedThreadId,
+    selectedThreadMessages.length,
+  ]);
 
   useEffect(() => {
     setThreadSearchCursor(0);

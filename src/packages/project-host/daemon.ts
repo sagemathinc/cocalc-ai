@@ -8,7 +8,7 @@ import {
   type SupervisionEvent,
 } from "./supervision-events";
 
-type DaemonAction = "start" | "stop" | "ensure";
+type DaemonAction = "start" | "stop" | "ensure" | "restart-project-host";
 
 type DaemonCommand = {
   action: DaemonAction;
@@ -83,7 +83,12 @@ function parseDaemonArgs(args: string[]): DaemonCommand | null {
   if (daemonIndex >= 0) {
     const action = args[daemonIndex + 1];
     const indexArg = args[daemonIndex + 2];
-    if (action === "start" || action === "stop" || action === "ensure") {
+    if (
+      action === "start" ||
+      action === "stop" ||
+      action === "ensure" ||
+      action === "restart-project-host"
+    ) {
       return { action, index: parseIndex(indexArg) };
     }
     if (action != null) {
@@ -95,7 +100,12 @@ function parseDaemonArgs(args: string[]): DaemonCommand | null {
     if (second == null) {
       return { action: "start", index: 0 };
     }
-    if (second === "start" || second === "stop" || second === "ensure") {
+    if (
+      second === "start" ||
+      second === "stop" ||
+      second === "ensure" ||
+      second === "restart-project-host"
+    ) {
       return { action: second, index: parseIndex(third) };
     }
     return { action: "start", index: parseIndex(second) };
@@ -359,11 +369,8 @@ function captureProcessForensics({
 function isProjectHostExternalConatRouterEnabled(
   env: Record<string, string>,
 ): boolean {
-  const value = `${env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER ?? ""}`.trim();
-  if (!value) {
-    return true;
-  }
-  return envIsTrue(value);
+  void env;
+  return true;
 }
 
 function isProjectHostExternalConatPersistEnabled(
@@ -373,10 +380,8 @@ function isProjectHostExternalConatPersistEnabled(
 }
 
 function usesManagedLocalConatRouter(env: Record<string, string>): boolean {
-  return (
-    isProjectHostExternalConatRouterEnabled(env) &&
-    !`${env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim()
-  );
+  void env;
+  return true;
 }
 
 function publicIngressEnabledValue(env: Record<string, string>): boolean {
@@ -398,13 +403,8 @@ function usesManagedLocalConatPersist(env: Record<string, string>): boolean {
 function ensureDefaults(env: Record<string, string>, index: number): void {
   const managedRouter = usesManagedLocalConatRouter(env);
   const managedPublicIngress = managedRouter && publicIngressEnabledValue(env);
-  if (!`${env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER ?? ""}`.trim()) {
-    env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
-  }
-  if (
-    !`${env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST ?? ""}`.trim() &&
-    isProjectHostExternalConatRouterEnabled(env)
-  ) {
+  env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+  if (!`${env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST ?? ""}`.trim()) {
     env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "1";
   }
   if (!env.COCALC_DISABLE_BEES) {
@@ -444,17 +444,13 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
   if (!env.COCALC_SSH_SERVER) {
     env.COCALC_SSH_SERVER = `localhost:${2222 + index}`;
   }
-  if (managedRouter) {
-    env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST =
-      env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST ?? "127.0.0.1";
-    env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT =
-      env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT ?? String(basePort + 100);
-    env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = `http://${env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST}:${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT}`;
-    if (
-      !`${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS ?? ""}`.trim()
-    ) {
-      env.COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS = "1";
-    }
+  env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST =
+    env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST ?? "127.0.0.1";
+  env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT =
+    env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT ?? String(basePort + 100);
+  env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = `http://${env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST}:${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT}`;
+  if (!`${env.COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS ?? ""}`.trim()) {
+    env.COCALC_PROJECT_HOST_CONAT_ROUTER_PUBLIC_INGRESS = "1";
   }
   if (managedPublicIngress) {
     env.COCALC_PROJECT_HOST_APP_HOST =
@@ -477,14 +473,11 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
   }
 }
 
-function isDerivedLocalRouterUrlForHostAgent(
+function isSupportedManagedLocalRouterUrl(
   env: Record<string, string>,
   explicitRouterUrl: string,
   index: number,
 ): boolean {
-  if (env.COCALC_PROJECT_HOST_AGENT !== "1") {
-    return false;
-  }
   const trimmed = explicitRouterUrl.trim();
   if (!trimmed) {
     return false;
@@ -568,18 +561,18 @@ function resolveEnv(index: number): {
       : "";
   ensureDefaults(env, index);
   const routerEnabled = isProjectHostExternalConatRouterEnabled(env);
-  const managedRouter =
-    routerEnabled &&
-    (!`${explicitRouterUrl}`.trim() ||
-      isDerivedLocalRouterUrlForHostAgent(env, explicitRouterUrl, index));
-  const managedPublicIngress = managedRouter && publicIngressEnabledValue(env);
-  const persistEnabled = isProjectHostExternalConatPersistEnabled(env);
-  const managedPersist = usesManagedLocalConatPersist(env);
-  if (persistEnabled && !routerEnabled) {
+  const managedRouter = usesManagedLocalConatRouter(env);
+  if (
+    `${explicitRouterUrl}`.trim() &&
+    !isSupportedManagedLocalRouterUrl(env, explicitRouterUrl, index)
+  ) {
     throw new Error(
-      "external conat persist mode requires external conat router mode",
+      "project-host no longer supports an external conat router; remove COCALC_PROJECT_HOST_CONAT_ROUTER_URL or point it at the managed local router daemon",
     );
   }
+  const managedPublicIngress = publicIngressEnabledValue(env);
+  const persistEnabled = isProjectHostExternalConatPersistEnabled(env);
+  const managedPersist = usesManagedLocalConatPersist(env);
   const logPath = path.join(dataDir, "log");
   const pidPath = path.join(dataDir, "daemon.pid");
   const agentLogPath = path.join(dataDir, "host-agent.log");
@@ -2419,8 +2412,7 @@ function stopHostAgentProcess({
 }
 
 export function startHostAgent(index = 0): void {
-  const { env, dataDir, agentLogPath, agentPidPath, managedRouter } =
-    resolveEnv(index);
+  const { env, dataDir, agentLogPath, agentPidPath } = resolveEnv(index);
   if (fs.existsSync(agentPidPath)) {
     const pid = Number(fs.readFileSync(agentPidPath, "utf8"));
     if (pid && isRunning(pid)) {
@@ -2462,13 +2454,6 @@ export function startHostAgent(index = 0): void {
     COCALC_PROJECT_HOST_AGENT: "1",
     COCALC_PROJECT_HOST_AGENT_INDEX: String(index),
   };
-  // The host-agent must see the original router-management intent, not the
-  // derived local router URL that resolveEnv synthesizes for project-host
-  // children. Otherwise it misclassifies the router as externally managed and
-  // never supervises it.
-  if (managedRouter) {
-    delete agentEnv.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
-  }
   const child = processRuntime.spawn(
     command,
     [...args, "--index", String(index)],
@@ -2673,6 +2658,10 @@ export function handleDaemonCli(argv: string[]): boolean {
     startHostAgent(cmd.index);
   } else if (cmd.action === "stop") {
     stopHostAgent(cmd.index);
+  } else if (cmd.action === "restart-project-host") {
+    restartProjectHost(cmd.index, {
+      preserveManagedAuxiliaryDaemons: true,
+    });
   } else {
     ensureHostAgent(cmd.index);
   }
