@@ -1,4 +1,5 @@
 import { delay } from "awaiting";
+import { RecoveryScheduler } from "@cocalc/conat/recovery/scheduler";
 import {
   before,
   after,
@@ -16,6 +17,42 @@ beforeAll(async () => {
 jest.setTimeout(30_000);
 
 describe("process-level recovery scheduler", () => {
+  it("uses adaptive parallel recovery by default", async () => {
+    const scheduler = new RecoveryScheduler({
+      canRun: () => true,
+      isTransportReady: () => true,
+    });
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let completed = 0;
+    const resources = Array.from({ length: 12 }, () =>
+      scheduler.registerResource({
+        recover: async () => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await delay(25);
+          completed += 1;
+          inFlight -= 1;
+        },
+      }),
+    );
+    try {
+      for (const resource of resources) {
+        resource.requestRecovery({ resetBackoff: true });
+      }
+      await wait({
+        timeout: 5_000,
+        until: () => completed === resources.length,
+      });
+      expect(maxInFlight).toBeGreaterThan(1);
+    } finally {
+      for (const resource of resources) {
+        resource.close();
+      }
+      scheduler.close();
+    }
+  });
+
   it("serializes socket recovery across many sockets on one client", async () => {
     const subject = `recovery-scheduler-socket-${Math.random()}`;
     const cn1 = connect();

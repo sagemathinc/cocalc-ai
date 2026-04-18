@@ -1,5 +1,7 @@
 # Hosts Drawer Tabs Plan
 
+Status: completed on 2026-04-18
+
 ## Goal
 
 Refactor the overloaded host drawer in
@@ -44,10 +46,12 @@ Recommended tabs:
 ### Overview
 
 Purpose:
+
 - the operational summary of the host
 - the first place a user lands
 
 Contents:
+
 - name, provider, region, size
 - online/offline/status tags
 - current host op / bootstrap progress
@@ -61,6 +65,7 @@ Contents:
   - details-style links into deeper tabs if useful
 
 Rules:
+
 - no dense version-management controls here
 - no long project browser
 - no rootfs inventory
@@ -69,9 +74,11 @@ Rules:
 ### Runtime
 
 Purpose:
+
 - software lifecycle and runtime deployment management
 
 Contents:
+
 - software artifacts section
   - `project-host`
   - `project bundle`
@@ -85,36 +92,43 @@ Contents:
 - CLI snippets / popovers
 
 Rules:
+
 - this is the only tab that should own most version-management actions
 - keep drawer-wide status summary out of here
 
 ### Projects
 
 Purpose:
+
 - host occupancy and project/backups operations
 
 Contents:
+
 - project status summary
 - backup status
 - stop/restart running projects
 - host projects browser
 
 Rules:
+
 - no software lifecycle controls
 - no rootfs/cache controls
 
 ### Storage
 
 Purpose:
+
 - storage and cache operations
 
 Contents:
+
 - rootfs inventory
 - rootfs pull/delete/gc
 - rootfs cache state
 - storage metrics that are primarily about host capacity / cache / disk
 
 Rules:
+
 - keep this focused on storage mechanics
 - if a metric is general operational health, it may also appear in Overview in
   summarized form
@@ -122,9 +136,11 @@ Rules:
 ### Logs
 
 Purpose:
+
 - diagnostics and observability
 
 Contents:
+
 - host runtime log tail
 - recent restart / watchdog / health summaries
 - bootstrap lifecycle detail
@@ -132,21 +148,30 @@ Contents:
 - host session ids / timestamps if useful
 
 Rules:
+
 - no mutation-heavy controls except log refresh / copy
 
 ### Danger
 
 Purpose:
+
 - destructive or high-risk operations
 
 Contents:
+
 - deprovision
 - delete
 - remove connector
 - force-deprovision / force operations
 
 Rules:
+
 - all destructive actions live here, not scattered throughout the drawer
+- future enhancement:
+  - support an optional per-host destructive-operation lock phrase
+  - require the user to enter or paste that phrase before deprovision/delete
+  - this is not a secret; it is an intentional friction mechanism for high-value
+    hosts such as production or dogfood infrastructure
 
 ## Mapping Current Drawer Sections
 
@@ -205,23 +230,28 @@ persist every collapsible detail section unless there is a clear reason.
 ### Phase 1: Structural Refactor
 
 Goal:
+
 - introduce tabs without changing most individual section internals
 
 Work:
+
 - add tab shell to `host-drawer.tsx`
 - move existing sections into the tabs listed above
 - keep current controls and cards mostly unchanged
 
 Acceptance:
+
 - no loss of existing functionality
 - no one long scroll surface
 
 ### Phase 2: Overview Compression
 
 Goal:
+
 - make `Overview` genuinely summary-first
 
 Work:
+
 - trim duplicate details from Overview
 - create or refine compact summary blocks:
   - daemon health
@@ -230,31 +260,38 @@ Work:
   - last action/error
 
 Acceptance:
+
 - Overview is quick to scan in under one screen on desktop
 
 ### Phase 3: Runtime Cleanup
 
 Goal:
+
 - make Runtime the clear home for software/daemon lifecycle
 
 Work:
+
 - align artifact cards and daemon cards visually
 - standardize action affordances
 - standardize CLI popovers
 
 Acceptance:
+
 - all rollout/deploy/rollback actions are easy to find in one place
 
 ### Phase 4: Logs / Danger Cleanup
 
 Goal:
+
 - isolate diagnostics and destructive operations
 
 Work:
+
 - simplify Logs tab
 - move all destructive actions into Danger
 
 Acceptance:
+
 - no destructive controls remain scattered in non-danger tabs
 
 ## Constraints
@@ -274,12 +311,23 @@ The refactor is successful if:
 - destructive actions are isolated
 - the default `Overview` tab is short and readable
 
-## Recommended Next Task
+## Completion Notes
 
-Implement Phase 1 only:
+Completed phases:
 
-- add tabs to `host-drawer.tsx`
-- move current sections into the new tab layout
-- keep all existing controls working
+- Phase 1: tab shell and section split
+- Phase 2: overview compression
+- Phase 3: runtime cleanup
+- Phase 4: logs simplification and danger isolation
 
-Do not try to fully redesign card internals in the same change-set.
+Result:
+
+- the drawer is now organized by tab responsibility
+- runtime controls are grouped under `Runtime`
+- diagnostics live under `Logs`
+- destructive actions live under `Danger`
+
+Follow-up work that remains intentionally out of scope for this plan:
+
+- optional per-host destructive lock phrase for deprovision/delete
+- any deeper visual redesign beyond the tabbed information architecture

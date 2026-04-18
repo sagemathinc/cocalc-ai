@@ -1,6 +1,7 @@
 /**
- * Minimal project-host: spins up a local conat server, embeds the file-server
- * and project-runner, and exposes a tiny HTTP API to start/stop/status projects.
+ * Minimal project-host: connects to the managed local conat-router daemon,
+ * embeds the file-server and project-runner, and exposes a tiny HTTP API to
+ * start/stop/status projects.
  *
  * Security: intentionally insecure for now. No auth, no TLS.
  */
@@ -18,7 +19,6 @@ import {
   setConatServer,
   setConatPassword,
 } from "@cocalc/backend/data";
-import type { ConatServer } from "@cocalc/conat/core/server";
 import {
   connect as connectToConat,
   type Client as ConatClient,
@@ -102,9 +102,7 @@ import { initProjectArchiveInfoService } from "./archive-info-service";
 import { startProjectHostEventLoopStallMonitor } from "./event-loop-stalls";
 import {
   attachProjectHostConatRouterProxy,
-  isProjectHostExternalConatRouterEnabled,
   resolveProjectHostConatRouterUrl,
-  startProjectHostConatRouterServer,
 } from "./conat-router";
 import {
   isProjectHostExternalConatPersistEnabled,
@@ -311,36 +309,18 @@ export async function main(
   const hostId = resolveProjectHostId(_config.hostId);
 
   // 1) HTTP + conat server
-  const { app, httpServer, isHttps } = await startHttpServer(port, host, tls);
-  const externalConatRouter = isProjectHostExternalConatRouterEnabled();
-  let conatServer: ConatServer | undefined;
-  let conatClient: ConatClient;
-  if (externalConatRouter) {
-    const conatRouterUrl = resolveProjectHostConatRouterUrl();
-    attachProjectHostConatRouterProxy({
-      app,
-      httpServer,
-      target: conatRouterUrl,
-    });
-    conatClient = connectToConat({
-      address: conatRouterUrl,
-      systemAccountPassword: localConatPassword,
-    });
-    setConatServer(conatRouterUrl);
-  } else {
-    conatServer = await startProjectHostConatRouterServer({
-      httpServer,
-      ssl: isHttps,
-      port,
-      hostId,
-      systemAccountPassword: localConatPassword,
-    });
-    conatClient = conatServer.client({
-      path: "/",
-      systemAccountPassword: localConatPassword,
-    });
-    setConatServer(conatServer.address());
-  }
+  const { app, httpServer } = await startHttpServer(port, host, tls);
+  const conatRouterUrl = resolveProjectHostConatRouterUrl();
+  attachProjectHostConatRouterProxy({
+    app,
+    httpServer,
+    target: conatRouterUrl,
+  });
+  const conatClient: ConatClient = connectToConat({
+    address: conatRouterUrl,
+    systemAccountPassword: localConatPassword,
+  });
+  setConatServer(conatRouterUrl);
   setConatClient({
     conat: () => conatClient,
     getLogger,
@@ -381,11 +361,6 @@ export async function main(
   // Local persist must exist before ACP startup so automation indexes can
   // republish into the project-scoped DKV stores on restart.
   const externalPersist = isProjectHostExternalConatPersistEnabled();
-  if (externalPersist && !externalConatRouter) {
-    throw new Error(
-      "external conat persist mode requires external conat router mode",
-    );
-  }
   const persistServer = externalPersist
     ? undefined
     : createPersistServer({ client: conatClient });
@@ -620,7 +595,6 @@ export async function main(
     try {
       conatClient?.close();
     } catch {}
-    void conatServer?.close?.();
   };
   const closeWithSignal = async (signal: string) => {
     if (closed || shutdownInProgress) return;

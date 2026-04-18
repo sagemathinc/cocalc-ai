@@ -1452,6 +1452,7 @@ export const useHostsPageViewModel = () => {
     hostOps,
     onClose: closeDetails,
     onEdit: openEdit,
+    onDelete: (id: string, opts) => removeHost(id, opts),
     onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
     onReconcile: isAdmin ? reconcileHostSoftware : undefined,
     onUpgradeFromHub: isAdmin ? upgradeHostSoftwareFromHub : undefined,

@@ -634,11 +634,11 @@ export class Client extends EventEmitter {
     this.recoveryScheduler = new RecoveryScheduler({
       canRun: () => !this.isClosed(),
       isTransportReady: () => this.isConnected(),
-      maxConcurrentRecoveries: this.options.recoveryConcurrency ?? 1,
+      maxConcurrentRecoveries: this.options.recoveryConcurrency,
     });
     this.heartbeatScheduler = new HeartbeatScheduler({
       canRun: () => !this.isClosed(),
-      maxConcurrentHeartbeats: this.options.heartbeatConcurrency ?? 1,
+      maxConcurrentHeartbeats: this.options.heartbeatConcurrency,
     });
     this.on("connected", this.recoveryScheduler.noteTransportConnected);
     this.on("disconnected", this.recoveryScheduler.noteTransportDisconnected);

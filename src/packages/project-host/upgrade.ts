@@ -594,7 +594,7 @@ export async function scheduleProjectHostRestart() {
     : fs.existsSync(candidate)
       ? candidate
       : path.join(PROJECT_HOST_ROOT, "cocalc-project-host");
-  const cmd = `sleep 3; ${bin} daemon stop || true; ${bin} daemon start`;
+  const cmd = `sleep 3; ${bin} daemon restart-project-host || true`;
   const child = spawn("bash", ["-c", cmd], {
     detached: true,
     stdio: "ignore",
