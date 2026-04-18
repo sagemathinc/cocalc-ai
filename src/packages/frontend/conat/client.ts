@@ -147,8 +147,10 @@ const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK = new Set<string>([
   "projects.chatStoreVacuum",
 ]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
-const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [3_000, 10_000, 30_000] as const;
+const PROJECT_HOST_AUTH_TIMEOUT_MS = 4_000;
+const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [1_000, 3_000, 7_000] as const;
 const PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS = 5_000;
+const ROUTED_HOST_RECONNECT_DELAYS_MS = [750, 2_000, 5_000] as const;
 const ROUTED_HOST_REBUILD_AFTER_ATTEMPTS = 3;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
 const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
@@ -1140,7 +1142,7 @@ export class ConatClient extends EventEmitter {
         service: "api",
         name: "hosts.issueProjectHostAuthToken",
         args: [{ host_id, project_id: authProjectId }],
-        timeout: DEFAULT_TIMEOUT,
+        timeout: PROJECT_HOST_AUTH_TIMEOUT_MS,
       }) as Promise<{ token: string; expires_at: number }>
     )
       .then(({ token, expires_at }) => {
@@ -1310,9 +1312,13 @@ export class ConatClient extends EventEmitter {
       if (state.reconnectTimer != null) {
         return;
       }
-      const delays = [1_000, 3_500, 10_000];
       const delayMs =
-        delays[Math.min(state.reconnectAttempts, delays.length - 1)];
+        ROUTED_HOST_RECONNECT_DELAYS_MS[
+          Math.min(
+            state.reconnectAttempts,
+            ROUTED_HOST_RECONNECT_DELAYS_MS.length - 1,
+          )
+        ];
       state.reconnectAttempts += 1;
       console.log(`scheduled routed host reconnect for ${host_id}`, {
         host_id,

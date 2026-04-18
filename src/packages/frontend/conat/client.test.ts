@@ -586,7 +586,7 @@ describe("ConatClient routed project-host reconnect", () => {
           },
         ],
       },
-      { timeout: 15000 },
+      { timeout: 4000 },
     );
 
     client.releaseProjectHostRouting({
