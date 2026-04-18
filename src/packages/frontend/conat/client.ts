@@ -1,5 +1,6 @@
 import { redux } from "@cocalc/frontend/app-framework";
 import type { WebappClient } from "@cocalc/frontend/client/client";
+import { withTimeout } from "@cocalc/util/async-utils";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
   type ConatSyncTable,
@@ -9,6 +10,7 @@ import { randomId, inboxPrefix } from "@cocalc/conat/names";
 import { projectSubject } from "@cocalc/conat/names";
 import { parseQueryWithOptions } from "@cocalc/sync/table/util";
 import { type HubApi, initHubApi } from "@cocalc/conat/hub/api";
+import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import { type ProjectApi, projectApiClient } from "@cocalc/conat/project/api";
 import { isValidUUID } from "@cocalc/util/misc";
 import { handleErrorMessage } from "@cocalc/conat/util";
@@ -146,6 +148,7 @@ const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK = new Set<string>([
 ]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [3_000, 10_000, 30_000] as const;
+const PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS = 5_000;
 const ROUTED_HOST_REBUILD_AFTER_ATTEMPTS = 3;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
 const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
@@ -763,9 +766,40 @@ export class ConatClient extends EventEmitter {
       host_id,
       ...this.reconnectDebugContext(),
     });
-    await redux.getActions("projects")?.ensure_host_info(host_id, true);
-    const routing = this.getHostRoutingInfo(host_id);
-    console.log(`refreshed routed host info for ${host_id}`, routing);
+    try {
+      await withTimeout(
+        Promise.resolve(
+          redux.getActions("projects")?.ensure_host_info(host_id, true),
+        ),
+        PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS,
+      );
+      const routing = this.getHostRoutingInfo(host_id);
+      if (routing) {
+        console.log(`refreshed routed host info for ${host_id}`, routing);
+        return routing;
+      }
+    } catch (err) {
+      console.warn(
+        `cached host-info refresh for ${host_id} timed out or failed; resolving directly`,
+        err,
+      );
+    }
+    const direct = (await this.callHub({
+      name: "hosts.resolveHostConnection",
+      args: [{ host_id }],
+      timeout: PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS,
+    })) as HostConnectionInfo | undefined;
+    const routing = direct?.connect_url
+      ? {
+          host_id,
+          address: direct.connect_url,
+          host_session_id: direct.host_session_id,
+        }
+      : undefined;
+    console.log(`refreshed routed host info for ${host_id}`, {
+      direct: true,
+      routing,
+    });
     return routing;
   };
 
