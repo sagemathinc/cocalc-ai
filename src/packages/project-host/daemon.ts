@@ -8,7 +8,7 @@ import {
   type SupervisionEvent,
 } from "./supervision-events";
 
-type DaemonAction = "start" | "stop" | "ensure";
+type DaemonAction = "start" | "stop" | "ensure" | "restart-project-host";
 
 type DaemonCommand = {
   action: DaemonAction;
@@ -83,7 +83,12 @@ function parseDaemonArgs(args: string[]): DaemonCommand | null {
   if (daemonIndex >= 0) {
     const action = args[daemonIndex + 1];
     const indexArg = args[daemonIndex + 2];
-    if (action === "start" || action === "stop" || action === "ensure") {
+    if (
+      action === "start" ||
+      action === "stop" ||
+      action === "ensure" ||
+      action === "restart-project-host"
+    ) {
       return { action, index: parseIndex(indexArg) };
     }
     if (action != null) {
@@ -95,7 +100,12 @@ function parseDaemonArgs(args: string[]): DaemonCommand | null {
     if (second == null) {
       return { action: "start", index: 0 };
     }
-    if (second === "start" || second === "stop" || second === "ensure") {
+    if (
+      second === "start" ||
+      second === "stop" ||
+      second === "ensure" ||
+      second === "restart-project-host"
+    ) {
       return { action: second, index: parseIndex(third) };
     }
     return { action: "start", index: parseIndex(second) };
@@ -2673,6 +2683,10 @@ export function handleDaemonCli(argv: string[]): boolean {
     startHostAgent(cmd.index);
   } else if (cmd.action === "stop") {
     stopHostAgent(cmd.index);
+  } else if (cmd.action === "restart-project-host") {
+    restartProjectHost(cmd.index, {
+      preserveManagedAuxiliaryDaemons: true,
+    });
   } else {
     ensureHostAgent(cmd.index);
   }

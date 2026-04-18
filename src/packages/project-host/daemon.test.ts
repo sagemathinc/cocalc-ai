@@ -13,6 +13,7 @@ const {
   __test__,
   ensureDaemon,
   ensureHostAgent,
+  handleDaemonCli,
   startDaemon,
   startHostAgent,
   stopDaemon,
@@ -519,6 +520,111 @@ describe("project-host daemon stop", () => {
     expect(killSpy).not.toHaveBeenCalledWith(2222, "SIGTERM");
     expect(fs.readFileSync(path.join(dataDir, "daemon.pid"), "utf8")).toBe(
       "3333",
+    );
+  });
+
+  it("restarts only project-host for the restart-project-host daemon action", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "1";
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT;
+    delete process.env.COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST;
+
+    fs.writeFileSync(path.join(dataDir, "daemon.pid"), "3333");
+    fs.writeFileSync(path.join(dataDir, "conat-router.pid"), "1111");
+    fs.writeFileSync(path.join(dataDir, "conat-persist.pid"), "2222");
+
+    const killState = new Map<number, "running" | "stopped">([
+      [1111, "running"],
+      [2222, "running"],
+      [3333, "running"],
+    ]);
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      const state = killState.get(pid);
+      if (!state) {
+        throw new Error(`unexpected pid ${pid}`);
+      }
+      if (signal === 0 || signal === undefined) {
+        if (state === "running") {
+          return true;
+        }
+        throw new Error("not running");
+      }
+      if (pid === 3333 && signal === "SIGTERM") {
+        killState.set(pid, "stopped");
+        return true;
+      }
+      throw new Error(`unexpected signal ${signal} for pid ${pid}`);
+    }) as typeof process.kill);
+
+    const realReadFileSync = fs.readFileSync;
+    const realReaddirSync = fs.readdirSync;
+    jest.spyOn(fs, "readdirSync").mockImplementation(((
+      file: any,
+      opts?: any,
+    ) => {
+      if (file === "/proc") {
+        return [
+          { name: "1111", isDirectory: () => true },
+          { name: "2222", isDirectory: () => true },
+        ] as any;
+      }
+      return (realReaddirSync as any)(file, opts);
+    }) as typeof fs.readdirSync);
+    jest.spyOn(fs, "readFileSync").mockImplementation(((
+      file: any,
+      options?: any,
+    ) => {
+      if (file === "/proc/1111/cmdline") {
+        return Buffer.from(
+          "node\u0000/opt/cocalc/project-host/bundles/good/main/index.js\u0000",
+        ) as any;
+      }
+      if (file === "/proc/1111/environ") {
+        return Buffer.from(
+          `COCALC_DATA=${dataDir}\u0000COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON=1\u0000PORT=9102\u0000`,
+        ) as any;
+      }
+      if (file === "/proc/2222/cmdline") {
+        return Buffer.from(
+          "node\u0000/opt/cocalc/project-host/bundles/good/main/index.js\u0000",
+        ) as any;
+      }
+      if (file === "/proc/2222/environ") {
+        return Buffer.from(
+          `COCALC_DATA=${dataDir}\u0000COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON=1\u0000PORT=9202\u0000`,
+        ) as any;
+      }
+      return (realReadFileSync as any)(file, options);
+    }) as typeof fs.readFileSync);
+
+    jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 0 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockReturnValue({ pid: 4444, unref: () => {} } as any);
+
+    expect(handleDaemonCli(["daemon", "restart-project-host", "0"])).toBe(true);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(killSpy).toHaveBeenCalledWith(3333, "SIGTERM");
+    expect(killSpy).toHaveBeenCalledWith(1111, 0);
+    expect(killSpy).toHaveBeenCalledWith(2222, 0);
+    expect(killSpy).not.toHaveBeenCalledWith(1111, "SIGTERM");
+    expect(killSpy).not.toHaveBeenCalledWith(2222, "SIGTERM");
+    expect(fs.readFileSync(path.join(dataDir, "daemon.pid"), "utf8")).toBe(
+      "4444",
     );
   });
 
