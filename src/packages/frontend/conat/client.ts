@@ -157,11 +157,33 @@ const ROUTED_HOST_REBUILD_AFTER_ATTEMPTS = 3;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
 const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
 const STALE_HUB_FORCE_RECONNECT_GRACE_MS = 5_000;
+const RECONNECT_DEBUG_STORAGE_KEY = "cocalc.debug.reconnect";
 const EMPTY_CONNECTION_STATS: ConnectionStats = {
   send: { messages: 0, bytes: 0 },
   recv: { messages: 0, bytes: 0 },
   subs: 0,
 };
+
+function isLocalStorageFlagEnabled(key: string): boolean {
+  try {
+    const value = globalThis.localStorage?.getItem(key)?.trim().toLowerCase();
+    if (!value) return false;
+    return !["0", "false", "off", "no"].includes(value);
+  } catch {
+    return false;
+  }
+}
+
+function reconnectDebugLog(...args: any[]): void {
+  if (!isLocalStorageFlagEnabled(RECONNECT_DEBUG_STORAGE_KEY)) return;
+  console.log(...args);
+}
+
+function reconnectDebugWarn(...args: any[]): void {
+  if (!isLocalStorageFlagEnabled(RECONNECT_DEBUG_STORAGE_KEY)) return;
+  console.warn(...args);
+}
+
 type RoutedHubClientState = {
   address: string;
   host_session_id?: string;
@@ -241,7 +263,7 @@ export class ConatClient extends EventEmitter {
   };
   private readonly browserOnlineHandler = () => {
     const priority = this.browserOnlinePriority();
-    console.log("browser online event", {
+    reconnectDebugLog("browser online event", {
       priority,
       tabPriority: this.tabReconnectPriority(),
       ...this.reconnectDebugContext(),
@@ -253,7 +275,7 @@ export class ConatClient extends EventEmitter {
       priority === "foreground" &&
       Object.keys(this.routedHubClients).length > 0
     ) {
-      console.log(
+      reconnectDebugLog(
         "browser online event; forcing reconnect to rebuild routed host connections",
       );
       this.reconnect();
@@ -266,7 +288,7 @@ export class ConatClient extends EventEmitter {
     });
   };
   private readonly browserOfflineHandler = () => {
-    console.warn("browser offline event", this.reconnectDebugContext());
+    reconnectDebugWarn("browser offline event", this.reconnectDebugContext());
   };
   private readonly foregroundWakeHandler = () => {
     if (this.tabReconnectPriority() !== "foreground") {
@@ -570,7 +592,10 @@ export class ConatClient extends EventEmitter {
         reconnection: false,
       });
       this._conatClient.on("connected", () => {
-        console.log("hub transport connected", this.reconnectDebugContext());
+        reconnectDebugLog(
+          "hub transport connected",
+          this.reconnectDebugContext(),
+        );
         this.noteHealthyHubResponse();
         this.reconnectCoordinator.noteConnected();
         this.browserSessionAutomation.noteConnected?.();
@@ -779,7 +804,7 @@ export class ConatClient extends EventEmitter {
   ): Promise<
     undefined | { host_id: string; address: string; host_session_id?: string }
   > => {
-    console.log(`refreshing routed host info for ${host_id}`, {
+    reconnectDebugLog(`refreshing routed host info for ${host_id}`, {
       host_id,
       ...this.reconnectDebugContext(),
     });
@@ -792,11 +817,11 @@ export class ConatClient extends EventEmitter {
       );
       const routing = this.getHostRoutingInfo(host_id);
       if (routing) {
-        console.log(`refreshed routed host info for ${host_id}`, routing);
+        reconnectDebugLog(`refreshed routed host info for ${host_id}`, routing);
         return routing;
       }
     } catch (err) {
-      console.warn(
+      reconnectDebugWarn(
         `cached host-info refresh for ${host_id} timed out or failed; resolving directly`,
         err,
       );
@@ -813,7 +838,7 @@ export class ConatClient extends EventEmitter {
           host_session_id: direct.host_session_id,
         }
       : undefined;
-    console.log(`refreshed routed host info for ${host_id}`, {
+    reconnectDebugLog(`refreshed routed host info for ${host_id}`, {
       direct: true,
       routing,
     });
@@ -871,7 +896,7 @@ export class ConatClient extends EventEmitter {
     const subject = `hub.account.${this.client.account_id}.api`;
     this.staleHubProbe = (async () => {
       try {
-        console.warn(`probing stale hub transport after ${reason}`, {
+        reconnectDebugWarn(`probing stale hub transport after ${reason}`, {
           reason,
           err,
           ...this.reconnectDebugContext(),
@@ -881,7 +906,9 @@ export class ConatClient extends EventEmitter {
           { name: "system.ping", args: [] },
           { timeout: 2_000 },
         );
-        console.warn(`stale hub transport probe succeeded after ${reason}`);
+        reconnectDebugWarn(
+          `stale hub transport probe succeeded after ${reason}`,
+        );
         this.noteHealthyHubResponse();
       } catch (probeErr) {
         if (
@@ -898,7 +925,7 @@ export class ConatClient extends EventEmitter {
           this.lastHealthyHubResponseAt > 0 &&
           healthyAgeMs < STALE_HUB_FORCE_RECONNECT_GRACE_MS
         ) {
-          console.warn(
+          reconnectDebugWarn(
             `stale hub transport probe failed after ${reason}, but recent hub traffic succeeded ${healthyAgeMs}ms ago; skipping forced reconnect`,
             probeErr,
           );
@@ -1138,7 +1165,7 @@ export class ConatClient extends EventEmitter {
       state.lastProjectId = project_id;
     }
     if (state.inFlight) {
-      console.log(
+      reconnectDebugLog(
         `waiting for in-flight project-host auth token for ${host_id}`,
         {
           host_id,
@@ -1148,16 +1175,19 @@ export class ConatClient extends EventEmitter {
       return await state.inFlight;
     }
     if (state.retryAfter != null && now < state.retryAfter) {
-      console.warn(`project-host auth token cooldown active for ${host_id}`, {
-        host_id,
-        project_id: project_id ?? state.lastProjectId,
-        retryAfter: state.retryAfter,
-        failureCount: state.failureCount,
-      });
+      reconnectDebugWarn(
+        `project-host auth token cooldown active for ${host_id}`,
+        {
+          host_id,
+          project_id: project_id ?? state.lastProjectId,
+          retryAfter: state.retryAfter,
+          failureCount: state.failureCount,
+        },
+      );
       throw this.getProjectHostTokenCooldownError(state);
     }
     const authProjectId = project_id ?? state.lastProjectId;
-    console.log(`requesting project-host auth token for ${host_id}`, {
+    reconnectDebugLog(`requesting project-host auth token for ${host_id}`, {
       host_id,
       project_id: authProjectId,
       failureCount: state.failureCount ?? 0,
@@ -1176,7 +1206,7 @@ export class ConatClient extends EventEmitter {
         state!.failureCount = 0;
         delete state!.retryAfter;
         delete state!.lastError;
-        console.log(`received project-host auth token for ${host_id}`, {
+        reconnectDebugLog(`received project-host auth token for ${host_id}`, {
           host_id,
           project_id: authProjectId,
           expires_at,
@@ -1190,13 +1220,16 @@ export class ConatClient extends EventEmitter {
         state!.retryAfter =
           Date.now() + this.projectHostTokenBackoffMs(state!.failureCount);
         state!.lastError = err;
-        console.warn(`project-host auth token request failed for ${host_id}`, {
-          host_id,
-          project_id: authProjectId,
-          failureCount: state!.failureCount,
-          retryAfter: state!.retryAfter,
-          err,
-        });
+        reconnectDebugWarn(
+          `project-host auth token request failed for ${host_id}`,
+          {
+            host_id,
+            project_id: authProjectId,
+            failureCount: state!.failureCount,
+            retryAfter: state!.retryAfter,
+            err,
+          },
+        );
         throw err;
       })
       .finally(() => {
@@ -1243,11 +1276,14 @@ export class ConatClient extends EventEmitter {
         PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH,
         address,
       ).toString();
-      console.log(`bootstrapping project-host browser session for ${host_id}`, {
-        host_id,
-        project_id: authProjectId,
-        address,
-      });
+      reconnectDebugLog(
+        `bootstrapping project-host browser session for ${host_id}`,
+        {
+          host_id,
+          project_id: authProjectId,
+          address,
+        },
+      );
       const response = await fetch(url, {
         method: "POST",
         credentials: "include",
@@ -1265,11 +1301,14 @@ export class ConatClient extends EventEmitter {
       }
       state!.address = address;
       state!.establishedAt = Date.now();
-      console.log(`bootstrapped project-host browser session for ${host_id}`, {
-        host_id,
-        project_id: authProjectId,
-        address,
-      });
+      reconnectDebugLog(
+        `bootstrapped project-host browser session for ${host_id}`,
+        {
+          host_id,
+          project_id: authProjectId,
+          address,
+        },
+      );
     })().finally(() => {
       if (state?.inFlight === request) {
         delete state.inFlight;
@@ -1321,7 +1360,7 @@ export class ConatClient extends EventEmitter {
         });
       } catch (err) {
         if (!this.isProjectHostAuthBackoffError(err)) {
-          console.warn(
+          reconnectDebugWarn(
             `failed preparing project-host browser session for host ${host_id}`,
             err,
           );
@@ -1342,12 +1381,15 @@ export class ConatClient extends EventEmitter {
         await delay(PROJECT_HOST_BROWSER_SESSION_SETTLE_MS);
       }
       try {
-        console.log(`calling connect() on routed host client ${host_id}`, {
-          host_id,
-          reconnectAttempts: state.reconnectAttempts,
-          address: state.address,
-          host_session_id: state.host_session_id,
-        });
+        reconnectDebugLog(
+          `calling connect() on routed host client ${host_id}`,
+          {
+            host_id,
+            reconnectAttempts: state.reconnectAttempts,
+            address: state.address,
+            host_session_id: state.host_session_id,
+          },
+        );
         const socket: any = state.client.conn;
         if (typeof socket?.connect === "function") {
           socket.connect();
@@ -1356,7 +1398,7 @@ export class ConatClient extends EventEmitter {
         }
         return true;
       } catch (err) {
-        console.warn(
+        reconnectDebugWarn(
           `failed reconnecting routed hub client for host ${host_id}`,
           err,
         );
@@ -1384,7 +1426,7 @@ export class ConatClient extends EventEmitter {
     if (this.permanentlyDisconnected) {
       return;
     }
-    console.log(`running routed host reconnect for ${host_id}`, {
+    reconnectDebugLog(`running routed host reconnect for ${host_id}`, {
       host_id,
       reconnectAttempts: state.reconnectAttempts,
       ...this.reconnectDebugContext(),
@@ -1392,7 +1434,7 @@ export class ConatClient extends EventEmitter {
     try {
       await waitForOnline();
     } catch {
-      console.warn(
+      reconnectDebugWarn(
         `routed host reconnect for ${host_id} aborted while waiting for browser online`,
       );
       this.scheduleRoutedHostReconnect({ host_id, state, project_id });
@@ -1401,17 +1443,20 @@ export class ConatClient extends EventEmitter {
     if (!this.isCurrentRoutedHostState(host_id, state)) {
       return;
     }
-    console.log(`browser is online for routed host reconnect ${host_id}`, {
-      host_id,
-      reconnectAttempts: state.reconnectAttempts,
-    });
+    reconnectDebugLog(
+      `browser is online for routed host reconnect ${host_id}`,
+      {
+        host_id,
+        reconnectAttempts: state.reconnectAttempts,
+      },
+    );
     let refreshed:
       | { host_id: string; address: string; host_session_id?: string }
       | undefined;
     try {
       refreshed = await this.refreshHostRoutingInfo(host_id);
     } catch (err) {
-      console.warn(
+      reconnectDebugWarn(
         `failed refreshing routed host info for host ${host_id}; will retry`,
         err,
       );
@@ -1482,7 +1527,7 @@ export class ConatClient extends EventEmitter {
         )
       ];
     state.reconnectAttempts += 1;
-    console.log(`scheduled routed host reconnect for ${host_id}`, {
+    reconnectDebugLog(`scheduled routed host reconnect for ${host_id}`, {
       host_id,
       delayMs,
       reconnectAttempts: state.reconnectAttempts,
@@ -1633,7 +1678,7 @@ export class ConatClient extends EventEmitter {
       }),
     };
     state.client.on("connected", () => {
-      console.log(`routed host connected ${host_id}`, {
+      reconnectDebugLog(`routed host connected ${host_id}`, {
         host_id,
         address: state.address,
         host_session_id: state.host_session_id,
@@ -1659,7 +1704,7 @@ export class ConatClient extends EventEmitter {
       this.invalidateProjectHostToken(host_id);
     });
     state.client.on("disconnected", () => {
-      console.warn(`routed host disconnected ${host_id}`, {
+      reconnectDebugWarn(`routed host disconnected ${host_id}`, {
         host_id,
         address: state.address,
         host_session_id: state.host_session_id,
@@ -1751,7 +1796,7 @@ export class ConatClient extends EventEmitter {
 
     client.on("info", (info) => {
       if (client.info?.user?.account_id) {
-        console.log("Connected as ", JSON.stringify(client.info?.user));
+        reconnectDebugLog("Connected as ", JSON.stringify(client.info?.user));
         this.signedIn({
           account_id: info.user.account_id,
           hub: info.id ?? "",
@@ -1770,7 +1815,7 @@ export class ConatClient extends EventEmitter {
           Cookies.set(ACCOUNT_ID_COOKIE, client.info.user.account_id);
           // and we're out of here:
           const wait = 5000;
-          console.log(`COOKIE ISSUE -- RELOAD IN ${wait / 1000} SECONDS...`, {
+          console.warn(`COOKIE ISSUE -- RELOAD IN ${wait / 1000} SECONDS...`, {
             cookie,
           });
           setTimeout(() => {
@@ -1782,7 +1827,7 @@ export class ConatClient extends EventEmitter {
         }
       } else if (lite && client.info?.user?.project_id) {
         // we *also* sign in as the PROJECT in lite mode.
-        console.log("lite: created project client");
+        reconnectDebugLog("lite: created project client");
       } else {
         console.log("Sign in failed -- ", client.info);
         this.signInFailed(client.info?.user?.error ?? "Failed to sign in.");
@@ -1871,7 +1916,7 @@ export class ConatClient extends EventEmitter {
     if (this.permanentlyDisconnected) {
       return;
     }
-    console.log("requestReconnect", {
+    reconnectDebugLog("requestReconnect", {
       reason,
       priority,
       resetBackoff,
@@ -1934,7 +1979,7 @@ export class ConatClient extends EventEmitter {
   // keep trying until connected.
   connect = reuseInFlight(async () => {
     if (this.permanentlyDisconnected) {
-      console.log(
+      reconnectDebugLog(
         "Not connecting -- client is permanently disconnected and must refresh their browser",
       );
       return;
@@ -1950,7 +1995,7 @@ export class ConatClient extends EventEmitter {
     if (this.permanentlyDisconnected || this._conatClient?.conn?.connected) {
       return;
     }
-    console.log(
+    reconnectDebugLog(
       `Connecting to ${this.address}: attempt ${Math.max(this.numConnectionAttempts, 1)}`,
     );
     this.client.emit("connecting");
