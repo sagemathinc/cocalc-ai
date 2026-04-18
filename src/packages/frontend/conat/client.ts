@@ -1279,6 +1279,221 @@ export class ConatClient extends EventEmitter {
     return await request;
   };
 
+  private isCurrentRoutedHostState = (
+    host_id: string,
+    state: RoutedHubClientState,
+  ): boolean => {
+    return this.routedHubClients[host_id]?.client === state.client;
+  };
+
+  private connectRoutedHost = async ({
+    host_id,
+    state,
+    project_id,
+  }: {
+    host_id: string;
+    state: RoutedHubClientState;
+    project_id?: string;
+  }): Promise<boolean> => {
+    if (state.connectInFlight) {
+      return await state.connectInFlight;
+    }
+    const connectAttempt = (async (): Promise<boolean> => {
+      if (this.permanentlyDisconnected) {
+        return false;
+      }
+      if (!this.isCurrentRoutedHostState(host_id, state)) {
+        return false;
+      }
+      if (state.client.conn?.connected) {
+        return true;
+      }
+      const authProjectId = this.pickTrackedProjectForHost(
+        host_id,
+        state,
+        project_id,
+      );
+      try {
+        await this.ensureProjectHostBrowserSession({
+          host_id,
+          address: state.address,
+          project_id: authProjectId,
+        });
+      } catch (err) {
+        if (!this.isProjectHostAuthBackoffError(err)) {
+          console.warn(
+            `failed preparing project-host browser session for host ${host_id}`,
+            err,
+          );
+        }
+        this.scheduleRoutedHostReconnect({ host_id, state, project_id });
+        return false;
+      }
+      if (this.permanentlyDisconnected) {
+        return false;
+      }
+      if (!this.isCurrentRoutedHostState(host_id, state)) {
+        return false;
+      }
+      if (state.client.conn?.connected) {
+        return true;
+      }
+      if (PROJECT_HOST_BROWSER_SESSION_SETTLE_MS > 0) {
+        await delay(PROJECT_HOST_BROWSER_SESSION_SETTLE_MS);
+      }
+      try {
+        console.log(`calling connect() on routed host client ${host_id}`, {
+          host_id,
+          reconnectAttempts: state.reconnectAttempts,
+          address: state.address,
+          host_session_id: state.host_session_id,
+        });
+        const socket: any = state.client.conn;
+        if (typeof socket?.connect === "function") {
+          socket.connect();
+        } else {
+          state.client.connect();
+        }
+        return true;
+      } catch (err) {
+        console.warn(
+          `failed reconnecting routed hub client for host ${host_id}`,
+          err,
+        );
+        this.scheduleRoutedHostReconnect({ host_id, state, project_id });
+        return false;
+      }
+    })().finally(() => {
+      if (state.connectInFlight === connectAttempt) {
+        delete state.connectInFlight;
+      }
+    });
+    state.connectInFlight = connectAttempt;
+    return await connectAttempt;
+  };
+
+  private runRoutedHostReconnect = async ({
+    host_id,
+    state,
+    project_id,
+  }: {
+    host_id: string;
+    state: RoutedHubClientState;
+    project_id?: string;
+  }): Promise<void> => {
+    if (this.permanentlyDisconnected) {
+      return;
+    }
+    console.log(`running routed host reconnect for ${host_id}`, {
+      host_id,
+      reconnectAttempts: state.reconnectAttempts,
+      ...this.reconnectDebugContext(),
+    });
+    try {
+      await waitForOnline();
+    } catch {
+      console.warn(
+        `routed host reconnect for ${host_id} aborted while waiting for browser online`,
+      );
+      this.scheduleRoutedHostReconnect({ host_id, state, project_id });
+      return;
+    }
+    if (!this.isCurrentRoutedHostState(host_id, state)) {
+      return;
+    }
+    console.log(`browser is online for routed host reconnect ${host_id}`, {
+      host_id,
+      reconnectAttempts: state.reconnectAttempts,
+    });
+    let refreshed:
+      | { host_id: string; address: string; host_session_id?: string }
+      | undefined;
+    try {
+      refreshed = await this.refreshHostRoutingInfo(host_id);
+    } catch (err) {
+      console.warn(
+        `failed refreshing routed host info for host ${host_id}; will retry`,
+        err,
+      );
+      this.scheduleRoutedHostReconnect({ host_id, state, project_id });
+      return;
+    }
+    if (this.permanentlyDisconnected) {
+      return;
+    }
+    if (!this.isCurrentRoutedHostState(host_id, state)) {
+      return;
+    }
+    if (
+      refreshed &&
+      (refreshed.address !== state.address ||
+        refreshed.host_session_id !== state.host_session_id)
+    ) {
+      this.invalidateProjectHostToken(host_id, {
+        resetFailureState: true,
+      });
+      this.removeRoutedHubClient(host_id, { expectedClient: state.client });
+      this.getOrCreateRoutedHubClient({
+        ...refreshed,
+        project_id,
+        project_ids: state.project_ids,
+      });
+      // Long-lived terminal/file sockets are attached to the main browser
+      // client and only rebuild when that client reconnects. Trigger that
+      // rebuild when the routed host endpoint/session changed.
+      this.scheduleRoutedHostRecovery();
+      return;
+    }
+    if (state.reconnectAttempts >= ROUTED_HOST_REBUILD_AFTER_ATTEMPTS) {
+      this.invalidateProjectHostToken(host_id);
+      this.removeRoutedHubClient(host_id, { expectedClient: state.client });
+      this.getOrCreateRoutedHubClient({
+        host_id,
+        address: refreshed?.address ?? state.address,
+        host_session_id: refreshed?.host_session_id ?? state.host_session_id,
+        project_id,
+        project_ids: state.project_ids,
+      });
+      return;
+    }
+    if (state.client.conn?.connected) {
+      return;
+    }
+    await this.connectRoutedHost({ host_id, state, project_id });
+  };
+
+  private scheduleRoutedHostReconnect = ({
+    host_id,
+    state,
+    project_id,
+  }: {
+    host_id: string;
+    state: RoutedHubClientState;
+    project_id?: string;
+  }): void => {
+    if (this.permanentlyDisconnected || state.reconnectTimer != null) {
+      return;
+    }
+    const delayMs =
+      ROUTED_HOST_RECONNECT_DELAYS_MS[
+        Math.min(
+          state.reconnectAttempts,
+          ROUTED_HOST_RECONNECT_DELAYS_MS.length - 1,
+        )
+      ];
+    state.reconnectAttempts += 1;
+    console.log(`scheduled routed host reconnect for ${host_id}`, {
+      host_id,
+      delayMs,
+      reconnectAttempts: state.reconnectAttempts,
+      host_session_id: state.host_session_id,
+    });
+    state.reconnectTimer = setTimeout(() => {
+      delete state.reconnectTimer;
+      void this.runRoutedHostReconnect({ host_id, state, project_id });
+    }, delayMs);
+  };
+
   // Mint a short-lived project-host auth token for ACP/Codex runtime use.
   // Returns undefined when this project is not project-host routed.
   public getProjectHostAcpBearer = async ({
@@ -1369,8 +1584,10 @@ export class ConatClient extends EventEmitter {
   // Project-host routing + auth design:
   // - docs/project-host-auth.md
   // - src/packages/server/conat/socketio/README.md
-  // This creates/reuses a direct browser->project-host Conat client and
-  // supplies short-lived host-scoped bearer tokens via socket.io auth.
+  // This creates/reuses a direct browser->project-host Conat client.
+  // In the steady state it reconnects using the host-local browser session;
+  // short-lived project-host tokens are only used to bootstrap that session
+  // or for ACP/Codex runtime use.
   private getOrCreateRoutedHubClient = ({
     host_id,
     address,
@@ -1401,111 +1618,6 @@ export class ConatClient extends EventEmitter {
     if (current) {
       this.removeRoutedHubClient(host_id);
     }
-    const reconnectRouted = () => {
-      if (this.permanentlyDisconnected) {
-        return;
-      }
-      if (state.reconnectTimer != null) {
-        return;
-      }
-      const delayMs =
-        ROUTED_HOST_RECONNECT_DELAYS_MS[
-          Math.min(
-            state.reconnectAttempts,
-            ROUTED_HOST_RECONNECT_DELAYS_MS.length - 1,
-          )
-        ];
-      state.reconnectAttempts += 1;
-      console.log(`scheduled routed host reconnect for ${host_id}`, {
-        host_id,
-        delayMs,
-        reconnectAttempts: state.reconnectAttempts,
-        host_session_id: state.host_session_id,
-      });
-      state.reconnectTimer = setTimeout(async () => {
-        delete state.reconnectTimer;
-        if (this.permanentlyDisconnected) {
-          return;
-        }
-        console.log(`running routed host reconnect for ${host_id}`, {
-          host_id,
-          reconnectAttempts: state.reconnectAttempts,
-          ...this.reconnectDebugContext(),
-        });
-        try {
-          await waitForOnline();
-        } catch {
-          console.warn(
-            `routed host reconnect for ${host_id} aborted while waiting for browser online`,
-          );
-          reconnectRouted();
-          return;
-        }
-        if (this.routedHubClients[host_id]?.client !== state.client) {
-          return;
-        }
-        console.log(`browser is online for routed host reconnect ${host_id}`, {
-          host_id,
-          reconnectAttempts: state.reconnectAttempts,
-        });
-        let refreshed:
-          | { host_id: string; address: string; host_session_id?: string }
-          | undefined;
-        try {
-          refreshed = await this.refreshHostRoutingInfo(host_id);
-        } catch (err) {
-          console.warn(
-            `failed refreshing routed host info for host ${host_id}; will retry`,
-            err,
-          );
-          reconnectRouted();
-          return;
-        }
-        if (this.permanentlyDisconnected) {
-          return;
-        }
-        if (this.routedHubClients[host_id]?.client !== state.client) {
-          return;
-        }
-        if (
-          refreshed &&
-          (refreshed.address !== state.address ||
-            refreshed.host_session_id !== state.host_session_id)
-        ) {
-          this.invalidateProjectHostToken(host_id, {
-            resetFailureState: true,
-          });
-          this.removeRoutedHubClient(host_id, { expectedClient: state.client });
-          this.getOrCreateRoutedHubClient({
-            ...refreshed,
-            project_id,
-            project_ids: state.project_ids,
-          });
-          // Long-lived terminal/file sockets are attached to the main browser
-          // client and only rebuild when that client reconnects. Trigger that
-          // rebuild when the routed host endpoint/session changed.
-          this.scheduleRoutedHostRecovery();
-          return;
-        }
-        if (state.reconnectAttempts >= ROUTED_HOST_REBUILD_AFTER_ATTEMPTS) {
-          this.invalidateProjectHostToken(host_id);
-          this.removeRoutedHubClient(host_id, { expectedClient: state.client });
-          this.getOrCreateRoutedHubClient({
-            host_id,
-            address: refreshed?.address ?? state.address,
-            host_session_id:
-              refreshed?.host_session_id ?? state.host_session_id,
-            project_id,
-            project_ids: state.project_ids,
-          });
-          return;
-        }
-        if (state.client.conn?.connected) {
-          return;
-        }
-        await connectRoutedWithFreshToken();
-      }, delayMs);
-    };
     const state: RoutedHubClientState = {
       address,
       host_session_id,
@@ -1519,83 +1631,6 @@ export class ConatClient extends EventEmitter {
         reconnection: false,
         forceNew: true,
       }),
-    };
-    const connectRoutedWithFreshToken = async (): Promise<boolean> => {
-      if (state.connectInFlight) {
-        return await state.connectInFlight;
-      }
-      const connectAttempt = (async (): Promise<boolean> => {
-        if (this.permanentlyDisconnected) {
-          return false;
-        }
-        if (this.routedHubClients[host_id]?.client !== state.client) {
-          return false;
-        }
-        if (state.client.conn?.connected) {
-          return true;
-        }
-        const authProjectId = this.pickTrackedProjectForHost(
-          host_id,
-          state,
-          project_id,
-        );
-        try {
-          await this.ensureProjectHostBrowserSession({
-            host_id,
-            address: state.address,
-            project_id: authProjectId,
-          });
-        } catch (err) {
-          if (!this.isProjectHostAuthBackoffError(err)) {
-            console.warn(
-              `failed preparing project-host browser session for host ${host_id}`,
-              err,
-            );
-          }
-          reconnectRouted();
-          return false;
-        }
-        if (this.permanentlyDisconnected) {
-          return false;
-        }
-        if (this.routedHubClients[host_id]?.client !== state.client) {
-          return false;
-        }
-        if (state.client.conn?.connected) {
-          return true;
-        }
-        if (PROJECT_HOST_BROWSER_SESSION_SETTLE_MS > 0) {
-          await delay(PROJECT_HOST_BROWSER_SESSION_SETTLE_MS);
-        }
-        try {
-          console.log(`calling connect() on routed host client ${host_id}`, {
-            host_id,
-            reconnectAttempts: state.reconnectAttempts,
-            address: state.address,
-            host_session_id: state.host_session_id,
-          });
-          const socket: any = state.client.conn;
-          if (typeof socket?.connect === "function") {
-            socket.connect();
-          } else {
-            state.client.connect();
-          }
-          return true;
-        } catch (err) {
-          console.warn(
-            `failed reconnecting routed hub client for host ${host_id}`,
-            err,
-          );
-          reconnectRouted();
-          return false;
-        }
-      })().finally(() => {
-        if (state.connectInFlight === connectAttempt) {
-          delete state.connectInFlight;
-        }
-      });
-      state.connectInFlight = connectAttempt;
-      return await connectAttempt;
     };
     state.client.on("connected", () => {
       console.log(`routed host connected ${host_id}`, {
@@ -1629,7 +1664,7 @@ export class ConatClient extends EventEmitter {
         address: state.address,
         host_session_id: state.host_session_id,
       });
-      reconnectRouted();
+      this.scheduleRoutedHostReconnect({ host_id, state, project_id });
     });
     state.client.conn.on("connect_error", (err) => {
       console.warn(`routed host connect_error ${host_id}`, {
@@ -1644,7 +1679,7 @@ export class ConatClient extends EventEmitter {
       if (this.isProjectHostAuthError(err)) {
         this.invalidateProjectHostToken(host_id);
       }
-      reconnectRouted();
+      this.scheduleRoutedHostReconnect({ host_id, state, project_id });
     });
     this.registerTrackedProjectForHost(host_id, state, project_id);
     if (project_ids) {
@@ -1653,7 +1688,7 @@ export class ConatClient extends EventEmitter {
       }
     }
     this.routedHubClients[host_id] = state;
-    void connectRoutedWithFreshToken();
+    void this.connectRoutedHost({ host_id, state, project_id });
     return state.client;
   };
 
