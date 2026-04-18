@@ -565,6 +565,32 @@ function formatUpgradePolicy(policy?: ManagedComponentUpgradePolicy): string {
   }
 }
 
+function componentModeDetails({
+  managed,
+  runningVersions,
+  runningPids,
+}: {
+  managed?: boolean;
+  runningVersions: string[];
+  runningPids: number[];
+}): { tag?: React.ReactNode; summary?: string; externallyManaged: boolean } {
+  if (managed !== false) {
+    return { externallyManaged: false };
+  }
+  if (runningVersions.length > 0 || runningPids.length > 0) {
+    return {
+      tag: <Tag>shared</Tag>,
+      summary: "shared with project-host",
+      externallyManaged: false,
+    };
+  }
+  return {
+    tag: <Tag>external</Tag>,
+    summary: "external endpoint",
+    externallyManaged: true,
+  };
+}
+
 const normalizeSpecValue = (
   key: keyof HostConfigSpec,
   value: HostConfigSpec[keyof HostConfigSpec],
@@ -1775,6 +1801,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   observedTarget?.enabled ?? observedComponent?.enabled;
                 const managed =
                   observedTarget?.managed ?? observedComponent?.managed;
+                const modeDetails = componentModeDetails({
+                  managed,
+                  runningVersions,
+                  runningPids,
+                });
                 const commands = cliCommandsForComponent({ host, component });
                 const expanded = !!expandedComponents[component];
                 return (
@@ -1790,8 +1821,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                     >
                       <Space wrap align="center">
                         <Typography.Text strong>{label}</Typography.Text>
-                        {runtimeStateTag(runtimeState)}
-                        {observedVersionStateTag(versionState)}
+                        {modeDetails.tag}
+                        {!modeDetails.externallyManaged &&
+                          runtimeStateTag(runtimeState)}
+                        {!modeDetails.externallyManaged &&
+                          observedVersionStateTag(versionState)}
                         {hasHostOverride && (
                           <Tag color="blue">host override</Tag>
                         )}
@@ -1806,12 +1840,17 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                       >
                         <Typography.Text type="secondary">
                           desired <code>{desiredVersion ?? "n/a"}</code> |
-                          current <code>{currentVersion ?? "n/a"}</code> |
-                          latest <code>{configured?.version ?? "unknown"}</code>
+                          current{" "}
+                          <code>
+                            {modeDetails.summary ?? currentVersion ?? "n/a"}
+                          </code>{" "}
+                          | latest{" "}
+                          <code>{configured?.version ?? "unknown"}</code>
                         </Typography.Text>
                         <Space wrap>
                           {canUpgrade &&
                             !host.deleted &&
+                            !modeDetails.externallyManaged &&
                             onSetRuntimeComponentDeployment &&
                             configured?.version && (
                               <Popconfirm
@@ -1845,6 +1884,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                             )}
                           {canUpgrade &&
                             !host.deleted &&
+                            !modeDetails.externallyManaged &&
                             onSetRuntimeComponentDeployment &&
                             hubVersion?.version && (
                               <Popconfirm
@@ -1900,6 +1940,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                             )}
                           {canUpgrade &&
                             !host.deleted &&
+                            !modeDetails.externallyManaged &&
                             onRollbackRuntimeComponent &&
                             rollbackVersion && (
                               <Popconfirm
@@ -1987,6 +2028,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               showIcon
                               message="This daemon is pinned by a host-specific override"
                               description={`Reason: ${formatRolloutReason(deployment?.rollout_reason)}. Use “Resume cluster default” to remove the override and inherit the fleet default again.`}
+                            />
+                          )}
+                          {modeDetails.externallyManaged && (
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="This component is using an external endpoint"
+                              description="This host is not running or observing a local daemon for this component, so the current runtime version is not available from host telemetry."
                             />
                           )}
                           {versionState === "missing" && (
