@@ -388,7 +388,11 @@ export const useHostsPageViewModel = () => {
   const runUpgrade = React.useCallback(
     async (
       host: Host,
-      opts?: { base_url?: string; artifacts?: HostSoftwareArtifact[] },
+      opts?: {
+        base_url?: string;
+        artifacts?: HostSoftwareArtifact[];
+        alignRuntimeStack?: boolean;
+      },
     ) => {
       if (!hub.hosts.upgradeHostSoftware) {
         return;
@@ -407,6 +411,7 @@ export const useHostsPageViewModel = () => {
             channel: "latest",
           })),
           ...(opts?.base_url ? { base_url: opts.base_url } : {}),
+          ...(opts?.alignRuntimeStack ? { align_runtime_stack: true } : {}),
         });
         trackHostOp(host.id, op);
         await refresh();
@@ -434,6 +439,12 @@ export const useHostsPageViewModel = () => {
   const upgradeHostSoftware = React.useCallback(
     async (host: Host) => {
       await runUpgrade(host);
+    },
+    [runUpgrade],
+  );
+  const upgradeAllHostSoftware = React.useCallback(
+    async (host: Host) => {
+      await runUpgrade(host, { alignRuntimeStack: true });
     },
     [runUpgrade],
   );
@@ -639,6 +650,16 @@ export const useHostsPageViewModel = () => {
     async (host: Host) => {
       if (!baseUrl) return;
       await runUpgrade(host, { base_url: `${baseUrl}/software` });
+    },
+    [baseUrl, runUpgrade],
+  );
+  const upgradeAllHostSoftwareFromHub = React.useCallback(
+    async (host: Host) => {
+      if (!baseUrl) return;
+      await runUpgrade(host, {
+        base_url: `${baseUrl}/software`,
+        alignRuntimeStack: true,
+      });
     },
     [baseUrl, runUpgrade],
   );
@@ -1454,8 +1475,10 @@ export const useHostsPageViewModel = () => {
     onEdit: openEdit,
     onDelete: (id: string, opts) => removeHost(id, opts),
     onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
+    onUpgradeAll: isAdmin ? upgradeAllHostSoftware : undefined,
     onReconcile: isAdmin ? reconcileHostSoftware : undefined,
     onUpgradeFromHub: isAdmin ? upgradeHostSoftwareFromHub : undefined,
+    onUpgradeAllFromHub: isAdmin ? upgradeAllHostSoftwareFromHub : undefined,
     onUpgradeArtifact: isAdmin ? upgradeHostArtifact : undefined,
     canUpgrade: isAdmin,
     onCancelOp: cancelHostOp,

@@ -26,6 +26,7 @@ import { conatPassword } from "@cocalc/backend/data";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
 import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
+import { resolveProjectHostBrowserSessionFromCookieHeader } from "./browser-session";
 
 const authDecisionCache = new TTL<string, boolean>({
   max: 20_000,
@@ -176,6 +177,23 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         throw new Error("invalid secret token for project");
       }
       return { project_id };
+    }
+    const browserSession = resolveProjectHostBrowserSessionFromCookieHeader(
+      socket?.handshake?.headers?.cookie,
+    );
+    if (browserSession) {
+      if (
+        isAccountSessionRevoked({
+          account_id: browserSession.account_id,
+          issued_at_s: browserSession.iat_s,
+        })
+      ) {
+        throw new Error("session revoked");
+      }
+      return {
+        account_id: browserSession.account_id,
+        auth_iat_s: browserSession.iat_s,
+      } satisfies CoCalcUser;
     }
     const token = readBearerToken(socket);
     const claims = verifyProjectHostAuthToken({

@@ -9,6 +9,7 @@ export function createBrowserSessionHeartbeat({
   retryBackoff = 2,
   retryJitter = 0.2,
   onWarn,
+  onFailure,
 }: {
   hub: HubApi;
   getSnapshot: () => Parameters<HubApi["system"]["upsertBrowserSession"]>[0];
@@ -18,6 +19,7 @@ export function createBrowserSessionHeartbeat({
   retryBackoff?: number;
   retryJitter?: number;
   onWarn?: (message: string) => void;
+  onFailure?: (err: unknown, consecutiveFailures: number) => void;
 }): {
   getAccountId: () => string | undefined;
   activate: (accountId: string) => void;
@@ -87,6 +89,7 @@ export function createBrowserSessionHeartbeat({
         }
         consecutiveFailures += 1;
         onWarn?.(`browser-session heartbeat failed: ${err}`);
+        onFailure?.(err, consecutiveFailures);
         schedule(nextRetryDelay());
       }
     }, delayMs);

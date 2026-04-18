@@ -25,8 +25,10 @@ type UseHostDrawerViewModelArgs = {
   onEdit: (host: Host) => void;
   onDelete?: (id: string, opts?: HostDeleteOptions) => void | Promise<void>;
   onUpgrade?: (host: Host) => void;
+  onUpgradeAll?: (host: Host) => void;
   onReconcile?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
+  onUpgradeAllFromHub?: (host: Host) => void;
   onUpgradeArtifact?: (opts: {
     host: Host;
     artifact: HostSoftwareArtifact;
@@ -134,8 +136,10 @@ export const useHostDrawerViewModel = ({
   onEdit,
   onDelete,
   onUpgrade,
+  onUpgradeAll,
   onReconcile,
   onUpgradeFromHub,
+  onUpgradeAllFromHub,
   onUpgradeArtifact,
   canUpgrade,
   onCancelOp,
@@ -164,8 +168,10 @@ export const useHostDrawerViewModel = ({
     onEdit,
     onDelete,
     onUpgrade,
+    onUpgradeAll,
     onReconcile,
     onUpgradeFromHub,
+    onUpgradeAllFromHub,
     onUpgradeArtifact,
     canUpgrade,
     onCancelOp,

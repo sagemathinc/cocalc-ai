@@ -18,6 +18,13 @@ import {
   legacyProjectHostCookiePath,
   projectCookiePath,
 } from "./http-proxy-cookies";
+import {
+  appendSetCookie,
+  buildProjectHostBrowserSessionCookie,
+  clearProjectHostBrowserSessionCookie,
+  createProjectHostBrowserSessionToken,
+  resolveProjectHostBrowserSessionFromCookieHeader,
+} from "./browser-session";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { getProjectHostAuthPublicKey } from "./auth-public-key";
 import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
@@ -108,19 +115,6 @@ function getAuthContext(
   req: IncomingMessage,
 ): AuthorizedAccountContext | undefined {
   return (req as any)[PROJECT_HOST_HTTP_AUTH_CONTEXT];
-}
-
-function appendSetCookie(res: ServerResponse, cookie: string): void {
-  const prev = res.getHeader("Set-Cookie");
-  if (!prev) {
-    res.setHeader("Set-Cookie", cookie);
-    return;
-  }
-  if (Array.isArray(prev)) {
-    res.setHeader("Set-Cookie", [...prev, cookie]);
-    return;
-  }
-  res.setHeader("Set-Cookie", [String(prev), cookie]);
 }
 
 function base64UrlEncode(value: string): string {
@@ -387,6 +381,19 @@ export function createProjectHostHttpProxyAuth({
     return session;
   };
 
+  const browserSessionAccountId = (
+    req: IncomingMessage,
+  ):
+    | {
+        account_id: string;
+        iat_s: number;
+      }
+    | undefined => {
+    return resolveProjectHostBrowserSessionFromCookieHeader(
+      req.headers.cookie as string | undefined,
+    );
+  };
+
   const clearSessionCookie = (
     req: IncomingMessage,
     res: ServerResponse,
@@ -406,6 +413,7 @@ export function createProjectHostHttpProxyAuth({
         path: legacyProjectHostCookiePath(),
       }),
     );
+    clearProjectHostBrowserSessionCookie({ req, res });
   };
 
   const setSessionCookie = (
@@ -425,6 +433,13 @@ export function createProjectHostHttpProxyAuth({
     appendSetCookie(
       res,
       buildProjectHostSessionCookie({ req, sessionToken, project_id }),
+    );
+    appendSetCookie(
+      res,
+      buildProjectHostBrowserSessionCookie({
+        req,
+        sessionToken: createProjectHostBrowserSessionToken({ account_id }),
+      }),
     );
   };
 
@@ -462,6 +477,27 @@ export function createProjectHostHttpProxyAuth({
     res: ServerResponse,
     project_id: string,
   ) => {
+    const accountFromBrowserSession = browserSessionAccountId(req);
+    if (accountFromBrowserSession) {
+      try {
+        assertNotRevoked({
+          account_id: accountFromBrowserSession.account_id,
+          issued_at_s: accountFromBrowserSession.iat_s,
+        });
+      } catch (err) {
+        clearSessionCookie(req, res, project_id);
+        throw err;
+      }
+      authorizeAccountForProject({
+        account_id: accountFromBrowserSession.account_id,
+        project_id,
+      });
+      setAuthContext(req, {
+        account_id: accountFromBrowserSession.account_id,
+        issued_at_s: accountFromBrowserSession.iat_s,
+      });
+      return;
+    }
     const accountFromSession = sessionAccountId(req);
     if (accountFromSession) {
       try {

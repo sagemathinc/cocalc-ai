@@ -28,6 +28,7 @@ import { createProxyHandlers } from "@cocalc/project-proxy/proxy";
 import { createProjectHostConatAuth } from "./conat-auth";
 
 const logger = getLogger("project-host:conat-router");
+const PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME = "cocalc_project_host_session";
 
 function parsePositiveInteger(
   raw: string | undefined,
@@ -373,6 +374,7 @@ export function attachProjectHostConatRouterProxy({
   const { handleRequest, handleUpgrade } = createProxyHandlers({
     resolveTarget: () => ({ handled: true, target: proxyTarget }),
     rewriteRequest,
+    preserveCookieNames: [PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME],
   });
   logger.info("project-host conat router proxy enabled", {
     target,

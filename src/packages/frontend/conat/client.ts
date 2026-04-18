@@ -1,5 +1,6 @@
 import { redux } from "@cocalc/frontend/app-framework";
 import type { WebappClient } from "@cocalc/frontend/client/client";
+import { withTimeout } from "@cocalc/util/async-utils";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
   type ConatSyncTable,
@@ -9,6 +10,7 @@ import { randomId, inboxPrefix } from "@cocalc/conat/names";
 import { projectSubject } from "@cocalc/conat/names";
 import { parseQueryWithOptions } from "@cocalc/sync/table/util";
 import { type HubApi, initHubApi } from "@cocalc/conat/hub/api";
+import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import { type ProjectApi, projectApiClient } from "@cocalc/conat/project/api";
 import { isValidUUID } from "@cocalc/util/misc";
 import { handleErrorMessage } from "@cocalc/conat/util";
@@ -64,6 +66,7 @@ import {
   setRememberMe,
 } from "@cocalc/frontend/misc/remember-me";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
+import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
 import {
   get as getLroStream,
   waitForCompletion as waitForLroCompletion,
@@ -145,10 +148,15 @@ const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK = new Set<string>([
   "projects.chatStoreVacuum",
 ]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
-const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [3_000, 10_000, 30_000] as const;
+const PROJECT_HOST_AUTH_TIMEOUT_MS = 4_000;
+const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [1_000, 3_000, 7_000] as const;
+const PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS = 5_000;
+const PROJECT_HOST_BROWSER_SESSION_SETTLE_MS = 100;
+const ROUTED_HOST_RECONNECT_DELAYS_MS = [750, 2_000, 5_000] as const;
 const ROUTED_HOST_REBUILD_AFTER_ATTEMPTS = 3;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
 const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
+const STALE_HUB_FORCE_RECONNECT_GRACE_MS = 5_000;
 const EMPTY_CONNECTION_STATS: ConnectionStats = {
   send: { messages: 0, bytes: 0 },
   recv: { messages: 0, bytes: 0 },
@@ -161,6 +169,7 @@ type RoutedHubClientState = {
   last_project_id?: string;
   client: ReturnType<typeof connectToConat>;
   reconnectTimer?: ReturnType<typeof setTimeout>;
+  connectInFlight?: Promise<boolean>;
   reconnectAttempts: number;
 };
 
@@ -174,6 +183,12 @@ type ProjectHostTokenState = {
   lastProjectId?: string;
 };
 
+type ProjectHostBrowserSessionState = {
+  address?: string;
+  establishedAt?: number;
+  inFlight?: Promise<void>;
+};
+
 export class ConatClient extends EventEmitter {
   client: WebappClient;
   public hub: HubApi;
@@ -182,15 +197,77 @@ export class ConatClient extends EventEmitter {
   private _conatClient: null | ReturnType<typeof connectToConat>;
   private routedHubClients: { [host_id: string]: RoutedHubClientState } = {};
   private projectHostTokens: { [host_id: string]: ProjectHostTokenState } = {};
+  private projectHostBrowserSessions: {
+    [host_id: string]: ProjectHostBrowserSessionState;
+  } = {};
   private routedHostRecoveryTimer?: ReturnType<typeof setTimeout>;
   private browserSessionAutomation: BrowserSessionAutomation;
   private reconnectCoordinator: ReconnectCoordinator;
+  private lastHealthyHubResponseAt = 0;
   private lastBackgroundAt?: number;
   private foregroundWakeRecovery?: Promise<void>;
+  private staleHubProbe?: Promise<void>;
   public numConnectionAttempts = 0;
   private automaticallyReconnect;
   public address: string;
   private remote: boolean;
+  private reconnectDebugContext = () => ({
+    online:
+      typeof navigator === "undefined" ? undefined : navigator.onLine !== false,
+    visibility:
+      typeof document === "undefined" ? undefined : document.visibilityState,
+    focused:
+      typeof document === "undefined" || typeof document.hasFocus !== "function"
+        ? undefined
+        : document.hasFocus(),
+    automaticallyReconnect: !!this.automaticallyReconnect,
+    hubConnected: !!this._conatClient?.conn?.connected,
+    routedHosts: Object.entries(this.routedHubClients).map(
+      ([host_id, state]) => ({
+        host_id,
+        connected: !!state.client?.conn?.connected,
+        reconnecting: state.reconnectTimer != null,
+        reconnectAttempts: state.reconnectAttempts,
+        host_session_id: state.host_session_id,
+        project_ids: Array.from(state.project_ids),
+      }),
+    ),
+  });
+  private browserOnlinePriority = (): ReconnectPriority => {
+    if (typeof document === "undefined") {
+      return "foreground";
+    }
+    return document.visibilityState === "hidden" ? "background" : "foreground";
+  };
+  private readonly browserOnlineHandler = () => {
+    const priority = this.browserOnlinePriority();
+    console.log("browser online event", {
+      priority,
+      tabPriority: this.tabReconnectPriority(),
+      ...this.reconnectDebugContext(),
+    });
+    if (this.permanentlyDisconnected || !this.automaticallyReconnect) {
+      return;
+    }
+    if (
+      priority === "foreground" &&
+      Object.keys(this.routedHubClients).length > 0
+    ) {
+      console.log(
+        "browser online event; forcing reconnect to rebuild routed host connections",
+      );
+      this.reconnect();
+      return;
+    }
+    this.requestReconnect({
+      reason: "browser_online",
+      priority,
+      resetBackoff: true,
+    });
+  };
+  private readonly browserOfflineHandler = () => {
+    console.warn("browser offline event", this.reconnectDebugContext());
+  };
   private readonly foregroundWakeHandler = () => {
     if (this.tabReconnectPriority() !== "foreground") {
       this.lastBackgroundAt = Date.now();
@@ -243,6 +320,8 @@ export class ConatClient extends EventEmitter {
       document.addEventListener("visibilitychange", this.foregroundWakeHandler);
       window.addEventListener("focus", this.foregroundWakeHandler);
       window.addEventListener("blur", this.foregroundWakeHandler);
+      window.addEventListener("online", this.browserOnlineHandler);
+      window.addEventListener("offline", this.browserOfflineHandler);
     }
   }
 
@@ -491,6 +570,8 @@ export class ConatClient extends EventEmitter {
         reconnection: false,
       });
       this._conatClient.on("connected", () => {
+        console.log("hub transport connected", this.reconnectDebugContext());
+        this.noteHealthyHubResponse();
         this.reconnectCoordinator.noteConnected();
         this.browserSessionAutomation.noteConnected?.();
         this.setConnectionStatus({
@@ -503,6 +584,11 @@ export class ConatClient extends EventEmitter {
         this.automaticallyReconnect = true;
       });
       this._conatClient.on("disconnected", (reason, details) => {
+        console.warn("hub transport disconnected", {
+          reason,
+          details,
+          ...this.reconnectDebugContext(),
+        });
         this.browserSessionAutomation.noteDisconnected?.();
         this.setConnectionStatus({
           state: "disconnected",
@@ -519,6 +605,10 @@ export class ConatClient extends EventEmitter {
         }
       });
       this._conatClient.conn.on("connect_error", (err) => {
+        console.warn("hub transport connect_error", {
+          err,
+          ...this.reconnectDebugContext(),
+        });
         this.browserSessionAutomation.noteDisconnected?.();
         if (!this.automaticallyReconnect) {
           return;
@@ -689,15 +779,56 @@ export class ConatClient extends EventEmitter {
   ): Promise<
     undefined | { host_id: string; address: string; host_session_id?: string }
   > => {
-    await redux.getActions("projects")?.ensure_host_info(host_id, true);
-    return this.getHostRoutingInfo(host_id);
+    console.log(`refreshing routed host info for ${host_id}`, {
+      host_id,
+      ...this.reconnectDebugContext(),
+    });
+    try {
+      await withTimeout(
+        Promise.resolve(
+          redux.getActions("projects")?.ensure_host_info(host_id, true),
+        ),
+        PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS,
+      );
+      const routing = this.getHostRoutingInfo(host_id);
+      if (routing) {
+        console.log(`refreshed routed host info for ${host_id}`, routing);
+        return routing;
+      }
+    } catch (err) {
+      console.warn(
+        `cached host-info refresh for ${host_id} timed out or failed; resolving directly`,
+        err,
+      );
+    }
+    const direct = (await this.callHub({
+      name: "hosts.resolveHostConnection",
+      args: [{ host_id }],
+      timeout: PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS,
+    })) as HostConnectionInfo | undefined;
+    const routing = direct?.connect_url
+      ? {
+          host_id,
+          address: direct.connect_url,
+          host_session_id: direct.host_session_id,
+        }
+      : undefined;
+    console.log(`refreshed routed host info for ${host_id}`, {
+      direct: true,
+      routing,
+    });
+    return routing;
   };
 
   private isProjectHostAuthError = (err: any): boolean => {
     const mesg = `${err?.message ?? ""}`.toLowerCase();
     return (
+      mesg.includes("failed to sign in") ||
       mesg.includes("missing project-host bearer token") ||
       mesg.includes("project-host auth token") ||
+      mesg.includes("project-host browser session") ||
+      mesg.includes("session revoked") ||
+      mesg.includes("authentication failures from") ||
       mesg.includes("jwt") ||
       mesg.includes("unauthorized")
     );
@@ -705,6 +836,83 @@ export class ConatClient extends EventEmitter {
 
   private isProjectHostAuthBackoffError = (err: any): boolean => {
     return !!err?.projectHostAuthBackoff;
+  };
+
+  private isTimeoutLikeError = (err: any): boolean => {
+    const code = `${err?.code ?? ""}`.trim();
+    const message = `${err?.message ?? err ?? ""}`.toLowerCase();
+    return (
+      code === "408" ||
+      message.includes("timeout") ||
+      message.includes("timed out")
+    );
+  };
+
+  private noteHealthyHubResponse = (): void => {
+    this.lastHealthyHubResponseAt = Date.now();
+  };
+
+  private maybeProbeStaleHubTransport = (reason: string, err: any): void => {
+    if (this.staleHubProbe != null || this.permanentlyDisconnected) {
+      return;
+    }
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      return;
+    }
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "hidden"
+    ) {
+      return;
+    }
+    if (!this._conatClient?.conn?.connected || !this.client.account_id) {
+      return;
+    }
+    const subject = `hub.account.${this.client.account_id}.api`;
+    this.staleHubProbe = (async () => {
+      try {
+        console.warn(`probing stale hub transport after ${reason}`, {
+          reason,
+          err,
+          ...this.reconnectDebugContext(),
+        });
+        await this._conatClient!.request(
+          subject,
+          { name: "system.ping", args: [] },
+          { timeout: 2_000 },
+        );
+        console.warn(`stale hub transport probe succeeded after ${reason}`);
+        this.noteHealthyHubResponse();
+      } catch (probeErr) {
+        if (
+          this.permanentlyDisconnected ||
+          (typeof navigator !== "undefined" && navigator.onLine === false) ||
+          (typeof document !== "undefined" &&
+            document.visibilityState === "hidden") ||
+          !this._conatClient?.conn?.connected
+        ) {
+          return;
+        }
+        const healthyAgeMs = Date.now() - this.lastHealthyHubResponseAt;
+        if (
+          this.lastHealthyHubResponseAt > 0 &&
+          healthyAgeMs < STALE_HUB_FORCE_RECONNECT_GRACE_MS
+        ) {
+          console.warn(
+            `stale hub transport probe failed after ${reason}, but recent hub traffic succeeded ${healthyAgeMs}ms ago; skipping forced reconnect`,
+            probeErr,
+          );
+          return;
+        }
+        console.warn(
+          `stale hub transport probe failed after ${reason}; forcing reconnect`,
+          probeErr,
+        );
+        this.reconnect();
+      } finally {
+        this.staleHubProbe = undefined;
+      }
+    })();
   };
 
   private projectHostTokenBackoffMs = (failureCount: number): number => {
@@ -745,6 +953,16 @@ export class ConatClient extends EventEmitter {
     if (resetFailureState) {
       delete this.projectHostTokens[host_id];
     }
+  };
+
+  private invalidateProjectHostBrowserSession = (host_id: string) => {
+    const state = this.projectHostBrowserSessions[host_id];
+    if (!state) {
+      return;
+    }
+    delete state.address;
+    delete state.establishedAt;
+    delete state.inFlight;
   };
 
   private getOpenProjectIdsForHost = (host_id: string): Set<string> => {
@@ -920,18 +1138,36 @@ export class ConatClient extends EventEmitter {
       state.lastProjectId = project_id;
     }
     if (state.inFlight) {
+      console.log(
+        `waiting for in-flight project-host auth token for ${host_id}`,
+        {
+          host_id,
+          project_id: project_id ?? state.lastProjectId,
+        },
+      );
       return await state.inFlight;
     }
     if (state.retryAfter != null && now < state.retryAfter) {
+      console.warn(`project-host auth token cooldown active for ${host_id}`, {
+        host_id,
+        project_id: project_id ?? state.lastProjectId,
+        retryAfter: state.retryAfter,
+        failureCount: state.failureCount,
+      });
       throw this.getProjectHostTokenCooldownError(state);
     }
     const authProjectId = project_id ?? state.lastProjectId;
+    console.log(`requesting project-host auth token for ${host_id}`, {
+      host_id,
+      project_id: authProjectId,
+      failureCount: state.failureCount ?? 0,
+    });
     const request = (
       this.callHub({
         service: "api",
         name: "hosts.issueProjectHostAuthToken",
         args: [{ host_id, project_id: authProjectId }],
-        timeout: DEFAULT_TIMEOUT,
+        timeout: PROJECT_HOST_AUTH_TIMEOUT_MS,
       }) as Promise<{ token: string; expires_at: number }>
     )
       .then(({ token, expires_at }) => {
@@ -940,6 +1176,11 @@ export class ConatClient extends EventEmitter {
         state!.failureCount = 0;
         delete state!.retryAfter;
         delete state!.lastError;
+        console.log(`received project-host auth token for ${host_id}`, {
+          host_id,
+          project_id: authProjectId,
+          expires_at,
+        });
         return token;
       })
       .catch((err) => {
@@ -949,6 +1190,13 @@ export class ConatClient extends EventEmitter {
         state!.retryAfter =
           Date.now() + this.projectHostTokenBackoffMs(state!.failureCount);
         state!.lastError = err;
+        console.warn(`project-host auth token request failed for ${host_id}`, {
+          host_id,
+          project_id: authProjectId,
+          failureCount: state!.failureCount,
+          retryAfter: state!.retryAfter,
+          err,
+        });
         throw err;
       })
       .finally(() => {
@@ -956,6 +1204,77 @@ export class ConatClient extends EventEmitter {
           delete state.inFlight;
         }
       });
+    state.inFlight = request;
+    return await request;
+  };
+
+  private ensureProjectHostBrowserSession = async ({
+    host_id,
+    address,
+    project_id,
+  }: {
+    host_id: string;
+    address: string;
+    project_id?: string;
+  }): Promise<void> => {
+    let state = this.projectHostBrowserSessions[host_id];
+    if (!state) {
+      state = {};
+      this.projectHostBrowserSessions[host_id] = state;
+    }
+    if (state.address === address && state.establishedAt != null) {
+      return;
+    }
+    if (state.inFlight) {
+      return await state.inFlight;
+    }
+    const request = (async () => {
+      const routedState = this.routedHubClients[host_id];
+      const authProjectId =
+        project_id ??
+        (routedState
+          ? this.pickTrackedProjectForHost(host_id, routedState)
+          : undefined);
+      const token = await this.getProjectHostToken({
+        host_id,
+        project_id: authProjectId,
+      });
+      const url = new URL(
+        PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH,
+        address,
+      ).toString();
+      console.log(`bootstrapping project-host browser session for ${host_id}`, {
+        host_id,
+        project_id: authProjectId,
+        address,
+      });
+      const response = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        this.invalidateProjectHostToken(host_id);
+        this.invalidateProjectHostBrowserSession(host_id);
+        const message = await response.text().catch(() => "");
+        throw new Error(
+          `project-host browser session bootstrap failed: status=${response.status}${message ? ` body=${message}` : ""}`,
+        );
+      }
+      state!.address = address;
+      state!.establishedAt = Date.now();
+      console.log(`bootstrapped project-host browser session for ${host_id}`, {
+        host_id,
+        project_id: authProjectId,
+        address,
+      });
+    })().finally(() => {
+      if (state?.inFlight === request) {
+        delete state.inFlight;
+      }
+    });
     state.inFlight = request;
     return await request;
   };
@@ -1089,19 +1408,59 @@ export class ConatClient extends EventEmitter {
       if (state.reconnectTimer != null) {
         return;
       }
-      const delays = [1_000, 3_500, 10_000];
       const delayMs =
-        delays[Math.min(state.reconnectAttempts, delays.length - 1)];
+        ROUTED_HOST_RECONNECT_DELAYS_MS[
+          Math.min(
+            state.reconnectAttempts,
+            ROUTED_HOST_RECONNECT_DELAYS_MS.length - 1,
+          )
+        ];
       state.reconnectAttempts += 1;
+      console.log(`scheduled routed host reconnect for ${host_id}`, {
+        host_id,
+        delayMs,
+        reconnectAttempts: state.reconnectAttempts,
+        host_session_id: state.host_session_id,
+      });
       state.reconnectTimer = setTimeout(async () => {
         delete state.reconnectTimer;
         if (this.permanentlyDisconnected) {
           return;
         }
+        console.log(`running routed host reconnect for ${host_id}`, {
+          host_id,
+          reconnectAttempts: state.reconnectAttempts,
+          ...this.reconnectDebugContext(),
+        });
+        try {
+          await waitForOnline();
+        } catch {
+          console.warn(
+            `routed host reconnect for ${host_id} aborted while waiting for browser online`,
+          );
+          reconnectRouted();
+          return;
+        }
         if (this.routedHubClients[host_id]?.client !== state.client) {
           return;
         }
-        const refreshed = await this.refreshHostRoutingInfo(host_id);
+        console.log(`browser is online for routed host reconnect ${host_id}`, {
+          host_id,
+          reconnectAttempts: state.reconnectAttempts,
+        });
+        let refreshed:
+          | { host_id: string; address: string; host_session_id?: string }
+          | undefined;
+        try {
+          refreshed = await this.refreshHostRoutingInfo(host_id);
+        } catch (err) {
+          console.warn(
+            `failed refreshing routed host info for host ${host_id}; will retry`,
+            err,
+          );
+          reconnectRouted();
+          return;
+        }
         if (this.permanentlyDisconnected) {
           return;
         }
@@ -1117,14 +1476,11 @@ export class ConatClient extends EventEmitter {
             resetFailureState: true,
           });
           this.removeRoutedHubClient(host_id, { expectedClient: state.client });
-          const replacement = this.getOrCreateRoutedHubClient({
+          this.getOrCreateRoutedHubClient({
             ...refreshed,
             project_id,
             project_ids: state.project_ids,
           });
-          if (!replacement.conn?.connected) {
-            replacement.connect();
-          }
           // Long-lived terminal/file sockets are attached to the main browser
           // client and only rebuild when that client reconnects. Trigger that
           // rebuild when the routed host endpoint/session changed.
@@ -1134,7 +1490,7 @@ export class ConatClient extends EventEmitter {
         if (state.reconnectAttempts >= ROUTED_HOST_REBUILD_AFTER_ATTEMPTS) {
           this.invalidateProjectHostToken(host_id);
           this.removeRoutedHubClient(host_id, { expectedClient: state.client });
-          const replacement = this.getOrCreateRoutedHubClient({
+          this.getOrCreateRoutedHubClient({
             host_id,
             address: refreshed?.address ?? state.address,
             host_session_id:
@@ -1142,23 +1498,12 @@ export class ConatClient extends EventEmitter {
             project_id,
             project_ids: state.project_ids,
           });
-          if (!replacement.conn?.connected) {
-            replacement.connect();
-          }
           return;
         }
         if (state.client.conn?.connected) {
           return;
         }
-        try {
-          state.client.connect();
-        } catch (err) {
-          console.warn(
-            `failed reconnecting routed hub client for host ${host_id}`,
-            err,
-          );
-          reconnectRouted();
-        }
+        await connectRoutedWithFreshToken();
       }, delayMs);
     };
     const state: RoutedHubClientState = {
@@ -1169,48 +1514,136 @@ export class ConatClient extends EventEmitter {
       client: connectToConat({
         address,
         inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
-        auth: (cb) => {
-          const authProjectId = this.pickTrackedProjectForHost(
-            host_id,
-            state,
-            project_id,
-          );
-          void this.getProjectHostToken({
-            host_id,
-            project_id: authProjectId,
-          })
-            .then((token) => {
-              cb({ bearer: token });
-            })
-            .catch((err) => {
-              this.invalidateProjectHostToken(host_id);
-              reconnectRouted();
-              if (!this.isProjectHostAuthBackoffError(err)) {
-                console.warn(
-                  `failed issuing project-host auth token for host ${host_id}`,
-                  err,
-                );
-              }
-              cb({});
-            });
-        },
+        autoConnect: false,
+        withCredentials: true,
         reconnection: false,
         forceNew: true,
       }),
     };
+    const connectRoutedWithFreshToken = async (): Promise<boolean> => {
+      if (state.connectInFlight) {
+        return await state.connectInFlight;
+      }
+      const connectAttempt = (async (): Promise<boolean> => {
+        if (this.permanentlyDisconnected) {
+          return false;
+        }
+        if (this.routedHubClients[host_id]?.client !== state.client) {
+          return false;
+        }
+        if (state.client.conn?.connected) {
+          return true;
+        }
+        const authProjectId = this.pickTrackedProjectForHost(
+          host_id,
+          state,
+          project_id,
+        );
+        try {
+          await this.ensureProjectHostBrowserSession({
+            host_id,
+            address: state.address,
+            project_id: authProjectId,
+          });
+        } catch (err) {
+          if (!this.isProjectHostAuthBackoffError(err)) {
+            console.warn(
+              `failed preparing project-host browser session for host ${host_id}`,
+              err,
+            );
+          }
+          reconnectRouted();
+          return false;
+        }
+        if (this.permanentlyDisconnected) {
+          return false;
+        }
+        if (this.routedHubClients[host_id]?.client !== state.client) {
+          return false;
+        }
+        if (state.client.conn?.connected) {
+          return true;
+        }
+        if (PROJECT_HOST_BROWSER_SESSION_SETTLE_MS > 0) {
+          await delay(PROJECT_HOST_BROWSER_SESSION_SETTLE_MS);
+        }
+        try {
+          console.log(`calling connect() on routed host client ${host_id}`, {
+            host_id,
+            reconnectAttempts: state.reconnectAttempts,
+            address: state.address,
+            host_session_id: state.host_session_id,
+          });
+          const socket: any = state.client.conn;
+          if (typeof socket?.connect === "function") {
+            socket.connect();
+          } else {
+            state.client.connect();
+          }
+          return true;
+        } catch (err) {
+          console.warn(
+            `failed reconnecting routed hub client for host ${host_id}`,
+            err,
+          );
+          reconnectRouted();
+          return false;
+        }
+      })().finally(() => {
+        if (state.connectInFlight === connectAttempt) {
+          delete state.connectInFlight;
+        }
+      });
+      state.connectInFlight = connectAttempt;
+      return await connectAttempt;
+    };
     state.client.on("connected", () => {
+      console.log(`routed host connected ${host_id}`, {
+        host_id,
+        address: state.address,
+        host_session_id: state.host_session_id,
+      });
       state.reconnectAttempts = 0;
       if (state.reconnectTimer != null) {
         clearTimeout(state.reconnectTimer);
         delete state.reconnectTimer;
       }
     });
-    state.client.on("disconnected", () => {
+    state.client.on("info", (info) => {
+      const error = `${info?.user?.error ?? ""}`.trim();
+      if (!error || !this.isProjectHostAuthError({ message: error })) {
+        return;
+      }
+      console.warn(`routed host sign-in auth failure ${host_id}`, {
+        host_id,
+        address: state.address,
+        host_session_id: state.host_session_id,
+        error,
+      });
+      this.invalidateProjectHostBrowserSession(host_id);
       this.invalidateProjectHostToken(host_id);
+    });
+    state.client.on("disconnected", () => {
+      console.warn(`routed host disconnected ${host_id}`, {
+        host_id,
+        address: state.address,
+        host_session_id: state.host_session_id,
+      });
       reconnectRouted();
     });
-    state.client.conn.on("connect_error", (_err) => {
-      this.invalidateProjectHostToken(host_id);
+    state.client.conn.on("connect_error", (err) => {
+      console.warn(`routed host connect_error ${host_id}`, {
+        host_id,
+        address: state.address,
+        host_session_id: state.host_session_id,
+        err,
+      });
+      if (this.isProjectHostAuthError(err)) {
+        this.invalidateProjectHostBrowserSession(host_id);
+      }
+      if (this.isProjectHostAuthError(err)) {
+        this.invalidateProjectHostToken(host_id);
+      }
       reconnectRouted();
     });
     this.registerTrackedProjectForHost(host_id, state, project_id);
@@ -1220,6 +1653,7 @@ export class ConatClient extends EventEmitter {
       }
     }
     this.routedHubClients[host_id] = state;
+    void connectRoutedWithFreshToken();
     return state.client;
   };
 
@@ -1357,6 +1791,7 @@ export class ConatClient extends EventEmitter {
     if (this.permanentlyDisconnected) {
       return;
     }
+    console.warn("manual reconnect requested", this.reconnectDebugContext());
     this.reconnectCoordinator.prepareForTransportRestart();
     void this.browserSessionAutomation.stop();
     if (this.routedHostRecoveryTimer != null) {
@@ -1401,6 +1836,12 @@ export class ConatClient extends EventEmitter {
     if (this.permanentlyDisconnected) {
       return;
     }
+    console.log("requestReconnect", {
+      reason,
+      priority,
+      resetBackoff,
+      ...this.reconnectDebugContext(),
+    });
     this.automaticallyReconnect = true;
     this.reconnectCoordinator.requestReconnect({
       reason,
@@ -1549,6 +1990,9 @@ export class ConatClient extends EventEmitter {
     try {
       const data = { name, args };
       const resp = await cn.request(subject, data, { timeout });
+      if (!routeToProjectHost) {
+        this.noteHealthyHubResponse();
+      }
       return resp.data;
     } catch (err) {
       if (routeToProjectHost && project_id) {
@@ -1566,11 +2010,15 @@ export class ConatClient extends EventEmitter {
               { name, args },
               { timeout },
             );
+            this.noteHealthyHubResponse();
             return retryResp.data;
           } catch (retryErr) {
             err = retryErr;
           }
         }
+      }
+      if (!routeToProjectHost && this.isTimeoutLikeError(err)) {
+        this.maybeProbeStaleHubTransport(`callHub:${name}`, err);
       }
       try {
         err.message = `${err.message} - callHub: subject='${subject}', name='${name}', code='${err.code}'`;
@@ -1926,7 +2374,7 @@ export class ConatClient extends EventEmitter {
 }
 
 async function waitForOnline(): Promise<void> {
-  if (navigator.onLine) return;
+  if (typeof navigator === "undefined" || navigator.onLine !== false) return;
   await new Promise<void>((resolve) => {
     const handler = () => {
       window.removeEventListener("online", handler);
