@@ -146,6 +146,10 @@ type HostDrawerViewModel = {
     version?: string;
     last_known_good?: boolean;
   }) => void | Promise<void>;
+  onRestartRuntimeComponent?: (opts: {
+    host: Host;
+    component: ManagedComponentKind;
+  }) => void | Promise<void>;
   onResumeRuntimeComponentClusterDefault?: (opts: {
     host: Host;
     component: ManagedComponentKind;
@@ -379,6 +383,7 @@ function cliCommandsForArtifact({
   artifact: HostRuntimeArtifact;
 }): string[] {
   return [
+    `cocalc host deploy`,
     `cocalc host deploy status ${host.id}`,
     `cocalc host deploy set --host ${host.id} --artifact ${artifact} --desired-version <version>`,
     `cocalc host deploy rollback ${host.id} --artifact ${artifact} --last-known-good`,
@@ -566,7 +571,9 @@ function cliCommandsForComponent({
   component: ManagedComponentKind;
 }): string[] {
   return [
+    `cocalc host deploy`,
     `cocalc host deploy status ${host.id}`,
+    `cocalc host deploy restart ${host.id} --component ${component} --wait`,
     `cocalc host deploy set --host ${host.id} --component ${component} --desired-version <version>`,
     `cocalc host deploy rollback ${host.id} --component ${component} --last-known-good`,
     `cocalc host deploy rollback ${host.id} --component ${component} --to-version <version>`,
@@ -730,6 +737,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     onResumeRuntimeArtifactClusterDefault,
     onSetRuntimeComponentDeployment,
     onRollbackRuntimeComponent,
+    onRestartRuntimeComponent,
     onResumeRuntimeComponentClusterDefault,
     rootfsInventory,
     canManageRootfs,
@@ -2134,6 +2142,35 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               >
                                 <Button size="small" disabled={hostOpActive}>
                                   Resume cluster default
+                                </Button>
+                              </Popconfirm>
+                            )}
+                          {canUpgrade &&
+                            !host.deleted &&
+                            !modeDetails.externallyManaged &&
+                            onRestartRuntimeComponent && (
+                              <Popconfirm
+                                title={`Restart ${label.toLowerCase()} on this host?`}
+                                description="This restarts the currently desired version without changing desired state."
+                                okText="Restart"
+                                cancelText="Cancel"
+                                onConfirm={() =>
+                                  onRestartRuntimeComponent({
+                                    host,
+                                    component,
+                                  })
+                                }
+                                disabled={
+                                  hostOpActive || host.status !== "running"
+                                }
+                              >
+                                <Button
+                                  size="small"
+                                  disabled={
+                                    hostOpActive || host.status !== "running"
+                                  }
+                                >
+                                  Restart
                                 </Button>
                               </Popconfirm>
                             )}
