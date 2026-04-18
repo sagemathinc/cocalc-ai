@@ -79,6 +79,7 @@ export class ConatSocketClient extends ConatSocketBase {
         }),
       disconnect: this.disconnect,
       keepAlive: this.keepAlive,
+      scheduler: this.client.heartbeatScheduler,
     });
   };
 

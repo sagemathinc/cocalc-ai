@@ -1,12 +1,23 @@
 import { type Role } from "./util";
+import type {
+  HeartbeatScheduler,
+  RegisteredHeartbeatProbe,
+} from "@cocalc/conat/recovery/heartbeat-scheduler";
 
 export function keepAlive(opts: {
   role: Role;
   ping: () => Promise<any>;
   disconnect: () => void;
   keepAlive: number;
+  scheduler?: HeartbeatScheduler;
 }) {
-  return new KeepAlive(opts.ping, opts.disconnect, opts.keepAlive, opts.role);
+  return new KeepAlive(
+    opts.ping,
+    opts.disconnect,
+    opts.keepAlive,
+    opts.role,
+    opts.scheduler,
+  );
 }
 
 export class KeepAlive {
@@ -14,6 +25,7 @@ export class KeepAlive {
   private state: "ready" | "paused" | "closed" = "ready";
   private sleepTimer?: ReturnType<typeof setTimeout>;
   private sleepResolve?: () => void;
+  private registration?: RegisteredHeartbeatProbe;
 
   constructor(
     private ping: () => Promise<any>,
@@ -21,8 +33,29 @@ export class KeepAlive {
     private keepAlive: number,
     // @ts-ignore
     private role: Role,
+    private scheduler?: HeartbeatScheduler,
   ) {
-    this.run();
+    if (this.scheduler == null) {
+      this.run();
+      return;
+    }
+    this.registration = this.scheduler.registerProbe({
+      canPing: () => this.state == "ready",
+      nextDueAt: () =>
+        this.state == "ready" ? this.last + this.keepAlive : undefined,
+      ping: async () => {
+        await this.ping?.();
+      },
+      onPingSuccess: () => {
+        this.last = Date.now();
+        this.registration?.schedule();
+      },
+      onPingFailure: () => {
+        this.disconnect?.();
+        this.close();
+      },
+    });
+    this.registration.schedule();
   }
 
   private run = async () => {
@@ -78,7 +111,9 @@ export class KeepAlive {
   // sending a ping
   recv = () => {
     this.last = Date.now();
-    if (this.state == "ready") {
+    if (this.scheduler != null) {
+      this.registration?.schedule();
+    } else if (this.state == "ready") {
       this.wake();
     }
   };
@@ -88,7 +123,11 @@ export class KeepAlive {
       return;
     }
     this.state = "paused";
-    this.wake();
+    if (this.scheduler != null) {
+      this.registration?.schedule();
+    } else {
+      this.wake();
+    }
   };
 
   resume = () => {
@@ -97,12 +136,20 @@ export class KeepAlive {
     }
     this.last = Date.now();
     this.state = "ready";
-    this.wake();
+    if (this.scheduler != null) {
+      this.registration?.schedule();
+    } else {
+      this.wake();
+    }
   };
 
   close = () => {
     this.state = "closed";
-    this.wake();
+    this.registration?.close();
+    this.registration = undefined;
+    if (this.scheduler == null) {
+      this.wake();
+    }
     delete this.sleepResolve;
     // @ts-ignore
     delete this.last;

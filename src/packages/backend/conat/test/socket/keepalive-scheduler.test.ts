@@ -1,4 +1,5 @@
 import { KeepAlive } from "@cocalc/conat/socket/keepalive";
+import { HeartbeatScheduler } from "@cocalc/conat/recovery/heartbeat-scheduler";
 import { delay } from "awaiting";
 
 describe("KeepAlive scheduler", () => {
@@ -46,6 +47,41 @@ describe("KeepAlive scheduler", () => {
       expect(pingCount).toBeGreaterThan(pausedCount);
     } finally {
       alive.close();
+    }
+  });
+
+  it("serializes heartbeats across many keepalives on one scheduler", async () => {
+    const scheduler = new HeartbeatScheduler({
+      canRun: () => true,
+      maxConcurrentHeartbeats: 1,
+    });
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let pingCount = 0;
+    const alive = Array.from({ length: 5 }, () => {
+      return new KeepAlive(
+        async () => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          pingCount += 1;
+          await delay(20);
+          inFlight -= 1;
+        },
+        () => {},
+        15,
+        "client",
+        scheduler,
+      );
+    });
+    try {
+      await delay(200);
+      expect(pingCount).toBeGreaterThanOrEqual(alive.length);
+      expect(maxInFlight).toBe(1);
+    } finally {
+      for (const keepalive of alive) {
+        keepalive.close();
+      }
+      scheduler.close();
     }
   });
 });

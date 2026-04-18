@@ -73,6 +73,7 @@ export class ServerSocket extends EventEmitter {
       },
       disconnect: this.close,
       keepAlive: this.conatSocket.keepAlive,
+      scheduler: this.conatSocket.client.heartbeatScheduler,
     });
   };
 
