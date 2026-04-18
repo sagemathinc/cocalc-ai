@@ -503,7 +503,7 @@ function MetricBar({
   const trendPoints = historyPoints ?? [];
   if (compact && dense) {
     return (
-      <Space orientation="vertical" size={2} style={{ width: 190 }}>
+      <Space orientation="vertical" size={2} style={{ width: "100%" }}>
         <Space
           size={8}
           style={{
@@ -552,11 +552,7 @@ function MetricBar({
   }
 
   return (
-    <Space
-      orientation="vertical"
-      size={2}
-      style={{ width: compact ? 180 : "100%" }}
-    >
+    <Space orientation="vertical" size={2} style={{ width: "100%" }}>
       <Space
         size={8}
         style={{
@@ -745,7 +741,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
 
   if (compact) {
     return (
-      <Space orientation="vertical" size={4}>
+      <Space orientation="vertical" size={4} style={{ width: "100%" }}>
         {staleMetricsTag}
         {riskTags}
         <MetricBar
