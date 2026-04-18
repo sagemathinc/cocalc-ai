@@ -5,36 +5,19 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { btrfs } from "./util";
-import { btrfsQuotaMode, btrfsQuotasDisabled } from "./config";
+import { btrfsQuotasDisabled } from "./config";
 import { ensureBtrfsQuotaMode } from "./quota-mode";
 
 const logger = getLogger("file-server:btrfs:quota-queue");
-const DEFAULT_RESCAN_LOG_MS = 250;
-const DEFAULT_RESCAN_WARN_MS = 2000;
 
-type QuotaWorkKind =
-  | "create_qgroup"
-  | "assign_snapshot_qgroup"
-  | "set_qgroup_limit";
+type QuotaWorkKind = "set_subvolume_limit";
 
-type QuotaWorkPayload =
-  | {
-      mount: string;
-      kind: "create_qgroup";
-      path: string;
-    }
-  | {
-      mount: string;
-      kind: "assign_snapshot_qgroup";
-      snapshotPath: string;
-      subvolumePath: string;
-    }
-  | {
-      mount: string;
-      kind: "set_qgroup_limit";
-      path: string;
-      size: string;
-    };
+type QuotaWorkPayload = {
+  mount: string;
+  kind: "set_subvolume_limit";
+  path: string;
+  size: string;
+};
 
 type QueueStatusValue = "queued" | "in_progress" | "failed";
 
@@ -54,7 +37,7 @@ type QueueRow = {
 
 export type BtrfsQuotaQueueStatus = {
   enabled: boolean;
-  mode: "disabled" | "qgroup" | "simple";
+  mode: "disabled" | "simple";
   queued_count: number;
   running_count: number;
   failed_count: number;
@@ -88,78 +71,6 @@ const waiters = new Map<
   string,
   { resolve: () => void; reject: (err: Error) => void }
 >();
-
-type QuotaWorkLogContext = {
-  queue_id?: string;
-  kind?: QuotaWorkKind;
-  mount: string;
-  path?: string;
-  snapshotPath?: string;
-  subvolumePath?: string;
-  attempts?: number;
-  phase?: string;
-};
-
-function positiveNumberEnv(name: string, fallback: number): number {
-  const raw = Number(process.env[name]);
-  return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
-}
-
-function rescanLogMs(): number {
-  return positiveNumberEnv(
-    "COCALC_BTRFS_QUOTA_RESCAN_LOG_MS",
-    DEFAULT_RESCAN_LOG_MS,
-  );
-}
-
-function rescanWarnMs(): number {
-  return Math.max(
-    rescanLogMs(),
-    positiveNumberEnv(
-      "COCALC_BTRFS_QUOTA_RESCAN_WARN_MS",
-      DEFAULT_RESCAN_WARN_MS,
-    ),
-  );
-}
-
-function trimOutput(value: unknown, max = 400): string | undefined {
-  const text = `${value ?? ""}`.trim();
-  if (!text) return;
-  return text.length > max ? `${text.slice(0, max)}...` : text;
-}
-
-function logRescanResult(
-  context: QuotaWorkLogContext,
-  {
-    elapsedMs,
-    exit_code,
-    stderr,
-    stdout,
-  }: {
-    elapsedMs: number;
-    exit_code?: number;
-    stderr?: string;
-    stdout?: string;
-  },
-): void {
-  const threshold = rescanLogMs();
-  const warnThreshold = rescanWarnMs();
-  if (elapsedMs < threshold) {
-    return;
-  }
-  const payload = {
-    elapsed_ms: elapsedMs,
-    exit_code: exit_code ?? 0,
-    stderr: trimOutput(stderr),
-    stdout: trimOutput(stdout),
-    ...context,
-  };
-  if (elapsedMs >= warnThreshold || (exit_code ?? 0) !== 0) {
-    logger.warn("btrfs quota rescan completed", payload);
-  } else {
-    logger.info("btrfs quota rescan completed", payload);
-  }
-}
 
 function sqliteFilename(): string {
   return (
@@ -233,268 +144,52 @@ function quoteIdent(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-function lowerError(err: any): string {
-  const message =
-    typeof err?.stderr === "string" && err.stderr.trim()
-      ? err.stderr
-      : `${err?.message ?? err}`;
-  return message.toLowerCase();
+function shouldRetry(row: QueueRow): boolean {
+  return row.attempts < MAX_ATTEMPTS;
 }
 
-function alreadyExistsError(err: any): boolean {
-  const s = lowerError(err);
-  return s.includes("exist") || s.includes("already");
+function retryDelayMs(attempts: number): number {
+  return Math.min(30_000, Math.max(250, 250 * 2 ** Math.max(0, attempts - 1)));
 }
 
-function quotaDisabledError(err: any): boolean {
-  const s = lowerError(err);
-  return s.includes("quota not enabled") || s.includes("quotas not enabled");
-}
-
-function rescanInProgressError(err: any): boolean {
-  const s = lowerError(err);
-  return s.includes("operation now in progress");
-}
-
-async function waitForRescan(
-  mount: string,
-  context?: Omit<QuotaWorkLogContext, "mount">,
-): Promise<void> {
-  if (btrfsQuotaMode() !== "qgroup") {
-    return;
-  }
-  const started = Date.now();
-  const result = await btrfs({
-    args: ["quota", "rescan", "-W", mount],
-    err_on_exit: false,
-    verbose: false,
-  });
-  const elapsedMs = Date.now() - started;
-  logRescanResult(
-    { mount, ...context },
-    {
-      elapsedMs,
-      exit_code: result.exit_code,
-      stderr: result.stderr,
-      stdout: result.stdout,
-    },
-  );
-  if (!result.exit_code) return;
-  const stderr = `${result.stderr ?? ""}`.toLowerCase();
-  if (
-    stderr.includes("quota not enabled") ||
-    stderr.includes("quotas not enabled")
-  ) {
-    return;
-  }
-  throw new Error(
-    `btrfs quota rescan -W ${mount} failed: ${result.stderr || result.stdout || result.exit_code}`,
-  );
-}
-
-async function getSubvolumeIdAtPath(path: string): Promise<number> {
-  const { stdout } = await btrfs({
-    args: ["subvolume", "show", path],
-    verbose: false,
-  });
-  const match = stdout.match(/^\s*Subvolume ID\s*:\s*(\d+)\s*$/im);
-  if (!match?.[1]) {
-    throw new Error(`unable to parse subvolume id for ${path}`);
-  }
-  return Number(match[1]);
-}
-
-async function enableQuota(
-  mount: string,
-  context?: Omit<QuotaWorkLogContext, "mount">,
-): Promise<void> {
-  const status = await ensureBtrfsQuotaMode(mount);
-  if (status.mode === "qgroup") {
-    await waitForRescan(mount, { ...context, phase: "enable-quota" });
+function settleWaiter(id: string, err?: Error): void {
+  const waiter = waiters.get(id);
+  if (!waiter) return;
+  waiters.delete(id);
+  if (err) {
+    waiter.reject(err);
+  } else {
+    waiter.resolve();
   }
 }
 
-async function withRescanBarrier(
-  mount: string,
-  context: Omit<QuotaWorkLogContext, "mount">,
-  fn: () => Promise<void>,
-): Promise<void> {
-  await waitForRescan(mount, { ...context, phase: "before" });
-  try {
-    await fn();
-  } catch (err) {
-    if (!rescanInProgressError(err)) {
-      throw err;
-    }
-    logger.warn("btrfs qgroup operation hit in-progress rescan", {
-      mount,
-      ...context,
-      err: trimOutput((err as any)?.stderr ?? (err as any)?.message ?? err),
-    });
-    await waitForRescan(mount, { ...context, phase: "retry-before" });
-    await fn();
-  }
-  await waitForRescan(mount, { ...context, phase: "after" });
-}
-
-async function createQgroupNow({
-  mount,
-  path,
-  context,
-}: {
-  mount: string;
-  path: string;
-  context?: Omit<QuotaWorkLogContext, "mount" | "path">;
-}): Promise<void> {
-  if (btrfsQuotaMode() === "simple") {
-    return;
-  }
-  if (!(await exists(path))) return;
-  const id = await getSubvolumeIdAtPath(path);
-  const tryCreate = async () => {
-    await withRescanBarrier(mount, { ...context, path }, async () => {
-      await btrfs({
-        args: ["qgroup", "create", `1/${id}`, path],
-        verbose: false,
-      });
-    });
-  };
-  try {
-    await tryCreate();
-  } catch (err) {
-    if (alreadyExistsError(err)) return;
-    if (!quotaDisabledError(err)) throw err;
-    await enableQuota(mount, { ...context, path });
-    try {
-      await tryCreate();
-    } catch (retryErr) {
-      if (alreadyExistsError(retryErr)) return;
-      throw retryErr;
-    }
-  }
-}
-
-async function assignSnapshotQgroupNow({
-  mount,
-  snapshotPath,
-  subvolumePath,
-  context,
-}: {
-  mount: string;
-  snapshotPath: string;
-  subvolumePath: string;
-  context?: Omit<
-    QuotaWorkLogContext,
-    "mount" | "snapshotPath" | "subvolumePath"
-  >;
-}): Promise<void> {
-  if (btrfsQuotaMode() === "simple") {
-    return;
-  }
-  if (!(await exists(snapshotPath)) || !(await exists(subvolumePath))) return;
-  const snapshotId = await getSubvolumeIdAtPath(snapshotPath);
-  const subvolumeId = await getSubvolumeIdAtPath(subvolumePath);
-  const tryAssign = async () => {
-    await withRescanBarrier(
-      mount,
-      { ...context, snapshotPath, subvolumePath },
-      async () => {
-        await btrfs({
-          args: [
-            "qgroup",
-            "assign",
-            `0/${snapshotId}`,
-            `1/${subvolumeId}`,
-            subvolumePath,
-          ],
-          verbose: false,
-        });
-      },
-    );
-  };
-  try {
-    await tryAssign();
-  } catch (err) {
-    if (alreadyExistsError(err)) return;
-    if (!quotaDisabledError(err)) throw err;
-    await enableQuota(mount, { ...context, snapshotPath, subvolumePath });
-    try {
-      await tryAssign();
-    } catch (retryErr) {
-      if (alreadyExistsError(retryErr)) return;
-      throw retryErr;
-    }
-  }
-}
-
-async function setQgroupLimitNow({
+async function setSubvolumeLimitNow({
   mount,
   path,
   size,
-  context,
 }: {
   mount: string;
   path: string;
   size: string;
-  context?: Omit<QuotaWorkLogContext, "mount" | "path">;
 }): Promise<void> {
   if (!(await exists(path))) return;
-  const id = await getSubvolumeIdAtPath(path);
-  const quotaMode = btrfsQuotaMode();
-  const tryLimit = async () => {
-    await withRescanBarrier(mount, { ...context, path }, async () => {
-      await btrfs({
-        args: ["qgroup", "limit", `${size}`, path],
-        verbose: false,
-      });
-      if (quotaMode === "simple") {
-        return;
-      }
-      await btrfs({
-        args: ["qgroup", "limit", `${size}`, `1/${id}`, path],
-        verbose: false,
-      });
-    });
-  };
-  try {
-    await tryLimit();
-  } catch (err) {
-    await enableQuota(mount, { ...context, path });
-    if (quotaMode !== "simple") {
-      await createQgroupNow({ mount, path, context });
-    }
-    await tryLimit();
-  }
+  // Deliberately do not create or touch tracking qgroups here. CoCalc uses
+  // only btrfs simple quotas because classic qgroups caused severe latency and
+  // host instability under our snapshot-heavy workload.
+  await ensureBtrfsQuotaMode(mount);
+  await btrfs({
+    args: ["qgroup", "limit", `${size}`, path],
+    verbose: false,
+  });
 }
 
 async function executeRow(row: QueueRow): Promise<void> {
-  const context = {
-    queue_id: row.id,
-    kind: row.kind,
-    attempts: row.attempts,
-  } satisfies Omit<QuotaWorkLogContext, "mount">;
   switch (row.payload.kind) {
-    case "create_qgroup":
-      await createQgroupNow({
-        mount: row.payload.mount,
-        path: row.payload.path,
-        context,
-      });
-      return;
-    case "assign_snapshot_qgroup":
-      await assignSnapshotQgroupNow({
-        mount: row.payload.mount,
-        snapshotPath: row.payload.snapshotPath,
-        subvolumePath: row.payload.subvolumePath,
-        context,
-      });
-      return;
-    case "set_qgroup_limit":
-      await setQgroupLimitNow({
+    case "set_subvolume_limit":
+      await setSubvolumeLimitNow({
         mount: row.payload.mount,
         path: row.payload.path,
         size: row.payload.size,
-        context,
       });
       return;
   }
@@ -574,26 +269,6 @@ function scheduleWake(delayMs = 0): void {
   wakeTimer.unref?.();
 }
 
-function shouldRetry(row: QueueRow, err: any): boolean {
-  if (alreadyExistsError(err)) return false;
-  return row.attempts < MAX_ATTEMPTS;
-}
-
-function retryDelayMs(attempts: number): number {
-  return Math.min(30_000, Math.max(250, 250 * 2 ** Math.max(0, attempts - 1)));
-}
-
-function settleWaiter(id: string, err?: Error): void {
-  const waiter = waiters.get(id);
-  if (!waiter) return;
-  waiters.delete(id);
-  if (err) {
-    waiter.reject(err);
-  } else {
-    waiter.resolve();
-  }
-}
-
 async function runWorker(): Promise<void> {
   ensureQueueTable();
   if (workerRunning) return;
@@ -619,7 +294,7 @@ async function runWorker(): Promise<void> {
           typeof (err as any)?.stderr === "string" && (err as any).stderr.trim()
             ? `${(err as any).stderr}`.trim()
             : `${(err as any)?.message ?? err}`;
-        if (shouldRetry(claimed, err)) {
+        if (shouldRetry(claimed)) {
           const delayMs = retryDelayMs(claimed.attempts);
           db()
             .prepare(
@@ -710,38 +385,6 @@ export function startBtrfsQuotaQueue(): void {
   scheduleWake(0);
 }
 
-export function queueCreateSubvolumeQgroup(opts: {
-  mount: string;
-  path: string;
-  wait?: boolean;
-}): Promise<void> | void {
-  return enqueueRow(
-    {
-      mount: opts.mount,
-      kind: "create_qgroup",
-      path: opts.path,
-    },
-    { wait: opts.wait ?? true },
-  );
-}
-
-export function queueAssignSnapshotQgroup(opts: {
-  mount: string;
-  snapshotPath: string;
-  subvolumePath: string;
-  wait?: boolean;
-}): Promise<void> | void {
-  return enqueueRow(
-    {
-      mount: opts.mount,
-      kind: "assign_snapshot_qgroup",
-      snapshotPath: opts.snapshotPath,
-      subvolumePath: opts.subvolumePath,
-    },
-    { wait: opts.wait ?? false },
-  );
-}
-
 export function queueSetSubvolumeQuota(opts: {
   mount: string;
   path: string;
@@ -751,7 +394,7 @@ export function queueSetSubvolumeQuota(opts: {
   return enqueueRow(
     {
       mount: opts.mount,
-      kind: "set_qgroup_limit",
+      kind: "set_subvolume_limit",
       path: opts.path,
       size: `${opts.size}`,
     },
@@ -775,7 +418,6 @@ export function getBtrfsQuotaQueueStatus(
     };
   }
   if (!queueInitialized) return undefined;
-  const mode = btrfsQuotaMode();
   const where = mount ? `WHERE mount = ${quoteIdent(mount)}` : "";
   const rows = db()
     .prepare(
@@ -845,7 +487,7 @@ export function getBtrfsQuotaQueueStatus(
   }
   return {
     enabled: true,
-    mode: mode === "simple" ? "simple" : "qgroup",
+    mode: "simple",
     queued_count,
     running_count,
     failed_count,

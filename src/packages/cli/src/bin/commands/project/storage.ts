@@ -84,7 +84,7 @@ export interface StorageAnalysisResult {
       size_bytes: number;
       used_percent?: number;
       qgroupid?: string;
-      scope?: "tracking" | "subvolume";
+      scope?: "subvolume";
       warning?: string;
     } | null;
     visible: Record<

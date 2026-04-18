@@ -1355,7 +1355,7 @@ async function getQuota({
   size: number;
   used: number;
   qgroupid?: string;
-  scope?: "tracking" | "subvolume";
+  scope?: "subvolume";
   warning?: string;
 }> {
   logger.debug("getQuota", { project_id, scratch });

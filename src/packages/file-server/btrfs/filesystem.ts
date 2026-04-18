@@ -90,9 +90,12 @@ export class Filesystem {
         err,
       );
     }
-    // Reconcile the filesystem to the configured quota mode on startup so
-    // ablation flags and squota experiments affect the mounted filesystem,
-    // not just our own queue behavior.
+    // Reconcile the mounted filesystem to CoCalc's only supported quota modes:
+    // simple quotas or fully disabled quotas. Classic btrfs qgroups are
+    // intentionally unsupported here because they caused severe latency,
+    // hangs, and daemon failures under our snapshot-heavy workload. Keep this
+    // startup reconciliation so old hosts are forced away from qgroups even if
+    // somebody tries to re-enable them via stale config.
     const quotaStatus = await ensureBtrfsQuotaMode(this.opts.mount);
     if (!quotaStatus.enabled) {
       logger.warn("Btrfs quota operations disabled by configuration", {

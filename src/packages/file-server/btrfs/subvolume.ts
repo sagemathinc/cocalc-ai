@@ -10,7 +10,6 @@ import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { SubvolumeRustic } from "./subvolume-rustic";
 import { SubvolumeSnapshots } from "./subvolume-snapshots";
 import { SubvolumeQuota } from "./subvolume-quota";
-import { queueCreateSubvolumeQgroup } from "./quota-queue";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { btrfs, sudo } from "./util";
@@ -60,7 +59,9 @@ export class Subvolume {
       });
       await this.chown(this.path);
     }
-    await this.ensureQgroup();
+    // Do not create tracking qgroups here. CoCalc intentionally uses btrfs
+    // simple quotas only; classic qgroups caused severe host stalls under our
+    // snapshot-heavy workload and are deliberately unsupported.
     await this.ensureSnapshotsDir();
   };
 
@@ -87,14 +88,6 @@ export class Subvolume {
     await sudo({
       command: "chown",
       args: [`${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`, path],
-    });
-  };
-
-  private ensureQgroup = async () => {
-    await queueCreateSubvolumeQgroup({
-      mount: this.filesystem.opts.mount,
-      path: this.path,
-      wait: true,
     });
   };
 

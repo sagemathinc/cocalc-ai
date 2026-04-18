@@ -1344,7 +1344,7 @@ describe("hosts.upgradeHostSoftware", () => {
     });
   });
 
-  it("rejects mixed project-host upgrades so rollback scope stays well-defined", async () => {
+  it("allows mixed project-host upgrades so one request can upgrade all host software", async () => {
     const { upgradeHostSoftware } = await import("./hosts");
     await expect(
       upgradeHostSoftware({
@@ -1355,8 +1355,25 @@ describe("hosts.upgradeHostSoftware", () => {
           { artifact: "tools", version: "tools-v5" },
         ],
       }),
-    ).rejects.toThrow(
-      "project-host upgrades must be requested separately from other artifacts",
+    ).resolves.toEqual(
+      expect.objectContaining({
+        op_id: "op-123",
+        kind: "host-upgrade-software",
+      }),
+    );
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-upgrade-software",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        input: expect.objectContaining({
+          id: HOST_ID,
+          targets: [
+            { artifact: "project-host", version: "ph-v2" },
+            { artifact: "tools", version: "tools-v5" },
+          ],
+        }),
+      }),
     );
   });
 });

@@ -106,21 +106,6 @@ function normalizeHostUpgradeTargetsForDedupe(
     );
 }
 
-export function assertProjectHostUpgradeIsExclusive(
-  targets: HostSoftwareUpgradeTarget[],
-): void {
-  const normalizedTargets = normalizeHostUpgradeTargetsForDedupe(targets);
-  const includesProjectHost = normalizedTargets.some(
-    (target) => target.artifact === "project-host",
-  );
-  if (!includesProjectHost || normalizedTargets.length <= 1) {
-    return;
-  }
-  throw new Error(
-    "project-host upgrades must be requested separately from other artifacts",
-  );
-}
-
 export function hostUpgradeDedupeKey({
   hostId,
   targets,

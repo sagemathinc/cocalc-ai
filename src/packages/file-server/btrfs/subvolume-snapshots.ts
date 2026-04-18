@@ -8,18 +8,9 @@ import { type SnapshotUsage } from "@cocalc/conat/files/file-server";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { getSubvolumeField } from "./subvolume";
 import { parsePlainQgroupShow } from "./subvolume-quota";
-import { queueAssignSnapshotQgroup } from "./quota-queue";
 import { btrfsQuotasDisabled } from "./config";
 
 const logger = getLogger("file-server:btrfs:subvolume-snapshots");
-const SNAPSHOT_QGROUP_ASSIGN_ENV = "COCALC_BTRFS_ENABLE_SNAPSHOT_QGROUP_ASSIGN";
-
-function snapshotQgroupAssignmentEnabled(): boolean {
-  const raw = `${process.env[SNAPSHOT_QGROUP_ASSIGN_ENV] ?? ""}`
-    .trim()
-    .toLowerCase();
-  return ["1", "true", "yes", "on"].includes(raw);
-}
 
 export class SubvolumeSnapshots {
   public readonly snapshotsDir: string;
@@ -83,22 +74,12 @@ export class SubvolumeSnapshots {
     if (quotaMode === "skip") {
       return;
     }
-
-    if (!snapshotQgroupAssignmentEnabled()) {
-      logger.debug("skipping snapshot qgroup assignment", {
-        subvolume: this.subvolume.name,
-        snapshot: name,
-        env: SNAPSHOT_QGROUP_ASSIGN_ENV,
-      });
-      return;
-    }
-
-    const wait = quotaMode === "sync";
-    await queueAssignSnapshotQgroup({
-      mount: this.subvolume.filesystem.opts.mount,
-      snapshotPath,
-      subvolumePath: this.subvolume.path,
-      wait,
+    // Intentionally do nothing here. CoCalc uses btrfs simple quotas only, so
+    // there is no tracking-qgroup assignment step after creating snapshots.
+    logger.debug("snapshot created without tracking qgroup assignment", {
+      subvolume: this.subvolume.name,
+      snapshot: name,
+      quotaMode,
     });
   };
 

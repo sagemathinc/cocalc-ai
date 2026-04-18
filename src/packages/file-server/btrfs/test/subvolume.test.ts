@@ -190,23 +190,10 @@ describe("the filesystem operations", () => {
   });
 });
 
-describe("snapshot-aware quota accounting", () => {
+describe("simple quota accounting", () => {
   let vol: Subvolume;
-  const previousEnv = process.env.COCALC_BTRFS_ENABLE_SNAPSHOT_QGROUP_ASSIGN;
 
-  beforeAll(() => {
-    process.env.COCALC_BTRFS_ENABLE_SNAPSHOT_QGROUP_ASSIGN = "1";
-  });
-
-  afterAll(() => {
-    if (previousEnv == null) {
-      delete process.env.COCALC_BTRFS_ENABLE_SNAPSHOT_QGROUP_ASSIGN;
-    } else {
-      process.env.COCALC_BTRFS_ENABLE_SNAPSHOT_QGROUP_ASSIGN = previousEnv;
-    }
-  });
-
-  it("reports quota from the tracking qgroup when snapshots retain data", async () => {
+  it("reports quota from the subvolume qgroup when snapshots retain data", async () => {
     vol = await fs.subvolumes.ensure("quota-with-snapshots");
     await vol.quota.set("100M");
     await vol.fs.writeFile("held.bin", randomBytes(4 * 1024 * 1024));
@@ -218,13 +205,13 @@ describe("snapshot-aware quota accounting", () => {
     await wait({
       until: async () => {
         const { used, qgroupid } = await vol.quota.get();
-        return qgroupid === `1/${id}` && used > 0;
+        return qgroupid === `0/${id}` && used > 0;
       },
     });
 
     const { used, qgroupid, scope } = await vol.quota.get();
-    expect(qgroupid).toBe(`1/${id}`);
-    expect(scope).toBe("tracking");
+    expect(qgroupid).toBe(`0/${id}`);
+    expect(scope).toBe("subvolume");
     expect(used).toBeGreaterThan(0);
   });
 });
