@@ -5,6 +5,7 @@ import { btrfs } from "./util";
 
 const logger = getLogger("file-server:btrfs:quota-mode");
 
+type LegacyRuntimeQuotaMode = "legacy-qgroup";
 export type ActiveBtrfsQuotaMode = Exclude<BtrfsQuotaMode, "disabled">;
 
 export type BtrfsQuotaRuntimeStatus =
@@ -14,7 +15,7 @@ export type BtrfsQuotaRuntimeStatus =
     }
   | {
       enabled: true;
-      mode: ActiveBtrfsQuotaMode;
+      mode: ActiveBtrfsQuotaMode | LegacyRuntimeQuotaMode;
     };
 
 function quotasNotEnabled(text: string): boolean {
@@ -69,7 +70,7 @@ async function getBtrfsQuotaSysfsStatus(
       throw err;
     }
   }
-  return { enabled: true, mode: "qgroup" };
+  return { enabled: true, mode: "legacy-qgroup" };
 }
 
 export function parseBtrfsQuotaStatus(
@@ -85,16 +86,11 @@ export function parseBtrfsQuotaStatus(
   if (modeText.includes("simple") || modeText.includes("squota")) {
     return { enabled: true, mode: "simple" };
   }
-  return { enabled: true, mode: "qgroup" };
+  return { enabled: true, mode: "legacy-qgroup" };
 }
 
-export function btrfsQuotaEnableArgs(
-  mount: string,
-  mode: ActiveBtrfsQuotaMode,
-): string[] {
-  return mode === "simple"
-    ? ["quota", "enable", "--simple", mount]
-    : ["quota", "enable", mount];
+export function btrfsQuotaEnableArgs(mount: string): string[] {
+  return ["quota", "enable", "--simple", mount];
 }
 
 export async function getBtrfsQuotaRuntimeStatus(
@@ -126,10 +122,9 @@ export async function getBtrfsQuotaRuntimeStatus(
     mount,
     stdout: result.stdout.trim(),
   });
-  const configuredMode = btrfsQuotaMode();
   return {
     enabled: true,
-    mode: configuredMode === "simple" ? "simple" : "qgroup",
+    mode: "legacy-qgroup",
   };
 }
 
@@ -153,6 +148,9 @@ export async function ensureBtrfsQuotaMode(
     return current;
   }
 
+  // Deliberately migrate any existing qgroup-based filesystem to simple quotas.
+  // We keep detection code here only so startup can force hosts away from the
+  // qgroup mode that caused severe latency and stability problems for CoCalc.
   if (current.enabled) {
     await btrfs({
       args: ["quota", "disable", mount],
@@ -161,7 +159,7 @@ export async function ensureBtrfsQuotaMode(
   }
 
   await btrfs({
-    args: btrfsQuotaEnableArgs(mount, desiredMode),
+    args: btrfsQuotaEnableArgs(mount),
     verbose: false,
   });
 

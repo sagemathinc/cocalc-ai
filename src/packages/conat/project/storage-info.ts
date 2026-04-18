@@ -20,7 +20,7 @@ export interface ProjectStorageQuotaSummary {
   used: number;
   size: number;
   qgroupid?: string;
-  scope?: "tracking" | "subvolume";
+  scope?: "subvolume";
   warning?: string;
 }
 
@@ -75,7 +75,7 @@ export interface ProjectDiskQuota {
   used: number;
   size: number;
   qgroupid?: string;
-  scope?: "tracking" | "subvolume";
+  scope?: "subvolume";
   warning?: string;
 }
 

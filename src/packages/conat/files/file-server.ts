@@ -112,7 +112,7 @@ export interface Fileserver {
     size: number;
     used: number;
     qgroupid?: string;
-    scope?: "tracking" | "subvolume";
+    scope?: "subvolume";
     warning?: string;
   }>;
 

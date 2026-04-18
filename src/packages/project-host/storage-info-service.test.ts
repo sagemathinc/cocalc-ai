@@ -59,8 +59,8 @@ describe("project storage info service", () => {
       getQuota: jest.fn(async () => ({
         used: 50,
         size: 100,
-        qgroupid: "1/2",
-        scope: "tracking",
+        qgroupid: "0/2",
+        scope: "subvolume",
       })),
       allSnapshotUsage: jest.fn(async () => [{ exclusive: 8_000_000 }]),
     });
@@ -116,8 +116,8 @@ describe("project storage info service", () => {
       getQuota: jest.fn(async () => ({
         used: 123,
         size: 456,
-        qgroupid: "1/9",
-        scope: "tracking",
+        qgroupid: "0/9",
+        scope: "subvolume",
         warning: "warn",
       })),
       allSnapshotUsage: jest.fn(async () => [

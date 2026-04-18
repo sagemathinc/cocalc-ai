@@ -1,10 +1,10 @@
-# Btrfs Simple Quotas Migration Plan
+# Btrfs Simple Quotas Plan
 
-Status: draft implementation and validation plan
+Status: implemented direction and ongoing dogfooding
 
-Goal: replace expensive classic btrfs qgroups with btrfs simple quotas for the
-project-home quota use case, while keeping frequent local snapshots viable and
-avoiding the pause/health-failure pattern observed on alpha.
+Goal: keep CoCalc on btrfs simple quotas only for the project-home quota use
+case, while keeping frequent local snapshots viable and avoiding the
+pause/health-failure pattern observed on alpha.
 
 ## Why This Plan Exists
 
@@ -76,23 +76,25 @@ and the installed `btrfs` userspace already advertises:
 
 So the host tooling appears sufficient for an initial simple-quota experiment.
 
-## Desired End State
+## Current Direction
 
 1. CoCalc uses a quota mode instead of a binary "quotas on/off" assumption.
 2. Supported quota modes are:
    - `disabled`
-   - `qgroup`
    - `simple`
-3. New hosts should be able to default to `simple` without invasive code forks.
-4. UI and API surfaces should clearly state which quota mode a host is using.
-5. Snapshot-related storage displays should avoid overclaiming precision when
+3. Classic qgroup support is intentionally removed from source paths so nobody
+   can accidentally re-enable it by "improving semantics".
+4. Hosts that still have qgroups enabled on disk should be force-migrated to
+   `simple` at startup.
+5. UI and API surfaces should clearly state which quota mode a host is using.
+6. Snapshot-related storage displays should avoid overclaiming precision when
    the host is in simple-quota mode.
 
-## Proposed Implementation
+## Landed Implementation
 
 ### 1. Replace the boolean quota toggle with a quota mode
 
-Introduce a host env / config mode such as:
+The file-server/btrfs layer now supports:
 
 - `COCALC_BTRFS_QUOTA_MODE=disabled|qgroup|simple`
 
@@ -101,117 +103,59 @@ Compatibility:
 - preserve `COCALC_DISABLE_BTRFS_QUOTAS=1` as a higher-priority override to
   `disabled`
 - keep the existing emergency kill switch behavior intact
+- treat the old `qgroup` value as `simple` for compatibility during rollout
 
-### 2. Update the btrfs/filesystem initialization path
+### 2. Force startup reconciliation to simple quotas
 
-Today the filesystem layer assumes classic quotas:
-
-- `btrfs quota enable <mount>`
-- qgroup queue startup
-
-Change this to:
+Filesystem startup now does this:
 
 - `disabled`: skip quota enable and queue startup
-- `qgroup`: current behavior
-- `simple`: run `btrfs quota enable --simple <mount>` and then use the same
-  qgroup/limit surface unless testing shows an incompatibility
+- `simple`: run `btrfs quota enable --simple <mount>`
+- legacy qgroup runtime state: disable quotas, then re-enable in simple mode
 
-### 3. Make runtime posture and host status mode-aware
+### 3. Remove qgroup-only bookkeeping
 
-Add explicit reporting for:
+Removed source support for:
 
-- quota mode
-- whether quota queue is active
-- whether snapshot accounting is exact vs approximate
+- tracking-qgroup creation
+- snapshot qgroup assignment
+- qgroup-limit writes to tracking qgroups
+- public/storage types that reported `"tracking"` as a supported quota scope
 
-This should be visible in:
+The remaining quota path is:
 
-- runtime posture logs
-- file-server runtime status
-- eventually `/hosts`
+- ensure simple quotas are enabled
+- apply the limit directly on the subvolume path
+- read quota information from the direct subvolume qgroup row
 
-### 4. Adjust storage/accounting UI semantics
+### 4. Leave a clear comment trail
 
-In `simple` mode, do not pretend snapshot accounting means the same thing as it
-did with classic qgroups.
+The source now includes explicit comments that classic qgroups are intentionally
+unsupported because they caused severe latency, hangs, and daemon failures
+under CoCalc's snapshot-heavy workload.
 
-Required changes:
+## Follow-Up Work
 
-- annotate snapshot usage/accounting as approximate / attribution-based
-- avoid wording that implies exact shared/exclusive ownership
-- keep per-project quota messaging focused on enforcement, not forensic storage
-  truth
-
-### 5. Keep BEES off during the first simple-quota phase
-
-Do not combine:
-
-- simple quota introduction
-- BEES reintroduction
-
-at the same time. First determine whether simple quotas plus rolling snapshots
-solve the pause problem. Only then decide whether BEES can come back.
-
-## Validation Plan
-
-### Phase A: Fresh-host experiment
-
-Use a fresh or freshly reprovisioned host/pool.
-
-1. Enable:
+1. Keep dogfooding hosts with:
    - `COCALC_BTRFS_QUOTA_MODE=simple`
-2. Keep:
-   - rolling snapshots on
-   - BEES off
-3. Dogfood under:
-   - heavy terminal use
-   - Codex turns
-   - high local disk I/O
-   - many open files/tabs
-4. Watch for:
-   - `btrfs-cleaner` pegging CPU
-   - router/persist/project-host health restarts
-   - user-visible pauses
-
-### Phase B: Snapshot-heavy behavior check
-
-Exercise:
-
-- frequent automatic local snapshots
-- snapshot deletion churn
-- project restore/clone flows
-
-Confirm:
-
-- no return of pause storms
-- quota enforcement still behaves acceptably for writable project homes
-- snapshot usage displays remain understandable enough for operators/users
-
-### Phase C: Decide default policy
-
-If simple quotas are stable:
-
-- make `simple` the default mode for new hosts
-- keep `disabled` as the emergency fallback
-- do not automatically migrate old hosts; use reprovision/rotation instead
+   - rolling snapshots enabled
+   - BEES as a separate controlled variable
+2. Make any remaining UI/operator wording reflect that CoCalc quota semantics
+   are simple-quota based, not tracking-qgroup based.
+3. Keep the emergency `disabled` mode, but do not reintroduce classic qgroup
+   support.
 
 ## Open Risks
 
 1. Rootfs clone / shared extent attribution may produce surprising numbers.
 2. Snapshot usage UI may need a more substantial redesign than expected.
-3. Some qgroup subcommands may behave differently enough under simple quotas
-   that we need targeted adjustments despite the shared surface.
+3. Some `btrfs qgroup` subcommands still behave differently enough under simple
+   quotas that targeted adjustments may be needed despite the shared surface.
 4. BEES may interact badly with extent attribution; keep it out of scope until
    simple quotas are proven stable first.
 
 ## Best Next Step
 
-Implement quota mode support in the file-server/btrfs layer and deploy it only
-to a fresh alpha-style host with:
-
-- `COCALC_BTRFS_QUOTA_MODE=simple`
-- rolling snapshots enabled
-- BEES disabled
-
-Then dogfood that host hard before deciding whether classic qgroups are gone
-for good.
+Keep dogfooding the current simple-quota hosts hard, and treat any attempt to
+reintroduce classic qgroups as a regression rather than an alternative design
+to revisit.

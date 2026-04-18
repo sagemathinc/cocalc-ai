@@ -21,7 +21,7 @@ describe("btrfs quota mode reconciliation", () => {
     }
   });
 
-  it("parses disabled, qgroup, and simple quota status output", async () => {
+  it("parses disabled, legacy qgroup, and simple quota status output", async () => {
     const { parseBtrfsQuotaStatus } = await import("./quota-mode");
 
     expect(
@@ -42,7 +42,7 @@ Quotas on /mnt/test:
 `),
     ).toEqual({
       enabled: true,
-      mode: "qgroup",
+      mode: "legacy-qgroup",
     });
 
     expect(
@@ -57,7 +57,7 @@ Quotas on /mnt/test:
     });
   });
 
-  it("switches an already-enabled filesystem from qgroup to simple", async () => {
+  it("switches an already-enabled filesystem from legacy qgroups to simple", async () => {
     process.env.COCALC_BTRFS_QUOTA_MODE = "simple";
     const readFileMock = jest.fn(async (path: string) => {
       if (path.endsWith("/enabled")) {

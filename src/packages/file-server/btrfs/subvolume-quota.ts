@@ -19,7 +19,7 @@ export type SubvolumeQuotaInfo = {
   size: number;
   used: number;
   qgroupid?: string;
-  scope?: "tracking" | "subvolume";
+  scope?: "subvolume";
   warning?: string;
 };
 
@@ -100,22 +100,14 @@ function quotaWarning(stderr?: string): string | undefined {
 function selectQgroup(
   groups: QgroupShowRow[],
   id: number,
-): {
-  match?: QgroupShowRow;
-  scope?: "tracking" | "subvolume";
-} {
-  const tracking = groups.find((g) => g.qgroupid === `1/${id}`);
-  if (tracking) {
-    return { match: tracking, scope: "tracking" };
-  }
-  const leaf = groups.find((g) => g.qgroupid === `0/${id}`);
-  if (leaf) {
-    return { match: leaf, scope: "subvolume" };
-  }
-  if (groups[0] != null) {
-    return { match: groups[0], scope: "subvolume" };
-  }
-  return {};
+): QgroupShowRow | undefined {
+  // CoCalc intentionally uses only simple quotas, so read the direct subvolume
+  // row rather than creating or preferring tracking qgroups.
+  return (
+    groups.find((g) => g.qgroupid === `0/${id}`) ??
+    groups.find((g) => g.path != null) ??
+    groups[0]
+  );
 }
 
 export class SubvolumeQuota {
@@ -131,11 +123,11 @@ export class SubvolumeQuota {
     });
     groups = parsePlainQgroupShow(result.stdout);
     const warning = quotaWarning(result.stderr);
-    const { match, scope } = selectQgroup(groups, id);
+    const match = selectQgroup(groups, id);
     if (!match) {
       throw Error(`no qgroup info for ${this.subvolume.path}`);
     }
-    return { match, scope, warning };
+    return { match, warning };
   };
 
   get = async (): Promise<SubvolumeQuotaInfo> => {
@@ -149,7 +141,6 @@ export class SubvolumeQuota {
     }
     const {
       match: { max_referenced: rawSize, referenced: used, qgroupid },
-      scope,
       warning,
     } = await this.qgroup();
     let size = rawSize;
@@ -160,7 +151,7 @@ export class SubvolumeQuota {
       used,
       size,
       qgroupid,
-      scope,
+      scope: "subvolume",
       warning,
     };
   };

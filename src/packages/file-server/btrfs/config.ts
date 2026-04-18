@@ -4,7 +4,12 @@ function envIsDisabled(name: string): boolean {
   return !["0", "false", "no", "off"].includes(value);
 }
 
-export type BtrfsQuotaMode = "disabled" | "qgroup" | "simple";
+// IMPORTANT: classic btrfs qgroups are intentionally unsupported in CoCalc.
+//
+// They caused severe lag, hangs, and daemon failures under our snapshot-heavy
+// workload. We keep only simple quotas and a full disable switch so nobody
+// accidentally "improves semantics" by reintroducing qgroup accounting.
+export type BtrfsQuotaMode = "disabled" | "simple";
 
 export function btrfsQuotaMode(): BtrfsQuotaMode {
   if (envIsDisabled("COCALC_DISABLE_BTRFS_QUOTAS")) {
@@ -19,7 +24,8 @@ export function btrfsQuotaMode(): BtrfsQuotaMode {
   if (value === "simple" || value === "squota") {
     return "simple";
   }
-  return "qgroup";
+  // Intentionally treat the old qgroup/default modes as simple quotas.
+  return "simple";
 }
 
 export function btrfsQuotasDisabled(): boolean {
