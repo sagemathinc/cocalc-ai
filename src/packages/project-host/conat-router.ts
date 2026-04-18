@@ -67,13 +67,51 @@ function parseProxyTarget(address: string): { host: string; port: number } {
 }
 
 function normalizeLoopbackHost(host: string): string {
-  return host === "0.0.0.0" || host === "::" || host === "[::]"
+  return host === "0.0.0.0" ||
+    host === "::" ||
+    host === "[::]" ||
+    host === "localhost"
     ? "127.0.0.1"
     : host;
 }
 
 export function isProjectHostExternalConatRouterEnabled(): boolean {
   return envIsTrue("COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER");
+}
+
+export function isProjectHostManagedLocalConatRouter(): boolean {
+  if (!isProjectHostExternalConatRouterEnabled()) {
+    return false;
+  }
+  const explicit =
+    `${process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim();
+  if (!explicit) {
+    return true;
+  }
+  const rawPort =
+    `${process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT ?? ""}`.trim();
+  if (!rawPort) {
+    return false;
+  }
+  try {
+    const parsed = new URL(explicit);
+    const defaultPort =
+      parsed.protocol === "https:" ? 443 : parsed.protocol === "http:" ? 80 : 0;
+    const port = parsed.port ? Number(parsed.port) : defaultPort;
+    if (!Number.isInteger(port) || port <= 0) {
+      return false;
+    }
+    const configuredHost = normalizeLoopbackHost(
+      `${process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST ?? "127.0.0.1"}`.trim() ||
+        "127.0.0.1",
+    );
+    return (
+      normalizeLoopbackHost(parsed.hostname) === configuredHost &&
+      String(port) === rawPort
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function resolveProjectHostConatRouterUrl(): string {

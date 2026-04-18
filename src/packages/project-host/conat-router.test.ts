@@ -10,6 +10,7 @@ import express from "express";
 import {
   attachProjectHostHttpFallbackProxy,
   isProjectHostExternalConatRouterEnabled,
+  isProjectHostManagedLocalConatRouter,
   resolveProjectHostConatRouterClusterName,
   resolveProjectHostConatRouterUrl,
   rewriteProjectHostConatProxyUrl,
@@ -45,6 +46,18 @@ describe("project-host conat router helpers", () => {
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
     process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT = "9922";
     expect(resolveProjectHostConatRouterUrl()).toBe("http://127.0.0.1:9922");
+  });
+
+  it("treats localhost router url plus matching port as managed local router mode", () => {
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
+    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST = "127.0.0.1";
+    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT = "9922";
+    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = "http://127.0.0.1:9922";
+    expect(isProjectHostManagedLocalConatRouter()).toBe(true);
+
+    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL =
+      "http://router.example:9922";
+    expect(isProjectHostManagedLocalConatRouter()).toBe(false);
   });
 
   it("requires explicit external router bootstrap config", () => {
