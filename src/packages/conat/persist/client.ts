@@ -25,6 +25,7 @@ import { getLogger } from "@cocalc/conat/logger";
 import { until } from "@cocalc/util/async-utils";
 import { getPersistServerId } from "./load-balancer";
 import type { JSONValue } from "@cocalc/util/types";
+import type { RegisteredRecoverableResource } from "@cocalc/conat/recovery/scheduler";
 
 let DEFAULT_RECONNECT_DELAY = 1500;
 let DEFAULT_RECONNECT_DELAY_MAX = 30_000;
@@ -192,6 +193,7 @@ class PersistStreamClient extends EventEmitter {
   private readonly initReporter?: PersistClientInitReporter;
   private recoveryState: PersistRecoveryState = "ready";
   private recoveryPaused = false;
+  private recoveryRegistration?: RegisteredRecoverableResource;
 
   constructor(
     private client: Client,
@@ -209,6 +211,13 @@ class PersistStreamClient extends EventEmitter {
     bumpCounterByStorage(activeByStorage, this.storageKey, 1);
     // paths.add(this.storage.path);
     logger.debug("constructor", this.storage);
+    this.recoveryRegistration = this.client.recoveryScheduler.registerResource({
+      canRecover: () => !this.recoveryPaused && !this.isClosed(),
+      isConnected: () => this.getRecoveryState() === "ready",
+      recover: async () => {
+        await this.recoverNow({ reason: "scheduler" });
+      },
+    });
     this.init();
   }
 
@@ -488,6 +497,14 @@ class PersistStreamClient extends EventEmitter {
     bumpCounterByStorage(reconnectByStorage, this.storageKey, 1);
     if (this.reconnectTimer != null) {
       clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (this.recoveryRegistration != null) {
+      this.setRecoveryState("recovering");
+      this.recoveryRegistration.requestRecovery({
+        reason: "persist_reconnect",
+      });
+      return;
     }
     const delay = this.nextReconnectDelay();
     this.setRecoveryState("recovering");
@@ -564,6 +581,8 @@ class PersistStreamClient extends EventEmitter {
       this.changefeeds.length = 0;
     }
     this.reconnecting = false;
+    this.recoveryRegistration?.close();
+    this.recoveryRegistration = undefined;
     this.socket.close();
   };
 

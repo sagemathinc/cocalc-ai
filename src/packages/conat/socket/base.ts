@@ -16,6 +16,7 @@ import {
   DEFAULT_KEEP_ALIVE_TIMEOUT,
 } from "./util";
 import { type ServerSocket } from "./server-socket";
+import type { RegisteredRecoverableResource } from "@cocalc/conat/recovery/scheduler";
 
 export type SocketRecoveryState =
   | "ready"
@@ -47,6 +48,7 @@ export abstract class ConatSocketBase extends EventEmitter {
   private recoveryState: SocketRecoveryState = "disconnected";
   private recoveryPaused = false;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private recoveryRegistration?: RegisteredRecoverableResource;
 
   // the following is all for compat with primus's api and has no meaning here.
   address = { ip: "" };
@@ -78,6 +80,16 @@ export abstract class ConatSocketBase extends EventEmitter {
     this.keepAliveTimeout = keepAliveTimeout;
     this.desc = desc;
     this.conn = { id };
+    if (this.reconnection) {
+      this.recoveryRegistration =
+        this.client.recoveryScheduler.registerResource({
+          canRecover: () => !this.recoveryPaused && this.state !== "closed",
+          isConnected: () => this.state === "ready",
+          recover: async () => {
+            await this.recoverNow({ reason: "scheduler" });
+          },
+        });
+    }
     this.connect();
     this.setMaxListeners(100);
   }
@@ -182,9 +194,17 @@ export abstract class ConatSocketBase extends EventEmitter {
     }
     if (this.reconnectTimer != null) {
       clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
     }
     if (this.recoveryPaused) {
       this.setRecoveryState("paused");
+      return;
+    }
+    if (this.recoveryRegistration != null) {
+      this.setRecoveryState("recovering");
+      this.recoveryRegistration.requestRecovery({
+        reason: "socket_disconnect",
+      });
       return;
     }
     this.setRecoveryState("recovering");
@@ -207,6 +227,8 @@ export abstract class ConatSocketBase extends EventEmitter {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
+    this.recoveryRegistration?.close();
+    this.recoveryRegistration = undefined;
     this.setState("closed");
     this.removeAllListeners();
 
