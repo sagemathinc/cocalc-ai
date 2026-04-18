@@ -8,6 +8,7 @@ import {
   Popconfirm,
   Space,
   Tag,
+  Tabs,
   Typography,
 } from "antd";
 import {
@@ -576,6 +577,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const [drawerWidth, setDrawerWidth] = React.useState<number | undefined>(
     readDrawerWidth,
   );
+  const [activeTab, setActiveTab] = React.useState("overview");
   const [showProjects, setShowProjects] = React.useState(false);
   const [expandedArtifacts, setExpandedArtifacts] = React.useState<
     Partial<Record<HostRuntimeArtifact, boolean>>
@@ -769,516 +771,809 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     return { upToDate, updatesAvailable, unknown };
   }, [deploymentStatus, host, softwareVersions]);
   React.useEffect(() => {
+    setActiveTab("overview");
     setShowProjects(false);
     setExpandedArtifacts({});
     setExpandedComponents({});
   }, [host?.id]);
-  return (
-    <Drawer
-      size={drawerWidth}
-      title={
-        <Space>
-          <Icon name="server" /> {host?.name ?? "Host details"}
-          {host && (
-            <Tooltip
-              title={getHostStatusTooltip(
-                host.status,
-                Boolean(host.deleted),
-                host.provider_observed_at,
-              )}
+  if (!host) {
+    return (
+      <Drawer
+        size={drawerWidth}
+        title={
+          <Space>
+            <Icon name="server" /> Host details
+          </Space>
+        }
+        onClose={onClose}
+        resizable={{ onResize: handleResize }}
+        open={false}
+      >
+        <Typography.Text type="secondary">
+          Select a host to see details.
+        </Typography.Text>
+      </Drawer>
+    );
+  }
+  const overviewContent = host ? (
+    <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+      {!showUpgradeProgress && (
+        <Space orientation="vertical" size="small">
+          <HostOpProgress op={displayActiveOp} />
+          <HostBootstrapProgress host={host} />
+          {canCancelBackups && (
+            <Popconfirm
+              title="Cancel backups for this host?"
+              okText="Cancel backups"
+              cancelText="Keep running"
+              onConfirm={() => onCancelOp?.(displayActiveOp!.op_id)}
             >
-              <Tag color={host.deleted ? "default" : STATUS_COLOR[host.status]}>
-                {showSpinner ? (
-                  <Space size={4}>
-                    <SyncOutlined spin />
-                    <span>{statusLabel}</span>
-                  </Space>
-                ) : (
-                  statusLabel
-                )}
-              </Tag>
-            </Tooltip>
-          )}
-          {onlineTag}
-          {host && (
-            <Button
-              type="link"
-              size="small"
-              disabled={!!host.deleted || hostOpActive}
-              onClick={() => onEdit(host)}
-            >
-              Edit
-            </Button>
+              <Button size="small" type="link">
+                Cancel backups
+              </Button>
+            </Popconfirm>
           )}
         </Space>
-      }
-      onClose={onClose}
-      resizable={{ onResize: handleResize }}
-      open={open && !!host}
-    >
-      {host ? (
-        <Space orientation="vertical" style={{ width: "100%" }} size="middle">
-          <Space size="small">
-            <Tag>
-              {host.machine?.cloud
-                ? isKnownProvider(host.machine.cloud)
-                  ? getProviderDescriptor(host.machine.cloud).label
-                  : host.machine.cloud
-                : "provider: n/a"}
-            </Tag>
-            <Tag>{connectorLabel}</Tag>
-            {backupRegionLabel && <Tag>Backup region: {backupRegionLabel}</Tag>}
-            {connectorStatusTag}
-            <Tag>{size?.primary ?? host.size}</Tag>
-            {host.gpu && <Tag color="purple">GPU</Tag>}
-            {host.reprovision_required && (
-              <Tooltip title="Host config changed while stopped; will reprovision on next start.">
-                <Tag color="orange">Reprovision on next start</Tag>
-              </Tooltip>
-            )}
-          </Space>
-          {!showUpgradeProgress && (
-            <Space orientation="vertical" size="small">
-              <HostOpProgress op={displayActiveOp} />
-              <HostBootstrapProgress host={host} />
-              <HostBootstrapLifecycle host={host} detailed />
-              {canCancelBackups && (
-                <Popconfirm
-                  title="Cancel backups for this host?"
-                  okText="Cancel backups"
-                  cancelText="Keep running"
-                  onConfirm={() => onCancelOp?.(displayActiveOp!.op_id)}
-                >
-                  <Button size="small" type="link">
-                    Cancel backups
-                  </Button>
-                </Popconfirm>
-              )}
-            </Space>
-          )}
-          <Typography.Text copyable={{ text: host.id }}>
-            Host ID: {host.id}
+      )}
+      <Typography.Text copyable={{ text: host.id }}>
+        Host ID: {host.id}
+      </Typography.Text>
+      {isSelfHost && host.region && (
+        <Typography.Text copyable={{ text: host.region }}>
+          Connector ID: {host.region}
+        </Typography.Text>
+      )}
+      <Space orientation="vertical" size="small">
+        {host.machine?.cloud && host.public_ip && (
+          <Typography.Text copyable={{ text: host.public_ip }}>
+            Public IP: {host.public_ip}
           </Typography.Text>
-          {isSelfHost && host.region && (
-            <Typography.Text copyable={{ text: host.region }}>
-              Connector ID: {host.region}
-            </Typography.Text>
-          )}
-          <Space orientation="vertical" size="small">
-            {host.machine?.cloud && host.public_ip && (
-              <Typography.Text copyable={{ text: host.public_ip }}>
-                Public IP: {host.public_ip}
-              </Typography.Text>
-            )}
-            {host.machine?.zone && (
-              <Typography.Text>Zone: {host.machine.zone}</Typography.Text>
-            )}
-            {host.machine?.machine_type && (
-              <Typography.Text>
-                Machine type: {host.machine.machine_type}
-              </Typography.Text>
-            )}
-            {host.machine?.gpu_type && (
-              <Typography.Text>
-                GPU type: {host.machine.gpu_type}
-              </Typography.Text>
-            )}
-            {showHostResources && (
-              <Typography.Text>
-                Resources: {hostCpu ?? "?"} vCPU / {hostRam ?? "?"} GiB RAM /{" "}
-                {hostDisk ?? "?"} disk
-              </Typography.Text>
-            )}
-            {isSelfHost && host.machine?.metadata?.self_host_ssh_target && (
-              <Typography.Text>
-                SSH target: {host.machine.metadata.self_host_ssh_target}
-              </Typography.Text>
-            )}
-          </Space>
-          <Space orientation="vertical" size="small">
-            <HostProjectStatus host={host} fontSize={14} />
-            <Button size="small" onClick={() => setShowProjects(true)}>
-              Browse projects
+        )}
+        {host.machine?.zone && (
+          <Typography.Text>Zone: {host.machine.zone}</Typography.Text>
+        )}
+        {host.machine?.machine_type && (
+          <Typography.Text>
+            Machine type: {host.machine.machine_type}
+          </Typography.Text>
+        )}
+        {host.machine?.gpu_type && (
+          <Typography.Text>GPU type: {host.machine.gpu_type}</Typography.Text>
+        )}
+        {showHostResources && (
+          <Typography.Text>
+            Resources: {hostCpu ?? "?"} vCPU / {hostRam ?? "?"} GiB RAM /{" "}
+            {hostDisk ?? "?"} disk
+          </Typography.Text>
+        )}
+        {isSelfHost && host.machine?.metadata?.self_host_ssh_target && (
+          <Typography.Text>
+            SSH target: {host.machine.metadata.self_host_ssh_target}
+          </Typography.Text>
+        )}
+      </Space>
+      {showConnectorWarning && selfHost && (
+        <Alert
+          type="warning"
+          showIcon
+          title="Connector offline"
+          description={
+            <Button size="small" onClick={handleSetupClick}>
+              Set up connector
+            </Button>
+          }
+        />
+      )}
+      {isSelfHost && selfHost && !host.deleted && (
+        <Space orientation="vertical" size="small">
+          <Typography.Text strong>Connector</Typography.Text>
+          <Space wrap>
+            <Button
+              size="small"
+              disabled={hostOpActive}
+              onClick={handleSetupClick}
+            >
+              Setup or reconnect
             </Button>
           </Space>
-          <Card size="small" title="Current metrics">
-            <HostCurrentMetrics host={host} />
-          </Card>
-          {parallelOps ? (
-            <HostParallelOpsPanel
-              host_id={host.id}
-              status={parallelOps.status}
-              loading={parallelOps.loading}
-              savingKey={parallelOps.savingKey}
-              onSetLimit={parallelOps.setLimit}
-              onClearLimit={parallelOps.clearLimit}
-            />
-          ) : null}
-          {(deploymentStatus ||
-            host.version ||
-            host.project_bundle_version ||
-            host.tools_version ||
-            softwareVersions) && (
+        </Space>
+      )}
+      <Card size="small" title="Current metrics">
+        <HostCurrentMetrics host={host} />
+      </Card>
+      {parallelOps ? (
+        <HostParallelOpsPanel
+          host_id={host.id}
+          status={parallelOps.status}
+          loading={parallelOps.loading}
+          savingKey={parallelOps.savingKey}
+          onSetLimit={parallelOps.setLimit}
+          onClearLimit={parallelOps.clearLimit}
+        />
+      ) : null}
+      <Typography.Text type="secondary">
+        Last seen:{" "}
+        {host.last_seen ? new Date(host.last_seen).toLocaleString() : "n/a"}
+      </Typography.Text>
+      {host.status === "error" && host.last_error && (
+        <Alert
+          type="error"
+          showIcon
+          title="Provisioning error"
+          description={host.last_error}
+        />
+      )}
+    </Space>
+  ) : null;
+  const projectsContent = host ? (
+    <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+      <HostProjectStatus host={host} fontSize={14} />
+      <Space wrap>
+        <Button size="small" onClick={() => setShowProjects(true)}>
+          Browse projects
+        </Button>
+      </Space>
+    </Space>
+  ) : null;
+  const storageContent = host ? (
+    <HostRootfsCachePanel
+      host={host}
+      canManage={!!canManageRootfs}
+      inventory={rootfsInventory}
+    />
+  ) : null;
+  const logsContent = host ? (
+    <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+      <HostBootstrapLifecycle host={host} detailed />
+      <div>
+        <Typography.Title level={5}>Recent actions</Typography.Title>
+        {loadingLog ? (
+          <Typography.Text type="secondary">Loading…</Typography.Text>
+        ) : hostLog.length === 0 ? (
+          <Typography.Text type="secondary">No actions yet.</Typography.Text>
+        ) : (
+          <Space orientation="vertical" style={{ width: "100%" }} size="small">
+            {hostLog.map((entry) => (
+              <Card
+                key={entry.id}
+                size="small"
+                styles={{ body: { padding: "10px 12px" } }}
+              >
+                {(() => {
+                  const change = describeSpecChange(entry.spec);
+                  const showDetails = !!change.details;
+                  const detailLink = showDetails ? (
+                    <Popover
+                      title="Config changes"
+                      content={
+                        <pre style={{ margin: 0, fontSize: 11 }}>
+                          {change.details}
+                        </pre>
+                      }
+                    >
+                      <a style={{ marginLeft: 8 }}>Details</a>
+                    </Popover>
+                  ) : null;
+                  return (
+                    <>
+                      {change.summary && (
+                        <div style={{ fontSize: 12, marginBottom: 6 }}>
+                          Config updated: {change.summary}
+                          {detailLink}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <div style={{ fontWeight: 600 }}>
+                    {entry.action} — {entry.status}
+                  </div>
+                  {entry.provider && (
+                    <div style={{ color: "#666", fontSize: 12 }}>
+                      Provider: {entry.provider}
+                    </div>
+                  )}
+                  <div style={{ color: "#888", fontSize: 12 }}>
+                    {entry.ts
+                      ? new Date(entry.ts).toLocaleString()
+                      : "unknown time"}
+                  </div>
+                  {entry.error && (
+                    <div
+                      style={{
+                        maxHeight: "4.8em",
+                        overflowY: "auto",
+                        color: "#c00",
+                        fontSize: 12,
+                        lineHeight: 1.2,
+                        whiteSpace: "pre-wrap",
+                        paddingRight: 4,
+                      }}
+                    >
+                      {entry.error}
+                    </div>
+                  )}
+                </div>
+              </Card>
+            ))}
+          </Space>
+        )}
+      </div>
+    </Space>
+  ) : null;
+  const dangerContent = host ? (
+    <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+      {isSelfHost && selfHost && !host.deleted ? (
+        <Space orientation="vertical" size="small">
+          <Typography.Text strong>Connector actions</Typography.Text>
+          <Space wrap>
+            <Button
+              size="small"
+              danger
+              disabled={hostOpActive}
+              onClick={() => selfHost.onRemove(host)}
+            >
+              Remove connector
+            </Button>
+            {canForceDeprovision && (
+              <Popconfirm
+                title="Force deprovision this host without contacting your machine?"
+                okText="Force deprovision"
+                cancelText="Cancel"
+                onConfirm={() => selfHost.onForceDeprovision(host)}
+                okButtonProps={{ danger: true }}
+              >
+                <Button size="small" disabled={hostOpActive}>
+                  Force deprovision
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
+        </Space>
+      ) : (
+        <Typography.Text type="secondary">
+          High-risk connector actions only. Start/stop/deprovision controls
+          remain on the main hosts list for now.
+        </Typography.Text>
+      )}
+    </Space>
+  ) : null;
+  const tabItems = [
+    {
+      key: "overview",
+      label: "Overview",
+      children: overviewContent,
+    },
+    {
+      key: "runtime",
+      label: "Runtime",
+      children:
+        deploymentStatus ||
+        host?.version ||
+        host?.project_bundle_version ||
+        host?.tools_version ||
+        softwareVersions ? (
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            <Space wrap align="center">
+              <Typography.Text strong>Runtime software</Typography.Text>
+              <Popover content={softwareHelp} trigger="click">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<QuestionCircleOutlined />}
+                />
+              </Popover>
+              {(softwareVersions || runtimeDeployments) && (
+                <Button
+                  type="text"
+                  size="small"
+                  icon={
+                    <SyncOutlined
+                      spin={
+                        !!softwareVersions?.loading ||
+                        !!runtimeDeployments?.loading ||
+                        !!runtimeDeployments?.refreshing
+                      }
+                    />
+                  }
+                  onClick={() => {
+                    Promise.all([
+                      softwareVersions?.refresh?.(),
+                      runtimeDeployments?.refresh?.(),
+                    ]).catch((err) => {
+                      console.error("failed to refresh runtime software", err);
+                    });
+                  }}
+                >
+                  Refresh
+                </Button>
+              )}
+            </Space>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Configured source: server default software base URL.
+              {softwareVersions?.hubSourceBaseUrl
+                ? ` Hub source: ${softwareVersions.hubSourceBaseUrl}`
+                : " Hub source: this site's /software endpoint."}
+            </Typography.Text>
+            <Space wrap size={[8, 8]}>
+              <Tag color="green">{softwareSummary.upToDate} up to date</Tag>
+              <Tag color="orange">
+                {softwareSummary.updatesAvailable} updates available
+              </Tag>
+              {softwareSummary.unknown > 0 && (
+                <Tag>{softwareSummary.unknown} unknown</Tag>
+              )}
+            </Space>
+            {runtimeDeployments?.error && (
+              <Alert
+                type="warning"
+                showIcon
+                title="Runtime deployment status unavailable"
+                description={runtimeDeployments.error}
+              />
+            )}
+            {deploymentStatus?.observation_error && (
+              <Alert
+                type="warning"
+                showIcon
+                title="Host observation warning"
+                description={deploymentStatus.observation_error}
+              />
+            )}
+            {softwareVersions?.configuredError && (
+              <Alert
+                type="warning"
+                showIcon
+                title="Configured source lookup failed"
+                description={softwareVersions.configuredError}
+              />
+            )}
+            {softwareVersions?.hubError && (
+              <Alert
+                type="warning"
+                showIcon
+                title="Hub source lookup failed"
+                description={softwareVersions.hubError}
+              />
+            )}
+            {deploymentStatus?.observed_host_agent?.project_host && (
+              <Card size="small" title="Host agent rollback state">
+                <Space orientation="vertical" size="small">
+                  {projectHostComponentDeployment?.scope_type === "host" && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="Project-host is pinned away from the cluster default"
+                      description={
+                        <span>
+                          This host currently overrides the cluster default and
+                          stays on{" "}
+                          <code>
+                            {projectHostComponentDeployment.desired_version}
+                          </code>
+                          {observedTargetForArtifact(
+                            deploymentStatus,
+                            "project-host",
+                          )?.desired_version ? (
+                            <>
+                              {" "}
+                              while the fleet target is{" "}
+                              <code>
+                                {
+                                  observedTargetForArtifact(
+                                    deploymentStatus,
+                                    "project-host",
+                                  )?.desired_version
+                                }
+                              </code>
+                              .
+                            </>
+                          ) : (
+                            "."
+                          )}{" "}
+                          Reason:{" "}
+                          {formatRolloutReason(
+                            projectHostComponentDeployment.rollout_reason,
+                          )}
+                          . Use <strong>Resume cluster default</strong> when you
+                          are ready to retry the fleet version.
+                        </span>
+                      }
+                    />
+                  )}
+                  {deploymentStatus.observed_host_agent.project_host
+                    .last_known_good_version && (
+                    <Typography.Text>
+                      Last known good:{" "}
+                      <code>
+                        {
+                          deploymentStatus.observed_host_agent.project_host
+                            .last_known_good_version
+                        }
+                      </code>
+                    </Typography.Text>
+                  )}
+                  {deploymentStatus.observed_host_agent.project_host
+                    .pending_rollout && (
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="Project-host rollout in progress"
+                      description={
+                        <span>
+                          Target{" "}
+                          <code>
+                            {
+                              deploymentStatus.observed_host_agent.project_host
+                                .pending_rollout.target_version
+                            }
+                          </code>{" "}
+                          from{" "}
+                          <code>
+                            {
+                              deploymentStatus.observed_host_agent.project_host
+                                .pending_rollout.previous_version
+                            }
+                          </code>
+                          {formatRuntimeTimestamp(
+                            deploymentStatus.observed_host_agent.project_host
+                              .pending_rollout.started_at,
+                          ) && (
+                            <>
+                              {" "}
+                              · started{" "}
+                              {formatRuntimeTimestamp(
+                                deploymentStatus.observed_host_agent
+                                  .project_host.pending_rollout.started_at,
+                              )}
+                            </>
+                          )}
+                          {formatRuntimeTimestamp(
+                            deploymentStatus.observed_host_agent.project_host
+                              .pending_rollout.deadline_at,
+                          ) && (
+                            <>
+                              {" "}
+                              · deadline{" "}
+                              {formatRuntimeTimestamp(
+                                deploymentStatus.observed_host_agent
+                                  .project_host.pending_rollout.deadline_at,
+                              )}
+                            </>
+                          )}
+                        </span>
+                      }
+                    />
+                  )}
+                  {deploymentStatus.observed_host_agent.project_host
+                    .last_automatic_rollback && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="Last automatic rollback"
+                      description={
+                        <span>
+                          Target{" "}
+                          <code>
+                            {
+                              deploymentStatus.observed_host_agent.project_host
+                                .last_automatic_rollback.target_version
+                            }
+                          </code>{" "}
+                          rolled back to{" "}
+                          <code>
+                            {
+                              deploymentStatus.observed_host_agent.project_host
+                                .last_automatic_rollback.rollback_version
+                            }
+                          </code>
+                          {formatRuntimeTimestamp(
+                            deploymentStatus.observed_host_agent.project_host
+                              .last_automatic_rollback.finished_at,
+                          ) && (
+                            <>
+                              {" "}
+                              · finished{" "}
+                              {formatRuntimeTimestamp(
+                                deploymentStatus.observed_host_agent
+                                  .project_host.last_automatic_rollback
+                                  .finished_at,
+                              )}
+                            </>
+                          )}{" "}
+                          ·{" "}
+                          {projectHostRollbackReasonLabel(
+                            deploymentStatus.observed_host_agent.project_host
+                              .last_automatic_rollback.reason,
+                          )}
+                        </span>
+                      }
+                    />
+                  )}
+                </Space>
+              </Card>
+            )}
+            {showUpgradeProgress && <HostOpProgress op={displayActiveOp} />}
             <Space
               orientation="vertical"
               size="small"
               style={{ width: "100%" }}
             >
-              <Space wrap align="center">
-                <Typography.Text strong>Runtime software</Typography.Text>
-                <Popover content={softwareHelp} trigger="click">
-                  <Button
-                    type="text"
+              {SOFTWARE_ARTIFACTS.map(({ artifact, label, desiredLabel }) => {
+                const running = runningVersion(host, artifact);
+                const buildId = runningBuildId(host, artifact);
+                const configured = sourceVersionForArtifact({
+                  artifact,
+                  softwareVersions,
+                  source: "configured",
+                });
+                const hubVersion = sourceVersionForArtifact({
+                  artifact,
+                  softwareVersions,
+                  source: "hub",
+                });
+                const deployment = deploymentRecordForArtifact(
+                  deploymentStatus,
+                  artifact,
+                );
+                const observedTarget = observedTargetForArtifact(
+                  deploymentStatus,
+                  artifact,
+                );
+                const observedArtifact = observedArtifactForArtifact(
+                  deploymentStatus,
+                  artifact,
+                );
+                const rollbackTarget = rollbackTargetForArtifact(
+                  deploymentStatus,
+                  artifact,
+                );
+                const componentOverride =
+                  artifact === "project-host"
+                    ? projectHostComponentDeployment
+                    : undefined;
+                const hasHostOverride =
+                  componentOverride?.scope_type === "host" ||
+                  deployment?.scope_type === "host";
+                const effectiveDesiredVersion =
+                  componentOverride?.desired_version ??
+                  deployment?.desired_version;
+                const effectiveOverrideReason =
+                  componentOverride?.rollout_reason ??
+                  deployment?.rollout_reason;
+                const currentVersion =
+                  observedTarget?.current_version ??
+                  observedArtifact?.current_version ??
+                  running;
+                const installedVersions =
+                  observedTarget?.installed_versions ??
+                  observedArtifact?.installed_versions ??
+                  [];
+                const rollbackVersion =
+                  rollbackTarget?.last_known_good_version ??
+                  rollbackTarget?.previous_version;
+                const commands = cliCommandsForArtifact({ host, artifact });
+                const expanded = !!expandedArtifacts[artifact];
+                return (
+                  <Card
+                    key={artifact}
                     size="small"
-                    icon={<QuestionCircleOutlined />}
-                  />
-                </Popover>
-                {(softwareVersions || runtimeDeployments) && (
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={
-                      <SyncOutlined
-                        spin={
-                          !!softwareVersions?.loading ||
-                          !!runtimeDeployments?.loading ||
-                          !!runtimeDeployments?.refreshing
-                        }
-                      />
-                    }
-                    onClick={() => {
-                      Promise.all([
-                        softwareVersions?.refresh?.(),
-                        runtimeDeployments?.refresh?.(),
-                      ]).catch((err) => {
-                        console.error(
-                          "failed to refresh runtime software",
-                          err,
-                        );
-                      });
-                    }}
+                    styles={{ body: { padding: "12px" } }}
                   >
-                    Refresh
-                  </Button>
-                )}
-              </Space>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Configured source: server default software base URL.
-                {softwareVersions?.hubSourceBaseUrl
-                  ? ` Hub source: ${softwareVersions.hubSourceBaseUrl}`
-                  : " Hub source: this site's /software endpoint."}
-              </Typography.Text>
-              <Space wrap size={[8, 8]}>
-                <Tag color="green">{softwareSummary.upToDate} up to date</Tag>
-                <Tag color="orange">
-                  {softwareSummary.updatesAvailable} updates available
-                </Tag>
-                {softwareSummary.unknown > 0 && (
-                  <Tag>{softwareSummary.unknown} unknown</Tag>
-                )}
-              </Space>
-              {runtimeDeployments?.error && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  title="Runtime deployment status unavailable"
-                  description={runtimeDeployments.error}
-                />
-              )}
-              {deploymentStatus?.observation_error && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  title="Host observation warning"
-                  description={deploymentStatus.observation_error}
-                />
-              )}
-              {softwareVersions?.configuredError && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  title="Configured source lookup failed"
-                  description={softwareVersions.configuredError}
-                />
-              )}
-              {softwareVersions?.hubError && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  title="Hub source lookup failed"
-                  description={softwareVersions.hubError}
-                />
-              )}
-              {deploymentStatus?.observed_host_agent?.project_host && (
-                <Card size="small" title="Host agent rollback state">
-                  <Space orientation="vertical" size="small">
-                    {projectHostComponentDeployment?.scope_type === "host" && (
-                      <Alert
-                        type="warning"
-                        showIcon
-                        message="Project-host is pinned away from the cluster default"
-                        description={
-                          <span>
-                            This host currently overrides the cluster default
-                            and stays on{" "}
-                            <code>
-                              {projectHostComponentDeployment.desired_version}
-                            </code>
-                            {observedTargetForArtifact(
-                              deploymentStatus,
-                              "project-host",
-                            )?.desired_version ? (
-                              <>
-                                {" "}
-                                while the fleet target is{" "}
-                                <code>
-                                  {
-                                    observedTargetForArtifact(
-                                      deploymentStatus,
-                                      "project-host",
-                                    )?.desired_version
-                                  }
-                                </code>
-                                .
-                              </>
-                            ) : (
-                              "."
-                            )}{" "}
-                            Reason:{" "}
-                            {formatRolloutReason(
-                              projectHostComponentDeployment.rollout_reason,
-                            )}
-                            . Use <strong>Resume cluster default</strong> when
-                            you are ready to retry the fleet version.
-                          </span>
-                        }
-                      />
-                    )}
-                    {deploymentStatus.observed_host_agent.project_host
-                      .last_known_good_version && (
-                      <Typography.Text>
-                        Last known good:{" "}
-                        <code>
-                          {
-                            deploymentStatus.observed_host_agent.project_host
-                              .last_known_good_version
-                          }
-                        </code>
-                      </Typography.Text>
-                    )}
-                    {deploymentStatus.observed_host_agent.project_host
-                      .pending_rollout && (
-                      <Alert
-                        type="info"
-                        showIcon
-                        message="Project-host rollout in progress"
-                        description={
-                          <span>
-                            Target{" "}
-                            <code>
-                              {
-                                deploymentStatus.observed_host_agent
-                                  .project_host.pending_rollout.target_version
-                              }
-                            </code>{" "}
-                            from{" "}
-                            <code>
-                              {
-                                deploymentStatus.observed_host_agent
-                                  .project_host.pending_rollout.previous_version
-                              }
-                            </code>
-                            {formatRuntimeTimestamp(
-                              deploymentStatus.observed_host_agent.project_host
-                                .pending_rollout.started_at,
-                            ) && (
-                              <>
-                                {" "}
-                                · started{" "}
-                                {formatRuntimeTimestamp(
-                                  deploymentStatus.observed_host_agent
-                                    .project_host.pending_rollout.started_at,
-                                )}
-                              </>
-                            )}
-                            {formatRuntimeTimestamp(
-                              deploymentStatus.observed_host_agent.project_host
-                                .pending_rollout.deadline_at,
-                            ) && (
-                              <>
-                                {" "}
-                                · deadline{" "}
-                                {formatRuntimeTimestamp(
-                                  deploymentStatus.observed_host_agent
-                                    .project_host.pending_rollout.deadline_at,
-                                )}
-                              </>
-                            )}
-                          </span>
-                        }
-                      />
-                    )}
-                    {deploymentStatus.observed_host_agent.project_host
-                      .last_automatic_rollback && (
-                      <Alert
-                        type="warning"
-                        showIcon
-                        message="Last automatic rollback"
-                        description={
-                          <span>
-                            Target{" "}
-                            <code>
-                              {
-                                deploymentStatus.observed_host_agent
-                                  .project_host.last_automatic_rollback
-                                  .target_version
-                              }
-                            </code>{" "}
-                            rolled back to{" "}
-                            <code>
-                              {
-                                deploymentStatus.observed_host_agent
-                                  .project_host.last_automatic_rollback
-                                  .rollback_version
-                              }
-                            </code>
-                            {formatRuntimeTimestamp(
-                              deploymentStatus.observed_host_agent.project_host
-                                .last_automatic_rollback.finished_at,
-                            ) && (
-                              <>
-                                {" "}
-                                · finished{" "}
-                                {formatRuntimeTimestamp(
-                                  deploymentStatus.observed_host_agent
-                                    .project_host.last_automatic_rollback
-                                    .finished_at,
-                                )}
-                              </>
-                            )}{" "}
-                            ·{" "}
-                            {projectHostRollbackReasonLabel(
-                              deploymentStatus.observed_host_agent.project_host
-                                .last_automatic_rollback.reason,
-                            )}
-                          </span>
-                        }
-                      />
-                    )}
-                  </Space>
-                </Card>
-              )}
-              {showUpgradeProgress && <HostOpProgress op={displayActiveOp} />}
-              <Space
-                orientation="vertical"
-                size="small"
-                style={{ width: "100%" }}
-              >
-                {SOFTWARE_ARTIFACTS.map(({ artifact, label, desiredLabel }) => {
-                  const running = runningVersion(host, artifact);
-                  const buildId = runningBuildId(host, artifact);
-                  const configured = sourceVersionForArtifact({
-                    artifact,
-                    softwareVersions,
-                    source: "configured",
-                  });
-                  const hubVersion = sourceVersionForArtifact({
-                    artifact,
-                    softwareVersions,
-                    source: "hub",
-                  });
-                  const deployment = deploymentRecordForArtifact(
-                    deploymentStatus,
-                    artifact,
-                  );
-                  const observedTarget = observedTargetForArtifact(
-                    deploymentStatus,
-                    artifact,
-                  );
-                  const observedArtifact = observedArtifactForArtifact(
-                    deploymentStatus,
-                    artifact,
-                  );
-                  const rollbackTarget = rollbackTargetForArtifact(
-                    deploymentStatus,
-                    artifact,
-                  );
-                  const componentOverride =
-                    artifact === "project-host"
-                      ? projectHostComponentDeployment
-                      : undefined;
-                  const hasHostOverride =
-                    componentOverride?.scope_type === "host" ||
-                    deployment?.scope_type === "host";
-                  const effectiveDesiredVersion =
-                    componentOverride?.desired_version ??
-                    deployment?.desired_version;
-                  const effectiveOverrideReason =
-                    componentOverride?.rollout_reason ??
-                    deployment?.rollout_reason;
-                  const currentVersion =
-                    observedTarget?.current_version ??
-                    observedArtifact?.current_version ??
-                    running;
-                  const installedVersions =
-                    observedTarget?.installed_versions ??
-                    observedArtifact?.installed_versions ??
-                    [];
-                  const rollbackVersion =
-                    rollbackTarget?.last_known_good_version ??
-                    rollbackTarget?.previous_version;
-                  const commands = cliCommandsForArtifact({ host, artifact });
-                  const expanded = !!expandedArtifacts[artifact];
-                  return (
-                    <Card
-                      key={artifact}
+                    <Space
+                      orientation="vertical"
                       size="small"
-                      styles={{ body: { padding: "12px" } }}
+                      style={{ width: "100%" }}
                     >
-                      <Space
-                        orientation="vertical"
-                        size="small"
-                        style={{ width: "100%" }}
-                      >
-                        <Space wrap align="center">
-                          <Typography.Text strong>{label}</Typography.Text>
-                          {observedVersionStateTag(
-                            observedTarget?.observed_version_state,
-                          )}
-                          <Typography.Text
-                            type="secondary"
-                            style={{ fontSize: 12 }}
-                          >
-                            {desiredLabel}
-                          </Typography.Text>
-                          {hasHostOverride && (
-                            <Tag color="blue">host override</Tag>
-                          )}
-                        </Space>
-                        <Space
-                          wrap
-                          align="center"
-                          style={{
-                            justifyContent: "space-between",
-                            width: "100%",
-                          }}
+                      <Space wrap align="center">
+                        <Typography.Text strong>{label}</Typography.Text>
+                        {observedVersionStateTag(
+                          observedTarget?.observed_version_state,
+                        )}
+                        <Typography.Text
+                          type="secondary"
+                          style={{ fontSize: 12 }}
                         >
-                          <Typography.Text type="secondary">
-                            desired{" "}
-                            <code>{effectiveDesiredVersion ?? "n/a"}</code> |
-                            observed <code>{currentVersion ?? "n/a"}</code> |
-                            latest{" "}
-                            <code>{configured?.version ?? "unknown"}</code>
+                          {desiredLabel}
+                        </Typography.Text>
+                        {hasHostOverride && (
+                          <Tag color="blue">host override</Tag>
+                        )}
+                      </Space>
+                      <Space
+                        wrap
+                        align="center"
+                        style={{
+                          justifyContent: "space-between",
+                          width: "100%",
+                        }}
+                      >
+                        <Typography.Text type="secondary">
+                          desired{" "}
+                          <code>{effectiveDesiredVersion ?? "n/a"}</code> |
+                          observed <code>{currentVersion ?? "n/a"}</code> |
+                          latest <code>{configured?.version ?? "unknown"}</code>
+                        </Typography.Text>
+                        <Space wrap>
+                          {canUpgrade &&
+                            !host.deleted &&
+                            onSetRuntimeArtifactDeployment &&
+                            configured?.version && (
+                              <Popconfirm
+                                title={upgradeTitle({
+                                  label,
+                                  source: "the configured source",
+                                })}
+                                okText="Deploy"
+                                cancelText="Cancel"
+                                onConfirm={() =>
+                                  onSetRuntimeArtifactDeployment({
+                                    host,
+                                    artifact,
+                                    desired_version: configured.version!,
+                                    source: "configured",
+                                  })
+                                }
+                                disabled={
+                                  hostOpActive || host.status !== "running"
+                                }
+                              >
+                                <Button
+                                  size="small"
+                                  disabled={
+                                    hostOpActive || host.status !== "running"
+                                  }
+                                >
+                                  Deploy latest
+                                </Button>
+                              </Popconfirm>
+                            )}
+                          {canUpgrade &&
+                            !host.deleted &&
+                            hasHostOverride &&
+                            onResumeRuntimeArtifactClusterDefault && (
+                              <Popconfirm
+                                title={`Resume following the cluster default for ${label.toLowerCase()}?`}
+                                description={`This deletes the host-specific desired version for ${label.toLowerCase()}. After that, this host will inherit the cluster default again, and if the host is running the backend may immediately queue the corresponding reconcile/upgrade work.`}
+                                okText="Resume default"
+                                cancelText="Cancel"
+                                onConfirm={() =>
+                                  onResumeRuntimeArtifactClusterDefault({
+                                    host,
+                                    artifact,
+                                  })
+                                }
+                                disabled={hostOpActive}
+                              >
+                                <Button size="small" disabled={hostOpActive}>
+                                  Resume cluster default
+                                </Button>
+                              </Popconfirm>
+                            )}
+                          {canUpgrade &&
+                            !host.deleted &&
+                            onRollbackRuntimeArtifact &&
+                            rollbackVersion && (
+                              <Popconfirm
+                                title={`Roll back ${label.toLowerCase()} on this host?`}
+                                okText="Rollback"
+                                cancelText="Cancel"
+                                onConfirm={() =>
+                                  onRollbackRuntimeArtifact({
+                                    host,
+                                    artifact,
+                                    ...(rollbackTarget?.last_known_good_version
+                                      ? { last_known_good: true }
+                                      : { version: rollbackVersion }),
+                                  })
+                                }
+                                disabled={hostOpActive}
+                              >
+                                <Button size="small" disabled={hostOpActive}>
+                                  Rollback
+                                </Button>
+                              </Popconfirm>
+                            )}
+                          <Button
+                            size="small"
+                            type="link"
+                            onClick={() =>
+                              setExpandedArtifacts((prev) => ({
+                                ...prev,
+                                [artifact]: !prev[artifact],
+                              }))
+                            }
+                          >
+                            {expanded ? "Hide details" : "Details"}
+                          </Button>
+                        </Space>
+                      </Space>
+                      {expanded && (
+                        <Space
+                          orientation="vertical"
+                          size="small"
+                          style={{ width: "100%" }}
+                        >
+                          {buildId && (
+                            <Typography.Text copyable={{ text: buildId }}>
+                              Build ID: <code>{buildId}</code>
+                            </Typography.Text>
+                          )}
+                          {observedArtifact?.current_build_id && !buildId && (
+                            <Typography.Text
+                              copyable={{
+                                text: observedArtifact.current_build_id,
+                              }}
+                            >
+                              Build ID:{" "}
+                              <code>{observedArtifact.current_build_id}</code>
+                            </Typography.Text>
+                          )}
+                          <Typography.Text>
+                            Latest hub source:{" "}
+                            <code>{hubVersion?.version ?? "unknown"}</code>{" "}
+                            {availableVersionTag({
+                              running: currentVersion,
+                              latest: hubVersion?.version,
+                              error: hubVersion?.error,
+                            })}
                           </Typography.Text>
+                          {!!installedVersions.length && (
+                            <Typography.Text>
+                              Installed versions:{" "}
+                              <code>{installedVersions.join(", ")}</code>
+                            </Typography.Text>
+                          )}
+                          {!!observedArtifact?.referenced_versions?.length && (
+                            <Typography.Text>
+                              Referenced by running projects:{" "}
+                              <code>
+                                {observedArtifact.referenced_versions
+                                  .map(
+                                    ({ version, project_count }) =>
+                                      `${version} x${project_count}`,
+                                  )
+                                  .join(", ")}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {observedTarget?.observed_version_state ===
+                            "missing" && (
+                            <Alert
+                              type="warning"
+                              showIcon
+                              message="Desired version is not installed on this host yet"
+                              description="Setting a desired version queues the corresponding host artifact operation automatically. Use Refresh to watch that operation appear in the host activity panel."
+                            />
+                          )}
+                          {rollbackTarget && (
+                            <Typography.Text>
+                              Rollback candidate:{" "}
+                              <code>
+                                {rollbackTarget.last_known_good_version ??
+                                  rollbackTarget.previous_version ??
+                                  "none"}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {hasHostOverride && (
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="This host is pinned by a host-specific override"
+                              description={`Reason: ${formatRolloutReason(effectiveOverrideReason)}. Use “Resume cluster default” to remove the override and inherit the fleet default again.`}
+                            />
+                          )}
                           <Space wrap>
                             {canUpgrade &&
                               !host.deleted &&
                               onSetRuntimeArtifactDeployment &&
-                              configured?.version && (
+                              hubVersion?.version && (
                                 <Popconfirm
                                   title={upgradeTitle({
                                     label,
-                                    source: "the configured source",
+                                    source: "this hub source",
                                   })}
                                   okText="Deploy"
                                   cancelText="Cancel"
@@ -1286,8 +1581,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                     onSetRuntimeArtifactDeployment({
                                       host,
                                       artifact,
-                                      desired_version: configured.version!,
-                                      source: "configured",
+                                      desired_version: hubVersion.version!,
+                                      source: "hub",
                                     })
                                   }
                                   disabled={
@@ -1300,324 +1595,302 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                       hostOpActive || host.status !== "running"
                                     }
                                   >
-                                    Deploy latest
+                                    Deploy hub latest
                                   </Button>
                                 </Popconfirm>
                               )}
-                            {canUpgrade &&
-                              !host.deleted &&
-                              hasHostOverride &&
-                              onResumeRuntimeArtifactClusterDefault && (
-                                <Popconfirm
-                                  title={`Resume following the cluster default for ${label.toLowerCase()}?`}
-                                  description={`This deletes the host-specific desired version for ${label.toLowerCase()}. After that, this host will inherit the cluster default again, and if the host is running the backend may immediately queue the corresponding reconcile/upgrade work.`}
-                                  okText="Resume default"
-                                  cancelText="Cancel"
-                                  onConfirm={() =>
-                                    onResumeRuntimeArtifactClusterDefault({
-                                      host,
-                                      artifact,
-                                    })
-                                  }
-                                  disabled={hostOpActive}
-                                >
-                                  <Button size="small" disabled={hostOpActive}>
-                                    Resume cluster default
-                                  </Button>
-                                </Popconfirm>
-                              )}
-                            {canUpgrade &&
-                              !host.deleted &&
-                              onRollbackRuntimeArtifact &&
-                              rollbackVersion && (
-                                <Popconfirm
-                                  title={`Roll back ${label.toLowerCase()} on this host?`}
-                                  okText="Rollback"
-                                  cancelText="Cancel"
-                                  onConfirm={() =>
-                                    onRollbackRuntimeArtifact({
-                                      host,
-                                      artifact,
-                                      ...(rollbackTarget?.last_known_good_version
-                                        ? { last_known_good: true }
-                                        : { version: rollbackVersion }),
-                                    })
-                                  }
-                                  disabled={hostOpActive}
-                                >
-                                  <Button size="small" disabled={hostOpActive}>
-                                    Rollback
-                                  </Button>
-                                </Popconfirm>
-                              )}
-                            <Button
-                              size="small"
-                              type="link"
-                              onClick={() =>
-                                setExpandedArtifacts((prev) => ({
-                                  ...prev,
-                                  [artifact]: !prev[artifact],
-                                }))
+                            <Popover
+                              trigger="click"
+                              title={`${label} CLI`}
+                              content={
+                                <div style={{ maxWidth: 520 }}>
+                                  {commands.map((command) => (
+                                    <Typography.Paragraph
+                                      key={command}
+                                      copyable={{ text: command }}
+                                      style={{ marginBottom: 8 }}
+                                    >
+                                      <code>{command}</code>
+                                    </Typography.Paragraph>
+                                  ))}
+                                </div>
                               }
                             >
-                              {expanded ? "Hide details" : "Details"}
-                            </Button>
+                              <Button
+                                size="small"
+                                type="text"
+                                icon={<CodeOutlined />}
+                              >
+                                CLI
+                              </Button>
+                            </Popover>
                           </Space>
                         </Space>
-                        {expanded && (
-                          <Space
-                            orientation="vertical"
-                            size="small"
-                            style={{ width: "100%" }}
-                          >
-                            {buildId && (
-                              <Typography.Text copyable={{ text: buildId }}>
-                                Build ID: <code>{buildId}</code>
-                              </Typography.Text>
-                            )}
-                            {observedArtifact?.current_build_id && !buildId && (
-                              <Typography.Text
-                                copyable={{
-                                  text: observedArtifact.current_build_id,
-                                }}
-                              >
-                                Build ID:{" "}
-                                <code>{observedArtifact.current_build_id}</code>
-                              </Typography.Text>
-                            )}
-                            <Typography.Text>
-                              Latest hub source:{" "}
-                              <code>{hubVersion?.version ?? "unknown"}</code>{" "}
-                              {availableVersionTag({
-                                running: currentVersion,
-                                latest: hubVersion?.version,
-                                error: hubVersion?.error,
-                              })}
-                            </Typography.Text>
-                            {!!installedVersions.length && (
-                              <Typography.Text>
-                                Installed versions:{" "}
-                                <code>{installedVersions.join(", ")}</code>
-                              </Typography.Text>
-                            )}
-                            {!!observedArtifact?.referenced_versions
-                              ?.length && (
-                              <Typography.Text>
-                                Referenced by running projects:{" "}
-                                <code>
-                                  {observedArtifact.referenced_versions
-                                    .map(
-                                      ({ version, project_count }) =>
-                                        `${version} x${project_count}`,
-                                    )
-                                    .join(", ")}
-                                </code>
-                              </Typography.Text>
-                            )}
-                            {observedTarget?.observed_version_state ===
-                              "missing" && (
-                              <Alert
-                                type="warning"
-                                showIcon
-                                message="Desired version is not installed on this host yet"
-                                description="Setting a desired version queues the corresponding host artifact operation automatically. Use Refresh to watch that operation appear in the host activity panel."
-                              />
-                            )}
-                            {rollbackTarget && (
-                              <Typography.Text>
-                                Rollback candidate:{" "}
-                                <code>
-                                  {rollbackTarget.last_known_good_version ??
-                                    rollbackTarget.previous_version ??
-                                    "none"}
-                                </code>
-                              </Typography.Text>
-                            )}
-                            {hasHostOverride && (
-                              <Alert
-                                type="info"
-                                showIcon
-                                message="This host is pinned by a host-specific override"
-                                description={`Reason: ${formatRolloutReason(effectiveOverrideReason)}. Use “Resume cluster default” to remove the override and inherit the fleet default again.`}
-                              />
-                            )}
-                            <Space wrap>
-                              {canUpgrade &&
-                                !host.deleted &&
-                                onSetRuntimeArtifactDeployment &&
-                                hubVersion?.version && (
-                                  <Popconfirm
-                                    title={upgradeTitle({
-                                      label,
-                                      source: "this hub source",
-                                    })}
-                                    okText="Deploy"
-                                    cancelText="Cancel"
-                                    onConfirm={() =>
-                                      onSetRuntimeArtifactDeployment({
-                                        host,
-                                        artifact,
-                                        desired_version: hubVersion.version!,
-                                        source: "hub",
-                                      })
-                                    }
-                                    disabled={
-                                      hostOpActive || host.status !== "running"
-                                    }
-                                  >
-                                    <Button
-                                      size="small"
-                                      disabled={
-                                        hostOpActive ||
-                                        host.status !== "running"
-                                      }
-                                    >
-                                      Deploy hub latest
-                                    </Button>
-                                  </Popconfirm>
-                                )}
-                              <Popover
-                                trigger="click"
-                                title={`${label} CLI`}
-                                content={
-                                  <div style={{ maxWidth: 520 }}>
-                                    {commands.map((command) => (
-                                      <Typography.Paragraph
-                                        key={command}
-                                        copyable={{ text: command }}
-                                        style={{ marginBottom: 8 }}
-                                      >
-                                        <code>{command}</code>
-                                      </Typography.Paragraph>
-                                    ))}
-                                  </div>
+                      )}
+                    </Space>
+                  </Card>
+                );
+              })}
+            </Space>
+            <Divider style={{ margin: "4px 0" }} />
+            <Space
+              orientation="vertical"
+              size="small"
+              style={{ width: "100%" }}
+            >
+              <Space wrap align="center">
+                <Typography.Text strong>Daemon components</Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Runtime state and desired versions for managed host daemons.
+                </Typography.Text>
+              </Space>
+              {DAEMON_COMPONENTS.map(({ component, label }) => {
+                const deployment = componentDeploymentRecord(
+                  deploymentStatus,
+                  component,
+                );
+                const observedTarget = observedTargetForComponent(
+                  deploymentStatus,
+                  component,
+                );
+                const observedComponent = observedComponentForComponent(
+                  deploymentStatus,
+                  component,
+                );
+                const rollbackTarget = rollbackTargetForComponent(
+                  deploymentStatus,
+                  component,
+                );
+                const configured = sourceVersionForComponent({
+                  softwareVersions,
+                  source: "configured",
+                });
+                const hubVersion = sourceVersionForComponent({
+                  softwareVersions,
+                  source: "hub",
+                });
+                const desiredVersion =
+                  deployment?.desired_version ??
+                  observedTarget?.desired_version;
+                const currentVersion =
+                  observedTarget?.current_version ??
+                  observedComponent?.running_versions?.[0];
+                const versionState =
+                  observedTarget?.observed_version_state ??
+                  observedComponent?.version_state;
+                const runtimeState =
+                  observedTarget?.observed_runtime_state ??
+                  observedComponent?.runtime_state;
+                const runningVersions =
+                  observedTarget?.running_versions ??
+                  observedComponent?.running_versions ??
+                  [];
+                const runningPids =
+                  observedTarget?.running_pids ??
+                  observedComponent?.running_pids ??
+                  [];
+                const rollbackVersion =
+                  rollbackTarget?.last_known_good_version ??
+                  rollbackTarget?.previous_version;
+                const hasHostOverride = deployment?.scope_type === "host";
+                const enabled =
+                  observedTarget?.enabled ?? observedComponent?.enabled;
+                const managed =
+                  observedTarget?.managed ?? observedComponent?.managed;
+                const commands = cliCommandsForComponent({ host, component });
+                const expanded = !!expandedComponents[component];
+                return (
+                  <Card
+                    key={component}
+                    size="small"
+                    styles={{ body: { padding: "12px" } }}
+                  >
+                    <Space
+                      orientation="vertical"
+                      size="small"
+                      style={{ width: "100%" }}
+                    >
+                      <Space wrap align="center">
+                        <Typography.Text strong>{label}</Typography.Text>
+                        {runtimeStateTag(runtimeState)}
+                        {observedVersionStateTag(versionState)}
+                        {hasHostOverride && (
+                          <Tag color="blue">host override</Tag>
+                        )}
+                      </Space>
+                      <Space
+                        wrap
+                        align="center"
+                        style={{
+                          justifyContent: "space-between",
+                          width: "100%",
+                        }}
+                      >
+                        <Typography.Text type="secondary">
+                          desired <code>{desiredVersion ?? "n/a"}</code> |
+                          running <code>{currentVersion ?? "n/a"}</code> |
+                          latest <code>{configured?.version ?? "unknown"}</code>
+                        </Typography.Text>
+                        <Space wrap>
+                          {canUpgrade &&
+                            !host.deleted &&
+                            onSetRuntimeComponentDeployment &&
+                            configured?.version && (
+                              <Popconfirm
+                                title={upgradeTitle({
+                                  label,
+                                  source: "the configured source",
+                                })}
+                                okText="Deploy"
+                                cancelText="Cancel"
+                                onConfirm={() =>
+                                  onSetRuntimeComponentDeployment({
+                                    host,
+                                    component,
+                                    desired_version: configured.version!,
+                                    source: "configured",
+                                  })
+                                }
+                                disabled={
+                                  hostOpActive || host.status !== "running"
                                 }
                               >
                                 <Button
                                   size="small"
-                                  type="text"
-                                  icon={<CodeOutlined />}
+                                  disabled={
+                                    hostOpActive || host.status !== "running"
+                                  }
                                 >
-                                  CLI
+                                  Deploy latest
                                 </Button>
-                              </Popover>
-                            </Space>
-                          </Space>
-                        )}
-                      </Space>
-                    </Card>
-                  );
-                })}
-              </Space>
-              <Divider style={{ margin: "4px 0" }} />
-              <Space
-                orientation="vertical"
-                size="small"
-                style={{ width: "100%" }}
-              >
-                <Space wrap align="center">
-                  <Typography.Text strong>Daemon components</Typography.Text>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    Runtime state and desired versions for managed host daemons.
-                  </Typography.Text>
-                </Space>
-                {DAEMON_COMPONENTS.map(({ component, label }) => {
-                  const deployment = componentDeploymentRecord(
-                    deploymentStatus,
-                    component,
-                  );
-                  const observedTarget = observedTargetForComponent(
-                    deploymentStatus,
-                    component,
-                  );
-                  const observedComponent = observedComponentForComponent(
-                    deploymentStatus,
-                    component,
-                  );
-                  const rollbackTarget = rollbackTargetForComponent(
-                    deploymentStatus,
-                    component,
-                  );
-                  const configured = sourceVersionForComponent({
-                    softwareVersions,
-                    source: "configured",
-                  });
-                  const hubVersion = sourceVersionForComponent({
-                    softwareVersions,
-                    source: "hub",
-                  });
-                  const desiredVersion =
-                    deployment?.desired_version ??
-                    observedTarget?.desired_version;
-                  const currentVersion =
-                    observedTarget?.current_version ??
-                    observedComponent?.running_versions?.[0];
-                  const versionState =
-                    observedTarget?.observed_version_state ??
-                    observedComponent?.version_state;
-                  const runtimeState =
-                    observedTarget?.observed_runtime_state ??
-                    observedComponent?.runtime_state;
-                  const runningVersions =
-                    observedTarget?.running_versions ??
-                    observedComponent?.running_versions ??
-                    [];
-                  const runningPids =
-                    observedTarget?.running_pids ??
-                    observedComponent?.running_pids ??
-                    [];
-                  const rollbackVersion =
-                    rollbackTarget?.last_known_good_version ??
-                    rollbackTarget?.previous_version;
-                  const hasHostOverride = deployment?.scope_type === "host";
-                  const enabled =
-                    observedTarget?.enabled ?? observedComponent?.enabled;
-                  const managed =
-                    observedTarget?.managed ?? observedComponent?.managed;
-                  const commands = cliCommandsForComponent({ host, component });
-                  const expanded = !!expandedComponents[component];
-                  return (
-                    <Card
-                      key={component}
-                      size="small"
-                      styles={{ body: { padding: "12px" } }}
-                    >
-                      <Space
-                        orientation="vertical"
-                        size="small"
-                        style={{ width: "100%" }}
-                      >
-                        <Space wrap align="center">
-                          <Typography.Text strong>{label}</Typography.Text>
-                          {runtimeStateTag(runtimeState)}
-                          {observedVersionStateTag(versionState)}
-                          {hasHostOverride && (
-                            <Tag color="blue">host override</Tag>
-                          )}
+                              </Popconfirm>
+                            )}
+                          {canUpgrade &&
+                            !host.deleted &&
+                            hasHostOverride &&
+                            onResumeRuntimeComponentClusterDefault && (
+                              <Popconfirm
+                                title={`Resume following the cluster default for ${label.toLowerCase()}?`}
+                                description={`This deletes the host-specific desired version for ${label.toLowerCase()}. After that, this daemon will inherit the cluster default again, and if the host is running the backend may immediately queue the corresponding reconcile/restart work.`}
+                                okText="Resume default"
+                                cancelText="Cancel"
+                                onConfirm={() =>
+                                  onResumeRuntimeComponentClusterDefault({
+                                    host,
+                                    component,
+                                  })
+                                }
+                                disabled={hostOpActive}
+                              >
+                                <Button size="small" disabled={hostOpActive}>
+                                  Resume cluster default
+                                </Button>
+                              </Popconfirm>
+                            )}
+                          {canUpgrade &&
+                            !host.deleted &&
+                            onRollbackRuntimeComponent &&
+                            rollbackVersion && (
+                              <Popconfirm
+                                title={`Roll back ${label.toLowerCase()} on this host?`}
+                                okText="Rollback"
+                                cancelText="Cancel"
+                                onConfirm={() =>
+                                  onRollbackRuntimeComponent({
+                                    host,
+                                    component,
+                                    ...(rollbackTarget?.last_known_good_version
+                                      ? { last_known_good: true }
+                                      : { version: rollbackVersion }),
+                                  })
+                                }
+                                disabled={hostOpActive}
+                              >
+                                <Button size="small" disabled={hostOpActive}>
+                                  Rollback
+                                </Button>
+                              </Popconfirm>
+                            )}
+                          <Button
+                            size="small"
+                            type="link"
+                            onClick={() =>
+                              setExpandedComponents((prev) => ({
+                                ...prev,
+                                [component]: !prev[component],
+                              }))
+                            }
+                          >
+                            {expanded ? "Hide details" : "Details"}
+                          </Button>
                         </Space>
+                      </Space>
+                      {expanded && (
                         <Space
-                          wrap
-                          align="center"
-                          style={{
-                            justifyContent: "space-between",
-                            width: "100%",
-                          }}
+                          orientation="vertical"
+                          size="small"
+                          style={{ width: "100%" }}
                         >
-                          <Typography.Text type="secondary">
-                            desired <code>{desiredVersion ?? "n/a"}</code> |
-                            running <code>{currentVersion ?? "n/a"}</code> |
-                            latest{" "}
-                            <code>{configured?.version ?? "unknown"}</code>
+                          <Typography.Text>
+                            Upgrade policy:{" "}
+                            <code>
+                              {formatUpgradePolicy(
+                                deployment?.rollout_policy ??
+                                  observedComponent?.upgrade_policy,
+                              )}
+                            </code>
                           </Typography.Text>
+                          <Typography.Text>
+                            Enabled: {enabled ? "yes" : "no"} · Managed:{" "}
+                            {managed ? "yes" : "no"}
+                          </Typography.Text>
+                          {!!runningVersions.length && (
+                            <Typography.Text>
+                              Running versions:{" "}
+                              <code>{runningVersions.join(", ")}</code>
+                            </Typography.Text>
+                          )}
+                          {!!runningPids.length && (
+                            <Typography.Text>
+                              Running PIDs:{" "}
+                              <code>{runningPids.join(", ")}</code>
+                            </Typography.Text>
+                          )}
+                          {rollbackTarget && (
+                            <Typography.Text>
+                              Rollback candidate:{" "}
+                              <code>
+                                {rollbackTarget.last_known_good_version ??
+                                  rollbackTarget.previous_version ??
+                                  "none"}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {hasHostOverride && (
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="This daemon is pinned by a host-specific override"
+                              description={`Reason: ${formatRolloutReason(deployment?.rollout_reason)}. Use “Resume cluster default” to remove the override and inherit the fleet default again.`}
+                            />
+                          )}
+                          {versionState === "missing" && (
+                            <Alert
+                              type="warning"
+                              showIcon
+                              message="Desired daemon version is not installed on this host yet"
+                              description="Setting a desired version queues the corresponding reconcile automatically. Use Refresh to watch the host activity panel for the rollout."
+                            />
+                          )}
                           <Space wrap>
                             {canUpgrade &&
                               !host.deleted &&
                               onSetRuntimeComponentDeployment &&
-                              configured?.version && (
+                              hubVersion?.version && (
                                 <Popconfirm
                                   title={upgradeTitle({
                                     label,
-                                    source: "the configured source",
+                                    source: "this hub source",
                                   })}
                                   okText="Deploy"
                                   cancelText="Cancel"
@@ -1625,8 +1898,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                     onSetRuntimeComponentDeployment({
                                       host,
                                       component,
-                                      desired_version: configured.version!,
-                                      source: "configured",
+                                      desired_version: hubVersion.version!,
+                                      source: "hub",
                                     })
                                   }
                                   disabled={
@@ -1639,404 +1912,189 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                       hostOpActive || host.status !== "running"
                                     }
                                   >
-                                    Deploy latest
+                                    Deploy hub latest
                                   </Button>
                                 </Popconfirm>
                               )}
-                            {canUpgrade &&
-                              !host.deleted &&
-                              hasHostOverride &&
-                              onResumeRuntimeComponentClusterDefault && (
-                                <Popconfirm
-                                  title={`Resume following the cluster default for ${label.toLowerCase()}?`}
-                                  description={`This deletes the host-specific desired version for ${label.toLowerCase()}. After that, this daemon will inherit the cluster default again, and if the host is running the backend may immediately queue the corresponding reconcile/restart work.`}
-                                  okText="Resume default"
-                                  cancelText="Cancel"
-                                  onConfirm={() =>
-                                    onResumeRuntimeComponentClusterDefault({
-                                      host,
-                                      component,
-                                    })
-                                  }
-                                  disabled={hostOpActive}
-                                >
-                                  <Button size="small" disabled={hostOpActive}>
-                                    Resume cluster default
-                                  </Button>
-                                </Popconfirm>
-                              )}
-                            {canUpgrade &&
-                              !host.deleted &&
-                              onRollbackRuntimeComponent &&
-                              rollbackVersion && (
-                                <Popconfirm
-                                  title={`Roll back ${label.toLowerCase()} on this host?`}
-                                  okText="Rollback"
-                                  cancelText="Cancel"
-                                  onConfirm={() =>
-                                    onRollbackRuntimeComponent({
-                                      host,
-                                      component,
-                                      ...(rollbackTarget?.last_known_good_version
-                                        ? { last_known_good: true }
-                                        : { version: rollbackVersion }),
-                                    })
-                                  }
-                                  disabled={hostOpActive}
-                                >
-                                  <Button size="small" disabled={hostOpActive}>
-                                    Rollback
-                                  </Button>
-                                </Popconfirm>
-                              )}
-                            <Button
-                              size="small"
-                              type="link"
-                              onClick={() =>
-                                setExpandedComponents((prev) => ({
-                                  ...prev,
-                                  [component]: !prev[component],
-                                }))
+                            <Popover
+                              trigger="click"
+                              title={`${label} CLI`}
+                              content={
+                                <div style={{ maxWidth: 520 }}>
+                                  {commands.map((command) => (
+                                    <Typography.Paragraph
+                                      key={command}
+                                      copyable={{ text: command }}
+                                      style={{ marginBottom: 8 }}
+                                    >
+                                      <code>{command}</code>
+                                    </Typography.Paragraph>
+                                  ))}
+                                </div>
                               }
                             >
-                              {expanded ? "Hide details" : "Details"}
-                            </Button>
+                              <Button
+                                size="small"
+                                type="text"
+                                icon={<CodeOutlined />}
+                              >
+                                CLI
+                              </Button>
+                            </Popover>
                           </Space>
                         </Space>
-                        {expanded && (
-                          <Space
-                            orientation="vertical"
-                            size="small"
-                            style={{ width: "100%" }}
-                          >
-                            <Typography.Text>
-                              Upgrade policy:{" "}
-                              <code>
-                                {formatUpgradePolicy(
-                                  deployment?.rollout_policy ??
-                                    observedComponent?.upgrade_policy,
-                                )}
-                              </code>
-                            </Typography.Text>
-                            <Typography.Text>
-                              Enabled: {enabled ? "yes" : "no"} · Managed:{" "}
-                              {managed ? "yes" : "no"}
-                            </Typography.Text>
-                            {!!runningVersions.length && (
-                              <Typography.Text>
-                                Running versions:{" "}
-                                <code>{runningVersions.join(", ")}</code>
-                              </Typography.Text>
-                            )}
-                            {!!runningPids.length && (
-                              <Typography.Text>
-                                Running PIDs:{" "}
-                                <code>{runningPids.join(", ")}</code>
-                              </Typography.Text>
-                            )}
-                            {rollbackTarget && (
-                              <Typography.Text>
-                                Rollback candidate:{" "}
-                                <code>
-                                  {rollbackTarget.last_known_good_version ??
-                                    rollbackTarget.previous_version ??
-                                    "none"}
-                                </code>
-                              </Typography.Text>
-                            )}
-                            {hasHostOverride && (
-                              <Alert
-                                type="info"
-                                showIcon
-                                message="This daemon is pinned by a host-specific override"
-                                description={`Reason: ${formatRolloutReason(deployment?.rollout_reason)}. Use “Resume cluster default” to remove the override and inherit the fleet default again.`}
-                              />
-                            )}
-                            {versionState === "missing" && (
-                              <Alert
-                                type="warning"
-                                showIcon
-                                message="Desired daemon version is not installed on this host yet"
-                                description="Setting a desired version queues the corresponding reconcile automatically. Use Refresh to watch the host activity panel for the rollout."
-                              />
-                            )}
-                            <Space wrap>
-                              {canUpgrade &&
-                                !host.deleted &&
-                                onSetRuntimeComponentDeployment &&
-                                hubVersion?.version && (
-                                  <Popconfirm
-                                    title={upgradeTitle({
-                                      label,
-                                      source: "this hub source",
-                                    })}
-                                    okText="Deploy"
-                                    cancelText="Cancel"
-                                    onConfirm={() =>
-                                      onSetRuntimeComponentDeployment({
-                                        host,
-                                        component,
-                                        desired_version: hubVersion.version!,
-                                        source: "hub",
-                                      })
-                                    }
-                                    disabled={
-                                      hostOpActive || host.status !== "running"
-                                    }
-                                  >
-                                    <Button
-                                      size="small"
-                                      disabled={
-                                        hostOpActive ||
-                                        host.status !== "running"
-                                      }
-                                    >
-                                      Deploy hub latest
-                                    </Button>
-                                  </Popconfirm>
-                                )}
-                              <Popover
-                                trigger="click"
-                                title={`${label} CLI`}
-                                content={
-                                  <div style={{ maxWidth: 520 }}>
-                                    {commands.map((command) => (
-                                      <Typography.Paragraph
-                                        key={command}
-                                        copyable={{ text: command }}
-                                        style={{ marginBottom: 8 }}
-                                      >
-                                        <code>{command}</code>
-                                      </Typography.Paragraph>
-                                    ))}
-                                  </div>
-                                }
-                              >
-                                <Button
-                                  size="small"
-                                  type="text"
-                                  icon={<CodeOutlined />}
-                                >
-                                  CLI
-                                </Button>
-                              </Popover>
-                            </Space>
-                          </Space>
-                        )}
-                      </Space>
-                    </Card>
-                  );
-                })}
-              </Space>
-              <Space wrap>
-                {canReconcile && host && onReconcile && (
-                  <Popconfirm
-                    title="Run bootstrap/software reconcile on this host?"
-                    okText="Reconcile"
-                    cancelText="Cancel"
-                    onConfirm={() => onReconcile(host)}
-                    disabled={hostOpActive}
-                  >
-                    <Button size="small" disabled={hostOpActive}>
-                      Reconcile
-                    </Button>
-                  </Popconfirm>
-                )}
-                {canUpgrade && host && !host.deleted && onUpgrade && (
-                  <Popconfirm
-                    title="Legacy direct upgrade"
-                    description={upgradeConfirmContent}
-                    okText="Upgrade"
-                    cancelText="Cancel"
-                    onConfirm={() => onUpgrade(host)}
+                      )}
+                    </Space>
+                  </Card>
+                );
+              })}
+            </Space>
+            <Space wrap>
+              {canReconcile && host && onReconcile && (
+                <Popconfirm
+                  title="Run bootstrap/software reconcile on this host?"
+                  okText="Reconcile"
+                  cancelText="Cancel"
+                  onConfirm={() => onReconcile(host)}
+                  disabled={hostOpActive}
+                >
+                  <Button size="small" disabled={hostOpActive}>
+                    Reconcile
+                  </Button>
+                </Popconfirm>
+              )}
+              {canUpgrade && host && !host.deleted && onUpgrade && (
+                <Popconfirm
+                  title="Legacy direct upgrade"
+                  description={upgradeConfirmContent}
+                  okText="Upgrade"
+                  cancelText="Cancel"
+                  onConfirm={() => onUpgrade(host)}
+                  disabled={hostOpActive || host.status !== "running"}
+                >
+                  <Button
+                    size="small"
                     disabled={hostOpActive || host.status !== "running"}
                   >
-                    <Button
-                      size="small"
-                      disabled={hostOpActive || host.status !== "running"}
-                    >
-                      Upgrade all now
-                    </Button>
-                  </Popconfirm>
-                )}
-                {canUpgrade && host && !host.deleted && onUpgradeFromHub && (
-                  <Popconfirm
-                    title="Legacy direct hub upgrade"
-                    description={upgradeFromHubConfirmContent}
-                    okText="Upgrade"
-                    cancelText="Cancel"
-                    onConfirm={() => onUpgradeFromHub(host)}
+                    Upgrade all now
+                  </Button>
+                </Popconfirm>
+              )}
+              {canUpgrade && host && !host.deleted && onUpgradeFromHub && (
+                <Popconfirm
+                  title="Legacy direct hub upgrade"
+                  description={upgradeFromHubConfirmContent}
+                  okText="Upgrade"
+                  cancelText="Cancel"
+                  onConfirm={() => onUpgradeFromHub(host)}
+                  disabled={hostOpActive || host.status !== "running"}
+                >
+                  <Button
+                    size="small"
                     disabled={hostOpActive || host.status !== "running"}
                   >
-                    <Button
-                      size="small"
-                      disabled={hostOpActive || host.status !== "running"}
-                    >
-                      Upgrade all from hub now
-                    </Button>
-                  </Popconfirm>
-                )}
-              </Space>
+                    Upgrade all from hub now
+                  </Button>
+                </Popconfirm>
+              )}
             </Space>
-          )}
-          <HostRootfsCachePanel
-            host={host}
-            canManage={!!canManageRootfs}
-            inventory={rootfsInventory}
-          />
-          {showConnectorWarning && selfHost && (
-            <Alert
-              type="warning"
-              showIcon
-              title="Connector offline"
-              description={
-                <Button size="small" onClick={handleSetupClick}>
-                  Set up connector
-                </Button>
-              }
-            />
-          )}
-          {isSelfHost && selfHost && !host.deleted && (
-            <Space orientation="vertical" size="small">
-              <Typography.Text strong>Connector actions</Typography.Text>
-              <Space wrap>
-                <Button
-                  size="small"
-                  disabled={hostOpActive}
-                  onClick={handleSetupClick}
-                >
-                  Setup or reconnect
-                </Button>
-                <Button
-                  size="small"
-                  danger
-                  disabled={hostOpActive}
-                  onClick={() => selfHost.onRemove(host)}
-                >
-                  Remove connector
-                </Button>
-                {canForceDeprovision && (
-                  <Popconfirm
-                    title="Force deprovision this host without contacting your machine?"
-                    okText="Force deprovision"
-                    cancelText="Cancel"
-                    onConfirm={() => selfHost.onForceDeprovision(host)}
-                    okButtonProps={{ danger: true }}
-                  >
-                    <Button size="small" disabled={hostOpActive}>
-                      Force deprovision
-                    </Button>
-                  </Popconfirm>
-                )}
-              </Space>
-            </Space>
-          )}
+          </Space>
+        ) : (
           <Typography.Text type="secondary">
-            Last seen:{" "}
-            {host.last_seen ? new Date(host.last_seen).toLocaleString() : "n/a"}
+            No runtime deployment details reported yet.
           </Typography.Text>
-          {host.status === "error" && host.last_error && (
-            <Alert
-              type="error"
-              showIcon
-              title="Provisioning error"
-              description={host.last_error}
-            />
-          )}
-          <Divider />
-          <Typography.Title level={5}>Recent actions</Typography.Title>
-          {loadingLog ? (
-            <Typography.Text type="secondary">Loading…</Typography.Text>
-          ) : hostLog.length === 0 ? (
-            <Typography.Text type="secondary">No actions yet.</Typography.Text>
-          ) : (
-            <Space
-              orientation="vertical"
-              style={{ width: "100%" }}
-              size="small"
-            >
-              {hostLog.map((entry) => (
-                <Card
-                  key={entry.id}
-                  size="small"
-                  styles={{ body: { padding: "10px 12px" } }}
-                >
-                  {(() => {
-                    const change = describeSpecChange(entry.spec);
-                    const showDetails = !!change.details;
-                    const detailLink = showDetails ? (
-                      <Popover
-                        title="Config changes"
-                        content={
-                          <pre style={{ margin: 0, fontSize: 11 }}>
-                            {change.details}
-                          </pre>
-                        }
-                      >
-                        <a style={{ marginLeft: 8 }}>Details</a>
-                      </Popover>
-                    ) : null;
-                    return (
-                      <>
-                        {change.summary && (
-                          <div style={{ fontSize: 12, marginBottom: 6 }}>
-                            Config updated: {change.summary}
-                            {detailLink}
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                  <div style={{ display: "flex", flexDirection: "column" }}>
-                    <div style={{ fontWeight: 600 }}>
-                      {entry.action} — {entry.status}
-                    </div>
-                    {entry.provider && (
-                      <div style={{ color: "#666", fontSize: 12 }}>
-                        Provider: {entry.provider}
-                      </div>
-                    )}
-                    <div style={{ color: "#888", fontSize: 12 }}>
-                      {entry.ts
-                        ? new Date(entry.ts).toLocaleString()
-                        : "unknown time"}
-                    </div>
-                    {entry.error && (
-                      <div
-                        style={{
-                          maxHeight: "4.8em",
-                          overflowY: "auto",
-                          color: "#c00",
-                          fontSize: 12,
-                          lineHeight: 1.2,
-                          whiteSpace: "pre-wrap",
-                          paddingRight: 4,
-                        }}
-                      >
-                        {entry.error}
-                      </div>
-                    )}
-                  </div>
-                </Card>
-              ))}
-            </Space>
-          )}
-          <HostProjectsBrowser
-            host={host}
-            open={showProjects}
-            onClose={() => setShowProjects(false)}
-            hostOpActive={hostOpActive}
-            onStopRunningProjects={onStopRunningProjects}
-            onRestartRunningProjects={onRestartRunningProjects}
-          />
-          <Divider />
-          <Typography.Title level={5}>Activity</Typography.Title>
+        ),
+    },
+    {
+      key: "projects",
+      label: "Projects",
+      children: projectsContent,
+    },
+    {
+      key: "storage",
+      label: "Storage",
+      children: storageContent,
+    },
+    {
+      key: "logs",
+      label: "Logs",
+      children: logsContent,
+    },
+    {
+      key: "danger",
+      label: "Danger",
+      children: dangerContent,
+    },
+  ];
+  return (
+    <Drawer
+      size={drawerWidth}
+      title={
+        <Space>
+          <Icon name="server" /> {host.name ?? "Host details"}
+          <Tooltip
+            title={getHostStatusTooltip(
+              host.status,
+              Boolean(host.deleted),
+              host.provider_observed_at,
+            )}
+          >
+            <Tag color={host.deleted ? "default" : STATUS_COLOR[host.status]}>
+              {showSpinner ? (
+                <Space size={4}>
+                  <SyncOutlined spin />
+                  <span>{statusLabel}</span>
+                </Space>
+              ) : (
+                statusLabel
+              )}
+            </Tag>
+          </Tooltip>
+          {onlineTag}
+          <Button
+            type="link"
+            size="small"
+            disabled={!!host.deleted || hostOpActive}
+            onClick={() => onEdit(host)}
+          >
+            Edit
+          </Button>
         </Space>
-      ) : (
-        <Typography.Text type="secondary">
-          Select a host to see details.
-        </Typography.Text>
-      )}
+      }
+      onClose={onClose}
+      resizable={{ onResize: handleResize }}
+      open={open}
+    >
+      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+        <Space size="small" wrap>
+          <Tag>
+            {host.machine?.cloud
+              ? isKnownProvider(host.machine.cloud)
+                ? getProviderDescriptor(host.machine.cloud).label
+                : host.machine.cloud
+              : "provider: n/a"}
+          </Tag>
+          <Tag>{connectorLabel}</Tag>
+          {backupRegionLabel && <Tag>Backup region: {backupRegionLabel}</Tag>}
+          {connectorStatusTag}
+          <Tag>{size?.primary ?? host.size}</Tag>
+          {host.gpu && <Tag color="purple">GPU</Tag>}
+          {host.reprovision_required && (
+            <Tooltip title="Host config changed while stopped; will reprovision on next start.">
+              <Tag color="orange">Reprovision on next start</Tag>
+            </Tooltip>
+          )}
+        </Space>
+        <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
+        <HostProjectsBrowser
+          host={host}
+          open={showProjects}
+          onClose={() => setShowProjects(false)}
+          hostOpActive={hostOpActive}
+          onStopRunningProjects={onStopRunningProjects}
+          onRestartRunningProjects={onRestartRunningProjects}
+        />
+      </Space>
     </Drawer>
   );
 };
