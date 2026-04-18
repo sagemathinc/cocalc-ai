@@ -278,6 +278,10 @@ function renderDerivedRiskTags(
   derived: HostMetricsDerived | undefined,
 ): React.ReactNode {
   if (!derived) return null;
+  const overlayInnerStyle = {
+    maxWidth: "min(420px, calc(100vw - 64px))",
+    width: "max-content",
+  } as const;
   const tags: React.ReactNode[] = [];
   if (derived.disk.level !== "healthy") {
     const tag = (
@@ -291,6 +295,7 @@ function renderDerivedRiskTags(
           key="disk-risk"
           title={riskTooltip("Disk risk", derived.disk)}
           placement="top"
+          overlayInnerStyle={overlayInnerStyle}
         >
           {tag}
         </Tooltip>
@@ -311,6 +316,7 @@ function renderDerivedRiskTags(
           key="metadata-risk"
           title={riskTooltip("Metadata risk", derived.metadata)}
           placement="top"
+          overlayInnerStyle={overlayInnerStyle}
         >
           {tag}
         </Tooltip>
@@ -324,6 +330,7 @@ function renderDerivedRiskTags(
       <Tooltip
         key="admission-blocked"
         title="Storage-heavy admissions should be blocked until the host recovers."
+        overlayInnerStyle={overlayInnerStyle}
       >
         <Tag color="red">admission blocked</Tag>
       </Tooltip>,
@@ -334,6 +341,7 @@ function renderDerivedRiskTags(
       <Tooltip
         key="auto-grow-recommended"
         title="The host is approaching a disk limit where guarded disk growth would likely help."
+        overlayInnerStyle={overlayInnerStyle}
       >
         <Tag color="gold">auto-grow suggested</Tag>
       </Tooltip>,
