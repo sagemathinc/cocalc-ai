@@ -524,6 +524,7 @@ export interface HostSoftwareUpgradeRequest {
   id: string;
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
+  align_runtime_stack?: boolean;
 }
 
 export interface HostSoftwareUpgradeResponse {
@@ -1130,6 +1131,7 @@ export interface Hosts {
     id: string;
     targets: HostSoftwareUpgradeTarget[];
     base_url?: string;
+    align_runtime_stack?: boolean;
   }) => Promise<HostLroResponse>;
   reconcileHostSoftware: (opts: {
     account_id?: string;

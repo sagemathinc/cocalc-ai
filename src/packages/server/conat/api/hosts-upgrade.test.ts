@@ -35,7 +35,7 @@ describe("rolloutComponentsForUpgradeResults", () => {
 });
 
 describe("runtimeDeploymentsForUpgradeResults", () => {
-  it("aligns the full managed runtime stack after a project-host upgrade", () => {
+  it("does not align managed runtime components by default", () => {
     expect(
       runtimeDeploymentsForUpgradeResults([
         {
@@ -43,8 +43,29 @@ describe("runtimeDeploymentsForUpgradeResults", () => {
           version: "project-host-2",
           status: "updated",
         },
-        { artifact: "tools", version: "tools-7", status: "updated" },
       ]),
+    ).toEqual([
+      {
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "project-host-2",
+      },
+    ]);
+  });
+
+  it("aligns the full managed runtime stack when explicitly requested", () => {
+    expect(
+      runtimeDeploymentsForUpgradeResults(
+        [
+          {
+            artifact: "project-host",
+            version: "project-host-2",
+            status: "updated",
+          },
+          { artifact: "tools", version: "tools-7", status: "updated" },
+        ],
+        { alignRuntimeStack: true },
+      ),
     ).toEqual(
       expect.arrayContaining([
         {

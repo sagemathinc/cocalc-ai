@@ -19,6 +19,7 @@ type Capture = {
     id: string;
     targets: any[];
     base_url?: string;
+    align_runtime_stack?: boolean;
   }>;
   reconciles: string[];
   rollouts: Array<{ id: string; components: string[]; reason?: string }>;
@@ -132,12 +133,18 @@ function makeDeps(
                 host_last_seen: "2026-04-15T02:00:00.000Z",
               };
             },
-            upgradeHostSoftware: async ({ id, targets, base_url }) => {
+            upgradeHostSoftware: async ({
+              id,
+              targets,
+              base_url,
+              align_runtime_stack,
+            }) => {
               capture.upgrades.push(id);
               capture.upgradeRequests!.push({
                 id,
                 targets,
                 base_url,
+                align_runtime_stack,
               });
               return { op_id: `op-${id}` };
             },
@@ -623,10 +630,44 @@ test("host upgrade accepts --artifact-version for explicit version pinning", asy
       id: "host-1",
       targets: [{ artifact: "project-host", version: "bundle-v2" }],
       base_url: undefined,
+      align_runtime_stack: false,
     },
   ]);
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.status, "queued");
+});
+
+test("host upgrade can explicitly align the managed runtime stack", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "upgrade",
+    "host-1",
+    "--artifact",
+    "project-host",
+    "--align-runtime-stack",
+  ]);
+
+  assert.deepEqual(capture.upgradeRequests, [
+    {
+      id: "host-1",
+      targets: [{ artifact: "project-host", channel: "latest" }],
+      base_url: undefined,
+      align_runtime_stack: true,
+    },
+  ]);
 });
 
 test("host upgrade --all-online --wait returns all successful hosts", async () => {

@@ -1139,7 +1139,7 @@ export function registerHostCommand(
 
   host
     .command("upgrade [host]")
-    .description("upgrade host software and align the managed runtime stack")
+    .description("upgrade host software")
     .option(
       "--artifact <artifact...>",
       "artifact(s): project-host, project, tools (default: all)",
@@ -1155,20 +1155,28 @@ export function registerHostCommand(
     )
     .option("--base-url <url>", "software base url override")
     .option("--all-online", "upgrade all online hosts")
+    .option(
+      "--align-runtime-stack",
+      "also align project-host, conat-router, conat-persist, and acp-worker to the selected project-host build",
+    )
     .option("--wait", "wait for completion")
     .addHelpText(
       "after",
       `
-When \`project-host\` is one of the selected artifacts, upgrade also records
-the matching desired versions for the managed runtime stack on that host:
-\`project-host\`, \`conat-router\`, \`conat-persist\`, and \`acp-worker\`.
-This makes the normal upgrade path the easiest way to fully align a host to a
-selected project-host build.
+By default, \`project-host\` upgrades preserve the existing low-disruption
+lifecycle: the host picks up the new project-host artifact, but managed
+components such as \`conat-router\`, \`conat-persist\`, and \`acp-worker\`
+continue running until you explicitly roll them.
+
+Use \`--align-runtime-stack\` when you intentionally want the upgrade request
+to make the host fully match a selected project-host build. That also records
+the matching desired versions for \`project-host\`, \`conat-router\`,
+\`conat-persist\`, and \`acp-worker\`.
 
 Examples:
   cocalc host upgrade my-project-host --artifact project-host --hub-source --wait
-  cocalc host upgrade my-project-host --artifact project-host project tools --hub-source --wait
-  cocalc host upgrade --all-online --artifact project-host --hub-source --wait
+  cocalc host upgrade my-project-host --artifact project-host --align-runtime-stack --hub-source --wait
+  cocalc host upgrade my-project-host --artifact project-host project tools --align-runtime-stack --hub-source --wait
 `,
     )
     .action(
@@ -1181,6 +1189,7 @@ Examples:
           hubSource?: boolean;
           baseUrl?: string;
           allOnline?: boolean;
+          alignRuntimeStack?: boolean;
           wait?: boolean;
         },
         command: Command,
@@ -1235,6 +1244,7 @@ Examples:
                 id: h.id,
                 targets,
                 base_url: baseUrl,
+                align_runtime_stack: !!opts.alignRuntimeStack,
               });
               return {
                 host_id: h.id,

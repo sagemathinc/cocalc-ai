@@ -110,13 +110,16 @@ export function hostUpgradeDedupeKey({
   hostId,
   targets,
   baseUrl,
+  alignRuntimeStack,
 }: {
   hostId: string;
   targets: HostSoftwareUpgradeTarget[];
   baseUrl?: string;
+  alignRuntimeStack?: boolean;
 }): string {
   const normalizedBaseUrl = `${baseUrl ?? ""}`.trim() || null;
   return `${HOST_UPGRADE_LRO_KIND}:${hostId}:${JSON.stringify({
+    align_runtime_stack: !!alignRuntimeStack,
     base_url: normalizedBaseUrl,
     targets: normalizeHostUpgradeTargetsForDedupe(targets),
   })}`;

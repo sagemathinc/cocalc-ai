@@ -321,6 +321,11 @@ export function computeHostRuntimeDeploymentReconcilePlan({
 
 export function runtimeDeploymentsForUpgradeResults(
   results: HostSoftwareUpgradeResponse["results"],
+  {
+    alignRuntimeStack = false,
+  }: {
+    alignRuntimeStack?: boolean;
+  } = {},
 ): HostRuntimeDeploymentUpsert[] {
   const deployments: HostRuntimeDeploymentUpsert[] = [];
   for (const result of results ?? []) {
@@ -331,7 +336,7 @@ export function runtimeDeploymentsForUpgradeResults(
       target,
       desired_version: result.version,
     });
-    if (target === "project-host") {
+    if (alignRuntimeStack && target === "project-host") {
       for (const component of PROJECT_HOST_RUNTIME_STACK_COMPONENTS) {
         deployments.push({
           target_type: "component",

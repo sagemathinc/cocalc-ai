@@ -3318,11 +3318,13 @@ export async function upgradeHostSoftware({
   id,
   targets,
   base_url,
+  align_runtime_stack,
 }: {
   account_id?: string;
   id: string;
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
+  align_runtime_stack?: boolean;
 }): Promise<HostLroResponse> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
@@ -3330,11 +3332,12 @@ export async function upgradeHostSoftware({
     kind: HOST_UPGRADE_LRO_KIND,
     row,
     account_id,
-    input: { id: row.id, account_id, targets, base_url },
+    input: { id: row.id, account_id, targets, base_url, align_runtime_stack },
     dedupe_key: hostUpgradeDedupeKey({
       hostId: row.id,
       targets,
       baseUrl: base_url,
+      alignRuntimeStack: align_runtime_stack,
     }),
   });
 }
@@ -3993,17 +3996,20 @@ export async function upgradeHostSoftwareInternal({
   id,
   targets,
   base_url,
+  align_runtime_stack,
 }: {
   account_id?: string;
   id: string;
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
+  align_runtime_stack?: boolean;
 }): Promise<HostSoftwareUpgradeResponse> {
   return await upgradeHostSoftwareInternalHelper({
     account_id,
     id,
     targets,
     base_url,
+    align_runtime_stack,
     loadHostForStartStop,
     assertHostRunningForUpgrade,
     computeHostOperationalAvailability,

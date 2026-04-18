@@ -39,6 +39,7 @@ export async function upgradeHostSoftwareInternalHelper({
   id,
   targets,
   base_url,
+  align_runtime_stack,
   loadHostForStartStop,
   assertHostRunningForUpgrade,
   computeHostOperationalAvailability,
@@ -56,6 +57,7 @@ export async function upgradeHostSoftwareInternalHelper({
   id: string;
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
+  align_runtime_stack?: boolean;
   loadHostForStartStop: (id: string, account_id?: string) => Promise<any>;
   assertHostRunningForUpgrade: (row: any) => void;
   computeHostOperationalAvailability: (row: any) => {
@@ -90,6 +92,7 @@ export async function upgradeHostSoftwareInternalHelper({
   }) => Promise<void>;
   runtimeDeploymentsForUpgradeResults: (
     results: HostSoftwareUpgradeResponse["results"],
+    opts?: { alignRuntimeStack?: boolean },
   ) => any[];
   requestedByForRuntimeDeployments: (opts: {
     account_id?: string;
@@ -158,7 +161,9 @@ export async function upgradeHostSoftwareInternalHelper({
   if (results.length) {
     await updateProjectHostSoftwareRecord({ row, results });
   }
-  const runtimeDeployments = runtimeDeploymentsForUpgradeResults(results);
+  const runtimeDeployments = runtimeDeploymentsForUpgradeResults(results, {
+    alignRuntimeStack: align_runtime_stack,
+  });
   if (runtimeDeployments.length) {
     await setProjectHostRuntimeDeployments({
       scope_type: "host",

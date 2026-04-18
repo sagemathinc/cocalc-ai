@@ -5,12 +5,7 @@ export const UpgradeConfirmContent: React.FC = () => (
     <ul style={{ margin: "8px 0 0 18px" }}>
       <li>Usually completes in a few seconds.</li>
       <li>
-        Project-host upgrades also realign the managed runtime stack:
-        project-host, conat-router, conat-persist, and acp-worker.
-      </li>
-      <li>
-        This may briefly reconnect browser, terminal, and proxy traffic while
-        those daemons roll forward.
+        Project-host upgrades may briefly reconnect browser and proxy traffic.
       </li>
       <li>Running project containers are not restarted in place.</li>
       <li>Newly started projects use the upgraded project bundle and tools.</li>
