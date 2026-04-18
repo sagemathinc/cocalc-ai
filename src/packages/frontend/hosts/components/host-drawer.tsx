@@ -53,7 +53,10 @@ import {
 } from "../constants";
 import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
-import { UpgradeConfirmContent } from "./upgrade-confirmation";
+import {
+  UpgradeAllConfirmContent,
+  UpgradeConfirmContent,
+} from "./upgrade-confirmation";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
 import { HostParallelOpsPanel } from "./host-parallel-ops-panel";
@@ -83,8 +86,10 @@ type HostDrawerViewModel = {
   onEdit: (host: Host) => void;
   onDelete?: (id: string, opts?: HostDeleteOptions) => void | Promise<void>;
   onUpgrade?: (host: Host) => void;
+  onUpgradeAll?: (host: Host) => void;
   onReconcile?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
+  onUpgradeAllFromHub?: (host: Host) => void;
   onUpgradeArtifact?: (opts: {
     host: Host;
     artifact: HostSoftwareArtifact;
@@ -350,6 +355,17 @@ function upgradeTitle({ label, source }: { label: string; source: string }) {
         Upgrade {label.toLowerCase()} from {source}?
       </div>
       <UpgradeConfirmContent />
+    </div>
+  );
+}
+
+function upgradeAllTitle({ label, source }: { label: string; source: string }) {
+  return (
+    <div>
+      <div>
+        Upgrade {label.toLowerCase()} from {source} and align the runtime stack?
+      </div>
+      <UpgradeAllConfirmContent />
     </div>
   );
 }
@@ -661,9 +677,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     onClose,
     onEdit,
     onDelete,
-    onUpgrade,
+    onUpgradeAll,
     onReconcile,
-    onUpgradeFromHub,
+    onUpgradeAllFromHub,
     canUpgrade,
     onCancelOp,
     hostLog,
@@ -770,11 +786,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     displayActiveOp?.kind === "host-reconcile-runtime-deployments" ||
     displayActiveOp?.summary?.kind === "host-rollback-runtime-deployments" ||
     displayActiveOp?.kind === "host-rollback-runtime-deployments";
-  const upgradeConfirmContent = upgradeTitle({
+  const upgradeAllConfirmContent = upgradeAllTitle({
     label: "all software",
     source: "the configured source",
   });
-  const upgradeFromHubConfirmContent = upgradeTitle({
+  const upgradeAllFromHubConfirmContent = upgradeAllTitle({
     label: "all software",
     source: "this hub source",
   });
@@ -2146,13 +2162,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   </Button>
                 </Popconfirm>
               )}
-              {canUpgrade && host && !host.deleted && onUpgrade && (
+              {canUpgrade && host && !host.deleted && onUpgradeAll && (
                 <Popconfirm
-                  title="Legacy direct upgrade"
-                  description={upgradeConfirmContent}
+                  title="Upgrade all runtime components"
+                  description={upgradeAllConfirmContent}
                   okText="Upgrade"
                   cancelText="Cancel"
-                  onConfirm={() => onUpgrade(host)}
+                  onConfirm={() => onUpgradeAll(host)}
                   disabled={hostOpActive || host.status !== "running"}
                 >
                   <Button
@@ -2163,13 +2179,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   </Button>
                 </Popconfirm>
               )}
-              {canUpgrade && host && !host.deleted && onUpgradeFromHub && (
+              {canUpgrade && host && !host.deleted && onUpgradeAllFromHub && (
                 <Popconfirm
-                  title="Legacy direct hub upgrade"
-                  description={upgradeFromHubConfirmContent}
+                  title="Upgrade all runtime components from hub"
+                  description={upgradeAllFromHubConfirmContent}
                   okText="Upgrade"
                   cancelText="Cancel"
-                  onConfirm={() => onUpgradeFromHub(host)}
+                  onConfirm={() => onUpgradeAllFromHub(host)}
                   disabled={hostOpActive || host.status !== "running"}
                 >
                   <Button

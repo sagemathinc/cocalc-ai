@@ -19,3 +19,23 @@ export const UpgradeConfirmContent: React.FC = () => (
     </ul>
   </div>
 );
+
+export const UpgradeAllConfirmContent: React.FC = () => (
+  <div>
+    <ul style={{ margin: "8px 0 0 18px" }}>
+      <li>Usually completes in a few seconds.</li>
+      <li>
+        This explicitly aligns the managed runtime stack: project-host,
+        conat-router, conat-persist, and acp-worker.
+      </li>
+      <li>
+        Browser, terminal, proxy, and Codex traffic may reconnect while those
+        daemons roll forward.
+      </li>
+      <li>Running project containers are not restarted in place.</li>
+      <li>
+        Active Codex turns may be interrupted if the ACP worker is replaced.
+      </li>
+    </ul>
+  </div>
+);
