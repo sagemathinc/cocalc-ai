@@ -366,6 +366,38 @@ function cliCommandsForArtifact({
   ];
 }
 
+function RuntimeCliButton({
+  title,
+  commands,
+}: {
+  title: string;
+  commands: string[];
+}) {
+  return (
+    <Popover
+      trigger="click"
+      title={title}
+      content={
+        <div style={{ maxWidth: 520 }}>
+          {commands.map((command) => (
+            <Typography.Paragraph
+              key={command}
+              copyable={{ text: command }}
+              style={{ marginBottom: 8 }}
+            >
+              <code>{command}</code>
+            </Typography.Paragraph>
+          ))}
+        </div>
+      }
+    >
+      <Button size="small" type="text" icon={<CodeOutlined />}>
+        CLI
+      </Button>
+    </Popover>
+  );
+}
+
 function sourceVersionForArtifact({
   artifact,
   softwareVersions,
@@ -1358,6 +1390,15 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               size="small"
               style={{ width: "100%" }}
             >
+              <Space wrap align="center">
+                <Typography.Text strong>
+                  Runtime software artifacts
+                </Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Desired versions, observed versions, and rollout controls for
+                  host software artifacts.
+                </Typography.Text>
+              </Space>
               {SOFTWARE_ARTIFACTS.map(({ artifact, label, desiredLabel }) => {
                 const running = runningVersion(host, artifact);
                 const buildId = runningBuildId(host, artifact);
@@ -1450,7 +1491,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                         <Typography.Text type="secondary">
                           desired{" "}
                           <code>{effectiveDesiredVersion ?? "n/a"}</code> |
-                          observed <code>{currentVersion ?? "n/a"}</code> |
+                          current <code>{currentVersion ?? "n/a"}</code> |
                           latest <code>{configured?.version ?? "unknown"}</code>
                         </Typography.Text>
                         <Space wrap>
@@ -1484,6 +1525,39 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                   }
                                 >
                                   Deploy latest
+                                </Button>
+                              </Popconfirm>
+                            )}
+                          {canUpgrade &&
+                            !host.deleted &&
+                            onSetRuntimeArtifactDeployment &&
+                            hubVersion?.version && (
+                              <Popconfirm
+                                title={upgradeTitle({
+                                  label,
+                                  source: "this hub source",
+                                })}
+                                okText="Deploy"
+                                cancelText="Cancel"
+                                onConfirm={() =>
+                                  onSetRuntimeArtifactDeployment({
+                                    host,
+                                    artifact,
+                                    desired_version: hubVersion.version!,
+                                    source: "hub",
+                                  })
+                                }
+                                disabled={
+                                  hostOpActive || host.status !== "running"
+                                }
+                              >
+                                <Button
+                                  size="small"
+                                  disabled={
+                                    hostOpActive || host.status !== "running"
+                                  }
+                                >
+                                  Deploy hub latest
                                 </Button>
                               </Popconfirm>
                             )}
@@ -1533,6 +1607,10 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 </Button>
                               </Popconfirm>
                             )}
+                          <RuntimeCliButton
+                            title={`${label} CLI`}
+                            commands={commands}
+                          />
                           <Button
                             size="small"
                             type="link"
@@ -1543,7 +1621,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               }))
                             }
                           >
-                            {expanded ? "Hide details" : "Details"}
+                            {expanded ? "Hide details" : "Show details"}
                           </Button>
                         </Space>
                       </Space>
@@ -1623,66 +1701,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               description={`Reason: ${formatRolloutReason(effectiveOverrideReason)}. Use “Resume cluster default” to remove the override and inherit the fleet default again.`}
                             />
                           )}
-                          <Space wrap>
-                            {canUpgrade &&
-                              !host.deleted &&
-                              onSetRuntimeArtifactDeployment &&
-                              hubVersion?.version && (
-                                <Popconfirm
-                                  title={upgradeTitle({
-                                    label,
-                                    source: "this hub source",
-                                  })}
-                                  okText="Deploy"
-                                  cancelText="Cancel"
-                                  onConfirm={() =>
-                                    onSetRuntimeArtifactDeployment({
-                                      host,
-                                      artifact,
-                                      desired_version: hubVersion.version!,
-                                      source: "hub",
-                                    })
-                                  }
-                                  disabled={
-                                    hostOpActive || host.status !== "running"
-                                  }
-                                >
-                                  <Button
-                                    size="small"
-                                    disabled={
-                                      hostOpActive || host.status !== "running"
-                                    }
-                                  >
-                                    Deploy hub latest
-                                  </Button>
-                                </Popconfirm>
-                              )}
-                            <Popover
-                              trigger="click"
-                              title={`${label} CLI`}
-                              content={
-                                <div style={{ maxWidth: 520 }}>
-                                  {commands.map((command) => (
-                                    <Typography.Paragraph
-                                      key={command}
-                                      copyable={{ text: command }}
-                                      style={{ marginBottom: 8 }}
-                                    >
-                                      <code>{command}</code>
-                                    </Typography.Paragraph>
-                                  ))}
-                                </div>
-                              }
-                            >
-                              <Button
-                                size="small"
-                                type="text"
-                                icon={<CodeOutlined />}
-                              >
-                                CLI
-                              </Button>
-                            </Popover>
-                          </Space>
                         </Space>
                       )}
                     </Space>
@@ -1697,7 +1715,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               style={{ width: "100%" }}
             >
               <Space wrap align="center">
-                <Typography.Text strong>Daemon components</Typography.Text>
+                <Typography.Text strong>
+                  Managed daemon components
+                </Typography.Text>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   Runtime state and desired versions for managed host daemons.
                 </Typography.Text>
@@ -1786,7 +1806,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                       >
                         <Typography.Text type="secondary">
                           desired <code>{desiredVersion ?? "n/a"}</code> |
-                          running <code>{currentVersion ?? "n/a"}</code> |
+                          current <code>{currentVersion ?? "n/a"}</code> |
                           latest <code>{configured?.version ?? "unknown"}</code>
                         </Typography.Text>
                         <Space wrap>
@@ -1820,6 +1840,39 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                   }
                                 >
                                   Deploy latest
+                                </Button>
+                              </Popconfirm>
+                            )}
+                          {canUpgrade &&
+                            !host.deleted &&
+                            onSetRuntimeComponentDeployment &&
+                            hubVersion?.version && (
+                              <Popconfirm
+                                title={upgradeTitle({
+                                  label,
+                                  source: "this hub source",
+                                })}
+                                okText="Deploy"
+                                cancelText="Cancel"
+                                onConfirm={() =>
+                                  onSetRuntimeComponentDeployment({
+                                    host,
+                                    component,
+                                    desired_version: hubVersion.version!,
+                                    source: "hub",
+                                  })
+                                }
+                                disabled={
+                                  hostOpActive || host.status !== "running"
+                                }
+                              >
+                                <Button
+                                  size="small"
+                                  disabled={
+                                    hostOpActive || host.status !== "running"
+                                  }
+                                >
+                                  Deploy hub latest
                                 </Button>
                               </Popconfirm>
                             )}
@@ -1869,6 +1922,10 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 </Button>
                               </Popconfirm>
                             )}
+                          <RuntimeCliButton
+                            title={`${label} CLI`}
+                            commands={commands}
+                          />
                           <Button
                             size="small"
                             type="link"
@@ -1879,7 +1936,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               }))
                             }
                           >
-                            {expanded ? "Hide details" : "Details"}
+                            {expanded ? "Hide details" : "Show details"}
                           </Button>
                         </Space>
                       </Space>
@@ -1940,66 +1997,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               description="Setting a desired version queues the corresponding reconcile automatically. Use Refresh to watch the host activity panel for the rollout."
                             />
                           )}
-                          <Space wrap>
-                            {canUpgrade &&
-                              !host.deleted &&
-                              onSetRuntimeComponentDeployment &&
-                              hubVersion?.version && (
-                                <Popconfirm
-                                  title={upgradeTitle({
-                                    label,
-                                    source: "this hub source",
-                                  })}
-                                  okText="Deploy"
-                                  cancelText="Cancel"
-                                  onConfirm={() =>
-                                    onSetRuntimeComponentDeployment({
-                                      host,
-                                      component,
-                                      desired_version: hubVersion.version!,
-                                      source: "hub",
-                                    })
-                                  }
-                                  disabled={
-                                    hostOpActive || host.status !== "running"
-                                  }
-                                >
-                                  <Button
-                                    size="small"
-                                    disabled={
-                                      hostOpActive || host.status !== "running"
-                                    }
-                                  >
-                                    Deploy hub latest
-                                  </Button>
-                                </Popconfirm>
-                              )}
-                            <Popover
-                              trigger="click"
-                              title={`${label} CLI`}
-                              content={
-                                <div style={{ maxWidth: 520 }}>
-                                  {commands.map((command) => (
-                                    <Typography.Paragraph
-                                      key={command}
-                                      copyable={{ text: command }}
-                                      style={{ marginBottom: 8 }}
-                                    >
-                                      <code>{command}</code>
-                                    </Typography.Paragraph>
-                                  ))}
-                                </div>
-                              }
-                            >
-                              <Button
-                                size="small"
-                                type="text"
-                                icon={<CodeOutlined />}
-                              >
-                                CLI
-                              </Button>
-                            </Popover>
-                          </Space>
                         </Space>
                       )}
                     </Space>
