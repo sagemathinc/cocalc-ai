@@ -9,6 +9,8 @@ let createBootstrapTokenMock: jest.Mock;
 let buildCloudInitStartupScriptMock: jest.Mock;
 let delayMock: jest.Mock;
 let spawnMock: jest.Mock;
+let upgradeHostSoftwareInternalHelperMock: jest.Mock;
+let rolloutHostManagedComponentsInternalHelperMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -52,6 +54,14 @@ jest.mock("node:child_process", () => {
   };
 });
 
+jest.mock("./hosts-software-execution", () => ({
+  __esModule: true,
+  upgradeHostSoftwareInternalHelper: (...args: any[]) =>
+    upgradeHostSoftwareInternalHelperMock(...args),
+  rolloutHostManagedComponentsInternalHelper: (...args: any[]) =>
+    rolloutHostManagedComponentsInternalHelperMock(...args),
+}));
+
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
   default: jest.fn(() => ({
@@ -70,6 +80,58 @@ jest.mock("@cocalc/backend/logger", () => ({
 
 const HOST_ID = "2058bae4-d049-40b9-88ba-187a7091da55";
 const ACCOUNT_ID = "acct-123";
+
+function makeHostRow({
+  version,
+  desiredProjectHostVersion,
+  lifecycleStatus,
+  publicIp,
+}: {
+  version: string;
+  desiredProjectHostVersion?: string;
+  lifecycleStatus: string;
+  publicIp?: string;
+}) {
+  const currentLastSeen = new Date().toISOString();
+  const desiredVersion = desiredProjectHostVersion ?? version;
+  return {
+    id: HOST_ID,
+    status: "running",
+    version,
+    last_seen: currentLastSeen,
+    metadata: {
+      owner: ACCOUNT_ID,
+      ...(publicIp
+        ? {
+            runtime: { public_ip: publicIp, ssh_user: "ubuntu" },
+            machine: { cloud: "gcp" },
+          }
+        : {}),
+      software: {
+        project_host: desiredVersion,
+        project_bundle: "project-bundle-1",
+        tools: "tools-1",
+      },
+      software_inventory: [
+        {
+          artifact: "project-host",
+          current_version: version,
+        },
+        {
+          artifact: "project-bundle",
+          current_version: "project-bundle-1",
+        },
+        {
+          artifact: "tools",
+          current_version: "tools-1",
+        },
+      ],
+      bootstrap_lifecycle: {
+        summary_status: lifecycleStatus,
+      },
+    },
+  };
+}
 
 function makeSshChild() {
   const child = new EventEmitter() as any;
@@ -105,6 +167,12 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
       async () => "#!/bin/bash\necho hi\n",
     );
     delayMock = jest.fn(async () => undefined);
+    upgradeHostSoftwareInternalHelperMock = jest.fn(async () => ({
+      results: [],
+    }));
+    rolloutHostManagedComponentsInternalHelperMock = jest.fn(async () => ({
+      results: [],
+    }));
   });
 
   it("waits for bootstrap reconcile lifecycle instead of blocking on the ssh session", async () => {
@@ -334,5 +402,156 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
         id: HOST_ID,
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it("prefers runtime reconcile before ssh when host-agent work converges lifecycle", async () => {
+    spawnMock = jest.fn(() => {
+      throw new Error("ssh should not be used");
+    });
+
+    const initialRow = makeHostRow({
+      version: "1776405602543",
+      desiredProjectHostVersion: "1776486535462",
+      lifecycleStatus: "drifted",
+    });
+    const reconciledRow = makeHostRow({
+      version: "1776486535462",
+      desiredProjectHostVersion: "1776486535462",
+      lifecycleStatus: "in_sync",
+    });
+
+    let loadCount = 0;
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        loadCount += 1;
+        return { rows: [loadCount === 1 ? initialRow : reconciledRow] };
+      }
+      if (sql.includes("SELECT deleted, last_seen FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              deleted: null,
+              last_seen: new Date(Date.now() + 60_000).toISOString(),
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { reconcileHostSoftwareInternal } = await import("./hosts");
+    await expect(
+      reconcileHostSoftwareInternal({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(upgradeHostSoftwareInternalHelperMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        targets: [{ artifact: "project-host", version: "1776486535462" }],
+      }),
+    );
+    expect(rolloutHostManagedComponentsInternalHelperMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        components: [
+          "project-host",
+          "conat-router",
+          "conat-persist",
+          "acp-worker",
+        ],
+        reason: "host_software_reconcile",
+      }),
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to ssh after a runtime reconcile failure", async () => {
+    const ssh = makeSshChild();
+    spawnMock = jest.fn(() => ssh.child);
+    upgradeHostSoftwareInternalHelperMock = jest.fn(async () => {
+      throw new Error("host control unavailable");
+    });
+
+    let pollCount = 0;
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            makeHostRow({
+              version: "1776405602543",
+              desiredProjectHostVersion: "1776486535462",
+              lifecycleStatus: "drifted",
+              publicIp: "34.11.143.149",
+            }),
+          ],
+        };
+      }
+      if (sql.includes("SELECT status, deleted, metadata FROM project_hosts")) {
+        pollCount += 1;
+        if (pollCount === 1) {
+          return {
+            rows: [
+              {
+                status: "running",
+                deleted: null,
+                metadata: {
+                  bootstrap: {
+                    status: "running",
+                    updated_at: "2026-04-01T21:01:00Z",
+                    message: "Reconciling host software",
+                  },
+                  bootstrap_lifecycle: {
+                    summary_status: "reconciling",
+                    current_operation: "reconcile",
+                    last_reconcile_started_at: "2026-04-01T21:01:00Z",
+                  },
+                },
+              },
+            ],
+          };
+        }
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              metadata: {
+                bootstrap: {
+                  status: "done",
+                  updated_at: "2026-04-01T21:01:30Z",
+                  message: "Host software reconciled",
+                },
+                bootstrap_lifecycle: {
+                  summary_status: "in_sync",
+                  last_reconcile_started_at: "2026-04-01T21:01:00Z",
+                  last_reconcile_finished_at: "2026-04-01T21:01:30Z",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { reconcileHostSoftwareInternal } = await import("./hosts");
+    await expect(
+      reconcileHostSoftwareInternal({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(upgradeHostSoftwareInternalHelperMock).toHaveBeenCalled();
+    expect(spawnMock).toHaveBeenCalledWith(
+      "ssh",
+      expect.arrayContaining(["ubuntu@34.11.143.149", "bash", "-se"]),
+      expect.any(Object),
+    );
   });
 });
