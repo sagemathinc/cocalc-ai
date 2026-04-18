@@ -82,6 +82,20 @@ export class ConatSocketClient extends ConatSocketBase {
     });
   };
 
+  protected onRecoveryPaused = () => {
+    this.alive?.pause();
+  };
+
+  protected onRecoveryResumed = () => {
+    if (this.state == "ready") {
+      this.alive?.resume();
+    }
+  };
+
+  protected onDisconnecting = () => {
+    this.alive?.pause();
+  };
+
   initTCP() {
     if (this.tcp != null) {
       throw Error("this.tcp already initialized");

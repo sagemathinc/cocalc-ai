@@ -124,10 +124,13 @@ export class ServerSocket extends EventEmitter {
   private setState = (state: State) => {
     this.state = state;
     if (state == "ready") {
+      this.alive?.resume();
       for (const mesg of this.queuedWrites) {
         this.sendDataToClient(mesg);
       }
       this.queuedWrites = [];
+    } else if (state == "disconnected") {
+      this.alive?.pause();
     }
     this.emit(state);
   };

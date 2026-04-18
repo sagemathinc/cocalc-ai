@@ -100,4 +100,75 @@ describe("test a client with a short keepalive time", () => {
   });
 });
 
+describe("keepalive only pings when a socket is actually idle", () => {
+  let client, server, cn1, cn2;
+
+  const keepAlive = 100;
+  const keepAliveTimeout = 50;
+
+  it("creates a socket with short client keepalive", async () => {
+    cn1 = connect();
+    server = cn1.socket.listen("keepalive-idle-aware.com", {
+      keepAlive: 10_000,
+      keepAliveTimeout: 10_000,
+    });
+    cn2 = connect();
+    client = cn2.socket.connect("keepalive-idle-aware.com", {
+      keepAlive,
+      keepAliveTimeout,
+      reconnection: false,
+    });
+
+    await wait({ until: () => client.state == "ready" });
+  });
+
+  it("keeps activity fresh while traffic is flowing", async () => {
+    const iter = client.iter();
+    const interval = setInterval(
+      () => {
+        server.write("tick");
+      },
+      Math.max(10, Math.floor(keepAlive / 4)),
+    );
+    try {
+      const end = Date.now() + 3 * keepAlive;
+      while (Date.now() < end) {
+        await iter.next();
+      }
+    } finally {
+      clearInterval(interval);
+    }
+    expect(Math.abs(client.alive.last - Date.now())).toBeLessThan(
+      keepAlive + keepAliveTimeout + 200,
+    );
+  });
+
+  it("keeps the socket alive after traffic stops", async () => {
+    await delay(3 * keepAlive);
+    expect(Math.abs(client.alive.last - Date.now())).toBeLessThan(
+      keepAlive + keepAliveTimeout + 200,
+    );
+  });
+
+  it("stops updating keepalive activity while recovery is paused", async () => {
+    client.pauseRecovery("test");
+    await delay(2 * keepAlive);
+    const pausedLast = client.alive.last;
+    await delay(2 * keepAlive);
+    expect(client.getRecoveryState()).toBe("paused");
+    expect(client.alive.last).toBe(pausedLast);
+  });
+
+  it("resumes keepalive activity when recovery resumes", async () => {
+    await client.resumeRecovery();
+    await wait({
+      until: () =>
+        Math.abs(client.alive.last - Date.now()) <
+        keepAlive + keepAliveTimeout + 200,
+      timeout: 20 * keepAlive,
+    });
+    expect(client.getRecoveryState()).toBe("ready");
+  });
+});
+
 afterAll(after);

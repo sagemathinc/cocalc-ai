@@ -11,7 +11,7 @@ export function keepAlive(opts: {
 
 export class KeepAlive {
   private last: number = Date.now();
-  private state: "ready" | "closed" = "ready";
+  private state: "ready" | "paused" | "closed" = "ready";
   private sleepTimer?: ReturnType<typeof setTimeout>;
   private sleepResolve?: () => void;
 
@@ -26,7 +26,16 @@ export class KeepAlive {
   }
 
   private run = async () => {
-    while (this.state == "ready") {
+    while (this.state != "closed") {
+      if (this.state == "paused") {
+        await this.sleep(undefined);
+        continue;
+      }
+      const idleMs = Date.now() - this.last;
+      if (idleMs < this.keepAlive) {
+        await this.sleep(this.keepAlive - idleMs);
+        continue;
+      }
       try {
         //console.log(this.role, "keepalive -- sending ping");
         await this.ping?.();
@@ -37,41 +46,63 @@ export class KeepAlive {
         return;
       }
       this.last = Date.now();
-      if (this.state == ("closed" as any)) {
-        return;
-      }
-      await this.sleep(this.keepAlive - (Date.now() - this.last));
     }
   };
 
-  private sleep = async (ms: number) => {
-    const delayMs = Math.max(0, ms);
+  private sleep = async (ms?: number) => {
     await new Promise<void>((resolve) => {
       this.sleepResolve = () => {
         this.sleepResolve = undefined;
         resolve();
       };
-      this.sleepTimer = setTimeout(() => {
-        this.sleepTimer = undefined;
-        this.sleepResolve?.();
-      }, delayMs);
-      this.sleepTimer.unref?.();
+      if (ms != null) {
+        const delayMs = Math.max(0, ms);
+        this.sleepTimer = setTimeout(() => {
+          this.sleepTimer = undefined;
+          this.sleepResolve?.();
+        }, delayMs);
+        this.sleepTimer.unref?.();
+      }
     });
+  };
+
+  private wake = () => {
+    if (this.sleepTimer != null) {
+      clearTimeout(this.sleepTimer);
+      this.sleepTimer = undefined;
+    }
+    this.sleepResolve?.();
   };
 
   // call this when any data is received, which defers having to waste resources on
   // sending a ping
   recv = () => {
     this.last = Date.now();
+    if (this.state == "ready") {
+      this.wake();
+    }
+  };
+
+  pause = () => {
+    if (this.state != "ready") {
+      return;
+    }
+    this.state = "paused";
+    this.wake();
+  };
+
+  resume = () => {
+    if (this.state != "paused") {
+      return;
+    }
+    this.last = Date.now();
+    this.state = "ready";
+    this.wake();
   };
 
   close = () => {
     this.state = "closed";
-    if (this.sleepTimer != null) {
-      clearTimeout(this.sleepTimer);
-      this.sleepTimer = undefined;
-    }
-    this.sleepResolve?.();
+    this.wake();
     delete this.sleepResolve;
     // @ts-ignore
     delete this.last;

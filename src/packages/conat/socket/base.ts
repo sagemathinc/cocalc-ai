@@ -119,10 +119,17 @@ export abstract class ConatSocketBase extends EventEmitter {
     }
   };
 
+  protected onRecoveryPaused() {}
+
+  protected onRecoveryResumed() {}
+
+  protected onDisconnecting() {}
+
   getRecoveryState = (): SocketRecoveryState => this.recoveryState;
 
   pauseRecovery = (_reason = "paused") => {
     this.recoveryPaused = true;
+    this.onRecoveryPaused();
     if (this.reconnectTimer != null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
@@ -139,6 +146,7 @@ export abstract class ConatSocketBase extends EventEmitter {
     } = {},
   ) => {
     this.recoveryPaused = false;
+    this.onRecoveryResumed();
     await this.recoverNow(_opts);
   };
 
@@ -216,6 +224,7 @@ export abstract class ConatSocketBase extends EventEmitter {
     if (this.state == "closed") {
       return;
     }
+    this.onDisconnecting();
     this.setState("disconnected");
     this.sub?.close();
     delete this.sub;
