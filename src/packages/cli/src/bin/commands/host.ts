@@ -25,6 +25,13 @@ const HOST_PROJECT_STATE_FILTERS = [
 ] as const;
 
 const DEFAULT_COMPONENT_ARTIFACT = "project-host";
+const HOST_DEPLOY_HISTORY_KINDS = new Set([
+  "host-upgrade-software",
+  "host-reconcile-software",
+  "host-reconcile-runtime-deployments",
+  "host-rollback-runtime-deployments",
+  "host-rollout-managed-components",
+]);
 
 export type HostCommandDeps = {
   withContext: any;
@@ -360,6 +367,87 @@ function formatRollbackTargetRows(
     last_known_good_version: target.last_known_good_version ?? "",
     retained_versions: formatList(target.retained_versions),
   }));
+}
+
+function formatHostDeployHistoryRequested(
+  summary: Record<string, any>,
+): string {
+  const input = summary.input ?? {};
+  switch (`${summary.kind ?? ""}`) {
+    case "host-upgrade-software":
+      return formatList(
+        (input.targets ?? []).map((target: any) => {
+          const artifact = `${target?.artifact ?? ""}`.trim();
+          const channel = `${target?.channel ?? ""}`.trim();
+          const version = `${target?.version ?? ""}`.trim();
+          return `${artifact}${channel ? `@${channel}` : version ? `=${version}` : ""}`;
+        }),
+      );
+    case "host-rollout-managed-components":
+    case "host-reconcile-runtime-deployments":
+      return formatList(input.components);
+    case "host-rollback-runtime-deployments":
+      return `${input.target_type ?? ""}:${input.target ?? ""}`.replace(
+        /^:/,
+        "",
+      );
+    default:
+      return "";
+  }
+}
+
+function formatHostDeployHistoryVersion(summary: Record<string, any>): string {
+  const input = summary.input ?? {};
+  if (`${summary.kind ?? ""}` === "host-rollback-runtime-deployments") {
+    return `${input.version ?? ""}`.trim() || "";
+  }
+  return "";
+}
+
+function formatHostDeployHistoryReason(summary: Record<string, any>): string {
+  const input = summary.input ?? {};
+  const reason = `${input.reason ?? ""}`.trim();
+  if (reason) return reason;
+  if (`${summary.kind ?? ""}` === "host-upgrade-software") {
+    return input.align_runtime_stack ? "align_runtime_stack" : "";
+  }
+  return "";
+}
+
+function formatHostDeployHistoryKind(kind: string): string {
+  switch (kind) {
+    case "host-upgrade-software":
+      return "upgrade";
+    case "host-reconcile-software":
+      return "reconcile-software";
+    case "host-reconcile-runtime-deployments":
+      return "reconcile-runtime";
+    case "host-rollback-runtime-deployments":
+      return "rollback";
+    case "host-rollout-managed-components":
+      return "rollout";
+    default:
+      return kind;
+  }
+}
+
+function summarizeHostDeployHistory(
+  rows: Array<Record<string, any>>,
+): Array<Record<string, unknown>> {
+  return rows
+    .filter((row) => HOST_DEPLOY_HISTORY_KINDS.has(`${row.kind ?? ""}`))
+    .map((row) => ({
+      op_id: row.op_id ?? "",
+      kind: formatHostDeployHistoryKind(`${row.kind ?? ""}`),
+      status: row.status ?? "",
+      requested: formatHostDeployHistoryRequested(row),
+      version: formatHostDeployHistoryVersion(row),
+      reason: formatHostDeployHistoryReason(row),
+      created_at: row.created_at ?? "",
+      started_at: row.started_at ?? "",
+      finished_at: row.finished_at ?? "",
+      error: row.error ?? "",
+    }));
 }
 
 function printNamedSection(
@@ -1577,6 +1665,48 @@ Status shows two views:
             return null;
           }
           return data;
+        });
+      },
+    );
+
+  deploy
+    .command("history <host>")
+    .description("show recent runtime deployment operations for one host")
+    .option("--limit <n>", "maximum rows", "20")
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: { limit?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "host deploy history", async (ctx) => {
+          const host = await resolveHost(ctx, hostIdentifier);
+          const limit = Math.max(
+            1,
+            Math.min(500, Number(opts.limit ?? "20") || 20),
+          );
+          const rows = summarizeHostDeployHistory(
+            ((await ctx.hub.lro.list({
+              scope_type: "host",
+              scope_id: host.id,
+              include_completed: true,
+            })) ?? []) as Array<Record<string, any>>,
+          ).slice(0, limit);
+          if (!ctx.globals.json && ctx.globals.output !== "json") {
+            if (!rows.length) {
+              console.log(
+                `No runtime deployment history for ${host.name ?? host.id}.`,
+              );
+              return null;
+            }
+            printArrayTable(rows);
+            return null;
+          }
+          return {
+            host_id: host.id,
+            name: host.name ?? undefined,
+            rows,
+          };
         });
       },
     );

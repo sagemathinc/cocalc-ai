@@ -55,6 +55,11 @@ type Capture = {
     deployments: any[];
     replace?: boolean;
   }>;
+  lroListRequests?: Array<{
+    scope_type: string;
+    scope_id: string;
+    include_completed?: boolean;
+  }>;
 };
 
 function withConsoleCapture(fn: () => Promise<void> | void): Promise<string> {
@@ -84,6 +89,7 @@ function makeDeps(
   capture.hostProjectsRequests ??= [];
   capture.hostProjectStops ??= [];
   capture.hostProjectRestarts ??= [];
+  capture.lroListRequests ??= [];
   return {
     withContext: async (_command, _label, fn) => {
       const ctx = {
@@ -450,6 +456,52 @@ function makeDeps(
             }),
           },
           lro: {
+            list: async ({ scope_type, scope_id, include_completed }) => {
+              capture.lroListRequests!.push({
+                scope_type,
+                scope_id,
+                include_completed,
+              });
+              return [
+                {
+                  op_id: "op-upgrade-1",
+                  kind: "host-upgrade-software",
+                  status: "succeeded",
+                  input: {
+                    targets: [{ artifact: "project-host", channel: "latest" }],
+                  },
+                  error: null,
+                  created_at: "2026-04-18T00:00:00.000Z",
+                  started_at: "2026-04-18T00:00:01.000Z",
+                  finished_at: "2026-04-18T00:00:10.000Z",
+                },
+                {
+                  op_id: "op-rollback-1",
+                  kind: "host-rollback-runtime-deployments",
+                  status: "failed",
+                  input: {
+                    target_type: "component",
+                    target: "acp-worker",
+                    version: "bundle-v0",
+                    reason: "test rollback",
+                  },
+                  error: "boom",
+                  created_at: "2026-04-18T01:00:00.000Z",
+                  started_at: "2026-04-18T01:00:01.000Z",
+                  finished_at: "2026-04-18T01:00:05.000Z",
+                },
+                {
+                  op_id: "op-host-stop-1",
+                  kind: "host-stop",
+                  status: "succeeded",
+                  input: {},
+                  error: null,
+                  created_at: "2026-04-18T02:00:00.000Z",
+                  started_at: null,
+                  finished_at: null,
+                },
+              ];
+            },
             get: async ({ op_id }) => ({
               result: `${op_id}`.startsWith("deploy-rollback-")
                 ? {
@@ -1518,6 +1570,41 @@ test("host deploy rollback queues runtime rollback and waits for completion", as
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.op_id, "deploy-rollback-host-1");
   assert.equal(capture.data.status, "succeeded");
+});
+
+test("host deploy history lists host-scoped runtime deployment operations", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "deploy",
+    "history",
+    "host-1",
+    "--limit",
+    "10",
+  ]);
+
+  assert.deepEqual(capture.lroListRequests, [
+    { scope_type: "host", scope_id: "host-1", include_completed: true },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.rows.length, 2);
+  assert.equal(capture.data.rows[0].kind, "upgrade");
+  assert.equal(capture.data.rows[0].requested, "project-host@latest");
+  assert.equal(capture.data.rows[1].kind, "rollback");
+  assert.equal(capture.data.rows[1].requested, "component:acp-worker");
+  assert.equal(capture.data.rows[1].version, "bundle-v0");
 });
 
 test("host deploy set upserts host-scoped desired state", async () => {
