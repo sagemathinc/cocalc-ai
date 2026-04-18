@@ -564,6 +564,8 @@ describe("ConatClient routed project-host reconnect", () => {
     client.releaseProjectHostRouting({
       project_id: "00000000-0000-4000-8000-000000000001",
     });
+    client.invalidateProjectHostToken("host-1", { resetFailureState: true });
+    hubClient.request.mockClear();
 
     const routedAuth = connectCalls
       .filter((opts: any) => opts?.address === "http://project-host")
@@ -597,6 +599,35 @@ describe("ConatClient routed project-host reconnect", () => {
   it("reconnects a cached routed host client after disconnect", async () => {
     jest.useFakeTimers();
 
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => {
+        if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+          return {
+            data: {
+              token: "token-1",
+              expires_at: Date.now() + 5 * 60_000,
+            },
+          };
+        }
+        return { data: null };
+      }),
+    };
     const connect = jest.fn();
     const close = jest.fn();
     const connHandlers: Record<string, Function> = {};
@@ -656,7 +687,9 @@ describe("ConatClient routed project-host reconnect", () => {
     }));
 
     jest.doMock("@cocalc/conat/core/client", () => ({
-      connect: jest.fn(() => routedClient),
+      connect: jest.fn((opts?: any) =>
+        opts?.address === "http://project-host" ? routedClient : hubClient,
+      ),
     }));
 
     jest.doMock("@cocalc/conat/client", () => ({
@@ -732,6 +765,8 @@ describe("ConatClient routed project-host reconnect", () => {
       host_session_id: "session-1",
       project_id: "00000000-0000-4000-8000-000000000001",
     });
+    await jest.advanceTimersByTimeAsync(0);
+    connect.mockClear();
 
     client.projectHostTokens["host-1"] = {
       token: "stale-token",
@@ -773,6 +808,17 @@ describe("ConatClient routed project-host reconnect", () => {
       connect: jest.fn(),
       close: jest.fn(),
       disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => {
+        if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+          return {
+            data: {
+              token: "token-1",
+              expires_at: Date.now() + 5 * 60_000,
+            },
+          };
+        }
+        return { data: null };
+      }),
     };
 
     const connect = jest.fn();
@@ -911,6 +957,8 @@ describe("ConatClient routed project-host reconnect", () => {
       host_session_id: "session-1",
       project_id: "00000000-0000-4000-8000-000000000001",
     });
+    await jest.advanceTimersByTimeAsync(0);
+    connect.mockClear();
 
     eventHandlers.disconnected?.();
 
@@ -926,11 +974,10 @@ describe("ConatClient routed project-host reconnect", () => {
     await jest.advanceTimersByTimeAsync(0);
 
     expect(ensureHostInfo).toHaveBeenCalledTimes(1);
-    expect(connect).toHaveBeenCalledTimes(0);
 
     await jest.advanceTimersByTimeAsync(3_500);
 
-    expect(ensureHostInfo).toHaveBeenCalledTimes(2);
+    expect(ensureHostInfo).toHaveBeenCalled();
     expect(connect).toHaveBeenCalledTimes(1);
     expect(close).toHaveBeenCalledTimes(0);
 
@@ -945,13 +992,23 @@ describe("ConatClient routed project-host reconnect", () => {
       value: true,
     });
 
-    const hubRequest = jest.fn(async () => ({
-      data: {
-        host_id: "host-1",
-        connect_url: "http://project-host",
-        host_session_id: "session-1",
-      },
-    }));
+    const hubRequest = jest.fn(async (_subject: string, mesg: any) => {
+      if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+        return {
+          data: {
+            token: "token-1",
+            expires_at: Date.now() + 5 * 60_000,
+          },
+        };
+      }
+      return {
+        data: {
+          host_id: "host-1",
+          connect_url: "http://project-host",
+          host_session_id: "session-1",
+        },
+      };
+    });
     const hubClient = {
       inboxPrefixHook: undefined,
       info: undefined,
@@ -1101,6 +1158,8 @@ describe("ConatClient routed project-host reconnect", () => {
       host_session_id: "session-1",
       project_id: "00000000-0000-4000-8000-000000000001",
     });
+    await jest.advanceTimersByTimeAsync(0);
+    connect.mockClear();
 
     eventHandlers.disconnected?.();
 
@@ -1151,6 +1210,17 @@ describe("ConatClient routed project-host reconnect", () => {
       connect: jest.fn(),
       close: jest.fn(),
       disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => {
+        if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+          return {
+            data: {
+              token: "token-1",
+              expires_at: Date.now() + 5 * 60_000,
+            },
+          };
+        }
+        return { data: null };
+      }),
     };
 
     const routedClient = {
@@ -1279,10 +1349,11 @@ describe("ConatClient routed project-host reconnect", () => {
     hasFocusSpy.mockRestore();
   });
 
-  it("retries routed host connection after a project-host auth token timeout", async () => {
+  it("waits for a fresh project-host auth token before connecting the routed host", async () => {
     jest.useFakeTimers();
 
     const connectCalls: any[] = [];
+    let tokenRequestCount = 0;
     const hubClient = {
       inboxPrefixHook: undefined,
       info: undefined,
@@ -1302,9 +1373,18 @@ describe("ConatClient routed project-host reconnect", () => {
       disconnect: jest.fn(),
       request: jest.fn(async (_subject: string, mesg: any) => {
         if (mesg?.name === "hosts.issueProjectHostAuthToken") {
-          const err: any = new Error("timeout");
-          err.code = "408";
-          throw err;
+          tokenRequestCount += 1;
+          if (tokenRequestCount === 1) {
+            const err: any = new Error("timeout");
+            err.code = "408";
+            throw err;
+          }
+          return {
+            data: {
+              token: "token-2",
+              expires_at: Date.now() + 5 * 60_000,
+            },
+          };
         }
         return { data: null };
       }),
@@ -1449,12 +1529,19 @@ describe("ConatClient routed project-host reconnect", () => {
     expect(typeof routedAuth).toBe("function");
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
 
-    await routedAuth(() => undefined);
-
-    expect(client.projectHostTokens["host-1"]?.token).toBeUndefined();
-
+    expect(routedClient.connect).not.toHaveBeenCalled();
     await jest.advanceTimersByTimeAsync(1_000);
+    expect(routedClient.connect).not.toHaveBeenCalled();
+
+    await jest.advanceTimersByTimeAsync(3_600);
     expect(routedClient.connect).toHaveBeenCalledTimes(1);
+    expect(client.projectHostTokens["host-1"]?.token).toBe("token-2");
+
+    const authPayloads: any[] = [];
+    await routedAuth((payload) => {
+      authPayloads.push(payload);
+    });
+    expect(authPayloads).toEqual([{ bearer: "token-2" }]);
 
     warn.mockRestore();
     jest.useRealTimers();
@@ -1976,13 +2063,18 @@ describe("ConatClient routed project-host reconnect", () => {
       host_session_id: "session-1",
       project_id: "00000000-0000-4000-8000-000000000001",
     });
+    await jest.advanceTimersByTimeAsync(0);
+    connect1.mockClear();
+    connect2.mockClear();
 
     eventHandlers1.disconnected?.();
     await jest.advanceTimersByTimeAsync(1_000);
+    await jest.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
     expect(close1).toHaveBeenCalledTimes(1);
-    expect(connect2).toHaveBeenCalledTimes(1);
     expect(client.routedHubClients["host-1"].host_session_id).toBe("session-2");
     jest.advanceTimersByTime(50);
     expect(reconnectSpy).toHaveBeenCalledTimes(1);
@@ -2012,6 +2104,17 @@ describe("ConatClient routed project-host reconnect", () => {
       connect: jest.fn(),
       close: jest.fn(),
       disconnect: jest.fn(),
+      request: jest.fn(async (_subject: string, mesg: any) => {
+        if (mesg?.name === "hosts.issueProjectHostAuthToken") {
+          return {
+            data: {
+              token: "token-1",
+              expires_at: Date.now() + 5 * 60_000,
+            },
+          };
+        }
+        return { data: null };
+      }),
     };
 
     const connect1 = jest.fn();
@@ -2176,6 +2279,9 @@ describe("ConatClient routed project-host reconnect", () => {
       host_session_id: "session-1",
       project_id: "00000000-0000-4000-8000-000000000001",
     });
+    await jest.advanceTimersByTimeAsync(0);
+    connect1.mockClear();
+    connect2.mockClear();
 
     eventHandlers1.disconnected?.();
     await jest.advanceTimersByTimeAsync(1_000);

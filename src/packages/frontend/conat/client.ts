@@ -164,6 +164,7 @@ type RoutedHubClientState = {
   last_project_id?: string;
   client: ReturnType<typeof connectToConat>;
   reconnectTimer?: ReturnType<typeof setTimeout>;
+  connectInFlight?: Promise<boolean>;
   reconnectAttempts: number;
 };
 
@@ -1354,14 +1355,11 @@ export class ConatClient extends EventEmitter {
             resetFailureState: true,
           });
           this.removeRoutedHubClient(host_id, { expectedClient: state.client });
-          const replacement = this.getOrCreateRoutedHubClient({
+          this.getOrCreateRoutedHubClient({
             ...refreshed,
             project_id,
             project_ids: state.project_ids,
           });
-          if (!replacement.conn?.connected) {
-            replacement.connect();
-          }
           // Long-lived terminal/file sockets are attached to the main browser
           // client and only rebuild when that client reconnects. Trigger that
           // rebuild when the routed host endpoint/session changed.
@@ -1371,7 +1369,7 @@ export class ConatClient extends EventEmitter {
         if (state.reconnectAttempts >= ROUTED_HOST_REBUILD_AFTER_ATTEMPTS) {
           this.invalidateProjectHostToken(host_id);
           this.removeRoutedHubClient(host_id, { expectedClient: state.client });
-          const replacement = this.getOrCreateRoutedHubClient({
+          this.getOrCreateRoutedHubClient({
             host_id,
             address: refreshed?.address ?? state.address,
             host_session_id:
@@ -1379,29 +1377,12 @@ export class ConatClient extends EventEmitter {
             project_id,
             project_ids: state.project_ids,
           });
-          if (!replacement.conn?.connected) {
-            replacement.connect();
-          }
           return;
         }
         if (state.client.conn?.connected) {
           return;
         }
-        try {
-          console.log(`calling connect() on routed host client ${host_id}`, {
-            host_id,
-            reconnectAttempts: state.reconnectAttempts,
-            address: state.address,
-            host_session_id: state.host_session_id,
-          });
-          state.client.connect();
-        } catch (err) {
-          console.warn(
-            `failed reconnecting routed hub client for host ${host_id}`,
-            err,
-          );
-          reconnectRouted();
-        }
+        await connectRoutedWithFreshToken();
       }, delayMs);
     };
     const state: RoutedHubClientState = {
@@ -1412,6 +1393,7 @@ export class ConatClient extends EventEmitter {
       client: connectToConat({
         address,
         inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
+        autoConnect: false,
         auth: (cb) => {
           const authProjectId = this.pickTrackedProjectForHost(
             host_id,
@@ -1440,6 +1422,75 @@ export class ConatClient extends EventEmitter {
         reconnection: false,
         forceNew: true,
       }),
+    };
+    const connectRoutedWithFreshToken = async (): Promise<boolean> => {
+      if (state.connectInFlight) {
+        return await state.connectInFlight;
+      }
+      const connectAttempt = (async (): Promise<boolean> => {
+        if (this.permanentlyDisconnected) {
+          return false;
+        }
+        if (this.routedHubClients[host_id]?.client !== state.client) {
+          return false;
+        }
+        if (state.client.conn?.connected) {
+          return true;
+        }
+        const authProjectId = this.pickTrackedProjectForHost(
+          host_id,
+          state,
+          project_id,
+        );
+        try {
+          await this.getProjectHostToken({
+            host_id,
+            project_id: authProjectId,
+          });
+        } catch (err) {
+          this.invalidateProjectHostToken(host_id);
+          if (!this.isProjectHostAuthBackoffError(err)) {
+            console.warn(
+              `failed preparing project-host auth token for host ${host_id}`,
+              err,
+            );
+          }
+          reconnectRouted();
+          return false;
+        }
+        if (this.permanentlyDisconnected) {
+          return false;
+        }
+        if (this.routedHubClients[host_id]?.client !== state.client) {
+          return false;
+        }
+        if (state.client.conn?.connected) {
+          return true;
+        }
+        try {
+          console.log(`calling connect() on routed host client ${host_id}`, {
+            host_id,
+            reconnectAttempts: state.reconnectAttempts,
+            address: state.address,
+            host_session_id: state.host_session_id,
+          });
+          state.client.connect();
+          return true;
+        } catch (err) {
+          console.warn(
+            `failed reconnecting routed hub client for host ${host_id}`,
+            err,
+          );
+          reconnectRouted();
+          return false;
+        }
+      })().finally(() => {
+        if (state.connectInFlight === connectAttempt) {
+          delete state.connectInFlight;
+        }
+      });
+      state.connectInFlight = connectAttempt;
+      return await connectAttempt;
     };
     state.client.on("connected", () => {
       console.log(`routed host connected ${host_id}`, {
@@ -1478,6 +1529,7 @@ export class ConatClient extends EventEmitter {
       }
     }
     this.routedHubClients[host_id] = state;
+    void connectRoutedWithFreshToken();
     return state.client;
   };
 
