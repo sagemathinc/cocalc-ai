@@ -119,6 +119,7 @@ import { getBrowserTimeTravelProviders } from "./timetravel-providers";
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_MS = 4_000;
 const HEARTBEAT_RETRY_MAX_MS = 60_000;
+const HEARTBEAT_FORCE_RECONNECT_AFTER_FAILURES = 2;
 const MAX_EXEC_CODE_LENGTH = 100_000;
 const MAX_EXEC_OPS = 256;
 const EXEC_OP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -156,6 +157,25 @@ export function createBrowserSessionAutomation({
     retryMs: HEARTBEAT_RETRY_MS,
     maxRetryMs: HEARTBEAT_RETRY_MAX_MS,
     onWarn: (message) => console.warn(message),
+    onFailure: (_err, consecutiveFailures) => {
+      const browserOffline =
+        typeof navigator !== "undefined" && navigator.onLine === false;
+      const hiddenTab =
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden";
+      if (
+        consecutiveFailures < HEARTBEAT_FORCE_RECONNECT_AFTER_FAILURES ||
+        browserOffline ||
+        hiddenTab ||
+        !client.conat_client?.is_connected?.()
+      ) {
+        return;
+      }
+      console.warn(
+        `browser-session heartbeat forcing reconnect after ${consecutiveFailures} consecutive failures`,
+      );
+      client.conat_client?.reconnect?.();
+    },
   });
 
   const assertExecNotCanceled = (isCanceled?: () => boolean) => {
