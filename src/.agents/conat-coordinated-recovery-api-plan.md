@@ -145,6 +145,42 @@ A coordinator per client process should own:
 - deduping equivalent recovery work
 - foreground-before-background ordering
 
+For a Node.js process with many active resources, this should be tested
+explicitly once the coordinator exists:
+
+1. create a process with large `N` sockets and/or streams
+2. disconnect and reconnect the network or underlying Conat transport
+3. observe orderly restoration of service instead of a reconnect stampede
+
+### Heartbeat And Liveness
+
+Heartbeat policy must also be coordinated.
+
+At the moment, there is a real risk of too many resource-local liveness checks.
+In particular, `dstream` / `dkv` recovery often flows through persist clients,
+and persist clients use Conat sockets, which currently have per-socket
+keepalive behavior.
+
+That does not scale well for large fanout.
+
+The intended direction should be:
+
+1. transport-level liveness first
+   - one primary heartbeat/liveness signal for the underlying Conat transport
+2. shared service-session liveness second
+   - if persist or another service needs extra liveness tracking, prefer one
+     shared session heartbeat over one heartbeat per logical resource
+3. resource-local heartbeats only as an exception
+   - only where correctness truly requires it
+   - only under coordinator control
+   - never as unbounded independent timers across hundreds of resources
+
+The exact final design is still open, but one constraint should be treated as
+firm:
+
+- avoid one heartbeat per `dkv`, one heartbeat per `dstream`, or one heartbeat
+  per logical socket by default
+
 ### Proposed Common Recovery Surface
 
 Each recoverable Conat resource should expose a small shared contract.
@@ -271,6 +307,8 @@ Coordinator responsibilities:
 For a Node.js process with 1000 resources, this is the only realistic way to
 avoid reconnect collapse.
 
+USER:  We could actually test this with the coordinator once it exists: (1) create a node process with large $N$ sockets (or streams), (2) disconnect then reconnect the network, (3) observe orderly restoration of services.
+
 ### Migration Shape
 
 #### Phase 1: Add lifecycle/control API without changing semantics much
@@ -371,11 +409,41 @@ Relevant existing tests:
 ### Open Questions
 
 1. Should coordinated mode be opt-in per resource, or a client-wide default?
+   Current view:
+   - during development it should be opt-in
+   - long term it should become the standard mode rather than living forever as
+     a niche option
 2. How much process-level concurrency should be allowed by default?
+   Current view:
+   - treat this as a parameter
+   - the real question is how many resources should actively recover at once
+     after reconnect
+   - likely candidates are small numbers such as `3` or `10`
+   - integration testing should help decide this instead of intuition alone
 3. Should resource priorities be part of the core API, or only the coordinator?
+   Current view:
+   - not obvious for non-browser resources
+   - `recently active` is likely a useful generic signal
+   - in practice, resources with recent traffic should probably recover before
+     long-idle resources
 4. Do sockets need a slightly richer recovery contract than streams and DKV?
+   Current view:
+   - maybe
+   - `dstream` and `dkv` share `CoreStream`, which is conceptually cleaner
+   - sockets carry stronger ordering/ack semantics and may need a slightly
+     richer contract
 5. Should the coordinator own recovery budgets per project/account/host, not
    just per process?
+   Current view:
+   - probably too hard to require initially
+   - per-process budgets are the right first design
+   - finer-grained budgets may make sense later, especially in hub processes
+6. What is the right heartbeat hierarchy?
+   Current view:
+   - this is a real open problem and should be treated explicitly
+   - transport heartbeat first, shared service-session heartbeat second,
+     resource-local heartbeat only as an exception
+   - if heartbeat fanout remains high, further multiplexing work will be needed
 
 ### Best Next Step
 
