@@ -346,23 +346,25 @@ if (ENABLED) {
 
 // timing functions
 
-const hijackTimeFunc = (_super) =>
-  function (f, t) {
-    if (typeof f === "function") {
-      f = wrap(f);
-      const args = Array.prototype.slice.call(arguments, 2);
-      return _super(function () {
-        return f.apply(this, args);
-      }, t);
-    } else {
-      return _super(f, t);
-    }
-  };
+// I was hitting hangs and this is using a lot of time in the profiler during this...
 
-if (ENABLED) {
-  polyFill(window, "setTimeout", hijackTimeFunc);
-  polyFill(window, "setInterval", hijackTimeFunc);
-}
+// const hijackTimeFunc = (_super) =>
+//   function (f, t) {
+//     if (typeof f === "function") {
+//       f = wrap(f);
+//       const args = Array.prototype.slice.call(arguments, 2);
+//       return _super(function () {
+//         return f.apply(this, args);
+//       }, t);
+//     } else {
+//       return _super(f, t);
+//     }
+//   };
+
+// if (ENABLED) {
+//   polyFill(window, "setTimeout", hijackTimeFunc);
+//   polyFill(window, "setInterval", hijackTimeFunc);
+// }
 
 if (ENABLED && window.requestAnimationFrame) {
   polyFill(
