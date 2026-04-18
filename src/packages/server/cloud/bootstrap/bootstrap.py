@@ -3058,6 +3058,98 @@ attach_running_project_processes() {
   )
 }
 
+allow_forensics_capture_dir() {
+  local path="${1//\\\\:/:}"
+  case "$path" in
+    /mnt/cocalc/data/forensics/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+capture_forensics() {
+  local component="$1"
+  local pid="$2"
+  local capture_dir="$3"
+  local duration_seconds="$4"
+  local status=0 task_dir task_file tid
+  case "${component}" in
+    project-host|conat-router|conat-persist)
+      ;;
+    *)
+      echo "invalid component '${component}'" >&2
+      exit 2
+      ;;
+  esac
+  if ! echo "${pid}" | grep -Eq '^[0-9]+$' || [ "${pid}" -le 0 ]; then
+    echo "invalid pid '${pid}'" >&2
+    exit 2
+  fi
+  if ! echo "${duration_seconds}" | grep -Eq '^[0-9]+$' || [ "${duration_seconds}" -le 0 ]; then
+    echo "invalid duration '${duration_seconds}'" >&2
+    exit 2
+  fi
+  if ! allow_forensics_capture_dir "${capture_dir}"; then
+    deny "forensics-dir-not-allowed" "${capture_dir}"
+  fi
+  mkdir -p "${capture_dir}"
+  chmod 700 "${capture_dir}" || true
+
+  if [ -r "/proc/${pid}/cmdline" ]; then
+    {
+      tr '\\0' ' ' < "/proc/${pid}/cmdline"
+      printf '\\n'
+    } > "${capture_dir}/cmdline.txt"
+  else
+    printf 'ERROR: unable to read /proc/%s/cmdline\\n' "${pid}" > "${capture_dir}/cmdline.txt"
+  fi
+  chmod 600 "${capture_dir}/cmdline.txt" || true
+
+  if ! cat "/proc/${pid}/stack" > "${capture_dir}/proc-stack.txt" 2>&1; then
+    :
+  fi
+  chmod 600 "${capture_dir}/proc-stack.txt" || true
+
+  task_dir="/proc/${pid}/task"
+  {
+    if [ -d "${task_dir}" ]; then
+      for task_file in "${task_dir}"/*; do
+        [ -e "${task_file}" ] || continue
+        tid="$(basename "${task_file}")"
+        printf '===== %s =====\\n' "${tid}"
+        if ! cat "${task_file}/stack" 2>&1; then
+          :
+        fi
+        printf '\\n'
+      done
+    else
+      printf 'ERROR: unable to read %s\\n' "${task_dir}"
+    fi
+  } > "${capture_dir}/task-stacks.txt"
+  chmod 600 "${capture_dir}/task-stacks.txt" || true
+
+  ps -L -p "${pid}" -o pid,tid,pcpu,pmem,stat,wchan,comm > "${capture_dir}/ps-threads.txt" 2>&1 || true
+  chmod 600 "${capture_dir}/ps-threads.txt" || true
+
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -p "${pid}" > "${capture_dir}/lsof.txt" 2>&1 || true
+  else
+    printf 'ERROR: lsof not installed\\n' > "${capture_dir}/lsof.txt"
+  fi
+  chmod 600 "${capture_dir}/lsof.txt" || true
+
+  set +e
+  /usr/bin/timeout "${duration_seconds}s" strace -ff -ttt -T -s 256 -yy -o "${capture_dir}/strace" -p "${pid}" > "${capture_dir}/strace-run.txt" 2>&1
+  status="$?"
+  set -e
+  chmod 600 "${capture_dir}/strace-run.txt" || true
+  chown -R "${RUNTIME_USER}:${RUNTIME_USER}" "${capture_dir}" >/dev/null 2>&1 || true
+  exit "${status}"
+}
+
 case "${cmd}" in
   start|ensure)
     run_daemon "${cmd}" "$@"
@@ -3073,6 +3165,13 @@ case "${cmd}" in
   protect)
     protect_pid
     attach_running_project_processes || true
+    ;;
+  capture-forensics)
+    if [ "$#" -ne 4 ]; then
+      echo "usage: ${0} capture-forensics <component> <pid> <capture-dir> <duration-seconds>" >&2
+      exit 2
+    fi
+    capture_forensics "$1" "$2" "$3" "$4"
     ;;
   noop)
     exit 0
@@ -3094,7 +3193,7 @@ case "${cmd}" in
     fi
     ;;
   *)
-    echo "usage: ${0} {start|stop|restart|ensure|status|protect|noop}" >&2
+    echo "usage: ${0} {start|stop|restart|ensure|status|protect|capture-forensics|noop}" >&2
     exit 2
     ;;
 esac

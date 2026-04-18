@@ -22,6 +22,7 @@ export type SupervisionEvent = {
   action:
     | "started"
     | "healthy"
+    | "health_check_failed"
     | "warming_up"
     | "forensics_captured"
     | "forensics_failed"

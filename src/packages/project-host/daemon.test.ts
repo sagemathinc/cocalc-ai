@@ -26,6 +26,7 @@ describe("project-host daemon stop", () => {
     jest.restoreAllMocks();
     process.env = { ...originalEnv };
     process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "0";
+    __test__.resetHealthFailureStreaks();
     runtimeDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-runtime-"),
     );
@@ -987,6 +988,7 @@ describe("project-host daemon stop", () => {
     fs.utimesSync(pidPath, old, old);
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_DAEMON_HEALTH_FAILS_BEFORE_RESTART = "1";
     process.env.COCALC_PROJECT_HOST_DAEMON_STOP_TIMEOUT_MS = "20";
     process.env.COCALC_PROJECT_HOST_DAEMON_STOP_POLL_MS = "1";
 
@@ -1019,8 +1021,10 @@ describe("project-host daemon stop", () => {
     ensureDaemon(0);
 
     expect(warnSpy).toHaveBeenCalledWith(
-      "project-host pid 8484 is running but unhealthy; restarting.",
+      "project-host pid 8484 failed health checks 1/1; restarting.",
       expect.objectContaining({
+        selected_version: undefined,
+        running_version: undefined,
         health: expect.objectContaining({
           ok: false,
           url: "http://127.0.0.1:9002/healthz",
@@ -1053,6 +1057,113 @@ describe("project-host daemon stop", () => {
     );
   });
 
+  it("restarts only after the configured number of consecutive failed health checks", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const pidPath = path.join(dataDir, "daemon.pid");
+    fs.writeFileSync(pidPath, "8484");
+    const old = new Date(Date.now() - 120_000);
+    fs.utimesSync(pidPath, old, old);
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_DAEMON_HEALTH_FAILS_BEFORE_RESTART = "3";
+    process.env.COCALC_PROJECT_HOST_DAEMON_STOP_TIMEOUT_MS = "20";
+    process.env.COCALC_PROJECT_HOST_DAEMON_STOP_POLL_MS = "1";
+
+    let running = true;
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      if (signal === 0 || signal === undefined) {
+        if (pid === 8484 && running) {
+          return true;
+        }
+        throw new Error("not running");
+      }
+      if (pid === 8484 && signal === "SIGTERM") {
+        running = false;
+        return true;
+      }
+      throw new Error(`unexpected signal ${signal}`);
+    }) as typeof process.kill);
+    jest
+      .spyOn(__test__.processRuntime, "spawnSync")
+      .mockReturnValue({ status: 1 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockReturnValue({ pid: 9494, unref: () => {} } as any);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    ensureDaemon(0);
+    ensureDaemon(0);
+    expect(killSpy).not.toHaveBeenCalledWith(8484, "SIGTERM");
+    expect(spawnSpy).not.toHaveBeenCalled();
+
+    ensureDaemon(0);
+
+    expect(warnSpy).toHaveBeenNthCalledWith(
+      1,
+      "project-host pid 8484 failed health check 1/3; deferring restart.",
+      expect.objectContaining({
+        selected_version: undefined,
+        running_version: undefined,
+        health: expect.objectContaining({
+          ok: false,
+          url: "http://127.0.0.1:9002/healthz",
+        }),
+      }),
+    );
+    expect(warnSpy).toHaveBeenNthCalledWith(
+      2,
+      "project-host pid 8484 failed health check 2/3; deferring restart.",
+      expect.objectContaining({
+        selected_version: undefined,
+        running_version: undefined,
+        health: expect.objectContaining({
+          ok: false,
+          url: "http://127.0.0.1:9002/healthz",
+        }),
+      }),
+    );
+    expect(warnSpy).toHaveBeenNthCalledWith(
+      3,
+      "project-host pid 8484 failed health checks 3/3; restarting.",
+      expect.objectContaining({
+        selected_version: undefined,
+        running_version: undefined,
+        health: expect.objectContaining({
+          ok: false,
+          url: "http://127.0.0.1:9002/healthz",
+        }),
+      }),
+    );
+    expect(killSpy).toHaveBeenCalledWith(8484, "SIGTERM");
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    const events = fs
+      .readFileSync(path.join(dataDir, "supervision-events.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(
+      events.filter((event) => event.action === "health_check_failed"),
+    ).toHaveLength(3);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component: "project-host",
+          action: "restart_requested",
+          pid: 8484,
+          metadata: expect.objectContaining({
+            consecutive_failures: 3,
+            restart_after_failures: 3,
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("captures unhealthy process forensics when enabled", () => {
     const dataDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
@@ -1062,26 +1173,24 @@ describe("project-host daemon stop", () => {
     const spawnSyncSpy = jest
       .spyOn(__test__.processRuntime, "spawnSync")
       .mockImplementation(((command: string, args: string[]) => {
-        if (command === "ps") {
-          return { status: 0, stdout: "ps ok\n", stderr: "" } as any;
-        }
-        if (command === "lsof") {
-          return { status: 0, stdout: "lsof ok\n", stderr: "" } as any;
-        }
-        if (command === "timeout") {
+        if (command === "sudo") {
+          const captureDir = args[5];
           expect(args).toEqual(
             expect.arrayContaining([
-              "1s",
-              "strace",
-              "-ff",
-              "-ttt",
-              "-T",
-              "-s",
-              "256",
-              "-yy",
-              "-p",
+              "-n",
+              __test__.rootctlPath(),
+              "capture-forensics",
+              "project-host",
               "4242",
+              captureDir,
+              "1",
             ]),
+          );
+          fs.writeFileSync(path.join(captureDir, "ps-threads.txt"), "ps ok\n");
+          fs.writeFileSync(path.join(captureDir, "lsof.txt"), "lsof ok\n");
+          fs.writeFileSync(
+            path.join(captureDir, "strace-run.txt"),
+            "strace timed out\n",
           );
           return { status: 124, stdout: "", stderr: "" } as any;
         }
