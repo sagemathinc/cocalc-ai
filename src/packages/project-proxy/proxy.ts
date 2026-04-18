@@ -41,10 +41,16 @@ interface StartOptions {
   rewriteRequest?: (req: http.IncomingMessage) => Promise<void> | void;
 }
 
-function stripProjectHostProxyAuthCookies(
+export function stripProjectHostProxyAuthCookies(
   cookieHeader: string | string[] | undefined,
+  {
+    preserveCookieNames = [],
+  }: {
+    preserveCookieNames?: string[];
+  } = {},
 ): string | undefined {
   if (cookieHeader == null) return undefined;
+  const preserved = new Set(preserveCookieNames);
   const raw = Array.isArray(cookieHeader)
     ? cookieHeader.join(";")
     : cookieHeader;
@@ -58,7 +64,8 @@ function stripProjectHostProxyAuthCookies(
       return (
         name !== PROJECT_HOST_HTTP_AUTH_COOKIE_NAME &&
         name !== PROJECT_HOST_HTTP_SESSION_COOKIE_NAME &&
-        name !== PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME
+        (name !== PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME ||
+          preserved.has(name))
       );
     });
   return kept.length > 0 ? kept.join("; ") : undefined;
@@ -121,6 +128,7 @@ export function createProxyHandlers({
   resolveTarget = defaultResolveTarget,
   onUpgradeAuthorized,
   rewriteRequest,
+  preserveCookieNames,
 }: {
   resolveTarget?: ResolveFn;
   onUpgradeAuthorized?: (
@@ -128,6 +136,7 @@ export function createProxyHandlers({
     socket: Socket | Duplex,
   ) => void;
   rewriteRequest?: (req: http.IncomingMessage) => Promise<void> | void;
+  preserveCookieNames?: string[];
 } = {}) {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
@@ -141,7 +150,9 @@ export function createProxyHandlers({
 
   proxy.on("proxyReq", (proxyReq, req) => {
     proxyReq.setHeader("X-Proxy-By", "cocalc-proxy");
-    const cookie = stripProjectHostProxyAuthCookies(req.headers.cookie);
+    const cookie = stripProjectHostProxyAuthCookies(req.headers.cookie, {
+      preserveCookieNames,
+    });
     if (cookie) {
       proxyReq.setHeader("cookie", cookie);
     } else {
@@ -150,7 +161,9 @@ export function createProxyHandlers({
   });
 
   proxy.on("proxyReqWs", (proxyReq, req) => {
-    const cookie = stripProjectHostProxyAuthCookies(req.headers.cookie);
+    const cookie = stripProjectHostProxyAuthCookies(req.headers.cookie, {
+      preserveCookieNames,
+    });
     if (cookie) {
       proxyReq.setHeader("cookie", cookie);
     } else {
