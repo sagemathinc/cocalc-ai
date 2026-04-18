@@ -48,6 +48,13 @@ export const DEFAULT_RUNTIME_DEPLOYMENT_POLICY: Record<
   "acp-worker": "drain_then_replace",
 };
 
+const PROJECT_HOST_RUNTIME_STACK_COMPONENTS: ManagedComponentKind[] = [
+  "project-host",
+  "conat-router",
+  "conat-persist",
+  "acp-worker",
+];
+
 export function normalizeRuntimeArtifactTarget(
   artifact?: HostSoftwareArtifact | HostRuntimeArtifact,
 ): HostRuntimeArtifact | undefined {
@@ -324,6 +331,17 @@ export function runtimeDeploymentsForUpgradeResults(
       target,
       desired_version: result.version,
     });
+    if (target === "project-host") {
+      for (const component of PROJECT_HOST_RUNTIME_STACK_COMPONENTS) {
+        deployments.push({
+          target_type: "component",
+          target: component,
+          desired_version: result.version,
+          rollout_policy: DEFAULT_RUNTIME_DEPLOYMENT_POLICY[component],
+          rollout_reason: "project_host_upgrade",
+        });
+      }
+    }
   }
   return normalizeRuntimeDeploymentUpserts(deployments);
 }

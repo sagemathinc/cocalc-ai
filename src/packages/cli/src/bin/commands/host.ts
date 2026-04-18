@@ -1139,7 +1139,7 @@ export function registerHostCommand(
 
   host
     .command("upgrade [host]")
-    .description("upgrade host software")
+    .description("upgrade host software and align the managed runtime stack")
     .option(
       "--artifact <artifact...>",
       "artifact(s): project-host, project, tools (default: all)",
@@ -1156,6 +1156,21 @@ export function registerHostCommand(
     .option("--base-url <url>", "software base url override")
     .option("--all-online", "upgrade all online hosts")
     .option("--wait", "wait for completion")
+    .addHelpText(
+      "after",
+      `
+When \`project-host\` is one of the selected artifacts, upgrade also records
+the matching desired versions for the managed runtime stack on that host:
+\`project-host\`, \`conat-router\`, \`conat-persist\`, and \`acp-worker\`.
+This makes the normal upgrade path the easiest way to fully align a host to a
+selected project-host build.
+
+Examples:
+  cocalc host upgrade my-project-host --artifact project-host --hub-source --wait
+  cocalc host upgrade my-project-host --artifact project-host project tools --hub-source --wait
+  cocalc host upgrade --all-online --artifact project-host --hub-source --wait
+`,
+    )
     .action(
       async (
         hostIdentifier: string | undefined,
