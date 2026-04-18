@@ -99,11 +99,23 @@ const DEFAULT_CODEX_MODEL =
 const ARCHIVED_SEARCH_LIMIT = 20;
 const ARCHIVED_HISTORY_LIMIT = 50;
 const ARCHIVED_INLINE_PREVIEW_LIMIT = 6;
+const CHAT_ARCHIVE_DEBUG_STORAGE_KEY = "cocalc.debug.chatArchive";
+
+function isLocalStorageFlagEnabled(key: string): boolean {
+  try {
+    const value = globalThis.localStorage?.getItem(key)?.trim().toLowerCase();
+    if (!value) return false;
+    return !["0", "false", "off", "no"].includes(value);
+  } catch {
+    return false;
+  }
+}
 
 function logChatArchiveDiagnostic(
   message: string,
   details: Record<string, unknown>,
 ): void {
+  if (!isLocalStorageFlagEnabled(CHAT_ARCHIVE_DEBUG_STORAGE_KEY)) return;
   console.log(`[chat-archive] ${message}`, details);
 }
 
