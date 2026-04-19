@@ -724,7 +724,9 @@ export class Client extends EventEmitter {
       this.setState("disconnected");
       this.disconnectAllSockets();
     });
-    this.conn.io.connect();
+    if (options.autoConnect !== false) {
+      this.conn.io.connect();
+    }
     this.statsLoop();
   }
 
