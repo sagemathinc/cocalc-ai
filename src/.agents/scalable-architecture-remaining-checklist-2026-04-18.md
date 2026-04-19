@@ -57,6 +57,8 @@ What should still be treated as incomplete:
 - inter-bay observability / replay / load-test readiness
 - explicit completion of host placement and lifecycle validation under multibay
   failure modes
+- 2FA / TOTP auth, which should be added later as a home-bay-owned auth layer
+  and not as a project-host or cross-bay runtime concern
 - account rehome workflow
 - project move workflow
 
@@ -89,6 +91,16 @@ Phase 5 remaining work is now mostly:
 - validation
 - observability
 - cleanup of leftover hidden one-bay assumptions
+
+Auth note for later:
+
+- 2FA should fit naturally into the stable-URL shell + home-bay auth-authority
+  design
+- TOTP secrets, backup codes, and challenge verification should be owned by the
+  account home bay
+- real session issuance should only happen after the home bay completes the
+  second factor
+- this should not change project-host routing or runtime placement logic
 
 ### Phase 6: Project Host Reachability And Placement
 
