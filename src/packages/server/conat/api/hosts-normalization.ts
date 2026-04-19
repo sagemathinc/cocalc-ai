@@ -262,6 +262,12 @@ export function parseRow(
     starred?: boolean;
     metrics_history?: HostMetricsHistory;
     runtime_exception_summary?: HostRuntimeExceptionSummary;
+    runtime_desired_artifacts?: {
+      project_host?: string;
+      project_bundle?: string;
+      tools?: string;
+      updated_at?: string;
+    };
   } = {},
 ): Host {
   const parsePositiveInt = (value: unknown): number | undefined => {
@@ -273,6 +279,107 @@ export function parseRow(
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed < 0) return undefined;
     return parsed;
+  };
+  const lifecycleValueText = (value: unknown): string | undefined => {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      return trimmed || undefined;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return `${value}`;
+    }
+    if (typeof value === "boolean") {
+      return value ? "true" : "false";
+    }
+    return undefined;
+  };
+  const maxTimestamp = (left?: string, right?: string): string | undefined => {
+    const leftMs = parseTimestampMs(left);
+    const rightMs = parseTimestampMs(right);
+    if (leftMs == null) return right;
+    if (rightMs == null) return left;
+    return leftMs >= rightMs ? left : right;
+  };
+  const normalizeLifecycleAgainstDesiredArtifacts = (
+    lifecycle: HostBootstrapLifecycle | undefined,
+  ): HostBootstrapLifecycle | undefined => {
+    if (!lifecycle || !opts.runtime_desired_artifacts) return lifecycle;
+    const overrides = new Map<string, string>();
+    const desiredProjectHost =
+      `${opts.runtime_desired_artifacts.project_host ?? ""}`.trim() ||
+      undefined;
+    const desiredProjectBundle =
+      `${opts.runtime_desired_artifacts.project_bundle ?? ""}`.trim() ||
+      undefined;
+    const desiredTools =
+      `${opts.runtime_desired_artifacts.tools ?? ""}`.trim() || undefined;
+    if (desiredProjectHost) {
+      overrides.set("project_host_bundle", desiredProjectHost);
+    }
+    if (desiredProjectBundle) {
+      overrides.set("project_bundle", desiredProjectBundle);
+    }
+    if (desiredTools) {
+      overrides.set("tools_bundle", desiredTools);
+    }
+    if (overrides.size === 0) return lifecycle;
+    let changed = false;
+    const items = lifecycle.items.map((item) => {
+      const nextDesired = overrides.get(item.key);
+      if (!nextDesired) return item;
+      const currentDesired = lifecycleValueText(item.desired);
+      if (currentDesired === nextDesired) return item;
+      changed = true;
+      const installed = lifecycleValueText(item.installed);
+      const nextItem: HostBootstrapLifecycleItem = {
+        ...item,
+        desired: nextDesired,
+      };
+      if (installed && installed === nextDesired) {
+        nextItem.status = "match";
+        delete nextItem.message;
+        return nextItem;
+      }
+      if (installed) {
+        nextItem.status = "drift";
+        nextItem.message = `installed bundle ${installed} does not match desired ${nextDesired}`;
+        return nextItem;
+      }
+      if (
+        item.status === "match" ||
+        /newer than desired/i.test(`${item.message ?? ""}`)
+      ) {
+        nextItem.status = "drift";
+        nextItem.message = `installed bundle does not match desired ${nextDesired}`;
+      }
+      return nextItem;
+    });
+    if (!changed) return lifecycle;
+    const driftCount = items.filter(
+      (item) => item.status === "drift" || item.status === "missing",
+    ).length;
+    const summary_status =
+      lifecycle.summary_status === "reconciling" ||
+      lifecycle.summary_status === "error"
+        ? lifecycle.summary_status
+        : driftCount > 0
+          ? "drifted"
+          : "in_sync";
+    const desired_recorded_at = maxTimestamp(
+      lifecycle.desired_recorded_at,
+      opts.runtime_desired_artifacts.updated_at,
+    );
+    return {
+      ...lifecycle,
+      ...(desired_recorded_at ? { desired_recorded_at } : {}),
+      summary_status,
+      drift_count: driftCount,
+      summary_message:
+        summary_status === "in_sync"
+          ? "desired and installed software are aligned"
+          : lifecycle.summary_message,
+      items,
+    };
   };
   const normalizeBootstrap = (
     bootstrap: HostBootstrapStatus | undefined,
@@ -724,7 +831,12 @@ export function parseRow(
   const rawStatus = String(row.status ?? "");
   const normalizedStatus =
     rawStatus === "active" ? "running" : rawStatus || "off";
-  const normalizedBootstrap = normalizeBootstrap(bootstrap, bootstrapLifecycle);
+  const normalizedBootstrapLifecycle =
+    normalizeLifecycleAgainstDesiredArtifacts(bootstrapLifecycle);
+  const normalizedBootstrap = normalizeBootstrap(
+    bootstrap,
+    normalizedBootstrapLifecycle,
+  );
   const pricingModel =
     normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand";
   const interruptionRestorePolicy =
@@ -790,6 +902,6 @@ export function parseRow(
     deleted: row.deleted ? new Date(row.deleted).toISOString() : undefined,
     backup_status: opts.backup_status,
     bootstrap: normalizedBootstrap,
-    bootstrap_lifecycle: bootstrapLifecycle,
+    bootstrap_lifecycle: normalizedBootstrapLifecycle,
   };
 }
