@@ -6,6 +6,7 @@ load_bay_env() {
   for env_file in \
     "${COCALC_BAY_ENV_FILE:-/etc/cocalc/bay.env}" \
     "${COCALC_BAY_WORKERS_ENV_FILE:-/etc/cocalc/bay-workers.env}" \
+    "${COCALC_BAY_OVERLAY_ENV_FILE:-/etc/cocalc/bay-overlay.env}" \
     "${COCALC_BAY_SECRETS_ENV_FILE:-/etc/cocalc/bay-secrets.env}"; do
     if [[ -r "$env_file" ]]; then
       # shellcheck disable=SC1090

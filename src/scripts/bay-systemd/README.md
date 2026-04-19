@@ -15,21 +15,31 @@ product runtime. They are meant to make the agreed rollout model concrete:
 - worker-only rollout vs full-bay rollout
 - explicit drain / replacement workflows above systemd
 
+There is also an installer:
+
+- [install-scaffold.sh](/home/user/cocalc-ai-clone/src/scripts/bay-systemd/install-scaffold.sh)
+
+It copies the units, wrapper scripts, and env templates into a target rootfs so
+you can start testing the scaffold on a remote VM without hand-copying every
+file.
+
 ## Suggested Install Layout
 
-1. Copy env examples into `/etc/cocalc/` and replace placeholders.
-   If you want to start from the current CoCalc source/bundle layout instead of
-   mapping every command by hand, also copy
-   `env/bay-current-cocalc-overlay.env.example` and source it after
-   `bay.env`.
-2. Copy `systemd/*.service` and `systemd/*.target` into
-   `/etc/systemd/system/`.
-3. Copy `bin/*` into `/opt/cocalc/bay/current/bin/`.
-4. Run:
+1. Run the installer, for example:
 
 ```sh
-sudo systemctl daemon-reload
-sudo systemctl enable cocalc-bay.target
+sudo ./src/scripts/bay-systemd/install-scaffold.sh --overlay current-cocalc --daemon-reload
+```
+
+2. Edit:
+   - `/etc/cocalc/bay.env`
+   - `/etc/cocalc/bay-workers.env`
+   - `/etc/cocalc/bay-secrets.env`
+   - optionally `/etc/cocalc/bay-overlay.env`
+3. Enable whichever worker instances you actually want.
+4. Start the bay target:
+
+```sh
 sudo systemctl enable cocalc-bay-hub@1.service
 sudo systemctl enable cocalc-bay-hub@2.service
 sudo systemctl start cocalc-bay.target
@@ -41,6 +51,7 @@ sudo systemctl start cocalc-bay.target
   - `/etc/cocalc/bay.env`
   - `/etc/cocalc/bay-workers.env`
   - `/etc/cocalc/bay-secrets.env`
+- optionally `/etc/cocalc/bay-overlay.env`
 - The optional `bay-current-cocalc-overlay.env.example` file is intentionally
   transitional. It binds the scaffold to the current repo layout:
   - router and persist from `@cocalc/project-host`

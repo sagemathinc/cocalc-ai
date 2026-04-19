@@ -10,6 +10,7 @@ User=cocalc-bay
 WorkingDirectory=/opt/cocalc/bay/current
 EnvironmentFile=/etc/cocalc/bay.env
 EnvironmentFile=-/etc/cocalc/bay-workers.env
+EnvironmentFile=-/etc/cocalc/bay-overlay.env
 EnvironmentFile=-/etc/cocalc/bay-secrets.env
 ExecStart=/opt/cocalc/bay/current/bin/bay-migrate
 RemainAfterExit=yes
