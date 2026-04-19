@@ -395,6 +395,162 @@ Examples:
 The CLI should speak in bay/operator language, not raw systemd internals, even
 if `systemd` is the implementation underneath.
 
+## Bay Drain Workflow
+
+For major upgrades, risky reconfiguration, or structural changes, the safest
+operator workflow may be:
+
+1. create a new bay
+2. drain the existing bay
+3. delete the old bay
+
+This should be a first-class supported path, not an improvised emergency move.
+
+### What Draining Means
+
+Draining a bay should mean:
+
+- stop placing new accounts/projects/hosts onto that bay
+- stop assigning new work there
+- gradually evacuate or rehome what is already there
+- keep the bay healthy and readable while it is draining
+- make the drain state explicit in operator surfaces
+
+In other words, draining is not “stop the VM.” It is controlled removal from
+service.
+
+### Bay Drain States
+
+Suggested operator-visible states:
+
+- `active`
+  - normal placement allowed
+- `cordoned`
+  - no new placement, but existing workloads continue
+- `draining`
+  - explicit evacuation/rehome work is in progress
+- `drained`
+  - nothing active remains except what is required for inspection/cleanup
+- `deleting`
+  - final teardown in progress
+
+### What Must Stop First
+
+On entering `cordoned` or `draining`:
+
+- new account home-bay assignment to this bay stops
+- new project owning-bay assignment to this bay stops
+- new host assignment to this bay stops
+- new long-running background placement onto this bay stops
+
+This must happen before any migration work starts, otherwise the bay keeps
+refilling.
+
+### What Gets Moved During Drain
+
+Depending on the system state, draining may require:
+
+- rehoming accounts to a new home bay
+- moving projects to a new owning bay
+- moving or reprovisioning hosts to a new bay
+- waiting for transient work to finish
+
+The exact mechanics may differ by object type, but the operator concept should
+be one thing:
+
+- “this bay is leaving service; move its owned work elsewhere”
+
+### Safe Release-Oriented Drain Procedure
+
+The release-safe pattern should be:
+
+1. **Create the replacement bay**
+   - provision VM
+   - bootstrap bay software
+   - verify health
+   - verify backups
+   - verify routing and auth
+
+2. **Cordon the old bay**
+   - stop new placements there
+   - make this visible in CLI/UI
+
+3. **Drain gradually**
+   - rehome accounts
+   - move projects
+   - move/reassign hosts
+   - monitor lag, failures, and workload counts
+
+4. **Verify drained state**
+   - no remaining active placements
+   - no pending migrations
+   - no backlog requiring the old bay
+
+5. **Delete or archive the old bay**
+   - final backup snapshot
+   - disable routing
+   - stop services
+   - destroy VM or keep fenced for forensic retention
+
+### Why This Matters
+
+This gives a safer path for:
+
+- major schema or deployment changes
+- region moves
+- instance type changes
+- replacing a problematic bay appliance image
+- escaping from a bay that has become operationally suspicious
+
+The key point is that some changes are safer as **bay replacement** than as
+in-place upgrade.
+
+### Systemd Implications
+
+Because the bay is a VM appliance under `systemd`, drain should be modeled above
+the service manager:
+
+- `systemd` manages the local processes
+- the control plane manages whether the bay is eligible for placement and
+  whether it is actively draining
+
+So draining a bay should not initially stop services. It should first change
+control-plane placement behavior.
+
+Only near the end, when the bay is actually drained, should the operator stop:
+
+- hub workers
+- router/persist
+- postgres
+
+### Minimal CLI Surface
+
+This suggests at least:
+
+- `cocalc bay cordon <bay-id>`
+- `cocalc bay drain <bay-id>`
+- `cocalc bay uncordon <bay-id>`
+- `cocalc bay delete <bay-id>`
+- `cocalc bay show <bay-id>`
+
+Where `bay show` should clearly answer:
+
+- is the bay accepting new placement?
+- is a drain in progress?
+- how many accounts/projects/hosts remain?
+- is it safe to delete?
+
+### Recommended Release Policy
+
+For release, explicitly support this conservative policy:
+
+- **minor change**: worker-only or in-place bay rollout
+- **moderate change**: in-place full-bay rollout
+- **major/risky change**: create new bay, drain old bay, delete old bay
+
+That gives operators a safe escape hatch without requiring Kubernetes-style
+rolling infrastructure.
+
 ## Release Phases
 
 ### Phase 1: Single-VM Bay Appliance
