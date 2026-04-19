@@ -18,10 +18,39 @@ product runtime. They are meant to make the agreed rollout model concrete:
 There is also an installer:
 
 - [install-scaffold.sh](/home/user/cocalc-ai-clone/src/scripts/bay-systemd/install-scaffold.sh)
+- [bay-bootstrap-host.sh](/home/user/cocalc-ai-clone/src/scripts/bay-systemd/bay-bootstrap-host.sh)
+- [bay-bootstrap-release.sh](/home/user/cocalc-ai-clone/src/scripts/bay-systemd/bay-bootstrap-release.sh)
 
 It copies the units, wrapper scripts, and env templates into a target rootfs so
 you can start testing the scaffold on a remote VM without hand-copying every
 file.
+
+## Fresh VM Bootstrap
+
+For a fresh Ubuntu VM, the intended first pass is:
+
+1. Prepare the host:
+
+```sh
+sudo ./src/scripts/bay-systemd/bay-bootstrap-host.sh --install-nodejs
+```
+
+2. Stage a built `src/` tree as the active bay release:
+
+```sh
+sudo ./src/scripts/bay-systemd/bay-bootstrap-release.sh \
+  --source /path/to/built/src \
+  --start
+```
+
+The release bootstrap currently:
+
+- stages the built tree under `/opt/cocalc/bay/releases/<release-id>`
+- updates `/opt/cocalc/bay/current`
+- installs the scaffold and the current-CoCalc overlay
+- provisions the bay database if missing
+- writes `/etc/cocalc/bay.env`, `bay-workers.env`, and `bay-secrets.env`
+- enables `cocalc-bay.target` plus the requested hub worker units
 
 ## Suggested Install Layout
 
