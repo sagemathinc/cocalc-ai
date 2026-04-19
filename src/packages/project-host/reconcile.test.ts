@@ -6,9 +6,14 @@ import { getProject, upsertProject } from "./sqlite/projects";
 
 const mockSpawn = jest.fn();
 
-jest.mock("node:child_process", () => ({
-  spawn: (...args: any[]) => mockSpawn(...args),
-}));
+jest.mock("node:child_process", () => {
+  const actual = jest.requireActual("node:child_process");
+  return {
+    __esModule: true,
+    ...actual,
+    spawn: (...args: any[]) => mockSpawn(...args),
+  };
+});
 
 jest.mock("@cocalc/backend/logger", () => {
   const factory = () => ({
