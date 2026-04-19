@@ -959,7 +959,7 @@ build_daemon() {
     stop_daemon 1
     start_daemon
     eval "$(pnpm -s dev:env:hub)"
-    cocalc host upgrade --hub-source --wait --all-online
+    cocalc host upgrade --hub-source --wait --all-online --align-runtime-stack
   )
 }
 
