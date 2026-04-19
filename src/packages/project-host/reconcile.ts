@@ -3,6 +3,7 @@ import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
+import { DEFAULT_PROJECT_PROXY_PORT } from "@cocalc/project-runner/run/env";
 import { listProjects, upsertProject } from "./sqlite/projects";
 import {
   resetProjectLastEditedRunning,
@@ -13,6 +14,7 @@ import { getMountPoint } from "./file-server";
 
 const DEFAULT_INTERVAL = 15_000;
 const DEFAULT_MISSING_CYCLES_BEFORE_OPENED = 2;
+const DEFAULT_PROJECT_PROXY_PORT_NUMBER = Number(DEFAULT_PROJECT_PROXY_PORT);
 
 const logger = getLogger("project-host:reconcile");
 const missingSince = new Map<string, number>();
@@ -45,11 +47,14 @@ function parsePorts(ports?: string): {
     if (Number.isNaN(host) || Number.isNaN(container)) continue;
     if (container === 22) {
       ssh_port = host;
-    } else if (http_port == null || container === 8080 || container === 80) {
-      // Project containers always publish SSH on 22 and their main HTTP proxy
-      // on one non-SSH TCP port (currently 8080). Preserve compatibility with
-      // any older 80/tcp layouts, but otherwise treat the first non-22 tcp
-      // mapping as the project HTTP port.
+    } else if (
+      http_port == null ||
+      container === DEFAULT_PROJECT_PROXY_PORT_NUMBER
+    ) {
+      // Project containers publish SSH on 22 and the project HTTP proxy on a
+      // non-SSH TCP port. Prefer the configured proxy port when present, but
+      // otherwise fall back to the first non-22 mapping we observe rather than
+      // guessing from legacy user-visible ports like 8080.
       http_port = host;
     }
   }

@@ -24,11 +24,15 @@ import type {
   ConatServer,
   UserFunction,
 } from "@cocalc/conat/core/server";
+import {
+  PROJECT_HOST_HTTP_AUTH_COOKIE_NAME,
+  PROJECT_HOST_HTTP_SESSION_COOKIE_NAME,
+} from "@cocalc/conat/auth/project-host-http";
+import { PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/project-host-browser-session";
 import { createProxyHandlers } from "@cocalc/project-proxy/proxy";
 import { createProjectHostConatAuth } from "./conat-auth";
 
 const logger = getLogger("project-host:conat-router");
-const PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME = "cocalc_project_host_session";
 
 function parsePositiveInteger(
   raw: string | undefined,
@@ -406,6 +410,11 @@ export function attachProjectHostHttpFallbackProxy({
   const proxyTarget = parseProxyTarget(target);
   const { handleRequest, handleUpgrade } = createProxyHandlers({
     resolveTarget: () => ({ handled: true, target: proxyTarget }),
+    preserveCookieNames: [
+      PROJECT_HOST_HTTP_AUTH_COOKIE_NAME,
+      PROJECT_HOST_HTTP_SESSION_COOKIE_NAME,
+      PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME,
+    ],
   });
   logger.info("project-host ingress fallback proxy enabled", {
     target,

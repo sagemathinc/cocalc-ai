@@ -82,6 +82,10 @@ type UseHostDrawerViewModelArgs = {
     version?: string;
     last_known_good?: boolean;
   }) => void | Promise<void>;
+  onRestartRuntimeComponent?: (opts: {
+    host: Host;
+    component: ManagedComponentKind;
+  }) => void | Promise<void>;
   onResumeRuntimeComponentClusterDefault?: (opts: {
     host: Host;
     component: ManagedComponentKind;
@@ -152,6 +156,7 @@ export const useHostDrawerViewModel = ({
   onResumeRuntimeArtifactClusterDefault,
   onSetRuntimeComponentDeployment,
   onRollbackRuntimeComponent,
+  onRestartRuntimeComponent,
   onResumeRuntimeComponentClusterDefault,
   rootfsInventory,
   canManageRootfs,
@@ -184,6 +189,7 @@ export const useHostDrawerViewModel = ({
     onResumeRuntimeArtifactClusterDefault,
     onSetRuntimeComponentDeployment,
     onRollbackRuntimeComponent,
+    onRestartRuntimeComponent,
     onResumeRuntimeComponentClusterDefault,
     rootfsInventory,
     canManageRootfs,

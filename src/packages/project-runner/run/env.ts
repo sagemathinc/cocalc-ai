@@ -15,6 +15,7 @@ import {
 export const COCALC_PROJECT_CACHE = ".cache/cocalc/project";
 
 const logger = getLogger("project-runner:run:env");
+export const DEFAULT_PROJECT_PROXY_PORT = "18080";
 
 function isLoopbackHostname(hostname: string): boolean {
   return (
@@ -131,6 +132,6 @@ export async function getEnvironment({
     BASE_PATH: base_path,
     DEBIAN_FRONTEND: "noninteractive",
     COCALC_PROXY_HOST: "0.0.0.0",
-    COCALC_PROXY_PORT: "8080",
+    COCALC_PROXY_PORT: DEFAULT_PROJECT_PROXY_PORT,
   };
 }

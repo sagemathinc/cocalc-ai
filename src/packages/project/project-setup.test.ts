@@ -1,0 +1,42 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+import { cleanup } from "./project-setup";
+
+const ORIGINAL_ENV = { ...process.env };
+
+function restoreEnv() {
+  for (const key of Object.keys(process.env)) {
+    if (!(key in ORIGINAL_ENV)) {
+      delete process.env[key];
+    }
+  }
+  for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
+    if (value == null) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+}
+
+describe("project environment cleanup", () => {
+  afterEach(() => restoreEnv());
+
+  test("preserves proxy listener settings while removing unrelated CoCalc env", () => {
+    process.env.PATH = "/usr/bin:/bin";
+    process.env.COCALC_PROXY_HOST = "0.0.0.0";
+    process.env.COCALC_PROXY_PORT = "18080";
+    process.env.COCALC_PROJECT_ID = "test-project";
+    process.env.COCALC_SECRET_TOKEN = "/tmp/secret-token";
+
+    cleanup();
+
+    expect(process.env.COCALC_PROXY_HOST).toBe("0.0.0.0");
+    expect(process.env.COCALC_PROXY_PORT).toBe("18080");
+    expect(process.env.COCALC_PROJECT_ID).toBeUndefined();
+    expect(process.env.COCALC_SECRET_TOKEN).toBeUndefined();
+  });
+});

@@ -93,32 +93,35 @@ function sessionSignature(payload: string): string {
     .digest("base64url");
 }
 
-function isLoopbackOrigin(origin: string | undefined): boolean {
-  if (!origin) return false;
+function normalizeOriginHostname(
+  origin: string | undefined,
+): string | undefined {
+  if (!origin) return;
   try {
     const { hostname } = new URL(origin);
     const normalized = hostname.trim().toLowerCase();
-    return (
-      normalized === "localhost" ||
-      normalized === "127.0.0.1" ||
-      normalized === "[::1]" ||
-      normalized.endsWith(".localhost")
-    );
+    return normalized || undefined;
   } catch {
-    return false;
+    return;
   }
 }
 
 function browserSessionSameSite(req: IncomingMessage): "Lax" | "None" {
-  // Local hub dev serves the main app from localhost while project-host
-  // traffic lands on a hosted cocalc.ai domain. Chrome rejects SameSite=Lax
-  // cookies on that cross-site bootstrap fetch, so opt into None+Secure for
-  // loopback-origin development only. Normal same-site production traffic
-  // keeps the stricter Lax behavior.
-  if (
-    isSecureRequest(req) &&
-    isLoopbackOrigin(`${req.headers.origin ?? ""}`.trim() || undefined)
-  ) {
+  // Project-host browser sessions are bootstrapped by an XHR/fetch from the
+  // main app origin to the host-specific project-host origin. Use None+Secure
+  // whenever that bootstrap is cross-origin so browsers will actually store
+  // the Set-Cookie response on the project-host origin.
+  if (!isSecureRequest(req)) {
+    return "Lax";
+  }
+  const originHost = normalizeOriginHostname(
+    `${req.headers.origin ?? ""}`.trim() || undefined,
+  );
+  const requestHost = `${req.headers.host ?? ""}`
+    .trim()
+    .toLowerCase()
+    .split(":")[0];
+  if (originHost && requestHost && originHost !== requestHost) {
     return "None";
   }
   return "Lax";

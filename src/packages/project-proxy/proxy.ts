@@ -62,8 +62,9 @@ export function stripProjectHostProxyAuthCookies(
       const idx = part.indexOf("=");
       const name = idx === -1 ? part : part.slice(0, idx).trim();
       return (
-        name !== PROJECT_HOST_HTTP_AUTH_COOKIE_NAME &&
-        name !== PROJECT_HOST_HTTP_SESSION_COOKIE_NAME &&
+        (name !== PROJECT_HOST_HTTP_AUTH_COOKIE_NAME || preserved.has(name)) &&
+        (name !== PROJECT_HOST_HTTP_SESSION_COOKIE_NAME ||
+          preserved.has(name)) &&
         (name !== PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME ||
           preserved.has(name))
       );
