@@ -4,10 +4,17 @@
  */
 
 let getServerSettingsMock: jest.Mock;
+let listClusterBayRegistryMock: jest.Mock;
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   __esModule: true,
   getServerSettings: (...args: any[]) => getServerSettingsMock(...args),
+}));
+
+jest.mock("./bay-registry", () => ({
+  __esModule: true,
+  listClusterBayRegistry: (...args: any[]) =>
+    listClusterBayRegistryMock(...args),
 }));
 
 describe("bay-public-origin", () => {
@@ -18,6 +25,7 @@ describe("bay-public-origin", () => {
     getServerSettingsMock = jest.fn(async () => ({
       dns: "lite4b.cocalc.ai",
     }));
+    listClusterBayRegistryMock = jest.fn(async () => []);
     process.env.COCALC_BAY_ID = "bay-0";
     process.env.COCALC_CLUSTER_ROLE = "seed";
     process.env.COCALC_CLUSTER_SEED_BAY_ID = "bay-0";
@@ -55,6 +63,34 @@ describe("bay-public-origin", () => {
     await expect(getBayPublicOrigin("bay-1")).resolves.toBe(
       "https://bay-1-alt.example.com",
     );
+  });
+
+  it("allows browser origins discovered through the bay registry when env bay ids are incomplete", async () => {
+    process.env.COCALC_BAY_ID = "bay-2";
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    delete process.env.COCALC_CLUSTER_BAY_IDS;
+    delete process.env.HUB_CLUSTER_BAY_IDS;
+    listClusterBayRegistryMock = jest.fn(async () => [
+      {
+        bay_id: "bay-0",
+        public_origin: "https://lite4b.cocalc.ai",
+        dns_hostname: "bay-0-lite4b.cocalc.ai",
+      },
+      {
+        bay_id: "bay-1",
+        public_origin: "http://localhost:13114",
+        dns_hostname: "bay-1-lite4b.cocalc.ai",
+      },
+      {
+        bay_id: "bay-2",
+        public_origin: "http://localhost:13214",
+        dns_hostname: "bay-2-lite4b.cocalc.ai",
+      },
+    ]);
+    const { isAllowedBrowserOrigin } = await import("./bay-public-origin");
+    await expect(
+      isAllowedBrowserOrigin("https://bay-1-lite4b.cocalc.ai"),
+    ).resolves.toBe(true);
   });
 
   it("derives a remote bay origin from the current request origin when site dns is unavailable locally", async () => {
