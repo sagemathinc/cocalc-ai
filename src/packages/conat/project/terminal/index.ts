@@ -135,6 +135,7 @@ export interface Options {
 }
 
 const sessions: { [id: string]: any } = {};
+const sessionPaths: { [id: string]: string | undefined } = {};
 const history: { [id: string]: string } = {};
 const sizes: { [id: string]: { rows: number; cols: number }[] } = {};
 
@@ -448,6 +449,7 @@ export function terminalServer({
           pty?.destroy();
           if (sessionId) {
             delete sessions[sessionId];
+            delete sessionPaths[sessionId];
           }
           updateSessionId(null);
           setPty(null);
@@ -538,6 +540,7 @@ export function terminalServer({
             setPty(spawn(command, args, options));
             if (id) {
               sessions[id] = pty;
+              sessionPaths[id] = options?.path;
               history[id] = "";
               const maxLen = options?.maxHistoryLength ?? MAX_HISTORY_LENGTH;
               pty.on("data", (data) => {
@@ -579,6 +582,7 @@ export function terminalServer({
             setPty(null);
             if (sessionId) {
               delete sessions[sessionId];
+              delete sessionPaths[sessionId];
             }
             updateSessionId(null);
             try {
@@ -729,4 +733,12 @@ export function terminalClient(opts: {
   reconnection?: boolean;
 }): TerminalClient {
   return new TerminalClient({ ...opts, subject: getSubject(opts) });
+}
+
+export function pidToPath(pid: number): string | undefined {
+  for (const id in sessions) {
+    if (sessions[id]?.pid === pid) {
+      return sessionPaths[id];
+    }
+  }
 }

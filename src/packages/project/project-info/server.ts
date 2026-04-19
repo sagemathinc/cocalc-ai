@@ -19,7 +19,7 @@ import { check as df } from "diskusage";
 import { EventEmitter } from "node:events";
 import { access, readFile } from "node:fs/promises";
 
-import { pidToPath as terminalPidToPath } from "@cocalc/project/conat/terminal/manager";
+import { pidToPath as terminalPidToPath } from "@cocalc/project/conat/terminal";
 import { getLogger } from "@cocalc/project/logger";
 import { get_path_for_pid as x11_pid2path } from "@cocalc/project/x11/server";
 import type {

@@ -2,7 +2,6 @@ import type { Options as FormatterOptions } from "@cocalc/util/code-formatter";
 
 export const editor = {
   formatString: true,
-  createTerminalService: true,
 };
 
 export interface CreateTerminalOptions {
@@ -23,9 +22,4 @@ export interface Editor {
     options: FormatterOptions;
     path?: string; // only used for CLANG
   }) => Promise<string>;
-
-  createTerminalService: (
-    termPath: string,
-    opts: CreateTerminalOptions,
-  ) => Promise<void>;
 }
