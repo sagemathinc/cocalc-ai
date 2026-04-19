@@ -50,6 +50,7 @@ observability inputs, and durable logs of what it did.
 - standardize the recurring "Codex investigates the problem" workflow
 - make operations more reproducible and auditable
 - reduce dependence on one expert manually inspecting logs in a shell
+- make it easier for admins to run their own Cocalc Launchpad sites with minimal support from my company
 
 ## Non-Goals
 
@@ -101,6 +102,7 @@ Good examples:
 - retry one failed backup sync
 - mark one host unschedulable
 - trigger one known-good rollback
+- block a user if there is strong evidence of abuse (e.g., bitcoin mining, rootkits)
 
 Bad examples:
 
@@ -451,6 +453,7 @@ Start where Codex is already high leverage:
 - failed rollout / rollback triage
 - inter-bay lag / stale directory diagnosis
 - spot instance churn review
+- staged rollout of updates to software
 
 These are repetitive enough to automate and structured enough to bound safely.
 
