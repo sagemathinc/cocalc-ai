@@ -43,6 +43,60 @@ export type ProjectMeta = {
 
 const pool = () => getPool();
 
+async function saveProjectStateSnapshot(
+  project_id: string,
+  state: string | { state?: string; time?: string | Date } | undefined,
+): Promise<void> {
+  if (!state) return;
+  const stateObj =
+    typeof state === "string"
+      ? { state, time: new Date().toISOString() }
+      : {
+          ...state,
+          time:
+            state.time instanceof Date
+              ? state.time.toISOString()
+              : (state.time ?? new Date().toISOString()),
+        };
+  if (!stateObj.state) {
+    return;
+  }
+  const defaultBayId = getConfiguredBayId();
+  const client = await pool().connect();
+  let changed = false;
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `UPDATE projects
+          SET state=$2::jsonb
+        WHERE project_id=$1
+          AND state IS DISTINCT FROM $2::jsonb`,
+      [project_id, stateObj],
+    );
+    changed = (result.rowCount ?? 0) > 0;
+    if (changed) {
+      await appendProjectOutboxEventForProject({
+        db: client,
+        event_type: "project.state_changed",
+        project_id,
+        default_bay_id: defaultBayId,
+      });
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+  if (changed) {
+    await publishProjectAccountFeedEventsBestEffort({
+      project_id,
+      default_bay_id: defaultBayId,
+    });
+  }
+}
+
 function effectiveBayId(bay_id?: string | null): string {
   const value = `${bay_id ?? ""}`.trim();
   return value || getConfiguredBayId();
@@ -209,9 +263,6 @@ export async function loadHostFromRegistry(host_id: string) {
 }
 
 async function hostExistsAnywhere(host_id: string): Promise<boolean> {
-  if (await loadHostFromRegistry(host_id)) {
-    return true;
-  }
   return !!(await resolveHostBayAcrossCluster(host_id));
 }
 
@@ -272,35 +323,34 @@ export async function savePlacement(
   placement: HostPlacement,
 ) {
   const defaultBayId = getConfiguredBayId();
+  if (!(await hostExistsAnywhere(placement.host_id))) {
+    throw Error(`host ${placement.host_id} not found`);
+  }
   const client = await pool().connect();
-  let rows: { owning_bay_id: string; host_bay_id: string }[] = [];
+  let rows: { owning_bay_id: string }[] = [];
   try {
     await client.query("BEGIN");
     ({ rows } = await client.query<{
       owning_bay_id: string;
-      host_bay_id: string;
     }>(
       `
         UPDATE projects AS projects
         SET host_id = $1
-        FROM project_hosts AS project_hosts
         WHERE projects.project_id = $2
-          AND project_hosts.id = $1
-          AND project_hosts.deleted IS NULL
         RETURNING
-          COALESCE(projects.owning_bay_id, $3) AS owning_bay_id,
-          COALESCE(project_hosts.bay_id, $3) AS host_bay_id
+          COALESCE(projects.owning_bay_id, $3) AS owning_bay_id
       `,
       [placement.host_id, project_id, defaultBayId],
     ));
-    if (rows[0]) {
-      await appendProjectOutboxEventForProject({
-        db: client,
-        event_type: "project.host_changed",
-        project_id,
-        default_bay_id: defaultBayId,
-      });
+    if (!rows[0]) {
+      throw Error(`project ${project_id} not found`);
     }
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.host_changed",
+      project_id,
+      default_bay_id: defaultBayId,
+    });
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
@@ -313,18 +363,6 @@ export async function savePlacement(
       project_id,
       default_bay_id: defaultBayId,
     });
-  }
-  if (!rows[0]) {
-    const { rows: projectRows } = await pool().query<{ owning_bay_id: string }>(
-      "SELECT COALESCE(owning_bay_id, $2) AS owning_bay_id FROM projects WHERE project_id=$1",
-      [project_id, defaultBayId],
-    );
-    if (!projectRows[0]) {
-      throw Error(`project ${project_id} not found`);
-    }
-    if (!(await hostExistsAnywhere(placement.host_id))) {
-      throw Error(`host ${placement.host_id} not found`);
-    }
   }
   await notifyProjectHostUpdate({
     project_id,
@@ -456,6 +494,7 @@ export async function startProjectOnHost(
         restore,
         lro_op_id: opts?.lro_op_id,
       });
+      await saveProjectStateSnapshot(project_id, response.state ?? "running");
       if (opts?.lro_op_id && response.phase_timings_ms) {
         startProjectPhaseTimings.set(opts.lro_op_id, response.phase_timings_ms);
       }
@@ -478,6 +517,7 @@ export async function startProjectOnHost(
           restore,
           lro_op_id: opts?.lro_op_id,
         });
+        await saveProjectStateSnapshot(project_id, retry.state ?? "running");
         if (opts?.lro_op_id && retry.phase_timings_ms) {
           startProjectPhaseTimings.set(opts.lro_op_id, retry.phase_timings_ms);
         }
@@ -538,7 +578,8 @@ export async function stopProjectOnHost(
     });
   }
   try {
-    await client.stopProject({ project_id });
+    const response = await client.stopProject({ project_id });
+    await saveProjectStateSnapshot(project_id, response.state ?? "opened");
     if (wasRunning) {
       await pool().query(
         "UPDATE projects SET last_edited=NOW() WHERE project_id=$1",

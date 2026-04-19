@@ -18,6 +18,11 @@ let hasAccountProjectHostTokenHostAccessMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
+let hostConnectionListMock: jest.Mock;
+let hostConnectionGetProjectStartMetadataMock: jest.Mock;
+let hostConnectionGetBackupConfigMock: jest.Mock;
+let hostConnectionRecordProjectBackupMock: jest.Mock;
+let hostConnectionListHostProjectsMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let routedHostControlClientMock: jest.Mock;
@@ -31,6 +36,8 @@ let buildCloudInitStartupScriptMock: jest.Mock;
 let siteUrlMock: jest.Mock;
 let getServerSettingsMock: jest.Mock;
 let fetchMock: jest.Mock;
+let getBackupConfigLocalInternalMock: jest.Mock;
+let recordProjectBackupLocalInternalMock: jest.Mock;
 const originalFetch = global.fetch;
 
 jest.mock("node:child_process", () => {
@@ -181,11 +188,29 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveHostBay: (...args: any[]) => resolveHostBayMock(...args),
 }));
 
+jest.mock("@cocalc/server/cluster-config", () => {
+  const actual = jest.requireActual("@cocalc/server/cluster-config");
+  return {
+    __esModule: true,
+    ...actual,
+    getConfiguredClusterBayIds: jest.fn(() => ["bay-0", "bay-1", "bay-2"]),
+  };
+});
+
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   __esModule: true,
   getInterBayBridge: jest.fn(() => ({
     hostConnection: jest.fn(() => ({
       get: (...args: any[]) => hostConnectionGetMock(...args),
+      list: (...args: any[]) => hostConnectionListMock(...args),
+      getProjectStartMetadata: (...args: any[]) =>
+        hostConnectionGetProjectStartMetadataMock(...args),
+      getBackupConfig: (...args: any[]) =>
+        hostConnectionGetBackupConfigMock(...args),
+      recordProjectBackup: (...args: any[]) =>
+        hostConnectionRecordProjectBackupMock(...args),
+      listHostProjects: (...args: any[]) =>
+        hostConnectionListHostProjectsMock(...args),
     })),
     projectReference: jest.fn(() => ({
       get: (...args: any[]) => projectReferenceGetMock(...args),
@@ -194,6 +219,14 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       issue: (...args: any[]) => projectHostAuthTokenIssueMock(...args),
     })),
   })),
+}));
+
+jest.mock("@cocalc/server/project-backup", () => ({
+  __esModule: true,
+  getBackupConfig: (...args: any[]) =>
+    getBackupConfigLocalInternalMock(...args),
+  recordProjectBackup: (...args: any[]) =>
+    recordProjectBackupLocalInternalMock(...args),
 }));
 
 const HOST_ID = "host-123";
@@ -237,6 +270,23 @@ beforeEach(() => {
   getServerSettingsMock = jest.fn(async () => ({}));
   fetchMock = jest.fn();
   global.fetch = fetchMock as any;
+  hostConnectionGetMock = jest.fn();
+  hostConnectionListMock = jest.fn(async () => []);
+  hostConnectionGetProjectStartMetadataMock = jest.fn();
+  hostConnectionGetBackupConfigMock = jest.fn();
+  hostConnectionRecordProjectBackupMock = jest.fn(async () => undefined);
+  hostConnectionListHostProjectsMock = jest.fn(async () => ({
+    rows: [],
+    summary: {
+      total: 0,
+      provisioned: 0,
+      running: 0,
+      provisioned_up_to_date: 0,
+      provisioned_needs_backup: 0,
+    },
+  }));
+  getBackupConfigLocalInternalMock = jest.fn();
+  recordProjectBackupLocalInternalMock = jest.fn(async () => undefined);
 });
 
 afterAll(() => {
@@ -245,8 +295,8 @@ afterAll(() => {
 
 const SUMMARY_ROW = {
   host_id: HOST_ID,
-  total: "3",
-  provisioned: "2",
+  total: "4",
+  provisioned: "3",
   running: "1",
   provisioned_up_to_date: "1",
   provisioned_needs_backup: "1",
@@ -298,10 +348,17 @@ const PROJECT_ROWS_PAGE_2 = [
   },
 ];
 
+const LOCAL_HOST_PROJECT_ROWS = [
+  ...PROJECT_ROWS_PAGE_1,
+  ...PROJECT_ROWS_PAGE_2,
+];
+
 describe("hosts.listHostProjects", () => {
   beforeEach(() => {
     jest.resetModules();
     process.env.LOGS = os.tmpdir();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
     moveProjectToHostMock = jest.fn();
@@ -327,7 +384,6 @@ describe("hosts.listHostProjects", () => {
       bay_id: "bay-0",
       epoch: 1,
     }));
-    hostConnectionGetMock = jest.fn();
     projectHostAuthTokenIssueMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => null);
     listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
@@ -343,7 +399,11 @@ describe("hosts.listHostProjects", () => {
           rows: [
             {
               id: HOST_ID,
-              metadata: { owner: ACCOUNT_ID },
+              region: "us-west1",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: { cloud: "gcp", region: "us-west1" },
+              },
               last_seen: new Date("2026-01-05T00:00:00Z"),
             },
           ],
@@ -353,12 +413,7 @@ describe("hosts.listHostProjects", () => {
         return { rows: [SUMMARY_ROW] };
       }
       if (sql.includes("LEFT(COALESCE(title")) {
-        if (params.length === 2) {
-          return { rows: PROJECT_ROWS_PAGE_1 };
-        }
-        if (params.length === 4) {
-          return { rows: PROJECT_ROWS_PAGE_2 };
-        }
+        return { rows: LOCAL_HOST_PROJECT_ROWS };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -379,8 +434,65 @@ describe("hosts.listHostProjects", () => {
       limit: 2,
       cursor: first.next_cursor,
     });
-    expect(second.rows).toHaveLength(1);
+    expect(second.rows).toHaveLength(2);
     expect(second.next_cursor).toBeUndefined();
+  });
+
+  it("merges remote-owned projects for the same host", async () => {
+    hostConnectionListHostProjectsMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            project_id: "proj-remote",
+            title: "Remote",
+            state: "running",
+            provisioned: true,
+            last_edited: "2026-01-04T00:00:00.000Z",
+            last_backup: "2026-01-03T00:00:00.000Z",
+            needs_backup: true,
+            collab_count: 4,
+          },
+        ],
+        summary: {
+          total: 1,
+          provisioned: 1,
+          running: 1,
+          provisioned_up_to_date: 0,
+          provisioned_needs_backup: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        rows: [],
+        summary: {
+          total: 0,
+          provisioned: 0,
+          running: 0,
+          provisioned_up_to_date: 0,
+          provisioned_needs_backup: 0,
+        },
+      });
+
+    const { listHostProjects } = await import("./hosts");
+    const result = await listHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      limit: 10,
+    });
+
+    expect(result.rows.map((row) => row.project_id)).toEqual([
+      "proj-remote",
+      "proj-3",
+      "proj-2",
+      "proj-1",
+      "proj-0",
+    ]);
+    expect(result.summary).toEqual({
+      total: 5,
+      provisioned: 4,
+      running: 2,
+      provisioned_up_to_date: 1,
+      provisioned_needs_backup: 2,
+    });
   });
 
   it("adds the risk filter when requested", async () => {
@@ -485,6 +597,8 @@ describe("hosts.listHostProjects", () => {
 
   afterEach(() => {
     delete process.env.LOGS;
+    delete process.env.COCALC_BAY_ID;
+    delete process.env.COCALC_CLUSTER_BAY_IDS;
   });
 });
 
@@ -492,6 +606,8 @@ describe("hosts.createHost", () => {
   beforeEach(() => {
     jest.resetModules();
     process.env.LOGS = os.tmpdir();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
     moveProjectToHostMock = jest.fn();
@@ -517,7 +633,27 @@ describe("hosts.createHost", () => {
       bay_id: "bay-0",
       epoch: 1,
     }));
-    hostConnectionGetMock = jest.fn();
+    hostConnectionListHostProjectsMock = jest.fn(async () => ({
+      rows: [
+        {
+          project_id: "proj-remote",
+          title: "Remote",
+          state: "running",
+          provisioned: true,
+          last_edited: "2026-01-04T00:00:00.000Z",
+          last_backup: "2026-01-03T00:00:00.000Z",
+          needs_backup: true,
+          collab_count: 4,
+        },
+      ],
+      summary: {
+        total: 1,
+        provisioned: 1,
+        running: 1,
+        provisioned_up_to_date: 0,
+        provisioned_needs_backup: 1,
+      },
+    }));
     projectHostAuthTokenIssueMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => null);
     listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
@@ -632,6 +768,8 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
   beforeEach(() => {
     jest.resetModules();
     process.env.LOGS = os.tmpdir();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
     moveProjectToHostMock = jest.fn();
@@ -658,6 +796,27 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       epoch: 1,
     }));
     hostConnectionGetMock = jest.fn();
+    hostConnectionListHostProjectsMock = jest.fn(async () => ({
+      rows: [
+        {
+          project_id: "proj-remote",
+          title: "Remote",
+          state: "running",
+          provisioned: true,
+          last_edited: "2026-01-04T00:00:00.000Z",
+          last_backup: "2026-01-03T00:00:00.000Z",
+          needs_backup: true,
+          collab_count: 4,
+        },
+      ],
+      summary: {
+        total: 1,
+        provisioned: 1,
+        running: 1,
+        provisioned_up_to_date: 0,
+        provisioned_needs_backup: 1,
+      },
+    }));
     projectHostAuthTokenIssueMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => null);
     listProjectHostRuntimeDeploymentsMock = jest.fn(async () => [
@@ -1424,6 +1583,8 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
   beforeEach(() => {
     jest.resetModules();
     process.env.LOGS = os.tmpdir();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
     moveProjectToHostMock = jest.fn();
@@ -1450,6 +1611,27 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
       epoch: 1,
     }));
     hostConnectionGetMock = jest.fn();
+    hostConnectionListHostProjectsMock = jest.fn(async () => ({
+      rows: [
+        {
+          project_id: "proj-remote",
+          title: "Remote",
+          state: "running",
+          provisioned: true,
+          last_edited: "2026-01-04T00:00:00.000Z",
+          last_backup: "2026-01-03T00:00:00.000Z",
+          needs_backup: true,
+          collab_count: 4,
+        },
+      ],
+      summary: {
+        total: 1,
+        provisioned: 1,
+        running: 1,
+        provisioned_up_to_date: 0,
+        provisioned_needs_backup: 1,
+      },
+    }));
     projectHostAuthTokenIssueMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => null);
     listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
@@ -1471,22 +1653,54 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
           ],
         };
       }
-      if (sql.includes("SELECT\n        project_id,")) {
+      if (sql.includes("COUNT(*) AS total")) {
+        return {
+          rows: [
+            {
+              host_id: HOST_ID,
+              total: "2",
+              provisioned: "2",
+              running: "2",
+              provisioned_up_to_date: "0",
+              provisioned_needs_backup: "2",
+            },
+          ],
+        };
+      }
+      if (sql.includes("LEFT(COALESCE(title")) {
         return {
           rows: [
             {
               project_id: "proj-1",
+              title: "Project 1",
               state: "running",
+              provisioned: true,
+              last_edited: new Date("2026-01-02T00:00:00Z"),
+              last_backup: new Date("2026-01-01T00:00:00Z"),
+              needs_backup: true,
+              collab_count: "1",
             },
             {
               project_id: "proj-2",
+              title: "Project 2",
               state: "running",
+              provisioned: true,
+              last_edited: new Date("2026-01-01T00:00:00Z"),
+              last_backup: new Date("2025-12-31T00:00:00Z"),
+              needs_backup: true,
+              collab_count: "2",
             },
           ],
         };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
+  });
+
+  afterEach(() => {
+    delete process.env.LOGS;
+    delete process.env.COCALC_BAY_ID;
+    delete process.env.COCALC_CLUSTER_BAY_IDS;
   });
 
   it("queues host-scoped project stop/restart actions with a snapshot target set", async () => {
@@ -1515,6 +1729,7 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
           state_filter: "running",
           parallel: 2,
           projects: [
+            { project_id: "proj-remote", state: "running" },
             { project_id: "proj-1", state: "running" },
             { project_id: "proj-2", state: "running" },
           ],
@@ -1532,6 +1747,7 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
           state_filter: "all",
           project_state: "opened",
           projects: [
+            { project_id: "proj-remote", state: "running" },
             { project_id: "proj-1", state: "running" },
             { project_id: "proj-2", state: "running" },
           ],
@@ -1953,6 +2169,7 @@ describe("hosts.rolloutHostManagedComponentsInternal local rollback", () => {
 
 describe("hosts.resolveHostConnection", () => {
   const REMOTE_HOST_ID = "host-remote";
+  const REMOTE_PROJECT_ID = "project-remote";
 
   beforeEach(() => {
     jest.resetModules();
@@ -2000,6 +2217,11 @@ describe("hosts.resolveHostConnection", () => {
       last_seen: "2026-04-10T00:00:00.000Z",
       online: true,
     }));
+    hostConnectionGetProjectStartMetadataMock = jest.fn(async () => ({
+      title: "Remote project",
+      image: "ghcr.io/example/project:latest",
+      run_quota: { disk_quota: 10 },
+    }));
     queryMock = jest.fn(async () => ({ rows: [] }));
   });
 
@@ -2024,6 +2246,97 @@ describe("hosts.resolveHostConnection", () => {
       account_id: ACCOUNT_ID,
       host_id: REMOTE_HOST_ID,
     });
+  });
+
+  it("routes project start metadata lookup to the owning bay when the local host bay misses", async () => {
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+    const { getProjectStartMetadata } = await import("./hosts");
+    await expect(
+      getProjectStartMetadata({
+        host_id: REMOTE_HOST_ID,
+        project_id: REMOTE_PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      title: "Remote project",
+      image: "ghcr.io/example/project:latest",
+      run_quota: { disk_quota: 10 },
+    });
+    expect(resolveProjectBayMock).toHaveBeenCalledWith(REMOTE_PROJECT_ID);
+    expect(hostConnectionGetProjectStartMetadataMock).toHaveBeenCalledWith({
+      host_id: REMOTE_HOST_ID,
+      project_id: REMOTE_PROJECT_ID,
+    });
+  });
+
+  it("routes backup config lookup to the owning bay when the project is remote", async () => {
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: REMOTE_HOST_ID,
+              region: "us-west1",
+              metadata: {
+                machine: { cloud: "gcp", region: "us-west1" },
+              },
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    hostConnectionGetBackupConfigMock = jest.fn(async () => ({
+      toml: "[repository]",
+      ttl_seconds: 123,
+    }));
+    const { getBackupConfig } = await import("./hosts");
+    await expect(
+      getBackupConfig({
+        host_id: REMOTE_HOST_ID,
+        project_id: REMOTE_PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      toml: "[repository]",
+      ttl_seconds: 123,
+    });
+    expect(resolveProjectBayMock).toHaveBeenCalledWith(REMOTE_PROJECT_ID);
+    expect(hostConnectionGetBackupConfigMock).toHaveBeenCalledWith({
+      host_id: REMOTE_HOST_ID,
+      project_id: REMOTE_PROJECT_ID,
+      host_region: "us-west1",
+      host_machine: { cloud: "gcp", region: "us-west1" },
+    });
+    expect(getBackupConfigLocalInternalMock).not.toHaveBeenCalled();
+  });
+
+  it("routes project backup recording to the owning bay when the project is remote", async () => {
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+    const { recordProjectBackup } = await import("./hosts");
+    const time = new Date("2026-04-19T20:00:00Z");
+    await expect(
+      recordProjectBackup({
+        host_id: REMOTE_HOST_ID,
+        project_id: REMOTE_PROJECT_ID,
+        time,
+      }),
+    ).resolves.toBeUndefined();
+    expect(resolveProjectBayMock).toHaveBeenCalledWith(REMOTE_PROJECT_ID);
+    expect(hostConnectionRecordProjectBackupMock).toHaveBeenCalledWith({
+      host_id: REMOTE_HOST_ID,
+      project_id: REMOTE_PROJECT_ID,
+      time,
+    });
+    expect(recordProjectBackupLocalInternalMock).not.toHaveBeenCalled();
   });
 });
 
@@ -2223,12 +2536,15 @@ describe("hosts.issueProjectHostAuthToken", () => {
 describe("hosts.listHosts bootstrap normalization", () => {
   beforeEach(() => {
     jest.resetModules();
+    delete process.env.COCALC_CLUSTER_BAY_IDS;
+    delete process.env.COCALC_BAY_ID;
     isAdminMock = jest.fn(async () => true);
     moveProjectToHostMock = jest.fn();
     resolveMembershipForAccountMock = jest.fn(async () => ({
       entitlements: {},
     }));
     loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    hostConnectionListMock = jest.fn(async () => []);
     queryMock = jest.fn(async (sql: string) => {
       if (
         sql.includes(
@@ -2322,6 +2638,87 @@ describe("hosts.listHosts bootstrap normalization", () => {
       host_override_count: 2,
       host_override_targets: ["conat-router", "project-host"],
     });
+  });
+
+  it("includes visible hosts from remote bays", async () => {
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
+    process.env.COCALC_BAY_ID = "bay-0";
+    hostConnectionListMock = jest.fn(async () => [
+      {
+        id: "remote-host",
+        name: "remote-host",
+        owner: "other-owner",
+        region: "us-west3",
+        size: "t2d-standard-2",
+        gpu: false,
+        status: "running",
+        scope: "collab",
+        can_place: true,
+        can_start: false,
+        pricing_model: "spot",
+      },
+    ]);
+
+    const { listHosts } = await import("./hosts");
+    const hosts = await listHosts({
+      account_id: ACCOUNT_ID,
+      admin_view: true,
+      include_deleted: true,
+    });
+    expect(hosts.map((host) => host.id)).toEqual([HOST_ID, "remote-host"]);
+    expect(hostConnectionListMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      admin_view: true,
+      include_deleted: true,
+    });
+  });
+
+  it("includes collaborator hosts in the local prefilter", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "CREATE TABLE IF NOT EXISTS project_host_runtime_deployments",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "CREATE INDEX IF NOT EXISTS project_host_runtime_deployments_host_idx",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              deleted: null,
+              metadata: {
+                collaborators: [ACCOUNT_ID],
+              },
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("FROM project_host_runtime_deployments") ||
+        sql.includes("COUNT(*) AS total")
+      ) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { listHosts } = await import("./hosts");
+    const hosts = await listHosts({
+      account_id: ACCOUNT_ID,
+      catalog: true,
+    });
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0].scope).toBe("collab");
   });
 });
 

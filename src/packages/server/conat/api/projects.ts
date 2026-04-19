@@ -1374,6 +1374,19 @@ export async function moveProject({
   stream_name: string;
 }> {
   await assertCollab({ account_id, project_id });
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  if (ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge().projectControl(ownership.bay_id).move({
+      project_id,
+      account_id,
+      dest_host_id,
+      allow_offline,
+      epoch: ownership.epoch,
+    });
+  }
   const movePrecheck = await getMoveOfflinePrecheck({ project_id });
   if (!allow_offline) {
     await ensureMoveOfflineAllowed({

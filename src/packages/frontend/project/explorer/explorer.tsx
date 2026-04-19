@@ -83,6 +83,7 @@ import {
 } from "./use-deferred-listing";
 import { useExplorerSettings } from "./use-explorer-settings";
 import { useNavigationHistory } from "./use-navigation-history";
+import { resolveVirtualListingPath } from "@cocalc/frontend/project/listing/virtual-listing-path";
 import {
   DirectoryTreeDragbar,
   DIRECTORY_TREE_MIN_WIDTH_PX,
@@ -215,10 +216,10 @@ export function Explorer() {
     typeof available_features?.homeDirectory === "string"
       ? normalizeAbsolutePath(available_features.homeDirectory)
       : getProjectHomeDirectory(project_id);
-  const listingPath =
-    inSnapshotsPath && !effective_current_path.startsWith("/")
-      ? normalizeAbsolutePath(effective_current_path, homePath)
-      : effective_current_path;
+  const listingPath = resolveVirtualListingPath({
+    path: effective_current_path,
+    homePath,
+  });
   let {
     refresh,
     listing,

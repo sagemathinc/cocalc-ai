@@ -94,3 +94,41 @@ describe("creating a listing monitor starting with an empty directory", () => {
     dir.close();
   });
 });
+
+describe("listing initialization", () => {
+  it("does not block the initial listing on watch bootstrap", async () => {
+    let resolveWatch;
+    const fs: any = {
+      getListing: jest.fn(async () => ({ files: {}, truncated: false })),
+      watch: jest.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveWatch = resolve;
+          }),
+      ),
+    };
+
+    const dir = await Promise.race([
+      listing({ path: "", fs }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("listing initialization timed out")),
+          250,
+        ),
+      ),
+    ]);
+
+    expect(fs.getListing).toHaveBeenCalledWith("");
+    expect(fs.watch).toHaveBeenCalledWith("", {
+      closeOnUnlink: true,
+      stats: true,
+    });
+    expect(dir.files).toEqual({});
+
+    resolveWatch({
+      async *[Symbol.asyncIterator]() {},
+      close() {},
+    });
+    dir.close();
+  });
+});

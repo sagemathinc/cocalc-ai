@@ -9,6 +9,7 @@ let stopProjectOnHostMock: jest.Mock;
 let startProjectLroMock: jest.Mock;
 let waitForLroCompletionMock: jest.Mock;
 let assertPortableProjectRootfsMock: jest.Mock;
+let resolveHostConnectionMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -46,6 +47,10 @@ jest.mock("../project-host/control", () => ({
 
 jest.mock("../conat/api/projects", () => ({
   start: (...args: any[]) => startProjectLroMock(...args),
+}));
+
+jest.mock("../conat/api/hosts", () => ({
+  resolveHostConnection: (...args: any[]) => resolveHostConnectionMock(...args),
 }));
 
 jest.mock("@cocalc/conat/lro/client", () => ({
@@ -113,6 +118,11 @@ describe("moveProjectToHost", () => {
       if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
         return { rows: [postTimeoutState] };
       }
+      if (
+        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
+      ) {
+        return { rows: [] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     loadHostFromRegistryMock = jest.fn(async (host_id: string) => ({
@@ -133,6 +143,11 @@ describe("moveProjectToHost", () => {
       throw new Error("timeout waiting for lro completion");
     });
     assertPortableProjectRootfsMock = jest.fn(async () => undefined);
+    resolveHostConnectionMock = jest.fn(async ({ host_id }: any) => ({
+      host_id,
+      bay_id: "bay-0",
+      region: "us-west1",
+    }));
   });
 
   it("accepts a timed-out destination start wait if the project is already running on the destination host", async () => {
@@ -185,13 +200,12 @@ describe("moveProjectToHost", () => {
     });
   });
 
-  it("rejects a move to a host in another bay", async () => {
-    loadHostFromRegistryMock = jest.fn(async (host_id: string) => ({
-      id: host_id,
+  it("allows a move to a host in another bay", async () => {
+    resolveHostConnectionMock = jest.fn(async ({ host_id }: any) => ({
+      host_id,
       bay_id: host_id === DEST_HOST_ID ? "bay-9" : "bay-0",
       region: "us-west1",
     }));
-
     const { moveProjectToHost } = await import("./move");
     await expect(
       moveProjectToHost({
@@ -200,15 +214,18 @@ describe("moveProjectToHost", () => {
         account_id: "account-id",
         allow_offline: true,
       }),
-    ).rejects.toThrow(
-      `project ${PROJECT_ID} belongs to bay bay-0 but host ${DEST_HOST_ID} belongs to bay bay-9`,
-    );
+    ).resolves.toBeUndefined();
 
-    expect(savePlacementMock).not.toHaveBeenCalled();
-    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    expect(resolveHostConnectionMock).toHaveBeenCalledWith({
+      account_id: "account-id",
+      host_id: DEST_HOST_ID,
+    });
+    expect(savePlacementMock).toHaveBeenCalledWith(PROJECT_ID, {
+      host_id: DEST_HOST_ID,
+    });
   });
 
-  it("treats a bay-mismatched current host as having no valid source host", async () => {
+  it("keeps a remote current host as the source placement", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (
         sql.includes(
@@ -231,6 +248,11 @@ describe("moveProjectToHost", () => {
           ],
         };
       }
+      if (
+        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
+      ) {
+        return { rows: [] };
+      }
       if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
         return { rows: [postTimeoutState] };
       }
@@ -252,9 +274,10 @@ describe("moveProjectToHost", () => {
     ).resolves.toBeUndefined();
 
     expect(selectActiveHostMock).toHaveBeenCalledWith({
-      exclude_host_id: undefined,
+      exclude_host_id: SOURCE_HOST_ID,
       bay_id: "bay-0",
     });
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
   });
 
   it("rejects move before touching placement when the project RootFS is not portable", async () => {

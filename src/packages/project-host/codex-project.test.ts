@@ -219,10 +219,6 @@ describe("initCodexProjectRunner", () => {
         "project-6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
         "/opt/cocalc/bin2/codex",
         "--config",
-        'model_providers.cocalc-openai-api-key={name="OpenAI",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false,supports_websockets=true,stream_idle_timeout_ms=1800000,websocket_connect_timeout_ms=60000}',
-        "--config",
-        'model_provider="cocalc-openai-api-key"',
-        "--config",
         'cli_auth_credentials_store="ephemeral"',
         "app-server",
         "--listen",
@@ -230,6 +226,10 @@ describe("initCodexProjectRunner", () => {
       ]),
     );
     expect(args).not.toContain("OPENAI_API_KEY=secret-key");
+    expect(args).not.toContain(
+      'model_providers.cocalc-openai-api-key={name="OpenAI",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false,supports_websockets=true,stream_idle_timeout_ms=1800000,websocket_connect_timeout_ms=60000}',
+    );
+    expect(args).not.toContain('model_provider="cocalc-openai-api-key"');
     expect(options).toMatchObject({
       stdio: ["pipe", "pipe", "pipe"],
       env: {

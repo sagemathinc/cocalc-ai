@@ -8,7 +8,6 @@ import {
   parseR2Region,
 } from "@cocalc/util/consts";
 import {
-  loadHostFromRegistry,
   selectActiveHost,
   deleteProjectDataOnHost,
   savePlacement,
@@ -16,6 +15,7 @@ import {
 } from "../project-host/control";
 import { getConfiguredBayId } from "../bay-config";
 import { start as startProjectLro } from "../conat/api/projects";
+import { resolveHostConnection } from "../conat/api/hosts";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
 import {
   makeOfflineMoveConfirmationPayload,
@@ -84,15 +84,6 @@ async function revertPlacementIfPossible(
     !context.project_host_id ||
     context.project_host_id === context.dest_host_id
   ) {
-    return;
-  }
-  const sourceHost = await loadHostFromRegistry(context.project_host_id);
-  if (!sourceHost) {
-    progress({
-      step: "revert-placement",
-      message: "source host unavailable; placement not restored",
-      detail: { source_host_id: context.project_host_id },
-    });
     return;
   }
   progress({
@@ -177,8 +168,7 @@ async function buildMoveProjectContext(
     throw new Error(`project ${project_id} not found`);
   }
   const source_host_id =
-    projectRow.host_id &&
-    projectRow.project_owning_bay_id === projectRow.host_bay_id
+    typeof projectRow.host_id === "string" && projectRow.host_id.trim()
       ? projectRow.host_id
       : null;
   let source_host_status: string | null = null;
@@ -202,7 +192,10 @@ async function buildMoveProjectContext(
   let dest_host_id = input.dest_host_id;
   const destHost =
     dest_host_id != null
-      ? await loadHostFromRegistry(dest_host_id)
+      ? await resolveHostConnection({
+          account_id,
+          host_id: dest_host_id,
+        })
       : await selectActiveHost({
           exclude_host_id: source_host_id ?? undefined,
           bay_id: projectRow.project_owning_bay_id,
@@ -219,11 +212,6 @@ async function buildMoveProjectContext(
   }
   if (!dest_host_id) {
     throw new Error("destination host id not available");
-  }
-  if (destHost.bay_id !== projectRow.project_owning_bay_id) {
-    throw new Error(
-      `project ${project_id} belongs to bay ${projectRow.project_owning_bay_id} but host ${dest_host_id} belongs to bay ${destHost.bay_id}`,
-    );
   }
   const project_region = parseR2Region(projectRow.region) ?? DEFAULT_R2_REGION;
   const dest_region = mapCloudRegionToR2Region(destHost.region);
@@ -534,11 +522,6 @@ export async function moveProjectToHost(
         }
       }
       await checkCanceled("backup");
-    }
-
-    const destHost = await loadHostFromRegistry(context.dest_host_id);
-    if (!destHost) {
-      throw new Error(`host ${context.dest_host_id} not found`);
     }
     progress({
       step: "placement",

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+ensure_dirs
+target="$(current_version || true)"
+previous="$(previous_version || true)"
+write_event migrate full running "$target" "$previous" "starting migrations"
+if run_env_cmd_once COCALC_BAY_MIGRATE_CMD; then
+  write_event migrate full succeeded "$target" "$previous" "migrations completed"
+else
+  write_event migrate full failed "$target" "$previous" "migrations failed"
+  exit 1
+fi

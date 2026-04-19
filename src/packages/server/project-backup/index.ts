@@ -803,9 +803,13 @@ function buildS3ProjectBackupToml({
 export async function getBackupConfig({
   host_id,
   project_id,
+  host_region,
+  host_machine,
 }: {
   host_id?: string;
   project_id?: string;
+  host_region?: string | null;
+  host_machine?: HostMachine | null;
 }): Promise<{ toml: string; ttl_seconds: number }> {
   if (!host_id || !isValidUUID(host_id)) {
     throw new Error("invalid host_id");
@@ -820,19 +824,22 @@ export async function getBackupConfig({
     "SELECT region, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
     [host_id],
   );
-  if (!rows[0]) {
+  const hostRow = rows[0];
+  if (!hostRow && host_region == null && host_machine == null) {
     throw new Error("host not found");
   }
 
   await assertHostProjectAccess(host_id, project_id);
 
-  const rowMetadata = rows[0]?.metadata ?? {};
-  const machine: HostMachine = rowMetadata?.machine ?? {};
+  const rowMetadata = hostRow?.metadata ?? {};
+  const machine: HostMachine = (rowMetadata?.machine ??
+    host_machine ??
+    {}) as HostMachine;
   if (isSelfHostLocalMachine(machine)) {
     return await buildSelfHostLocalBackupConfig();
   }
 
-  const hostRegion = rows[0]?.region ?? null;
+  const hostRegion = hostRow?.region ?? host_region ?? null;
   const hostR2Region = mapCloudRegionToR2Region(
     hostRegion ?? DEFAULT_R2_REGION,
   );
@@ -1230,11 +1237,9 @@ async function assertHostProjectAccess(host_id: string, project_id: string) {
     throw new Error("project not assigned to host");
   }
   if (currentHost === host_id) {
-    // Keep the ordinary backup path bay-consistent. Transitional move/copy
-    // access checks below intentionally remain host-based for now.
-    if (row?.project_owning_bay_id !== row?.host_bay_id) {
-      throw new Error("project bay does not match assigned host");
-    }
+    // Backup management is now host-local even when the project owning bay
+    // differs from the host bay. The authenticated host is authorized as long
+    // as it is the project's current assigned host.
     return;
   }
 
