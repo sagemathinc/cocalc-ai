@@ -116,6 +116,8 @@ export async function rollbackHostRuntimeDeploymentsInternalHelper({
   upgradeHostSoftwareInternal,
   reconcileProjectHostComponent,
   rolloutProjectHostArtifact,
+  assertCloudHostBootstrapReconcileSupported,
+  reconcileCloudHostBootstrapOverSsh,
 }: {
   account_id?: string;
   id: string;
@@ -173,6 +175,11 @@ export async function rollbackHostRuntimeDeploymentsInternalHelper({
   }) => Promise<
     HostRuntimeDeploymentRollbackResult["managed_component_rollout"]
   >;
+  assertCloudHostBootstrapReconcileSupported: (row: any) => void;
+  reconcileCloudHostBootstrapOverSsh: (opts: {
+    host_id: string;
+    row: any;
+  }) => Promise<void>;
 }): Promise<HostRuntimeDeploymentRollbackResult> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
@@ -209,9 +216,6 @@ export async function rollbackHostRuntimeDeploymentsInternalHelper({
     last_known_good,
   });
   const artifact = rollbackTarget.artifact;
-  if (artifact === "bootstrap-environment") {
-    throw new Error("bootstrap-environment rollback is not implemented");
-  }
   const requested_by = requestedByForRuntimeDeployments({ account_id, row });
   const updatedDeployments = await setProjectHostRuntimeDeployments({
     scope_type: "host",
@@ -234,6 +238,22 @@ export async function rollbackHostRuntimeDeploymentsInternalHelper({
   const updatedDeployment = updatedDeployments.find(
     (entry) => entry.target_type === target_type && entry.target === target,
   );
+  if (artifact === "bootstrap-environment") {
+    assertCloudHostBootstrapReconcileSupported(row);
+    await reconcileCloudHostBootstrapOverSsh({
+      host_id: row.id,
+      row,
+    });
+    return {
+      host_id: row.id,
+      target_type,
+      target,
+      artifact,
+      rollback_version,
+      rollback_source,
+      deployment: updatedDeployment,
+    };
+  }
   let upgrade_results: HostRuntimeDeploymentRollbackResult["upgrade_results"];
   let reconcile_result:
     | HostRuntimeDeploymentRollbackResult["reconcile_result"]

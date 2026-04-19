@@ -44,6 +44,8 @@ type UseHostDrawerViewModelArgs = {
     configuredError?: string;
     hub: HostSoftwareMap;
     hubError?: string;
+    configuredCatalog?: HostSoftwareAvailableVersion[];
+    hubCatalog?: HostSoftwareAvailableVersion[];
     refresh: () => Promise<void>;
     hubSourceBaseUrl?: string;
   };
@@ -81,6 +83,10 @@ type UseHostDrawerViewModelArgs = {
     component: ManagedComponentKind;
     version?: string;
     last_known_good?: boolean;
+  }) => void | Promise<void>;
+  onRestartRuntimeComponent?: (opts: {
+    host: Host;
+    component: ManagedComponentKind;
   }) => void | Promise<void>;
   onResumeRuntimeComponentClusterDefault?: (opts: {
     host: Host;
@@ -152,6 +158,7 @@ export const useHostDrawerViewModel = ({
   onResumeRuntimeArtifactClusterDefault,
   onSetRuntimeComponentDeployment,
   onRollbackRuntimeComponent,
+  onRestartRuntimeComponent,
   onResumeRuntimeComponentClusterDefault,
   rootfsInventory,
   canManageRootfs,
@@ -184,6 +191,7 @@ export const useHostDrawerViewModel = ({
     onResumeRuntimeArtifactClusterDefault,
     onSetRuntimeComponentDeployment,
     onRollbackRuntimeComponent,
+    onRestartRuntimeComponent,
     onResumeRuntimeComponentClusterDefault,
     rootfsInventory,
     canManageRootfs,

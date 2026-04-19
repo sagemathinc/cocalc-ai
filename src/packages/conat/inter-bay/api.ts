@@ -38,6 +38,7 @@ import type {
   HostCreateProjectResponse,
   HostBackupExecutionStatus,
   HostInstalledRuntimeArtifactStatus,
+  HostInstalledRuntimeArtifactsRequest,
   HostManagedComponentStatus,
   HostManagedComponentRolloutRequest,
   HostManagedComponentRolloutResponse,
@@ -466,6 +467,7 @@ export interface InterBayHostControlApi {
   }) => Promise<HostManagedComponentStatus[]>;
   getInstalledRuntimeArtifacts: (opts: {
     host_id: string;
+    get?: HostInstalledRuntimeArtifactsRequest;
   }) => Promise<HostInstalledRuntimeArtifactStatus[]>;
   getHostAgentStatus: (opts: { host_id: string }) => Promise<HostAgentStatus>;
   inspectStaticAppPath: (opts: {

@@ -64,6 +64,42 @@ type ArtifactReconcileQueued =
       op_id: string;
     };
 
+function timestampMs(value?: string): number {
+  const ts = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function pickRequestedBy({
+  row,
+  deployments,
+}: {
+  row: any;
+  deployments: Array<{
+    requested_by?: string;
+    updated_at?: string;
+    requested_at?: string;
+  }>;
+}): string | undefined {
+  const candidate = [...(deployments ?? [])]
+    .filter((deployment) => `${deployment?.requested_by ?? ""}`.trim())
+    .sort((a, b) => {
+      const aTs = Math.max(
+        timestampMs(a.updated_at),
+        timestampMs(a.requested_at),
+      );
+      const bTs = Math.max(
+        timestampMs(b.updated_at),
+        timestampMs(b.requested_at),
+      );
+      return bTs - aTs;
+    })[0];
+  return (
+    `${candidate?.requested_by ?? ""}`.trim() ||
+    `${row?.metadata?.owner ?? ""}`.trim() ||
+    undefined
+  );
+}
+
 function uniqueHostIds(host_ids: string[]): string[] {
   return Array.from(
     new Set(
@@ -106,6 +142,7 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcileInternal({
   createHostLro: (opts: {
     kind: HostLroKind;
     row: any;
+    account_id?: string;
     input: any;
     dedupe_key: string;
   }) => Promise<{ op_id: string }>;
@@ -141,11 +178,23 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcileInternal({
   if (!plan.reconciled_components.length) {
     return { queued: false, host_id: row.id, reason: "no_reconcile_needed" };
   }
+  const requestedBy = pickRequestedBy({
+    row,
+    deployments: (status.effective ?? []).filter(
+      (deployment: any) =>
+        deployment?.target_type === "component" &&
+        plan.reconciled_components.includes(
+          deployment.target as ManagedComponentKind,
+        ),
+    ),
+  });
   const op = await createHostLro({
     kind: reconcile_lro_kind,
     row,
+    account_id: requestedBy,
     input: {
       id: row.id,
+      ...(requestedBy ? { account_id: requestedBy } : {}),
       components: plan.reconciled_components,
       reason: reason ?? automatic_reason,
     },
@@ -189,6 +238,7 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcileInternal({
   createHostLro: (opts: {
     kind: HostLroKind;
     row: any;
+    account_id?: string;
     input: any;
     dedupe_key: string;
   }) => Promise<{ op_id: string }>;
@@ -221,11 +271,25 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcileInternal({
   if (!targets.length) {
     return { queued: false, host_id: row.id, reason: "no_reconcile_needed" };
   }
+  const requestedBy = pickRequestedBy({
+    row,
+    deployments: (status.effective ?? []).filter(
+      (deployment: any) =>
+        deployment?.target_type === "artifact" &&
+        targets.some(
+          (target) =>
+            deployment.target === target.artifact &&
+            deployment.desired_version === target.version,
+        ),
+    ),
+  });
   const op = await createHostLro({
     kind: upgrade_lro_kind,
     row,
+    account_id: requestedBy,
     input: {
       id: row.id,
+      ...(requestedBy ? { account_id: requestedBy } : {}),
       targets,
     },
     dedupe_key: hostUpgradeDedupeKey({

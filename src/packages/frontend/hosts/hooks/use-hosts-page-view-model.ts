@@ -626,8 +626,9 @@ export const useHostsPageViewModel = () => {
     hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
   });
   const runtimeVersionCatalog = useHostSoftwareVersionCatalog(hub, {
-    enabled: isAdmin && showRuntimeVersions,
+    enabled: isAdmin && (showRuntimeVersions || (drawerOpen && !!selected)),
     hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
+    historyLimit: drawerOpen && selected ? 24 : undefined,
   });
   const [settingClusterDefaultKey, setSettingClusterDefaultKey] =
     React.useState<string>();
@@ -918,6 +919,42 @@ export const useHostsPageViewModel = () => {
       }
     },
     [hub, refresh, runtimeDeployments, trackHostOp],
+  );
+  const restartRuntimeComponent = React.useCallback(
+    async ({
+      host,
+      component,
+    }: {
+      host: Host;
+      component: ManagedComponentKind;
+    }) => {
+      if (!hub.hosts.rolloutHostManagedComponents) {
+        return;
+      }
+      try {
+        const op = await hub.hosts.rolloutHostManagedComponents({
+          id: host.id,
+          components: [component],
+          reason: "frontend restart",
+        });
+        trackHostOp(host.id, op);
+        await Promise.all([
+          refresh(),
+          runtimeDeployments.refresh(),
+          refreshHostOps(),
+        ]);
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `Failed to restart ${component} on ${host.name}: ${
+            err instanceof Error ? err.message : `${err}`
+          }`,
+          timeout: 20,
+        });
+        console.error(err);
+      }
+    },
+    [hub, refresh, refreshHostOps, runtimeDeployments, trackHostOp],
   );
   const resumeRuntimeArtifactClusterDefault = React.useCallback(
     async ({
@@ -1486,6 +1523,8 @@ export const useHostsPageViewModel = () => {
     loadingLog,
     softwareVersions: {
       ...softwareVersions,
+      configuredCatalog: runtimeVersionCatalog.configured,
+      hubCatalog: runtimeVersionCatalog.hub,
       hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
     },
     runtimeDeployments,
@@ -1500,6 +1539,7 @@ export const useHostsPageViewModel = () => {
       ? setRuntimeComponentDeployment
       : undefined,
     onRollbackRuntimeComponent: isAdmin ? rollbackRuntimeComponent : undefined,
+    onRestartRuntimeComponent: isAdmin ? restartRuntimeComponent : undefined,
     onResumeRuntimeComponentClusterDefault: isAdmin
       ? resumeRuntimeComponentClusterDefault
       : undefined,

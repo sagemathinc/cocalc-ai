@@ -33,6 +33,18 @@ function getHostSessionId(metadata: any): string | undefined {
   return value || undefined;
 }
 
+function getPendingAutomaticConvergenceRetry(metadata: any): {
+  runtime: boolean;
+  artifacts: boolean;
+} {
+  const pending =
+    metadata?.runtime_deployments?.pending_automatic_convergence_retry ?? {};
+  return {
+    runtime: pending?.runtime === true,
+    artifacts: pending?.artifacts === true,
+  };
+}
+
 export interface HostRegistryApi {
   register: (info: HostRegistration) => Promise<void>;
   heartbeat: (info: HostRegistration) => Promise<void>;
@@ -123,6 +135,103 @@ export async function initHostRegistryService() {
       logger.warn("failed to publish host ssh key", { err, id: info.id });
     }
   };
+  const updatePendingAutomaticConvergenceRetry = async ({
+    host_id,
+    runtime,
+    artifacts,
+  }: {
+    host_id: string;
+    runtime: boolean;
+    artifacts: boolean;
+  }) => {
+    const { rows } = await pool().query<{ metadata?: any }>(
+      "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+      [host_id],
+    );
+    const metadata = rows[0]?.metadata ?? {};
+    const runtimeDeployments = { ...(metadata?.runtime_deployments ?? {}) };
+    if (runtime || artifacts) {
+      runtimeDeployments.pending_automatic_convergence_retry = {
+        ...(runtime ? { runtime: true } : {}),
+        ...(artifacts ? { artifacts: true } : {}),
+        updated_at: new Date().toISOString(),
+      };
+    } else {
+      delete runtimeDeployments.pending_automatic_convergence_retry;
+    }
+    const nextMetadata = {
+      ...metadata,
+      runtime_deployments: runtimeDeployments,
+    };
+    await pool().query(
+      "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
+      [host_id, nextMetadata],
+    );
+  };
+  const attemptAutomaticConvergence = async ({
+    host_id,
+    reason,
+    retryOnlyPending,
+  }: {
+    host_id: string;
+    reason: string;
+    retryOnlyPending?: boolean;
+  }) => {
+    let pending = {
+      runtime: true,
+      artifacts: true,
+    };
+    if (retryOnlyPending) {
+      const { rows } = await pool().query<{ metadata?: any }>(
+        "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        [host_id],
+      );
+      pending = getPendingAutomaticConvergenceRetry(rows[0]?.metadata);
+      if (!pending.runtime && !pending.artifacts) {
+        return;
+      }
+    }
+    let nextRuntimePending = false;
+    let nextArtifactsPending = false;
+    if (pending.runtime) {
+      try {
+        const result = await ensureAutomaticHostRuntimeDeploymentsReconcile({
+          host_id,
+          reason,
+        });
+        nextRuntimePending =
+          !result.queued && result.reason === "observation_failed";
+      } catch (err) {
+        nextRuntimePending = true;
+        logger.warn("automatic runtime deployment reconcile failed", {
+          host_id,
+          source: reason,
+          err: `${err}`,
+        });
+      }
+    }
+    if (pending.artifacts) {
+      try {
+        const result = await ensureAutomaticHostArtifactDeploymentsReconcile({
+          host_id,
+        });
+        nextArtifactsPending =
+          !result.queued && result.reason === "observation_failed";
+      } catch (err) {
+        nextArtifactsPending = true;
+        logger.warn("automatic artifact deployment reconcile failed", {
+          host_id,
+          source: reason,
+          err: `${err}`,
+        });
+      }
+    }
+    await updatePendingAutomaticConvergenceRetry({
+      host_id,
+      runtime: nextRuntimePending,
+      artifacts: nextArtifactsPending,
+    });
+  };
   return await createServiceHandler<HostRegistryApi>({
     client,
     service: SUBJECT,
@@ -175,28 +284,9 @@ export async function initHostRegistryService() {
         if (previousRows[0] && previousSessionId !== nextSessionId) {
           await notifyProjectHostUpdate({ host_id: info.id });
         }
-        await ensureAutomaticHostRuntimeDeploymentsReconcile({
+        await attemptAutomaticConvergence({
           host_id: info.id,
           reason: "host_register",
-        }).catch((err) => {
-          logger.warn(
-            "automatic runtime deployment reconcile failed on register",
-            {
-              host_id: info.id,
-              err: `${err}`,
-            },
-          );
-        });
-        await ensureAutomaticHostArtifactDeploymentsReconcile({
-          host_id: info.id,
-        }).catch((err) => {
-          logger.warn(
-            "automatic artifact deployment reconcile failed on register",
-            {
-              host_id: info.id,
-              err: `${err}`,
-            },
-          );
         });
         await publishKey(info);
       },
@@ -226,6 +316,11 @@ export async function initHostRegistryService() {
           status: "running",
           last_seen: new Date(),
           host_session_id: getHostSessionId(sanitized.metadata),
+        });
+        await attemptAutomaticConvergence({
+          host_id: info.id,
+          reason: "host_heartbeat_retry",
+          retryOnlyPending: true,
         });
         await publishKey(info);
       },

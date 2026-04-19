@@ -16,6 +16,30 @@ import {
   rewriteProjectHostConatProxyUrl,
 } from "./conat-router";
 
+async function requestJson({
+  url,
+  headers,
+}: {
+  url: string;
+  headers?: Record<string, string>;
+}): Promise<{ statusCode: number; body: any }> {
+  return await new Promise((resolve, reject) => {
+    const req = http.request(url, { headers }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      res.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        resolve({
+          statusCode: res.statusCode ?? 0,
+          body: JSON.parse(text),
+        });
+      });
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 describe("project-host conat router helpers", () => {
   const originalEnv = { ...process.env };
 
@@ -130,6 +154,58 @@ describe("project-host conat router helpers", () => {
       expect(await res.json()).toEqual({
         ok: true,
         source: "project-host-upstream",
+      });
+    } finally {
+      await new Promise<void>((resolve) =>
+        ingressServer.close(() => resolve()),
+      );
+      await new Promise<void>((resolve) =>
+        upstreamServer.close(() => resolve()),
+      );
+    }
+  });
+
+  it("preserves project-host auth cookies on the fallback ingress proxy", async () => {
+    const upstreamApp = express();
+    upstreamApp.get("/app", (req, res) => {
+      res.json({ cookie: req.headers.cookie ?? null });
+    });
+    const upstreamServer = http.createServer(upstreamApp);
+    upstreamServer.listen(0, "127.0.0.1");
+    await once(upstreamServer, "listening");
+    const upstreamPort = (upstreamServer.address() as AddressInfo).port;
+
+    const ingressApp = express();
+    const ingressServer = http.createServer(ingressApp);
+    attachProjectHostHttpFallbackProxy({
+      app: ingressApp,
+      httpServer: ingressServer,
+      target: `http://127.0.0.1:${upstreamPort}`,
+    });
+    ingressServer.listen(0, "127.0.0.1");
+    await once(ingressServer, "listening");
+    const ingressPort = (ingressServer.address() as AddressInfo).port;
+
+    try {
+      const res = await requestJson({
+        url: `http://127.0.0.1:${ingressPort}/app`,
+        headers: {
+          Cookie: [
+            "cocalc_project_host_http_bearer=bearer-cookie",
+            "cocalc_project_host_http_session=http-session-cookie",
+            "cocalc_project_host_session=browser-session-cookie",
+            "other_cookie=kept",
+          ].join("; "),
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual({
+        cookie: [
+          "cocalc_project_host_http_bearer=bearer-cookie",
+          "cocalc_project_host_http_session=http-session-cookie",
+          "cocalc_project_host_session=browser-session-cookie",
+          "other_cookie=kept",
+        ].join("; "),
       });
     } finally {
       await new Promise<void>((resolve) =>

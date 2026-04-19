@@ -72,6 +72,11 @@ import {
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
 } from "../utils/project-host-rollout";
+import {
+  currentHostRuntimeExceptionSummary,
+  hostRuntimeExceptionDescription,
+  hostRuntimeExceptionLabel,
+} from "../utils/runtime-exceptions";
 
 const STATUS_ORDER = [
   "running",
@@ -785,6 +790,8 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const showSpinner = isHostTransitioning(host.status);
         const statusLabel = host.deleted ? "deleted" : host.status;
         const op = hostOps?.[host.id];
+        const runtimeExceptionSummary =
+          currentHostRuntimeExceptionSummary(host);
         const projectHostRollback = currentProjectHostAutomaticRollback({
           observation: host.observed_host_agent?.project_host,
           currentVersion: host.version,
@@ -828,6 +835,17 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               {showStaleTag && (
                 <Tooltip title={getHostOnlineTooltip(host.last_seen)}>
                   <Tag color="orange">offline</Tag>
+                </Tooltip>
+              )}
+              {runtimeExceptionSummary && (
+                <Tooltip
+                  title={hostRuntimeExceptionDescription(
+                    runtimeExceptionSummary,
+                  )}
+                >
+                  <Tag color="blue">
+                    {hostRuntimeExceptionLabel(runtimeExceptionSummary)}
+                  </Tag>
                 </Tooltip>
               )}
             </Space>
@@ -1180,6 +1198,50 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     />
   ) : null;
 
+  const runtimeExceptionCounts = React.useMemo(() => {
+    let pinned = 0;
+    let autoRolledBack = 0;
+    for (const host of visibleHosts) {
+      if (currentHostRuntimeExceptionSummary(host)) {
+        pinned += 1;
+      }
+      if (
+        currentProjectHostAutomaticRollback({
+          observation: host.observed_host_agent?.project_host,
+          currentVersion: host.version,
+        })
+      ) {
+        autoRolledBack += 1;
+      }
+    }
+    return { pinned, autoRolledBack };
+  }, [visibleHosts]);
+
+  const runtimeExceptionNotice =
+    runtimeExceptionCounts.pinned > 0 ||
+    runtimeExceptionCounts.autoRolledBack > 0 ? (
+      <Alert
+        type="info"
+        showIcon
+        title="Runtime exceptions are visible in this host list."
+        description={
+          <Space size="small" wrap>
+            {runtimeExceptionCounts.pinned > 0 && (
+              <Tag color="blue">
+                Pinned by host override: {runtimeExceptionCounts.pinned}
+              </Tag>
+            )}
+            {runtimeExceptionCounts.autoRolledBack > 0 && (
+              <Tag color="orange">
+                Auto-rolled back: {runtimeExceptionCounts.autoRolledBack}
+              </Tag>
+            )}
+          </Space>
+        }
+        style={{ marginBottom: 12 }}
+      />
+    ) : null;
+
   const header = (
     <div
       style={{
@@ -1389,6 +1451,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     <div>
       {header}
       {filterNotice}
+      {runtimeExceptionNotice}
       {isAdmin && showParallelLimits && parallelOps ? (
         <HostParallelOpsSummary
           status={parallelOps.status}

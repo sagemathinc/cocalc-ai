@@ -492,6 +492,12 @@ export function createProjectHostHttpProxyAuth({
         account_id: accountFromBrowserSession.account_id,
         project_id,
       });
+      setSessionCookie(
+        req,
+        res,
+        accountFromBrowserSession.account_id,
+        project_id,
+      );
       setAuthContext(req, {
         account_id: accountFromBrowserSession.account_id,
         issued_at_s: accountFromBrowserSession.iat_s,
@@ -565,6 +571,23 @@ export function createProjectHostHttpProxyAuth({
     req: IncomingMessage,
     project_id: string,
   ): Promise<AuthorizedAccountContext> => {
+    const accountFromBrowserSession = browserSessionAccountId(req);
+    if (accountFromBrowserSession) {
+      assertNotRevoked({
+        account_id: accountFromBrowserSession.account_id,
+        issued_at_s: accountFromBrowserSession.iat_s,
+      });
+      authorizeAccountForProject({
+        account_id: accountFromBrowserSession.account_id,
+        project_id,
+      });
+      const context = {
+        account_id: accountFromBrowserSession.account_id,
+        issued_at_s: accountFromBrowserSession.iat_s,
+      };
+      setAuthContext(req, context);
+      return context;
+    }
     const accountFromSession = sessionAccountId(req);
     if (accountFromSession) {
       assertNotRevoked({

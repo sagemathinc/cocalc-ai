@@ -19,7 +19,7 @@ import { mountArg } from "@cocalc/backend/podman";
 import { DEFAULT_PROJECT_TOOLS, nodePath } from "./mounts";
 import { isValidUUID } from "@cocalc/util/misc";
 import { ensureConfFilesExists, setupDataPath, writeSecretToken } from "./util";
-import { getEnvironment } from "./env";
+import { DEFAULT_PROJECT_PROXY_PORT, getEnvironment } from "./env";
 import {
   mkdir,
   readFile,
@@ -1007,7 +1007,7 @@ export async function start({
     args.push("-p", `${publishHostValue}:${ssh_port}:22`);
     args.push(
       "-p",
-      `${publishHostValue}:${http_port}:${env.COCALC_PROXY_PORT ?? "8080"}`,
+      `${publishHostValue}:${http_port}:${env.COCALC_PROXY_PORT ?? DEFAULT_PROJECT_PROXY_PORT}`,
     );
     if (config.gpu) {
       args.push("--device", "nvidia.com/gpu=all");

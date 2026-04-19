@@ -16,6 +16,11 @@ const L = getLogger("project:project-setup");
 // 19 is the minimum, we keep it 1 above that.
 export const DEFAULT_FREE_PROCS_NICENESS = 18;
 
+const PRESERVED_COCALC_ENV_VARS = new Set([
+  "COCALC_PROXY_HOST",
+  "COCALC_PROXY_PORT",
+]);
+
 // this only lists some of the fields in use, there might be more
 interface ProjectConfig {
   quota?: {
@@ -152,9 +157,12 @@ export function cleanup(): void {
   }
 
   // Drop all CoCalc-prefixed env vars inherited from the parent shell.
-  // The project server should set any required COCALC_* vars explicitly.
+  // Preserve the proxy listener contract passed by the project runner, since
+  // the project HTTP proxy is started after this cleanup step.
   for (const key in process.env) {
-    if (key.startsWith("COCALC_")) delete process.env[key];
+    if (key.startsWith("COCALC_") && !PRESERVED_COCALC_ENV_VARS.has(key)) {
+      delete process.env[key];
+    }
   }
 }
 

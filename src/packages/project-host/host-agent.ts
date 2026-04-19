@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import {
   ensureDaemon,
@@ -10,32 +8,16 @@ import {
   appendSupervisionEvent,
   type SupervisionEvent,
 } from "./supervision-events";
+import {
+  readHostAgentState,
+  type HostAgentState,
+  type ProjectHostRollbackPending,
+  type ProjectHostRollbackRecord,
+  writeHostAgentState,
+} from "./host-agent-state";
 import { activateInstalledProjectHostVersion } from "./upgrade";
 
 const logger = getLogger("project-host:host-agent");
-
-export type ProjectHostRollbackPending = {
-  target_version: string;
-  previous_version: string;
-  started_at: string;
-  deadline_at: string;
-};
-
-export type ProjectHostRollbackRecord = {
-  target_version: string;
-  rollback_version: string;
-  started_at: string;
-  finished_at: string;
-  reason: "health_deadline_exceeded";
-};
-
-export type HostAgentState = {
-  project_host?: {
-    last_known_good_version?: string;
-    pending_rollout?: ProjectHostRollbackPending;
-    last_automatic_rollback?: ProjectHostRollbackRecord;
-  };
-};
 
 function parseIndex(argv: string[]): number {
   const indexFlag = argv.findIndex((arg) => arg === "--index");
@@ -73,32 +55,6 @@ function getProjectHostRollbackTimeoutMs(): number {
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function stateFilePath(dataDir: string): string {
-  return path.join(dataDir, "host-agent-state.json");
-}
-
-function readState(dataDir: string): HostAgentState {
-  try {
-    return JSON.parse(fs.readFileSync(stateFilePath(dataDir), "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-export function readHostAgentState(dataDir?: string): HostAgentState {
-  const resolved =
-    `${dataDir ?? process.env.COCALC_DATA ?? process.env.DATA ?? ""}`.trim() ||
-    "/mnt/cocalc/data";
-  return readState(resolved);
-}
-
-function writeState(dataDir: string, state: HostAgentState): void {
-  const file = stateFilePath(dataDir);
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
-  fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
-  fs.renameSync(tmp, file);
 }
 
 function recordHostAgentEvent(
@@ -206,7 +162,7 @@ async function reconcileProjectHostRollback({
   timeoutMs: number;
 }): Promise<void> {
   const status = inspectProjectHostRuntime(index);
-  const state = readState(status.dataDir);
+  const state = readHostAgentState(status.dataDir);
   const now = Date.now();
   const currentVersion = `${status.currentVersion ?? ""}`.trim() || undefined;
   const runningVersion = `${status.runningVersion ?? ""}`.trim() || undefined;
@@ -217,7 +173,7 @@ async function reconcileProjectHostRollback({
 
   if (currentVersion && !state.project_host?.last_known_good_version) {
     rememberSuccessfulVersion(state, effectiveLastKnownGood ?? currentVersion);
-    writeState(status.dataDir, state);
+    writeHostAgentState(status.dataDir, state);
   }
 
   const lastKnownGood = effectiveLastKnownGood;
@@ -226,7 +182,7 @@ async function reconcileProjectHostRollback({
   if (!currentVersion || !lastKnownGood || currentVersion === lastKnownGood) {
     if (pending) {
       clearPendingRollout(state);
-      writeState(status.dataDir, state);
+      writeHostAgentState(status.dataDir, state);
     }
     return;
   }
@@ -246,7 +202,7 @@ async function reconcileProjectHostRollback({
       running_version: runningVersion,
     });
     rememberSuccessfulVersion(state, currentVersion, pending);
-    writeState(status.dataDir, state);
+    writeHostAgentState(status.dataDir, state);
     return;
   }
 
@@ -264,7 +220,7 @@ async function reconcileProjectHostRollback({
       now,
       timeoutMs,
     });
-    writeState(status.dataDir, state);
+    writeHostAgentState(status.dataDir, state);
     logger.warn("host-agent tracking project-host rollout candidate", {
       index,
       target_version: currentVersion,
@@ -329,7 +285,7 @@ async function reconcileProjectHostRollback({
       finished_at: new Date(now).toISOString(),
       reason: "health_deadline_exceeded",
     });
-    writeState(status.dataDir, state);
+    writeHostAgentState(status.dataDir, state);
     logger.warn("host-agent completed local project-host rollback", {
       index,
       target_version: activePending.target_version,

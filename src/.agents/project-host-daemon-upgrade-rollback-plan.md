@@ -1,7 +1,7 @@
 # Project-Host Runtime Upgrade And Rollback Plan
 
-Status: partially implemented; this document is now primarily the remaining-work
-plan and architecture reference
+Status: substantially implemented; this document is now primarily the
+remaining-work plan and architecture reference
 
 Goal: evolve the current imperative host software upgrade and managed-component
 rollout work into a fully production-ready runtime lifecycle system for Linux
@@ -78,6 +78,10 @@ but "which parts are finished, partial, or still missing?"
    - cluster default can be changed from the UI
    - per-host rollback pins are surfaced more explicitly
    - `Resume cluster default` exists in both UI and CLI
+   - the host drawer/runtime view now exposes daemon components and health for
+     `project-host`, `conat-router`, `conat-persist`, and `acp-worker`
+   - the host drawer is now split into operational tabs instead of one long
+     scroll surface
 6. Artifact metadata/catalog work has started.
    - published runtime versions now carry operator-facing metadata such as
      build message
@@ -87,38 +91,67 @@ but "which parts are finished, partial, or still missing?"
    - deploy status exposes `referenced_versions` for `project bundle` and
      `project tools`
    - this is enough to make retention/rollback decisions data-driven later
+8. Runtime rollback is no longer only implicit.
+   - `cocalc host deploy rollback` exists
+   - explicit CLI version selection via `--to-version` exists
+   - rollback targets and retained versions are exposed in deploy status
+   - `bootstrap-environment` rollback now follows the same desired-state path
+     and applies via bootstrap reconcile over ssh
+9. Host upgrade semantics now distinguish low-disruption `project-host`
+   updates from explicit full-stack alignment.
+   - ordinary `project-host` upgrade preserves the lower-disruption path
+   - explicit `--align-runtime-stack` and drawer “upgrade all” paths exist for
+     coordinated runtime alignment
 
 ### Partial / Still Missing
 
 1. The plan document itself is stale.
-   - it still reads as if desired-state, host overrides, automatic rollback,
-     and the runtime versions UI do not exist
-2. The `/hosts` UI is still too artifact-centric.
-   - the host drawer still does not expose daemon components as first-class
-     rows for `conat-router`, `conat-persist`, and `acp-worker`
-3. Fleet-scale exception visibility is still missing.
-   - there is no good fleet-wide view of hosts pinned away from the cluster
-     default
-   - there is no central "these hosts auto-rolled back" table/filter for large
-     fleets
-4. Explicit rollback to a chosen prior version is still not a first-class
-   standard workflow in the UI.
-   - we can explain automatic rollback pins
-   - we can resume following the cluster default
-   - but normal operator-facing rollback-to-version still needs better affordances
-5. Retained rollback inventory and pruning policy are still incomplete.
+   - several sections below still read like open proposals instead of current
+     reality
+2. Fleet-scale exception visibility is only partially landed.
+   - hosts list and CLI now surface host overrides and recent automatic
+     rollbacks
+   - there is still no dedicated central table/filter for these exceptions in
+     large fleets
+3. Retained rollback inventory and pruning policy are still incomplete.
    - the system can now observe referenced bundle/tools versions
+   - rollback targets now surface protected vs prune-candidate versions
+   - live deploy status now includes retained/protected/prunable byte totals for
+     runtime artifacts, so operators can reason about disk cost instead of only
+     version counts
+   - host-side bundle/tools pruning now preserves versions referenced by
+     running projects instead of treating every artifact as a blind keep-3
+     cache
+   - host-side `project-host` pruning now also preserves the host-agent's own
+     rollback checkpoint versions instead of relying only on recency
+   - host-side retention policy is now configurable by env and can use
+     per-artifact byte budgets in addition to keep-count floors
+   - control-plane software upgrades now send retention policy explicitly, and
+     host runtime status surfaces the host's effective keep floor / byte budget
+   - durable default retention policy now lives in `server_settings` instead of
+     only fixed server-side constants, while host env vars remain last-mile
+     overrides
+   - admin settings now expose a guided wizard for editing runtime retention
+     policy instead of requiring raw JSON editing only
+   - the host drawer now renders rollback / protected / prunable versions with
+     human-readable timestamps and published artifact messages when that
+     metadata is available, instead of only raw opaque version strings
+   - the host drawer now also explains why versions are protected vs prunable
+     and labels the primary rollback action explicitly as last-known-good or
+     previous when possible
    - but local rollback inventory, retention policy, and rollback candidate
-     surfacing are not operator-friendly yet
-6. Some desired-state semantics are still incomplete or only partially proven.
-   - offline host convergence needs more end-to-end validation
+     surfacing are still not fully operator-friendly yet
+4. Some desired-state semantics are still incomplete or only partially proven.
+   - explicit `--align-runtime-stack` execution now converges the full managed
+     runtime stack on live hosts and updates status coherently
+   - hosts now retry automatic convergence on heartbeat after register-time
+     `observation_failed` results, so reconnect timing is less brittle
+   - single-host offline convergence has now been validated live, but broader
+     adversarial coverage is still missing
    - component policy is not yet exposed as durable central control-plane state
-   - rollout is still partly framed as "act now" instead of uniformly
-     "converge to declared target state"
-7. LRO and CLI ergonomics still have gaps.
-   - `--wait` output is still too quiet in some paths
-   - repeated deploy/upgrade requests still need stronger idempotency and stale
-     state handling
+5. LRO and CLI ergonomics still have gaps.
+   - repeated deploy/upgrade requests still need more adversarial coverage for
+     stale observed state and offline hosts
 
 ## Problem Statement
 
@@ -1180,29 +1213,35 @@ We should preserve user muscle memory where possible.
 - `cocalc host upgrade`
 - `cocalc host rollout`
 - `cocalc host reconcile`
+- `cocalc host versions`
 
-### Add
+### Landed Under `host deploy`
 
+- `cocalc host deploy restart`
 - `cocalc host deploy status`
 - `cocalc host deploy set`
 - `cocalc host deploy rollback`
-- `cocalc host deploy history`
-- `cocalc host deploy restart`
-- `cocalc host versions`
-- `cocalc host stage`
+- `cocalc host deploy resume-default`
+- `cocalc host deploy reconcile`
 
 ### Reframe
 
-- `host stage`:
-  ensure artifacts are present on a host without changing desired state
+- `host upgrade`:
+  keep as the routine operator path for artifact updates, especially the
+  lower-disruption `project-host` flow
 - `host rollout`:
   immediate advanced action primitive
 - `host deploy set`:
   durable desired-state workflow
+- `host deploy rollback`:
+  durable rollback workflow using recorded rollback targets and retained
+  versions
 
-The existing `host upgrade` command should be retained only as a compatibility
-wrapper or advanced alias, because the name is misleading once deploy and
-rollback become first-class.
+The earlier proposal to demote `host upgrade` into a thin compatibility alias
+does not match current operational reality. We need both:
+
+- a routine, low-disruption `host upgrade` workflow
+- an explicit desired-state / rollback surface under `host deploy`
 
 ## Why We Are Not Using MicroK8s / K3s / Similar
 
@@ -1299,23 +1338,24 @@ This plan is complete when all of the following are true:
 
 ## Immediate Next Steps
 
-The next implementation slice should change the host-local architecture before
-we invest more in hardening the old monolithic recovery path:
+The next implementation priorities are now narrower and more operational:
 
-1. define the `host-agent` package/process boundary
-2. move daemon lifecycle and automatic `project-host` rollback execution under
-   `host-agent`
-3. keep the existing hub-side desired-state, rollout, and rollback model
-   stable during that move
-4. make the standard rollback path depend on `host-agent`, not ssh
-5. only then continue hardening emergency ssh recovery as a secondary path
-
-After that architectural split, the next priorities remain:
-
-- CLI `--wait` progress streaming
-- explicit `projects-backup` host LRO
-- `bootstrap environment` as an explicit managed artifact
-- bundle/tools retention and pruning based on observed references
+1. finish rollback inventory and retention policy
+   - make retained local versions easier to inspect and reason about
+   - turn raw retained/reference data into clearer rollback and pruning UX
+   - tighten host-side pruning policy beyond the first reference-aware safety
+     slice
+2. add more adversarial convergence coverage
+   - repeated `--align-runtime-stack` requests
+   - stale observed state
+   - offline host reconnect and delayed observation paths
+3. add smoke-test coverage for restart-only and canary workflows
+   - restart each managed component
+   - verify host readiness
+   - verify a small set of user-facing flows afterward
+4. continue operator tooling around host-scoped maintenance LROs
+   - explicit `projects-backup`
+   - host-scoped batch stop/restart of projects where operationally useful
 
 ## Near-Term Operator Batch Controls
 

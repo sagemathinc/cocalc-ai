@@ -32,6 +32,15 @@ describe("rolloutComponentsForUpgradeResults", () => {
       ]),
     ).toEqual([]);
   });
+
+  it("rolls out the full managed runtime stack for explicit align-runtime-stack upgrades", () => {
+    expect(
+      rolloutComponentsForUpgradeResults([], {
+        targets: [{ artifact: "project-host", channel: "latest" }],
+        alignRuntimeStack: true,
+      }),
+    ).toEqual(["project-host", "conat-router", "conat-persist", "acp-worker"]);
+  });
 });
 
 describe("runtimeDeploymentsForUpgradeResults", () => {

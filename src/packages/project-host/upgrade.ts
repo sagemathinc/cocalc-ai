@@ -7,6 +7,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import getLogger from "@cocalc/backend/logger";
 import type {
+  HostRuntimeRetentionPolicy,
   SoftwareUpgradeTarget,
   UpgradeSoftwareRequest,
   UpgradeSoftwareResponse,
@@ -14,6 +15,12 @@ import type {
   SoftwareArtifact,
   SoftwareChannel,
 } from "@cocalc/conat/project-host/api";
+import { readHostAgentState } from "./host-agent-state";
+import {
+  retentionPolicyForArtifact,
+  writeConfiguredRuntimeRetentionPolicy,
+} from "./runtime-retention-policy";
+import { listRuntimeArtifactReferences } from "./sqlite/projects";
 
 const logger = getLogger("project-host:upgrade");
 
@@ -22,7 +29,6 @@ const DEFAULT_BUNDLE_ROOT = "/opt/cocalc/project-bundles";
 const DEFAULT_TOOLS_ROOT = "/opt/cocalc/tools";
 const PROJECT_HOST_ROOT = "/opt/cocalc/project-host";
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
-const BUNDLE_RETENTION_COUNT = 3;
 
 type CanonicalArtifact = "project-host" | "project" | "tools";
 
@@ -36,6 +42,15 @@ type ResolvedArtifact = {
   root: string;
   versionDir: string;
   currentLink: string;
+  retentionPolicy?: HostRuntimeRetentionPolicy;
+};
+
+type VersionDirEntry = {
+  dir: string;
+  real: string;
+  mtimeMs: number;
+  name: string;
+  bytes: number | undefined;
 };
 
 function normalizeBaseUrl(baseUrl?: string): string {
@@ -332,13 +347,48 @@ async function assertInstalledVersionDir(versionDir: string): Promise<void> {
   }
 }
 
+function pathSizeBytes(target: string, seen = new Set<string>()): number {
+  let real = target;
+  try {
+    real = fs.realpathSync(target);
+  } catch {
+    // keep original path
+  }
+  if (seen.has(real)) return 0;
+  seen.add(real);
+  let stat;
+  try {
+    stat = fs.lstatSync(target);
+  } catch {
+    return 0;
+  }
+  if (stat.isSymbolicLink()) {
+    return stat.size;
+  }
+  if (!stat.isDirectory()) {
+    return stat.size;
+  }
+  let total = 0;
+  try {
+    for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
+      total += pathSizeBytes(path.join(target, entry.name), seen);
+    }
+  } catch {
+    // ignore unreadable directories
+  }
+  return total;
+}
+
 async function pruneVersionDirs(opts: {
   root: string;
   currentLink: string;
   desiredDir: string;
+  protectedVersions?: string[];
   keep?: number;
+  maxBytes?: number;
 }) {
-  const keep = opts.keep ?? BUNDLE_RETENTION_COUNT;
+  const keep = opts.keep ?? 3;
+  const maxBytes = opts.maxBytes;
   const entries = await fs.promises.readdir(opts.root, { withFileTypes: true });
   const keepRealPaths = new Set<string>();
   try {
@@ -351,7 +401,18 @@ async function pruneVersionDirs(opts: {
   } catch {
     // ignore
   }
-  const dirs = await Promise.all(
+  for (const protectedVersion of opts.protectedVersions ?? []) {
+    const version = `${protectedVersion ?? ""}`.trim();
+    if (!version) continue;
+    try {
+      keepRealPaths.add(
+        await fs.promises.realpath(path.join(opts.root, version)),
+      );
+    } catch {
+      // ignore missing protected versions
+    }
+  }
+  const dirs: Array<VersionDirEntry | undefined> = await Promise.all(
     entries
       .filter(
         (entry) =>
@@ -364,36 +425,94 @@ async function pruneVersionDirs(opts: {
         const dir = path.join(opts.root, entry.name);
         try {
           const stat = await fs.promises.stat(dir);
-          return { dir, mtimeMs: stat.mtimeMs, name: entry.name };
+          let real = dir;
+          try {
+            real = await fs.promises.realpath(dir);
+          } catch {
+            // keep raw path
+          }
+          return {
+            dir,
+            real,
+            mtimeMs: stat.mtimeMs,
+            name: entry.name,
+            bytes: maxBytes != null ? pathSizeBytes(dir) : undefined,
+          };
         } catch {
           return undefined;
         }
       }),
   );
   const sorted = dirs
-    .filter(
-      (entry): entry is { dir: string; mtimeMs: number; name: string } =>
-        entry != null,
-    )
+    .filter((entry): entry is VersionDirEntry => entry != null)
     .sort((a, b) => b.mtimeMs - a.mtimeMs || b.name.localeCompare(a.name));
+  let retainedCount = 0;
+  let retainedBytes = 0;
   for (const entry of sorted) {
-    let real = entry.dir;
-    try {
-      real = await fs.promises.realpath(entry.dir);
-    } catch {
-      // keep raw path
+    if (!keepRealPaths.has(entry.real)) continue;
+    retainedCount += 1;
+    retainedBytes += entry.bytes ?? 0;
+  }
+  for (const entry of sorted) {
+    if (keepRealPaths.has(entry.real)) continue;
+    if (retainedCount < keep) {
+      keepRealPaths.add(entry.real);
+      retainedCount += 1;
+      retainedBytes += entry.bytes ?? 0;
+      continue;
     }
-    if (keepRealPaths.has(real)) continue;
-    if (keepRealPaths.size < keep) {
-      keepRealPaths.add(real);
+    if (maxBytes != null && retainedBytes + (entry.bytes ?? 0) <= maxBytes) {
+      keepRealPaths.add(entry.real);
+      retainedCount += 1;
+      retainedBytes += entry.bytes ?? 0;
       continue;
     }
     logger.info("upgrade: pruning old bundle dir", {
       root: opts.root,
       dir: entry.dir,
+      keep,
+      max_bytes: maxBytes,
     });
     await safeRemove(entry.dir);
   }
+}
+
+function protectedArtifactVersions({
+  artifact,
+  desiredVersion,
+}: {
+  artifact: CanonicalArtifact;
+  desiredVersion: string;
+}): string[] {
+  const versions = new Set<string>();
+  const desired = `${desiredVersion ?? ""}`.trim();
+  if (desired) {
+    versions.add(desired);
+  }
+  if (artifact === "project-host") {
+    const hostAgentState = readHostAgentState();
+    const lastKnownGood =
+      `${hostAgentState.project_host?.last_known_good_version ?? ""}`.trim();
+    const pendingPrevious =
+      `${hostAgentState.project_host?.pending_rollout?.previous_version ?? ""}`.trim();
+    if (lastKnownGood) {
+      versions.add(lastKnownGood);
+    }
+    if (pendingPrevious) {
+      versions.add(pendingPrevious);
+    }
+  } else {
+    const references = listRuntimeArtifactReferences();
+    const artifactReferences =
+      artifact === "project" ? references.project_bundle : references.tools;
+    for (const reference of artifactReferences) {
+      const version = `${reference.version ?? ""}`.trim();
+      if (version) {
+        versions.add(version);
+      }
+    }
+  }
+  return [...versions];
 }
 
 async function resolveArtifact(
@@ -565,10 +684,20 @@ async function downloadAndInstall(
     dir: resolved.versionDir,
   });
   await replaceSymlink(resolved.currentLink, resolved.versionDir);
+  const retentionPolicy = retentionPolicyForArtifact(
+    resolved.artifact === "project" ? "project-bundle" : resolved.artifact,
+    resolved.retentionPolicy,
+  );
   await pruneVersionDirs({
     root: resolved.root,
     currentLink: resolved.currentLink,
     desiredDir: resolved.versionDir,
+    protectedVersions: protectedArtifactVersions({
+      artifact: resolved.canonicalArtifact,
+      desiredVersion: resolved.version,
+    }),
+    keep: retentionPolicy.keep_count,
+    maxBytes: retentionPolicy.max_bytes,
   });
   logger.info("upgrade: updated current symlink", {
     artifact: resolved.artifact,
@@ -650,11 +779,15 @@ export async function upgradeSoftware(
     if (!targets.length) {
       throw new Error("upgrade requires at least one target");
     }
+    if (opts.retention_policy) {
+      writeConfiguredRuntimeRetentionPolicy(opts.retention_policy);
+    }
     const baseUrl = normalizeBaseUrl(opts.base_url);
     const results: UpgradeSoftwareResult[] = [];
     let restartHost = false;
     for (const target of targets) {
       const resolved = await resolveArtifact(target, baseUrl);
+      resolved.retentionPolicy = opts.retention_policy;
       logger.info("upgrade: resolved artifact", {
         artifact: resolved.artifact,
         version: resolved.version,

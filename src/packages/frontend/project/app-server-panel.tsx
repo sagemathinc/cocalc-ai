@@ -1670,16 +1670,10 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       if (!preferredLocal) return;
       const local =
         withProjectHostBase(project_id, preferredLocal) ?? preferredLocal;
-      const shouldSkipProjectHostAuth =
-        preferredLocal === basePathLocal &&
-        !!siteOrigin &&
-        local.startsWith(siteOrigin);
-      url = shouldSkipProjectHostAuth
-        ? local
-        : await webapp_client.conat_client.addProjectHostAuthToUrl({
-            project_id,
-            url: local,
-          });
+      url = await webapp_client.conat_client.addProjectHostAuthToUrl({
+        project_id,
+        url: local,
+      });
     }
     if (!url) return;
     window.open(url, "_blank", "noopener,noreferrer");
