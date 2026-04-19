@@ -209,6 +209,7 @@ export async function open_file(
     new_browser_window: false,
     change_history: true,
     explicit: false,
+    workspaceSelection: undefined,
   });
   const projectHome = getProjectHomeDirectory(actions.project_id);
   const hadTrailingSlash = opts.path.endsWith("/");
