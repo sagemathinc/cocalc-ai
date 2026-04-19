@@ -1,0 +1,24 @@
+[Unit]
+Description=CoCalc Bay Conat Persist
+After=cocalc-bay-postgres.service cocalc-bay-migrations.service
+Requires=cocalc-bay-postgres.service cocalc-bay-migrations.service
+PartOf=cocalc-bay.target
+
+[Service]
+Type=simple
+User=cocalc-bay
+WorkingDirectory=/opt/cocalc/bay/current
+EnvironmentFile=/etc/cocalc/bay.env
+EnvironmentFile=-/etc/cocalc/bay-workers.env
+EnvironmentFile=-/etc/cocalc/bay-secrets.env
+ExecStartPre=/opt/cocalc/bay/current/bin/bay-preflight persist
+ExecStart=/opt/cocalc/bay/current/bin/bay-conat-persist
+ExecStartPost=/opt/cocalc/bay/current/bin/bay-persist-health
+Restart=always
+RestartSec=2
+TimeoutStartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=cocalc-bay.target

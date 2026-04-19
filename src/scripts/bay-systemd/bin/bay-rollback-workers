@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+target="${1:-$(previous_version || true)}"
+if [[ -z "$target" ]]; then
+  bay_log "no rollback target available"
+  exit 1
+fi
+
+exec "${SCRIPT_DIR}/bay-rollout-workers" "$target"

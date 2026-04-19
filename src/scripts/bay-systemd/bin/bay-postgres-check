@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+if ! tcp_check "$COCALC_BAY_POSTGRES_HOST" "$COCALC_BAY_POSTGRES_PORT"; then
+  bay_log "postgres is not reachable on ${COCALC_BAY_POSTGRES_HOST}:${COCALC_BAY_POSTGRES_PORT}"
+  exit 1
+fi
+
+if [[ -n "${COCALC_BAY_POSTGRES_MIGRATIONS_CHECK_CMD:-}" ]]; then
+  run_env_cmd_once COCALC_BAY_POSTGRES_MIGRATIONS_CHECK_CMD
+fi
+
+bay_log "postgres check ok"

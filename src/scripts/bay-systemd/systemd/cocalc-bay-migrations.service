@@ -1,0 +1,20 @@
+[Unit]
+Description=CoCalc Bay Migrations
+After=cocalc-bay-postgres.service
+Requires=cocalc-bay-postgres.service
+PartOf=cocalc-bay.target
+
+[Service]
+Type=oneshot
+User=cocalc-bay
+WorkingDirectory=/opt/cocalc/bay/current
+EnvironmentFile=/etc/cocalc/bay.env
+EnvironmentFile=-/etc/cocalc/bay-workers.env
+EnvironmentFile=-/etc/cocalc/bay-secrets.env
+ExecStart=/opt/cocalc/bay/current/bin/bay-migrate
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=cocalc-bay.target

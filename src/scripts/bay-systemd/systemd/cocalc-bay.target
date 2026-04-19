@@ -1,0 +1,10 @@
+[Unit]
+Description=CoCalc Bay Aggregate Target
+Wants=cocalc-bay-postgres.service
+Wants=cocalc-bay-conat-persist.service
+Wants=cocalc-bay-conat-router.service
+Wants=cocalc-bay-hub-workers.target
+After=network-online.target
+
+[Install]
+WantedBy=multi-user.target

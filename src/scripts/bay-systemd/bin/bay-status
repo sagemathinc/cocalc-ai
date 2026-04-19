@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+current="$(current_version || true)"
+previous="$(previous_version || true)"
+
+printf 'bay_id=%s\n' "$COCALC_BAY_ID"
+printf 'current_version=%s\n' "${current:-unknown}"
+printf 'previous_version=%s\n' "${previous:-unknown}"
+printf 'worker_count=%s\n' "$COCALC_BAY_WORKER_COUNT"
+
+if "${SCRIPT_DIR}/bay-health" >/dev/null 2>&1; then
+  printf 'health=ok\n'
+else
+  printf 'health=failed\n'
+fi

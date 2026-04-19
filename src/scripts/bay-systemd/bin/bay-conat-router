@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+ensure_dirs
+if [[ -n "${COCALC_BAY_ROUTER_REQUIRED_UPSTREAMS:-}" ]]; then
+  bay_log "validating router upstreams: ${COCALC_BAY_ROUTER_REQUIRED_UPSTREAMS}"
+fi
+run_env_cmd COCALC_BAY_ROUTER_CMD
