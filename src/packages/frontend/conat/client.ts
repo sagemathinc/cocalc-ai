@@ -66,6 +66,7 @@ import {
   setRememberMe,
 } from "@cocalc/frontend/misc/remember-me";
 import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
+import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import {
   get as getLroStream,
   waitForCompletion as waitForLroCompletion,
@@ -1574,7 +1575,18 @@ export class ConatClient extends EventEmitter {
       address: routing.address,
       project_id,
     });
-    return routedUrl;
+    const token = await this.getProjectHostToken({
+      host_id: routing.host_id,
+      project_id,
+    });
+    try {
+      const authed = new URL(routedUrl);
+      authed.searchParams.set(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM, token);
+      return authed.toString();
+    } catch {
+      const separator = routedUrl.includes("?") ? "&" : "?";
+      return `${routedUrl}${separator}${PROJECT_HOST_HTTP_AUTH_QUERY_PARAM}=${encodeURIComponent(token)}`;
+    }
   };
 
   public touchProjectHost = async ({
