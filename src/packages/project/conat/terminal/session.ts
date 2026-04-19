@@ -289,7 +289,15 @@ export class Session {
       return;
     }
     const cwd = getCWD(head, this.options.cwd);
-    logger.debug("creating pty");
+    logger.debug("creating pty", {
+      termPath: this.termPath,
+      terminalPath: this.options.path,
+      cwd,
+      command,
+      args,
+      initFilename,
+      hasTerminalInitFile,
+    });
     this.pty = spawn(command, args, {
       cwd,
       env,
