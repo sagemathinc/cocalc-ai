@@ -553,6 +553,30 @@ function rollbackVersionOptions(
   );
 }
 
+function primaryRollbackSelection(
+  rollbackTarget: HostRuntimeRollbackTarget | undefined,
+): {
+  version?: string;
+  source?: "last_known_good" | "previous_version";
+  label: string;
+} {
+  if (rollbackTarget?.last_known_good_version) {
+    return {
+      version: rollbackTarget.last_known_good_version,
+      source: "last_known_good",
+      label: "last known good",
+    };
+  }
+  if (rollbackTarget?.previous_version) {
+    return {
+      version: rollbackTarget.previous_version,
+      source: "previous_version",
+      label: "previous",
+    };
+  }
+  return { label: "retained version" };
+}
+
 type RuntimeVersionMetadata = {
   built_at?: string;
   message?: string;
@@ -803,6 +827,31 @@ function RuntimeVersionList({
         </Typography.Text>
       )}
     </Space>
+  );
+}
+
+function RuntimeRetentionExplanation({
+  rollbackTarget,
+}: {
+  rollbackTarget?: HostRuntimeRollbackTarget;
+}) {
+  if (!rollbackTarget) return null;
+  const hasReferencedVersions = !!rollbackTarget.referenced_versions?.length;
+  return (
+    <Alert
+      type="info"
+      showIcon
+      message="Local retention policy"
+      description={
+        <span>
+          Protected versions stay installed because they are current, desired,
+          rollback checkpoints, or still referenced
+          {hasReferencedVersions ? " by running projects" : ""}. Prune
+          candidates are retained local cache and are the first versions removed
+          when the keep floor or byte budget needs space.
+        </span>
+      }
+    />
   );
 }
 
@@ -1909,9 +1958,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   observedTarget?.installed_versions ??
                   observedArtifact?.installed_versions ??
                   [];
-                const rollbackVersion =
-                  rollbackTarget?.last_known_good_version ??
-                  rollbackTarget?.previous_version;
+                const primaryRollback =
+                  primaryRollbackSelection(rollbackTarget);
+                const rollbackVersion = primaryRollback.version;
                 const rollbackOptions = rollbackVersionOptions(rollbackTarget);
                 const selectedRollbackVersion =
                   artifactRollbackSelection[artifact] ??
@@ -2053,7 +2102,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                             onRollbackRuntimeArtifact &&
                             rollbackVersion && (
                               <Popconfirm
-                                title={`Roll back ${label.toLowerCase()} on this host?`}
+                                title={`Roll back ${label.toLowerCase()} to ${primaryRollback.label}?`}
+                                description={`This will switch this host to ${rollbackVersion}.`}
                                 okText="Rollback"
                                 cancelText="Cancel"
                                 onConfirm={() =>
@@ -2068,7 +2118,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 disabled={hostOpActive}
                               >
                                 <Button size="small" disabled={hostOpActive}>
-                                  Rollback
+                                  {primaryRollback.source === "last_known_good"
+                                    ? "Rollback to last known good"
+                                    : primaryRollback.source ===
+                                        "previous_version"
+                                      ? "Rollback to previous"
+                                      : "Rollback"}
                                 </Button>
                               </Popconfirm>
                             )}
@@ -2181,6 +2236,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               </code>
                             </Typography.Text>
                           )}
+                          <RuntimeRetentionExplanation
+                            rollbackTarget={rollbackTarget}
+                          />
                           {rollbackTarget && (
                             <Space
                               direction="vertical"
@@ -2386,9 +2444,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   observedTarget?.running_pids ??
                   observedComponent?.running_pids ??
                   [];
-                const rollbackVersion =
-                  rollbackTarget?.last_known_good_version ??
-                  rollbackTarget?.previous_version;
+                const primaryRollback =
+                  primaryRollbackSelection(rollbackTarget);
+                const rollbackVersion = primaryRollback.version;
                 const rollbackOptions = rollbackVersionOptions(rollbackTarget);
                 const selectedRollbackVersion =
                   componentRollbackSelection[component] ??
@@ -2571,7 +2629,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                             onRollbackRuntimeComponent &&
                             rollbackVersion && (
                               <Popconfirm
-                                title={`Roll back ${label.toLowerCase()} on this host?`}
+                                title={`Roll back ${label.toLowerCase()} to ${primaryRollback.label}?`}
+                                description={`This will switch this host to ${rollbackVersion}.`}
                                 okText="Rollback"
                                 cancelText="Cancel"
                                 onConfirm={() =>
@@ -2586,7 +2645,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 disabled={hostOpActive}
                               >
                                 <Button size="small" disabled={hostOpActive}>
-                                  Rollback
+                                  {primaryRollback.source === "last_known_good"
+                                    ? "Rollback to last known good"
+                                    : primaryRollback.source ===
+                                        "previous_version"
+                                      ? "Rollback to previous"
+                                      : "Rollback"}
                                 </Button>
                               </Popconfirm>
                             )}
@@ -2658,6 +2722,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               </code>
                             </Typography.Text>
                           )}
+                          <RuntimeRetentionExplanation
+                            rollbackTarget={rollbackTarget}
+                          />
                           {rollbackTarget && (
                             <Space
                               direction="vertical"
