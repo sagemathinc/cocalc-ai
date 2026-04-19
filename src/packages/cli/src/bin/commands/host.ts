@@ -384,6 +384,19 @@ function formatList(values: unknown): string {
   return values.map((value) => `${value ?? ""}`.trim()).join(", ");
 }
 
+function formatBytesValue(value: unknown): string {
+  const bytes = Number(value ?? 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let unit = 0;
+  let scaled = bytes;
+  while (scaled >= 1024 && unit < units.length - 1) {
+    scaled /= 1024;
+    unit += 1;
+  }
+  return `${scaled >= 10 || unit === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[unit]}`;
+}
+
 function formatArtifactReferences(value: unknown): string {
   if (!Array.isArray(value) || value.length === 0) return "";
   return value
@@ -449,6 +462,7 @@ function formatObservedArtifactRows(
     current_version: artifact.current_version ?? "",
     current_build_id: artifact.current_build_id ?? "",
     installed_versions: formatList(artifact.installed_versions),
+    installed_bytes_total: formatBytesValue(artifact.installed_bytes_total),
     referenced_versions: formatArtifactReferences(artifact.referenced_versions),
   }));
 }
@@ -465,6 +479,14 @@ function formatRollbackTargetRows(
     previous_version: target.previous_version ?? "",
     last_known_good_version: target.last_known_good_version ?? "",
     retained_versions: formatList(target.retained_versions),
+    referenced_versions: formatArtifactReferences(target.referenced_versions),
+    protected_versions: formatList(target.protected_versions),
+    prune_candidate_versions: formatList(target.prune_candidate_versions),
+    retained_bytes_total: formatBytesValue(target.retained_bytes_total),
+    protected_bytes_total: formatBytesValue(target.protected_bytes_total),
+    prune_candidate_bytes_total: formatBytesValue(
+      target.prune_candidate_bytes_total,
+    ),
   }));
 }
 
@@ -699,6 +721,11 @@ function emitHostDeployStatusHuman(
     const observed = (data.observed_components ?? []).find(
       (row) => row.component === component,
     );
+    const observedTarget = (data.observed_targets ?? []).find(
+      (row) =>
+        row.target_type === "component" &&
+        `${row.target ?? ""}`.trim() === component,
+    );
     const hostAgentProjectHost =
       component === "project-host"
         ? (data.observed_host_agent?.project_host as
@@ -716,13 +743,22 @@ function emitHostDeployStatusHuman(
         artifact_current_version: observedArtifact?.current_version ?? "",
         artifact_current_build_id: observedArtifact?.current_build_id ?? "",
         artifact_installed_versions: observedArtifact?.installed_versions ?? [],
-        enabled: observed?.enabled ?? "",
-        managed: observed?.managed ?? "",
-        runtime_state: observed?.runtime_state ?? "",
-        version_state: observed?.version_state ?? "",
-        desired_version: observed?.desired_version ?? "",
-        running_versions: observed?.running_versions ?? [],
-        running_pids: observed?.running_pids ?? [],
+        enabled: observedTarget?.enabled ?? observed?.enabled ?? "",
+        managed: observedTarget?.managed ?? observed?.managed ?? "",
+        runtime_state:
+          observedTarget?.observed_runtime_state ??
+          observed?.runtime_state ??
+          "",
+        version_state:
+          observedTarget?.observed_version_state ??
+          observed?.version_state ??
+          "",
+        desired_version:
+          observedTarget?.desired_version ?? observed?.desired_version ?? "",
+        running_versions:
+          observedTarget?.running_versions ?? observed?.running_versions ?? [],
+        running_pids:
+          observedTarget?.running_pids ?? observed?.running_pids ?? [],
         host_agent_last_known_good_version:
           hostAgentProjectHost?.last_known_good_version ?? "",
         host_agent_pending_target_version:
@@ -857,6 +893,18 @@ export function registerHostCommand(
             scope: row.scope ?? "",
             last_seen: row.last_seen ?? null,
             public_ip: row.public_ip ?? null,
+            runtime_host_override_count:
+              row.runtime_exception_summary?.host_override_count ?? 0,
+            runtime_host_override_targets:
+              row.runtime_exception_summary?.host_override_targets?.join(
+                ", ",
+              ) ?? "",
+            project_host_auto_rollback_version:
+              row.observed_host_agent?.project_host?.last_automatic_rollback
+                ?.rollback_version ?? null,
+            project_host_auto_rollback_finished_at:
+              row.observed_host_agent?.project_host?.last_automatic_rollback
+                ?.finished_at ?? null,
           }));
         });
       },
@@ -936,6 +984,8 @@ export function registerHostCommand(
           tools_version: h.tools_version ?? null,
           bootstrap: h.bootstrap ?? null,
           bootstrap_lifecycle: h.bootstrap_lifecycle ?? null,
+          runtime_exception_summary: h.runtime_exception_summary ?? null,
+          observed_host_agent: h.observed_host_agent ?? null,
         };
       });
     });

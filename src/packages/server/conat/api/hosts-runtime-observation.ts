@@ -77,12 +77,25 @@ function componentDeploymentObservedVersionState({
     `${observed_artifact?.current_build_id ?? ""}`.trim();
   if (
     currentArtifactVersion &&
-    currentArtifactVersion === desiredArtifactVersion &&
-    currentArtifactBuildId
+    currentArtifactVersion === desiredArtifactVersion
   ) {
+    const normalizedRunningVersions = Array.from(
+      new Set(
+        observed_component.running_versions.map((runningVersion) => {
+          if (
+            runningVersion === currentArtifactVersion ||
+            (currentArtifactBuildId &&
+              runningVersion === currentArtifactBuildId)
+          ) {
+            return currentArtifactVersion;
+          }
+          return runningVersion;
+        }),
+      ),
+    );
     return deploymentObservedVersionState({
-      desired_version: currentArtifactBuildId,
-      running_versions: observed_component.running_versions,
+      desired_version: currentArtifactVersion,
+      running_versions: normalizedRunningVersions,
     });
   }
   return deploymentObservedVersionState({
@@ -95,6 +108,50 @@ function sortVersionsDescending(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort((a, b) =>
     a < b ? 1 : a > b ? -1 : 0,
   );
+}
+
+function protectInstalledVersions({
+  installed_versions,
+  desired_version,
+  current_version,
+  previous_version,
+  last_known_good_version,
+  referenced_versions,
+}: {
+  installed_versions: string[];
+  desired_version?: string;
+  current_version?: string;
+  previous_version?: string;
+  last_known_good_version?: string;
+  referenced_versions?: Array<{
+    version: string;
+    project_count: number;
+  }>;
+}): {
+  protected_versions: string[];
+  prune_candidate_versions: string[];
+} {
+  const installed = new Set(sortVersionsDescending(installed_versions));
+  const protected_versions = sortVersionsDescending(
+    [
+      desired_version,
+      current_version,
+      previous_version,
+      last_known_good_version,
+      ...(referenced_versions ?? []).map((reference) => reference.version),
+    ]
+      .map((version) => `${version ?? ""}`.trim())
+      .filter(
+        (version): version is string => !!version && installed.has(version),
+      ),
+  );
+  const protected_set = new Set(protected_versions);
+  return {
+    protected_versions,
+    prune_candidate_versions: sortVersionsDescending(
+      [...installed].filter((version) => !protected_set.has(version)),
+    ),
+  };
 }
 
 export function observedRuntimeArtifactsFromMetadata(
@@ -113,6 +170,7 @@ export function observedRuntimeArtifactsFromMetadata(
       ) {
         return undefined;
       }
+      const installed_bytes_total_raw = Number(entry?.installed_bytes_total);
       return {
         artifact,
         current_version: `${entry?.current_version ?? ""}`.trim() || undefined,
@@ -148,6 +206,31 @@ export function observedRuntimeArtifactsFromMetadata(
                 } => reference != null,
               )
           : undefined,
+        version_bytes: Array.isArray(entry?.version_bytes)
+          ? entry.version_bytes
+              .map((sizeEntry: any) => {
+                const version = `${sizeEntry?.version ?? ""}`.trim();
+                const bytes = Math.max(
+                  0,
+                  Math.floor(Number(sizeEntry?.bytes ?? 0) || 0),
+                );
+                if (!version) return undefined;
+                return { version, bytes };
+              })
+              .filter(
+                (
+                  sizeEntry,
+                ): sizeEntry is {
+                  version: string;
+                  bytes: number;
+                } => sizeEntry != null,
+              )
+          : undefined,
+        installed_bytes_total:
+          Number.isFinite(installed_bytes_total_raw) &&
+          installed_bytes_total_raw > 0
+            ? Math.floor(installed_bytes_total_raw)
+            : undefined,
       } satisfies HostRuntimeArtifactObservation;
     })
     .filter((entry): entry is HostRuntimeArtifactObservation => entry != null);
@@ -331,6 +414,26 @@ function lastKnownGoodArtifactVersion(
   );
 }
 
+function sumVersionBytes({
+  version_bytes,
+  versions,
+}: {
+  version_bytes?: Array<{
+    version: string;
+    bytes: number;
+  }>;
+  versions: string[];
+}): number | undefined {
+  if (!version_bytes?.length || !versions.length) {
+    return undefined;
+  }
+  const included = new Set(versions);
+  return version_bytes.reduce(
+    (total, entry) => total + (included.has(entry.version) ? entry.bytes : 0),
+    0,
+  );
+}
+
 export function summarizeRollbackTargets({
   row,
   effective,
@@ -358,6 +461,36 @@ export function summarizeRollbackTargets({
     const previous_version = retained_versions.find(
       (version) => version !== current_version,
     );
+    const last_known_good_version = lastKnownGoodArtifactVersion(row, artifact);
+    const referenced_versions =
+      observed?.referenced_versions?.filter(
+        (reference) =>
+          retained_versions.includes(reference.version) &&
+          reference.project_count > 0,
+      ) ?? [];
+    const { protected_versions, prune_candidate_versions } =
+      protectInstalledVersions({
+        installed_versions: retained_versions,
+        desired_version: deployment.desired_version,
+        current_version,
+        previous_version,
+        last_known_good_version,
+        referenced_versions,
+      });
+    const retained_bytes_total =
+      observed?.installed_bytes_total ??
+      sumVersionBytes({
+        version_bytes: observed?.version_bytes,
+        versions: retained_versions,
+      });
+    const protected_bytes_total = sumVersionBytes({
+      version_bytes: observed?.version_bytes,
+      versions: protected_versions,
+    });
+    const prune_candidate_bytes_total = sumVersionBytes({
+      version_bytes: observed?.version_bytes,
+      versions: prune_candidate_versions,
+    });
     return {
       target_type: deployment.target_type,
       target: deployment.target,
@@ -365,8 +498,14 @@ export function summarizeRollbackTargets({
       desired_version: deployment.desired_version,
       current_version,
       previous_version,
-      last_known_good_version: lastKnownGoodArtifactVersion(row, artifact),
+      last_known_good_version,
       retained_versions,
+      referenced_versions,
+      protected_versions,
+      prune_candidate_versions,
+      retained_bytes_total,
+      protected_bytes_total,
+      prune_candidate_bytes_total,
     };
   });
 }

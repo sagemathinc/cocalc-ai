@@ -20,6 +20,11 @@ export type InstalledRuntimeArtifactStatus = {
   current_version?: string;
   current_build_id?: string;
   installed_versions: string[];
+  version_bytes?: Array<{
+    version: string;
+    bytes: number;
+  }>;
+  installed_bytes_total?: number;
   referenced_versions?: Array<{
     version: string;
     project_count: number;
@@ -64,8 +69,8 @@ function uniqSortedDescending(values: string[]): string[] {
   );
 }
 
-function listInstalledVersionsInRoots(roots: string[]): string[] {
-  const versions: string[] = [];
+function collectInstalledVersionDirs(roots: string[]): Map<string, string> {
+  const versions = new Map<string, string>();
   for (const root of roots) {
     try {
       for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
@@ -73,7 +78,7 @@ function listInstalledVersionsInRoots(roots: string[]): string[] {
         const fullPath = path.join(root, entry.name);
         try {
           if (fs.statSync(fullPath).isDirectory()) {
-            versions.push(entry.name);
+            versions.set(entry.name, fullPath);
           }
         } catch {
           // ignore broken or unreadable entries
@@ -83,7 +88,39 @@ function listInstalledVersionsInRoots(roots: string[]): string[] {
       // ignore missing roots
     }
   }
-  return uniqSortedDescending(versions);
+  return versions;
+}
+
+function pathSizeBytes(target: string, seen = new Set<string>()): number {
+  let real = target;
+  try {
+    real = fs.realpathSync(target);
+  } catch {
+    // keep original path
+  }
+  if (seen.has(real)) return 0;
+  seen.add(real);
+  let stat;
+  try {
+    stat = fs.lstatSync(target);
+  } catch {
+    return 0;
+  }
+  if (stat.isSymbolicLink()) {
+    return stat.size;
+  }
+  if (!stat.isDirectory()) {
+    return stat.size;
+  }
+  let total = 0;
+  try {
+    for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
+      total += pathSizeBytes(path.join(target, entry.name), seen);
+    }
+  } catch {
+    // ignore unreadable directories
+  }
+  return total;
 }
 
 function realpathParent(currentPath: string): string | undefined {
@@ -131,21 +168,40 @@ function describeInstalledArtifact({
   artifact,
   currentPath,
   roots,
+  include_sizes,
   referenced_versions,
 }: {
   artifact: InstalledRuntimeArtifact;
   currentPath: string;
   roots: string[];
+  include_sizes?: boolean;
   referenced_versions?: Array<{
     version: string;
     project_count: number;
   }>;
 }): InstalledRuntimeArtifactStatus {
+  const installed = collectInstalledVersionDirs(roots);
+  const installed_versions = uniqSortedDescending([...installed.keys()]);
+  const version_bytes = include_sizes
+    ? installed_versions.map((version) => ({
+        version,
+        bytes: pathSizeBytes(installed.get(version)!),
+      }))
+    : undefined;
   return {
     artifact,
     current_version: versionFromCurrentPath(currentPath),
     current_build_id: readBuildIdFromCurrentPath(currentPath),
-    installed_versions: listInstalledVersionsInRoots(roots),
+    installed_versions,
+    ...(version_bytes
+      ? {
+          version_bytes,
+          installed_bytes_total: version_bytes.reduce(
+            (total, entry) => total + entry.bytes,
+            0,
+          ),
+        }
+      : {}),
     referenced_versions,
   };
 }
@@ -214,7 +270,9 @@ export function getSoftwareVersions(): SoftwareVersions {
   };
 }
 
-export function getInstalledRuntimeArtifacts(): InstalledRuntimeArtifactStatus[] {
+export function getInstalledRuntimeArtifacts(opts?: {
+  include_sizes?: boolean;
+}): InstalledRuntimeArtifactStatus[] {
   const projectHostCurrent = projectHostCurrentPath();
   const projectBundlesRoot =
     process.env.COCALC_PROJECT_BUNDLES ?? DEFAULT_BUNDLE_ROOT;
@@ -222,22 +280,26 @@ export function getInstalledRuntimeArtifacts(): InstalledRuntimeArtifactStatus[]
   const toolsCurrent =
     process.env.COCALC_PROJECT_TOOLS ?? DEFAULT_TOOLS_CURRENT;
   const references = listRuntimeArtifactReferences();
+  const include_sizes = opts?.include_sizes === true;
   return [
     describeInstalledArtifact({
       artifact: "project-host",
       currentPath: projectHostCurrent,
       roots: projectHostInventoryRoots(projectHostCurrent),
+      include_sizes,
     }),
     describeInstalledArtifact({
       artifact: "project-bundle",
       currentPath: projectBundleCurrent,
       roots: siblingInventoryRoots(projectBundleCurrent),
+      include_sizes,
       referenced_versions: references.project_bundle,
     }),
     describeInstalledArtifact({
       artifact: "tools",
       currentPath: toolsCurrent,
       roots: siblingInventoryRoots(toolsCurrent),
+      include_sizes,
       referenced_versions: references.tools,
     }),
   ];

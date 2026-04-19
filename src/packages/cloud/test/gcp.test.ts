@@ -230,6 +230,34 @@ describe("GcpProvider", () => {
     );
   });
 
+  it("retries transient operation wait timeouts during stop", async () => {
+    stopMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-stop", status: "PENDING" } },
+    ]);
+    waitMock
+      .mockRejectedValueOnce(
+        Object.assign(new Error("read ETIMEDOUT"), { code: "ETIMEDOUT" }),
+      )
+      .mockResolvedValueOnce([{ status: "DONE" }]);
+
+    const provider = new GcpProvider();
+    const runtime = {
+      provider: "gcp" as const,
+      instance_id: "ph-test",
+      zone: "us-west1-b",
+      ssh_user: "ubuntu",
+    };
+    const creds = {
+      project_id: "proj-1",
+      client_email: "svc@example.com",
+      private_key: "key",
+    };
+
+    await provider.stopHost(runtime, creds);
+
+    expect(waitMock).toHaveBeenCalledTimes(2);
+  });
+
   it("respects custom zone and source image", async () => {
     insertMock.mockResolvedValueOnce([
       { latestResponse: { name: "op-3", status: "DONE" } },

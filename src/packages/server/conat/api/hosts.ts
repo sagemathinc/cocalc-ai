@@ -105,6 +105,7 @@ import {
   loadProjectHostMetricsHistory,
 } from "@cocalc/database/postgres/project-host-metrics";
 import {
+  ensureProjectHostRuntimeDeploymentsSchema,
   listProjectHostRuntimeDeployments,
   setProjectHostRuntimeDeployments,
 } from "@cocalc/database/postgres/project-host-runtime-deployments";
@@ -218,6 +219,147 @@ import {
 } from "./hosts-rootfs-releases";
 function pool() {
   return getPool();
+}
+
+async function loadHostRuntimeExceptionSummaries(
+  host_ids: string[],
+): Promise<Map<string, Host["runtime_exception_summary"]>> {
+  const uniqueHostIds = Array.from(
+    new Set(host_ids.map((id) => `${id ?? ""}`.trim()).filter(Boolean)),
+  );
+  if (!uniqueHostIds.length) {
+    return new Map();
+  }
+  await ensureProjectHostRuntimeDeploymentsSchema();
+  const { rows } = await pool().query<{ host_id: string; target: string }>(
+    `SELECT host_id::text AS host_id, target
+     FROM project_host_runtime_deployments
+     WHERE scope_type='host'
+       AND host_id::text = ANY($1::text[])
+     ORDER BY host_id, target_type, target`,
+    [uniqueHostIds],
+  );
+  const summaries = new Map<string, Host["runtime_exception_summary"]>();
+  for (const row of rows) {
+    const host_id = `${row?.host_id ?? ""}`.trim();
+    const target = `${row?.target ?? ""}`.trim() as HostRuntimeDeploymentTarget;
+    if (!host_id || !target) continue;
+    const current = summaries.get(host_id);
+    if (!current) {
+      summaries.set(host_id, {
+        host_override_count: 1,
+        host_override_targets: [target],
+      });
+      continue;
+    }
+    if (current.host_override_targets.includes(target)) {
+      continue;
+    }
+    current.host_override_targets.push(target);
+    current.host_override_targets.sort((left, right) =>
+      left.localeCompare(right),
+    );
+    current.host_override_count = current.host_override_targets.length;
+  }
+  return summaries;
+}
+
+type HostRuntimeDesiredArtifactsSummary = {
+  project_host?: string;
+  project_bundle?: string;
+  tools?: string;
+  updated_at?: string;
+};
+
+async function loadHostRuntimeDesiredArtifactSummaries(
+  host_ids: string[],
+): Promise<Map<string, HostRuntimeDesiredArtifactsSummary>> {
+  const uniqueHostIds = Array.from(
+    new Set(host_ids.map((id) => `${id ?? ""}`.trim()).filter(Boolean)),
+  );
+  if (!uniqueHostIds.length) {
+    return new Map();
+  }
+  await ensureProjectHostRuntimeDeploymentsSchema();
+  const globalRows = await listProjectHostRuntimeDeployments({
+    scope_type: "global",
+  });
+  const { rows } = await pool().query<{
+    host_id: string;
+    target: string;
+    desired_version: string;
+    updated_at: Date | string;
+  }>(
+    `SELECT host_id::text AS host_id, target, desired_version, updated_at
+     FROM project_host_runtime_deployments
+     WHERE scope_type='host'
+       AND target_type='artifact'
+       AND host_id::text = ANY($1::text[])
+       AND target = ANY($2::text[])`,
+    [uniqueHostIds, ["project-host", "project-bundle", "tools"]],
+  );
+  const setSummaryValue = (
+    summary: HostRuntimeDesiredArtifactsSummary,
+    target: string,
+    desired_version: string,
+    updated_at?: string,
+  ) => {
+    switch (target) {
+      case "project-host":
+        summary.project_host = desired_version;
+        break;
+      case "project-bundle":
+        summary.project_bundle = desired_version;
+        break;
+      case "tools":
+        summary.tools = desired_version;
+        break;
+      default:
+        return;
+    }
+    if (!summary.updated_at) {
+      summary.updated_at = updated_at;
+      return;
+    }
+    if (!updated_at) return;
+    const currentMs = new Date(summary.updated_at).getTime();
+    const nextMs = new Date(updated_at).getTime();
+    if (
+      Number.isFinite(nextMs) &&
+      (!Number.isFinite(currentMs) || nextMs > currentMs)
+    ) {
+      summary.updated_at = updated_at;
+    }
+  };
+  const globalSummary: HostRuntimeDesiredArtifactsSummary = {};
+  for (const record of globalRows) {
+    if (record.target_type !== "artifact") continue;
+    setSummaryValue(
+      globalSummary,
+      record.target,
+      record.desired_version,
+      record.updated_at,
+    );
+  }
+  const summaries = new Map<string, HostRuntimeDesiredArtifactsSummary>();
+  for (const host_id of uniqueHostIds) {
+    summaries.set(host_id, { ...globalSummary });
+  }
+  for (const row of rows) {
+    const host_id = `${row?.host_id ?? ""}`.trim();
+    const desired_version = `${row?.desired_version ?? ""}`.trim();
+    const target = `${row?.target ?? ""}`.trim();
+    if (!host_id || !desired_version || !target) continue;
+    const summary = summaries.get(host_id) ?? {};
+    setSummaryValue(
+      summary,
+      target,
+      desired_version,
+      new Date(row.updated_at).toISOString(),
+    );
+    summaries.set(host_id, summary);
+  }
+  return summaries;
 }
 
 const SELF_HOST_RESIZE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -1557,6 +1699,13 @@ export async function listHosts({
     window_minutes: 60,
     max_points: 60,
   });
+  const runtimeExceptionSummaries = await loadHostRuntimeExceptionSummaries(
+    visibleRows.map(({ row }) => row.id),
+  );
+  const runtimeDesiredArtifactSummaries =
+    await loadHostRuntimeDesiredArtifactSummaries(
+      visibleRows.map(({ row }) => row.id),
+    );
 
   return visibleRows.map(
     ({ row, scope, can_place, can_start, reason_unavailable, starred }) =>
@@ -1568,6 +1717,8 @@ export async function listHosts({
         backup_status: backupStatus.get(row.id),
         starred,
         metrics_history: metricsHistory.get(row.id),
+        runtime_exception_summary: runtimeExceptionSummaries.get(row.id),
+        runtime_desired_artifacts: runtimeDesiredArtifactSummaries.get(row.id),
       }),
   );
 }

@@ -33,6 +33,8 @@ import type {
   HostManagedComponentRolloutRequest,
   HostManagedComponentRolloutResponse,
 } from "@cocalc/conat/project-host/api";
+import { installedProjectHostArtifactVersion } from "./hosts-runtime-observation";
+import { runtimeDeploymentsForAlignedProjectHostVersion } from "./hosts-runtime-deployment-planning";
 
 export async function upgradeHostSoftwareInternalHelper({
   account_id,
@@ -164,6 +166,35 @@ export async function upgradeHostSoftwareInternalHelper({
   const runtimeDeployments = runtimeDeploymentsForUpgradeResults(results, {
     alignRuntimeStack: align_runtime_stack,
   });
+  const hasAlignedProjectHostRuntimeTargets = runtimeDeployments.some(
+    (deployment) =>
+      deployment.target_type === "component" &&
+      deployment.target === "project-host",
+  );
+  if (
+    align_runtime_stack &&
+    requestedProjectHostUpgrade &&
+    !hasAlignedProjectHostRuntimeTargets
+  ) {
+    const explicitProjectHostTarget = targets.find(
+      (target) =>
+        target.artifact === "project-host" &&
+        `${target.version ?? ""}`.trim().length > 0,
+    );
+    const refreshedRow =
+      explicitProjectHostTarget == null || !results.length
+        ? await loadHostForStartStop(id, account_id)
+        : undefined;
+    const desiredProjectHostVersion =
+      `${explicitProjectHostTarget?.version ?? ""}`.trim() ||
+      installedProjectHostArtifactVersion(refreshedRow ?? row);
+    runtimeDeployments.push(
+      ...runtimeDeploymentsForAlignedProjectHostVersion({
+        version: desiredProjectHostVersion,
+        rolloutReason: "project_host_align_runtime_stack",
+      }),
+    );
+  }
   if (runtimeDeployments.length) {
     await setProjectHostRuntimeDeployments({
       scope_type: "host",

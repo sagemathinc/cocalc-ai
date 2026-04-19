@@ -553,6 +553,20 @@ function rollbackVersionLabel(
   return badges.length ? `${version} (${badges.join(", ")})` : version;
 }
 
+function formatBytes(value?: number): string | undefined {
+  if (!Number.isFinite(value) || !value || value <= 0) {
+    return undefined;
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let unit = 0;
+  let scaled = value;
+  while (scaled >= 1024 && unit < units.length - 1) {
+    scaled /= 1024;
+    unit += 1;
+  }
+  return `${scaled >= 10 || unit === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[unit]}`;
+}
+
 function componentDeploymentRecord(
   status: HostRuntimeDeploymentStatus | undefined,
   component: string,
@@ -1834,6 +1848,18 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               <code>{installedVersions.join(", ")}</code>
                             </Typography.Text>
                           )}
+                          {!!formatBytes(
+                            observedArtifact?.installed_bytes_total,
+                          ) && (
+                            <Typography.Text>
+                              Installed size:{" "}
+                              <code>
+                                {formatBytes(
+                                  observedArtifact?.installed_bytes_total,
+                                )}
+                              </code>
+                            </Typography.Text>
+                          )}
                           {!!observedArtifact?.referenced_versions?.length && (
                             <Typography.Text>
                               Referenced by running projects:{" "}
@@ -1863,6 +1889,50 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 {rollbackTarget.last_known_good_version ??
                                   rollbackTarget.previous_version ??
                                   "none"}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {!!rollbackTarget?.protected_versions?.length && (
+                            <Typography.Text>
+                              Protected from pruning:{" "}
+                              <code>
+                                {rollbackTarget.protected_versions.join(", ")}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {!!formatBytes(
+                            rollbackTarget?.protected_bytes_total,
+                          ) && (
+                            <Typography.Text>
+                              Protected bytes:{" "}
+                              <code>
+                                {formatBytes(
+                                  rollbackTarget?.protected_bytes_total,
+                                )}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {rollbackTarget && (
+                            <Typography.Text>
+                              Prune candidates:{" "}
+                              <code>
+                                {rollbackTarget.prune_candidate_versions?.length
+                                  ? rollbackTarget.prune_candidate_versions.join(
+                                      ", ",
+                                    )
+                                  : "none"}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {!!formatBytes(
+                            rollbackTarget?.prune_candidate_bytes_total,
+                          ) && (
+                            <Typography.Text>
+                              Prune-candidate bytes:{" "}
+                              <code>
+                                {formatBytes(
+                                  rollbackTarget?.prune_candidate_bytes_total,
+                                )}
                               </code>
                             </Typography.Text>
                           )}
@@ -2255,6 +2325,50 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 {rollbackTarget.last_known_good_version ??
                                   rollbackTarget.previous_version ??
                                   "none"}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {!!rollbackTarget?.protected_versions?.length && (
+                            <Typography.Text>
+                              Protected from pruning:{" "}
+                              <code>
+                                {rollbackTarget.protected_versions.join(", ")}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {!!formatBytes(
+                            rollbackTarget?.protected_bytes_total,
+                          ) && (
+                            <Typography.Text>
+                              Protected bytes:{" "}
+                              <code>
+                                {formatBytes(
+                                  rollbackTarget?.protected_bytes_total,
+                                )}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {rollbackTarget && (
+                            <Typography.Text>
+                              Prune candidates:{" "}
+                              <code>
+                                {rollbackTarget.prune_candidate_versions?.length
+                                  ? rollbackTarget.prune_candidate_versions.join(
+                                      ", ",
+                                    )
+                                  : "none"}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {!!formatBytes(
+                            rollbackTarget?.prune_candidate_bytes_total,
+                          ) && (
+                            <Typography.Text>
+                              Prune-candidate bytes:{" "}
+                              <code>
+                                {formatBytes(
+                                  rollbackTarget?.prune_candidate_bytes_total,
+                                )}
                               </code>
                             </Typography.Text>
                           )}

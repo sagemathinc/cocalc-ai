@@ -390,6 +390,11 @@ export interface HostMetrics {
   history?: HostMetricsHistory;
 }
 
+export interface HostRuntimeExceptionSummary {
+  host_override_count: number;
+  host_override_targets: HostRuntimeDeploymentTarget[];
+}
+
 export interface HostCatalog {
   provider: string;
   entries: HostCatalogEntry[];
@@ -437,6 +442,7 @@ export interface Host {
   provider_observed_at?: string;
   observed_host_agent?: HostRuntimeHostAgentObservation;
   observed_components?: HostManagedComponentStatus[];
+  runtime_exception_summary?: HostRuntimeExceptionSummary;
   deleted?: string;
   backup_status?: HostBackupStatus;
   bootstrap?: HostBootstrapStatus;
@@ -589,6 +595,11 @@ export interface HostRuntimeArtifactObservation {
   current_version?: string;
   current_build_id?: string;
   installed_versions: string[];
+  version_bytes?: Array<{
+    version: string;
+    bytes: number;
+  }>;
+  installed_bytes_total?: number;
   referenced_versions?: Array<{
     version: string;
     project_count: number;
@@ -645,6 +656,15 @@ export interface HostRuntimeRollbackTarget {
   previous_version?: string;
   last_known_good_version?: string;
   retained_versions: string[];
+  referenced_versions?: Array<{
+    version: string;
+    project_count: number;
+  }>;
+  protected_versions: string[];
+  prune_candidate_versions: string[];
+  retained_bytes_total?: number;
+  protected_bytes_total?: number;
+  prune_candidate_bytes_total?: number;
 }
 
 export interface HostRuntimeDeploymentReconcileDecision {

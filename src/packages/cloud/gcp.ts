@@ -89,6 +89,26 @@ function isStartResourceNotReadyFingerprintError(err: unknown): boolean {
   );
 }
 
+function isRetryableOperationWaitError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const anyErr = err as {
+    code?: string | number;
+    message?: string;
+    details?: string;
+  };
+  const code = `${anyErr.code ?? ""}`.trim().toUpperCase();
+  if (
+    code === "ETIMEDOUT" ||
+    code === "ECONNRESET" ||
+    code === "ECONNABORTED" ||
+    code === "EAI_AGAIN"
+  ) {
+    return true;
+  }
+  const msg = String(anyErr.message ?? anyErr.details ?? "");
+  return /timed out/i.test(msg) || /ECONNRESET/i.test(msg);
+}
+
 function diskTypeFor(spec: HostSpec): string {
   switch (spec.disk_type) {
     case "ssd":
@@ -234,19 +254,38 @@ async function waitUntilOperationComplete({
     return;
   }
   const operationsClient = new ZoneOperationsClient(credentials);
+  const waitForOperationUpdate = async () => {
+    const maxAttempts = 5;
+    let attempt = 0;
+    while (true) {
+      attempt += 1;
+      try {
+        const [nextOperation] = await operationsClient.wait({
+          operation: operation.name,
+          project: credentials.projectId,
+          zone,
+        });
+        return nextOperation;
+      } catch (err) {
+        const retryable =
+          isRetryableOperationWaitError(err) && attempt < maxAttempts;
+        if (!retryable) throw err;
+        logger.warn("gcp operation wait retry", {
+          operation: operation.name,
+          project: credentials.projectId,
+          zone,
+          attempt,
+          err: String(err),
+        });
+        await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+      }
+    }
+  };
   if (!operation.status) {
-    [operation] = await operationsClient.wait({
-      operation: operation.name,
-      project: credentials.projectId,
-      zone,
-    });
+    operation = await waitForOperationUpdate();
   }
   while (operation.status !== "DONE") {
-    [operation] = await operationsClient.wait({
-      operation: operation.name,
-      project: credentials.projectId,
-      zone,
-    });
+    operation = await waitForOperationUpdate();
   }
   const opError = operation?.error;
   const opErrors = Array.isArray(opError?.errors) ? opError.errors : [];

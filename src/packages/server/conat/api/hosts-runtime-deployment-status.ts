@@ -44,7 +44,9 @@ import {
 
 type RuntimeStatusHostControlClient = {
   getManagedComponentStatus: () => Promise<HostManagedComponentStatus[]>;
-  getInstalledRuntimeArtifacts: () => Promise<any[]>;
+  getInstalledRuntimeArtifacts: (opts?: {
+    include_sizes?: boolean;
+  }) => Promise<any[]>;
   getHostAgentStatus: () => Promise<any>;
 };
 
@@ -110,7 +112,7 @@ export async function getHostRuntimeDeploymentStatusInternal({
       const [componentsResult, artifactsResult, hostAgentResult] =
         await Promise.allSettled([
           client.getManagedComponentStatus(),
-          client.getInstalledRuntimeArtifacts(),
+          client.getInstalledRuntimeArtifacts({ include_sizes: true }),
           client.getHostAgentStatus(),
         ]);
       if (componentsResult.status === "fulfilled") {
