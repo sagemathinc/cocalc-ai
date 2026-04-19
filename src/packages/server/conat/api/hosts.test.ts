@@ -1115,8 +1115,10 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
         kind: "host-reconcile-runtime-deployments",
         scope_type: "host",
         scope_id: HOST_ID,
+        created_by: ACCOUNT_ID,
         input: expect.objectContaining({
           id: HOST_ID,
+          account_id: ACCOUNT_ID,
           components: ["acp-worker"],
           reason: "automatic_runtime_deployment_reconcile",
         }),
@@ -1142,7 +1144,9 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
         kind: "host-reconcile-runtime-deployments",
         scope_type: "host",
         scope_id: HOST_ID,
+        created_by: ACCOUNT_ID,
         input: expect.objectContaining({
+          account_id: ACCOUNT_ID,
           components: ["acp-worker"],
         }),
       }),
@@ -1280,8 +1284,10 @@ describe("hosts.setHostRuntimeDeployments automatic artifact reconcile", () => {
         kind: "host-upgrade-software",
         scope_type: "host",
         scope_id: HOST_ID,
+        created_by: ACCOUNT_ID,
         input: expect.objectContaining({
           id: HOST_ID,
+          account_id: ACCOUNT_ID,
           targets: [{ artifact: "project-bundle", version: "bundle-v5" }],
         }),
       }),
