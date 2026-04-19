@@ -384,6 +384,19 @@ function formatList(values: unknown): string {
   return values.map((value) => `${value ?? ""}`.trim()).join(", ");
 }
 
+function formatBytesValue(value: unknown): string {
+  const bytes = Number(value ?? 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let unit = 0;
+  let scaled = bytes;
+  while (scaled >= 1024 && unit < units.length - 1) {
+    scaled /= 1024;
+    unit += 1;
+  }
+  return `${scaled >= 10 || unit === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[unit]}`;
+}
+
 function formatArtifactReferences(value: unknown): string {
   if (!Array.isArray(value) || value.length === 0) return "";
   return value
@@ -449,6 +462,7 @@ function formatObservedArtifactRows(
     current_version: artifact.current_version ?? "",
     current_build_id: artifact.current_build_id ?? "",
     installed_versions: formatList(artifact.installed_versions),
+    installed_bytes_total: formatBytesValue(artifact.installed_bytes_total),
     referenced_versions: formatArtifactReferences(artifact.referenced_versions),
   }));
 }
@@ -468,6 +482,11 @@ function formatRollbackTargetRows(
     referenced_versions: formatArtifactReferences(target.referenced_versions),
     protected_versions: formatList(target.protected_versions),
     prune_candidate_versions: formatList(target.prune_candidate_versions),
+    retained_bytes_total: formatBytesValue(target.retained_bytes_total),
+    protected_bytes_total: formatBytesValue(target.protected_bytes_total),
+    prune_candidate_bytes_total: formatBytesValue(
+      target.prune_candidate_bytes_total,
+    ),
   }));
 }
 

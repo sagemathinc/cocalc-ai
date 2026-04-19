@@ -116,6 +116,9 @@ but "which parts are finished, partial, or still missing?"
 3. Retained rollback inventory and pruning policy are still incomplete.
    - the system can now observe referenced bundle/tools versions
    - rollback targets now surface protected vs prune-candidate versions
+   - live deploy status now includes retained/protected/prunable byte totals for
+     runtime artifacts, so operators can reason about disk cost instead of only
+     version counts
    - host-side bundle/tools pruning now preserves versions referenced by
      running projects instead of treating every artifact as a blind keep-3
      cache

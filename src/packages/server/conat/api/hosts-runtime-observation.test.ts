@@ -127,6 +127,14 @@ describe("summarizeRollbackTargets", () => {
               "bundle-v2",
               "bundle-v1",
             ],
+            version_bytes: [
+              { version: "bundle-v5", bytes: 500 },
+              { version: "bundle-v4", bytes: 400 },
+              { version: "bundle-v3", bytes: 300 },
+              { version: "bundle-v2", bytes: 200 },
+              { version: "bundle-v1", bytes: 100 },
+            ],
+            installed_bytes_total: 1500,
             referenced_versions: [{ version: "bundle-v2", project_count: 3 }],
           },
         ],
@@ -149,6 +157,9 @@ describe("summarizeRollbackTargets", () => {
       referenced_versions: [{ version: "bundle-v2", project_count: 3 }],
       protected_versions: ["bundle-v5", "bundle-v4", "bundle-v2"],
       prune_candidate_versions: ["bundle-v3", "bundle-v1"],
+      retained_bytes_total: 1500,
+      protected_bytes_total: 1100,
+      prune_candidate_bytes_total: 400,
     });
   });
 });

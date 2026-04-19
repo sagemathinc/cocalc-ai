@@ -728,18 +728,27 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
           current_version: "ph-v2",
           current_build_id: "build-ph-v2",
           installed_versions: ["ph-v2", "ph-v1"],
+          version_bytes: [
+            { version: "ph-v2", bytes: 2000 },
+            { version: "ph-v1", bytes: 1000 },
+          ],
+          installed_bytes_total: 3000,
         },
         {
           artifact: "project-bundle",
           current_version: "bundle-v4",
           current_build_id: "build-bundle-v4",
           installed_versions: ["bundle-v4"],
+          version_bytes: [{ version: "bundle-v4", bytes: 4000 }],
+          installed_bytes_total: 4000,
           referenced_versions: [{ version: "bundle-v4", project_count: 2 }],
         },
         {
           artifact: "tools",
           current_version: "tools-v7",
           installed_versions: ["tools-v7"],
+          version_bytes: [{ version: "tools-v7", bytes: 7000 }],
+          installed_bytes_total: 7000,
           referenced_versions: [
             { version: "tools-v7", project_count: 1 },
             { version: "tools-v6", project_count: 1 },
@@ -807,6 +816,8 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         current_version: "bundle-v4",
         current_build_id: "build-bundle-v4",
         installed_versions: ["bundle-v4"],
+        version_bytes: [{ version: "bundle-v4", bytes: 4000 }],
+        installed_bytes_total: 4000,
         referenced_versions: [{ version: "bundle-v4", project_count: 2 }],
       },
       {
@@ -814,11 +825,18 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         current_version: "ph-v2",
         current_build_id: "build-ph-v2",
         installed_versions: ["ph-v2", "ph-v1"],
+        version_bytes: [
+          { version: "ph-v2", bytes: 2000 },
+          { version: "ph-v1", bytes: 1000 },
+        ],
+        installed_bytes_total: 3000,
       },
       {
         artifact: "tools",
         current_version: "tools-v7",
         installed_versions: ["tools-v7"],
+        version_bytes: [{ version: "tools-v7", bytes: 7000 }],
+        installed_bytes_total: 7000,
         referenced_versions: [
           { version: "tools-v7", project_count: 1 },
           { version: "tools-v6", project_count: 1 },
@@ -872,6 +890,9 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         referenced_versions: [],
         protected_versions: ["ph-v2", "ph-v1"],
         prune_candidate_versions: [],
+        retained_bytes_total: 3000,
+        protected_bytes_total: 3000,
+        prune_candidate_bytes_total: undefined,
       },
       {
         target_type: "component",
@@ -885,6 +906,9 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         referenced_versions: [],
         protected_versions: ["ph-v2", "ph-v1"],
         prune_candidate_versions: [],
+        retained_bytes_total: 3000,
+        protected_bytes_total: 3000,
+        prune_candidate_bytes_total: undefined,
       },
     ]);
     expect(status.observation_error).toBeUndefined();

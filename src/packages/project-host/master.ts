@@ -756,8 +756,8 @@ export async function startMasterRegistration({
       async getManagedComponentStatus() {
         return getManagedComponentStatus();
       },
-      async getInstalledRuntimeArtifacts() {
-        return getInstalledRuntimeArtifacts();
+      async getInstalledRuntimeArtifacts(opts) {
+        return getInstalledRuntimeArtifacts(opts);
       },
       async getHostAgentStatus() {
         return readHostAgentState();

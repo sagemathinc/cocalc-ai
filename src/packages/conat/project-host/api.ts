@@ -105,10 +105,19 @@ export interface HostInstalledRuntimeArtifactStatus {
   current_version?: string;
   current_build_id?: string;
   installed_versions: string[];
+  version_bytes?: Array<{
+    version: string;
+    bytes: number;
+  }>;
+  installed_bytes_total?: number;
   referenced_versions?: Array<{
     version: string;
     project_count: number;
   }>;
+}
+
+export interface HostInstalledRuntimeArtifactsRequest {
+  include_sizes?: boolean;
 }
 
 export interface HostAgentProjectHostPendingRollout {
@@ -261,9 +270,9 @@ export interface HostControlApi {
   }) => Promise<HostSshAuthorizedKeysResponse & { removed: boolean }>;
   getBackupExecutionStatus: () => Promise<HostBackupExecutionStatus>;
   getManagedComponentStatus: () => Promise<HostManagedComponentStatus[]>;
-  getInstalledRuntimeArtifacts: () => Promise<
-    HostInstalledRuntimeArtifactStatus[]
-  >;
+  getInstalledRuntimeArtifacts: (
+    opts?: HostInstalledRuntimeArtifactsRequest,
+  ) => Promise<HostInstalledRuntimeArtifactStatus[]>;
   getHostAgentStatus: () => Promise<HostAgentStatus>;
   rolloutManagedComponents: (
     opts: HostManagedComponentRolloutRequest,

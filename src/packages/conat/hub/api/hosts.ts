@@ -595,6 +595,11 @@ export interface HostRuntimeArtifactObservation {
   current_version?: string;
   current_build_id?: string;
   installed_versions: string[];
+  version_bytes?: Array<{
+    version: string;
+    bytes: number;
+  }>;
+  installed_bytes_total?: number;
   referenced_versions?: Array<{
     version: string;
     project_count: number;
@@ -657,6 +662,9 @@ export interface HostRuntimeRollbackTarget {
   }>;
   protected_versions: string[];
   prune_candidate_versions: string[];
+  retained_bytes_total?: number;
+  protected_bytes_total?: number;
+  prune_candidate_bytes_total?: number;
 }
 
 export interface HostRuntimeDeploymentReconcileDecision {

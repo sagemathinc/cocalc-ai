@@ -134,4 +134,32 @@ describe("getInstalledRuntimeArtifacts", () => {
       { version: "tools-a", project_count: 1 },
     ]);
   });
+
+  it("can include installed bytes on demand", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-software-"));
+    const bundlesRoot = path.join(root, "project-bundles");
+    fs.mkdirSync(bundlesRoot, { recursive: true });
+    const currentBundle = makeVersionDir(bundlesRoot, "bundle-b");
+    fs.writeFileSync(path.join(currentBundle, "README.txt"), "hello world");
+    fs.symlinkSync(currentBundle, path.join(bundlesRoot, "current"));
+    process.env.COCALC_PROJECT_BUNDLES = bundlesRoot;
+
+    const inventory = getInstalledRuntimeArtifacts({ include_sizes: true });
+    expect(
+      inventory.find((entry) => entry.artifact === "project-bundle"),
+    ).toEqual({
+      artifact: "project-bundle",
+      current_version: "bundle-b",
+      current_build_id: undefined,
+      installed_versions: ["bundle-b"],
+      version_bytes: [
+        {
+          version: "bundle-b",
+          bytes: "hello world".length,
+        },
+      ],
+      installed_bytes_total: "hello world".length,
+      referenced_versions: [],
+    });
+  });
 });
