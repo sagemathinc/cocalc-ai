@@ -124,6 +124,21 @@ but "which parts are finished, partial, or still missing?"
      cache
    - host-side `project-host` pruning now also preserves the host-agent's own
      rollback checkpoint versions instead of relying only on recency
+   - host-side retention policy is now configurable by env and can use
+     per-artifact byte budgets in addition to keep-count floors
+   - control-plane software upgrades now send retention policy explicitly, and
+     host runtime status surfaces the host's effective keep floor / byte budget
+   - durable default retention policy now lives in `server_settings` instead of
+     only fixed server-side constants, while host env vars remain last-mile
+     overrides
+   - admin settings now expose a guided wizard for editing runtime retention
+     policy instead of requiring raw JSON editing only
+   - the host drawer now renders rollback / protected / prunable versions with
+     human-readable timestamps and published artifact messages when that
+     metadata is available, instead of only raw opaque version strings
+   - the host drawer now also explains why versions are protected vs prunable
+     and labels the primary rollback action explicitly as last-known-good or
+     previous when possible
    - but local rollback inventory, retention policy, and rollback candidate
      surfacing are still not fully operator-friendly yet
 4. Some desired-state semantics are still incomplete or only partially proven.

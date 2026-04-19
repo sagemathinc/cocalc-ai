@@ -9,6 +9,7 @@ import type {
   ProjectState,
 } from "@cocalc/util/db-schema/projects";
 import type { SnapshotSchedule } from "@cocalc/util/consts/snapshots";
+export { DEFAULT_RUNTIME_RETENTION_POLICY } from "./retention-policy";
 
 export interface HostCreateProjectRequest extends CreateProjectOptions {
   project_id?: string;
@@ -29,6 +30,13 @@ export interface HostRuntimeLogResponse {
   lines: number;
   text: string;
 }
+
+export type HostRuntimeLogSource =
+  | "project-host"
+  | "conat-router"
+  | "conat-persist"
+  | "host-agent"
+  | "supervision-events";
 
 export interface HostProjectRuntimeLogResponse {
   project_id: string;
@@ -100,6 +108,15 @@ export type HostInstalledRuntimeArtifact =
   | "project-bundle"
   | "tools";
 
+export interface HostRuntimeArtifactRetentionPolicy {
+  keep_count: number;
+  max_bytes?: number;
+}
+
+export type HostRuntimeRetentionPolicy = Partial<
+  Record<HostInstalledRuntimeArtifact, HostRuntimeArtifactRetentionPolicy>
+>;
+
 export interface HostInstalledRuntimeArtifactStatus {
   artifact: HostInstalledRuntimeArtifact;
   current_version?: string;
@@ -114,6 +131,7 @@ export interface HostInstalledRuntimeArtifactStatus {
     version: string;
     project_count: number;
   }>;
+  retention_policy?: HostRuntimeArtifactRetentionPolicy;
 }
 
 export interface HostInstalledRuntimeArtifactsRequest {
@@ -253,7 +271,10 @@ export interface HostControlApi {
     opts: UpgradeSoftwareRequest,
   ) => Promise<UpgradeSoftwareResponse>;
   growBtrfs: (opts: { disk_gb?: number }) => Promise<{ ok: boolean }>;
-  getRuntimeLog: (opts: { lines?: number }) => Promise<HostRuntimeLogResponse>;
+  getRuntimeLog: (opts: {
+    lines?: number;
+    source?: HostRuntimeLogSource;
+  }) => Promise<HostRuntimeLogResponse>;
   getProjectRuntimeLog: (opts: {
     project_id: string;
     lines?: number;
@@ -377,6 +398,7 @@ export interface UpgradeSoftwareRequest {
   targets: SoftwareUpgradeTarget[];
   base_url?: string;
   restart_project_host?: boolean;
+  retention_policy?: HostRuntimeRetentionPolicy;
 }
 
 export interface UpgradeSoftwareResult {

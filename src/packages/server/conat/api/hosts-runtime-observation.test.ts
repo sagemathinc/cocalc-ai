@@ -160,6 +160,7 @@ describe("summarizeRollbackTargets", () => {
       retained_bytes_total: 1500,
       protected_bytes_total: 1100,
       prune_candidate_bytes_total: 400,
+      retention_policy: { keep_count: 3 },
     });
   });
 });

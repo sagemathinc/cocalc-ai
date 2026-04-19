@@ -297,6 +297,11 @@ type HostListViewModel = {
       source: "configured" | "hub";
     }) => void | Promise<void>;
     settingClusterDefaultKey?: string;
+    onAlignProjectHostFleetVersion?: (opts: {
+      desired_version: string;
+      source: "configured" | "hub";
+    }) => void | Promise<void>;
+    aligningProjectHostFleetKey?: string;
   };
 };
 
@@ -1223,19 +1228,27 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       <Alert
         type="info"
         showIcon
-        title="Runtime exceptions are visible in this host list."
+        message="Some visible hosts are not simply following the fleet default."
         description={
-          <Space size="small" wrap>
-            {runtimeExceptionCounts.pinned > 0 && (
-              <Tag color="blue">
-                Pinned by host override: {runtimeExceptionCounts.pinned}
-              </Tag>
-            )}
-            {runtimeExceptionCounts.autoRolledBack > 0 && (
-              <Tag color="orange">
-                Auto-rolled back: {runtimeExceptionCounts.autoRolledBack}
-              </Tag>
-            )}
+          <Space direction="vertical" size={6} style={{ width: "100%" }}>
+            <Typography.Text type="secondary">
+              Host overrides pin a host to an explicit desired runtime version,
+              so it may not follow later fleet-default changes until you remove
+              the override. Automatic rollbacks also show up here so they are
+              easy to spot during fleet management.
+            </Typography.Text>
+            <Space size="small" wrap>
+              {runtimeExceptionCounts.pinned > 0 && (
+                <Tag color="blue">
+                  Host overrides: {runtimeExceptionCounts.pinned}
+                </Tag>
+              )}
+              {runtimeExceptionCounts.autoRolledBack > 0 && (
+                <Tag color="orange">
+                  Auto-rolled back: {runtimeExceptionCounts.autoRolledBack}
+                </Tag>
+              )}
+            </Space>
           </Space>
         }
         style={{ marginBottom: 12 }}

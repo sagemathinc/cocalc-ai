@@ -108,6 +108,8 @@ type HostDrawerViewModel = {
     configuredError?: string;
     hub: Partial<Record<HostSoftwareArtifact, HostSoftwareAvailableVersion>>;
     hubError?: string;
+    configuredCatalog?: HostSoftwareAvailableVersion[];
+    hubCatalog?: HostSoftwareAvailableVersion[];
     refresh: () => Promise<void>;
     hubSourceBaseUrl?: string;
   };
@@ -443,6 +445,18 @@ function sourceVersionForArtifact({
     : softwareVersions.hub?.[sourceArtifact];
 }
 
+function runtimeArtifactForSoftwareArtifact(
+  artifact: HostSoftwareArtifact,
+): HostRuntimeArtifact {
+  if (artifact === "project" || artifact === "project-bundle") {
+    return "project-bundle";
+  }
+  if (artifact === "project-host") {
+    return "project-host";
+  }
+  return "tools";
+}
+
 function sourceVersionForComponent({
   softwareVersions,
   source,
@@ -539,18 +553,306 @@ function rollbackVersionOptions(
   );
 }
 
-function rollbackVersionLabel(
+function primaryRollbackSelection(
   rollbackTarget: HostRuntimeRollbackTarget | undefined,
-  version: string,
-): string {
-  const badges: string[] = [];
+): {
+  version?: string;
+  source?: "last_known_good" | "previous_version";
+  label: string;
+} {
+  if (rollbackTarget?.last_known_good_version) {
+    return {
+      version: rollbackTarget.last_known_good_version,
+      source: "last_known_good",
+      label: "last known good",
+    };
+  }
+  if (rollbackTarget?.previous_version) {
+    return {
+      version: rollbackTarget.previous_version,
+      source: "previous_version",
+      label: "previous",
+    };
+  }
+  return { label: "retained version" };
+}
+
+type RuntimeVersionMetadata = {
+  built_at?: string;
+  message?: string;
+  source?: "configured" | "hub";
+};
+
+type RuntimeVersionMetadataIndex = Map<string, RuntimeVersionMetadata>;
+
+function runtimeVersionKey(artifact: HostRuntimeArtifact, version: string) {
+  return `${artifact}:${version}`;
+}
+
+function buildRuntimeVersionMetadataIndex({
+  configuredCatalog,
+  hubCatalog,
+}: {
+  configuredCatalog?: HostSoftwareAvailableVersion[];
+  hubCatalog?: HostSoftwareAvailableVersion[];
+}): RuntimeVersionMetadataIndex {
+  const out: RuntimeVersionMetadataIndex = new Map();
+  const ingest = (
+    source: "configured" | "hub",
+    rows?: HostSoftwareAvailableVersion[],
+  ) => {
+    for (const row of rows ?? []) {
+      const version = `${row.version ?? ""}`.trim();
+      if (!version) continue;
+      const key = runtimeVersionKey(
+        runtimeArtifactForSoftwareArtifact(row.artifact),
+        version,
+      );
+      const prev = out.get(key);
+      if (
+        prev &&
+        (!!prev.built_at || !row.built_at) &&
+        (!!prev.message || !row.message)
+      ) {
+        continue;
+      }
+      out.set(key, {
+        built_at: row.built_at,
+        message: row.message,
+        source,
+      });
+    }
+  };
+  ingest("configured", configuredCatalog);
+  ingest("hub", hubCatalog);
+  return out;
+}
+
+function inferredVersionTimestamp(version?: string): number | undefined {
+  const value = `${version ?? ""}`.trim();
+  if (!value) return undefined;
+  if (/^\d{13}$/.test(value)) {
+    const ts = Number(value);
+    return Number.isFinite(ts) ? ts : undefined;
+  }
+  if (/^\d{10}$/.test(value)) {
+    const ts = Number(value) * 1000;
+    return Number.isFinite(ts) ? ts : undefined;
+  }
+  const buildId = value.match(/^(\d{8}T\d{6}Z)(?:-|$)/)?.[1];
+  if (buildId) {
+    const ts = Date.parse(buildId);
+    return Number.isFinite(ts) ? ts : undefined;
+  }
+  return undefined;
+}
+
+function lookupRuntimeVersionMetadata({
+  artifact,
+  version,
+  metadataIndex,
+}: {
+  artifact: HostRuntimeArtifact;
+  version: string;
+  metadataIndex: RuntimeVersionMetadataIndex;
+}): RuntimeVersionMetadata | undefined {
+  return metadataIndex.get(runtimeVersionKey(artifact, version));
+}
+
+function formatVersionBuiltAt({
+  version,
+  metadata,
+}: {
+  version: string;
+  metadata?: RuntimeVersionMetadata;
+}): string | undefined {
+  const builtAt = metadata?.built_at;
+  if (builtAt) {
+    const ts = Date.parse(builtAt);
+    if (Number.isFinite(ts)) {
+      return new Date(ts).toLocaleString();
+    }
+  }
+  const inferred = inferredVersionTimestamp(version);
+  return inferred ? new Date(inferred).toLocaleString() : undefined;
+}
+
+function runtimeVersionBadges({
+  rollbackTarget,
+  version,
+  section,
+}: {
+  rollbackTarget?: HostRuntimeRollbackTarget;
+  version: string;
+  section?: "protected" | "prune" | "option";
+}): React.ReactNode[] {
+  const badges: React.ReactNode[] = [];
+  if (version === rollbackTarget?.current_version) {
+    badges.push(<Tag key={`${version}:current`}>current</Tag>);
+  }
+  if (version === rollbackTarget?.desired_version) {
+    badges.push(<Tag key={`${version}:desired`}>desired</Tag>);
+  }
   if (version === rollbackTarget?.last_known_good_version) {
-    badges.push("last known good");
+    badges.push(
+      <Tag color="green" key={`${version}:lkg`}>
+        last known good
+      </Tag>,
+    );
   }
   if (version === rollbackTarget?.previous_version) {
-    badges.push("previous");
+    badges.push(
+      <Tag color="blue" key={`${version}:previous`}>
+        previous
+      </Tag>,
+    );
   }
-  return badges.length ? `${version} (${badges.join(", ")})` : version;
+  const reference = rollbackTarget?.referenced_versions?.find(
+    (entry) => entry.version === version,
+  );
+  if (reference) {
+    badges.push(
+      <Tag color="cyan" key={`${version}:referenced`}>
+        running projects x{reference.project_count}
+      </Tag>,
+    );
+  }
+  if (
+    section !== "protected" &&
+    rollbackTarget?.protected_versions?.includes(version)
+  ) {
+    badges.push(<Tag key={`${version}:protected`}>protected</Tag>);
+  }
+  if (
+    section !== "prune" &&
+    rollbackTarget?.prune_candidate_versions?.includes(version)
+  ) {
+    badges.push(
+      <Tag color="orange" key={`${version}:prune`}>
+        prune candidate
+      </Tag>,
+    );
+  }
+  return badges;
+}
+
+function RuntimeVersionDisplay({
+  artifact,
+  version,
+  rollbackTarget,
+  metadataIndex,
+  section,
+}: {
+  artifact: HostRuntimeArtifact;
+  version: string;
+  rollbackTarget?: HostRuntimeRollbackTarget;
+  metadataIndex: RuntimeVersionMetadataIndex;
+  section?: "protected" | "prune" | "option";
+}) {
+  const metadata = lookupRuntimeVersionMetadata({
+    artifact,
+    version,
+    metadataIndex,
+  });
+  const builtAt = formatVersionBuiltAt({ version, metadata });
+  const message = `${metadata?.message ?? ""}`.trim();
+  const source =
+    metadata?.source === "configured"
+      ? "configured catalog"
+      : metadata?.source === "hub"
+        ? "hub /software"
+        : undefined;
+  const badges = runtimeVersionBadges({ rollbackTarget, version, section });
+  const detailLine = [builtAt, source, message].filter(Boolean).join(" · ");
+  return (
+    <Space direction="vertical" size={2} style={{ width: "100%", minWidth: 0 }}>
+      <Space wrap size={[6, 4]}>
+        <Typography.Text code>{version}</Typography.Text>
+        {badges}
+      </Space>
+      {detailLine ? (
+        <Typography.Text
+          type="secondary"
+          style={{
+            fontSize: 12,
+            lineHeight: 1.3,
+            whiteSpace: "normal",
+          }}
+        >
+          {detailLine}
+        </Typography.Text>
+      ) : null}
+    </Space>
+  );
+}
+
+function RuntimeVersionList({
+  title,
+  emptyText,
+  artifact,
+  versions,
+  rollbackTarget,
+  metadataIndex,
+  section,
+}: {
+  title: string;
+  emptyText?: string;
+  artifact: HostRuntimeArtifact;
+  versions?: string[];
+  rollbackTarget?: HostRuntimeRollbackTarget;
+  metadataIndex: RuntimeVersionMetadataIndex;
+  section?: "protected" | "prune";
+}) {
+  return (
+    <Space direction="vertical" size={4} style={{ width: "100%" }}>
+      <Typography.Text>{title}</Typography.Text>
+      {versions?.length ? (
+        <Card size="small" styles={{ body: { padding: 10 } }}>
+          <Space direction="vertical" size={8} style={{ width: "100%" }}>
+            {versions.map((version) => (
+              <RuntimeVersionDisplay
+                key={`${title}:${artifact}:${version}`}
+                artifact={artifact}
+                version={version}
+                rollbackTarget={rollbackTarget}
+                metadataIndex={metadataIndex}
+                section={section}
+              />
+            ))}
+          </Space>
+        </Card>
+      ) : (
+        <Typography.Text type="secondary">
+          {emptyText ?? "none"}
+        </Typography.Text>
+      )}
+    </Space>
+  );
+}
+
+function RuntimeRetentionExplanation({
+  rollbackTarget,
+}: {
+  rollbackTarget?: HostRuntimeRollbackTarget;
+}) {
+  if (!rollbackTarget) return null;
+  const hasReferencedVersions = !!rollbackTarget.referenced_versions?.length;
+  return (
+    <Alert
+      type="info"
+      showIcon
+      message="Local retention policy"
+      description={
+        <span>
+          Protected versions stay installed because they are current, desired,
+          rollback checkpoints, or still referenced
+          {hasReferencedVersions ? " by running projects" : ""}. Prune
+          candidates are retained local cache and are the first versions removed
+          when the keep floor or byte budget needs space.
+        </span>
+      }
+    />
+  );
 }
 
 function formatBytes(value?: number): string | undefined {
@@ -856,14 +1158,35 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     source: "this hub source",
   });
   const softwareHelp = (
-    <div style={{ maxWidth: 420 }}>
-      <div style={{ marginBottom: 8 }}>
-        This section compares the versions currently reported by the host with
-        the newest versions available from the configured software source and
-        from this site&apos;s <code>/software</code> endpoint.
-      </div>
+    <div style={{ maxWidth: 480 }}>
+      <Space direction="vertical" size={8} style={{ width: "100%" }}>
+        <Typography.Text>
+          This section compares the versions currently reported by the host with
+          the newest versions available from the configured software source and
+          from this site&apos;s <code>/software</code> endpoint.
+        </Typography.Text>
+        <Typography.Text type="secondary">
+          Installed runtime artifacts live on the host under{" "}
+          <code>/opt/cocalc/project-host</code>,{" "}
+          <code>/opt/cocalc/project-bundles</code>, and{" "}
+          <code>/opt/cocalc/tools</code>.
+        </Typography.Text>
+        <Typography.Text type="secondary">
+          Local development hubs can publish fresh runtime artifacts with{" "}
+          <code>pnpm hub:daemon:build</code>. Production sites normally publish
+          to the configured software base URL instead.
+        </Typography.Text>
+      </Space>
       <UpgradeConfirmContent />
     </div>
+  );
+  const versionMetadataIndex = React.useMemo(
+    () =>
+      buildRuntimeVersionMetadataIndex({
+        configuredCatalog: softwareVersions?.configuredCatalog,
+        hubCatalog: softwareVersions?.hubCatalog,
+      }),
+    [softwareVersions?.configuredCatalog, softwareVersions?.hubCatalog],
   );
   const onlineTag =
     host && !host.deleted ? (
@@ -1368,6 +1691,10 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 ? ` Hub source: ${softwareVersions.hubSourceBaseUrl}`
                 : " Hub source: this site's /software endpoint."}
             </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Version entries below show the raw version plus inferred build
+              time and published message when that metadata is available.
+            </Typography.Text>
             <Space wrap size={[8, 8]}>
               <Tag color="green">{softwareSummary.upToDate} up to date</Tag>
               <Tag color="orange">
@@ -1631,9 +1958,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   observedTarget?.installed_versions ??
                   observedArtifact?.installed_versions ??
                   [];
-                const rollbackVersion =
-                  rollbackTarget?.last_known_good_version ??
-                  rollbackTarget?.previous_version;
+                const primaryRollback =
+                  primaryRollbackSelection(rollbackTarget);
+                const rollbackVersion = primaryRollback.version;
                 const rollbackOptions = rollbackVersionOptions(rollbackTarget);
                 const selectedRollbackVersion =
                   artifactRollbackSelection[artifact] ??
@@ -1775,7 +2102,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                             onRollbackRuntimeArtifact &&
                             rollbackVersion && (
                               <Popconfirm
-                                title={`Roll back ${label.toLowerCase()} on this host?`}
+                                title={`Roll back ${label.toLowerCase()} to ${primaryRollback.label}?`}
+                                description={`This will switch this host to ${rollbackVersion}.`}
                                 okText="Rollback"
                                 cancelText="Cancel"
                                 onConfirm={() =>
@@ -1790,7 +2118,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 disabled={hostOpActive}
                               >
                                 <Button size="small" disabled={hostOpActive}>
-                                  Rollback
+                                  {primaryRollback.source === "last_known_good"
+                                    ? "Rollback to last known good"
+                                    : primaryRollback.source ===
+                                        "previous_version"
+                                      ? "Rollback to previous"
+                                      : "Rollback"}
                                 </Button>
                               </Popconfirm>
                             )}
@@ -1842,12 +2175,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               error: hubVersion?.error,
                             })}
                           </Typography.Text>
-                          {!!installedVersions.length && (
-                            <Typography.Text>
-                              Installed versions:{" "}
-                              <code>{installedVersions.join(", ")}</code>
-                            </Typography.Text>
-                          )}
+                          <RuntimeVersionList
+                            title="Installed versions"
+                            emptyText="none reported"
+                            artifact={artifact}
+                            versions={installedVersions}
+                            rollbackTarget={rollbackTarget}
+                            metadataIndex={versionMetadataIndex}
+                          />
                           {!!formatBytes(
                             observedArtifact?.installed_bytes_total,
                           ) && (
@@ -1884,22 +2219,63 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                           )}
                           {rollbackTarget && (
                             <Typography.Text>
-                              Rollback candidate:{" "}
+                              Retention keep floor:{" "}
                               <code>
-                                {rollbackTarget.last_known_good_version ??
-                                  rollbackTarget.previous_version ??
-                                  "none"}
+                                {rollbackTarget.retention_policy?.keep_count ??
+                                  "unknown"}
                               </code>
                             </Typography.Text>
                           )}
-                          {!!rollbackTarget?.protected_versions?.length && (
+                          {rollbackTarget && (
                             <Typography.Text>
-                              Protected from pruning:{" "}
+                              Retention byte budget:{" "}
                               <code>
-                                {rollbackTarget.protected_versions.join(", ")}
+                                {formatBytes(
+                                  rollbackTarget.retention_policy?.max_bytes,
+                                ) || "none"}
                               </code>
                             </Typography.Text>
                           )}
+                          <RuntimeRetentionExplanation
+                            rollbackTarget={rollbackTarget}
+                          />
+                          {rollbackTarget && (
+                            <Space
+                              direction="vertical"
+                              size={4}
+                              style={{ width: "100%" }}
+                            >
+                              <Typography.Text>
+                                Rollback candidate:
+                              </Typography.Text>
+                              {rollbackTarget.last_known_good_version ||
+                              rollbackTarget.previous_version ? (
+                                <RuntimeVersionDisplay
+                                  artifact={artifact}
+                                  version={
+                                    rollbackTarget.last_known_good_version ??
+                                    rollbackTarget.previous_version ??
+                                    ""
+                                  }
+                                  rollbackTarget={rollbackTarget}
+                                  metadataIndex={versionMetadataIndex}
+                                />
+                              ) : (
+                                <Typography.Text type="secondary">
+                                  none
+                                </Typography.Text>
+                              )}
+                            </Space>
+                          )}
+                          <RuntimeVersionList
+                            title="Protected from pruning"
+                            emptyText="none"
+                            artifact={artifact}
+                            versions={rollbackTarget?.protected_versions}
+                            rollbackTarget={rollbackTarget}
+                            metadataIndex={versionMetadataIndex}
+                            section="protected"
+                          />
                           {!!formatBytes(
                             rollbackTarget?.protected_bytes_total,
                           ) && (
@@ -1912,18 +2288,15 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               </code>
                             </Typography.Text>
                           )}
-                          {rollbackTarget && (
-                            <Typography.Text>
-                              Prune candidates:{" "}
-                              <code>
-                                {rollbackTarget.prune_candidate_versions?.length
-                                  ? rollbackTarget.prune_candidate_versions.join(
-                                      ", ",
-                                    )
-                                  : "none"}
-                              </code>
-                            </Typography.Text>
-                          )}
+                          <RuntimeVersionList
+                            title="Prune candidates"
+                            emptyText="none"
+                            artifact={artifact}
+                            versions={rollbackTarget?.prune_candidate_versions}
+                            rollbackTarget={rollbackTarget}
+                            metadataIndex={versionMetadataIndex}
+                            section="prune"
+                          />
                           {!!formatBytes(
                             rollbackTarget?.prune_candidate_bytes_total,
                           ) && (
@@ -1946,7 +2319,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 </Typography.Text>
                                 <Select
                                   size="small"
-                                  style={{ minWidth: 260 }}
+                                  style={{ minWidth: 320 }}
+                                  popupMatchSelectWidth={480}
                                   value={selectedRollbackVersion}
                                   onChange={(value) =>
                                     setArtifactRollbackSelection((prev) => ({
@@ -1956,9 +2330,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                   }
                                   options={rollbackOptions.map((value) => ({
                                     value,
-                                    label: rollbackVersionLabel(
-                                      rollbackTarget,
-                                      value,
+                                    label: (
+                                      <RuntimeVersionDisplay
+                                        artifact={artifact}
+                                        version={value}
+                                        rollbackTarget={rollbackTarget}
+                                        metadataIndex={versionMetadataIndex}
+                                        section="option"
+                                      />
                                     ),
                                   }))}
                                   disabled={hostOpActive}
@@ -2065,9 +2444,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   observedTarget?.running_pids ??
                   observedComponent?.running_pids ??
                   [];
-                const rollbackVersion =
-                  rollbackTarget?.last_known_good_version ??
-                  rollbackTarget?.previous_version;
+                const primaryRollback =
+                  primaryRollbackSelection(rollbackTarget);
+                const rollbackVersion = primaryRollback.version;
                 const rollbackOptions = rollbackVersionOptions(rollbackTarget);
                 const selectedRollbackVersion =
                   componentRollbackSelection[component] ??
@@ -2250,7 +2629,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                             onRollbackRuntimeComponent &&
                             rollbackVersion && (
                               <Popconfirm
-                                title={`Roll back ${label.toLowerCase()} on this host?`}
+                                title={`Roll back ${label.toLowerCase()} to ${primaryRollback.label}?`}
+                                description={`This will switch this host to ${rollbackVersion}.`}
                                 okText="Rollback"
                                 cancelText="Cancel"
                                 onConfirm={() =>
@@ -2265,7 +2645,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 disabled={hostOpActive}
                               >
                                 <Button size="small" disabled={hostOpActive}>
-                                  Rollback
+                                  {primaryRollback.source === "last_known_good"
+                                    ? "Rollback to last known good"
+                                    : primaryRollback.source ===
+                                        "previous_version"
+                                      ? "Rollback to previous"
+                                      : "Rollback"}
                                 </Button>
                               </Popconfirm>
                             )}
@@ -2320,22 +2705,63 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                           )}
                           {rollbackTarget && (
                             <Typography.Text>
-                              Rollback candidate:{" "}
+                              Retention keep floor:{" "}
                               <code>
-                                {rollbackTarget.last_known_good_version ??
-                                  rollbackTarget.previous_version ??
-                                  "none"}
+                                {rollbackTarget.retention_policy?.keep_count ??
+                                  "unknown"}
                               </code>
                             </Typography.Text>
                           )}
-                          {!!rollbackTarget?.protected_versions?.length && (
+                          {rollbackTarget && (
                             <Typography.Text>
-                              Protected from pruning:{" "}
+                              Retention byte budget:{" "}
                               <code>
-                                {rollbackTarget.protected_versions.join(", ")}
+                                {formatBytes(
+                                  rollbackTarget.retention_policy?.max_bytes,
+                                ) || "none"}
                               </code>
                             </Typography.Text>
                           )}
+                          <RuntimeRetentionExplanation
+                            rollbackTarget={rollbackTarget}
+                          />
+                          {rollbackTarget && (
+                            <Space
+                              direction="vertical"
+                              size={4}
+                              style={{ width: "100%" }}
+                            >
+                              <Typography.Text>
+                                Rollback candidate:
+                              </Typography.Text>
+                              {rollbackTarget.last_known_good_version ||
+                              rollbackTarget.previous_version ? (
+                                <RuntimeVersionDisplay
+                                  artifact="project-host"
+                                  version={
+                                    rollbackTarget.last_known_good_version ??
+                                    rollbackTarget.previous_version ??
+                                    ""
+                                  }
+                                  rollbackTarget={rollbackTarget}
+                                  metadataIndex={versionMetadataIndex}
+                                />
+                              ) : (
+                                <Typography.Text type="secondary">
+                                  none
+                                </Typography.Text>
+                              )}
+                            </Space>
+                          )}
+                          <RuntimeVersionList
+                            title="Protected from pruning"
+                            emptyText="none"
+                            artifact="project-host"
+                            versions={rollbackTarget?.protected_versions}
+                            rollbackTarget={rollbackTarget}
+                            metadataIndex={versionMetadataIndex}
+                            section="protected"
+                          />
                           {!!formatBytes(
                             rollbackTarget?.protected_bytes_total,
                           ) && (
@@ -2348,18 +2774,15 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               </code>
                             </Typography.Text>
                           )}
-                          {rollbackTarget && (
-                            <Typography.Text>
-                              Prune candidates:{" "}
-                              <code>
-                                {rollbackTarget.prune_candidate_versions?.length
-                                  ? rollbackTarget.prune_candidate_versions.join(
-                                      ", ",
-                                    )
-                                  : "none"}
-                              </code>
-                            </Typography.Text>
-                          )}
+                          <RuntimeVersionList
+                            title="Prune candidates"
+                            emptyText="none"
+                            artifact="project-host"
+                            versions={rollbackTarget?.prune_candidate_versions}
+                            rollbackTarget={rollbackTarget}
+                            metadataIndex={versionMetadataIndex}
+                            section="prune"
+                          />
                           {!!formatBytes(
                             rollbackTarget?.prune_candidate_bytes_total,
                           ) && (
@@ -2383,7 +2806,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 </Typography.Text>
                                 <Select
                                   size="small"
-                                  style={{ minWidth: 260 }}
+                                  style={{ minWidth: 320 }}
+                                  popupMatchSelectWidth={480}
                                   value={selectedRollbackVersion}
                                   onChange={(value) =>
                                     setComponentRollbackSelection((prev) => ({
@@ -2393,9 +2817,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                   }
                                   options={rollbackOptions.map((value) => ({
                                     value,
-                                    label: rollbackVersionLabel(
-                                      rollbackTarget,
-                                      value,
+                                    label: (
+                                      <RuntimeVersionDisplay
+                                        artifact="project-host"
+                                        version={value}
+                                        rollbackTarget={rollbackTarget}
+                                        metadataIndex={versionMetadataIndex}
+                                        section="option"
+                                      />
                                     ),
                                   }))}
                                   disabled={hostOpActive}

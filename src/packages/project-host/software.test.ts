@@ -55,6 +55,7 @@ describe("getInstalledRuntimeArtifacts", () => {
       current_version: "1002",
       current_build_id: "build-1002",
       installed_versions: ["1002", "1001"],
+      retention_policy: { keep_count: 10 },
     });
   });
 
@@ -85,6 +86,7 @@ describe("getInstalledRuntimeArtifacts", () => {
       current_build_id: "bundle-build-b",
       installed_versions: ["bundle-b", "bundle-a"],
       referenced_versions: [],
+      retention_policy: { keep_count: 3 },
     });
     expect(inventory.find((entry) => entry.artifact === "tools")).toEqual({
       artifact: "tools",
@@ -92,6 +94,7 @@ describe("getInstalledRuntimeArtifacts", () => {
       current_build_id: "tools-build-b",
       installed_versions: ["tools-b", "tools-a"],
       referenced_versions: [],
+      retention_policy: { keep_count: 3 },
     });
   });
 
@@ -160,6 +163,40 @@ describe("getInstalledRuntimeArtifacts", () => {
       ],
       installed_bytes_total: "hello world".length,
       referenced_versions: [],
+      retention_policy: { keep_count: 3 },
+    });
+  });
+
+  it("reports persisted retention policy with env overrides applied", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-software-"));
+    const bundlesRoot = path.join(root, "project-bundles");
+    fs.mkdirSync(bundlesRoot, { recursive: true });
+    const currentBundle = makeVersionDir(bundlesRoot, "bundle-b");
+    fs.symlinkSync(currentBundle, path.join(bundlesRoot, "current"));
+    process.env.COCALC_DATA = path.join(root, "data");
+    process.env.COCALC_PROJECT_BUNDLES = bundlesRoot;
+    process.env.COCALC_PROJECT_RUNTIME_ARTIFACT_RETENTION_MAX_BYTES = "4096";
+    fs.mkdirSync(process.env.COCALC_DATA, { recursive: true });
+    fs.writeFileSync(
+      path.join(process.env.COCALC_DATA, "runtime-retention-policy.json"),
+      JSON.stringify(
+        {
+          "project-bundle": {
+            keep_count: 7,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const inventory = getInstalledRuntimeArtifacts();
+    expect(
+      inventory.find((entry) => entry.artifact === "project-bundle")
+        ?.retention_policy,
+    ).toEqual({
+      keep_count: 7,
+      max_bytes: 4096,
     });
   });
 });

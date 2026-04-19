@@ -614,6 +614,10 @@ export class Client extends EventEmitter {
   public readonly recoveryScheduler: RecoveryScheduler;
   public readonly heartbeatScheduler: HeartbeatScheduler;
 
+  private getAddressForLog(): string {
+    return this.options?.address ?? "<unknown address>";
+  }
+
   constructor(options: ClientOptions) {
     super();
     if (process.env.COCALC_TEST_MODE) {
@@ -647,7 +651,7 @@ export class Client extends EventEmitter {
     const { address, path } = cocalcServerToSocketioAddress(
       this.options.address!,
     );
-    logger.debug(`Conat: Connecting to ${this.options.address}...`);
+    logger.debug(`Conat: Connecting to ${this.getAddressForLog()}...`);
     //     if (options.extraHeaders == null) {
     //       console.trace("WARNING: no auth set");
     //     }
@@ -702,14 +706,14 @@ export class Client extends EventEmitter {
       this.permissionError[type]?.set(subject, message);
     });
     this.conn.on("connect", async () => {
-      logger.debug(`Conat: Connected to ${this.options.address}`);
+      logger.debug(`Conat: Connected to ${this.getAddressForLog()}`);
       if (this.conn.connected) {
         this.setState("connected");
       }
     });
     this.conn.io.on("error", (err) => {
       logger.debug(
-        `Conat: Error connecting to ${this.options.address} -- ${err}`,
+        `Conat: Error connecting to ${this.getAddressForLog()} -- ${err}`,
       );
     });
     this.conn.on("disconnect", async () => {
@@ -720,7 +724,9 @@ export class Client extends EventEmitter {
       this.setState("disconnected");
       this.disconnectAllSockets();
     });
-    this.conn.io.connect();
+    if (options.autoConnect !== false) {
+      this.conn.io.connect();
+    }
     this.statsLoop();
   }
 

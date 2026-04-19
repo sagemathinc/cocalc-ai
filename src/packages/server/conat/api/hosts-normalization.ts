@@ -359,9 +359,8 @@ export function parseRow(
       (item) => item.status === "drift" || item.status === "missing",
     ).length;
     const summary_status =
-      lifecycle.summary_status === "reconciling" ||
-      lifecycle.summary_status === "error"
-        ? lifecycle.summary_status
+      lifecycle.summary_status === "reconciling"
+        ? "reconciling"
         : driftCount > 0
           ? "drifted"
           : "in_sync";
@@ -375,9 +374,13 @@ export function parseRow(
       summary_status,
       drift_count: driftCount,
       summary_message:
-        summary_status === "in_sync"
-          ? "desired and installed software are aligned"
-          : lifecycle.summary_message,
+        summary_status === "reconciling"
+          ? lifecycle.summary_message
+          : summary_status === "drifted"
+            ? driftCount === 1
+              ? "1 drift item detected"
+              : `${driftCount} drift items detected`
+            : "desired and installed software are aligned",
       items,
     };
   };
@@ -387,6 +390,7 @@ export function parseRow(
   ): HostBootstrapStatus | undefined => {
     if (!bootstrap || !lifecycle) return bootstrap;
     const bootstrapUpdatedMs = parseTimestampMs(bootstrap.updated_at);
+    const lifecycleDesiredMs = parseTimestampMs(lifecycle.desired_recorded_at);
     const lifecycleStartedMs = parseTimestampMs(
       lifecycle.last_reconcile_started_at,
     );
@@ -395,14 +399,21 @@ export function parseRow(
     );
     if (
       lifecycle.summary_status === "in_sync" &&
-      lifecycleFinishedMs != null &&
-      (bootstrapUpdatedMs == null || bootstrapUpdatedMs <= lifecycleFinishedMs)
+      ((lifecycleFinishedMs != null &&
+        (bootstrapUpdatedMs == null ||
+          bootstrapUpdatedMs <= lifecycleFinishedMs)) ||
+        (lifecycleDesiredMs != null &&
+          (bootstrapUpdatedMs == null ||
+            bootstrapUpdatedMs <= lifecycleDesiredMs)))
     ) {
       return {
         ...bootstrap,
         status: "done",
         updated_at:
-          lifecycle.last_reconcile_finished_at ?? bootstrap.updated_at,
+          maxTimestamp(
+            lifecycle.last_reconcile_finished_at,
+            lifecycle.desired_recorded_at,
+          ) ?? bootstrap.updated_at,
         message:
           lifecycle.summary_message ??
           bootstrap.message ??

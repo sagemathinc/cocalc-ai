@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { HostRuntimeArtifactRetentionPolicy } from "@cocalc/conat/project-host/api";
+import { effectiveRuntimeRetentionPolicy } from "./runtime-retention-policy";
 import { listRuntimeArtifactReferences } from "./sqlite/projects";
 
 export type SoftwareVersions = {
@@ -29,6 +31,7 @@ export type InstalledRuntimeArtifactStatus = {
     version: string;
     project_count: number;
   }>;
+  retention_policy?: HostRuntimeArtifactRetentionPolicy;
 };
 
 const DEFAULT_BUNDLE_ROOT = "/opt/cocalc/project-bundles";
@@ -170,6 +173,7 @@ function describeInstalledArtifact({
   roots,
   include_sizes,
   referenced_versions,
+  retention_policy,
 }: {
   artifact: InstalledRuntimeArtifact;
   currentPath: string;
@@ -179,6 +183,7 @@ function describeInstalledArtifact({
     version: string;
     project_count: number;
   }>;
+  retention_policy?: HostRuntimeArtifactRetentionPolicy;
 }): InstalledRuntimeArtifactStatus {
   const installed = collectInstalledVersionDirs(roots);
   const installed_versions = uniqSortedDescending([...installed.keys()]);
@@ -203,6 +208,7 @@ function describeInstalledArtifact({
         }
       : {}),
     referenced_versions,
+    retention_policy,
   };
 }
 
@@ -281,12 +287,14 @@ export function getInstalledRuntimeArtifacts(opts?: {
     process.env.COCALC_PROJECT_TOOLS ?? DEFAULT_TOOLS_CURRENT;
   const references = listRuntimeArtifactReferences();
   const include_sizes = opts?.include_sizes === true;
+  const retentionPolicy = effectiveRuntimeRetentionPolicy();
   return [
     describeInstalledArtifact({
       artifact: "project-host",
       currentPath: projectHostCurrent,
       roots: projectHostInventoryRoots(projectHostCurrent),
       include_sizes,
+      retention_policy: retentionPolicy["project-host"],
     }),
     describeInstalledArtifact({
       artifact: "project-bundle",
@@ -294,6 +302,7 @@ export function getInstalledRuntimeArtifacts(opts?: {
       roots: siblingInventoryRoots(projectBundleCurrent),
       include_sizes,
       referenced_versions: references.project_bundle,
+      retention_policy: retentionPolicy["project-bundle"],
     }),
     describeInstalledArtifact({
       artifact: "tools",
@@ -301,6 +310,7 @@ export function getInstalledRuntimeArtifacts(opts?: {
       roots: siblingInventoryRoots(toolsCurrent),
       include_sizes,
       referenced_versions: references.tools,
+      retention_policy: retentionPolicy.tools,
     }),
   ];
 }

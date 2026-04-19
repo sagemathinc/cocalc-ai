@@ -2,6 +2,7 @@ import { authFirstRequireAccount, authFirstRequireHost } from "./util";
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
+  HostRuntimeArtifactRetentionPolicy,
   ManagedComponentKind,
   ManagedComponentRuntimeState,
   ManagedComponentUpgradePolicy,
@@ -604,6 +605,7 @@ export interface HostRuntimeArtifactObservation {
     version: string;
     project_count: number;
   }>;
+  retention_policy?: HostRuntimeArtifactRetentionPolicy;
 }
 
 export interface HostRuntimeHostAgentProjectHostPendingRollout {
@@ -665,6 +667,7 @@ export interface HostRuntimeRollbackTarget {
   retained_bytes_total?: number;
   protected_bytes_total?: number;
   prune_candidate_bytes_total?: number;
+  retention_policy?: HostRuntimeArtifactRetentionPolicy;
 }
 
 export interface HostRuntimeDeploymentReconcileDecision {
@@ -859,6 +862,12 @@ export interface Hosts {
     account_id?: string;
     id: string;
     lines?: number;
+    source?:
+      | "project-host"
+      | "conat-router"
+      | "conat-persist"
+      | "host-agent"
+      | "supervision-events";
   }) => Promise<HostRuntimeLog>;
   getHostMetricsHistory: (opts: {
     account_id?: string;

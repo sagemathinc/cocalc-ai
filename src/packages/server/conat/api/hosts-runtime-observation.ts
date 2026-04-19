@@ -34,9 +34,11 @@ import type {
   HostRuntimeHostAgentObservation,
   HostRuntimeRollbackTarget,
 } from "@cocalc/conat/hub/api/hosts";
-import type {
-  HostManagedComponentStatus,
-  ManagedComponentKind,
+import {
+  DEFAULT_RUNTIME_RETENTION_POLICY,
+  type HostRuntimeArtifactRetentionPolicy,
+  type HostManagedComponentStatus,
+  type ManagedComponentKind,
 } from "@cocalc/conat/project-host/api";
 
 function deploymentObservedVersionState({
@@ -154,6 +156,36 @@ function protectInstalledVersions({
   };
 }
 
+function defaultRetentionPolicyForArtifact(
+  artifact: HostRuntimeArtifact,
+): HostRuntimeArtifactRetentionPolicy {
+  return {
+    ...(artifact === "project-host"
+      ? DEFAULT_RUNTIME_RETENTION_POLICY["project-host"]
+      : artifact === "project-bundle"
+        ? DEFAULT_RUNTIME_RETENTION_POLICY["project-bundle"]
+        : DEFAULT_RUNTIME_RETENTION_POLICY.tools),
+  };
+}
+
+function normalizeRetentionPolicy(
+  artifact: HostRuntimeArtifact,
+  raw: any,
+): HostRuntimeArtifactRetentionPolicy {
+  const fallback = defaultRetentionPolicyForArtifact(artifact);
+  const keep_count = Math.max(
+    0,
+    Math.floor(Number(raw?.keep_count ?? fallback.keep_count) || 0),
+  );
+  const max_bytes_raw = Number(raw?.max_bytes);
+  return {
+    keep_count,
+    ...(Number.isFinite(max_bytes_raw) && max_bytes_raw >= 0
+      ? { max_bytes: Math.floor(max_bytes_raw) }
+      : {}),
+  };
+}
+
 export function observedRuntimeArtifactsFromMetadata(
   row: any,
 ): HostRuntimeArtifactObservation[] {
@@ -206,6 +238,10 @@ export function observedRuntimeArtifactsFromMetadata(
                 } => reference != null,
               )
           : undefined,
+        retention_policy: normalizeRetentionPolicy(
+          artifact,
+          entry?.retention_policy,
+        ),
         version_bytes: Array.isArray(entry?.version_bytes)
           ? entry.version_bytes
               .map((sizeEntry: any) => {
@@ -249,6 +285,7 @@ export function observedRuntimeArtifactsFromMetadata(
           ? [`${software.project_host}`.trim()]
           : [],
       ),
+      retention_policy: defaultRetentionPolicyForArtifact("project-host"),
     },
     {
       artifact: "project-bundle",
@@ -260,6 +297,7 @@ export function observedRuntimeArtifactsFromMetadata(
           ? [`${software.project_bundle}`.trim()]
           : [],
       ),
+      retention_policy: defaultRetentionPolicyForArtifact("project-bundle"),
     },
     {
       artifact: "tools",
@@ -267,6 +305,7 @@ export function observedRuntimeArtifactsFromMetadata(
       installed_versions: sortVersionsDescending(
         `${software?.tools ?? ""}`.trim() ? [`${software.tools}`.trim()] : [],
       ),
+      retention_policy: defaultRetentionPolicyForArtifact("tools"),
     },
   ];
   for (const fallback of fallbacks) {
@@ -506,6 +545,9 @@ export function summarizeRollbackTargets({
       retained_bytes_total,
       protected_bytes_total,
       prune_candidate_bytes_total,
+      retention_policy:
+        observed?.retention_policy ??
+        defaultRetentionPolicyForArtifact(artifact),
     };
   });
 }

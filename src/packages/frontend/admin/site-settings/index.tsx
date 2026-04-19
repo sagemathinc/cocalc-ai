@@ -31,6 +31,7 @@ import GcpServiceAccountWizard from "./gcp-service-account-wizard";
 import NebiusCliWizard from "./nebius-cli-wizard";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
 import LauncherDefaultsWizard from "./launcher-defaults-wizard";
+import RuntimeRetentionPolicyWizard from "./runtime-retention-policy-wizard";
 import {
   toCustomOpenAIModel,
   toOllamaModel,
@@ -859,6 +860,12 @@ export default function SiteSettings({ close }) {
           open={activeWizard === "launcher-defaults"}
           onClose={closeWizard}
           data={data ?? {}}
+          onApply={applyWizardSettings}
+        />
+        <RuntimeRetentionPolicyWizard
+          open={activeWizard === "runtime-retention-policy"}
+          onClose={closeWizard}
+          currentJson={data?.project_hosts_runtime_retention_policy}
           onApply={applyWizardSettings}
         />
         <Row key="filter">
