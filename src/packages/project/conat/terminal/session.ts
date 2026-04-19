@@ -25,6 +25,7 @@ import { randomId } from "@cocalc/conat/names";
 import { getOwnedProcessRegistry } from "@cocalc/project/project-info";
 import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 import { terminalCwdForPid } from "./cwd";
+import { getProjectInitCommand } from "./startup";
 
 const logger = getLogger("project:conat:terminal:session");
 
@@ -36,10 +37,6 @@ const MAX_INPUT_SIZE = 10000;
 const INPUT_CHUNK_SIZE = 50;
 
 const EXIT_MESSAGE = "\r\n\r\n[Process completed - press any key]\r\n\r\n";
-
-const HARD_RESET = "reset";
-
-const PROJECT_INIT = `${HARD_RESET}; history -d $(history 1);\n`;
 
 const DEFAULT_COMMAND = "bash";
 const INFINITY = 999999;
@@ -281,9 +278,10 @@ export class Session {
     delete env.TMUX_TMPDIR;
     delete env.TERMCAP;
     let command = this.options.command ?? DEFAULT_COMMAND;
-    let args = this.options.args ?? [];
+    let args = [...(this.options.args ?? [])];
     const initFilename: string = console_init_filename(this.termPath);
-    if (await exists(initFilename)) {
+    const hasTerminalInitFile = await exists(initFilename);
+    if (hasTerminalInitFile) {
       args.push("--init-file");
       args.push(path_split(initFilename).tail);
     }
@@ -302,7 +300,11 @@ export class Session {
     this.pid = this.pty.pid;
     getOwnedProcessRegistry().attachPid(this.ownedRootId, this.pid);
     if (command.endsWith("bash")) {
-      this.pty.write(PROJECT_INIT);
+      this.pty.write(
+        getProjectInitCommand({
+          hasTerminalInitFile,
+        }),
+      );
     }
     this.state = "running";
     logger.debug("creating stream");
