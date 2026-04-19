@@ -15,6 +15,8 @@ describe("virtual path helpers", () => {
     expect(isSnapshotsPath(`/${SNAPSHOTS}`)).toBe(true);
     expect(isSnapshotsPath(`${SNAPSHOTS}/2026-01-01`)).toBe(true);
     expect(isSnapshotsPath(`/${SNAPSHOTS}/2026-01-01`)).toBe(true);
+    expect(isSnapshotsPath(`/home/user/${SNAPSHOTS}`)).toBe(true);
+    expect(isSnapshotsPath(`/home/user/${SNAPSHOTS}/2026-01-01`)).toBe(true);
     expect(isSnapshotsPath("/tmp")).toBe(false);
   });
 });

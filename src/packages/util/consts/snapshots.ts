@@ -8,8 +8,14 @@ function stripLeadingSlash(path: string): string {
 
 export function isSnapshotsPath(path?: string): boolean {
   if (path == null) return false;
-  const normalized = stripLeadingSlash(path);
-  return normalized === SNAPSHOTS || normalized.startsWith(`${SNAPSHOTS}/`);
+  const normalized = `${path}`.replace(/\/+$/, "");
+  const stripped = stripLeadingSlash(normalized);
+  return (
+    stripped === SNAPSHOTS ||
+    stripped.startsWith(`${SNAPSHOTS}/`) ||
+    normalized.includes(`/${SNAPSHOTS}/`) ||
+    normalized.endsWith(`/${SNAPSHOTS}`)
+  );
 }
 
 // Lengths of time in minutes to keep snapshots

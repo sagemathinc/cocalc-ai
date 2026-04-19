@@ -27,6 +27,15 @@ describe("resolveVirtualListingPath", () => {
     ).toBe("/home/user/.snapshots");
   });
 
+  it("leaves home-absolute snapshot paths unchanged", () => {
+    expect(
+      resolveVirtualListingPath({
+        path: "/home/user/.snapshots/snap-1",
+        homePath,
+      }),
+    ).toBe("/home/user/.snapshots/snap-1");
+  });
+
   it("leaves non-snapshot paths unchanged", () => {
     expect(
       resolveVirtualListingPath({
