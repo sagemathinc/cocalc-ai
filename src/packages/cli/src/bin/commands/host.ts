@@ -465,6 +465,9 @@ function formatRollbackTargetRows(
     previous_version: target.previous_version ?? "",
     last_known_good_version: target.last_known_good_version ?? "",
     retained_versions: formatList(target.retained_versions),
+    referenced_versions: formatArtifactReferences(target.referenced_versions),
+    protected_versions: formatList(target.protected_versions),
+    prune_candidate_versions: formatList(target.prune_candidate_versions),
   }));
 }
 

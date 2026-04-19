@@ -14,6 +14,7 @@ import type {
   SoftwareArtifact,
   SoftwareChannel,
 } from "@cocalc/conat/project-host/api";
+import { listRuntimeArtifactReferences } from "./sqlite/projects";
 
 const logger = getLogger("project-host:upgrade");
 
@@ -22,7 +23,8 @@ const DEFAULT_BUNDLE_ROOT = "/opt/cocalc/project-bundles";
 const DEFAULT_TOOLS_ROOT = "/opt/cocalc/tools";
 const PROJECT_HOST_ROOT = "/opt/cocalc/project-host";
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
-const BUNDLE_RETENTION_COUNT = 3;
+const PROJECT_HOST_RETENTION_COUNT = 10;
+const PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT = 3;
 
 type CanonicalArtifact = "project-host" | "project" | "tools";
 
@@ -336,9 +338,10 @@ async function pruneVersionDirs(opts: {
   root: string;
   currentLink: string;
   desiredDir: string;
+  protectedVersions?: string[];
   keep?: number;
 }) {
-  const keep = opts.keep ?? BUNDLE_RETENTION_COUNT;
+  const keep = opts.keep ?? PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT;
   const entries = await fs.promises.readdir(opts.root, { withFileTypes: true });
   const keepRealPaths = new Set<string>();
   try {
@@ -350,6 +353,17 @@ async function pruneVersionDirs(opts: {
     keepRealPaths.add(await fs.promises.realpath(opts.currentLink));
   } catch {
     // ignore
+  }
+  for (const protectedVersion of opts.protectedVersions ?? []) {
+    const version = `${protectedVersion ?? ""}`.trim();
+    if (!version) continue;
+    try {
+      keepRealPaths.add(
+        await fs.promises.realpath(path.join(opts.root, version)),
+      );
+    } catch {
+      // ignore missing protected versions
+    }
   }
   const dirs = await Promise.all(
     entries
@@ -394,6 +408,37 @@ async function pruneVersionDirs(opts: {
     });
     await safeRemove(entry.dir);
   }
+}
+
+function protectedArtifactVersions({
+  artifact,
+  desiredVersion,
+}: {
+  artifact: CanonicalArtifact;
+  desiredVersion: string;
+}): string[] {
+  const versions = new Set<string>();
+  const desired = `${desiredVersion ?? ""}`.trim();
+  if (desired) {
+    versions.add(desired);
+  }
+  const references = listRuntimeArtifactReferences();
+  if (artifact === "project") {
+    for (const reference of references.project_bundle) {
+      const version = `${reference.version ?? ""}`.trim();
+      if (version) {
+        versions.add(version);
+      }
+    }
+  } else if (artifact === "tools") {
+    for (const reference of references.tools) {
+      const version = `${reference.version ?? ""}`.trim();
+      if (version) {
+        versions.add(version);
+      }
+    }
+  }
+  return [...versions];
 }
 
 async function resolveArtifact(
@@ -569,6 +614,14 @@ async function downloadAndInstall(
     root: resolved.root,
     currentLink: resolved.currentLink,
     desiredDir: resolved.versionDir,
+    protectedVersions: protectedArtifactVersions({
+      artifact: resolved.canonicalArtifact,
+      desiredVersion: resolved.version,
+    }),
+    keep:
+      resolved.canonicalArtifact === "project-host"
+        ? PROJECT_HOST_RETENTION_COUNT
+        : PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT,
   });
   logger.info("upgrade: updated current symlink", {
     artifact: resolved.artifact,

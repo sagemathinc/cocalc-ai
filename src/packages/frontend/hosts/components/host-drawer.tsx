@@ -1866,6 +1866,26 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                               </code>
                             </Typography.Text>
                           )}
+                          {!!rollbackTarget?.protected_versions?.length && (
+                            <Typography.Text>
+                              Protected from pruning:{" "}
+                              <code>
+                                {rollbackTarget.protected_versions.join(", ")}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {rollbackTarget && (
+                            <Typography.Text>
+                              Prune candidates:{" "}
+                              <code>
+                                {rollbackTarget.prune_candidate_versions?.length
+                                  ? rollbackTarget.prune_candidate_versions.join(
+                                      ", ",
+                                    )
+                                  : "none"}
+                              </code>
+                            </Typography.Text>
+                          )}
                           {canUpgrade &&
                             !host.deleted &&
                             onRollbackRuntimeArtifact &&
@@ -2255,6 +2275,26 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                 {rollbackTarget.last_known_good_version ??
                                   rollbackTarget.previous_version ??
                                   "none"}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {!!rollbackTarget?.protected_versions?.length && (
+                            <Typography.Text>
+                              Protected from pruning:{" "}
+                              <code>
+                                {rollbackTarget.protected_versions.join(", ")}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {rollbackTarget && (
+                            <Typography.Text>
+                              Prune candidates:{" "}
+                              <code>
+                                {rollbackTarget.prune_candidate_versions?.length
+                                  ? rollbackTarget.prune_candidate_versions.join(
+                                      ", ",
+                                    )
+                                  : "none"}
                               </code>
                             </Typography.Text>
                           )}

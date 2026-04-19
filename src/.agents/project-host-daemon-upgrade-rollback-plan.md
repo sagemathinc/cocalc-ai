@@ -115,14 +115,19 @@ but "which parts are finished, partial, or still missing?"
      large fleets
 3. Retained rollback inventory and pruning policy are still incomplete.
    - the system can now observe referenced bundle/tools versions
+   - rollback targets now surface protected vs prune-candidate versions
+   - host-side bundle/tools pruning now preserves versions referenced by
+     running projects instead of treating every artifact as a blind keep-3
+     cache
    - but local rollback inventory, retention policy, and rollback candidate
-     surfacing are not operator-friendly yet
+     surfacing are still not fully operator-friendly yet
 4. Some desired-state semantics are still incomplete or only partially proven.
    - explicit `--align-runtime-stack` execution now converges the full managed
      runtime stack on live hosts and updates status coherently
    - hosts now retry automatic convergence on heartbeat after register-time
      `observation_failed` results, so reconnect timing is less brittle
-   - offline host convergence still needs more end-to-end validation
+   - single-host offline convergence has now been validated live, but broader
+     adversarial coverage is still missing
    - component policy is not yet exposed as durable central control-plane state
 5. LRO and CLI ergonomics still have gaps.
    - repeated deploy/upgrade requests still need more adversarial coverage for
@@ -1313,23 +1318,24 @@ This plan is complete when all of the following are true:
 
 ## Immediate Next Steps
 
-The next implementation slice should change the host-local architecture before
-we invest more in hardening the old monolithic recovery path:
+The next implementation priorities are now narrower and more operational:
 
-1. define the `host-agent` package/process boundary
-2. move daemon lifecycle and automatic `project-host` rollback execution under
-   `host-agent`
-3. keep the existing hub-side desired-state, rollout, and rollback model
-   stable during that move
-4. make the standard rollback path depend on `host-agent`, not ssh
-5. only then continue hardening emergency ssh recovery as a secondary path
-
-After that architectural split, the next priorities remain:
-
-- CLI `--wait` progress streaming
-- explicit `projects-backup` host LRO
-- `bootstrap environment` as an explicit managed artifact
-- bundle/tools retention and pruning based on observed references
+1. finish rollback inventory and retention policy
+   - make retained local versions easier to inspect and reason about
+   - turn raw retained/reference data into clearer rollback and pruning UX
+   - tighten host-side pruning policy beyond the first reference-aware safety
+     slice
+2. add more adversarial convergence coverage
+   - repeated `--align-runtime-stack` requests
+   - stale observed state
+   - offline host reconnect and delayed observation paths
+3. add smoke-test coverage for restart-only and canary workflows
+   - restart each managed component
+   - verify host readiness
+   - verify a small set of user-facing flows afterward
+4. continue operator tooling around host-scoped maintenance LROs
+   - explicit `projects-backup`
+   - host-scoped batch stop/restart of projects where operationally useful
 
 ## Near-Term Operator Batch Controls
 

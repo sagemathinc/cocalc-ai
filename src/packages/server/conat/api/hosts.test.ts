@@ -869,6 +869,9 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         previous_version: "ph-v1",
         last_known_good_version: "ph-v0",
         retained_versions: ["ph-v2", "ph-v1"],
+        referenced_versions: [],
+        protected_versions: ["ph-v2", "ph-v1"],
+        prune_candidate_versions: [],
       },
       {
         target_type: "component",
@@ -879,6 +882,9 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         previous_version: "ph-v1",
         last_known_good_version: "ph-v0",
         retained_versions: ["ph-v2", "ph-v1"],
+        referenced_versions: [],
+        protected_versions: ["ph-v2", "ph-v1"],
+        prune_candidate_versions: [],
       },
     ]);
     expect(status.observation_error).toBeUndefined();

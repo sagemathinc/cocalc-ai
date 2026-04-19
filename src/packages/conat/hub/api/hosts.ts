@@ -651,6 +651,12 @@ export interface HostRuntimeRollbackTarget {
   previous_version?: string;
   last_known_good_version?: string;
   retained_versions: string[];
+  referenced_versions?: Array<{
+    version: string;
+    project_count: number;
+  }>;
+  protected_versions: string[];
+  prune_candidate_versions: string[];
 }
 
 export interface HostRuntimeDeploymentReconcileDecision {

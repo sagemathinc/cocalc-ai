@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { summarizeObservedRuntimeDeployments } from "./hosts-runtime-observation";
+import {
+  summarizeObservedRuntimeDeployments,
+  summarizeRollbackTargets,
+} from "./hosts-runtime-observation";
 
 describe("summarizeObservedRuntimeDeployments", () => {
   it("treats project-host artifact-version component reports as aligned", () => {
@@ -84,5 +87,68 @@ describe("summarizeObservedRuntimeDeployments", () => {
         ],
       })[0]?.observed_version_state,
     ).toBe("aligned");
+  });
+});
+
+describe("summarizeRollbackTargets", () => {
+  it("surfaces protected and prune-candidate versions for referenced artifacts", () => {
+    expect(
+      summarizeRollbackTargets({
+        row: {
+          metadata: {
+            runtime_deployments: {
+              last_known_good_versions: {
+                "project-bundle": "bundle-v2",
+              },
+            },
+          },
+        },
+        effective: [
+          {
+            scope_type: "host",
+            scope_id: "host-1",
+            host_id: "host-1",
+            target_type: "artifact",
+            target: "project-bundle",
+            desired_version: "bundle-v5",
+            requested_by: "account-1",
+            requested_at: "2026-04-19T01:00:00.000Z",
+            updated_at: "2026-04-19T01:00:00.000Z",
+          },
+        ],
+        observed_artifacts: [
+          {
+            artifact: "project-bundle",
+            current_version: "bundle-v4",
+            installed_versions: [
+              "bundle-v5",
+              "bundle-v4",
+              "bundle-v3",
+              "bundle-v2",
+              "bundle-v1",
+            ],
+            referenced_versions: [{ version: "bundle-v2", project_count: 3 }],
+          },
+        ],
+      })[0],
+    ).toEqual({
+      target_type: "artifact",
+      target: "project-bundle",
+      artifact: "project-bundle",
+      desired_version: "bundle-v5",
+      current_version: "bundle-v4",
+      previous_version: "bundle-v5",
+      last_known_good_version: "bundle-v2",
+      retained_versions: [
+        "bundle-v5",
+        "bundle-v4",
+        "bundle-v3",
+        "bundle-v2",
+        "bundle-v1",
+      ],
+      referenced_versions: [{ version: "bundle-v2", project_count: 3 }],
+      protected_versions: ["bundle-v5", "bundle-v4", "bundle-v2"],
+      prune_candidate_versions: ["bundle-v3", "bundle-v1"],
+    });
   });
 });

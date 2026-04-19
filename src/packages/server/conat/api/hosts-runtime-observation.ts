@@ -110,6 +110,50 @@ function sortVersionsDescending(values: string[]): string[] {
   );
 }
 
+function protectInstalledVersions({
+  installed_versions,
+  desired_version,
+  current_version,
+  previous_version,
+  last_known_good_version,
+  referenced_versions,
+}: {
+  installed_versions: string[];
+  desired_version?: string;
+  current_version?: string;
+  previous_version?: string;
+  last_known_good_version?: string;
+  referenced_versions?: Array<{
+    version: string;
+    project_count: number;
+  }>;
+}): {
+  protected_versions: string[];
+  prune_candidate_versions: string[];
+} {
+  const installed = new Set(sortVersionsDescending(installed_versions));
+  const protected_versions = sortVersionsDescending(
+    [
+      desired_version,
+      current_version,
+      previous_version,
+      last_known_good_version,
+      ...(referenced_versions ?? []).map((reference) => reference.version),
+    ]
+      .map((version) => `${version ?? ""}`.trim())
+      .filter(
+        (version): version is string => !!version && installed.has(version),
+      ),
+  );
+  const protected_set = new Set(protected_versions);
+  return {
+    protected_versions,
+    prune_candidate_versions: sortVersionsDescending(
+      [...installed].filter((version) => !protected_set.has(version)),
+    ),
+  };
+}
+
 export function observedRuntimeArtifactsFromMetadata(
   row: any,
 ): HostRuntimeArtifactObservation[] {
@@ -371,6 +415,22 @@ export function summarizeRollbackTargets({
     const previous_version = retained_versions.find(
       (version) => version !== current_version,
     );
+    const last_known_good_version = lastKnownGoodArtifactVersion(row, artifact);
+    const referenced_versions =
+      observed?.referenced_versions?.filter(
+        (reference) =>
+          retained_versions.includes(reference.version) &&
+          reference.project_count > 0,
+      ) ?? [];
+    const { protected_versions, prune_candidate_versions } =
+      protectInstalledVersions({
+        installed_versions: retained_versions,
+        desired_version: deployment.desired_version,
+        current_version,
+        previous_version,
+        last_known_good_version,
+        referenced_versions,
+      });
     return {
       target_type: deployment.target_type,
       target: deployment.target,
@@ -378,8 +438,11 @@ export function summarizeRollbackTargets({
       desired_version: deployment.desired_version,
       current_version,
       previous_version,
-      last_known_good_version: lastKnownGoodArtifactVersion(row, artifact),
+      last_known_good_version,
       retained_versions,
+      referenced_versions,
+      protected_versions,
+      prune_candidate_versions,
     };
   });
 }
