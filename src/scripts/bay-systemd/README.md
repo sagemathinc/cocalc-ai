@@ -56,7 +56,8 @@ sudo systemctl start cocalc-bay.target
   transitional. It binds the scaffold to the current repo layout:
   - router and persist from `@cocalc/project-host`
   - hub workers from `@cocalc/hub`
-  - migrations still require a bay-specific implementation decision
+  - migrations through a dedicated `bay-migrate-schema.js` helper that runs the
+    current CoCalc schema update path and exits
 - The actual bundle entrypoints are intentionally configured through
   `COCALC_BAY_*_CMD` variables instead of being hardcoded here.
 - Rollout helpers assume versioned bundles live under
