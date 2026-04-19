@@ -123,6 +123,7 @@ import {
 } from "@cocalc/util/db-schema/llm-utils";
 import { type RootfsUploadedArtifactResult } from "@cocalc/util/rootfs-images";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getConfiguredClusterBayIds } from "@cocalc/server/cluster-config";
 import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -1600,19 +1601,21 @@ export async function recordCodexSiteUsage({
   return { usage_units };
 }
 
-export async function listHosts({
-  account_id,
-  admin_view,
-  include_deleted,
-  catalog,
-  show_all,
-}: {
+type ListHostsOptions = {
   account_id?: string;
   admin_view?: boolean;
   include_deleted?: boolean;
   catalog?: boolean;
   show_all?: boolean;
-}): Promise<Host[]> {
+};
+
+export async function listHostsLocal({
+  account_id,
+  admin_view,
+  include_deleted,
+  catalog,
+  show_all,
+}: ListHostsOptions): Promise<Host[]> {
   const owner = requireAccount(account_id);
   if (admin_view && !(await isAdmin(owner))) {
     throw new Error("not authorized");
@@ -1621,7 +1624,9 @@ export async function listHosts({
   const params: any[] = [];
   if (!admin_view) {
     filters.push(
-      `(metadata->>'owner' = $${params.length + 1} OR tier IS NOT NULL)`,
+      `(metadata->>'owner' = $${params.length + 1}
+        OR COALESCE(metadata->'collaborators', '[]'::jsonb) ? $${params.length + 1}
+        OR tier IS NOT NULL)`,
     );
     params.push(owner);
   }
@@ -1721,6 +1726,29 @@ export async function listHosts({
         runtime_desired_artifacts: runtimeDesiredArtifactSummaries.get(row.id),
       }),
   );
+}
+
+export async function listHosts(opts: ListHostsOptions): Promise<Host[]> {
+  const local = await listHostsLocal(opts);
+  const remoteHosts = await Promise.all(
+    getConfiguredClusterBayIds()
+      .filter((bay_id) => bay_id !== getConfiguredBayId())
+      .map(async (bay_id) => {
+        try {
+          return await getInterBayBridge().hostConnection(bay_id).list(opts);
+        } catch (err) {
+          logger.warn(
+            `listHosts: failed to load hosts from remote bay ${bay_id} -- ${err}`,
+          );
+          return [];
+        }
+      }),
+  );
+  const deduped = new Map<string, Host>();
+  for (const host of [...local, ...remoteHosts.flat()]) {
+    deduped.set(host.id, host);
+  }
+  return Array.from(deduped.values());
 }
 
 export async function resolveHostConnection({

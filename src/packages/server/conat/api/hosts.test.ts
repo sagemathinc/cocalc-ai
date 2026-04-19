@@ -18,6 +18,7 @@ let hasAccountProjectHostTokenHostAccessMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
+let hostConnectionListMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let routedHostControlClientMock: jest.Mock;
@@ -186,6 +187,7 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   getInterBayBridge: jest.fn(() => ({
     hostConnection: jest.fn(() => ({
       get: (...args: any[]) => hostConnectionGetMock(...args),
+      list: (...args: any[]) => hostConnectionListMock(...args),
     })),
     projectReference: jest.fn(() => ({
       get: (...args: any[]) => projectReferenceGetMock(...args),
@@ -2223,12 +2225,15 @@ describe("hosts.issueProjectHostAuthToken", () => {
 describe("hosts.listHosts bootstrap normalization", () => {
   beforeEach(() => {
     jest.resetModules();
+    delete process.env.COCALC_CLUSTER_BAY_IDS;
+    delete process.env.COCALC_BAY_ID;
     isAdminMock = jest.fn(async () => true);
     moveProjectToHostMock = jest.fn();
     resolveMembershipForAccountMock = jest.fn(async () => ({
       entitlements: {},
     }));
     loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
+    hostConnectionListMock = jest.fn(async () => []);
     queryMock = jest.fn(async (sql: string) => {
       if (
         sql.includes(
@@ -2322,6 +2327,87 @@ describe("hosts.listHosts bootstrap normalization", () => {
       host_override_count: 2,
       host_override_targets: ["conat-router", "project-host"],
     });
+  });
+
+  it("includes visible hosts from remote bays", async () => {
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
+    process.env.COCALC_BAY_ID = "bay-0";
+    hostConnectionListMock = jest.fn(async () => [
+      {
+        id: "remote-host",
+        name: "remote-host",
+        owner: "other-owner",
+        region: "us-west3",
+        size: "t2d-standard-2",
+        gpu: false,
+        status: "running",
+        scope: "collab",
+        can_place: true,
+        can_start: false,
+        pricing_model: "spot",
+      },
+    ]);
+
+    const { listHosts } = await import("./hosts");
+    const hosts = await listHosts({
+      account_id: ACCOUNT_ID,
+      admin_view: true,
+      include_deleted: true,
+    });
+    expect(hosts.map((host) => host.id)).toEqual([HOST_ID, "remote-host"]);
+    expect(hostConnectionListMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      admin_view: true,
+      include_deleted: true,
+    });
+  });
+
+  it("includes collaborator hosts in the local prefilter", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "CREATE TABLE IF NOT EXISTS project_host_runtime_deployments",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "CREATE INDEX IF NOT EXISTS project_host_runtime_deployments_host_idx",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              deleted: null,
+              metadata: {
+                collaborators: [ACCOUNT_ID],
+              },
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("FROM project_host_runtime_deployments") ||
+        sql.includes("COUNT(*) AS total")
+      ) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { listHosts } = await import("./hosts");
+    const hosts = await listHosts({
+      account_id: ACCOUNT_ID,
+      catalog: true,
+    });
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0].scope).toBe("collab");
   });
 });
 

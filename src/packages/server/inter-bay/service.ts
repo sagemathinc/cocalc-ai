@@ -19,6 +19,7 @@ import {
   createInterBayBayDirectoryHandlers,
   createInterBayDirectoryHandlers,
   createInterBayProjectControlHandler,
+  createInterBayProjectControlMoveHandler,
   createInterBayProjectControlRestartHandler,
   createInterBayProjectControlStateHandler,
   createInterBayProjectLroHandler,
@@ -77,6 +78,7 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
   handleProjectControlAddress,
   handleProjectControlActiveOperation,
+  handleProjectControlMove,
   handleProjectControlRestart,
   handleProjectControlStart,
   handleProjectControlState,
@@ -87,6 +89,7 @@ import {
 } from "@cocalc/server/inter-bay/project-control";
 import {
   issueProjectHostAuthTokenLocal,
+  listHostsLocal,
   resolveHostConnectionLocal,
 } from "@cocalc/server/conat/api/hosts";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -287,6 +290,7 @@ async function startProjectControlStartService(): Promise<void> {
     },
     state: async (opts) => await handleProjectControlState(opts),
     address: async (opts) => await handleProjectControlAddress(opts),
+    move: async (opts) => await handleProjectControlMove(opts),
     activeOp: async (opts) => await handleProjectControlActiveOperation(opts),
   };
   const bay_id = getConfiguredBayId();
@@ -314,6 +318,12 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlStateHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlMoveHandler({
       client,
       bay_id,
       parallel: true,
@@ -422,9 +432,10 @@ async function startHostConnectionService(): Promise<void> {
       }
       return connection;
     },
+    list: async (opts) => await listHostsLocal(opts),
   };
   services.push(
-    createInterBayHostConnectionHandler({
+    ...createInterBayHostConnectionHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

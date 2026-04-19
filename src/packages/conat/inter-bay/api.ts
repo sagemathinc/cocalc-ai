@@ -15,7 +15,11 @@ import type {
   AccountFeedProjectUpsertEvent,
 } from "@cocalc/conat/hub/api/account-feed";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
-import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
+import type {
+  Host,
+  HostConnectionInfo,
+  Hosts,
+} from "@cocalc/conat/hub/api/hosts";
 import type {
   ProjectActiveOperationSummary,
   ProjectBackupSchedule,
@@ -118,6 +122,22 @@ export interface ProjectControlAddressRequest {
   project_id: string;
   account_id: string;
   epoch?: number;
+}
+
+export interface ProjectControlMoveRequest {
+  project_id: string;
+  account_id: string;
+  dest_host_id?: string;
+  allow_offline?: boolean;
+  epoch?: number;
+}
+
+export interface ProjectControlMoveResponse {
+  op_id: string;
+  scope_type: "project";
+  scope_id: string;
+  service: string;
+  stream_name: string;
 }
 
 export interface ProjectControlActiveOperationRequest {
@@ -293,12 +313,13 @@ export type ProjectControlMethod =
   | "restart"
   | "state"
   | "address"
+  | "move"
   | "active-op";
 export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
 export type BayDirectoryMethod = DirectoryMethod;
 export type ProjectReferenceMethod = "get";
 export type ProjectDetailsMethod = "get";
-export type HostConnectionMethod = "get";
+export type HostConnectionMethod = "get" | "list";
 export type HostControlMethod =
   | "create-project"
   | "start-project"
@@ -366,6 +387,9 @@ export interface InterBayProjectControlApi {
   restart: (opts: ProjectControlRestartRequest) => Promise<void>;
   state: (opts: ProjectControlStateRequest) => Promise<ProjectState>;
   address: (opts: ProjectControlAddressRequest) => Promise<ProjectAddress>;
+  move: (
+    opts: ProjectControlMoveRequest,
+  ) => Promise<ProjectControlMoveResponse>;
   activeOp: (
     opts: ProjectControlActiveOperationRequest,
   ) => Promise<ProjectActiveOperationSummary | null>;
@@ -381,7 +405,16 @@ export interface InterBayProjectDetailsApi {
 
 export interface InterBayHostConnectionApi {
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
+  list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
 }
+
+const HOST_CONNECTION_METHOD_SPECS = [
+  { name: "get", method: "get" },
+  { name: "list", method: "list" },
+] as const satisfies ReadonlyArray<{
+  name: keyof InterBayHostConnectionApi;
+  method: HostConnectionMethod;
+}>;
 
 type HostControlArg<K extends keyof HostControlApi> = Parameters<
   HostControlApi[K]
@@ -962,6 +995,12 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "address" }),
   });
+  const moveClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "move">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({ dest_bay, method: "move" }),
+  });
   const activeOpClient = createServiceClient<
     Pick<InterBayProjectControlApi, "activeOp">
   >({
@@ -974,6 +1013,7 @@ export function createInterBayProjectControlClient({
     restart: async (opts) => await restartClient.restart(opts),
     state: async (opts) => await stateClient.state(opts),
     address: async (opts) => await addressClient.address(opts),
+    move: async (opts) => await moveClient.move(opts),
     activeOp: async (opts) => await activeOpClient.activeOp(opts),
   };
 }
@@ -1045,15 +1085,18 @@ export function createInterBayHostConnectionClient({
   dest_bay: string;
   timeout?: number;
 }): InterBayHostConnectionApi {
-  const hostConnectionClient = createServiceClient<
-    Pick<InterBayHostConnectionApi, "get">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: hostConnectionSubject({ dest_bay, method: "get" }),
-  });
-  return {
-    get: async (opts) => await hostConnectionClient.get(opts),
-  };
+  const api = {} as InterBayHostConnectionApi;
+  for (const { name, method } of HOST_CONNECTION_METHOD_SPECS) {
+    const methodClient = createServiceClient<
+      Pick<InterBayHostConnectionApi, typeof name>
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: hostConnectionSubject({ dest_bay, method }),
+    });
+    (api as any)[name] = async (...args: any[]) =>
+      await (methodClient as any)[name](...args);
+  }
+  return api;
 }
 
 export function createInterBayHostControlClient({
@@ -1141,15 +1184,17 @@ export function createInterBayHostConnectionHandler({
 }: ServiceHandlerOptions & {
   bay_id: string;
   impl: InterBayHostConnectionApi;
-}): ConatService {
-  return createServiceHandler<Pick<InterBayHostConnectionApi, "get">>({
-    ...options,
-    service: "inter-bay-host-connection",
-    subject: hostConnectionSubject({ dest_bay: bay_id, method: "get" }),
-    impl: {
-      get: async (opts) => await impl.get(opts),
-    },
-  });
+}): ConatService[] {
+  return HOST_CONNECTION_METHOD_SPECS.map(({ name, method }) =>
+    createServiceHandler<Pick<InterBayHostConnectionApi, typeof name>>({
+      ...options,
+      service: "inter-bay-host-connection",
+      subject: hostConnectionSubject({ dest_bay: bay_id, method }),
+      impl: {
+        [name]: async (...args: any[]) => await (impl as any)[name](...args),
+      } as Pick<InterBayHostConnectionApi, typeof name>,
+    }),
+  );
 }
 
 export function createInterBayHostControlHandler({
@@ -1707,6 +1752,24 @@ export function createInterBayProjectControlAddressHandler({
     subject: projectControlSubject({ dest_bay: bay_id, method: "address" }),
     impl: {
       address: async (opts) => await impl.address(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlMoveHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "move">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({ dest_bay: bay_id, method: "move" }),
+    impl: {
+      move: async (opts) => await impl.move(opts),
     },
   });
 }
