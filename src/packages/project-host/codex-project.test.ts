@@ -239,6 +239,7 @@ describe("initCodexProjectRunner", () => {
     });
     expect(spawned.authSource).toBe("account-api-key");
     expect(spawned.runtimeEnv).toMatchObject({
+      OPENAI_API_KEY: "secret-key",
       COCALC_API_URL: "http://host.containers.internal:7103",
       COCALC_BEARER_TOKEN: "issued-project-host-token",
       COCALC_AGENT_TOKEN: "issued-project-host-token",

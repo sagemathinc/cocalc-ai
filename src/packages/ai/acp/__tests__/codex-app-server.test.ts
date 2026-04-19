@@ -1968,6 +1968,7 @@ describe("CodexAppServerAgent", () => {
         args: ["app-server"],
         cwd: "/tmp/project",
         runtimeEnv: {
+          OPENAI_API_KEY: "site-key",
           COCALC_CLI_CMD: '"/root/.local/bin/cocalc"',
           COCALC_CLI_BIN: "/root/.local/bin/cocalc",
           COCALC_BEARER_TOKEN: "project-token",
@@ -1997,6 +1998,7 @@ describe("CodexAppServerAgent", () => {
       COCALC_PROJECT_ID: "00000000-0000-4000-8000-000000000000",
       COCALC_BROWSER_ID: "browser-1",
       COCALC_API_URL: "https://lite3.cocalc.ai",
+      OPENAI_API_KEY: "site-key",
       COCALC_CLI_CMD: '"/root/.local/bin/cocalc"',
       COCALC_CLI_BIN: "/root/.local/bin/cocalc",
       COCALC_BEARER_TOKEN: "project-token",
