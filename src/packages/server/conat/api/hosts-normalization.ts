@@ -30,6 +30,7 @@ import type {
   HostBootstrapLifecycleItem,
   HostBootstrapStatus,
   HostCurrentMetrics,
+  HostRuntimeExceptionSummary,
   HostInterruptionRestorePolicy,
   HostMetricsHistory,
   HostPricingModel,
@@ -260,6 +261,7 @@ export function parseRow(
     backup_status?: HostBackupStatus;
     starred?: boolean;
     metrics_history?: HostMetricsHistory;
+    runtime_exception_summary?: HostRuntimeExceptionSummary;
   } = {},
 ): Host {
   const parsePositiveInt = (value: unknown): number | undefined => {
@@ -784,6 +786,7 @@ export function parseRow(
     observed_components: normalizeObservedComponents(
       metadata.observed_components,
     ),
+    runtime_exception_summary: opts.runtime_exception_summary,
     deleted: row.deleted ? new Date(row.deleted).toISOString() : undefined,
     backup_status: opts.backup_status,
     bootstrap: normalizedBootstrap,

@@ -105,6 +105,7 @@ import {
   loadProjectHostMetricsHistory,
 } from "@cocalc/database/postgres/project-host-metrics";
 import {
+  ensureProjectHostRuntimeDeploymentsSchema,
   listProjectHostRuntimeDeployments,
   setProjectHostRuntimeDeployments,
 } from "@cocalc/database/postgres/project-host-runtime-deployments";
@@ -218,6 +219,49 @@ import {
 } from "./hosts-rootfs-releases";
 function pool() {
   return getPool();
+}
+
+async function loadHostRuntimeExceptionSummaries(
+  host_ids: string[],
+): Promise<Map<string, Host["runtime_exception_summary"]>> {
+  const uniqueHostIds = Array.from(
+    new Set(host_ids.map((id) => `${id ?? ""}`.trim()).filter(Boolean)),
+  );
+  if (!uniqueHostIds.length) {
+    return new Map();
+  }
+  await ensureProjectHostRuntimeDeploymentsSchema();
+  const { rows } = await pool().query<{ host_id: string; target: string }>(
+    `SELECT host_id::text AS host_id, target
+     FROM project_host_runtime_deployments
+     WHERE scope_type='host'
+       AND host_id::text = ANY($1::text[])
+     ORDER BY host_id, target_type, target`,
+    [uniqueHostIds],
+  );
+  const summaries = new Map<string, Host["runtime_exception_summary"]>();
+  for (const row of rows) {
+    const host_id = `${row?.host_id ?? ""}`.trim();
+    const target = `${row?.target ?? ""}`.trim() as HostRuntimeDeploymentTarget;
+    if (!host_id || !target) continue;
+    const current = summaries.get(host_id);
+    if (!current) {
+      summaries.set(host_id, {
+        host_override_count: 1,
+        host_override_targets: [target],
+      });
+      continue;
+    }
+    if (current.host_override_targets.includes(target)) {
+      continue;
+    }
+    current.host_override_targets.push(target);
+    current.host_override_targets.sort((left, right) =>
+      left.localeCompare(right),
+    );
+    current.host_override_count = current.host_override_targets.length;
+  }
+  return summaries;
 }
 
 const SELF_HOST_RESIZE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -1557,6 +1601,9 @@ export async function listHosts({
     window_minutes: 60,
     max_points: 60,
   });
+  const runtimeExceptionSummaries = await loadHostRuntimeExceptionSummaries(
+    visibleRows.map(({ row }) => row.id),
+  );
 
   return visibleRows.map(
     ({ row, scope, can_place, can_start, reason_unavailable, starred }) =>
@@ -1568,6 +1615,7 @@ export async function listHosts({
         backup_status: backupStatus.get(row.id),
         starred,
         metrics_history: metricsHistory.get(row.id),
+        runtime_exception_summary: runtimeExceptionSummaries.get(row.id),
       }),
   );
 }

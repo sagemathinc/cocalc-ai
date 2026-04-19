@@ -857,6 +857,18 @@ export function registerHostCommand(
             scope: row.scope ?? "",
             last_seen: row.last_seen ?? null,
             public_ip: row.public_ip ?? null,
+            runtime_host_override_count:
+              row.runtime_exception_summary?.host_override_count ?? 0,
+            runtime_host_override_targets:
+              row.runtime_exception_summary?.host_override_targets?.join(
+                ", ",
+              ) ?? "",
+            project_host_auto_rollback_version:
+              row.observed_host_agent?.project_host?.last_automatic_rollback
+                ?.rollback_version ?? null,
+            project_host_auto_rollback_finished_at:
+              row.observed_host_agent?.project_host?.last_automatic_rollback
+                ?.finished_at ?? null,
           }));
         });
       },
@@ -936,6 +948,8 @@ export function registerHostCommand(
           tools_version: h.tools_version ?? null,
           bootstrap: h.bootstrap ?? null,
           bootstrap_lifecycle: h.bootstrap_lifecycle ?? null,
+          runtime_exception_summary: h.runtime_exception_summary ?? null,
+          observed_host_agent: h.observed_host_agent ?? null,
         };
       });
     });

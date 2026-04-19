@@ -390,6 +390,11 @@ export interface HostMetrics {
   history?: HostMetricsHistory;
 }
 
+export interface HostRuntimeExceptionSummary {
+  host_override_count: number;
+  host_override_targets: HostRuntimeDeploymentTarget[];
+}
+
 export interface HostCatalog {
   provider: string;
   entries: HostCatalogEntry[];
@@ -437,6 +442,7 @@ export interface Host {
   provider_observed_at?: string;
   observed_host_agent?: HostRuntimeHostAgentObservation;
   observed_components?: HostManagedComponentStatus[];
+  runtime_exception_summary?: HostRuntimeExceptionSummary;
   deleted?: string;
   backup_status?: HostBackupStatus;
   bootstrap?: HostBootstrapStatus;

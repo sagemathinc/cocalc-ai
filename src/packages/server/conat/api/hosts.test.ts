@@ -106,6 +106,7 @@ jest.mock("@cocalc/database/postgres/project-host-metrics", () => ({
 
 jest.mock("@cocalc/database/postgres/project-host-runtime-deployments", () => ({
   __esModule: true,
+  ensureProjectHostRuntimeDeploymentsSchema: jest.fn(async () => undefined),
   listProjectHostRuntimeDeployments: (...args: any[]) =>
     listProjectHostRuntimeDeploymentsMock(...args),
   loadEffectiveProjectHostRuntimeDeployments: (...args: any[]) =>
@@ -2162,6 +2163,20 @@ describe("hosts.listHosts bootstrap normalization", () => {
     }));
     loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
     queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "CREATE TABLE IF NOT EXISTS project_host_runtime_deployments",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "CREATE INDEX IF NOT EXISTS project_host_runtime_deployments_host_idx",
+        )
+      ) {
+        return { rows: [] };
+      }
       if (sql.includes("SELECT * FROM project_hosts")) {
         return {
           rows: [
@@ -2203,6 +2218,14 @@ describe("hosts.listHosts bootstrap normalization", () => {
           ],
         };
       }
+      if (sql.includes("FROM project_host_runtime_deployments")) {
+        return {
+          rows: [
+            { host_id: HOST_ID, target: "project-host" },
+            { host_id: HOST_ID, target: "conat-router" },
+          ],
+        };
+      }
       if (sql.includes("COUNT(*) AS total")) {
         return { rows: [] };
       }
@@ -2228,6 +2251,10 @@ describe("hosts.listHosts bootstrap normalization", () => {
         running_versions: ["build-ph-v2"],
       }),
     ]);
+    expect(hosts[0].runtime_exception_summary).toEqual({
+      host_override_count: 2,
+      host_override_targets: ["conat-router", "project-host"],
+    });
   });
 });
 
