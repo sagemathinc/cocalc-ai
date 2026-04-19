@@ -35,6 +35,11 @@ For a fresh Ubuntu VM, the intended first pass is:
 sudo ./src/scripts/bay-systemd/bay-bootstrap-host.sh --install-nodejs
 ```
 
+On a fresh Ubuntu VM, the host bootstrap also stops and disables the default
+package-managed `postgresql` service so it does not collide with the bay-local
+Postgres instance on `127.0.0.1:5432`. Use `--preserve-system-postgres` only if
+you intentionally want to keep that system service around.
+
 2. Stage a built `src/` tree as the active bay release:
 
 ```sh

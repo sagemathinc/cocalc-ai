@@ -94,7 +94,10 @@ find_createdb() {
 
 render_if_missing_or_forced() {
   local target="$1"
+  local example="${2:-}"
   if [[ "$FORCE_ENV" -eq 1 || ! -e "$target" ]]; then
+    cat >"$target"
+  elif [[ -n "$example" && -e "$example" ]] && cmp -s "$target" "$example"; then
     cat >"$target"
   else
     cat >/dev/null
@@ -275,6 +278,9 @@ main() {
   CURRENT_LINK="${INSTALL_BASE}/current"
   TARGET_RELEASE="${RELEASES_DIR}/${RELEASE_ID}"
   ENV_DIR="/etc/cocalc"
+  BAY_ENV_EXAMPLE="${ENV_DIR}/bay.env.example"
+  BAY_WORKERS_ENV_EXAMPLE="${ENV_DIR}/bay-workers.env.example"
+  BAY_SECRETS_ENV_EXAMPLE="${ENV_DIR}/bay-secrets.env.example"
   POSTGRES_BIN="$(find_postgres)"
   PG_CTL_BIN="$(find_pg_ctl)"
   PSQL_BIN="$(find_psql)"
@@ -323,7 +329,7 @@ main() {
     "$BAY_USER" \
     "$BAY_USER"
 
-  render_if_missing_or_forced "${ENV_DIR}/bay.env" <<EOF
+  render_if_missing_or_forced "${ENV_DIR}/bay.env" "$BAY_ENV_EXAMPLE" <<EOF
 COCALC_BAY_ID=${BAY_ID}
 COCALC_BAY_ROOT=${BAY_ROOT}
 COCALC_BAY_RELEASES_DIR=${RELEASES_DIR}
@@ -377,13 +383,13 @@ CONAT_SERVER=http://127.0.0.1:${ROUTER_PORT}
 COCALC_BAY_POSTGRES_CMD='${POSTGRES_BIN} -D "\$COCALC_BAY_POSTGRES_DATA_DIR" -k "\$COCALC_BAY_POSTGRES_SOCKET_DIR" -h "\$COCALC_BAY_POSTGRES_HOST" -p "\$COCALC_BAY_POSTGRES_PORT"'
 EOF
 
-  render_if_missing_or_forced "${ENV_DIR}/bay-workers.env" <<EOF
+  render_if_missing_or_forced "${ENV_DIR}/bay-workers.env" "$BAY_WORKERS_ENV_EXAMPLE" <<EOF
 COCALC_BAY_WORKER_COUNT=${WORKER_COUNT}
 COCALC_BAY_WORKER_NODE_OPTIONS=
 COCALC_BAY_WORKER_EXTRA_ENV=
 EOF
 
-  render_if_missing_or_forced "${ENV_DIR}/bay-secrets.env" <<EOF
+  render_if_missing_or_forced "${ENV_DIR}/bay-secrets.env" "$BAY_SECRETS_ENV_EXAMPLE" <<EOF
 COCALC_SESSION_SECRET=$(random_secret)
 COCALC_COOKIE_SECRET=$(random_secret)
 COCALC_CONAT_SHARED_SECRET=$(random_secret)

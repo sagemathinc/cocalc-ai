@@ -9,6 +9,7 @@ INSTALL_BASE="/opt/cocalc/bay"
 INSTALL_PACKAGES=1
 INSTALL_NODEJS=0
 NODE_MAJOR=22
+PRESERVE_SYSTEM_POSTGRES=0
 
 usage() {
   cat <<'EOF'
@@ -25,6 +26,8 @@ Options:
   --skip-packages          do not apt install base packages
   --install-nodejs         install Node.js from NodeSource if node is missing or too old
   --node-major <n>         NodeSource major version when using --install-nodejs (default: 22)
+  --preserve-system-postgres
+                           do not stop/disable Ubuntu's package-managed postgres service
   -h, --help               show help
 EOF
 }
@@ -103,6 +106,10 @@ main() {
         NODE_MAJOR="$2"
         shift 2
         ;;
+      --preserve-system-postgres)
+        PRESERVE_SYSTEM_POSTGRES=1
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -123,6 +130,19 @@ main() {
   fi
 
   ensure_node
+
+  if [[ "$PRESERVE_SYSTEM_POSTGRES" -ne 1 ]]; then
+    if command -v pg_lsclusters >/dev/null 2>&1; then
+      while read -r version cluster _rest; do
+        if [[ -n "${version:-}" && -n "${cluster:-}" ]]; then
+          run pg_ctlcluster "$version" "$cluster" stop || true
+        fi
+      done < <(pg_lsclusters --no-header 2>/dev/null || true)
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+      run systemctl disable --now postgresql || true
+    fi
+  fi
 
   if ! getent group "$BAY_GROUP" >/dev/null; then
     run groupadd --system "$BAY_GROUP"
