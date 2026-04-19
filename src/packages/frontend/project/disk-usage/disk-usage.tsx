@@ -600,6 +600,8 @@ export default function DiskUsage({
   const summaryVisible = visible.filter(
     (bucket) => bucket.key !== "environment",
   );
+  const hasSummaryData =
+    quota != null || summaryVisible.length > 0 || counted.length > 0;
   const visibleTotal = Math.max(
     visible.reduce((sum, bucket) => sum + bucket.summaryBytes, 0),
     1,
@@ -854,10 +856,10 @@ export default function DiskUsage({
                   {human_readable_size(quota.size)}
                 </Text>
               </>
-            ) : (
-              <Spin delay={1000} />
-            )}
-            {loading && <Spin delay={1000} size="small" />}
+            ) : null}
+            {loading && hasSummaryData ? (
+              <Text type="secondary">Refreshing…</Text>
+            ) : null}
           </Space>
           {(visible.length > 0 || counted.length > 0) && (
             <div
@@ -897,15 +899,15 @@ export default function DiskUsage({
                 {human_readable_size(quota.size)}
               </Text>
             </>
-          ) : (
-            <Spin delay={1000} />
-          )}
+          ) : null}
           {summaryVisible.map((bucket) => (
             <Tag key={bucket.key}>
               {relativeLabel(bucket)} {human_readable_size(bucket.summaryBytes)}
             </Tag>
           ))}
-          {loading && <Spin delay={1000} />}
+          {loading && hasSummaryData ? (
+            <Text type="secondary">Refreshing…</Text>
+          ) : null}
         </Space>
       )}
     </Button>
