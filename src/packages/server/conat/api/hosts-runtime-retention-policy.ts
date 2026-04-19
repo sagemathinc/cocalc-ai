@@ -4,8 +4,10 @@
  */
 
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { type HostRuntimeRetentionPolicy } from "@cocalc/conat/project-host/api";
-import { DEFAULT_RUNTIME_RETENTION_POLICY } from "../../../conat/project-host/retention-policy";
+import {
+  DEFAULT_RUNTIME_RETENTION_POLICY,
+  type HostRuntimeRetentionPolicy,
+} from "@cocalc/conat/project-host/api";
 
 function parseNonNegativeInt(raw: unknown): number | undefined {
   if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) {

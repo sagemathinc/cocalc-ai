@@ -34,12 +34,12 @@ import type {
   HostRuntimeHostAgentObservation,
   HostRuntimeRollbackTarget,
 } from "@cocalc/conat/hub/api/hosts";
-import type {
-  HostRuntimeArtifactRetentionPolicy,
-  HostManagedComponentStatus,
-  ManagedComponentKind,
+import {
+  DEFAULT_RUNTIME_RETENTION_POLICY,
+  type HostRuntimeArtifactRetentionPolicy,
+  type HostManagedComponentStatus,
+  type ManagedComponentKind,
 } from "@cocalc/conat/project-host/api";
-import { DEFAULT_RUNTIME_RETENTION_POLICY } from "../../../conat/project-host/retention-policy";
 
 function deploymentObservedVersionState({
   desired_version,
