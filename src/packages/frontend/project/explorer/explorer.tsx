@@ -460,7 +460,11 @@ export function Explorer() {
           if (isDir) {
             navigateExplorer(path);
           } else {
-            actions.open_file({ path, foreground: !e.ctrlKey });
+            actions.open_file({
+              path,
+              foreground: !e.ctrlKey,
+              workspaceSelection: nextSelection,
+            });
           }
           setTimeout(() => workspaces.setSelection(nextSelection), 0);
           if (!e.ctrlKey) {

@@ -309,4 +309,36 @@ describe("applyWorkspaceSelectionForForegroundOpen", () => {
     expect(persist).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
   });
+
+  it("respects an explicit workspace selection for foreground opens", () => {
+    jest
+      .spyOn(workspaceRecordsRuntime, "getRuntimeWorkspaceRecords")
+      .mockReturnValue([workspaceRecord]);
+    jest
+      .spyOn(workspaceSelectionRuntime, "loadSessionSelection")
+      .mockReturnValue({ kind: "unscoped" });
+    const persist = jest.spyOn(
+      workspaceSelectionRuntime,
+      "persistSessionSelection",
+    );
+    const dispatch = jest.spyOn(
+      workspaceSelectionRuntime,
+      "dispatchWorkspaceSelectionEvent",
+    );
+
+    applyWorkspaceSelectionForForegroundOpen(
+      PROJECT_ID,
+      "/repo/workspace/file.ts",
+      { kind: "workspace", workspace_id: "w1" },
+    );
+
+    expect(persist).toHaveBeenCalledWith(PROJECT_ID, {
+      kind: "workspace",
+      workspace_id: "w1",
+    });
+    expect(dispatch).toHaveBeenCalledWith(PROJECT_ID, {
+      kind: "workspace",
+      workspace_id: "w1",
+    });
+  });
 });
