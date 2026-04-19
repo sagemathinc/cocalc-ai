@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+if ! command -v systemctl >/dev/null 2>&1; then
+  bay_log "systemctl is required"
+  exit 1
+fi
+
+target="${1:-}"
+if [[ -z "$target" ]]; then
+  bay_log "usage: bay-rollout-full <version>"
+  exit 1
+fi
+
+previous="$(current_version || true)"
+assert_release_exists "$target"
+write_event rollout full running "$target" "$previous" "full rollout started"
+set_current_version "$target"
+
+systemctl restart cocalc-bay-postgres.service
+systemctl restart cocalc-bay-migrations.service
+systemctl restart cocalc-bay-conat-persist.service
+systemctl restart cocalc-bay-conat-router.service
+"${SCRIPT_DIR}/bay-scale-workers" "$COCALC_BAY_WORKER_COUNT"
+
+for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
+  systemctl restart "cocalc-bay-hub@${worker_id}.service"
+  "${SCRIPT_DIR}/bay-worker-health" "$worker_id"
+done
+
+"${SCRIPT_DIR}/bay-health"
+write_event rollout full succeeded "$target" "$previous" "full rollout completed"

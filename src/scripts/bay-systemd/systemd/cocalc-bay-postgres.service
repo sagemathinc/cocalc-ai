@@ -1,0 +1,25 @@
+[Unit]
+Description=CoCalc Bay Postgres
+After=network-online.target
+Wants=network-online.target
+PartOf=cocalc-bay.target
+
+[Service]
+Type=simple
+User=cocalc-bay
+WorkingDirectory=/opt/cocalc/bay/current
+EnvironmentFile=/etc/cocalc/bay.env
+EnvironmentFile=-/etc/cocalc/bay-workers.env
+EnvironmentFile=-/etc/cocalc/bay-overlay.env
+EnvironmentFile=-/etc/cocalc/bay-secrets.env
+ExecStartPre=/opt/cocalc/bay/current/bin/bay-preflight postgres
+ExecStart=/opt/cocalc/bay/current/bin/bay-postgres-run
+ExecStartPost=/opt/cocalc/bay/current/bin/bay-postgres-check
+Restart=always
+RestartSec=2
+TimeoutStartSec=90
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=cocalc-bay.target

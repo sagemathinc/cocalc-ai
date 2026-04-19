@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+ensure_dirs
+
+service="${1:-all}"
+worker_id="${2:-}"
+
+if [[ ! -L "$COCALC_BAY_CURRENT_LINK" ]]; then
+  bay_log "current bundle symlink is missing: $COCALC_BAY_CURRENT_LINK"
+  exit 1
+fi
+
+if [[ ! -d "$(readlink -f "$COCALC_BAY_CURRENT_LINK")" ]]; then
+  bay_log "current bundle target does not exist"
+  exit 1
+fi
+
+if command -v df >/dev/null 2>&1; then
+  free_mb="$(df -Pm "$COCALC_BAY_ROOT" | awk 'NR==2 {print $4}')"
+  if [[ "${free_mb:-0}" -lt "$COCALC_BAY_MIN_FREE_MB" ]]; then
+    bay_log "free disk space ${free_mb:-0}MB is below ${COCALC_BAY_MIN_FREE_MB}MB"
+    exit 1
+  fi
+fi
+
+if command -v ss >/dev/null 2>&1; then
+  ports=()
+  case "$service" in
+    postgres)
+      ports+=("$COCALC_BAY_POSTGRES_PORT")
+      ;;
+    persist)
+      ports+=("$COCALC_BAY_PERSIST_PORT")
+      ;;
+    router)
+      ports+=("$COCALC_BAY_ROUTER_PORT")
+      ;;
+    worker)
+      if [[ -z "$worker_id" ]]; then
+        bay_log "worker preflight requires worker id"
+        exit 1
+      fi
+      ports+=("$(worker_port "$worker_id")")
+      ;;
+  esac
+  for port in "${ports[@]}"; do
+    if ss -ltnH "( sport = :$port )" | grep -q .; then
+      bay_log "port already in use: $port"
+      exit 1
+    fi
+  done
+fi
+
+bay_log "preflight ok"

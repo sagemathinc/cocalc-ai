@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+router_only=false
+if [[ "${1:-}" == "--router-only" ]]; then
+  router_only=true
+fi
+
+postgres_ok=true
+persist_ok=true
+router_ok=true
+healthy_workers=0
+
+if ! "$router_only"; then
+  if ! "${SCRIPT_DIR}/bay-postgres-check" >/dev/null 2>&1; then
+    postgres_ok=false
+  fi
+  if ! http_check "$(persist_url)"; then
+    persist_ok=false
+  fi
+fi
+
+if ! http_check "$(router_url)"; then
+  router_ok=false
+fi
+
+if ! "$router_only"; then
+  for worker_id in $(seq 1 "$COCALC_BAY_WORKER_COUNT"); do
+    if "${SCRIPT_DIR}/bay-worker-health" "$worker_id" >/dev/null 2>&1; then
+      healthy_workers=$((healthy_workers + 1))
+    fi
+  done
+fi
+
+if "$router_only"; then
+  printf '{"ok":%s,"router_ok":%s}\n' "$router_ok" "$router_ok"
+  "$router_ok"
+  exit $?
+fi
+
+ok=false
+if "$postgres_ok" && "$persist_ok" && "$router_ok" \
+  && [[ "$healthy_workers" -ge "$COCALC_BAY_MIN_HEALTHY_WORKERS" ]]; then
+  ok=true
+fi
+
+printf '{"ok":%s,"postgres_ok":%s,"persist_ok":%s,"router_ok":%s,"healthy_workers":%s,"min_healthy_workers":%s}\n' \
+  "$ok" "$postgres_ok" "$persist_ok" "$router_ok" "$healthy_workers" \
+  "$COCALC_BAY_MIN_HEALTHY_WORKERS"
+
+"$ok"

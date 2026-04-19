@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+worker_id="${1:-}"
+if [[ -z "$worker_id" ]]; then
+  bay_log "usage: bay-hub-worker <worker-id>"
+  exit 1
+fi
+
+export COCALC_BAY_WORKER_ID="$worker_id"
+export COCALC_BAY_WORKER_PORT
+COCALC_BAY_WORKER_PORT="$(worker_port "$worker_id")"
+export PORT="$COCALC_BAY_WORKER_PORT"
+
+if [[ -n "${COCALC_BAY_WORKER_EXTRA_ENV:-}" ]]; then
+  # shellcheck disable=SC2086
+  export ${COCALC_BAY_WORKER_EXTRA_ENV}
+fi
+
+run_env_cmd COCALC_BAY_HUB_CMD

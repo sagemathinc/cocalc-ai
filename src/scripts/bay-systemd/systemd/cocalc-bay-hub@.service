@@ -1,0 +1,25 @@
+[Unit]
+Description=CoCalc Bay Hub Worker %i
+After=cocalc-bay-postgres.service cocalc-bay-migrations.service cocalc-bay-conat-persist.service cocalc-bay-conat-router.service
+Requires=cocalc-bay-postgres.service cocalc-bay-conat-persist.service cocalc-bay-conat-router.service
+PartOf=cocalc-bay-hub-workers.target
+
+[Service]
+Type=simple
+User=cocalc-bay
+WorkingDirectory=/opt/cocalc/bay/current
+EnvironmentFile=/etc/cocalc/bay.env
+EnvironmentFile=-/etc/cocalc/bay-workers.env
+EnvironmentFile=-/etc/cocalc/bay-overlay.env
+EnvironmentFile=-/etc/cocalc/bay-secrets.env
+ExecStartPre=/opt/cocalc/bay/current/bin/bay-preflight worker %i
+ExecStart=/opt/cocalc/bay/current/bin/bay-hub-worker %i
+ExecStartPost=/opt/cocalc/bay/current/bin/bay-worker-health %i
+Restart=always
+RestartSec=2
+TimeoutStartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=cocalc-bay-hub-workers.target
