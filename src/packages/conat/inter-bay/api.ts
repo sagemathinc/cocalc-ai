@@ -323,6 +323,8 @@ export type HostConnectionMethod =
   | "get"
   | "list"
   | "get-project-start-metadata"
+  | "get-backup-config"
+  | "record-project-backup"
   | "list-host-projects";
 export type HostControlMethod =
   | "create-project"
@@ -413,6 +415,12 @@ export interface InterBayHostConnectionApi {
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
+  getBackupConfig: (
+    opts: Parameters<Hosts["getBackupConfig"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getBackupConfig"]>>>;
+  recordProjectBackup: (
+    opts: Parameters<Hosts["recordProjectBackup"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackup"]>>>;
   listHostProjects: (
     opts: Pick<
       Parameters<Hosts["listHostProjects"]>[0],
@@ -427,6 +435,14 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "getProjectStartMetadata",
     method: "get-project-start-metadata",
+  },
+  {
+    name: "getBackupConfig",
+    method: "get-backup-config",
+  },
+  {
+    name: "recordProjectBackup",
+    method: "record-project-backup",
   },
   {
     name: "listHostProjects",

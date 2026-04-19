@@ -20,6 +20,8 @@ let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
 let hostConnectionListMock: jest.Mock;
 let hostConnectionGetProjectStartMetadataMock: jest.Mock;
+let hostConnectionGetBackupConfigMock: jest.Mock;
+let hostConnectionRecordProjectBackupMock: jest.Mock;
 let hostConnectionListHostProjectsMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
@@ -34,6 +36,8 @@ let buildCloudInitStartupScriptMock: jest.Mock;
 let siteUrlMock: jest.Mock;
 let getServerSettingsMock: jest.Mock;
 let fetchMock: jest.Mock;
+let getBackupConfigLocalInternalMock: jest.Mock;
+let recordProjectBackupLocalInternalMock: jest.Mock;
 const originalFetch = global.fetch;
 
 jest.mock("node:child_process", () => {
@@ -201,6 +205,10 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       list: (...args: any[]) => hostConnectionListMock(...args),
       getProjectStartMetadata: (...args: any[]) =>
         hostConnectionGetProjectStartMetadataMock(...args),
+      getBackupConfig: (...args: any[]) =>
+        hostConnectionGetBackupConfigMock(...args),
+      recordProjectBackup: (...args: any[]) =>
+        hostConnectionRecordProjectBackupMock(...args),
       listHostProjects: (...args: any[]) =>
         hostConnectionListHostProjectsMock(...args),
     })),
@@ -211,6 +219,14 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       issue: (...args: any[]) => projectHostAuthTokenIssueMock(...args),
     })),
   })),
+}));
+
+jest.mock("@cocalc/server/project-backup", () => ({
+  __esModule: true,
+  getBackupConfig: (...args: any[]) =>
+    getBackupConfigLocalInternalMock(...args),
+  recordProjectBackup: (...args: any[]) =>
+    recordProjectBackupLocalInternalMock(...args),
 }));
 
 const HOST_ID = "host-123";
@@ -257,6 +273,8 @@ beforeEach(() => {
   hostConnectionGetMock = jest.fn();
   hostConnectionListMock = jest.fn(async () => []);
   hostConnectionGetProjectStartMetadataMock = jest.fn();
+  hostConnectionGetBackupConfigMock = jest.fn();
+  hostConnectionRecordProjectBackupMock = jest.fn(async () => undefined);
   hostConnectionListHostProjectsMock = jest.fn(async () => ({
     rows: [],
     summary: {
@@ -267,6 +285,8 @@ beforeEach(() => {
       provisioned_needs_backup: 0,
     },
   }));
+  getBackupConfigLocalInternalMock = jest.fn();
+  recordProjectBackupLocalInternalMock = jest.fn(async () => undefined);
 });
 
 afterAll(() => {
@@ -379,7 +399,11 @@ describe("hosts.listHostProjects", () => {
           rows: [
             {
               id: HOST_ID,
-              metadata: { owner: ACCOUNT_ID },
+              region: "us-west1",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: { cloud: "gcp", region: "us-west1" },
+              },
               last_seen: new Date("2026-01-05T00:00:00Z"),
             },
           ],
@@ -2245,6 +2269,74 @@ describe("hosts.resolveHostConnection", () => {
       host_id: REMOTE_HOST_ID,
       project_id: REMOTE_PROJECT_ID,
     });
+  });
+
+  it("routes backup config lookup to the owning bay when the project is remote", async () => {
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: REMOTE_HOST_ID,
+              region: "us-west1",
+              metadata: {
+                machine: { cloud: "gcp", region: "us-west1" },
+              },
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    hostConnectionGetBackupConfigMock = jest.fn(async () => ({
+      toml: "[repository]",
+      ttl_seconds: 123,
+    }));
+    const { getBackupConfig } = await import("./hosts");
+    await expect(
+      getBackupConfig({
+        host_id: REMOTE_HOST_ID,
+        project_id: REMOTE_PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      toml: "[repository]",
+      ttl_seconds: 123,
+    });
+    expect(resolveProjectBayMock).toHaveBeenCalledWith(REMOTE_PROJECT_ID);
+    expect(hostConnectionGetBackupConfigMock).toHaveBeenCalledWith({
+      host_id: REMOTE_HOST_ID,
+      project_id: REMOTE_PROJECT_ID,
+      host_region: "us-west1",
+      host_machine: { cloud: "gcp", region: "us-west1" },
+    });
+    expect(getBackupConfigLocalInternalMock).not.toHaveBeenCalled();
+  });
+
+  it("routes project backup recording to the owning bay when the project is remote", async () => {
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+    const { recordProjectBackup } = await import("./hosts");
+    const time = new Date("2026-04-19T20:00:00Z");
+    await expect(
+      recordProjectBackup({
+        host_id: REMOTE_HOST_ID,
+        project_id: REMOTE_PROJECT_ID,
+        time,
+      }),
+    ).resolves.toBeUndefined();
+    expect(resolveProjectBayMock).toHaveBeenCalledWith(REMOTE_PROJECT_ID);
+    expect(hostConnectionRecordProjectBackupMock).toHaveBeenCalledWith({
+      host_id: REMOTE_HOST_ID,
+      project_id: REMOTE_PROJECT_ID,
+      time,
+    });
+    expect(recordProjectBackupLocalInternalMock).not.toHaveBeenCalled();
   });
 });
 

@@ -952,6 +952,8 @@ export interface Hosts {
   getBackupConfig: (opts: {
     host_id?: string;
     project_id?: string;
+    host_region?: string | null;
+    host_machine?: HostMachine | null;
   }) => Promise<{ toml: string; ttl_seconds: number }>;
   recordProjectBackup: (opts: {
     host_id?: string;
