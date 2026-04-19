@@ -176,6 +176,37 @@ export async function getClusterBayPublicOrigins(): Promise<
       result[bay_id] = origin;
     }
   }
+  try {
+    const mod = (await import("./bay-registry")) as {
+      listClusterBayRegistry?: () => Promise<
+        {
+          bay_id?: string | null;
+          public_origin?: string | null;
+          dns_hostname?: string | null;
+        }[]
+      >;
+    };
+    const entries = await mod.listClusterBayRegistry?.();
+    for (const entry of entries ?? []) {
+      const bay_id = trim(entry?.bay_id);
+      const registryOrigin = normalizeOrigin(entry?.public_origin);
+      const origin =
+        (registryOrigin && isUsablePublicOrigin(registryOrigin)
+          ? registryOrigin
+          : undefined) ??
+        (() => {
+          const hostname = normalizeHostname(entry?.dns_hostname);
+          if (!hostname) return;
+          return `${defaultSchemeForHostname(hostname)}://${hostname}`;
+        })();
+      if (!bay_id || !origin || !isUsablePublicOrigin(origin)) continue;
+      result[bay_id] = origin;
+    }
+  } catch {
+    // Keep CORS/origin checks best-effort. Static config is still enough for
+    // simpler deployments, and registry access can fail transiently on attached
+    // bays during startup.
+  }
   return result;
 }
 
