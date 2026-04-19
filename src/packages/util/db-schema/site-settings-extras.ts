@@ -1078,6 +1078,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: from_json,
     valid: parsableJson,
     to_display: displayJson,
+    wizard: { name: "runtime-retention-policy", label: "Wizard..." },
+    managed_by_wizard: true,
     tags: ["Project Hosts", "Cloud"],
     group: "Compute / Project Hosts",
     subgroup: "Runtime Software",
