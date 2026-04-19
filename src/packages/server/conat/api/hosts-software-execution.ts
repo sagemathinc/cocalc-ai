@@ -32,11 +32,83 @@ import type {
 import type {
   HostManagedComponentRolloutRequest,
   HostManagedComponentRolloutResponse,
+  HostRuntimeLogSource,
   HostRuntimeRetentionPolicy,
 } from "@cocalc/conat/project-host/api";
 import { installedProjectHostArtifactVersion } from "./hosts-runtime-observation";
 import { defaultHostRuntimeRetentionPolicy } from "./hosts-runtime-retention-policy";
 import { runtimeDeploymentsForAlignedProjectHostVersion } from "./hosts-runtime-deployment-planning";
+
+const ROLLOUT_DIAGNOSTIC_LINES = 25;
+
+const RUNTIME_LOG_SOURCE_BY_COMPONENT: Partial<
+  Record<
+    HostManagedComponentRolloutRequest["components"][number],
+    HostRuntimeLogSource
+  >
+> = {
+  "project-host": "project-host",
+  "conat-router": "conat-router",
+  "conat-persist": "conat-persist",
+};
+
+function uniqueRuntimeLogSourcesForComponents(
+  components: HostManagedComponentRolloutRequest["components"],
+): HostRuntimeLogSource[] {
+  const requested = new Set<HostRuntimeLogSource>(["supervision-events"]);
+  for (const component of components) {
+    const source = RUNTIME_LOG_SOURCE_BY_COMPONENT[component];
+    if (source) requested.add(source);
+  }
+  return [...requested];
+}
+
+function trimRuntimeLogText(text?: string): string | undefined {
+  const normalized = `${text ?? ""}`.trim();
+  return normalized || undefined;
+}
+
+async function enrichManagedComponentRolloutError({
+  err,
+  client,
+  components,
+}: {
+  err: unknown;
+  client: {
+    getRuntimeLog: (opts: {
+      lines?: number;
+      source?: HostRuntimeLogSource;
+    }) => Promise<{ source: string; lines: number; text: string }>;
+  };
+  components: HostManagedComponentRolloutRequest["components"];
+}): Promise<Error> {
+  const sections: string[] = [];
+  for (const source of uniqueRuntimeLogSourcesForComponents(components)) {
+    try {
+      const log = await client.getRuntimeLog({
+        source,
+        lines: ROLLOUT_DIAGNOSTIC_LINES,
+      });
+      const text = trimRuntimeLogText(log.text);
+      if (!text) continue;
+      sections.push(`[${source}]\n${text}`);
+    } catch {
+      continue;
+    }
+  }
+  const message =
+    err instanceof Error ? err.message : `${err ?? "unknown rollout error"}`;
+  if (!sections.length) {
+    return err instanceof Error ? err : new Error(message);
+  }
+  const enriched = new Error(
+    `${message}\n\nRecent host diagnostics:\n${sections.join("\n\n")}`,
+  );
+  if (err instanceof Error) {
+    (enriched as Error & { cause?: Error }).cause = err;
+  }
+  return enriched;
+}
 
 export async function upgradeHostSoftwareInternalHelper({
   account_id,
@@ -238,6 +310,10 @@ export async function rolloutHostManagedComponentsInternalHelper({
     id: string,
     timeout_ms: number,
   ) => Promise<{
+    getRuntimeLog: (opts: {
+      lines?: number;
+      source?: HostRuntimeLogSource;
+    }) => Promise<{ source: string; lines: number; text: string }>;
     rolloutManagedComponents: (opts: {
       components: HostManagedComponentRolloutRequest["components"];
       reason?: string;
@@ -287,10 +363,19 @@ export async function rolloutHostManagedComponentsInternalHelper({
   const requestedProjectHostRollout = components.includes("project-host");
   const client = await hostControlClient(id, 60_000);
   const rolloutStartedAt = Date.now();
-  const response = await client.rolloutManagedComponents({
-    components,
-    reason,
-  });
+  let response: HostManagedComponentRolloutResponse;
+  try {
+    response = await client.rolloutManagedComponents({
+      components,
+      reason,
+    });
+  } catch (err) {
+    throw await enrichManagedComponentRolloutError({
+      err,
+      client,
+      components,
+    });
+  }
   let refreshedRow = row;
   if (requestedProjectHostRollout) {
     const baselineSeen = row?.last_seen

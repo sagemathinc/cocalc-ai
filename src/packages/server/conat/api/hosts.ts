@@ -2265,15 +2265,23 @@ export async function getHostRuntimeLog({
   account_id,
   id,
   lines,
+  source,
 }: {
   account_id?: string;
   id: string;
   lines?: number;
+  source?:
+    | "project-host"
+    | "conat-router"
+    | "conat-persist"
+    | "host-agent"
+    | "supervision-events";
 }): Promise<{ host_id: string; source: string; lines: number; text: string }> {
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);
   const response = await client.getRuntimeLog({
     lines: normalizeHostRuntimeLogLines(lines),
+    source,
   });
   return {
     host_id: id,

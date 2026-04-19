@@ -31,6 +31,13 @@ export interface HostRuntimeLogResponse {
   text: string;
 }
 
+export type HostRuntimeLogSource =
+  | "project-host"
+  | "conat-router"
+  | "conat-persist"
+  | "host-agent"
+  | "supervision-events";
+
 export interface HostProjectRuntimeLogResponse {
   project_id: string;
   container: string;
@@ -264,7 +271,10 @@ export interface HostControlApi {
     opts: UpgradeSoftwareRequest,
   ) => Promise<UpgradeSoftwareResponse>;
   growBtrfs: (opts: { disk_gb?: number }) => Promise<{ ok: boolean }>;
-  getRuntimeLog: (opts: { lines?: number }) => Promise<HostRuntimeLogResponse>;
+  getRuntimeLog: (opts: {
+    lines?: number;
+    source?: HostRuntimeLogSource;
+  }) => Promise<HostRuntimeLogResponse>;
   getProjectRuntimeLog: (opts: {
     project_id: string;
     lines?: number;

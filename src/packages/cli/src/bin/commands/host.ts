@@ -1343,21 +1343,39 @@ export function registerHostCommand(
     .command("logs <host>")
     .description("tail project-host runtime log")
     .option("--tail <n>", "number of log lines", "200")
+    .option(
+      "--source <source>",
+      "log source: project-host, conat-router, conat-persist, host-agent, supervision-events",
+    )
     .action(
       async (
         hostIdentifier: string,
-        opts: { tail?: string },
+        opts: { tail?: string; source?: string },
         command: Command,
       ) => {
         await withContext(command, "host logs", async (ctx) => {
           const h = await resolveHost(ctx, hostIdentifier);
           const lines = Number(opts.tail ?? "200");
+          const source = `${opts.source ?? "project-host"}`.trim();
+          const allowedSources = new Set([
+            "project-host",
+            "conat-router",
+            "conat-persist",
+            "host-agent",
+            "supervision-events",
+          ]);
           if (!Number.isFinite(lines) || lines <= 0) {
             throw new Error("--tail must be a positive integer");
+          }
+          if (!allowedSources.has(source)) {
+            throw new Error(
+              "--source must be one of: project-host, conat-router, conat-persist, host-agent, supervision-events",
+            );
           }
           const log = (await ctx.hub.hosts.getHostRuntimeLog({
             id: h.id,
             lines: Math.floor(lines),
+            source: source as any,
           })) as HostRuntimeLogRow;
           if (!ctx.globals.json && ctx.globals.output !== "json") {
             emitProjectFileCatHumanContent(log.text ?? "");

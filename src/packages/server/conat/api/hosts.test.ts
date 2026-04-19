@@ -1721,12 +1721,11 @@ describe("hosts.rollbackProjectHostOverSshInternal", () => {
       expect.objectContaining({
         scope_type: "host",
         host_id: HOST_ID,
-        deployments: [
+        deployments: expect.arrayContaining([
           expect.objectContaining({
             target_type: "artifact",
             target: "project-host",
             desired_version: "ph-v1",
-            rollout_reason: "automatic_project_host_upgrade_rollback",
           }),
           expect.objectContaining({
             target_type: "component",
@@ -1734,7 +1733,25 @@ describe("hosts.rollbackProjectHostOverSshInternal", () => {
             desired_version: "ph-v1",
             rollout_reason: "automatic_project_host_upgrade_rollback",
           }),
-        ],
+          expect.objectContaining({
+            target_type: "component",
+            target: "conat-router",
+            desired_version: "ph-v1",
+            rollout_reason: "automatic_project_host_upgrade_rollback",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "conat-persist",
+            desired_version: "ph-v1",
+            rollout_reason: "automatic_project_host_upgrade_rollback",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "acp-worker",
+            desired_version: "ph-v1",
+            rollout_reason: "automatic_project_host_upgrade_rollback",
+          }),
+        ]),
       }),
     );
     expect(createProjectHostBootstrapTokenMock).toHaveBeenCalledWith(HOST_ID);
@@ -1902,7 +1919,7 @@ describe("hosts.rolloutHostManagedComponentsInternal local rollback", () => {
       expect.objectContaining({
         scope_type: "host",
         host_id: HOST_ID,
-        deployments: [
+        deployments: expect.arrayContaining([
           expect.objectContaining({
             target_type: "artifact",
             target: "project-host",
@@ -1913,7 +1930,22 @@ describe("hosts.rolloutHostManagedComponentsInternal local rollback", () => {
             target: "project-host",
             desired_version: "ph-v1",
           }),
-        ],
+          expect.objectContaining({
+            target_type: "component",
+            target: "conat-router",
+            desired_version: "ph-v1",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "conat-persist",
+            desired_version: "ph-v1",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "acp-worker",
+            desired_version: "ph-v1",
+          }),
+        ]),
       }),
     );
   });

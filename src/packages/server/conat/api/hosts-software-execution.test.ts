@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { upgradeHostSoftwareInternalHelper } from "./hosts-software-execution";
+import {
+  rolloutHostManagedComponentsInternalHelper,
+  upgradeHostSoftwareInternalHelper,
+} from "./hosts-software-execution";
 import { runtimeDeploymentsForUpgradeResults } from "./hosts-runtime-deployment-planning";
 
 let getServerSettingsMock: jest.Mock;
@@ -171,6 +174,59 @@ describe("upgradeHostSoftwareInternalHelper", () => {
           tools: { keep_count: 5, max_bytes: 5000 },
         },
       }),
+    );
+  });
+});
+
+describe("rolloutHostManagedComponentsInternalHelper", () => {
+  it("appends recent host diagnostics when managed component rollout fails", async () => {
+    await expect(
+      rolloutHostManagedComponentsInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        components: ["conat-router"],
+        reason: "host_software_upgrade",
+        loadHostForStartStop: async () => ({
+          id: "host-1",
+          status: "running",
+          metadata: {
+            owner: "account-1",
+            software: {
+              project_host: "ph-v1",
+            },
+          },
+        }),
+        assertHostRunningForUpgrade: () => undefined,
+        hostControlClient: async () => ({
+          getRuntimeLog: async ({ source }) => ({
+            source: source ?? "project-host",
+            lines: 25,
+            text:
+              source === "supervision-events"
+                ? '{"component":"conat-router","action":"missing_process"}'
+                : "router crashed during startup",
+          }),
+          rolloutManagedComponents: async () => {
+            throw new Error(
+              "project-host conat router exited before becoming healthy",
+            );
+          },
+        }),
+        waitForHostHeartbeatAfter: async () => undefined,
+        installedProjectHostArtifactVersion: () => "ph-v1",
+        recordProjectHostLocalRollbackInternal: async () => ({
+          host_id: "host-1",
+          rollback_version: "ph-v1",
+          source: "host-agent",
+        }),
+        project_host_local_rollback_error_code: "project_host_local_rollback",
+        setLastKnownGoodArtifactVersionInternal: async () => undefined,
+        runtimeDeploymentsForComponentRollout: () => [],
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => undefined,
+      }),
+    ).rejects.toThrow(
+      /Recent host diagnostics:[\s\S]*\[supervision-events\][\s\S]*\[conat-router\]/,
     );
   });
 });

@@ -862,6 +862,12 @@ export interface Hosts {
     account_id?: string;
     id: string;
     lines?: number;
+    source?:
+      | "project-host"
+      | "conat-router"
+      | "conat-persist"
+      | "host-agent"
+      | "supervision-events";
   }) => Promise<HostRuntimeLog>;
   getHostMetricsHistory: (opts: {
     account_id?: string;

@@ -10,7 +10,7 @@ import type {
   HostRuntimeArtifactRetentionPolicy,
   HostRuntimeRetentionPolicy,
 } from "@cocalc/conat/project-host/api";
-import { DEFAULT_RUNTIME_RETENTION_POLICY } from "../conat/project-host/retention-policy";
+import { DEFAULT_RUNTIME_RETENTION_POLICY } from "@cocalc/conat/project-host/api";
 
 const RUNTIME_RETENTION_POLICY_STATE = "runtime-retention-policy.json";
 
