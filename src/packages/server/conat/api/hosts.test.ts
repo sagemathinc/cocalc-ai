@@ -20,6 +20,7 @@ let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
 let hostConnectionListMock: jest.Mock;
 let hostConnectionGetProjectStartMetadataMock: jest.Mock;
+let hostConnectionListHostProjectsMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let routedHostControlClientMock: jest.Mock;
@@ -183,6 +184,15 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveHostBay: (...args: any[]) => resolveHostBayMock(...args),
 }));
 
+jest.mock("@cocalc/server/cluster-config", () => {
+  const actual = jest.requireActual("@cocalc/server/cluster-config");
+  return {
+    __esModule: true,
+    ...actual,
+    getConfiguredClusterBayIds: jest.fn(() => ["bay-0", "bay-1", "bay-2"]),
+  };
+});
+
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   __esModule: true,
   getInterBayBridge: jest.fn(() => ({
@@ -191,6 +201,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       list: (...args: any[]) => hostConnectionListMock(...args),
       getProjectStartMetadata: (...args: any[]) =>
         hostConnectionGetProjectStartMetadataMock(...args),
+      listHostProjects: (...args: any[]) =>
+        hostConnectionListHostProjectsMock(...args),
     })),
     projectReference: jest.fn(() => ({
       get: (...args: any[]) => projectReferenceGetMock(...args),
@@ -242,6 +254,19 @@ beforeEach(() => {
   getServerSettingsMock = jest.fn(async () => ({}));
   fetchMock = jest.fn();
   global.fetch = fetchMock as any;
+  hostConnectionGetMock = jest.fn();
+  hostConnectionListMock = jest.fn(async () => []);
+  hostConnectionGetProjectStartMetadataMock = jest.fn();
+  hostConnectionListHostProjectsMock = jest.fn(async () => ({
+    rows: [],
+    summary: {
+      total: 0,
+      provisioned: 0,
+      running: 0,
+      provisioned_up_to_date: 0,
+      provisioned_needs_backup: 0,
+    },
+  }));
 });
 
 afterAll(() => {
@@ -250,8 +275,8 @@ afterAll(() => {
 
 const SUMMARY_ROW = {
   host_id: HOST_ID,
-  total: "3",
-  provisioned: "2",
+  total: "4",
+  provisioned: "3",
   running: "1",
   provisioned_up_to_date: "1",
   provisioned_needs_backup: "1",
@@ -303,10 +328,17 @@ const PROJECT_ROWS_PAGE_2 = [
   },
 ];
 
+const LOCAL_HOST_PROJECT_ROWS = [
+  ...PROJECT_ROWS_PAGE_1,
+  ...PROJECT_ROWS_PAGE_2,
+];
+
 describe("hosts.listHostProjects", () => {
   beforeEach(() => {
     jest.resetModules();
     process.env.LOGS = os.tmpdir();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
     moveProjectToHostMock = jest.fn();
@@ -332,7 +364,6 @@ describe("hosts.listHostProjects", () => {
       bay_id: "bay-0",
       epoch: 1,
     }));
-    hostConnectionGetMock = jest.fn();
     projectHostAuthTokenIssueMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => null);
     listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
@@ -358,12 +389,7 @@ describe("hosts.listHostProjects", () => {
         return { rows: [SUMMARY_ROW] };
       }
       if (sql.includes("LEFT(COALESCE(title")) {
-        if (params.length === 2) {
-          return { rows: PROJECT_ROWS_PAGE_1 };
-        }
-        if (params.length === 4) {
-          return { rows: PROJECT_ROWS_PAGE_2 };
-        }
+        return { rows: LOCAL_HOST_PROJECT_ROWS };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -384,8 +410,65 @@ describe("hosts.listHostProjects", () => {
       limit: 2,
       cursor: first.next_cursor,
     });
-    expect(second.rows).toHaveLength(1);
+    expect(second.rows).toHaveLength(2);
     expect(second.next_cursor).toBeUndefined();
+  });
+
+  it("merges remote-owned projects for the same host", async () => {
+    hostConnectionListHostProjectsMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            project_id: "proj-remote",
+            title: "Remote",
+            state: "running",
+            provisioned: true,
+            last_edited: "2026-01-04T00:00:00.000Z",
+            last_backup: "2026-01-03T00:00:00.000Z",
+            needs_backup: true,
+            collab_count: 4,
+          },
+        ],
+        summary: {
+          total: 1,
+          provisioned: 1,
+          running: 1,
+          provisioned_up_to_date: 0,
+          provisioned_needs_backup: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        rows: [],
+        summary: {
+          total: 0,
+          provisioned: 0,
+          running: 0,
+          provisioned_up_to_date: 0,
+          provisioned_needs_backup: 0,
+        },
+      });
+
+    const { listHostProjects } = await import("./hosts");
+    const result = await listHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      limit: 10,
+    });
+
+    expect(result.rows.map((row) => row.project_id)).toEqual([
+      "proj-remote",
+      "proj-3",
+      "proj-2",
+      "proj-1",
+      "proj-0",
+    ]);
+    expect(result.summary).toEqual({
+      total: 5,
+      provisioned: 4,
+      running: 2,
+      provisioned_up_to_date: 1,
+      provisioned_needs_backup: 2,
+    });
   });
 
   it("adds the risk filter when requested", async () => {
@@ -490,6 +573,8 @@ describe("hosts.listHostProjects", () => {
 
   afterEach(() => {
     delete process.env.LOGS;
+    delete process.env.COCALC_BAY_ID;
+    delete process.env.COCALC_CLUSTER_BAY_IDS;
   });
 });
 
@@ -497,6 +582,8 @@ describe("hosts.createHost", () => {
   beforeEach(() => {
     jest.resetModules();
     process.env.LOGS = os.tmpdir();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
     moveProjectToHostMock = jest.fn();
@@ -522,7 +609,27 @@ describe("hosts.createHost", () => {
       bay_id: "bay-0",
       epoch: 1,
     }));
-    hostConnectionGetMock = jest.fn();
+    hostConnectionListHostProjectsMock = jest.fn(async () => ({
+      rows: [
+        {
+          project_id: "proj-remote",
+          title: "Remote",
+          state: "running",
+          provisioned: true,
+          last_edited: "2026-01-04T00:00:00.000Z",
+          last_backup: "2026-01-03T00:00:00.000Z",
+          needs_backup: true,
+          collab_count: 4,
+        },
+      ],
+      summary: {
+        total: 1,
+        provisioned: 1,
+        running: 1,
+        provisioned_up_to_date: 0,
+        provisioned_needs_backup: 1,
+      },
+    }));
     projectHostAuthTokenIssueMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => null);
     listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
@@ -637,6 +744,8 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
   beforeEach(() => {
     jest.resetModules();
     process.env.LOGS = os.tmpdir();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
     moveProjectToHostMock = jest.fn();
@@ -663,6 +772,27 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       epoch: 1,
     }));
     hostConnectionGetMock = jest.fn();
+    hostConnectionListHostProjectsMock = jest.fn(async () => ({
+      rows: [
+        {
+          project_id: "proj-remote",
+          title: "Remote",
+          state: "running",
+          provisioned: true,
+          last_edited: "2026-01-04T00:00:00.000Z",
+          last_backup: "2026-01-03T00:00:00.000Z",
+          needs_backup: true,
+          collab_count: 4,
+        },
+      ],
+      summary: {
+        total: 1,
+        provisioned: 1,
+        running: 1,
+        provisioned_up_to_date: 0,
+        provisioned_needs_backup: 1,
+      },
+    }));
     projectHostAuthTokenIssueMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => null);
     listProjectHostRuntimeDeploymentsMock = jest.fn(async () => [
@@ -1429,6 +1559,8 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
   beforeEach(() => {
     jest.resetModules();
     process.env.LOGS = os.tmpdir();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
     moveProjectToHostMock = jest.fn();
@@ -1455,6 +1587,27 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
       epoch: 1,
     }));
     hostConnectionGetMock = jest.fn();
+    hostConnectionListHostProjectsMock = jest.fn(async () => ({
+      rows: [
+        {
+          project_id: "proj-remote",
+          title: "Remote",
+          state: "running",
+          provisioned: true,
+          last_edited: "2026-01-04T00:00:00.000Z",
+          last_backup: "2026-01-03T00:00:00.000Z",
+          needs_backup: true,
+          collab_count: 4,
+        },
+      ],
+      summary: {
+        total: 1,
+        provisioned: 1,
+        running: 1,
+        provisioned_up_to_date: 0,
+        provisioned_needs_backup: 1,
+      },
+    }));
     projectHostAuthTokenIssueMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => null);
     listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
@@ -1476,22 +1629,54 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
           ],
         };
       }
-      if (sql.includes("SELECT\n        project_id,")) {
+      if (sql.includes("COUNT(*) AS total")) {
+        return {
+          rows: [
+            {
+              host_id: HOST_ID,
+              total: "2",
+              provisioned: "2",
+              running: "2",
+              provisioned_up_to_date: "0",
+              provisioned_needs_backup: "2",
+            },
+          ],
+        };
+      }
+      if (sql.includes("LEFT(COALESCE(title")) {
         return {
           rows: [
             {
               project_id: "proj-1",
+              title: "Project 1",
               state: "running",
+              provisioned: true,
+              last_edited: new Date("2026-01-02T00:00:00Z"),
+              last_backup: new Date("2026-01-01T00:00:00Z"),
+              needs_backup: true,
+              collab_count: "1",
             },
             {
               project_id: "proj-2",
+              title: "Project 2",
               state: "running",
+              provisioned: true,
+              last_edited: new Date("2026-01-01T00:00:00Z"),
+              last_backup: new Date("2025-12-31T00:00:00Z"),
+              needs_backup: true,
+              collab_count: "2",
             },
           ],
         };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
+  });
+
+  afterEach(() => {
+    delete process.env.LOGS;
+    delete process.env.COCALC_BAY_ID;
+    delete process.env.COCALC_CLUSTER_BAY_IDS;
   });
 
   it("queues host-scoped project stop/restart actions with a snapshot target set", async () => {
@@ -1520,6 +1705,7 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
           state_filter: "running",
           parallel: 2,
           projects: [
+            { project_id: "proj-remote", state: "running" },
             { project_id: "proj-1", state: "running" },
             { project_id: "proj-2", state: "running" },
           ],
@@ -1537,6 +1723,7 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
           state_filter: "all",
           project_state: "opened",
           projects: [
+            { project_id: "proj-remote", state: "running" },
             { project_id: "proj-1", state: "running" },
             { project_id: "proj-2", state: "running" },
           ],

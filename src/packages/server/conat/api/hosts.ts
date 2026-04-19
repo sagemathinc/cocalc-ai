@@ -528,6 +528,58 @@ async function loadHostBackupStatus(
   return map;
 }
 
+function compareHostProjectRows(a: HostProjectRow, b: HostProjectRow): number {
+  const aTime = a.last_edited == null ? 0 : new Date(a.last_edited).valueOf();
+  const bTime = b.last_edited == null ? 0 : new Date(b.last_edited).valueOf();
+  if (aTime !== bTime) {
+    return bTime - aTime;
+  }
+  if (a.project_id === b.project_id) {
+    return 0;
+  }
+  return a.project_id < b.project_id ? 1 : -1;
+}
+
+function mergeHostBackupSummaries(
+  parts: HostBackupStatus[],
+): HostBackupStatus | undefined {
+  if (!parts.length) {
+    return undefined;
+  }
+  return parts.reduce<HostBackupStatus>(
+    (acc, part) => ({
+      total: acc.total + (part.total ?? 0),
+      provisioned: acc.provisioned + (part.provisioned ?? 0),
+      running: acc.running + (part.running ?? 0),
+      provisioned_up_to_date:
+        acc.provisioned_up_to_date + (part.provisioned_up_to_date ?? 0),
+      provisioned_needs_backup:
+        acc.provisioned_needs_backup + (part.provisioned_needs_backup ?? 0),
+    }),
+    {
+      total: 0,
+      provisioned: 0,
+      running: 0,
+      provisioned_up_to_date: 0,
+      provisioned_needs_backup: 0,
+    },
+  );
+}
+
+function rowMatchesHostProjectsCursor(
+  row: HostProjectRow,
+  cursor: { project_id: string; last_edited: string | null },
+): boolean {
+  const rowTime =
+    row.last_edited == null ? 0 : new Date(row.last_edited).valueOf();
+  const cursorTime =
+    cursor.last_edited == null ? 0 : new Date(cursor.last_edited).valueOf();
+  if (rowTime !== cursorTime) {
+    return rowTime < cursorTime;
+  }
+  return row.project_id < cursor.project_id;
+}
+
 async function loadOwnedHost(id: string, account_id?: string): Promise<any> {
   const owner = requireAccount(account_id);
   const { rows } = await pool().query(
@@ -1862,6 +1914,100 @@ export async function listHostProjects({
 }): Promise<HostProjectsResponse> {
   const host = await loadHostForListing(id, account_id);
   const cappedLimit = normalizeHostProjectsLimit(limit);
+  const snapshots = await Promise.all([
+    listHostProjectsLocalSnapshot({
+      id,
+      risk_only,
+      state_filter,
+      project_state,
+    }),
+    ...getConfiguredClusterBayIds()
+      .filter((bay_id) => bay_id !== getConfiguredBayId())
+      .map(async (bay_id) => {
+        try {
+          return await getInterBayBridge()
+            .hostConnection(bay_id)
+            .listHostProjects({
+              id,
+              risk_only,
+              state_filter,
+              project_state,
+            });
+        } catch (err) {
+          logger.warn(
+            `listHostProjects: failed to load remote host projects from ${bay_id} for host ${id} -- ${err}`,
+          );
+          return undefined;
+        }
+      }),
+  ]);
+  const mergedRows = new Map<string, HostProjectRow>();
+  for (const snapshot of snapshots) {
+    if (!snapshot) {
+      continue;
+    }
+    for (const row of snapshot.rows) {
+      mergedRows.set(row.project_id, row);
+    }
+  }
+  let rows = Array.from(mergedRows.values()).sort(compareHostProjectRows);
+  if (cursor) {
+    const decoded = decodeHostProjectsCursor(cursor);
+    const cursorDate =
+      decoded.last_edited == null
+        ? null
+        : normalizeDate(new Date(decoded.last_edited));
+    if (decoded.last_edited != null && cursorDate == null) {
+      throw new Error("invalid cursor timestamp");
+    }
+    rows = rows.filter((row) =>
+      rowMatchesHostProjectsCursor(row, {
+        project_id: decoded.project_id,
+        last_edited: cursorDate,
+      }),
+    );
+  }
+  const trimmed = rows.slice(0, cappedLimit);
+  const summary = mergeHostBackupSummaries(
+    snapshots
+      .filter((snapshot): snapshot is HostProjectsResponse => !!snapshot)
+      .map((snapshot) => snapshot.summary),
+  ) ?? {
+    total: 0,
+    provisioned: 0,
+    running: 0,
+    provisioned_up_to_date: 0,
+    provisioned_needs_backup: 0,
+  };
+
+  let next_cursor: string | undefined;
+  if (rows.length > cappedLimit && trimmed.length > 0) {
+    const last = trimmed[trimmed.length - 1];
+    next_cursor = encodeHostProjectsCursor({
+      project_id: last.project_id,
+      last_edited: last.last_edited,
+    });
+  }
+
+  return {
+    rows: trimmed,
+    summary,
+    next_cursor,
+    host_last_seen: normalizeDate(host.last_seen) ?? undefined,
+  };
+}
+
+export async function listHostProjectsLocalSnapshot({
+  id,
+  risk_only,
+  state_filter,
+  project_state,
+}: {
+  id: string;
+  risk_only?: boolean;
+  state_filter?: HostProjectStateFilter;
+  project_state?: string;
+}): Promise<HostProjectsResponse> {
   const { params, filters, needsBackupSql } = buildHostProjectsBaseQuery({
     host_id: id,
     state_filter,
@@ -1872,25 +2018,6 @@ export async function listHostProjects({
     filters.push(`(${needsBackupSql})`);
   }
 
-  if (cursor) {
-    const decoded = decodeHostProjectsCursor(cursor);
-    const cursorDate =
-      decoded.last_edited == null ? new Date(0) : new Date(decoded.last_edited);
-    if (Number.isNaN(cursorDate.valueOf())) {
-      throw new Error("invalid cursor timestamp");
-    }
-    params.push(cursorDate);
-    params.push(decoded.project_id);
-    filters.push(
-      `(COALESCE(last_edited, to_timestamp(0)) < $${
-        params.length - 1
-      } OR (COALESCE(last_edited, to_timestamp(0)) = $${
-        params.length - 1
-      } AND project_id < $${params.length}))`,
-    );
-  }
-
-  params.push(cappedLimit + 1);
   const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
   const { rows } = await pool().query<{
     project_id: string;
@@ -1921,21 +2048,9 @@ export async function listHostProjects({
       FROM projects
       ${whereClause}
       ORDER BY COALESCE(last_edited, to_timestamp(0)) DESC, project_id DESC
-      LIMIT $${params.length}
     `,
     params,
   );
-
-  let next_cursor: string | undefined;
-  let trimmed = rows;
-  if (rows.length > cappedLimit) {
-    trimmed = rows.slice(0, cappedLimit);
-    const last = trimmed[trimmed.length - 1];
-    next_cursor = encodeHostProjectsCursor({
-      project_id: last.project_id,
-      last_edited: normalizeDate(last.last_edited),
-    });
-  }
 
   const summaryMap = await loadHostBackupStatus([id]);
   const summary = summaryMap.get(id) ?? {
@@ -1946,7 +2061,7 @@ export async function listHostProjects({
     provisioned_needs_backup: 0,
   };
 
-  const resultRows: HostProjectRow[] = trimmed.map((row) => ({
+  const resultRows: HostProjectRow[] = rows.map((row) => ({
     project_id: row.project_id,
     title: row.title ?? "",
     state: row.state ?? "",
@@ -1960,8 +2075,6 @@ export async function listHostProjects({
   return {
     rows: resultRows,
     summary,
-    next_cursor,
-    host_last_seen: normalizeDate(host.last_seen) ?? undefined,
   };
 }
 
@@ -2051,37 +2164,49 @@ async function selectHostProjectActionRows({
   rows: Array<{ project_id: string; state: string }>;
 }> {
   const host = await loadHostForListing(id, account_id);
-  const {
-    params,
-    filters,
-    needsBackupSql,
-    normalizedStateFilter,
-    normalizedProjectState,
-  } = buildHostProjectsBaseQuery({
-    host_id: id,
-    state_filter,
-    project_state,
-  });
-
-  if (risk_only) {
-    filters.push(`(${needsBackupSql})`);
-  }
-
-  const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
-  const { rows } = await pool().query<{
-    project_id: string;
-    state: string | null;
-  }>(
-    `
-      SELECT
-        project_id,
-        COALESCE(state->>'state', '') AS state
-      FROM projects
-      ${whereClause}
-      ORDER BY COALESCE(last_edited, to_timestamp(0)) DESC, project_id DESC
-    `,
-    params,
-  );
+  const { normalizedStateFilter, normalizedProjectState } =
+    buildHostProjectsBaseQuery({
+      host_id: id,
+      state_filter,
+      project_state,
+    });
+  const snapshots = await Promise.all([
+    listHostProjectsLocalSnapshot({
+      id,
+      risk_only,
+      state_filter,
+      project_state,
+    }),
+    ...getConfiguredClusterBayIds()
+      .filter((bay_id) => bay_id !== getConfiguredBayId())
+      .map(async (bay_id) => {
+        try {
+          return await getInterBayBridge()
+            .hostConnection(bay_id)
+            .listHostProjects({
+              id,
+              risk_only,
+              state_filter,
+              project_state,
+            });
+        } catch (err) {
+          logger.warn(
+            `selectHostProjectActionRows: failed to load remote host projects from ${bay_id} for host ${id} -- ${err}`,
+          );
+          return undefined;
+        }
+      }),
+  ]);
+  const rows = Array.from(
+    snapshots
+      .filter((snapshot): snapshot is HostProjectsResponse => !!snapshot)
+      .flatMap((snapshot) => snapshot.rows)
+      .reduce<Map<string, HostProjectRow>>((acc, row) => {
+        acc.set(row.project_id, row);
+        return acc;
+      }, new Map())
+      .values(),
+  ).sort(compareHostProjectRows);
 
   return {
     host,

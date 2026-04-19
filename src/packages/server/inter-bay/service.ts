@@ -89,6 +89,7 @@ import {
 } from "@cocalc/server/inter-bay/project-control";
 import {
   getProjectStartMetadataLocal,
+  listHostProjectsLocalSnapshot,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
   resolveHostConnectionLocal,
@@ -446,6 +447,13 @@ async function startHostConnectionService(): Promise<void> {
       }
       return metadata;
     },
+    listHostProjects: async ({ id, risk_only, state_filter, project_state }) =>
+      await listHostProjectsLocalSnapshot({
+        id,
+        risk_only,
+        state_filter,
+        project_state,
+      }),
   };
   services.push(
     ...createInterBayHostConnectionHandler({

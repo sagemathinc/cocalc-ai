@@ -322,7 +322,8 @@ export type ProjectDetailsMethod = "get";
 export type HostConnectionMethod =
   | "get"
   | "list"
-  | "get-project-start-metadata";
+  | "get-project-start-metadata"
+  | "list-host-projects";
 export type HostControlMethod =
   | "create-project"
   | "start-project"
@@ -412,6 +413,12 @@ export interface InterBayHostConnectionApi {
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
+  listHostProjects: (
+    opts: Pick<
+      Parameters<Hosts["listHostProjects"]>[0],
+      "id" | "risk_only" | "state_filter" | "project_state"
+    >,
+  ) => Promise<Awaited<ReturnType<Hosts["listHostProjects"]>>>;
 }
 
 const HOST_CONNECTION_METHOD_SPECS = [
@@ -420,6 +427,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "getProjectStartMetadata",
     method: "get-project-start-metadata",
+  },
+  {
+    name: "listHostProjects",
+    method: "list-host-projects",
   },
 ] as const satisfies ReadonlyArray<{
   name: keyof InterBayHostConnectionApi;
