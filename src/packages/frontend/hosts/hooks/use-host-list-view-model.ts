@@ -93,6 +93,11 @@ type UseHostListViewModelArgs = {
       source: "configured" | "hub";
     }) => void | Promise<void>;
     settingClusterDefaultKey?: string;
+    onAlignProjectHostFleetVersion?: (opts: {
+      desired_version: string;
+      source: "configured" | "hub";
+    }) => void | Promise<void>;
+    aligningProjectHostFleetKey?: string;
   };
 };
 

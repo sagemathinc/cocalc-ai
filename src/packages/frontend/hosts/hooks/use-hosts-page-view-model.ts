@@ -842,6 +842,87 @@ export const useHostsPageViewModel = () => {
     },
     [hub, refresh, refreshHostOps, runtimeVersionCatalog],
   );
+  const [aligningProjectHostFleetKey, setAligningProjectHostFleetKey] =
+    React.useState<string>();
+  const alignProjectHostFleetVersion = React.useCallback(
+    async ({
+      desired_version,
+      source,
+    }: {
+      desired_version: string;
+      source: "configured" | "hub";
+    }) => {
+      if (!hub.hosts.upgradeHostSoftware) {
+        return;
+      }
+      const runningHosts = hosts.filter(
+        (host) => !host.deleted && host.status === "running",
+      );
+      if (!runningHosts.length) {
+        alert_message({
+          type: "info",
+          message: "No running hosts are available for fleet alignment.",
+          timeout: 6,
+        });
+        return;
+      }
+      const actionKey = `project-host:${desired_version}`;
+      setAligningProjectHostFleetKey(actionKey);
+      try {
+        const results = await Promise.allSettled(
+          runningHosts.map(async (host) => {
+            const op = await hub.hosts.upgradeHostSoftware({
+              id: host.id,
+              targets: [{ artifact: "project-host", version: desired_version }],
+              ...(source === "hub" && baseUrl ? { base_url: baseUrl } : {}),
+              align_runtime_stack: true,
+            });
+            trackHostOp(host.id, op);
+            return host;
+          }),
+        );
+        const failed = results.filter(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected",
+        );
+        await Promise.all([refresh(), refreshHostOps({ force: true })]);
+        if (failed.length) {
+          alert_message({
+            type: "warning",
+            message: `Queued full-stack project-host alignment to ${desired_version} on ${
+              runningHosts.length - failed.length
+            }/${runningHosts.length} running hosts. Failed hosts: ${
+              failed.length
+            }. Check host operations for details.`,
+            timeout: 12,
+          });
+          for (const result of failed) {
+            console.error(result.reason);
+          }
+          return;
+        }
+        alert_message({
+          type: "success",
+          message: `Queued full-stack project-host alignment to ${desired_version} on ${runningHosts.length} running hosts.`,
+          timeout: 8,
+        });
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `Failed to queue fleet alignment for project-host ${desired_version}: ${
+            err instanceof Error ? err.message : `${err}`
+          }`,
+          timeout: 20,
+        });
+        console.error(err);
+      } finally {
+        setAligningProjectHostFleetKey((current) =>
+          current === actionKey ? undefined : current,
+        );
+      }
+    },
+    [baseUrl, hub, hosts, refresh, refreshHostOps, trackHostOp],
+  );
   const rollbackRuntimeArtifact = React.useCallback(
     async ({
       host,
@@ -1501,6 +1582,8 @@ export const useHostsPageViewModel = () => {
           hubSourceLabel: baseUrl ? `${baseUrl}/software` : undefined,
           onSetClusterDefault: setClusterRuntimeArtifactDeployment,
           settingClusterDefaultKey,
+          onAlignProjectHostFleetVersion: alignProjectHostFleetVersion,
+          aligningProjectHostFleetKey,
         }
       : undefined,
   });

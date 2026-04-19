@@ -38,6 +38,11 @@ type HostRuntimeVersionsPanelProps = {
     source: "configured" | "hub";
   }) => void | Promise<void>;
   settingClusterDefaultKey?: string;
+  onAlignProjectHostFleetVersion?: (opts: {
+    desired_version: string;
+    source: "configured" | "hub";
+  }) => void | Promise<void>;
+  aligningProjectHostFleetKey?: string;
 };
 
 type VersionRow = HostSoftwareAvailableVersion & {
@@ -179,6 +184,8 @@ export const HostRuntimeVersionsPanel: React.FC<
   onRefresh,
   onSetClusterDefault,
   settingClusterDefaultKey,
+  onAlignProjectHostFleetVersion,
+  aligningProjectHostFleetKey,
 }) => {
   const rows = React.useMemo(
     () => buildRows({ hosts, configured, hub }),
@@ -306,10 +313,70 @@ export const HostRuntimeVersionsPanel: React.FC<
           );
         },
       },
+      {
+        title: "Fleet Rollout",
+        key: "fleet_rollout",
+        width: 250,
+        render: (_value, row) => {
+          if (
+            row.artifact !== "project-host" ||
+            !row.version ||
+            !onAlignProjectHostFleetVersion
+          ) {
+            return (
+              <Typography.Text type="secondary">Artifact only</Typography.Text>
+            );
+          }
+          const actionKey = `project-host:${row.version}`;
+          const sourceLabel =
+            row.source === "configured"
+              ? "configured catalog"
+              : "hub /software";
+          return (
+            <Popconfirm
+              title="Align all running hosts to this project-host build?"
+              description={
+                <Space direction="vertical" size={4}>
+                  <Typography.Text>
+                    This is the disruptive full-stack action. It queues:
+                  </Typography.Text>
+                  <Typography.Text code>
+                    cocalc host upgrade --artifact project-host
+                    --artifact-version {row.version} --all-online --wait
+                    --align-runtime-stack
+                  </Typography.Text>
+                  <Typography.Text type="secondary">
+                    Running hosts will move project-host, conat-router,
+                    conat-persist, and acp-worker to {row.version} from{" "}
+                    {sourceLabel}.
+                  </Typography.Text>
+                </Space>
+              }
+              okText="Align fleet"
+              onConfirm={() =>
+                onAlignProjectHostFleetVersion({
+                  desired_version: row.version!,
+                  source: row.source,
+                })
+              }
+            >
+              <Button
+                size="small"
+                danger
+                loading={aligningProjectHostFleetKey === actionKey}
+              >
+                Align fleet stack
+              </Button>
+            </Popconfirm>
+          );
+        },
+      },
     ],
     [
+      aligningProjectHostFleetKey,
       globalDefaultMap,
       hubSourceLabel,
+      onAlignProjectHostFleetVersion,
       onSetClusterDefault,
       settingClusterDefaultKey,
     ],
@@ -355,9 +422,27 @@ export const HostRuntimeVersionsPanel: React.FC<
           Published runtime versions across the configured catalog and the local
           hub software feed, annotated with how many running hosts are currently
           on each version. Use Set cluster default to promote a version for the
-          fleet; running hosts will reconcile automatically.
+          fleet and for future hosts. For project-host, that promotes the
+          artifact version only; it does not automatically restart conat-router,
+          conat-persist, or acp-worker.
           {hubSourceLabel ? ` Hub source: ${hubSourceLabel}.` : ""}
         </Typography.Paragraph>
+        <Alert
+          type="info"
+          showIcon
+          message="This is not a Kubernetes-style deployment table."
+          description={
+            <Space direction="vertical" size={4}>
+              <Typography.Text>
+                Promoting a project-host cluster default changes the desired
+                artifact version. Use <strong>Align fleet stack</strong> only
+                when you intentionally want all running hosts to restart
+                project-host, conat-router, conat-persist, and acp-worker onto
+                that exact project-host build.
+              </Typography.Text>
+            </Space>
+          }
+        />
         <Table<VersionRow>
           size="small"
           rowKey="key"
@@ -370,7 +455,7 @@ export const HostRuntimeVersionsPanel: React.FC<
               ? "Loading runtime versions..."
               : "No published runtime versions found.",
           }}
-          scroll={{ x: 1120 }}
+          scroll={{ x: 1360 }}
         />
       </Space>
     </Card>
