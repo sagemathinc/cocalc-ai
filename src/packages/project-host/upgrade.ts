@@ -24,8 +24,8 @@ const DEFAULT_BUNDLE_ROOT = "/opt/cocalc/project-bundles";
 const DEFAULT_TOOLS_ROOT = "/opt/cocalc/tools";
 const PROJECT_HOST_ROOT = "/opt/cocalc/project-host";
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
-const PROJECT_HOST_RETENTION_COUNT = 10;
-const PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT = 3;
+const DEFAULT_PROJECT_HOST_RETENTION_COUNT = 10;
+const DEFAULT_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT = 3;
 
 type CanonicalArtifact = "project-host" | "project" | "tools";
 
@@ -39,6 +39,19 @@ type ResolvedArtifact = {
   root: string;
   versionDir: string;
   currentLink: string;
+};
+
+type RetentionPolicy = {
+  keep: number;
+  maxBytes?: number;
+};
+
+type VersionDirEntry = {
+  dir: string;
+  real: string;
+  mtimeMs: number;
+  name: string;
+  bytes: number | undefined;
 };
 
 function normalizeBaseUrl(baseUrl?: string): string {
@@ -104,6 +117,63 @@ function describeError(err: any): string {
     parts.push(`cause=${detail}`);
   }
   return parts.join(": ");
+}
+
+function parseNonNegativeIntEnv(name: string): number | undefined {
+  const raw = `${process.env[name] ?? ""}`.trim();
+  if (!raw) return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    logger.warn("upgrade: ignoring invalid retention env", {
+      name,
+      raw,
+    });
+    return undefined;
+  }
+  return parsed;
+}
+
+function retentionPolicyForArtifact(
+  artifact: CanonicalArtifact,
+): RetentionPolicy {
+  if (artifact === "project-host") {
+    return {
+      keep:
+        parseNonNegativeIntEnv("COCALC_PROJECT_HOST_RETENTION_COUNT") ??
+        DEFAULT_PROJECT_HOST_RETENTION_COUNT,
+      maxBytes: parseNonNegativeIntEnv(
+        "COCALC_PROJECT_HOST_RETENTION_MAX_BYTES",
+      ),
+    };
+  }
+  if (artifact === "project") {
+    return {
+      keep:
+        parseNonNegativeIntEnv("COCALC_PROJECT_BUNDLE_RETENTION_COUNT") ??
+        parseNonNegativeIntEnv(
+          "COCALC_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT",
+        ) ??
+        DEFAULT_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT,
+      maxBytes:
+        parseNonNegativeIntEnv("COCALC_PROJECT_BUNDLE_RETENTION_MAX_BYTES") ??
+        parseNonNegativeIntEnv(
+          "COCALC_PROJECT_RUNTIME_ARTIFACT_RETENTION_MAX_BYTES",
+        ),
+    };
+  }
+  return {
+    keep:
+      parseNonNegativeIntEnv("COCALC_PROJECT_TOOLS_RETENTION_COUNT") ??
+      parseNonNegativeIntEnv(
+        "COCALC_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT",
+      ) ??
+      DEFAULT_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT,
+    maxBytes:
+      parseNonNegativeIntEnv("COCALC_PROJECT_TOOLS_RETENTION_MAX_BYTES") ??
+      parseNonNegativeIntEnv(
+        "COCALC_PROJECT_RUNTIME_ARTIFACT_RETENTION_MAX_BYTES",
+      ),
+  };
 }
 
 async function runCommandCapture(
@@ -335,14 +405,48 @@ async function assertInstalledVersionDir(versionDir: string): Promise<void> {
   }
 }
 
+function pathSizeBytes(target: string, seen = new Set<string>()): number {
+  let real = target;
+  try {
+    real = fs.realpathSync(target);
+  } catch {
+    // keep original path
+  }
+  if (seen.has(real)) return 0;
+  seen.add(real);
+  let stat;
+  try {
+    stat = fs.lstatSync(target);
+  } catch {
+    return 0;
+  }
+  if (stat.isSymbolicLink()) {
+    return stat.size;
+  }
+  if (!stat.isDirectory()) {
+    return stat.size;
+  }
+  let total = 0;
+  try {
+    for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
+      total += pathSizeBytes(path.join(target, entry.name), seen);
+    }
+  } catch {
+    // ignore unreadable directories
+  }
+  return total;
+}
+
 async function pruneVersionDirs(opts: {
   root: string;
   currentLink: string;
   desiredDir: string;
   protectedVersions?: string[];
   keep?: number;
+  maxBytes?: number;
 }) {
-  const keep = opts.keep ?? PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT;
+  const keep = opts.keep ?? DEFAULT_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT;
+  const maxBytes = opts.maxBytes;
   const entries = await fs.promises.readdir(opts.root, { withFileTypes: true });
   const keepRealPaths = new Set<string>();
   try {
@@ -366,7 +470,7 @@ async function pruneVersionDirs(opts: {
       // ignore missing protected versions
     }
   }
-  const dirs = await Promise.all(
+  const dirs: Array<VersionDirEntry | undefined> = await Promise.all(
     entries
       .filter(
         (entry) =>
@@ -379,33 +483,53 @@ async function pruneVersionDirs(opts: {
         const dir = path.join(opts.root, entry.name);
         try {
           const stat = await fs.promises.stat(dir);
-          return { dir, mtimeMs: stat.mtimeMs, name: entry.name };
+          let real = dir;
+          try {
+            real = await fs.promises.realpath(dir);
+          } catch {
+            // keep raw path
+          }
+          return {
+            dir,
+            real,
+            mtimeMs: stat.mtimeMs,
+            name: entry.name,
+            bytes: maxBytes != null ? pathSizeBytes(dir) : undefined,
+          };
         } catch {
           return undefined;
         }
       }),
   );
   const sorted = dirs
-    .filter(
-      (entry): entry is { dir: string; mtimeMs: number; name: string } =>
-        entry != null,
-    )
+    .filter((entry): entry is VersionDirEntry => entry != null)
     .sort((a, b) => b.mtimeMs - a.mtimeMs || b.name.localeCompare(a.name));
+  let retainedCount = 0;
+  let retainedBytes = 0;
   for (const entry of sorted) {
-    let real = entry.dir;
-    try {
-      real = await fs.promises.realpath(entry.dir);
-    } catch {
-      // keep raw path
+    if (!keepRealPaths.has(entry.real)) continue;
+    retainedCount += 1;
+    retainedBytes += entry.bytes ?? 0;
+  }
+  for (const entry of sorted) {
+    if (keepRealPaths.has(entry.real)) continue;
+    if (retainedCount < keep) {
+      keepRealPaths.add(entry.real);
+      retainedCount += 1;
+      retainedBytes += entry.bytes ?? 0;
+      continue;
     }
-    if (keepRealPaths.has(real)) continue;
-    if (keepRealPaths.size < keep) {
-      keepRealPaths.add(real);
+    if (maxBytes != null && retainedBytes + (entry.bytes ?? 0) <= maxBytes) {
+      keepRealPaths.add(entry.real);
+      retainedCount += 1;
+      retainedBytes += entry.bytes ?? 0;
       continue;
     }
     logger.info("upgrade: pruning old bundle dir", {
       root: opts.root,
       dir: entry.dir,
+      keep,
+      max_bytes: maxBytes,
     });
     await safeRemove(entry.dir);
   }
@@ -618,6 +742,9 @@ async function downloadAndInstall(
     dir: resolved.versionDir,
   });
   await replaceSymlink(resolved.currentLink, resolved.versionDir);
+  const retentionPolicy = retentionPolicyForArtifact(
+    resolved.canonicalArtifact,
+  );
   await pruneVersionDirs({
     root: resolved.root,
     currentLink: resolved.currentLink,
@@ -626,10 +753,8 @@ async function downloadAndInstall(
       artifact: resolved.canonicalArtifact,
       desiredVersion: resolved.version,
     }),
-    keep:
-      resolved.canonicalArtifact === "project-host"
-        ? PROJECT_HOST_RETENTION_COUNT
-        : PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT,
+    keep: retentionPolicy.keep,
+    maxBytes: retentionPolicy.maxBytes,
   });
   logger.info("upgrade: updated current symlink", {
     artifact: resolved.artifact,
@@ -747,4 +872,5 @@ export async function upgradeSoftware(
 export const __test__ = {
   downloadAndInstall,
   pruneVersionDirs,
+  retentionPolicyForArtifact,
 };

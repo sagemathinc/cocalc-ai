@@ -124,6 +124,8 @@ but "which parts are finished, partial, or still missing?"
      cache
    - host-side `project-host` pruning now also preserves the host-agent's own
      rollback checkpoint versions instead of relying only on recency
+   - host-side retention policy is now configurable by env and can use
+     per-artifact byte budgets in addition to keep-count floors
    - but local rollback inventory, retention policy, and rollback candidate
      surfacing are still not fully operator-friendly yet
 4. Some desired-state semantics are still incomplete or only partially proven.
