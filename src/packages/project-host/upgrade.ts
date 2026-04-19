@@ -14,6 +14,7 @@ import type {
   SoftwareArtifact,
   SoftwareChannel,
 } from "@cocalc/conat/project-host/api";
+import { readHostAgentState } from "./host-agent-state";
 import { listRuntimeArtifactReferences } from "./sqlite/projects";
 
 const logger = getLogger("project-host:upgrade");
@@ -422,16 +423,23 @@ function protectedArtifactVersions({
   if (desired) {
     versions.add(desired);
   }
-  const references = listRuntimeArtifactReferences();
-  if (artifact === "project") {
-    for (const reference of references.project_bundle) {
-      const version = `${reference.version ?? ""}`.trim();
-      if (version) {
-        versions.add(version);
-      }
+  if (artifact === "project-host") {
+    const hostAgentState = readHostAgentState();
+    const lastKnownGood =
+      `${hostAgentState.project_host?.last_known_good_version ?? ""}`.trim();
+    const pendingPrevious =
+      `${hostAgentState.project_host?.pending_rollout?.previous_version ?? ""}`.trim();
+    if (lastKnownGood) {
+      versions.add(lastKnownGood);
     }
-  } else if (artifact === "tools") {
-    for (const reference of references.tools) {
+    if (pendingPrevious) {
+      versions.add(pendingPrevious);
+    }
+  } else {
+    const references = listRuntimeArtifactReferences();
+    const artifactReferences =
+      artifact === "project" ? references.project_bundle : references.tools;
+    for (const reference of artifactReferences) {
       const version = `${reference.version ?? ""}`.trim();
       if (version) {
         versions.add(version);

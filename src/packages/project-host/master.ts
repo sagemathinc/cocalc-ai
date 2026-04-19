@@ -48,7 +48,7 @@ import { startHostMetricsCollector } from "./host-metrics";
 import { applyPendingCopies } from "./pending-copies";
 import { getManagedComponentStatus } from "./managed-components";
 import { rolloutManagedComponents } from "./managed-component-rollout";
-import { readHostAgentState } from "./host-agent";
+import { readHostAgentState } from "./host-agent-state";
 
 const logger = getLogger("project-host:master");
 

@@ -200,4 +200,86 @@ describe("project host upgrade installer", () => {
       fs.rmSync(base, { recursive: true, force: true });
     }
   });
+
+  it("preserves host-agent rollback versions for project-host pruning", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-test-"));
+    const archivePath = createArchive(base);
+    const served = await serveFile(archivePath);
+    try {
+      process.env.COCALC_DATA = path.join(base, "data");
+      fs.mkdirSync(process.env.COCALC_DATA, { recursive: true });
+      fs.writeFileSync(
+        path.join(process.env.COCALC_DATA, "host-agent-state.json"),
+        JSON.stringify(
+          {
+            project_host: {
+              last_known_good_version: "v02",
+              pending_rollout: {
+                target_version: "v13",
+                previous_version: "v03",
+                started_at: "2026-04-19T00:00:00.000Z",
+                deadline_at: "2026-04-19T00:10:00.000Z",
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      const bundlesRoot = path.join(base, "project-host-bundles");
+      fs.mkdirSync(bundlesRoot, { recursive: true });
+      for (const version of [
+        "v01",
+        "v02",
+        "v03",
+        "v04",
+        "v05",
+        "v06",
+        "v07",
+        "v08",
+        "v09",
+        "v10",
+        "v11",
+        "v12",
+      ]) {
+        const dir = path.join(bundlesRoot, version);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, "README.txt"), `${version}\n`);
+      }
+      const currentLink = path.join(bundlesRoot, "current");
+      fs.symlinkSync(path.join(bundlesRoot, "v12"), currentLink);
+      const versionDir = path.join(bundlesRoot, "v13");
+      await __test__.downloadAndInstall({
+        artifact: "project-host",
+        canonicalArtifact: "project-host",
+        version: "v13",
+        url: served.url,
+        stripComponents: 1,
+        root: bundlesRoot,
+        versionDir,
+        currentLink,
+      } as any);
+
+      const versions = fs
+        .readdirSync(bundlesRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name !== "current")
+        .map((entry) => entry.name)
+        .sort();
+      expect(versions).toEqual([
+        "v02",
+        "v03",
+        "v06",
+        "v07",
+        "v08",
+        "v09",
+        "v10",
+        "v11",
+        "v12",
+        "v13",
+      ]);
+    } finally {
+      await served.close();
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
 });

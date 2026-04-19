@@ -119,6 +119,8 @@ but "which parts are finished, partial, or still missing?"
    - host-side bundle/tools pruning now preserves versions referenced by
      running projects instead of treating every artifact as a blind keep-3
      cache
+   - host-side `project-host` pruning now also preserves the host-agent's own
+     rollback checkpoint versions instead of relying only on recency
    - but local rollback inventory, retention policy, and rollback candidate
      surfacing are still not fully operator-friendly yet
 4. Some desired-state semantics are still incomplete or only partially proven.
