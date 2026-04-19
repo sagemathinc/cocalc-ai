@@ -79,4 +79,42 @@ describe("upgradeHostSoftwareInternalHelper", () => {
       }),
     );
   });
+
+  it("sends control-plane retention policy to the host upgrader", async () => {
+    const upgradeSoftware = jest.fn(async () => ({ results: [] }));
+
+    await upgradeHostSoftwareInternalHelper({
+      account_id: "account-1",
+      id: "host-1",
+      targets: [{ artifact: "project-host", channel: "latest" }],
+      loadHostForStartStop: async () => ({
+        id: "host-1",
+        status: "running",
+        metadata: { owner: "account-1" },
+      }),
+      assertHostRunningForUpgrade: () => undefined,
+      computeHostOperationalAvailability: () => ({ online: true }),
+      resolveHostSoftwareBaseUrl: async () => undefined,
+      resolveReachableUpgradeBaseUrl: async () => undefined,
+      logWarn: () => undefined,
+      reconcileCloudHostBootstrapOverSsh: async () => undefined,
+      hostControlClient: async () => ({
+        upgradeSoftware,
+      }),
+      updateProjectHostSoftwareRecord: async () => undefined,
+      runtimeDeploymentsForUpgradeResults,
+      requestedByForRuntimeDeployments: () => "account-1",
+      setProjectHostRuntimeDeployments: async () => undefined,
+    });
+
+    expect(upgradeSoftware).toHaveBeenCalledWith(
+      expect.objectContaining({
+        retention_policy: {
+          "project-host": { keep_count: 10 },
+          "project-bundle": { keep_count: 3 },
+          tools: { keep_count: 3 },
+        },
+      }),
+    );
+  });
 });

@@ -819,6 +819,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         version_bytes: [{ version: "bundle-v4", bytes: 4000 }],
         installed_bytes_total: 4000,
         referenced_versions: [{ version: "bundle-v4", project_count: 2 }],
+        retention_policy: { keep_count: 3 },
       },
       {
         artifact: "project-host",
@@ -830,6 +831,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
           { version: "ph-v1", bytes: 1000 },
         ],
         installed_bytes_total: 3000,
+        retention_policy: { keep_count: 10 },
       },
       {
         artifact: "tools",
@@ -841,6 +843,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
           { version: "tools-v7", project_count: 1 },
           { version: "tools-v6", project_count: 1 },
         ],
+        retention_policy: { keep_count: 3 },
       },
     ]);
     expect(status.observed_targets).toEqual([
@@ -893,6 +896,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         retained_bytes_total: 3000,
         protected_bytes_total: 3000,
         prune_candidate_bytes_total: undefined,
+        retention_policy: { keep_count: 10 },
       },
       {
         target_type: "component",
@@ -909,6 +913,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         retained_bytes_total: 3000,
         protected_bytes_total: 3000,
         prune_candidate_bytes_total: undefined,
+        retention_policy: { keep_count: 10 },
       },
     ]);
     expect(status.observation_error).toBeUndefined();

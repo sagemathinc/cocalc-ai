@@ -7,6 +7,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import getLogger from "@cocalc/backend/logger";
 import type {
+  HostRuntimeRetentionPolicy,
   SoftwareUpgradeTarget,
   UpgradeSoftwareRequest,
   UpgradeSoftwareResponse,
@@ -15,6 +16,10 @@ import type {
   SoftwareChannel,
 } from "@cocalc/conat/project-host/api";
 import { readHostAgentState } from "./host-agent-state";
+import {
+  retentionPolicyForArtifact,
+  writeConfiguredRuntimeRetentionPolicy,
+} from "./runtime-retention-policy";
 import { listRuntimeArtifactReferences } from "./sqlite/projects";
 
 const logger = getLogger("project-host:upgrade");
@@ -24,8 +29,6 @@ const DEFAULT_BUNDLE_ROOT = "/opt/cocalc/project-bundles";
 const DEFAULT_TOOLS_ROOT = "/opt/cocalc/tools";
 const PROJECT_HOST_ROOT = "/opt/cocalc/project-host";
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
-const DEFAULT_PROJECT_HOST_RETENTION_COUNT = 10;
-const DEFAULT_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT = 3;
 
 type CanonicalArtifact = "project-host" | "project" | "tools";
 
@@ -39,11 +42,7 @@ type ResolvedArtifact = {
   root: string;
   versionDir: string;
   currentLink: string;
-};
-
-type RetentionPolicy = {
-  keep: number;
-  maxBytes?: number;
+  retentionPolicy?: HostRuntimeRetentionPolicy;
 };
 
 type VersionDirEntry = {
@@ -117,63 +116,6 @@ function describeError(err: any): string {
     parts.push(`cause=${detail}`);
   }
   return parts.join(": ");
-}
-
-function parseNonNegativeIntEnv(name: string): number | undefined {
-  const raw = `${process.env[name] ?? ""}`.trim();
-  if (!raw) return undefined;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    logger.warn("upgrade: ignoring invalid retention env", {
-      name,
-      raw,
-    });
-    return undefined;
-  }
-  return parsed;
-}
-
-function retentionPolicyForArtifact(
-  artifact: CanonicalArtifact,
-): RetentionPolicy {
-  if (artifact === "project-host") {
-    return {
-      keep:
-        parseNonNegativeIntEnv("COCALC_PROJECT_HOST_RETENTION_COUNT") ??
-        DEFAULT_PROJECT_HOST_RETENTION_COUNT,
-      maxBytes: parseNonNegativeIntEnv(
-        "COCALC_PROJECT_HOST_RETENTION_MAX_BYTES",
-      ),
-    };
-  }
-  if (artifact === "project") {
-    return {
-      keep:
-        parseNonNegativeIntEnv("COCALC_PROJECT_BUNDLE_RETENTION_COUNT") ??
-        parseNonNegativeIntEnv(
-          "COCALC_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT",
-        ) ??
-        DEFAULT_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT,
-      maxBytes:
-        parseNonNegativeIntEnv("COCALC_PROJECT_BUNDLE_RETENTION_MAX_BYTES") ??
-        parseNonNegativeIntEnv(
-          "COCALC_PROJECT_RUNTIME_ARTIFACT_RETENTION_MAX_BYTES",
-        ),
-    };
-  }
-  return {
-    keep:
-      parseNonNegativeIntEnv("COCALC_PROJECT_TOOLS_RETENTION_COUNT") ??
-      parseNonNegativeIntEnv(
-        "COCALC_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT",
-      ) ??
-      DEFAULT_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT,
-    maxBytes:
-      parseNonNegativeIntEnv("COCALC_PROJECT_TOOLS_RETENTION_MAX_BYTES") ??
-      parseNonNegativeIntEnv(
-        "COCALC_PROJECT_RUNTIME_ARTIFACT_RETENTION_MAX_BYTES",
-      ),
-  };
 }
 
 async function runCommandCapture(
@@ -445,7 +387,7 @@ async function pruneVersionDirs(opts: {
   keep?: number;
   maxBytes?: number;
 }) {
-  const keep = opts.keep ?? DEFAULT_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT;
+  const keep = opts.keep ?? 3;
   const maxBytes = opts.maxBytes;
   const entries = await fs.promises.readdir(opts.root, { withFileTypes: true });
   const keepRealPaths = new Set<string>();
@@ -743,7 +685,8 @@ async function downloadAndInstall(
   });
   await replaceSymlink(resolved.currentLink, resolved.versionDir);
   const retentionPolicy = retentionPolicyForArtifact(
-    resolved.canonicalArtifact,
+    resolved.artifact === "project" ? "project-bundle" : resolved.artifact,
+    resolved.retentionPolicy,
   );
   await pruneVersionDirs({
     root: resolved.root,
@@ -753,8 +696,8 @@ async function downloadAndInstall(
       artifact: resolved.canonicalArtifact,
       desiredVersion: resolved.version,
     }),
-    keep: retentionPolicy.keep,
-    maxBytes: retentionPolicy.maxBytes,
+    keep: retentionPolicy.keep_count,
+    maxBytes: retentionPolicy.max_bytes,
   });
   logger.info("upgrade: updated current symlink", {
     artifact: resolved.artifact,
@@ -836,11 +779,15 @@ export async function upgradeSoftware(
     if (!targets.length) {
       throw new Error("upgrade requires at least one target");
     }
+    if (opts.retention_policy) {
+      writeConfiguredRuntimeRetentionPolicy(opts.retention_policy);
+    }
     const baseUrl = normalizeBaseUrl(opts.base_url);
     const results: UpgradeSoftwareResult[] = [];
     let restartHost = false;
     for (const target of targets) {
       const resolved = await resolveArtifact(target, baseUrl);
+      resolved.retentionPolicy = opts.retention_policy;
       logger.info("upgrade: resolved artifact", {
         artifact: resolved.artifact,
         version: resolved.version,
@@ -872,5 +819,4 @@ export async function upgradeSoftware(
 export const __test__ = {
   downloadAndInstall,
   pruneVersionDirs,
-  retentionPolicyForArtifact,
 };

@@ -1884,6 +1884,25 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                           )}
                           {rollbackTarget && (
                             <Typography.Text>
+                              Retention keep floor:{" "}
+                              <code>
+                                {rollbackTarget.retention_policy?.keep_count ??
+                                  "unknown"}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {rollbackTarget && (
+                            <Typography.Text>
+                              Retention byte budget:{" "}
+                              <code>
+                                {formatBytes(
+                                  rollbackTarget.retention_policy?.max_bytes,
+                                ) || "none"}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {rollbackTarget && (
+                            <Typography.Text>
                               Rollback candidate:{" "}
                               <code>
                                 {rollbackTarget.last_known_good_version ??
@@ -2316,6 +2335,25 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                             <Typography.Text>
                               Running PIDs:{" "}
                               <code>{runningPids.join(", ")}</code>
+                            </Typography.Text>
+                          )}
+                          {rollbackTarget && (
+                            <Typography.Text>
+                              Retention keep floor:{" "}
+                              <code>
+                                {rollbackTarget.retention_policy?.keep_count ??
+                                  "unknown"}
+                              </code>
+                            </Typography.Text>
+                          )}
+                          {rollbackTarget && (
+                            <Typography.Text>
+                              Retention byte budget:{" "}
+                              <code>
+                                {formatBytes(
+                                  rollbackTarget.retention_policy?.max_bytes,
+                                ) || "none"}
+                              </code>
                             </Typography.Text>
                           )}
                           {rollbackTarget && (

@@ -32,8 +32,10 @@ import type {
 import type {
   HostManagedComponentRolloutRequest,
   HostManagedComponentRolloutResponse,
+  HostRuntimeRetentionPolicy,
 } from "@cocalc/conat/project-host/api";
 import { installedProjectHostArtifactVersion } from "./hosts-runtime-observation";
+import { defaultHostRuntimeRetentionPolicy } from "./hosts-runtime-retention-policy";
 import { runtimeDeploymentsForAlignedProjectHostVersion } from "./hosts-runtime-deployment-planning";
 
 export async function upgradeHostSoftwareInternalHelper({
@@ -86,6 +88,7 @@ export async function upgradeHostSoftwareInternalHelper({
       targets: HostSoftwareUpgradeTarget[];
       base_url?: string;
       restart_project_host: boolean;
+      retention_policy?: HostRuntimeRetentionPolicy;
     }) => Promise<HostSoftwareUpgradeResponse>;
   }>;
   updateProjectHostSoftwareRecord: (opts: {
@@ -146,6 +149,7 @@ export async function upgradeHostSoftwareInternalHelper({
       targets,
       base_url: effectiveBaseUrl,
       restart_project_host: false,
+      retention_policy: defaultHostRuntimeRetentionPolicy(),
     });
   } catch (err) {
     if (!supportsBootstrapFallback) {

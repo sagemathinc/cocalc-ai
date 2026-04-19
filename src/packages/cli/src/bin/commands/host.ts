@@ -410,6 +410,12 @@ function formatArtifactReferences(value: unknown): string {
     .join(", ");
 }
 
+function formatRetentionKeepCount(value: unknown): string {
+  const count = Number(value ?? 0);
+  if (!Number.isFinite(count) || count < 0) return "";
+  return `${Math.floor(count)}`;
+}
+
 function formatRuntimeDeploymentRows(
   deployments: Array<Record<string, unknown>> | undefined,
 ): Record<string, unknown>[] {
@@ -464,6 +470,12 @@ function formatObservedArtifactRows(
     installed_versions: formatList(artifact.installed_versions),
     installed_bytes_total: formatBytesValue(artifact.installed_bytes_total),
     referenced_versions: formatArtifactReferences(artifact.referenced_versions),
+    retention_keep_count: formatRetentionKeepCount(
+      (artifact.retention_policy as any)?.keep_count,
+    ),
+    retention_max_bytes: formatBytesValue(
+      (artifact.retention_policy as any)?.max_bytes,
+    ),
   }));
 }
 
@@ -486,6 +498,12 @@ function formatRollbackTargetRows(
     protected_bytes_total: formatBytesValue(target.protected_bytes_total),
     prune_candidate_bytes_total: formatBytesValue(
       target.prune_candidate_bytes_total,
+    ),
+    retention_keep_count: formatRetentionKeepCount(
+      (target.retention_policy as any)?.keep_count,
+    ),
+    retention_max_bytes: formatBytesValue(
+      (target.retention_policy as any)?.max_bytes,
     ),
   }));
 }
