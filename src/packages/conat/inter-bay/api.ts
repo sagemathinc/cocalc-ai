@@ -319,7 +319,10 @@ export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
 export type BayDirectoryMethod = DirectoryMethod;
 export type ProjectReferenceMethod = "get";
 export type ProjectDetailsMethod = "get";
-export type HostConnectionMethod = "get" | "list";
+export type HostConnectionMethod =
+  | "get"
+  | "list"
+  | "get-project-start-metadata";
 export type HostControlMethod =
   | "create-project"
   | "start-project"
@@ -406,11 +409,18 @@ export interface InterBayProjectDetailsApi {
 export interface InterBayHostConnectionApi {
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
+  getProjectStartMetadata: (
+    opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
 }
 
 const HOST_CONNECTION_METHOD_SPECS = [
   { name: "get", method: "get" },
   { name: "list", method: "list" },
+  {
+    name: "getProjectStartMetadata",
+    method: "get-project-start-metadata",
+  },
 ] as const satisfies ReadonlyArray<{
   name: keyof InterBayHostConnectionApi;
   method: HostConnectionMethod;

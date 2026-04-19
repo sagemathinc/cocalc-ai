@@ -88,6 +88,7 @@ import {
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
 import {
+  getProjectStartMetadataLocal,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
   resolveHostConnectionLocal,
@@ -433,6 +434,18 @@ async function startHostConnectionService(): Promise<void> {
       return connection;
     },
     list: async (opts) => await listHostsLocal(opts),
+    getProjectStartMetadata: async ({ host_id, project_id }) => {
+      const metadata = await getProjectStartMetadataLocal({
+        host_id,
+        project_id,
+      });
+      if (!metadata) {
+        throw new Error(
+          `project ${project_id} is not assigned to host ${host_id} or is unavailable`,
+        );
+      }
+      return metadata;
+    },
   };
   services.push(
     ...createInterBayHostConnectionHandler({

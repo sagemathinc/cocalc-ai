@@ -124,7 +124,10 @@ import {
 import { type RootfsUploadedArtifactResult } from "@cocalc/util/rootfs-images";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterBayIds } from "@cocalc/server/cluster-config";
-import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveHostBay,
+  resolveProjectBay,
+} from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
@@ -891,6 +894,46 @@ export async function getProjectStartMetadata({
   if (!project_id) {
     throw new Error("project_id must be specified");
   }
+  const local = await getProjectStartMetadataLocal({
+    host_id,
+    project_id,
+    allowMissing: true,
+  });
+  if (local) {
+    return local;
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .getProjectStartMetadata({ host_id, project_id });
+  }
+  throw new Error(
+    `project ${project_id} is not assigned to host ${host_id} or is unavailable`,
+  );
+}
+
+export async function getProjectStartMetadataLocal({
+  host_id,
+  project_id,
+  allowMissing = false,
+}: {
+  host_id?: string;
+  project_id: string;
+  allowMissing?: boolean;
+}): Promise<{
+  title?: string;
+  users?: any;
+  image?: string;
+  authorized_keys?: string;
+  run_quota?: any;
+} | null> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
   const { rows } = await pool().query(
     `SELECT title, users, rootfs_image AS image, run_quota
        FROM projects
@@ -902,6 +945,9 @@ export async function getProjectStartMetadata({
   );
   const row = rows[0];
   if (!row) {
+    if (allowMissing) {
+      return null;
+    }
     throw new Error(
       `project ${project_id} is not assigned to host ${host_id} or is unavailable`,
     );

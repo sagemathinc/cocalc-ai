@@ -19,6 +19,7 @@ let resolveProjectBayMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
 let hostConnectionListMock: jest.Mock;
+let hostConnectionGetProjectStartMetadataMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let routedHostControlClientMock: jest.Mock;
@@ -188,6 +189,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
     hostConnection: jest.fn(() => ({
       get: (...args: any[]) => hostConnectionGetMock(...args),
       list: (...args: any[]) => hostConnectionListMock(...args),
+      getProjectStartMetadata: (...args: any[]) =>
+        hostConnectionGetProjectStartMetadataMock(...args),
     })),
     projectReference: jest.fn(() => ({
       get: (...args: any[]) => projectReferenceGetMock(...args),
@@ -1955,6 +1958,7 @@ describe("hosts.rolloutHostManagedComponentsInternal local rollback", () => {
 
 describe("hosts.resolveHostConnection", () => {
   const REMOTE_HOST_ID = "host-remote";
+  const REMOTE_PROJECT_ID = "project-remote";
 
   beforeEach(() => {
     jest.resetModules();
@@ -2002,6 +2006,11 @@ describe("hosts.resolveHostConnection", () => {
       last_seen: "2026-04-10T00:00:00.000Z",
       online: true,
     }));
+    hostConnectionGetProjectStartMetadataMock = jest.fn(async () => ({
+      title: "Remote project",
+      image: "ghcr.io/example/project:latest",
+      run_quota: { disk_quota: 10 },
+    }));
     queryMock = jest.fn(async () => ({ rows: [] }));
   });
 
@@ -2025,6 +2034,29 @@ describe("hosts.resolveHostConnection", () => {
     expect(hostConnectionGetMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       host_id: REMOTE_HOST_ID,
+    });
+  });
+
+  it("routes project start metadata lookup to the owning bay when the local host bay misses", async () => {
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+    const { getProjectStartMetadata } = await import("./hosts");
+    await expect(
+      getProjectStartMetadata({
+        host_id: REMOTE_HOST_ID,
+        project_id: REMOTE_PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      title: "Remote project",
+      image: "ghcr.io/example/project:latest",
+      run_quota: { disk_quota: 10 },
+    });
+    expect(resolveProjectBayMock).toHaveBeenCalledWith(REMOTE_PROJECT_ID);
+    expect(hostConnectionGetProjectStartMetadataMock).toHaveBeenCalledWith({
+      host_id: REMOTE_HOST_ID,
+      project_id: REMOTE_PROJECT_ID,
     });
   });
 });
