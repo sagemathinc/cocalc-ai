@@ -88,10 +88,12 @@ import {
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
 import {
+  getBackupConfigLocal,
   getProjectStartMetadataLocal,
   listHostProjectsLocalSnapshot,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
+  recordProjectBackupLocal,
   resolveHostConnectionLocal,
 } from "@cocalc/server/conat/api/hosts";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -447,6 +449,20 @@ async function startHostConnectionService(): Promise<void> {
       }
       return metadata;
     },
+    getBackupConfig: async ({
+      host_id,
+      project_id,
+      host_region,
+      host_machine,
+    }) =>
+      await getBackupConfigLocal({
+        host_id,
+        project_id,
+        host_region,
+        host_machine,
+      }),
+    recordProjectBackup: async ({ host_id, project_id, time }) =>
+      await recordProjectBackupLocal({ host_id, project_id, time }),
     listHostProjects: async ({ id, risk_only, state_filter, project_state }) =>
       await listHostProjectsLocalSnapshot({
         id,

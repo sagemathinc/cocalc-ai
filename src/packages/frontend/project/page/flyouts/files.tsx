@@ -58,6 +58,7 @@ import useListing from "@cocalc/frontend/project/listing/use-listing";
 import useBackupsListing, {
   isBackupsPath,
 } from "@cocalc/frontend/project/listing/use-backups";
+import { resolveVirtualListingPath } from "@cocalc/frontend/project/listing/virtual-listing-path";
 import Backups from "@cocalc/frontend/project/backups";
 import Snapshots from "@cocalc/frontend/project/snapshots";
 import {
@@ -210,10 +211,10 @@ export function FilesFlyout({
     typeof available_features?.homeDirectory === "string"
       ? normalizeAbsolutePath(available_features.homeDirectory)
       : getProjectHomeDirectory(project_id);
-  const listingPath =
-    inSnapshotsPath && !effective_current_path.startsWith("/")
-      ? normalizeAbsolutePath(effective_current_path, homePath)
-      : effective_current_path;
+  const listingPath = resolveVirtualListingPath({
+    path: effective_current_path,
+    homePath,
+  });
   const fs = useFs({ project_id });
   const {
     listing: directoryListing,

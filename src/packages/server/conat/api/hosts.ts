@@ -113,6 +113,10 @@ import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
+import {
+  getBackupConfig as getBackupConfigLocalInternal,
+  recordProjectBackup as recordProjectBackupLocalInternal,
+} from "@cocalc/server/project-backup";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { getLLMUsageStatus } from "@cocalc/server/llm/usage-status";
 import { computeUsageUnits } from "@cocalc/server/llm/usage-units";
@@ -819,11 +823,112 @@ function requireCreateHosts(entitlements: any) {
   }
 }
 
-export {
-  getBackupConfig,
-  recordProjectBackup,
-} from "@cocalc/server/project-backup";
 export { rolloutComponentsForUpgradeResultsInternal as rolloutComponentsForUpgradeResults };
+
+export async function getBackupConfig({
+  host_id,
+  project_id,
+  host_region,
+  host_machine,
+}: {
+  host_id?: string;
+  project_id?: string;
+  host_region?: string | null;
+  host_machine?: HostMachine | null;
+}): Promise<{ toml: string; ttl_seconds: number }> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    const { rows } = await pool().query<{
+      region: string | null;
+      metadata: any;
+    }>(
+      "SELECT region, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+      [host_id],
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new Error("host not found");
+    }
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .getBackupConfig({
+        host_id,
+        project_id,
+        host_region: row.region ?? host_region ?? null,
+        host_machine: (row.metadata?.machine ??
+          host_machine ??
+          null) as HostMachine | null,
+      });
+  }
+  return await getBackupConfigLocalInternal({
+    host_id,
+    project_id,
+    host_region,
+    host_machine,
+  });
+}
+
+export async function getBackupConfigLocal({
+  host_id,
+  project_id,
+  host_region,
+  host_machine,
+}: {
+  host_id?: string;
+  project_id?: string;
+  host_region?: string | null;
+  host_machine?: HostMachine | null;
+}): Promise<{ toml: string; ttl_seconds: number }> {
+  return await getBackupConfigLocalInternal({
+    host_id,
+    project_id,
+    host_region,
+    host_machine,
+  });
+}
+
+export async function recordProjectBackup({
+  host_id,
+  project_id,
+  time,
+}: {
+  host_id?: string;
+  project_id: string;
+  time: Date;
+}): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .recordProjectBackup({ host_id, project_id, time });
+    return;
+  }
+  await recordProjectBackupLocalInternal({ host_id, project_id, time });
+}
+
+export async function recordProjectBackupLocal({
+  host_id,
+  project_id,
+  time,
+}: {
+  host_id?: string;
+  project_id: string;
+  time: Date;
+}): Promise<void> {
+  await recordProjectBackupLocalInternal({ host_id, project_id, time });
+}
 
 export async function touchProject({
   host_id,
