@@ -126,6 +126,10 @@ but "which parts are finished, partial, or still missing?"
    - `cocalc host deploy restart` does not exist yet
    - repeated deploy/upgrade requests still need stronger idempotency and stale
      state handling
+6. Explicit full-stack "Upgrade all..." flows are still not fully reliable.
+   - the align-runtime-stack path can still leave managed runtime components on
+     older builds even after `project-host` moves forward
+   - the resulting drift/status reporting is still too confusing for operators
 
 ## Problem Statement
 
