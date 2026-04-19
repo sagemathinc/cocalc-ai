@@ -278,6 +278,10 @@ function renderDerivedRiskTags(
   derived: HostMetricsDerived | undefined,
 ): React.ReactNode {
   if (!derived) return null;
+  const overlayInnerStyle = {
+    maxWidth: "min(420px, calc(100vw - 64px))",
+    width: "max-content",
+  } as const;
   const tags: React.ReactNode[] = [];
   if (derived.disk.level !== "healthy") {
     const tag = (
@@ -291,6 +295,7 @@ function renderDerivedRiskTags(
           key="disk-risk"
           title={riskTooltip("Disk risk", derived.disk)}
           placement="top"
+          overlayInnerStyle={overlayInnerStyle}
         >
           {tag}
         </Tooltip>
@@ -311,6 +316,7 @@ function renderDerivedRiskTags(
           key="metadata-risk"
           title={riskTooltip("Metadata risk", derived.metadata)}
           placement="top"
+          overlayInnerStyle={overlayInnerStyle}
         >
           {tag}
         </Tooltip>
@@ -324,6 +330,7 @@ function renderDerivedRiskTags(
       <Tooltip
         key="admission-blocked"
         title="Storage-heavy admissions should be blocked until the host recovers."
+        overlayInnerStyle={overlayInnerStyle}
       >
         <Tag color="red">admission blocked</Tag>
       </Tooltip>,
@@ -334,6 +341,7 @@ function renderDerivedRiskTags(
       <Tooltip
         key="auto-grow-recommended"
         title="The host is approaching a disk limit where guarded disk growth would likely help."
+        overlayInnerStyle={overlayInnerStyle}
       >
         <Tag color="gold">auto-grow suggested</Tag>
       </Tooltip>,
@@ -408,6 +416,26 @@ function Sparkline({
   const coordinates = sparklineCoordinates(values, chartWidth, chartHeight);
   const hoveredPoint =
     hoveredIndex != null ? coordinates[hoveredIndex] : undefined;
+  const tooltipStyle =
+    hoveredPoint && hoveredIndex != null
+      ? hoveredPoint.x < 72
+        ? {
+            left: 0,
+            top: -8,
+            transform: "translate(0, -100%)",
+          }
+        : hoveredPoint.x > chartWidth - 72
+          ? {
+              right: 0,
+              top: -8,
+              transform: "translate(0, -100%)",
+            }
+          : {
+              left: `${(hoveredPoint.x / chartWidth) * 100}%`,
+              top: -8,
+              transform: "translate(-50%, -100%)",
+            }
+      : undefined;
   return (
     <div
       style={{
@@ -467,15 +495,20 @@ function Sparkline({
         <div
           style={{
             position: "absolute",
-            left: `${(hoveredPoint.x / chartWidth) * 100}%`,
-            top: `${(hoveredPoint.y / chartHeight) * 100}%`,
-            transform: "translate(-50%, -50%)",
+            zIndex: 20,
             pointerEvents: "none",
+            maxWidth: compact ? 220 : 280,
+            borderRadius: 6,
+            padding: "8px 10px",
+            background: "rgba(24, 24, 27, 0.94)",
+            color: "white",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+            fontSize: 12,
+            lineHeight: 1.35,
+            ...tooltipStyle,
           }}
         >
-          <Tooltip open title={points[hoveredIndex].tooltip} placement="top">
-            <div style={{ width: 1, height: 1 }} />
-          </Tooltip>
+          {points[hoveredIndex].tooltip}
         </div>
       )}
     </div>
@@ -495,7 +528,7 @@ function MetricBar({
   const trendPoints = historyPoints ?? [];
   if (compact && dense) {
     return (
-      <Space orientation="vertical" size={2} style={{ width: 190 }}>
+      <Space orientation="vertical" size={2} style={{ width: "100%" }}>
         <Space
           size={8}
           style={{
@@ -544,11 +577,7 @@ function MetricBar({
   }
 
   return (
-    <Space
-      orientation="vertical"
-      size={2}
-      style={{ width: compact ? 180 : "100%" }}
-    >
+    <Space orientation="vertical" size={2} style={{ width: "100%" }}>
       <Space
         size={8}
         style={{
@@ -737,7 +766,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
 
   if (compact) {
     return (
-      <Space orientation="vertical" size={4}>
+      <Space orientation="vertical" size={4} style={{ width: "100%" }}>
         {staleMetricsTag}
         {riskTags}
         <MetricBar

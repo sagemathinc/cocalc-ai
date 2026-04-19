@@ -5,7 +5,10 @@ import { promises as fsPromises } from "node:fs";
 import { availableParallelism, homedir, totalmem, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { getRow, upsertRow } from "@cocalc/lite/hub/sqlite/database";
-import { createHostControlService } from "@cocalc/conat/project-host/api";
+import {
+  createHostControlService,
+  type HostRuntimeLogSource,
+} from "@cocalc/conat/project-host/api";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { clearLocalAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 import { account_id } from "@cocalc/backend/data";
@@ -48,7 +51,7 @@ import { startHostMetricsCollector } from "./host-metrics";
 import { applyPendingCopies } from "./pending-copies";
 import { getManagedComponentStatus } from "./managed-components";
 import { rolloutManagedComponents } from "./managed-component-rollout";
-import { readHostAgentState } from "./host-agent";
+import { readHostAgentState } from "./host-agent-state";
 
 const logger = getLogger("project-host:master");
 
@@ -267,8 +270,28 @@ async function removeHostSshAuthorizedKey(public_key: string) {
   };
 }
 
-async function readRuntimeLogTail(lines?: number) {
-  const logPath = DEFAULT_RUNTIME_LOG_PATH;
+function runtimeLogPath(source?: HostRuntimeLogSource): string {
+  const dataDir = dirname(DEFAULT_RUNTIME_LOG_PATH);
+  switch (source) {
+    case "conat-router":
+      return join(dataDir, "conat-router.log");
+    case "conat-persist":
+      return join(dataDir, "conat-persist.log");
+    case "host-agent":
+      return join(dataDir, "host-agent.log");
+    case "supervision-events":
+      return join(dataDir, "supervision-events.jsonl");
+    case "project-host":
+    default:
+      return DEFAULT_RUNTIME_LOG_PATH;
+  }
+}
+
+async function readRuntimeLogTail(
+  source?: HostRuntimeLogSource,
+  lines?: number,
+) {
+  const logPath = runtimeLogPath(source);
   const tailLines = normalizeLogLines(lines);
   const runTail = async (command: string, args: string[]): Promise<string> => {
     const { stdout, stderr, exit_code } = await executeCode({
@@ -724,8 +747,8 @@ export async function startMasterRegistration({
         }
         return { ok: true };
       },
-      async getRuntimeLog({ lines }) {
-        return await readRuntimeLogTail(lines);
+      async getRuntimeLog({ lines, source }) {
+        return await readRuntimeLogTail(source, lines);
       },
       async getProjectRuntimeLog({ project_id, lines }) {
         return await readProjectRuntimeLogTail(project_id, lines);
@@ -756,8 +779,8 @@ export async function startMasterRegistration({
       async getManagedComponentStatus() {
         return getManagedComponentStatus();
       },
-      async getInstalledRuntimeArtifacts() {
-        return getInstalledRuntimeArtifacts();
+      async getInstalledRuntimeArtifacts(opts) {
+        return getInstalledRuntimeArtifacts(opts);
       },
       async getHostAgentStatus() {
         return readHostAgentState();

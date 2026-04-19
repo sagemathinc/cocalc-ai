@@ -119,6 +119,9 @@ import { getBrowserTimeTravelProviders } from "./timetravel-providers";
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_MS = 4_000;
 const HEARTBEAT_RETRY_MAX_MS = 60_000;
+const HEARTBEAT_STALE_PROBE_TIMEOUT_MS = 2_000;
+const HEARTBEAT_STALE_PROBE_AFTER_FAILURES = 1;
+const HEARTBEAT_FORCE_RECONNECT_AFTER_FAILURES = 2;
 const MAX_EXEC_CODE_LENGTH = 100_000;
 const MAX_EXEC_OPS = 256;
 const EXEC_OP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -149,6 +152,7 @@ export function createBrowserSessionAutomation({
   const runtimeObservability = createBrowserRuntimeObservability();
   const syncDocLeases = createManagedSyncDocLeases({ conat });
   const extensionsRuntime = new BrowserExtensionsRuntime();
+  let staleHeartbeatProbe: Promise<void> | undefined;
   const heartbeatController = createBrowserSessionHeartbeat({
     hub,
     getSnapshot: () => buildSessionSnapshot(client),
@@ -156,6 +160,63 @@ export function createBrowserSessionAutomation({
     retryMs: HEARTBEAT_RETRY_MS,
     maxRetryMs: HEARTBEAT_RETRY_MAX_MS,
     onWarn: (message) => console.warn(message),
+    onFailure: (_err, consecutiveFailures) => {
+      const browserOffline =
+        typeof navigator !== "undefined" && navigator.onLine === false;
+      const hiddenTab =
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden";
+      const conatClient = client.conat_client;
+      if (browserOffline || hiddenTab || !conatClient?.is_connected?.()) {
+        return;
+      }
+      if (
+        consecutiveFailures >= HEARTBEAT_STALE_PROBE_AFTER_FAILURES &&
+        staleHeartbeatProbe == null
+      ) {
+        staleHeartbeatProbe = (async () => {
+          try {
+            const callHub = (conatClient as any)?.callHub;
+            if (typeof callHub !== "function") {
+              return;
+            }
+            console.warn(
+              `browser-session heartbeat probing hub after ${consecutiveFailures} consecutive failures`,
+            );
+            await callHub.call(conatClient, {
+              name: "system.ping",
+              args: [],
+              timeout: HEARTBEAT_STALE_PROBE_TIMEOUT_MS,
+            });
+            console.warn("browser-session heartbeat stale probe succeeded");
+          } catch (probeErr) {
+            if (
+              (typeof navigator !== "undefined" &&
+                navigator.onLine === false) ||
+              (typeof document !== "undefined" &&
+                document.visibilityState === "hidden") ||
+              !conatClient?.is_connected?.()
+            ) {
+              return;
+            }
+            console.warn(
+              `browser-session heartbeat stale probe failed after ${consecutiveFailures} consecutive failures; forcing reconnect`,
+              probeErr,
+            );
+            conatClient?.reconnect?.();
+          } finally {
+            staleHeartbeatProbe = undefined;
+          }
+        })();
+      }
+      if (consecutiveFailures < HEARTBEAT_FORCE_RECONNECT_AFTER_FAILURES) {
+        return;
+      }
+      console.warn(
+        `browser-session heartbeat forcing reconnect after ${consecutiveFailures} consecutive failures`,
+      );
+      conatClient?.reconnect?.();
+    },
   });
 
   const assertExecNotCanceled = (isCanceled?: () => boolean) => {

@@ -11,6 +11,7 @@ import type { ManagedComponentKind } from "@cocalc/conat/project-host/api";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLogEntry } from "./use-host-log";
 import type { HostLroState } from "./use-host-ops";
+import type { HostDeleteOptions } from "../types";
 
 type HostSoftwareMap = Partial<
   Record<HostSoftwareArtifact, HostSoftwareAvailableVersion>
@@ -22,9 +23,12 @@ type UseHostDrawerViewModelArgs = {
   hostOps?: Record<string, HostLroState>;
   onClose: () => void;
   onEdit: (host: Host) => void;
+  onDelete?: (id: string, opts?: HostDeleteOptions) => void | Promise<void>;
   onUpgrade?: (host: Host) => void;
+  onUpgradeAll?: (host: Host) => void;
   onReconcile?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
+  onUpgradeAllFromHub?: (host: Host) => void;
   onUpgradeArtifact?: (opts: {
     host: Host;
     artifact: HostSoftwareArtifact;
@@ -40,6 +44,8 @@ type UseHostDrawerViewModelArgs = {
     configuredError?: string;
     hub: HostSoftwareMap;
     hubError?: string;
+    configuredCatalog?: HostSoftwareAvailableVersion[];
+    hubCatalog?: HostSoftwareAvailableVersion[];
     refresh: () => Promise<void>;
     hubSourceBaseUrl?: string;
   };
@@ -77,6 +83,10 @@ type UseHostDrawerViewModelArgs = {
     component: ManagedComponentKind;
     version?: string;
     last_known_good?: boolean;
+  }) => void | Promise<void>;
+  onRestartRuntimeComponent?: (opts: {
+    host: Host;
+    component: ManagedComponentKind;
   }) => void | Promise<void>;
   onResumeRuntimeComponentClusterDefault?: (opts: {
     host: Host;
@@ -130,9 +140,12 @@ export const useHostDrawerViewModel = ({
   hostOps,
   onClose,
   onEdit,
+  onDelete,
   onUpgrade,
+  onUpgradeAll,
   onReconcile,
   onUpgradeFromHub,
+  onUpgradeAllFromHub,
   onUpgradeArtifact,
   canUpgrade,
   onCancelOp,
@@ -145,6 +158,7 @@ export const useHostDrawerViewModel = ({
   onResumeRuntimeArtifactClusterDefault,
   onSetRuntimeComponentDeployment,
   onRollbackRuntimeComponent,
+  onRestartRuntimeComponent,
   onResumeRuntimeComponentClusterDefault,
   rootfsInventory,
   canManageRootfs,
@@ -159,9 +173,12 @@ export const useHostDrawerViewModel = ({
     hostOps,
     onClose,
     onEdit,
+    onDelete,
     onUpgrade,
+    onUpgradeAll,
     onReconcile,
     onUpgradeFromHub,
+    onUpgradeAllFromHub,
     onUpgradeArtifact,
     canUpgrade,
     onCancelOp,
@@ -174,6 +191,7 @@ export const useHostDrawerViewModel = ({
     onResumeRuntimeArtifactClusterDefault,
     onSetRuntimeComponentDeployment,
     onRollbackRuntimeComponent,
+    onRestartRuntimeComponent,
     onResumeRuntimeComponentClusterDefault,
     rootfsInventory,
     canManageRootfs,

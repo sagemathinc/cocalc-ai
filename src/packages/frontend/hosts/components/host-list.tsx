@@ -72,6 +72,11 @@ import {
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
 } from "../utils/project-host-rollout";
+import {
+  currentHostRuntimeExceptionSummary,
+  hostRuntimeExceptionDescription,
+  hostRuntimeExceptionLabel,
+} from "../utils/runtime-exceptions";
 
 const STATUS_ORDER = [
   "running",
@@ -292,6 +297,11 @@ type HostListViewModel = {
       source: "configured" | "hub";
     }) => void | Promise<void>;
     settingClusterDefaultKey?: string;
+    onAlignProjectHostFleetVersion?: (opts: {
+      desired_version: string;
+      source: "configured" | "hub";
+    }) => void | Promise<void>;
+    aligningProjectHostFleetKey?: string;
   };
 };
 
@@ -785,6 +795,8 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const showSpinner = isHostTransitioning(host.status);
         const statusLabel = host.deleted ? "deleted" : host.status;
         const op = hostOps?.[host.id];
+        const runtimeExceptionSummary =
+          currentHostRuntimeExceptionSummary(host);
         const projectHostRollback = currentProjectHostAutomaticRollback({
           observation: host.observed_host_agent?.project_host,
           currentVersion: host.version,
@@ -828,6 +840,17 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               {showStaleTag && (
                 <Tooltip title={getHostOnlineTooltip(host.last_seen)}>
                   <Tag color="orange">offline</Tag>
+                </Tooltip>
+              )}
+              {runtimeExceptionSummary && (
+                <Tooltip
+                  title={hostRuntimeExceptionDescription(
+                    runtimeExceptionSummary,
+                  )}
+                >
+                  <Tag color="blue">
+                    {hostRuntimeExceptionLabel(runtimeExceptionSummary)}
+                  </Tag>
                 </Tooltip>
               )}
             </Space>
@@ -1180,6 +1203,58 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     />
   ) : null;
 
+  const runtimeExceptionCounts = React.useMemo(() => {
+    let pinned = 0;
+    let autoRolledBack = 0;
+    for (const host of visibleHosts) {
+      if (currentHostRuntimeExceptionSummary(host)) {
+        pinned += 1;
+      }
+      if (
+        currentProjectHostAutomaticRollback({
+          observation: host.observed_host_agent?.project_host,
+          currentVersion: host.version,
+        })
+      ) {
+        autoRolledBack += 1;
+      }
+    }
+    return { pinned, autoRolledBack };
+  }, [visibleHosts]);
+
+  const runtimeExceptionNotice =
+    runtimeExceptionCounts.pinned > 0 ||
+    runtimeExceptionCounts.autoRolledBack > 0 ? (
+      <Alert
+        type="info"
+        showIcon
+        message="Some visible hosts are not simply following the fleet default."
+        description={
+          <Space direction="vertical" size={6} style={{ width: "100%" }}>
+            <Typography.Text type="secondary">
+              Host overrides pin a host to an explicit desired runtime version,
+              so it may not follow later fleet-default changes until you remove
+              the override. Automatic rollbacks also show up here so they are
+              easy to spot during fleet management.
+            </Typography.Text>
+            <Space size="small" wrap>
+              {runtimeExceptionCounts.pinned > 0 && (
+                <Tag color="blue">
+                  Host overrides: {runtimeExceptionCounts.pinned}
+                </Tag>
+              )}
+              {runtimeExceptionCounts.autoRolledBack > 0 && (
+                <Tag color="orange">
+                  Auto-rolled back: {runtimeExceptionCounts.autoRolledBack}
+                </Tag>
+              )}
+            </Space>
+          </Space>
+        }
+        style={{ marginBottom: 12 }}
+      />
+    ) : null;
+
   const header = (
     <div
       style={{
@@ -1389,6 +1464,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     <div>
       {header}
       {filterNotice}
+      {runtimeExceptionNotice}
       {isAdmin && showParallelLimits && parallelOps ? (
         <HostParallelOpsSummary
           status={parallelOps.status}

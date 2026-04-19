@@ -23,10 +23,7 @@ import {
   assertLocalBindOrInsecure,
   assertSecureUrlOrLocal,
 } from "@cocalc/backend/network/policy";
-import {
-  resolveProjectHostConatRouterUrl,
-  isProjectHostExternalConatRouterEnabled,
-} from "./conat-router";
+import { resolveProjectHostConatRouterUrl } from "./conat-router";
 
 const logger = getLogger("project-host:conat-persist");
 
@@ -158,15 +155,10 @@ export async function startStandaloneProjectHostConatPersist({
   persistServer: ConatSocketServer;
   port: number;
 }> {
-  if (!isProjectHostExternalConatRouterEnabled()) {
-    throw new Error(
-      "external conat persist mode requires external conat router mode",
-    );
-  }
   const conatRouterUrl = resolveProjectHostConatRouterUrl();
   assertSecureUrlOrLocal({
     url: conatRouterUrl,
-    urlName: "COCALC_PROJECT_HOST_CONAT_ROUTER_URL",
+    urlName: "COCALC_PROJECT_HOST_CONAT_ROUTER_PORT",
   });
   const bindHost = resolveProjectHostConatPersistHealthHost();
   const bindPort =

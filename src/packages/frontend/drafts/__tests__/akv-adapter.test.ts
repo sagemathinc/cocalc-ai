@@ -65,4 +65,20 @@ describe("AkvDraftAdapter", () => {
       { ttl: 9000 },
     );
   });
+
+  it("closes the underlying kv stream when requested", () => {
+    const close = jest.fn();
+    const adapter = new AkvDraftAdapter({
+      kv: {
+        get: async () => undefined,
+        set: async () => undefined,
+        delete: async () => undefined,
+        close,
+      },
+    });
+
+    adapter.close();
+
+    expect(close).toHaveBeenCalledTimes(1);
+  });
 });

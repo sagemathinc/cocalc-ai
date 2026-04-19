@@ -37,6 +37,11 @@ import {
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
 } from "../utils/project-host-rollout";
+import {
+  currentHostRuntimeExceptionSummary,
+  hostRuntimeExceptionDescription,
+  hostRuntimeExceptionLabel,
+} from "../utils/runtime-exceptions";
 
 type HostCardProps = {
   host: Host;
@@ -94,6 +99,7 @@ export const HostCard: React.FC<HostCardProps> = ({
     observation: projectHostObservation,
     currentVersion: host.version,
   });
+  const runtimeExceptionSummary = currentHostRuntimeExceptionSummary(host);
   const displayHostOp = shouldSuppressProjectHostFailedOp({
     op: hostOp,
     currentVersion: host.version,
@@ -319,6 +325,15 @@ export const HostCard: React.FC<HostCardProps> = ({
           {showStaleTag && (
             <Tooltip title={getHostOnlineTooltip(host.last_seen)}>
               <Tag color="orange">offline</Tag>
+            </Tooltip>
+          )}
+          {runtimeExceptionSummary && (
+            <Tooltip
+              title={hostRuntimeExceptionDescription(runtimeExceptionSummary)}
+            >
+              <Tag color="blue">
+                {hostRuntimeExceptionLabel(runtimeExceptionSummary)}
+              </Tag>
             </Tooltip>
           )}
         </Space>

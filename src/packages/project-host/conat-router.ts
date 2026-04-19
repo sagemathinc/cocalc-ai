@@ -24,16 +24,15 @@ import type {
   ConatServer,
   UserFunction,
 } from "@cocalc/conat/core/server";
+import {
+  PROJECT_HOST_HTTP_AUTH_COOKIE_NAME,
+  PROJECT_HOST_HTTP_SESSION_COOKIE_NAME,
+} from "@cocalc/conat/auth/project-host-http";
+import { PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/project-host-browser-session";
 import { createProxyHandlers } from "@cocalc/project-proxy/proxy";
 import { createProjectHostConatAuth } from "./conat-auth";
 
 const logger = getLogger("project-host:conat-router");
-
-const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
-
-function envIsTrue(name: string): boolean {
-  return TRUE_VALUES.has(`${process.env[name] ?? ""}`.trim().toLowerCase());
-}
 
 function parsePositiveInteger(
   raw: string | undefined,
@@ -67,16 +66,44 @@ function parseProxyTarget(address: string): { host: string; port: number } {
 }
 
 function normalizeLoopbackHost(host: string): string {
-  return host === "0.0.0.0" || host === "::" || host === "[::]"
+  return host === "0.0.0.0" ||
+    host === "::" ||
+    host === "[::]" ||
+    host === "localhost"
     ? "127.0.0.1"
     : host;
 }
 
 export function isProjectHostExternalConatRouterEnabled(): boolean {
-  return envIsTrue("COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER");
+  // Project-host now always routes through a dedicated local conat-router
+  // daemon. Keep this helper as a compatibility shim for older callers.
+  return true;
+}
+
+export function isProjectHostManagedLocalConatRouter(): boolean {
+  try {
+    resolveProjectHostConatRouterUrl();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function resolveProjectHostConatRouterUrl(): string {
+  const configuredHost = normalizeLoopbackHost(
+    `${process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_HOST ?? "127.0.0.1"}`.trim() ||
+      "127.0.0.1",
+  );
+  const port = parsePositiveInteger(
+    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT,
+    "COCALC_PROJECT_HOST_CONAT_ROUTER_PORT",
+  );
+  if (port == null) {
+    throw new Error(
+      "project-host requires COCALC_PROJECT_HOST_CONAT_ROUTER_PORT so it can connect to the managed local conat router daemon",
+    );
+  }
+  const derived = `http://${configuredHost}:${port}`;
   const explicit =
     `${process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL ?? ""}`.trim();
   if (explicit) {
@@ -84,18 +111,36 @@ export function resolveProjectHostConatRouterUrl(): string {
       url: explicit,
       urlName: "COCALC_PROJECT_HOST_CONAT_ROUTER_URL",
     });
-    return explicit;
+    try {
+      const parsed = new URL(explicit);
+      const explicitPort =
+        parsed.port.length > 0
+          ? Number(parsed.port)
+          : parsed.protocol === "http:"
+            ? 80
+            : parsed.protocol === "https:"
+              ? 443
+              : undefined;
+      if (
+        parsed.protocol !== "http:" ||
+        (parsed.pathname && parsed.pathname !== "/") ||
+        normalizeLoopbackHost(parsed.hostname) !== configuredHost ||
+        explicitPort !== port
+      ) {
+        throw new Error(
+          "project-host does not support an external conat router; use the managed local daemon port configuration instead",
+        );
+      }
+    } catch (err) {
+      if (err instanceof Error) {
+        throw err;
+      }
+      throw new Error(
+        "project-host does not support an external conat router; use the managed local daemon port configuration instead",
+      );
+    }
   }
-  const port = parsePositiveInteger(
-    process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_PORT,
-    "COCALC_PROJECT_HOST_CONAT_ROUTER_PORT",
-  );
-  if (port != null) {
-    return `http://127.0.0.1:${port}`;
-  }
-  throw new Error(
-    "external conat router mode requires COCALC_PROJECT_HOST_CONAT_ROUTER_URL or COCALC_PROJECT_HOST_CONAT_ROUTER_PORT",
-  );
+  return derived;
 }
 
 function resolveProjectHostConatRouterIngressHost(): string | undefined {
@@ -333,6 +378,7 @@ export function attachProjectHostConatRouterProxy({
   const { handleRequest, handleUpgrade } = createProxyHandlers({
     resolveTarget: () => ({ handled: true, target: proxyTarget }),
     rewriteRequest,
+    preserveCookieNames: [PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME],
   });
   logger.info("project-host conat router proxy enabled", {
     target,
@@ -364,6 +410,11 @@ export function attachProjectHostHttpFallbackProxy({
   const proxyTarget = parseProxyTarget(target);
   const { handleRequest, handleUpgrade } = createProxyHandlers({
     resolveTarget: () => ({ handled: true, target: proxyTarget }),
+    preserveCookieNames: [
+      PROJECT_HOST_HTTP_AUTH_COOKIE_NAME,
+      PROJECT_HOST_HTTP_SESSION_COOKIE_NAME,
+      PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME,
+    ],
   });
   logger.info("project-host ingress fallback proxy enabled", {
     target,

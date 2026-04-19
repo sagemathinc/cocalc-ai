@@ -28,7 +28,7 @@ runtime deployment flow in `hosts.ts`.
 import type { HostRuntimeArtifact } from "@cocalc/conat/hub/api/hosts";
 import getPool from "@cocalc/database/pool";
 import { setProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
-import { DEFAULT_RUNTIME_DEPLOYMENT_POLICY } from "./hosts-runtime-deployment-planning";
+import { runtimeDeploymentsForAlignedProjectHostVersion } from "./hosts-runtime-deployment-planning";
 
 function pool() {
   return getPool();
@@ -101,21 +101,10 @@ export async function rewriteProjectHostDesiredVersionInternal({
     host_id: row.id,
     requested_by,
     replace: false,
-    deployments: [
-      {
-        target_type: "artifact",
-        target: "project-host",
-        desired_version: normalizedVersion,
-        rollout_reason: reason,
-      },
-      {
-        target_type: "component",
-        target: "project-host",
-        desired_version: normalizedVersion,
-        rollout_policy: DEFAULT_RUNTIME_DEPLOYMENT_POLICY["project-host"],
-        rollout_reason: reason,
-      },
-    ],
+    deployments: runtimeDeploymentsForAlignedProjectHostVersion({
+      version: normalizedVersion,
+      rolloutReason: reason,
+    }),
   });
 }
 

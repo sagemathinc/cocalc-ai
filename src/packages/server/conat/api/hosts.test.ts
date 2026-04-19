@@ -106,6 +106,7 @@ jest.mock("@cocalc/database/postgres/project-host-metrics", () => ({
 
 jest.mock("@cocalc/database/postgres/project-host-runtime-deployments", () => ({
   __esModule: true,
+  ensureProjectHostRuntimeDeploymentsSchema: jest.fn(async () => undefined),
   listProjectHostRuntimeDeployments: (...args: any[]) =>
     listProjectHostRuntimeDeploymentsMock(...args),
   loadEffectiveProjectHostRuntimeDeployments: (...args: any[]) =>
@@ -727,18 +728,27 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
           current_version: "ph-v2",
           current_build_id: "build-ph-v2",
           installed_versions: ["ph-v2", "ph-v1"],
+          version_bytes: [
+            { version: "ph-v2", bytes: 2000 },
+            { version: "ph-v1", bytes: 1000 },
+          ],
+          installed_bytes_total: 3000,
         },
         {
           artifact: "project-bundle",
           current_version: "bundle-v4",
           current_build_id: "build-bundle-v4",
           installed_versions: ["bundle-v4"],
+          version_bytes: [{ version: "bundle-v4", bytes: 4000 }],
+          installed_bytes_total: 4000,
           referenced_versions: [{ version: "bundle-v4", project_count: 2 }],
         },
         {
           artifact: "tools",
           current_version: "tools-v7",
           installed_versions: ["tools-v7"],
+          version_bytes: [{ version: "tools-v7", bytes: 7000 }],
+          installed_bytes_total: 7000,
           referenced_versions: [
             { version: "tools-v7", project_count: 1 },
             { version: "tools-v6", project_count: 1 },
@@ -806,22 +816,34 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         current_version: "bundle-v4",
         current_build_id: "build-bundle-v4",
         installed_versions: ["bundle-v4"],
+        version_bytes: [{ version: "bundle-v4", bytes: 4000 }],
+        installed_bytes_total: 4000,
         referenced_versions: [{ version: "bundle-v4", project_count: 2 }],
+        retention_policy: { keep_count: 3 },
       },
       {
         artifact: "project-host",
         current_version: "ph-v2",
         current_build_id: "build-ph-v2",
         installed_versions: ["ph-v2", "ph-v1"],
+        version_bytes: [
+          { version: "ph-v2", bytes: 2000 },
+          { version: "ph-v1", bytes: 1000 },
+        ],
+        installed_bytes_total: 3000,
+        retention_policy: { keep_count: 10 },
       },
       {
         artifact: "tools",
         current_version: "tools-v7",
         installed_versions: ["tools-v7"],
+        version_bytes: [{ version: "tools-v7", bytes: 7000 }],
+        installed_bytes_total: 7000,
         referenced_versions: [
           { version: "tools-v7", project_count: 1 },
           { version: "tools-v6", project_count: 1 },
         ],
+        retention_policy: { keep_count: 3 },
       },
     ]);
     expect(status.observed_targets).toEqual([
@@ -868,6 +890,13 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         previous_version: "ph-v1",
         last_known_good_version: "ph-v0",
         retained_versions: ["ph-v2", "ph-v1"],
+        referenced_versions: [],
+        protected_versions: ["ph-v2", "ph-v1"],
+        prune_candidate_versions: [],
+        retained_bytes_total: 3000,
+        protected_bytes_total: 3000,
+        prune_candidate_bytes_total: undefined,
+        retention_policy: { keep_count: 10 },
       },
       {
         target_type: "component",
@@ -878,6 +907,13 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         previous_version: "ph-v1",
         last_known_good_version: "ph-v0",
         retained_versions: ["ph-v2", "ph-v1"],
+        referenced_versions: [],
+        protected_versions: ["ph-v2", "ph-v1"],
+        prune_candidate_versions: [],
+        retained_bytes_total: 3000,
+        protected_bytes_total: 3000,
+        prune_candidate_bytes_total: undefined,
+        retention_policy: { keep_count: 10 },
       },
     ]);
     expect(status.observation_error).toBeUndefined();
@@ -1115,8 +1151,10 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
         kind: "host-reconcile-runtime-deployments",
         scope_type: "host",
         scope_id: HOST_ID,
+        created_by: ACCOUNT_ID,
         input: expect.objectContaining({
           id: HOST_ID,
+          account_id: ACCOUNT_ID,
           components: ["acp-worker"],
           reason: "automatic_runtime_deployment_reconcile",
         }),
@@ -1142,7 +1180,9 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
         kind: "host-reconcile-runtime-deployments",
         scope_type: "host",
         scope_id: HOST_ID,
+        created_by: ACCOUNT_ID,
         input: expect.objectContaining({
+          account_id: ACCOUNT_ID,
           components: ["acp-worker"],
         }),
       }),
@@ -1280,8 +1320,10 @@ describe("hosts.setHostRuntimeDeployments automatic artifact reconcile", () => {
         kind: "host-upgrade-software",
         scope_type: "host",
         scope_id: HOST_ID,
+        created_by: ACCOUNT_ID,
         input: expect.objectContaining({
           id: HOST_ID,
+          account_id: ACCOUNT_ID,
           targets: [{ artifact: "project-bundle", version: "bundle-v5" }],
         }),
       }),
@@ -1679,12 +1721,11 @@ describe("hosts.rollbackProjectHostOverSshInternal", () => {
       expect.objectContaining({
         scope_type: "host",
         host_id: HOST_ID,
-        deployments: [
+        deployments: expect.arrayContaining([
           expect.objectContaining({
             target_type: "artifact",
             target: "project-host",
             desired_version: "ph-v1",
-            rollout_reason: "automatic_project_host_upgrade_rollback",
           }),
           expect.objectContaining({
             target_type: "component",
@@ -1692,7 +1733,25 @@ describe("hosts.rollbackProjectHostOverSshInternal", () => {
             desired_version: "ph-v1",
             rollout_reason: "automatic_project_host_upgrade_rollback",
           }),
-        ],
+          expect.objectContaining({
+            target_type: "component",
+            target: "conat-router",
+            desired_version: "ph-v1",
+            rollout_reason: "automatic_project_host_upgrade_rollback",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "conat-persist",
+            desired_version: "ph-v1",
+            rollout_reason: "automatic_project_host_upgrade_rollback",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "acp-worker",
+            desired_version: "ph-v1",
+            rollout_reason: "automatic_project_host_upgrade_rollback",
+          }),
+        ]),
       }),
     );
     expect(createProjectHostBootstrapTokenMock).toHaveBeenCalledWith(HOST_ID);
@@ -1860,7 +1919,7 @@ describe("hosts.rolloutHostManagedComponentsInternal local rollback", () => {
       expect.objectContaining({
         scope_type: "host",
         host_id: HOST_ID,
-        deployments: [
+        deployments: expect.arrayContaining([
           expect.objectContaining({
             target_type: "artifact",
             target: "project-host",
@@ -1871,7 +1930,22 @@ describe("hosts.rolloutHostManagedComponentsInternal local rollback", () => {
             target: "project-host",
             desired_version: "ph-v1",
           }),
-        ],
+          expect.objectContaining({
+            target_type: "component",
+            target: "conat-router",
+            desired_version: "ph-v1",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "conat-persist",
+            desired_version: "ph-v1",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "acp-worker",
+            desired_version: "ph-v1",
+          }),
+        ]),
       }),
     );
   });
@@ -2156,6 +2230,20 @@ describe("hosts.listHosts bootstrap normalization", () => {
     }));
     loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
     queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "CREATE TABLE IF NOT EXISTS project_host_runtime_deployments",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "CREATE INDEX IF NOT EXISTS project_host_runtime_deployments_host_idx",
+        )
+      ) {
+        return { rows: [] };
+      }
       if (sql.includes("SELECT * FROM project_hosts")) {
         return {
           rows: [
@@ -2197,6 +2285,14 @@ describe("hosts.listHosts bootstrap normalization", () => {
           ],
         };
       }
+      if (sql.includes("FROM project_host_runtime_deployments")) {
+        return {
+          rows: [
+            { host_id: HOST_ID, target: "project-host" },
+            { host_id: HOST_ID, target: "conat-router" },
+          ],
+        };
+      }
       if (sql.includes("COUNT(*) AS total")) {
         return { rows: [] };
       }
@@ -2222,6 +2318,10 @@ describe("hosts.listHosts bootstrap normalization", () => {
         running_versions: ["build-ph-v2"],
       }),
     ]);
+    expect(hosts[0].runtime_exception_summary).toEqual({
+      host_override_count: 2,
+      host_override_targets: ["conat-router", "project-host"],
+    });
   });
 });
 

@@ -1,6 +1,7 @@
 /**
- * Minimal project-host: spins up a local conat server, embeds the file-server
- * and project-runner, and exposes a tiny HTTP API to start/stop/status projects.
+ * Minimal project-host: connects to the managed local conat-router daemon,
+ * embeds the file-server and project-runner, and exposes a tiny HTTP API to
+ * start/stop/status projects.
  *
  * Security: intentionally insecure for now. No auth, no TLS.
  */
@@ -18,7 +19,6 @@ import {
   setConatServer,
   setConatPassword,
 } from "@cocalc/backend/data";
-import type { ConatServer } from "@cocalc/conat/core/server";
 import {
   connect as connectToConat,
   type Client as ConatClient,
@@ -102,10 +102,13 @@ import { initProjectArchiveInfoService } from "./archive-info-service";
 import { startProjectHostEventLoopStallMonitor } from "./event-loop-stalls";
 import {
   attachProjectHostConatRouterProxy,
-  isProjectHostExternalConatRouterEnabled,
   resolveProjectHostConatRouterUrl,
-  startProjectHostConatRouterServer,
 } from "./conat-router";
+import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
+import {
+  clearProjectHostBrowserSessionCookie,
+  issueProjectHostBrowserSessionFromBearer,
+} from "./browser-session";
 import {
   isProjectHostExternalConatPersistEnabled,
   waitForProjectHostConatPersistReady,
@@ -311,36 +314,18 @@ export async function main(
   const hostId = resolveProjectHostId(_config.hostId);
 
   // 1) HTTP + conat server
-  const { app, httpServer, isHttps } = await startHttpServer(port, host, tls);
-  const externalConatRouter = isProjectHostExternalConatRouterEnabled();
-  let conatServer: ConatServer | undefined;
-  let conatClient: ConatClient;
-  if (externalConatRouter) {
-    const conatRouterUrl = resolveProjectHostConatRouterUrl();
-    attachProjectHostConatRouterProxy({
-      app,
-      httpServer,
-      target: conatRouterUrl,
-    });
-    conatClient = connectToConat({
-      address: conatRouterUrl,
-      systemAccountPassword: localConatPassword,
-    });
-    setConatServer(conatRouterUrl);
-  } else {
-    conatServer = await startProjectHostConatRouterServer({
-      httpServer,
-      ssl: isHttps,
-      port,
-      hostId,
-      systemAccountPassword: localConatPassword,
-    });
-    conatClient = conatServer.client({
-      path: "/",
-      systemAccountPassword: localConatPassword,
-    });
-    setConatServer(conatServer.address());
-  }
+  const { app, httpServer } = await startHttpServer(port, host, tls);
+  const conatRouterUrl = resolveProjectHostConatRouterUrl();
+  attachProjectHostConatRouterProxy({
+    app,
+    httpServer,
+    target: conatRouterUrl,
+  });
+  const conatClient: ConatClient = connectToConat({
+    address: conatRouterUrl,
+    systemAccountPassword: localConatPassword,
+  });
+  setConatServer(conatRouterUrl);
   setConatClient({
     conat: () => conatClient,
     getLogger,
@@ -381,11 +366,6 @@ export async function main(
   // Local persist must exist before ACP startup so automation indexes can
   // republish into the project-scoped DKV stores on restart.
   const externalPersist = isProjectHostExternalConatPersistEnabled();
-  if (externalPersist && !externalConatRouter) {
-    throw new Error(
-      "external conat persist mode requires external conat router mode",
-    );
-  }
   const persistServer = externalPersist
     ? undefined
     : createPersistServer({ client: conatClient });
@@ -415,6 +395,50 @@ export async function main(
   const httpProxyAuth = createProjectHostHttpProxyAuth({ host_id: hostId });
   const stopHttpProxyRevocationKickLoop =
     httpProxyAuth.startUpgradeRevocationKickLoop();
+  const setBrowserSessionCorsHeaders = (
+    req: IncomingMessage,
+    res: express.Response,
+  ) => {
+    const origin = `${req.headers.origin ?? ""}`.trim();
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+    }
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Authorization, Content-Type",
+    );
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  };
+  app.options(PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH, (req, res) => {
+    setBrowserSessionCorsHeaders(req, res);
+    res.status(204).end();
+  });
+  app.post(PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH, (req, res) => {
+    setBrowserSessionCorsHeaders(req, res);
+    const authHeader = `${req.headers.authorization ?? ""}`;
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    if (!match?.[1]?.trim()) {
+      clearProjectHostBrowserSessionCookie({ req, res });
+      res.status(401).json({ error: "missing project-host bearer token" });
+      return;
+    }
+    try {
+      issueProjectHostBrowserSessionFromBearer({
+        req,
+        res,
+        host_id: hostId,
+        token: match[1].trim(),
+      });
+      res.status(204).end();
+    } catch (err: any) {
+      clearProjectHostBrowserSessionCookie({ req, res });
+      const message = `${err?.message ?? err ?? "invalid browser session bootstrap"}`;
+      const status = message === "session revoked" ? 401 : 403;
+      res.status(status).json({ error: message });
+    }
+  });
   const publicAppRouteCache = new TTL<string, PublicHostnameRoute | null>({
     max: 20_000,
     ttl: PUBLIC_APP_ROUTE_CACHE_MS,
@@ -620,7 +644,6 @@ export async function main(
     try {
       conatClient?.close();
     } catch {}
-    void conatServer?.close?.();
   };
   const closeWithSignal = async (signal: string) => {
     if (closed || shutdownInProgress) return;

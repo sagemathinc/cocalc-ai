@@ -388,7 +388,11 @@ export const useHostsPageViewModel = () => {
   const runUpgrade = React.useCallback(
     async (
       host: Host,
-      opts?: { base_url?: string; artifacts?: HostSoftwareArtifact[] },
+      opts?: {
+        base_url?: string;
+        artifacts?: HostSoftwareArtifact[];
+        alignRuntimeStack?: boolean;
+      },
     ) => {
       if (!hub.hosts.upgradeHostSoftware) {
         return;
@@ -407,6 +411,7 @@ export const useHostsPageViewModel = () => {
             channel: "latest",
           })),
           ...(opts?.base_url ? { base_url: opts.base_url } : {}),
+          ...(opts?.alignRuntimeStack ? { align_runtime_stack: true } : {}),
         });
         trackHostOp(host.id, op);
         await refresh();
@@ -434,6 +439,12 @@ export const useHostsPageViewModel = () => {
   const upgradeHostSoftware = React.useCallback(
     async (host: Host) => {
       await runUpgrade(host);
+    },
+    [runUpgrade],
+  );
+  const upgradeAllHostSoftware = React.useCallback(
+    async (host: Host) => {
+      await runUpgrade(host, { alignRuntimeStack: true });
     },
     [runUpgrade],
   );
@@ -615,8 +626,9 @@ export const useHostsPageViewModel = () => {
     hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
   });
   const runtimeVersionCatalog = useHostSoftwareVersionCatalog(hub, {
-    enabled: isAdmin && showRuntimeVersions,
+    enabled: isAdmin && (showRuntimeVersions || (drawerOpen && !!selected)),
     hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
+    historyLimit: drawerOpen && selected ? 24 : undefined,
   });
   const [settingClusterDefaultKey, setSettingClusterDefaultKey] =
     React.useState<string>();
@@ -639,6 +651,16 @@ export const useHostsPageViewModel = () => {
     async (host: Host) => {
       if (!baseUrl) return;
       await runUpgrade(host, { base_url: `${baseUrl}/software` });
+    },
+    [baseUrl, runUpgrade],
+  );
+  const upgradeAllHostSoftwareFromHub = React.useCallback(
+    async (host: Host) => {
+      if (!baseUrl) return;
+      await runUpgrade(host, {
+        base_url: `${baseUrl}/software`,
+        alignRuntimeStack: true,
+      });
     },
     [baseUrl, runUpgrade],
   );
@@ -820,6 +842,87 @@ export const useHostsPageViewModel = () => {
     },
     [hub, refresh, refreshHostOps, runtimeVersionCatalog],
   );
+  const [aligningProjectHostFleetKey, setAligningProjectHostFleetKey] =
+    React.useState<string>();
+  const alignProjectHostFleetVersion = React.useCallback(
+    async ({
+      desired_version,
+      source,
+    }: {
+      desired_version: string;
+      source: "configured" | "hub";
+    }) => {
+      if (!hub.hosts.upgradeHostSoftware) {
+        return;
+      }
+      const runningHosts = hosts.filter(
+        (host) => !host.deleted && host.status === "running",
+      );
+      if (!runningHosts.length) {
+        alert_message({
+          type: "info",
+          message: "No running hosts are available for fleet alignment.",
+          timeout: 6,
+        });
+        return;
+      }
+      const actionKey = `project-host:${desired_version}`;
+      setAligningProjectHostFleetKey(actionKey);
+      try {
+        const results = await Promise.allSettled(
+          runningHosts.map(async (host) => {
+            const op = await hub.hosts.upgradeHostSoftware({
+              id: host.id,
+              targets: [{ artifact: "project-host", version: desired_version }],
+              ...(source === "hub" && baseUrl ? { base_url: baseUrl } : {}),
+              align_runtime_stack: true,
+            });
+            trackHostOp(host.id, op);
+            return host;
+          }),
+        );
+        const failed = results.filter(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected",
+        );
+        await Promise.all([refresh(), refreshHostOps({ force: true })]);
+        if (failed.length) {
+          alert_message({
+            type: "warning",
+            message: `Queued full-stack project-host alignment to ${desired_version} on ${
+              runningHosts.length - failed.length
+            }/${runningHosts.length} running hosts. Failed hosts: ${
+              failed.length
+            }. Check host operations for details.`,
+            timeout: 12,
+          });
+          for (const result of failed) {
+            console.error(result.reason);
+          }
+          return;
+        }
+        alert_message({
+          type: "success",
+          message: `Queued full-stack project-host alignment to ${desired_version} on ${runningHosts.length} running hosts.`,
+          timeout: 8,
+        });
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `Failed to queue fleet alignment for project-host ${desired_version}: ${
+            err instanceof Error ? err.message : `${err}`
+          }`,
+          timeout: 20,
+        });
+        console.error(err);
+      } finally {
+        setAligningProjectHostFleetKey((current) =>
+          current === actionKey ? undefined : current,
+        );
+      }
+    },
+    [baseUrl, hub, hosts, refresh, refreshHostOps, trackHostOp],
+  );
   const rollbackRuntimeArtifact = React.useCallback(
     async ({
       host,
@@ -897,6 +1000,42 @@ export const useHostsPageViewModel = () => {
       }
     },
     [hub, refresh, runtimeDeployments, trackHostOp],
+  );
+  const restartRuntimeComponent = React.useCallback(
+    async ({
+      host,
+      component,
+    }: {
+      host: Host;
+      component: ManagedComponentKind;
+    }) => {
+      if (!hub.hosts.rolloutHostManagedComponents) {
+        return;
+      }
+      try {
+        const op = await hub.hosts.rolloutHostManagedComponents({
+          id: host.id,
+          components: [component],
+          reason: "frontend restart",
+        });
+        trackHostOp(host.id, op);
+        await Promise.all([
+          refresh(),
+          runtimeDeployments.refresh(),
+          refreshHostOps(),
+        ]);
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `Failed to restart ${component} on ${host.name}: ${
+            err instanceof Error ? err.message : `${err}`
+          }`,
+          timeout: 20,
+        });
+        console.error(err);
+      }
+    },
+    [hub, refresh, refreshHostOps, runtimeDeployments, trackHostOp],
   );
   const resumeRuntimeArtifactClusterDefault = React.useCallback(
     async ({
@@ -1443,6 +1582,8 @@ export const useHostsPageViewModel = () => {
           hubSourceLabel: baseUrl ? `${baseUrl}/software` : undefined,
           onSetClusterDefault: setClusterRuntimeArtifactDeployment,
           settingClusterDefaultKey,
+          onAlignProjectHostFleetVersion: alignProjectHostFleetVersion,
+          aligningProjectHostFleetKey,
         }
       : undefined,
   });
@@ -1452,9 +1593,12 @@ export const useHostsPageViewModel = () => {
     hostOps,
     onClose: closeDetails,
     onEdit: openEdit,
+    onDelete: (id: string, opts) => removeHost(id, opts),
     onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
+    onUpgradeAll: isAdmin ? upgradeAllHostSoftware : undefined,
     onReconcile: isAdmin ? reconcileHostSoftware : undefined,
     onUpgradeFromHub: isAdmin ? upgradeHostSoftwareFromHub : undefined,
+    onUpgradeAllFromHub: isAdmin ? upgradeAllHostSoftwareFromHub : undefined,
     onUpgradeArtifact: isAdmin ? upgradeHostArtifact : undefined,
     canUpgrade: isAdmin,
     onCancelOp: cancelHostOp,
@@ -1462,6 +1606,8 @@ export const useHostsPageViewModel = () => {
     loadingLog,
     softwareVersions: {
       ...softwareVersions,
+      configuredCatalog: runtimeVersionCatalog.configured,
+      hubCatalog: runtimeVersionCatalog.hub,
       hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
     },
     runtimeDeployments,
@@ -1476,6 +1622,7 @@ export const useHostsPageViewModel = () => {
       ? setRuntimeComponentDeployment
       : undefined,
     onRollbackRuntimeComponent: isAdmin ? rollbackRuntimeComponent : undefined,
+    onRestartRuntimeComponent: isAdmin ? restartRuntimeComponent : undefined,
     onResumeRuntimeComponentClusterDefault: isAdmin
       ? resumeRuntimeComponentClusterDefault
       : undefined,

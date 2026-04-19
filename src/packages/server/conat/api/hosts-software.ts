@@ -20,6 +20,12 @@ const SOFTWARE_FETCH_TIMEOUT_MS = 8_000;
 const HOST_UPGRADE_LRO_KIND = "host-upgrade-software";
 const HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND =
   "host-rollout-managed-components";
+const PROJECT_HOST_RUNTIME_STACK_COMPONENTS: ManagedComponentKind[] = [
+  "project-host",
+  "conat-router",
+  "conat-persist",
+  "acp-worker",
+];
 
 function canonicalizeSoftwareArtifact(
   artifact: HostSoftwareArtifact,
@@ -110,13 +116,16 @@ export function hostUpgradeDedupeKey({
   hostId,
   targets,
   baseUrl,
+  alignRuntimeStack,
 }: {
   hostId: string;
   targets: HostSoftwareUpgradeTarget[];
   baseUrl?: string;
+  alignRuntimeStack?: boolean;
 }): string {
   const normalizedBaseUrl = `${baseUrl ?? ""}`.trim() || null;
   return `${HOST_UPGRADE_LRO_KIND}:${hostId}:${JSON.stringify({
+    align_runtime_stack: !!alignRuntimeStack,
     base_url: normalizedBaseUrl,
     targets: normalizeHostUpgradeTargetsForDedupe(targets),
   })}`;
@@ -130,7 +139,20 @@ export function normalizeManagedComponentKindsForDedupe(
 
 export function rolloutComponentsForUpgradeResults(
   results: HostSoftwareUpgradeResponse["results"],
+  {
+    targets,
+    alignRuntimeStack = false,
+  }: {
+    targets?: HostSoftwareUpgradeTarget[];
+    alignRuntimeStack?: boolean;
+  } = {},
 ): ManagedComponentKind[] {
+  if (
+    alignRuntimeStack &&
+    (targets ?? []).some((target) => target.artifact === "project-host")
+  ) {
+    return [...PROJECT_HOST_RUNTIME_STACK_COMPONENTS];
+  }
   const components = new Set<ManagedComponentKind>();
   for (const result of results ?? []) {
     if (result.artifact === "project-host" && result.status === "updated") {

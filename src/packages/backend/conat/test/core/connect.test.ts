@@ -49,6 +49,23 @@ describe("basic test of restarting the server causing a reconnect of client", ()
     cn.close();
   });
 });
+
+describe("transport error logging", () => {
+  it("does not throw if client options are unexpectedly missing", () => {
+    const cn = connect({
+      address: `http://localhost:${port}`,
+      reconnectionDelay: 25,
+      randomizationFactor: 0,
+    });
+    // Simulate a partially torn-down client during an async transport error.
+    (cn as any).options = undefined;
+    expect(() => {
+      cn.conn.io.emit("error", new Error("boom"));
+    }).not.toThrow();
+    cn.close();
+  });
+});
+
 describe("create server *after* client and ensure connects properly", () => {
   let cn;
   it("starts a client connecting to that port, despite there being no server yet", async () => {

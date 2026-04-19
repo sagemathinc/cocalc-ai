@@ -2,6 +2,7 @@ import { authFirstRequireAccount, authFirstRequireHost } from "./util";
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
+  HostRuntimeArtifactRetentionPolicy,
   ManagedComponentKind,
   ManagedComponentRuntimeState,
   ManagedComponentUpgradePolicy,
@@ -390,6 +391,11 @@ export interface HostMetrics {
   history?: HostMetricsHistory;
 }
 
+export interface HostRuntimeExceptionSummary {
+  host_override_count: number;
+  host_override_targets: HostRuntimeDeploymentTarget[];
+}
+
 export interface HostCatalog {
   provider: string;
   entries: HostCatalogEntry[];
@@ -437,6 +443,7 @@ export interface Host {
   provider_observed_at?: string;
   observed_host_agent?: HostRuntimeHostAgentObservation;
   observed_components?: HostManagedComponentStatus[];
+  runtime_exception_summary?: HostRuntimeExceptionSummary;
   deleted?: string;
   backup_status?: HostBackupStatus;
   bootstrap?: HostBootstrapStatus;
@@ -524,6 +531,7 @@ export interface HostSoftwareUpgradeRequest {
   id: string;
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
+  align_runtime_stack?: boolean;
 }
 
 export interface HostSoftwareUpgradeResponse {
@@ -588,10 +596,16 @@ export interface HostRuntimeArtifactObservation {
   current_version?: string;
   current_build_id?: string;
   installed_versions: string[];
+  version_bytes?: Array<{
+    version: string;
+    bytes: number;
+  }>;
+  installed_bytes_total?: number;
   referenced_versions?: Array<{
     version: string;
     project_count: number;
   }>;
+  retention_policy?: HostRuntimeArtifactRetentionPolicy;
 }
 
 export interface HostRuntimeHostAgentProjectHostPendingRollout {
@@ -644,6 +658,16 @@ export interface HostRuntimeRollbackTarget {
   previous_version?: string;
   last_known_good_version?: string;
   retained_versions: string[];
+  referenced_versions?: Array<{
+    version: string;
+    project_count: number;
+  }>;
+  protected_versions: string[];
+  prune_candidate_versions: string[];
+  retained_bytes_total?: number;
+  protected_bytes_total?: number;
+  prune_candidate_bytes_total?: number;
+  retention_policy?: HostRuntimeArtifactRetentionPolicy;
 }
 
 export interface HostRuntimeDeploymentReconcileDecision {
@@ -838,6 +862,12 @@ export interface Hosts {
     account_id?: string;
     id: string;
     lines?: number;
+    source?:
+      | "project-host"
+      | "conat-router"
+      | "conat-persist"
+      | "host-agent"
+      | "supervision-events";
   }) => Promise<HostRuntimeLog>;
   getHostMetricsHistory: (opts: {
     account_id?: string;
@@ -1130,6 +1160,7 @@ export interface Hosts {
     id: string;
     targets: HostSoftwareUpgradeTarget[];
     base_url?: string;
+    align_runtime_stack?: boolean;
   }) => Promise<HostLroResponse>;
   reconcileHostSoftware: (opts: {
     account_id?: string;

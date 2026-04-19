@@ -76,8 +76,8 @@ export async function getRoutedHostControlClient({
         await bridge.getBackupExecutionStatus({ host_id }),
       getManagedComponentStatus: async () =>
         await bridge.getManagedComponentStatus({ host_id }),
-      getInstalledRuntimeArtifacts: async () =>
-        await bridge.getInstalledRuntimeArtifacts({ host_id }),
+      getInstalledRuntimeArtifacts: async (get) =>
+        await bridge.getInstalledRuntimeArtifacts({ host_id, get }),
       getHostAgentStatus: async () =>
         await bridge.getHostAgentStatus({ host_id }),
       inspectStaticAppPath: async (inspect) =>

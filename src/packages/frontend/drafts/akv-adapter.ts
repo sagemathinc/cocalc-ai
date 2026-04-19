@@ -18,6 +18,7 @@ interface AKVLike {
     options?: { ttl?: number },
   ): Promise<unknown>;
   delete(key: string): Promise<unknown>;
+  close?(): void;
 }
 
 interface AkvDraftPayloadV1 {
@@ -84,5 +85,9 @@ export class AkvDraftAdapter implements DraftStorageAdapter {
 
   async clear(key: string): Promise<void> {
     await this.kv.delete(key);
+  }
+
+  close(): void {
+    this.kv.close?.();
   }
 }
