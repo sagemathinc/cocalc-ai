@@ -260,6 +260,7 @@ export type SiteSettingsExtrasKeys =
   | "google_cloud_service_account_json"
   | "project_hosts_google_prefix"
   | "project_hosts_software_base_url"
+  | "project_hosts_runtime_retention_policy"
   | "project_hosts_bootstrap_channel"
   | "project_hosts_bootstrap_version"
   | "project_hosts_self_host_connector_version"
@@ -1067,6 +1068,19 @@ export const EXTRAS: SettingsExtras = {
     valid: () => true,
     group: "Compute / Project Hosts",
     subgroup: "Bootstrap",
+  },
+  project_hosts_runtime_retention_policy: {
+    name: "Project Hosts: Runtime Retention Policy",
+    desc: 'Controls how many installed project-host runtime artifacts are retained locally for rollback and recovery. Example: `{"project-host":{"keep_count":10},"project-bundle":{"keep_count":3},"tools":{"keep_count":3}}`. Optional `max_bytes` per artifact can retain extra recent versions while under budget.',
+    default:
+      '{"project-host":{"keep_count":10},"project-bundle":{"keep_count":3},"tools":{"keep_count":3}}',
+    multiline: 6,
+    to_val: from_json,
+    valid: parsableJson,
+    to_display: displayJson,
+    tags: ["Project Hosts", "Cloud"],
+    group: "Compute / Project Hosts",
+    subgroup: "Runtime Software",
   },
   project_hosts_bootstrap_channel: {
     name: "Project Hosts: Bootstrap Channel",

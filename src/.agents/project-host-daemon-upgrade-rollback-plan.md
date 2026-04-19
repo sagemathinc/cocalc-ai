@@ -128,6 +128,9 @@ but "which parts are finished, partial, or still missing?"
      per-artifact byte budgets in addition to keep-count floors
    - control-plane software upgrades now send retention policy explicitly, and
      host runtime status surfaces the host's effective keep floor / byte budget
+   - durable default retention policy now lives in `server_settings` instead of
+     only fixed server-side constants, while host env vars remain last-mile
+     overrides
    - but local rollback inventory, retention policy, and rollback candidate
      surfacing are still not fully operator-friendly yet
 4. Some desired-state semantics are still incomplete or only partially proven.

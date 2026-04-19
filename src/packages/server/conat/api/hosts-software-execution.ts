@@ -149,7 +149,7 @@ export async function upgradeHostSoftwareInternalHelper({
       targets,
       base_url: effectiveBaseUrl,
       restart_project_host: false,
-      retention_policy: defaultHostRuntimeRetentionPolicy(),
+      retention_policy: await defaultHostRuntimeRetentionPolicy(),
     });
   } catch (err) {
     if (!supportsBootstrapFallback) {
