@@ -626,8 +626,9 @@ export const useHostsPageViewModel = () => {
     hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
   });
   const runtimeVersionCatalog = useHostSoftwareVersionCatalog(hub, {
-    enabled: isAdmin && showRuntimeVersions,
+    enabled: isAdmin && (showRuntimeVersions || (drawerOpen && !!selected)),
     hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
+    historyLimit: drawerOpen && selected ? 24 : undefined,
   });
   const [settingClusterDefaultKey, setSettingClusterDefaultKey] =
     React.useState<string>();
@@ -1522,6 +1523,8 @@ export const useHostsPageViewModel = () => {
     loadingLog,
     softwareVersions: {
       ...softwareVersions,
+      configuredCatalog: runtimeVersionCatalog.configured,
+      hubCatalog: runtimeVersionCatalog.hub,
       hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
     },
     runtimeDeployments,

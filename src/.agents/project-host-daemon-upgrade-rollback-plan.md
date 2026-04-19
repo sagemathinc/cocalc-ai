@@ -133,6 +133,9 @@ but "which parts are finished, partial, or still missing?"
      overrides
    - admin settings now expose a guided wizard for editing runtime retention
      policy instead of requiring raw JSON editing only
+   - the host drawer now renders rollback / protected / prunable versions with
+     human-readable timestamps and published artifact messages when that
+     metadata is available, instead of only raw opaque version strings
    - but local rollback inventory, retention policy, and rollback candidate
      surfacing are still not fully operator-friendly yet
 4. Some desired-state semantics are still incomplete or only partially proven.

@@ -44,6 +44,8 @@ type UseHostDrawerViewModelArgs = {
     configuredError?: string;
     hub: HostSoftwareMap;
     hubError?: string;
+    configuredCatalog?: HostSoftwareAvailableVersion[];
+    hubCatalog?: HostSoftwareAvailableVersion[];
     refresh: () => Promise<void>;
     hubSourceBaseUrl?: string;
   };
