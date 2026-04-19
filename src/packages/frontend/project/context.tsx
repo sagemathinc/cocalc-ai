@@ -58,6 +58,28 @@ type HiddenActiveTabResolution =
   | { kind: "activate-path"; path: string }
   | { kind: "show-files" };
 
+export function shouldResyncWorkspaceSelectionFromActivePath({
+  workspaceRestorePending,
+  activePath,
+  activePathIsOpen,
+  selectionChanged,
+  previousActivePathClosed,
+}: {
+  workspaceRestorePending: boolean;
+  activePath: string;
+  activePathIsOpen: boolean;
+  selectionChanged: boolean;
+  previousActivePathClosed: boolean;
+}): boolean {
+  return (
+    !workspaceRestorePending &&
+    !!activePath &&
+    activePathIsOpen &&
+    !selectionChanged &&
+    !previousActivePathClosed
+  );
+}
+
 export function resolveHiddenActiveTabForSelection({
   activeProjectTab,
   orderedPaths,
@@ -411,13 +433,16 @@ export function useProjectContextProvider({
       return;
     }
     if (
-      activePath &&
-      activePathIsOpen &&
-      !selectionChanged &&
-      !previousActivePathClosed
+      shouldResyncWorkspaceSelectionFromActivePath({
+        workspaceRestorePending: workspaceRestorePendingRef.current,
+        activePath: activePath ?? "",
+        activePathIsOpen,
+        selectionChanged,
+        previousActivePathClosed,
+      })
     ) {
       if (workspaces.loading) return;
-      const nextSelection = selectionForPath(workspaces.records, activePath);
+      const nextSelection = selectionForPath(workspaces.records, activePath!);
       workspaces.setSelection(nextSelection);
       return;
     }
