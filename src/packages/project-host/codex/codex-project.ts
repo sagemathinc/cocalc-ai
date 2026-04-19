@@ -1316,7 +1316,7 @@ async function spawnCodexAppServerInProjectRuntime({
     delete execEnv.OPENAI_API_KEY;
   }
   const runtimeEnv = {
-    ...authRuntime.env,
+    ...(appServerLogin?.type === "apiKey" ? {} : authRuntime.env),
     ...execEnv,
   };
   applyProjectRuntimeCliEnv(execEnv, accountId);
@@ -1331,7 +1331,10 @@ async function spawnCodexAppServerInProjectRuntime({
     execArgs.push("-e", `${key}=${execEnv[key]}`);
   }
   const codexArgs: string[] = [];
-  const providerArgs = getManagedOpenAiProviderArgs(authRuntime);
+  const providerArgs =
+    appServerLogin?.type === "apiKey"
+      ? undefined
+      : getManagedOpenAiProviderArgs(authRuntime);
   if (providerArgs) {
     codexArgs.push(...providerArgs);
     logger.debug(
