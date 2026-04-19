@@ -1,0 +1,82 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+import { upgradeHostSoftwareInternalHelper } from "./hosts-software-execution";
+import { runtimeDeploymentsForUpgradeResults } from "./hosts-runtime-deployment-planning";
+
+describe("upgradeHostSoftwareInternalHelper", () => {
+  it("realigns the full runtime stack on noop project-host upgrades when requested", async () => {
+    const row = {
+      id: "host-1",
+      status: "running",
+      version: "ph-v2",
+      metadata: {
+        owner: "account-1",
+        software: {
+          project_host: "ph-v2",
+        },
+      },
+    };
+    const setProjectHostRuntimeDeployments = jest.fn(async () => []);
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "project-host", channel: "latest" }],
+        align_runtime_stack: true,
+        loadHostForStartStop: async () => row,
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () => undefined,
+        resolveReachableUpgradeBaseUrl: async () => undefined,
+        logWarn: () => undefined,
+        reconcileCloudHostBootstrapOverSsh: async () => undefined,
+        hostControlClient: async () => ({
+          upgradeSoftware: async () => ({ results: [] }),
+        }),
+        updateProjectHostSoftwareRecord: async () => undefined,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments,
+      }),
+    ).resolves.toEqual({ results: [] });
+
+    expect(setProjectHostRuntimeDeployments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope_type: "host",
+        host_id: "host-1",
+        replace: false,
+        deployments: expect.arrayContaining([
+          {
+            target_type: "artifact",
+            target: "project-host",
+            desired_version: "ph-v2",
+          },
+          expect.objectContaining({
+            target_type: "component",
+            target: "project-host",
+            desired_version: "ph-v2",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "conat-router",
+            desired_version: "ph-v2",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "conat-persist",
+            desired_version: "ph-v2",
+          }),
+          expect.objectContaining({
+            target_type: "component",
+            target: "acp-worker",
+            desired_version: "ph-v2",
+          }),
+        ]),
+      }),
+    );
+  });
+});

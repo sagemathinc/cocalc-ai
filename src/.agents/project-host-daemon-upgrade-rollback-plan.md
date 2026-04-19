@@ -118,17 +118,13 @@ but "which parts are finished, partial, or still missing?"
    - but local rollback inventory, retention policy, and rollback candidate
      surfacing are not operator-friendly yet
 4. Some desired-state semantics are still incomplete or only partially proven.
-   - offline host convergence needs more end-to-end validation
+   - explicit `--align-runtime-stack` execution now converges the full managed
+     runtime stack on live hosts and updates status coherently
+   - offline host convergence still needs more end-to-end validation
    - component policy is not yet exposed as durable central control-plane state
-   - rollout is still partly framed as "act now" instead of uniformly
-     "converge to declared target state"
 5. LRO and CLI ergonomics still have gaps.
-   - repeated deploy/upgrade requests still need stronger idempotency and stale
-     state handling
-6. Explicit full-stack "Upgrade all..." flows are still not fully reliable.
-   - the align-runtime-stack path can still leave managed runtime components on
-     older builds even after `project-host` moves forward
-   - the resulting drift/status reporting is still too confusing for operators
+   - repeated deploy/upgrade requests still need more adversarial coverage for
+     stale observed state and offline hosts
 
 ## Problem Statement
 

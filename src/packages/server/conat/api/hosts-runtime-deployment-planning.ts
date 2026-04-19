@@ -55,6 +55,31 @@ const PROJECT_HOST_RUNTIME_STACK_COMPONENTS: ManagedComponentKind[] = [
   "acp-worker",
 ];
 
+export function runtimeDeploymentsForAlignedProjectHostVersion({
+  version,
+  rolloutReason = "project_host_upgrade",
+}: {
+  version?: string;
+  rolloutReason?: string;
+}): HostRuntimeDeploymentUpsert[] {
+  const desiredVersion = `${version ?? ""}`.trim();
+  if (!desiredVersion) return [];
+  return normalizeRuntimeDeploymentUpserts([
+    {
+      target_type: "artifact",
+      target: "project-host",
+      desired_version: desiredVersion,
+    },
+    ...PROJECT_HOST_RUNTIME_STACK_COMPONENTS.map((component) => ({
+      target_type: "component" as const,
+      target: component,
+      desired_version: desiredVersion,
+      rollout_policy: DEFAULT_RUNTIME_DEPLOYMENT_POLICY[component],
+      rollout_reason: rolloutReason,
+    })),
+  ]);
+}
+
 export function normalizeRuntimeArtifactTarget(
   artifact?: HostSoftwareArtifact | HostRuntimeArtifact,
 ): HostRuntimeArtifact | undefined {
@@ -331,22 +356,19 @@ export function runtimeDeploymentsForUpgradeResults(
   for (const result of results ?? []) {
     const target = normalizeRuntimeArtifactTarget(result.artifact);
     if (!target || !`${result.version ?? ""}`.trim()) continue;
+    if (alignRuntimeStack && target === "project-host") {
+      deployments.push(
+        ...runtimeDeploymentsForAlignedProjectHostVersion({
+          version: result.version,
+        }),
+      );
+      continue;
+    }
     deployments.push({
       target_type: "artifact",
       target,
       desired_version: result.version,
     });
-    if (alignRuntimeStack && target === "project-host") {
-      for (const component of PROJECT_HOST_RUNTIME_STACK_COMPONENTS) {
-        deployments.push({
-          target_type: "component",
-          target: component,
-          desired_version: result.version,
-          rollout_policy: DEFAULT_RUNTIME_DEPLOYMENT_POLICY[component],
-          rollout_reason: "project_host_upgrade",
-        });
-      }
-    }
   }
   return normalizeRuntimeDeploymentUpserts(deployments);
 }

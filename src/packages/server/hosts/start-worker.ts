@@ -987,9 +987,14 @@ async function handleOp(op: LroSummary): Promise<void> {
           id: host_id,
           targets: input?.targets ?? [],
           base_url: input?.base_url,
+          align_runtime_stack: input?.align_runtime_stack,
         });
         const rolloutComponents = rolloutComponentsForUpgradeResults(
           response.results ?? [],
+          {
+            targets: input?.targets ?? [],
+            alignRuntimeStack: !!input?.align_runtime_stack,
+          },
         );
         if (rolloutComponents.length > 0) {
           await progressStep(
@@ -1108,6 +1113,10 @@ async function handleOp(op: LroSummary): Promise<void> {
             host_id,
             components: rolloutComponentsForUpgradeResults(
               response?.results ?? [],
+              {
+                targets: input?.targets ?? [],
+                alignRuntimeStack: !!input?.align_runtime_stack,
+              },
             ),
             err: `${err}`,
           },
@@ -1119,6 +1128,10 @@ async function handleOp(op: LroSummary): Promise<void> {
             host_id,
             components: rolloutComponentsForUpgradeResults(
               response?.results ?? [],
+              {
+                targets: input?.targets ?? [],
+                alignRuntimeStack: !!input?.align_runtime_stack,
+              },
             ),
           },
         );

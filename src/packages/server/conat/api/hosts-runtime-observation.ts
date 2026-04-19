@@ -77,12 +77,25 @@ function componentDeploymentObservedVersionState({
     `${observed_artifact?.current_build_id ?? ""}`.trim();
   if (
     currentArtifactVersion &&
-    currentArtifactVersion === desiredArtifactVersion &&
-    currentArtifactBuildId
+    currentArtifactVersion === desiredArtifactVersion
   ) {
+    const normalizedRunningVersions = Array.from(
+      new Set(
+        observed_component.running_versions.map((runningVersion) => {
+          if (
+            runningVersion === currentArtifactVersion ||
+            (currentArtifactBuildId &&
+              runningVersion === currentArtifactBuildId)
+          ) {
+            return currentArtifactVersion;
+          }
+          return runningVersion;
+        }),
+      ),
+    );
     return deploymentObservedVersionState({
-      desired_version: currentArtifactBuildId,
-      running_versions: observed_component.running_versions,
+      desired_version: currentArtifactVersion,
+      running_versions: normalizedRunningVersions,
     });
   }
   return deploymentObservedVersionState({

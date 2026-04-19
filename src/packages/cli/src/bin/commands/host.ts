@@ -699,6 +699,11 @@ function emitHostDeployStatusHuman(
     const observed = (data.observed_components ?? []).find(
       (row) => row.component === component,
     );
+    const observedTarget = (data.observed_targets ?? []).find(
+      (row) =>
+        row.target_type === "component" &&
+        `${row.target ?? ""}`.trim() === component,
+    );
     const hostAgentProjectHost =
       component === "project-host"
         ? (data.observed_host_agent?.project_host as
@@ -716,13 +721,22 @@ function emitHostDeployStatusHuman(
         artifact_current_version: observedArtifact?.current_version ?? "",
         artifact_current_build_id: observedArtifact?.current_build_id ?? "",
         artifact_installed_versions: observedArtifact?.installed_versions ?? [],
-        enabled: observed?.enabled ?? "",
-        managed: observed?.managed ?? "",
-        runtime_state: observed?.runtime_state ?? "",
-        version_state: observed?.version_state ?? "",
-        desired_version: observed?.desired_version ?? "",
-        running_versions: observed?.running_versions ?? [],
-        running_pids: observed?.running_pids ?? [],
+        enabled: observedTarget?.enabled ?? observed?.enabled ?? "",
+        managed: observedTarget?.managed ?? observed?.managed ?? "",
+        runtime_state:
+          observedTarget?.observed_runtime_state ??
+          observed?.runtime_state ??
+          "",
+        version_state:
+          observedTarget?.observed_version_state ??
+          observed?.version_state ??
+          "",
+        desired_version:
+          observedTarget?.desired_version ?? observed?.desired_version ?? "",
+        running_versions:
+          observedTarget?.running_versions ?? observed?.running_versions ?? [],
+        running_pids:
+          observedTarget?.running_pids ?? observed?.running_pids ?? [],
         host_agent_last_known_good_version:
           hostAgentProjectHost?.last_known_good_version ?? "",
         host_agent_pending_target_version:
