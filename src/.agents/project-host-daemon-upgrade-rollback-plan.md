@@ -108,11 +108,11 @@ but "which parts are finished, partial, or still missing?"
 1. The plan document itself is stale.
    - several sections below still read like open proposals instead of current
      reality
-2. Fleet-scale exception visibility is still missing.
-   - there is no good fleet-wide view of hosts pinned away from the cluster
-     default
-   - there is no central "these hosts auto-rolled back" table/filter for large
-     fleets
+2. Fleet-scale exception visibility is only partially landed.
+   - hosts list and CLI now surface host overrides and recent automatic
+     rollbacks
+   - there is still no dedicated central table/filter for these exceptions in
+     large fleets
 3. Retained rollback inventory and pruning policy are still incomplete.
    - the system can now observe referenced bundle/tools versions
    - but local rollback inventory, retention policy, and rollback candidate
@@ -123,7 +123,6 @@ but "which parts are finished, partial, or still missing?"
    - rollout is still partly framed as "act now" instead of uniformly
      "converge to declared target state"
 5. LRO and CLI ergonomics still have gaps.
-   - `cocalc host deploy restart` does not exist yet
    - repeated deploy/upgrade requests still need stronger idempotency and stale
      state handling
 6. Explicit full-stack "Upgrade all..." flows are still not fully reliable.
@@ -1202,10 +1201,6 @@ We should preserve user muscle memory where possible.
 - `cocalc host deploy resume-default`
 - `cocalc host deploy reconcile`
 
-### Still Missing
-
-- `cocalc host stage`
-
 ### Reframe
 
 - `host upgrade`:
@@ -1218,8 +1213,6 @@ We should preserve user muscle memory where possible.
 - `host deploy rollback`:
   durable rollback workflow using recorded rollback targets and retained
   versions
-- `host stage`:
-  still useful conceptually, but not yet a first-class surfaced command
 
 The earlier proposal to demote `host upgrade` into a thin compatibility alias
 does not match current operational reality. We need both:
