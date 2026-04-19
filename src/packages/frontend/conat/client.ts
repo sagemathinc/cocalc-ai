@@ -768,8 +768,10 @@ export class ConatClient extends EventEmitter {
       `${project_map?.getIn([project_id, "owning_bay_id"]) ?? ""}`.trim();
     const hostBayId = `${hostInfo.get("bay_id") ?? ""}`.trim();
     if (projectBayId && hostBayId && projectBayId !== hostBayId) {
+      // Cross-bay placement is valid. Refresh any stale cached host info, but
+      // do not suppress direct browser->project-host routing just because the
+      // control-plane bay and host bay differ.
       void redux.getActions("projects")?.ensure_host_info(host_id, true);
-      return;
     }
     return this.buildHostRoutingInfo(host_id, hostInfo);
   }
@@ -779,24 +781,23 @@ export class ConatClient extends EventEmitter {
   ): Promise<
     undefined | { host_id: string; address: string; host_session_id?: string }
   > => {
-    const initial = this.getProjectRoutingInfo(project_id);
-    if (initial) return initial;
     const project_map = redux.getStore("projects")?.get("project_map");
     const host_id = project_map?.getIn([project_id, "host_id"]) as
       | string
       | undefined;
-    if (!host_id) return;
     const projectBayId =
       `${project_map?.getIn([project_id, "owning_bay_id"]) ?? ""}`.trim();
-    const hostBayId =
-      `${redux.getStore("projects")?.get("host_info")?.get(host_id)?.get?.("bay_id") ?? ""}`.trim();
-    await redux
-      .getActions("projects")
-      ?.ensure_host_info(
-        host_id,
-        !!projectBayId && !!hostBayId && projectBayId !== hostBayId,
-      );
-    return this.getProjectRoutingInfo(project_id);
+    const hostInfo = host_id
+      ? redux.getStore("projects")?.get("host_info")?.get(host_id)
+      : undefined;
+    const hostBayId = `${hostInfo?.get?.("bay_id") ?? ""}`.trim();
+    const bayMismatch =
+      !!host_id && !!projectBayId && !!hostBayId && projectBayId !== hostBayId;
+    const initial = this.getProjectRoutingInfo(project_id);
+    if (initial && !bayMismatch) return initial;
+    if (!host_id) return initial;
+    await redux.getActions("projects")?.ensure_host_info(host_id, bayMismatch);
+    return this.getProjectRoutingInfo(project_id) ?? initial;
   };
 
   private refreshHostRoutingInfo = async (

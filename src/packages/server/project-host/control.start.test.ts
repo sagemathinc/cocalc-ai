@@ -118,7 +118,10 @@ describe("startProjectOnHost placement", () => {
     );
     getCurrentProjectRootfsBindingMock = jest.fn(async () => undefined);
     releaseMock = jest.fn();
-    resolveHostBayMock = jest.fn(async () => undefined);
+    resolveHostBayMock = jest.fn(async (host_id: string) => ({
+      bay_id: host_id === "host-2" ? "bay-7" : "bay-0",
+      epoch: 0,
+    }));
   });
 
   it("registers a new host placement without doing the long runtime start in createProject", async () => {
@@ -196,10 +199,13 @@ describe("startProjectOnHost placement", () => {
           rows: [{ metadata: { machine: {} } }],
         };
       }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
       if (sql.includes("UPDATE projects AS projects")) {
         expect(params).toEqual(["host-1", "proj-1", "bay-0"]);
         return {
-          rows: [{ owning_bay_id: "bay-0", host_bay_id: "bay-0" }],
+          rows: [{ owning_bay_id: "bay-0" }],
         };
       }
       if (sql === "SELECT backup_repo_id FROM projects WHERE project_id=$1") {
@@ -322,10 +328,13 @@ describe("startProjectOnHost placement", () => {
           rows: [{ metadata: { machine: {} } }],
         };
       }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
       if (sql.includes("UPDATE projects AS projects")) {
         expect(params).toEqual(["host-1", "proj-1", "bay-0"]);
         return {
-          rows: [{ owning_bay_id: "bay-0", host_bay_id: "bay-0" }],
+          rows: [{ owning_bay_id: "bay-0" }],
         };
       }
       if (sql === "SELECT backup_repo_id FROM projects WHERE project_id=$1") {
@@ -355,10 +364,13 @@ describe("startProjectOnHost placement", () => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return { rows: [], rowCount: null };
       }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
       if (sql.includes("UPDATE projects AS projects")) {
         expect(params).toEqual(["host-2", "proj-1", "bay-0"]);
         return {
-          rows: [{ owning_bay_id: "bay-0", host_bay_id: "bay-7" }],
+          rows: [{ owning_bay_id: "bay-0" }],
         };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -454,9 +466,12 @@ describe("startProjectOnHost placement", () => {
           rows: [{ metadata: { machine: {} } }],
         };
       }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
       if (sql.includes("UPDATE projects AS projects")) {
         return {
-          rows: [{ owning_bay_id: "bay-0", host_bay_id: "bay-0" }],
+          rows: [{ owning_bay_id: "bay-0" }],
         };
       }
       if (sql === "SELECT backup_repo_id FROM projects WHERE project_id=$1") {
@@ -556,9 +571,12 @@ describe("startProjectOnHost placement", () => {
           rows: [{ metadata: { machine: {} } }],
         };
       }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
       if (sql.includes("UPDATE projects AS projects")) {
         return {
-          rows: [{ owning_bay_id: "bay-0", host_bay_id: "bay-0" }],
+          rows: [{ owning_bay_id: "bay-0" }],
         };
       }
       if (sql === "SELECT backup_repo_id FROM projects WHERE project_id=$1") {

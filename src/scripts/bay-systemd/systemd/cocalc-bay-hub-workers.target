@@ -1,0 +1,8 @@
+[Unit]
+Description=CoCalc Bay Hub Workers Target
+After=cocalc-bay-postgres.service cocalc-bay-migrations.service cocalc-bay-conat-persist.service cocalc-bay-conat-router.service
+Requires=cocalc-bay-postgres.service cocalc-bay-conat-persist.service cocalc-bay-conat-router.service
+PartOf=cocalc-bay.target
+
+[Install]
+WantedBy=cocalc-bay.target

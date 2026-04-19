@@ -1,0 +1,25 @@
+[Unit]
+Description=CoCalc Bay Conat Router
+After=cocalc-bay-conat-persist.service
+Requires=cocalc-bay-conat-persist.service
+PartOf=cocalc-bay.target
+
+[Service]
+Type=simple
+User=cocalc-bay
+WorkingDirectory=/opt/cocalc/bay/current
+EnvironmentFile=/etc/cocalc/bay.env
+EnvironmentFile=-/etc/cocalc/bay-workers.env
+EnvironmentFile=-/etc/cocalc/bay-overlay.env
+EnvironmentFile=-/etc/cocalc/bay-secrets.env
+ExecStartPre=/opt/cocalc/bay/current/bin/bay-preflight router
+ExecStart=/opt/cocalc/bay/current/bin/bay-conat-router
+ExecStartPost=/opt/cocalc/bay/current/bin/bay-health --router-only
+Restart=always
+RestartSec=2
+TimeoutStartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=cocalc-bay.target

@@ -1974,6 +1974,10 @@ describe("CodexAppServerAgent", () => {
           COCALC_AGENT_TOKEN: "project-token",
           PATH: "/root/.local/bin:/usr/bin",
         },
+        appServerLogin: {
+          type: "apiKey",
+          apiKey: "site-key",
+        },
       }),
     });
 

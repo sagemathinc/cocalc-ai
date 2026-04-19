@@ -1315,14 +1315,26 @@ async function spawnCodexAppServerInProjectRuntime({
   if (!execEnv.OPENAI_API_KEY?.trim()) {
     delete execEnv.OPENAI_API_KEY;
   }
+  const runtimeEnv = {
+    ...(appServerLogin?.type === "apiKey" ? {} : authRuntime.env),
+    ...execEnv,
+  };
   applyProjectRuntimeCliEnv(execEnv, accountId);
   execEnv.COCALC_API_URL = resolveProjectRuntimeApiUrl(execEnv.COCALC_API_URL);
   applyProjectRuntimeCliEnv(execEnv, accountId);
+  applyProjectRuntimeCliEnv(runtimeEnv, accountId);
+  runtimeEnv.COCALC_API_URL = resolveProjectRuntimeApiUrl(
+    runtimeEnv.COCALC_API_URL,
+  );
+  applyProjectRuntimeCliEnv(runtimeEnv, accountId);
   for (const key in execEnv) {
     execArgs.push("-e", `${key}=${execEnv[key]}`);
   }
   const codexArgs: string[] = [];
-  const providerArgs = getManagedOpenAiProviderArgs(authRuntime);
+  const providerArgs =
+    appServerLogin?.type === "apiKey"
+      ? undefined
+      : getManagedOpenAiProviderArgs(authRuntime);
   if (providerArgs) {
     codexArgs.push(...providerArgs);
     logger.debug(
@@ -1402,7 +1414,7 @@ async function spawnCodexAppServerInProjectRuntime({
     scratch,
     appServerLogin,
     handleAppServerRequest,
-    runtimeEnv: execEnv,
+    runtimeEnv,
   };
 }
 

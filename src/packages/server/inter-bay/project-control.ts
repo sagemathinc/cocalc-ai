@@ -11,6 +11,8 @@ import type {
   ProjectReference,
   ProjectControlActiveOperationRequest,
   ProjectControlAddressRequest,
+  ProjectControlMoveRequest,
+  ProjectControlMoveResponse,
   ProjectControlRestartRequest,
   ProjectControlStartRequest,
   ProjectControlStateRequest,
@@ -23,6 +25,7 @@ import { resolveProjectBayDirect } from "@cocalc/server/inter-bay/directory";
 import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { getProject } from "@cocalc/server/projects/control";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
+import { moveProject as moveProjectLocal } from "@cocalc/server/conat/api/projects";
 import {
   clearProjectActiveOperation,
   getProjectActiveOperation,
@@ -208,6 +211,21 @@ export async function handleProjectControlAddress(
   });
 }
 
+export async function handleProjectControlMove(
+  req: ProjectControlMoveRequest,
+): Promise<ProjectControlMoveResponse> {
+  await assertCurrentProjectOwnership({
+    project_id: req.project_id,
+    epoch: req.epoch,
+  });
+  return await moveProjectLocal({
+    account_id: req.account_id,
+    project_id: req.project_id,
+    dest_host_id: req.dest_host_id,
+    allow_offline: req.allow_offline,
+  });
+}
+
 export async function handleProjectControlActiveOperation(
   req: ProjectControlActiveOperationRequest,
 ) {
@@ -228,7 +246,9 @@ export async function handleProjectReferenceGet(
       account_id: req.account_id,
       project_id: req.project_id,
     });
-    const { rows } = await getPool().query<{ users: Record<string, any> | null }>(
+    const { rows } = await getPool().query<{
+      users: Record<string, any> | null;
+    }>(
       `
         SELECT COALESCE(users, '{}'::jsonb) AS users
         FROM projects
@@ -336,6 +356,13 @@ export async function dispatchProjectControlRpc(
     return await handleProjectControlAddress(
       payload as ProjectControlAddressRequest,
     );
+  }
+  const moveExpected = projectControlSubject({
+    dest_bay: getConfiguredBayId(),
+    method: "move",
+  });
+  if (subject === moveExpected) {
+    return await handleProjectControlMove(payload as ProjectControlMoveRequest);
   }
   const activeOpExpected = projectControlSubject({
     dest_bay: getConfiguredBayId(),

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
+
+if ! command -v systemctl >/dev/null 2>&1; then
+  bay_log "systemctl is required"
+  exit 1
+fi
+
+desired="${1:-$COCALC_BAY_WORKER_COUNT}"
+if [[ ! "$desired" =~ ^[0-9]+$ ]] || [[ "$desired" -lt 1 ]]; then
+  bay_log "worker count must be a positive integer"
+  exit 1
+fi
+
+max_seen=0
+while IFS= read -r worker_id; do
+  if [[ -n "$worker_id" ]] && [[ "$worker_id" -gt "$max_seen" ]]; then
+    max_seen="$worker_id"
+  fi
+done < <(enabled_worker_ids || true)
+
+for worker_id in $(seq 1 "$desired"); do
+  systemctl enable --now "cocalc-bay-hub@${worker_id}.service"
+done
+
+if [[ "$max_seen" -gt "$desired" ]]; then
+  for worker_id in $(seq $((desired + 1)) "$max_seen"); do
+    systemctl disable --now "cocalc-bay-hub@${worker_id}.service" || true
+  done
+fi
+
+write_event scale workers succeeded "$(current_version || true)" "$(previous_version || true)" \
+  "worker_count=${desired}"

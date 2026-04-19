@@ -5,6 +5,7 @@ let resolveProjectBayMock: jest.Mock;
 let interBayStateMock: jest.Mock;
 let interBayAddressMock: jest.Mock;
 let interBayActiveOpMock: jest.Mock;
+let interBayMoveMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -74,6 +75,7 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       state: (...args: any[]) => interBayStateMock(...args),
       address: (...args: any[]) => interBayAddressMock(...args),
       activeOp: (...args: any[]) => interBayActiveOpMock(...args),
+      move: (...args: any[]) => interBayMoveMock(...args),
     })),
   })),
 }));
@@ -155,6 +157,13 @@ describe("projects.getProjectState / getProjectAddress", () => {
       started_at: new Date("2026-04-08T10:00:00Z"),
       updated_at: new Date("2026-04-08T10:00:01Z"),
     }));
+    interBayMoveMock = jest.fn(async () => ({
+      op_id: "move-op-1",
+      scope_type: "project",
+      scope_id: "proj-1",
+      service: "persist-service",
+      stream_name: "lro.move-op-1",
+    }));
   });
 
   it("routes project state reads through the owning bay", async () => {
@@ -210,6 +219,31 @@ describe("projects.getProjectState / getProjectAddress", () => {
     });
     expect(interBayActiveOpMock).toHaveBeenCalledWith({
       project_id: "proj-1",
+      epoch: 7,
+    });
+  });
+
+  it("routes project move requests through the owning bay", async () => {
+    const { moveProject } = await import("./projects");
+    await expect(
+      moveProject({
+        account_id: "acct-1",
+        project_id: "proj-1",
+        dest_host_id: "host-1",
+        allow_offline: true,
+      }),
+    ).resolves.toEqual({
+      op_id: "move-op-1",
+      scope_type: "project",
+      scope_id: "proj-1",
+      service: "persist-service",
+      stream_name: "lro.move-op-1",
+    });
+    expect(interBayMoveMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      dest_host_id: "host-1",
+      allow_offline: true,
       epoch: 7,
     });
   });
