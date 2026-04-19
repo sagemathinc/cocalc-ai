@@ -120,6 +120,8 @@ but "which parts are finished, partial, or still missing?"
 4. Some desired-state semantics are still incomplete or only partially proven.
    - explicit `--align-runtime-stack` execution now converges the full managed
      runtime stack on live hosts and updates status coherently
+   - hosts now retry automatic convergence on heartbeat after register-time
+     `observation_failed` results, so reconnect timing is less brittle
    - offline host convergence still needs more end-to-end validation
    - component policy is not yet exposed as durable central control-plane state
 5. LRO and CLI ergonomics still have gaps.
