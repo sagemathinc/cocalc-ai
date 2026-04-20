@@ -171,6 +171,29 @@ function LiveResponseComponent({
   );
 }
 
+function StatusComponent({
+  generating,
+  logKey = "log-key",
+  logSubject = "subject-1",
+  liveLogStream,
+}: {
+  generating: boolean;
+  logKey?: string;
+  logSubject?: string;
+  liveLogStream?: string;
+}) {
+  const { liveStatus } = useCodexLog({
+    enabled: true,
+    generating,
+    projectId: "project-1",
+    logStore: "acp-log",
+    logKey,
+    logSubject,
+    liveLogStream,
+  });
+  return <div data-testid="live-status">{liveStatus}</div>;
+}
+
 describe("useCodexLog", () => {
   const reconnectRegisterMock = (webapp_client.conat_client as any)
     .registerReconnectResource as jest.Mock;
@@ -609,6 +632,51 @@ describe("useCodexLog", () => {
 
     expect(reconnectResource.requestReconnect).toHaveBeenCalledWith({
       reason: "codex_log_disconnected",
+    });
+  });
+
+  it("surfaces shared dstream live status and requests reconnect on disconnect", async () => {
+    const stream = new FakeDstream();
+    const get = jest.fn().mockResolvedValue(null);
+    dstreamMock.mockResolvedValue(stream);
+    conatMock.mockReturnValue({
+      subscribe: jest.fn(),
+      sync: {
+        akv: () => ({ get }),
+      },
+    });
+
+    render(
+      <StatusComponent
+        generating={true}
+        logKey="log-key-live-status"
+        liveLogStream="live-stream-status"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("live-status").textContent).toBe("connected");
+    });
+
+    act(() => {
+      stream.emit("disconnected");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("live-status").textContent).toBe(
+        "reconnecting",
+      );
+    });
+    expect(reconnectResource.requestReconnect).toHaveBeenCalledWith({
+      reason: "codex_log_stream_disconnected",
+    });
+
+    act(() => {
+      stream.emit("recovered");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("live-status").textContent).toBe("connected");
     });
   });
 

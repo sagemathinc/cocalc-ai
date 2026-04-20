@@ -103,4 +103,43 @@ describe("DStream unsaved change events", () => {
     expect(table.has_uncommitted_changes()).toBe(false);
     expect(events).toEqual([true, false]);
   });
+
+  it("propagates DStream recovery state as SyncTableStream connection state", async () => {
+    const project_id = "00000000-0000-4000-8000-000000000000";
+    const table = new SyncTableStream({
+      client: {} as any,
+      immutable: true,
+      noAutosave: true,
+      noInventory: true,
+      query: {
+        patches: [
+          {
+            project_id,
+            path: "doc.txt",
+            time: null,
+            user_id: null,
+            wall: null,
+            patch: null,
+            snapshot: null,
+            is_snapshot: null,
+            seq_info: null,
+            parents: null,
+            version: null,
+          },
+        ],
+      },
+    });
+    await table.init();
+
+    const events: string[] = [];
+    table.on("disconnected", () => events.push("disconnected"));
+    table.on("connected", () => events.push("connected"));
+
+    (table as any).dstream.emit("disconnected");
+    expect(table.get_state()).toBe("disconnected");
+
+    (table as any).dstream.emit("recovered");
+    expect(table.get_state()).toBe("connected");
+    expect(events).toEqual(["disconnected", "connected"]);
+  });
 });

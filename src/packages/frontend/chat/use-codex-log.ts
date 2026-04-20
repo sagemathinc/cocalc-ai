@@ -37,7 +37,15 @@ export interface CodexLogResult {
   events: any[] | null | undefined;
   hasLogRef: boolean;
   deleteLog: () => Promise<void>;
+  liveStatus: CodexLiveLogStatus;
 }
+
+export type CodexLiveLogStatus =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "error";
 
 function recentLogCacheKey({
   projectId,
@@ -138,6 +146,7 @@ export function useCodexLog({
     if (!cacheKey) return [];
     return recentLogCache.get(cacheKey) ?? [];
   });
+  const [liveStatus, setLiveStatus] = useState<CodexLiveLogStatus>("idle");
   const [liveReconnectToken, setLiveReconnectToken] = useState(0);
   const liveBufferRef = useRef<any[]>([]);
   const liveFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -156,6 +165,16 @@ export function useCodexLog({
       mountedRef.current = false;
     };
   }, []);
+
+  const setLiveConnectionState = useCallback(
+    (connected: boolean, status: CodexLiveLogStatus) => {
+      liveConnectedRef.current = connected;
+      if (mountedRef.current) {
+        setLiveStatus(status);
+      }
+    },
+    [],
+  );
 
   const mergeLogs = useMemo(() => {
     return (a: any[] | null, b: any[]): any[] => {
@@ -311,16 +330,18 @@ export function useCodexLog({
         return;
       }
       if (Date.now() - started > 30_000) {
+        setLiveConnectionState(false, "error");
         throw Error("timed out waiting for codex log reconnect");
       }
       await delay(100);
     }
-  }, [canReconnectLive, hasLiveSource]);
+  }, [canReconnectLive, hasLiveSource, setLiveConnectionState]);
 
   useEffect(() => {
     if (!canReconnectLive) {
       reconnectResourceRef.current?.close();
       reconnectResourceRef.current = null;
+      setLiveConnectionState(false, "idle");
       return;
     }
     reconnectResourceRef.current?.close();
@@ -330,7 +351,7 @@ export function useCodexLog({
         isConnected: () => !hasLiveSource || liveConnectedRef.current,
         priority: () => "foreground",
         reconnect: async () => {
-          liveConnectedRef.current = false;
+          setLiveConnectionState(false, "reconnecting");
           try {
             const persisted = await fetchPersistedLog({
               allowDuringGeneration: true,
@@ -357,16 +378,17 @@ export function useCodexLog({
     canReconnectLive,
     fetchPersistedLog,
     hasLiveSource,
+    setLiveConnectionState,
     waitForLiveReconnect,
   ]);
 
   useEffect(() => {
     if (!canReconnectLive) {
-      liveConnectedRef.current = false;
+      setLiveConnectionState(false, "idle");
       return;
     }
     const handleDisconnected = () => {
-      liveConnectedRef.current = false;
+      setLiveConnectionState(false, "reconnecting");
       reconnectResourceRef.current?.requestReconnect({
         reason: "codex_log_disconnected",
       });
@@ -375,7 +397,7 @@ export function useCodexLog({
     return () => {
       webapp_client.conat_client.off("disconnected", handleDisconnected);
     };
-  }, [canReconnectLive]);
+  }, [canReconnectLive, setLiveConnectionState]);
 
   // Subscribe to live events while generating.
   useEffect(() => {
@@ -385,6 +407,8 @@ export function useCodexLog({
     let liveStreamListener:
       | ((event: AcpStreamMessage | AcpStreamMessage[], seq?: number) => void)
       | undefined;
+    let liveStreamDisconnected: (() => void) | undefined;
+    let liveStreamRecovered: (() => void) | undefined;
     let stopped = false;
     const flushBufferedLiveLog = () => {
       if (liveFlushTimerRef.current != null) {
@@ -408,8 +432,11 @@ export function useCodexLog({
       );
     };
     async function subscribe() {
-      if (!enabled || !generating || !projectId) return;
-      liveConnectedRef.current = false;
+      if (!enabled || !generating || !projectId) {
+        setLiveConnectionState(false, "idle");
+        return;
+      }
+      setLiveConnectionState(false, "connecting");
       try {
         const cn = webapp_client.conat_client.conat();
         if (liveLogStream) {
@@ -425,7 +452,21 @@ export function useCodexLog({
             await releaseLiveStream({ immediate: true });
             return;
           }
-          liveConnectedRef.current = true;
+          setLiveConnectionState(true, "connected");
+          liveStreamDisconnected = () => {
+            if (stopped) return;
+            setLiveConnectionState(false, "reconnecting");
+            reconnectResourceRef.current?.requestReconnect({
+              reason: "codex_log_stream_disconnected",
+            });
+          };
+          liveStreamRecovered = () => {
+            if (stopped) return;
+            setLiveConnectionState(true, "connected");
+          };
+          liveStream.on("disconnected", liveStreamDisconnected);
+          liveStream.on("paused", liveStreamDisconnected);
+          liveStream.on("recovered", liveStreamRecovered);
           liveStream.setMaxListeners(
             Math.max(liveStream.getMaxListeners(), 50),
           );
@@ -460,9 +501,12 @@ export function useCodexLog({
           }
           return;
         }
-        if (!logSubject) return;
+        if (!logSubject) {
+          setLiveConnectionState(false, "idle");
+          return;
+        }
         sub = await cn.subscribe(logSubject);
-        liveConnectedRef.current = true;
+        setLiveConnectionState(true, "connected");
         for await (const mesg of sub) {
           if (stopped) break;
           const payload = normalizeIncomingLogPayload(mesg?.data);
@@ -479,13 +523,13 @@ export function useCodexLog({
           scheduleBufferedFlush(immediate);
         }
         if (!stopped) {
-          liveConnectedRef.current = false;
+          setLiveConnectionState(false, "reconnecting");
           reconnectResourceRef.current?.requestReconnect({
             reason: "codex_log_subscription_closed",
           });
         }
       } catch (err) {
-        liveConnectedRef.current = false;
+        setLiveConnectionState(false, "reconnecting");
         try {
           if (liveStream && liveStreamListener) {
             liveStream.off("change", liveStreamListener);
@@ -520,6 +564,13 @@ export function useCodexLog({
         if (liveStream && liveStreamListener) {
           liveStream.off("change", liveStreamListener);
         }
+        if (liveStream && liveStreamDisconnected) {
+          liveStream.off("disconnected", liveStreamDisconnected);
+          liveStream.off("paused", liveStreamDisconnected);
+        }
+        if (liveStream && liveStreamRecovered) {
+          liveStream.off("recovered", liveStreamRecovered);
+        }
       } catch {
         // ignore
       }
@@ -533,6 +584,7 @@ export function useCodexLog({
     liveLogStream,
     logSubject,
     mergeLogs,
+    setLiveConnectionState,
   ]);
 
   const events = useMemo(() => {
@@ -568,5 +620,5 @@ export function useCodexLog({
     setLiveLog([]);
   };
 
-  return { events, hasLogRef, deleteLog };
+  return { events, hasLogRef, deleteLog, liveStatus };
 }
