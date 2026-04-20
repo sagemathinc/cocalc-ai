@@ -29,6 +29,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { isMultiBayCluster } from "@cocalc/server/cluster-config";
 import { getClusterAccountsByIds } from "@cocalc/server/inter-bay/accounts";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 import { isValidUUID } from "@cocalc/util/misc";
 import { publishAccountFeedEventBestEffort } from "./feed";
 
@@ -73,7 +74,7 @@ function buildProjectFeedRow(opts: {
     name: payload.name ?? null,
     theme: payload.theme ?? null,
     host_id: payload.host_id ?? null,
-    owning_bay_id: `${payload.owning_bay_id ?? ""}`.trim() || "bay-0",
+    owning_bay_id: `${payload.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
     users: payload.users_summary ?? {},
     state: payload.state_summary ?? {},
     last_active: payload.last_activity_by_account ?? {},
@@ -94,7 +95,7 @@ async function loadLatestProjectOutboxEvent(opts: {
     `SELECT
        event_id,
        project_id,
-       COALESCE(NULLIF(BTRIM(owning_bay_id), ''), 'bay-0') AS owning_bay_id,
+       COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $2) AS owning_bay_id,
        event_type,
        payload_json,
        created_at,
@@ -103,7 +104,7 @@ async function loadLatestProjectOutboxEvent(opts: {
      WHERE project_id = $1
      ORDER BY created_at DESC, event_id DESC
      LIMIT 1`,
-    [opts.project_id],
+    [opts.project_id, DEFAULT_BAY_ID],
   );
   return rows[0] ?? null;
 }
@@ -176,7 +177,7 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
     [
       event.account_id,
       event.project.project_id,
-      `${event.project.owning_bay_id ?? ""}`.trim() || "bay-0",
+      `${event.project.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
       event.project.host_id,
       event.project.title ?? "",
       event.project.description ?? "",
@@ -298,7 +299,7 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
   default_bay_id?: string;
 }): Promise<void> {
   const bay_id =
-    `${opts.default_bay_id ?? getConfiguredBayId()}`.trim() || "bay-0";
+    `${opts.default_bay_id ?? getConfiguredBayId()}`.trim() || DEFAULT_BAY_ID;
   const client = await getPool().connect();
   try {
     const latestEvent = await loadLatestProjectOutboxEvent({

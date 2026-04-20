@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-const DEFAULT_BAY_ID = "bay-0";
+import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 
 function configuredEnv(name: string): string | undefined {
   const value = `${process.env[name] ?? ""}`.trim();

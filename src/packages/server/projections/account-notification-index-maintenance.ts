@@ -7,6 +7,7 @@ import getLogger from "@cocalc/backend/logger";
 import { drainAccountNotificationIndexProjection } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
+import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 
 const logger = getLogger("server:projections:account-notification-index");
 
@@ -107,7 +108,8 @@ function isoOrNull(value: Date | null): string | null {
 export async function runAccountNotificationIndexProjectionPass(
   opts?: RunAccountNotificationIndexProjectionPassOptions,
 ): Promise<AccountNotificationIndexProjectionPassResult> {
-  const bay_id = `${opts?.bay_id ?? getConfiguredBayId()}`.trim() || "bay-0";
+  const bay_id =
+    `${opts?.bay_id ?? getConfiguredBayId()}`.trim() || DEFAULT_BAY_ID;
   const batch_limit = opts?.batch_limit ?? BATCH_LIMIT;
   const max_batches_per_tick =
     opts?.max_batches_per_tick ?? MAX_BATCHES_PER_TICK;

@@ -8,6 +8,7 @@ import { drainAccountCollaboratorIndexProjection } from "@cocalc/database/postgr
 import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
 import type { AccountFeedEvent } from "@cocalc/conat/hub/api/account-feed";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 
 const logger = getLogger("server:projections:account-collaborator-index");
 
@@ -104,7 +105,8 @@ function isoOrNull(value: Date | null): string | null {
 export async function runAccountCollaboratorIndexProjectionPass(
   opts?: RunAccountCollaboratorIndexProjectionPassOptions,
 ): Promise<AccountCollaboratorIndexProjectionPassResult> {
-  const bay_id = `${opts?.bay_id ?? getConfiguredBayId()}`.trim() || "bay-0";
+  const bay_id =
+    `${opts?.bay_id ?? getConfiguredBayId()}`.trim() || DEFAULT_BAY_ID;
   const batch_limit = opts?.batch_limit ?? BATCH_LIMIT;
   const max_batches_per_tick =
     opts?.max_batches_per_tick ?? MAX_BATCHES_PER_TICK;
