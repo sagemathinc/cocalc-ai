@@ -927,14 +927,14 @@ importers:
         specifier: ^2.17.0
         version: 2.17.0
       slate:
-        specifier: ^0.123.0
-        version: 0.123.0
+        specifier: ^0.124.1
+        version: 0.124.1
       slate-history:
         specifier: ^0.115.0
-        version: 0.115.0(slate@0.123.0)
+        version: 0.115.0(slate@0.124.1)
       slate-react:
-        specifier: ^0.123.0
-        version: 0.123.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(slate-dom@0.123.0(slate@0.123.0))(slate@0.123.0)
+        specifier: ^0.124.0
+        version: 0.124.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(slate-dom@0.123.0(slate@0.124.1))(slate@0.124.1)
       superb:
         specifier: ^3.0.0
         version: 3.0.0
@@ -6770,8 +6770,8 @@ packages:
   electron-to-chromium@1.5.264:
     resolution: {integrity: sha512-1tEf0nLgltC3iy9wtlYDlQDc5Rg9lEKVjEmIHJ21rI9OcqkvD45K1oyNIRA4rR1z3LgJ7KeGzEBojVcV6m4qjA==}
 
-  electron-to-chromium@1.5.336:
-    resolution: {integrity: sha512-AbH9q9J455r/nLmdNZes0G0ZKcRX73FicwowalLs6ijwOmCJSRRrLX63lcAlzy9ux3dWK1w1+1nsBJEWN11hcQ==}
+  electron-to-chromium@1.5.340:
+    resolution: {integrity: sha512-908qahOGocRMinT2nM3ajCEM99H4iPdv84eagPP3FfZy/1ZGeOy2CZYzjhms81ckOPCXPlW7LkY4XpxD8r1DrA==}
 
   electron@37.8.0:
     resolution: {integrity: sha512-R7fCCfp/foGvJjxReBpb01Fk0bEKAvUdbwXK4c2c2ttuHpPEV/k65GRkz5yYYVhE8EGIa/j5uh0uToOpsocsZw==}
@@ -10543,16 +10543,16 @@ packages:
     peerDependencies:
       slate: '>=0.114.3'
 
-  slate-react@0.123.0:
-    resolution: {integrity: sha512-nQwXL1FEacrY9ZFmatRhoBnsySNUX2x6qB77V3oNHd7wWxBJWuzz4GMrBXcVoRE8Gac7Angf8xaNGzb6zcPlHg==}
+  slate-react@0.124.0:
+    resolution: {integrity: sha512-NLN6ME64ChOgJtiVTKwISS1sI/Y8/qN1cwmDTZM9AQJCl+jR3XNCvDsKNrW0kJU+1G3NgIGaYoVWhgIVEIL+Aw==}
     peerDependencies:
       react: '>=18.2.0'
       react-dom: '>=18.2.0'
       slate: '>=0.121.0'
       slate-dom: '>=0.119.1'
 
-  slate@0.123.0:
-    resolution: {integrity: sha512-Oon3HR/QzJQBjuOUJT1jGGlp8Ff7t3Bkr/rJ2lDqxNT4H+cBnXpEVQ/si6hn1ZCHhD2xY/2N91PQoH/rD7kxTg==}
+  slate@0.124.1:
+    resolution: {integrity: sha512-ii7DwezgvbLAyKtHBIunjTR1kzbNfYLCUKLMzJELlbTZkvHzX4DzN7HKIwcakf6dPxO6AoeT/P7kHOcyTym/hA==}
 
   slice-ansi@4.0.0:
     resolution: {integrity: sha512-qMCMfhY040cVHT43K9BFygqYbUPFZKHOg7K73mtTWJRb8pyP3fzf4Ixd5SzdEJQ6MRUg/WBnOLxghZtKKurENQ==}
@@ -16052,7 +16052,7 @@ snapshots:
     dependencies:
       baseline-browser-mapping: 2.10.19
       caniuse-lite: 1.0.30001788
-      electron-to-chromium: 1.5.336
+      electron-to-chromium: 1.5.340
       node-releases: 2.0.37
       update-browserslist-db: 1.2.3(browserslist@4.28.2)
 
@@ -17275,7 +17275,7 @@ snapshots:
 
   electron-to-chromium@1.5.264: {}
 
-  electron-to-chromium@1.5.336: {}
+  electron-to-chromium@1.5.340: {}
 
   electron@37.8.0:
     dependencies:
@@ -22323,7 +22323,7 @@ snapshots:
 
   slash@5.1.0: {}
 
-  slate-dom@0.123.0(slate@0.123.0):
+  slate-dom@0.123.0(slate@0.124.1):
     dependencies:
       '@juggle/resize-observer': 3.4.0
       direction: 1.0.4
@@ -22331,14 +22331,14 @@ snapshots:
       is-plain-object: 5.0.0
       lodash: 4.18.1
       scroll-into-view-if-needed: 3.1.0
-      slate: 0.123.0
+      slate: 0.124.1
       tiny-invariant: 1.3.1
 
-  slate-history@0.115.0(slate@0.123.0):
+  slate-history@0.115.0(slate@0.124.1):
     dependencies:
-      slate: 0.123.0
+      slate: 0.124.1
 
-  slate-react@0.123.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(slate-dom@0.123.0(slate@0.123.0))(slate@0.123.0):
+  slate-react@0.124.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(slate-dom@0.123.0(slate@0.124.1))(slate@0.124.1):
     dependencies:
       '@juggle/resize-observer': 3.4.0
       direction: 1.0.4
@@ -22347,11 +22347,11 @@ snapshots:
       react: 19.2.1
       react-dom: 19.2.1(react@19.2.1)
       scroll-into-view-if-needed: 3.1.0
-      slate: 0.123.0
-      slate-dom: 0.123.0(slate@0.123.0)
+      slate: 0.124.1
+      slate-dom: 0.123.0(slate@0.124.1)
       tiny-invariant: 1.3.1
 
-  slate@0.123.0: {}
+  slate@0.124.1: {}
 
   slice-ansi@4.0.0:
     dependencies:
