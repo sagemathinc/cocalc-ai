@@ -183,7 +183,9 @@ function getOrCreateRoutedHubClient({
     noCache: true,
     forceNew: true,
     address,
-    inboxPrefix: inboxPrefix({ hub_id: "hub" }),
+    inboxPrefix: account_id
+      ? inboxPrefix({ account_id })
+      : inboxPrefix({ hub_id: "hub" }),
     auth: async (cb) => {
       try {
         const token = await getHubRouteToken(host_id, state);

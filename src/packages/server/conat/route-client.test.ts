@@ -45,7 +45,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
 }));
 
 jest.mock("@cocalc/conat/names", () => ({
-  inboxPrefix: ({ hub_id }) => `inbox.${hub_id}`,
+  inboxPrefix: ({ account_id, hub_id }) =>
+    account_id ? `inbox.${account_id}` : `inbox.${hub_id}`,
 }));
 
 jest.mock("@cocalc/conat/auth/project-host-token", () => ({
@@ -309,6 +310,11 @@ describe("server/conat route-client", () => {
         actor: "account",
         account_id: "account-1",
         host_id: "host-local",
+      }),
+    );
+    expect(connectMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        inboxPrefix: "inbox.account-1",
       }),
     );
     expect(authValue).toEqual({ bearer: "token-1" });
