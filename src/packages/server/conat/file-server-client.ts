@@ -11,9 +11,17 @@ import {
   materializeProjectHostTarget,
   materializeRemoteProjectHostTarget,
 } from "./route-project";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { resolveHostBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
 
 let routedClient: Client | undefined;
 const routedAccountClients = new Map<string, Client>();
+const ROUTE_AUTH_SYNC_TTL_MS = 30_000;
+const routeAuthSyncCache = new Map<
+  string,
+  { expiresAt: number; inFlight?: Promise<void> }
+>();
 
 type FileserverServiceClient = Fileserver & {
   conat?: {
@@ -34,6 +42,63 @@ function getRoutedClient(account_id?: string): Client {
   return routedClient;
 }
 
+async function ensureProjectHostAccountRouteReady({
+  account_id,
+  project_id,
+  host_id,
+  host_session_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  host_id: string;
+  host_session_id?: string;
+}): Promise<void> {
+  if (!account_id) {
+    return;
+  }
+  const key = `${account_id}:${project_id}:${host_id}:${host_session_id ?? ""}`;
+  const now = Date.now();
+  const cached = routeAuthSyncCache.get(key);
+  if (cached?.expiresAt && now < cached.expiresAt) {
+    if (cached.inFlight) {
+      await cached.inFlight;
+    }
+    return;
+  }
+  if (cached?.inFlight) {
+    await cached.inFlight;
+    return;
+  }
+
+  const entry = {
+    expiresAt: 0,
+    inFlight: undefined as Promise<void> | undefined,
+  };
+  entry.inFlight = (async () => {
+    const ownership = await resolveHostBayAcrossCluster(host_id);
+    await getInterBayBridge()
+      .projectHostAuthToken(ownership?.bay_id ?? getConfiguredBayId(), {
+        timeout_ms: 15_000,
+      })
+      .issue({
+        account_id,
+        host_id,
+        project_id,
+        ttl_seconds: 60,
+      });
+    entry.expiresAt = Date.now() + ROUTE_AUTH_SYNC_TTL_MS;
+  })();
+  routeAuthSyncCache.set(key, entry);
+  try {
+    await entry.inFlight;
+  } finally {
+    delete entry.inFlight;
+    if (!entry.expiresAt) {
+      routeAuthSyncCache.delete(key);
+    }
+  }
+}
+
 export async function ensureProjectFileServerRoute(
   project_id: string,
   account_id?: string,
@@ -51,6 +116,12 @@ export async function ensureProjectFileServerRoute(
   if (!target?.address) {
     throw new Error(`unable to route project ${project_id} to a host`);
   }
+  await ensureProjectHostAccountRouteReady({
+    account_id,
+    project_id,
+    host_id: target.host_id,
+    host_session_id: target.host_session_id,
+  });
   return target.address;
 }
 
