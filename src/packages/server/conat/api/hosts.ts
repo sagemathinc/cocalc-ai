@@ -127,7 +127,7 @@ import {
 } from "@cocalc/util/db-schema/llm-utils";
 import { type RootfsUploadedArtifactResult } from "@cocalc/util/rootfs-images";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getConfiguredClusterBayIds } from "@cocalc/server/cluster-config";
+import { getConfiguredClusterBayIdsForStaticEnumerationOnly } from "@cocalc/server/cluster-config";
 import {
   resolveHostBay,
   resolveProjectBay,
@@ -544,32 +544,6 @@ function compareHostProjectRows(a: HostProjectRow, b: HostProjectRow): number {
   return a.project_id < b.project_id ? 1 : -1;
 }
 
-function mergeHostBackupSummaries(
-  parts: HostBackupStatus[],
-): HostBackupStatus | undefined {
-  if (!parts.length) {
-    return undefined;
-  }
-  return parts.reduce<HostBackupStatus>(
-    (acc, part) => ({
-      total: acc.total + (part.total ?? 0),
-      provisioned: acc.provisioned + (part.provisioned ?? 0),
-      running: acc.running + (part.running ?? 0),
-      provisioned_up_to_date:
-        acc.provisioned_up_to_date + (part.provisioned_up_to_date ?? 0),
-      provisioned_needs_backup:
-        acc.provisioned_needs_backup + (part.provisioned_needs_backup ?? 0),
-    }),
-    {
-      total: 0,
-      provisioned: 0,
-      running: 0,
-      provisioned_up_to_date: 0,
-      provisioned_needs_backup: 0,
-    },
-  );
-}
-
 function rowMatchesHostProjectsCursor(
   row: HostProjectRow,
   cursor: { project_id: string; last_edited: string | null },
@@ -671,6 +645,40 @@ async function loadHostForListing(
     return row;
   }
   throw new Error("not authorized");
+}
+
+function isHostNotFoundError(err: unknown): boolean {
+  return err instanceof Error && err.message === "host not found";
+}
+
+async function resolveHostProjectListingTarget({
+  id,
+  account_id,
+}: {
+  id: string;
+  account_id?: string;
+}): Promise<
+  | { kind: "local"; host: Awaited<ReturnType<typeof loadHostForListing>> }
+  | { kind: "remote"; bay_id: string }
+> {
+  try {
+    const host = await loadHostForListing(id, account_id);
+    const bay_id = `${host?.bay_id ?? ""}`.trim();
+    if (bay_id && bay_id !== getConfiguredBayId()) {
+      return { kind: "remote", bay_id };
+    }
+    return { kind: "local", host };
+  } catch (err) {
+    if (!isHostNotFoundError(err)) {
+      throw err;
+    }
+  }
+
+  const ownership = await resolveHostBay(id);
+  if (!ownership || ownership.bay_id === getConfiguredBayId()) {
+    throw new Error("host not found");
+  }
+  return { kind: "remote", bay_id: ownership.bay_id };
 }
 
 type HostProjectsCursor = {
@@ -1934,7 +1942,7 @@ export async function listHostsLocal({
 export async function listHosts(opts: ListHostsOptions): Promise<Host[]> {
   const local = await listHostsLocal(opts);
   const remoteHosts = await Promise.all(
-    getConfiguredClusterBayIds()
+    getConfiguredClusterBayIdsForStaticEnumerationOnly()
       .filter((bay_id) => bay_id !== getConfiguredBayId())
       .map(async (bay_id) => {
         try {
@@ -2017,45 +2025,29 @@ export async function listHostProjects({
   state_filter?: HostProjectStateFilter;
   project_state?: string;
 }): Promise<HostProjectsResponse> {
-  const host = await loadHostForListing(id, account_id);
-  const cappedLimit = normalizeHostProjectsLimit(limit);
-  const snapshots = await Promise.all([
-    listHostProjectsLocalSnapshot({
-      id,
-      risk_only,
-      state_filter,
-      project_state,
-    }),
-    ...getConfiguredClusterBayIds()
-      .filter((bay_id) => bay_id !== getConfiguredBayId())
-      .map(async (bay_id) => {
-        try {
-          return await getInterBayBridge()
-            .hostConnection(bay_id)
-            .listHostProjects({
-              id,
-              risk_only,
-              state_filter,
-              project_state,
-            });
-        } catch (err) {
-          logger.warn(
-            `listHostProjects: failed to load remote host projects from ${bay_id} for host ${id} -- ${err}`,
-          );
-          return undefined;
-        }
-      }),
-  ]);
-  const mergedRows = new Map<string, HostProjectRow>();
-  for (const snapshot of snapshots) {
-    if (!snapshot) {
-      continue;
-    }
-    for (const row of snapshot.rows) {
-      mergedRows.set(row.project_id, row);
-    }
+  const target = await resolveHostProjectListingTarget({ id, account_id });
+  if (target.kind === "remote") {
+    return await getInterBayBridge()
+      .hostConnection(target.bay_id)
+      .listHostProjects({
+        account_id,
+        id,
+        limit,
+        cursor,
+        risk_only,
+        state_filter,
+        project_state,
+      });
   }
-  let rows = Array.from(mergedRows.values()).sort(compareHostProjectRows);
+  const { host } = target;
+  const cappedLimit = normalizeHostProjectsLimit(limit);
+  const snapshot = await listHostProjectsLocalSnapshot({
+    id,
+    risk_only,
+    state_filter,
+    project_state,
+  });
+  let rows = snapshot.rows.sort(compareHostProjectRows);
   if (cursor) {
     const decoded = decodeHostProjectsCursor(cursor);
     const cursorDate =
@@ -2073,17 +2065,6 @@ export async function listHostProjects({
     );
   }
   const trimmed = rows.slice(0, cappedLimit);
-  const summary = mergeHostBackupSummaries(
-    snapshots
-      .filter((snapshot): snapshot is HostProjectsResponse => !!snapshot)
-      .map((snapshot) => snapshot.summary),
-  ) ?? {
-    total: 0,
-    provisioned: 0,
-    running: 0,
-    provisioned_up_to_date: 0,
-    provisioned_needs_backup: 0,
-  };
 
   let next_cursor: string | undefined;
   if (rows.length > cappedLimit && trimmed.length > 0) {
@@ -2096,7 +2077,7 @@ export async function listHostProjects({
 
   return {
     rows: trimmed,
-    summary,
+    summary: snapshot.summary,
     next_cursor,
     host_last_seen: normalizeDate(host.last_seen) ?? undefined,
   };
@@ -2268,53 +2249,52 @@ async function selectHostProjectActionRows({
   project_state?: string;
   rows: Array<{ project_id: string; state: string }>;
 }> {
-  const host = await loadHostForListing(id, account_id);
+  const target = await resolveHostProjectListingTarget({ id, account_id });
   const { normalizedStateFilter, normalizedProjectState } =
     buildHostProjectsBaseQuery({
       host_id: id,
       state_filter,
       project_state,
     });
-  const snapshots = await Promise.all([
-    listHostProjectsLocalSnapshot({
-      id,
-      risk_only,
-      state_filter,
-      project_state,
-    }),
-    ...getConfiguredClusterBayIds()
-      .filter((bay_id) => bay_id !== getConfiguredBayId())
-      .map(async (bay_id) => {
-        try {
-          return await getInterBayBridge()
-            .hostConnection(bay_id)
-            .listHostProjects({
-              id,
-              risk_only,
-              state_filter,
-              project_state,
-            });
-        } catch (err) {
-          logger.warn(
-            `selectHostProjectActionRows: failed to load remote host projects from ${bay_id} for host ${id} -- ${err}`,
-          );
-          return undefined;
-        }
-      }),
-  ]);
-  const rows = Array.from(
-    snapshots
-      .filter((snapshot): snapshot is HostProjectsResponse => !!snapshot)
-      .flatMap((snapshot) => snapshot.rows)
-      .reduce<Map<string, HostProjectRow>>((acc, row) => {
-        acc.set(row.project_id, row);
-        return acc;
-      }, new Map())
-      .values(),
-  ).sort(compareHostProjectRows);
+  if (target.kind === "remote") {
+    const rows: HostProjectRow[] = [];
+    let cursor: string | undefined;
+    do {
+      const response = await getInterBayBridge()
+        .hostConnection(target.bay_id)
+        .listHostProjects({
+          account_id,
+          id,
+          limit: HOST_PROJECTS_MAX_LIMIT,
+          cursor,
+          risk_only,
+          state_filter,
+          project_state,
+        });
+      rows.push(...response.rows);
+      cursor = response.next_cursor;
+    } while (cursor);
+    return {
+      host: { id },
+      state_filter: normalizedStateFilter,
+      project_state: normalizedProjectState || undefined,
+      rows: rows.map((row) => ({
+        project_id: row.project_id,
+        state: row.state ?? "",
+      })),
+    };
+  }
+
+  const snapshot = await listHostProjectsLocalSnapshot({
+    id,
+    risk_only,
+    state_filter,
+    project_state,
+  });
+  const rows = snapshot.rows.sort(compareHostProjectRows);
 
   return {
-    host,
+    host: target.host,
     state_filter: normalizedStateFilter,
     project_state: normalizedProjectState || undefined,
     rows: rows.map((row) => ({

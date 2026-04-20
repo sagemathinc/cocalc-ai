@@ -593,6 +593,7 @@ export interface Projects {
   respondCollabInvite: (opts: {
     account_id?: string;
     invite_id: string;
+    project_id?: string;
     action: ProjectCollabInviteAction;
   }) => Promise<ProjectCollabInviteRow>;
 

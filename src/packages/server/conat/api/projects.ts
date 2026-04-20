@@ -26,7 +26,6 @@ import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-clien
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getConfiguredClusterBayIds } from "@cocalc/server/cluster-config";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
 import type {
@@ -803,10 +802,12 @@ function isCollabInviteNotFound(err: unknown, invite_id: string): boolean {
 export async function respondCollabInvite({
   account_id,
   invite_id,
+  project_id,
   action,
 }: {
   account_id?: string;
   invite_id: string;
+  project_id?: string;
   action: ProjectCollabInviteAction;
 }) {
   try {
@@ -818,30 +819,23 @@ export async function respondCollabInvite({
     if (!account_id) {
       throw err;
     }
-    const currentBayId = getConfiguredBayId();
-    const include_email = await isAdmin(account_id);
-    for (const bay_id of getConfiguredClusterBayIds()) {
-      if (!bay_id || bay_id === currentBayId) {
-        continue;
-      }
-      try {
-        const result = await getInterBayBridge()
-          .projectCollabInvite(bay_id)
-          .respond({
-            account_id,
-            invite_id,
-            action,
-            include_email,
-          });
-        return collabInviteFromWire(result);
-      } catch (remoteErr) {
-        if (isCollabInviteNotFound(remoteErr, invite_id)) {
-          continue;
-        }
-        throw remoteErr;
-      }
+    if (!project_id) {
+      throw err;
     }
-    throw err;
+    const ownership = await resolveProjectBay(project_id);
+    if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+      throw err;
+    }
+    const include_email = await isAdmin(account_id);
+    const result = await getInterBayBridge()
+      .projectCollabInvite(ownership.bay_id)
+      .respond({
+        account_id,
+        invite_id,
+        action,
+        include_email,
+      });
+    return collabInviteFromWire(result);
   }
 }
 

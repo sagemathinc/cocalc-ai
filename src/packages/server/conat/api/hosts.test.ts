@@ -193,7 +193,11 @@ jest.mock("@cocalc/server/cluster-config", () => {
   return {
     __esModule: true,
     ...actual,
-    getConfiguredClusterBayIds: jest.fn(() => ["bay-0", "bay-1", "bay-2"]),
+    getConfiguredClusterBayIdsForStaticEnumerationOnly: jest.fn(() => [
+      "bay-0",
+      "bay-1",
+      "bay-2",
+    ]),
   };
 });
 
@@ -438,39 +442,43 @@ describe("hosts.listHostProjects", () => {
     expect(second.next_cursor).toBeUndefined();
   });
 
-  it("merges remote-owned projects for the same host", async () => {
-    hostConnectionListHostProjectsMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            project_id: "proj-remote",
-            title: "Remote",
-            state: "running",
-            provisioned: true,
-            last_edited: "2026-01-04T00:00:00.000Z",
-            last_backup: "2026-01-03T00:00:00.000Z",
-            needs_backup: true,
-            collab_count: 4,
-          },
-        ],
-        summary: {
-          total: 1,
-          provisioned: 1,
-          running: 1,
-          provisioned_up_to_date: 0,
-          provisioned_needs_backup: 1,
+  it("routes project listing to the host-owning bay", async () => {
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              bay_id: "bay-1",
+              metadata: { owner: ACCOUNT_ID },
+              last_seen: new Date("2026-01-05T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected local query: ${sql}`);
+    });
+    hostConnectionListHostProjectsMock.mockResolvedValueOnce({
+      rows: [
+        {
+          project_id: "proj-remote",
+          title: "Remote",
+          state: "running",
+          provisioned: true,
+          last_edited: "2026-01-04T00:00:00.000Z",
+          last_backup: "2026-01-03T00:00:00.000Z",
+          needs_backup: true,
+          collab_count: 4,
         },
-      })
-      .mockResolvedValueOnce({
-        rows: [],
-        summary: {
-          total: 0,
-          provisioned: 0,
-          running: 0,
-          provisioned_up_to_date: 0,
-          provisioned_needs_backup: 0,
-        },
-      });
+      ],
+      summary: {
+        total: 1,
+        provisioned: 1,
+        running: 1,
+        provisioned_up_to_date: 0,
+        provisioned_needs_backup: 1,
+      },
+    });
 
     const { listHostProjects } = await import("./hosts");
     const result = await listHostProjects({
@@ -479,19 +487,20 @@ describe("hosts.listHostProjects", () => {
       limit: 10,
     });
 
-    expect(result.rows.map((row) => row.project_id)).toEqual([
-      "proj-remote",
-      "proj-3",
-      "proj-2",
-      "proj-1",
-      "proj-0",
-    ]);
+    expect(hostConnectionListHostProjectsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        limit: 10,
+      }),
+    );
+    expect(result.rows.map((row) => row.project_id)).toEqual(["proj-remote"]);
     expect(result.summary).toEqual({
-      total: 5,
-      provisioned: 4,
-      running: 2,
-      provisioned_up_to_date: 1,
-      provisioned_needs_backup: 2,
+      total: 1,
+      provisioned: 1,
+      running: 1,
+      provisioned_up_to_date: 0,
+      provisioned_needs_backup: 1,
     });
   });
 
@@ -1729,7 +1738,6 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
           state_filter: "running",
           parallel: 2,
           projects: [
-            { project_id: "proj-remote", state: "running" },
             { project_id: "proj-1", state: "running" },
             { project_id: "proj-2", state: "running" },
           ],
@@ -1747,9 +1755,88 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
           state_filter: "all",
           project_state: "opened",
           projects: [
-            { project_id: "proj-remote", state: "running" },
             { project_id: "proj-1", state: "running" },
             { project_id: "proj-2", state: "running" },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("routes host-scoped project actions to the host-owning bay", async () => {
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              bay_id: "bay-1",
+              status: "running",
+              metadata: { owner: ACCOUNT_ID },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected local query: ${sql}`);
+    });
+    hostConnectionListHostProjectsMock
+      .mockResolvedValueOnce({
+        rows: [{ project_id: "proj-remote-1", state: "running" }],
+        summary: {
+          total: 2,
+          provisioned: 2,
+          running: 2,
+          provisioned_up_to_date: 0,
+          provisioned_needs_backup: 2,
+        },
+        next_cursor: "next",
+      })
+      .mockResolvedValueOnce({
+        rows: [{ project_id: "proj-remote-2", state: "off" }],
+        summary: {
+          total: 2,
+          provisioned: 2,
+          running: 2,
+          provisioned_up_to_date: 0,
+          provisioned_needs_backup: 2,
+        },
+      });
+
+    const { stopHostProjects } = await import("./hosts");
+    await stopHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      state_filter: "running",
+    });
+
+    expect(hostConnectionListHostProjectsMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        limit: 5000,
+        cursor: undefined,
+        state_filter: "running",
+      }),
+    );
+    expect(hostConnectionListHostProjectsMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        limit: 5000,
+        cursor: "next",
+        state_filter: "running",
+      }),
+    );
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-stop-projects",
+        scope_id: HOST_ID,
+        input: expect.objectContaining({
+          projects: [
+            { project_id: "proj-remote-1", state: "running" },
+            { project_id: "proj-remote-2", state: "off" },
           ],
         }),
       }),

@@ -84,6 +84,7 @@ export class ProjectCollaborators {
 
   public async respond_invite(opts: {
     invite_id: string;
+    project_id?: string;
     action: ProjectCollabInviteAction;
   }): Promise<ProjectCollabInviteRow> {
     return await this.conat.hub.projects.respondCollabInvite(opts);

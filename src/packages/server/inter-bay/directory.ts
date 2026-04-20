@@ -9,7 +9,7 @@ import {
   type BayOwnership,
 } from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getConfiguredClusterBayIds } from "@cocalc/server/cluster-config";
+import { getConfiguredClusterBayIdsForStaticEnumerationOnly } from "@cocalc/server/cluster-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
@@ -57,7 +57,7 @@ export async function resolveProjectBayAcrossCluster(
   // but the long-term fix should be a cluster-wide index or broadcast-style
   // lookup rather than sequential fanout across bays.
   const currentBayId = getConfiguredBayId();
-  for (const bay_id of getConfiguredClusterBayIds()) {
+  for (const bay_id of getConfiguredClusterBayIdsForStaticEnumerationOnly()) {
     if (!bay_id || bay_id === currentBayId) {
       continue;
     }
@@ -118,7 +118,7 @@ export async function resolveHostBayAcrossCluster(
   // Same tradeoff as resolveProjectBayAcrossCluster: this is only a bounded
   // fallback path until we have a better cluster-wide ownership directory.
   const currentBayId = getConfiguredBayId();
-  for (const bay_id of getConfiguredClusterBayIds()) {
+  for (const bay_id of getConfiguredClusterBayIdsForStaticEnumerationOnly()) {
     if (!bay_id || bay_id === currentBayId) {
       continue;
     }

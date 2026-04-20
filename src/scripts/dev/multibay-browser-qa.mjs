@@ -944,12 +944,13 @@ async function createCollaboratorInvite(page, options, inviteeAccountId) {
 async function revokeCollaboratorInvite(page, options, inviteId) {
   await waitForRuntime(page, options);
   return await page.evaluate(
-    async ({ inviteId }) =>
+    async ({ inviteId, projectId }) =>
       await globalThis.cc.conat.hub.projects.respondCollabInvite({
         invite_id: inviteId,
+        project_id: projectId,
         action: "revoke",
       }),
-    { inviteId },
+    { inviteId, projectId: options.projectId },
   );
 }
 
@@ -1101,6 +1102,7 @@ async function acceptCollaboratorInvite(page, options, inviteId) {
         if (invite) {
           return await hubProjects.respondCollabInvite({
             invite_id: invite.invite_id,
+            project_id: projectId,
             action: "accept",
           });
         }

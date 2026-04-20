@@ -6,7 +6,7 @@
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
-  getConfiguredClusterBayIds,
+  getConfiguredClusterBayIdsForStaticEnumerationOnly,
   getConfiguredClusterSeedBayId,
 } from "@cocalc/server/cluster-config";
 import type { Request, Response } from "express";
@@ -170,7 +170,7 @@ export async function getClusterBayPublicOrigins(): Promise<
   Record<string, string>
 > {
   const result: Record<string, string> = {};
-  for (const bay_id of getConfiguredClusterBayIds()) {
+  for (const bay_id of getConfiguredClusterBayIdsForStaticEnumerationOnly()) {
     const origin = await getBayPublicOrigin(bay_id);
     if (origin) {
       result[bay_id] = origin;
