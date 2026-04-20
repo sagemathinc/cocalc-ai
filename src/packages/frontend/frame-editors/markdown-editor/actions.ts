@@ -11,7 +11,7 @@ import { delay } from "awaiting";
 import { fromJS } from "immutable";
 import $ from "jquery";
 import { debounce } from "lodash";
-
+import { IS_MOBILE } from "@cocalc/frontend/feature";
 import {
   TableOfContentsEntry,
   TableOfContentsEntryList,
@@ -71,6 +71,11 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   }
 
   _raw_default_frame_tree(): FrameTree {
+    if (IS_MOBILE) {
+      // the split below wastes valuable space; also very unlikely to want to EDIT
+      // on mobile, so make it static.
+      return { type: "markdown" };
+    }
     return {
       direction: "col",
       type: "node",
