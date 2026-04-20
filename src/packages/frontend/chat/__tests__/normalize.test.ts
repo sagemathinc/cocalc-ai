@@ -331,6 +331,33 @@ describe("handleSyncDBChange", () => {
     });
     expect(store.state.acpState?.get("message:msg-queued-user")).toBe("queue");
   });
+
+  it("maps not-sent chat-row acp_state into acpState", () => {
+    const store = new MockStore();
+    const date = new Date("2024-01-02T03:04:06.000Z");
+    const chatRecord = {
+      event: "chat",
+      sender_id: "user-1",
+      date,
+      message_id: "msg-not-sent-user",
+      thread_id: "thread-not-sent-user",
+      acp_state: "not-sent",
+      history: [],
+      editing: {},
+      feedback: {},
+      schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+    };
+    const syncdb = new MockSyncDB([chatRecord]);
+
+    handleSyncDBChange({
+      syncdb,
+      store,
+      changes: [{ event: "chat", sender_id: "user-1", date }],
+    });
+    expect(store.state.acpState?.get("message:msg-not-sent-user")).toBe(
+      "not-sent",
+    );
+  });
 });
 
 describe("initFromSyncDB", () => {

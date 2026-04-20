@@ -101,6 +101,14 @@ import {
 import { tab_to_path } from "@cocalc/util/misc";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
 import type { ChatInputControl } from "./input";
+import {
+  claimPendingChatSend,
+  listPendingChatSends,
+  removePendingChatSendEntry,
+  removePendingChatSend,
+  storePendingChatSend,
+  type PendingChatSend,
+} from "./pending-chat-outbox";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -649,6 +657,7 @@ export function ChatPanel({
     text: string;
     sourceDraftKey: number;
   } | null>(null);
+  const recoveredPendingChatSendsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     inputRef.current = input;
   }, [input]);
@@ -682,6 +691,73 @@ export function ChatPanel({
       void clearComposerDraft(pending.sourceDraftKey);
     }
   }, [clearComposerDraft, composerDraftKey, selectedThreadKey, setInput]);
+  useEffect(() => {
+    if (!actions.syncdb || !actions.isSyncdbReady()) return;
+    let cancelled = false;
+    void (async () => {
+      const entries = await listPendingChatSends({ project_id, path });
+      for (const entry of entries) {
+        if (cancelled || recoveredPendingChatSendsRef.current.has(entry.id)) {
+          continue;
+        }
+        recoveredPendingChatSendsRef.current.add(entry.id);
+        const claimed = await claimPendingChatSend(entry);
+        if (!claimed || cancelled) {
+          continue;
+        }
+        const pending = claimed.payload;
+        if (
+          !pending ||
+          pending.project_id !== project_id ||
+          pending.path !== path ||
+          !pending.input?.trim() ||
+          !pending.message_id ||
+          !pending.thread_id ||
+          !pending.date
+        ) {
+          await removePendingChatSendEntry(claimed);
+          continue;
+        }
+        if (actions.getMessageById?.(pending.message_id)) {
+          await removePendingChatSend(pending);
+          continue;
+        }
+        const sent = actions.sendChat({
+          input: pending.input,
+          sender_id: pending.sender_id,
+          reply_thread_id: pending.reply_thread_id,
+          parent_message_id: pending.parent_message_id,
+          send_mode: pending.send_mode,
+          name: pending.name,
+          threadAgent: pending.threadAgent,
+          threadAppearance: pending.threadAppearance,
+          acp_loop_config: pending.acp_loop_config,
+          acpConfigOverride: pending.acpConfigOverride,
+          chatIdentity: {
+            date: pending.date,
+            message_id: pending.message_id,
+            thread_id: pending.thread_id,
+          },
+          skipModelDispatch: true,
+          recoveredNotSent: pending.shouldMarkNotSent,
+          preserveSelectedThread: true,
+          skipDraftDelete: true,
+          noNotification: true,
+          onPersisted: async () => {
+            await removePendingChatSend(pending);
+          },
+        });
+        if (!sent) {
+          recoveredPendingChatSendsRef.current.delete(entry.id);
+        }
+      }
+    })().catch((err) => {
+      console.warn("failed to recover pending chat sends", err);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [actions, docVersion, path, project_id]);
   const hasInput = input.trim().length > 0;
   const isSelectedThreadAI = selectedThread?.isAI ?? false;
   const [composerLoopConfig, setComposerLoopConfig] = useState<
@@ -1482,10 +1558,10 @@ export function ChatPanel({
     return resolveFromThreadKey(selectedThreadKey);
   }
 
-  function sendMessage(
+  async function sendMessage(
     extraInput?: string,
     opts?: { immediate?: boolean },
-  ): void {
+  ): Promise<void> {
     const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
     const sendingText = rawSendingText.trim();
     if (sendingText.length === 0) return;
@@ -1503,14 +1579,53 @@ export function ChatPanel({
       setAllowAutoSelectThread(false);
     }
 
-    clearComposerNow(composerDraftKey);
-
+    const chatIdentity = actions.reserveChatSendIdentity({ reply_thread_id });
+    const mentionProcessedInput =
+      submitMentionsRef?.current?.({
+        chat: `${new Date(chatIdentity.date).valueOf()}`,
+      }) ?? "";
+    const resolvedInput =
+      mentionProcessedInput.trim().length > 0
+        ? mentionProcessedInput
+        : rawSendingText;
+    const sendMode = opts?.immediate ? "immediate" : undefined;
+    const newThreadName =
+      !reply_thread_id && newThreadSetup.title.trim()
+        ? newThreadSetup.title.trim()
+        : undefined;
+    const newThreadModel =
+      newThreadSetup.codexConfig.model?.trim() || newThreadSetup.model?.trim();
+    const threadAgent =
+      !reply_thread_id && newThreadSetup.agentMode
+        ? {
+            mode: newThreadSetup.agentMode,
+            model: newThreadModel,
+            codexConfig:
+              newThreadSetup.agentMode === "codex"
+                ? {
+                    ...newThreadSetup.codexConfig,
+                    model: newThreadModel,
+                  }
+                : undefined,
+          }
+        : undefined;
+    const threadAppearance = !reply_thread_id
+      ? {
+          color: newThreadSetup.color?.trim(),
+          icon: newThreadSetup.icon?.trim(),
+          image: newThreadSetup.image?.trim(),
+        }
+      : undefined;
+    const acp_loop_config =
+      composerLoopConfig?.enabled === true &&
+      (isSelectedThreadCodex ||
+        (!reply_thread_id && newThreadSetup.agentMode === "codex"))
+        ? composerLoopConfig
+        : undefined;
     const acpConfigOverride =
       !reply_thread_id && newThreadSetup.agentMode === "codex"
         ? (() => {
-            const model =
-              newThreadSetup.codexConfig.model?.trim() ||
-              newThreadSetup.model?.trim();
+            const model = newThreadModel;
             if (!model) return undefined;
             const next: Partial<CodexThreadConfig> = {
               ...newThreadSetup.codexConfig,
@@ -1528,51 +1643,56 @@ export function ChatPanel({
             actions.getCodexConfig?.(reply_thread_id) ??
             undefined)
           : undefined;
-
-    const timeStamp = actions.sendChat({
-      submitMentionsRef,
+    const pendingChatSend: PendingChatSend = {
+      project_id,
+      path,
+      account_id,
+      sender_id: account_id,
+      input: resolvedInput,
+      date: chatIdentity.date,
+      message_id: chatIdentity.message_id,
+      thread_id: chatIdentity.thread_id,
       reply_thread_id,
       parent_message_id,
-      extraInput,
-      send_mode: opts?.immediate ? "immediate" : undefined,
-      name:
-        !reply_thread_id && newThreadSetup.title.trim()
-          ? newThreadSetup.title.trim()
-          : undefined,
-      threadAgent:
-        !reply_thread_id && newThreadSetup.agentMode
-          ? {
-              mode: newThreadSetup.agentMode,
-              model:
-                newThreadSetup.codexConfig.model?.trim() ||
-                newThreadSetup.model?.trim(),
-              codexConfig:
-                newThreadSetup.agentMode === "codex"
-                  ? {
-                      ...newThreadSetup.codexConfig,
-                      model:
-                        newThreadSetup.codexConfig.model?.trim() ||
-                        newThreadSetup.model?.trim(),
-                    }
-                  : undefined,
-            }
-          : undefined,
-      threadAppearance: !reply_thread_id
-        ? {
-            color: newThreadSetup.color?.trim(),
-            icon: newThreadSetup.icon?.trim(),
-            image: newThreadSetup.image?.trim(),
-          }
-        : undefined,
-      acp_loop_config:
-        composerLoopConfig?.enabled === true &&
-        (isSelectedThreadCodex ||
-          (!reply_thread_id && newThreadSetup.agentMode === "codex"))
-          ? composerLoopConfig
-          : undefined,
+      send_mode: sendMode,
+      name: newThreadName,
+      threadAgent,
+      threadAppearance,
+      acp_loop_config,
       acpConfigOverride,
+      shouldMarkNotSent:
+        (!reply_thread_id && newThreadSetup.agentMode === "codex") ||
+        existingThreadMetadata?.agent_kind === "acp",
+    };
+    let pendingStored = false;
+    try {
+      pendingStored = (await storePendingChatSend(pendingChatSend)) != null;
+    } catch (err) {
+      console.warn("failed to store pending chat send", err);
+    }
+
+    if (pendingStored) {
+      clearComposerNow(composerDraftKey);
+    }
+
+    const timeStamp = actions.sendChat({
+      reply_thread_id,
+      parent_message_id,
+      input: resolvedInput,
+      send_mode: sendMode,
+      name: newThreadName,
+      threadAgent,
+      threadAppearance,
+      acp_loop_config,
+      acpConfigOverride,
+      chatIdentity,
+      skipDraftDelete: !pendingStored,
+      onPersisted: async () => {
+        await removePendingChatSend(pendingChatSend);
+      },
     });
     if (!timeStamp) {
+      await removePendingChatSend(pendingChatSend);
       // If send preconditions fail after optimistic clear (e.g. transient
       // reply-target metadata race), restore the typed input so nothing vanishes.
       inputRef.current = rawSendingText;
@@ -1632,11 +1752,11 @@ export function ChatPanel({
     }, 100);
   }
   function on_send(value?: string): void {
-    sendMessage(value);
+    void sendMessage(value);
   }
 
   function on_send_immediately(value?: string): void {
-    sendMessage(value, { immediate: true });
+    void sendMessage(value, { immediate: true });
   }
 
   function onNewChat(): void {
