@@ -396,15 +396,6 @@ export function useProjectContextProvider({
         openFallbackPath(getFallbackPath()!);
         return;
       }
-      if (current_path_abs && !selectionChanged) {
-        if (workspaces.loading) return;
-        const nextSelection = selectionForPath(
-          workspaces.records,
-          current_path_abs,
-        );
-        workspaces.setSelection(nextSelection);
-        return;
-      }
       void actions.open_directory(current.root_path, false, true);
       return;
     }
