@@ -13,6 +13,7 @@ let routeProjectSubjectMock: jest.Mock;
 let listenForUpdatesMock: jest.Mock;
 let issueProjectHostAuthTokenMock: jest.Mock;
 let resolveHostBayAcrossClusterMock: jest.Mock;
+let projectHostAuthTokenIssueMock: jest.Mock;
 
 jest.mock("@cocalc/backend/data", () => ({
   conatPassword: "hub-password",
@@ -29,6 +30,18 @@ jest.mock("@cocalc/backend/logger", () => ({
 
 jest.mock("@cocalc/backend/auth/cookie-names", () => ({
   HUB_PASSWORD_COOKIE_NAME: "hub_cookie",
+}));
+
+jest.mock("@cocalc/server/bay-config", () => ({
+  getConfiguredBayId: jest.fn(() => "bay-0"),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  getInterBayBridge: jest.fn(() => ({
+    projectHostAuthToken: jest.fn(() => ({
+      issue: (...args: any[]) => projectHostAuthTokenIssueMock(...args),
+    })),
+  })),
 }));
 
 jest.mock("@cocalc/conat/names", () => ({
@@ -88,6 +101,10 @@ describe("server/conat route-client", () => {
     routeProjectSubjectMock = jest.fn();
     listenForUpdatesMock = jest.fn(async () => undefined);
     resolveHostBayAcrossClusterMock = jest.fn(async () => null);
+    projectHostAuthTokenIssueMock = jest.fn(async () => ({
+      token: "remote-account-token",
+      expires_at: Date.now() + 60_000,
+    }));
     issueProjectHostAuthTokenMock = jest.fn(() => ({
       token: "token-1",
       expires_at: Date.now() + 60_000,
@@ -254,6 +271,86 @@ describe("server/conat route-client", () => {
         forceNew: true,
       }),
     );
+  });
+
+  it("uses account-scoped auth for account-routed project clients", async () => {
+    const central = createFakeClient();
+    const routed = createFakeClient();
+    let authValue: any;
+    let authPromise: Promise<void> | undefined;
+    connectMock
+      .mockImplementationOnce(() => central)
+      .mockImplementationOnce((opts) => {
+        authPromise = Promise.resolve(
+          opts.auth((value) => {
+            authValue = value;
+          }),
+        );
+        return routed;
+      });
+    routeProjectSubjectMock.mockReturnValue({
+      host_id: "host-local",
+      address: "https://host-local.example",
+    });
+
+    const { conatWithProjectRoutingForAccount } =
+      await import("./route-client");
+    const client = conatWithProjectRoutingForAccount({
+      account_id: "account-1",
+    }) as any;
+    const routedResult = client.routeSubject(
+      "file-server.12345678-1234-1234-1234-123456789012.api",
+    );
+
+    expect(routedResult?.client).toBe(routed);
+    await authPromise;
+    expect(issueProjectHostAuthTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: "account",
+        account_id: "account-1",
+        host_id: "host-local",
+      }),
+    );
+    expect(authValue).toEqual({ bearer: "token-1" });
+  });
+
+  it("asks the owning bay to issue account-scoped auth for remote hosts", async () => {
+    const central = createFakeClient();
+    const routed = createFakeClient();
+    let authValue: any;
+    let authPromise: Promise<void> | undefined;
+    connectMock
+      .mockImplementationOnce(() => central)
+      .mockImplementationOnce((opts) => {
+        authPromise = Promise.resolve(
+          opts.auth((value) => {
+            authValue = value;
+          }),
+        );
+        return routed;
+      });
+    resolveHostBayAcrossClusterMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 1,
+    }));
+    routeProjectSubjectMock.mockReturnValue({
+      host_id: "host-remote",
+      address: "https://host-remote.example",
+    });
+
+    const { conatWithProjectRoutingForAccount } =
+      await import("./route-client");
+    const client = conatWithProjectRoutingForAccount({
+      account_id: "account-1",
+    }) as any;
+    client.routeSubject("file-server.12345678-1234-1234-1234-123456789012.api");
+
+    await authPromise;
+    expect(projectHostAuthTokenIssueMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      host_id: "host-remote",
+    });
+    expect(authValue).toEqual({ bearer: "remote-account-token" });
   });
 
   it("allows explicit host control clients for hosts resolved on another bay", async () => {

@@ -3,13 +3,17 @@ import {
   type Fileserver,
 } from "@cocalc/conat/files/file-server";
 import type { Client } from "@cocalc/conat/core/client";
-import { conatWithProjectRouting } from "./route-client";
+import {
+  conatWithProjectRouting,
+  conatWithProjectRoutingForAccount,
+} from "./route-client";
 import {
   materializeProjectHostTarget,
   materializeRemoteProjectHostTarget,
 } from "./route-project";
 
 let routedClient: Client | undefined;
+const routedAccountClients = new Map<string, Client>();
 
 type FileserverServiceClient = Fileserver & {
   conat?: {
@@ -17,7 +21,15 @@ type FileserverServiceClient = Fileserver & {
   };
 };
 
-function getRoutedClient(): Client {
+function getRoutedClient(account_id?: string): Client {
+  if (account_id) {
+    let client = routedAccountClients.get(account_id);
+    if (!client) {
+      client = conatWithProjectRoutingForAccount({ account_id });
+      routedAccountClients.set(account_id, client);
+    }
+    return client;
+  }
   routedClient ??= conatWithProjectRouting();
   return routedClient;
 }
@@ -57,7 +69,7 @@ export async function getProjectFileServerClient({
     await ensureProjectFileServerRoute(project_id, account_id);
   }
   return fileServerClient({
-    client: getRoutedClient(),
+    client: getRoutedClient(account_id),
     project_id,
     timeout,
     waitForInterest: true,

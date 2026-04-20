@@ -4,6 +4,7 @@ let materializeProjectHostTargetMock: jest.Mock;
 let materializeRemoteProjectHostTargetMock: jest.Mock;
 let fileServerClientMock: jest.Mock;
 let conatWithProjectRoutingMock: jest.Mock;
+let conatWithProjectRoutingForAccountMock: jest.Mock;
 let pingMock: jest.Mock;
 
 jest.mock("./route-project", () => ({
@@ -18,6 +19,8 @@ jest.mock("./route-client", () => ({
   __esModule: true,
   conatWithProjectRouting: (...args: any[]) =>
     conatWithProjectRoutingMock(...args),
+  conatWithProjectRoutingForAccount: (...args: any[]) =>
+    conatWithProjectRoutingForAccountMock(...args),
 }));
 
 jest.mock("@cocalc/conat/files/file-server", () => ({
@@ -34,6 +37,9 @@ describe("conat/file-server-client", () => {
     }));
     materializeRemoteProjectHostTargetMock = jest.fn(async () => undefined);
     conatWithProjectRoutingMock = jest.fn(() => ({ id: "routed-client" }));
+    conatWithProjectRoutingForAccountMock = jest.fn(() => ({
+      id: "account-routed-client",
+    }));
     pingMock = jest.fn(async () => undefined);
     fileServerClientMock = jest.fn(() => ({
       createBackup: jest.fn(),
@@ -92,7 +98,14 @@ describe("conat/file-server-client", () => {
       account_id: "account-1",
       project_id: "22222222-2222-2222-2222-222222222222",
     });
-    expect(fileServerClientMock).toHaveBeenCalled();
+    expect(conatWithProjectRoutingForAccountMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+    });
+    expect(fileServerClientMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        client: { id: "account-routed-client" },
+      }),
+    );
   });
 
   it("supports bypassing route checks when explicitly disabled", async () => {

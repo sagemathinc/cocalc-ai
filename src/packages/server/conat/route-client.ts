@@ -12,6 +12,8 @@ import {
   type Client,
 } from "@cocalc/conat/core/client";
 import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import {
   materializeHostRouteTarget,
   materializeProjectHostTarget,
@@ -30,9 +32,11 @@ const ROUTED_RECONNECT_DELAYS_MS = [1_000, 3_500, 10_000];
 const log = getLogger("server:conat:route-client");
 
 type RoutedHubClientState = {
+  key: string;
   address: string;
   client: Client;
   host_session_id?: string;
+  account_id?: string;
   token?: string;
   expiresAt?: number;
   inFlight?: Promise<string>;
@@ -50,14 +54,11 @@ type RoutedTarget =
       client: Client;
     };
 
-function evictRoutedHubClient(
-  host_id: string,
-  expected?: RoutedHubClientState,
-): void {
-  const current = routedHubClients[host_id];
+function evictRoutedClient(key: string, expected?: RoutedHubClientState): void {
+  const current = routedHubClients[key];
   if (!current) return;
   if (expected != null && current !== expected) return;
-  delete routedHubClients[host_id];
+  delete routedHubClients[key];
   try {
     current.client.close();
   } catch {
@@ -78,6 +79,32 @@ function issueHubRouteToken(host_id: string): {
   return { token, expiresAt: expires_at };
 }
 
+async function issueAccountRouteToken({
+  host_id,
+  account_id,
+}: {
+  host_id: string;
+  account_id: string;
+}): Promise<{
+  token: string;
+  expiresAt: number;
+}> {
+  const ownership = await resolveHostBayAcrossCluster(host_id);
+  if (ownership && ownership.bay_id !== getConfiguredBayId()) {
+    const issued = await getInterBayBridge()
+      .projectHostAuthToken(ownership.bay_id, { timeout_ms: 15_000 })
+      .issue({ account_id, host_id });
+    return { token: issued.token, expiresAt: issued.expires_at };
+  }
+  const { token, expires_at } = issueProjectHostAuthToken({
+    host_id,
+    actor: "account",
+    account_id,
+    private_key: getProjectHostAuthTokenPrivateKey(),
+  });
+  return { token, expiresAt: expires_at };
+}
+
 async function getHubRouteToken(
   host_id: string,
   state: RoutedHubClientState,
@@ -93,8 +120,13 @@ async function getHubRouteToken(
   if (state.inFlight) {
     return await state.inFlight;
   }
-  state.inFlight = Promise.resolve().then(() => {
-    const { token, expiresAt } = issueHubRouteToken(host_id);
+  state.inFlight = Promise.resolve().then(async () => {
+    const { token, expiresAt } = state.account_id
+      ? await issueAccountRouteToken({
+          host_id,
+          account_id: state.account_id,
+        })
+      : issueHubRouteToken(host_id);
     state.token = token;
     state.expiresAt = expiresAt;
     return token;
@@ -106,16 +138,29 @@ async function getHubRouteToken(
   }
 }
 
+function routedClientKey({
+  host_id,
+  account_id,
+}: {
+  host_id: string;
+  account_id?: string;
+}): string {
+  return account_id ? `${host_id}:account:${account_id}` : `${host_id}:hub`;
+}
+
 function getOrCreateRoutedHubClient({
   host_id,
   address,
   host_session_id,
+  account_id,
 }: {
   host_id: string;
   address: string;
   host_session_id?: string;
+  account_id?: string;
 }): Client {
-  const existing = routedHubClients[host_id];
+  const key = routedClientKey({ host_id, account_id });
+  const existing = routedHubClients[key];
   if (
     existing?.address === address &&
     existing?.host_session_id === host_session_id
@@ -123,11 +168,13 @@ function getOrCreateRoutedHubClient({
     return existing.client;
   }
   if (existing) {
-    evictRoutedHubClient(host_id, existing);
+    evictRoutedClient(key, existing);
   }
   const state: RoutedHubClientState = {
+    key,
     address,
     host_session_id,
+    account_id,
     client: undefined as unknown as Client,
   };
   state.client = connect({
@@ -155,7 +202,7 @@ function getOrCreateRoutedHubClient({
   const reconnectRouted = () => {
     for (const delayMs of ROUTED_RECONNECT_DELAYS_MS) {
       setTimeout(() => {
-        if (routedHubClients[host_id] !== state) {
+        if (routedHubClients[key] !== state) {
           return;
         }
         if (state.client.conn?.connected) {
@@ -187,17 +234,20 @@ function getOrCreateRoutedHubClient({
     reconnectRouted();
   });
   state.client.on("closed", () => {
-    evictRoutedHubClient(host_id, state);
+    evictRoutedClient(key, state);
   });
-  routedHubClients[host_id] = state;
+  routedHubClients[key] = state;
   return state.client;
 }
 
-function routeTargetToClient(target?: {
-  address?: string;
-  host_id?: string;
-  host_session_id?: string;
-}): RoutedTarget | undefined {
+function routeTargetToClient(
+  target?: {
+    address?: string;
+    host_id?: string;
+    host_session_id?: string;
+  },
+  account_id?: string,
+): RoutedTarget | undefined {
   if (!target?.address || !target.host_id) {
     return target;
   }
@@ -206,6 +256,7 @@ function routeTargetToClient(target?: {
       host_id: target.host_id,
       address: target.address,
       host_session_id: target.host_session_id,
+      account_id,
     }),
   };
 }
@@ -264,7 +315,10 @@ export async function getExplicitHostControlClient({
   return conatWithProjectRouting();
 }
 
-export function conatWithProjectRouting(options?: ClientOptions): Client {
+function conatWithProjectRoutingInternal(
+  options?: ClientOptions,
+  account_id?: string,
+): Client {
   if (!listenerStarted) {
     listenerStarted = true;
     // Ensure we hear about project host changes so routing stays fresh.
@@ -285,14 +339,28 @@ export function conatWithProjectRouting(options?: ClientOptions): Client {
     routeSubject == null
       ? (subject: string) => {
           const routed = routeProjectSubject(subject);
-          return routeTargetToClient(routed);
+          return routeTargetToClient(routed, account_id);
         }
       : (subject: string) => {
           const custom = routeSubject(subject);
           if (custom) return custom;
           const routed = routeProjectSubject(subject);
-          return routeTargetToClient(routed);
+          return routeTargetToClient(routed, account_id);
         };
   client.setRouteSubject(combinedRoute);
   return client;
+}
+
+export function conatWithProjectRouting(options?: ClientOptions): Client {
+  return conatWithProjectRoutingInternal(options);
+}
+
+export function conatWithProjectRoutingForAccount({
+  account_id,
+  options,
+}: {
+  account_id: string;
+  options?: ClientOptions;
+}): Client {
+  return conatWithProjectRoutingInternal(options, account_id);
 }
