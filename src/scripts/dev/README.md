@@ -182,7 +182,8 @@ the UI uses.
 
 Useful options:
 
-- `--scenario sign-in-target` or `--scenario storage-archives` to run one check.
+- `--scenario sign-in-target`, `--scenario storage-archives`, or
+  `--scenario project-lifecycle` to run one check.
 - `--allow-empty-backups` for fixtures that should not require an existing backup.
 - `--allow-empty-snapshots` for fixtures that should not require snapshots.
 - `--headed` to watch the Chromium run.
@@ -207,6 +208,22 @@ For disposable repeatable fixtures, add `--invite-reset-before` to remove the
 invitee from the project before creating the invite. Add
 `--invite-cleanup-after` only when the invitee should not remain a collaborator
 after the run.
+
+Run the opt-in lifecycle matrix scenario when it is acceptable for the fixture
+project to be started, restarted, stopped, and started again. The scenario
+leaves the project running and verifies a terminal-backed file marker after
+start and restart:
+
+```bash
+COCALC_MULTIBAY_QA_PASSWORD='<password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --scenario project-lifecycle \
+  --base-url https://lite4b.cocalc.ai \
+  --project <project-id> \
+  --project-title '<visible project title>' \
+  --email <test-account@example.com> \
+  --timeout 120000
+```
 
 ## Codex long-thread benchmark
 

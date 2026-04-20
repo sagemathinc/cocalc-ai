@@ -11,7 +11,12 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = path.resolve(SCRIPT_DIR, "../..");
 const DEFAULT_SCENARIOS = ["sign-in-target", "storage-archives"];
 const INVITE_REDEEM_SCENARIO = "invite-redeem";
-const KNOWN_SCENARIOS = new Set([...DEFAULT_SCENARIOS, INVITE_REDEEM_SCENARIO]);
+const PROJECT_LIFECYCLE_SCENARIO = "project-lifecycle";
+const KNOWN_SCENARIOS = new Set([
+  ...DEFAULT_SCENARIOS,
+  INVITE_REDEEM_SCENARIO,
+  PROJECT_LIFECYCLE_SCENARIO,
+]);
 
 function usageAndExit(message, code = 1) {
   if (message) {
@@ -30,7 +35,7 @@ function usageAndExit(message, code = 1) {
       "Options:",
       "  --project-title <text>     Visible project title to require after sign-in",
       "  --scenario <name>          Scenario to run; repeatable. Defaults to all.",
-      "                            Known: sign-in-target, storage-archives, invite-redeem",
+      "                            Known: sign-in-target, storage-archives, invite-redeem, project-lifecycle",
       "  --owner-email <address>    Inviter account for invite-redeem; defaults to --email",
       "  --owner-password <pass>    Inviter password for invite-redeem; defaults to --password",
       "  --invitee-email <address>  Invitee account for invite-redeem",
@@ -215,7 +220,11 @@ function parseArgs(argv) {
   if (!options.projectId) usageAndExit("--project is required");
   if (
     options.scenarios.some((scenario) =>
-      ["sign-in-target", "storage-archives"].includes(scenario),
+      [
+        "sign-in-target",
+        "storage-archives",
+        PROJECT_LIFECYCLE_SCENARIO,
+      ].includes(scenario),
     )
   ) {
     if (!options.email) usageAndExit("--email is required");
@@ -531,6 +540,8 @@ async function readStorageArchives(page, options) {
               );
             }),
           ]);
+        } catch (err) {
+          throw new Error(`${label} failed: ${err}`);
         } finally {
           clearTimeout(timer);
         }
@@ -620,6 +631,224 @@ async function readStorageArchives(page, options) {
     firstBackupId: result.backups[0]?.id ?? null,
     firstBackupFileCount: result.firstBackupFiles?.length ?? null,
   };
+}
+
+async function runProjectLifecycle(page, options) {
+  await waitForRuntime(page, options);
+  const result = await page.evaluate(
+    async ({ projectId, timeoutMs }) => {
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      function toPlain(value) {
+        return JSON.parse(JSON.stringify(value ?? null));
+      }
+
+      async function withTimeout(label, promise) {
+        let timer;
+        try {
+          return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+                timeoutMs,
+              );
+            }),
+          ]);
+        } catch (err) {
+          throw new Error(`${label} failed: ${err}`);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      const conat = globalThis.cc.conat;
+      const hubProjects = conat.hub.projects;
+
+      async function getState() {
+        return await withTimeout(
+          "getProjectState",
+          hubProjects.getProjectState({ project_id: projectId }),
+        );
+      }
+
+      async function waitForState(label, predicate) {
+        const deadline = Date.now() + timeoutMs;
+        let lastState = null;
+        while (Date.now() < deadline) {
+          lastState = await getState();
+          if (predicate(lastState)) {
+            return toPlain(lastState);
+          }
+          await sleep(1_000);
+        }
+        throw new Error(
+          `${label} timed out after ${timeoutMs}ms; last state=${JSON.stringify(lastState)}`,
+        );
+      }
+
+      async function waitForLro(label, op) {
+        if (typeof conat.lroWait !== "function") {
+          return null;
+        }
+        const summary = await withTimeout(
+          label,
+          conat.lroWait({
+            op_id: op.op_id,
+            stream_name: op.stream_name,
+            scope_type: op.scope_type,
+            scope_id: op.scope_id,
+            timeout_ms: timeoutMs,
+          }),
+        );
+        if (summary?.status !== "succeeded") {
+          throw new Error(
+            `${label} finished with status ${summary?.status ?? "<missing>"}`,
+          );
+        }
+        return toPlain(summary);
+      }
+
+      async function startAndWait(label) {
+        const op = await withTimeout(
+          `${label}:start`,
+          hubProjects.start({ project_id: projectId, wait: false }),
+        );
+        const summary = await waitForLro(`${label}:lro`, op).catch(
+          async () => null,
+        );
+        const state = await waitForState(
+          `${label}:running`,
+          (candidate) => candidate?.state === "running",
+        );
+        return { op: toPlain(op), summary, state };
+      }
+
+      async function stopAndWait() {
+        await withTimeout("stop", hubProjects.stop({ project_id: projectId }));
+        return await waitForState(
+          "stop:non-running",
+          (candidate) => candidate?.state !== "running",
+        );
+      }
+
+      async function restartAndWait() {
+        const op = await withTimeout(
+          "restart",
+          hubProjects.restart({ project_id: projectId, wait: false }),
+        );
+        const summary = await waitForLro("restart:lro", op).catch(
+          async () => null,
+        );
+        const state = await waitForState(
+          "restart:running",
+          (candidate) => candidate?.state === "running",
+        );
+        return { op: toPlain(op), summary, state };
+      }
+
+      async function terminalSmoke(label) {
+        if (typeof conat.terminalClient !== "function") {
+          throw new Error("cc.conat.terminalClient is not available");
+        }
+        const marker = `multibay_lifecycle_${label}_${Date.now()}`;
+        const path = `.smoke/${marker}.txt`;
+        const term = conat.terminalClient({ project_id: projectId });
+        try {
+          const spawnHistory = `${await withTimeout(
+            `${label}:terminal-spawn`,
+            term.spawn(
+              "bash",
+              [
+                "-lc",
+                `mkdir -p .smoke && printf '%s\\n' '${marker}' > '${path}' && cat '${path}' && sleep 300`,
+              ],
+              {
+                id: `.smoke/${marker}.term`,
+                timeout: timeoutMs,
+                rows: 24,
+                cols: 80,
+              },
+            ),
+          )}`;
+          if (spawnHistory.includes(marker)) {
+            return { marker, path, historyLength: spawnHistory.length };
+          }
+          const deadline = Date.now() + timeoutMs;
+          let history = "";
+          while (Date.now() < deadline) {
+            history = `${await withTimeout(`${label}:terminal-history`, term.history())}`;
+            if (history.includes(marker)) {
+              return { marker, path, historyLength: history.length };
+            }
+            await sleep(500);
+          }
+          throw new Error(
+            `${label}: terminal marker not observed; spawn_history=${JSON.stringify(spawnHistory.slice(-500))}; last_history=${JSON.stringify(history.slice(-500))}`,
+          );
+        } finally {
+          try {
+            await term.destroy();
+          } catch {
+            // Terminal cleanup is best-effort; close below tears down the socket.
+          }
+          term.close();
+        }
+      }
+
+      const initialState = await getState();
+      try {
+        const start = await startAndWait("start");
+        const terminalAfterStart = await terminalSmoke("start");
+        const restart = await restartAndWait();
+        const terminalAfterRestart = await terminalSmoke("restart");
+        const stoppedState = await stopAndWait();
+        const finalStart = await startAndWait("final-start");
+
+        return toPlain({
+          initialState,
+          start,
+          terminalAfterStart,
+          restart,
+          terminalAfterRestart,
+          stoppedState,
+          finalStart,
+        });
+      } catch (err) {
+        try {
+          const state = await getState();
+          if (state?.state !== "running") {
+            await startAndWait("failure-recovery-start");
+          }
+        } catch (recoveryErr) {
+          throw new Error(`${err}; recovery start failed: ${recoveryErr}`);
+        }
+        throw err;
+      }
+    },
+    { projectId: options.projectId, timeoutMs: options.timeoutMs },
+  );
+
+  if (result?.start?.state?.state !== "running") {
+    throw new Error("project did not reach running after start");
+  }
+  if (result?.restart?.state?.state !== "running") {
+    throw new Error("project did not reach running after restart");
+  }
+  if (result?.finalStart?.state?.state !== "running") {
+    throw new Error("project did not reach running after final start");
+  }
+  if (!result?.terminalAfterStart?.marker) {
+    throw new Error("missing terminal marker after start");
+  }
+  if (!result?.terminalAfterRestart?.marker) {
+    throw new Error("missing terminal marker after restart");
+  }
+
+  return result;
 }
 
 async function getSignedInAccountId(page, options) {
@@ -919,6 +1148,17 @@ async function runScenario(browser, scenario, options) {
         diagnostics: summarizeDiagnostics(diagnostics),
       };
     }
+    if (scenario === PROJECT_LIFECYCLE_SCENARIO) {
+      const signIn = await signInToProject(page, options);
+      const lifecycle = await runProjectLifecycle(page, options);
+      return {
+        scenario,
+        status: "pass",
+        signIn,
+        lifecycle,
+        diagnostics: summarizeDiagnostics(diagnostics),
+      };
+    }
     throw new Error(`unhandled scenario: ${scenario}`);
   } catch (error) {
     return {
@@ -971,6 +1211,27 @@ function printTextResult(result) {
           : "",
         invite?.removedBefore ? "removed_before=1" : "removed_before=0",
         invite?.removedAfter ? "removed_after=1" : "removed_after=0",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  } else if (result.scenario === PROJECT_LIFECYCLE_SCENARIO) {
+    const lifecycle = result.lifecycle;
+    console.log(
+      [
+        `${prefix} project-lifecycle`,
+        `final_url=${result.signIn?.finalUrl ?? result.currentUrl ?? "<unknown>"}`,
+        lifecycle?.initialState?.state
+          ? `initial=${lifecycle.initialState.state}`
+          : "",
+        lifecycle?.stoppedState?.state
+          ? `stopped=${lifecycle.stoppedState.state}`
+          : "",
+        lifecycle?.finalStart?.state?.state
+          ? `final=${lifecycle.finalStart.state.state}`
+          : "",
+        lifecycle?.terminalAfterStart?.marker ? "terminal_start=1" : "",
+        lifecycle?.terminalAfterRestart?.marker ? "terminal_restart=1" : "",
       ]
         .filter(Boolean)
         .join(" "),
