@@ -7,6 +7,7 @@ import { listProjectedMyCollaboratorsForAccount } from "@cocalc/database/postgre
 import getPool from "@cocalc/database/pool";
 import { callback2 } from "@cocalc/util/async-utils";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
+import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import type {
   AddCollaborator,
   MyCollaboratorRow,
@@ -342,6 +343,22 @@ async function hydrateCollaboratorRows(
     }
     return hydrated;
   });
+}
+
+function collaboratorRowsFromProjectUsers(
+  users?: Record<string, any> | null,
+): ProjectCollaboratorRow[] {
+  return Object.entries(users ?? {})
+    .map(([account_id, info]) => ({
+      account_id,
+      group: `${info?.group ?? ""}` as ProjectCollaboratorRow["group"],
+    }))
+    .filter((row) => COLLAB_GROUP_SET.has(row.group))
+    .sort((a, b) => {
+      const groupOrder =
+        (a.group === "owner" ? 0 : 1) - (b.group === "owner" ? 0 : 1);
+      return groupOrder || a.account_id.localeCompare(b.account_id);
+    });
 }
 
 async function hydrateMyCollaboratorRows(
@@ -1207,8 +1224,17 @@ export async function listCollaborators({
     throw new Error("user must be signed in");
   }
   ensureUuid(project_id, "project_id");
-  await assertLocalProjectCollaborator({ account_id, project_id });
+  const project = await assertProjectCollaboratorAccessAllowRemote({
+    account_id,
+    project_id,
+  });
   const includeEmail = await isAdmin(account_id);
+  if (project.owning_bay_id !== getConfiguredBayId()) {
+    return await hydrateCollaboratorRows(
+      collaboratorRowsFromProjectUsers(project.users),
+      includeEmail,
+    );
+  }
   const pool = getPool();
   const { rows } = await pool.query<ProjectCollaboratorRow>(
     `SELECT
