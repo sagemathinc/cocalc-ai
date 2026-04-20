@@ -211,6 +211,7 @@ export default function init(router: Router) {
           const resolved = await resolveLaunchpadBootstrapUrl({
             fallbackHost: req.get("host"),
             fallbackProtocol: req.protocol,
+            preferCurrentBay: true,
           });
           baseUrl = resolved.baseUrl;
         } catch {
