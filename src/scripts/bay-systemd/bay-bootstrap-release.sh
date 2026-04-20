@@ -14,8 +14,8 @@ START_BAY=0
 FORCE_ENV=0
 OVERLAY_MODE="current-cocalc"
 ROUTER_PORT=9102
-PERSIST_PORT=9103
-HUB_BASE_PORT=9200
+PERSIST_PORT=9202
+HUB_BASE_PORT=9300
 PUBLIC_URL=""
 DAEMON_RELOAD=1
 
@@ -36,8 +36,8 @@ Options:
   --release-id <id>        explicit release id (default: timestamp-gitshort)
   --worker-count <n>       worker count to write into bay-workers.env (default: 2)
   --router-port <n>        router port (default: 9102)
-  --persist-port <n>       persist port (default: 9103)
-  --hub-base-port <n>      base port for hub workers (default: 9200)
+  --persist-port <n>       persist port (default: 9202)
+  --hub-base-port <n>      base port for hub workers (default: 9300)
   --public-url <url>       optional public bay URL
   --force-env              overwrite generated env files
   --no-enable-workers      do not enable worker units
@@ -169,8 +169,7 @@ ensure_bay_database() {
 derive_release_id() {
   local git_short
   git_short="$(git -C "$SOURCE_ROOT" rev-parse --short HEAD 2>/dev/null || echo local)"
-  date +%Y%m%d%H%M%S
-  printf -- "-%s" "$git_short"
+  printf '%s-%s\n' "$(date +%Y%m%d%H%M%S)" "$git_short"
 }
 
 main() {
@@ -281,6 +280,7 @@ main() {
   BAY_ENV_EXAMPLE="${ENV_DIR}/bay.env.example"
   BAY_WORKERS_ENV_EXAMPLE="${ENV_DIR}/bay-workers.env.example"
   BAY_SECRETS_ENV_EXAMPLE="${ENV_DIR}/bay-secrets.env.example"
+  BAY_OVERLAY_ENV_EXAMPLE="${ENV_DIR}/bay-current-cocalc-overlay.env.example"
   POSTGRES_BIN="$(find_postgres)"
   PG_CTL_BIN="$(find_pg_ctl)"
   PSQL_BIN="$(find_psql)"
@@ -296,10 +296,10 @@ main() {
 
   run mkdir -p "$TARGET_RELEASE"
   run rsync -a --delete \
-    --exclude '.git' \
-    --exclude '.local' \
-    --exclude 'data' \
-    --exclude '.build-home' \
+    --exclude '/.git' \
+    --exclude '/.local' \
+    --exclude '/data' \
+    --exclude '/.build-home' \
     "${SOURCE_ROOT}/" "${TARGET_RELEASE}/"
   run ln -sfn "$TARGET_RELEASE" "$CURRENT_LINK"
 
@@ -356,10 +356,10 @@ COCALC_BAY_ROUTER_HEALTH_PATH=/healthz
 
 COCALC_BAY_HUB_BIND_HOST=127.0.0.1
 COCALC_BAY_HUB_BASE_PORT=${HUB_BASE_PORT}
-COCALC_BAY_HUB_HEALTH_PATH=/healthz
+COCALC_BAY_HUB_HEALTH_PATH=/alive
 
 COCALC_BAY_MIN_HEALTHY_WORKERS=1
-COCALC_BAY_HEALTH_TIMEOUT_S=5
+COCALC_BAY_HEALTH_TIMEOUT_S=15
 COCALC_BAY_MIN_FREE_MB=1024
 
 COCALC_PRODUCT=launchpad
@@ -395,6 +395,11 @@ COCALC_COOKIE_SECRET=$(random_secret)
 COCALC_CONAT_SHARED_SECRET=$(random_secret)
 EOF
   chmod 0600 "${ENV_DIR}/bay-secrets.env"
+
+  if [[ "$OVERLAY_MODE" == "current-cocalc" ]]; then
+    render_if_missing_or_forced "${ENV_DIR}/bay-overlay.env" "$BAY_OVERLAY_ENV_EXAMPLE" \
+      < "${TARGET_RELEASE}/scripts/bay-systemd/env/bay-current-cocalc-overlay.env.example"
+  fi
 
   run systemctl enable cocalc-bay.target
   if [[ "$ENABLE_WORKERS" -eq 1 ]]; then

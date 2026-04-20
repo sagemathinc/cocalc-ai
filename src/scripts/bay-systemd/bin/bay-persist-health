@@ -4,8 +4,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "${SCRIPT_DIR}/lib.sh"
 
-if ! http_check "$(persist_url)"; then
-  bay_log "persist is unhealthy"
+if ! wait_for_http_check "$(persist_url)" "persist"; then
   exit 1
 fi
 

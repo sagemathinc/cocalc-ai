@@ -4,10 +4,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "${SCRIPT_DIR}/lib.sh"
 
-if ! tcp_check "$COCALC_BAY_POSTGRES_HOST" "$COCALC_BAY_POSTGRES_PORT"; then
-  bay_log "postgres is not reachable on ${COCALC_BAY_POSTGRES_HOST}:${COCALC_BAY_POSTGRES_PORT}"
-  exit 1
-fi
+postgres_ready() {
+  local socket_dir="${COCALC_BAY_POSTGRES_SOCKET_DIR:-${COCALC_BAY_RUN_DIR}/postgres}"
+  local db_name="${COCALC_BAY_POSTGRES_DB:-${PGDATABASE:-postgres}}"
+  local db_user="${COCALC_BAY_POSTGRES_USER:-${PGUSER:-}}"
+  if command -v pg_isready >/dev/null 2>&1; then
+    if pg_isready \
+      -h "$socket_dir" \
+      -p "$COCALC_BAY_POSTGRES_PORT" \
+      -d "$db_name" \
+      -U "$db_user" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  tcp_check "$COCALC_BAY_POSTGRES_HOST" "$COCALC_BAY_POSTGRES_PORT"
+}
+
+deadline=$((SECONDS + COCALC_BAY_HEALTH_TIMEOUT_S))
+until postgres_ready; do
+  if ((SECONDS >= deadline)); then
+    bay_log "postgres is not reachable via pg_isready/socket or ${COCALC_BAY_POSTGRES_HOST}:${COCALC_BAY_POSTGRES_PORT}"
+    exit 1
+  fi
+  sleep 0.2
+done
 
 if [[ -n "${COCALC_BAY_POSTGRES_MIGRATIONS_CHECK_CMD:-}" ]]; then
   run_env_cmd_once COCALC_BAY_POSTGRES_MIGRATIONS_CHECK_CMD

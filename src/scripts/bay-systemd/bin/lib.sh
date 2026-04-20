@@ -28,17 +28,17 @@ load_bay_env
 : "${COCALC_BAY_POSTGRES_HOST:=127.0.0.1}"
 : "${COCALC_BAY_POSTGRES_PORT:=5432}"
 : "${COCALC_BAY_PERSIST_HOST:=127.0.0.1}"
-: "${COCALC_BAY_PERSIST_PORT:=9103}"
+: "${COCALC_BAY_PERSIST_PORT:=9202}"
 : "${COCALC_BAY_PERSIST_HEALTH_PATH:=/healthz}"
 : "${COCALC_BAY_ROUTER_HOST:=127.0.0.1}"
 : "${COCALC_BAY_ROUTER_PORT:=9102}"
 : "${COCALC_BAY_ROUTER_HEALTH_PATH:=/healthz}"
 : "${COCALC_BAY_HUB_BIND_HOST:=127.0.0.1}"
-: "${COCALC_BAY_HUB_BASE_PORT:=9200}"
-: "${COCALC_BAY_HUB_HEALTH_PATH:=/healthz}"
+: "${COCALC_BAY_HUB_BASE_PORT:=9300}"
+: "${COCALC_BAY_HUB_HEALTH_PATH:=/alive}"
 : "${COCALC_BAY_MIN_HEALTHY_WORKERS:=1}"
 : "${COCALC_BAY_WORKER_COUNT:=1}"
-: "${COCALC_BAY_HEALTH_TIMEOUT_S:=5}"
+: "${COCALC_BAY_HEALTH_TIMEOUT_S:=15}"
 : "${COCALC_BAY_MIN_FREE_MB:=1024}"
 : "${COCALC_BAY_EVENT_LOG:=${COCALC_BAY_STATE_DIR}/rollout-events.jsonl}"
 
@@ -147,6 +147,19 @@ http_check() {
   local url="$1"
   curl --fail --silent --show-error --max-time "${COCALC_BAY_HEALTH_TIMEOUT_S}" \
     "$url" >/dev/null
+}
+
+wait_for_http_check() {
+  local url="$1"
+  local label="$2"
+  local deadline=$((SECONDS + COCALC_BAY_HEALTH_TIMEOUT_S))
+  until http_check "$url"; do
+    if ((SECONDS >= deadline)); then
+      bay_log "${label} is unhealthy"
+      return 1
+    fi
+    sleep 0.2
+  done
 }
 
 write_event() {

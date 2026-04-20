@@ -23,7 +23,7 @@ if ! "$router_only"; then
   fi
 fi
 
-if ! http_check "$(router_url)"; then
+if ! wait_for_http_check "$(router_url)" "router"; then
   router_ok=false
 fi
 

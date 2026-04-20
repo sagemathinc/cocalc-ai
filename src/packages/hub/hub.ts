@@ -434,13 +434,11 @@ async function main(): Promise<void> {
     .option(
       "--update-stats",
       "Calculates the statistics for the /stats endpoint and stores them in the database",
-      "yes",
     )
-    .option("--delete-expired", "Delete expired data from the database", "yes")
+    .option("--delete-expired", "Delete expired data from the database")
     .option(
       "--blob-maintenance",
       "Do blob-related maintenance (dump to tarballs, offload to gcloud)",
-      "yes",
     )
     .option(
       "--mentions",

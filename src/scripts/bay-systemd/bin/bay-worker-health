@@ -18,8 +18,7 @@ if [[ -n "${COCALC_BAY_WORKER_HEALTH_CMD:-}" ]]; then
   exit 0
 fi
 
-if ! http_check "$(worker_url "$worker_id")"; then
-  bay_log "worker ${worker_id} is unhealthy"
+if ! wait_for_http_check "$(worker_url "$worker_id")" "worker ${worker_id}"; then
   exit 1
 fi
 

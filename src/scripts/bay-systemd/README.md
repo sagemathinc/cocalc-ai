@@ -108,3 +108,40 @@ sudo systemctl start cocalc-bay.target
 
 That missing work is deliberate. This tree is meant to be the smallest useful
 starting point that can be iterated on during implementation.
+
+## Direct State Handoff
+
+For the first alpha-to-bay cutover, the simplest path is a direct control-plane
+state handoff, not a backup restore drill.
+
+On the current launchpad-style source host:
+
+```sh
+./src/scripts/bay-systemd/export-launchpad-state.sh \
+  --output /tmp/alpha-state \
+  --data-dir /home/wstein/cocalc-ai/src/data/app/postgres \
+  --pg-host /run/user/1001/cocalc/pg-bef114df \
+  --pg-user smc \
+  --pg-database smc
+```
+
+Copy that directory to the bay VM, then on the bay VM:
+
+```sh
+sudo ./src/scripts/bay-systemd/import-bay-state.sh \
+  --input /tmp/alpha-state \
+  --start
+```
+
+This imports:
+
+- the control-plane Postgres DB
+- `DATA/sync`
+- `DATA/secrets`
+
+By default, `export-launchpad-state.sh` excludes `secrets/launchpad-cloudflare`
+so a disposable bay VM does not immediately advertise itself as the existing
+public site. Pass `--include-cloudflare` only for an intentional cutover.
+
+It does not attempt a full backup/PITR restore and it does not move
+project-host storage.
