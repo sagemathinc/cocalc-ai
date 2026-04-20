@@ -70,3 +70,24 @@ export function getControlPlaneAppUrl(): string | undefined {
   if (!origin) return;
   return `${origin}${appBasePath === "/" ? "" : appBasePath}`;
 }
+
+function deriveSiteHostname(hostname: string): string {
+  const match = hostname.match(/^bay-\d+-(.+)$/);
+  return match?.[1] ?? hostname;
+}
+
+export function deriveBayControlPlaneOrigin(
+  origin: unknown,
+  bay_id: unknown,
+): string | undefined {
+  const normalized = normalizeControlPlaneOrigin(origin);
+  const bay = `${bay_id ?? ""}`.trim().toLowerCase();
+  if (!normalized || !bay) return;
+  try {
+    const url = new URL(normalized);
+    url.hostname = `${bay}-${deriveSiteHostname(url.hostname)}`;
+    return normalizeControlPlaneOrigin(url.toString());
+  } catch {
+    return;
+  }
+}

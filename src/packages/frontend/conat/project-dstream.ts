@@ -3,7 +3,18 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { DStream, DStreamOptions } from "@cocalc/conat/sync/dstream";
+import {
+  connect as connectToConat,
+  type Client,
+} from "@cocalc/conat/core/client";
+import { inboxPrefix } from "@cocalc/conat/names";
+import {
+  dstream,
+  type DStream,
+  type DStreamOptions,
+} from "@cocalc/conat/sync/dstream";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { normalizeControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import jsonStableStringify from "json-stable-stringify";
@@ -19,6 +30,7 @@ type SharedProjectDStreamOptions = Omit<
 > & {
   project_id: string;
   maxListeners?: number;
+  controlPlaneOrigin?: string;
 };
 
 export type SharedProjectDStreamRelease = (opts?: {
@@ -31,6 +43,7 @@ type SharedProjectDStreamEntry = {
 };
 
 const sharedStreams = new Map<string, SharedProjectDStreamEntry>();
+const controlPlaneClients = new Map<string, Client>();
 
 let leaseManager = createLeaseManager();
 let sessionListenersInitialized = false;
@@ -43,6 +56,48 @@ function createLeaseManager(): RefcountLeaseManager<string> {
     delayMs: 0,
     disposer: closeSharedStream,
   });
+}
+
+function controlPlaneAppAddress(origin: string): string {
+  return `${origin}${appBasePath === "/" ? "" : appBasePath}`;
+}
+
+function closeControlPlaneClients() {
+  for (const [origin, client] of controlPlaneClients) {
+    controlPlaneClients.delete(origin);
+    try {
+      client.close?.();
+    } catch {
+      // ignore close errors during cleanup
+    }
+  }
+}
+
+function getControlPlaneClient(origin: string): Client {
+  const normalized = normalizeControlPlaneOrigin(origin);
+  if (!normalized) {
+    throw new Error(`invalid control plane origin: ${origin}`);
+  }
+  const existing = controlPlaneClients.get(normalized);
+  if (existing) {
+    return existing;
+  }
+  const client = connectToConat({
+    address: controlPlaneAppAddress(normalized),
+    inboxPrefix: inboxPrefix({ account_id: webapp_client.account_id }),
+    auth: (cb) => cb({ browser_id: webapp_client.browser_id }),
+    withCredentials: true,
+    reconnection: false,
+    noCache: true,
+    forceNew: true,
+  });
+  client.on?.("closed", () => {
+    if (controlPlaneClients.get(normalized) === client) {
+      controlPlaneClients.delete(normalized);
+    }
+  });
+  controlPlaneClients.set(normalized, client);
+  return client;
 }
 
 function cacheKey(opts: SharedProjectDStreamOptions): string {
@@ -58,6 +113,7 @@ function cacheKey(opts: SharedProjectDStreamOptions): string {
       noInventory: !!opts.noInventory,
       service: opts.service,
       sync: opts.sync,
+      controlPlaneOrigin: normalizeControlPlaneOrigin(opts.controlPlaneOrigin),
     }) ?? ""
   );
 }
@@ -106,6 +162,7 @@ function closeSharedStreams() {
     void closeSharedStream(key);
   }
   sharedStreams.clear();
+  closeControlPlaneClients();
 }
 
 function ensureSessionListeners() {
@@ -146,11 +203,26 @@ async function ensureSharedProjectDStream<T>(
     sharedStreams.set(key, entry);
   }
   let promise: Promise<DStream<T>>;
-  promise = webapp_client.conat_client
-    .dstream<T>({
-      ...opts,
-      project_id: opts.project_id,
-    })
+  const normalizedControlPlaneOrigin = normalizeControlPlaneOrigin(
+    opts.controlPlaneOrigin,
+  );
+  const {
+    maxListeners: _maxListeners,
+    controlPlaneOrigin: _controlPlaneOrigin,
+    ...streamOpts
+  } = opts;
+  promise = (
+    normalizedControlPlaneOrigin
+      ? dstream<T>({
+          ...streamOpts,
+          project_id: opts.project_id,
+          client: getControlPlaneClient(normalizedControlPlaneOrigin),
+        })
+      : webapp_client.conat_client.dstream<T>({
+          ...streamOpts,
+          project_id: opts.project_id,
+        })
+  )
     .then((stream) => {
       if (sharedStreams.get(key) !== entry) {
         try {
