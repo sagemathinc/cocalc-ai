@@ -76,6 +76,10 @@ function deriveSiteHostname(hostname: string): string {
   return match?.[1] ?? hostname;
 }
 
+function isDefaultSeedBay(bay_id: string): boolean {
+  return bay_id === "bay-0";
+}
+
 export function deriveBayControlPlaneOrigin(
   origin: unknown,
   bay_id: unknown,
@@ -85,7 +89,12 @@ export function deriveBayControlPlaneOrigin(
   if (!normalized || !bay) return;
   try {
     const url = new URL(normalized);
-    url.hostname = `${bay}-${deriveSiteHostname(url.hostname)}`;
+    const siteHostname = deriveSiteHostname(url.hostname);
+    // The default seed bay is addressed by the stable site URL. Deriving
+    // bay-0-<site> breaks single-bay launchpads and seed-bay control-plane use.
+    url.hostname = isDefaultSeedBay(bay)
+      ? siteHostname
+      : `${bay}-${siteHostname}`;
     return normalizeControlPlaneOrigin(url.toString());
   } catch {
     return;

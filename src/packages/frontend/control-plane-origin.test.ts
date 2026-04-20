@@ -16,9 +16,15 @@ describe("deriveBayControlPlaneOrigin", () => {
     ).toBe("https://bay-2-lite4b.cocalc.ai");
   });
 
-  it("normalizes trailing slashes before deriving", () => {
+  it("keeps the stable site origin for the default seed bay", () => {
     expect(
       deriveBayControlPlaneOrigin("https://lite4b.cocalc.ai/", "bay-0"),
-    ).toBe(normalizeControlPlaneOrigin("https://bay-0-lite4b.cocalc.ai"));
+    ).toBe(normalizeControlPlaneOrigin("https://lite4b.cocalc.ai"));
+  });
+
+  it("derives the stable site origin from an attached bay for the default seed bay", () => {
+    expect(
+      deriveBayControlPlaneOrigin("https://bay-2-lite4b.cocalc.ai", "bay-0"),
+    ).toBe(normalizeControlPlaneOrigin("https://lite4b.cocalc.ai"));
   });
 });
