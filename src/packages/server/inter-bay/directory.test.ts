@@ -37,7 +37,11 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
 
 jest.mock("@cocalc/server/cluster-config", () => ({
   __esModule: true,
-  getConfiguredClusterBayIds: jest.fn(() => ["bay-0", "bay-1", "bay-2"]),
+  getConfiguredClusterBayIdsForStaticEnumerationOnly: jest.fn(() => [
+    "bay-0",
+    "bay-1",
+    "bay-2",
+  ]),
 }));
 
 describe("inter-bay directory", () => {

@@ -127,7 +127,7 @@ import {
 } from "@cocalc/util/db-schema/llm-utils";
 import { type RootfsUploadedArtifactResult } from "@cocalc/util/rootfs-images";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getConfiguredClusterBayIds } from "@cocalc/server/cluster-config";
+import { getConfiguredClusterBayIdsForStaticEnumerationOnly } from "@cocalc/server/cluster-config";
 import {
   resolveHostBay,
   resolveProjectBay,
@@ -1934,7 +1934,7 @@ export async function listHostsLocal({
 export async function listHosts(opts: ListHostsOptions): Promise<Host[]> {
   const local = await listHostsLocal(opts);
   const remoteHosts = await Promise.all(
-    getConfiguredClusterBayIds()
+    getConfiguredClusterBayIdsForStaticEnumerationOnly()
       .filter((bay_id) => bay_id !== getConfiguredBayId())
       .map(async (bay_id) => {
         try {
@@ -2026,7 +2026,7 @@ export async function listHostProjects({
       state_filter,
       project_state,
     }),
-    ...getConfiguredClusterBayIds()
+    ...getConfiguredClusterBayIdsForStaticEnumerationOnly()
       .filter((bay_id) => bay_id !== getConfiguredBayId())
       .map(async (bay_id) => {
         try {
@@ -2282,7 +2282,7 @@ async function selectHostProjectActionRows({
       state_filter,
       project_state,
     }),
-    ...getConfiguredClusterBayIds()
+    ...getConfiguredClusterBayIdsForStaticEnumerationOnly()
       .filter((bay_id) => bay_id !== getConfiguredBayId())
       .map(async (bay_id) => {
         try {

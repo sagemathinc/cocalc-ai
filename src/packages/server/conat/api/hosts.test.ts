@@ -193,7 +193,11 @@ jest.mock("@cocalc/server/cluster-config", () => {
   return {
     __esModule: true,
     ...actual,
-    getConfiguredClusterBayIds: jest.fn(() => ["bay-0", "bay-1", "bay-2"]),
+    getConfiguredClusterBayIdsForStaticEnumerationOnly: jest.fn(() => [
+      "bay-0",
+      "bay-1",
+      "bay-2",
+    ]),
   };
 });
 
