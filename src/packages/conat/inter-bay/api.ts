@@ -477,7 +477,13 @@ export interface InterBayHostConnectionApi {
   listHostProjects: (
     opts: Pick<
       Parameters<Hosts["listHostProjects"]>[0],
-      "id" | "risk_only" | "state_filter" | "project_state"
+      | "account_id"
+      | "id"
+      | "limit"
+      | "cursor"
+      | "risk_only"
+      | "state_filter"
+      | "project_state"
     >,
   ) => Promise<Awaited<ReturnType<Hosts["listHostProjects"]>>>;
 }

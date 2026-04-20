@@ -92,7 +92,7 @@ import {
 import {
   getBackupConfigLocal,
   getProjectStartMetadataLocal,
-  listHostProjectsLocalSnapshot,
+  listHostProjects,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
   recordProjectBackupLocal,
@@ -502,9 +502,20 @@ async function startHostConnectionService(): Promise<void> {
       }),
     recordProjectBackup: async ({ host_id, project_id, time }) =>
       await recordProjectBackupLocal({ host_id, project_id, time }),
-    listHostProjects: async ({ id, risk_only, state_filter, project_state }) =>
-      await listHostProjectsLocalSnapshot({
+    listHostProjects: async ({
+      account_id,
+      id,
+      limit,
+      cursor,
+      risk_only,
+      state_filter,
+      project_state,
+    }) =>
+      await listHostProjects({
+        account_id,
         id,
+        limit,
+        cursor,
         risk_only,
         state_filter,
         project_state,
