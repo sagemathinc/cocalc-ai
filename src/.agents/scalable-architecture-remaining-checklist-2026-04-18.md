@@ -60,10 +60,15 @@ Recent 3-way fixture validation:
   - invite projection and redeem from bay-2
   - snapshot listing
   - storage summary
-  - remote stop and start with LRO completion
+  - remote stop, start, and restart with LRO completion
+- validated browser smoke paths:
+  - bay-2 home-bay impersonation finishes back on the stable site URL
+  - stable URL can open the bay-1-owned project as the bay-2 collaborator
+  - browser opens a direct project-host session on the bay-1 host
 - backup listing reached the project-host, but the fresh fixture has no backup
   repo configured, so it correctly stopped at "missing backup config"
-- this was CLI/control-plane validation only; full browser replay remains open
+- full browser replay still remains open for interactive UI actions and
+  lifecycle controls
 
 What should still be treated as incomplete:
 
@@ -177,6 +182,9 @@ Notes:
 - invite projection/redeem has been validated in the CLI from bay-1 owner to a
   bay-2 invitee, but still needs browser replay before this browser matrix item
   is closed
+- browser sign-in through the bay-2 home-bay impersonation retry path was
+  validated and ended on `lite4b.cocalc.ai`, and browser project open reached
+  the bay-1 project host
 - however, the full matrix should not be treated as formally closed until it
   is replayed deliberately and recorded
 
@@ -233,9 +241,9 @@ This is the major new area that changed in the last few days.
 
 Notes:
 
-- CLI remote `stop` and `start` were validated on 2026-04-20 with account home
-  bay 2, project owning bay 1, and host bay 1
-- `restart` and browser-side lifecycle validation remain open
+- CLI remote `stop`, `start`, and `restart` were validated on 2026-04-20 with
+  account home bay 2, project owning bay 1, and host bay 1
+- browser-side lifecycle validation remains open
 
 ### 5. Spot Instance Operational Readiness
 
