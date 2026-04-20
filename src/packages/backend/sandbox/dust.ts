@@ -54,17 +54,30 @@ export default async function dust(
     });
   }
 
-  return await exec({
-    cmd,
-    cwd: path,
-    positionalArgs: [path],
-    options,
-    darwin,
-    linux,
-    maxSize,
-    timeout,
-    whitelist,
-  });
+  try {
+    return await exec({
+      cmd,
+      cwd: path,
+      positionalArgs: [path],
+      options,
+      darwin,
+      linux,
+      maxSize,
+      timeout,
+      whitelist,
+    });
+  } catch (err) {
+    if (!`${err}`.includes("ENOENT")) {
+      throw err;
+    }
+    return await dustWithDuFallback(path, {
+      options,
+      darwin,
+      linux,
+      timeout,
+      maxSize,
+    });
+  }
 }
 
 async function dustWithDuFallback(
