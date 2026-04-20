@@ -1,4 +1,4 @@
-import dust, { resolveDustCommandPath } from "./dust";
+import dust, { duOutputToDustJson, resolveDustCommandPath } from "./dust";
 import { dust as dustBin } from "./install";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -31,6 +31,28 @@ describe("resolveDustCommandPath", () => {
 
   it("returns the configured path when no fallback exists so the spawn error stays explicit", () => {
     expect(resolveDustCommandPath(() => false)).toBe(dustBin);
+  });
+});
+
+describe("duOutputToDustJson", () => {
+  it("converts byte-count du output into the dust JSON shape used by storage scans", () => {
+    expect(
+      JSON.parse(
+        duOutputToDustJson(
+          Buffer.from(
+            "12\t/tmp/project/a\n34\t/tmp/project/b\n50\t/tmp/project\n",
+          ),
+          "/tmp/project",
+        ),
+      ),
+    ).toEqual({
+      size: "50B",
+      name: "/tmp/project",
+      children: [
+        { size: "12B", name: "/tmp/project/a", children: [] },
+        { size: "34B", name: "/tmp/project/b", children: [] },
+      ],
+    });
   });
 });
 
