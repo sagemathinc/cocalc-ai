@@ -133,6 +133,7 @@ export class SyncTableStream extends EventEmitter {
     this.dstream.on("reject", (err) => {
       console.warn("synctable-stream: rejected - ", err);
     });
+    this.dstream.on("has-unsaved-changes", this.handleHasUnsavedChanges);
     const initial = this.dstream.getAll();
     for (const mesg of initial) {
       this.handle(mesg, false);
@@ -143,6 +144,10 @@ export class SyncTableStream extends EventEmitter {
   private setState = (state: State): void => {
     this.state = state;
     this.emit(state);
+  };
+
+  private handleHasUnsavedChanges = (hasUnsavedChanges: boolean): void => {
+    this.emit("has-uncommitted-changes", hasUnsavedChanges);
   };
 
   get_state = () => {
