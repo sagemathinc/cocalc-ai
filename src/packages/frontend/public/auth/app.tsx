@@ -36,6 +36,7 @@ interface PublicAuthAppProps {
   initialRoute: PublicAuthRoute;
   initialSSOStrategies?: PublicSSOStrategy[];
   isAuthenticated?: boolean;
+  redirectToPath?: string;
   showPolicies?: boolean;
   siteName?: string;
 }
@@ -106,6 +107,7 @@ export default function PublicAuthApp({
   initialRoute,
   initialSSOStrategies,
   isAuthenticated,
+  redirectToPath,
   showPolicies,
   siteName = SITE_NAME,
 }: PublicAuthAppProps) {
@@ -140,12 +142,16 @@ export default function PublicAuthApp({
       title={title}
     >
       {route.kind === "auth-form" && route.view === "sign-in" && (
-        <PublicSignInForm onNavigate={onNavigate} />
+        <PublicSignInForm
+          onNavigate={onNavigate}
+          redirectToPath={redirectToPath}
+        />
       )}
       {route.kind === "auth-form" && route.view === "sign-up" && (
         <PublicSignUpForm
           initialRequiresToken={initialRequiresToken}
           onNavigate={onNavigate}
+          redirectToPath={redirectToPath}
         />
       )}
       {route.kind === "auth-form" && route.view === "password-reset" && (
