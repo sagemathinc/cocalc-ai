@@ -355,6 +355,7 @@ describe("server/conat route-client", () => {
     expect(projectHostAuthTokenIssueMock).toHaveBeenCalledWith({
       account_id: "account-1",
       host_id: "host-remote",
+      project_id: "12345678-1234-1234-1234-123456789012",
     });
     expect(authValue).toEqual({ bearer: "remote-account-token" });
   });
