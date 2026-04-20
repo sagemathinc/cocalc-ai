@@ -216,19 +216,14 @@ export function SaveButton({
   }, [read_only]);
 
   const label = useMemo(() => {
-    if (!no_labels || showReadOnly) {
+    if (showReadOnly) {
       return intl.formatMessage(labels.frame_editors_title_bar_save_label, {
-        type: showReadOnly ? "read_only" : "save",
+        type: "read_only",
       });
     } else {
       return null;
     }
   }, [intl, no_labels, showReadOnly]);
-
-  const disabled = useMemo(
-    () => !has_unsaved_changes || !!read_only,
-    [has_unsaved_changes, read_only],
-  );
 
   const icon = useMemo(
     () =>
@@ -280,7 +275,7 @@ export function SaveButton({
   return (
     <Button
       size={size}
-      disabled={disabled}
+      disabled={read_only}
       onClick={onClick}
       style={{
         whiteSpace: "nowrap",
