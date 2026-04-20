@@ -8,6 +8,7 @@ import { assertHardDeleteProjectPermission } from "@cocalc/server/projects/hard-
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 export * from "@cocalc/server/projects/collaborators";
+import { createCollabInvite as createCollabInviteLocal } from "@cocalc/server/projects/collaborators";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 export * from "@cocalc/server/conat/api/project-snapshots";
 export * from "@cocalc/server/conat/api/project-backups";
@@ -88,6 +89,7 @@ import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/accoun
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
+import { fromWire as collabInviteFromWire } from "@cocalc/server/projects/collab-invite-inbox";
 
 // Start/restart can legitimately take a long time because the owning bay may
 // need to provision storage, restore data, pull rootfs layers, or seal a
@@ -678,6 +680,48 @@ export async function getProjectCourseInfo({
 }): Promise<ProjectCourseInfo> {
   return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
     .course;
+}
+
+export async function createCollabInvite({
+  account_id,
+  project_id,
+  invitee_account_id,
+  message,
+  direct,
+}: {
+  account_id?: string;
+  project_id: string;
+  invitee_account_id: string;
+  message?: string;
+  direct?: boolean;
+}) {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  if (ownership.bay_id === getConfiguredBayId()) {
+    return await createCollabInviteLocal({
+      account_id,
+      project_id,
+      invitee_account_id,
+      message,
+      direct,
+    });
+  }
+  const result = await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .create({
+      account_id: account_id!,
+      project_id,
+      invitee_account_id,
+      message,
+      direct,
+    });
+  return {
+    created: result.created,
+    invite: collabInviteFromWire(result.invite),
+  };
 }
 
 export async function exec({

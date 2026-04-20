@@ -465,19 +465,20 @@ async function signInToProject(
 }
 
 async function signInToRoot(page, options, credentials) {
-  await page.goto(`${options.baseUrl}/auth/sign-in?target=%2F`, {
+  await page.goto(`${options.baseUrl}/auth/sign-in?target=%2Fapp`, {
     waitUntil: "domcontentloaded",
     timeout: options.timeoutMs,
   });
   await assertNoStaleBuild(page);
   await fillAndSubmitSignIn(page, credentials);
   await page.waitForURL(
-    (url) => url.origin === options.baseOrigin && url.pathname === "/",
+    (url) =>
+      url.origin === options.baseOrigin && !url.pathname.startsWith("/auth"),
     { timeout: options.timeoutMs },
   );
   await assertNoStaleBuild(page);
   await waitForRuntime(page, options);
-  return { finalUrl: redact(page.url()), target: "/" };
+  return { finalUrl: redact(page.url()), target: "/app" };
 }
 
 async function waitForRuntime(page, options) {

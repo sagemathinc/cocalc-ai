@@ -314,6 +314,19 @@ export interface ProjectCollabInviteRespondRequest {
   include_email?: boolean;
 }
 
+export interface ProjectCollabInviteCreateRequest {
+  account_id: string;
+  project_id: string;
+  invitee_account_id: string;
+  message?: string;
+  direct?: boolean;
+}
+
+export interface ProjectCollabInviteCreateResultWire {
+  created: boolean;
+  invite: ProjectCollabInviteWire;
+}
+
 export type ProjectControlMethod =
   | "start"
   | "stop"
@@ -376,6 +389,7 @@ export type BayRegistryMethod = "register" | "list";
 export type ProjectCollabInviteMethod =
   | "upsert-inbox"
   | "delete-inbox"
+  | "create"
   | "respond";
 export type AccountProjectFeedMethod = "upsert" | "remove";
 
@@ -632,6 +646,9 @@ export interface InterBayAuthTokenApi {
 export interface InterBayProjectCollabInviteApi {
   upsertInbox: (opts: ProjectCollabInviteInboxUpsertRequest) => Promise<void>;
   deleteInbox: (opts: ProjectCollabInviteInboxDeleteRequest) => Promise<void>;
+  create: (
+    opts: ProjectCollabInviteCreateRequest,
+  ) => Promise<ProjectCollabInviteCreateResultWire>;
   respond: (
     opts: ProjectCollabInviteRespondRequest,
   ) => Promise<ProjectCollabInviteWire>;
@@ -1611,6 +1628,12 @@ export function createInterBayProjectCollabInviteClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectCollabInviteSubject({ dest_bay, method: "delete-inbox" }),
   });
+  const createClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "create">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({ dest_bay, method: "create" }),
+  });
   const respondClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "respond">
   >({
@@ -1620,6 +1643,7 @@ export function createInterBayProjectCollabInviteClient({
   return {
     upsertInbox: async (opts) => await upsertInboxClient.upsertInbox(opts),
     deleteInbox: async (opts) => await deleteInboxClient.deleteInbox(opts),
+    create: async (opts) => await createClient.create(opts),
     respond: async (opts) => await respondClient.respond(opts),
   };
 }
@@ -1680,6 +1704,17 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         deleteInbox: async (opts) => await impl.deleteInbox(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "create">>({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "create",
+      }),
+      impl: {
+        create: async (opts) => await impl.create(opts),
       },
     }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "respond">>({

@@ -105,7 +105,10 @@ import {
   toWire as collabInviteToWire,
   upsertProjectedCollabInviteDirect,
 } from "@cocalc/server/projects/collab-invite-inbox";
-import { respondCollabInviteCanonical } from "@cocalc/server/projects/collaborators";
+import {
+  createCollabInvite,
+  respondCollabInviteCanonical,
+} from "@cocalc/server/projects/collaborators";
 
 const logger = getLogger("server:inter-bay:service");
 
@@ -412,6 +415,13 @@ async function startProjectCollabInviteService(): Promise<void> {
     },
     deleteInbox: async ({ invite_id }) => {
       await deleteProjectedCollabInviteDirect(invite_id);
+    },
+    create: async (opts) => {
+      const result = await createCollabInvite(opts);
+      return {
+        created: result.created,
+        invite: collabInviteToWire(result.invite),
+      };
     },
     respond: async ({ account_id, invite_id, action, include_email }) =>
       collabInviteToWire(
