@@ -133,9 +133,8 @@ describe("sendChat identity fields", () => {
     expect(cfgSet.thread_id).toBe(chatSet.thread_id);
   });
 
-  it("honors reserved chat identity and calls persistence callback after save", async () => {
+  it("honors reserved chat identity", async () => {
     const actions = makeActions();
-    const onPersisted = jest.fn();
     const sent = actions.sendChat({
       input: "reserved message",
       chatIdentity: {
@@ -144,9 +143,7 @@ describe("sendChat identity fields", () => {
         thread_id: "thread-reserved",
       },
       skipModelDispatch: true,
-      onPersisted,
     });
-    await Promise.resolve();
     await Promise.resolve();
 
     expect(sent).toBe("2026-02-21T18:02:00.000Z");
@@ -157,8 +154,6 @@ describe("sendChat identity fields", () => {
     expect(chatSet.thread_id).toBe("thread-reserved");
     expect(chatSet.date).toBe("2026-02-21T18:02:00.000Z");
     expect(actions.processLLM).not.toHaveBeenCalled();
-    expect(actions.syncdb.save).toHaveBeenCalledTimes(1);
-    expect(onPersisted).toHaveBeenCalledWith(chatSet);
   });
 
   it("marks recovered agent messages as not sent", () => {

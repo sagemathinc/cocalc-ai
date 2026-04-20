@@ -11,6 +11,8 @@ import {
 } from "@cocalc/frontend/browser-outbox";
 import {
   claimPendingChatSend,
+  getPendingChatBrowserSessionId,
+  isCurrentPendingChatSession,
   listPendingChatSends,
   removePendingChatSend,
   storePendingChatSend,
@@ -33,6 +35,7 @@ describe("pending chat outbox", () => {
     const pending = {
       project_id: "project-1",
       path: "x.chat",
+      browser_session_id: getPendingChatBrowserSessionId(),
       sender_id: "user-1",
       input: "do the important thing",
       date: "2026-04-19T12:00:00.000Z",
@@ -57,6 +60,7 @@ describe("pending chat outbox", () => {
     const claimed = await claimPendingChatSend(entry);
     expect(claimed?.payload?.message_id).toBe("message-1");
     expect(claimed?.payload?.shouldMarkNotSent).toBe(true);
+    expect(isCurrentPendingChatSession(claimed?.payload)).toBe(true);
 
     await removePendingChatSend(pending);
     expect(

@@ -10,6 +10,7 @@ import {
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
+import { uuid } from "@cocalc/util/misc";
 import type {
   NewThreadAgentOptions,
   NewThreadAppearanceOptions,
@@ -17,10 +18,12 @@ import type {
 
 const CHAT_PENDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CHAT_PENDING_LEASE_TTL_MS = 30_000;
+const pendingChatBrowserSessionId = uuid();
 
 export type PendingChatSend = {
   project_id: string;
   path: string;
+  browser_session_id: string;
   account_id?: string;
   sender_id?: string;
   input: string;
@@ -39,6 +42,16 @@ export type PendingChatSend = {
 };
 
 export type PendingChatOutboxEntry = BrowserOutboxEntry<PendingChatSend>;
+
+export function getPendingChatBrowserSessionId(): string {
+  return pendingChatBrowserSessionId;
+}
+
+export function isCurrentPendingChatSession(
+  pending: Pick<PendingChatSend, "browser_session_id"> | undefined | null,
+): boolean {
+  return pending?.browser_session_id === pendingChatBrowserSessionId;
+}
 
 function pendingChatOutboxId({
   project_id,
@@ -63,18 +76,23 @@ export async function storePendingChatSend(
 ): Promise<PendingChatOutboxEntry | undefined> {
   const outbox = getBrowserOutbox();
   if (!outbox) return undefined;
+  const payload: PendingChatSend = {
+    ...pending,
+    browser_session_id:
+      pending.browser_session_id || pendingChatBrowserSessionId,
+  };
   return await outbox.put<PendingChatSend>({
-    id: pendingChatOutboxId(pending),
+    id: pendingChatOutboxId(payload),
     kind: "chat-row",
     op: "chat-row",
-    account_id: pending.account_id,
-    project_id: pending.project_id,
-    path: pending.path,
-    operation_id: pending.message_id,
-    payload: pending,
-    label: pending.path,
+    account_id: payload.account_id,
+    project_id: payload.project_id,
+    path: payload.path,
+    operation_id: payload.message_id,
+    payload,
+    label: payload.path,
     description: "Pending chat message",
-    preview: preview(pending.input),
+    preview: preview(payload.input),
     ttlMs: CHAT_PENDING_TTL_MS,
   });
 }

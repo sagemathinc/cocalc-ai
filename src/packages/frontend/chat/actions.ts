@@ -836,7 +836,6 @@ export class ChatActions extends Actions<ChatState> {
     acpConfigOverride,
     chatIdentity,
     recoveredNotSent,
-    onPersisted,
     skipDraftDelete,
   }: {
     input?: string;
@@ -868,8 +867,6 @@ export class ChatActions extends Actions<ChatState> {
     chatIdentity?: PreparedChatSendIdentity;
     // recovered agent input should be visible as user-authored but not sent
     recoveredNotSent?: boolean;
-    // called only after syncdb.save confirms the chat row is durable
-    onPersisted?: (message: ChatMessage) => void | Promise<void>;
     // recovery replay should not delete whatever the user is composing now
     skipDraftDelete?: boolean;
   }): string => {
@@ -1046,18 +1043,6 @@ export class ChatActions extends Actions<ChatState> {
           acpSendMode: send_mode,
           acpConfigOverride: effectiveAcpConfigOverride,
         });
-      })();
-    }
-    if (onPersisted != null) {
-      (async () => {
-        try {
-          if (typeof this.syncdb?.save === "function") {
-            await this.syncdb.save();
-          }
-          await onPersisted(message);
-        } catch (err) {
-          console.warn("chat row persistence callback failed", err);
-        }
       })();
     }
     return time_stamp_str;

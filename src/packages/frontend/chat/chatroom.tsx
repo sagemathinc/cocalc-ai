@@ -103,6 +103,8 @@ import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-s
 import type { ChatInputControl } from "./input";
 import {
   claimPendingChatSend,
+  getPendingChatBrowserSessionId,
+  isCurrentPendingChatSession,
   listPendingChatSends,
   removePendingChatSendEntry,
   removePendingChatSend,
@@ -700,6 +702,9 @@ export function ChatPanel({
         if (cancelled || recoveredPendingChatSendsRef.current.has(entry.id)) {
           continue;
         }
+        if (isCurrentPendingChatSession(entry.payload)) {
+          continue;
+        }
         recoveredPendingChatSendsRef.current.add(entry.id);
         const claimed = await claimPendingChatSend(entry);
         if (!claimed || cancelled) {
@@ -743,9 +748,6 @@ export function ChatPanel({
           preserveSelectedThread: true,
           skipDraftDelete: true,
           noNotification: true,
-          onPersisted: async () => {
-            await removePendingChatSend(pending);
-          },
         });
         if (!sent) {
           recoveredPendingChatSendsRef.current.delete(entry.id);
@@ -1646,6 +1648,7 @@ export function ChatPanel({
     const pendingChatSend: PendingChatSend = {
       project_id,
       path,
+      browser_session_id: getPendingChatBrowserSessionId(),
       account_id,
       sender_id: account_id,
       input: resolvedInput,
@@ -1687,9 +1690,6 @@ export function ChatPanel({
       acpConfigOverride,
       chatIdentity,
       skipDraftDelete: !pendingStored,
-      onPersisted: async () => {
-        await removePendingChatSend(pendingChatSend);
-      },
     });
     if (!timeStamp) {
       await removePendingChatSend(pendingChatSend);
