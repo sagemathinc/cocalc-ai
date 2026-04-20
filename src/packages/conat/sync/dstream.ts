@@ -103,6 +103,7 @@ export class DStream<T = any> extends EventEmitter {
   } = {};
   private saved: { [seq: number]: T } = {};
   private opts: DStreamOptions;
+  private lastHasUnsavedChanges = false;
 
   constructor(opts: DStreamOptions) {
     super();
@@ -146,6 +147,7 @@ export class DStream<T = any> extends EventEmitter {
     this.stream.on("reset", () => {
       this.local = {};
       this.saved = {};
+      this.updateHasUnsavedChanges();
     });
     await this.stream.init();
     this.emit("connected");
@@ -163,6 +165,7 @@ export class DStream<T = any> extends EventEmitter {
       // when the same message is in both this.local *and* this.messages, and you'll
       // see it doubled in this.getAll().
       delete this.local[msgID];
+      this.updateHasUnsavedChanges();
     }
     this.emit("change", mesg, raw?.seq);
     if (this.isStable()) {
@@ -417,6 +420,7 @@ export class DStream<T = any> extends EventEmitter {
   ): void => {
     const id = randomId();
     this.local[id] = mesg;
+    this.updateHasUnsavedChanges();
     if (options != null) {
       this.publishOptions[id] = options;
     }
@@ -447,6 +451,15 @@ export class DStream<T = any> extends EventEmitter {
       return false;
     }
     return Object.keys(this.local).length > 0;
+  };
+
+  private updateHasUnsavedChanges = (): void => {
+    const hasUnsavedChanges = this.hasUnsavedChanges();
+    if (hasUnsavedChanges === this.lastHasUnsavedChanges) {
+      return;
+    }
+    this.lastHasUnsavedChanges = hasUnsavedChanges;
+    this.emit("has-unsaved-changes", hasUnsavedChanges);
   };
 
   unsavedChanges = (): T[] => {
@@ -524,6 +537,7 @@ export class DStream<T = any> extends EventEmitter {
       delete this.local[id];
       delete this.publishOptions[id];
     }
+    this.updateHasUnsavedChanges();
     if (errors) {
       throw Error(`there were errors saving dstream '${this.name}'`);
     }

@@ -19,6 +19,7 @@ import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { COLORS } from "@cocalc/util/theme";
 import CodexLogPanel from "./codex-log-panel";
 import type { ActivityLogContext } from "./actions/activity-logs";
+import type { CodexLiveLogStatus } from "./use-codex-log";
 
 const activityScrollPositions = new Map<string, number>();
 const SCROLL_BOTTOM_SENTINEL = Number.POSITIVE_INFINITY;
@@ -243,6 +244,7 @@ interface AgentMessageStatusProps {
   attachedSteers?: AttachedSteerMessage[];
   interruptRequested?: boolean;
   onInterrupt?: () => void;
+  activityLiveStatus?: CodexLiveLogStatus;
 }
 
 interface AgentActivityChipProps {
@@ -253,6 +255,7 @@ interface AgentActivityChipProps {
   date: number;
   onOpen: () => void;
   style?: CSSProperties;
+  liveStatus?: CodexLiveLogStatus;
 }
 
 export function AgentActivityChip({
@@ -263,6 +266,7 @@ export function AgentActivityChip({
   date,
   onOpen,
   style,
+  liveStatus = "idle",
 }: AgentActivityChipProps) {
   const runStartMs = resolveLiveRunStartMs({ startedAtMs, date });
   const lastActivityInfo = useMemo(
@@ -277,8 +281,17 @@ export function AgentActivityChip({
   const lastActivityColor = lastActivityInfo.stale
     ? COLORS.ORANGE_WARN
     : COLORS.GRAY_D;
+  const liveStatusIssue =
+    generating && (liveStatus === "reconnecting" || liveStatus === "error");
   const liveStatusTitle = useMemo(() => {
     const parts: string[] = [];
+    if (liveStatusIssue) {
+      parts.push(
+        liveStatus === "error"
+          ? "Activity stream: disconnected"
+          : "Activity stream: reconnecting",
+      );
+    }
     if (Number.isFinite(runStartMs) && runStartMs > 0) {
       parts.push(`Running since: ${formatTimestampTitle(runStartMs)}`);
     }
@@ -291,7 +304,7 @@ export function AgentActivityChip({
       parts.push("Last activity: awaiting first event");
     }
     return parts.join("\n");
-  }, [runStartMs, lastActivityAtMs, generating]);
+  }, [runStartMs, lastActivityAtMs, generating, liveStatus, liveStatusIssue]);
 
   return (
     <div
@@ -352,6 +365,28 @@ export function AgentActivityChip({
           </span>
         </Tooltip>
       ) : null}
+      {liveStatusIssue ? (
+        <Tooltip
+          title={
+            liveStatus === "error"
+              ? "The Codex activity stream did not reconnect. Refresh this browser tab if the turn appears stuck."
+              : "The Codex activity stream is reconnecting. New activity may be delayed."
+          }
+        >
+          <span
+            style={{
+              color:
+                liveStatus === "error" ? COLORS.FG_RED : COLORS.ORANGE_WARN,
+              fontSize: 12,
+              fontWeight: 500,
+            }}
+          >
+            {liveStatus === "error"
+              ? "Activity disconnected"
+              : "Activity reconnecting"}
+          </span>
+        </Tooltip>
+      ) : null}
       <span
         style={{
           color: COLORS.GRAY_D,
@@ -391,6 +426,7 @@ export function AgentMessageStatus({
   onNotifyOnTurnFinishChange,
   interruptRequested = false,
   onInterrupt,
+  activityLiveStatus,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [activitySize, setActivitySize0] = useState<number>(
@@ -541,6 +577,7 @@ export function AgentMessageStatus({
           startedAtMs={startedAtMs}
           date={date}
           onOpen={openActivity}
+          liveStatus={activityLiveStatus}
         />
         {generating && onInterrupt ? (
           <Button

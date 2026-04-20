@@ -1877,6 +1877,7 @@ export default function Message({
             Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
           }
           deleteLog={codexPreviewLog.deleteLog}
+          activityLiveStatus={codexPreviewLog.liveStatus}
           openDrawerToken={openActivityDrawerToken}
           jumpText={undefined}
           jumpToken={0}

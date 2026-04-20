@@ -11,6 +11,7 @@ import { useIntl } from "react-intl";
 
 import {
   Icon,
+  Tooltip,
   UncommittedChanges,
   VisibleMDLG,
 } from "@cocalc/frontend/components";
@@ -135,7 +136,7 @@ function statusInfo(status: SaveStatus): SaveStatusInfo {
       return {
         label: "Syncing",
         title:
-          "Changes are waiting for CoCalc confirmation. Another browser may not see them yet.",
+          "Changes are waiting for CoCalc confirmation. Another browser may not see them yet, and they may be lost if you close this browser tab.",
         background: COLORS.ANTD_BG_BLUE_L,
         border: COLORS.BLUE_LLL,
         color: COLORS.BLUE_DD,
@@ -240,32 +241,33 @@ export function SaveButton({
   function renderStatus() {
     const width = no_labels ? STATUS_DOT_WIDTH : STATUS_CHIP_WIDTH;
     return (
-      <span
-        title={status.title}
-        aria-label={status.title}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width,
-          minWidth: width,
-          maxWidth: width,
-          height: no_labels ? 12 : 18,
-          marginLeft: no_labels ? 4 : 8,
-          borderRadius: 9,
-          border: `1px solid ${status.border}`,
-          background: status.background,
-          color: status.color,
-          fontSize: 11,
-          fontWeight: 500,
-          lineHeight: "16px",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          verticalAlign: "middle",
-        }}
-      >
-        {no_labels ? "" : status.label}
-      </span>
+      <Tooltip title={status.title}>
+        <span
+          aria-label={status.title}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width,
+            minWidth: width,
+            maxWidth: width,
+            height: no_labels ? 12 : 18,
+            marginLeft: no_labels ? 4 : 8,
+            borderRadius: 9,
+            border: `1px solid ${status.border}`,
+            background: status.background,
+            color: status.color,
+            fontSize: 11,
+            fontWeight: 500,
+            lineHeight: "16px",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            verticalAlign: "middle",
+          }}
+        >
+          {no_labels ? "" : status.label}
+        </span>
+      </Tooltip>
     );
   }
 
