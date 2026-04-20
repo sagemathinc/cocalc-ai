@@ -161,6 +161,33 @@ Example:
 pnpm --dir src smoke:codex-launchpad -- --project 3a05a2be-2018-41c6-8aa7-a7e0085b4bab
 ```
 
+## Multibay browser QA
+
+```bash
+COCALC_MULTIBAY_QA_PASSWORD='<password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --base-url https://lite4b.cocalc.ai \
+  --project <project-id> \
+  --email <test-account@example.com> \
+  --project-title '<visible project title>'
+```
+
+This runs a real Chromium browser against a stable public multibay URL. It opens
+the project while signed out, verifies that the sign-in target preserves the
+stable `/projects/<id>` path, signs in as the supplied test account, and checks
+that the final browser URL is still on the stable site URL. It then uses the
+signed-in browser app runtime to read project storage quota/overview, snapshot
+usage, backups, and first-backup root files through the same Conat routing that
+the UI uses.
+
+Useful options:
+
+- `--scenario sign-in-target` or `--scenario storage-archives` to run one check.
+- `--allow-empty-backups` for fixtures that should not require an existing backup.
+- `--allow-empty-snapshots` for fixtures that should not require snapshots.
+- `--headed` to watch the Chromium run.
+- `--json` for machine-readable output.
+
 ## Codex long-thread benchmark
 
 ```bash

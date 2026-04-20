@@ -61,6 +61,7 @@
     "bench:codex-thread": "node ./scripts/dev/codex-thread-benchmark.mjs",
     "lint:frontend": "cd packages && pnpm lint:frontend",
     "lint": "cd packages && ./node_modules/.bin/oxlint --config .oxlintrc.jsonc frontend && ./node_modules/.bin/oxlint --config .oxlintrc.non-frontend.jsonc .",
+    "qa:multibay-browser": "node ./scripts/dev/multibay-browser-qa.mjs",
     "smoke:codex-launchpad": "node ./scripts/dev/codex-launchpad-smoke.mjs",
     "smoke:self-host": "bash ./scripts/dev/self-host-smoke.sh",
     "smoke:cloud-host": "bash ./scripts/dev/cloud-host-smoke.sh",
