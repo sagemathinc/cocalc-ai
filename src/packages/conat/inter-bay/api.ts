@@ -14,7 +14,7 @@ import type {
   AccountFeedProjectRemoveEvent,
   AccountFeedProjectUpsertEvent,
 } from "@cocalc/conat/hub/api/account-feed";
-import type { LroEvent } from "@cocalc/conat/hub/api/lro";
+import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
 import type {
   Host,
   HostConnectionInfo,
@@ -110,6 +110,13 @@ export interface ProjectControlRestartRequest {
   account_id: string;
   lro_op_id?: string;
   source_bay_id?: string;
+  epoch?: number;
+}
+
+export interface ProjectControlBackupRequest {
+  project_id: string;
+  account_id?: string;
+  tags?: string[];
   epoch?: number;
 }
 
@@ -311,6 +318,7 @@ export type ProjectControlMethod =
   | "start"
   | "stop"
   | "restart"
+  | "backup"
   | "state"
   | "address"
   | "move"
@@ -392,6 +400,7 @@ export interface InterBayProjectControlApi {
   start: (opts: ProjectControlStartRequest) => Promise<void>;
   stop: (opts: ProjectControlStopRequest) => Promise<void>;
   restart: (opts: ProjectControlRestartRequest) => Promise<void>;
+  backup: (opts: ProjectControlBackupRequest) => Promise<LroSummary>;
   state: (opts: ProjectControlStateRequest) => Promise<ProjectState>;
   address: (opts: ProjectControlAddressRequest) => Promise<ProjectAddress>;
   move: (
@@ -1034,6 +1043,12 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "restart" }),
   });
+  const backupClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "backup">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({ dest_bay, method: "backup" }),
+  });
   const stateClient = createServiceClient<
     Pick<InterBayProjectControlApi, "state">
   >({
@@ -1062,6 +1077,7 @@ export function createInterBayProjectControlClient({
     start: async (opts) => await startClient.start(opts),
     stop: async (opts) => await stopClient.stop(opts),
     restart: async (opts) => await restartClient.restart(opts),
+    backup: async (opts) => await backupClient.backup(opts),
     state: async (opts) => await stateClient.state(opts),
     address: async (opts) => await addressClient.address(opts),
     move: async (opts) => await moveClient.move(opts),
@@ -1767,6 +1783,24 @@ export function createInterBayProjectControlRestartHandler({
     subject: projectControlSubject({ dest_bay: bay_id, method: "restart" }),
     impl: {
       restart: async (opts) => await impl.restart(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlBackupHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "backup">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({ dest_bay: bay_id, method: "backup" }),
+    impl: {
+      backup: async (opts) => await impl.backup(opts),
     },
   });
 }

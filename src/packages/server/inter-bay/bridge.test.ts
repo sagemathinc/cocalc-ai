@@ -83,6 +83,37 @@ describe("inter-bay bridge", () => {
     );
   });
 
+  it("dispatches typed project backup requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({
+      data: {
+        op_id: "op-1",
+        kind: "project-backup",
+        scope_type: "project",
+        scope_id: "p1",
+        status: "succeeded",
+      },
+    });
+    const { getInterBayBridge } = await import("./bridge");
+    const bridge = getInterBayBridge();
+    await expect(
+      bridge
+        .projectControl("bay-0")
+        .backup({ project_id: "p1", account_id: "a1" } as any),
+    ).resolves.toMatchObject({
+      op_id: "op-1",
+      kind: "project-backup",
+      status: "succeeded",
+    });
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-0.rpc.project-control.backup",
+      {
+        name: "backup",
+        args: [{ project_id: "p1", account_id: "a1" }],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
+
   it("dispatches typed project state requests through the fabric client", async () => {
     requestMock.mockResolvedValue({
       data: { state: "running", ip: "10.0.0.1" },

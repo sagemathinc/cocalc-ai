@@ -68,9 +68,9 @@ Recent 3-way fixture validation:
 - backup listing from a bay-2 collaborator against the bay-1-owned fixture now
   succeeds; attached bays delegate backup repo config to the seed bay, and the
   bay-1 project row records the returned seed repo id
-- manual backup creation from a non-owning bay exposed a separate LRO routing
-  bug: the operation was queued in the caller bay DB, where no local project row
-  exists for the backup worker to claim it
+- manual backup creation from a non-owning bay now returns a waitable source-bay
+  LRO and delegates execution to the owning bay's backup worker; validated from
+  bay-2 against the bay-1-owned fixture after redeploying hubs
 - full browser replay still remains open for interactive UI actions and
   lifecycle controls
 
@@ -216,9 +216,9 @@ This is the major new area that changed in the last few days.
       quota path
 - [ ] validate simple quota behavior under realistic host churn and snapshot
       load
-- [ ] fix project backup creation LRO routing when the caller bay is not the
-      owning bay; backup reads are fixed, but create currently queues in the
-      caller bay and is not claimed by the owning bay's backup worker
+- [x] fix project backup creation LRO routing when the caller bay is not the
+      owning bay; the caller bay keeps the waitable source LRO while the owning
+      bay queues and runs the actual backup
 - [ ] validate sqlite persistence/concurrency under Codex-heavy workloads after
       the recent locking fixes
 - [ ] validate daemon split behavior under adversarial conditions:

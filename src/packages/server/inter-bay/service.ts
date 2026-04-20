@@ -16,6 +16,7 @@ import {
   createInterBayProjectHostAuthTokenHandler,
   createInterBayProjectControlAddressHandler,
   createInterBayProjectControlActiveOpHandler,
+  createInterBayProjectControlBackupHandler,
   createInterBayBayDirectoryHandlers,
   createInterBayDirectoryHandlers,
   createInterBayProjectControlHandler,
@@ -78,6 +79,7 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
   handleProjectControlAddress,
   handleProjectControlActiveOperation,
+  handleProjectControlBackup,
   handleProjectControlMove,
   handleProjectControlRestart,
   handleProjectControlStart,
@@ -293,6 +295,7 @@ async function startProjectControlStartService(): Promise<void> {
     restart: async (opts) => {
       await handleProjectControlRestart(opts);
     },
+    backup: async (opts) => await handleProjectControlBackup(opts),
     state: async (opts) => await handleProjectControlState(opts),
     address: async (opts) => await handleProjectControlAddress(opts),
     move: async (opts) => await handleProjectControlMove(opts),
@@ -317,6 +320,12 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlRestartHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlBackupHandler({
       client,
       bay_id,
       parallel: true,
