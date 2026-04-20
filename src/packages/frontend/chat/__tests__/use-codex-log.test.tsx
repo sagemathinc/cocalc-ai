@@ -82,16 +82,25 @@ class FakeSubscription {
 }
 
 class FakeDstream extends EventEmitter {
-  constructor(private messages: any[] = []) {
+  constructor(
+    private messages: any[] = [],
+    private recoveryState: string = "ready",
+  ) {
     super();
   }
 
   close = jest.fn();
   getAll = jest.fn(() => [...this.messages]);
+  getRecoveryState = jest.fn(() => this.recoveryState);
 
   push(message: any) {
     this.messages = [...this.messages, message];
     this.emit("change", message, message?.seq);
+  }
+
+  setRecoveryState(state: string) {
+    this.recoveryState = state;
+    this.emit(state === "ready" ? "recovered" : state);
   }
 }
 
@@ -659,7 +668,7 @@ describe("useCodexLog", () => {
     });
 
     act(() => {
-      stream.emit("disconnected");
+      stream.setRecoveryState("disconnected");
     });
 
     await waitFor(() => {
@@ -672,11 +681,40 @@ describe("useCodexLog", () => {
     });
 
     act(() => {
-      stream.emit("recovered");
+      stream.setRecoveryState("ready");
     });
 
     await waitFor(() => {
       expect(screen.getByTestId("live-status").textContent).toBe("connected");
+    });
+  });
+
+  it("surfaces a shared dstream that is already recovering on attach", async () => {
+    const stream = new FakeDstream([], "recovering");
+    const get = jest.fn().mockResolvedValue(null);
+    dstreamMock.mockResolvedValue(stream);
+    conatMock.mockReturnValue({
+      subscribe: jest.fn(),
+      sync: {
+        akv: () => ({ get }),
+      },
+    });
+
+    render(
+      <StatusComponent
+        generating={true}
+        logKey="log-key-live-status-recovering"
+        liveLogStream="live-stream-status-recovering"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("live-status").textContent).toBe(
+        "reconnecting",
+      );
+    });
+    expect(reconnectResource.requestReconnect).toHaveBeenCalledWith({
+      reason: "codex_log_stream_not_ready",
     });
   });
 

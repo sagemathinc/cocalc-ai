@@ -1,3 +1,5 @@
+let mockRecoveryState = "ready";
+
 jest.mock("./core-stream", () => {
   const { EventEmitter } = require("events");
 
@@ -21,7 +23,7 @@ jest.mock("./core-stream", () => {
     getCheckpoint = jest.fn();
     setCheckpoint = jest.fn();
     deleteCheckpoint = jest.fn();
-    getRecoveryState = jest.fn(() => "ready");
+    getRecoveryState = jest.fn(() => mockRecoveryState);
     pauseRecovery = jest.fn();
     resumeRecovery = jest.fn();
     recoverNow = jest.fn();
@@ -37,6 +39,10 @@ import { DStream } from "./dstream";
 import { SyncTableStream } from "./synctable-stream";
 
 describe("DStream unsaved change events", () => {
+  beforeEach(() => {
+    mockRecoveryState = "ready";
+  });
+
   it("emits when local messages become pending and then acknowledged", async () => {
     const stream = new DStream({
       name: "unsaved-events",
@@ -141,5 +147,37 @@ describe("DStream unsaved change events", () => {
     (table as any).dstream.emit("recovered");
     expect(table.get_state()).toBe("connected");
     expect(events).toEqual(["disconnected", "connected"]);
+  });
+
+  it("initializes SyncTableStream disconnected when the DStream is still recovering", async () => {
+    mockRecoveryState = "recovering";
+    const project_id = "00000000-0000-4000-8000-000000000000";
+    const table = new SyncTableStream({
+      client: {} as any,
+      immutable: true,
+      noAutosave: true,
+      noInventory: true,
+      query: {
+        patches: [
+          {
+            project_id,
+            path: "doc.txt",
+            time: null,
+            user_id: null,
+            wall: null,
+            patch: null,
+            snapshot: null,
+            is_snapshot: null,
+            seq_info: null,
+            parents: null,
+            version: null,
+          },
+        ],
+      },
+    });
+
+    await table.init();
+
+    expect(table.get_state()).toBe("disconnected");
   });
 });

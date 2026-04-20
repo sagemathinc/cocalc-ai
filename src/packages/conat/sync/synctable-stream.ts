@@ -142,7 +142,11 @@ export class SyncTableStream extends EventEmitter {
     for (const mesg of initial) {
       this.handle(mesg, false);
     }
-    this.setState("connected");
+    this.setState(
+      this.dstream.getRecoveryState() === "ready"
+        ? "connected"
+        : "disconnected",
+    );
   };
 
   private setState = (state: State): void => {

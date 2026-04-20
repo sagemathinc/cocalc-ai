@@ -110,6 +110,13 @@ function normalizeLiveStreamPayload(
   return normalizeIncomingLogPayload(payload).map(normalizeLiveStreamEvent);
 }
 
+function isDStreamLiveConnected(stream: DStream<any>): boolean {
+  return (
+    typeof stream.getRecoveryState !== "function" ||
+    stream.getRecoveryState() === "ready"
+  );
+}
+
 /**
  * Fetch Codex/ACP logs from AKV and live stream from conat during generation.
  * Resets state when the log key changes so logs don't bleed across turns.
@@ -452,7 +459,16 @@ export function useCodexLog({
             await releaseLiveStream({ immediate: true });
             return;
           }
-          setLiveConnectionState(true, "connected");
+          const streamConnected = isDStreamLiveConnected(liveStream);
+          setLiveConnectionState(
+            streamConnected,
+            streamConnected ? "connected" : "reconnecting",
+          );
+          if (!streamConnected) {
+            reconnectResourceRef.current?.requestReconnect({
+              reason: "codex_log_stream_not_ready",
+            });
+          }
           liveStreamDisconnected = () => {
             if (stopped) return;
             setLiveConnectionState(false, "reconnecting");
@@ -465,6 +481,7 @@ export function useCodexLog({
             setLiveConnectionState(true, "connected");
           };
           liveStream.on("disconnected", liveStreamDisconnected);
+          liveStream.on("recovering", liveStreamDisconnected);
           liveStream.on("paused", liveStreamDisconnected);
           liveStream.on("recovered", liveStreamRecovered);
           liveStream.setMaxListeners(
@@ -566,6 +583,7 @@ export function useCodexLog({
         }
         if (liveStream && liveStreamDisconnected) {
           liveStream.off("disconnected", liveStreamDisconnected);
+          liveStream.off("recovering", liveStreamDisconnected);
           liveStream.off("paused", liveStreamDisconnected);
         }
         if (liveStream && liveStreamRecovered) {
