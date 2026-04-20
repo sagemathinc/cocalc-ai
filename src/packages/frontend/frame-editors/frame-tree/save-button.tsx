@@ -136,7 +136,7 @@ function statusInfo(status: SaveStatus): SaveStatusInfo {
       return {
         label: "Syncing",
         title:
-          "Changes are waiting for CoCalc confirmation. Another browser may not see them yet.",
+          "Changes are waiting for CoCalc confirmation. Another browser may not see them yet, and they may be lost if you close this browser tab.",
         background: COLORS.ANTD_BG_BLUE_L,
         border: COLORS.BLUE_LLL,
         color: COLORS.BLUE_DD,
