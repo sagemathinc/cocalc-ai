@@ -57,7 +57,6 @@ export default async function dust(
   try {
     return await exec({
       cmd,
-      cwd: path,
       positionalArgs: [path],
       options,
       darwin,
@@ -103,7 +102,6 @@ async function dustWithDuFallback(
   const duCmd = existsSync("/usr/bin/du") ? "/usr/bin/du" : "/bin/du";
   const duOutput = await exec({
     cmd: duCmd,
-    cwd: path,
     prefixArgs: ["-B1", "-x", "-d", `${depth}`],
     positionalArgs: [path],
     maxSize,
