@@ -5,6 +5,8 @@ import getPool, {
 } from "@cocalc/database/pool";
 import LRU from "lru-cache";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { resolveProjectBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const log = getLogger("server:conat:route-project");
@@ -444,6 +446,49 @@ export async function materializeProjectHostTarget(
     if (cached) return cached;
   }
   return await fetchHostAddress(project_id);
+}
+
+export async function materializeRemoteProjectHostTarget({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectHostRouteTarget | undefined> {
+  const local = await materializeProjectHostTarget(project_id, { fresh: true });
+  if (local) {
+    return local;
+  }
+  const ownership = await resolveProjectBayAcrossCluster(project_id);
+  const currentBayId = getConfiguredBayId();
+  if (!ownership || ownership.bay_id === currentBayId) {
+    return undefined;
+  }
+  const bridge = getInterBayBridge();
+  const reference = await bridge
+    .projectReference(ownership.bay_id, { timeout_ms: 15_000 })
+    .get({ account_id, project_id });
+  const host_id = `${reference?.host_id ?? ""}`.trim();
+  if (!host_id) {
+    return undefined;
+  }
+  const connection = await bridge
+    .hostConnection(ownership.bay_id, { timeout_ms: 15_000 })
+    .get({ account_id, host_id });
+  const address = `${connection?.connect_url ?? ""}`.trim();
+  if (!address) {
+    return undefined;
+  }
+  cacheHostTarget(host_id, {
+    address,
+    host_session_id: connection.host_session_id,
+  });
+  cacheRouteTarget(project_id, {
+    address,
+    host_id,
+    host_session_id: connection.host_session_id,
+  });
+  return projectCache.get(project_id);
 }
 
 export async function materializeHostRouteTarget(

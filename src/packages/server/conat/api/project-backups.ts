@@ -19,8 +19,8 @@ import { assertPortableProjectRootfs } from "@cocalc/server/projects/rootfs-stat
 const MAX_BACKUPS_PER_PROJECT = 30;
 const log = getLogger("server:conat:api:project-backups");
 
-async function projectClient(project_id: string) {
-  return await getProjectFileServerClient({ project_id });
+async function projectClient(project_id: string, account_id?: string) {
+  return await getProjectFileServerClient({ project_id, account_id });
 }
 
 async function publishQueuedLroSafe({
@@ -133,7 +133,12 @@ export async function deleteBackup({
   id: string;
 }) {
   await assertCollab({ account_id, project_id });
-  await (await projectClient(project_id)).deleteBackup({ project_id, id });
+  await (
+    await projectClient(project_id, account_id)
+  ).deleteBackup({
+    project_id,
+    id,
+  });
 }
 
 export async function restoreBackup({
@@ -192,7 +197,7 @@ export async function beginRestoreStaging({
 }): Promise<RestoreStagingHandle | null> {
   await assertCollab({ account_id, project_id });
   return await (
-    await projectClient(project_id)
+    await projectClient(project_id, account_id)
   ).beginRestoreStaging({
     project_id,
     home,
@@ -209,7 +214,7 @@ export async function ensureRestoreStaging({
 }) {
   await assertCollab({ account_id, project_id: handle.project_id });
   await (
-    await projectClient(handle.project_id)
+    await projectClient(handle.project_id, account_id)
   ).ensureRestoreStaging({
     handle,
   });
@@ -224,7 +229,7 @@ export async function finalizeRestoreStaging({
 }) {
   await assertCollab({ account_id, project_id: handle.project_id });
   await (
-    await projectClient(handle.project_id)
+    await projectClient(handle.project_id, account_id)
   ).finalizeRestoreStaging({
     handle,
   });
@@ -241,7 +246,7 @@ export async function releaseRestoreStaging({
 }) {
   await assertCollab({ account_id, project_id: handle.project_id });
   await (
-    await projectClient(handle.project_id)
+    await projectClient(handle.project_id, account_id)
   ).releaseRestoreStaging({
     handle,
     cleanupStaging,
@@ -258,7 +263,11 @@ export async function cleanupRestoreStaging({
   root?: string;
 }) {
   await assertCollab({ account_id, project_id });
-  await (await projectClient(project_id)).cleanupRestoreStaging({ root });
+  await (
+    await projectClient(project_id, account_id)
+  ).cleanupRestoreStaging({
+    root,
+  });
 }
 
 export async function getBackups({
@@ -272,7 +281,7 @@ export async function getBackups({
 }) {
   await assertCollab({ account_id, project_id });
   return await (
-    await projectClient(project_id)
+    await projectClient(project_id, account_id)
   ).getBackups({
     project_id,
     indexed_only,
@@ -292,7 +301,7 @@ export async function getBackupFiles({
 }) {
   await assertCollab({ account_id, project_id });
   return await (
-    await projectClient(project_id)
+    await projectClient(project_id, account_id)
   ).getBackupFiles({
     project_id,
     id,
@@ -317,7 +326,7 @@ export async function findBackupFiles({
 }) {
   await assertCollab({ account_id, project_id });
   return await (
-    await projectClient(project_id)
+    await projectClient(project_id, account_id)
   ).findBackupFiles({
     project_id,
     glob,
@@ -342,7 +351,7 @@ export async function getBackupFileText({
 }) {
   await assertCollab({ account_id, project_id });
   return await (
-    await projectClient(project_id)
+    await projectClient(project_id, account_id)
   ).getBackupFileText({
     project_id,
     id,

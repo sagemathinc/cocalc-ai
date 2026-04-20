@@ -1,6 +1,7 @@
 export {};
 
 let materializeProjectHostTargetMock: jest.Mock;
+let materializeRemoteProjectHostTargetMock: jest.Mock;
 let fileServerClientMock: jest.Mock;
 let conatWithProjectRoutingMock: jest.Mock;
 let pingMock: jest.Mock;
@@ -9,6 +10,8 @@ jest.mock("./route-project", () => ({
   __esModule: true,
   materializeProjectHostTarget: (...args: any[]) =>
     materializeProjectHostTargetMock(...args),
+  materializeRemoteProjectHostTarget: (...args: any[]) =>
+    materializeRemoteProjectHostTargetMock(...args),
 }));
 
 jest.mock("./route-client", () => ({
@@ -29,6 +32,7 @@ describe("conat/file-server-client", () => {
       address: "https://host",
       host_id: "host-1",
     }));
+    materializeRemoteProjectHostTargetMock = jest.fn(async () => undefined);
     conatWithProjectRoutingMock = jest.fn(() => ({ id: "routed-client" }));
     pingMock = jest.fn(async () => undefined);
     fileServerClientMock = jest.fn(() => ({
@@ -69,6 +73,26 @@ describe("conat/file-server-client", () => {
       "unable to route project 22222222-2222-2222-2222-222222222222 to a host",
     );
     expect(fileServerClientMock).not.toHaveBeenCalled();
+  });
+
+  it("uses authenticated remote project routing when local route lookup misses", async () => {
+    materializeProjectHostTargetMock = jest.fn(async () => undefined);
+    materializeRemoteProjectHostTargetMock = jest.fn(async () => ({
+      address: "https://remote-host",
+      host_id: "host-remote",
+    }));
+    const { getProjectFileServerClient } = await import("./file-server-client");
+
+    await getProjectFileServerClient({
+      project_id: "22222222-2222-2222-2222-222222222222",
+      account_id: "account-1",
+    });
+
+    expect(materializeRemoteProjectHostTargetMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      project_id: "22222222-2222-2222-2222-222222222222",
+    });
+    expect(fileServerClientMock).toHaveBeenCalled();
   });
 
   it("supports bypassing route checks when explicitly disabled", async () => {

@@ -16,8 +16,8 @@ import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-cli
 
 const MAX_SNAPSHOTS_PER_PROJECT = 250;
 
-async function projectClient(project_id: string) {
-  return await getProjectFileServerClient({ project_id });
+async function projectClient(project_id: string, account_id?: string) {
+  return await getProjectFileServerClient({ project_id, account_id });
 }
 
 async function publishQueuedLroSafe({ op }: { op: LroSummary }) {
@@ -55,7 +55,7 @@ export async function createSnapshot({
 }) {
   await assertCollab({ account_id, project_id });
   await (
-    await projectClient(project_id)
+    await projectClient(project_id, account_id)
   ).createSnapshot({
     project_id,
     name,
@@ -73,7 +73,12 @@ export async function deleteSnapshot({
   name: string;
 }) {
   await assertCollab({ account_id, project_id });
-  await (await projectClient(project_id)).deleteSnapshot({ project_id, name });
+  await (
+    await projectClient(project_id, account_id)
+  ).deleteSnapshot({
+    project_id,
+    name,
+  });
 }
 
 export async function getSnapshotQuota({
@@ -96,7 +101,7 @@ export async function allSnapshotUsage({
 }) {
   await assertCollab({ account_id, project_id });
   return await (
-    await projectClient(project_id)
+    await projectClient(project_id, account_id)
   ).allSnapshotUsage({
     project_id,
   });
@@ -117,7 +122,7 @@ export async function getSnapshotFileText({
 }) {
   await assertCollab({ account_id, project_id });
   return await (
-    await projectClient(project_id)
+    await projectClient(project_id, account_id)
   ).getSnapshotFileText({
     project_id,
     snapshot,

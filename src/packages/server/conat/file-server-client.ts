@@ -4,7 +4,10 @@ import {
 } from "@cocalc/conat/files/file-server";
 import type { Client } from "@cocalc/conat/core/client";
 import { conatWithProjectRouting } from "./route-client";
-import { materializeProjectHostTarget } from "./route-project";
+import {
+  materializeProjectHostTarget,
+  materializeRemoteProjectHostTarget,
+} from "./route-project";
 
 let routedClient: Client | undefined;
 
@@ -21,10 +24,18 @@ function getRoutedClient(): Client {
 
 export async function ensureProjectFileServerRoute(
   project_id: string,
+  account_id?: string,
 ): Promise<string> {
-  const target = await materializeProjectHostTarget(project_id, {
-    fresh: true,
-  });
+  const target =
+    (await materializeProjectHostTarget(project_id, {
+      fresh: true,
+    })) ??
+    (account_id
+      ? await materializeRemoteProjectHostTarget({
+          account_id,
+          project_id,
+        })
+      : undefined);
   if (!target?.address) {
     throw new Error(`unable to route project ${project_id} to a host`);
   }
@@ -33,15 +44,17 @@ export async function ensureProjectFileServerRoute(
 
 export async function getProjectFileServerClient({
   project_id,
+  account_id,
   timeout,
   ensure_route = true,
 }: {
   project_id: string;
+  account_id?: string;
   timeout?: number;
   ensure_route?: boolean;
 }): Promise<Fileserver> {
   if (ensure_route) {
-    await ensureProjectFileServerRoute(project_id);
+    await ensureProjectFileServerRoute(project_id, account_id);
   }
   return fileServerClient({
     client: getRoutedClient(),
