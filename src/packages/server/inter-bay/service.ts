@@ -107,6 +107,8 @@ import {
 } from "@cocalc/server/projects/collab-invite-inbox";
 import {
   createCollabInvite,
+  listCollabInvites,
+  removeCollaborator,
   respondCollabInviteCanonical,
 } from "@cocalc/server/projects/collaborators";
 
@@ -422,6 +424,13 @@ async function startProjectCollabInviteService(): Promise<void> {
         created: result.created,
         invite: collabInviteToWire(result.invite),
       };
+    },
+    list: async (opts) =>
+      (await listCollabInvites(opts)).map((invite) =>
+        collabInviteToWire(invite),
+      ),
+    removeCollaborator: async (opts) => {
+      await removeCollaborator(opts);
     },
     respond: async ({ account_id, invite_id, action, include_email }) =>
       collabInviteToWire(

@@ -11,10 +11,12 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = path.resolve(SCRIPT_DIR, "../..");
 const DEFAULT_SCENARIOS = ["sign-in-target", "storage-archives"];
 const INVITE_REDEEM_SCENARIO = "invite-redeem";
+const INVITE_EDGE_CASES_SCENARIO = "invite-edge-cases";
 const PROJECT_LIFECYCLE_SCENARIO = "project-lifecycle";
 const KNOWN_SCENARIOS = new Set([
   ...DEFAULT_SCENARIOS,
   INVITE_REDEEM_SCENARIO,
+  INVITE_EDGE_CASES_SCENARIO,
   PROJECT_LIFECYCLE_SCENARIO,
 ]);
 
@@ -35,11 +37,11 @@ function usageAndExit(message, code = 1) {
       "Options:",
       "  --project-title <text>     Visible project title to require after sign-in",
       "  --scenario <name>          Scenario to run; repeatable. Defaults to all.",
-      "                            Known: sign-in-target, storage-archives, invite-redeem, project-lifecycle",
-      "  --owner-email <address>    Inviter account for invite-redeem; defaults to --email",
-      "  --owner-password <pass>    Inviter password for invite-redeem; defaults to --password",
-      "  --invitee-email <address>  Invitee account for invite-redeem",
-      "  --invitee-password <pass>  Invitee password for invite-redeem",
+      "                            Known: sign-in-target, storage-archives, invite-redeem, invite-edge-cases, project-lifecycle",
+      "  --owner-email <address>    Inviter account for invite scenarios; defaults to --email",
+      "  --owner-password <pass>    Inviter password for invite scenarios; defaults to --password",
+      "  --invitee-email <address>  Invitee account for invite scenarios",
+      "  --invitee-password <pass>  Invitee password for invite scenarios",
       "  --invite-message <text>    Optional collaborator invite message",
       "  --invite-reset-before      Remove invitee collaborator before inviting, for disposable fixtures",
       "  --invite-cleanup-after     Remove invitee collaborator after validation",
@@ -230,18 +232,22 @@ function parseArgs(argv) {
     if (!options.email) usageAndExit("--email is required");
     if (!options.password) usageAndExit("--password is required");
   }
-  if (options.scenarios.includes(INVITE_REDEEM_SCENARIO)) {
+  if (
+    options.scenarios.some((scenario) =>
+      [INVITE_REDEEM_SCENARIO, INVITE_EDGE_CASES_SCENARIO].includes(scenario),
+    )
+  ) {
     if (!options.ownerEmail) {
-      usageAndExit("--owner-email is required for invite-redeem");
+      usageAndExit("--owner-email is required for invite scenarios");
     }
     if (!options.ownerPassword) {
-      usageAndExit("--owner-password is required for invite-redeem");
+      usageAndExit("--owner-password is required for invite scenarios");
     }
     if (!options.inviteeEmail) {
-      usageAndExit("--invitee-email is required for invite-redeem");
+      usageAndExit("--invitee-email is required for invite scenarios");
     }
     if (!options.inviteePassword) {
-      usageAndExit("--invitee-password is required for invite-redeem");
+      usageAndExit("--invitee-password is required for invite scenarios");
     }
     if (options.ownerEmail === options.inviteeEmail) {
       usageAndExit("--owner-email and --invitee-email must be different");
@@ -935,6 +941,141 @@ async function createCollaboratorInvite(page, options, inviteeAccountId) {
   );
 }
 
+async function revokeCollaboratorInvite(page, options, inviteId) {
+  await waitForRuntime(page, options);
+  return await page.evaluate(
+    async ({ inviteId }) =>
+      await globalThis.cc.conat.hub.projects.respondCollabInvite({
+        invite_id: inviteId,
+        action: "revoke",
+      }),
+    { inviteId },
+  );
+}
+
+async function listPendingInboundInvites(page, options) {
+  await waitForRuntime(page, options);
+  return await page.evaluate(
+    async ({ projectId }) =>
+      await globalThis.cc.conat.hub.projects.listCollabInvites({
+        project_id: projectId,
+        direction: "inbound",
+        status: "pending",
+        limit: 50,
+      }),
+    { projectId: options.projectId },
+  );
+}
+
+async function listPendingOutboundInvitesForInvitee(
+  page,
+  options,
+  inviteeAccountId,
+) {
+  await waitForRuntime(page, options);
+  return await page.evaluate(
+    async ({ projectId, inviteeAccountId }) => {
+      const invites = await globalThis.cc.conat.hub.projects.listCollabInvites({
+        project_id: projectId,
+        direction: "outbound",
+        status: "pending",
+        limit: 100,
+      });
+      return invites.filter(
+        (invite) => invite.invitee_account_id === inviteeAccountId,
+      );
+    },
+    { projectId: options.projectId, inviteeAccountId },
+  );
+}
+
+async function revokePendingOutboundInvitesForInvitee(
+  page,
+  options,
+  inviteeAccountId,
+) {
+  const invites = await listPendingOutboundInvitesForInvitee(
+    page,
+    options,
+    inviteeAccountId,
+  );
+  for (const invite of invites) {
+    await revokeCollaboratorInvite(page, options, invite.invite_id);
+  }
+  return invites.map((invite) => invite.invite_id);
+}
+
+async function waitForInboundInvite(page, options, inviteId) {
+  const deadline = Date.now() + options.timeoutMs;
+  let lastInviteIds = [];
+  while (Date.now() < deadline) {
+    const invites = await listPendingInboundInvites(page, options);
+    lastInviteIds = invites.map((invite) => invite.invite_id);
+    const invite = invites.find(
+      (candidate) => candidate.invite_id === inviteId,
+    );
+    if (invite) {
+      return invite;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error(
+    `timed out waiting for inbound invite ${inviteId}; pending invites=${lastInviteIds.join(",")}`,
+  );
+}
+
+async function waitForInboundInviteAbsent(page, options, inviteId) {
+  const deadline = Date.now() + options.timeoutMs;
+  let present = false;
+  while (Date.now() < deadline) {
+    const invites = await listPendingInboundInvites(page, options);
+    present = invites.some((candidate) => candidate.invite_id === inviteId);
+    if (!present) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error(
+    `timed out waiting for inbound invite ${inviteId} to disappear; still present=${present}`,
+  );
+}
+
+async function expectAlreadyCollaboratorInviteError(
+  page,
+  options,
+  inviteeAccountId,
+) {
+  await waitForRuntime(page, options);
+  const result = await page.evaluate(
+    async ({ projectId, inviteeAccountId, message }) => {
+      try {
+        await globalThis.cc.conat.hub.projects.createCollabInvite({
+          project_id: projectId,
+          invitee_account_id: inviteeAccountId,
+          message,
+        });
+        return { ok: true, error: "" };
+      } catch (err) {
+        return { ok: false, error: err?.message ?? `${err}` };
+      }
+    },
+    {
+      projectId: options.projectId,
+      inviteeAccountId,
+      message: options.inviteMessage,
+    },
+  );
+  if (result.ok) {
+    throw new Error("already-collaborator invite unexpectedly succeeded");
+  }
+  if (!/already a collaborator/i.test(result.error)) {
+    throw new Error(
+      `already-collaborator invite failed with unexpected error: ${result.error}`,
+    );
+  }
+  return result.error;
+}
+
 async function acceptCollaboratorInvite(page, options, inviteId) {
   await waitForRuntime(page, options);
   return await page.evaluate(
@@ -1114,9 +1255,229 @@ async function runInviteRedeemScenario(browser, options) {
   }
 }
 
+async function runInviteEdgeCasesScenario(browser, options) {
+  const diagnostics = createDiagnostics(INVITE_EDGE_CASES_SCENARIO);
+  const contexts = [];
+  let ownerPage;
+  let inviteePage;
+  let inviteeAccountId = "";
+  let finalCollaborator = false;
+  let removedAfter = false;
+
+  try {
+    const owner = await newQaPage(browser, options, diagnostics, "owner");
+    contexts.push(owner.context);
+    ownerPage = owner.page;
+    const ownerSignIn = await signInToProject(
+      owner.page,
+      options,
+      ownerCredentials(options),
+    );
+
+    const invitee = await newQaPage(browser, options, diagnostics, "invitee");
+    contexts.push(invitee.context);
+    inviteePage = invitee.page;
+    const inviteeSignIn = await signInToRoot(
+      invitee.page,
+      options,
+      inviteeCredentials(options),
+    );
+    inviteeAccountId = await getSignedInAccountId(invitee.page, options);
+
+    const removedBefore = await removeCollaboratorIfPresent(
+      owner.page,
+      options,
+      inviteeAccountId,
+    );
+    const revokedBefore = await revokePendingOutboundInvitesForInvitee(
+      owner.page,
+      options,
+      inviteeAccountId,
+    );
+
+    const firstInvite = await createCollaboratorInvite(
+      owner.page,
+      options,
+      inviteeAccountId,
+    );
+    if (!firstInvite?.created) {
+      throw new Error("initial invite did not create a new pending invite");
+    }
+    const firstInviteId = firstInvite.invite?.invite_id;
+    if (!firstInviteId) {
+      throw new Error("initial invite response is missing invite_id");
+    }
+    await waitForInboundInvite(invitee.page, options, firstInviteId);
+
+    const duplicateInvite = await createCollaboratorInvite(
+      owner.page,
+      options,
+      inviteeAccountId,
+    );
+    if (duplicateInvite?.created !== false) {
+      throw new Error("duplicate invite did not return created=false");
+    }
+    if (duplicateInvite?.invite?.invite_id !== firstInviteId) {
+      throw new Error(
+        `duplicate invite id mismatch: expected ${firstInviteId}, got ${duplicateInvite?.invite?.invite_id ?? "<missing>"}`,
+      );
+    }
+
+    const revokedInvite = await revokeCollaboratorInvite(
+      owner.page,
+      options,
+      firstInviteId,
+    );
+    if (revokedInvite?.status !== "canceled") {
+      throw new Error(
+        `revoked invite status mismatch: expected canceled, got ${revokedInvite?.status ?? "<missing>"}`,
+      );
+    }
+    await waitForInboundInviteAbsent(invitee.page, options, firstInviteId);
+
+    const secondInvite = await createCollaboratorInvite(
+      owner.page,
+      options,
+      inviteeAccountId,
+    );
+    if (!secondInvite?.created) {
+      throw new Error("post-revoke invite did not create a new pending invite");
+    }
+    const secondInviteId = secondInvite.invite?.invite_id;
+    if (!secondInviteId) {
+      throw new Error("post-revoke invite response is missing invite_id");
+    }
+    if (secondInviteId === firstInviteId) {
+      throw new Error("post-revoke invite reused the revoked invite id");
+    }
+
+    const acceptedInvite = await acceptCollaboratorInvite(
+      invitee.page,
+      options,
+      secondInviteId,
+    );
+    await waitForCollaboratorState(owner.page, options, inviteeAccountId, true);
+    const projectOpenAfterAccept = await openProjectAndVerify(
+      invitee.page,
+      options,
+    );
+
+    const alreadyCollaboratorError = await expectAlreadyCollaboratorInviteError(
+      owner.page,
+      options,
+      inviteeAccountId,
+    );
+
+    const removedAfterAccept = await removeCollaboratorIfPresent(
+      owner.page,
+      options,
+      inviteeAccountId,
+    );
+    if (!removedAfterAccept) {
+      throw new Error("remove collaborator after accept did not remove anyone");
+    }
+
+    const thirdInvite = await createCollaboratorInvite(
+      owner.page,
+      options,
+      inviteeAccountId,
+    );
+    if (!thirdInvite?.created) {
+      throw new Error("post-remove invite did not create a new pending invite");
+    }
+    const thirdInviteId = thirdInvite.invite?.invite_id;
+    if (!thirdInviteId) {
+      throw new Error("post-remove invite response is missing invite_id");
+    }
+
+    const acceptedAfterRemove = await acceptCollaboratorInvite(
+      invitee.page,
+      options,
+      thirdInviteId,
+    );
+    await waitForCollaboratorState(owner.page, options, inviteeAccountId, true);
+    const projectOpenAfterReaccept = await openProjectAndVerify(
+      invitee.page,
+      options,
+    );
+    finalCollaborator = true;
+
+    if (options.inviteCleanupAfter) {
+      removedAfter = await removeCollaboratorIfPresent(
+        owner.page,
+        options,
+        inviteeAccountId,
+      );
+      finalCollaborator = !removedAfter;
+    }
+
+    return {
+      scenario: INVITE_EDGE_CASES_SCENARIO,
+      status: "pass",
+      inviteEdgeCases: {
+        ownerSignIn,
+        inviteeSignIn,
+        inviteeAccountId,
+        removedBefore,
+        revokedBefore,
+        duplicateCreated: duplicateInvite.created,
+        firstInviteId,
+        revokedStatus: revokedInvite.status,
+        secondInviteId,
+        acceptedStatus: acceptedInvite?.status ?? null,
+        alreadyCollaboratorError,
+        removedAfterAccept,
+        thirdInviteId,
+        acceptedAfterRemoveStatus: acceptedAfterRemove?.status ?? null,
+        finalCollaborator,
+        removedAfter,
+        finalUrl:
+          projectOpenAfterReaccept.finalUrl ?? projectOpenAfterAccept.finalUrl,
+      },
+      diagnostics: summarizeDiagnostics(diagnostics),
+    };
+  } catch (error) {
+    if (
+      options.inviteCleanupAfter &&
+      finalCollaborator &&
+      ownerPage &&
+      inviteeAccountId
+    ) {
+      try {
+        removedAfter = await removeCollaboratorIfPresent(
+          ownerPage,
+          options,
+          inviteeAccountId,
+        );
+      } catch {
+        // Preserve the original failure; cleanup is best-effort in failure paths.
+      }
+    }
+    return {
+      scenario: INVITE_EDGE_CASES_SCENARIO,
+      status: "fail",
+      error: formatError(error),
+      inviteEdgeCases: {
+        inviteeAccountId: inviteeAccountId || null,
+        finalCollaborator,
+        removedAfter,
+        currentInviteeUrl: inviteePage ? redact(inviteePage.url()) : null,
+      },
+      diagnostics: summarizeDiagnostics(diagnostics),
+    };
+  } finally {
+    await Promise.all(
+      contexts.map((context) => context.close().catch(() => {})),
+    );
+  }
+}
+
 async function runScenario(browser, scenario, options) {
   if (scenario === INVITE_REDEEM_SCENARIO) {
     return await runInviteRedeemScenario(browser, options);
+  }
+  if (scenario === INVITE_EDGE_CASES_SCENARIO) {
+    return await runInviteEdgeCasesScenario(browser, options);
   }
 
   const diagnostics = createDiagnostics(scenario);
@@ -1210,6 +1571,34 @@ function printTextResult(result) {
           ? `accepted_status=${invite.acceptedStatus}`
           : "",
         invite?.removedBefore ? "removed_before=1" : "removed_before=0",
+        invite?.removedAfter ? "removed_after=1" : "removed_after=0",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  } else if (result.scenario === INVITE_EDGE_CASES_SCENARIO) {
+    const invite = result.inviteEdgeCases;
+    console.log(
+      [
+        `${prefix} invite-edge-cases`,
+        `final_url=${invite?.finalUrl ?? result.currentUrl ?? "<unknown>"}`,
+        invite?.firstInviteId ? `first=${invite.firstInviteId}` : "",
+        invite?.secondInviteId ? `second=${invite.secondInviteId}` : "",
+        invite?.thirdInviteId ? `third=${invite.thirdInviteId}` : "",
+        invite?.revokedBefore?.length
+          ? `revoked_before=${invite.revokedBefore.length}`
+          : "revoked_before=0",
+        invite?.duplicateCreated === false ? "duplicate_created=0" : "",
+        invite?.revokedStatus ? `revoked=${invite.revokedStatus}` : "",
+        invite?.acceptedStatus
+          ? `accepted_status=${invite.acceptedStatus}`
+          : "",
+        invite?.acceptedAfterRemoveStatus
+          ? `reaccepted_status=${invite.acceptedAfterRemoveStatus}`
+          : "",
+        invite?.alreadyCollaboratorError ? "already_collaborator_error=1" : "",
+        invite?.removedAfterAccept ? "removed_after_accept=1" : "",
+        invite?.finalCollaborator ? "final_collaborator=1" : "",
         invite?.removedAfter ? "removed_after=1" : "removed_after=0",
       ]
         .filter(Boolean)

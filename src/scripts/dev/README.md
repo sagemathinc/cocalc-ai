@@ -182,7 +182,8 @@ the UI uses.
 
 Useful options:
 
-- `--scenario sign-in-target`, `--scenario storage-archives`, or
+- `--scenario sign-in-target`, `--scenario storage-archives`,
+  `--scenario invite-redeem`, `--scenario invite-edge-cases`, or
   `--scenario project-lifecycle` to run one check.
 - `--allow-empty-backups` for fixtures that should not require an existing backup.
 - `--allow-empty-snapshots` for fixtures that should not require snapshots.
@@ -208,6 +209,23 @@ For disposable repeatable fixtures, add `--invite-reset-before` to remove the
 invitee from the project before creating the invite. Add
 `--invite-cleanup-after` only when the invitee should not remain a collaborator
 after the run.
+
+Run the mutating invite edge-case scenario against disposable invitee accounts
+to cover duplicate invite creation, revoke, already-collaborator rejection,
+remove collaborator, and re-invite/redeem. Repeat this scenario with one
+invitee account homed on each bay to cover cross-bay inbox projection:
+
+```bash
+COCALC_MULTIBAY_QA_OWNER_PASSWORD='<owner-password>' \
+COCALC_MULTIBAY_QA_INVITEE_PASSWORD='<invitee-password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --scenario invite-edge-cases \
+  --base-url https://lite4b.cocalc.ai \
+  --project <project-id> \
+  --project-title '<visible project title>' \
+  --owner-email <owner@example.com> \
+  --invitee-email <invitee-on-one-bay@example.com>
+```
 
 Run the opt-in lifecycle matrix scenario when it is acceptable for the fixture
 project to be started, restarted, stopped, and started again. The scenario
