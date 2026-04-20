@@ -1,6 +1,7 @@
 export {};
 
 let assertLocalProjectCollaboratorMock: jest.Mock;
+let assertProjectCollaboratorAccessAllowRemoteMock: jest.Mock;
 let queryMock: jest.Mock;
 let callback2Mock: jest.Mock;
 let isAdminMock: jest.Mock;
@@ -17,6 +18,12 @@ jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
   assertLocalProjectCollaborator: (...args: any[]) =>
     assertLocalProjectCollaboratorMock(...args),
+}));
+
+jest.mock("@cocalc/server/conat/project-remote-access", () => ({
+  __esModule: true,
+  assertProjectCollaboratorAccessAllowRemote: (...args: any[]) =>
+    assertProjectCollaboratorAccessAllowRemoteMock(...args),
 }));
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -119,6 +126,16 @@ describe("project collaborators local bay access", () => {
   beforeEach(() => {
     jest.resetModules();
     assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
+    assertProjectCollaboratorAccessAllowRemoteMock = jest.fn(async () => ({
+      project_id: PROJECT_ID,
+      title: "Test Project",
+      host_id: null,
+      owning_bay_id: "bay-0",
+      users: {
+        [ACCOUNT_ID]: { group: "owner" },
+        [TARGET_ACCOUNT_ID]: { group: "collaborator" },
+      },
+    }));
     queryMock = jest.fn(async () => ({ rows: [] }));
     callback2Mock = jest.fn(async (fn, opts) => await fn(opts));
     isAdminMock = jest.fn(async () => false);
@@ -205,11 +222,58 @@ describe("project collaborators local bay access", () => {
         name: "Collab",
       }),
     ]);
-    expect(assertLocalProjectCollaboratorMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-    });
+    expect(assertProjectCollaboratorAccessAllowRemoteMock).toHaveBeenCalledWith(
+      {
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      },
+    );
     expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads collaborators from remote project references", async () => {
+    assertProjectCollaboratorAccessAllowRemoteMock = jest.fn(async () => ({
+      project_id: PROJECT_ID,
+      title: "Remote Project",
+      host_id: "55555555-5555-4555-8555-555555555555",
+      owning_bay_id: "bay-7",
+      users: {
+        [TARGET_ACCOUNT_ID]: { group: "collaborator" },
+        [ACCOUNT_ID]: { group: "owner" },
+        ["44444444-4444-4444-8444-444444444444"]: { group: "viewer" },
+      },
+    }));
+    getClusterAccountsByIdsMock = jest.fn(async (account_ids: string[]) =>
+      account_ids.map((account_id) => ({
+        account_id,
+        name: account_id === ACCOUNT_ID ? "Remote Owner" : "Remote Collab",
+      })),
+    );
+    const { listCollaborators } = await import("./collaborators");
+    await expect(
+      listCollaborators({
+        account_id: TARGET_ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        group: "owner",
+        name: "Remote Owner",
+      }),
+      expect.objectContaining({
+        account_id: TARGET_ACCOUNT_ID,
+        group: "collaborator",
+        name: "Remote Collab",
+      }),
+    ]);
+    expect(assertProjectCollaboratorAccessAllowRemoteMock).toHaveBeenCalledWith(
+      {
+        account_id: TARGET_ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      },
+    );
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("uses projected my-collaborator rows when enabled", async () => {

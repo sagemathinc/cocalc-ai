@@ -1,6 +1,6 @@
 # Scalable Architecture Remaining Checklist
 
-Status: active checklist as of 2026-04-18.
+Status: active checklist as of 2026-04-20.
 
 This is the current execution checklist for finishing the scalable control-plane
 work after the recent multibay auth/bootstrap work and the large project-host
@@ -49,6 +49,30 @@ What is proven or substantially implemented:
   - this reduces bay load and removes a class of reconnect complexity
 - spot-instance support now exists and materially improves the production cost
   story for project hosts
+
+Recent 3-way fixture validation:
+
+- on 2026-04-20, a bay-1-owned project running on a bay-1 spot project-host was
+  validated from bay-2 collaborator accounts through the stable multibay control
+  path
+- validated CLI paths:
+  - remote collaborator listing
+  - invite projection and redeem from bay-2
+  - snapshot listing
+  - storage summary
+  - remote stop, start, and restart with LRO completion
+- validated browser smoke paths:
+  - bay-2 home-bay impersonation finishes back on the stable site URL
+  - stable URL can open the bay-1-owned project as the bay-2 collaborator
+  - browser opens a direct project-host session on the bay-1 host
+- backup listing from a bay-2 collaborator against the bay-1-owned fixture now
+  succeeds; attached bays delegate backup repo config to the seed bay, and the
+  bay-1 project row records the returned seed repo id
+- manual backup creation from a non-owning bay now returns a waitable source-bay
+  LRO and delegates execution to the owning bay's backup worker; validated from
+  bay-2 against the bay-1-owned fixture after redeploying hubs
+- full browser replay still remains open for interactive UI actions and
+  lifecycle controls
 
 What should still be treated as incomplete:
 
@@ -159,6 +183,12 @@ Notes:
 
 - the stable-URL + hidden-home-bay websocket trick appears to work in real
   testing and should now be treated as demonstrated
+- invite projection/redeem has been validated in the CLI from bay-1 owner to a
+  bay-2 invitee, but still needs browser replay before this browser matrix item
+  is closed
+- browser sign-in through the bay-2 home-bay impersonation retry path was
+  validated and ended on `lite4b.cocalc.ai`, and browser project open reached
+  the bay-1 project host
 - however, the full matrix should not be treated as formally closed until it
   is replayed deliberately and recorded
 
@@ -186,6 +216,9 @@ This is the major new area that changed in the last few days.
       quota path
 - [ ] validate simple quota behavior under realistic host churn and snapshot
       load
+- [x] fix project backup creation LRO routing when the caller bay is not the
+      owning bay; the caller bay keeps the waitable source LRO while the owning
+      bay queues and runs the actual backup
 - [ ] validate sqlite persistence/concurrency under Codex-heavy workloads after
       the recent locking fixes
 - [ ] validate daemon split behavior under adversarial conditions:
@@ -212,6 +245,12 @@ This is the major new area that changed in the last few days.
 - [ ] validate LRO progress / errors across owning-bay and host-bay boundaries
 - [ ] audit remaining assumptions that `project bay == host bay`
 - [ ] measure host heartbeat / lifecycle traffic at realistic bay sizes
+
+Notes:
+
+- CLI remote `stop`, `start`, and `restart` were validated on 2026-04-20 with
+  account home bay 2, project owning bay 1, and host bay 1
+- browser-side lifecycle validation remains open
 
 ### 5. Spot Instance Operational Readiness
 

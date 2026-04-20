@@ -1,10 +1,13 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import useDiskUsage from "./use-disk-usage";
-import getStorageOverview from "./storage-overview";
+import getStorageOverview, {
+  getCachedStorageOverview,
+} from "./storage-overview";
 
 jest.mock("./storage-overview", () => ({
   __esModule: true,
   default: jest.fn(),
+  getCachedStorageOverview: jest.fn(),
   key: ({ project_id, home }: { project_id: string; home: string }) =>
     `${project_id}:${home}`,
 }));
@@ -34,6 +37,7 @@ function TestComponent({ project_id }: { project_id: string }) {
 }
 
 const overviewMock = getStorageOverview as jest.Mock;
+const cachedOverviewMock = getCachedStorageOverview as jest.Mock;
 
 function overview({
   used = 17,
@@ -74,6 +78,7 @@ function overview({
 describe("useDiskUsage", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    cachedOverviewMock.mockReturnValue(undefined);
   });
 
   it("ignores stale storage overview responses after the target changes", async () => {
@@ -139,6 +144,36 @@ describe("useDiskUsage", () => {
       expect(screen.getByTestId("quota").textContent).toBe("17");
       expect(screen.getByTestId("counted").textContent).toBe("4000000");
     });
+  });
+
+  it("seeds from cached overview while refreshing in the background", () => {
+    cachedOverviewMock.mockReturnValue(
+      overview({
+        used: 55,
+        visible: [
+          {
+            key: "home",
+            label: "/root",
+            summaryLabel: "Home",
+            path: "/root",
+            summaryBytes: 222,
+            usage: {
+              path: "/root",
+              bytes: 222,
+              children: [],
+              collected_at: "",
+            },
+          },
+        ],
+      }),
+    );
+    overviewMock.mockReturnValue(new Promise(() => {}));
+
+    render(<TestComponent project_id="project-1" />);
+
+    expect(screen.getByTestId("quota").textContent).toBe("55");
+    expect(screen.getByTestId("summary-usage").textContent).toBe("222");
+    expect(screen.getByTestId("summary-label").textContent).toBe("Home");
   });
 
   it("passes through quota warnings", async () => {

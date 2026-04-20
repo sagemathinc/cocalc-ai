@@ -8,6 +8,12 @@ import { assertHardDeleteProjectPermission } from "@cocalc/server/projects/hard-
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 export * from "@cocalc/server/projects/collaborators";
+import {
+  createCollabInvite as createCollabInviteLocal,
+  listCollabInvites as listCollabInvitesLocal,
+  removeCollaborator as removeCollaboratorLocal,
+  respondCollabInvite as respondCollabInviteLocal,
+} from "@cocalc/server/projects/collaborators";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 export * from "@cocalc/server/conat/api/project-snapshots";
 export * from "@cocalc/server/conat/api/project-backups";
@@ -20,6 +26,7 @@ import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-clien
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getConfiguredClusterBayIds } from "@cocalc/server/cluster-config";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
 import type {
@@ -72,6 +79,9 @@ import type {
   ProjectQuotaSettings,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
+  ProjectCollabInviteAction,
+  ProjectCollabInviteDirection,
+  ProjectCollabInviteStatus,
   ProjectRunQuota,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
@@ -88,6 +98,7 @@ import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/accoun
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
+import { fromWire as collabInviteFromWire } from "@cocalc/server/projects/collab-invite-inbox";
 
 // Start/restart can legitimately take a long time because the owning bay may
 // need to provision storage, restore data, pull rootfs layers, or seal a
@@ -678,6 +689,160 @@ export async function getProjectCourseInfo({
 }): Promise<ProjectCourseInfo> {
   return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
     .course;
+}
+
+export async function createCollabInvite({
+  account_id,
+  project_id,
+  invitee_account_id,
+  message,
+  direct,
+}: {
+  account_id?: string;
+  project_id: string;
+  invitee_account_id: string;
+  message?: string;
+  direct?: boolean;
+}) {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  if (ownership.bay_id === getConfiguredBayId()) {
+    return await createCollabInviteLocal({
+      account_id,
+      project_id,
+      invitee_account_id,
+      message,
+      direct,
+    });
+  }
+  const result = await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .create({
+      account_id: account_id!,
+      project_id,
+      invitee_account_id,
+      message,
+      direct,
+    });
+  return {
+    created: result.created,
+    invite: collabInviteFromWire(result.invite),
+  };
+}
+
+export async function listCollabInvites({
+  account_id,
+  project_id,
+  direction,
+  status,
+  limit,
+}: {
+  account_id?: string;
+  project_id?: string;
+  direction?: ProjectCollabInviteDirection;
+  status?: ProjectCollabInviteStatus;
+  limit?: number;
+}) {
+  if (!project_id) {
+    return await listCollabInvitesLocal({
+      account_id,
+      direction,
+      status,
+      limit,
+    });
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await listCollabInvitesLocal({
+      account_id,
+      project_id,
+      direction,
+      status,
+      limit,
+    });
+  }
+  const result = await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .list({
+      account_id: account_id!,
+      project_id,
+      direction,
+      status,
+      limit,
+    });
+  return result.map((invite) => collabInviteFromWire(invite));
+}
+
+export async function removeCollaborator({
+  account_id,
+  opts,
+}: {
+  account_id?: string;
+  opts: {
+    account_id;
+    project_id;
+  };
+}) {
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await removeCollaboratorLocal({ account_id: account_id!, opts });
+  }
+  await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .removeCollaborator({ account_id: account_id!, opts });
+}
+
+function isCollabInviteNotFound(err: unknown, invite_id: string): boolean {
+  const message = err instanceof Error ? err.message : `${err}`;
+  return message.includes(`invite '${invite_id}' not found`);
+}
+
+export async function respondCollabInvite({
+  account_id,
+  invite_id,
+  action,
+}: {
+  account_id?: string;
+  invite_id: string;
+  action: ProjectCollabInviteAction;
+}) {
+  try {
+    return await respondCollabInviteLocal({ account_id, invite_id, action });
+  } catch (err) {
+    if (!isCollabInviteNotFound(err, invite_id)) {
+      throw err;
+    }
+    if (!account_id) {
+      throw err;
+    }
+    const currentBayId = getConfiguredBayId();
+    const include_email = await isAdmin(account_id);
+    for (const bay_id of getConfiguredClusterBayIds()) {
+      if (!bay_id || bay_id === currentBayId) {
+        continue;
+      }
+      try {
+        const result = await getInterBayBridge()
+          .projectCollabInvite(bay_id)
+          .respond({
+            account_id,
+            invite_id,
+            action,
+            include_email,
+          });
+        return collabInviteFromWire(result);
+      } catch (remoteErr) {
+        if (isCollabInviteNotFound(remoteErr, invite_id)) {
+          continue;
+        }
+        throw remoteErr;
+      }
+    }
+    throw err;
+  }
 }
 
 export async function exec({

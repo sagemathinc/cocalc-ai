@@ -1,4 +1,7 @@
-import getStorageOverview, { key } from "./storage-overview";
+import getStorageOverview, {
+  getCachedStorageOverview,
+  key,
+} from "./storage-overview";
 import { useAsyncEffect } from "@cocalc/frontend/app-framework";
 import { useRef, useState } from "react";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -20,12 +23,22 @@ export type StorageCountedSummary = ProjectStorageCountedSummary;
 export default function useDiskUsage({ project_id }: { project_id: string }) {
   const [counter, setCounter] = useState<number>(0);
   const lastCounterRef = useRef<number>(0);
-  const [visible, setVisible] = useState<StorageVisibleSummary[]>([]);
-  const [counted, setCounted] = useState<StorageCountedSummary[]>([]);
+  const homePath = getProjectHomeDirectory(project_id);
+  const cachedOverview = getCachedStorageOverview({
+    project_id,
+    home: homePath,
+  });
+  const [visible, setVisible] = useState<StorageVisibleSummary[]>(
+    () => cachedOverview?.visible ?? [],
+  );
+  const [counted, setCounted] = useState<StorageCountedSummary[]>(
+    () => cachedOverview?.counted ?? [],
+  );
   const [error, setError] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const [quotas, setQuotas] = useState<StorageQuotaSummary[]>([]);
-  const homePath = getProjectHomeDirectory(project_id);
+  const [quotas, setQuotas] = useState<StorageQuotaSummary[]>(
+    () => cachedOverview?.quotas ?? [],
+  );
   const requestKey = key({ project_id, home: homePath });
   const currentRef = useRef<any>(requestKey);
   currentRef.current = requestKey;
@@ -35,6 +48,9 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
     try {
       if (activeRequestKey === currentRef.current) {
         setError(null);
+        setVisible(cachedOverview?.visible ?? []);
+        setCounted(cachedOverview?.counted ?? []);
+        setQuotas(cachedOverview?.quotas ?? []);
         setLoading(true);
       }
       const cache = counter == lastCounterRef.current;
@@ -59,7 +75,7 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
       }
     }
     lastCounterRef.current = counter;
-  }, [project_id, homePath, requestKey, counter]);
+  }, [project_id, homePath, requestKey, counter, cachedOverview]);
 
   return {
     quotas,

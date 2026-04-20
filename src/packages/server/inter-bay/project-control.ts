@@ -11,6 +11,7 @@ import type {
   ProjectReference,
   ProjectControlActiveOperationRequest,
   ProjectControlAddressRequest,
+  ProjectControlBackupRequest,
   ProjectControlMoveRequest,
   ProjectControlMoveResponse,
   ProjectControlRestartRequest,
@@ -18,6 +19,7 @@ import type {
   ProjectControlStateRequest,
   ProjectControlStopRequest,
 } from "@cocalc/conat/inter-bay/api";
+import type { LroStatus, LroSummary } from "@cocalc/conat/hub/api/lro";
 import getPool from "@cocalc/database/pool";
 import { publishLroEvent } from "@cocalc/server/lro/stream";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -36,6 +38,18 @@ import { forwardRemoteStartLroProgress } from "@cocalc/server/inter-bay/start-lr
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
+import { createBackup as createBackupLocal } from "@cocalc/server/conat/api/project-backups";
+import { getLro } from "@cocalc/server/lro/lro-db";
+import { BACKUP_TIMEOUT_MS } from "@cocalc/server/projects/backup-lro";
+import { sleep } from "@cocalc/util/async-utils";
+
+const LRO_TERMINAL_STATUSES = new Set<LroStatus>([
+  "succeeded",
+  "failed",
+  "canceled",
+  "expired",
+]);
+const BACKUP_POLL_INTERVAL_MS = 1_000;
 
 function staleRoutingError({
   project_id,
@@ -182,6 +196,37 @@ export async function handleProjectControlRestart(
       op_id: req.lro_op_id,
     });
   }
+}
+
+export async function handleProjectControlBackup(
+  req: ProjectControlBackupRequest,
+): Promise<LroSummary> {
+  await assertCurrentProjectOwnership({
+    project_id: req.project_id,
+    epoch: req.epoch,
+  });
+  const op = await createBackupLocal(
+    {
+      account_id: req.account_id,
+      project_id: req.project_id,
+      tags: req.tags,
+    },
+    {
+      skip_collab_check: true,
+      skip_owner_route: true,
+    },
+  );
+  const deadline = Date.now() + BACKUP_TIMEOUT_MS + 60_000;
+  while (Date.now() < deadline) {
+    const summary = await getLro(op.op_id);
+    if (summary != null && LRO_TERMINAL_STATUSES.has(summary.status)) {
+      return summary;
+    }
+    await sleep(BACKUP_POLL_INTERVAL_MS, { unref: true });
+  }
+  throw new Error(
+    `timed out waiting for backup operation ${op.op_id} on project ${req.project_id}`,
+  );
 }
 
 export async function handleProjectControlState(
@@ -338,6 +383,15 @@ export async function dispatchProjectControlRpc(
   if (subject === restartExpected) {
     await handleProjectControlRestart(payload as ProjectControlRestartRequest);
     return null;
+  }
+  const backupExpected = projectControlSubject({
+    dest_bay: getConfiguredBayId(),
+    method: "backup",
+  });
+  if (subject === backupExpected) {
+    return await handleProjectControlBackup(
+      payload as ProjectControlBackupRequest,
+    );
   }
   const stateExpected = projectControlSubject({
     dest_bay: getConfiguredBayId(),

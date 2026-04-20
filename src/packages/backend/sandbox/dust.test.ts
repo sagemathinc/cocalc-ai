@@ -1,4 +1,4 @@
-import dust from "./dust";
+import dust, { duOutputToDustJson, resolveDustCommandPath } from "./dust";
 import { dust as dustBin } from "./install";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -17,6 +17,44 @@ const describeDust =
   process.platform === "linux" && existsSync(dustBin)
     ? describe
     : describe.skip;
+
+describe("resolveDustCommandPath", () => {
+  it("uses the configured dust binary when it exists", () => {
+    expect(resolveDustCommandPath((path) => path === dustBin)).toBe(dustBin);
+  });
+
+  it("falls back to the project runtime dust binary when the configured binary is stale", () => {
+    expect(
+      resolveDustCommandPath((path) => path === "/opt/cocalc/bin2/dust"),
+    ).toBe("/opt/cocalc/bin2/dust");
+  });
+
+  it("returns the configured path when no fallback exists so the spawn error stays explicit", () => {
+    expect(resolveDustCommandPath(() => false)).toBe(dustBin);
+  });
+});
+
+describe("duOutputToDustJson", () => {
+  it("converts byte-count du output into the dust JSON shape used by storage scans", () => {
+    expect(
+      JSON.parse(
+        duOutputToDustJson(
+          Buffer.from(
+            "12\t/tmp/project/a\n34\t/tmp/project/b\n50\t/tmp/project\n",
+          ),
+          "/tmp/project",
+        ),
+      ),
+    ).toEqual({
+      size: "50B",
+      name: "/tmp/project",
+      children: [
+        { size: "12B", name: "/tmp/project/a", children: [] },
+        { size: "34B", name: "/tmp/project/b", children: [] },
+      ],
+    });
+  });
+});
 
 describeDust("dust works", () => {
   it("directory starts empty - no results", async () => {

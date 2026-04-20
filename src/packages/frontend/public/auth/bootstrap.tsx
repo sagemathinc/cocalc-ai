@@ -27,8 +27,48 @@ async function loadCustomize(): Promise<CustomizePayload | undefined> {
   }
 }
 
+function appRelativePath(pathname: string): string {
+  if (
+    appBasePath !== "/" &&
+    (pathname === appBasePath || pathname.startsWith(`${appBasePath}/`))
+  ) {
+    return pathname.slice(appBasePath.length) || "/";
+  }
+  return pathname;
+}
+
+export function getPublicAuthRedirectTargetFromSearch(
+  search: string,
+  depth = 0,
+): string | undefined {
+  const target = new URLSearchParams(search).get("target");
+  if (!target || !target.startsWith("/") || target.startsWith("//")) {
+    return undefined;
+  }
+  try {
+    const url = new URL(target, "https://example.invalid");
+    if (url.origin !== "https://example.invalid") {
+      return undefined;
+    }
+    const relative = appRelativePath(url.pathname);
+    if (/^\/(auth|sso|redeem)(\/|$)/.test(relative)) {
+      // The public auth shell itself is loaded through a target wrapper, e.g.
+      // /static/public-auth.html?target=/auth/sign-in?target=/projects/...
+      return depth < 3
+        ? getPublicAuthRedirectTargetFromSearch(url.search, depth + 1)
+        : undefined;
+    }
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function init(): Promise<void> {
   const target = new URLSearchParams(window.location.search).get("target");
+  const redirectToPath = getPublicAuthRedirectTargetFromSearch(
+    window.location.search,
+  );
   const initialPath =
     target &&
     (target.includes("/auth") ||
@@ -60,6 +100,7 @@ export async function init(): Promise<void> {
         initialRequiresToken={!!payload?.registration}
         initialRoute={getPublicAuthRouteFromPath(pathname, search)}
         isAuthenticated={!!payload?.configuration?.is_authenticated}
+        redirectToPath={redirectToPath}
         showPolicies={!!payload?.configuration?.show_policies}
         siteName={payload?.configuration?.site_name ?? SITE_NAME}
       />,

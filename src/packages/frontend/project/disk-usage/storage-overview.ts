@@ -19,6 +19,16 @@ export function key({
   return `${project_id}:${home}`;
 }
 
+export function getCachedStorageOverview({
+  project_id,
+  home,
+}: {
+  project_id: string;
+  home: string;
+}): ProjectStorageOverview | undefined {
+  return storageOverviewCache.get(key({ project_id, home }));
+}
+
 export default async function getStorageOverview({
   project_id,
   home,

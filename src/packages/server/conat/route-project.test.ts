@@ -8,6 +8,9 @@ export {};
 let queryMock: jest.Mock;
 let warnMock: jest.Mock;
 let debugMock: jest.Mock;
+let resolveProjectBayAcrossClusterMock: jest.Mock;
+let projectReferenceGetMock: jest.Mock;
+let hostConnectionGetMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -26,6 +29,24 @@ jest.mock("@cocalc/database/pool", () => ({
   isPgliteEnabled: jest.fn(() => false),
 }));
 
+jest.mock("@cocalc/server/inter-bay/directory", () => ({
+  __esModule: true,
+  resolveProjectBayAcrossCluster: (...args: any[]) =>
+    resolveProjectBayAcrossClusterMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  __esModule: true,
+  getInterBayBridge: jest.fn(() => ({
+    projectReference: jest.fn(() => ({
+      get: (...args: any[]) => projectReferenceGetMock(...args),
+    })),
+    hostConnection: jest.fn(() => ({
+      get: (...args: any[]) => hostConnectionGetMock(...args),
+    })),
+  })),
+}));
+
 describe("route-project bay-aware routing", () => {
   const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
   const HOST_ID = "22222222-2222-4222-8222-222222222222";
@@ -35,6 +56,9 @@ describe("route-project bay-aware routing", () => {
     queryMock = jest.fn();
     warnMock = jest.fn();
     debugMock = jest.fn();
+    resolveProjectBayAcrossClusterMock = jest.fn(async () => null);
+    projectReferenceGetMock = jest.fn(async () => null);
+    hostConnectionGetMock = jest.fn(async () => null);
   });
 
   it("routes a project through a host in the same bay and caches the target", async () => {
@@ -132,6 +156,51 @@ describe("route-project bay-aware routing", () => {
     ).resolves.toBeUndefined();
     expect(routeProjectSubject(`project.${PROJECT_ID}`)).toBeUndefined();
     expect(warnMock).not.toHaveBeenCalled();
+  });
+
+  it("materializes a remote collaborator project through the owning bay host connection", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    resolveProjectBayAcrossClusterMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 4,
+    }));
+    projectReferenceGetMock = jest.fn(async () => ({
+      project_id: PROJECT_ID,
+      host_id: HOST_ID,
+    }));
+    hostConnectionGetMock = jest.fn(async () => ({
+      host_id: HOST_ID,
+      connect_url: "https://remote-host.example.com",
+      host_session_id: "remote-session",
+    }));
+
+    const { materializeRemoteProjectHostTarget, routeProjectSubject } =
+      await import("./route-project");
+
+    await expect(
+      materializeRemoteProjectHostTarget({
+        account_id: "account-1",
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      address: "https://remote-host.example.com",
+      host_id: HOST_ID,
+      host_session_id: "remote-session",
+    });
+    expect(resolveProjectBayAcrossClusterMock).toHaveBeenCalledWith(PROJECT_ID);
+    expect(projectReferenceGetMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      project_id: PROJECT_ID,
+    });
+    expect(hostConnectionGetMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      host_id: HOST_ID,
+    });
+    expect(routeProjectSubject(`file-server.${PROJECT_ID}.api`)).toEqual({
+      address: "https://remote-host.example.com",
+      host_id: HOST_ID,
+      host_session_id: "remote-session",
+    });
   });
 
   it("routes direct host subjects through a host in the same bay", async () => {

@@ -440,7 +440,9 @@ async function handleProvision(row: any) {
   let startupScript: string | undefined;
   if (providerId) {
     try {
-      const { baseUrl } = await resolveLaunchpadBootstrapUrl();
+      const { baseUrl } = await resolveLaunchpadBootstrapUrl({
+        preferCurrentBay: true,
+      });
       const token = await createProjectHostBootstrapToken(row.id);
       startupScript = await buildCloudInitStartupScript(
         row,
@@ -671,7 +673,9 @@ async function handleStart(row: any) {
     });
     let runtimeForStart = runtime;
     try {
-      const { baseUrl } = await resolveLaunchpadBootstrapUrl();
+      const { baseUrl } = await resolveLaunchpadBootstrapUrl({
+        preferCurrentBay: true,
+      });
       const token = await createProjectHostBootstrapToken(row.id);
       const startupScript = await buildCloudInitStartupScript(
         row,
@@ -901,7 +905,9 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
   const provider = entry.provider;
   let runtimeForRestart = runtime;
   try {
-    const { baseUrl } = await resolveLaunchpadBootstrapUrl();
+    const { baseUrl } = await resolveLaunchpadBootstrapUrl({
+      preferCurrentBay: true,
+    });
     const token = await createProjectHostBootstrapToken(row.id);
     const startupScript = await buildCloudInitStartupScript(
       row,
