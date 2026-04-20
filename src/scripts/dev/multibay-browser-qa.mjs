@@ -10,7 +10,8 @@ const require = createRequire(import.meta.url);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = path.resolve(SCRIPT_DIR, "../..");
 const DEFAULT_SCENARIOS = ["sign-in-target", "storage-archives"];
-const KNOWN_SCENARIOS = new Set(DEFAULT_SCENARIOS);
+const INVITE_REDEEM_SCENARIO = "invite-redeem";
+const KNOWN_SCENARIOS = new Set([...DEFAULT_SCENARIOS, INVITE_REDEEM_SCENARIO]);
 
 function usageAndExit(message, code = 1) {
   if (message) {
@@ -20,16 +21,23 @@ function usageAndExit(message, code = 1) {
     [
       "Usage: node scripts/dev/multibay-browser-qa.mjs [options]",
       "",
-      "Required via flags or environment:",
+      "Common inputs via flags or environment:",
       "  --base-url <url>           Stable public site URL, e.g. https://lite4b.cocalc.ai",
       "  --project <uuid>           Project id to open through the stable URL",
-      "  --email <address>          Test account email",
-      "  --password <password>      Test account password",
+      "  --email <address>          Test account email for sign-in/storage scenarios",
+      "  --password <password>      Test account password for sign-in/storage scenarios",
       "",
       "Options:",
       "  --project-title <text>     Visible project title to require after sign-in",
       "  --scenario <name>          Scenario to run; repeatable. Defaults to all.",
-      "                            Known: sign-in-target, storage-archives",
+      "                            Known: sign-in-target, storage-archives, invite-redeem",
+      "  --owner-email <address>    Inviter account for invite-redeem; defaults to --email",
+      "  --owner-password <pass>    Inviter password for invite-redeem; defaults to --password",
+      "  --invitee-email <address>  Invitee account for invite-redeem",
+      "  --invitee-password <pass>  Invitee password for invite-redeem",
+      "  --invite-message <text>    Optional collaborator invite message",
+      "  --invite-reset-before      Remove invitee collaborator before inviting, for disposable fixtures",
+      "  --invite-cleanup-after     Remove invitee collaborator after validation",
       "  --chromium <path>          Chromium executable path (default: /usr/bin/chromium)",
       "  --timeout <ms>             Per-step timeout (default: 60000)",
       "  --headed                   Run Chromium visibly instead of headless",
@@ -44,6 +52,13 @@ function usageAndExit(message, code = 1) {
       "  COCALC_MULTIBAY_QA_PROJECT_ID",
       "  COCALC_MULTIBAY_QA_EMAIL",
       "  COCALC_MULTIBAY_QA_PASSWORD",
+      "  COCALC_MULTIBAY_QA_OWNER_EMAIL",
+      "  COCALC_MULTIBAY_QA_OWNER_PASSWORD",
+      "  COCALC_MULTIBAY_QA_INVITEE_EMAIL",
+      "  COCALC_MULTIBAY_QA_INVITEE_PASSWORD",
+      "  COCALC_MULTIBAY_QA_INVITE_MESSAGE",
+      "  COCALC_MULTIBAY_QA_INVITE_RESET_BEFORE",
+      "  COCALC_MULTIBAY_QA_INVITE_CLEANUP_AFTER",
       "  COCALC_MULTIBAY_QA_PROJECT_TITLE",
       "  COCALC_MULTIBAY_QA_SCENARIOS",
       "  COCALC_MULTIBAY_QA_CHROMIUM",
@@ -101,6 +116,13 @@ function parseArgs(argv) {
     projectId: process.env.COCALC_MULTIBAY_QA_PROJECT_ID ?? "",
     email: process.env.COCALC_MULTIBAY_QA_EMAIL ?? "",
     password: process.env.COCALC_MULTIBAY_QA_PASSWORD ?? "",
+    ownerEmail: process.env.COCALC_MULTIBAY_QA_OWNER_EMAIL ?? "",
+    ownerPassword: process.env.COCALC_MULTIBAY_QA_OWNER_PASSWORD ?? "",
+    inviteeEmail: process.env.COCALC_MULTIBAY_QA_INVITEE_EMAIL ?? "",
+    inviteePassword: process.env.COCALC_MULTIBAY_QA_INVITEE_PASSWORD ?? "",
+    inviteMessage:
+      process.env.COCALC_MULTIBAY_QA_INVITE_MESSAGE ??
+      "Multibay browser QA invite",
     projectTitle: process.env.COCALC_MULTIBAY_QA_PROJECT_TITLE ?? "",
     scenarios: parseScenarioList(process.env.COCALC_MULTIBAY_QA_SCENARIOS),
     chromiumPath:
@@ -112,6 +134,8 @@ function parseArgs(argv) {
     failFast: envFlag("COCALC_MULTIBAY_QA_FAIL_FAST"),
     allowEmptyBackups: envFlag("COCALC_MULTIBAY_QA_ALLOW_EMPTY_BACKUPS"),
     allowEmptySnapshots: envFlag("COCALC_MULTIBAY_QA_ALLOW_EMPTY_SNAPSHOTS"),
+    inviteResetBefore: envFlag("COCALC_MULTIBAY_QA_INVITE_RESET_BEFORE"),
+    inviteCleanupAfter: envFlag("COCALC_MULTIBAY_QA_INVITE_CLEANUP_AFTER"),
     json: envFlag("COCALC_MULTIBAY_QA_JSON"),
   };
 
@@ -133,6 +157,21 @@ function parseArgs(argv) {
     } else if (arg === "--password") {
       options.password = takeValue(argv, i, arg);
       i += 1;
+    } else if (arg === "--owner-email") {
+      options.ownerEmail = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--owner-password") {
+      options.ownerPassword = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--invitee-email") {
+      options.inviteeEmail = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--invitee-password") {
+      options.inviteePassword = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--invite-message") {
+      options.inviteMessage = takeValue(argv, i, arg);
+      i += 1;
     } else if (arg === "--project-title") {
       options.projectTitle = takeValue(argv, i, arg);
       i += 1;
@@ -153,6 +192,10 @@ function parseArgs(argv) {
       options.allowEmptyBackups = true;
     } else if (arg === "--allow-empty-snapshots") {
       options.allowEmptySnapshots = true;
+    } else if (arg === "--invite-reset-before") {
+      options.inviteResetBefore = true;
+    } else if (arg === "--invite-cleanup-after") {
+      options.inviteCleanupAfter = true;
     } else if (arg === "--json") {
       options.json = true;
     } else {
@@ -163,12 +206,38 @@ function parseArgs(argv) {
   options.baseUrl = options.baseUrl.replace(/\/+$/, "");
   options.projectId = options.projectId.trim();
   options.email = options.email.trim();
+  options.ownerEmail = options.ownerEmail.trim() || options.email;
+  options.ownerPassword = options.ownerPassword || options.password;
+  options.inviteeEmail = options.inviteeEmail.trim();
   options.scenarios = normalizeScenarios(options.scenarios);
 
   if (!options.baseUrl) usageAndExit("--base-url is required");
   if (!options.projectId) usageAndExit("--project is required");
-  if (!options.email) usageAndExit("--email is required");
-  if (!options.password) usageAndExit("--password is required");
+  if (
+    options.scenarios.some((scenario) =>
+      ["sign-in-target", "storage-archives"].includes(scenario),
+    )
+  ) {
+    if (!options.email) usageAndExit("--email is required");
+    if (!options.password) usageAndExit("--password is required");
+  }
+  if (options.scenarios.includes(INVITE_REDEEM_SCENARIO)) {
+    if (!options.ownerEmail) {
+      usageAndExit("--owner-email is required for invite-redeem");
+    }
+    if (!options.ownerPassword) {
+      usageAndExit("--owner-password is required for invite-redeem");
+    }
+    if (!options.inviteeEmail) {
+      usageAndExit("--invitee-email is required for invite-redeem");
+    }
+    if (!options.inviteePassword) {
+      usageAndExit("--invitee-password is required for invite-redeem");
+    }
+    if (options.ownerEmail === options.inviteeEmail) {
+      usageAndExit("--owner-email and --invitee-email must be different");
+    }
+  }
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
     usageAndExit("--timeout must be a positive number");
   }
@@ -234,20 +303,22 @@ function createDiagnostics(scenario) {
   };
 }
 
-function attachDiagnostics(page, diagnostics) {
+function attachDiagnostics(page, diagnostics, pageLabel = "") {
   page.on("console", (message) => {
     if (!["warning", "error"].includes(message.type())) return;
     diagnostics.console.push({
+      page: pageLabel,
       type: message.type(),
       text: redact(message.text()),
       location: message.location(),
     });
   });
   page.on("pageerror", (error) => {
-    diagnostics.pageErrors.push(formatError(error));
+    diagnostics.pageErrors.push({ page: pageLabel, error: formatError(error) });
   });
   page.on("requestfailed", (request) => {
     diagnostics.failedRequests.push({
+      page: pageLabel,
       method: request.method(),
       url: redact(request.url()),
       error: request.failure()?.errorText ?? "unknown",
@@ -256,10 +327,23 @@ function attachDiagnostics(page, diagnostics) {
   page.on("response", (response) => {
     if (!response.url().includes("/api/v2/auth/sign-in")) return;
     diagnostics.authResponses.push({
+      page: pageLabel,
       status: response.status(),
       url: redact(response.url()),
     });
   });
+}
+
+async function newQaPage(browser, options, diagnostics, pageLabel) {
+  const context = await browser.newContext({
+    ignoreHTTPSErrors: true,
+    viewport: { width: 1400, height: 900 },
+  });
+  const page = await context.newPage();
+  page.setDefaultTimeout(options.timeoutMs);
+  page.setDefaultNavigationTimeout(options.timeoutMs);
+  attachDiagnostics(page, diagnostics, pageLabel);
+  return { context, page };
 }
 
 function summarizeDiagnostics(diagnostics) {
@@ -289,6 +373,27 @@ async function waitForStableProjectUrl(page, options) {
   );
 }
 
+function primaryCredentials(options) {
+  return {
+    email: options.email,
+    password: options.password,
+  };
+}
+
+function ownerCredentials(options) {
+  return {
+    email: options.ownerEmail,
+    password: options.ownerPassword,
+  };
+}
+
+function inviteeCredentials(options) {
+  return {
+    email: options.inviteeEmail,
+    password: options.inviteePassword,
+  };
+}
+
 function getTargetFromHref(href, options) {
   if (!href) return "";
   try {
@@ -298,7 +403,17 @@ function getTargetFromHref(href, options) {
   }
 }
 
-async function signInToProject(page, options) {
+async function fillAndSubmitSignIn(page, credentials) {
+  await page.getByPlaceholder("you@example.com").fill(credentials.email);
+  await page.getByPlaceholder("Password").fill(credentials.password);
+  await page.getByRole("button", { name: /^Sign In$/i }).click();
+}
+
+async function signInToProject(
+  page,
+  options,
+  credentials = primaryCredentials(options),
+) {
   const projectPath = `/projects/${options.projectId}`;
   await page.goto(`${options.baseUrl}${projectPath}`, {
     waitUntil: "domcontentloaded",
@@ -329,9 +444,7 @@ async function signInToProject(page, options) {
     );
   }
 
-  await page.getByPlaceholder("you@example.com").fill(options.email);
-  await page.getByPlaceholder("Password").fill(options.password);
-  await page.getByRole("button", { name: /^Sign In$/i }).click();
+  await fillAndSubmitSignIn(page, credentials);
 
   await waitForStableProjectUrl(page, options);
   await assertNoStaleBuild(page);
@@ -349,6 +462,22 @@ async function signInToProject(page, options) {
     signInHref: redact(href),
     target: projectPath,
   };
+}
+
+async function signInToRoot(page, options, credentials) {
+  await page.goto(`${options.baseUrl}/auth/sign-in?target=%2F`, {
+    waitUntil: "domcontentloaded",
+    timeout: options.timeoutMs,
+  });
+  await assertNoStaleBuild(page);
+  await fillAndSubmitSignIn(page, credentials);
+  await page.waitForURL(
+    (url) => url.origin === options.baseOrigin && url.pathname === "/",
+    { timeout: options.timeoutMs },
+  );
+  await assertNoStaleBuild(page);
+  await waitForRuntime(page, options);
+  return { finalUrl: redact(page.url()), target: "/" };
 }
 
 async function waitForRuntime(page, options) {
@@ -492,16 +621,281 @@ async function readStorageArchives(page, options) {
   };
 }
 
-async function runScenario(browser, scenario, options) {
-  const diagnostics = createDiagnostics(scenario);
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
-    viewport: { width: 1400, height: 900 },
+async function getSignedInAccountId(page, options) {
+  await waitForRuntime(page, options);
+  const accountId = await page.evaluate(() => {
+    const clientAccountId = globalThis.cc?.client?.account_id;
+    if (typeof clientAccountId === "string" && clientAccountId) {
+      return clientAccountId;
+    }
+    const storeAccountId = globalThis.cc?.redux
+      ?.getStore?.("account")
+      ?.get?.("account_id");
+    return typeof storeAccountId === "string" ? storeAccountId : "";
   });
-  const page = await context.newPage();
-  page.setDefaultTimeout(options.timeoutMs);
-  page.setDefaultNavigationTimeout(options.timeoutMs);
-  attachDiagnostics(page, diagnostics);
+  if (!accountId) {
+    throw new Error("unable to determine signed-in account id");
+  }
+  return accountId;
+}
+
+async function listCollaborators(page, options) {
+  await waitForRuntime(page, options);
+  return await page.evaluate(
+    async ({ projectId }) =>
+      await globalThis.cc.conat.hub.projects.listCollaborators({
+        project_id: projectId,
+      }),
+    { projectId: options.projectId },
+  );
+}
+
+async function isProjectCollaborator(page, options, accountId) {
+  const collaborators = await listCollaborators(page, options);
+  return collaborators.some(
+    (collaborator) => collaborator.account_id === accountId,
+  );
+}
+
+async function waitForCollaboratorState(page, options, accountId, expected) {
+  const deadline = Date.now() + options.timeoutMs;
+  let lastState = false;
+  while (Date.now() < deadline) {
+    lastState = await isProjectCollaborator(page, options, accountId);
+    if (lastState === expected) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error(
+    `timed out waiting for invitee collaborator state ${expected}; last state was ${lastState}`,
+  );
+}
+
+async function removeCollaboratorIfPresent(page, options, accountId) {
+  const present = await isProjectCollaborator(page, options, accountId);
+  if (!present) {
+    return false;
+  }
+  await page.evaluate(
+    async ({ projectId, accountId }) =>
+      await globalThis.cc.conat.hub.projects.removeCollaborator({
+        opts: { project_id: projectId, account_id: accountId },
+      }),
+    { projectId: options.projectId, accountId },
+  );
+  await waitForCollaboratorState(page, options, accountId, false);
+  return true;
+}
+
+async function createCollaboratorInvite(page, options, inviteeAccountId) {
+  await waitForRuntime(page, options);
+  return await page.evaluate(
+    async ({ projectId, inviteeAccountId, message }) =>
+      await globalThis.cc.conat.hub.projects.createCollabInvite({
+        project_id: projectId,
+        invitee_account_id: inviteeAccountId,
+        message,
+      }),
+    {
+      projectId: options.projectId,
+      inviteeAccountId,
+      message: options.inviteMessage,
+    },
+  );
+}
+
+async function acceptCollaboratorInvite(page, options, inviteId) {
+  await waitForRuntime(page, options);
+  return await page.evaluate(
+    async ({ projectId, inviteId, timeoutMs }) => {
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      const hubProjects = globalThis.cc.conat.hub.projects;
+      const deadline = Date.now() + timeoutMs;
+      let lastInviteIds = [];
+      while (Date.now() < deadline) {
+        const invites = await hubProjects.listCollabInvites({
+          project_id: projectId,
+          direction: "inbound",
+          status: "pending",
+          limit: 50,
+        });
+        lastInviteIds = invites.map((invite) => invite.invite_id);
+        const invite = invites.find((candidate) =>
+          inviteId ? candidate.invite_id === inviteId : true,
+        );
+        if (invite) {
+          return await hubProjects.respondCollabInvite({
+            invite_id: invite.invite_id,
+            action: "accept",
+          });
+        }
+        await sleep(1_000);
+      }
+      throw new Error(
+        `timed out waiting for inbound invite ${inviteId}; pending invites=${lastInviteIds.join(",")}`,
+      );
+    },
+    {
+      projectId: options.projectId,
+      inviteId,
+      timeoutMs: options.timeoutMs,
+    },
+  );
+}
+
+async function openProjectAndVerify(page, options) {
+  await page.goto(`${options.baseUrl}/projects/${options.projectId}`, {
+    waitUntil: "domcontentloaded",
+    timeout: options.timeoutMs,
+  });
+  await waitForStableProjectUrl(page, options);
+  await assertNoStaleBuild(page);
+  if (options.projectTitle) {
+    await page.waitForFunction(
+      (title) => document.body?.innerText?.includes(title),
+      options.projectTitle,
+      { timeout: options.timeoutMs },
+    );
+  }
+  await waitForRuntime(page, options);
+  return { finalUrl: redact(page.url()) };
+}
+
+async function runInviteRedeemScenario(browser, options) {
+  const diagnostics = createDiagnostics(INVITE_REDEEM_SCENARIO);
+  const contexts = [];
+  let ownerPage;
+  let inviteeAccountId = "";
+  let accepted = false;
+  let removedAfter = false;
+
+  try {
+    const owner = await newQaPage(browser, options, diagnostics, "owner");
+    contexts.push(owner.context);
+    ownerPage = owner.page;
+    const ownerSignIn = await signInToProject(
+      owner.page,
+      options,
+      ownerCredentials(options),
+    );
+
+    const invitee = await newQaPage(browser, options, diagnostics, "invitee");
+    contexts.push(invitee.context);
+    const inviteeSignIn = await signInToRoot(
+      invitee.page,
+      options,
+      inviteeCredentials(options),
+    );
+    inviteeAccountId = await getSignedInAccountId(invitee.page, options);
+
+    const removedBefore = options.inviteResetBefore
+      ? await removeCollaboratorIfPresent(owner.page, options, inviteeAccountId)
+      : false;
+
+    const alreadyCollaborator = await isProjectCollaborator(
+      owner.page,
+      options,
+      inviteeAccountId,
+    );
+    if (alreadyCollaborator) {
+      throw new Error(
+        "invitee is already a collaborator; use --invite-reset-before with a disposable fixture or choose a non-collaborator invitee",
+      );
+    }
+
+    const createdInvite = await createCollaboratorInvite(
+      owner.page,
+      options,
+      inviteeAccountId,
+    );
+    const acceptedInvite = await acceptCollaboratorInvite(
+      invitee.page,
+      options,
+      createdInvite?.invite?.invite_id,
+    );
+    accepted = true;
+    await waitForCollaboratorState(
+      invitee.page,
+      options,
+      inviteeAccountId,
+      true,
+    );
+    const projectOpen = await openProjectAndVerify(invitee.page, options);
+
+    if (options.inviteCleanupAfter) {
+      removedAfter = await removeCollaboratorIfPresent(
+        owner.page,
+        options,
+        inviteeAccountId,
+      );
+    }
+
+    return {
+      scenario: INVITE_REDEEM_SCENARIO,
+      status: "pass",
+      inviteRedeem: {
+        ownerSignIn,
+        inviteeSignIn,
+        inviteeAccountId,
+        removedBefore,
+        removedAfter,
+        created: Boolean(createdInvite?.created),
+        inviteId: createdInvite?.invite?.invite_id ?? null,
+        acceptedStatus: acceptedInvite?.status ?? null,
+        finalUrl: projectOpen.finalUrl,
+      },
+      diagnostics: summarizeDiagnostics(diagnostics),
+    };
+  } catch (error) {
+    if (
+      options.inviteCleanupAfter &&
+      accepted &&
+      ownerPage &&
+      inviteeAccountId
+    ) {
+      try {
+        removedAfter = await removeCollaboratorIfPresent(
+          ownerPage,
+          options,
+          inviteeAccountId,
+        );
+      } catch {
+        // Preserve the original failure; cleanup is best-effort in failure paths.
+      }
+    }
+    return {
+      scenario: INVITE_REDEEM_SCENARIO,
+      status: "fail",
+      error: formatError(error),
+      inviteRedeem: {
+        inviteeAccountId: inviteeAccountId || null,
+        removedAfter,
+      },
+      diagnostics: summarizeDiagnostics(diagnostics),
+    };
+  } finally {
+    await Promise.all(
+      contexts.map((context) => context.close().catch(() => {})),
+    );
+  }
+}
+
+async function runScenario(browser, scenario, options) {
+  if (scenario === INVITE_REDEEM_SCENARIO) {
+    return await runInviteRedeemScenario(browser, options);
+  }
+
+  const diagnostics = createDiagnostics(scenario);
+  const { context, page } = await newQaPage(
+    browser,
+    options,
+    diagnostics,
+    scenario,
+  );
 
   try {
     if (scenario === "sign-in-target") {
@@ -560,6 +954,22 @@ function printTextResult(result) {
         storage?.firstBackupFileCount != null
           ? `first_backup_files=${storage.firstBackupFileCount}`
           : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  } else if (result.scenario === INVITE_REDEEM_SCENARIO) {
+    const invite = result.inviteRedeem;
+    console.log(
+      [
+        `${prefix} invite-redeem`,
+        `final_url=${invite?.finalUrl ?? result.currentUrl ?? "<unknown>"}`,
+        invite?.inviteId ? `invite=${invite.inviteId}` : "",
+        invite?.acceptedStatus
+          ? `accepted_status=${invite.acceptedStatus}`
+          : "",
+        invite?.removedBefore ? "removed_before=1" : "removed_before=0",
+        invite?.removedAfter ? "removed_after=1" : "removed_after=0",
       ]
         .filter(Boolean)
         .join(" "),

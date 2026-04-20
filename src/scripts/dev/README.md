@@ -188,6 +188,26 @@ Useful options:
 - `--headed` to watch the Chromium run.
 - `--json` for machine-readable output.
 
+Run the account-to-account invite/redeem matrix scenario with an inviter account
+that already has project access and a disposable invitee account that does not:
+
+```bash
+COCALC_MULTIBAY_QA_OWNER_PASSWORD='<owner-password>' \
+COCALC_MULTIBAY_QA_INVITEE_PASSWORD='<invitee-password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --scenario invite-redeem \
+  --base-url https://lite4b.cocalc.ai \
+  --project <project-id> \
+  --project-title '<visible project title>' \
+  --owner-email <owner@example.com> \
+  --invitee-email <invitee@example.com>
+```
+
+For disposable repeatable fixtures, add `--invite-reset-before` to remove the
+invitee from the project before creating the invite. Add
+`--invite-cleanup-after` only when the invitee should not remain a collaborator
+after the run.
+
 ## Codex long-thread benchmark
 
 ```bash
