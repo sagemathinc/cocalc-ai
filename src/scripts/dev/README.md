@@ -184,7 +184,8 @@ Useful options:
 
 - `--scenario sign-in-target`, `--scenario storage-archives`,
   `--scenario invite-redeem`, `--scenario invite-edge-cases`, or
-  `--scenario project-lifecycle` to run one check.
+  `--scenario project-lifecycle`, or `--scenario reconnect-stable-url` to run
+  one check.
 - `--allow-empty-backups` for fixtures that should not require an existing backup.
 - `--allow-empty-snapshots` for fixtures that should not require snapshots.
 - `--headed` to watch the Chromium run.
@@ -241,6 +242,20 @@ pnpm --dir src qa:multibay-browser -- \
   --project-title '<visible project title>' \
   --email <test-account@example.com> \
   --timeout 120000
+```
+
+Run the stable URL reconnect scenario to validate that a signed-in browser can
+survive a network flap without leaving the stable public origin and can still
+read routed project state afterward:
+
+```bash
+COCALC_MULTIBAY_QA_PASSWORD='<password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --scenario reconnect-stable-url \
+  --base-url https://lite4b.cocalc.ai \
+  --project <project-id> \
+  --project-title '<visible project title>' \
+  --email <test-account@example.com>
 ```
 
 ## Codex long-thread benchmark

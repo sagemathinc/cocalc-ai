@@ -13,11 +13,13 @@ const DEFAULT_SCENARIOS = ["sign-in-target", "storage-archives"];
 const INVITE_REDEEM_SCENARIO = "invite-redeem";
 const INVITE_EDGE_CASES_SCENARIO = "invite-edge-cases";
 const PROJECT_LIFECYCLE_SCENARIO = "project-lifecycle";
+const RECONNECT_STABLE_URL_SCENARIO = "reconnect-stable-url";
 const KNOWN_SCENARIOS = new Set([
   ...DEFAULT_SCENARIOS,
   INVITE_REDEEM_SCENARIO,
   INVITE_EDGE_CASES_SCENARIO,
   PROJECT_LIFECYCLE_SCENARIO,
+  RECONNECT_STABLE_URL_SCENARIO,
 ]);
 
 function usageAndExit(message, code = 1) {
@@ -37,7 +39,7 @@ function usageAndExit(message, code = 1) {
       "Options:",
       "  --project-title <text>     Visible project title to require after sign-in",
       "  --scenario <name>          Scenario to run; repeatable. Defaults to all.",
-      "                            Known: sign-in-target, storage-archives, invite-redeem, invite-edge-cases, project-lifecycle",
+      "                            Known: sign-in-target, storage-archives, invite-redeem, invite-edge-cases, project-lifecycle, reconnect-stable-url",
       "  --owner-email <address>    Inviter account for invite scenarios; defaults to --email",
       "  --owner-password <pass>    Inviter password for invite scenarios; defaults to --password",
       "  --invitee-email <address>  Invitee account for invite scenarios",
@@ -226,6 +228,7 @@ function parseArgs(argv) {
         "sign-in-target",
         "storage-archives",
         PROJECT_LIFECYCLE_SCENARIO,
+        RECONNECT_STABLE_URL_SCENARIO,
       ].includes(scenario),
     )
   ) {
@@ -294,6 +297,10 @@ function redact(value) {
       "$1[redacted]",
     )
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/g, "$1[redacted]");
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatError(error) {
@@ -506,6 +513,87 @@ async function waitForRuntime(page, options) {
     undefined,
     { timeout: options.timeoutMs },
   );
+}
+
+async function readProjectStateAfterRoutedReconnect(page, options, label) {
+  await waitForRuntime(page, options);
+  const deadline = Date.now() + options.timeoutMs;
+  let lastError = "";
+  while (Date.now() < deadline) {
+    try {
+      return await page.evaluate(
+        async ({ projectId, timeoutMs, label }) => {
+          function toPlain(value) {
+            return JSON.parse(JSON.stringify(value ?? null));
+          }
+
+          let timer;
+          try {
+            const state = await Promise.race([
+              globalThis.cc.conat.hub.projects.getProjectState({
+                project_id: projectId,
+              }),
+              new Promise((_, reject) => {
+                timer = setTimeout(
+                  () =>
+                    reject(
+                      new Error(
+                        `${label}: getProjectState timed out after ${timeoutMs}ms`,
+                      ),
+                    ),
+                  timeoutMs,
+                );
+              }),
+            ]);
+            return toPlain(state);
+          } finally {
+            clearTimeout(timer);
+          }
+        },
+        { projectId: options.projectId, timeoutMs: options.timeoutMs, label },
+      );
+    } catch (error) {
+      lastError = formatError(error);
+      await sleep(1_000);
+    }
+  }
+  throw new Error(
+    `${label}: unable to read routed project state after reconnect; last error: ${lastError}`,
+  );
+}
+
+async function runReconnectStableUrl(page, context, options) {
+  const before = await readProjectStateAfterRoutedReconnect(
+    page,
+    options,
+    "before-reconnect",
+  );
+  const beforeUrl = page.url();
+
+  await context.setOffline(true);
+  await sleep(Math.min(3_000, Math.max(1_000, options.timeoutMs / 20)));
+  await context.setOffline(false);
+
+  await waitForStableProjectUrl(page, options);
+  const after = await readProjectStateAfterRoutedReconnect(
+    page,
+    options,
+    "after-reconnect",
+  );
+  const afterUrl = page.url();
+
+  if (new URL(afterUrl).origin !== options.baseOrigin) {
+    throw new Error(
+      `reconnect changed origin: expected ${options.baseOrigin}, got ${afterUrl}`,
+    );
+  }
+
+  return {
+    beforeUrl: redact(beforeUrl),
+    afterUrl: redact(afterUrl),
+    beforeState: before,
+    afterState: after,
+  };
 }
 
 function assertFiniteNumber(value, label) {
@@ -1522,6 +1610,17 @@ async function runScenario(browser, scenario, options) {
         diagnostics: summarizeDiagnostics(diagnostics),
       };
     }
+    if (scenario === RECONNECT_STABLE_URL_SCENARIO) {
+      const signIn = await signInToProject(page, options);
+      const reconnect = await runReconnectStableUrl(page, context, options);
+      return {
+        scenario,
+        status: "pass",
+        signIn,
+        reconnect,
+        diagnostics: summarizeDiagnostics(diagnostics),
+      };
+    }
     throw new Error(`unhandled scenario: ${scenario}`);
   } catch (error) {
     return {
@@ -1623,6 +1722,22 @@ function printTextResult(result) {
           : "",
         lifecycle?.terminalAfterStart?.marker ? "terminal_start=1" : "",
         lifecycle?.terminalAfterRestart?.marker ? "terminal_restart=1" : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  } else if (result.scenario === RECONNECT_STABLE_URL_SCENARIO) {
+    const reconnect = result.reconnect;
+    console.log(
+      [
+        `${prefix} reconnect-stable-url`,
+        `final_url=${reconnect?.afterUrl ?? result.currentUrl ?? "<unknown>"}`,
+        reconnect?.beforeState?.state
+          ? `before=${reconnect.beforeState.state}`
+          : "",
+        reconnect?.afterState?.state
+          ? `after=${reconnect.afterState.state}`
+          : "",
       ]
         .filter(Boolean)
         .join(" "),
