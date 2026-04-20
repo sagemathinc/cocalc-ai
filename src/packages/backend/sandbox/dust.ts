@@ -2,6 +2,27 @@ import exec, { type ExecOutput, validate } from "./exec";
 import { type DustOptions } from "@cocalc/conat/files/fs";
 export { type DustOptions };
 import { dust as dustPath } from "./install";
+import { existsSync } from "node:fs";
+
+const fallbackDustPaths = [
+  "/opt/cocalc/bin2/dust",
+  "/usr/local/bin/dust",
+  "/usr/bin/dust",
+];
+
+export function resolveDustCommandPath(
+  exists: (path: string) => boolean = existsSync,
+): string {
+  if (exists(dustPath)) {
+    return dustPath;
+  }
+  for (const path of fallbackDustPaths) {
+    if (exists(path)) {
+      return path;
+    }
+  }
+  return dustPath;
+}
 
 export default async function dust(
   path: string,
@@ -12,7 +33,7 @@ export default async function dust(
   }
 
   return await exec({
-    cmd: dustPath,
+    cmd: resolveDustCommandPath(),
     cwd: path,
     positionalArgs: [path],
     options,

@@ -1,4 +1,4 @@
-import dust from "./dust";
+import dust, { resolveDustCommandPath } from "./dust";
 import { dust as dustBin } from "./install";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -17,6 +17,22 @@ const describeDust =
   process.platform === "linux" && existsSync(dustBin)
     ? describe
     : describe.skip;
+
+describe("resolveDustCommandPath", () => {
+  it("uses the configured dust binary when it exists", () => {
+    expect(resolveDustCommandPath((path) => path === dustBin)).toBe(dustBin);
+  });
+
+  it("falls back to the project runtime dust binary when the configured binary is stale", () => {
+    expect(
+      resolveDustCommandPath((path) => path === "/opt/cocalc/bin2/dust"),
+    ).toBe("/opt/cocalc/bin2/dust");
+  });
+
+  it("returns the configured path when no fallback exists so the spawn error stays explicit", () => {
+    expect(resolveDustCommandPath(() => false)).toBe(dustBin);
+  });
+});
 
 describeDust("dust works", () => {
   it("directory starts empty - no results", async () => {
