@@ -324,6 +324,7 @@ export type HostConnectionMethod =
   | "list"
   | "get-project-start-metadata"
   | "get-backup-config"
+  | "get-seed-backup-config"
   | "record-project-backup"
   | "list-host-projects";
 export type HostControlMethod =
@@ -418,6 +419,15 @@ export interface InterBayHostConnectionApi {
   getBackupConfig: (
     opts: Parameters<Hosts["getBackupConfig"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getBackupConfig"]>>>;
+  getSeedBackupConfig: (opts: {
+    project_id: string;
+    project_region?: string | null;
+    backup_repo_id?: string | null;
+  }) => Promise<{
+    toml: string;
+    ttl_seconds: number;
+    backup_repo_id: string | null;
+  }>;
   recordProjectBackup: (
     opts: Parameters<Hosts["recordProjectBackup"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackup"]>>>;
@@ -439,6 +449,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "getBackupConfig",
     method: "get-backup-config",
+  },
+  {
+    name: "getSeedBackupConfig",
+    method: "get-seed-backup-config",
   },
   {
     name: "recordProjectBackup",

@@ -96,6 +96,7 @@ import {
   recordProjectBackupLocal,
   resolveHostConnectionLocal,
 } from "@cocalc/server/conat/api/hosts";
+import { getSeedProjectBackupConfig } from "@cocalc/server/project-backup";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   deleteProjectedCollabInviteDirect,
@@ -460,6 +461,16 @@ async function startHostConnectionService(): Promise<void> {
         project_id,
         host_region,
         host_machine,
+      }),
+    getSeedBackupConfig: async ({
+      project_id,
+      project_region,
+      backup_repo_id,
+    }) =>
+      await getSeedProjectBackupConfig({
+        project_id,
+        project_region,
+        backup_repo_id,
       }),
     recordProjectBackup: async ({ host_id, project_id, time }) =>
       await recordProjectBackupLocal({ host_id, project_id, time }),
