@@ -60,6 +60,7 @@ export const system = {
   userSearch: authFirst,
   getNames: requireSignedIn,
   adminCreateUser: authFirst,
+  deleteAccount: authFirst,
   adminResetPasswordLink: authFirst,
   sendEmailVerification: authFirst,
   deletePassport: authFirst,
@@ -984,6 +985,16 @@ export interface System {
     no_first_project: boolean;
     password_generated: boolean;
     generated_password?: string;
+  }>;
+
+  deleteAccount: (opts: {
+    account_id?: string;
+    user_account_id: string;
+    only_if_tag?: string;
+  }) => Promise<{
+    account_id: string;
+    home_bay_id: string;
+    status: "deleted";
   }>;
 
   backfillBayOwnership: (opts: {

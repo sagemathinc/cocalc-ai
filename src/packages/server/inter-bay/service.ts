@@ -62,6 +62,8 @@ import {
 } from "@cocalc/server/account/project-feed";
 import {
   createClusterAccount,
+  deleteClusterAccount,
+  deleteLocalClusterAccount,
   getClusterAccountByEmail,
   getClusterAccountById,
   getClusterAccountHomeBayCounts,
@@ -245,6 +247,7 @@ async function startAccountDirectoryService(): Promise<void> {
       }),
     getHomeBayCounts: async () => await getClusterAccountHomeBayCounts(),
     create: async (opts) => await createClusterAccount(opts),
+    delete: async (opts) => await deleteClusterAccount(opts),
   };
   services.push(
     ...createInterBayAccountDirectoryHandlers({
@@ -259,9 +262,10 @@ async function startAccountLocalService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayAccountLocalApi = {
     create: async (opts) => await provisionLocalClusterAccount(opts),
+    delete: async (opts) => await deleteLocalClusterAccount(opts),
   };
   services.push(
-    createInterBayAccountLocalHandler({
+    ...createInterBayAccountLocalHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

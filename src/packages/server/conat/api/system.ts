@@ -34,6 +34,7 @@ import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import {
   createClusterAccount,
+  deleteClusterAccount,
   searchClusterAccounts,
 } from "@cocalc/server/inter-bay/accounts";
 export { getNames } from "@cocalc/server/accounts/get-name";
@@ -1194,6 +1195,35 @@ export async function adminCreateUser({
     }
     throw err;
   }
+}
+
+export async function deleteAccount({
+  account_id,
+  user_account_id,
+  only_if_tag,
+}: {
+  account_id?: string;
+  user_account_id: string;
+  only_if_tag?: string;
+}): Promise<{
+  account_id: string;
+  home_bay_id: string;
+  status: "deleted";
+}> {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  const targetAccountId = `${user_account_id ?? ""}`.trim();
+  if (!targetAccountId) {
+    throw Error("user_account_id is required");
+  }
+  if (targetAccountId !== account_id && !(await isAdmin(account_id))) {
+    throw Error("must be an admin to delete another account");
+  }
+  return await deleteClusterAccount({
+    account_id: targetAccountId,
+    only_if_tag: `${only_if_tag ?? ""}`.trim() || undefined,
+  });
 }
 
 import sendEmailVerification0 from "@cocalc/server/accounts/send-email-verification";
