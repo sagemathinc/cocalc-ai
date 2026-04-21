@@ -41,6 +41,8 @@ module.exports = {
   },
   testMatch: ["**/?(*.)+(spec|test).ts?(x)", "!**/playwright/**"],
   testPathIgnorePatterns: [
+    // Frontend builds write dist/package.json, which collides with the source
+    // package.json in jest-haste-map unless generated output is fully ignored.
     "<rootDir>/dist/",
     "<rootDir>/editors/slate/playwright/",
     "<rootDir>/chat/playwright/",
