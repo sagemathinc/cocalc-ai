@@ -57,33 +57,21 @@ describe("SyncDoc patchflow store change batching", () => {
     await doc.close();
   });
 
-  it("applies a remote patch batch with one Patchflow graph recompute", async () => {
+  it("uses Patchflow's remote batch API", async () => {
     const doc = await openSyncString();
     const envA = { time: legacyPatchId(1000), patch: [], version: 4 };
     const envB = { time: legacyPatchId(2000), patch: [], version: 5 };
     const session = Object.assign(new EventEmitter(), {
-      graph: {
-        add: jest.fn(),
-        versions: jest.fn(() => [envA.time, envB.time]),
-      },
-      lastTimeMs: 0,
-      maxVersion: 0,
-      syncDoc: jest.fn(),
+      applyRemoteBatch: jest.fn(),
       close: jest.fn(),
     });
-    const patchListener = jest.fn();
-    session.on("patch", patchListener);
     const target: any = doc;
     target.patchflowSession = session;
 
     const applied = target.applyPatchflowRemoteBatch([envA, envB]);
 
     expect(applied).toBe(true);
-    expect(session.graph.add).toHaveBeenCalledWith([envA, envB]);
-    expect(session.syncDoc).toHaveBeenCalledTimes(1);
-    expect(session.lastTimeMs).toBe(2000);
-    expect(session.maxVersion).toBe(5);
-    expect(patchListener).toHaveBeenCalledTimes(2);
+    expect(session.applyRemoteBatch).toHaveBeenCalledWith([envA, envB]);
     await doc.close();
   });
 });

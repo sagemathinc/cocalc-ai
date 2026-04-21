@@ -10,3 +10,5 @@ packages:
   - "!**/build/**"
 
 minimumReleaseAge: 4320
+minimumReleaseAgeExclude:
+  - patchflow

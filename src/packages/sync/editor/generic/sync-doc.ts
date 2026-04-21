@@ -2568,44 +2568,11 @@ export class SyncDoc extends EventEmitter {
   };
 
   private applyPatchflowRemoteBatch = (envs: PatchEnvelope[]): boolean => {
-    const session = this.patchflowSession as any;
-    if (
-      session == null ||
-      session.graph == null ||
-      typeof session.graph.add !== "function" ||
-      typeof session.syncDoc !== "function"
-    ) {
+    if (this.patchflowSession == null) {
       return false;
     }
-    try {
-      // Patchflow currently exposes TypeScript-private fields at runtime. Use
-      // them here to avoid recomputing and emitting the full document once per
-      // replayed reconnect patch. If upstream hardens these fields, fall back to
-      // the public per-envelope path above.
-      session.graph.add(envs);
-      for (const env of envs) {
-        session.lastTimeMs = Math.max(
-          session.lastTimeMs ?? 0,
-          decodePatchId(env.time).timeMs,
-        );
-        if (env.version != null) {
-          session.maxVersion = Math.max(session.maxVersion ?? 0, env.version);
-        } else if (typeof session.graph.versions === "function") {
-          session.maxVersion = Math.max(
-            session.maxVersion ?? 0,
-            session.graph.versions().length,
-          );
-        }
-      }
-      session.syncDoc();
-      for (const env of envs) {
-        session.emit?.("patch", env);
-      }
-      return true;
-    } catch (err) {
-      console.warn("patchflow batch apply failed; falling back", err);
-      return false;
-    }
+    this.patchflowSession.applyRemoteBatch(envs);
+    return true;
   };
 
   private get_patches = (): Patch[] => {
