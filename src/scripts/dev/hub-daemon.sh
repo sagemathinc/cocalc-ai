@@ -372,6 +372,16 @@ load_config() {
   fi
 }
 
+unset_agent_runtime_env() {
+  unset COCALC_AGENT_TOKEN
+  unset COCALC_BEARER_TOKEN
+  unset COCALC_BROWSER_ID
+  unset COCALC_PROJECT_ID
+  unset COCALC_PROJECT_INFO_SCOPE
+  unset COCALC_PROJECT_SECRET
+  unset COCALC_SECRET_TOKEN
+}
+
 local_hub_url() {
   local bind_host="${1:-localhost}"
   local port="${2:-9100}"
@@ -569,6 +579,7 @@ start_cluster_bay() {
 
   (
     cd "$SRC_DIR"
+    unset_agent_runtime_env
     export PATH="$SRC_DIR/packages/hub/node_modules/.bin:$SRC_DIR/node_modules/.bin:$PATH:/usr/local/bin:/usr/bin:/bin"
     local node_bin
     node_bin="$(resolve_node_bin || true)"
@@ -853,6 +864,7 @@ start_daemon() {
 
     (
       cd "$SRC_DIR"
+      unset_agent_runtime_env
       export PATH="$SRC_DIR/packages/hub/node_modules/.bin:$SRC_DIR/node_modules/.bin:$PATH:/usr/local/bin:/usr/bin:/bin"
       local node_bin
       node_bin="$(resolve_node_bin || true)"

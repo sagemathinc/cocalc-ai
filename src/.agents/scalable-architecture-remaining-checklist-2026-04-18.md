@@ -380,6 +380,40 @@ Notes:
   close the full adversarial item because host-agent automatic rollback,
   browser-session recovery under load, and partial-failure UX still need live
   drills
+- on 2026-04-21, a corrected background-load daemon restart drill was run
+  against the local 3-bay hub cluster:
+  - selected project: `abd37947-fd69-40ea-999c-190a9458e6b2`
+  - selected host: `host2`
+  - four async project exec jobs completed successfully while `project-host`,
+    `conat-router`, `conat-persist`, and `acp-worker` were restarted through
+    managed rollout operations
+  - foreground exec remained usable after each restart
+  - rollout operation ids:
+    - `conat-persist`: `85b4c21a-4e4c-401b-89a0-43f8dfdf0c89`
+    - `conat-router`: `28550f0e-7e6d-43c7-a2eb-8c2ed6105fa8`
+    - `project-host`: `dbdd22ce-45a0-4075-948d-35cbf254e9c0`
+    - `acp-worker`: `13e3c1f1-9234-40f4-90ed-6fc823e3344a`
+- the browser-session recovery drill exposed two local QA/control-plane issues
+  before the actual recovery test could run:
+  - the hub daemon inherited project-scoped agent environment variables from
+    the shell, causing spawned browsers to attempt auth against a stale project
+  - `system.listBrowserSessions` treated a Conat `callMany` async iterable as a
+    synchronous array and used `timeout` instead of `maxWait`, causing
+    discovery hangs instead of bounded fanout
+- after fixing those two issues, spawned Chromium still failed to register a
+  browser heartbeat: HTTP requests authenticated with the CLI-minted
+  `remember_me`, but the proxied `/conat` websocket reached the Conat server
+  with no auth cookie. This remains the current browser-session recovery
+  blocker.
+- a rollback drill under project exec load found a partial-failure UX bug:
+  rolling `project-host` back to the previous retained version failed because
+  the software URL returned 404, but desired component state had already been
+  rewritten to the unavailable version. The host kept running the last known
+  good daemon, but status showed persistent drift until restoring
+  `--last-known-good`.
+- the rollback desired-state mutation has been changed to preflight project-host
+  artifact availability before rewriting component desired state, so this class
+  of failed rollback should not leave persistent drift.
 
 ### 4. Close Phase 6 Placement / Lifecycle Validation
 

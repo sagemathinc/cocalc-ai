@@ -290,11 +290,13 @@ export type PlaywrightDaemonConfig = {
   spawn_id: string;
   state_file: string;
   target_url: string;
+  sign_in_url?: string;
   headless?: boolean;
   timeout_ms?: number;
   executable_path?: string;
   session_name?: string;
   cookies?: SpawnCookie[];
+  remember_me_storage_keys?: string[];
 };
 
 export type SpawnStateRecord = {
@@ -387,6 +389,7 @@ export type BrowserSessionRegisterUtils = {
     rememberMe?: string;
     accountId?: string;
   }) => SpawnCookie[];
+  buildRememberMeStorageKeys: (apiUrl: string) => string[];
   writeDaemonConfig: (path: string, value: PlaywrightDaemonConfig) => void;
   parseDiscoveryTimeout: (
     value: string | undefined,

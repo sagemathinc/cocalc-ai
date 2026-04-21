@@ -34,11 +34,13 @@ type SpawnDaemonConfig = {
   spawn_id: string;
   state_file: string;
   target_url: string;
+  sign_in_url?: string;
   headless?: boolean;
   timeout_ms?: number;
   executable_path?: string;
   session_name?: string;
   cookies?: SpawnCookie[];
+  remember_me_storage_keys?: string[];
 };
 
 type SpawnDaemonState = {
@@ -62,7 +64,8 @@ type SpawnDaemonState = {
 
 type DaemonRequest = {
   request_id: string;
-  action: "screenshot";
+  action: "evaluate" | "screenshot";
+  expression?: string;
   selector?: string;
   wait_for_idle_ms?: number;
   timeout_ms?: number;
@@ -153,6 +156,7 @@ function readConfig(configPath: string): SpawnDaemonConfig {
   const spawn_id = `${row.spawn_id ?? ""}`.trim();
   const state_file = `${row.state_file ?? ""}`.trim();
   const target_url = `${row.target_url ?? ""}`.trim();
+  const sign_in_url = `${row.sign_in_url ?? ""}`.trim() || undefined;
   if (!spawn_id) throw new Error("daemon config missing spawn_id");
   if (!state_file) throw new Error("daemon config missing state_file");
   if (!target_url) throw new Error("daemon config missing target_url");
@@ -174,15 +178,26 @@ function readConfig(configPath: string): SpawnDaemonConfig {
           `${(x as any).url ?? ""}`.trim(),
       ) as SpawnCookie[])
     : undefined;
+  const remember_me_storage_keys = Array.isArray(row.remember_me_storage_keys)
+    ? Array.from(
+        new Set(
+          row.remember_me_storage_keys
+            .map((key) => `${key ?? ""}`.trim())
+            .filter(Boolean),
+        ),
+      )
+    : undefined;
   return {
     spawn_id,
     state_file,
     target_url,
+    sign_in_url,
     timeout_ms,
     headless,
     executable_path,
     session_name,
     cookies,
+    remember_me_storage_keys,
   };
 }
 
@@ -340,18 +355,33 @@ async function main(): Promise<void> {
   }
   const page = await context.newPage();
   const spawnMarker = spawnMarkerFromUrl(config.target_url);
-  if (spawnMarker) {
+  if (spawnMarker || config.remember_me_storage_keys?.length) {
     await page.addInitScript(
-      ({ marker, storageKey }) => {
+      ({ marker, storageKey, rememberMeStorageKeys }) => {
         try {
-          (globalThis as any).__COCALC_BROWSER_SPAWN_MARKER = marker;
-          globalThis.sessionStorage?.setItem(storageKey, marker);
+          if (marker) {
+            (globalThis as any).__COCALC_BROWSER_SPAWN_MARKER = marker;
+            globalThis.sessionStorage?.setItem(storageKey, marker);
+          }
+          for (const key of rememberMeStorageKeys) {
+            globalThis.localStorage?.setItem(key, "true");
+          }
         } catch {
           // best-effort only
         }
       },
-      { marker: spawnMarker, storageKey: SPAWN_MARKER_STORAGE_KEY },
+      {
+        marker: spawnMarker,
+        storageKey: SPAWN_MARKER_STORAGE_KEY,
+        rememberMeStorageKeys: config.remember_me_storage_keys ?? [],
+      },
     );
+  }
+  if (config.sign_in_url) {
+    await page.goto(config.sign_in_url, {
+      waitUntil: "domcontentloaded",
+      timeout: config.timeout_ms,
+    });
   }
   await page.goto(config.target_url, {
     waitUntil: "domcontentloaded",
@@ -381,7 +411,26 @@ async function main(): Promise<void> {
       const request = readJson(requestPath) as DaemonRequest;
       requestId = `${request?.request_id ?? ""}`.trim();
       if (!requestId) throw new Error("missing request_id");
-      if (`${request?.action ?? ""}`.trim() !== "screenshot") {
+      const action = `${request?.action ?? ""}`.trim();
+      if (action === "evaluate") {
+        const expression = `${request.expression ?? ""}`.trim();
+        if (!expression) {
+          throw new Error("evaluate action requires expression");
+        }
+        writeJsonAtomic(responsePath, {
+          ok: true,
+          request_id: requestId,
+          result: {
+            page_url: page.url(),
+            value: await page.evaluate((source: string) => {
+              return globalThis.eval(source);
+            }, expression),
+          },
+        } satisfies DaemonResponse);
+        safeUnlink(requestPath);
+        return;
+      }
+      if (action !== "screenshot") {
         throw new Error(`unsupported action '${request?.action ?? ""}'`);
       }
       const selector = `${request.selector ?? "body"}`.trim() || "body";

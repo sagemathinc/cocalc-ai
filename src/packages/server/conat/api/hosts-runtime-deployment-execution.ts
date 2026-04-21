@@ -217,28 +217,30 @@ export async function rollbackHostRuntimeDeploymentsInternalHelper({
   });
   const artifact = rollbackTarget.artifact;
   const requested_by = requestedByForRuntimeDeployments({ account_id, row });
-  const updatedDeployments = await setProjectHostRuntimeDeployments({
-    scope_type: "host",
-    host_id: row.id,
-    requested_by,
-    replace: false,
-    deployments: [
-      {
-        target_type: deployment.target_type,
-        target: deployment.target,
-        desired_version: rollback_version,
-        rollout_policy: deployment.rollout_policy,
-        drain_deadline_seconds: deployment.drain_deadline_seconds,
-        rollout_reason:
-          `${reason ?? deployment.rollout_reason ?? ""}`.trim() || undefined,
-        metadata: deployment.metadata,
-      },
-    ],
-  });
-  const updatedDeployment = updatedDeployments.find(
-    (entry) => entry.target_type === target_type && entry.target === target,
-  );
+  const rollbackDeployment = {
+    target_type: deployment.target_type,
+    target: deployment.target,
+    desired_version: rollback_version,
+    rollout_policy: deployment.rollout_policy,
+    drain_deadline_seconds: deployment.drain_deadline_seconds,
+    rollout_reason:
+      `${reason ?? deployment.rollout_reason ?? ""}`.trim() || undefined,
+    metadata: deployment.metadata,
+  };
+  const setRollbackDeployment = async () => {
+    const updatedDeployments = await setProjectHostRuntimeDeployments({
+      scope_type: "host",
+      host_id: row.id,
+      requested_by,
+      replace: false,
+      deployments: [rollbackDeployment],
+    });
+    return updatedDeployments.find(
+      (entry) => entry.target_type === target_type && entry.target === target,
+    );
+  };
   if (artifact === "bootstrap-environment") {
+    const updatedDeployment = await setRollbackDeployment();
     assertCloudHostBootstrapReconcileSupported(row);
     await reconcileCloudHostBootstrapOverSsh({
       host_id: row.id,
@@ -264,6 +266,9 @@ export async function rollbackHostRuntimeDeploymentsInternalHelper({
   const currentArtifactVersion =
     `${rollbackTarget.current_version ?? ""}`.trim();
   if (currentArtifactVersion !== rollback_version) {
+    // Preflight artifact availability before mutating desired runtime state.
+    // A failed rollback must not leave components pinned to an unavailable
+    // artifact version.
     const upgrade = await upgradeHostSoftwareInternal({
       account_id,
       id: row.id,
@@ -271,6 +276,7 @@ export async function rollbackHostRuntimeDeploymentsInternalHelper({
     });
     upgrade_results = upgrade.results ?? [];
   }
+  const updatedDeployment = await setRollbackDeployment();
   if (target_type === "artifact") {
     if (
       target === "project-host" &&

@@ -246,8 +246,8 @@ async function getLiveBrowserControlStatus(): Promise<BayLoadBrowserControlStatu
   try {
     const client = conat();
     await client.waitUntilSignedIn({ timeout: 3_000 });
-    const statsByNode = await sysApiMany(client, { timeout: 2_000 }).stats();
-    for (const node of statsByNode ?? []) {
+    const statsByNode = await sysApiMany(client, { maxWait: 2_000 }).stats();
+    for await (const node of statsByNode ?? []) {
       for (const sockets of Object.values(node ?? {})) {
         for (const stat of Object.values(sockets ?? {})) {
           const s = stat as ConnectionStats | undefined;
@@ -1783,8 +1783,8 @@ async function getLiveBrowserSessionInfo(
   try {
     const client = conat();
     await client.waitUntilSignedIn({ timeout: 3_000 });
-    const statsByNode = await sysApiMany(client, { timeout: 2_000 }).stats();
-    for (const node of statsByNode ?? []) {
+    const statsByNode = await sysApiMany(client, { maxWait: 2_000 }).stats();
+    for await (const node of statsByNode ?? []) {
       for (const sockets of Object.values(node ?? {})) {
         for (const stat of Object.values(sockets ?? {})) {
           const s = stat as ConnectionStats | undefined;

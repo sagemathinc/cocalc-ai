@@ -6,6 +6,15 @@
 import { rollbackHostRuntimeDeploymentsInternalHelper } from "./hosts-runtime-deployment-execution";
 
 describe("rollbackHostRuntimeDeploymentsInternalHelper", () => {
+  const targetKeyForRuntimeDeployment = ({ target_type, target }) =>
+    `${target_type}:${target}`;
+  const resolveRollbackVersion = ({ rollbackTarget, last_known_good }) => ({
+    rollback_version: last_known_good
+      ? rollbackTarget.last_known_good_version
+      : (rollbackTarget.previous_version ?? "project-host-v1"),
+    rollback_source: last_known_good ? "last_known_good" : "previous_version",
+  });
+
   it("rolls back bootstrap-environment by reconciling bootstrap over ssh", async () => {
     const row = {
       id: "host-1",
@@ -61,16 +70,8 @@ describe("rollbackHostRuntimeDeploymentsInternalHelper", () => {
           },
         ],
       }),
-      targetKeyForRuntimeDeployment: ({ target_type, target }) =>
-        `${target_type}:${target}`,
-      resolveRollbackVersion: ({ rollbackTarget, last_known_good }) => ({
-        rollback_version: last_known_good
-          ? rollbackTarget.last_known_good_version
-          : "bootstrap-v0",
-        rollback_source: last_known_good
-          ? "last_known_good"
-          : "explicit_version",
-      }),
+      targetKeyForRuntimeDeployment,
+      resolveRollbackVersion,
       requestedByForRuntimeDeployments: () => "tester",
       setProjectHostRuntimeDeployments,
       upgradeHostSoftwareInternal,
@@ -117,5 +118,59 @@ describe("rollbackHostRuntimeDeploymentsInternalHelper", () => {
     expect(upgradeHostSoftwareInternal).not.toHaveBeenCalled();
     expect(reconcileProjectHostComponent).not.toHaveBeenCalled();
     expect(rolloutProjectHostArtifact).not.toHaveBeenCalled();
+  });
+
+  it("does not rewrite component desired state when artifact preflight fails", async () => {
+    const setProjectHostRuntimeDeployments = jest.fn();
+    const upgradeHostSoftwareInternal = jest.fn(async () => {
+      throw new Error("artifact unavailable");
+    });
+
+    await expect(
+      rollbackHostRuntimeDeploymentsInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        target_type: "component",
+        target: "project-host",
+        reason: "test failed rollback",
+        loadHostForStartStop: async () => ({ id: "host-1", status: "running" }),
+        assertHostRunningForUpgrade: () => undefined,
+        getHostRuntimeDeploymentStatus: async () => ({
+          effective: [
+            {
+              target_type: "component",
+              target: "project-host",
+              desired_version: "project-host-v2",
+              rollout_policy: "restart_now",
+            },
+          ],
+          rollback_targets: [
+            {
+              target_type: "component",
+              target: "project-host",
+              artifact: "project-host",
+              current_version: "project-host-v2",
+              previous_version: "project-host-v1",
+            },
+          ],
+        }),
+        targetKeyForRuntimeDeployment,
+        resolveRollbackVersion,
+        requestedByForRuntimeDeployments: () => "tester",
+        setProjectHostRuntimeDeployments,
+        upgradeHostSoftwareInternal,
+        reconcileProjectHostComponent: jest.fn(),
+        rolloutProjectHostArtifact: jest.fn(),
+        assertCloudHostBootstrapReconcileSupported: jest.fn(),
+        reconcileCloudHostBootstrapOverSsh: jest.fn(),
+      }),
+    ).rejects.toThrow("artifact unavailable");
+
+    expect(upgradeHostSoftwareInternal).toHaveBeenCalledWith({
+      account_id: "account-1",
+      id: "host-1",
+      targets: [{ artifact: "project-host", version: "project-host-v1" }],
+    });
+    expect(setProjectHostRuntimeDeployments).not.toHaveBeenCalled();
   });
 });

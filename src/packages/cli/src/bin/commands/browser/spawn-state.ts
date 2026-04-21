@@ -306,6 +306,24 @@ export function buildSpawnCookies({
   return out;
 }
 
+export function buildRememberMeStorageKeys(apiUrl: string): string[] {
+  let basePath = "/";
+  try {
+    basePath = new URL(apiUrl).pathname || "/";
+  } catch {
+    basePath = "/";
+  }
+  basePath = basePath.replace(/\/+$/, "") || "/";
+  const normalizedBasePath = basePath.startsWith("/")
+    ? basePath.slice(1)
+    : basePath;
+  const keys = ["remember_me"];
+  if (normalizedBasePath) {
+    keys.push(`remember_me${normalizedBasePath}`);
+  }
+  return Array.from(new Set(keys));
+}
+
 export async function waitForSpawnStateReady({
   stateFile,
   timeoutMs,

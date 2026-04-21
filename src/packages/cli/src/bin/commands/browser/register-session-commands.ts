@@ -47,11 +47,21 @@ async function resolveSpawnRememberMeCookie({
 }: {
   ctx: BrowserCommandContext;
   apiUrl: string;
-}): Promise<{ remember_me?: string; account_id?: string }> {
+}): Promise<{
+  remember_me?: string;
+  account_id?: string;
+  sign_in_url?: string;
+}> {
+  const authToken = await ctx.hub.system.generateUserAuthToken({
+    user_account_id: ctx.accountId,
+  });
+  const url = new URL("/auth/impersonate", apiUrl);
+  url.searchParams.set("auth_token", authToken);
   try {
-    return await ctx.hub.system.issueBrowserSignInCookie({
+    const cookie = await ctx.hub.system.issueBrowserSignInCookie({
       max_age_ms: DEFAULT_SIGN_IN_COOKIE_MAX_AGE_MS,
     });
+    return { ...cookie, sign_in_url: url.toString() };
   } catch (err) {
     const message =
       err instanceof Error ? err.message : `${err ?? "unknown error"}`;
@@ -60,11 +70,6 @@ async function resolveSpawnRememberMeCookie({
     }
   }
 
-  const authToken = await ctx.hub.system.generateUserAuthToken({
-    user_account_id: ctx.accountId,
-  });
-  const url = new URL("/auth/impersonate", apiUrl);
-  url.searchParams.set("auth_token", authToken);
   const response = await fetch(url.toString(), {
     redirect: "manual",
   });
@@ -77,7 +82,11 @@ async function resolveSpawnRememberMeCookie({
       "failed to bootstrap browser remember_me cookie via /auth/impersonate",
     );
   }
-  return { remember_me, account_id: ctx.accountId };
+  return {
+    remember_me,
+    account_id: ctx.accountId,
+    sign_in_url: url.toString(),
+  };
 }
 
 type RegisterSessionDeps = {
@@ -104,6 +113,7 @@ export function registerBrowserSessionCommands({
     resolveChromiumExecutablePath,
     resolveSecret,
     buildSpawnCookies,
+    buildRememberMeStorageKeys,
     writeDaemonConfig,
     parseDiscoveryTimeout,
     waitForSpawnStateReady,
@@ -412,6 +422,7 @@ export function registerBrowserSessionCommands({
               spawn_id: spawnId,
               state_file: stateFile,
               target_url: markedTargetUrl,
+              sign_in_url: signInCookie?.sign_in_url,
               headless: spawnHeadless,
               timeout_ms: parseDiscoveryTimeout(
                 opts.readyTimeout,
@@ -420,6 +431,9 @@ export function registerBrowserSessionCommands({
               executable_path: chromiumPath,
               session_name: sessionName,
               cookies,
+              remember_me_storage_keys: signInCookie?.remember_me
+                ? buildRememberMeStorageKeys(parsedApiUrl)
+                : undefined,
             });
             const child = spawnProcess(
               process.execPath,
