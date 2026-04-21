@@ -53,7 +53,7 @@ describe("automation form helpers", () => {
         window_end_local_time: "23:59",
         timezone: "America/Los_Angeles",
       }),
-    ).toBe("Mon-Fri Every 2 hours all day America/Los_Angeles");
+    ).toBe("Mon-Fri Every 2 hours all day");
   });
 
   it("hides next run when the automation is paused", () => {
