@@ -70,6 +70,20 @@ function currentProjectHostVersion(): string | undefined {
   );
 }
 
+function normalizeProjectHostRuntimeVersion(
+  version: string | undefined,
+): string | undefined {
+  const normalized = `${version ?? ""}`.trim();
+  if (!normalized) return;
+  const versions = getSoftwareVersions();
+  const currentVersion = `${versions.project_host ?? ""}`.trim();
+  const currentBuildId = `${versions.project_host_build_id ?? ""}`.trim();
+  if (currentBuildId && currentVersion && normalized === currentVersion) {
+    return currentBuildId;
+  }
+  return normalized;
+}
+
 function readPidFile(pidFile: string): number | undefined {
   try {
     const raw = readFileSync(pidFile, "utf8").trim();
@@ -191,7 +205,9 @@ function routerSnapshot(): ManagedComponentSnapshot {
     managed: true,
     desired_version,
     running_versions: uniqueNonEmpty(
-      running_pids.map((value) => inferBundleVersionFromPid(value)),
+      running_pids.map((value) =>
+        normalizeProjectHostRuntimeVersion(inferBundleVersionFromPid(value)),
+      ),
     ),
     running_pids,
   };
@@ -215,7 +231,9 @@ function persistSnapshot(): ManagedComponentSnapshot {
     managed: true,
     desired_version,
     running_versions: uniqueNonEmpty(
-      running_pids.map((value) => inferBundleVersionFromPid(value)),
+      running_pids.map((value) =>
+        normalizeProjectHostRuntimeVersion(inferBundleVersionFromPid(value)),
+      ),
     ),
     running_pids,
   };
@@ -276,4 +294,5 @@ export function getManagedComponentStatus(): HostManagedComponentStatus[] {
 
 export const __test__ = {
   summarizeManagedComponentStatus,
+  normalizeProjectHostRuntimeVersion,
 };

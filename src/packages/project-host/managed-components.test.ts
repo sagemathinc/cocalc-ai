@@ -1,6 +1,19 @@
+jest.mock("./software", () => ({
+  getSoftwareVersions: jest.fn(() => ({})),
+}));
+
+import { getSoftwareVersions } from "./software";
 import { __test__ } from "./managed-components";
 
+const getSoftwareVersionsMock = getSoftwareVersions as jest.MockedFunction<
+  typeof getSoftwareVersions
+>;
+
 describe("managed component status model", () => {
+  beforeEach(() => {
+    getSoftwareVersionsMock.mockReturnValue({});
+  });
+
   it("marks disabled components as disabled with unknown version state", () => {
     expect(
       __test__.summarizeManagedComponentStatus({
@@ -71,5 +84,19 @@ describe("managed component status model", () => {
       runtime_state: "running",
       version_state: "mixed",
     });
+  });
+
+  it("normalizes the current numeric project-host bundle version to its build id", () => {
+    getSoftwareVersionsMock.mockReturnValue({
+      project_host: "1776808579069",
+      project_host_build_id: "20260421T215608Z-39cf7e213a49",
+    });
+
+    expect(__test__.normalizeProjectHostRuntimeVersion("1776808579069")).toBe(
+      "20260421T215608Z-39cf7e213a49",
+    );
+    expect(__test__.normalizeProjectHostRuntimeVersion("1776577465070")).toBe(
+      "1776577465070",
+    );
   });
 });
