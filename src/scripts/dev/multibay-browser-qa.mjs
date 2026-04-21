@@ -12,6 +12,7 @@ const SRC_ROOT = path.resolve(SCRIPT_DIR, "../..");
 const DEFAULT_SCENARIOS = ["sign-in-target", "storage-archives"];
 const INVITE_REDEEM_SCENARIO = "invite-redeem";
 const INVITE_EDGE_CASES_SCENARIO = "invite-edge-cases";
+const NOTEBOOK_RUNTIME_SCENARIO = "notebook-runtime";
 const PROJECT_LIFECYCLE_SCENARIO = "project-lifecycle";
 const RECONNECT_STABLE_URL_SCENARIO = "reconnect-stable-url";
 const SIGN_UP_HOME_BAY_SCENARIO = "sign-up-home-bay";
@@ -20,6 +21,7 @@ const KNOWN_SCENARIOS = new Set([
   ...DEFAULT_SCENARIOS,
   INVITE_REDEEM_SCENARIO,
   INVITE_EDGE_CASES_SCENARIO,
+  NOTEBOOK_RUNTIME_SCENARIO,
   PROJECT_LIFECYCLE_SCENARIO,
   RECONNECT_STABLE_URL_SCENARIO,
   SIGN_UP_HOME_BAY_SCENARIO,
@@ -43,7 +45,7 @@ function usageAndExit(message, code = 1) {
       "Options:",
       "  --project-title <text>     Visible project title to require after sign-in",
       "  --scenario <name>          Scenario to run; repeatable. Defaults to all.",
-      "                            Known: sign-in-target, storage-archives, invite-redeem, invite-edge-cases, project-lifecycle, reconnect-stable-url, sign-up-home-bay, terminal-interactive",
+      "                            Known: sign-in-target, storage-archives, invite-redeem, invite-edge-cases, notebook-runtime, project-lifecycle, reconnect-stable-url, sign-up-home-bay, terminal-interactive",
       "  --registration-token <t>   Registration token for sign-up-home-bay when required",
       "  --expected-home-bay <id>   Assert created/signed-in account home bay, e.g. bay-2",
       "  --first-name <text>        First name for sign-up-home-bay (default: QA)",
@@ -263,6 +265,7 @@ function parseArgs(argv) {
       [
         "sign-in-target",
         "storage-archives",
+        NOTEBOOK_RUNTIME_SCENARIO,
         PROJECT_LIFECYCLE_SCENARIO,
         RECONNECT_STABLE_URL_SCENARIO,
         SIGN_UP_HOME_BAY_SCENARIO,
@@ -1266,6 +1269,297 @@ async function runTerminalInteractive(page, options) {
   return result;
 }
 
+async function runNotebookRuntime(page, options) {
+  await waitForRuntime(page, options);
+  const result = await page.evaluate(
+    async ({ projectId, timeoutMs }) => {
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      function toPlain(value) {
+        return JSON.parse(JSON.stringify(value ?? null));
+      }
+
+      function syncdbPath(path) {
+        if (path.endsWith("jupyter2")) {
+          return path;
+        }
+        const parts = path.split("/");
+        const tail = parts.pop();
+        return [...parts, `.${tail}.sage-jupyter2`]
+          .filter((part, index) => index === 0 || part !== "")
+          .join("/");
+      }
+
+      async function withTimeout(label, promise, timeout = timeoutMs) {
+        let timer;
+        try {
+          return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(new Error(`${label} timed out after ${timeout}ms`)),
+                timeout,
+              );
+            }),
+          ]);
+        } catch (err) {
+          throw new Error(`${label} failed: ${err}`);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      async function ensureProjectRunning() {
+        const projects = globalThis.cc.conat.hub.projects;
+        const state = await withTimeout(
+          "getProjectState",
+          projects.getProjectState({ project_id: projectId }),
+        );
+        if (state?.state === "running") {
+          return state;
+        }
+        await withTimeout(
+          "startProject",
+          projects.start({ project_id: projectId, wait: true }),
+        );
+        const deadline = Date.now() + timeoutMs;
+        let last = state;
+        while (Date.now() < deadline) {
+          last = await withTimeout(
+            "getProjectState",
+            projects.getProjectState({ project_id: projectId }),
+          );
+          if (last?.state === "running") {
+            return last;
+          }
+          await sleep(1000);
+        }
+        throw new Error(
+          `project did not reach running; last state=${JSON.stringify(last)}`,
+        );
+      }
+
+      function chooseKernel(kernels) {
+        if (!Array.isArray(kernels) || kernels.length === 0) {
+          throw new Error("no jupyter kernels available");
+        }
+        return (
+          kernels.find((kernel) => kernel?.name === "python3") ??
+          kernels.find((kernel) =>
+            `${kernel?.name ?? ""}`.toLowerCase().includes("python"),
+          ) ??
+          kernels[0]
+        );
+      }
+
+      async function waitForOutput(predicate, outputs, errors) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (errors.length > 0) {
+            throw new Error(`jupyter socket error: ${errors.join("; ")}`);
+          }
+          if (predicate()) {
+            return;
+          }
+          await sleep(100);
+        }
+        throw new Error(
+          `timed out waiting for jupyter output; output tail=${JSON.stringify(outputs.slice(-10))}`,
+        );
+      }
+
+      await ensureProjectRunning();
+
+      const conatClient = globalThis.cc.conat.conat();
+      const api = globalThis.cc.conat.projectApi({ project_id: projectId });
+      const fs = conatClient.fs({ project_id: projectId });
+      const kernels = await withTimeout(
+        "jupyter-kernels",
+        api.jupyter.kernels(),
+      );
+      const kernel = chooseKernel(kernels);
+      const marker = `multibay_notebook_${Date.now()}`;
+      const stdinValue = `${marker}_stdin`;
+      const notebookPath = `.smoke/${marker}.ipynb`;
+      const runPath = syncdbPath(notebookPath);
+      const cellId = "qa-cell";
+      const cellInput = [
+        `print("${marker}:start")`,
+        `value = input("qa input: ")`,
+        `print("STDIN:" + value)`,
+        "print(6 * 7)",
+      ].join("\n");
+      const notebook = {
+        cells: [
+          {
+            id: cellId,
+            cell_type: "code",
+            execution_count: null,
+            metadata: {},
+            outputs: [],
+            source: cellInput.split("\n").map((line) => `${line}\n`),
+          },
+        ],
+        metadata: {
+          kernelspec: {
+            name: kernel.name,
+            display_name: kernel.display_name ?? kernel.name,
+            language: kernel.language ?? "python",
+          },
+          language_info: {
+            name: kernel.language ?? "python",
+          },
+        },
+        nbformat: 4,
+        nbformat_minor: 5,
+      };
+
+      const socket = conatClient.socket.connect(
+        `jupyter.project-${projectId}.0`,
+      );
+      const outputs = [];
+      const errors = [];
+      let closed = false;
+      let stdinRequests = 0;
+      let runDone = false;
+      socket.on("data", (batch, headers) => {
+        if (headers?.error) {
+          errors.push(`${headers.error}`);
+        }
+        if (batch == null) {
+          closed = true;
+          return;
+        }
+        if (!Array.isArray(batch)) {
+          return;
+        }
+        for (const mesg of batch) {
+          outputs.push(mesg);
+          if (mesg?.lifecycle === "run_done" || mesg?.msg_type === "run_done") {
+            runDone = true;
+          }
+        }
+      });
+      socket.on("request", (mesg) => {
+        if (mesg?.data?.type === "stdin") {
+          stdinRequests += 1;
+          mesg.respondSync(stdinValue);
+          return;
+        }
+        mesg.respondSync(null);
+      });
+
+      try {
+        await withTimeout(
+          "mkdir-smoke",
+          fs.mkdir(".smoke", { recursive: true }),
+        );
+        await withTimeout(
+          "write-notebook",
+          fs.writeFile(notebookPath, JSON.stringify(notebook, null, 2)),
+        );
+        await withTimeout("jupyter-start", api.jupyter.start(runPath));
+
+        const runId = `qa-${Date.now()}`;
+        const ack = await withTimeout(
+          "jupyter-run",
+          socket.request(
+            {
+              cmd: "run",
+              path: runPath,
+              cells: [{ id: cellId, input: cellInput }],
+              run_id: runId,
+              limit: 20_000,
+            },
+            { timeout: timeoutMs },
+          ),
+        );
+
+        await waitForOutput(() => runDone || closed, outputs, errors);
+
+        const text = outputs
+          .map((mesg) => {
+            const content = mesg?.content;
+            const data = content?.data;
+            return [
+              content?.text,
+              typeof data?.["text/plain"] === "string"
+                ? data["text/plain"]
+                : undefined,
+            ]
+              .filter(Boolean)
+              .join("\n");
+          })
+          .join("\n");
+        const status = await withTimeout(
+          "jupyter-kernel-status",
+          socket.request({ cmd: "get-kernel-status", path: runPath }),
+        );
+
+        return toPlain({
+          marker,
+          notebookPath,
+          runPath,
+          kernelName: kernel.name,
+          ack: ack?.data,
+          status: status?.data,
+          stdinRequests,
+          outputCount: outputs.length,
+          sawStart: text.includes(`${marker}:start`),
+          sawStdin: text.includes(`STDIN:${stdinValue}`),
+          sawAnswer: text.includes("42"),
+          sawRunDone: runDone,
+          socketClosed: closed,
+          textTail: text.slice(-1000),
+        });
+      } finally {
+        try {
+          await withTimeout("jupyter-stop", api.jupyter.stop(runPath), 10_000);
+        } catch {
+          // Best effort; deleting the disposable files below is still safe.
+        }
+        try {
+          await withTimeout(
+            "remove-notebook",
+            fs.rm([notebookPath, runPath], { force: true, recursive: true }),
+            10_000,
+          );
+        } catch {
+          // Best effort cleanup for disposable QA files.
+        }
+        try {
+          socket.close();
+        } catch {}
+      }
+    },
+    { projectId: options.projectId, timeoutMs: options.timeoutMs },
+  );
+
+  if (!result?.sawStart) {
+    throw new Error(
+      `notebook output missing start marker; tail=${JSON.stringify(result?.textTail ?? "")}`,
+    );
+  }
+  if (!result?.sawStdin || result?.stdinRequests < 1) {
+    throw new Error(
+      `notebook stdin path failed; requests=${result?.stdinRequests ?? 0} tail=${JSON.stringify(result?.textTail ?? "")}`,
+    );
+  }
+  if (!result?.sawAnswer) {
+    throw new Error(
+      `notebook output missing arithmetic result; tail=${JSON.stringify(result?.textTail ?? "")}`,
+    );
+  }
+  if (!result?.sawRunDone) {
+    throw new Error("notebook run did not emit run_done lifecycle marker");
+  }
+
+  return result;
+}
+
 async function getSignedInAccountId(page, options) {
   await waitForRuntime(page, options);
   const accountId = await page.evaluate(() => {
@@ -2047,6 +2341,17 @@ async function runScenario(browser, scenario, options) {
         diagnostics: summarizeDiagnostics(diagnostics),
       };
     }
+    if (scenario === NOTEBOOK_RUNTIME_SCENARIO) {
+      const signIn = await signInToProject(page, options);
+      const notebookRuntime = await runNotebookRuntime(page, options);
+      return {
+        scenario,
+        status: "pass",
+        signIn,
+        notebookRuntime,
+        diagnostics: summarizeDiagnostics(diagnostics),
+      };
+    }
     if (scenario === PROJECT_LIFECYCLE_SCENARIO) {
       const signIn = await signInToProject(page, options);
       const lifecycle = await runProjectLifecycle(page, options);
@@ -2203,6 +2508,24 @@ function printTextResult(result) {
           : "",
         Array.isArray(terminal?.resizeEvents)
           ? `resize_events=${terminal.resizeEvents.length}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  } else if (result.scenario === NOTEBOOK_RUNTIME_SCENARIO) {
+    const notebook = result.notebookRuntime;
+    console.log(
+      [
+        `${prefix} notebook-runtime`,
+        `final_url=${result.signIn?.finalUrl ?? result.currentUrl ?? "<unknown>"}`,
+        notebook?.kernelName ? `kernel=${notebook.kernelName}` : "",
+        notebook?.sawStart ? "stream=1" : "",
+        notebook?.sawStdin ? "stdin=1" : "",
+        notebook?.sawAnswer ? "answer=1" : "",
+        notebook?.sawRunDone ? "run_done=1" : "",
+        Number.isFinite(notebook?.outputCount)
+          ? `outputs=${notebook.outputCount}`
           : "",
       ]
         .filter(Boolean)

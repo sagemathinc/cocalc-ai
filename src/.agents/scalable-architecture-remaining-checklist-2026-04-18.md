@@ -82,6 +82,10 @@ Recent 3-way fixture validation:
     `reconnection:false` terminal-editor assumption: stream delivery, stdin,
     pty resize via `stty`, `sizes()`, resize broadcast, history, and cleanup
     all validated through the stable URL fixture
+  - browser notebook runtime smoke passed: disposable notebook creation through
+    routed project FS, Jupyter backend start through project API, raw routed
+    `jupyter.project-*` socket execution, stdin request/response, output
+    streaming, run completion, kernel status, and cleanup
   - browser storage / snapshot / backup reads passed
   - browser invite redeem passed with cleanup
   - browser invite duplicate, revoke, already-collaborator, remove, and
@@ -219,11 +223,25 @@ The rule remains:
 Remaining audit targets:
 
 - [x] terminal creation / attach / resize / stream paths
-- [ ] notebook kernel / session / exec paths
+- [x] notebook kernel / session / exec paths
 - [ ] app-server interactive reads / status paths
 - [ ] any remaining user-hot-path `hub.projects.*` runtime reads
 - [ ] any remaining frontend code that can silently fall back to the default
       global Conat client instead of an explicit routed client
+
+Notes:
+
+- notebook runtime was validated on 2026-04-21 through the stable
+  `lite4b.cocalc.ai` fixture with account home bay `bay-1`, project owning bay
+  `bay-0`, and host execution on `host2`
+- the reusable QA scenario creates a disposable `.ipynb`, derives the
+  corresponding `.sage-jupyter2` syncdb path, starts the Jupyter backend via the
+  routed project API, runs code over the routed `jupyter.project-*` socket,
+  handles stdin, verifies output and `run_done`, reads kernel status, and cleans
+  up both disposable files
+- a missing Python kernelspec is now clearly exposed as fixture/image readiness,
+  not as a multibay routing failure; the validated fixture has `python3`
+  available
 
 ### 3. Finish Project-Host Runtime Productionization
 
