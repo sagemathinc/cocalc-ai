@@ -22,7 +22,7 @@ export default async function handle(req, res) {
   }
   const {
     project_id,
-    url, // the supported schema is as in next/lib/share/proxy/get-public-path.ts).
+    url,
     path, // where to write the contents of the url
   } = params;
 

@@ -504,7 +504,6 @@ function ActionBarEnabled({
       | "duplicate"
       | "move"
       | "copy"
-      | "share"
     )[];
     if (checked_files.size === 0) {
       return;

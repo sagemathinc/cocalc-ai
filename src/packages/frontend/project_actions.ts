@@ -98,7 +98,6 @@ import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import * as misc from "@cocalc/util/misc";
 import { reduxNameToProjectId } from "@cocalc/util/redux/name";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
-import { client_db } from "@cocalc/util/schema";
 import { type FilesystemClient } from "@cocalc/conat/files/fs";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import {
@@ -293,25 +292,6 @@ export const QUERIES = {
       event: null,
     },
   },
-
-  public_paths: {
-    query: {
-      id: null,
-      project_id: null,
-      path: null,
-      name: null,
-      description: null,
-      disabled: null,
-      unlisted: null,
-      authenticated: null,
-      created: null,
-      license: null,
-      last_edited: null,
-      last_saved: null,
-      counter: null,
-      redirect: null,
-    },
-  },
 };
 
 const must_define = function (redux) {
@@ -381,16 +361,6 @@ export const FILE_ACTIONS = {
     }),
     icon: "files" as IconName,
     allows_multiple_files: true,
-    hideFlyout: false,
-  },
-  share: {
-    name: defineMessage({
-      id: "file_actions.publish.name",
-      defaultMessage: "Publish",
-      description: "Publish a file",
-    }),
-    icon: "share-square" as IconName,
-    allows_multiple_files: false,
     hideFlyout: false,
   },
   download: {
@@ -593,8 +563,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.rootfsPublishOpsManager.init();
     this.startOpsManager.init();
     this.moveOpsManager.init();
-    const store = this.get_store();
-    store?.init_table?.("public_paths");
   };
 
   private closeExpensive = () => {
@@ -3167,107 +3135,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   };
 
-  /*
-   * Actions for PUBLIC PATHS
-   */
-  set_public_path = async (
-    path,
-    opts: {
-      description?: string;
-      unlisted?: boolean;
-      license?: string;
-      disabled?: boolean;
-      authenticated?: boolean;
-      redirect?: string;
-    },
-  ) => {
-    const store = this.get_store();
-    if (!store) {
-      console.warn("set_public_path: no store");
-      return;
-    }
-
-    const project_id = this.project_id;
-    const id = client_db.sha1(project_id, path);
-
-    const table = this.redux.getProjectTable(project_id, "public_paths");
-    let obj: undefined | Map<string, any> = table._table.get(id);
-
-    let log: boolean = false;
-    const now = misc.server_time();
-    if (obj == null) {
-      log = true;
-      obj = fromJS({
-        project_id,
-        path,
-        created: now,
-      });
-    }
-    if (obj == null) {
-      // make typescript happy
-      console.warn("set_public_path: BUG -- obj can't be null");
-      return;
-    }
-
-    // not allowed to write these back
-    obj = obj.delete("last_saved");
-    obj = obj.delete("counter");
-
-    obj = obj.set("last_edited", now);
-
-    for (const k in opts) {
-      if (opts[k] !== undefined) {
-        const will_change = opts[k] != obj.get(k);
-        if (!log) {
-          if (k === "disabled" && will_change) {
-            // changing disabled state
-            log = true;
-          } else if (k === "unlisted" && will_change) {
-            // changing unlisted state
-            log = true;
-          } else if (k === "authenticated" && will_change) {
-            log = true;
-          } else if (k === "redirect" && will_change) {
-            log = true;
-          }
-        }
-        obj = obj.set(k, opts[k]);
-      }
-    }
-    if (obj.get("disabled") && obj.get("name")) {
-      // clear the name when disabling a share -- see https://github.com/sagemathinc/cocalc/issues/6172
-      obj = obj.set("name", "");
-    }
-
-    table.set(obj);
-
-    if (log) {
-      // can't just change always since we frequently update last_edited to get the share to get copied over.
-      this.log({
-        event: "public_path",
-        path: path + ((await this.isDir(path)) ? "/" : ""),
-        disabled: !!obj.get("disabled"),
-        unlisted: !!obj.get("unlisted"),
-        authenticated: !!obj.get("authenticated"),
-        redirect: obj.get("redirect"),
-      });
-    }
-  };
-
-  // Make a database query to set the name of a
-  // public path.  Because this can error due to
-  // an invalid name it's good to do this rather than
-  // changing the public_paths table.  This function
-  // will throw an exception if anything goes wrong setting
-  // the name.
-  setPublicPathName = async (path: string, name: string): Promise<void> => {
-    const id = client_db.sha1(this.project_id, path);
-    const query = {
-      public_paths: { project_id: this.project_id, path, name, id },
-    };
-    await webapp_client.async_query({ query });
-  };
-
   set_file_listing_scroll(scroll_top) {
     this.setState({ file_listing_scroll_top: scroll_top });
   }
@@ -3626,13 +3493,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       timeout: 99999,
     });
   };
-
-  public show_public_config(path: string): void {
-    this.set_current_path(misc.path_split(path).head);
-    this.set_all_files_unchecked();
-    this.set_file_checked(path, true);
-    this.set_file_action("share");
-  }
 
   public toggleActionButtons() {
     const accountStore = this.redux.getStore("account") as any;

@@ -8,27 +8,17 @@ import create from "@cocalc/server/projects/create";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
-  const { title, description, public_path_id } = getParams(req);
+  const { title, description } = getParams(req);
   const account_id = await getAccountId(req);
   try {
-    const project_id = await createProject(
-      account_id,
-      title,
-      description,
-      public_path_id,
-    );
+    const project_id = await createProject(account_id, title, description);
     res.json({ project_id });
   } catch (err) {
     res.json({ error: err.message });
   }
 }
 
-async function createProject(
-  account_id,
-  title,
-  description,
-  public_path_id?: string,
-): Promise<string> {
+async function createProject(account_id, title, description): Promise<string> {
   if (!account_id) {
     throw Error("user must be signed in");
   }
@@ -36,6 +26,5 @@ async function createProject(
     account_id,
     title,
     description,
-    public_path_id,
   });
 }

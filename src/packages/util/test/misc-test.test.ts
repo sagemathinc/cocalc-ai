@@ -1145,50 +1145,6 @@ describe("parse_hashtags", () => {
   });
 });
 
-describe("path_is_in_public_paths", () => {
-  const p = misc.path_is_in_public_paths;
-
-  it("returns false for a path with no public paths", () => {
-    expect(p("path", [])).toBe(false);
-  });
-
-  it("returns false if path is undefined and there are no public paths -- basically avoid possible hack", () => {
-    expect(p(null, [])).toBe(false);
-  });
-
-  it("returns false if path is undefined and there is a public path -- basically avoid possible hack", () => {
-    expect(p(null, ["/public/path"])).toBe(false);
-  });
-
-  it("returns true if the entire project is public", () => {
-    expect(p("path", [""])).toBe(true);
-  });
-
-  it("returns true if the path matches something in the list", () => {
-    expect(p("path", ["path_name", "path"])).toBe(true);
-  });
-
-  it("returns true if the path is within a public path", () => {
-    expect(p("path/name", ["path_name", "path"])).toBe(true);
-  });
-
-  it("returns true if path ends with .zip and is within a public path", () => {
-    expect(p("path/name.zip", ["path_name", "path"])).toBe(true);
-  });
-
-  it("handles path.zip correctly if it is not in the path", () => {
-    expect(p("foo/bar.zip", ["foo/baz"])).toBe(false);
-  });
-
-  it("returns false if the path is not in the public paths", () => {
-    expect(p("path", ["path_name", "path/name"])).toBe(false);
-  });
-
-  it("doesn't allow relative path trickery", () => {
-    expect(p("../foo", ["foo"])).toBe(false);
-  });
-});
-
 describe("timestamp_cmp", () => {
   const tcmp = misc.timestamp_cmp;
   const a = { timestamp: new Date("2015-01-01") };

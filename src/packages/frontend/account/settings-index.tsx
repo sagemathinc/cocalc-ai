@@ -350,26 +350,6 @@ export function SettingsOverview() {
         </>
       )}
 
-      {!lite && (
-        <>
-          <Divider plain>
-            <Icon name="files" /> {intl.formatMessage(labels.files)}
-          </Divider>
-          <Flex {...FLEX_PROPS}>
-            <Card
-              {...CARD_PROPS}
-              onClick={() => handleNavigate("settings/public-files")}
-            >
-              <Card.Meta
-                avatar={<Icon name="share-square" />}
-                title={intl.formatMessage(labels.published_files)}
-                description={intl.formatMessage(MESSAGES.files)}
-              />
-            </Card>
-          </Flex>
-        </>
-      )}
-
       {zendesk && (
         <>
           <Divider plain>

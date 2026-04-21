@@ -103,7 +103,6 @@ interface Props {
   setScrollIdxHide: (hide: boolean) => void;
   setSearchState: (search: string) => void;
   virtuosoRef: React.RefObject<VirtuosoHandle>;
-  showFileSharingDialog(file): void;
   checked_files: immutable.Set<string>;
   directoryFiles: DirectoryListing;
   getFile: (path: string) => DirectoryListingEntry | undefined;
@@ -111,7 +110,6 @@ interface Props {
   modeState: ["open" | "select", (mode: "open" | "select") => void];
   clearAllSelections: (switchMode: boolean) => void;
   selectAllFiles: () => void;
-  publicFiles: Set<string>;
   refreshBackups?: () => void;
   currentPath: string;
   onNavigate: (path: string) => void;
@@ -136,7 +134,6 @@ export function FilesHeader({
   setScrollIdxHide,
   setSearchState,
   virtuosoRef,
-  showFileSharingDialog,
   checked_files,
   directoryFiles,
   getFile,
@@ -144,7 +141,6 @@ export function FilesHeader({
   modeState,
   selectAllFiles,
   clearAllSelections,
-  publicFiles,
   refreshBackups,
   currentPath,
   onNavigate,
@@ -633,11 +629,9 @@ export function FilesHeader({
           checked_files={checked_files}
           directoryFiles={directoryFiles}
           open={open}
-          showFileSharingDialog={showFileSharingDialog}
           getFile={getFile}
           mode="top"
           activeFile={activeFile}
-          publicFiles={publicFiles}
           refreshBackups={refreshBackups}
         />
         <FilesSelectButtons

@@ -20,14 +20,12 @@ import {
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, LoginLink } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
-import { useRunQuota } from "@cocalc/frontend/project/settings/run-quota/hooks";
 import {
   file_actions,
   type ProjectActions,
 } from "@cocalc/frontend/project_store";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
-import ConfigureShare from "@cocalc/frontend/share/config";
 import * as misc from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import DirectorySelector from "../directory-selector";
@@ -72,7 +70,6 @@ export function ActionBox({
 }: Props) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
-  const runQuota = useRunQuota(project_id, null);
   const user_type = useTypedRedux("account", "user_type");
   const dnd_copy_dest = useTypedRedux(
     { project_id },
@@ -128,23 +125,6 @@ export function ActionBox({
 
   function cancel_action(): void {
     clear();
-  }
-
-  function action_key(e): void {
-    switch (e.keyCode) {
-      case 27:
-        cancel_action();
-        break;
-      case 13:
-        switch (file_action) {
-          case "move":
-            submit_action_move();
-            break;
-          case "copy":
-            submit_action_copy();
-            break;
-        }
-    }
   }
 
   function render_selected_files_list() {
@@ -347,12 +327,6 @@ export function ActionBox({
         </Row>
       </div>
     );
-  }
-
-  function submit_action_move(): void {
-    if (valid_move_input()) {
-      move_click();
-    }
   }
 
   function render_different_project_dialog() {
@@ -565,30 +539,6 @@ export function ActionBox({
     }
   }
 
-  function submit_action_copy(): void {
-    if (valid_copy_input()) {
-      copy_click();
-    }
-  }
-
-  function render_share() {
-    // currently only works for a single selected file
-    const path: string = checked_files.first() ?? "";
-    if (!path) {
-      return null;
-    }
-    return (
-      <ConfigureShare
-        project_id={project_id}
-        path={path}
-        close={cancel_action}
-        onKeyUp={action_key}
-        actions={actions}
-        has_network_access={!!runQuota.network}
-      />
-    );
-  }
-
   function render_action_box(action: FileAction) {
     switch (action) {
       case "compress":
@@ -624,8 +574,6 @@ export function ActionBox({
         );
       case "move":
         return render_move();
-      case "share":
-        return render_share();
       default:
         return undefined;
     }

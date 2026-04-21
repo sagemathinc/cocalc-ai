@@ -42,7 +42,6 @@ import {
 } from "./activity-bar-consts";
 import { FileTab, FIXED_PROJECT_TABS, FixedTab } from "./file-tab";
 import FileTabs from "./file-tabs";
-import { ShareIndicator } from "./share-indicator";
 import { lite } from "@cocalc/frontend/lite";
 import SettingsButton from "@cocalc/frontend/account/settings-button";
 import { RemoteSshButton, SshButton } from "@cocalc/frontend/ssh";
@@ -106,7 +105,6 @@ export default function ProjectTabs(props: PTProps) {
             marginLeft: "-10px",
           }}
         >
-          <ShareIndicatorTab activeTab={activeTab} project_id={project_id} />
           <ChatIndicatorTab activeTab={activeTab} project_id={project_id} />
         </div>
         {lite && (
@@ -812,26 +810,6 @@ function ChatIndicatorTab({ activeTab, project_id }): React.JSX.Element | null {
         path={path}
         chatState={chatState}
       />
-    </div>
-  );
-}
-
-function ShareIndicatorTab({ activeTab, project_id }) {
-  const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
-  const currentPath = currentPathAbs ?? "/";
-
-  const path = activeTab === "files" ? currentPath : tab_to_path(activeTab);
-  if (path == null) {
-    // nothing specifically to share
-    return null;
-  }
-  if (path === "/") {
-    // sharing whole project not implemented
-    return null;
-  }
-  return (
-    <div style={INDICATOR_STYLE}>
-      <ShareIndicator project_id={project_id} path={path} />
     </div>
   );
 }

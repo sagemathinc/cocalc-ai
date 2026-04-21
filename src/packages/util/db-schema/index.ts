@@ -69,8 +69,6 @@ import "./rootfs-image-events";
 import "./rootfs-images";
 import "./rootfs-release-artifacts";
 import "./rootfs-releases";
-import "./public-path-stars";
-import "./public-paths";
 import "./purchase-quotas";
 import "./purchases";
 import "./registration-tokens";

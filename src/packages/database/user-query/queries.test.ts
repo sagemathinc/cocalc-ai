@@ -66,7 +66,6 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
     db.user_is_in_project_group = jest.fn(
       (opts) => opts.cb && opts.cb(null, false),
     );
-    db.has_public_path = jest.fn((opts) => opts.cb && opts.cb(null, false));
     db.projectControl = jest.fn();
     db.changefeed = jest.fn();
     db.ensure_connection_to_project = jest.fn();
@@ -1620,33 +1619,6 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           "test_account",
           (err) => {
             expect(err).toContain("account_id must be given");
-            restore();
-            done();
-          },
-        );
-      });
-
-      test("should require public path for project_id-public", (done) => {
-        const restore = setSchema("test_public", {
-          anonymous: true,
-          fields: { project_id: { type: "uuid" } },
-          user_query: {
-            get: {
-              pg_where: [{ "project_id = $::UUID": "project_id-public" }],
-              fields: { project_id: null },
-            },
-          },
-        });
-
-        db.has_public_path = jest.fn((opts) => opts.cb(null, false));
-        db._user_get_query_where(
-          SCHEMA.test_public.user_query,
-          undefined,
-          undefined,
-          { project_id: "project-1" },
-          "test_public",
-          (err) => {
-            expect(err).toContain("public paths");
             restore();
             done();
           },

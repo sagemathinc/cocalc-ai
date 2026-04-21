@@ -11,9 +11,7 @@ import {
   Store,
   Table,
   TypedMap,
-  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { useMemo } from "react";
 import { fileURL } from "@cocalc/frontend/lib/cocalc-urls";
 import { remove } from "@cocalc/frontend/project-file";
 import { ProjectLogMap } from "@cocalc/frontend/project/history/types";
@@ -28,7 +26,7 @@ import {
   isMainConfiguration,
   ProjectConfiguration,
 } from "@cocalc/frontend/project_configuration";
-import { containing_public_path, deep_copy } from "@cocalc/util/misc";
+import { deep_copy } from "@cocalc/util/misc";
 import { FixedTab } from "./project/page/file-tab";
 import {
   FlyoutActiveMode,
@@ -42,11 +40,8 @@ import {
   FLYOUT_LOG_FILTER_DEFAULT,
   FlyoutLogFilter,
 } from "./project/page/flyouts/utils";
-import { type PublicPath } from "@cocalc/util/db-schema/public-paths";
-import { DirectoryListing } from "@cocalc/frontend/project/explorer/types";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 export { FILE_ACTIONS as file_actions, type FileAction, ProjectActions };
-import { SCHEMA, client_db } from "@cocalc/util/schema";
 import type {
   FindBackupsState,
   FindFilesState,
@@ -73,8 +68,6 @@ export interface ProjectStoreState {
   open_files: immutable.Map<string, immutable.Map<string, any>>;
   open_files_order: immutable.List<string>;
   just_closed_files: immutable.List<string>;
-  public_paths?: immutable.Map<string, TypedMap<PublicPath>>;
-
   show_upload: boolean;
   create_file_alert: boolean;
   configuration?: ProjectConfiguration;
@@ -169,9 +162,6 @@ export interface ProjectStoreState {
   // Search page -- update this when params change
   search_page?: number;
 
-  // Project Settings
-  get_public_path_id?: (path: string) => any;
-
   // Project Info
   show_project_info_explanation?: boolean;
   project_info_focus?: {
@@ -210,7 +200,7 @@ export class ProjectStore extends Store<ProjectStoreState> {
   private previous_runstate: string | undefined;
 
   // Function to call to initialize one of the tables in this store.
-  // This is purely an optimization, so project_log, project_log_all and public_paths
+  // This is purely an optimization, so project_log and project_log_all
   // do not have to be initialized unless necessary.  The code
   // is a little awkward, since I didn't want to change things too
   // much while making this optimization.
@@ -357,18 +347,6 @@ export class ProjectStore extends Store<ProjectStoreState> {
         return (this.redux.getStore("account") as any).get("other_settings");
       },
     },
-
-    get_public_path_id: {
-      fn: () => {
-        const project_id = this.project_id;
-        return function (path) {
-          return SCHEMA.public_paths.user_query?.set?.fields.id(
-            { project_id, path },
-            client_db,
-          );
-        };
-      },
-    },
   };
 
   // Returns the cursor positions for the given project_id/path, if that
@@ -412,48 +390,6 @@ export class ProjectStore extends Store<ProjectStoreState> {
     // note that component is NOT an immutable.js object:
     return this.getIn(["open_files", path, "component"])?.Editor != null;
   }
-}
-
-// Returns set of paths that are public in the given
-// listing, because they are in a public folder or are themselves public.
-// This is used entirely to put an extra "public" label in the row of the file,
-// when displaying it in a listing.
-export function getPublicFiles(
-  listing: DirectoryListing,
-  public_paths: PublicPath[],
-  current_path: string,
-): Set<string> {
-  if ((public_paths?.length ?? 0) == 0) {
-    return new Set();
-  }
-  const paths = public_paths
-    .filter(({ disabled }) => !disabled)
-    .map(({ path }) => path);
-
-  if (paths.length == 0) {
-    return new Set();
-  }
-
-  const head =
-    current_path === "/"
-      ? "/"
-      : current_path && current_path.length > 0
-        ? `${current_path}/`
-        : "";
-  if (containing_public_path(current_path, paths)) {
-    // fast special case: *every* file is public
-    return new Set(listing.map(({ name }) => name));
-  }
-
-  // maybe some files are public?
-  const X = new Set<string>();
-  for (const file of listing) {
-    const full = head + file.name;
-    if (containing_public_path(full, paths) != null) {
-      X.add(file.name);
-    }
-  }
-  return X;
 }
 
 export function init(project_id: string, redux: AppRedux): ProjectStore {
@@ -533,12 +469,4 @@ export function init(project_id: string, redux: AppRedux): ProjectStore {
   };
 
   return store;
-}
-
-export function useStrippedPublicPaths(project_id: string): PublicPath[] {
-  const public_paths = useTypedRedux({ project_id }, "public_paths");
-  return useMemo(() => {
-    const rows = public_paths?.valueSeq()?.toJS() ?? [];
-    return rows as unknown as PublicPath[];
-  }, [public_paths]);
 }

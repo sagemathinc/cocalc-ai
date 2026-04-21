@@ -20,7 +20,6 @@ import "./messages";
 import "./agents";
 import "./patches";
 import "./projects";
-import "./public-paths";
 import "./purchases";
 import "./purchase-quotas";
 import "./shopping-cart-items";

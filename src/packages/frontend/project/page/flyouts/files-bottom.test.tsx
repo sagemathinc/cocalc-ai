@@ -136,12 +136,10 @@ describe("FilesBottom", () => {
         projectIsRunning={false}
         rootHeightPx={600}
         open={jest.fn()}
-        showFileSharingDialog={jest.fn()}
         modeState={["open", jest.fn()]}
         clearAllSelections={jest.fn()}
         selectAllFiles={jest.fn()}
         getFile={jest.fn()}
-        publicFiles={new Set()}
         currentPath="/"
         onNavigate={jest.fn()}
       />,

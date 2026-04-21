@@ -17,21 +17,14 @@ import { QueryParams } from "@cocalc/frontend/misc/query-params";
 export const NAME = "launch-actions";
 const LS_KEY = NAME;
 
-export type LaunchTypes = "share" | undefined;
+export type LaunchTypes = string | undefined;
 
 export function is_csi_launchvalue(_launch: string) {
   return false;
 }
 
-export function launch_action_description(
-  type: NonNullable<LaunchTypes>,
-): string | undefined {
-  switch (type) {
-    case "share":
-      return "Open Shared File";
-    default:
-      return undefined;
-  }
+export function launch_action_description(): string | undefined {
+  return undefined;
 }
 
 interface LaunchData {
@@ -57,7 +50,7 @@ export function store() {
       console.warn("WARNING: launch query param must be a string");
       return;
     }
-    const type = launch.split("/")[0] as LaunchTypes;
+    const type = launch.split("/")[0];
     const data: LaunchData = {
       launch,
       type,
@@ -94,13 +87,8 @@ export async function launch() {
   }
   actions.setState(data);
   try {
-    switch (type) {
-      case "share":
-        throw Error("share launcher is deprecated");
-      default:
-        console.warn(`launch type "${type}" unknown`);
-        return;
-    }
+    console.warn(`launch type "${type}" unknown`);
+    return;
   } catch (err) {
     console.warn(
       `WARNING: launch action "${launch}" of type "${type}" failed -- ${err}`,

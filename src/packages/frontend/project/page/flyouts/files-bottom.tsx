@@ -58,12 +58,10 @@ interface FilesBottomProps {
     index: number,
     skip?: boolean,
   ) => void;
-  showFileSharingDialog(file): void;
   modeState: ["open" | "select", (mode: "open" | "select") => void];
   clearAllSelections: (switchMode: boolean) => void;
   selectAllFiles: () => void;
   getFile: (path: string) => DirectoryListingEntry | undefined;
-  publicFiles: Set<string>;
   refreshBackups?: () => void;
   currentPath: string;
   onNavigate: (path: string) => void;
@@ -79,10 +77,8 @@ export function FilesBottom({
   selectAllFiles,
   rootHeightPx,
   open,
-  showFileSharingDialog,
   getFile,
   directoryFiles,
-  publicFiles,
   refreshBackups,
   currentPath,
   onNavigate,
@@ -291,11 +287,9 @@ export function FilesBottom({
         checked_files={checked_files}
         directoryFiles={directoryFiles}
         open={open}
-        showFileSharingDialog={showFileSharingDialog}
         getFile={getFile}
         mode="bottom"
         activeFile={activeFile}
-        publicFiles={publicFiles}
         refreshBackups={refreshBackups}
       />
     );

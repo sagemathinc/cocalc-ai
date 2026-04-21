@@ -50,14 +50,6 @@ export type SyncTableNotification = [
   old_val?: SyncTableRow | null,
 ];
 
-export interface PublicPathListingEntry extends Record<string, unknown> {
-  name?: string;
-}
-
-export interface PublicPathListing extends Record<string, unknown> {
-  files?: PublicPathListingEntry[];
-}
-
 export type BlobCompression = "gzip" | "zlib";
 
 export interface SyncstringPatch {
@@ -405,19 +397,6 @@ export interface PostgreSQLMethods extends EventEmitter {
     project_id: string;
     columns?: string[];
     cb: CB<Record<string, unknown> | undefined>;
-  }): void;
-  get_public_paths(opts: { project_id: string; cb: CB<string[]> }): void;
-  has_public_path(opts: { project_id: string; cb: CB<boolean> }): void;
-  path_is_public(opts: {
-    project_id: string;
-    path: string;
-    cb: CB<boolean>;
-  }): void;
-  filter_public_paths(opts: {
-    project_id: string;
-    path: string;
-    listing: PublicPathListing;
-    cb: CB<PublicPathListing>;
   }): void;
   recently_modified_projects(opts: {
     max_age_s: number;

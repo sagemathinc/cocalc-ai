@@ -1,9 +1,9 @@
 import { timeInSeconds } from "./util";
 
 test("use the timeInSeconds code gen function", () => {
-  const s = timeInSeconds("public_paths.last_edited", "last_edited");
+  const s = timeInSeconds("projects.last_edited", "last_edited");
   expect(s).toEqual(
-    " (EXTRACT(EPOCH FROM public_paths.last_edited)*1000)::FLOAT as last_edited ",
+    " (EXTRACT(EPOCH FROM projects.last_edited)*1000)::FLOAT as last_edited ",
   );
 });
 

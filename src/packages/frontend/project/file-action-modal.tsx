@@ -28,8 +28,7 @@ export default function FileActionModal() {
   const actionInfo = FILE_ACTIONS[file_action];
   if (!actionInfo) return null;
 
-  const wideModal =
-    file_action === "copy" || file_action === "move" || file_action === "share";
+  const wideModal = file_action === "copy" || file_action === "move";
 
   return (
     <Modal

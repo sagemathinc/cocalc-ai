@@ -45,7 +45,6 @@ import type {
   OpenFile,
   ProjectControlEvent,
   ProjectEvent,
-  PublicPathEvent,
   SystemEvent,
   UpgradeEvent,
   X11Event,
@@ -85,7 +84,6 @@ const file_action_icons: {
   moved: "move",
   renamed: "rename",
   copied: "copy",
-  shared: "share",
   uploaded: "upload",
   created: "create",
 };
@@ -267,32 +265,6 @@ export const LogEntry: React.FC<Props> = React.memo(
               (file was deleted <TimeAgo date={event.deleted} />)
             </>
           )}
-        </span>
-      );
-    }
-
-    function render_public_path(event: PublicPathEvent): React.JSX.Element {
-      return (
-        <span>
-          <FormattedMessage
-            id="project.history.log-entry.public_path"
-            defaultMessage={`set the public path {gap} {path} to be {event} and {listed}`}
-            values={{
-              gap: <Gap />,
-              path: (
-                <PathLink
-                  path={event.path}
-                  full={true}
-                  style={cursor ? selected_item : undefined}
-                  trunc={TRUNC}
-                  project_id={project_id}
-                  dimExtensions={dimFileExtensions}
-                />
-              ),
-              event: event.disabled ? "disabled" : "enabled",
-              listed: event.unlisted ? "unlisted" : "listed",
-            }}
-          />
         </span>
       );
     }
@@ -521,13 +493,6 @@ export const LogEntry: React.FC<Props> = React.memo(
             <span>
               {intl.formatMessage(labels.copied)} {multi_file_links(e)}{" "}
               {e.count != null ? `(${e.count} total)` : ""} to {to_link(e)}
-            </span>
-          );
-        case "shared":
-          return (
-            <span>
-              {intl.formatMessage(labels.shared)} {multi_file_links(e)}{" "}
-              {e.count != null ? `(${e.count} total)` : ""}
             </span>
           );
         case "uploaded":
@@ -860,8 +825,6 @@ export const LogEntry: React.FC<Props> = React.memo(
           return <span>hid the {projectLabelLower} from themself</span>;
         case "unhide_project":
           return <span>unhid the {projectLabelLower} from themself</span>;
-        case "public_path":
-          return render_public_path(event);
         case "llm":
           return render_llm(event);
         default:
@@ -921,8 +884,6 @@ export const LogEntry: React.FC<Props> = React.memo(
         case "invite_nonuser":
         case "remove_collaborator":
           return "user";
-        case "public_path":
-          return "share-square";
       }
 
       if (event.event.indexOf("project") !== -1) {

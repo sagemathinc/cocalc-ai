@@ -27,7 +27,6 @@ export const FLYOUT_LOG_FILTER_MODES = [
   "open",
   "files",
   "project",
-  "share",
   "user",
   "other",
 ] as const;
