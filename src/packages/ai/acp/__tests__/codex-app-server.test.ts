@@ -483,6 +483,112 @@ describe("CodexAppServerAgent", () => {
     ]);
   });
 
+  it("streams completed image-generation metadata without raw image data", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-image-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-image-1" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-image-1", status: "inProgress" },
+            });
+            fake.sendNotification("item/updated", {
+              threadId: "thr-image-1",
+              turnId: "turn-image-1",
+              item: {
+                type: "imageGeneration",
+                id: "img-1",
+                status: "inProgress",
+                revisedPrompt: "A clean diagram of a reconnect pipeline",
+                result: "base64-image-data-that-must-not-be-streamed",
+              },
+            });
+            const completedItem = {
+              type: "imageGeneration",
+              id: "img-1",
+              status: "completed",
+              revisedPrompt: "A clean diagram of a reconnect pipeline",
+              savedPath: "/tmp/project/.codex/generated_images/img-1.png",
+              result: "base64-image-data-that-must-not-be-streamed",
+            };
+            fake.sendNotification("item/updated", {
+              threadId: "thr-image-1",
+              turnId: "turn-image-1",
+              item: completedItem,
+            });
+            fake.sendNotification("item/completed", {
+              threadId: "thr-image-1",
+              turnId: "turn-image-1",
+              item: completedItem,
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-image-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "make an image",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    const imageEvents = streamPayloads.filter(
+      (payload) => payload?.type === "event" && payload.event?.type === "image",
+    );
+    expect(imageEvents).toEqual([
+      {
+        type: "event",
+        event: {
+          type: "image",
+          id: "img-1",
+          status: "completed",
+          revisedPrompt: "A clean diagram of a reconnect pipeline",
+          savedPath: "/tmp/project/.codex/generated_images/img-1.png",
+        },
+      },
+    ]);
+    expect(JSON.stringify(streamPayloads)).not.toContain("base64-image-data");
+  });
+
   it("retries remote compaction timeouts before visible turn side effects", async () => {
     process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES = "1";
     process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS = "1";

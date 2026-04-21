@@ -1410,6 +1410,7 @@ export class CodexAppServerAgent implements AcpAgent {
     const completedTerminals = new Set<string>();
     const emittedFileWrites = new Set<string>();
     const emittedFileWritePaths = new Set<string>();
+    const emittedImages = new Set<string>();
     let latestTurnDiffText: string | undefined;
     const siteKeyGovernor = getCodexSiteKeyGovernor();
     const siteKeyEnforced =
@@ -1769,6 +1770,58 @@ export class CodexAppServerAgent implements AcpAgent {
               }
             }
             break;
+          case "imageGeneration": {
+            const imageId =
+              typeof item.id === "string" && item.id.trim()
+                ? item.id.trim()
+                : undefined;
+            const status =
+              typeof item.status === "string" && item.status.trim()
+                ? item.status.trim()
+                : "unknown";
+            const savedPath =
+              typeof item.savedPath === "string" && item.savedPath.trim()
+                ? item.savedPath.trim()
+                : typeof item.saved_path === "string" && item.saved_path.trim()
+                  ? item.saved_path.trim()
+                  : undefined;
+            const revisedPrompt =
+              typeof item.revisedPrompt === "string"
+                ? item.revisedPrompt
+                : typeof item.revised_prompt === "string"
+                  ? item.revised_prompt
+                  : undefined;
+            const normalizedStatus = status.toLowerCase();
+            const terminal =
+              savedPath != null ||
+              normalizedStatus === "completed" ||
+              normalizedStatus === "failed" ||
+              normalizedStatus === "declined" ||
+              normalizedStatus === "cancelled";
+            if (!terminal) {
+              break;
+            }
+            const eventKey =
+              imageId ??
+              `anonymous:${normalizedStatus}:${savedPath ?? ""}:${
+                revisedPrompt ?? ""
+              }`;
+            if (emittedImages.has(eventKey)) {
+              break;
+            }
+            emittedImages.add(eventKey);
+            await stream({
+              type: "event",
+              event: {
+                type: "image",
+                id: imageId,
+                status,
+                revisedPrompt,
+                savedPath,
+              },
+            });
+            break;
+          }
           default:
             break;
         }

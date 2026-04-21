@@ -257,6 +257,18 @@ export type AcpStreamEvent =
       existed?: boolean;
     }
   | {
+      type: "image";
+      id?: string;
+      status: string;
+      revisedPrompt?: string;
+      savedPath?: string;
+      blob?: {
+        uuid: string;
+        filename: string;
+        url: string;
+      };
+    }
+  | {
       type: "terminal";
       terminalId: string;
       phase: "start" | "data" | "exit";

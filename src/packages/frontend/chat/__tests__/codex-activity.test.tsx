@@ -141,4 +141,32 @@ describe("CodexActivity terminal rows", () => {
     expect(screen.queryByText("Waiting for output…")).toBeNull();
     expect(screen.getByText("No output.")).not.toBeNull();
   });
+
+  it("renders generated image events with prompt and saved path", () => {
+    render(
+      React.createElement(CodexActivity, {
+        expanded: true,
+        events: [
+          {
+            type: "event",
+            seq: 1,
+            time: Date.parse("2026-04-21T18:00:00.000Z"),
+            event: {
+              type: "image",
+              id: "img-1",
+              status: "completed",
+              revisedPrompt: "A reconnect architecture diagram",
+              savedPath: "/tmp/project/.codex/generated_images/img-1.png",
+            },
+          } as any,
+        ],
+      }),
+    );
+
+    expect(screen.getByText("Generated image")).not.toBeNull();
+    expect(screen.getByText("A reconnect architecture diagram")).not.toBeNull();
+    expect(
+      screen.getByText("/tmp/project/.codex/generated_images/img-1.png"),
+    ).not.toBeNull();
+  });
 });
