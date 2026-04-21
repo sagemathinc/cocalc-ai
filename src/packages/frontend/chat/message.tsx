@@ -250,7 +250,9 @@ const AVATAR_MARGIN_LEFTRIGHT = "15px";
 const VIEWER_MESSAGE_LEFT_MARGIN = "clamp(12px, 15%, 150px)";
 const VIEWER_ONLY_STATES = new Set(["queue", "sending", "sent", "not-sent"]);
 
-function linkifyCommitHashes(text: string): string {
+const INLINE_COMMIT_CODE_RE = /^`([0-9a-f]{7,40})(?:\s+([^\n`]*\S))?`$/i;
+
+export function linkifyCommitHashes(text: string): string {
   if (!text || !/[0-9a-f]{7,40}/i.test(text)) return text;
   const fencedChunks = text.split(/(```[\s\S]*?```)/g);
   return fencedChunks
@@ -260,12 +262,16 @@ function linkifyCommitHashes(text: string): string {
       return inlineChunks
         .map((part, jdx) => {
           if (jdx % 2 === 1) {
-            // Inline code span. If it is exactly a git hash, keep the code
-            // appearance while making it clickable.
-            const m = /^`([0-9a-f]{7,40})`$/i.exec(part);
+            // Inline code span. Codex often writes "`hash subject`"; link the
+            // hash while leaving the subject as plain text.
+            const m = INLINE_COMMIT_CODE_RE.exec(part);
             if (!m) return part;
             const hash = m[1];
-            return [`[\`${hash}\`](${GIT_COMMIT_LINK_SCHEME}${hash})`].join("");
+            const subject = m[2]?.trim();
+            return [
+              `[Commit ${hash}](${GIT_COMMIT_LINK_SCHEME}${hash} "Open commit ${hash}")`,
+              subject ? ` ${subject}` : "",
+            ].join("");
           }
           return part.replace(
             COMMIT_HASH_BOUNDARY_RE,
@@ -276,7 +282,7 @@ function linkifyCommitHashes(text: string): string {
               if (/[-/=?&#:]/.test(before) || /[-/=?&#:]/.test(after)) {
                 return hash;
               }
-              return `[${hash}](${GIT_COMMIT_LINK_SCHEME}${hash})`;
+              return `[Commit ${hash}](${GIT_COMMIT_LINK_SCHEME}${hash} "Open commit ${hash}")`;
             },
           );
         })
