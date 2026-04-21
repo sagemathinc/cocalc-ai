@@ -2491,28 +2491,36 @@ export class SyncDoc extends EventEmitter {
             "patches_table must be initialized before subscribing",
           );
         }
-        const handler = (keys: any[]) => {
-          const envs: PatchEnvelope[] = [];
-          for (const key of keys ?? []) {
-            let x = this.patches_table.get(key);
-            if (x == null) {
-              continue;
-            }
-            if (!Map.isMap(x)) {
-              x = fromJS(x);
-            }
-            const p = this.processPatch({ x });
-            if (p != null) {
-              envs.push(this.toPatchflowEnvelope(p));
-            }
+        let closed = false;
+        let scheduled = false;
+        const pendingKeys = new Set<any>();
+        const flush = () => {
+          scheduled = false;
+          if (closed || pendingKeys.size === 0) {
+            pendingKeys.clear();
+            return;
           }
-          for (const env of envs) {
-            onEnvelope(env);
+          const keys = [...pendingKeys];
+          pendingKeys.clear();
+          this.applyPatchflowRemoteEnvelopes(
+            this.patchflowEnvelopesForKeys(keys),
+            onEnvelope,
+          );
+        };
+        const handler = (keys: any[]) => {
+          for (const key of keys ?? []) {
+            pendingKeys.add(key);
+          }
+          if (!scheduled) {
+            scheduled = true;
+            queueMicrotask(flush);
           }
         };
         const table: any = this.patches_table;
         table.on("change", handler);
         return () => {
+          closed = true;
+          pendingKeys.clear();
           if (table?.off) {
             table.off("change", handler);
           } else if (table?.removeListener) {
@@ -2521,6 +2529,83 @@ export class SyncDoc extends EventEmitter {
         };
       },
     };
+  };
+
+  private patchflowEnvelopesForKeys = (keys: any[]): PatchEnvelope[] => {
+    if (this.patches_table == null) {
+      return [];
+    }
+    const envs: PatchEnvelope[] = [];
+    for (const key of keys ?? []) {
+      let x = this.patches_table.get(key);
+      if (x == null) {
+        continue;
+      }
+      if (!Map.isMap(x)) {
+        x = fromJS(x);
+      }
+      const p = this.processPatch({ x });
+      if (p != null) {
+        envs.push(this.toPatchflowEnvelope(p));
+      }
+    }
+    return envs;
+  };
+
+  private applyPatchflowRemoteEnvelopes = (
+    envs: PatchEnvelope[],
+    onEnvelope: (env: PatchEnvelope) => void,
+  ): void => {
+    if (envs.length === 0) {
+      return;
+    }
+    if (envs.length > 1 && this.applyPatchflowRemoteBatch(envs)) {
+      return;
+    }
+    for (const env of envs) {
+      onEnvelope(env);
+    }
+  };
+
+  private applyPatchflowRemoteBatch = (envs: PatchEnvelope[]): boolean => {
+    const session = this.patchflowSession as any;
+    if (
+      session == null ||
+      session.graph == null ||
+      typeof session.graph.add !== "function" ||
+      typeof session.syncDoc !== "function"
+    ) {
+      return false;
+    }
+    try {
+      // Patchflow currently exposes TypeScript-private fields at runtime. Use
+      // them here to avoid recomputing and emitting the full document once per
+      // replayed reconnect patch. If upstream hardens these fields, fall back to
+      // the public per-envelope path above.
+      session.graph.add(envs);
+      for (const env of envs) {
+        session.lastTimeMs = Math.max(
+          session.lastTimeMs ?? 0,
+          decodePatchId(env.time).timeMs,
+        );
+        if (env.version != null) {
+          session.maxVersion = Math.max(session.maxVersion ?? 0, env.version);
+        } else if (typeof session.graph.versions === "function") {
+          session.maxVersion = Math.max(
+            session.maxVersion ?? 0,
+            session.graph.versions().length,
+          );
+        }
+      }
+      session.syncDoc();
+      for (const env of envs) {
+        session.emit?.("patch", env);
+      }
+      return true;
+    } catch (err) {
+      console.warn("patchflow batch apply failed; falling back", err);
+      return false;
+    }
   };
 
   private get_patches = (): Patch[] => {
