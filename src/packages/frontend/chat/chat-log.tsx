@@ -47,7 +47,6 @@ import { dateValue, field, parentMessageId } from "./access";
 // you can use this to quickly disabled virtuoso, but rendering large chatrooms will
 // become basically impossible.
 const USE_VIRTUOSO = true;
-const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
 
 function isImmediateAcpSteerMessage(message: ChatMessageTyped): boolean {
   return field<string>(message, "acp_send_mode") === "immediate";
@@ -361,44 +360,17 @@ export function ChatLog({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const manualScrollRef = useRef<boolean>(false);
   const [manualScroll, setManualScroll] = useState(false);
-
-  // Auto-scroll to bottom while an AI message is generating, unless the
-  // user has manually scrolled away from the bottom.
-  const generating = useMemo(() => {
-    if (!messages) return false;
-    for (const date of sortedDates) {
-      const msg = getMessageAtDate({ messages, date: parseFloat(date) });
-      if (field(msg, "generating") !== true) continue;
-      const isAcpTurn = !!field<string>(msg, "acp_account_id");
-      if (!isAcpTurn) return true;
-      const msgDate = dateValue(msg);
-      if (!msgDate) continue;
-      const messageId = field<string>(msg, "message_id");
-      const threadId = field<string>(msg, "thread_id");
-      const byThread =
-        threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
-      if (
-        ACP_ACTIVE_STATES.has(byThread) ||
-        ACP_ACTIVE_STATES.has(
-          messageId != null
-            ? acpState?.get?.(`message:${messageId}`)
-            : undefined,
-        )
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }, [messages, sortedDates, acpState]);
+  const bottomScrollTokenRef = useRef(0);
+  const bottomScrollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
-    if (!canAutoScroll) return;
-    if (!generating) return;
-    manualScrollRef.current = false;
-    setManualScroll(false);
-    keepBottomAnchoredRef.current = true;
-    scrollToBottomRef?.current?.(true);
-  }, [generating, scrollToBottomRef, canAutoScroll]);
+    return () => {
+      for (const timer of bottomScrollTimersRef.current) {
+        clearTimeout(timer);
+      }
+      bottomScrollTimersRef.current = [];
+    };
+  }, []);
 
   useEffect(() => {
     if (scrollToBottomRef == null) return;
@@ -408,17 +380,29 @@ export function ChatLog({
       manualScrollRef.current = false;
       setManualScroll(false);
       keepBottomAnchoredRef.current = true;
+      const token = ++bottomScrollTokenRef.current;
       const doScroll = () =>
         virtuosoRef.current?.scrollToIndex({ index: Number.MAX_SAFE_INTEGER });
+      const doScrollIfStillAnchored = () => {
+        if (bottomScrollTokenRef.current !== token) return;
+        if (!canAutoScrollRef.current) return;
+        if (manualScrollRef.current) return;
+        if (!keepBottomAnchoredRef.current) return;
+        doScroll();
+      };
 
       doScroll();
       // sometimes scrolling to bottom is requested before last entry added,
       // so we do it again in the next render loop.  This seems needed mainly
       // for side chat when there is little vertical space.
-      setTimeout(doScroll, 1);
+      bottomScrollTimersRef.current.push(
+        setTimeout(doScrollIfStillAnchored, 1),
+      );
       // Images and other late-layout content can still increase message height
       // after the immediate scrolls above, so do one delayed follow-up as well.
-      setTimeout(doScroll, 500);
+      bottomScrollTimersRef.current.push(
+        setTimeout(doScrollIfStillAnchored, 500),
+      );
     };
   }, [scrollToBottomRef, setManualScroll]);
 
@@ -689,14 +673,58 @@ export function MessageList({
   const blockScrollInput = anyOverlayOpen === true;
   const canNotifyForRunningTurn =
     selectedThread != null && onNotifyOnTurnFinishChange != null;
+  const userScrollIntentRef = useRef(false);
+  const userScrollIntentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  const clearUserScrollIntentLater = () => {
+    if (userScrollIntentTimerRef.current != null) {
+      clearTimeout(userScrollIntentTimerRef.current);
+    }
+    userScrollIntentTimerRef.current = setTimeout(() => {
+      userScrollIntentRef.current = false;
+    }, 1000);
+  };
+
+  const markManualScrollAway = () => {
+    if (keepBottomAnchoredRef) {
+      keepBottomAnchoredRef.current = false;
+    }
+    if (manualScrollRef) {
+      manualScrollRef.current = true;
+    }
+    setManualScroll?.(true);
+  };
+
+  const markUserScrollIntent = () => {
+    userScrollIntentRef.current = true;
+    clearUserScrollIntentLater();
+  };
+
+  useEffect(() => {
+    return () => {
+      if (userScrollIntentTimerRef.current != null) {
+        clearTimeout(userScrollIntentTimerRef.current);
+      }
+    };
+  }, []);
 
   const maybeBlockScrollEvent = (event: {
     preventDefault: () => void;
     stopPropagation: () => void;
     target?: EventTarget | null;
+    deltaY?: number;
   }) => {
+    const editableTarget = isEditableOrOverlayInteractionTarget(
+      event.target ?? null,
+    );
+    if (!editableTarget && (event.deltaY == null || event.deltaY < 0)) {
+      markUserScrollIntent();
+      markManualScrollAway();
+    }
     if (!blockScrollInput) return;
-    if (isEditableOrOverlayInteractionTarget(event.target ?? null)) return;
+    if (editableTarget) return;
     event.preventDefault();
     event.stopPropagation();
   };
@@ -710,6 +738,16 @@ export function MessageList({
       return;
     }
     const key = `${event.key ?? ""}`.toLowerCase();
+    if (
+      key === "arrowup" ||
+      key === "pageup" ||
+      key === "home" ||
+      key === " " ||
+      key === "spacebar"
+    ) {
+      markUserScrollIntent();
+      markManualScrollAway();
+    }
     if (
       key === "arrowup" ||
       key === "arrowdown" ||
@@ -938,6 +976,7 @@ export function MessageList({
         onWheelCapture={maybeBlockScrollEvent}
         onTouchMoveCapture={maybeBlockScrollEvent}
         onKeyDownCapture={maybeBlockScrollKeys}
+        onPointerDownCapture={markUserScrollIntent}
       >
         {sortedDates.map((_, index) => renderMessage(index))}
         <div ref={endRef} style={{ height: "25px" }} />
@@ -953,12 +992,14 @@ export function MessageList({
       onWheelCapture={maybeBlockScrollEvent}
       onTouchMoveCapture={maybeBlockScrollEvent}
       onKeyDownCapture={maybeBlockScrollKeys}
+      onPointerDownCapture={markUserScrollIntent}
     >
       <StatefulVirtuoso
         style={{ flex: "1 1 0", minHeight: 0 }}
         ref={virtuosoRef}
         totalCount={sortedDates.length + 1}
         cacheId={cacheId}
+        persistState={false}
         initialTopMostItemIndex={initialIndex}
         atTopThreshold={240}
         itemSize={(el) => {
@@ -979,12 +1020,11 @@ export function MessageList({
         rangeChanged={
           manualScrollRef
             ? ({ endIndex }) => {
-                if (endIndex < sortedDates.length - 1) {
-                  if (keepBottomAnchoredRef) {
-                    keepBottomAnchoredRef.current = false;
-                  }
-                  manualScrollRef.current = true;
-                  setManualScroll?.(true);
+                if (
+                  endIndex < sortedDates.length - 1 &&
+                  userScrollIntentRef.current
+                ) {
+                  markManualScrollAway();
                 }
               }
             : undefined
@@ -992,12 +1032,14 @@ export function MessageList({
         atBottomStateChange={
           manualScrollRef
             ? (atBottom: boolean) => {
-                if (keepBottomAnchoredRef) {
-                  keepBottomAnchoredRef.current = atBottom;
-                }
-                if (!atBottom) {
-                  manualScrollRef.current = true;
-                  setManualScroll?.(true);
+                if (atBottom) {
+                  if (keepBottomAnchoredRef) {
+                    keepBottomAnchoredRef.current = true;
+                  }
+                  manualScrollRef.current = false;
+                  setManualScroll?.(false);
+                } else if (!atBottom && userScrollIntentRef.current) {
+                  markManualScrollAway();
                 }
                 setAtBottom(atBottom);
               }

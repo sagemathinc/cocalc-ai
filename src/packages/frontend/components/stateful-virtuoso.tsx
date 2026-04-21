@@ -6,6 +6,7 @@ import type { StateSnapshot } from "react-virtuoso";
 interface CoreProps extends React.ComponentProps<typeof Virtuoso> {
   cacheId: string;
   initialIndex?: number;
+  persistState?: boolean;
 }
 
 const STORAGE_KEY = "cocalc-stateful-virtuoso-cache";
@@ -100,7 +101,13 @@ const schedulePersist = () => {
 };
 
 function StatefulVirtuosoCore(
-  { cacheId, initialTopMostItemIndex, initialScrollTop, ...rest }: CoreProps,
+  {
+    cacheId,
+    initialTopMostItemIndex,
+    initialScrollTop,
+    persistState = true,
+    ...rest
+  }: CoreProps,
   ref: ForwardedRef<VirtuosoHandle>,
 ) {
   const virtRef = useRef<VirtuosoHandle | null>(null);
@@ -109,6 +116,7 @@ function StatefulVirtuosoCore(
   const savingRef = useRef<boolean>(false);
 
   const canSaveState = () => {
+    if (!persistState) return false;
     if (typeof document !== "undefined" && document.hidden) return false;
     const node = scrollerRef.current;
     if (!node) return true;
@@ -122,12 +130,14 @@ function StatefulVirtuosoCore(
 
   const cached = cacheId ? cache.get(cacheId) : undefined;
   if (
+    persistState &&
     cached &&
     snapshotRef.current == null &&
     hasViableSnapshotMetrics(cached)
   ) {
     snapshotRef.current = cached.snapshot;
   } else if (
+    persistState &&
     cached &&
     snapshotRef.current == null &&
     !hasViableSnapshotMetrics(cached)
@@ -135,7 +145,7 @@ function StatefulVirtuosoCore(
     cache.delete(cacheId);
     schedulePersist();
     snapshotRef.current = undefined;
-  } else if (!cached && snapshotRef.current == null) {
+  } else if ((!persistState || !cached) && snapshotRef.current == null) {
     snapshotRef.current = undefined;
   }
 

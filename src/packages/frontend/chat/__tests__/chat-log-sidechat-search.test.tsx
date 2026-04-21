@@ -12,6 +12,7 @@ import { ChatLog } from "../chat-log";
 const mockScrollToIndex = jest.fn();
 let activeTopTab = "project-2";
 let activeProjectTab = "editor-some-other.chat";
+let latestVirtuosoProps: any;
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (arg1: any, arg2?: string) => {
@@ -38,6 +39,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 jest.mock("@cocalc/frontend/components/stateful-virtuoso", () => {
   const React = require("react");
   return React.forwardRef((props: any, ref: any) => {
+    latestVirtuosoProps = props;
     React.useImperativeHandle(ref, () => ({
       scrollToIndex: mockScrollToIndex,
       scrollIntoView: jest.fn(),
@@ -83,6 +85,7 @@ jest.mock("../composing", () => ({
 describe("ChatLog sidechat search jumps", () => {
   beforeEach(() => {
     mockScrollToIndex.mockClear();
+    latestVirtuosoProps = undefined;
     activeTopTab = "project-2";
     activeProjectTab = "editor-some-other.chat";
   });
@@ -128,7 +131,7 @@ describe("ChatLog sidechat search jumps", () => {
     );
   });
 
-  it("scrolls to the bottom when a generating chat tab returns to the foreground", async () => {
+  it("does not force-scroll to the bottom when a generating chat tab returns to the foreground", async () => {
     const scrollToBottomRef = { current: undefined as any };
     const props = {
       project_id: "project-1",
@@ -164,6 +167,7 @@ describe("ChatLog sidechat search jumps", () => {
 
     await waitFor(() => expect(scrollToBottomRef.current).toBeDefined());
     expect(mockScrollToIndex).not.toHaveBeenCalled();
+    expect(latestVirtuosoProps?.persistState).toBe(false);
 
     act(() => {
       activeTopTab = "project-1";
@@ -172,10 +176,56 @@ describe("ChatLog sidechat search jumps", () => {
     });
 
     await waitFor(() =>
-      expect(mockScrollToIndex).toHaveBeenCalledWith({
-        index: Number.MAX_SAFE_INTEGER,
-      }),
+      expect(latestVirtuosoProps?.followOutput).toBe("smooth"),
     );
+    expect(mockScrollToIndex).not.toHaveBeenCalled();
+  });
+
+  it("stops following output after the user scrolls away", async () => {
+    activeTopTab = "project-1";
+    activeProjectTab = "editor-thread.chat";
+    render(
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        messages={
+          new Map([
+            [
+              "1000",
+              {
+                date: 1000,
+                sender_id: "acct-1",
+                history: [{ content: "first message" }],
+              },
+            ],
+            [
+              "2000",
+              {
+                date: 2000,
+                sender_id: "acct-2",
+                generating: true,
+                history: [{ content: "streaming output" }],
+              },
+            ],
+          ]) as any
+        }
+        mode="standalone"
+        actions={{ clearScrollRequest: jest.fn() } as any}
+        selectedThread="thread-1"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(latestVirtuosoProps?.followOutput).toBe("smooth"),
+    );
+    act(() => {
+      fireEvent.wheel(screen.getByTestId("virtuoso").parentElement!, {
+        deltaY: -100,
+      });
+      latestVirtuosoProps?.atBottomStateChange?.(false);
+    });
+
+    await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(false));
   });
 
   it("re-applies bottom scroll after an image loads in a bottom-anchored thread", async () => {
