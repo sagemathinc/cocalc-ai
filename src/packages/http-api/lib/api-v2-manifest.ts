@@ -72,10 +72,6 @@ import handler65 from "../pages/api/v2/projects/start";
 import handler66 from "../pages/api/v2/projects/stop";
 import handler67 from "../pages/api/v2/projects/touch";
 import handler68 from "../pages/api/v2/projects/update";
-import handler69 from "../pages/api/v2/public-paths/listing-cached";
-import handler70 from "../pages/api/v2/public-paths/save";
-import handler71 from "../pages/api/v2/public-paths/star";
-import handler72 from "../pages/api/v2/public-paths/unstar";
 import handler73 from "../pages/api/v2/purchases/admin-purchase";
 import handler74 from "../pages/api/v2/purchases/cancel-automatic-billing";
 import handler75 from "../pages/api/v2/purchases/cancel-current-checkout-session";
@@ -226,10 +222,6 @@ export const apiV2Manifest: ApiV2ManifestEntry[] = [
   { path: "/projects/stop", handler: handler66 },
   { path: "/projects/touch", handler: handler67 },
   { path: "/projects/update", handler: handler68 },
-  { path: "/public-paths/listing-cached", handler: handler69 },
-  { path: "/public-paths/save", handler: handler70 },
-  { path: "/public-paths/star", handler: handler71 },
-  { path: "/public-paths/unstar", handler: handler72 },
   { path: "/purchases/admin-purchase", handler: handler73 },
   { path: "/purchases/cancel-automatic-billing", handler: handler74 },
   { path: "/purchases/cancel-current-checkout-session", handler: handler75 },
@@ -270,7 +262,10 @@ export const apiV2Manifest: ApiV2ManifestEntry[] = [
   { path: "/purchases/stripe/cancel-payment-intent", handler: handler110 },
   { path: "/purchases/stripe/create-payment-intent", handler: handler111 },
   { path: "/purchases/stripe/create-setup-intent", handler: handler112 },
-  { path: "/purchases/stripe/create-subscription-payment", handler: handler113 },
+  {
+    path: "/purchases/stripe/create-subscription-payment",
+    handler: handler113,
+  },
   { path: "/purchases/stripe/delete-payment-method", handler: handler114 },
   { path: "/purchases/stripe/get-checkout-session", handler: handler115 },
   { path: "/purchases/stripe/get-customer-session", handler: handler116 },

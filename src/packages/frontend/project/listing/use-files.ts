@@ -9,16 +9,35 @@ TESTS: See packages/test/project/listing/
 import useAsyncEffect from "use-async-effect";
 import { useEffect, useRef, useState } from "react";
 import { throttle } from "lodash";
-import { type Files } from "@cocalc/conat/files/listing";
-import { type FilesystemClient } from "@cocalc/conat/files/fs";
-import { type ConatError } from "@cocalc/conat/core/client";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import LRU from "lru-cache";
 import { sleep, withTimeout } from "@cocalc/util/async-utils";
 import type { JSONValue } from "@cocalc/util/types";
 import { dirname, join } from "path";
 
-export { Files };
+export interface FileData {
+  mtime: number;
+  size: number;
+  isDir?: boolean;
+  isSymLink?: boolean;
+  linkTarget?: string;
+  type?: string;
+}
+
+export type Files = { [name: string]: FileData };
+
+type ListingLike = {
+  files?: Files;
+  close?: () => void;
+  on: (event: "change", listener: () => void) => void;
+};
+
+type FilesystemClientLike = {
+  getListing: (path: string) => Promise<{ files: Files; truncated?: boolean }>;
+  listing: (path: string) => Promise<ListingLike>;
+};
+
+type ConatErrorLike = Error & { code?: string | number; data?: unknown };
 
 const DEFAULT_THROTTLE_FILE_UPDATE = 500;
 const INITIAL_LISTING_TIMEOUT_MS = 2000;
@@ -65,6 +84,30 @@ export function useFilesCacheVersion(): number {
   return version;
 }
 
+function sameFiles(a: Files | null | undefined, b: Files | null | undefined) {
+  if (a === b) return true;
+  if (a == null || b == null) return a == null && b == null;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const name of aKeys) {
+    const x = a[name];
+    const y = b[name];
+    if (
+      y == null ||
+      x.mtime !== y.mtime ||
+      x.size !== y.size ||
+      x.isDir !== y.isDir ||
+      x.isSymLink !== y.isSymLink ||
+      x.linkTarget !== y.linkTarget ||
+      x.type !== y.type
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export default function useFiles({
   fs,
   path,
@@ -72,21 +115,25 @@ export default function useFiles({
   cacheId,
 }: {
   // fs = undefined is supported and just waits until you provide a fs that is defined
-  fs?: FilesystemClient | null;
+  fs?: FilesystemClientLike | null;
   path: string;
   throttleUpdate?: number;
   // cacheId -- if given, save most recently loaded Files for a path in an in-memory LRU cache.
   // An example cacheId could be {project_id}.
   // This is used to speed up the first load, and can also be fetched synchronously.
   cacheId?: JSONValue;
-}): { files: Files | null; error: null | ConatError; refresh: () => void } {
+}): {
+  files: Files | null;
+  error: null | ConatErrorLike;
+  refresh: () => void;
+} {
   const [filesState, setFilesState] = useState<{
     path: string;
     files: Files | null;
   }>(() => ({ path, files: getFiles({ cacheId, path }) }));
   const [errorState, setErrorState] = useState<{
     path: string;
-    error: ConatError | null;
+    error: ConatErrorLike | null;
   }>({ path, error: null });
   const { val: counter, inc: refresh } = useCounter();
   const listingRef = useRef<any>(null);
@@ -100,13 +147,24 @@ export default function useFiles({
       const id = ++requestId.current;
       if (fs == null) {
         if (requestId.current !== id) return;
-        setErrorState({ path, error: null });
-        setFilesState({ path, files: null });
+        setErrorState((cur) =>
+          cur.path === path && cur.error == null ? cur : { path, error: null },
+        );
+        setFilesState((cur) =>
+          cur.path === path && cur.files == null ? cur : { path, files: null },
+        );
         return;
       }
       try {
-        setFilesState({ path, files: getFiles({ cacheId, path }) });
-        setErrorState({ path, error: null });
+        const cachedFiles = getFiles({ cacheId, path });
+        setFilesState((cur) =>
+          cur.path === path && sameFiles(cur.files, cachedFiles)
+            ? cur
+            : { path, files: cachedFiles },
+        );
+        setErrorState((cur) =>
+          cur.path === path && cur.error == null ? cur : { path, error: null },
+        );
         const snapshot = await getListingSnapshot({ fs, path });
         if (requestId.current !== id) return;
         const snapshotFiles = snapshot.files ?? {};
@@ -115,12 +173,24 @@ export default function useFiles({
           notifyCacheListeners();
           cacheNeighbors({ fs, cacheId, path, files: snapshotFiles });
         }
-        setFilesState({ path, files: { ...snapshotFiles } });
-        setErrorState({ path, error: null });
+        setFilesState((cur) =>
+          cur.path === path && sameFiles(cur.files, snapshotFiles)
+            ? cur
+            : { path, files: { ...snapshotFiles } },
+        );
+        setErrorState((cur) =>
+          cur.path === path && cur.error == null ? cur : { path, error: null },
+        );
       } catch (err) {
         if (requestId.current !== id) return;
-        setErrorState({ path, error: err as ConatError });
-        setFilesState({ path, files: null });
+        setErrorState((cur) =>
+          cur.path === path && cur.error === err
+            ? cur
+            : { path, error: err as ConatErrorLike },
+        );
+        setFilesState((cur) =>
+          cur.path === path && cur.files == null ? cur : { path, files: null },
+        );
         return;
       }
       void fs
@@ -138,7 +208,11 @@ export default function useFiles({
           }
           const update = () => {
             if (requestId.current !== id) return;
-            setFilesState({ path, files: { ...listing.files } });
+            setFilesState((cur) =>
+              cur.path === path && sameFiles(cur.files, listing.files)
+                ? cur
+                : { path, files: { ...(listing.files ?? {}) } },
+            );
           };
           update();
           const throttledUpdate = throttle(update, throttleUpdate, {
@@ -180,7 +254,7 @@ async function getListingSnapshot({
   fs,
   path,
 }: {
-  fs: FilesystemClient;
+  fs: FilesystemClientLike;
   path: string;
 }): Promise<{ files: Files; truncated?: boolean }> {
   let lastError: unknown;
@@ -210,7 +284,7 @@ async function ensureCached({
   fs,
   path,
 }: {
-  fs: FilesystemClient;
+  fs: FilesystemClientLike;
   cacheId: JSONValue;
   path: string;
 }) {
@@ -237,7 +311,7 @@ async function cacheNeighbors({
   path,
   files,
 }: {
-  fs: FilesystemClient;
+  fs: FilesystemClientLike;
   cacheId: JSONValue;
   path: string;
   files: Files;

@@ -8,6 +8,14 @@ jest.mock("@cocalc/frontend/jupyter/new-notebook", () => ({
   ),
 }));
 
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    conat_client: {
+      permanentlyDisconnect: jest.fn(),
+    },
+  },
+}));
+
 const getEditorActions = jest.fn();
 const getProjectActions = jest.fn();
 const ensureContainingDirectoryExists = jest.fn(async () => {});

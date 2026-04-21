@@ -1,11 +1,11 @@
 import { Alert, Button, Input, Modal, Select, Space } from "antd";
 import { dirname, join } from "path";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Tooltip } from "@cocalc/frontend/components";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { alert_message } from "@cocalc/frontend/alerts";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { type FilesystemClient } from "@cocalc/conat/files/fs";
+import useFs from "@cocalc/frontend/project/listing/use-fs";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { type FindScopeMode } from "./types";
 
@@ -37,10 +37,7 @@ export function FindScopeBar({
   onScopePinnedChange: (next: boolean) => void;
 }) {
   const size = mode === "flyout" ? "small" : "middle";
-  const fs = useMemo(
-    () => webapp_client.conat_client.conat().fs({ project_id }),
-    [project_id],
-  );
+  const fs = useFs({ project_id });
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [pendingPath, setPendingPath] = useState(scopePath);
   const [draftPath, setDraftPath] = useState(scopePath);
@@ -100,6 +97,9 @@ export function FindScopeBar({
   const setGitRoot = useCallback(async () => {
     setGitLoading(true);
     try {
+      if (fs == null) {
+        throw Error("filesystem client not ready");
+      }
       const root = await findGitRoot(fs, currentPath);
       if (!root) {
         alert_message({
@@ -135,6 +135,9 @@ export function FindScopeBar({
       setPathWarning(null);
       setCheckingPath(true);
       try {
+        if (fs == null) {
+          throw Error("filesystem client not ready");
+        }
         const ok = await fs.exists(normalized);
         if (!ok) {
           setPathWarning({

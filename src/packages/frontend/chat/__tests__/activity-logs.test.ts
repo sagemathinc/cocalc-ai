@@ -6,7 +6,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
-      conat: jest.fn(),
+      projectConat: jest.fn(),
     },
   },
 }));
@@ -14,7 +14,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 describe("deleteAllActivityLogs", () => {
   it("prefers explicit log refs on messages over derived refs", async () => {
     const deleteFn = jest.fn().mockResolvedValue(undefined);
-    (webapp_client.conat_client.conat as any).mockReturnValue({
+    (webapp_client.conat_client.projectConat as any).mockResolvedValue({
       sync: {
         akv: ({ name }: { name: string }) => ({
           delete: (key: string) => deleteFn(name, key),
@@ -62,7 +62,7 @@ describe("deleteAllActivityLogs", () => {
 
   it("derives log refs from thread_id and message_id when explicit refs are absent", async () => {
     const deleteFn = jest.fn().mockResolvedValue(undefined);
-    (webapp_client.conat_client.conat as any).mockReturnValue({
+    (webapp_client.conat_client.projectConat as any).mockResolvedValue({
       sync: {
         akv: ({ name }: { name: string }) => ({
           delete: (key: string) => deleteFn(name, key),

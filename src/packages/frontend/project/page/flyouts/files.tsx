@@ -28,10 +28,6 @@ import {
   DirectoryListingEntry,
   FileMap,
 } from "@cocalc/frontend/project/explorer/types";
-import {
-  getPublicFiles,
-  useStrippedPublicPaths,
-} from "@cocalc/frontend/project_store";
 import track from "@cocalc/frontend/user-tracking";
 import {
   capitalize,
@@ -52,7 +48,6 @@ import { FileListItem } from "./file-list-item";
 import { FilesBottom } from "./files-bottom";
 import { FilesHeader } from "./files-header";
 import { fileItemStyle } from "./utils";
-import { triggerFlyoutFileAction } from "./file-action-trigger";
 import useFs from "@cocalc/frontend/project/listing/use-fs";
 import useListing from "@cocalc/frontend/project/listing/use-listing";
 import useBackupsListing, {
@@ -164,7 +159,6 @@ export function FilesFlyout({
     actions,
     current_path: effective_current_path,
   });
-  const strippedPublicPaths = useStrippedPublicPaths(project_id);
   const activeTab = useTypedRedux({ project_id }, "active_project_tab");
 
   const [activeFileSort, setActiveFileSort] = useFlyoutSettings(project_id);
@@ -386,7 +380,6 @@ export function FilesFlyout({
     show_masked,
     typeFilter,
     effective_current_path,
-    strippedPublicPaths,
   ]);
   const {
     displayListing: deferredDirectoryFiles,
@@ -440,12 +433,6 @@ export function FilesFlyout({
     openFiles.has(path_to_file(effective_current_path, file.name));
   const isActive = (file) =>
     activePath == path_to_file(effective_current_path, file.name);
-
-  const publicFiles = getPublicFiles(
-    directoryFiles,
-    strippedPublicPaths,
-    effective_current_path,
-  );
 
   const prev_current_path = usePrevious(effective_current_path);
   const prevCheckedSize = useRef(checked_files?.size ?? 0);
@@ -684,17 +671,6 @@ export function FilesFlyout({
     }
   }
 
-  function showFileSharingDialog(file?: { name: string }) {
-    if (!file) return;
-    const fullPath = path_to_file(effective_current_path, file.name);
-    triggerFlyoutFileAction({
-      actions,
-      action: "share",
-      path: fullPath,
-      multiple: false,
-    });
-  }
-
   function renderTimeAgo(item: DirectoryListingEntry) {
     if (
       isSnapshotsPath(effective_current_path) &&
@@ -767,7 +743,6 @@ export function FilesFlyout({
         mode="files"
         item={{
           ...item,
-          isPublic: publicFiles.has(item.name),
           isOpen: isOpen(item),
           isActive: isActive(item),
         }}
@@ -783,7 +758,6 @@ export function FilesFlyout({
           }
         }}
         itemStyle={fileItemStyle(age ?? 0, mask)}
-        onPublic={() => showFileSharingDialog(directoryFiles[index])}
         selected={isSelected}
         showCheckbox={
           mode === "select" ||
@@ -964,12 +938,10 @@ export function FilesFlyout({
         setScrollIdx={setScrollIdx}
         setScrollIdxHide={setScrollIdxHide}
         setSearchState={setSearchState}
-        showFileSharingDialog={showFileSharingDialog}
         virtuosoRef={virtuosoRef}
         modeState={[mode, setMode]}
         clearAllSelections={clearAllSelections}
         selectAllFiles={selectAllFiles}
-        publicFiles={publicFiles}
         refreshBackups={refreshBackups}
         currentPath={effective_current_path}
         onNavigate={navigateFlyout}
@@ -1022,9 +994,7 @@ export function FilesFlyout({
         clearAllSelections={clearAllSelections}
         selectAllFiles={selectAllFiles}
         open={open}
-        showFileSharingDialog={showFileSharingDialog}
         getFile={getFile}
-        publicFiles={publicFiles}
         refreshBackups={refreshBackups}
         currentPath={effective_current_path}
         onNavigate={navigateFlyout}

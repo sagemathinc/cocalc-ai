@@ -218,10 +218,18 @@ async function ensureSharedProjectDStream<T>(
           project_id: opts.project_id,
           client: getControlPlaneClient(normalizedControlPlaneOrigin),
         })
-      : webapp_client.conat_client.dstream<T>({
-          ...streamOpts,
-          project_id: opts.project_id,
-        })
+      : webapp_client.conat_client
+          .projectConat({
+            project_id: opts.project_id,
+            caller: "acquireSharedProjectDStream",
+          })
+          .then((client) =>
+            dstream<T>({
+              ...streamOpts,
+              project_id: opts.project_id,
+              client,
+            }),
+          )
   )
     .then((stream) => {
       if (sharedStreams.get(key) !== entry) {

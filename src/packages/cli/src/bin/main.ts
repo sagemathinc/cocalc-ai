@@ -2283,6 +2283,7 @@ const daemonCommandDeps = {
 registerDaemonCommand(program, daemonCommandDeps);
 
 const authCommandDeps = {
+  env: process.env,
   runLocalCommand,
   authConfigPath,
   loadAuthConfig,

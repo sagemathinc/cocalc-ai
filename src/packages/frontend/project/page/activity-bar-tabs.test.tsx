@@ -142,9 +142,6 @@ jest.mock("@cocalc/frontend/ssh/ssh-upgrade-button", () => () => null);
 jest.mock("@cocalc/frontend/chat/chat-indicator", () => ({
   ChatIndicator: () => null,
 }));
-jest.mock("./share-indicator", () => ({
-  ShareIndicator: () => null,
-}));
 jest.mock("../workspaces/strong-theme", () => ({
   workspaceStrongThemeChrome: () => null,
 }));

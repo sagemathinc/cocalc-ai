@@ -2076,28 +2076,6 @@ export function _user_get_query_where(
             },
           });
         }
-      case "project_id-public":
-        if (user_query.project_id == null) {
-          return cb("FATAL: must specify project_id");
-        } else {
-          if (schema[table].anonymous) {
-            return this.has_public_path({
-              project_id: user_query.project_id,
-              cb: (err, has_public_path) => {
-                if (err) {
-                  return cb(err);
-                } else if (!has_public_path) {
-                  return cb("project does not have any public paths");
-                } else {
-                  subs[value] = user_query.project_id;
-                  return cb();
-                }
-              },
-            });
-          } else {
-            return cb("FATAL: table must allow anonymous queries");
-          }
-        }
       default:
         return cb();
     }

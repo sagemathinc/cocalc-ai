@@ -199,20 +199,13 @@ function deriveHistory(
     showOpenFiles: boolean;
     showFileActions: boolean;
     showProject: boolean;
-    showShare: boolean;
     showUser: boolean;
     showOther: boolean;
   },
   pathMatches?: (path: string) => boolean,
 ) {
-  const {
-    showOpenFiles,
-    showFileActions,
-    showProject,
-    showShare,
-    showUser,
-    showOther,
-  } = filter;
+  const { showOpenFiles, showFileActions, showProject, showUser, showOther } =
+    filter;
   const searchWords = search_split(searchTerm);
 
   return project_log
@@ -227,9 +220,6 @@ function deriveHistory(
       }
       if (isProjectEvent(event, entry)) {
         return showProject;
-      }
-      if (event === "public_path") {
-        return showShare;
       }
       if (isUserEvent(event)) {
         return showUser;
@@ -295,7 +285,6 @@ export function LogFlyout({
   const showProject = logFilter.contains("project");
   const showOther = logFilter.contains("other");
   const showUser = logFilter.contains("user");
-  const showShare = logFilter.contains("share");
   const deduplicate: FlyoutLogDeduplicate = useTypedRedux(
     { project_id },
     "flyout_log_deduplicate",
@@ -376,7 +365,6 @@ export function LogFlyout({
             showOpenFiles,
             showFileActions,
             showProject,
-            showShare,
             showUser,
             showOther,
           },
@@ -700,16 +688,6 @@ export function LogFlyout({
             title={"Show project events"}
           >
             <Icon name="edit" />
-          </BSButton>
-          <BSButton
-            active={showShare}
-            bsSize="xsmall"
-            onClick={() => {
-              actions?.setFlyoutLogFilter("share", !showShare);
-            }}
-            title={"Show sharing files events"}
-          >
-            <Icon name="share-square" />
           </BSButton>
           <BSButton
             active={showUser}

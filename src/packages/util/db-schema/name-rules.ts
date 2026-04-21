@@ -79,28 +79,6 @@ export function checkProjectName(name: string) {
   }
 }
 
-/*
-Public path name:
-
-- Max length: 100 characters
-- All characters must be either a hyphen (-), a period (.), or alphanumeric
-- Unique amongst public paths in a given project (a separate db query)
-*/
-
-export function checkPublicPathName(name: string) {
-  if (name.length < 1) {
-    throw Error("name must have at least 1 character");
-  }
-  if (name.length > 100) {
-    throw Error("name must have at most 100 characters");
-  }
-  if (!/^[\.a-z\d](?:[\.a-z\d]|-(?=[\.a-z\d])){0,99}$/i.test(name)) {
-    throw Error(
-      "name must contain only a-z,A-Z,0-9, . or -, and not start with hyphen or have spaces.",
-    );
-  }
-}
-
 // Combined words from what we use, https://www.quora.com/How-do-sites-prevent-vanity-URLs-from-colliding-with-future-features
 // and https://github.com/Mottie/github-reserved-names/blob/master/reserved-names.json and
 // https://github.com/Mottie/github-reserved-names and random other things.

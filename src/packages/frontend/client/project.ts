@@ -613,10 +613,11 @@ export class ProjectClient {
     project_id: string;
     path: string;
   }): Promise<boolean> => {
-    return await isDirViaFs(
-      this.client.conat_client.conat().fs({ project_id }),
-      path,
-    );
+    const fs = await this.client.conat_client.projectFs({
+      project_id,
+      caller: "ProjectClient.isDir",
+    });
+    return await isDirViaFs(fs, path);
   };
 
   // getting, setting, editing, deleting, etc., the  api keys for a project

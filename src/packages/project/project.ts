@@ -14,7 +14,6 @@ import initInfoJson from "./info-json";
 import initKucalc from "./init-kucalc";
 import { getOptions } from "./init-program";
 import { cleanup as cleanupEnvironmentVariables } from "./project-setup";
-import initPublicPaths from "./public-paths";
 import { maybeActivateRuntimeUser } from "./runtime-bootstrap";
 import initServers from "./servers/init";
 
@@ -58,7 +57,5 @@ export async function main() {
   initClient();
   logger.info("create all the servers...");
   await initServers();
-  logger.info("create public paths watcher...");
-  initPublicPaths();
   initDEBUG();
 }

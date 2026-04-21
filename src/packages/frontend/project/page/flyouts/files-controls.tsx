@@ -45,14 +45,12 @@ interface FilesSelectedControlsProps {
   getFile: (path: string) => DirectoryListingEntry | undefined;
   mode: "top" | "bottom";
   project_id: string;
-  showFileSharingDialog(file): void;
   open: (
     e: React.MouseEvent | React.KeyboardEvent,
     index: number,
     skip?: boolean,
   ) => void;
   activeFile: DirectoryListingEntry | null;
-  publicFiles: Set<string>;
   refreshBackups?: () => void;
 }
 
@@ -63,9 +61,7 @@ export function FilesSelectedControls({
   mode,
   open,
   project_id,
-  showFileSharingDialog,
   activeFile,
-  publicFiles,
   refreshBackups,
 }: FilesSelectedControlsProps) {
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
@@ -273,20 +269,6 @@ export function FilesSelectedControls({
               {human_readable_size(size)}
             </Descriptions.Item>
           )}
-          {publicFiles.has(singleFile.name) ? (
-            <Descriptions.Item label="Published">
-              <Button
-                size="small"
-                icon={<Icon name="share-square" />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  showFileSharingDialog(singleFile);
-                }}
-              >
-                configure
-              </Button>
-            </Descriptions.Item>
-          ) : undefined}
         </Descriptions>
       );
     } else {

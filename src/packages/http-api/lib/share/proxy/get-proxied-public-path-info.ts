@@ -1,5 +1,4 @@
-// Get public path info for public path defined by url proxy which is assumed
-// to already exist in the database.
+// Inspect public content hosted by supported external providers.
 
 import getPublicPathInfoGithub from "./get-public-path-info-github";
 import getPublicPathInfoGist from "./get-public-path-info-gist";

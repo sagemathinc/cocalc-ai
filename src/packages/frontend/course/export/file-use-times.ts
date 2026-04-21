@@ -51,8 +51,12 @@ async function one_student_file_use_times(
     throw Error("must be signed in");
   }
   for (const path of paths) {
+    const client = await webapp_client.conat_client.projectConat({
+      project_id,
+      caller: "course.getFileUseTimes",
+    });
     const { edit_times, access_times } = await getProjectFileUseTimes({
-      client: webapp_client.conat_client.conat(),
+      client,
       account_id: requester_account_id,
       project_id,
       path,

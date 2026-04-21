@@ -513,21 +513,6 @@ async function purgeProjectRows({
     });
     await runDeleteMaybeMissingTable({
       client,
-      table: "public_path_stars",
-      query:
-        "DELETE FROM public_path_stars WHERE public_path_id IN (SELECT id FROM public_paths WHERE project_id=$1)",
-      params: [project.project_id],
-      purged,
-    });
-    await runDeleteMaybeMissingTable({
-      client,
-      table: "public_paths",
-      query: "DELETE FROM public_paths WHERE project_id=$1",
-      params: [project.project_id],
-      purged,
-    });
-    await runDeleteMaybeMissingTable({
-      client,
       table: "project_copies",
       query:
         "DELETE FROM project_copies WHERE src_project_id=$1 OR dest_project_id=$1",

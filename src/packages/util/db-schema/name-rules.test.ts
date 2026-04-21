@@ -75,31 +75,3 @@ test("checkProjectName", () => {
     checkProjectName("3b38dd9c-f8bf-48c0-9d26-7cad4bac08eb"),
   ).not.toThrow(/.*UUID.*/);
 });
-
-test("checkPublicPathName", () => {
-  const { checkPublicPathName } = NR;
-
-  // at most 100 characters
-  expect(() =>
-    checkPublicPathName(
-      "12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901",
-    ),
-  ).toThrow(/.*100.*/);
-
-  // not less than 1 character
-  expect(() => checkPublicPathName("")).toThrow(/.*1.*/);
-
-  // not start with hyphen
-  expect(() => checkPublicPathName("-foo")).toThrow(/.*hyphen.*/);
-
-  // name must contain only a-z,A-Z,0-9, . or -, and not start with hyphen or have spaces
-  expect(() => checkPublicPathName("foo bar")).toThrow(/.*spaces.*/);
-  expect(() => checkPublicPathName("foo_bar")).toThrow(/.*spaces.*/);
-  expect(() => checkPublicPathName("foo-bar")).not.toThrow(/.*spaces.*/);
-  expect(() => checkPublicPathName("foo.bar")).not.toThrow(/.*spaces.*/);
-
-  // allow UUID
-  expect(() =>
-    checkPublicPathName("3b38dd9c-f8bf-48c0-9d26-7cad4bac08eb"),
-  ).not.toThrow(/.*UUID.*/);
-});

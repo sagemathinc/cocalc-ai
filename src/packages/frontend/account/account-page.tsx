@@ -79,7 +79,6 @@ import {
 } from "./account-preferences-security";
 import { I18NSelector } from "./i18n-selector";
 import { LicensesPage } from "./licenses/licenses-page";
-import { PublicPaths } from "./public-paths/public-paths";
 import { SettingsOverview } from "./settings-index";
 import {
   applyAccountSettingsRoute,
@@ -400,18 +399,6 @@ export const AccountPage: React.FC = () => {
       items.push({ type: "divider" });
     }
 
-    if (!lite) {
-      items.push({
-        key: "public-files",
-        label: (
-          <span>
-            <Icon name="share-square" />{" "}
-            {intl.formatMessage(labels.published_files)}
-          </span>
-        ),
-        children: active_page === "public-files" && <PublicPaths />,
-      });
-    }
     if (
       kucalc === KUCALC_COCALC_COM ||
       kucalc === KUCALC_ON_PREMISES ||

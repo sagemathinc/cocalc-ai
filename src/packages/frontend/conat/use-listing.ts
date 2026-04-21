@@ -47,9 +47,13 @@ export default function useListing({
     if (!project_id) {
       return;
     }
+    const client = await webapp_client.conat_client.projectConat({
+      project_id,
+      caller: "useListing",
+    });
     listingsRef.current = await listingsClient({
       project_id,
-      client: webapp_client.conat_client.conat(),
+      client,
     });
     const handleChange = (path) => {
       if (path == pathRef.current) {

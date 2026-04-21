@@ -412,6 +412,9 @@ describe("ConatClient routed project-host reconnect", () => {
 
     const project_id = "00000000-0000-4000-8000-000000000004";
     const connectCalls: any[] = [];
+    const routedFsClient = { kind: "fs-client" };
+    const routedListingsClient = { kind: "listings-client" };
+    const listingsClient = jest.fn(async () => routedListingsClient);
     let hostInfo: any;
     const ensureHostInfo = jest.fn(async () => {
       hostInfo = immutable.Map({
@@ -455,6 +458,7 @@ describe("ConatClient routed project-host reconnect", () => {
       connect: jest.fn(),
       close: jest.fn(),
       request: jest.fn(async () => ({ data: 123 })),
+      fs: jest.fn(() => routedFsClient),
     };
 
     jest.doMock("@cocalc/frontend/app-framework", () => ({
@@ -515,6 +519,10 @@ describe("ConatClient routed project-host reconnect", () => {
       initHubApi: () => ({}),
     }));
 
+    jest.doMock("@cocalc/conat/service/listings", () => ({
+      listingsClient,
+    }));
+
     jest.doMock("./browser-session", () => ({
       createBrowserSessionAutomation: () => ({
         start: jest.fn(),
@@ -573,6 +581,19 @@ describe("ConatClient routed project-host reconnect", () => {
     expect(connectCalls.map((opts) => opts?.address)).toContain(
       "http://project-host",
     );
+
+    await expect(
+      client.projectFs({ project_id, caller: "test.projectFs" }),
+    ).resolves.toBe(routedFsClient);
+    expect(routedClient.fs).toHaveBeenCalledWith({ project_id });
+
+    await expect(client.listings({ project_id })).resolves.toBe(
+      routedListingsClient,
+    );
+    expect(listingsClient).toHaveBeenCalledWith({
+      project_id,
+      client: routedClient,
+    });
   });
 
   it("sends project touches directly to the routed project-host client", async () => {
