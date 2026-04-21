@@ -444,12 +444,12 @@ export class ConatClient extends EventEmitter {
   };
 
   private setConnectionStatus = (status: Partial<ConatConnectionStatus>) => {
-    const actions = redux?.getActions("page");
-    const store = redux?.getStore("page");
-    if (actions == null || store == null) {
+    const actions = redux?.getActions?.("page");
+    const store = redux?.getStore?.("page");
+    if (actions?.setState == null || store?.get == null) {
       return;
     }
-    const cur = store.get("conat")?.toJS();
+    const cur = store.get("conat")?.toJS?.();
     actions.setState({ conat: { ...cur, ...status } } as any);
   };
 
