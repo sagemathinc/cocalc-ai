@@ -324,6 +324,17 @@ export function buildRememberMeStorageKeys(apiUrl: string): string[] {
   return Array.from(new Set(keys));
 }
 
+export function buildControlPlaneOriginStorageKey(apiUrl: string): string {
+  let basePath = "/";
+  try {
+    basePath = new URL(apiUrl).pathname || "/";
+  } catch {
+    basePath = "/";
+  }
+  basePath = basePath.replace(/\/+$/, "") || "/";
+  return `cocalc-control-plane-origin:${basePath}`;
+}
+
 export async function waitForSpawnStateReady({
   stateFile,
   timeoutMs,

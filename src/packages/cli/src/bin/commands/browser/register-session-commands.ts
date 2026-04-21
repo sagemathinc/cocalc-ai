@@ -113,6 +113,7 @@ export function registerBrowserSessionCommands({
     resolveChromiumExecutablePath,
     resolveSecret,
     buildSpawnCookies,
+    buildControlPlaneOriginStorageKey,
     buildRememberMeStorageKeys,
     writeDaemonConfig,
     parseDiscoveryTimeout,
@@ -431,6 +432,9 @@ export function registerBrowserSessionCommands({
               executable_path: chromiumPath,
               session_name: sessionName,
               cookies,
+              control_plane_origin: new URL(markedTargetUrl).origin,
+              control_plane_storage_key:
+                buildControlPlaneOriginStorageKey(parsedApiUrl),
               remember_me_storage_keys: signInCookie?.remember_me
                 ? buildRememberMeStorageKeys(parsedApiUrl)
                 : undefined,

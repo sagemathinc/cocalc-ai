@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildRememberMeStorageKeys, buildSpawnCookies } from "./spawn-state";
+import {
+  buildControlPlaneOriginStorageKey,
+  buildRememberMeStorageKeys,
+  buildSpawnCookies,
+} from "./spawn-state";
 
 test("buildSpawnCookies prefers remember_me over hub/api cookies", () => {
   const cookies = buildSpawnCookies({
@@ -37,4 +41,15 @@ test("buildRememberMeStorageKeys matches frontend remember_me localStorage keys"
     "remember_me",
     "remember_mecocalc",
   ]);
+});
+
+test("buildControlPlaneOriginStorageKey matches frontend control-plane key", () => {
+  assert.equal(
+    buildControlPlaneOriginStorageKey("http://localhost:9001"),
+    "cocalc-control-plane-origin:/",
+  );
+  assert.equal(
+    buildControlPlaneOriginStorageKey("https://example.test/cocalc/"),
+    "cocalc-control-plane-origin:/cocalc",
+  );
 });

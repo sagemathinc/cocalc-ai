@@ -297,6 +297,8 @@ export type PlaywrightDaemonConfig = {
   session_name?: string;
   cookies?: SpawnCookie[];
   remember_me_storage_keys?: string[];
+  control_plane_origin?: string;
+  control_plane_storage_key?: string;
 };
 
 export type SpawnStateRecord = {
@@ -389,6 +391,7 @@ export type BrowserSessionRegisterUtils = {
     rememberMe?: string;
     accountId?: string;
   }) => SpawnCookie[];
+  buildControlPlaneOriginStorageKey: (apiUrl: string) => string;
   buildRememberMeStorageKeys: (apiUrl: string) => string[];
   writeDaemonConfig: (path: string, value: PlaywrightDaemonConfig) => void;
   parseDiscoveryTimeout: (

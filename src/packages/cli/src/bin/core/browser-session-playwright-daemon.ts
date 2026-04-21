@@ -41,6 +41,8 @@ type SpawnDaemonConfig = {
   session_name?: string;
   cookies?: SpawnCookie[];
   remember_me_storage_keys?: string[];
+  control_plane_origin?: string;
+  control_plane_storage_key?: string;
 };
 
 type SpawnDaemonState = {
@@ -64,7 +66,7 @@ type SpawnDaemonState = {
 
 type DaemonRequest = {
   request_id: string;
-  action: "evaluate" | "screenshot";
+  action: "cookies" | "evaluate" | "screenshot";
   expression?: string;
   selector?: string;
   wait_for_idle_ms?: number;
@@ -187,6 +189,10 @@ function readConfig(configPath: string): SpawnDaemonConfig {
         ),
       )
     : undefined;
+  const control_plane_origin =
+    `${row.control_plane_origin ?? ""}`.trim() || undefined;
+  const control_plane_storage_key =
+    `${row.control_plane_storage_key ?? ""}`.trim() || undefined;
   return {
     spawn_id,
     state_file,
@@ -198,6 +204,8 @@ function readConfig(configPath: string): SpawnDaemonConfig {
     session_name,
     cookies,
     remember_me_storage_keys,
+    control_plane_origin,
+    control_plane_storage_key,
   };
 }
 
@@ -220,6 +228,20 @@ function safeUnlink(path: string): void {
   } catch {
     // best-effort cleanup
   }
+}
+
+function redactCookie(cookie: Record<string, any>): Record<string, unknown> {
+  const value = `${cookie.value ?? ""}`;
+  return {
+    name: `${cookie.name ?? ""}`,
+    domain: `${cookie.domain ?? ""}`,
+    path: `${cookie.path ?? ""}`,
+    expires: cookie.expires,
+    httpOnly: cookie.httpOnly === true,
+    secure: cookie.secure === true,
+    sameSite: cookie.sameSite,
+    value_length: value.length,
+  };
 }
 
 function parsePngDimensions(
@@ -355,13 +377,29 @@ async function main(): Promise<void> {
   }
   const page = await context.newPage();
   const spawnMarker = spawnMarkerFromUrl(config.target_url);
-  if (spawnMarker || config.remember_me_storage_keys?.length) {
+  if (
+    spawnMarker ||
+    config.remember_me_storage_keys?.length ||
+    (config.control_plane_origin && config.control_plane_storage_key)
+  ) {
     await page.addInitScript(
-      ({ marker, storageKey, rememberMeStorageKeys }) => {
+      ({
+        controlPlaneOrigin,
+        controlPlaneStorageKey,
+        marker,
+        storageKey,
+        rememberMeStorageKeys,
+      }) => {
         try {
           if (marker) {
             (globalThis as any).__COCALC_BROWSER_SPAWN_MARKER = marker;
             globalThis.sessionStorage?.setItem(storageKey, marker);
+          }
+          if (controlPlaneOrigin && controlPlaneStorageKey) {
+            globalThis.localStorage?.setItem(
+              controlPlaneStorageKey,
+              controlPlaneOrigin,
+            );
           }
           for (const key of rememberMeStorageKeys) {
             globalThis.localStorage?.setItem(key, "true");
@@ -371,6 +409,8 @@ async function main(): Promise<void> {
         }
       },
       {
+        controlPlaneOrigin: config.control_plane_origin,
+        controlPlaneStorageKey: config.control_plane_storage_key,
         marker: spawnMarker,
         storageKey: SPAWN_MARKER_STORAGE_KEY,
         rememberMeStorageKeys: config.remember_me_storage_keys ?? [],
@@ -378,8 +418,11 @@ async function main(): Promise<void> {
     );
   }
   if (config.sign_in_url) {
-    await page.goto(config.sign_in_url, {
-      waitUntil: "domcontentloaded",
+    // Seed browser cookies without loading the frontend. Navigating the page to
+    // /auth/impersonate can start Conat before remember_me is established,
+    // leaving the spawned session stuck with a failed heartbeat.
+    await context.request.get(config.sign_in_url, {
+      maxRedirects: 0,
       timeout: config.timeout_ms,
     });
   }
@@ -412,6 +455,25 @@ async function main(): Promise<void> {
       requestId = `${request?.request_id ?? ""}`.trim();
       if (!requestId) throw new Error("missing request_id");
       const action = `${request?.action ?? ""}`.trim();
+      if (action === "cookies") {
+        const urls = Array.from(
+          new Set(
+            [page.url(), config.target_url, config.sign_in_url]
+              .map((url) => `${url ?? ""}`.trim())
+              .filter(Boolean),
+          ),
+        );
+        writeJsonAtomic(responsePath, {
+          ok: true,
+          request_id: requestId,
+          result: {
+            page_url: page.url(),
+            cookies: (await context.cookies(urls)).map(redactCookie),
+          },
+        } satisfies DaemonResponse);
+        safeUnlink(requestPath);
+        return;
+      }
       if (action === "evaluate") {
         const expression = `${request.expression ?? ""}`.trim();
         if (!expression) {
