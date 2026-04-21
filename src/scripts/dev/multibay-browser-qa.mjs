@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = path.resolve(SCRIPT_DIR, "../..");
 const DEFAULT_SCENARIOS = ["sign-in-target", "storage-archives"];
+const APP_SERVER_RUNTIME_SCENARIO = "app-server-runtime";
 const INVITE_REDEEM_SCENARIO = "invite-redeem";
 const INVITE_EDGE_CASES_SCENARIO = "invite-edge-cases";
 const NOTEBOOK_RUNTIME_SCENARIO = "notebook-runtime";
@@ -19,6 +20,7 @@ const SIGN_UP_HOME_BAY_SCENARIO = "sign-up-home-bay";
 const TERMINAL_INTERACTIVE_SCENARIO = "terminal-interactive";
 const KNOWN_SCENARIOS = new Set([
   ...DEFAULT_SCENARIOS,
+  APP_SERVER_RUNTIME_SCENARIO,
   INVITE_REDEEM_SCENARIO,
   INVITE_EDGE_CASES_SCENARIO,
   NOTEBOOK_RUNTIME_SCENARIO,
@@ -45,7 +47,7 @@ function usageAndExit(message, code = 1) {
       "Options:",
       "  --project-title <text>     Visible project title to require after sign-in",
       "  --scenario <name>          Scenario to run; repeatable. Defaults to all.",
-      "                            Known: sign-in-target, storage-archives, invite-redeem, invite-edge-cases, notebook-runtime, project-lifecycle, reconnect-stable-url, sign-up-home-bay, terminal-interactive",
+      "                            Known: sign-in-target, storage-archives, app-server-runtime, invite-redeem, invite-edge-cases, notebook-runtime, project-lifecycle, reconnect-stable-url, sign-up-home-bay, terminal-interactive",
       "  --registration-token <t>   Registration token for sign-up-home-bay when required",
       "  --expected-home-bay <id>   Assert created/signed-in account home bay, e.g. bay-2",
       "  --first-name <text>        First name for sign-up-home-bay (default: QA)",
@@ -265,6 +267,7 @@ function parseArgs(argv) {
       [
         "sign-in-target",
         "storage-archives",
+        APP_SERVER_RUNTIME_SCENARIO,
         NOTEBOOK_RUNTIME_SCENARIO,
         PROJECT_LIFECYCLE_SCENARIO,
         RECONNECT_STABLE_URL_SCENARIO,
@@ -334,7 +337,7 @@ function loadPlaywrightCore() {
 function redact(value) {
   return `${value ?? ""}`
     .replace(
-      /([?&](?:auth_token|password|token|key)=)[^&\s]+/gi,
+      /([?&](?:auth_token|password|token|key|cocalc_project_host_token)=)[^&\s]+/gi,
       "$1[redacted]",
     )
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/g, "$1[redacted]");
@@ -1560,6 +1563,288 @@ async function runNotebookRuntime(page, options) {
   return result;
 }
 
+async function runAppServerRuntime(page, options) {
+  await waitForRuntime(page, options);
+  let setup;
+
+  async function restoreProjectRuntime() {
+    const projectPath = `/projects/${options.projectId}`;
+    if (new URL(page.url()).pathname !== projectPath) {
+      await page.goto(`${options.baseUrl}${projectPath}`, {
+        waitUntil: "domcontentloaded",
+        timeout: options.timeoutMs,
+      });
+      await waitForStableProjectUrl(page, options);
+    }
+    await waitForRuntime(page, options);
+  }
+
+  async function cleanup() {
+    if (!setup?.appId) {
+      return;
+    }
+    try {
+      await restoreProjectRuntime();
+      await page.evaluate(
+        async ({ projectId, appId }) => {
+          const api = globalThis.cc.conat.projectApi({ project_id: projectId });
+          await api.apps.deleteApp(appId);
+        },
+        { projectId: options.projectId, appId: setup.appId },
+      );
+    } catch {
+      // Best effort cleanup for a disposable QA app.
+    }
+  }
+
+  try {
+    setup = await page.evaluate(
+      async ({ projectId, timeoutMs }) => {
+        function sleep(ms) {
+          return new Promise((resolve) => setTimeout(resolve, ms));
+        }
+
+        async function withTimeout(label, promise, timeout = timeoutMs) {
+          let timer;
+          try {
+            return await Promise.race([
+              promise,
+              new Promise((_, reject) => {
+                timer = setTimeout(
+                  () =>
+                    reject(new Error(`${label} timed out after ${timeout}ms`)),
+                  timeout,
+                );
+              }),
+            ]);
+          } catch (err) {
+            throw new Error(`${label} failed: ${err}`);
+          } finally {
+            clearTimeout(timer);
+          }
+        }
+
+        async function ensureProjectRunning() {
+          const projects = globalThis.cc.conat.hub.projects;
+          const state = await withTimeout(
+            "getProjectState",
+            projects.getProjectState({ project_id: projectId }),
+          );
+          if (state?.state === "running") {
+            return state;
+          }
+          await withTimeout(
+            "startProject",
+            projects.start({ project_id: projectId, wait: true }),
+          );
+          const deadline = Date.now() + timeoutMs;
+          let last = state;
+          while (Date.now() < deadline) {
+            last = await withTimeout(
+              "getProjectState",
+              projects.getProjectState({ project_id: projectId }),
+            );
+            if (last?.state === "running") {
+              return last;
+            }
+            await sleep(1000);
+          }
+          throw new Error(
+            `project did not reach running; last state=${JSON.stringify(last)}`,
+          );
+        }
+
+        await ensureProjectRunning();
+
+        const api = globalThis.cc.conat.projectApi({ project_id: projectId });
+        const appId = `qa-app-${Date.now().toString(36)}`;
+        const marker = `multibay_app_server_${Date.now()}`;
+        const serviceScript = `
+const http = require("http");
+const host = process.env.HOST || "127.0.0.1";
+const port = Number(process.env.PORT || 0);
+const marker = process.env.QA_MARKER || "missing-marker";
+const server = http.createServer((req, res) => {
+  const body = marker + "\\npath=" + String(req.url || "/") + "\\n";
+  res.statusCode = 200;
+  res.setHeader("content-type", "text/plain; charset=utf-8");
+  res.setHeader("content-length", Buffer.byteLength(body));
+  res.end(body);
+});
+server.listen(port, host, () => {
+  console.log("ready " + marker + " " + host + ":" + port);
+});
+const shutdown = () => server.close(() => process.exit(0));
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+`;
+        const launcher = [
+          "set -e",
+          'node_bin="$(command -v node || true)"',
+          'if [ -z "$node_bin" ] && [ -x /opt/cocalc/bin/node ]; then node_bin=/opt/cocalc/bin/node; fi',
+          'if [ -z "$node_bin" ]; then echo "node not found" >&2; exit 127; fi',
+          'exec "$node_bin" -e "$APP_SCRIPT"',
+        ].join("\n");
+        await withTimeout(
+          "upsert-app-spec",
+          api.apps.upsertAppSpec({
+            version: 1,
+            id: appId,
+            title: "Multibay QA App Server",
+            kind: "service",
+            command: {
+              exec: "bash",
+              args: ["-lc", launcher],
+              env: {
+                APP_SCRIPT: serviceScript,
+                QA_MARKER: marker,
+              },
+            },
+            lifecycle: { mode: "managed" },
+            network: { listen_host: "127.0.0.1", protocol: "http" },
+            proxy: {
+              base_path: `/apps/${appId}`,
+              strip_prefix: true,
+              websocket: false,
+              open_mode: "port",
+              readiness_timeout_s: 30,
+            },
+            wake: {
+              enabled: true,
+              keep_warm_s: 60,
+              startup_timeout_s: 60,
+            },
+          }),
+        );
+
+        const metricsBefore = await withTimeout(
+          "app-metrics-before",
+          api.apps.appMetrics(appId, { minutes: 60 }),
+        );
+        const status = await withTimeout(
+          "ensure-running",
+          api.apps.ensureRunning(appId, {
+            timeout: Math.min(timeoutMs, 90_000),
+            interval: 500,
+          }),
+        );
+        if (status?.state !== "running" || status?.ready !== true) {
+          throw new Error(
+            `app did not become ready: ${JSON.stringify(status)}`,
+          );
+        }
+        if (!status?.url) {
+          throw new Error(`app status missing url: ${JSON.stringify(status)}`);
+        }
+        const authedUrl = await globalThis.cc.conat.addProjectHostAuthToUrl({
+          project_id: projectId,
+          url: status.url,
+        });
+        return JSON.parse(
+          JSON.stringify({
+            appId,
+            marker,
+            rawUrl: status.url,
+            authedUrl: new URL(authedUrl, window.location.origin).toString(),
+            status,
+            metricsBefore,
+          }),
+        );
+      },
+      { projectId: options.projectId, timeoutMs: options.timeoutMs },
+    );
+
+    const appPage = await page.context().newPage();
+    appPage.setDefaultTimeout(options.timeoutMs);
+    appPage.setDefaultNavigationTimeout(options.timeoutMs);
+    let responseStatus;
+    let bodyText = "";
+    try {
+      const response = await appPage.goto(setup.authedUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: options.timeoutMs,
+      });
+      responseStatus = response?.status();
+      bodyText = await appPage.locator("body").innerText({
+        timeout: options.timeoutMs,
+      });
+      if (responseStatus !== 200) {
+        throw new Error(
+          `app server returned status ${responseStatus}; body=${JSON.stringify(bodyText.slice(0, 1000))}`,
+        );
+      }
+      if (!bodyText.includes(setup.marker)) {
+        throw new Error(
+          `app server response missing marker ${setup.marker}; body=${JSON.stringify(bodyText.slice(0, 1000))}`,
+        );
+      }
+      if (bodyText.includes("cocalc_project_host_token")) {
+        throw new Error("project-host auth token leaked into app server URL");
+      }
+    } finally {
+      await bestEffortTimeout(
+        "app-server-page.close",
+        appPage.close().catch(() => {}),
+        5_000,
+      );
+    }
+
+    const metricsAfter = await page.evaluate(
+      async ({ projectId, appId, metricsBefore, timeoutMs }) => {
+        function sleep(ms) {
+          return new Promise((resolve) => setTimeout(resolve, ms));
+        }
+
+        const api = globalThis.cc.conat.projectApi({ project_id: projectId });
+        const beforeRequests = Number(metricsBefore?.totals?.requests) || 0;
+        const beforeBytes = Number(metricsBefore?.totals?.bytes_sent) || 0;
+        const deadline = Date.now() + timeoutMs;
+        let last;
+        while (Date.now() < deadline) {
+          last = await api.apps.appMetrics(appId, { minutes: 60 });
+          if (
+            Number(last?.totals?.requests) > beforeRequests &&
+            Number(last?.totals?.bytes_sent) > beforeBytes &&
+            Number(last?.totals?.private_requests) > 0
+          ) {
+            return JSON.parse(JSON.stringify(last));
+          }
+          await sleep(250);
+        }
+        throw new Error(
+          `app metrics did not update; last=${JSON.stringify(last)}`,
+        );
+      },
+      {
+        projectId: options.projectId,
+        appId: setup.appId,
+        metricsBefore: setup.metricsBefore,
+        timeoutMs: Math.min(options.timeoutMs, 30_000),
+      },
+    );
+
+    return {
+      appId: setup.appId,
+      marker: setup.marker,
+      rawUrl: setup.rawUrl,
+      authedUrl: redact(setup.authedUrl),
+      responseStatus,
+      bodyTail: bodyText.slice(-1000),
+      status: setup.status,
+      metricsBefore: setup.metricsBefore,
+      metricsAfter,
+      requestDelta:
+        Number(metricsAfter?.totals?.requests) -
+        (Number(setup.metricsBefore?.totals?.requests) || 0),
+      bytesSentDelta:
+        Number(metricsAfter?.totals?.bytes_sent) -
+        (Number(setup.metricsBefore?.totals?.bytes_sent) || 0),
+    };
+  } finally {
+    await cleanup();
+  }
+}
+
 async function getSignedInAccountId(page, options) {
   await waitForRuntime(page, options);
   const accountId = await page.evaluate(() => {
@@ -2341,6 +2626,17 @@ async function runScenario(browser, scenario, options) {
         diagnostics: summarizeDiagnostics(diagnostics),
       };
     }
+    if (scenario === APP_SERVER_RUNTIME_SCENARIO) {
+      const signIn = await signInToProject(page, options);
+      const appServerRuntime = await runAppServerRuntime(page, options);
+      return {
+        scenario,
+        status: "pass",
+        signIn,
+        appServerRuntime,
+        diagnostics: summarizeDiagnostics(diagnostics),
+      };
+    }
     if (scenario === NOTEBOOK_RUNTIME_SCENARIO) {
       const signIn = await signInToProject(page, options);
       const notebookRuntime = await runNotebookRuntime(page, options);
@@ -2424,6 +2720,24 @@ function printTextResult(result) {
         storage ? `backups=${storage.backupCount}` : "backups=<unavailable>",
         storage?.firstBackupFileCount != null
           ? `first_backup_files=${storage.firstBackupFileCount}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  } else if (result.scenario === APP_SERVER_RUNTIME_SCENARIO) {
+    const app = result.appServerRuntime;
+    console.log(
+      [
+        `${prefix} app-server-runtime`,
+        `final_url=${result.signIn?.finalUrl ?? result.currentUrl ?? "<unknown>"}`,
+        app?.appId ? `app=${app.appId}` : "",
+        app?.responseStatus ? `http=${app.responseStatus}` : "",
+        Number.isFinite(app?.requestDelta)
+          ? `requests_delta=${app.requestDelta}`
+          : "",
+        Number.isFinite(app?.bytesSentDelta)
+          ? `bytes_sent_delta=${app.bytesSentDelta}`
           : "",
       ]
         .filter(Boolean)

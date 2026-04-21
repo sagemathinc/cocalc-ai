@@ -226,6 +226,36 @@ clients.
    should become explicit before multi-bay routing
 2. keep server-side bridge/control paths ahead of broader frontend ergonomics
 
+## Completed In The Browser Project Routing Pass
+
+### `frontend/conat/client.ts`
+
+- added `projectConat(...)` as the browser-local helper that asynchronously
+  warms project-host routing before returning a project-scoped Conat client
+- `projectApi(...)` now uses `projectConat(...)` for each RPC, so cold
+  `host_info` is resolved before the first project API request instead of
+  sending the request through the default hub/home-bay client
+- `projectWebsocketApi(...)` now uses the same project-scoped routing helper
+- `primus(...)` and `terminalClient(...)` now explicitly use cached
+  project-host routing when it is available
+- `routeSubject(...)`, `primus(...)`, and `terminalClient(...)` now emit a
+  one-time warning when a project has a host id but the browser must fall back
+  to the default hub client because project-host routing is not yet available
+- regression coverage now exercises a cold-host-info `projectApi(...)` request
+  and verifies that the project RPC goes through the routed project-host client,
+  not the hub client
+
+This closes the main user-hot runtime path that could send an initial project
+API request through the wrong bay before project-host routing metadata was
+cached.
+
+Remaining browser-side work:
+
+- filesystem/listing/storage/project-info helpers that pass
+  `webapp_client.conat_client.conat()` still rely on synchronous
+  `routeSubject(...)`; they now warn on fallback, but they are not fully
+  converted to an async `projectConat(...)` style wrapper
+
 ## Completed In The Filesystem And LLM Pass
 
 ### `conat/files/fs.ts`
@@ -602,3 +632,92 @@ be initialized.
 This does not remove the global client yet, but it removes a major structural
 reason for keeping it around. Logger access is now a separate runtime concern
 instead of piggybacking on whichever global Conat client happens to be set.
+
+## Completed In The Browser Runtime Hot-Path Audit
+
+Status: audit pass on 2026-04-21, after terminal, notebook, and app-server
+runtime QA passed against the stable `lite4b.cocalc.ai` multibay fixture.
+
+### `hub.projects.*` Browser Uses
+
+No remaining frontend `hub.projects.*` call sites were found that look like
+high-frequency project runtime data paths and are not already routed or
+control-plane by nature.
+
+Current classification:
+
+- project-local chat archive / search maintenance calls are routed to the
+  project host through the browser `callHub(...)` project-host whitelist:
+  - `projects.chatStoreStats`
+  - `projects.chatStoreRotate`
+  - `projects.chatStoreListSegments`
+  - `projects.chatStoreReadArchived`
+  - `projects.chatStoreReadArchivedHit`
+  - `projects.chatStoreSearch`
+  - `projects.chatStoreDelete`
+  - `projects.chatStoreVacuum`
+- Codex credential/device-auth project helpers are also routed through the
+  same whitelist:
+  - `projects.codexDeviceAuthStart`
+  - `projects.codexDeviceAuthStatus`
+  - `projects.codexDeviceAuthCancel`
+  - `projects.codexUploadAuthFile`
+- remaining frontend `hub.projects.*` uses are account/project metadata,
+  collaboration, lifecycle orchestration, LRO control, snapshot/backup
+  orchestration, SSH key metadata, public import, or project settings. These
+  belong on the bay/control plane or are already validated as routed
+  orchestration paths rather than interactive runtime byte streams.
+
+This closes the `hub.projects.*` browser runtime-read audit bucket. The
+remaining risk is not a specific `hub.projects.*` method.
+
+### Remaining Browser Conat Fallback Risk
+
+The important remaining browser-side risk is the synchronous `routeSubject`
+fallback in [frontend/conat/client.ts](/home/user/cocalc-ai/src/packages/frontend/conat/client.ts).
+
+The browser's main Conat client is configured with a `routeSubject(subject)`
+hook that extracts a `project_id` from project subjects and routes those
+subjects to a direct browser -> project-host Conat client when cached project
+host routing info exists.
+
+This covers many user-hot runtime paths:
+
+- `projectApi({ project_id })`
+- `projectWebsocketApi({ project_id, ... })`
+- `primus({ project_id, ... })`
+- `terminalClient({ project_id, ... })`
+- filesystem/listing/storage/project-info helpers that pass
+  `webapp_client.conat_client.conat()` and include `project_id` in their
+  project subjects
+
+The issue is that `routeSubject(...)` is synchronous. If project map or host
+info is not loaded when one of these project-subject calls is made, routing
+returns `undefined` and the call uses the default hub/home-bay connection.
+That is deliberate today as a compatibility fallback, but it is still the main
+place where project runtime traffic can silently hairpin through a bay.
+
+Observed state:
+
+- terminal, notebook, storage, snapshots/backups, invite flows, app-server
+  runtime reads, and app metrics have all passed through the stable multibay
+  browser QA fixture
+- project-host connection targets do appear once routing info is loaded
+- no concrete post-QA user-visible failure was found in this audit pass
+- the fallback remains architecturally risky because it depends on route info
+  being warm before the first runtime call
+
+Recommended next cleanup:
+
+1. Add an explicit browser wrapper for project-runtime Conat clients, e.g.
+   `projectConat({ project_id, requireRouting?: boolean })`, that can
+   asynchronously call `ensureProjectRoutingInfo(project_id)` before returning
+   the low-level client.
+2. Convert the highest-value wrappers to use it or assert route readiness:
+   `projectApi`, `projectWebsocketApi`, `primus`, `terminalClient`, and the
+   filesystem/listing/storage wrappers.
+3. In development and QA, make project-subject fallback to the hub visible
+   either through a warning, metric, or hard assertion in the multibay QA
+   runner.
+4. Keep an intentional fallback mode for one-bay / no-host projects, but make
+   it explicit rather than implicit.

@@ -27,6 +27,11 @@ jest.mock("@cocalc/database/settings/site-url", () => ({
   default: (...args: any[]) => siteUrlMock(...args),
 }));
 
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  __esModule: true,
+  getServerSettings: jest.fn(async () => ({})),
+}));
+
 jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
   __esModule: true,
   createProjectHostBootstrapToken: (...args: any[]) =>

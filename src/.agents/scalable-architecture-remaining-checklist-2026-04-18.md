@@ -86,6 +86,14 @@ Recent 3-way fixture validation:
     routed project FS, Jupyter backend start through project API, raw routed
     `jupyter.project-*` socket execution, stdin request/response, output
     streaming, run completion, kernel status, and cleanup
+  - browser app-server runtime smoke reached the disposable managed HTTP app,
+    verified HTTP response delivery and app metrics updates, and found one
+    important privacy/security bug: the short-lived project-host bearer query
+    token could be forwarded to app code when an existing browser session cookie
+    also authorized the request
+  - after deploying the project-host HTTP proxy auth fix, the app-server runtime
+    replay passed: the app response did not receive the bearer query token, HTTP
+    response delivery worked, and request / bytes metrics were recorded
   - browser storage / snapshot / backup reads passed
   - browser invite redeem passed with cleanup
   - browser invite duplicate, revoke, already-collaborator, remove, and
@@ -224,8 +232,8 @@ Remaining audit targets:
 
 - [x] terminal creation / attach / resize / stream paths
 - [x] notebook kernel / session / exec paths
-- [ ] app-server interactive reads / status paths
-- [ ] any remaining user-hot-path `hub.projects.*` runtime reads
+- [x] app-server interactive reads / status paths
+- [x] any remaining user-hot-path `hub.projects.*` runtime reads
 - [ ] any remaining frontend code that can silently fall back to the default
       global Conat client instead of an explicit routed client
 
@@ -242,6 +250,31 @@ Notes:
 - a missing Python kernelspec is now clearly exposed as fixture/image readiness,
   not as a multibay routing failure; the validated fixture has `python3`
   available
+- app-server runtime QA now creates a disposable managed HTTP app through the
+  routed project API, starts it, opens it through the project-host auth URL,
+  verifies the response body, checks request/bytes metrics, and deletes the app
+  afterward
+- the first live app-server replay exposed that project-host bearer query tokens
+  were forwarded to app code if a browser-session cookie authorized first; after
+  deploying the project-host fix, the stable-URL replay passed with HTTP 200,
+  no token leakage in the app-visible path, one private request recorded, and
+  bytes sent metrics updated
+- a 2026-04-21 frontend audit found no remaining `hub.projects.*` browser
+  runtime-read path that is both user-hot and unrouted; chat archive/search and
+  Codex credential project helpers are already in the project-host-routed
+  `callHub(...)` whitelist, while remaining `hub.projects.*` call sites are
+  metadata, lifecycle, collaboration, backup/snapshot orchestration, or LRO
+  control-plane paths
+- the remaining browser-side risk is the synchronous `routeSubject` fallback:
+  project-subject calls route directly to the project-host only when project
+  host routing info is already cached; if that info is cold, the default
+  hub/home-bay client is still used implicitly
+- a partial browser routing fix now makes `projectApi(...)` and
+  `projectWebsocketApi(...)` explicitly warm project-host routing before use,
+  and makes `primus(...)`, `terminalClient(...)`, and `routeSubject(...)` warn
+  when they must fall back to the default hub client; the remaining open work
+  is converting lower-level filesystem/listing/storage/project-info wrappers
+  away from implicit synchronous `routeSubject(...)` fallback
 
 ### 3. Finish Project-Host Runtime Productionization
 

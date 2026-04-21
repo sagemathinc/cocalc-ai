@@ -458,6 +458,24 @@ export function createProjectHostHttpProxyAuth({
     }
   };
 
+  const cleanQueryTokenOrRedirect = (
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): boolean => {
+    const cleaned = urlWithoutQueryToken(req);
+    if (!cleaned) {
+      return false;
+    }
+    if (/^(GET|HEAD)$/i.test(req.method ?? "GET")) {
+      res.statusCode = 302;
+      res.setHeader("Location", cleaned);
+      res.end("");
+      return true;
+    }
+    stripQueryToken(req);
+    return false;
+  };
+
   const assertNotRevoked = ({
     account_id,
     issued_at_s,
@@ -502,6 +520,9 @@ export function createProjectHostHttpProxyAuth({
         account_id: accountFromBrowserSession.account_id,
         issued_at_s: accountFromBrowserSession.iat_s,
       });
+      if (cleanQueryTokenOrRedirect(req, res)) {
+        return;
+      }
       return;
     }
     const accountFromSession = sessionAccountId(req);
@@ -523,6 +544,9 @@ export function createProjectHostHttpProxyAuth({
         account_id: accountFromSession.account_id,
         issued_at_s: accountFromSession.iat_s,
       });
+      if (cleanQueryTokenOrRedirect(req, res)) {
+        return;
+      }
       return;
     }
     const { token, source } = readBearerToken(req);
@@ -554,16 +578,8 @@ export function createProjectHostHttpProxyAuth({
       delete req.headers.authorization;
     }
     setSessionCookie(req, res, account_id, project_id);
-    if (source === "query") {
-      // Clean the browser URL and avoid forwarding a bearer query parameter.
-      const cleaned = urlWithoutQueryToken(req);
-      if (cleaned && /^(GET|HEAD)$/i.test(req.method ?? "GET")) {
-        res.statusCode = 302;
-        res.setHeader("Location", cleaned);
-        res.end("");
-        return;
-      }
-      stripQueryToken(req);
+    if (cleanQueryTokenOrRedirect(req, res)) {
+      return;
     }
   };
 
@@ -586,6 +602,7 @@ export function createProjectHostHttpProxyAuth({
         issued_at_s: accountFromBrowserSession.iat_s,
       };
       setAuthContext(req, context);
+      stripQueryToken(req);
       return context;
     }
     const accountFromSession = sessionAccountId(req);
@@ -603,6 +620,7 @@ export function createProjectHostHttpProxyAuth({
         issued_at_s: accountFromSession.iat_s,
       };
       setAuthContext(req, context);
+      stripQueryToken(req);
       return context;
     }
     const { token, source } = readBearerToken(req);
@@ -635,6 +653,7 @@ export function createProjectHostHttpProxyAuth({
     if (source === "header") {
       delete req.headers.authorization;
     }
+    stripQueryToken(req);
     return context;
   };
 
