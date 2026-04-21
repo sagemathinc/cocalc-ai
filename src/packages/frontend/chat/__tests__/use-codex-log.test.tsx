@@ -17,6 +17,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => {
         reconnectResource,
         registerReconnectResource: jest.fn(() => reconnectResource),
         conat: jest.fn(),
+        projectConat: jest.fn(),
         dstream: jest.fn(),
       },
     },
@@ -212,12 +213,16 @@ describe("useCodexLog", () => {
     close: jest.Mock;
   };
   const conatMock = webapp_client.conat_client.conat as jest.Mock;
+  const projectConatMock = webapp_client.conat_client.projectConat as jest.Mock;
   const dstreamMock = webapp_client.conat_client.dstream as jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useRealTimers();
     resetSharedProjectDStreamCacheForTests();
+    conatMock.mockReset();
+    projectConatMock.mockReset();
+    projectConatMock.mockImplementation(async () => conatMock());
     dstreamMock.mockReset();
     reconnectResource.requestReconnect.mockReset();
     reconnectResource.close.mockReset();

@@ -17,6 +17,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       conat: jest.fn(() => ({ id: "client" })),
+      projectConat: jest.fn(async () => ({ id: "project-client" })),
     },
   },
 }));

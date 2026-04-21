@@ -279,10 +279,15 @@ Notes:
   archive reads, project-info, and project-status paths now explicitly warm
   project-host routing before constructing their low-level Conat clients; this
   closes the main known cold-host-info fallback in the user-visible runtime UI
-- the remaining frontend fallback audit is now narrower: generic syncdoc/chat/
-  Jupyter-specific clients and old action-level convenience wrappers still need
-  code review, but the validated storage/listing/info matrix is no longer
-  dependent on synchronous `routeSubject(...)` cache state
+- the async project-runtime batch now also warms project-host routing for
+  shared project dstreams, Codex log AKV reads/deletes, chat project read-state,
+  chat activity-log cleanup, Jupyter live-run/usage/run-code clients, recent
+  document activity, and course file-use reads
+- the remaining frontend fallback audit is now narrower: account-local stores
+  intentionally stay on the signed-in/home-bay browser client, while
+  synchronous project syncdoc factories still depend on route-subject cache
+  state and need either an async initialization layer or an earlier project-open
+  prewarm guarantee
 
 ### 3. Finish Project-Host Runtime Productionization
 

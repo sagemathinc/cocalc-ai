@@ -1,13 +1,12 @@
 import { EventEmitter } from "events";
 
-const dstreamMock = jest.fn();
 const directDstreamMock = jest.fn();
 const connectMock = jest.fn();
 const webappClient = Object.assign(new EventEmitter(), {
   account_id: "account-1",
   browser_id: "browser-1",
   conat_client: {
-    dstream: dstreamMock,
+    projectConat: jest.fn(async () => "project-client"),
   },
   removeListener: EventEmitter.prototype.removeListener,
 });
@@ -42,15 +41,15 @@ class FakeDStream extends EventEmitter {
 describe("shared project dstream cache", () => {
   beforeEach(() => {
     jest.resetModules();
-    dstreamMock.mockReset();
     directDstreamMock.mockReset();
     connectMock.mockReset();
+    webappClient.conat_client.projectConat.mockClear();
     webappClient.removeAllListeners();
   });
 
   it("reuses the same project stream while multiple leases are held", async () => {
     const stream = new FakeDStream();
-    dstreamMock.mockResolvedValue(stream);
+    directDstreamMock.mockResolvedValue(stream);
 
     const {
       acquireSharedProjectDStream,
@@ -69,7 +68,18 @@ describe("shared project dstream cache", () => {
       });
 
       expect(first.stream).toBe(second.stream);
-      expect(dstreamMock).toHaveBeenCalledTimes(1);
+      expect(webappClient.conat_client.projectConat).toHaveBeenCalledWith({
+        project_id: "project-1",
+        caller: "acquireSharedProjectDStream",
+      });
+      expect(directDstreamMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: "project-1",
+          name: "feed",
+          client: "project-client",
+        }),
+      );
+      expect(directDstreamMock).toHaveBeenCalledTimes(1);
 
       await first.release();
       expect(stream.close).not.toHaveBeenCalled();
@@ -84,7 +94,9 @@ describe("shared project dstream cache", () => {
   it("drops stale project streams after sign-out", async () => {
     const first = new FakeDStream();
     const second = new FakeDStream();
-    dstreamMock.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    directDstreamMock
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second);
 
     const {
       acquireSharedProjectDStream,
@@ -106,7 +118,7 @@ describe("shared project dstream cache", () => {
 
       expect(first.close).toHaveBeenCalled();
       expect(next.stream).toBe(second);
-      expect(dstreamMock).toHaveBeenCalledTimes(2);
+      expect(directDstreamMock).toHaveBeenCalledTimes(2);
 
       await next.release();
     } finally {
@@ -150,7 +162,7 @@ describe("shared project dstream cache", () => {
           client,
         }),
       );
-      expect(dstreamMock).not.toHaveBeenCalled();
+      expect(webappClient.conat_client.projectConat).not.toHaveBeenCalled();
 
       await lease.release();
     } finally {

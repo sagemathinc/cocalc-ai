@@ -112,13 +112,20 @@ export class FileUseActions extends Actions<any> {
       ...(lite
         ? []
         : [
-            markProjectDocumentActivity({
-              client: webapp_client.conat_client.conat(),
-              account_id,
-              project_id,
-              path,
-              action,
-            }),
+            webapp_client.conat_client
+              .projectConat({
+                project_id,
+                caller: "DocumentActivityActions.do_mark_file",
+              })
+              .then((client) =>
+                markProjectDocumentActivity({
+                  client,
+                  account_id,
+                  project_id,
+                  path,
+                  action,
+                }),
+              ),
           ]),
     ]);
   }

@@ -180,6 +180,13 @@ ambient singleton.
   default hub connection
 - updated find/snapshot/unknown-file/time-travel/workspace helper paths that
   opened project filesystem clients directly
+- converted the next async project-runtime batch to warm project-host routing
+  before opening Conat state:
+  - shared project dstreams, including live Codex log streams
+  - Codex log AKV reads/deletes
+  - chat project read-state and activity-log cleanup
+  - Jupyter live-run subscriptions, usage-info polling, and run-code clients
+  - recent document activity and course file-use reads
 
 This reduces the remaining risk from synchronous `routeSubject(...)` fallback:
 these user-visible browser paths now ask for the project-host client first, so
@@ -238,9 +245,22 @@ Many frontend paths intentionally use the browser's main Conat client, e.g.
 [frontend/conat/client.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/client.ts)
 and callers of `webapp_client.conat_client.conat()`.
 
-These are not automatically wrong, but they need to be revisited once browser
-control traffic is split between `home_bay` and project/host-specific routed
-clients.
+Known remaining direct browser uses after the async project-runtime pass:
+
+- account-local stores that should stay with the signed-in/home-bay browser
+  client unless account rehome changes the storage model:
+  - chat composer drafts
+  - git review metadata and legacy migration reads
+- synchronous project syncdoc factories:
+  - chat syncdb initialization
+  - course editor syncdb initialization
+  - generic frame-editor `syncstring` / `syncdb` / `immerdb` factories
+
+The syncdoc factories are the remaining architectural risk because their public
+APIs are synchronous. They currently depend on the browser route-subject hook
+and whatever project-host routing metadata is already cached. Closing that gap
+probably requires either an async syncdoc initialization layer or an earlier
+project-open prewarm guarantee, not another small local wrapper change.
 
 ## Next Recommended Cleanup Pass
 

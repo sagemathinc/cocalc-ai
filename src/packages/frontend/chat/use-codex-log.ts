@@ -262,7 +262,10 @@ export function useCodexLog({
       if (!allowDuringGeneration && generating && liveLogStream) {
         return undefined;
       }
-      const cn = webapp_client.conat_client.conat();
+      const cn = await webapp_client.conat_client.projectConat({
+        project_id: projectId,
+        caller: "useCodexLog.fetchPersistedLog",
+      });
       const kv = cn.sync.akv<any[]>({
         project_id: projectId,
         name: logStore,
@@ -445,7 +448,6 @@ export function useCodexLog({
       }
       setLiveConnectionState(false, "connecting");
       try {
-        const cn = webapp_client.conat_client.conat();
         if (liveLogStream) {
           const lease = await acquireSharedProjectDStream<AcpStreamMessage>({
             project_id: projectId,
@@ -522,6 +524,10 @@ export function useCodexLog({
           setLiveConnectionState(false, "idle");
           return;
         }
+        const cn = await webapp_client.conat_client.projectConat({
+          project_id: projectId,
+          caller: "useCodexLog.subscribe",
+        });
         sub = await cn.subscribe(logSubject);
         setLiveConnectionState(true, "connected");
         for await (const mesg of sub) {
@@ -621,7 +627,10 @@ export function useCodexLog({
   const deleteLog = async () => {
     if (!hasLogRef || !projectId || !logStore || !logKey) return;
     try {
-      const cn = webapp_client.conat_client.conat();
+      const cn = await webapp_client.conat_client.projectConat({
+        project_id: projectId,
+        caller: "useCodexLog.deleteLog",
+      });
       const kv = cn.sync.akv({ project_id: projectId, name: logStore });
       await kv.delete(logKey);
     } catch (err) {
