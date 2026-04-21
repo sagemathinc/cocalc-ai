@@ -86,6 +86,14 @@ Recent 3-way fixture validation:
     routed project FS, Jupyter backend start through project API, raw routed
     `jupyter.project-*` socket execution, stdin request/response, output
     streaming, run completion, kernel status, and cleanup
+  - browser app-server runtime smoke reached the disposable managed HTTP app,
+    verified HTTP response delivery and app metrics updates, and found one
+    important privacy/security bug: the short-lived project-host bearer query
+    token could be forwarded to app code when an existing browser session cookie
+    also authorized the request
+  - project-host HTTP proxy auth now strips or redirects away the bearer query
+    parameter even when cookie auth succeeds first; this still needs a live
+    post-deploy replay before marking the app-server runtime path fully closed
   - browser storage / snapshot / backup reads passed
   - browser invite redeem passed with cleanup
   - browser invite duplicate, revoke, already-collaborator, remove, and
@@ -242,6 +250,15 @@ Notes:
 - a missing Python kernelspec is now clearly exposed as fixture/image readiness,
   not as a multibay routing failure; the validated fixture has `python3`
   available
+- app-server runtime QA now creates a disposable managed HTTP app through the
+  routed project API, starts it, opens it through the project-host auth URL,
+  verifies the response body, checks request/bytes metrics, and deletes the app
+  afterward
+- the first live app-server replay exposed that project-host bearer query tokens
+  were forwarded to app code if a browser-session cookie authorized first; the
+  project-host fix is implemented and unit-tested, but the checklist item stays
+  open until the fix is deployed and the stable-URL replay passes without token
+  leakage
 
 ### 3. Finish Project-Host Runtime Productionization
 
