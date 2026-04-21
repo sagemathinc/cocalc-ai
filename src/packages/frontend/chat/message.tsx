@@ -269,7 +269,7 @@ export function linkifyCommitHashes(text: string): string {
             const hash = m[1];
             const subject = m[2]?.trim();
             return [
-              `[Commit \`${hash}\`](${GIT_COMMIT_LINK_SCHEME}${hash} "Open commit ${hash}")`,
+              `[Commit ${hash}](${GIT_COMMIT_LINK_SCHEME}${hash} "Open commit ${hash}")`,
               subject ? ` ${subject}` : "",
             ].join("");
           }

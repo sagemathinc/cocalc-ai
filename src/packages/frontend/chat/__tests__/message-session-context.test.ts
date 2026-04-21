@@ -124,7 +124,7 @@ describe("linkifyCommitHashes", () => {
         "- `29cbc87b15 project-host: prevent duplicate bees dedupers`",
       ),
     ).toBe(
-      '- [Commit `29cbc87b15`](cocalc-commit://29cbc87b15 "Open commit 29cbc87b15") project-host: prevent duplicate bees dedupers',
+      '- [Commit 29cbc87b15](cocalc-commit://29cbc87b15 "Open commit 29cbc87b15") project-host: prevent duplicate bees dedupers',
     );
   });
 
