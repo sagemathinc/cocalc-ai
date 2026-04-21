@@ -177,7 +177,8 @@ export interface GetHostConnectionRequest {
 
 export interface IssueProjectHostAuthTokenRequest {
   host_id: string;
-  account_id: string;
+  account_id?: string;
+  actor?: "account" | "hub";
   project_id?: string;
   ttl_seconds?: number;
 }

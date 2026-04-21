@@ -12,16 +12,20 @@ const SRC_ROOT = path.resolve(SCRIPT_DIR, "../..");
 const DEFAULT_SCENARIOS = ["sign-in-target", "storage-archives"];
 const INVITE_REDEEM_SCENARIO = "invite-redeem";
 const INVITE_EDGE_CASES_SCENARIO = "invite-edge-cases";
+const NOTEBOOK_RUNTIME_SCENARIO = "notebook-runtime";
 const PROJECT_LIFECYCLE_SCENARIO = "project-lifecycle";
 const RECONNECT_STABLE_URL_SCENARIO = "reconnect-stable-url";
 const SIGN_UP_HOME_BAY_SCENARIO = "sign-up-home-bay";
+const TERMINAL_INTERACTIVE_SCENARIO = "terminal-interactive";
 const KNOWN_SCENARIOS = new Set([
   ...DEFAULT_SCENARIOS,
   INVITE_REDEEM_SCENARIO,
   INVITE_EDGE_CASES_SCENARIO,
+  NOTEBOOK_RUNTIME_SCENARIO,
   PROJECT_LIFECYCLE_SCENARIO,
   RECONNECT_STABLE_URL_SCENARIO,
   SIGN_UP_HOME_BAY_SCENARIO,
+  TERMINAL_INTERACTIVE_SCENARIO,
 ]);
 
 function usageAndExit(message, code = 1) {
@@ -41,7 +45,7 @@ function usageAndExit(message, code = 1) {
       "Options:",
       "  --project-title <text>     Visible project title to require after sign-in",
       "  --scenario <name>          Scenario to run; repeatable. Defaults to all.",
-      "                            Known: sign-in-target, storage-archives, invite-redeem, invite-edge-cases, project-lifecycle, reconnect-stable-url, sign-up-home-bay",
+      "                            Known: sign-in-target, storage-archives, invite-redeem, invite-edge-cases, notebook-runtime, project-lifecycle, reconnect-stable-url, sign-up-home-bay, terminal-interactive",
       "  --registration-token <t>   Registration token for sign-up-home-bay when required",
       "  --expected-home-bay <id>   Assert created/signed-in account home bay, e.g. bay-2",
       "  --first-name <text>        First name for sign-up-home-bay (default: QA)",
@@ -261,9 +265,11 @@ function parseArgs(argv) {
       [
         "sign-in-target",
         "storage-archives",
+        NOTEBOOK_RUNTIME_SCENARIO,
         PROJECT_LIFECYCLE_SCENARIO,
         RECONNECT_STABLE_URL_SCENARIO,
         SIGN_UP_HOME_BAY_SCENARIO,
+        TERMINAL_INTERACTIVE_SCENARIO,
       ].includes(scenario),
     )
   ) {
@@ -338,6 +344,23 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function bestEffortTimeout(label, promise, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timer = setTimeout(() => {
+          console.warn(`${label} timed out after ${timeoutMs}ms`);
+          resolve(undefined);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function formatError(error) {
   if (!error) return "unknown error";
   if (error.stack) return redact(error.stack);
@@ -362,6 +385,9 @@ function createDiagnostics(scenario) {
 
 function attachDiagnostics(page, diagnostics, pageLabel = "") {
   page.on("console", (message) => {
+    if (message.text().startsWith("multibay-qa:")) {
+      console.warn(`${pageLabel}:${message.text()}`);
+    }
     if (!["warning", "error"].includes(message.type())) return;
     diagnostics.console.push({
       page: pageLabel,
@@ -540,11 +566,73 @@ async function signInToRoot(page, options, credentials) {
 
 async function waitForRuntime(page, options) {
   await page.waitForFunction(
-    () =>
-      Boolean(
-        globalThis.cc?.conat?.hub?.projects &&
-        typeof globalThis.cc?.conat?.conat === "function",
-      ),
+    () => {
+      function hasRuntimeGlobal() {
+        return Boolean(
+          globalThis.cc?.conat?.hub?.projects &&
+          typeof globalThis.cc?.conat?.conat === "function",
+        );
+      }
+
+      if (hasRuntimeGlobal()) {
+        return true;
+      }
+
+      const chunk = globalThis.webpackChunk_cocalc_static;
+      if (!Array.isArray(chunk)) {
+        return false;
+      }
+
+      let webpackRequire = null;
+      try {
+        chunk.push([
+          [`qa-runtime-${Date.now()}`],
+          {},
+          (req) => {
+            webpackRequire = req;
+          },
+        ]);
+      } catch {
+        return false;
+      }
+
+      const modules = webpackRequire?.c ? Object.values(webpackRequire.c) : [];
+      for (const mod of modules) {
+        const exports = mod?.exports;
+        if (exports == null) {
+          continue;
+        }
+        const candidates = [exports];
+        if (typeof exports === "object" || typeof exports === "function") {
+          for (const key of Object.keys(exports)) {
+            candidates.push(exports[key]);
+          }
+        }
+        for (const candidate of candidates) {
+          if (
+            candidate == null ||
+            (typeof candidate !== "object" && typeof candidate !== "function")
+          ) {
+            continue;
+          }
+          const conat = candidate.conat_client;
+          if (
+            conat?.hub?.projects &&
+            typeof conat.conat === "function" &&
+            candidate.account_id
+          ) {
+            globalThis.cc = {
+              client: candidate,
+              conat,
+              redux: candidate.redux,
+            };
+            return true;
+          }
+        }
+      }
+
+      return hasRuntimeGlobal();
+    },
     undefined,
     { timeout: options.timeoutMs },
   );
@@ -766,6 +854,10 @@ async function runProjectLifecycle(page, options) {
   await waitForRuntime(page, options);
   const result = await page.evaluate(
     async ({ projectId, timeoutMs }) => {
+      function progress(label) {
+        console.warn(`multibay-qa: lifecycle ${label}`);
+      }
+
       function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
       }
@@ -938,12 +1030,19 @@ async function runProjectLifecycle(page, options) {
 
       const initialState = await getState();
       try {
+        progress("start:start");
         const start = await startAndWait("start");
+        progress("start:terminal");
         const terminalAfterStart = await terminalSmoke("start");
+        progress("restart:start");
         const restart = await restartAndWait();
+        progress("restart:terminal");
         const terminalAfterRestart = await terminalSmoke("restart");
+        progress("stop:start");
         const stoppedState = await stopAndWait();
+        progress("final-start:start");
         const finalStart = await startAndWait("final-start");
+        progress("done");
 
         return toPlain({
           initialState,
@@ -983,6 +1082,479 @@ async function runProjectLifecycle(page, options) {
   }
   if (!result?.terminalAfterRestart?.marker) {
     throw new Error("missing terminal marker after restart");
+  }
+
+  return result;
+}
+
+async function runTerminalInteractive(page, options) {
+  await waitForRuntime(page, options);
+  const result = await page.evaluate(
+    async ({ projectId, timeoutMs }) => {
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      function toPlain(value) {
+        return JSON.parse(JSON.stringify(value ?? null));
+      }
+
+      async function withTimeout(label, promise, timeout = timeoutMs) {
+        let timer;
+        try {
+          return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(new Error(`${label} timed out after ${timeout}ms`)),
+                timeout,
+              );
+            }),
+          ]);
+        } catch (err) {
+          throw new Error(`${label} failed: ${err}`);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      async function waitForStream(label, predicate) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (predicate(stream)) {
+            return;
+          }
+          await sleep(100);
+        }
+        throw new Error(
+          `${label} timed out; stream tail=${JSON.stringify(stream.slice(-1000))}`,
+        );
+      }
+
+      const conat = globalThis.cc.conat;
+      if (typeof conat.terminalClient !== "function") {
+        throw new Error("cc.conat.terminalClient is not available");
+      }
+
+      const marker = `multibay_terminal_${Date.now()}`;
+      const input = `${marker}_input`;
+      const ready = `STREAM_READY:${marker}`;
+      const inputEcho = `INPUT:${input}`;
+      let currentSize = { rows: 24, cols: 80 };
+      let stream = "";
+      const resizeEvents = [];
+      let exitCount = 0;
+      const term = conat.terminalClient({
+        project_id: projectId,
+        getSize: () => currentSize,
+      });
+
+      term.socket.on("data", (data) => {
+        stream += `${data ?? ""}`;
+      });
+      term.on("resize", (payload) => {
+        resizeEvents.push(payload);
+      });
+      term.on("exit", () => {
+        exitCount += 1;
+      });
+
+      try {
+        await withTimeout(
+          "terminal-spawn",
+          term.spawn(
+            "bash",
+            [
+              "-lc",
+              [
+                `printf '${ready}\\n'`,
+                "IFS= read -r line",
+                `printf 'INPUT:%s\\n' \"$line\"`,
+                `printf 'SIZE:'`,
+                "stty size",
+                "sleep 1",
+              ].join("; "),
+            ],
+            {
+              id: `.smoke/${marker}.term`,
+              timeout: timeoutMs,
+              rows: currentSize.rows,
+              cols: currentSize.cols,
+              maxHistoryLength: 20_000,
+            },
+          ),
+        );
+        await waitForStream("terminal-ready", (value) => value.includes(ready));
+
+        currentSize = { rows: 33, cols: 77 };
+        await withTimeout(
+          "terminal-resize",
+          term.resize({ rows: 33, cols: 77 }),
+        );
+        await sleep(250);
+        const sampledSizes = await withTimeout("terminal-sizes", term.sizes());
+
+        term.socket.write(`${input}\n`);
+        await waitForStream("terminal-input", (value) =>
+          value.includes(inputEcho),
+        );
+        await waitForStream("terminal-stty-size", (value) =>
+          /SIZE:\s*33\s+77/.test(value),
+        );
+
+        const history = `${await withTimeout("terminal-history", term.history())}`;
+        const state = await withTimeout("terminal-state", term.state());
+
+        return toPlain({
+          marker,
+          input,
+          sampledSizes,
+          resizeEvents,
+          exitCount,
+          historyIncludesInput: history.includes(inputEcho),
+          streamIncludesReady: stream.includes(ready),
+          streamIncludesInput: stream.includes(inputEcho),
+          streamIncludesResizeSize: /SIZE:\s*33\s+77/.test(stream),
+          streamTail: stream.slice(-1000),
+          state,
+        });
+      } finally {
+        try {
+          await withTimeout("terminal-destroy", term.destroy(), 5_000);
+        } catch {
+          // Best effort; the browser context close below tears down the socket.
+        }
+        try {
+          term.close();
+        } catch {}
+      }
+    },
+    { projectId: options.projectId, timeoutMs: options.timeoutMs },
+  );
+
+  if (!result?.streamIncludesReady) {
+    throw new Error("terminal stream did not include ready marker");
+  }
+  if (!result?.streamIncludesInput) {
+    throw new Error("terminal stream did not include stdin marker");
+  }
+  if (!result?.historyIncludesInput) {
+    throw new Error("terminal history did not include stdin marker");
+  }
+  if (!result?.streamIncludesResizeSize) {
+    throw new Error(
+      `terminal process did not observe resized stty size; stream tail=${JSON.stringify(result?.streamTail ?? "")}`,
+    );
+  }
+  if (
+    !Array.isArray(result?.sampledSizes) ||
+    !result.sampledSizes.some((size) => size?.rows === 33 && size?.cols === 77)
+  ) {
+    throw new Error(
+      `terminal sizes did not sample resized browser size; sizes=${JSON.stringify(result?.sampledSizes ?? null)}`,
+    );
+  }
+  if (
+    !Array.isArray(result?.resizeEvents) ||
+    !result.resizeEvents.some(
+      (event) => event?.rows === 33 && event?.cols === 77,
+    )
+  ) {
+    throw new Error(
+      `terminal resize broadcast missing; events=${JSON.stringify(result?.resizeEvents ?? null)}`,
+    );
+  }
+
+  return result;
+}
+
+async function runNotebookRuntime(page, options) {
+  await waitForRuntime(page, options);
+  const result = await page.evaluate(
+    async ({ projectId, timeoutMs }) => {
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      function toPlain(value) {
+        return JSON.parse(JSON.stringify(value ?? null));
+      }
+
+      function syncdbPath(path) {
+        if (path.endsWith("jupyter2")) {
+          return path;
+        }
+        const parts = path.split("/");
+        const tail = parts.pop();
+        return [...parts, `.${tail}.sage-jupyter2`]
+          .filter((part, index) => index === 0 || part !== "")
+          .join("/");
+      }
+
+      async function withTimeout(label, promise, timeout = timeoutMs) {
+        let timer;
+        try {
+          return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(new Error(`${label} timed out after ${timeout}ms`)),
+                timeout,
+              );
+            }),
+          ]);
+        } catch (err) {
+          throw new Error(`${label} failed: ${err}`);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      async function ensureProjectRunning() {
+        const projects = globalThis.cc.conat.hub.projects;
+        const state = await withTimeout(
+          "getProjectState",
+          projects.getProjectState({ project_id: projectId }),
+        );
+        if (state?.state === "running") {
+          return state;
+        }
+        await withTimeout(
+          "startProject",
+          projects.start({ project_id: projectId, wait: true }),
+        );
+        const deadline = Date.now() + timeoutMs;
+        let last = state;
+        while (Date.now() < deadline) {
+          last = await withTimeout(
+            "getProjectState",
+            projects.getProjectState({ project_id: projectId }),
+          );
+          if (last?.state === "running") {
+            return last;
+          }
+          await sleep(1000);
+        }
+        throw new Error(
+          `project did not reach running; last state=${JSON.stringify(last)}`,
+        );
+      }
+
+      function chooseKernel(kernels) {
+        if (!Array.isArray(kernels) || kernels.length === 0) {
+          throw new Error("no jupyter kernels available");
+        }
+        return (
+          kernels.find((kernel) => kernel?.name === "python3") ??
+          kernels.find((kernel) =>
+            `${kernel?.name ?? ""}`.toLowerCase().includes("python"),
+          ) ??
+          kernels[0]
+        );
+      }
+
+      async function waitForOutput(predicate, outputs, errors) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (errors.length > 0) {
+            throw new Error(`jupyter socket error: ${errors.join("; ")}`);
+          }
+          if (predicate()) {
+            return;
+          }
+          await sleep(100);
+        }
+        throw new Error(
+          `timed out waiting for jupyter output; output tail=${JSON.stringify(outputs.slice(-10))}`,
+        );
+      }
+
+      await ensureProjectRunning();
+
+      const conatClient = globalThis.cc.conat.conat();
+      const api = globalThis.cc.conat.projectApi({ project_id: projectId });
+      const fs = conatClient.fs({ project_id: projectId });
+      const kernels = await withTimeout(
+        "jupyter-kernels",
+        api.jupyter.kernels(),
+      );
+      const kernel = chooseKernel(kernels);
+      const marker = `multibay_notebook_${Date.now()}`;
+      const stdinValue = `${marker}_stdin`;
+      const notebookPath = `.smoke/${marker}.ipynb`;
+      const runPath = syncdbPath(notebookPath);
+      const cellId = "qa-cell";
+      const cellInput = [
+        `print("${marker}:start")`,
+        `value = input("qa input: ")`,
+        `print("STDIN:" + value)`,
+        "print(6 * 7)",
+      ].join("\n");
+      const notebook = {
+        cells: [
+          {
+            id: cellId,
+            cell_type: "code",
+            execution_count: null,
+            metadata: {},
+            outputs: [],
+            source: cellInput.split("\n").map((line) => `${line}\n`),
+          },
+        ],
+        metadata: {
+          kernelspec: {
+            name: kernel.name,
+            display_name: kernel.display_name ?? kernel.name,
+            language: kernel.language ?? "python",
+          },
+          language_info: {
+            name: kernel.language ?? "python",
+          },
+        },
+        nbformat: 4,
+        nbformat_minor: 5,
+      };
+
+      const socket = conatClient.socket.connect(
+        `jupyter.project-${projectId}.0`,
+      );
+      const outputs = [];
+      const errors = [];
+      let closed = false;
+      let stdinRequests = 0;
+      let runDone = false;
+      socket.on("data", (batch, headers) => {
+        if (headers?.error) {
+          errors.push(`${headers.error}`);
+        }
+        if (batch == null) {
+          closed = true;
+          return;
+        }
+        if (!Array.isArray(batch)) {
+          return;
+        }
+        for (const mesg of batch) {
+          outputs.push(mesg);
+          if (mesg?.lifecycle === "run_done" || mesg?.msg_type === "run_done") {
+            runDone = true;
+          }
+        }
+      });
+      socket.on("request", (mesg) => {
+        if (mesg?.data?.type === "stdin") {
+          stdinRequests += 1;
+          mesg.respondSync(stdinValue);
+          return;
+        }
+        mesg.respondSync(null);
+      });
+
+      try {
+        await withTimeout(
+          "mkdir-smoke",
+          fs.mkdir(".smoke", { recursive: true }),
+        );
+        await withTimeout(
+          "write-notebook",
+          fs.writeFile(notebookPath, JSON.stringify(notebook, null, 2)),
+        );
+        await withTimeout("jupyter-start", api.jupyter.start(runPath));
+
+        const runId = `qa-${Date.now()}`;
+        const ack = await withTimeout(
+          "jupyter-run",
+          socket.request(
+            {
+              cmd: "run",
+              path: runPath,
+              cells: [{ id: cellId, input: cellInput }],
+              run_id: runId,
+              limit: 20_000,
+            },
+            { timeout: timeoutMs },
+          ),
+        );
+
+        await waitForOutput(() => runDone || closed, outputs, errors);
+
+        const text = outputs
+          .map((mesg) => {
+            const content = mesg?.content;
+            const data = content?.data;
+            return [
+              content?.text,
+              typeof data?.["text/plain"] === "string"
+                ? data["text/plain"]
+                : undefined,
+            ]
+              .filter(Boolean)
+              .join("\n");
+          })
+          .join("\n");
+        const status = await withTimeout(
+          "jupyter-kernel-status",
+          socket.request({ cmd: "get-kernel-status", path: runPath }),
+        );
+
+        return toPlain({
+          marker,
+          notebookPath,
+          runPath,
+          kernelName: kernel.name,
+          ack: ack?.data,
+          status: status?.data,
+          stdinRequests,
+          outputCount: outputs.length,
+          sawStart: text.includes(`${marker}:start`),
+          sawStdin: text.includes(`STDIN:${stdinValue}`),
+          sawAnswer: text.includes("42"),
+          sawRunDone: runDone,
+          socketClosed: closed,
+          textTail: text.slice(-1000),
+        });
+      } finally {
+        try {
+          await withTimeout("jupyter-stop", api.jupyter.stop(runPath), 10_000);
+        } catch {
+          // Best effort; deleting the disposable files below is still safe.
+        }
+        try {
+          await withTimeout(
+            "remove-notebook",
+            fs.rm([notebookPath, runPath], { force: true, recursive: true }),
+            10_000,
+          );
+        } catch {
+          // Best effort cleanup for disposable QA files.
+        }
+        try {
+          socket.close();
+        } catch {}
+      }
+    },
+    { projectId: options.projectId, timeoutMs: options.timeoutMs },
+  );
+
+  if (!result?.sawStart) {
+    throw new Error(
+      `notebook output missing start marker; tail=${JSON.stringify(result?.textTail ?? "")}`,
+    );
+  }
+  if (!result?.sawStdin || result?.stdinRequests < 1) {
+    throw new Error(
+      `notebook stdin path failed; requests=${result?.stdinRequests ?? 0} tail=${JSON.stringify(result?.textTail ?? "")}`,
+    );
+  }
+  if (!result?.sawAnswer) {
+    throw new Error(
+      `notebook output missing arithmetic result; tail=${JSON.stringify(result?.textTail ?? "")}`,
+    );
+  }
+  if (!result?.sawRunDone) {
+    throw new Error("notebook run did not emit run_done lifecycle marker");
   }
 
   return result;
@@ -1769,6 +2341,17 @@ async function runScenario(browser, scenario, options) {
         diagnostics: summarizeDiagnostics(diagnostics),
       };
     }
+    if (scenario === NOTEBOOK_RUNTIME_SCENARIO) {
+      const signIn = await signInToProject(page, options);
+      const notebookRuntime = await runNotebookRuntime(page, options);
+      return {
+        scenario,
+        status: "pass",
+        signIn,
+        notebookRuntime,
+        diagnostics: summarizeDiagnostics(diagnostics),
+      };
+    }
     if (scenario === PROJECT_LIFECYCLE_SCENARIO) {
       const signIn = await signInToProject(page, options);
       const lifecycle = await runProjectLifecycle(page, options);
@@ -1777,6 +2360,17 @@ async function runScenario(browser, scenario, options) {
         status: "pass",
         signIn,
         lifecycle,
+        diagnostics: summarizeDiagnostics(diagnostics),
+      };
+    }
+    if (scenario === TERMINAL_INTERACTIVE_SCENARIO) {
+      const signIn = await signInToProject(page, options);
+      const terminalInteractive = await runTerminalInteractive(page, options);
+      return {
+        scenario,
+        status: "pass",
+        signIn,
+        terminalInteractive,
         diagnostics: summarizeDiagnostics(diagnostics),
       };
     }
@@ -1801,7 +2395,11 @@ async function runScenario(browser, scenario, options) {
       diagnostics: summarizeDiagnostics(diagnostics),
     };
   } finally {
-    await context.close().catch(() => {});
+    await bestEffortTimeout(
+      `${scenario}:context.close`,
+      context.close().catch(() => {}),
+      5_000,
+    );
   }
 }
 
@@ -1896,6 +2494,43 @@ function printTextResult(result) {
         .filter(Boolean)
         .join(" "),
     );
+  } else if (result.scenario === TERMINAL_INTERACTIVE_SCENARIO) {
+    const terminal = result.terminalInteractive;
+    console.log(
+      [
+        `${prefix} terminal-interactive`,
+        `final_url=${result.signIn?.finalUrl ?? result.currentUrl ?? "<unknown>"}`,
+        terminal?.streamIncludesReady ? "stream_ready=1" : "",
+        terminal?.streamIncludesInput ? "stdin=1" : "",
+        terminal?.streamIncludesResizeSize ? "resize_stty=1" : "",
+        Array.isArray(terminal?.sampledSizes)
+          ? `sizes=${terminal.sampledSizes.length}`
+          : "",
+        Array.isArray(terminal?.resizeEvents)
+          ? `resize_events=${terminal.resizeEvents.length}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  } else if (result.scenario === NOTEBOOK_RUNTIME_SCENARIO) {
+    const notebook = result.notebookRuntime;
+    console.log(
+      [
+        `${prefix} notebook-runtime`,
+        `final_url=${result.signIn?.finalUrl ?? result.currentUrl ?? "<unknown>"}`,
+        notebook?.kernelName ? `kernel=${notebook.kernelName}` : "",
+        notebook?.sawStart ? "stream=1" : "",
+        notebook?.sawStdin ? "stdin=1" : "",
+        notebook?.sawAnswer ? "answer=1" : "",
+        notebook?.sawRunDone ? "run_done=1" : "",
+        Number.isFinite(notebook?.outputCount)
+          ? `outputs=${notebook.outputCount}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
   } else if (result.scenario === RECONNECT_STABLE_URL_SCENARIO) {
     const reconnect = result.reconnect;
     console.log(
@@ -1977,7 +2612,11 @@ async function main() {
       }
     }
   } finally {
-    await browser.close().catch(() => {});
+    await bestEffortTimeout(
+      "browser.close",
+      browser.close().catch(() => {}),
+      10_000,
+    );
   }
 
   const summary = {

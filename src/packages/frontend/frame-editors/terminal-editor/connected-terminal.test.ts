@@ -233,7 +233,6 @@ describe("connected terminal resizing", () => {
     expect(terminalClient).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "project-1",
-        reconnection: false,
       }),
     );
 

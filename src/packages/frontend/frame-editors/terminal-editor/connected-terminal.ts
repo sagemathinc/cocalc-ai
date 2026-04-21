@@ -531,7 +531,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
             return this.fitAddon.proposeDimensions();
           }
         },
-        reconnection: false,
+        // Use the terminal socket's default reconnection. Routed project-host
+        // terminals may need one retry while browser-session auth is bootstrapped.
       });
       this.pty = pty;
       pty.socket.on("data", (data) => {

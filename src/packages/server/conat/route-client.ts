@@ -68,10 +68,17 @@ function evictRoutedClient(key: string, expected?: RoutedHubClientState): void {
   }
 }
 
-function issueHubRouteToken(host_id: string): {
+async function issueHubRouteToken(host_id: string): Promise<{
   token: string;
   expiresAt: number;
-} {
+}> {
+  const ownership = await resolveHostBayAcrossCluster(host_id);
+  if (ownership && ownership.bay_id !== getConfiguredBayId()) {
+    const issued = await getInterBayBridge()
+      .projectHostAuthToken(ownership.bay_id, { timeout_ms: 15_000 })
+      .issue({ actor: "hub", host_id });
+    return { token: issued.token, expiresAt: issued.expires_at };
+  }
   const { token, expires_at } = issueProjectHostAuthToken({
     host_id,
     actor: "hub",
@@ -131,7 +138,7 @@ async function getHubRouteToken(
           account_id: state.account_id,
           project_id: state.project_id,
         })
-      : issueHubRouteToken(host_id);
+      : await issueHubRouteToken(host_id);
     state.token = token;
     state.expiresAt = expiresAt;
     return token;
