@@ -141,7 +141,13 @@ export class Filesystem {
       this.beesRestartTimer = undefined;
     }
     if (this.bees) {
-      signalBeesProcessGroup(this.bees, "SIGQUIT");
+      const child = this.bees;
+      signalBeesProcessGroup(child, "SIGQUIT");
+      const timer = setTimeout(
+        () => signalBeesProcessGroup(child, "SIGKILL"),
+        1000,
+      );
+      timer.unref();
     }
     this.fileSync.close();
   };
