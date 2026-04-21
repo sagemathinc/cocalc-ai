@@ -345,6 +345,24 @@ export class BaseEditorActions<
       rtc_status: this.areSyncdocsLiveConnected() ? "live" : "loading",
     });
   };
+  private readonly handleSyncdocOpenPhase = (payload: {
+    phase?: string;
+    elapsed_ms?: number;
+    [key: string]: any;
+  }) => {
+    recordSyncdocReconnectDebug({
+      event: "syncdoc_open_phase",
+      name: this.name,
+      path: this.path,
+      phase: payload?.phase,
+      // This is elapsed time since file-open initialization, not duration of
+      // the current reconnect action, so keep it out of elapsedMs.
+      openElapsedMs: payload?.elapsed_ms,
+      payload,
+      syncstring: this.syncdocReconnectDebugState(this._syncstring),
+      syncdb: this.syncdocReconnectDebugState(this._syncdb),
+    });
+  };
 
   private tracksLiveSyncdocStatus(): boolean {
     return this.doctype !== "none" && !this.isClosed();
@@ -641,6 +659,7 @@ export class BaseEditorActions<
     }
     this._syncstring.on("disconnected", this.handleSyncdocDisconnected);
     this._syncstring.on("connected", this.handleSyncdocConnected);
+    this._syncstring.on("open-phase", this.handleSyncdocOpenPhase);
 
     // File-open timing starts when live sync initialization actually begins,
     // not when a tab was created in the background.
@@ -827,6 +846,7 @@ export class BaseEditorActions<
     });
     this._syncdb.on("disconnected", this.handleSyncdocDisconnected);
     this._syncdb.on("connected", this.handleSyncdocConnected);
+    this._syncdb.on("open-phase", this.handleSyncdocOpenPhase);
     this._syncdb.once("error", (err) => {
       this.set_error(`${err}.\nFix this, then try opening the file again.`);
     });
@@ -1225,6 +1245,7 @@ export class BaseEditorActions<
     delete this._syncstring;
     s.removeListener?.("disconnected", this.handleSyncdocDisconnected);
     s.removeListener?.("connected", this.handleSyncdocConnected);
+    s.removeListener?.("open-phase", this.handleSyncdocOpenPhase);
     s.removeListener?.("closed", this.handleSyncstringClosed);
     s.close(); // this should save synctables in syncstring
   }
@@ -1235,6 +1256,7 @@ export class BaseEditorActions<
     delete this._syncdb;
     s.removeListener?.("disconnected", this.handleSyncdocDisconnected);
     s.removeListener?.("connected", this.handleSyncdocConnected);
+    s.removeListener?.("open-phase", this.handleSyncdocOpenPhase);
     s.removeListener?.("closed", this.handleSyncdbClosed);
     s.close();
   }
