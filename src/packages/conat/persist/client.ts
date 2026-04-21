@@ -34,7 +34,7 @@ let DEFAULT_RECONNECT_DELAY_JITTER = 0.25;
 let DEFAULT_RECONNECT_STABLE_RESET_MS = 60_000;
 let DEFAULT_RECOVERY_TIMEOUT = 30_000;
 const RECOVERY_ATTEMPT_TIMEOUT = 2_500;
-const FOREGROUND_RECOVERY_ATTEMPT_TIMEOUT = 1_000;
+const FOREGROUND_RECOVERY_ATTEMPT_TIMEOUT = 2_000;
 
 export function setDefaultReconnectDelay(delay) {
   DEFAULT_RECONNECT_DELAY = delay;
@@ -909,6 +909,8 @@ class PersistStreamClient extends EventEmitter {
       start_seq,
       start_checkpoint,
       end_seq,
+      timeout,
+      max_wait: maxWait ?? timeout,
       changefeed,
       include_config: includeConfig,
       include_metadata: includeMetadata,
@@ -927,12 +929,14 @@ class PersistStreamClient extends EventEmitter {
         includeCheckpoints,
       } as any,
       timeout,
-      maxWait,
+      maxWait: maxWait ?? timeout,
     });
     this.emitInitPhase("persist_request_many_subscribed", {
       start_seq,
       start_checkpoint,
       end_seq,
+      timeout,
+      max_wait: maxWait ?? timeout,
       changefeed,
       include_config: includeConfig,
       include_metadata: includeMetadata,
