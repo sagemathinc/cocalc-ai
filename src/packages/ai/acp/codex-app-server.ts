@@ -37,6 +37,10 @@ import {
 } from "./codex-session-store";
 
 const logger = getLogger("ai:acp:codex-app-server");
+// Codex 0.120 still marks this under-development and disabled by default.
+// The built-in tool has its own auth/model gates, so enabling the feature flag
+// here does not expose image generation to unsupported auth modes.
+const IMAGE_GENERATION_FEATURE_ARGS = ["--enable", "image_generation"];
 const REQUEST_TIMEOUT_MS = Math.max(
   5_000,
   Number(process.env.COCALC_CODEX_APP_SERVER_TIMEOUT_MS ?? 90_000),
@@ -1206,7 +1210,12 @@ async function spawnStandaloneAppServer(
   env?: NodeJS.ProcessEnv,
 ): Promise<SpawnedCodexAppServer> {
   const cmd = opts.binaryPath ?? "codex";
-  const args = ["app-server", "--listen", "stdio://"];
+  const args = [
+    ...IMAGE_GENERATION_FEATURE_ARGS,
+    "app-server",
+    "--listen",
+    "stdio://",
+  ];
   const HOME = process.env.COCALC_ORIGINAL_HOME ?? process.env.HOME;
   const proc = spawn(cmd, args, {
     cwd: opts.cwd,

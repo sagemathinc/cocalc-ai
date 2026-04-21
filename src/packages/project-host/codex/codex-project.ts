@@ -88,6 +88,10 @@ const BUILTIN_LAUNCHPAD_SKILLS = ["cocalc"] as const;
 const OPENAI_PROVIDER_BASE_URL = "https://api.openai.com/v1";
 const API_KEY_PROVIDER_ID = "cocalc-openai-api-key";
 const EPHEMERAL_AUTH_STORE_CONFIG = 'cli_auth_credentials_store="ephemeral"';
+// Codex 0.120 still marks this under-development and disabled by default.
+// The built-in tool has its own auth/model gates, so enabling the feature flag
+// here does not expose image generation to unsupported auth modes.
+const IMAGE_GENERATION_FEATURE_ARGS = ["--enable", "image_generation"];
 const PROJECT_RUNTIME_HOME = DEFAULT_PROJECT_RUNTIME_HOME;
 const PROJECT_RUNTIME_CODEX_HOME = join(PROJECT_RUNTIME_HOME, ".codex");
 // Security-critical: app-server must be exec'd via the exact trusted Codex
@@ -1359,6 +1363,7 @@ async function spawnCodexAppServerInProjectRuntime({
     name,
     getProjectRuntimeCodexPath(),
     ...codexArgs,
+    ...IMAGE_GENERATION_FEATURE_ARGS,
     "app-server",
     "--listen",
     "stdio://",
