@@ -17,6 +17,7 @@ const NOTEBOOK_RUNTIME_SCENARIO = "notebook-runtime";
 const PROJECT_LIFECYCLE_SCENARIO = "project-lifecycle";
 const RECONNECT_STABLE_URL_SCENARIO = "reconnect-stable-url";
 const SIGN_UP_HOME_BAY_SCENARIO = "sign-up-home-bay";
+const SYNCDOC_ROUTING_SCENARIO = "syncdoc-routing";
 const TERMINAL_INTERACTIVE_SCENARIO = "terminal-interactive";
 const KNOWN_SCENARIOS = new Set([
   ...DEFAULT_SCENARIOS,
@@ -27,6 +28,7 @@ const KNOWN_SCENARIOS = new Set([
   PROJECT_LIFECYCLE_SCENARIO,
   RECONNECT_STABLE_URL_SCENARIO,
   SIGN_UP_HOME_BAY_SCENARIO,
+  SYNCDOC_ROUTING_SCENARIO,
   TERMINAL_INTERACTIVE_SCENARIO,
 ]);
 
@@ -47,7 +49,7 @@ function usageAndExit(message, code = 1) {
       "Options:",
       "  --project-title <text>     Visible project title to require after sign-in",
       "  --scenario <name>          Scenario to run; repeatable. Defaults to all.",
-      "                            Known: sign-in-target, storage-archives, app-server-runtime, invite-redeem, invite-edge-cases, notebook-runtime, project-lifecycle, reconnect-stable-url, sign-up-home-bay, terminal-interactive",
+      "                            Known: sign-in-target, storage-archives, app-server-runtime, invite-redeem, invite-edge-cases, notebook-runtime, project-lifecycle, reconnect-stable-url, sign-up-home-bay, syncdoc-routing, terminal-interactive",
       "  --registration-token <t>   Registration token for sign-up-home-bay when required",
       "  --expected-home-bay <id>   Assert created/signed-in account home bay, e.g. bay-2",
       "  --first-name <text>        First name for sign-up-home-bay (default: QA)",
@@ -272,6 +274,7 @@ function parseArgs(argv) {
         PROJECT_LIFECYCLE_SCENARIO,
         RECONNECT_STABLE_URL_SCENARIO,
         SIGN_UP_HOME_BAY_SCENARIO,
+        SYNCDOC_ROUTING_SCENARIO,
         TERMINAL_INTERACTIVE_SCENARIO,
       ].includes(scenario),
     )
@@ -600,6 +603,33 @@ async function waitForRuntime(page, options) {
       }
 
       const modules = webpackRequire?.c ? Object.values(webpackRequire.c) : [];
+      let redux = null;
+      for (const mod of modules) {
+        const exports = mod?.exports;
+        if (exports == null) {
+          continue;
+        }
+        const candidates = [exports];
+        if (typeof exports === "object" || typeof exports === "function") {
+          for (const key of Object.keys(exports)) {
+            candidates.push(exports[key]);
+          }
+        }
+        for (const candidate of candidates) {
+          if (
+            candidate != null &&
+            typeof candidate === "object" &&
+            typeof candidate.getStore === "function" &&
+            typeof candidate.getActions === "function"
+          ) {
+            redux = candidate;
+            break;
+          }
+        }
+        if (redux) {
+          break;
+        }
+      }
       for (const mod of modules) {
         const exports = mod?.exports;
         if (exports == null) {
@@ -627,7 +657,7 @@ async function waitForRuntime(page, options) {
             globalThis.cc = {
               client: candidate,
               conat,
-              redux: candidate.redux,
+              redux: candidate.redux ?? redux,
             };
             return true;
           }
@@ -720,6 +750,216 @@ async function runReconnectStableUrl(page, context, options) {
     beforeState: before,
     afterState: after,
   };
+}
+
+async function runSyncdocRouting(page, options) {
+  await waitForRuntime(page, options);
+  const result = await page.evaluate(
+    async ({ projectId, timeoutMs }) => {
+      function toPlain(value) {
+        return JSON.parse(JSON.stringify(value ?? null));
+      }
+
+      async function withTimeout(label, promise, timeout = timeoutMs) {
+        let timer;
+        try {
+          return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(new Error(`${label} timed out after ${timeout}ms`)),
+                timeout,
+              );
+            }),
+          ]);
+        } catch (err) {
+          throw new Error(`${label} failed: ${err}`);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      async function waitReady(syncdoc, label) {
+        if (syncdoc?.get_state?.() === "ready") {
+          return;
+        }
+        await withTimeout(
+          label,
+          new Promise((resolve, reject) => {
+            syncdoc.once("ready", resolve);
+            syncdoc.once("error", reject);
+            syncdoc.once("close", () =>
+              reject(new Error(`${label} closed before ready`)),
+            );
+          }),
+        );
+      }
+
+      async function waitForProjectHostRoute() {
+        const deadline = Date.now() + timeoutMs;
+        let last = {};
+        while (Date.now() < deadline) {
+          const projectMap = globalThis.cc.redux
+            ?.getStore?.("projects")
+            ?.get?.("project_map");
+          const hostInfo = globalThis.cc.redux
+            ?.getStore?.("projects")
+            ?.get?.("host_info");
+          const hostId = projectMap?.getIn?.([projectId, "host_id"]);
+          const host = hostId ? hostInfo?.get?.(hostId) : undefined;
+          const localProxy = host?.get?.("local_proxy");
+          const connectUrl = `${host?.get?.("connect_url") ?? ""}`.trim();
+          const address =
+            localProxy && typeof window !== "undefined"
+              ? `${window.location.origin}/${hostId}`
+              : connectUrl;
+          last = {
+            hostId,
+            hasHostInfo: !!host,
+            localProxy: !!localProxy,
+            connectUrl,
+          };
+          if (hostId && address) {
+            return { hostId, address };
+          }
+          if (hostId) {
+            await globalThis.cc.redux
+              ?.getActions?.("projects")
+              ?.ensure_host_info?.(hostId, true);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        throw new Error(
+          `project host routing info unavailable; last=${JSON.stringify(last)}`,
+        );
+      }
+
+      const marker = `multibay_syncdoc_${Date.now()}`;
+      const textPath = `.smoke/${marker}.txt`;
+      const dbPath = `.smoke/${marker}.syncdb`;
+
+      const route = await waitForProjectHostRoute();
+      const routedAsync = await withTimeout(
+        "projectConat-preflight",
+        globalThis.cc.conat.projectConat({
+          project_id: projectId,
+          caller: "qa.syncdoc-routing-preflight",
+          requireRouting: true,
+        }),
+      );
+      const routedSync = globalThis.cc.conat.projectConatSync({
+        project_id: projectId,
+        caller: "qa.syncdoc-routing",
+        requireRouting: true,
+      });
+      const hubAddress = globalThis.cc.conat.conat().options?.address ?? "";
+      const routedAddress = routedSync.options?.address ?? "";
+      const preflightAddress = routedAsync.options?.address ?? "";
+      if (!routedAddress || routedAddress === hubAddress) {
+        throw new Error(
+          `syncdoc routing did not select project-host address; hub=${hubAddress} routed=${routedAddress}`,
+        );
+      }
+      if (preflightAddress !== routedAddress) {
+        throw new Error(
+          `async and sync project routing disagree; async=${preflightAddress} sync=${routedAddress}`,
+        );
+      }
+
+      const fs = routedSync.fs({ project_id: projectId });
+      let syncstring;
+      let syncdb;
+      try {
+        await withTimeout(
+          "mkdir-smoke",
+          fs.mkdir(".smoke", { recursive: true }),
+        );
+        await withTimeout("write-text-initial", fs.writeFile(textPath, ""));
+
+        syncstring = routedSync.sync.string({
+          project_id: projectId,
+          path: textPath,
+          cursors: false,
+          persistent: false,
+          document_activity_interval: 0,
+        });
+        await waitReady(syncstring, "syncstring-ready");
+        syncstring.from_str(`${marker}\n`);
+        await withTimeout("syncstring-save", syncstring.save_to_disk());
+        const textContent = `${await withTimeout(
+          "read-text",
+          fs.readFile(textPath, "utf8"),
+        )}`;
+        if (!textContent.includes(marker)) {
+          throw new Error(
+            `syncstring save did not persist marker; content=${JSON.stringify(textContent)}`,
+          );
+        }
+
+        syncdb = routedSync.sync.db({
+          project_id: projectId,
+          path: dbPath,
+          primary_keys: ["id"],
+          string_cols: ["value"],
+          cursors: false,
+          persistent: false,
+          document_activity_interval: 0,
+        });
+        await waitReady(syncdb, "syncdb-ready");
+        syncdb.set({ id: "row", value: marker });
+        syncdb.commit();
+        await withTimeout("syncdb-save", syncdb.save_to_disk());
+        const dbContent = `${await withTimeout(
+          "read-syncdb",
+          fs.readFile(dbPath, "utf8"),
+        )}`;
+        if (!dbContent.includes(marker)) {
+          throw new Error(
+            `syncdb save did not persist marker; content=${JSON.stringify(dbContent)}`,
+          );
+        }
+
+        return toPlain({
+          marker,
+          textPath,
+          dbPath,
+          hubAddress,
+          routedAddress,
+          route,
+          textLength: textContent.length,
+          dbLength: dbContent.length,
+          syncstringState: syncstring.get_state?.(),
+          syncdbState: syncdb.get_state?.(),
+        });
+      } finally {
+        try {
+          syncstring?.close?.();
+        } catch {}
+        try {
+          syncdb?.close?.();
+        } catch {}
+        try {
+          await withTimeout(
+            "remove-syncdoc-smoke",
+            fs.rm([textPath, dbPath], { force: true, recursive: true }),
+            10_000,
+          );
+        } catch {
+          // Best effort cleanup for disposable QA files.
+        }
+      }
+    },
+    { projectId: options.projectId, timeoutMs: options.timeoutMs },
+  );
+
+  if (result?.syncstringState !== "ready") {
+    throw new Error(`syncstring state is ${result?.syncstringState}`);
+  }
+  if (result?.syncdbState !== "ready") {
+    throw new Error(`syncdb state is ${result?.syncdbState}`);
+  }
+  return result;
 }
 
 function assertFiniteNumber(value, label) {
@@ -2681,6 +2921,35 @@ async function runScenario(browser, scenario, options) {
         diagnostics: summarizeDiagnostics(diagnostics),
       };
     }
+    if (scenario === SYNCDOC_ROUTING_SCENARIO) {
+      const signIn = await signInToProject(page, options);
+      const warningStart = diagnostics.console.length;
+      const syncdocRouting = await runSyncdocRouting(page, options);
+      const syncdocWarnings = diagnostics.console
+        .slice(warningStart)
+        .filter((entry) => {
+          const text = entry?.text ?? "";
+          return (
+            text.includes(
+              "project runtime using default hub client before project-host route is available",
+            ) ||
+            text.includes("unable to route") ||
+            text.includes("host routing info unavailable")
+          );
+        });
+      if (syncdocWarnings.length > 0) {
+        throw new Error(
+          `syncdoc routing emitted fallback warnings: ${JSON.stringify(syncdocWarnings)}`,
+        );
+      }
+      return {
+        scenario,
+        status: "pass",
+        signIn,
+        syncdocRouting,
+        diagnostics: summarizeDiagnostics(diagnostics),
+      };
+    }
     throw new Error(`unhandled scenario: ${scenario}`);
   } catch (error) {
     return {
@@ -2856,6 +3125,25 @@ function printTextResult(result) {
           : "",
         reconnect?.afterState?.state
           ? `after=${reconnect.afterState.state}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  } else if (result.scenario === SYNCDOC_ROUTING_SCENARIO) {
+    const syncdoc = result.syncdocRouting;
+    console.log(
+      [
+        `${prefix} syncdoc-routing`,
+        `final_url=${result.signIn?.finalUrl ?? result.currentUrl ?? "<unknown>"}`,
+        syncdoc?.routedAddress ? `routed=${redact(syncdoc.routedAddress)}` : "",
+        syncdoc?.syncstringState ? `syncstring=${syncdoc.syncstringState}` : "",
+        syncdoc?.syncdbState ? `syncdb=${syncdoc.syncdbState}` : "",
+        Number.isFinite(syncdoc?.textLength)
+          ? `text_bytes=${syncdoc.textLength}`
+          : "",
+        Number.isFinite(syncdoc?.dbLength)
+          ? `db_bytes=${syncdoc.dbLength}`
           : "",
       ]
         .filter(Boolean)
