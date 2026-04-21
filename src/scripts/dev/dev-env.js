@@ -488,6 +488,32 @@ function resolveHubProjectAndAccount(statusInfo) {
   const connection = resolveHubPostgresConnection(statusInfo);
   if (!connection) return {};
 
+  const adminAccountLine = runPsqlQuery(
+    connection,
+    `SELECT account_id::text
+FROM accounts
+WHERE 'admin'=ANY(COALESCE(groups, ARRAY[]::text[]))
+ORDER BY COALESCE(last_active, created) DESC NULLS LAST
+LIMIT 1;`,
+  );
+  const adminAccountId = `${adminAccountLine ?? ""}`.trim();
+  if (isValidUuid(adminAccountId)) {
+    const projectForAdminLine = runPsqlQuery(
+      connection,
+      `SELECT p.project_id::text
+FROM projects p
+WHERE COALESCE(p.deleted, false) = false
+  AND COALESCE(p.users, '{}'::jsonb) ? ${sqlLiteral(adminAccountId)}
+ORDER BY COALESCE(p.last_edited, p.created) DESC NULLS LAST
+LIMIT 1;`,
+    );
+    const projectId = `${projectForAdminLine ?? ""}`.trim();
+    return {
+      accountId: adminAccountId,
+      projectId: isValidUuid(projectId) ? projectId : undefined,
+    };
+  }
+
   const latestProjectSql = `
 WITH recent AS (
   SELECT
