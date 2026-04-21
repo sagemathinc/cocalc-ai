@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Dropdown, MenuProps } from "antd";
+import { Dropdown, MenuProps } from "antd";
 import immutable from "immutable";
 import { useIntl } from "react-intl";
 import {
@@ -96,12 +96,6 @@ const ICON_STYLE: CSS = {
   marginRight: FLYOUT_PADDING,
 } as const;
 
-const BTN_STYLE: CSS = {
-  fontSize: "11px",
-  height: "20px",
-  width: "20px",
-} as const;
-
 // this is a bit hacky, because of the larger font (otherwise it's just a really small (X))
 // the bottom is cut off slightly. With that padding and relative position move, it looks better.
 const CLOSE_ICON_STYLE: CSS = {
@@ -116,7 +110,6 @@ interface Item {
   isOpen?: boolean;
   isDir?: boolean;
   isActive?: boolean;
-  isPublic?: boolean;
   name: string;
   size?: number;
   mask?: boolean;
@@ -140,14 +133,12 @@ interface FileListItemProps {
   onClick?: (e?: React.MouseEvent) => void;
   onClose?: (e: React.MouseEvent | undefined, name: string) => void;
   onMouseDown?: (e: React.MouseEvent, name: string) => void;
-  onPublic?: (e?: React.MouseEvent) => void;
   onStar?: (next: boolean) => void;
   selected?: boolean;
   setShowCheckboxIndex?: (index: number | null) => void;
   showCheckbox?: boolean;
   style?: CSS;
   tooltip?: React.JSX.Element | string;
-  noPublish?: boolean; // for layout only – indicate that there is never a publish indicator button
   dimFileExtensions?: boolean;
   currentPath?: string;
   dragPaths?: string[];
@@ -170,7 +161,6 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
     onClick,
     onClose,
     onMouseDown,
-    onPublic,
     onStar,
     selected,
     setShowCheckboxIndex,
@@ -182,8 +172,6 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
     dragPaths,
   } = props;
   const isActive = mode === "active";
-  // only in files mode, we show the publish icon
-  const showPublish = mode === "files";
   const intl = useIntl();
   const { project_id } = useProjectContext();
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
@@ -231,24 +219,6 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
           onClose?.(e, name);
         }}
       />
-    );
-  }
-
-  function renderPublishedIcon(): React.JSX.Element | undefined {
-    if (!showPublish || !item.isPublic) return undefined;
-    return (
-      <Tooltip title="File is published" placement="right">
-        <Button
-          size="small"
-          type="text"
-          style={BTN_STYLE}
-          icon={<Icon name="share-square" />}
-          onClick={(e) => {
-            e.stopPropagation();
-            onPublic?.(e);
-          }}
-        />
-      </Tooltip>
     );
   }
 
@@ -384,8 +354,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
     if (currentExtra == null) return;
     // calculate extra margin to align the columns. if there is no "onClose", no margin
     const closeMargin = onClose != null ? (item.isOpen ? 0 : 18) : 0;
-    const publishMargin = showPublish ? (item.isPublic ? 0 : 20) : 0;
-    const marginRight = type === 1 ? publishMargin + closeMargin : undefined;
+    const marginRight = type === 1 ? closeMargin : undefined;
     const widthPx = FLYOUT_DEFAULT_WIDTH_PX * 0.33;
     // if the 2nd extra shows up, fix the width to align the columns
     const width = type === 1 && extra2 != null ? `${widthPx}px` : undefined;
@@ -436,7 +405,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
         onMouseLeave={handleMouseLeave}
       >
         {renderBodyLeft()} {renderStarred()} {renderName()} {renderExtra(2)}{" "}
-        {renderExtra(1)} {renderPublishedIcon()}
+        {renderExtra(1)}
         {renderCloseItem(item)}
       </div>
     );
@@ -497,7 +466,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
   }
 
   function getContextMenu(): MenuProps["items"] {
-    const { name, isDir, isPublic, size } = item;
+    const { name, isDir, size } = item;
     const n = checked_files?.size ?? 0;
     const multiple = n > 1;
 
@@ -531,15 +500,6 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
     }
 
     ctx.push({ key: "divider-header", type: "divider" });
-
-    if (isPublic && typeof onPublic === "function") {
-      ctx.push({
-        key: "public",
-        label: "Item is published",
-        icon: <Icon name="share-square" />,
-        onClick: () => onPublic?.(),
-      });
-    }
 
     // the file or directory actions
     makeContextMenuEntries(ctx, item, multiple);

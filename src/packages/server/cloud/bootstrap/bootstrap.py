@@ -2133,6 +2133,51 @@ PY' bash "$tree"
     ;;
   bees)
     check_args "$@"
+    mountpoint=""
+    for arg in "$@"; do
+      mountpoint="$arg"
+    done
+    case "$mountpoint" in
+      /mnt/cocalc|/mnt/cocalc/*)
+        ;;
+      *)
+        deny "bees-mountpoint-not-allowed" "$mountpoint"
+        ;;
+    esac
+    beeshome="$mountpoint/.beeshome"
+    if [ ! -d "$beeshome" ]; then
+      deny "bees-home-missing" "$beeshome"
+    fi
+    if ! command -v flock >/dev/null 2>&1; then
+      deny "flock-missing" "flock"
+    fi
+    lock_path="$beeshome/cocalc-bees.lock"
+    exec 9>"$lock_path"
+    if ! flock -n 9; then
+      echo "BEES_ALREADY_RUNNING mountpoint=${mountpoint} lock=${lock_path}" >&2
+      exit 75
+    fi
+    existing_pid=""
+    for proc in /proc/[0-9]*; do
+      pid="${proc##*/}"
+      if [ "$pid" = "$$" ]; then
+        continue
+      fi
+      if [ ! -r "$proc/comm" ] || [ ! -r "$proc/cmdline" ]; then
+        continue
+      fi
+      if [ "$(cat "$proc/comm" 2>/dev/null || true)" != "bees" ]; then
+        continue
+      fi
+      if [ "$(tr '\0' '\n' <"$proc/cmdline" 2>/dev/null | tail -n 1)" = "$mountpoint" ]; then
+        existing_pid="$pid"
+        break
+      fi
+    done
+    if [ -n "$existing_pid" ]; then
+      echo "BEES_ALREADY_RUNNING mountpoint=${mountpoint} pid=${existing_pid}" >&2
+      exit 75
+    fi
     if [ -x /opt/cocalc/tools/current/bees ]; then
       exec /opt/cocalc/tools/current/bees "$@"
     fi

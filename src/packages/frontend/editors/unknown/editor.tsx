@@ -44,7 +44,10 @@ async function get_mime({
   set_snippet: (snippet: string) => void;
 }) {
   try {
-    const fs = webapp_client.conat_client.conat().fs({ project_id });
+    const fs = await webapp_client.conat_client.projectFs({
+      project_id,
+      caller: "UnknownEditor.get_mime",
+    });
     const { mime, snippet }: FileDescription = await fs.describeFile(path);
     set_mime(mime);
     if (snippet) {

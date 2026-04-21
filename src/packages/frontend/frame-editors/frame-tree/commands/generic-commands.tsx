@@ -1060,25 +1060,6 @@ addCommands({
     label: labels.upload,
     ...fileAction("upload"),
   },
-  share: {
-    pos: 10,
-    group: "export",
-    icon: "share-square",
-    title: defineMessage({
-      id: "menu.generic.publish_file.tooltip",
-      defaultMessage:
-        "Make this file available to be easily copies by other people, either publicly or for people who know the link.",
-    }),
-    button: defineMessage({
-      id: "menu.generic.publish_file.button",
-      defaultMessage: "Publish",
-    }),
-    label: defineMessage({
-      id: "menu.generic.publish_file.label",
-      defaultMessage: "Publish File",
-    }),
-    ...fileAction("share"),
-  },
   print: {
     pos: 2,
     group: "export",

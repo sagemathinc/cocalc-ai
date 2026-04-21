@@ -1169,21 +1169,6 @@ Set title and description for a project, given the project id.
          "id":"ad7d6b17-f5a9-4c5c-abc3-3823b1e1773f"}
 \`\`\`
 
-Make a path public (publish a file).
-\`\`\`
-  curl -u sk_abcdefQWERTY090900000000: \\
-    -H "Content-Type: application/json" \\
-    -d '{"query":{"public_paths":{"project_id":"29163de6-b5b0-496f-b75d-24be9aa2aa1d", \\
-                                  "path":"myfile.txt", \\
-                                  "description":"a shared text file"}}}' \\
-    https://cocalc.com/api/v1/query
-    ==> {"event":"query",
-         "query":{},
-         "multi_response":false,
-         "id":"ad7d6b17-f5a9-4c5c-abc3-3823b1e1773f"}
-
-\`\`\`
-
 Set present user to open Jupyter notebooks in
 "CoCalc Jupyter Notebook" as opposed to "Classical Notebook".
 This change not usually needed, because accounts

@@ -757,7 +757,6 @@ export interface CreateProjectOptions {
   rootfs_image_id?: string;
   // Optional backup region (Cloudflare R2 region code).
   region?: string;
-  public_path_id?: string;
   // start running the moment the project is created -- uses more resources, but possibly better user experience
   start?: boolean;
 

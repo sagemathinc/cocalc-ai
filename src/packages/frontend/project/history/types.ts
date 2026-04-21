@@ -41,7 +41,6 @@ export type ProjectEvent =
   | SetDescriptionEvent
   | SetNameEvent
   | SetAvatarEvent
-  | PublicPathEvent
   | { event: "open_project" }
   | { event: "delete_project" }
   | { event: "undelete_project" }
@@ -198,7 +197,6 @@ export type FileActionEvent =
       | {
           action: "copied";
         }
-      | { action: "shared" }
       | { action: "uploaded"; file: string }
       | { action: "created" }
     ) & {
@@ -208,15 +206,6 @@ export type FileActionEvent =
       project?: string;
       dest?: string;
     });
-
-export type PublicPathEvent = {
-  event: "public_path";
-  path: string;
-  unlisted?: boolean;
-  disabled?: boolean;
-  authenticated?: boolean;
-  redirect?: string;
-};
 
 export type SystemEvent = { event: ""; by: string };
 

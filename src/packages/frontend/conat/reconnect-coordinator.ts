@@ -1,4 +1,5 @@
 import { EventEmitter } from "events";
+import { AdaptiveWindow } from "@cocalc/conat/recovery/adaptive-window";
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 const DEFAULT_RECONNECT_DELAY_MAX_MS = 30_000;
@@ -9,6 +10,9 @@ const BACKGROUND_TAB_RECONNECT_DELAY_MS = 15_000;
 const FOREGROUND_RESOURCE_RECONNECT_DELAY_MS = 1_000;
 const BACKGROUND_RESOURCE_RECONNECT_DELAY_MS = 5_000;
 const MAX_RESOURCE_RECONNECT_DELAY_MS = 30_000;
+const DEFAULT_RESOURCE_RECONNECT_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_CONCURRENT_RESOURCE_RECONNECTS = 16;
+const DEFAULT_INITIAL_CONCURRENT_RESOURCE_RECONNECTS = 4;
 
 export type ReconnectPriority = "foreground" | "background";
 export type StandbyStage = "active" | "soft" | "hard";
@@ -25,8 +29,11 @@ export interface ReconnectCoordinatorOptions {
   canReconnect: () => boolean;
   connect: () => Promise<void>;
   isConnected: () => boolean;
+  initialConcurrentResourceReconnects?: number;
+  maxConcurrentResourceReconnects?: number;
   onReconnectScheduled?: (event: ReconnectScheduleEvent) => void;
   onReconnectStable?: () => void;
+  resourceReconnectTimeoutMs?: number;
 }
 
 export interface ReconnectResourceOptions {
@@ -52,6 +59,7 @@ interface PendingReconnectResource {
   pendingAt?: number;
   pendingReason?: string;
   readyAt?: number;
+  reconnecting?: boolean;
 }
 
 export class ReconnectCoordinator extends EventEmitter {
@@ -63,7 +71,8 @@ export class ReconnectCoordinator extends EventEmitter {
   private pendingReason?: string;
   private nextResourceId = 0;
   private readonly resources = new Map<string, PendingReconnectResource>();
-  private resourceReconnectInFlight = false;
+  private readonly resourceConcurrencyWindow: AdaptiveWindow;
+  private resourceReconnectsInFlight = 0;
   private resourceReconnectTimer?: ReturnType<typeof setTimeout>;
   private standbyStage: StandbyStage = "active";
   private readonly foregroundStateHandler = () => {
@@ -86,6 +95,19 @@ export class ReconnectCoordinator extends EventEmitter {
 
   constructor(private readonly options: ReconnectCoordinatorOptions) {
     super();
+    this.resourceConcurrencyWindow = new AdaptiveWindow({
+      min: 1,
+      initial:
+        options.initialConcurrentResourceReconnects ??
+        Math.min(
+          DEFAULT_INITIAL_CONCURRENT_RESOURCE_RECONNECTS,
+          options.maxConcurrentResourceReconnects ??
+            DEFAULT_MAX_CONCURRENT_RESOURCE_RECONNECTS,
+        ),
+      max:
+        options.maxConcurrentResourceReconnects ??
+        DEFAULT_MAX_CONCURRENT_RESOURCE_RECONNECTS,
+    });
     if (typeof document !== "undefined") {
       document.addEventListener(
         "visibilitychange",
@@ -297,7 +319,10 @@ export class ReconnectCoordinator extends EventEmitter {
 
   private schedulePendingResourceReconnects = () => {
     this.clearResourceReconnectTimer();
-    if (this.resourceReconnectInFlight) {
+    if (
+      this.resourceReconnectsInFlight >=
+      this.resourceConcurrencyWindow.capacity()
+    ) {
       return;
     }
     if (this.standbyStage !== "active") {
@@ -313,13 +338,16 @@ export class ReconnectCoordinator extends EventEmitter {
     const delay = Math.max(0, (next.readyAt ?? 0) - Date.now());
     this.resourceReconnectTimer = setTimeout(() => {
       this.clearResourceReconnectTimer();
-      void this.runNextPendingResourceReconnect();
+      void this.runPendingResourceReconnects();
     }, delay);
     this.resourceReconnectTimer.unref?.();
   };
 
   private pickNextPendingResource = () => {
     const resources = Array.from(this.resources.values()).filter((resource) => {
+      if (resource.reconnecting) {
+        return false;
+      }
       if (resource.readyAt == null) {
         return false;
       }
@@ -356,37 +384,78 @@ export class ReconnectCoordinator extends EventEmitter {
     return priority === "foreground" ? 1 : 0;
   };
 
-  private runNextPendingResourceReconnect = async () => {
-    if (this.resourceReconnectInFlight) {
-      return;
-    }
+  private runPendingResourceReconnects = async () => {
     if (this.standbyStage !== "active") {
       return;
     }
     if (!this.options.canReconnect() || !this.options.isConnected()) {
       return;
     }
-    const resource = this.pickNextPendingResource();
-    if (!resource || resource.readyAt == null) {
-      return;
+    while (
+      this.resourceReconnectsInFlight <
+      this.resourceConcurrencyWindow.capacity()
+    ) {
+      const resource = this.pickNextPendingResource();
+      if (!resource || resource.readyAt == null) {
+        break;
+      }
+      if (resource.readyAt > Date.now()) {
+        break;
+      }
+      void this.runOneResourceReconnect(resource);
     }
-    if (resource.readyAt > Date.now()) {
-      this.schedulePendingResourceReconnects();
-      return;
-    }
-    this.resourceReconnectInFlight = true;
+    this.schedulePendingResourceReconnects();
+  };
+
+  private runOneResourceReconnect = async (
+    resource: PendingReconnectResource,
+  ) => {
+    this.resourceReconnectsInFlight += 1;
+    resource.reconnecting = true;
     resource.readyAt = undefined;
     try {
-      await resource.options.reconnect();
+      await this.runResourceReconnectWithTimeout(resource);
       resource.pendingAt = undefined;
       resource.pendingReason = undefined;
       resource.attempts = 0;
+      this.resourceConcurrencyWindow.noteSuccess();
     } catch {
       resource.attempts += 1;
       resource.readyAt = Date.now() + this.computeResourceDelay(resource);
+      this.resourceConcurrencyWindow.noteFailure();
     } finally {
-      this.resourceReconnectInFlight = false;
+      resource.reconnecting = false;
+      this.resourceReconnectsInFlight = Math.max(
+        0,
+        this.resourceReconnectsInFlight - 1,
+      );
       this.schedulePendingResourceReconnects();
+    }
+  };
+
+  private runResourceReconnectWithTimeout = async (
+    resource: PendingReconnectResource,
+  ) => {
+    const timeoutMs = Math.max(
+      1,
+      this.options.resourceReconnectTimeoutMs ??
+        DEFAULT_RESOURCE_RECONNECT_TIMEOUT_MS,
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        resource.options.reconnect(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(Error(`resource reconnect timeout after ${timeoutMs}ms`));
+          }, timeoutMs);
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer != null) {
+        clearTimeout(timer);
+      }
     }
   };
 

@@ -8,7 +8,6 @@ export const ACTION_BUTTONS_DIR = [
   "duplicate",
   "move",
   "copy",
-  "share",
 ] as const;
 
 export const ACTION_BUTTONS_FILE = [
@@ -19,7 +18,6 @@ export const ACTION_BUTTONS_FILE = [
   "duplicate",
   "move",
   "copy",
-  "share",
 ] as const;
 
 export const ACTION_BUTTONS_MULTI = [

@@ -919,7 +919,11 @@ export class JupyterActions extends JupyterActions0 {
       project_id: this.project_id,
       path: this.liveRunPath,
     });
-    const sub = await webapp_client.conat_client.conat().subscribe(subject);
+    const client = await webapp_client.conat_client.projectConat({
+      project_id: this.project_id,
+      caller: "JupyterActions.ensureLiveRunSubscription",
+    });
+    const sub = await client.subscribe(subject);
     if (this.isClosed()) {
       sub.close();
       return;
@@ -1236,10 +1240,14 @@ export class JupyterActions extends JupyterActions0 {
   initUsageInfo = async () => {
     while (this._state != "closed") {
       try {
+        const client = await webapp_client.conat_client.projectConat({
+          project_id: this.project_id,
+          caller: "JupyterActions.initUsageInfo",
+        });
         const kernel_usage = await getUsageInfo({
           project_id: this.project_id,
           path: this.path,
-          client: webapp_client.conat_client.conat(),
+          client,
         });
         if (this._state == ("closed" as any)) return;
         this.setState({ kernel_usage });
@@ -2664,9 +2672,13 @@ export class JupyterActions extends JupyterActions0 {
     await this.waitUntilProjectIsRunning();
     if (this.isClosed()) return null;
     this.runDebug("client.create.start");
+    const client = await webapp_client.conat_client.projectConat({
+      project_id: this.project_id,
+      caller: "JupyterActions.getJupyterClient",
+    });
     c = jupyterClient({
       path: this.syncdbPath,
-      client: webapp_client.conat_client.conat(),
+      client,
       project_id: this.project_id,
       stdin: async ({ id, prompt, password }) => {
         // set the redux store so that it is known we would like some stdin,

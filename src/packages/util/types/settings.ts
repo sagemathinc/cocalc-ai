@@ -37,7 +37,6 @@ export const VALID_SETTINGS_PAGES = [
   "payments",
   "payment-methods",
   "statements",
-  "public-files",
   "support",
 ] as const;
 

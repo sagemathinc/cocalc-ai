@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { describeProjectScopedAuth } from "../../core/auth-cookies";
 
 export type AuthCommandDeps = {
+  env: NodeJS.ProcessEnv;
   runLocalCommand: any;
   authConfigPath: any;
   loadAuthConfig: any;
@@ -25,6 +26,7 @@ export function registerAuthCommand(
   deps: AuthCommandDeps,
 ): Command {
   const {
+    env,
     runLocalCommand,
     authConfigPath,
     loadAuthConfig,
@@ -58,23 +60,21 @@ export function registerAuthCommand(
         const applied = applyAuthProfile(globals, config);
         const effective = applied.globals as any;
         const accountId =
-          getExplicitAccountId(effective) ??
-          process.env.COCALC_ACCOUNT_ID ??
-          null;
+          getExplicitAccountId(effective) ?? env.COCALC_ACCOUNT_ID ?? null;
         const apiBaseUrl = effective.api
           ? normalizeUrl(effective.api)
           : defaultApiBaseUrl();
-        const projectAuth = describeProjectScopedAuth(process.env);
+        const projectAuth = describeProjectScopedAuth(env);
         const effective_remote_auth = projectAuth.has_project_scoped_auth
           ? "project_scoped"
-          : (effective.bearer ?? process.env.COCALC_BEARER_TOKEN)
+          : (effective.bearer ?? env.COCALC_BEARER_TOKEN)
             ? "bearer"
             : effective.cookie
               ? "cookie"
-              : (effective.apiKey ?? process.env.COCALC_API_KEY)
+              : (effective.apiKey ?? env.COCALC_API_KEY)
                 ? "api_key"
                 : normalizeSecretValue(
-                      effective.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
+                      effective.hubPassword ?? env.COCALC_HUB_PASSWORD,
                     )
                   ? "hub_password"
                   : "none";
@@ -126,11 +126,11 @@ export function registerAuthCommand(
           profiles_count: Object.keys(config.profiles).length,
           api: apiBaseUrl,
           account_id: accountId,
-          has_api_key: !!(effective.apiKey ?? process.env.COCALC_API_KEY),
+          has_api_key: !!(effective.apiKey ?? env.COCALC_API_KEY),
           has_cookie: !!effective.cookie,
-          has_bearer: !!(effective.bearer ?? process.env.COCALC_BEARER_TOKEN),
+          has_bearer: !!(effective.bearer ?? env.COCALC_BEARER_TOKEN),
           has_hub_password: !!normalizeSecretValue(
-            effective.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
+            effective.hubPassword ?? env.COCALC_HUB_PASSWORD,
           ),
           ...projectAuth,
           effective_remote_auth,

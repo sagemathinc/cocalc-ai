@@ -36,8 +36,12 @@ export default async function getStorageHistory({
   if (cache && storageHistoryCache.has(k)) {
     return storageHistoryCache.get(k)!;
   }
+  const client = await webapp_client.conat_client.projectConat({
+    project_id,
+    caller: "getStorageHistory",
+  });
   const history = await getProjectStorageHistory({
-    client: webapp_client.conat_client.conat(),
+    client,
     project_id,
     window_minutes,
     max_points,

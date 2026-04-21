@@ -689,11 +689,18 @@ export class ChatActions extends Actions<ChatState> {
       this.clearProjectReadState();
       this.projectReadStateKey = key;
     }
-    this.projectReadStateInit = openProjectReadState({
-      account_id,
-      project_id,
-      client: webapp_client.conat_client.conat(),
-    })
+    this.projectReadStateInit = webapp_client.conat_client
+      .projectConat({
+        project_id,
+        caller: "ChatActions.ensureProjectReadState",
+      })
+      .then((client) =>
+        openProjectReadState({
+          account_id,
+          project_id,
+          client,
+        }),
+      )
       .then((store) => {
         if (this.projectReadStateKey !== key) {
           store.close();

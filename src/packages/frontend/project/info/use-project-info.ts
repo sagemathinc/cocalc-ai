@@ -51,8 +51,12 @@ export default function useProjectInfo({
   const update = useCallback(async () => {
     // console.log("update", { project_id });
     try {
+      const client = await webapp_client.conat_client.projectConat({
+        project_id,
+        caller: "useProjectInfo",
+      });
       const info = await get({
-        client: webapp_client.conat_client.conat(),
+        client,
         project_id,
       });
       setInfo(info);

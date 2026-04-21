@@ -89,7 +89,6 @@ export function buildFileActionItems(
 
   for (const key of actionNames) {
     if (key === "download" && !isdir) continue;
-    if (key === "share") continue;
 
     const actionInfo = FILE_ACTIONS[key];
     if ("hideFlyout" in actionInfo && actionInfo.hideFlyout) continue;

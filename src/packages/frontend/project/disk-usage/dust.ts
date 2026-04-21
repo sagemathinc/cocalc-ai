@@ -32,8 +32,12 @@ export default async function dust({
   if (cache && dustCache.has(k)) {
     return dustCache.get(k)!;
   }
+  const client = await webapp_client.conat_client.projectConat({
+    project_id,
+    caller: "dust",
+  });
   const v = await getProjectStorageBreakdown({
-    client: webapp_client.conat_client.conat(),
+    client,
     project_id,
     path,
   });

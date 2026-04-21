@@ -136,8 +136,12 @@ async function fetchRecentActivityBatch({
   }
   const settled = await Promise.allSettled(
     projectIds.map(async (project_id) => {
+      const client = await webapp_client.conat_client.projectConat({
+        project_id,
+        caller: "listRecentDocumentActivity",
+      });
       return await listRecent({
-        client: webapp_client.conat_client.conat(),
+        client,
         account_id: requester_account_id,
         project_id,
         limit: rowsPerProject,

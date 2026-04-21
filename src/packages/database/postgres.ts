@@ -116,15 +116,6 @@ import {
   unlink_old_deleted_projects,
 } from "./postgres/project/delete-projects";
 
-import {
-  filter_public_paths,
-  get_all_public_paths,
-  get_public_paths,
-  has_public_path,
-  path_is_public,
-  unlist_all_public_paths,
-} from "./postgres/paths/public-paths";
-
 import { get_personal_user } from "./postgres/account/personal";
 
 import {
@@ -1586,26 +1577,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     return runWithCbResultValue(opts.cb, () => get_collaborators(this, opts));
   }
 
-  // return list of paths that are public and not disabled in the given project
-  async get_public_paths(opts: PgMethodOpts<"get_public_paths">) {
-    if (!this._validate_opts(opts)) {
-      return;
-    }
-    return runWithCbResultValue(opts.cb, () => get_public_paths(this, opts));
-  }
-
-  async has_public_path(opts: PgMethodOpts<"has_public_path">) {
-    return runWithCbResultValue(opts.cb, () => has_public_path(this, opts));
-  }
-
-  async path_is_public(opts: PgMethodOpts<"path_is_public">) {
-    return runWithCbResultValue(opts.cb, () => path_is_public(this, opts));
-  }
-
-  async filter_public_paths(opts: PgMethodOpts<"filter_public_paths">) {
-    return runWithCbResultValue(opts.cb, () => filter_public_paths(this, opts));
-  }
-
   // Set last_edited for this project to right now, and possibly update its size.
   // It is safe and efficient to call this function very frequently since it will
   // actually hit the database at most once every 30s (per project, per client).  In particular,
@@ -1841,10 +1812,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     return await unlink_old_deleted_projects(this);
   }
 
-  async unlist_all_public_paths(account_id, is_owner) {
-    return await unlist_all_public_paths(this, account_id, is_owner);
-  }
-
   async projects_that_need_to_be_started() {
     return await projects_that_need_to_be_started(this);
   }
@@ -1857,10 +1824,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
   // true if they are a manager on a license or have any subscriptions.
   async is_paying_customer(account_id) {
     return await is_paying_customer(this, account_id);
-  }
-
-  async get_all_public_paths(account_id) {
-    return await get_all_public_paths(this, account_id);
   }
 
   // Return true if the given account is a member or

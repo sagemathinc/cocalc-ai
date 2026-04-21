@@ -164,6 +164,35 @@ This keeps shared project metadata helpers reusable across frontend, backend,
 CLI, and future bay-aware code without letting them silently attach to an
 ambient singleton.
 
+## Completed In The Browser Project Runtime Routing Pass
+
+### Frontend project-host wrappers
+
+- added async project-host routing helpers to
+  [frontend/conat/client.ts](/home/user/cocalc-ai/src/packages/frontend/conat/client.ts)
+  for project filesystem and listing clients
+- converted browser listing, storage/disk-usage, snapshot/backup archive reads,
+  project-info hooks, and project-status subscription setup to explicitly warm
+  project-host routing before opening their Conat client
+- converted the shared browser `useFs(...)` hook to return `null` while the
+  routed project filesystem client is being initialized, so listing/explorer UI
+  waits instead of synchronously constructing a filesystem client against the
+  default hub connection
+- updated find/snapshot/unknown-file/time-travel/workspace helper paths that
+  opened project filesystem clients directly
+- converted the next async project-runtime batch to warm project-host routing
+  before opening Conat state:
+  - shared project dstreams, including live Codex log streams
+  - Codex log AKV reads/deletes
+  - chat project read-state and activity-log cleanup
+  - Jupyter live-run subscriptions, usage-info polling, and run-code clients
+  - recent document activity and course file-use reads
+
+This reduces the remaining risk from synchronous `routeSubject(...)` fallback:
+these user-visible browser paths now ask for the project-host client first, so
+they do not depend on host routing metadata already being cached at the instant
+the low-level filesystem/listing/storage call is constructed.
+
 ## Completed In The Generic Service Pass
 
 ### `conat/service/service.ts`
@@ -216,9 +245,22 @@ Many frontend paths intentionally use the browser's main Conat client, e.g.
 [frontend/conat/client.ts](/home/wstein/build/cocalc-lite4/src/packages/frontend/conat/client.ts)
 and callers of `webapp_client.conat_client.conat()`.
 
-These are not automatically wrong, but they need to be revisited once browser
-control traffic is split between `home_bay` and project/host-specific routed
-clients.
+Known remaining direct browser uses after the async project-runtime pass:
+
+- account-local stores that should stay with the signed-in/home-bay browser
+  client unless account rehome changes the storage model:
+  - chat composer drafts
+  - git review metadata and legacy migration reads
+- synchronous project syncdoc factories:
+  - chat syncdb initialization
+  - course editor syncdb initialization
+  - generic frame-editor `syncstring` / `syncdb` / `immerdb` factories
+
+The syncdoc factories are the remaining architectural risk because their public
+APIs are synchronous. They currently depend on the browser route-subject hook
+and whatever project-host routing metadata is already cached. Closing that gap
+probably requires either an async syncdoc initialization layer or an earlier
+project-open prewarm guarantee, not another small local wrapper change.
 
 ## Next Recommended Cleanup Pass
 

@@ -13,6 +13,7 @@ function makeDeps(
   overrides: Partial<AuthCommandDeps> = {},
 ): AuthCommandDeps {
   return {
+    env: {},
     runLocalCommand: async (_command: unknown, _name: string, fn: any) => {
       capture.data = await fn({});
     },
@@ -46,14 +47,18 @@ test("auth status reports project-scoped auth clearly", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-status-"));
   const tokenPath = join(dir, "secret-token");
   writeFileSync(tokenPath, "project-secret-token\n", "utf8");
-  const prevSecretPath = process.env.COCALC_SECRET_TOKEN;
-  const prevProjectId = process.env.COCALC_PROJECT_ID;
   try {
-    process.env.COCALC_SECRET_TOKEN = tokenPath;
-    process.env.COCALC_PROJECT_ID = "890afc74-9156-4386-a395-afd4bebab4dd";
     const capture: { data?: any } = {};
     const program = new Command();
-    registerAuthCommand(program, makeDeps(capture));
+    registerAuthCommand(
+      program,
+      makeDeps(capture, {
+        env: {
+          COCALC_SECRET_TOKEN: tokenPath,
+          COCALC_PROJECT_ID: "890afc74-9156-4386-a395-afd4bebab4dd",
+        },
+      }),
+    );
     await program.parseAsync(["node", "test", "auth", "status"]);
     assert.equal(capture.data.has_project_secret, true);
     assert.equal(capture.data.has_project_id, true);
@@ -65,16 +70,6 @@ test("auth status reports project-scoped auth clearly", async () => {
       /remote commands can authenticate even without api_key\/cookie\/bearer/,
     );
   } finally {
-    if (prevSecretPath == null) {
-      delete process.env.COCALC_SECRET_TOKEN;
-    } else {
-      process.env.COCALC_SECRET_TOKEN = prevSecretPath;
-    }
-    if (prevProjectId == null) {
-      delete process.env.COCALC_PROJECT_ID;
-    } else {
-      process.env.COCALC_PROJECT_ID = prevProjectId;
-    }
     rmSync(dir, { recursive: true, force: true });
   }
 });

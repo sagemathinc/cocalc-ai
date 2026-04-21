@@ -4,7 +4,7 @@ import { type VirtuosoGridHandle } from "react-virtuoso";
 import { useActions } from "@cocalc/frontend/app-framework";
 import { SearchInput, Loading } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import useFs from "@cocalc/frontend/project/listing/use-fs";
 import { should_open_in_foreground } from "@cocalc/frontend/lib/should-open-in-foreground";
 import { isChatExtension } from "@cocalc/frontend/chat/paths";
 import {
@@ -42,10 +42,7 @@ export function FilesTab({
   const fieldWidth = mode === "flyout" ? "100%" : "50%";
   const { project_id } = useProjectContext();
   const actions = useActions({ project_id });
-  const fs = useMemo(
-    () => webapp_client.conat_client.conat().fs({ project_id }),
-    [project_id],
-  );
+  const fs = useFs({ project_id });
   const [state, setState] = useFindTabState(
     project_id,
     "find_files_state",
@@ -75,6 +72,9 @@ export function FilesTab({
       setLoading(true);
       setError(null);
       try {
+        if (fs == null) {
+          throw Error("filesystem client not ready");
+        }
         const normalized = normalizeGlobQuery(q);
         const options = [
           "-g",
@@ -144,6 +144,7 @@ export function FilesTab({
   const openResult = useCallback(
     async (index: number) => {
       if (!actions) return;
+      if (fs == null) return;
       const path = filteredResults[index];
       if (!path) return;
       const fullPath = path_to_file(scopePath, path);
@@ -320,6 +321,7 @@ export function FilesTab({
                     onClick={async (e) => {
                       setSelectedIndex(index);
                       if (!actions) return;
+                      if (fs == null) return;
                       const fullPath = path_to_file(scopePath, path);
                       const stats = await fs.stat(fullPath);
                       if (stats.isDirectory()) {

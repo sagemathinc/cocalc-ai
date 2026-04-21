@@ -22,8 +22,6 @@ schema.table_name =
                       'account_id' - replaced by user's account_id
                       'project_id' - filled in by project_id, which must be specified in the query itself;
                                     (if table not anonymous then project_id must be a project that user has read access to)
-                      'project_id-public' - filled in by project_id, which must be specified in the query itself;
-                                    (if table not anonymous then project_id must be of a project with at east one public path)
                       'all_projects_read' - filled in with list of all the id's of projects this user has read access to
                       'collaborators' - filled in by account_id's of all collaborators of this user
                       an arbitrary function -  gets called with an object with these keys:

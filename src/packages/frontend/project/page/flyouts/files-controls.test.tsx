@@ -104,10 +104,8 @@ describe("FilesSelectedControls", () => {
         getFile={() => undefined}
         mode="top"
         project_id="project-1"
-        showFileSharingDialog={jest.fn()}
         open={jest.fn()}
         activeFile={null}
-        publicFiles={new Set()}
       />,
     );
 
@@ -119,10 +117,8 @@ describe("FilesSelectedControls", () => {
         getFile={() => undefined}
         mode="top"
         project_id="project-2"
-        showFileSharingDialog={jest.fn()}
         open={jest.fn()}
         activeFile={null}
-        publicFiles={new Set()}
       />,
     );
 

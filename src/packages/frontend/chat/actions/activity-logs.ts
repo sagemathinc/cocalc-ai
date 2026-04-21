@@ -109,7 +109,10 @@ export async function deleteAllActivityLogs({
   if (project_id) {
     for (const ref of logRefs) {
       try {
-        const cn = webapp_client.conat_client.conat();
+        const cn = await webapp_client.conat_client.projectConat({
+          project_id,
+          caller: "deleteChatActivityLogs",
+        });
         const kv = cn.sync.akv({ project_id, name: ref.store });
         await kv.delete(ref.key);
       } catch (err) {

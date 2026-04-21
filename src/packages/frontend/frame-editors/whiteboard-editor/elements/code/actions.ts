@@ -7,9 +7,9 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { delay } from "awaiting";
 
 import { redux } from "@cocalc/frontend/app-framework";
-import { JupyterEditorActions } from "@cocalc/frontend/frame-editors/jupyter-editor/actions";
+import type { JupyterEditorActions } from "@cocalc/frontend/frame-editors/jupyter-editor/actions";
 import { createInitialIpynbContent } from "@cocalc/frontend/jupyter/new-notebook";
-import { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
+import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import { once } from "@cocalc/util/async-utils";
 import { aux_file } from "@cocalc/util/misc";
 

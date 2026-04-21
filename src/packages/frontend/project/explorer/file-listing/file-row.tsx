@@ -4,7 +4,6 @@
  */
 
 import { Button, Popover, Col, Row } from "antd";
-import memoizeOne from "memoize-one";
 import { CSS, React, useState } from "@cocalc/frontend/app-framework";
 import {
   Icon,
@@ -25,8 +24,6 @@ import * as misc from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { url_href } from "@cocalc/frontend/project/utils";
 import { FileCheckbox } from "./file-checkbox";
-import { PublicButton } from "./public-button";
-import { generate_click_for } from "./utils";
 import { type DirectoryListing } from "@cocalc/frontend/project/explorer/types";
 import { FILE_ITEM_OPENED_STYLE } from "@cocalc/frontend/project/page/flyouts/file-list-item";
 import { isISODate } from "@cocalc/util/misc";
@@ -56,7 +53,6 @@ interface Props {
   selected: boolean;
   color: string;
   mask: boolean;
-  isPublic: boolean;
   isOpen: boolean;
   current_path: string;
   actions: ProjectActions;
@@ -80,7 +76,6 @@ export function FileRow({
   selected,
   color,
   mask,
-  isPublic,
   isOpen,
   current_path,
   actions,
@@ -196,16 +191,6 @@ export function FileRow({
       );
     } else {
       return render_name_link(style, name0, ext);
-    }
-  }
-
-  const generate_on_share_click = memoizeOne((full_path: string) => {
-    return generate_click_for("share", full_path, actions);
-  });
-
-  function render_public_file_info() {
-    if (isPublic) {
-      return <PublicButton on_click={generate_on_share_click(full_path())} />;
     }
   }
 
@@ -459,16 +444,13 @@ export function FileRow({
           />
         )}
       </Col>
-      <Col sm={2} xs={6} style={{ textAlign: "center" }}>
-        {render_public_file_info()}
-      </Col>
       <Col sm={2} xs={12} onClick={handle_click}>
         {render_icon()}
       </Col>
       <Col sm={1} xs={6} style={{ textAlign: "center" }}>
         {render_star()}
       </Col>
-      <Col sm={10} xs={24} onClick={handle_click}>
+      <Col sm={12} xs={24} onClick={handle_click}>
         <VisibleXS>
           <span style={{ marginLeft: "16px" }} />
         </VisibleXS>

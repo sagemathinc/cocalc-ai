@@ -46,8 +46,12 @@ export default function useProjectInfoHistory({
 
   const update = useCallback(async () => {
     try {
+      const client = await webapp_client.conat_client.projectConat({
+        project_id,
+        caller: "useProjectInfoHistory",
+      });
       const value = await getHistory({
-        client: webapp_client.conat_client.conat(),
+        client,
         project_id,
         minutes,
       });

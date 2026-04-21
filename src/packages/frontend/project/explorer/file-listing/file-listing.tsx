@@ -72,7 +72,6 @@ import {
 const COL_W = {
   CHECKBOX: 40,
   TYPE: 60,
-  PUBLIC: 40,
   STAR: 55,
   DATE: 170,
   SIZE: 130,
@@ -114,7 +113,6 @@ interface Props {
   project_id: string;
   shiftIsDown: boolean;
   isRunning?: boolean;
-  publicFiles: Set<string>;
   sort_by: (column_name: string) => void;
   onNavigateDirectory?: (path: string) => void;
 }
@@ -123,7 +121,6 @@ interface FileEntry extends DirectoryListingEntry {
   display_name?: string;
   fullPath: string;
   isOpen: boolean;
-  isPublic: boolean;
   isStarred: boolean;
 }
 
@@ -434,7 +431,6 @@ export function FileListing({
   project_id,
   shiftIsDown,
   file_search = "",
-  publicFiles,
   sort_by,
   onNavigateDirectory,
 }: Props) {
@@ -528,7 +524,6 @@ export function FileListing({
           ...entry,
           fullPath,
           isOpen: openFiles.has(fullPath),
-          isPublic: publicFiles.has(entry.name),
           isStarred: starredSet.has(entry.isDir ? `${fullPath}/` : fullPath),
         };
       });
@@ -538,7 +533,6 @@ export function FileListing({
     type_filter,
     current_path,
     openFiles,
-    publicFiles,
     starredSet,
   ]);
 
@@ -999,7 +993,6 @@ export function FileListing({
         <th style={{ ...centeredHeaderStyle, width: COL_W.STAR }}>
           <Icon name="star" />
         </th>
-        <th style={{ ...centeredHeaderStyle, width: COL_W.PUBLIC }} />
         <th style={sortableThStyle} onClick={() => sort_by("name")}>
           <span style={sortLabelStyle("name")}>
             {intl.formatMessage(labels.name)}
@@ -1170,13 +1163,6 @@ export function FileListing({
                 color: record.isStarred ? COLORS.STAR : COLORS.GRAY_L,
               }}
             />
-          </td>
-          <td
-            style={{ ...cellStyle, width: COL_W.PUBLIC, textAlign: "center" }}
-          >
-            {record.isPublic ? (
-              <Icon name="share-square" style={{ color: COLORS.TAB }} />
-            ) : null}
           </td>
           <td style={cellStyle}>{renderFileName(record)}</td>
           <td style={{ ...cellStyle, width: COL_W.DATE }}>

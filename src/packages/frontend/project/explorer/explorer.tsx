@@ -52,10 +52,6 @@ import useBackupsListing, {
 import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import filterListing from "@cocalc/frontend/project/listing/filter-listing";
 import ShowError from "@cocalc/frontend/components/error";
-import {
-  getPublicFiles,
-  useStrippedPublicPaths,
-} from "@cocalc/frontend/project_store";
 import { Icon } from "@cocalc/frontend/components";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
@@ -411,19 +407,6 @@ export function Explorer() {
       cancelled = true;
     };
   }, [actions, effective_current_path, project_id]);
-
-  // ensure that listing entries have isPublic set:
-  const strippedPublicPaths = useStrippedPublicPaths(project_id);
-  const publicFiles: Set<string> = useMemo(() => {
-    if (visibleListing == null) {
-      return new Set<string>();
-    }
-    return getPublicFiles(
-      visibleListing,
-      strippedPublicPaths,
-      effective_current_path,
-    );
-  }, [visibleListing, effective_current_path, strippedPublicPaths]);
 
   const { val: clicked, inc: clickedOnExplorer } = useCounter();
   useEffect(() => {
@@ -1064,7 +1047,6 @@ You can either wait for this host to become available again, or move this ${proj
                       actions={actions}
                       project_id={project_id}
                       shiftIsDown={shiftIsDown}
-                      publicFiles={publicFiles}
                       onNavigateDirectory={navigateExplorer}
                     />
                   )}

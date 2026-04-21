@@ -145,8 +145,9 @@ export async function ensureWorkspaceChatDirectory(opts: {
   project_id: string;
   chat_path: string;
 }): Promise<void> {
-  const fs = webapp_client.conat_client.conat().fs({
+  const fs = await webapp_client.conat_client.projectFs({
     project_id: opts.project_id,
+    caller: "ensureWorkspaceChatDirectory",
   });
   try {
     await fs.mkdir(path_split(opts.chat_path).head, { recursive: true });

@@ -7,7 +7,7 @@ import { Loading, SearchInput } from "@cocalc/frontend/components";
 import { getSnapshotFileText } from "@cocalc/frontend/project/archive-info";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import useFs from "@cocalc/frontend/project/listing/use-fs";
 import { BACKUPS } from "@cocalc/util/consts/backups";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { search_match, search_split } from "@cocalc/util/misc";
@@ -80,10 +80,7 @@ export function SnapshotsTab({
     { project_id },
     "available_features",
   );
-  const fs = useMemo(
-    () => webapp_client.conat_client.conat().fs({ project_id }),
-    [project_id],
-  );
+  const fs = useFs({ project_id });
   const homeDirectory = useMemo(() => {
     const homeFromFeatures =
       (available_features as any)?.homeDirectory ??
@@ -216,6 +213,9 @@ export function SnapshotsTab({
       setLoading(true);
       setError(null);
       try {
+        if (fs == null) {
+          throw Error("filesystem client not ready");
+        }
         if (activeMode === "files") {
           const normalized = normalizeGlobQuery(q);
           const { stdout, stderr } = await fs.fd(SNAPSHOTS, {
@@ -299,6 +299,7 @@ export function SnapshotsTab({
   }, [state.query, state.mode, scopePath, snapshotName]);
 
   useEffect(() => {
+    if (fs == null) return;
     if (!results.length) return;
     let cancelled = false;
     const pending = results
@@ -459,6 +460,9 @@ export function SnapshotsTab({
     async (mode: "original" | "scratch") => {
       if (!restoreTarget) return;
       try {
+        if (fs == null) {
+          throw Error("filesystem client not ready");
+        }
         setRestoreLoading(true);
         setRestoreError(null);
         const { relative, snapshotPath } = buildSnapshotPaths(restoreTarget);
