@@ -29,6 +29,7 @@ export class ConatSocketClient extends ConatSocketBase {
   private alive?: KeepAlive;
   private serverId?: string;
   private loadBalancer?: (subject: string) => Promise<string>;
+  private loadBalancerTimeout?: number;
   private lifecycleReporter?: ConatSocketOptions["lifecycleReporter"];
   private nextConnectAttemptId = 0;
   private connectAttempts = new Map<
@@ -40,6 +41,7 @@ export class ConatSocketClient extends ConatSocketBase {
   constructor(opts: ConatSocketOptions) {
     super(opts);
     this.loadBalancer = opts.loadBalancer;
+    this.loadBalancerTimeout = opts.loadBalancerTimeout;
     this.lifecycleReporter = opts.lifecycleReporter;
     // logger.silly("creating a client socket connecting to ", this.subject);
     this.initTCP();
@@ -249,19 +251,54 @@ export class ConatSocketClient extends ConatSocketBase {
   private getServerId = async () => {
     let id;
     this.lifecycleReporter?.("get_server_id_start");
-    if (this.loadBalancer != null) {
-      logger.debug("getting server id from load balancer");
-      id = await this.loadBalancer(this.subject);
-    } else {
-      logger.debug("getting server id from socket server");
-      const resp = await this.client.request(
-        serverStatusSubject(this.subject),
-        null,
-      );
-      ({ id } = resp.data);
+    try {
+      const timeout = this.loadBalancerTimeout ?? DEFAULT_COMMAND_TIMEOUT;
+      if (this.loadBalancer != null) {
+        logger.debug("getting server id from load balancer");
+        id = await this.withServerIdTimeout(
+          this.loadBalancer(this.subject),
+          timeout,
+        );
+      } else {
+        logger.debug("getting server id from socket server");
+        const resp = await this.client.request(
+          serverStatusSubject(this.subject),
+          null,
+          { timeout },
+        );
+        ({ id } = resp.data);
+      }
+    } catch (err) {
+      this.lifecycleReporter?.("get_server_id_error", { error: `${err}` });
+      throw err;
     }
     this.serverId = id;
     this.lifecycleReporter?.("get_server_id_done", { server_id: id });
+  };
+
+  private withServerIdTimeout = async (
+    promise: Promise<string>,
+    timeout: number,
+  ): Promise<string> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(
+              Error(`timeout getting socket server id after ${timeout}ms`),
+            );
+          }, timeout);
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer != null) {
+        clearTimeout(timer);
+      }
+      promise.catch(() => undefined);
+    }
   };
 
   protected async run() {

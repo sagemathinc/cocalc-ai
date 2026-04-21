@@ -100,4 +100,34 @@ describe("BaseEditorActions reconnect coordination", () => {
       "test-syncdb-live",
     );
   });
+
+  it("actively recovers a syncdoc before waiting for it to become live", async () => {
+    const actions = new BaseEditorActions(
+      "test-syncdoc-recover-now",
+      makeRedux(),
+    ) as any;
+    let liveConnected = false;
+    const syncdoc = {
+      get_state: () => "ready",
+      is_live_connected: () => liveConnected,
+      recoverNow: jest.fn(async () => {
+        liveConnected = true;
+      }),
+      wait_until_live_connected: jest.fn(async () => {}),
+    };
+    actions.wait_until_syncdoc_ready = jest.fn(async () => true);
+    actions.isClosed = jest.fn(() => false);
+
+    const connected = await actions.wait_until_syncdoc_live_connected(
+      syncdoc,
+      "foreground",
+    );
+
+    expect(connected).toBe(true);
+    expect(syncdoc.recoverNow).toHaveBeenCalledWith({
+      priority: "foreground",
+      reason: "editor_resource_reconnect",
+    });
+    expect(syncdoc.wait_until_live_connected).toHaveBeenCalled();
+  });
 });

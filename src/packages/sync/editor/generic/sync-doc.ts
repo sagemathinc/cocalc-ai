@@ -616,6 +616,24 @@ export class SyncDoc extends EventEmitter {
   isReady = () => this.state == "ready";
   is_live_connected = () => this.liveConnected;
 
+  debug_live_connection_state = () => {
+    const tableState = (table: any) => ({
+      table: table?.table,
+      state: table?.get_state?.(),
+      recoveryState: table?.getRecoveryState?.(),
+      hasUncommittedChanges: table?.has_uncommitted_changes?.(),
+      dstreamRecoveryState: table?.dstream?.getRecoveryState?.(),
+      dkvRecoveryState: table?.dkv?.getRecoveryState?.(),
+    });
+    return {
+      path: this.path,
+      syncPath: this.syncPath,
+      state: this.state,
+      liveConnected: this.liveConnected,
+      tables: this.connectedTables().map(tableState),
+    };
+  };
+
   private set_state = (state: State): void => {
     this.state = state;
     this.refreshLiveConnectionState();
@@ -1644,6 +1662,25 @@ export class SyncDoc extends EventEmitter {
       return;
     }
     await once(this, "connected");
+  };
+
+  recoverNow = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ): Promise<void> => {
+    this.assert_not_closed("recoverNow");
+    await Promise.all(
+      this.connectedTables().map(async (table) => {
+        const recoverNow = (table as any).recoverNow;
+        if (typeof recoverNow === "function") {
+          await recoverNow.call(table, opts);
+        }
+      }),
+    );
+    this.refreshLiveConnectionState();
   };
 
   /* Calls wait for the corresponding patches SyncTable, if

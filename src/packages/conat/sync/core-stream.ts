@@ -67,6 +67,7 @@ const logger = getLogger("sync:core-stream");
 const PUBLISH_MANY_BATCH_SIZE = 500;
 
 const DEFAULT_GET_ALL_TIMEOUT = 30_000;
+const PERSIST_RECOVERY_WAIT_SLICE_MS = 1_000;
 const GET_ALL_RETRY_START = 1_500;
 const GET_ALL_RETRY_MAX = 30_000;
 const GET_ALL_RETRY_DECAY = 1.5;
@@ -510,11 +511,9 @@ export class CoreStream<T = any> extends EventEmitter {
     if (this.isClosed()) {
       return;
     }
-    if (this.persistClient?.getRecoveryState() !== "ready") {
-      await once(this.persistClient, "recovered", DEFAULT_GET_ALL_TIMEOUT);
-      if (this.isClosed()) {
-        return;
-      }
+    await this.waitUntilPersistClientRecovered(opts);
+    if (this.isClosed()) {
+      return;
     }
     await this.getAllFromPersist({
       start_seq: this.lastSeq + 1,
@@ -525,6 +524,40 @@ export class CoreStream<T = any> extends EventEmitter {
     if (!this.isClosed()) {
       this.startListen();
       this.setRecoveryState("ready");
+    }
+  };
+
+  private waitUntilPersistClientRecovered = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
+    const persistClient = this.persistClient;
+    if (persistClient == null) {
+      return;
+    }
+    const deadline = Date.now() + DEFAULT_GET_ALL_TIMEOUT;
+    while (!this.isClosed() && persistClient.getRecoveryState() !== "ready") {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw Error(
+          `persist client did not recover within ${DEFAULT_GET_ALL_TIMEOUT}ms`,
+        );
+      }
+      try {
+        await once(
+          persistClient,
+          "recovered",
+          Math.min(PERSIST_RECOVERY_WAIT_SLICE_MS, remaining),
+        );
+      } catch {
+        if (persistClient.getRecoveryState() === "ready") {
+          return;
+        }
+        await persistClient.recoverNow(opts);
+      }
     }
   };
 

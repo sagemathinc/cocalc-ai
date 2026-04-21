@@ -170,6 +170,28 @@ export class SyncTableKV extends EventEmitter {
       // so we emit that object second.
       this.emit("change", [x.key], x);
     });
+    // @ts-ignore -- DKV/DKO share these recovery events at runtime.
+    this.dkv.on("disconnected", this.handleDisconnected);
+    // @ts-ignore
+    this.dkv.on("recovering", this.handleDisconnected);
+    // @ts-ignore
+    this.dkv.on("paused", this.handleDisconnected);
+    // @ts-ignore
+    this.dkv.on("recovered", this.handleRecovered);
+    this.updateConnectionState();
+  };
+
+  private updateConnectionState = () => {
+    this.set_state(
+      this.dkv?.getRecoveryState?.() === "ready" ? "connected" : "disconnected",
+    );
+  };
+
+  private handleDisconnected = () => {
+    this.set_state("disconnected");
+  };
+
+  private handleRecovered = () => {
     this.set_state("connected");
   };
 
@@ -222,10 +244,33 @@ export class SyncTableKV extends EventEmitter {
     await this.dkv?.save();
   };
 
+  recoverNow = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
+    await this.dkv?.recoverNow?.(opts);
+    this.updateConnectionState();
+  };
+
+  getRecoveryState = () => {
+    return this.dkv?.getRecoveryState?.() ?? "closed";
+  };
+
   close = async () => {
     if (this.state == "closed") return;
     this.set_state("closed");
     this.removeAllListeners();
+    // @ts-ignore -- DKV/DKO share these recovery events at runtime.
+    this.dkv?.removeListener("disconnected", this.handleDisconnected);
+    // @ts-ignore
+    this.dkv?.removeListener("recovering", this.handleDisconnected);
+    // @ts-ignore
+    this.dkv?.removeListener("paused", this.handleDisconnected);
+    // @ts-ignore
+    this.dkv?.removeListener("recovered", this.handleRecovered);
     await this.dkv?.close();
     delete this.dkv;
     // @ts-ignore

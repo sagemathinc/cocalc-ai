@@ -25,6 +25,7 @@ import refCache from "@cocalc/util/refcache";
 import jsonStableStringify from "json-stable-stringify";
 import { isEqual } from "lodash";
 import type { Client } from "@cocalc/conat/core/client";
+import type { RecoveryState } from "./core-stream";
 
 export function userKvKey(options: DKVOptions) {
   if (!options.name) {
@@ -110,6 +111,26 @@ export class DKO<T = any> extends EventEmitter {
     }
   };
 
+  private dkvOnRecoveryState = (state: RecoveryState) => {
+    this.emit("recovery-state", state);
+  };
+
+  private dkvOnDisconnected = () => {
+    this.emit("disconnected");
+  };
+
+  private dkvOnRecovering = () => {
+    this.emit("recovering");
+  };
+
+  private dkvOnPaused = () => {
+    this.emit("paused");
+  };
+
+  private dkvOnRecovered = () => {
+    this.emit("recovered");
+  };
+
   private initialized = false;
   init = async () => {
     if (this.initialized) {
@@ -122,6 +143,11 @@ export class DKO<T = any> extends EventEmitter {
     });
     this.dkv.on("change", this.dkvOnChange);
     this.dkv.on("reject", this.dkvOnReject);
+    this.dkv.on("recovery-state", this.dkvOnRecoveryState);
+    this.dkv.on("disconnected", this.dkvOnDisconnected);
+    this.dkv.on("recovering", this.dkvOnRecovering);
+    this.dkv.on("paused", this.dkvOnPaused);
+    this.dkv.on("recovered", this.dkvOnRecovered);
   };
 
   close = async () => {
@@ -130,6 +156,11 @@ export class DKO<T = any> extends EventEmitter {
     }
     this.dkv.removeListener("change", this.dkvOnChange);
     this.dkv.removeListener("reject", this.dkvOnReject);
+    this.dkv.removeListener("recovery-state", this.dkvOnRecoveryState);
+    this.dkv.removeListener("disconnected", this.dkvOnDisconnected);
+    this.dkv.removeListener("recovering", this.dkvOnRecovering);
+    this.dkv.removeListener("paused", this.dkvOnPaused);
+    this.dkv.removeListener("recovered", this.dkvOnRecovered);
     await this.dkv.close();
     delete this.dkv;
     // @ts-ignore
@@ -263,6 +294,33 @@ export class DKO<T = any> extends EventEmitter {
 
   hasUnsavedChanges = (): boolean => {
     return !!this.dkv?.hasUnsavedChanges();
+  };
+
+  getRecoveryState = (): RecoveryState => {
+    return this.dkv?.getRecoveryState() ?? "closed";
+  };
+
+  pauseRecovery = (reason: string) => {
+    this.dkv?.pauseRecovery(reason);
+  };
+
+  resumeRecovery = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+    } = {},
+  ) => {
+    await this.dkv?.resumeRecovery(opts);
+  };
+
+  recoverNow = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
+    await this.dkv?.recoverNow(opts);
   };
 
   unsavedChanges = (): { key: string; field: string }[] => {
