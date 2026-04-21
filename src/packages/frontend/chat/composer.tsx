@@ -9,7 +9,7 @@ import type {
   MouseEvent as ReactMouseEvent,
 } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, InputNumber, Modal, Switch } from "antd";
+import { Button } from "antd";
 import { FormattedMessage } from "react-intl";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
@@ -26,7 +26,6 @@ import type { ThreadMeta } from "./threads";
 import { ThreadBadge } from "./thread-badge";
 import type { ChatInputControl } from "./input";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
-import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
 import {
   findChatComposerFocusTarget,
   refocusChatComposerInput,
@@ -56,9 +55,6 @@ export interface ChatRoomComposerProps {
   ) => void;
   codexPaymentSource?: CodexPaymentSourceInfo;
   codexPaymentSourceLoading?: boolean;
-  showLoopControls?: boolean;
-  loopConfig?: AcpLoopConfig;
-  onLoopConfigChange?: (config?: AcpLoopConfig) => void;
 }
 
 export { findChatComposerFocusTarget, refocusChatComposerInput };
@@ -84,9 +80,6 @@ export function ChatRoomComposer({
   onComposerReady,
   codexPaymentSource: _codexPaymentSource,
   codexPaymentSourceLoading: _codexPaymentSourceLoading = false,
-  showLoopControls = false,
-  loopConfig,
-  onLoopConfigChange,
 }: ChatRoomComposerProps) {
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
@@ -94,19 +87,6 @@ export function ChatRoomComposer({
   const DRAG_MAX_VH = 0.9;
   const MIN_DRAG_HEIGHT = 60;
   const IDLE_COLLAPSED_HEIGHT = 60;
-  const LOOP_DEFAULTS: AcpLoopConfig = {
-    enabled: true,
-    max_turns: 8,
-    max_wall_time_ms: 30 * 60_000,
-    check_in_every_turns: 0,
-    stop_on_repeated_blocker_count: 2,
-    sleep_ms_between_turns: 0,
-  };
-  const [loopModalOpen, setLoopModalOpen] = useState<boolean>(false);
-  const [loopDraft, setLoopDraft] = useState<AcpLoopConfig>(
-    loopConfig ?? LOOP_DEFAULTS,
-  );
-
   const stripHtml = (value: string): string =>
     value.replace(/<[^>]*>/g, "").trim();
 
@@ -386,48 +366,6 @@ export function ChatRoomComposer({
     boxSizing: "border-box",
   };
 
-  useEffect(() => {
-    if (!loopModalOpen) return;
-    setLoopDraft(loopConfig ?? LOOP_DEFAULTS);
-  }, [loopModalOpen, loopConfig]);
-
-  const applyLoopConfig = useCallback(() => {
-    const normalized: AcpLoopConfig = {
-      enabled: loopDraft.enabled === true,
-      max_turns: Number(loopDraft.max_turns ?? LOOP_DEFAULTS.max_turns),
-      max_wall_time_ms: Number(
-        loopDraft.max_wall_time_ms ?? LOOP_DEFAULTS.max_wall_time_ms,
-      ),
-      check_in_every_turns: Number(
-        loopDraft.check_in_every_turns ?? LOOP_DEFAULTS.check_in_every_turns,
-      ),
-      stop_on_repeated_blocker_count: Number(
-        loopDraft.stop_on_repeated_blocker_count ??
-          LOOP_DEFAULTS.stop_on_repeated_blocker_count,
-      ),
-      sleep_ms_between_turns: Number(
-        loopDraft.sleep_ms_between_turns ??
-          LOOP_DEFAULTS.sleep_ms_between_turns,
-      ),
-    };
-    onLoopConfigChange?.(normalized.enabled ? normalized : undefined);
-    setLoopModalOpen(false);
-  }, [loopDraft, onLoopConfigChange]);
-
-  const loopEnabled = loopConfig?.enabled === true;
-
-  const onLoopToggle = useCallback(
-    (checked: boolean) => {
-      if (!checked) {
-        onLoopConfigChange?.(undefined);
-        return;
-      }
-      setLoopDraft(loopConfig ?? LOOP_DEFAULTS);
-      setLoopModalOpen(true);
-    },
-    [loopConfig, onLoopConfigChange],
-  );
-
   return (
     <div ref={zenContainerRef} style={composerStyle}>
       <div
@@ -545,51 +483,6 @@ export function ChatRoomComposer({
         <div style={{ flex: 1 }} />
         {hasInput && (
           <>
-            {showLoopControls ? (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "flex-end",
-                  justifyContent: "flex-end",
-                  gap: "4px",
-                  marginBottom: "5px",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
-                >
-                  <Tooltip title="Enable autonomous loop for this Codex send">
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6,
-                      }}
-                    >
-                      <span style={{ fontSize: 12, color: "#666" }}>Loop</span>
-                      <Switch
-                        size="small"
-                        checked={loopEnabled}
-                        onChange={onLoopToggle}
-                      />
-                    </span>
-                  </Tooltip>
-                  <Tooltip title="Configure loop settings">
-                    <Button
-                      size="small"
-                      onClick={() => setLoopModalOpen(true)}
-                      disabled={!loopEnabled}
-                      icon={<Icon name="gear" />}
-                    />
-                  </Tooltip>
-                </div>
-              </div>
-            ) : null}
             <Tooltip
               title={
                 isZenMode
@@ -663,120 +556,6 @@ export function ChatRoomComposer({
           </>
         )}
       </div>
-      <Modal
-        title="Codex Loop"
-        open={loopModalOpen}
-        onCancel={() => setLoopModalOpen(false)}
-        onOk={applyLoopConfig}
-        okText="Apply"
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Switch
-              checked={loopDraft.enabled === true}
-              onChange={(checked) =>
-                setLoopDraft((prev) => ({ ...prev, enabled: checked }))
-              }
-            />
-            <span>Enable loop for this send</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <label>Max turns</label>
-            <InputNumber
-              min={1}
-              max={200}
-              style={{ width: "100%" }}
-              disabled={loopDraft.enabled !== true}
-              value={loopDraft.max_turns ?? LOOP_DEFAULTS.max_turns}
-              onChange={(value) =>
-                setLoopDraft((prev) => ({
-                  ...prev,
-                  max_turns: Number(value ?? LOOP_DEFAULTS.max_turns),
-                }))
-              }
-            />
-            <label>Max wall time (minutes)</label>
-            <InputNumber
-              min={1}
-              max={24 * 60}
-              style={{ width: "100%" }}
-              disabled={loopDraft.enabled !== true}
-              value={Math.max(
-                1,
-                Math.round(
-                  Number(
-                    loopDraft.max_wall_time_ms ??
-                      LOOP_DEFAULTS.max_wall_time_ms,
-                  ) / 60_000,
-                ),
-              )}
-              onChange={(value) =>
-                setLoopDraft((prev) => ({
-                  ...prev,
-                  max_wall_time_ms: Math.max(1, Number(value ?? 30)) * 60_000,
-                }))
-              }
-            />
-            <label>Check-in every N turns (0 disables)</label>
-            <InputNumber
-              min={0}
-              max={200}
-              style={{ width: "100%" }}
-              disabled={loopDraft.enabled !== true}
-              value={
-                loopDraft.check_in_every_turns ??
-                LOOP_DEFAULTS.check_in_every_turns
-              }
-              onChange={(value) =>
-                setLoopDraft((prev) => ({
-                  ...prev,
-                  check_in_every_turns: Number(value ?? 0),
-                }))
-              }
-            />
-            <label>Stop on repeated blocker count</label>
-            <InputNumber
-              min={1}
-              max={50}
-              style={{ width: "100%" }}
-              disabled={loopDraft.enabled !== true}
-              value={
-                loopDraft.stop_on_repeated_blocker_count ??
-                LOOP_DEFAULTS.stop_on_repeated_blocker_count
-              }
-              onChange={(value) =>
-                setLoopDraft((prev) => ({
-                  ...prev,
-                  stop_on_repeated_blocker_count: Number(value ?? 2),
-                }))
-              }
-            />
-            <label>Delay between turns (seconds)</label>
-            <InputNumber
-              min={0}
-              max={60}
-              style={{ width: "100%" }}
-              disabled={loopDraft.enabled !== true}
-              value={Math.max(
-                0,
-                Math.round(
-                  Number(
-                    loopDraft.sleep_ms_between_turns ??
-                      LOOP_DEFAULTS.sleep_ms_between_turns,
-                  ) / 1000,
-                ),
-              )}
-              onChange={(value) =>
-                setLoopDraft((prev) => ({
-                  ...prev,
-                  sleep_ms_between_turns:
-                    Math.max(0, Number(value ?? 0)) * 1000,
-                }))
-              }
-            />
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }

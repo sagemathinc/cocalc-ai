@@ -609,7 +609,14 @@ async function automationRequest({
 }: {
   actions: ChatActions;
   threadId: string;
-  action: "upsert" | "pause" | "resume" | "run_now" | "acknowledge" | "delete";
+  action:
+    | "upsert"
+    | "pause"
+    | "resume"
+    | "run_now"
+    | "skip_next"
+    | "acknowledge"
+    | "delete";
   config?: AcpAutomationConfig | null;
 }): Promise<AcpAutomationResponse | undefined> {
   const { store } = actions;
@@ -682,6 +689,20 @@ export async function runThreadAutomationNow({
     actions,
     threadId,
     action: "run_now",
+  });
+}
+
+export async function skipNextThreadAutomationRun({
+  actions,
+  threadId,
+}: {
+  actions: ChatActions;
+  threadId: string;
+}): Promise<AcpAutomationResponse | undefined> {
+  return await automationRequest({
+    actions,
+    threadId,
+    action: "skip_next",
   });
 }
 

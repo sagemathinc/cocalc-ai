@@ -4,7 +4,7 @@
  */
 
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { Alert, Button, Checkbox, Modal, Popconfirm, Space, Tag } from "antd";
+import { Button, Checkbox, Modal, Popconfirm, Space, Tag } from "antd";
 import {
   delete_local_storage,
   get_local_storage,
@@ -21,7 +21,8 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Loading, TimeAgo } from "@cocalc/frontend/components";
+import { Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
+import { COLORS } from "@cocalc/util/theme";
 import type { NodeDesc } from "../frame-editors/frame-tree/types";
 import { EditorComponentProps } from "../frame-editors/frame-tree/types";
 import type { ChatActions } from "./actions";
@@ -58,6 +59,7 @@ import {
   pauseThreadAutomation,
   resumeThreadAutomation,
   runThreadAutomationNow,
+  skipNextThreadAutomationRun,
   upsertThreadAutomation,
 } from "./acp-api";
 import {
@@ -79,7 +81,6 @@ import type {
   AcpAutomationConfig,
   AcpAutomationState,
   AcpLoopConfig,
-  AcpLoopState,
 } from "@cocalc/conat/ai/acp/types";
 import {
   setChatOverlayOpen,
@@ -608,6 +609,7 @@ export function ChatPanel({
     defaultNewThreadSetup,
   );
   const [automationModalOpen, setAutomationModalOpen] = useState(false);
+  const [automationDetailsOpen, setAutomationDetailsOpen] = useState(false);
   const [automationModalThreadKey, setAutomationModalThreadKey] = useState<
     string | null
   >(null);
@@ -762,13 +764,6 @@ export function ChatPanel({
   }, [actions, docVersion, path, project_id]);
   const hasInput = input.trim().length > 0;
   const isSelectedThreadAI = selectedThread?.isAI ?? false;
-  const [composerLoopConfig, setComposerLoopConfig] = useState<
-    AcpLoopConfig | undefined
-  >(undefined);
-  const [composerLoopConfigDirty, setComposerLoopConfigDirty] = useState(false);
-  const [suppressedLoopThreads, setSuppressedLoopThreads] = useState<
-    Set<string>
-  >(new Set());
   const selectedThreadId = useMemo(
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
@@ -794,16 +789,6 @@ export function ChatPanel({
           })
         : undefined,
     [actions, selectedThreadKey, selectedThreadId, docVersion],
-  );
-  const isSelectedThreadCodex =
-    threadSupportsCodexAutomation(selectedThreadMetadata) ||
-    (isSelectedThreadAI &&
-      typeof selectedThreadMetadata?.agent_model === "string" &&
-      `${selectedThreadMetadata.agent_model}`.toLowerCase().includes("codex"));
-
-  const persistedLoopConfig = useMemo(
-    () => enabledLoopConfig(selectedThreadMetadata?.loop_config),
-    [selectedThreadMetadata?.loop_config],
   );
   const selectedThreadAutomationConfig = useMemo(
     () => visibleAutomationConfig(selectedThreadMetadata?.automation_config),
@@ -837,74 +822,6 @@ export function ChatPanel({
     () => threadSupportsCodexAutomation(automationModalMetadata),
     [automationModalMetadata],
   );
-  const selectedThreadLoopState = useMemo(
-    () => selectedThreadMetadata?.loop_state as AcpLoopState | undefined,
-    [selectedThreadMetadata?.loop_state],
-  );
-  const visiblePersistedLoopConfig = useMemo(() => {
-    if (
-      selectedThreadKey != null &&
-      suppressedLoopThreads.has(selectedThreadKey.trim())
-    ) {
-      return undefined;
-    }
-    return persistedLoopConfig;
-  }, [persistedLoopConfig, selectedThreadKey, suppressedLoopThreads]);
-
-  useEffect(() => {
-    const threadKey = selectedThreadKey?.trim();
-    if (!threadKey || persistedLoopConfig != null) return;
-    setSuppressedLoopThreads((prev) => {
-      if (!prev.has(threadKey)) return prev;
-      const next = new Set(prev);
-      next.delete(threadKey);
-      return next;
-    });
-  }, [selectedThreadKey, persistedLoopConfig]);
-
-  useEffect(() => {
-    // When switching threads, reflect persisted loop state for that thread.
-    setComposerLoopConfig(visiblePersistedLoopConfig);
-    setComposerLoopConfigDirty(false);
-  }, [selectedThreadKey, visiblePersistedLoopConfig]);
-
-  useEffect(() => {
-    // Once a local override has been consumed/reset, re-sync the switch from
-    // persisted thread metadata so the UI matches backend loop behavior.
-    if (composerLoopConfigDirty) return;
-    setComposerLoopConfig(visiblePersistedLoopConfig);
-  }, [visiblePersistedLoopConfig, composerLoopConfigDirty]);
-
-  const handleLoopConfigChange = useCallback(
-    (config?: AcpLoopConfig) => {
-      const threadKey = selectedThreadKey?.trim();
-      if (threadKey) {
-        setSuppressedLoopThreads((prev) => {
-          if (!prev.has(threadKey)) return prev;
-          const next = new Set(prev);
-          next.delete(threadKey);
-          return next;
-        });
-      }
-      if (config?.enabled !== true) {
-        if (threadKey) {
-          setSuppressedLoopThreads((prev) => {
-            if (prev.has(threadKey)) return prev;
-            const next = new Set(prev);
-            next.add(threadKey);
-            return next;
-          });
-        }
-        clearThreadLoopRuntime(actions, selectedThreadKey);
-        setComposerLoopConfig(undefined);
-        setComposerLoopConfigDirty(false);
-        return;
-      }
-      setComposerLoopConfig(config);
-      setComposerLoopConfigDirty(true);
-    },
-    [actions, selectedThreadKey],
-  );
 
   const handleAutomationSave = useCallback(
     async ({
@@ -937,6 +854,11 @@ export function ChatPanel({
   const handleAutomationRunNow = useCallback(async () => {
     if (!selectedThreadId) return;
     await runThreadAutomationNow({ actions, threadId: selectedThreadId });
+  }, [actions, selectedThreadId]);
+
+  const handleAutomationSkipNext = useCallback(async () => {
+    if (!selectedThreadId) return;
+    await skipNextThreadAutomationRun({ actions, threadId: selectedThreadId });
   }, [actions, selectedThreadId]);
 
   const handleAutomationAcknowledge = useCallback(async () => {
@@ -1618,12 +1540,6 @@ export function ChatPanel({
           image: newThreadSetup.image?.trim(),
         }
       : undefined;
-    const acp_loop_config =
-      composerLoopConfig?.enabled === true &&
-      (isSelectedThreadCodex ||
-        (!reply_thread_id && newThreadSetup.agentMode === "codex"))
-        ? composerLoopConfig
-        : undefined;
     const acpConfigOverride =
       !reply_thread_id && newThreadSetup.agentMode === "codex"
         ? (() => {
@@ -1661,7 +1577,6 @@ export function ChatPanel({
       name: newThreadName,
       threadAgent,
       threadAppearance,
-      acp_loop_config,
       acpConfigOverride,
       shouldMarkNotSent:
         (!reply_thread_id && newThreadSetup.agentMode === "codex") ||
@@ -1686,7 +1601,6 @@ export function ChatPanel({
       name: newThreadName,
       threadAgent,
       threadAppearance,
-      acp_loop_config,
       acpConfigOverride,
       chatIdentity,
       skipDraftDelete: !pendingStored,
@@ -1726,19 +1640,6 @@ export function ChatPanel({
         console.error("Failed to create thread automation", err);
       });
     }
-    const consumedLoopThreadKey = (reply_thread_id ?? threadKey)?.trim();
-    if (composerLoopConfig?.enabled === true && consumedLoopThreadKey) {
-      setSuppressedLoopThreads((prev) => {
-        if (prev.has(consumedLoopThreadKey)) return prev;
-        const next = new Set(prev);
-        next.add(consumedLoopThreadKey);
-        return next;
-      });
-    }
-    // Clear local override; per-thread suppression keeps the one-shot loop
-    // toggle off after a successful send until the user explicitly re-enables it.
-    setComposerLoopConfig(undefined);
-    setComposerLoopConfigDirty(false);
     if (!reply_thread_id && threadKey) {
       setAllowAutoSelectThread(false);
       setSelectedThreadKey(threadKey);
@@ -1971,202 +1872,168 @@ export function ChatPanel({
     setActivityJumpToken((n) => n + 1);
   }, [actions, gitBrowserThreadKey, selectedThreadKey, setSelectedThreadKey]);
 
-  const activeLoopState =
-    isSelectedThreadCodex &&
-    selectedThreadLoopState &&
-    selectedThreadLoopState.status !== "stopped"
-      ? selectedThreadLoopState
-      : undefined;
-  const latestSelectedThreadCodexActivityDate = useMemo(
-    () => getLatestCodexActivityDate(selectedThreadMessages),
-    [selectedThreadMessages],
+  const automationScheduleSummary = describeAutomationSchedule(
+    selectedThreadAutomationConfig,
   );
-
-  const loopBanner = activeLoopState ? (
-    <Alert
-      type={activeLoopState.status === "paused" ? "warning" : "info"}
-      style={{ margin: "8px 8px 0 8px" }}
-      title={
-        <Space size="small" wrap>
-          <strong>Codex loop</strong>
-          <Tag
-            color={
-              activeLoopState.status === "paused" ? "orange" : "processing"
-            }
-          >
-            {activeLoopState.status}
-          </Tag>
-          <span>
-            Iteration {activeLoopState.iteration}
-            {typeof activeLoopState.max_turns === "number"
-              ? ` / ${activeLoopState.max_turns}`
-              : ""}
-          </span>
-          {typeof activeLoopState.max_wall_time_ms === "number" ? (
-            <span>
-              Max wall time{" "}
-              {Math.max(
-                1,
-                Math.round(activeLoopState.max_wall_time_ms / 60000),
-              )}{" "}
-              min
-            </span>
-          ) : null}
-          {typeof activeLoopState.updated_at_ms === "number" ? (
-            <span>
-              Updated <TimeAgo date={new Date(activeLoopState.updated_at_ms)} />
-            </span>
-          ) : null}
-        </Space>
-      }
-      description={
-        <Space size="small" wrap>
-          {activeLoopState.next_prompt ? (
-            <span>Next prompt queued.</span>
-          ) : null}
-          {activeLoopState.stop_reason ? (
-            <span>{activeLoopState.stop_reason}</span>
-          ) : null}
-          {latestSelectedThreadCodexActivityDate ? (
-            <Button
-              size="small"
-              type="link"
-              style={{ padding: 0, height: "auto" }}
-              onClick={() => {
-                setActivityJumpDate(latestSelectedThreadCodexActivityDate);
-                setActivityJumpToken((n) => n + 1);
-              }}
-            >
-              View activity log
-            </Button>
-          ) : null}
-        </Space>
-      }
-    />
-  ) : null;
-
+  const automationStatus =
+    selectedThreadAutomationState?.status ??
+    (selectedThreadAutomationConfig?.enabled === false ? "paused" : "active");
+  const automationHasNextRun =
+    selectedThreadAutomationConfig != null &&
+    selectedThreadAutomationState?.next_run_at_ms != null &&
+    shouldShowAutomationNextRun({
+      enabled: selectedThreadAutomationConfig.enabled,
+      status: selectedThreadAutomationState?.status,
+      next_run_at_ms: selectedThreadAutomationState.next_run_at_ms,
+    });
+  const automationIsRunning = automationStatus === "running";
   const automationBanner = selectedThreadAutomationConfig ? (
-    <Alert
-      type={
-        selectedThreadAutomationState?.status === "error"
-          ? "error"
-          : selectedThreadAutomationState?.status === "paused"
-            ? "warning"
-            : "info"
-      }
-      style={{ margin: "8px 8px 0 8px" }}
-      title={
-        <Space size="small" wrap>
-          <strong>
-            {selectedThreadAutomationConfig.title?.trim() ||
-              "Scheduled automation"}
-          </strong>
-          <Tag
-            color={
-              selectedThreadAutomationConfig.enabled === false
-                ? "default"
-                : "blue"
-            }
-          >
-            {selectedThreadAutomationState?.status ??
-              (selectedThreadAutomationConfig.enabled === false
-                ? "paused"
-                : "active")}
+    <div
+      style={{
+        margin: "8px 8px 0 8px",
+        padding: "6px 8px",
+        border: `1px solid ${
+          automationStatus === "error"
+            ? COLORS.ANTD_RED
+            : automationStatus === "paused"
+              ? COLORS.BG_WARNING
+              : COLORS.BLUE_LLL
+        }`,
+        background:
+          automationStatus === "error"
+            ? COLORS.ANTD_BG_RED_L
+            : automationStatus === "paused"
+              ? COLORS.YELL_LLL
+              : COLORS.BLUE_LLLL,
+        borderRadius: 4,
+      }}
+    >
+      <Space size="small" wrap>
+        <strong>
+          {selectedThreadAutomationConfig.title?.trim() || "Automation"}
+        </strong>
+        <Tag
+          color={
+            selectedThreadAutomationConfig.enabled === false
+              ? "default"
+              : automationStatus === "running"
+                ? "processing"
+                : automationStatus === "error"
+                  ? "red"
+                  : "blue"
+          }
+        >
+          {automationStatus}
+        </Tag>
+        {automationScheduleSummary ? (
+          <span>{automationScheduleSummary}</span>
+        ) : null}
+        {automationHasNextRun ? (
+          <span>
+            Next{" "}
+            <TimeAgo date={selectedThreadAutomationState.next_run_at_ms!} />
+          </span>
+        ) : null}
+        {typeof selectedThreadAutomationState?.unacknowledged_runs ===
+          "number" && selectedThreadAutomationState.unacknowledged_runs > 0 ? (
+          <Tag color="orange">
+            {selectedThreadAutomationState.unacknowledged_runs} unacknowledged
           </Tag>
-          {describeAutomationSchedule(selectedThreadAutomationConfig) ? (
-            <span>
-              {describeAutomationSchedule(selectedThreadAutomationConfig)}.
-            </span>
-          ) : null}
-          {selectedThreadAutomationState?.next_run_at_ms != null &&
-          shouldShowAutomationNextRun({
-            enabled: selectedThreadAutomationConfig.enabled,
-            status: selectedThreadAutomationState?.status,
-            next_run_at_ms: selectedThreadAutomationState.next_run_at_ms,
-          }) ? (
-            <span>
-              Next run{" "}
-              <TimeAgo
-                date={new Date(selectedThreadAutomationState.next_run_at_ms)}
-              />
-              .
-            </span>
-          ) : null}
-          {selectedThreadAutomationState?.last_run_finished_at_ms ? (
-            <span>
-              Last run{" "}
-              <TimeAgo
-                date={
-                  new Date(
-                    selectedThreadAutomationState.last_run_finished_at_ms,
-                  )
-                }
-              />
-              .
-            </span>
-          ) : null}
-          {typeof selectedThreadAutomationState?.unacknowledged_runs ===
-            "number" &&
-          selectedThreadAutomationState.unacknowledged_runs > 0 ? (
-            <Tag color="orange">
-              {selectedThreadAutomationState.unacknowledged_runs} unacknowledged
-            </Tag>
-          ) : null}
-        </Space>
-      }
-      description={
-        <Space size="small" wrap>
-          {selectedThreadAutomationState?.paused_reason ? (
-            <span>
-              {formatAutomationPausedReason(
-                selectedThreadAutomationState.paused_reason,
-              )}
-            </span>
-          ) : null}
-          {selectedThreadAutomationState?.last_error ? (
-            <span>{selectedThreadAutomationState.last_error}</span>
-          ) : null}
-          <Button size="small" onClick={() => void handleAutomationRunNow()}>
-            Run now
-          </Button>
-          {selectedThreadAutomationState?.status === "paused" ||
-          selectedThreadAutomationConfig.enabled === false ? (
-            <Button size="small" onClick={() => void handleAutomationResume()}>
-              Resume
-            </Button>
-          ) : (
-            <Button size="small" onClick={() => void handleAutomationPause()}>
-              Pause
-            </Button>
-          )}
+        ) : null}
+        <Tooltip title="Start a manual run now. This does not move the next scheduled run. If a run is already active, no extra run is queued.">
           <Button
             size="small"
-            onClick={() => void handleAutomationAcknowledge()}
+            disabled={automationIsRunning}
+            onClick={() => void handleAutomationRunNow()}
           >
-            Acknowledge
+            Run now
           </Button>
-          {selectedThreadKey ? (
+        </Tooltip>
+        <Tooltip title="Skip only the next scheduled run and move this automation to the following scheduled time.">
+          <Button
+            size="small"
+            disabled={!automationHasNextRun}
+            onClick={() => void handleAutomationSkipNext()}
+          >
+            Skip next
+          </Button>
+        </Tooltip>
+        {automationStatus === "paused" ||
+        selectedThreadAutomationConfig.enabled === false ? (
+          <Button size="small" onClick={() => void handleAutomationResume()}>
+            Resume
+          </Button>
+        ) : (
+          <Button size="small" onClick={() => void handleAutomationPause()}>
+            Pause
+          </Button>
+        )}
+        <Button
+          size="small"
+          type="link"
+          onClick={() => setAutomationDetailsOpen((open) => !open)}
+        >
+          {automationDetailsOpen ? "Hide details" : "Details"}
+        </Button>
+      </Space>
+      {automationDetailsOpen ? (
+        <div style={{ marginTop: 6 }}>
+          <Space size="small" wrap>
+            {selectedThreadAutomationState?.paused_reason ? (
+              <span>
+                {formatAutomationPausedReason(
+                  selectedThreadAutomationState.paused_reason,
+                )}
+              </span>
+            ) : null}
+            {selectedThreadAutomationState?.last_error ? (
+              <span>{selectedThreadAutomationState.last_error}</span>
+            ) : null}
+            {selectedThreadAutomationState?.last_run_finished_at_ms ? (
+              <span>
+                Last run{" "}
+                <TimeAgo
+                  date={
+                    new Date(
+                      selectedThreadAutomationState.last_run_finished_at_ms,
+                    )
+                  }
+                />
+              </span>
+            ) : null}
+            <span>
+              Run now does not skip the next scheduled run. Overlapping runs are
+              not queued.
+            </span>
             <Button
               size="small"
-              onClick={() => openAutomationModalForThread(selectedThreadKey)}
+              onClick={() => void handleAutomationAcknowledge()}
             >
-              Edit
+              Acknowledge
             </Button>
-          ) : null}
-          <Popconfirm
-            title="Delete scheduled automation?"
-            description="This removes the schedule from this chat thread."
-            okText="Delete"
-            cancelText="Cancel"
-            onConfirm={() => void handleAutomationDelete()}
-          >
-            <Button danger size="small">
-              Delete schedule
-            </Button>
-          </Popconfirm>
-        </Space>
-      }
-    />
+            {selectedThreadKey ? (
+              <Button
+                size="small"
+                onClick={() => openAutomationModalForThread(selectedThreadKey)}
+              >
+                Edit
+              </Button>
+            ) : null}
+            <Popconfirm
+              title="Delete scheduled automation?"
+              description="This removes the schedule from this chat thread."
+              okText="Delete"
+              cancelText="Cancel"
+              onConfirm={() => void handleAutomationDelete()}
+            >
+              <Button danger size="small">
+                Delete schedule
+              </Button>
+            </Popconfirm>
+          </Space>
+        </div>
+      ) : null}
+    </div>
   ) : null;
 
   const renderChatContent = () => (
@@ -2209,7 +2076,6 @@ export function ChatPanel({
         sidebarHidden={sidebarHidden}
         onToggleSidebar={() => setSidebarHidden((hidden) => !hidden)}
       />
-      {loopBanner}
       {automationBanner}
       <ChatRoomComposer
         actions={actions}
@@ -2232,9 +2098,6 @@ export function ChatPanel({
         onComposerReady={onComposerReady}
         codexPaymentSource={codexPaymentSource}
         codexPaymentSourceLoading={codexPaymentSourceLoading}
-        showLoopControls={isSelectedThreadCodex}
-        loopConfig={composerLoopConfig}
-        onLoopConfigChange={handleLoopConfigChange}
       />
       <Modal
         title="Codex turn finished"

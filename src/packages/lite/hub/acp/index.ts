@@ -61,6 +61,7 @@ import {
 import { buildAutomationAcpConfig } from "./automation-request-config";
 import {
   computeNextAutomationRunAt,
+  computeSkippedAutomationRunAt,
   normalizeAcpAutomationConfig,
   AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
   AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS,
@@ -6272,6 +6273,34 @@ async function handleAcpAutomationRequest(
       ...existing,
       last_acknowledged_at: Date.now(),
       unacknowledged_runs: 0,
+      updated_at: Date.now(),
+    });
+    await patchThreadAutomationProjection({
+      project_id,
+      path,
+      thread_id,
+      updated_by: request.account_id,
+      automation_config: toAutomationConfig(row) as ChatThreadAutomationConfig,
+      automation_state: toAutomationState(row) as ChatThreadAutomationState,
+    });
+    await publishAutomationRecordToProjectIndex(row);
+    return {
+      ok: true,
+      config: toAutomationConfig(row) ?? null,
+      state: toAutomationState(row) ?? null,
+      record: toAutomationRecord(row) ?? null,
+    };
+  }
+  if (request.action === "skip_next") {
+    const row = upsertAcpAutomation({
+      ...existing,
+      next_run_at:
+        computeSkippedAutomationRunAt(existing, {
+          nextRunAtMs: existing.next_run_at,
+          defaultPauseAfterRuns: AUTOMATION_DEFAULT_UNACK_LIMIT,
+        }) ??
+        existing.next_run_at ??
+        null,
       updated_at: Date.now(),
     });
     await patchThreadAutomationProjection({

@@ -12,8 +12,10 @@ import { Tooltip } from "@cocalc/frontend/components/tip";
 
 const DEFAULT_LOCAL_TIME = "05:00";
 const DEFAULT_INTERVAL_MINUTES = 120;
-const DEFAULT_WINDOW_START_LOCAL_TIME = "06:00";
-const DEFAULT_WINDOW_END_LOCAL_TIME = "20:00";
+const DEFAULT_WINDOW_START_LOCAL_TIME = "00:00";
+const DEFAULT_WINDOW_END_LOCAL_TIME = "23:59";
+const DEFAULT_RANGE_START_LOCAL_TIME = "06:00";
+const DEFAULT_RANGE_END_LOCAL_TIME = "20:00";
 const DEFAULT_PAUSE_AFTER_RUNS = 7;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_COMMAND_MAX_OUTPUT_BYTES = 250_000;
@@ -85,6 +87,15 @@ function intervalLabel(minutes?: number): string {
   return `Every ${value} min`;
 }
 
+function isAllDayWindow(config?: AcpAutomationConfig): boolean {
+  return (
+    (config?.window_start_local_time ?? DEFAULT_WINDOW_START_LOCAL_TIME) ===
+      DEFAULT_WINDOW_START_LOCAL_TIME &&
+    (config?.window_end_local_time ?? DEFAULT_WINDOW_END_LOCAL_TIME) ===
+      DEFAULT_WINDOW_END_LOCAL_TIME
+  );
+}
+
 export function hasAutomationConfigContent(
   config?: AcpAutomationConfig,
 ): boolean {
@@ -119,6 +130,11 @@ export function describeAutomationSchedule(
     config.window_end_local_time
   ) {
     const prefix = daySummary ? `${daySummary} ` : "";
+    if (isAllDayWindow(config)) {
+      return `${prefix}${intervalLabel(config.interval_minutes)} all day${
+        timezone ? ` ${timezone}` : ""
+      }`;
+    }
     return `${prefix}${intervalLabel(config.interval_minutes)} from ${
       config.window_start_local_time
     } to ${config.window_end_local_time}${timezone ? ` ${timezone}` : ""}`;
@@ -180,6 +196,29 @@ export function buildAutomationDraft({
     run_kind,
     days_of_week: normalizeDaysOfWeek(config?.days_of_week),
   };
+}
+
+function clearedNumber(): number {
+  return null as unknown as number;
+}
+
+function inputNumberValue({
+  draft,
+  key,
+  fallback,
+  scale = 1,
+}: {
+  draft?: AcpAutomationConfig;
+  key: keyof AcpAutomationConfig;
+  fallback: number;
+  scale?: number;
+}): number | null {
+  if (draft && key in draft && draft[key] == null) {
+    return null;
+  }
+  const raw = (draft?.[key] as number | undefined) ?? fallback;
+  const value = Number(raw) / scale;
+  return Number.isFinite(value) ? Math.round(value) : null;
 }
 
 export function normalizeAutomationConfigForSave({
@@ -446,20 +485,18 @@ export function AutomationConfigFields({
             max={24 * 60 * 60}
             disabled={disabled}
             style={{ width: "100%" }}
-            value={Math.max(
-              1,
-              Math.round(
-                Number(value.command_timeout_ms ?? DEFAULT_COMMAND_TIMEOUT_MS) /
-                  1000,
-              ),
-            )}
+            value={inputNumberValue({
+              draft,
+              key: "command_timeout_ms",
+              fallback: DEFAULT_COMMAND_TIMEOUT_MS,
+              scale: 1000,
+            })}
             onChange={(next) =>
               onChange({
                 command_timeout_ms:
-                  Math.max(
-                    1,
-                    Number(next ?? DEFAULT_COMMAND_TIMEOUT_MS / 1000),
-                  ) * 1000,
+                  next == null
+                    ? clearedNumber()
+                    : Math.max(1, Number(next)) * 1000,
               })
             }
           />
@@ -469,22 +506,18 @@ export function AutomationConfigFields({
             max={10 * 1024}
             disabled={disabled}
             style={{ width: "100%" }}
-            value={Math.max(
-              1,
-              Math.round(
-                Number(
-                  value.command_max_output_bytes ??
-                    DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
-                ) / 1000,
-              ),
-            )}
+            value={inputNumberValue({
+              draft,
+              key: "command_max_output_bytes",
+              fallback: DEFAULT_COMMAND_MAX_OUTPUT_BYTES,
+              scale: 1000,
+            })}
             onChange={(next) =>
               onChange({
                 command_max_output_bytes:
-                  Math.max(
-                    1,
-                    Number(next ?? DEFAULT_COMMAND_MAX_OUTPUT_BYTES / 1000),
-                  ) * 1000,
+                  next == null
+                    ? clearedNumber()
+                    : Math.max(1, Number(next)) * 1000,
               })
             }
           />
@@ -552,33 +585,61 @@ export function AutomationConfigFields({
             max={24 * 60}
             disabled={disabled}
             style={{ width: "100%" }}
-            value={value.interval_minutes ?? DEFAULT_INTERVAL_MINUTES}
+            value={inputNumberValue({
+              draft,
+              key: "interval_minutes",
+              fallback: DEFAULT_INTERVAL_MINUTES,
+            })}
             onChange={(next) =>
               onChange({
-                interval_minutes: Number(next ?? DEFAULT_INTERVAL_MINUTES),
+                interval_minutes: next == null ? clearedNumber() : Number(next),
               })
             }
           />
-          <label>From (24h)</label>
-          <Input
-            value={
-              value.window_start_local_time ?? DEFAULT_WINDOW_START_LOCAL_TIME
-            }
-            disabled={disabled}
-            placeholder={DEFAULT_WINDOW_START_LOCAL_TIME}
-            onChange={(e) =>
-              onChange({ window_start_local_time: e.target.value })
-            }
-          />
-          <label>Until (24h)</label>
-          <Input
-            value={value.window_end_local_time ?? DEFAULT_WINDOW_END_LOCAL_TIME}
-            disabled={disabled}
-            placeholder={DEFAULT_WINDOW_END_LOCAL_TIME}
-            onChange={(e) =>
-              onChange({ window_end_local_time: e.target.value })
-            }
-          />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Switch
+              checked={isAllDayWindow(value)}
+              disabled={disabled}
+              onChange={(checked) =>
+                onChange({
+                  window_start_local_time: checked
+                    ? DEFAULT_WINDOW_START_LOCAL_TIME
+                    : DEFAULT_RANGE_START_LOCAL_TIME,
+                  window_end_local_time: checked
+                    ? DEFAULT_WINDOW_END_LOCAL_TIME
+                    : DEFAULT_RANGE_END_LOCAL_TIME,
+                })
+              }
+            />
+            <span>Run all day</span>
+          </div>
+          {!isAllDayWindow(value) ? (
+            <>
+              <label>From (24h)</label>
+              <Input
+                value={
+                  value.window_start_local_time ??
+                  DEFAULT_RANGE_START_LOCAL_TIME
+                }
+                disabled={disabled}
+                placeholder={DEFAULT_RANGE_START_LOCAL_TIME}
+                onChange={(e) =>
+                  onChange({ window_start_local_time: e.target.value })
+                }
+              />
+              <label>Until (24h)</label>
+              <Input
+                value={
+                  value.window_end_local_time ?? DEFAULT_RANGE_END_LOCAL_TIME
+                }
+                disabled={disabled}
+                placeholder={DEFAULT_RANGE_END_LOCAL_TIME}
+                onChange={(e) =>
+                  onChange({ window_end_local_time: e.target.value })
+                }
+              />
+            </>
+          ) : null}
         </>
       ) : (
         <>
@@ -604,14 +665,15 @@ export function AutomationConfigFields({
         max={365}
         disabled={disabled}
         style={{ width: "100%" }}
-        value={
-          value.pause_after_unacknowledged_runs ?? DEFAULT_PAUSE_AFTER_RUNS
-        }
+        value={inputNumberValue({
+          draft,
+          key: "pause_after_unacknowledged_runs",
+          fallback: DEFAULT_PAUSE_AFTER_RUNS,
+        })}
         onChange={(next) =>
           onChange({
-            pause_after_unacknowledged_runs: Number(
-              next ?? DEFAULT_PAUSE_AFTER_RUNS,
-            ),
+            pause_after_unacknowledged_runs:
+              next == null ? clearedNumber() : Number(next),
           })
         }
       />

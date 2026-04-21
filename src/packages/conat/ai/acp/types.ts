@@ -251,7 +251,14 @@ export type AcpAutomationRequest = {
   account_id: string;
   path: string;
   thread_id: string;
-  action: "upsert" | "pause" | "resume" | "run_now" | "acknowledge" | "delete";
+  action:
+    | "upsert"
+    | "pause"
+    | "resume"
+    | "run_now"
+    | "skip_next"
+    | "acknowledge"
+    | "delete";
   config?: AcpAutomationConfig | null;
 };
 

@@ -49,11 +49,11 @@ describe("automation form helpers", () => {
         schedule_type: "interval",
         days_of_week: [1, 2, 3, 4, 5],
         interval_minutes: 120,
-        window_start_local_time: "06:00",
-        window_end_local_time: "20:00",
+        window_start_local_time: "00:00",
+        window_end_local_time: "23:59",
         timezone: "America/Los_Angeles",
       }),
-    ).toBe("Mon-Fri Every 2 hours from 06:00 to 20:00 America/Los_Angeles");
+    ).toBe("Mon-Fri Every 2 hours all day America/Los_Angeles");
   });
 
   it("hides next run when the automation is paused", () => {
