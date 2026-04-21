@@ -1646,6 +1646,25 @@ export class SyncDoc extends EventEmitter {
     await once(this, "connected");
   };
 
+  recoverNow = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ): Promise<void> => {
+    this.assert_not_closed("recoverNow");
+    await Promise.all(
+      this.connectedTables().map(async (table) => {
+        const recoverNow = (table as any).recoverNow;
+        if (typeof recoverNow === "function") {
+          await recoverNow.call(table, opts);
+        }
+      }),
+    );
+    this.refreshLiveConnectionState();
+  };
+
   /* Calls wait for the corresponding patches SyncTable, if
      it has been defined.  If it hasn't been defined, it waits
      until it is defined, then calls wait.  Timeout only starts

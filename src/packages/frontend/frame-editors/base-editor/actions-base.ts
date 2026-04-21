@@ -172,7 +172,10 @@ import { misspelled_words } from "../code-editor/spell-check";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { lite } from "@cocalc/frontend/lite";
 import { isEqual } from "lodash";
-import type { RegisteredReconnectResource } from "@cocalc/frontend/conat/reconnect-coordinator";
+import type {
+  ReconnectPriority,
+  RegisteredReconnectResource,
+} from "@cocalc/frontend/conat/reconnect-coordinator";
 
 interface gutterMarkerParams {
   line: number;
@@ -814,12 +817,23 @@ export class BaseEditorActions<
         priority: () =>
           this.store?.get("visible") ? "foreground" : "background",
         reconnect: async () => {
+          const priority = this.store?.get("visible")
+            ? "foreground"
+            : "background";
           if (
-            !(await this.wait_until_syncdoc_live_connected(this._syncstring))
+            !(await this.wait_until_syncdoc_live_connected(
+              this._syncstring,
+              priority,
+            ))
           ) {
             throw Error("syncstring_not_live_connected");
           }
-          if (!(await this.wait_until_syncdoc_live_connected(this._syncdb))) {
+          if (
+            !(await this.wait_until_syncdoc_live_connected(
+              this._syncdb,
+              priority,
+            ))
+          ) {
             throw Error("syncdb_not_live_connected");
           }
         },
@@ -843,13 +857,17 @@ export class BaseEditorActions<
     );
   }
 
-  private async wait_until_syncdoc_live_connected(syncdoc?): Promise<boolean> {
+  private async wait_until_syncdoc_live_connected(
+    syncdoc?,
+    priority: ReconnectPriority = "background",
+  ): Promise<boolean> {
     if (!(await this.wait_until_syncdoc_ready(syncdoc))) {
       return false;
     }
     if (syncdoc == null || this.isFakeSyncdoc(syncdoc)) {
       return true;
     }
+    await this.recover_syncdoc_now(syncdoc, priority);
     if (typeof syncdoc.wait_until_live_connected === "function") {
       try {
         await syncdoc.wait_until_live_connected();
@@ -867,6 +885,23 @@ export class BaseEditorActions<
       return false;
     }
     return !this.isClosed() && this.isSyncdocLiveConnected(syncdoc);
+  }
+
+  private async recover_syncdoc_now(
+    syncdoc,
+    priority: ReconnectPriority,
+  ): Promise<void> {
+    if (this.isSyncdocLiveConnected(syncdoc)) {
+      return;
+    }
+    const recoverNow = syncdoc?.recoverNow;
+    if (typeof recoverNow !== "function") {
+      return;
+    }
+    await recoverNow.call(syncdoc, {
+      priority,
+      reason: "editor_resource_reconnect",
+    });
   }
 
   private isFakeSyncdoc(syncdoc): boolean {

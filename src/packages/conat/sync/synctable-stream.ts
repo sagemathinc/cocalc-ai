@@ -279,6 +279,21 @@ export class SyncTableStream extends EventEmitter {
     this.dstream?.save();
   };
 
+  recoverNow = async (
+    opts: {
+      epoch?: number;
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
+    await this.dstream?.recoverNow(opts);
+    this.setState(
+      this.dstream?.getRecoveryState() === "ready"
+        ? "connected"
+        : "disconnected",
+    );
+  };
+
   has_uncommitted_changes = () => {
     return this.dstream?.hasUnsavedChanges();
   };
