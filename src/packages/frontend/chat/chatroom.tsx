@@ -1871,6 +1871,9 @@ export function ChatPanel({
   const automationIsRunning = automationStatus === "running";
   const automationTitle =
     selectedThreadAutomationConfig?.title?.trim() || "Automation";
+  const automationHasUnacknowledgedRuns =
+    typeof selectedThreadAutomationState?.unacknowledged_runs === "number" &&
+    selectedThreadAutomationState.unacknowledged_runs > 0;
   const automationStatusTag = (
     <Tag
       color={
@@ -1896,8 +1899,7 @@ export function ChatPanel({
           Next <TimeAgo date={selectedThreadAutomationState.next_run_at_ms!} />
         </span>
       ) : null}
-      {typeof selectedThreadAutomationState?.unacknowledged_runs === "number" &&
-      selectedThreadAutomationState.unacknowledged_runs > 0 ? (
+      {automationHasUnacknowledgedRuns ? (
         <Tag color="orange">
           {selectedThreadAutomationState.unacknowledged_runs} unacknowledged
         </Tag>
@@ -1995,6 +1997,7 @@ export function ChatPanel({
             </span>
             <Button
               size="small"
+              disabled={!automationHasUnacknowledgedRuns}
               onClick={() => void handleAutomationAcknowledge()}
             >
               Acknowledge
