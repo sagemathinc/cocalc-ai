@@ -180,4 +180,43 @@ describe("DStream unsaved change events", () => {
 
     expect(table.get_state()).toBe("disconnected");
   });
+
+  it("forwards explicit recovery requests from SyncTableStream to DStream", async () => {
+    mockRecoveryState = "recovering";
+    const project_id = "00000000-0000-4000-8000-000000000000";
+    const table = new SyncTableStream({
+      client: {} as any,
+      immutable: true,
+      noAutosave: true,
+      noInventory: true,
+      query: {
+        patches: [
+          {
+            project_id,
+            path: "doc.txt",
+            time: null,
+            user_id: null,
+            wall: null,
+            patch: null,
+            snapshot: null,
+            is_snapshot: null,
+            seq_info: null,
+            parents: null,
+            version: null,
+          },
+        ],
+      },
+    });
+    await table.init();
+
+    await table.recoverNow({
+      priority: "foreground",
+      reason: "test",
+    });
+
+    expect((table as any).dstream.stream.recoverNow).toHaveBeenCalledWith({
+      priority: "foreground",
+      reason: "test",
+    });
+  });
 });

@@ -23,7 +23,10 @@ import { refCacheSync } from "@cocalc/util/refcache";
 import { EventEmitter } from "events";
 import { getLogger } from "@cocalc/conat/logger";
 import { until } from "@cocalc/util/async-utils";
-import { getPersistServerId } from "./load-balancer";
+import {
+  getPersistServerId,
+  PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS,
+} from "./load-balancer";
 import type { JSONValue } from "@cocalc/util/types";
 import type { RegisteredRecoverableResource } from "@cocalc/conat/recovery/scheduler";
 
@@ -33,6 +36,8 @@ let DEFAULT_RECONNECT_DELAY_DECAY = 1.8;
 let DEFAULT_RECONNECT_DELAY_JITTER = 0.25;
 let DEFAULT_RECONNECT_STABLE_RESET_MS = 60_000;
 let DEFAULT_RECOVERY_TIMEOUT = 30_000;
+const RECOVERY_ATTEMPT_TIMEOUT = 2_500;
+const FOREGROUND_RECOVERY_ATTEMPT_TIMEOUT = 2_000;
 
 export function setDefaultReconnectDelay(delay) {
   DEFAULT_RECONNECT_DELAY = delay;
@@ -268,7 +273,7 @@ class PersistStreamClient extends EventEmitter {
   };
 
   recoverNow = async (
-    _opts: {
+    opts: {
       epoch?: number;
       priority?: "foreground" | "background";
       reason?: string;
@@ -294,7 +299,7 @@ class PersistStreamClient extends EventEmitter {
     }
     if (this.reconnecting) {
       this.setRecoveryState("recovering");
-      await this.getMissed();
+      await this.getMissed(opts);
       return;
     }
     this.setRecoveryState("ready");
@@ -324,6 +329,7 @@ class PersistStreamClient extends EventEmitter {
     this.socket = this.client.socket.connect(subject, {
       desc: `persist: ${this.storage.path}`,
       reconnection: false,
+      loadBalancerTimeout: PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS,
       loadBalancer: async (subject: string) =>
         await getPersistServerId({ client: this.client, subject }),
       lifecycleReporter: (phase, details) => {
@@ -386,19 +392,24 @@ class PersistStreamClient extends EventEmitter {
         this.setRecoveryState("ready");
         return;
       }
-      void this.getMissed();
+      void this.getMissed({ priority: "background", reason: "socket_ready" });
     } else {
       this.setRecoveryState("ready");
     }
   };
 
-  private getMissed = async () => {
+  private getMissed = async (
+    opts: {
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
     if (this.recoveryPromise != null) {
       stats.getMissedJoined += 1;
       await this.recoveryPromise;
       return;
     }
-    this.recoveryPromise = this.getMissed0();
+    this.recoveryPromise = this.getMissed0(opts);
     try {
       await this.recoveryPromise;
     } finally {
@@ -406,12 +417,31 @@ class PersistStreamClient extends EventEmitter {
     }
   };
 
-  private getMissed0 = async () => {
+  private recoveryAttemptTimeout = ({
+    priority,
+  }: {
+    priority?: "foreground" | "background";
+  }): number => {
+    const timeout =
+      priority === "foreground"
+        ? FOREGROUND_RECOVERY_ATTEMPT_TIMEOUT
+        : RECOVERY_ATTEMPT_TIMEOUT;
+    return Math.max(1, Math.min(DEFAULT_RECOVERY_TIMEOUT, timeout));
+  };
+
+  private getMissed0 = async (
+    opts: {
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
     if (this.changefeeds.length == 0 || this.state != "ready") {
       return;
     }
     stats.getMissedRuns += 1;
     let recovered = false;
+    const attemptTimeout = this.recoveryAttemptTimeout(opts);
+    const foreground = opts.priority === "foreground";
     try {
       this.gettingMissed = true;
       this.changesWhenGettingMissed.length = 0;
@@ -426,7 +456,14 @@ class PersistStreamClient extends EventEmitter {
             return true;
           }
           try {
-            await this.socket.waitUntilReady(DEFAULT_RECOVERY_TIMEOUT);
+            if (
+              this.socket == null ||
+              this.socket.state === "closed" ||
+              this.socket.state === "disconnected"
+            ) {
+              this.init();
+            }
+            await this.socket.waitUntilReady(attemptTimeout);
             if (this.changefeeds.length == 0 || this.state != "ready") {
               return true;
             }
@@ -435,7 +472,7 @@ class PersistStreamClient extends EventEmitter {
             }
             const updates = await this.getAll({
               start_seq: this.lastSeq,
-              timeout: DEFAULT_RECOVERY_TIMEOUT,
+              timeout: attemptTimeout,
               changefeed: true,
             });
             this.changefeedEmit(updates);
@@ -447,10 +484,11 @@ class PersistStreamClient extends EventEmitter {
           }
         },
         {
-          start: DEFAULT_RECONNECT_DELAY,
-          min: Math.min(DEFAULT_RECONNECT_DELAY, 250),
-          max: DEFAULT_RECONNECT_DELAY_MAX,
-          decay: DEFAULT_RECONNECT_DELAY_DECAY,
+          start: foreground ? 100 : DEFAULT_RECONNECT_DELAY,
+          min: foreground ? 100 : Math.min(DEFAULT_RECONNECT_DELAY, 250),
+          max: foreground ? 1000 : DEFAULT_RECONNECT_DELAY_MAX,
+          decay: foreground ? 1.3 : DEFAULT_RECONNECT_DELAY_DECAY,
+          timeout: DEFAULT_RECOVERY_TIMEOUT,
         },
       );
     } finally {
@@ -884,6 +922,8 @@ class PersistStreamClient extends EventEmitter {
       start_seq,
       start_checkpoint,
       end_seq,
+      timeout,
+      max_wait: maxWait ?? timeout,
       changefeed,
       include_config: includeConfig,
       include_metadata: includeMetadata,
@@ -902,12 +942,14 @@ class PersistStreamClient extends EventEmitter {
         includeCheckpoints,
       } as any,
       timeout,
-      maxWait,
+      maxWait: maxWait ?? timeout,
     });
     this.emitInitPhase("persist_request_many_subscribed", {
       start_seq,
       start_checkpoint,
       end_seq,
+      timeout,
+      max_wait: maxWait ?? timeout,
       changefeed,
       include_config: includeConfig,
       include_metadata: includeMetadata,

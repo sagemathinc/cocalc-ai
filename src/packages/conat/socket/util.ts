@@ -64,10 +64,12 @@ export interface SocketConfiguration {
   // socket servers with the same subject). This is used
   // by the persist server.
   loadBalancer?: (subject: string) => Promise<string>;
+  loadBalancerTimeout?: number;
   lifecycleReporter?: (
     phase:
       | "get_server_id_start"
       | "get_server_id_done"
+      | "get_server_id_error"
       | "subscribe_start"
       | "subscribe_done"
       | "connect_command_start"
