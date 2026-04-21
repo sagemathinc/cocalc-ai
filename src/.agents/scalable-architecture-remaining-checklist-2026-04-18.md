@@ -233,7 +233,7 @@ Remaining audit targets:
 - [x] terminal creation / attach / resize / stream paths
 - [x] notebook kernel / session / exec paths
 - [x] app-server interactive reads / status paths
-- [ ] any remaining user-hot-path `hub.projects.*` runtime reads
+- [x] any remaining user-hot-path `hub.projects.*` runtime reads
 - [ ] any remaining frontend code that can silently fall back to the default
       global Conat client instead of an explicit routed client
 
@@ -259,6 +259,16 @@ Notes:
   deploying the project-host fix, the stable-URL replay passed with HTTP 200,
   no token leakage in the app-visible path, one private request recorded, and
   bytes sent metrics updated
+- a 2026-04-21 frontend audit found no remaining `hub.projects.*` browser
+  runtime-read path that is both user-hot and unrouted; chat archive/search and
+  Codex credential project helpers are already in the project-host-routed
+  `callHub(...)` whitelist, while remaining `hub.projects.*` call sites are
+  metadata, lifecycle, collaboration, backup/snapshot orchestration, or LRO
+  control-plane paths
+- the remaining browser-side risk is the synchronous `routeSubject` fallback:
+  project-subject calls route directly to the project-host only when project
+  host routing info is already cached; if that info is cold, the default
+  hub/home-bay client is still used implicitly
 
 ### 3. Finish Project-Host Runtime Productionization
 
