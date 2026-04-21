@@ -23,11 +23,9 @@ jest.mock("../../app-framework", () => {
 jest.mock("../../webapp-client", () => ({
   webapp_client: {
     conat_client: {
-      conat: () => ({
-        fs: () => ({
-          describeFile: (...args: any[]) => describeFile(...args),
-        }),
-      }),
+      projectFs: jest.fn(async () => ({
+        describeFile: (...args: any[]) => describeFile(...args),
+      })),
     },
   },
 }));

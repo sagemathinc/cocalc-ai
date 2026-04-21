@@ -615,6 +615,12 @@ export class ConatClient extends EventEmitter {
         this.automaticallyReconnect = true;
       });
       this._conatClient.on("disconnected", (reason, details) => {
+        if (
+          this.permanentlyDisconnected ||
+          (process.env.COCALC_TEST_MODE && !this.automaticallyReconnect)
+        ) {
+          return;
+        }
         console.warn("hub transport disconnected", {
           reason,
           details,
@@ -636,6 +642,12 @@ export class ConatClient extends EventEmitter {
         }
       });
       this._conatClient.conn.on("connect_error", (err) => {
+        if (
+          this.permanentlyDisconnected ||
+          (process.env.COCALC_TEST_MODE && !this.automaticallyReconnect)
+        ) {
+          return;
+        }
         console.warn("hub transport connect_error", {
           err,
           ...this.reconnectDebugContext(),
