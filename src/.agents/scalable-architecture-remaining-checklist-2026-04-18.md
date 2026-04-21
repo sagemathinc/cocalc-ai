@@ -91,9 +91,9 @@ Recent 3-way fixture validation:
     important privacy/security bug: the short-lived project-host bearer query
     token could be forwarded to app code when an existing browser session cookie
     also authorized the request
-  - project-host HTTP proxy auth now strips or redirects away the bearer query
-    parameter even when cookie auth succeeds first; this still needs a live
-    post-deploy replay before marking the app-server runtime path fully closed
+  - after deploying the project-host HTTP proxy auth fix, the app-server runtime
+    replay passed: the app response did not receive the bearer query token, HTTP
+    response delivery worked, and request / bytes metrics were recorded
   - browser storage / snapshot / backup reads passed
   - browser invite redeem passed with cleanup
   - browser invite duplicate, revoke, already-collaborator, remove, and
@@ -232,7 +232,7 @@ Remaining audit targets:
 
 - [x] terminal creation / attach / resize / stream paths
 - [x] notebook kernel / session / exec paths
-- [ ] app-server interactive reads / status paths
+- [x] app-server interactive reads / status paths
 - [ ] any remaining user-hot-path `hub.projects.*` runtime reads
 - [ ] any remaining frontend code that can silently fall back to the default
       global Conat client instead of an explicit routed client
@@ -255,10 +255,10 @@ Notes:
   verifies the response body, checks request/bytes metrics, and deletes the app
   afterward
 - the first live app-server replay exposed that project-host bearer query tokens
-  were forwarded to app code if a browser-session cookie authorized first; the
-  project-host fix is implemented and unit-tested, but the checklist item stays
-  open until the fix is deployed and the stable-URL replay passes without token
-  leakage
+  were forwarded to app code if a browser-session cookie authorized first; after
+  deploying the project-host fix, the stable-URL replay passed with HTTP 200,
+  no token leakage in the app-visible path, one private request recorded, and
+  bytes sent metrics updated
 
 ### 3. Finish Project-Host Runtime Productionization
 
