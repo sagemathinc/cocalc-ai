@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import {
+  linkifyCommitHashes,
   resolveMessageGitBrowserRequest,
   resolveForkThreadNavigation,
   resolveThreadMetadataLookup,
@@ -113,5 +114,22 @@ describe("resolveMessageGitBrowserRequest", () => {
       cwdOverride: undefined,
       commitHash: "HEAD",
     });
+  });
+});
+
+describe("linkifyCommitHashes", () => {
+  it("links inline code that contains a commit hash and subject", () => {
+    expect(
+      linkifyCommitHashes(
+        "- `29cbc87b15 project-host: prevent duplicate bees dedupers`",
+      ),
+    ).toBe(
+      '- [Commit 29cbc87b15](cocalc-commit://29cbc87b15 "Open commit 29cbc87b15") project-host: prevent duplicate bees dedupers',
+    );
+  });
+
+  it("keeps fenced code blocks unchanged", () => {
+    const text = "```md\n`29cbc87b15 project-host: subject`\n```";
+    expect(linkifyCommitHashes(text)).toBe(text);
   });
 });
