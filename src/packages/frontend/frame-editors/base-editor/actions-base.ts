@@ -66,6 +66,55 @@ function isFastOpenSyncstringEnabled(): boolean {
   return true;
 }
 
+const SYNC_DOC_RECONNECT_DEBUG_GLOBAL = "__cocalc_syncdoc_reconnect_debug";
+const SYNC_DOC_RECONNECT_DEBUG_LOCAL_STORAGE = "cocalc.debug.syncdoc_reconnect";
+const SYNC_DOC_RECONNECT_SLOW_MS = 1000;
+
+function shouldLogSyncdocReconnectDebug(): boolean {
+  if (typeof window === "undefined") return false;
+  const state = (window as any)[SYNC_DOC_RECONNECT_DEBUG_GLOBAL];
+  if (state?.console === true) return true;
+  try {
+    return (
+      window.localStorage.getItem(SYNC_DOC_RECONNECT_DEBUG_LOCAL_STORAGE) ===
+      "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function recordSyncdocReconnectDebug(event: { [key: string]: any }): void {
+  if (typeof window === "undefined") return;
+  const w = window as any;
+  const state = (w[SYNC_DOC_RECONNECT_DEBUG_GLOBAL] ??= {
+    events: [],
+    console: false,
+    clear() {
+      this.events.length = 0;
+    },
+    print(limit = 80) {
+      console.table(this.events.slice(-limit));
+    },
+  });
+  const entry = {
+    time: new Date().toISOString(),
+    now: performance.now(),
+    ...event,
+  };
+  state.events.push(entry);
+  if (state.events.length > 1000) {
+    state.events.splice(0, state.events.length - 1000);
+  }
+  const elapsedMs = Number(event.elapsedMs ?? 0);
+  if (
+    shouldLogSyncdocReconnectDebug() ||
+    elapsedMs >= SYNC_DOC_RECONNECT_SLOW_MS
+  ) {
+    console.info("[syncdoc reconnect]", entry);
+  }
+}
+
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
   Actions as BaseActions,
@@ -820,21 +869,58 @@ export class BaseEditorActions<
           const priority = this.store?.get("visible")
             ? "foreground"
             : "background";
-          if (
-            !(await this.wait_until_syncdoc_live_connected(
-              this._syncstring,
+          const started = performance.now();
+          recordSyncdocReconnectDebug({
+            event: "editor_reconnect_start",
+            name: this.name,
+            path: this.path,
+            doctype: this.doctype,
+            priority,
+            syncstring: this.syncdocReconnectDebugState(this._syncstring),
+            syncdb: this.syncdocReconnectDebugState(this._syncdb),
+          });
+          try {
+            if (
+              !(await this.wait_until_syncdoc_live_connected(
+                this._syncstring,
+                priority,
+                "syncstring",
+              ))
+            ) {
+              throw Error("syncstring_not_live_connected");
+            }
+            if (
+              !(await this.wait_until_syncdoc_live_connected(
+                this._syncdb,
+                priority,
+                "syncdb",
+              ))
+            ) {
+              throw Error("syncdb_not_live_connected");
+            }
+            recordSyncdocReconnectDebug({
+              event: "editor_reconnect_done",
+              name: this.name,
+              path: this.path,
+              doctype: this.doctype,
               priority,
-            ))
-          ) {
-            throw Error("syncstring_not_live_connected");
-          }
-          if (
-            !(await this.wait_until_syncdoc_live_connected(
-              this._syncdb,
+              elapsedMs: Math.round(performance.now() - started),
+              syncstring: this.syncdocReconnectDebugState(this._syncstring),
+              syncdb: this.syncdocReconnectDebugState(this._syncdb),
+            });
+          } catch (err) {
+            recordSyncdocReconnectDebug({
+              event: "editor_reconnect_error",
+              name: this.name,
+              path: this.path,
+              doctype: this.doctype,
               priority,
-            ))
-          ) {
-            throw Error("syncdb_not_live_connected");
+              elapsedMs: Math.round(performance.now() - started),
+              error: `${err}`,
+              syncstring: this.syncdocReconnectDebugState(this._syncstring),
+              syncdb: this.syncdocReconnectDebugState(this._syncdb),
+            });
+            throw err;
           }
         },
       });
@@ -860,48 +946,177 @@ export class BaseEditorActions<
   private async wait_until_syncdoc_live_connected(
     syncdoc?,
     priority: ReconnectPriority = "background",
+    label: string = "syncdoc",
   ): Promise<boolean> {
+    const started = performance.now();
+    recordSyncdocReconnectDebug({
+      event: "syncdoc_wait_start",
+      name: this.name,
+      path: this.path,
+      label,
+      priority,
+      syncdoc: this.syncdocReconnectDebugState(syncdoc),
+    });
     if (!(await this.wait_until_syncdoc_ready(syncdoc))) {
+      recordSyncdocReconnectDebug({
+        event: "syncdoc_wait_not_ready",
+        name: this.name,
+        path: this.path,
+        label,
+        priority,
+        elapsedMs: Math.round(performance.now() - started),
+        syncdoc: this.syncdocReconnectDebugState(syncdoc),
+      });
       return false;
     }
     if (syncdoc == null || this.isFakeSyncdoc(syncdoc)) {
+      recordSyncdocReconnectDebug({
+        event: "syncdoc_wait_skipped",
+        name: this.name,
+        path: this.path,
+        label,
+        priority,
+        elapsedMs: Math.round(performance.now() - started),
+        syncdoc: this.syncdocReconnectDebugState(syncdoc),
+      });
       return true;
     }
-    await this.recover_syncdoc_now(syncdoc, priority);
+    await this.recover_syncdoc_now(syncdoc, priority, label);
     if (typeof syncdoc.wait_until_live_connected === "function") {
       try {
         await syncdoc.wait_until_live_connected();
       } catch {
+        recordSyncdocReconnectDebug({
+          event: "syncdoc_wait_error",
+          name: this.name,
+          path: this.path,
+          label,
+          priority,
+          elapsedMs: Math.round(performance.now() - started),
+          syncdoc: this.syncdocReconnectDebugState(syncdoc),
+        });
         return false;
       }
+      recordSyncdocReconnectDebug({
+        event: "syncdoc_wait_done",
+        name: this.name,
+        path: this.path,
+        label,
+        priority,
+        elapsedMs: Math.round(performance.now() - started),
+        syncdoc: this.syncdocReconnectDebugState(syncdoc),
+      });
       return !this.isClosed();
     }
     if (this.isSyncdocLiveConnected(syncdoc)) {
+      recordSyncdocReconnectDebug({
+        event: "syncdoc_wait_already_connected",
+        name: this.name,
+        path: this.path,
+        label,
+        priority,
+        elapsedMs: Math.round(performance.now() - started),
+        syncdoc: this.syncdocReconnectDebugState(syncdoc),
+      });
       return true;
     }
     try {
       await once(syncdoc, "connected");
     } catch {
+      recordSyncdocReconnectDebug({
+        event: "syncdoc_wait_error",
+        name: this.name,
+        path: this.path,
+        label,
+        priority,
+        elapsedMs: Math.round(performance.now() - started),
+        syncdoc: this.syncdocReconnectDebugState(syncdoc),
+      });
       return false;
     }
+    recordSyncdocReconnectDebug({
+      event: "syncdoc_wait_done",
+      name: this.name,
+      path: this.path,
+      label,
+      priority,
+      elapsedMs: Math.round(performance.now() - started),
+      syncdoc: this.syncdocReconnectDebugState(syncdoc),
+    });
     return !this.isClosed() && this.isSyncdocLiveConnected(syncdoc);
   }
 
   private async recover_syncdoc_now(
     syncdoc,
     priority: ReconnectPriority,
+    label: string,
   ): Promise<void> {
     if (this.isSyncdocLiveConnected(syncdoc)) {
+      recordSyncdocReconnectDebug({
+        event: "syncdoc_recover_skipped_connected",
+        name: this.name,
+        path: this.path,
+        label,
+        priority,
+        syncdoc: this.syncdocReconnectDebugState(syncdoc),
+      });
       return;
     }
     const recoverNow = syncdoc?.recoverNow;
     if (typeof recoverNow !== "function") {
+      recordSyncdocReconnectDebug({
+        event: "syncdoc_recover_unavailable",
+        name: this.name,
+        path: this.path,
+        label,
+        priority,
+        syncdoc: this.syncdocReconnectDebugState(syncdoc),
+      });
       return;
     }
+    const started = performance.now();
+    recordSyncdocReconnectDebug({
+      event: "syncdoc_recover_start",
+      name: this.name,
+      path: this.path,
+      label,
+      priority,
+      syncdoc: this.syncdocReconnectDebugState(syncdoc),
+    });
     await recoverNow.call(syncdoc, {
       priority,
       reason: "editor_resource_reconnect",
     });
+    recordSyncdocReconnectDebug({
+      event: "syncdoc_recover_done",
+      name: this.name,
+      path: this.path,
+      label,
+      priority,
+      elapsedMs: Math.round(performance.now() - started),
+      syncdoc: this.syncdocReconnectDebugState(syncdoc),
+    });
+  }
+
+  private syncdocReconnectDebugState(syncdoc?) {
+    if (syncdoc == null) {
+      return { kind: "none" };
+    }
+    if (this.isFakeSyncdoc(syncdoc)) {
+      return { kind: "fake" };
+    }
+    try {
+      const debug = syncdoc.debug_live_connection_state;
+      if (typeof debug === "function") {
+        return debug.call(syncdoc);
+      }
+    } catch (err) {
+      return { error: `${err}` };
+    }
+    return {
+      state: syncdoc.get_state?.(),
+      liveConnected: syncdoc.is_live_connected?.(),
+    };
   }
 
   private isFakeSyncdoc(syncdoc): boolean {

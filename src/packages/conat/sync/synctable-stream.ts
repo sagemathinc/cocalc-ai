@@ -294,6 +294,10 @@ export class SyncTableStream extends EventEmitter {
     );
   };
 
+  getRecoveryState = () => {
+    return this.dstream?.getRecoveryState() ?? "closed";
+  };
+
   has_uncommitted_changes = () => {
     return this.dstream?.hasUnsavedChanges();
   };

@@ -616,6 +616,24 @@ export class SyncDoc extends EventEmitter {
   isReady = () => this.state == "ready";
   is_live_connected = () => this.liveConnected;
 
+  debug_live_connection_state = () => {
+    const tableState = (table: any) => ({
+      table: table?.table,
+      state: table?.get_state?.(),
+      recoveryState: table?.getRecoveryState?.(),
+      hasUncommittedChanges: table?.has_uncommitted_changes?.(),
+      dstreamRecoveryState: table?.dstream?.getRecoveryState?.(),
+      dkvRecoveryState: table?.dkv?.getRecoveryState?.(),
+    });
+    return {
+      path: this.path,
+      syncPath: this.syncPath,
+      state: this.state,
+      liveConnected: this.liveConnected,
+      tables: this.connectedTables().map(tableState),
+    };
+  };
+
   private set_state = (state: State): void => {
     this.state = state;
     this.refreshLiveConnectionState();

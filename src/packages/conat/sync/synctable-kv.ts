@@ -255,6 +255,10 @@ export class SyncTableKV extends EventEmitter {
     this.updateConnectionState();
   };
 
+  getRecoveryState = () => {
+    return this.dkv?.getRecoveryState?.() ?? "closed";
+  };
+
   close = async () => {
     if (this.state == "closed") return;
     this.set_state("closed");
