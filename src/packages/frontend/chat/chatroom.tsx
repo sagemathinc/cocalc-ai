@@ -1892,17 +1892,29 @@ export function ChatPanel({
   const automationScheduleInfo = (
     <>
       {automationScheduleSummary ? (
-        <span>{automationScheduleSummary}</span>
+        <span style={{ whiteSpace: "nowrap" }}>
+          {automationScheduleSummary}
+        </span>
       ) : null}
       {automationHasNextRun ? (
-        <span>
+        <span style={{ whiteSpace: "nowrap" }}>
           Next <TimeAgo date={selectedThreadAutomationState.next_run_at_ms!} />
         </span>
       ) : null}
       {automationHasUnacknowledgedRuns ? (
-        <Tag color="orange">
-          {selectedThreadAutomationState.unacknowledged_runs} unacknowledged
-        </Tag>
+        <Tooltip title="Acknowledge these automation runs. This clears the unacknowledged count.">
+          <Button
+            size="small"
+            onClick={() => void handleAutomationAcknowledge()}
+            style={{
+              borderColor: COLORS.BG_WARNING,
+              color: COLORS.YELL_D,
+              background: COLORS.YELL_LLL,
+            }}
+          >
+            {selectedThreadAutomationState.unacknowledged_runs} unacknowledged
+          </Button>
+        </Tooltip>
       ) : null}
     </>
   );
@@ -1995,13 +2007,6 @@ export function ChatPanel({
               Run now does not skip the next scheduled run. Overlapping runs are
               not queued.
             </span>
-            <Button
-              size="small"
-              disabled={!automationHasUnacknowledgedRuns}
-              onClick={() => void handleAutomationAcknowledge()}
-            >
-              Acknowledge
-            </Button>
             {selectedThreadKey ? (
               <Button
                 size="small"
@@ -2024,18 +2029,36 @@ export function ChatPanel({
           </Space>
         </div>
       ) : null}
-      <Space size="small" wrap={!IS_MOBILE}>
-        <strong>{IS_MOBILE ? "Automation" : automationTitle}</strong>
-        {automationStatusTag}
-        {IS_MOBILE ? null : (
-          <>
-            {automationScheduleInfo}
-            {automationActions}
-          </>
-        )}
+      <div
+        style={{
+          alignItems: "center",
+          display: "flex",
+          flexWrap: "nowrap",
+          gap: 8,
+          minWidth: 0,
+          overflow: "hidden",
+        }}
+      >
+        <strong
+          title={automationTitle}
+          style={{
+            flex: IS_MOBILE ? "0 0 auto" : "1 1 14em",
+            minWidth: 0,
+            maxWidth: IS_MOBILE ? undefined : 280,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {IS_MOBILE ? "Automation" : automationTitle}
+        </strong>
+        <span style={{ flex: "0 0 auto" }}>{automationStatusTag}</span>
+        {IS_MOBILE ? null : automationScheduleInfo}
+        {IS_MOBILE ? null : automationActions}
         <Button
           size="small"
           type="link"
+          style={{ flex: "0 0 auto" }}
           onClick={() => setAutomationDetailsOpen((open) => !open)}
         >
           {automationDetailsOpen
@@ -2044,7 +2067,7 @@ export function ChatPanel({
               : "Hide details"
             : "Details"}
         </Button>
-      </Space>
+      </div>
     </div>
   ) : null;
 
