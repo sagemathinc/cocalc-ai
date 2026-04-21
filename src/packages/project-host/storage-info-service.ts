@@ -29,7 +29,7 @@ const logger = getLogger("project-host:storage-info");
 export const PROJECT_STORAGE_INFO_SUBJECT = "project.*.storage-info.-";
 export const PROJECT_STORAGE_HISTORY_STREAM_NAME = "project-storage-history";
 
-const PROJECT_STORAGE_CACHE_TTL_MS = 30_000;
+const PROJECT_STORAGE_CACHE_TTL_MS = 3 * 60_000;
 const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
 const STORAGE_HISTORY_SAMPLE_INTERVAL_MS = 5 * 60_000;
 const STORAGE_HISTORY_TTL_MS = 35 * 24 * 60 * 60 * 1000;
@@ -42,6 +42,14 @@ const projectStorageOverviewCache = new TTL<string, ProjectStorageOverview>({
 const projectStorageBreakdownCache = new TTL<string, ProjectStorageBreakdown>({
   ttl: PROJECT_STORAGE_CACHE_TTL_MS,
 });
+const projectStorageOverviewInflight = new Map<
+  string,
+  Promise<ProjectStorageOverview>
+>();
+const projectStorageBreakdownInflight = new Map<
+  string,
+  Promise<ProjectStorageBreakdown>
+>();
 const historyStreams = new TTL<string, DStream<ProjectStorageHistoryPoint>>({
   ttl: 30 * 60_000,
   dispose: (stream) => {
@@ -358,7 +366,7 @@ function localFs({
   return fsClient({
     client,
     subject: fsSubject({ project_id }),
-    waitForInterest: true,
+    waitForInterest: false,
   });
 }
 
@@ -378,15 +386,27 @@ async function getStorageBreakdownImpl({
   });
   const cached = projectStorageBreakdownCache.get(cacheKey);
   if (cached) return cached;
-  const breakdown = parseDustOutput(
-    await localFs({ client, project_id }).dust(normalizedPath, {
-      options: ["-j", "-x", "-d", "1", "-s", "-o", "b", "-P"],
-      timeout: PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS,
-    }),
-    normalizedPath,
-  );
-  projectStorageBreakdownCache.set(cacheKey, breakdown);
-  return breakdown;
+  const inflight = projectStorageBreakdownInflight.get(cacheKey);
+  if (inflight) return await inflight;
+  const scan = (async () => {
+    const breakdown = parseDustOutput(
+      await localFs({ client, project_id }).dust(normalizedPath, {
+        options: ["-j", "-x", "-T", "2", "-d", "1", "-s", "-o", "b", "-P"],
+        timeout: PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS,
+      }),
+      normalizedPath,
+    );
+    projectStorageBreakdownCache.set(cacheKey, breakdown);
+    return breakdown;
+  })();
+  projectStorageBreakdownInflight.set(cacheKey, scan);
+  try {
+    return await scan;
+  } finally {
+    if (projectStorageBreakdownInflight.get(cacheKey) === scan) {
+      projectStorageBreakdownInflight.delete(cacheKey);
+    }
+  }
 }
 
 async function getStorageOverviewImpl({
@@ -406,128 +426,143 @@ async function getStorageOverviewImpl({
     ? undefined
     : projectStorageOverviewCache.get(cacheKey);
   if (cached) return cached;
+  const inflight = projectStorageOverviewInflight.get(cacheKey);
+  if (inflight) return await inflight;
 
-  const environmentPath = posix.join(homePath, PROJECT_IMAGE_PATH);
-  const fileServer = fileServerClient(client);
-  const [quota, homeUsage, scratchUsage, environmentUsage, snapshotUsage] =
-    await Promise.all([
-      fileServer.getQuota({ project_id }),
-      getStorageBreakdownImpl({ client, project_id, path: homePath }),
-      getStorageBreakdownImpl({ client, project_id, path: "/scratch" }).catch(
-        (err) => {
+  const load = (async () => {
+    const environmentPath = posix.join(homePath, PROJECT_IMAGE_PATH);
+    const fileServer = fileServerClient(client);
+    const [quota, homeUsage, scratchUsage, environmentUsage, snapshotUsage] =
+      await Promise.all([
+        fileServer.getQuota({ project_id }),
+        getStorageBreakdownImpl({ client, project_id, path: homePath }),
+        getStorageBreakdownImpl({ client, project_id, path: "/scratch" }).catch(
+          (err) => {
+            const text = `${err ?? ""}`.toLowerCase();
+            if (
+              text.includes("scratch is not mounted") ||
+              text.includes("no such file") ||
+              text.includes("not found")
+            ) {
+              return null;
+            }
+            throw err;
+          },
+        ),
+        getStorageBreakdownImpl({
+          client,
+          project_id,
+          path: environmentPath,
+        }).catch((err) => {
           const text = `${err ?? ""}`.toLowerCase();
-          if (
-            text.includes("scratch is not mounted") ||
-            text.includes("no such file") ||
-            text.includes("not found")
-          ) {
+          if (text.includes("no such file") || text.includes("not found")) {
             return null;
           }
           throw err;
-        },
-      ),
-      getStorageBreakdownImpl({
-        client,
-        project_id,
+        }),
+        fileServer.allSnapshotUsage({ project_id }),
+      ]);
+
+    const visible: ProjectStorageVisibleSummary[] = [
+      {
+        key: "home",
+        label: homePath,
+        summaryLabel: "Home",
+        path: homePath,
+        summaryBytes: Math.max(
+          0,
+          homeUsage.bytes - Math.max(0, environmentUsage?.bytes ?? 0),
+        ),
+        usage: homeUsage,
+      },
+    ];
+    if (scratchUsage != null) {
+      visible.push({
+        key: "scratch",
+        label: "/scratch",
+        summaryLabel: "Scratch",
+        path: "/scratch",
+        summaryBytes: scratchUsage.bytes,
+        usage: scratchUsage,
+      });
+    }
+    if (environmentUsage != null) {
+      visible.push({
+        key: "environment",
+        label: "Environment changes",
+        summaryLabel: "Environment",
         path: environmentPath,
-      }).catch((err) => {
-        const text = `${err ?? ""}`.toLowerCase();
-        if (text.includes("no such file") || text.includes("not found")) {
-          return null;
-        }
-        throw err;
-      }),
-      fileServer.allSnapshotUsage({ project_id }),
-    ]);
+        summaryBytes: environmentUsage.bytes,
+        usage: environmentUsage,
+      });
+    }
 
-  const visible: ProjectStorageVisibleSummary[] = [
-    {
-      key: "home",
-      label: homePath,
-      summaryLabel: "Home",
-      path: homePath,
-      summaryBytes: Math.max(
-        0,
-        homeUsage.bytes - Math.max(0, environmentUsage?.bytes ?? 0),
-      ),
-      usage: homeUsage,
-    },
-  ];
-  if (scratchUsage != null) {
-    visible.push({
-      key: "scratch",
-      label: "/scratch",
-      summaryLabel: "Scratch",
-      path: "/scratch",
-      summaryBytes: scratchUsage.bytes,
-      usage: scratchUsage,
-    });
-  }
-  if (environmentUsage != null) {
-    visible.push({
-      key: "environment",
-      label: "Environment changes",
-      summaryLabel: "Environment",
-      path: environmentPath,
-      summaryBytes: environmentUsage.bytes,
-      usage: environmentUsage,
-    });
-  }
-
-  const snapshotExclusiveBytes = snapshotUsage.reduce(
-    (sum, snapshot) => sum + Math.max(0, snapshot.exclusive ?? 0),
-    0,
-  );
-  const counted: ProjectStorageCountedSummary[] = [];
-  if (snapshotExclusiveBytes >= 1 << 20) {
-    const snapshotCount = snapshotUsage.length;
-    const largestExclusiveBytes = snapshotUsage.reduce(
-      (max, snapshot) => Math.max(max, Math.max(0, snapshot.exclusive ?? 0)),
+    const snapshotExclusiveBytes = snapshotUsage.reduce(
+      (sum, snapshot) => sum + Math.max(0, snapshot.exclusive ?? 0),
       0,
     );
-    counted.push({
-      key: "snapshots",
-      label: "Snapshots",
-      bytes: snapshotExclusiveBytes,
-      compactLabel: "Snapshots",
-      detail:
-        snapshotCount <= 1
-          ? "This snapshot currently holds counted storage that would be freed if it is deleted."
-          : `Across ${snapshotCount} snapshots, this is storage referenced only by snapshots. The largest single snapshot currently has about ${human_readable_size(largestExclusiveBytes)} of exclusive data, and exact savings from deleting one snapshot depend on overlap.`,
-    });
-  }
+    const counted: ProjectStorageCountedSummary[] = [];
+    if (snapshotExclusiveBytes >= 1 << 20) {
+      const snapshotCount = snapshotUsage.length;
+      const largestExclusiveBytes = snapshotUsage.reduce(
+        (max, snapshot) => Math.max(max, Math.max(0, snapshot.exclusive ?? 0)),
+        0,
+      );
+      counted.push({
+        key: "snapshots",
+        label: "Snapshots",
+        bytes: snapshotExclusiveBytes,
+        compactLabel: "Snapshots",
+        detail:
+          snapshotCount <= 1
+            ? "This snapshot currently holds counted storage that would be freed if it is deleted."
+            : `Across ${snapshotCount} snapshots, this is storage referenced only by snapshots. The largest single snapshot currently has about ${human_readable_size(largestExclusiveBytes)} of exclusive data, and exact savings from deleting one snapshot depend on overlap.`,
+      });
+    }
 
-  const overview: ProjectStorageOverview = {
-    collected_at: new Date().toISOString(),
-    quotas: [
-      {
-        key: "project",
-        label: "Project quota",
-        used: quota.used,
-        size: quota.size,
-        qgroupid: quota.qgroupid,
-        scope: quota.scope,
-        warning: quota.warning,
-      },
-    ],
-    visible,
-    counted,
-  };
+    const overview: ProjectStorageOverview = {
+      collected_at: new Date().toISOString(),
+      quotas: [
+        {
+          key: "project",
+          label: "Project quota",
+          used: quota.used,
+          size: quota.size,
+          qgroupid: quota.qgroupid,
+          scope: quota.scope,
+          warning: quota.warning,
+        },
+      ],
+      visible,
+      counted,
+    };
+    try {
+      await recordProjectStorageHistorySample({
+        client,
+        project_id,
+        overview,
+        force: !!force_sample,
+      });
+    } catch (err) {
+      logger.warn(
+        "getStorageOverview: unable to record storage history sample",
+        {
+          project_id,
+          err,
+        },
+      );
+    }
+    projectStorageOverviewCache.set(cacheKey, overview);
+    return overview;
+  })();
+  projectStorageOverviewInflight.set(cacheKey, load);
   try {
-    await recordProjectStorageHistorySample({
-      client,
-      project_id,
-      overview,
-      force: !!force_sample,
-    });
-  } catch (err) {
-    logger.warn("getStorageOverview: unable to record storage history sample", {
-      project_id,
-      err,
-    });
+    return await load;
+  } finally {
+    if (projectStorageOverviewInflight.get(cacheKey) === load) {
+      projectStorageOverviewInflight.delete(cacheKey);
+    }
   }
-  projectStorageOverviewCache.set(cacheKey, overview);
-  return overview;
 }
 
 async function getSnapshotUsageImpl({

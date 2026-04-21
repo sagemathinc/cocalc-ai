@@ -24,7 +24,7 @@ def make_cfg(tmpdir: str) -> bootstrap.BootstrapConfig:
         expected_os="linux",
         expected_arch="amd64",
         image_size_gb_raw="10",
-        root_reserve_gb_raw="15",
+        root_reserve_gb_raw="25",
         data_disk_devices="",
         data_disk_candidates="",
         apt_packages=[],

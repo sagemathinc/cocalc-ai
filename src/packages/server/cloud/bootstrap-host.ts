@@ -525,7 +525,7 @@ export function resolveBootstrapRootReserveGb(raw?: unknown): string {
   if (Number.isFinite(parsed) && parsed > 0) {
     return String(Math.max(1, Math.floor(parsed)));
   }
-  return "15";
+  return "25";
 }
 
 export async function buildBootstrapScripts(

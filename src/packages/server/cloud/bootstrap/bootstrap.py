@@ -178,7 +178,7 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
             "bootstrap-desired-state.image_size_gb_raw",
         ),
         root_reserve_gb_raw=_ensure_str(
-            desired.get("root_reserve_gb_raw") or "15",
+            desired.get("root_reserve_gb_raw") or "25",
             "bootstrap-desired-state.root_reserve_gb_raw",
         ),
         data_disk_devices=_ensure_str(
@@ -752,6 +752,29 @@ def configure_chrony(cfg: BootstrapConfig) -> None:
     chrony_conf = "pool pool.ntp.org iburst maxsources 4\nmakestep 1.0 -1\nrtcsync\n"
     Path("/etc/chrony/chrony.conf").write_text(chrony_conf, encoding="utf-8")
     run_best_effort(cfg, ["systemctl", "restart", "chrony"], "restart chrony")
+
+
+def configure_journald_limits(cfg: BootstrapConfig) -> None:
+    if shutil.which("systemctl") is None:
+        return
+    log_line(cfg, "bootstrap: configuring journald disk limits")
+    dropin_dir = Path("/etc/systemd/journald.conf.d")
+    dropin_dir.mkdir(parents=True, exist_ok=True)
+    (dropin_dir / "90-cocalc-root-disk.conf").write_text(
+        "[Journal]\nSystemMaxUse=200M\nRuntimeMaxUse=100M\n",
+        encoding="utf-8",
+    )
+    run_best_effort(
+        cfg,
+        ["systemctl", "restart", "systemd-journald"],
+        "restart systemd-journald",
+    )
+    if shutil.which("journalctl") is not None:
+        run_best_effort(
+            cfg,
+            ["journalctl", "--vacuum-size=200M"],
+            "vacuum systemd journal",
+        )
 
 
 def detect_public_ip(cfg: BootstrapConfig) -> str | None:
@@ -3762,6 +3785,7 @@ def run_provision(cfg: BootstrapConfig) -> int:
         report_bootstrap_status(cfg, "running", "Configuring storage and containers")
         install_gpu_support(cfg)
         configure_chrony(cfg)
+        configure_journald_limits(cfg)
         enable_userns(cfg)
         ensure_subuids(cfg)
         enable_linger(cfg)
@@ -3782,6 +3806,7 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
     try:
         ensure_runtime_user(cfg)
         ensure_bootstrap_paths(cfg)
+        configure_journald_limits(cfg)
         image_size_gb = compute_image_size(cfg)
         install_btrfs_helper(cfg)
         install_privileged_wrappers(cfg)
