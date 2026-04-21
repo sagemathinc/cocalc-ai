@@ -141,4 +141,66 @@ describe("CodexActivity terminal rows", () => {
     expect(screen.queryByText("Waiting for output…")).toBeNull();
     expect(screen.getByText("No output.")).not.toBeNull();
   });
+
+  it("renders generated image events with prompt and saved path", () => {
+    render(
+      React.createElement(CodexActivity, {
+        expanded: true,
+        events: [
+          {
+            type: "event",
+            seq: 1,
+            time: Date.parse("2026-04-21T18:00:00.000Z"),
+            event: {
+              type: "image",
+              id: "img-1",
+              status: "completed",
+              revisedPrompt: "A reconnect architecture diagram",
+              savedPath: "/tmp/project/.codex/generated_images/img-1.png",
+            },
+          } as any,
+        ],
+      }),
+    );
+
+    expect(screen.getByText("Generated image")).not.toBeNull();
+    expect(screen.getByText("A reconnect architecture diagram")).not.toBeNull();
+    expect(
+      screen.getByText("/tmp/project/.codex/generated_images/img-1.png"),
+    ).not.toBeNull();
+  });
+
+  it("renders generated blob image events with open and copy affordances", () => {
+    render(
+      React.createElement(CodexActivity, {
+        expanded: true,
+        events: [
+          {
+            type: "event",
+            seq: 1,
+            time: Date.parse("2026-04-21T18:00:00.000Z"),
+            event: {
+              type: "image",
+              id: "img-1",
+              status: "completed",
+              revisedPrompt: "A reconnect architecture diagram",
+              savedPath: "/tmp/project/.codex/generated_images/img-1.png",
+              blob: {
+                uuid: "blob-1",
+                filename: "img-1.png",
+                url: "/blobs/img-1.png?uuid=blob-1",
+              },
+            },
+          } as any,
+        ],
+      }),
+    );
+
+    const link = screen.getByRole("link", { name: "Open image" });
+    expect(link.getAttribute("href")).toBe("/blobs/img-1.png?uuid=blob-1");
+    expect(screen.getAllByRole("button", { name: /copy/i }).length).toBe(2);
+    expect(
+      screen.queryByText("/tmp/project/.codex/generated_images/img-1.png"),
+    ).toBeNull();
+  });
 });

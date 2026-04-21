@@ -178,6 +178,55 @@ describe("codexEventsToMarkdown", () => {
     ]);
     expect(markdown).toContain("- File: Wrote `README.md` (2.0 KB)");
   });
+
+  it("exports generated image metadata and saved file path", () => {
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "image",
+          id: "img-1",
+          status: "completed",
+          revisedPrompt: "A reconnect architecture diagram",
+          savedPath: "/tmp/project/.codex/generated_images/img-1.png",
+          result: "base64-image-data-that-should-not-export",
+        },
+      } as any,
+    ]);
+
+    expect(markdown).toContain(
+      "- Generated image: A reconnect architecture diagram",
+    );
+    expect(markdown).toContain(
+      "Saved file: `/tmp/project/.codex/generated_images/img-1.png`",
+    );
+    expect(markdown).not.toContain("base64-image-data");
+  });
+
+  it("exports generated image blob URLs as markdown images", () => {
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "image",
+          id: "img-1",
+          status: "completed",
+          revisedPrompt: "A reconnect architecture diagram",
+          blob: {
+            uuid: "blob-1",
+            filename: "diagram.png",
+            url: "/blobs/diagram.png?uuid=blob-1",
+          },
+        },
+      } as any,
+    ]);
+
+    expect(markdown).toContain(
+      "![Generated image](/blobs/diagram.png?uuid=blob-1)",
+    );
+  });
 });
 
 describe("parsePathLineTarget", () => {

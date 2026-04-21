@@ -6,6 +6,7 @@ export const db = {
   getLegacyTimeTravelInfo: authFirst,
   getLegacyTimeTravelPatches: authFirst,
   removeBlobTtls: requireAccount,
+  saveBlob: authFirst,
 };
 
 export interface DB {
@@ -37,4 +38,11 @@ export interface DB {
     timeout?: number;
   }) => Promise<string>;
   removeBlobTtls: (opts: { uuids: string[] }) => Promise<void>;
+  saveBlob: (opts: {
+    account_id?: string;
+    project_id?: string;
+    uuid: string;
+    blob: string;
+    ttl?: number;
+  }) => Promise<{ uuid: string }>;
 }

@@ -289,6 +289,34 @@ describe("response text helpers", () => {
     );
   });
 
+  test("appends generated blob images to live and final response markdown", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "Here is the generated image.", 1),
+      {
+        type: "event",
+        seq: 2,
+        event: {
+          type: "image",
+          status: "completed",
+          blob: {
+            uuid: "blob-1",
+            filename: "image.png",
+            url: "/blobs/image.png?uuid=blob-1",
+          },
+        },
+      } as any,
+      {
+        type: "summary",
+        seq: 3,
+        finalResponse: "Here is the generated image.",
+      } as any,
+    ];
+    const expected =
+      "Here is the generated image.\n\n![Generated image](/blobs/image.png?uuid=blob-1)";
+    expect(getLiveResponseMarkdown(events)).toBe(expected);
+    expect(getBestResponseText(events)).toBe(expected);
+  });
+
   test("keeps camel-case product names intact across interleaved deltas", () => {
     const events: AcpStreamMessage[] = [
       textEvent("message", "Co", 1, { delta: true }),

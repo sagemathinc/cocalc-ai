@@ -96,6 +96,21 @@ type ActivityEntry =
       line?: number;
       limit?: number;
       existed?: boolean;
+    }
+  | {
+      kind: "image";
+      id: string;
+      seq: number;
+      time?: number;
+      imageId?: string;
+      status: string;
+      revisedPrompt?: string;
+      savedPath?: string;
+      blob?: {
+        uuid: string;
+        filename: string;
+        url: string;
+      };
     };
 
 export interface CodexActivityProps {
@@ -478,6 +493,15 @@ function ActivityRow({
           editorTheme={editorTheme}
         />
       );
+    case "image":
+      return (
+        <ImageRow
+          entry={entry}
+          fontSize={fontSize}
+          projectId={projectId}
+          basePath={basePath}
+        />
+      );
     case "status":
     default:
       return (
@@ -738,6 +762,25 @@ function createEventEntry({
       existed: event.existed,
     };
   }
+  if (event?.type === "image") {
+    return {
+      kind: "image",
+      id: `image-${seq}`,
+      seq,
+      time,
+      imageId: typeof event.id === "string" ? event.id : undefined,
+      status:
+        typeof event.status === "string" && event.status.trim()
+          ? event.status.trim()
+          : "unknown",
+      revisedPrompt:
+        typeof event.revisedPrompt === "string"
+          ? event.revisedPrompt
+          : undefined,
+      savedPath: stringifyPath(event.savedPath) || undefined,
+      blob: isActivityBlob(event.blob) ? event.blob : undefined,
+    };
+  }
   if (event?.type === "thinking") {
     return {
       kind: "reasoning",
@@ -851,6 +894,18 @@ function stringifyPath(pathValue: any): string {
   } catch {
     return String(pathValue);
   }
+}
+
+function isActivityBlob(
+  blob: any,
+): blob is { uuid: string; filename: string; url: string } {
+  return (
+    blob != null &&
+    typeof blob === "object" &&
+    typeof blob.uuid === "string" &&
+    typeof blob.filename === "string" &&
+    typeof blob.url === "string"
+  );
 }
 
 function PathLink({
@@ -1133,6 +1188,73 @@ function detectBasePath(
     : undefined;
   if (chatDir) return chatDir;
   return undefined;
+}
+
+function ImageRow({
+  entry,
+  fontSize,
+  projectId,
+  basePath,
+}: {
+  entry: Extract<ActivityEntry, { kind: "image" }>;
+  fontSize: number;
+  projectId?: string;
+  basePath?: string;
+}) {
+  const secondarySize = Math.max(11, fontSize - 2);
+  const timestamp = formatEntryTimestamp(entry.time);
+  const isCompleted = entry.status.toLowerCase() === "completed";
+  const imageMarkdown = entry.blob?.url
+    ? `![Generated image](${entry.blob.url})`
+    : undefined;
+  return (
+    <div>
+      <Space size={6} wrap align="center" style={{ marginBottom: 4 }}>
+        <TimestampTooltip timestamp={timestamp}>
+          <Tag
+            color={isCompleted ? "geekblue" : "default"}
+            style={{ margin: 0 }}
+          >
+            Generated image
+          </Tag>
+        </TimestampTooltip>
+        <ActivityTimestamp time={entry.time} />
+        {!isCompleted ? (
+          <Tag color="default" style={{ margin: 0 }}>
+            {entry.status}
+          </Tag>
+        ) : null}
+        {entry.blob?.url ? (
+          <>
+            <a href={entry.blob.url} target="_blank" rel="noreferrer">
+              Open image
+            </a>
+            <CopyButton markdown value={imageMarkdown} size="small" />
+          </>
+        ) : entry.savedPath ? (
+          <PathLink
+            path={entry.savedPath}
+            projectId={projectId}
+            fontSize={secondarySize}
+            basePath={basePath}
+          />
+        ) : null}
+      </Space>
+      {entry.revisedPrompt ? (
+        <Text type="secondary" style={{ display: "block", fontSize }}>
+          {entry.revisedPrompt}
+        </Text>
+      ) : null}
+      {entry.imageId ? (
+        <Text
+          type="secondary"
+          style={{ display: "block", fontSize: secondarySize }}
+        >
+          id {entry.imageId}
+        </Text>
+      ) : null}
+    </div>
+  );
 }
 
 export function TerminalRow({
@@ -1636,6 +1758,28 @@ export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
           parts.push("(output truncated)");
         }
         lines.push(parts.join(" "));
+        break;
+      }
+      case "image": {
+        const prompt =
+          entry.revisedPrompt && entry.revisedPrompt.trim().length > 0
+            ? `: ${entry.revisedPrompt.trim()}`
+            : "";
+        const status =
+          entry.status && entry.status.toLowerCase() !== "completed"
+            ? ` (${entry.status})`
+            : "";
+        if (entry.blob?.url) {
+          lines.push(
+            `- Generated image${status}${prompt}\n\n![Generated image](${entry.blob.url})`,
+          );
+        } else {
+          const parts = [`- Generated image${status}${prompt}`];
+          if (entry.savedPath) {
+            parts.push(`Saved file: ${formatPathMarkdown(entry.savedPath)}`);
+          }
+          lines.push(parts.join("\n"));
+        }
         break;
       }
       default:

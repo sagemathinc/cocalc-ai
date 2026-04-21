@@ -4,6 +4,7 @@ import { callback2 } from "@cocalc/util/async-utils";
 import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 import { assertCollab } from "./util";
+import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
 
 export { userQuery };
 
@@ -83,4 +84,44 @@ export async function removeBlobTtls({ uuids }: { uuids: string[] }) {
       [v],
     );
   }
+}
+
+export async function saveBlob({
+  account_id,
+  project_id,
+  uuid,
+  blob,
+  ttl,
+}: {
+  account_id?: string;
+  project_id?: string;
+  uuid: string;
+  blob: string;
+  ttl?: number;
+}): Promise<{ uuid: string }> {
+  if (!uuid) {
+    throw Error("uuid must be set");
+  }
+  if (!account_id && !project_id) {
+    throw Error("account_id or project_id must be set");
+  }
+  if (account_id && project_id) {
+    await assertCollab({ account_id, project_id });
+  }
+  const buffer = Buffer.from(blob, "base64");
+  if (buffer.byteLength > MAX_BLOB_SIZE) {
+    throw Error(
+      `blob is too large (${buffer.byteLength} bytes; max ${MAX_BLOB_SIZE})`,
+    );
+  }
+  const D = db();
+  await callback2(D.save_blob, {
+    uuid,
+    blob: buffer,
+    ttl,
+    project_id,
+    account_id,
+    check: true,
+  });
+  return { uuid };
 }
