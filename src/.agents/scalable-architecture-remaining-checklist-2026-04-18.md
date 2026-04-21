@@ -356,6 +356,31 @@ Current project-host runtime facts:
 - [ ] validate daemon restart ordering and operator UX under partial runtime
       failure
 
+Notes:
+
+- on 2026-04-21, a first live managed-daemon restart pass was run against the
+  local 3-bay hub cluster after rebuilding and upgrading the online hosts:
+  - selected project: `e9290ac6-1dda-4629-b9e0-19b162e6c108`
+  - selected host: `london`
+  - `project-host`, `conat-router`, `conat-persist`, and `acp-worker` were
+    restarted one at a time through `cocalc host deploy restart --wait`
+  - after each component restart, `cocalc project exec` against the running
+    project succeeded
+  - runtime deployment history showed each restart as a succeeded rollout with
+    the requested component and reason
+  - supervision events showed the expected managed daemon start events
+- that pass found one operator-status bug: router/persist were healthy and
+  running but reported `drifted` because their runtime version was inferred from
+  the numeric bundle directory while desired state used the build id
+- after normalizing current numeric project-host bundle versions to the current
+  build id, `host deploy status` on the redeployed `host2` showed
+  `project-host`, `conat-router`, `conat-persist`, and `acp-worker` all
+  `running` and `aligned`
+- this is good evidence for restart-only component rollout, but it does not yet
+  close the full adversarial item because host-agent automatic rollback,
+  browser-session recovery under load, and partial-failure UX still need live
+  drills
+
 ### 4. Close Phase 6 Placement / Lifecycle Validation
 
 - [x] validate 3-way `start`, `stop`, and `restart` in both browser and CLI
