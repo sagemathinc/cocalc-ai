@@ -121,7 +121,6 @@ export function describeAutomationSchedule(
   config?: AcpAutomationConfig,
 ): string | undefined {
   if (!config) return undefined;
-  const timezone = `${config.timezone ?? ""}`.trim();
   const daySummary = summarizeDays(config.days_of_week);
   if (
     config.schedule_type === "interval" &&
@@ -131,17 +130,15 @@ export function describeAutomationSchedule(
   ) {
     const prefix = daySummary ? `${daySummary} ` : "";
     if (isAllDayWindow(config)) {
-      return `${prefix}${intervalLabel(config.interval_minutes)} all day${
-        timezone ? ` ${timezone}` : ""
-      }`;
+      return `${prefix}${intervalLabel(config.interval_minutes)} all day`;
     }
     return `${prefix}${intervalLabel(config.interval_minutes)} from ${
       config.window_start_local_time
-    } to ${config.window_end_local_time}${timezone ? ` ${timezone}` : ""}`;
+    } to ${config.window_end_local_time}`;
   }
   if (config.local_time) {
     const prefix = daySummary ? `${daySummary} at ` : "Daily at ";
-    return `${prefix}${config.local_time}${timezone ? ` ${timezone}` : ""}`;
+    return `${prefix}${config.local_time}`;
   }
   return undefined;
 }
