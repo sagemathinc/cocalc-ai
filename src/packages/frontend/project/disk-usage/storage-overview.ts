@@ -44,8 +44,12 @@ export default async function getStorageOverview({
   if (cache && storageOverviewCache.has(k)) {
     return storageOverviewCache.get(k)!;
   }
+  const client = await webapp_client.conat_client.projectConat({
+    project_id,
+    caller: "getStorageOverview",
+  });
   const overview = await getProjectStorageOverview({
-    client: webapp_client.conat_client.conat(),
+    client,
     project_id,
     home,
     force_sample,

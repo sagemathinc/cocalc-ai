@@ -13,8 +13,22 @@ import {
 } from "@cocalc/conat/project/archive-info";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
-function getClient(client?: ConatClient): ConatClient {
-  return client ?? webapp_client.conat_client.conat();
+async function getClient({
+  client,
+  project_id,
+  caller,
+}: {
+  client?: ConatClient;
+  project_id: string;
+  caller: string;
+}): Promise<ConatClient> {
+  return (
+    client ??
+    (await webapp_client.conat_client.projectConat({
+      project_id,
+      caller,
+    }))
+  );
 }
 
 export async function getBackups({
@@ -26,7 +40,11 @@ export async function getBackups({
   indexed_only?: boolean;
 }) {
   return await getProjectBackups({
-    client: getClient(client),
+    client: await getClient({
+      client,
+      project_id: opts.project_id,
+      caller: "getBackups",
+    }),
     ...opts,
   });
 }
@@ -41,7 +59,11 @@ export async function getBackupFiles({
   path?: string;
 }) {
   return await getProjectBackupFiles({
-    client: getClient(client),
+    client: await getClient({
+      client,
+      project_id: opts.project_id,
+      caller: "getBackupFiles",
+    }),
     ...opts,
   });
 }
@@ -58,7 +80,11 @@ export async function findBackupFiles({
   ids?: string[];
 }) {
   return await findProjectBackupFiles({
-    client: getClient(client),
+    client: await getClient({
+      client,
+      project_id: opts.project_id,
+      caller: "findBackupFiles",
+    }),
     ...opts,
   });
 }
@@ -74,7 +100,11 @@ export async function getBackupFileText({
   max_bytes?: number;
 }) {
   return await getProjectBackupFileText({
-    client: getClient(client),
+    client: await getClient({
+      client,
+      project_id: opts.project_id,
+      caller: "getBackupFileText",
+    }),
     ...opts,
   });
 }
@@ -90,7 +120,11 @@ export async function getSnapshotFileText({
   max_bytes?: number;
 }) {
   return await getProjectSnapshotFileText({
-    client: getClient(client),
+    client: await getClient({
+      client,
+      project_id: opts.project_id,
+      caller: "getSnapshotFileText",
+    }),
     ...opts,
   });
 }

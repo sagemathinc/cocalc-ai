@@ -26,8 +26,12 @@ export default async function quota({
   if (cache && quotaCache.has(k)) {
     return quotaCache.get(k)!;
   }
+  const client = await webapp_client.conat_client.projectConat({
+    project_id,
+    caller: "quota",
+  });
   const x = await getProjectDiskQuota({
-    client: webapp_client.conat_client.conat(),
+    client,
     project_id,
   });
   quotaCache.set(k, x);

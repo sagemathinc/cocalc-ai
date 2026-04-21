@@ -22,8 +22,12 @@ export default async function getSnapshotUsage({
   if (cache && snapshotUsageCache.has(k)) {
     return snapshotUsageCache.get(k)!;
   }
+  const client = await webapp_client.conat_client.projectConat({
+    project_id,
+    caller: "getSnapshotUsage",
+  });
   const usage = await getProjectSnapshotUsage({
-    client: webapp_client.conat_client.conat(),
+    client,
     project_id,
   });
   snapshotUsageCache.set(k, usage);

@@ -34,15 +34,11 @@ export class Listings extends EventEmitter {
   private project_id: string;
   private state: State = "init";
   private listingsClient?: ListingsClient;
-  private api: ListingsApi;
+  private api?: ListingsApi;
 
   constructor(project_id: string) {
     super();
     this.project_id = project_id;
-    this.api = createListingsApiClient({
-      project_id,
-      client: webapp_client.conat_client.conat(),
-    });
     this.init();
   }
 
@@ -51,9 +47,17 @@ export class Listings extends EventEmitter {
     const MAX_DELAY_MS = 15000;
     while (this.state != "closed") {
       try {
+        const client = await webapp_client.conat_client.projectConat({
+          project_id: this.project_id,
+          caller: "Listings.createClient",
+        });
+        this.api = createListingsApiClient({
+          project_id: this.project_id,
+          client,
+        });
         this.listingsClient = await listingsClient({
           project_id: this.project_id,
-          client: webapp_client.conat_client.conat(),
+          client,
         });
         // success!
         return;
@@ -149,6 +153,9 @@ export class Listings extends EventEmitter {
         return;
       }
     }
+    if (this.api == null) {
+      throw Error("listings api not ready");
+    }
     return await this.api.getListing({ path, hidden: true });
   };
 
@@ -221,6 +228,12 @@ export class Listings extends EventEmitter {
       ) {
         throw Error("project not running");
       }
+    }
+    if (this.api == null) {
+      await this.init();
+    }
+    if (this.api == null) {
+      throw Error("listings api not ready");
     }
     return await this.api.getListing({ path, hidden: true });
   };

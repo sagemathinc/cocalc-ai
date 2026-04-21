@@ -502,8 +502,9 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   updateSnapshotVersions = async (): Promise<List<string>> => {
     try {
       const archiveDocpath = this.archiveDocpath();
-      const fs = webapp_client.conat_client.conat().fs({
+      const fs = await webapp_client.conat_client.projectFs({
         project_id: this.project_id,
+        caller: "TimeTravelActions.updateSnapshotVersions",
       });
       const { tail } = path_split(this.docpath);
       const docDepth = archiveDocpath.split("/").filter(Boolean).length + 1;

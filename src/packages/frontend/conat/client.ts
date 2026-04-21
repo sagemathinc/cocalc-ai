@@ -41,6 +41,7 @@ import Cookies from "js-cookie";
 import { ACCOUNT_ID_COOKIE } from "@cocalc/frontend/client/client";
 import { info as refCacheInfo } from "@cocalc/util/refcache";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
+import type { FilesystemClient } from "@cocalc/conat/files/fs";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   clearStoredControlPlaneOrigin,
@@ -2474,10 +2475,25 @@ export class ConatClient extends EventEmitter {
     return await dko<T>({ ...opts, client: opts.client ?? this.conat() });
   };
 
+  projectFs = async ({
+    project_id,
+    caller = "projectFs",
+  }: {
+    project_id: string;
+    caller?: string;
+  }): Promise<FilesystemClient> => {
+    const client = await this.projectConat({ project_id, caller });
+    return client.fs({ project_id });
+  };
+
   listings = async (opts: { project_id: string }) => {
+    const client = await this.projectConat({
+      project_id: opts.project_id,
+      caller: "listings",
+    });
     return await listingsClient({
       project_id: opts.project_id,
-      client: this.conat(),
+      client,
     });
   };
 

@@ -234,7 +234,9 @@ Remaining audit targets:
 - [x] notebook kernel / session / exec paths
 - [x] app-server interactive reads / status paths
 - [x] any remaining user-hot-path `hub.projects.*` runtime reads
-- [ ] any remaining frontend code that can silently fall back to the default
+- [x] convert browser filesystem/listing/storage/project-info wrappers away
+      from implicit synchronous `routeSubject(...)` fallback
+- [ ] audit any remaining frontend code that can silently fall back to the default
       global Conat client instead of an explicit routed client
 
 Notes:
@@ -272,9 +274,15 @@ Notes:
 - a partial browser routing fix now makes `projectApi(...)` and
   `projectWebsocketApi(...)` explicitly warm project-host routing before use,
   and makes `primus(...)`, `terminalClient(...)`, and `routeSubject(...)` warn
-  when they must fall back to the default hub client; the remaining open work
-  is converting lower-level filesystem/listing/storage/project-info wrappers
-  away from implicit synchronous `routeSubject(...)` fallback
+  when they must fall back to the default hub client
+- browser listing, project filesystem, storage/disk-usage, snapshot/backup
+  archive reads, project-info, and project-status paths now explicitly warm
+  project-host routing before constructing their low-level Conat clients; this
+  closes the main known cold-host-info fallback in the user-visible runtime UI
+- the remaining frontend fallback audit is now narrower: generic syncdoc/chat/
+  Jupyter-specific clients and old action-level convenience wrappers still need
+  code review, but the validated storage/listing/info matrix is no longer
+  dependent on synchronous `routeSubject(...)` cache state
 
 ### 3. Finish Project-Host Runtime Productionization
 

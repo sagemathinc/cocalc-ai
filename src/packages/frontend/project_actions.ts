@@ -3682,8 +3682,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
   private initProjectStatus = async () => {
     try {
+      const client = await webapp_client.conat_client.projectConat({
+        project_id: this.project_id,
+        caller: "ProjectActions.initProjectStatus",
+      });
       this.projectStatusSub = await getProjectStatus({
-        client: webapp_client.conat_client.conat(),
+        client,
         project_id: this.project_id,
       });
     } catch (err) {

@@ -164,6 +164,28 @@ This keeps shared project metadata helpers reusable across frontend, backend,
 CLI, and future bay-aware code without letting them silently attach to an
 ambient singleton.
 
+## Completed In The Browser Project Runtime Routing Pass
+
+### Frontend project-host wrappers
+
+- added async project-host routing helpers to
+  [frontend/conat/client.ts](/home/user/cocalc-ai/src/packages/frontend/conat/client.ts)
+  for project filesystem and listing clients
+- converted browser listing, storage/disk-usage, snapshot/backup archive reads,
+  project-info hooks, and project-status subscription setup to explicitly warm
+  project-host routing before opening their Conat client
+- converted the shared browser `useFs(...)` hook to return `null` while the
+  routed project filesystem client is being initialized, so listing/explorer UI
+  waits instead of synchronously constructing a filesystem client against the
+  default hub connection
+- updated find/snapshot/unknown-file/time-travel/workspace helper paths that
+  opened project filesystem clients directly
+
+This reduces the remaining risk from synchronous `routeSubject(...)` fallback:
+these user-visible browser paths now ask for the project-host client first, so
+they do not depend on host routing metadata already being cached at the instant
+the low-level filesystem/listing/storage call is constructed.
+
 ## Completed In The Generic Service Pass
 
 ### `conat/service/service.ts`
