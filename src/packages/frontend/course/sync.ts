@@ -31,13 +31,19 @@ export function create_sync_db(
   const path = store.get("course_filename");
   actions.setState({ loading: true });
 
-  const syncdb = webapp_client.conat_client.conat().sync.db({
-    project_id,
-    path,
-    primary_keys: ["table", "handout_id", "student_id", "assignment_id"],
-    string_cols: ["note", "description", "title", "email_invite"],
-    change_throttle: 500, // helps when doing a lot of assign/collect, etc.
-  });
+  const syncdb = webapp_client.conat_client
+    .projectConatSync({
+      project_id,
+      caller: "course.syncdb",
+      requireRouting: true,
+    })
+    .sync.db({
+      project_id,
+      path,
+      primary_keys: ["table", "handout_id", "student_id", "assignment_id"],
+      string_cols: ["note", "description", "title", "email_invite"],
+      change_throttle: 500, // helps when doing a lot of assign/collect, etc.
+    });
 
   syncdb.once("error", (err) => {
     if (!actions.is_closed()) {

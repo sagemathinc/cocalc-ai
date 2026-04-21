@@ -5,9 +5,13 @@ import { requireAbsolutePath } from "./common-utils";
 type BrowserSyncDocType = "string" | "db" | "immer";
 
 export function createManagedSyncDocLeases({
-  conat,
+  projectConat,
 }: {
-  conat: () => ConatClient;
+  projectConat: (opts: {
+    project_id: string;
+    caller: string;
+    requireRouting?: boolean;
+  }) => Promise<ConatClient>;
 }): {
   acquireManagedSyncDoc: ({
     project_id,
@@ -90,14 +94,16 @@ export function createManagedSyncDocLeases({
   };
 
   const getSyncDocTypeForPath = async ({
+    client,
     project_id,
     path,
   }: {
+    client: ConatClient;
     project_id: string;
     path: string;
   }): Promise<{ type: BrowserSyncDocType; opts?: Record<string, unknown> }> => {
     const string_id = client_db.sha1(project_id, path);
-    const syncstrings = await conat().sync.synctable({
+    const syncstrings = await client.sync.synctable({
       query: {
         syncstrings: [{ project_id, path, string_id, doctype: null }],
       },
@@ -129,7 +135,13 @@ export function createManagedSyncDocLeases({
     path: string;
   }): Promise<any> => {
     const cleanPath = requireAbsolutePath(path);
+    const client = await projectConat({
+      project_id,
+      caller: "browser-session.syncdoc",
+      requireRouting: true,
+    });
     const { type, opts } = await getSyncDocTypeForPath({
+      client,
       project_id,
       path: cleanPath,
     });
@@ -146,7 +158,7 @@ export function createManagedSyncDocLeases({
     const string_cols = toStringArray(
       (opts as any)?.string_cols ?? (opts as any)?.stringCols,
     );
-    const sync = conat().sync;
+    const sync = client.sync;
     const syncdoc =
       type === "immer" && primary_keys.length > 0
         ? sync.immer({ ...commonOpts, primary_keys, string_cols })

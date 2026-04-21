@@ -314,6 +314,7 @@ export class ConatClient extends EventEmitter {
       client: this.client,
       hub: this.hub,
       conat: this.conat,
+      projectConat: this.projectConat,
     });
     this.reconnectCoordinator = new ReconnectCoordinator({
       canReconnect: () =>
@@ -2104,6 +2105,34 @@ export class ConatClient extends EventEmitter {
       throw Error(
         `unable to route '${caller}' to project-host for project ${project_id}; host routing info unavailable`,
       );
+    }
+    return this.conat();
+  };
+
+  projectConatSync = ({
+    project_id,
+    caller = "projectConatSync",
+    requireRouting = false,
+  }: {
+    project_id: string;
+    caller?: string;
+    requireRouting?: boolean;
+  }) => {
+    if (!isValidUUID(project_id)) {
+      throw Error(`project_id = '${project_id}' must be a valid uuid`);
+    }
+    const routing = this.getProjectRoutingInfo(project_id);
+    if (routing) {
+      return this.getOrCreateRoutedHubClient({ ...routing, project_id });
+    }
+    const host_id = this.getProjectHostId(project_id);
+    if (host_id) {
+      this.noteProjectRuntimeHubFallback({ project_id, caller });
+      if (requireRouting) {
+        throw Error(
+          `unable to route '${caller}' to project-host for project ${project_id}; host routing info unavailable`,
+        );
+      }
     }
     return this.conat();
   };

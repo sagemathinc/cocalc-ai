@@ -143,14 +143,20 @@ export function createBrowserSessionAutomation({
   client,
   hub,
   conat,
+  projectConat,
 }: {
   client: WebappClient;
   hub: HubApi;
   conat: () => ConatClient;
+  projectConat: (opts: {
+    project_id: string;
+    caller: string;
+    requireRouting?: boolean;
+  }) => Promise<ConatClient>;
 }): BrowserSessionAutomation {
   let service: ConatService | undefined;
   const runtimeObservability = createBrowserRuntimeObservability();
-  const syncDocLeases = createManagedSyncDocLeases({ conat });
+  const syncDocLeases = createManagedSyncDocLeases({ projectConat });
   const extensionsRuntime = new BrowserExtensionsRuntime();
   let staleHeartbeatProbe: Promise<void> | undefined;
   const heartbeatController = createBrowserSessionHeartbeat({

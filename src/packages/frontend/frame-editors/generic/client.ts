@@ -140,7 +140,7 @@ export function syncstring(opts: SyncstringOpts): any {
     delete opts.fake;
   }
   opts1.id = schema.client_db.sha1(opts.project_id, opts.path);
-  return webapp_client.conat_client.conat().sync.string(opts1);
+  return projectSyncConat(opts.project_id, "syncstring").sync.string(opts1);
 }
 
 import { DataServer } from "@cocalc/sync/editor/generic/sync-doc";
@@ -158,7 +158,7 @@ interface SyncstringOpts2 {
 }
 
 export function syncstring2(opts: SyncstringOpts2): SyncString {
-  return webapp_client.conat_client.conat().sync.string({
+  return projectSyncConat(opts.project_id, "syncstring2").sync.string({
     ...opts,
   });
 }
@@ -178,7 +178,7 @@ export interface SyncDBOpts {
 }
 
 export function syncdb(opts: SyncDBOpts): any {
-  return webapp_client.conat_client.conat().sync.db({
+  return projectSyncConat(opts.project_id, "syncdb").sync.db({
     ...opts,
   });
 }
@@ -192,7 +192,7 @@ export function syncdb2(opts: SyncDBOpts): SyncDB {
   }
   const opts1: any = opts;
   opts1.client = webapp_client;
-  return webapp_client.conat_client.conat().sync.db(opts1);
+  return projectSyncConat(opts.project_id, "syncdb2").sync.db(opts1);
 }
 
 export type ImmerDBOpts = SyncDBOpts;
@@ -203,7 +203,15 @@ export function immerdb2(opts: ImmerDBOpts): ImmerDB {
   }
   const opts1: any = opts;
   opts1.client = webapp_client;
-  return webapp_client.conat_client.conat().sync.immer(opts1);
+  return projectSyncConat(opts.project_id, "immerdb2").sync.immer(opts1);
+}
+
+function projectSyncConat(project_id: string, caller: string) {
+  return webapp_client.conat_client.projectConatSync({
+    project_id,
+    caller,
+    requireRouting: true,
+  });
 }
 
 interface QueryOpts {

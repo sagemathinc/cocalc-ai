@@ -108,7 +108,11 @@ export function initChat(
     redux.getProjectActions(project_id)?.setNotDeleted(path);
   }
 
-  const sync = webapp_client.conat_client.conat().sync;
+  const sync = webapp_client.conat_client.projectConatSync({
+    project_id,
+    caller: "chat.syncdb",
+    requireRouting: true,
+  }).sync;
   const syncdb = sync.immer({
     project_id,
     path,
