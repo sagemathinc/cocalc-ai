@@ -226,6 +226,36 @@ clients.
    should become explicit before multi-bay routing
 2. keep server-side bridge/control paths ahead of broader frontend ergonomics
 
+## Completed In The Browser Project Routing Pass
+
+### `frontend/conat/client.ts`
+
+- added `projectConat(...)` as the browser-local helper that asynchronously
+  warms project-host routing before returning a project-scoped Conat client
+- `projectApi(...)` now uses `projectConat(...)` for each RPC, so cold
+  `host_info` is resolved before the first project API request instead of
+  sending the request through the default hub/home-bay client
+- `projectWebsocketApi(...)` now uses the same project-scoped routing helper
+- `primus(...)` and `terminalClient(...)` now explicitly use cached
+  project-host routing when it is available
+- `routeSubject(...)`, `primus(...)`, and `terminalClient(...)` now emit a
+  one-time warning when a project has a host id but the browser must fall back
+  to the default hub client because project-host routing is not yet available
+- regression coverage now exercises a cold-host-info `projectApi(...)` request
+  and verifies that the project RPC goes through the routed project-host client,
+  not the hub client
+
+This closes the main user-hot runtime path that could send an initial project
+API request through the wrong bay before project-host routing metadata was
+cached.
+
+Remaining browser-side work:
+
+- filesystem/listing/storage/project-info helpers that pass
+  `webapp_client.conat_client.conat()` still rely on synchronous
+  `routeSubject(...)`; they now warn on fallback, but they are not fully
+  converted to an async `projectConat(...)` style wrapper
+
 ## Completed In The Filesystem And LLM Pass
 
 ### `conat/files/fs.ts`

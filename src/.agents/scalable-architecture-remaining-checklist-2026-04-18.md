@@ -269,6 +269,12 @@ Notes:
   project-subject calls route directly to the project-host only when project
   host routing info is already cached; if that info is cold, the default
   hub/home-bay client is still used implicitly
+- a partial browser routing fix now makes `projectApi(...)` and
+  `projectWebsocketApi(...)` explicitly warm project-host routing before use,
+  and makes `primus(...)`, `terminalClient(...)`, and `routeSubject(...)` warn
+  when they must fall back to the default hub client; the remaining open work
+  is converting lower-level filesystem/listing/storage/project-info wrappers
+  away from implicit synchronous `routeSubject(...)` fallback
 
 ### 3. Finish Project-Host Runtime Productionization
 

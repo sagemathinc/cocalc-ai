@@ -11,7 +11,7 @@ import { projectSubject } from "@cocalc/conat/names";
 import { parseQueryWithOptions } from "@cocalc/sync/table/util";
 import { type HubApi, initHubApi } from "@cocalc/conat/hub/api";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
-import { type ProjectApi, projectApiClient } from "@cocalc/conat/project/api";
+import { initProjectApi, type ProjectApi } from "@cocalc/conat/project/api";
 import { isValidUUID } from "@cocalc/util/misc";
 import { handleErrorMessage } from "@cocalc/conat/util";
 import { PubSub } from "@cocalc/conat/sync/pubsub";
@@ -222,6 +222,7 @@ export class ConatClient extends EventEmitter {
   private projectHostBrowserSessions: {
     [host_id: string]: ProjectHostBrowserSessionState;
   } = {};
+  private projectRuntimeFallbackWarnings = new Set<string>();
   private routedHostRecoveryTimer?: ReturnType<typeof setTimeout>;
   private browserSessionAutomation: BrowserSessionAutomation;
   private reconnectCoordinator: ReconnectCoordinator;
@@ -577,6 +578,10 @@ export class ConatClient extends EventEmitter {
           }
           const routing = this.getProjectRoutingInfo(project_id);
           if (!routing) {
+            this.noteProjectRuntimeHubFallback({
+              project_id,
+              caller: "routeSubject",
+            });
             return;
           }
           return {
@@ -775,6 +780,36 @@ export class ConatClient extends EventEmitter {
     }
     return this.buildHostRoutingInfo(host_id, hostInfo);
   }
+
+  private getProjectHostId(project_id: string): string | undefined {
+    const project_map = redux.getStore("projects")?.get("project_map");
+    const host_id = project_map?.getIn([project_id, "host_id"]) as
+      | string
+      | undefined;
+    return host_id || undefined;
+  }
+
+  private noteProjectRuntimeHubFallback = ({
+    project_id,
+    caller,
+  }: {
+    project_id: string;
+    caller: string;
+  }) => {
+    const host_id = this.getProjectHostId(project_id);
+    if (!host_id) {
+      return;
+    }
+    const key = `${project_id}:${caller}`;
+    if (this.projectRuntimeFallbackWarnings.has(key)) {
+      return;
+    }
+    this.projectRuntimeFallbackWarnings.add(key);
+    console.warn(
+      "project runtime using default hub client before project-host route is available",
+      { project_id, host_id, caller },
+    );
+  };
 
   private ensureProjectRoutingInfo = async (
     project_id: string,
@@ -2020,7 +2055,10 @@ export class ConatClient extends EventEmitter {
     mesg,
     timeout = DEFAULT_TIMEOUT,
   }) => {
-    const cn = this.conat();
+    const cn = await this.projectConat({
+      project_id,
+      caller: "projectWebsocketApi",
+    });
     const subject = projectSubject({
       project_id,
       service: "browser-api",
@@ -2030,6 +2068,31 @@ export class ConatClient extends EventEmitter {
       waitForInterest: true,
     });
     return resp.data;
+  };
+
+  projectConat = async ({
+    project_id,
+    caller = "projectConat",
+    requireRouting = false,
+  }: {
+    project_id: string;
+    caller?: string;
+    requireRouting?: boolean;
+  }) => {
+    if (!isValidUUID(project_id)) {
+      throw Error(`project_id = '${project_id}' must be a valid uuid`);
+    }
+    const routing = await this.ensureProjectRoutingInfo(project_id);
+    if (routing) {
+      return this.getOrCreateRoutedHubClient({ ...routing, project_id });
+    }
+    this.noteProjectRuntimeHubFallback({ project_id, caller });
+    if (requireRouting) {
+      throw Error(
+        `unable to route '${caller}' to project-host for project ${project_id}; host routing info unavailable`,
+      );
+    }
+    return this.conat();
   };
 
   private callHub = async ({
@@ -2190,10 +2253,26 @@ export class ConatClient extends EventEmitter {
     if (!isValidUUID(project_id)) {
       throw Error(`project_id = '${project_id}' must be a valid uuid`);
     }
-    return projectApiClient({
-      project_id,
-      timeout,
-      client: this.conat(),
+    const subject = projectSubject({ project_id, service: "api" });
+    const getProjectClient = (caller: string) =>
+      this.projectConat({ project_id, caller });
+    return initProjectApi({
+      isReady: async () =>
+        await (await getProjectClient("projectApi.isReady")).interest(subject),
+      waitUntilReady: async ({ timeout }: { timeout?: number } = {}) => {
+        await (
+          await getProjectClient("projectApi.waitUntilReady")
+        ).waitForInterest(subject, { timeout });
+      },
+      callProjectApi: async ({ name, args }) => {
+        const client = await getProjectClient(`projectApi.${name}`);
+        const resp = await client.request(
+          subject,
+          { name, args },
+          { timeout, waitForInterest: true },
+        );
+        return resp.data;
+      },
     });
   };
 
@@ -2280,7 +2359,14 @@ export class ConatClient extends EventEmitter {
     if (channel) {
       subject += "." + channel;
     }
-    return this.conat().socket.connect(subject, {
+    const routing = this.getProjectRoutingInfo(project_id);
+    if (!routing) {
+      this.noteProjectRuntimeHubFallback({ project_id, caller: "primus" });
+    }
+    const client = routing
+      ? this.getOrCreateRoutedHubClient({ ...routing, project_id })
+      : this.conat();
+    return client.socket.connect(subject, {
       desc: `primus-${channel ?? ""}`,
     });
   };
@@ -2445,8 +2531,20 @@ export class ConatClient extends EventEmitter {
     getSize?: () => undefined | { rows: number; cols: number };
     reconnection?: boolean;
   }) => {
+    const routing = this.getProjectRoutingInfo(opts.project_id);
+    if (!routing) {
+      this.noteProjectRuntimeHubFallback({
+        project_id: opts.project_id,
+        caller: "terminalClient",
+      });
+    }
     return terminalClient({
-      client: this.conat(),
+      client: routing
+        ? this.getOrCreateRoutedHubClient({
+            ...routing,
+            project_id: opts.project_id,
+          })
+        : this.conat(),
       ...opts,
     });
   };
