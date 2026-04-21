@@ -184,6 +184,117 @@ describe("ReconnectCoordinator", () => {
     }
   });
 
+  it("reconnects multiple foreground resources in parallel", async () => {
+    const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
+    const firstReconnect = jest.fn(
+      () =>
+        new Promise<void>(() => {
+          // Keep this reconnect in flight so the test can observe concurrency.
+        }),
+    );
+    const secondReconnect = jest.fn(
+      () =>
+        new Promise<void>(() => {
+          // Keep this reconnect in flight so the test can observe concurrency.
+        }),
+    );
+    const thirdReconnect = jest.fn(async () => {});
+    const coordinator = new ReconnectCoordinator({
+      canReconnect: () => true,
+      connect: jest.fn(async () => {}),
+      initialConcurrentResourceReconnects: 2,
+      isConnected: () => true,
+      maxConcurrentResourceReconnects: 2,
+    });
+    const first = coordinator.registerResource({
+      isConnected: () => false,
+      priority: () => "foreground",
+      reconnect: firstReconnect,
+    });
+    const second = coordinator.registerResource({
+      isConnected: () => false,
+      priority: () => "foreground",
+      reconnect: secondReconnect,
+    });
+    const third = coordinator.registerResource({
+      isConnected: () => false,
+      priority: () => "foreground",
+      reconnect: thirdReconnect,
+    });
+
+    try {
+      first.requestReconnect({ reason: "socket_closed" });
+      second.requestReconnect({ reason: "socket_closed" });
+      third.requestReconnect({ reason: "socket_closed" });
+
+      await jest.advanceTimersByTimeAsync(999);
+      expect(firstReconnect).toHaveBeenCalledTimes(0);
+      expect(secondReconnect).toHaveBeenCalledTimes(0);
+      expect(thirdReconnect).toHaveBeenCalledTimes(0);
+
+      await jest.advanceTimersByTimeAsync(1);
+      expect(firstReconnect).toHaveBeenCalledTimes(1);
+      expect(secondReconnect).toHaveBeenCalledTimes(1);
+      expect(thirdReconnect).toHaveBeenCalledTimes(0);
+    } finally {
+      first.close();
+      second.close();
+      third.close();
+      coordinator.close();
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("does not let a hung resource reconnect block the queue forever", async () => {
+    const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
+    const hungReconnect = jest.fn(
+      () =>
+        new Promise<void>(() => {
+          // Simulate a document reconnect promise waiting on an event that never fires.
+        }),
+    );
+    const nextReconnect = jest.fn(async () => {});
+    const coordinator = new ReconnectCoordinator({
+      canReconnect: () => true,
+      connect: jest.fn(async () => {}),
+      initialConcurrentResourceReconnects: 1,
+      isConnected: () => true,
+      maxConcurrentResourceReconnects: 1,
+      resourceReconnectTimeoutMs: 100,
+    });
+    const hung = coordinator.registerResource({
+      isConnected: () => false,
+      priority: () => "foreground",
+      reconnect: hungReconnect,
+    });
+    const next = coordinator.registerResource({
+      isConnected: () => false,
+      priority: () => "foreground",
+      reconnect: nextReconnect,
+    });
+
+    try {
+      hung.requestReconnect({ reason: "socket_closed" });
+      next.requestReconnect({ reason: "socket_closed" });
+
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(hungReconnect).toHaveBeenCalledTimes(1);
+      expect(nextReconnect).toHaveBeenCalledTimes(0);
+
+      await jest.advanceTimersByTimeAsync(99);
+      expect(nextReconnect).toHaveBeenCalledTimes(0);
+
+      await jest.advanceTimersByTimeAsync(1);
+      await jest.runOnlyPendingTimersAsync();
+      expect(nextReconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      hung.close();
+      next.close();
+      coordinator.close();
+      randomSpy.mockRestore();
+    }
+  });
+
   it("caps resource priority when the tab itself is in the background", async () => {
     const randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.5);
     Object.defineProperty(document, "visibilityState", {
