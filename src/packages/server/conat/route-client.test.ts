@@ -360,6 +360,43 @@ describe("server/conat route-client", () => {
     expect(authValue).toEqual({ bearer: "remote-account-token" });
   });
 
+  it("asks the owning bay to issue hub-scoped auth for remote hosts", async () => {
+    const central = createFakeClient();
+    const routed = createFakeClient();
+    let authValue: any;
+    let authPromise: Promise<void> | undefined;
+    connectMock
+      .mockImplementationOnce(() => central)
+      .mockImplementationOnce((opts) => {
+        authPromise = Promise.resolve(
+          opts.auth((value) => {
+            authValue = value;
+          }),
+        );
+        return routed;
+      });
+    resolveHostBayAcrossClusterMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 1,
+    }));
+    routeProjectSubjectMock.mockReturnValue({
+      host_id: "host-remote",
+      address: "https://host-remote.example",
+    });
+
+    const { conatWithProjectRouting } = await import("./route-client");
+    const client = conatWithProjectRouting() as any;
+    client.routeSubject("file-server.12345678-1234-1234-1234-123456789012.api");
+
+    await authPromise;
+    expect(projectHostAuthTokenIssueMock).toHaveBeenCalledWith({
+      actor: "hub",
+      host_id: "host-remote",
+    });
+    expect(issueProjectHostAuthTokenMock).not.toHaveBeenCalled();
+    expect(authValue).toEqual({ bearer: "remote-account-token" });
+  });
+
   it("allows explicit host control clients for hosts resolved on another bay", async () => {
     const central = createFakeClient();
     connectMock.mockImplementationOnce(() => central);
