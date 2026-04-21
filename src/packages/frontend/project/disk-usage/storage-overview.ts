@@ -6,8 +6,12 @@ import {
 } from "@cocalc/conat/project/storage-info";
 
 const storageOverviewCache = new TTLCache<string, ProjectStorageOverview>({
-  ttl: 1000 * 30,
+  ttl: 3 * 60 * 1000,
 });
+const storageOverviewInflight = new Map<
+  string,
+  Promise<ProjectStorageOverview>
+>();
 
 export function key({
   project_id,
@@ -44,12 +48,22 @@ export default async function getStorageOverview({
   if (cache && storageOverviewCache.has(k)) {
     return storageOverviewCache.get(k)!;
   }
-  const overview = await getProjectStorageOverview({
+  const inflight = storageOverviewInflight.get(k);
+  if (inflight) return await inflight;
+  const request = getProjectStorageOverview({
     client: webapp_client.conat_client.conat(),
     project_id,
     home,
     force_sample,
   });
-  storageOverviewCache.set(k, overview);
-  return overview;
+  storageOverviewInflight.set(k, request);
+  try {
+    const overview = await request;
+    storageOverviewCache.set(k, overview);
+    return overview;
+  } finally {
+    if (storageOverviewInflight.get(k) === request) {
+      storageOverviewInflight.delete(k);
+    }
+  }
 }

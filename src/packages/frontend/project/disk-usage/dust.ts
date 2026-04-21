@@ -6,8 +6,9 @@ import {
 import TTLCache from "@isaacs/ttlcache";
 
 const dustCache = new TTLCache<string, ProjectStorageBreakdown>({
-  ttl: 1000 * 30,
+  ttl: 3 * 60 * 1000,
 });
+const dustInflight = new Map<string, Promise<ProjectStorageBreakdown>>();
 
 export function key({
   project_id,
@@ -32,11 +33,21 @@ export default async function dust({
   if (cache && dustCache.has(k)) {
     return dustCache.get(k)!;
   }
-  const v = await getProjectStorageBreakdown({
+  const inflight = dustInflight.get(k);
+  if (inflight) return await inflight;
+  const request = getProjectStorageBreakdown({
     client: webapp_client.conat_client.conat(),
     project_id,
     path,
   });
-  dustCache.set(k, v);
-  return v;
+  dustInflight.set(k, request);
+  try {
+    const v = await request;
+    dustCache.set(k, v);
+    return v;
+  } finally {
+    if (dustInflight.get(k) === request) {
+      dustInflight.delete(k);
+    }
+  }
 }

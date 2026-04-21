@@ -49,8 +49,8 @@ describe("resolveBootstrapImageSizeGb", () => {
 });
 
 describe("resolveBootstrapRootReserveGb", () => {
-  it("defaults to a 15 GiB root reserve", () => {
-    expect(resolveBootstrapRootReserveGb()).toBe("15");
+  it("defaults to a 25 GiB root reserve", () => {
+    expect(resolveBootstrapRootReserveGb()).toBe("25");
   });
 
   it("accepts explicit positive overrides", () => {

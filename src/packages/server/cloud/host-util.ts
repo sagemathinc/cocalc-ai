@@ -303,9 +303,8 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
   let sourceImageProject: string | undefined;
   let platform = machine.metadata?.platform;
   const sanitizedMetadata = { ...(machine.metadata ?? {}) };
-  const hasGpu = !!gpu;
   if (sanitizedMetadata.boot_disk_gb == null) {
-    sanitizedMetadata.boot_disk_gb = hasGpu ? 20 : 10;
+    sanitizedMetadata.boot_disk_gb = 25;
   }
   if (
     providerId === "nebius" &&
