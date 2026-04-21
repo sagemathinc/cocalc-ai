@@ -18,6 +18,8 @@ import {
   ensureAutomaticHostArtifactDeploymentsReconcile,
   ensureAutomaticHostRuntimeDeploymentsReconcile,
 } from "@cocalc/server/conat/api/hosts";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { notifyProjectHostUpdate } from "./route-project";
 
 const logger = getLogger("server:conat:host-registry");
@@ -31,6 +33,95 @@ export interface HostRegistration extends ProjectHostRecord {
 function getHostSessionId(metadata: any): string | undefined {
   const value = `${metadata?.host_session_id ?? ""}`.trim();
   return value || undefined;
+}
+
+async function markStaleRunningProjectsOpened({
+  host_id,
+  previous_session_id,
+  next_session_id,
+  source,
+}: {
+  host_id: string;
+  previous_session_id?: string;
+  next_session_id?: string;
+  source: "register" | "heartbeat";
+}): Promise<void> {
+  if (
+    !previous_session_id ||
+    !next_session_id ||
+    previous_session_id === next_session_id
+  ) {
+    return;
+  }
+  const defaultBayId = getConfiguredBayId();
+  const state = {
+    state: "opened",
+    time: new Date().toISOString(),
+    reason: "host_session_replaced",
+    previous_host_session_id: previous_session_id,
+    host_session_id: next_session_id,
+  };
+  let projectIds: string[] = [];
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query<{ project_id: string }>(
+      `UPDATE projects
+          SET state=$2::jsonb
+        WHERE host_id=$1
+          AND COALESCE(state->>'state', '') IN ('running', 'starting', 'restarting')
+        RETURNING project_id`,
+      [host_id, state],
+    );
+    projectIds = rows.map((row) => row.project_id).filter(Boolean);
+    for (const project_id of projectIds) {
+      await appendProjectOutboxEventForProject({
+        db: client,
+        event_type: "project.state_changed",
+        project_id,
+        default_bay_id: defaultBayId,
+      });
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.warn("failed to mark stale host-session projects opened", {
+      host_id,
+      previous_session_id,
+      next_session_id,
+      source,
+      err: `${err}`,
+    });
+    return;
+  } finally {
+    client.release();
+  }
+  if (projectIds.length === 0) {
+    return;
+  }
+  logger.info("marked stale host-session projects opened", {
+    host_id,
+    previous_session_id,
+    next_session_id,
+    source,
+    count: projectIds.length,
+  });
+  const settled = await Promise.allSettled(
+    projectIds.map((project_id) =>
+      publishProjectAccountFeedEventsBestEffort({
+        project_id,
+        default_bay_id: defaultBayId,
+      }),
+    ),
+  );
+  const failed = settled.filter((result) => result.status === "rejected");
+  if (failed.length > 0) {
+    logger.warn("failed to publish some stale host-session project updates", {
+      host_id,
+      source,
+      failed: failed.length,
+    });
+  }
 }
 
 function getPendingAutomaticConvergenceRetry(metadata: any): {
@@ -281,6 +372,12 @@ export async function initHostRegistryService() {
           last_seen: new Date(),
           host_session_id: nextSessionId,
         });
+        await markStaleRunningProjectsOpened({
+          host_id: info.id,
+          previous_session_id: previousSessionId,
+          next_session_id: nextSessionId,
+          source: "register",
+        });
         if (previousRows[0] && previousSessionId !== nextSessionId) {
           await notifyProjectHostUpdate({ host_id: info.id });
         }
@@ -310,12 +407,24 @@ export async function initHostRegistryService() {
         const sanitized = isLocalSelfHost
           ? { ...info, public_url: undefined, internal_url: undefined }
           : info;
+        const { rows: previousRows } = await pool().query<{ metadata: any }>(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+          [info.id],
+        );
+        const previousSessionId = getHostSessionId(previousRows[0]?.metadata);
+        const nextSessionId = getHostSessionId(sanitized.metadata);
         await upsertProjectHost({
           ...sanitized,
           bay_id: getConfiguredBayId(),
           status: "running",
           last_seen: new Date(),
-          host_session_id: getHostSessionId(sanitized.metadata),
+          host_session_id: nextSessionId,
+        });
+        await markStaleRunningProjectsOpened({
+          host_id: info.id,
+          previous_session_id: previousSessionId,
+          next_session_id: nextSessionId,
+          source: "heartbeat",
         });
         await attemptAutomaticConvergence({
           host_id: info.id,

@@ -1556,6 +1556,7 @@ export function ChatRoomThreadPanel({
               }}
               logEvents={selectedRunningCodexLog.events}
               deleteLog={selectedRunningCodexLog.deleteLog}
+              activityLiveStatus={selectedRunningCodexLog.liveStatus}
               notifyOnTurnFinish={notifyOnTurnFinish}
               onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
               interruptRequested={interruptRequested}

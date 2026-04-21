@@ -4,6 +4,7 @@
  */
 
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { DEFAULT_SEED_BAY_ID } from "@cocalc/util/bay";
 
 export type ClusterRole = "standalone" | "seed" | "attached";
 
@@ -36,7 +37,9 @@ export function getConfiguredClusterRole(): ClusterRole {
 export function getConfiguredClusterSeedBayId(): string {
   return (
     configuredEnv("COCALC_CLUSTER_SEED_BAY_ID") ??
-    (getConfiguredClusterRole() === "attached" ? "bay-0" : getConfiguredBayId())
+    (getConfiguredClusterRole() === "attached"
+      ? DEFAULT_SEED_BAY_ID
+      : getConfiguredBayId())
   );
 }
 
@@ -49,7 +52,15 @@ export function getClusterConfig(): ClusterConfig {
   };
 }
 
-export function getConfiguredClusterBayIds(): string[] {
+/**
+ * Static configured bay ids.
+ *
+ * Do not use this for request routing, ownership lookup, or hot-path fanout.
+ * Prefer project/host/account directory lookups. Use this only for static
+ * configuration, startup validation, low-frequency admin aggregation, or
+ * bounded maintenance tasks where touching every bay is explicitly intended.
+ */
+export function getConfiguredClusterBayIdsForStaticEnumerationOnly(): string[] {
   const fromEnv =
     `${process.env.COCALC_CLUSTER_BAY_IDS ?? process.env.HUB_CLUSTER_BAY_IDS ?? ""}`
       .split(",")

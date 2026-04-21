@@ -28,6 +28,52 @@ export function registerAccountCommand(
       });
     });
 
+  account
+    .command("delete [account]")
+    .description(
+      "delete an account (defaults to the signed-in account; admins can delete another account)",
+    )
+    .option(
+      "--only-if-tag <tag>",
+      "refuse deletion unless the target account has this tag",
+    )
+    .option("-y, --yes", "skip interactive safety confirmation")
+    .action(
+      async (
+        accountIdentifier: string | undefined,
+        opts: { onlyIfTag?: string; yes?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "account delete", async (ctx) => {
+          const target = accountIdentifier?.trim()
+            ? await resolveAccountByIdentifier(ctx, accountIdentifier.trim())
+            : { account_id: ctx.accountId, email_address: null, name: "" };
+          const accountId = `${target.account_id ?? ""}`.trim();
+          if (!accountId) {
+            throw new Error("unable to resolve target account");
+          }
+          if (!opts.yes) {
+            const label =
+              `${target.email_address ?? target.name ?? ""}`.trim() ||
+              accountId;
+            throw new Error(
+              `refusing to delete account '${label}' without --yes`,
+            );
+          }
+          const result = await ctx.hub.system.deleteAccount({
+            user_account_id: accountId,
+            only_if_tag: `${opts.onlyIfTag ?? ""}`.trim() || undefined,
+          });
+          return {
+            account_id: result.account_id,
+            home_bay_id: result.home_bay_id,
+            status: result.status,
+            only_if_tag: `${opts.onlyIfTag ?? ""}`.trim() || null,
+          };
+        });
+      },
+    );
+
   const accountApiKey = account
     .command("api-key")
     .description("manage account API keys");

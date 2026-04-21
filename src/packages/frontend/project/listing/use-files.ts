@@ -14,12 +14,16 @@ import { type FilesystemClient } from "@cocalc/conat/files/fs";
 import { type ConatError } from "@cocalc/conat/core/client";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import LRU from "lru-cache";
+import { sleep, withTimeout } from "@cocalc/util/async-utils";
 import type { JSONValue } from "@cocalc/util/types";
 import { dirname, join } from "path";
 
 export { Files };
 
 const DEFAULT_THROTTLE_FILE_UPDATE = 500;
+const INITIAL_LISTING_TIMEOUT_MS = 2000;
+const INITIAL_LISTING_RETRY_DELAY_MS = 250;
+const INITIAL_LISTING_MAX_ATTEMPTS = 3;
 
 // max number of subdirs to cache right after computing the listing for a dir
 // This makes it so clicking on a subdir for a listing is MUCH faster.
@@ -100,16 +104,18 @@ export default function useFiles({
         setFilesState({ path, files: null });
         return;
       }
-      let listing;
       try {
         setFilesState({ path, files: getFiles({ cacheId, path }) });
         setErrorState({ path, error: null });
-        listing = await fs.listing(path);
-        if (requestId.current !== id) {
-          listing.close?.();
-          return;
+        const snapshot = await getListingSnapshot({ fs, path });
+        if (requestId.current !== id) return;
+        const snapshotFiles = snapshot.files ?? {};
+        if (cacheId != null) {
+          cache.set(key(cacheId, path), snapshotFiles);
+          notifyCacheListeners();
+          cacheNeighbors({ fs, cacheId, path, files: snapshotFiles });
         }
-        listingRef.current = listing;
+        setFilesState({ path, files: { ...snapshotFiles } });
         setErrorState({ path, error: null });
       } catch (err) {
         if (requestId.current !== id) return;
@@ -117,25 +123,35 @@ export default function useFiles({
         setFilesState({ path, files: null });
         return;
       }
-      if (cacheId != null) {
-        cache.set(key(cacheId, path), listing.files);
-        notifyCacheListeners();
-        if (listing.files != null) {
-          cacheNeighbors({ fs, cacheId, path, files: listing.files });
-        }
-      }
-      const update = () => {
-        if (requestId.current !== id) return;
-        setFilesState({ path, files: { ...listing.files } });
-      };
-      update();
-
-      const throttledUpdate = throttle(update, throttleUpdate, {
-        leading: true,
-        trailing: true,
-      });
-      throttledUpdateRef.current = throttledUpdate;
-      listing.on("change", throttledUpdate);
+      void fs
+        .listing(path)
+        .then((listing) => {
+          if (requestId.current !== id) {
+            listing.close?.();
+            return;
+          }
+          listingRef.current = listing;
+          if (cacheId != null && listing.files != null) {
+            cache.set(key(cacheId, path), listing.files);
+            notifyCacheListeners();
+            cacheNeighbors({ fs, cacheId, path, files: listing.files });
+          }
+          const update = () => {
+            if (requestId.current !== id) return;
+            setFilesState({ path, files: { ...listing.files } });
+          };
+          update();
+          const throttledUpdate = throttle(update, throttleUpdate, {
+            leading: true,
+            trailing: true,
+          });
+          throttledUpdateRef.current = throttledUpdate;
+          listing.on("change", throttledUpdate);
+        })
+        .catch((err) => {
+          if (requestId.current !== id) return;
+          console.warn("listing watcher bootstrap failed", { path, err });
+        });
     },
     () => {
       throttledUpdateRef.current?.cancel?.();
@@ -154,6 +170,35 @@ export default function useFiles({
 
 function key(cacheId: JSONValue, path: string) {
   return JSON.stringify({ cacheId, path });
+}
+
+function isListingTimeoutError(err: unknown): boolean {
+  return `${(err as any)?.message ?? err ?? ""}`.includes("timeout");
+}
+
+async function getListingSnapshot({
+  fs,
+  path,
+}: {
+  fs: FilesystemClient;
+  path: string;
+}): Promise<{ files: Files; truncated?: boolean }> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= INITIAL_LISTING_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await withTimeout(fs.getListing(path), INITIAL_LISTING_TIMEOUT_MS);
+    } catch (err) {
+      lastError = err;
+      if (
+        !isListingTimeoutError(err) ||
+        attempt >= INITIAL_LISTING_MAX_ATTEMPTS
+      ) {
+        throw err;
+      }
+      await sleep(INITIAL_LISTING_RETRY_DELAY_MS);
+    }
+  }
+  throw lastError;
 }
 
 // anything in failed we don't try to update -- this is

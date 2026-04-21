@@ -16,6 +16,7 @@ import {
   createInterBayProjectHostAuthTokenHandler,
   createInterBayProjectControlAddressHandler,
   createInterBayProjectControlActiveOpHandler,
+  createInterBayProjectControlBackupHandler,
   createInterBayBayDirectoryHandlers,
   createInterBayDirectoryHandlers,
   createInterBayProjectControlHandler,
@@ -61,6 +62,8 @@ import {
 } from "@cocalc/server/account/project-feed";
 import {
   createClusterAccount,
+  deleteClusterAccount,
+  deleteLocalClusterAccount,
   getClusterAccountByEmail,
   getClusterAccountById,
   getClusterAccountHomeBayCounts,
@@ -78,6 +81,7 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
   handleProjectControlAddress,
   handleProjectControlActiveOperation,
+  handleProjectControlBackup,
   handleProjectControlMove,
   handleProjectControlRestart,
   handleProjectControlStart,
@@ -88,19 +92,27 @@ import {
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
 import {
+  getBackupConfigLocal,
   getProjectStartMetadataLocal,
-  listHostProjectsLocalSnapshot,
+  listHostProjects,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
+  recordProjectBackupLocal,
   resolveHostConnectionLocal,
 } from "@cocalc/server/conat/api/hosts";
+import { getSeedProjectBackupConfig } from "@cocalc/server/project-backup";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   deleteProjectedCollabInviteDirect,
   toWire as collabInviteToWire,
   upsertProjectedCollabInviteDirect,
 } from "@cocalc/server/projects/collab-invite-inbox";
-import { respondCollabInviteCanonical } from "@cocalc/server/projects/collaborators";
+import {
+  createCollabInvite,
+  listCollabInvites,
+  removeCollaborator,
+  respondCollabInviteCanonical,
+} from "@cocalc/server/projects/collaborators";
 
 const logger = getLogger("server:inter-bay:service");
 
@@ -235,6 +247,7 @@ async function startAccountDirectoryService(): Promise<void> {
       }),
     getHomeBayCounts: async () => await getClusterAccountHomeBayCounts(),
     create: async (opts) => await createClusterAccount(opts),
+    delete: async (opts) => await deleteClusterAccount(opts),
   };
   services.push(
     ...createInterBayAccountDirectoryHandlers({
@@ -249,9 +262,10 @@ async function startAccountLocalService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayAccountLocalApi = {
     create: async (opts) => await provisionLocalClusterAccount(opts),
+    delete: async (opts) => await deleteLocalClusterAccount(opts),
   };
   services.push(
-    createInterBayAccountLocalHandler({
+    ...createInterBayAccountLocalHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,
@@ -290,6 +304,7 @@ async function startProjectControlStartService(): Promise<void> {
     restart: async (opts) => {
       await handleProjectControlRestart(opts);
     },
+    backup: async (opts) => await handleProjectControlBackup(opts),
     state: async (opts) => await handleProjectControlState(opts),
     address: async (opts) => await handleProjectControlAddress(opts),
     move: async (opts) => await handleProjectControlMove(opts),
@@ -314,6 +329,12 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlRestartHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlBackupHandler({
       client,
       bay_id,
       parallel: true,
@@ -401,6 +422,20 @@ async function startProjectCollabInviteService(): Promise<void> {
     deleteInbox: async ({ invite_id }) => {
       await deleteProjectedCollabInviteDirect(invite_id);
     },
+    create: async (opts) => {
+      const result = await createCollabInvite(opts);
+      return {
+        created: result.created,
+        invite: collabInviteToWire(result.invite),
+      };
+    },
+    list: async (opts) =>
+      (await listCollabInvites(opts)).map((invite) =>
+        collabInviteToWire(invite),
+      ),
+    removeCollaborator: async (opts) => {
+      await removeCollaborator(opts);
+    },
     respond: async ({ account_id, invite_id, action, include_email }) =>
       collabInviteToWire(
         await respondCollabInviteCanonical({
@@ -447,9 +482,44 @@ async function startHostConnectionService(): Promise<void> {
       }
       return metadata;
     },
-    listHostProjects: async ({ id, risk_only, state_filter, project_state }) =>
-      await listHostProjectsLocalSnapshot({
+    getBackupConfig: async ({
+      host_id,
+      project_id,
+      host_region,
+      host_machine,
+    }) =>
+      await getBackupConfigLocal({
+        host_id,
+        project_id,
+        host_region,
+        host_machine,
+      }),
+    getSeedBackupConfig: async ({
+      project_id,
+      project_region,
+      backup_repo_id,
+    }) =>
+      await getSeedProjectBackupConfig({
+        project_id,
+        project_region,
+        backup_repo_id,
+      }),
+    recordProjectBackup: async ({ host_id, project_id, time }) =>
+      await recordProjectBackupLocal({ host_id, project_id, time }),
+    listHostProjects: async ({
+      account_id,
+      id,
+      limit,
+      cursor,
+      risk_only,
+      state_filter,
+      project_state,
+    }) =>
+      await listHostProjects({
+        account_id,
         id,
+        limit,
+        cursor,
         risk_only,
         state_filter,
         project_state,

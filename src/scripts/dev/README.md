@@ -161,6 +161,117 @@ Example:
 pnpm --dir src smoke:codex-launchpad -- --project 3a05a2be-2018-41c6-8aa7-a7e0085b4bab
 ```
 
+## Multibay browser QA
+
+```bash
+COCALC_MULTIBAY_QA_PASSWORD='<password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --base-url https://lite4b.cocalc.ai \
+  --project <project-id> \
+  --email <test-account@example.com> \
+  --project-title '<visible project title>'
+```
+
+This runs a real Chromium browser against a stable public multibay URL. It opens
+the project while signed out, verifies that the sign-in target preserves the
+stable `/projects/<id>` path, signs in as the supplied test account, and checks
+that the final browser URL is still on the stable site URL. It then uses the
+signed-in browser app runtime to read project storage quota/overview, snapshot
+usage, backups, and first-backup root files through the same Conat routing that
+the UI uses.
+
+Useful options:
+
+- `--scenario sign-in-target`, `--scenario storage-archives`,
+  `--scenario invite-redeem`, `--scenario invite-edge-cases`,
+  `--scenario project-lifecycle`, `--scenario reconnect-stable-url`, or
+  `--scenario sign-up-home-bay` to run one check.
+- `--allow-empty-backups` for fixtures that should not require an existing backup.
+- `--allow-empty-snapshots` for fixtures that should not require snapshots.
+- `--headed` to watch the Chromium run.
+- `--json` for machine-readable output.
+
+Run the account-to-account invite/redeem matrix scenario with an inviter account
+that already has project access and a disposable invitee account that does not:
+
+```bash
+COCALC_MULTIBAY_QA_OWNER_PASSWORD='<owner-password>' \
+COCALC_MULTIBAY_QA_INVITEE_PASSWORD='<invitee-password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --scenario invite-redeem \
+  --base-url https://lite4b.cocalc.ai \
+  --project <project-id> \
+  --project-title '<visible project title>' \
+  --owner-email <owner@example.com> \
+  --invitee-email <invitee@example.com>
+```
+
+For disposable repeatable fixtures, add `--invite-reset-before` to remove the
+invitee from the project before creating the invite. Add
+`--invite-cleanup-after` only when the invitee should not remain a collaborator
+after the run.
+
+Run the mutating invite edge-case scenario against disposable invitee accounts
+to cover duplicate invite creation, revoke, already-collaborator rejection,
+remove collaborator, and re-invite/redeem. Repeat this scenario with one
+invitee account homed on each bay to cover cross-bay inbox projection:
+
+```bash
+COCALC_MULTIBAY_QA_OWNER_PASSWORD='<owner-password>' \
+COCALC_MULTIBAY_QA_INVITEE_PASSWORD='<invitee-password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --scenario invite-edge-cases \
+  --base-url https://lite4b.cocalc.ai \
+  --project <project-id> \
+  --project-title '<visible project title>' \
+  --owner-email <owner@example.com> \
+  --invitee-email <invitee-on-one-bay@example.com>
+```
+
+Run the opt-in lifecycle matrix scenario when it is acceptable for the fixture
+project to be started, restarted, stopped, and started again. The scenario
+leaves the project running and verifies a terminal-backed file marker after
+start and restart:
+
+```bash
+COCALC_MULTIBAY_QA_PASSWORD='<password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --scenario project-lifecycle \
+  --base-url https://lite4b.cocalc.ai \
+  --project <project-id> \
+  --project-title '<visible project title>' \
+  --email <test-account@example.com> \
+  --timeout 120000
+```
+
+Run the stable URL reconnect scenario to validate that a signed-in browser can
+survive a network flap without leaving the stable public origin and can still
+read routed project state afterward:
+
+```bash
+COCALC_MULTIBAY_QA_PASSWORD='<password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --scenario reconnect-stable-url \
+  --base-url https://lite4b.cocalc.ai \
+  --project <project-id> \
+  --project-title '<visible project title>' \
+  --email <test-account@example.com>
+```
+
+Run the sign-up home-bay scenario to create a disposable account through the
+stable public URL, assert the selected home bay, then sign in again from a fresh
+browser context. This scenario does not require `--project`:
+
+```bash
+COCALC_MULTIBAY_QA_PASSWORD='<password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --scenario sign-up-home-bay \
+  --base-url https://lite4b.cocalc.ai \
+  --email <new-test-account@example.com> \
+  --registration-token <registration-token> \
+  --expected-home-bay bay-2
+```
+
 ## Codex long-thread benchmark
 
 ```bash

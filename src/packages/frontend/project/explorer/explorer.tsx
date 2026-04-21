@@ -83,6 +83,7 @@ import {
 } from "./use-deferred-listing";
 import { useExplorerSettings } from "./use-explorer-settings";
 import { useNavigationHistory } from "./use-navigation-history";
+import { resolveVirtualListingPath } from "@cocalc/frontend/project/listing/virtual-listing-path";
 import {
   DirectoryTreeDragbar,
   DIRECTORY_TREE_MIN_WIDTH_PX,
@@ -215,10 +216,10 @@ export function Explorer() {
     typeof available_features?.homeDirectory === "string"
       ? normalizeAbsolutePath(available_features.homeDirectory)
       : getProjectHomeDirectory(project_id);
-  const listingPath =
-    inSnapshotsPath && !effective_current_path.startsWith("/")
-      ? normalizeAbsolutePath(effective_current_path, homePath)
-      : effective_current_path;
+  const listingPath = resolveVirtualListingPath({
+    path: effective_current_path,
+    homePath,
+  });
   let {
     refresh,
     listing,
@@ -277,6 +278,18 @@ export function Explorer() {
   }
   const showHidden = useTypedRedux({ project_id }, "show_hidden");
   const flyout = useTypedRedux({ project_id }, "flyout");
+  const applyNavigationWorkspaceSelection = useCallback(
+    (path: string) => {
+      const nextSelection = selectionForPathFollowThrough(
+        workspaces.selection,
+        workspaces.records,
+        path,
+      );
+      workspaces.setSelection(nextSelection);
+      setTimeout(() => workspaces.setSelection(nextSelection), 0);
+    },
+    [workspaces],
+  );
   const navigateExplorerRaw = useCallback(
     (path: string) => {
       navigateBrowsingPath(project_id, path, { updateUrl: true });
@@ -292,10 +305,11 @@ export function Explorer() {
   const navigateExplorer = useCallback(
     (path: string) => {
       const normalized = normalizeBrowsingPath(path);
+      applyNavigationWorkspaceSelection(normalized);
       navigateExplorerRaw(normalized);
       navHistory.recordNavigation(normalized);
     },
-    [navigateExplorerRaw, navHistory],
+    [applyNavigationWorkspaceSelection, navigateExplorerRaw, navHistory],
   );
 
   listing = listingError
@@ -460,7 +474,11 @@ export function Explorer() {
           if (isDir) {
             navigateExplorer(path);
           } else {
-            actions.open_file({ path, foreground: !e.ctrlKey });
+            actions.open_file({
+              path,
+              foreground: !e.ctrlKey,
+              workspaceSelection: nextSelection,
+            });
           }
           setTimeout(() => workspaces.setSelection(nextSelection), 0);
           if (!e.ctrlKey) {

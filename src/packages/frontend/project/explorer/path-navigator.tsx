@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { HomeOutlined } from "@ant-design/icons";
 import { Breadcrumb, Button, Dropdown, Flex } from "antd";
 import type { MenuProps } from "antd";
 import { dirname } from "path";
@@ -348,13 +347,8 @@ export const PathNavigator: React.FC<Props> = React.memo(
       } as const;
 
       const homeDisplay =
-        currentSource.key === "home" && mode === "files" ? (
-          <>
-            <HomeOutlined style={homeStyle} />{" "}
-            <span style={homeStyle}>Home</span>
-          </>
-        ) : currentSource.key === "home" ? (
-          <HomeOutlined style={homeStyle} />
+        currentSource.key === "home" ? (
+          <span style={homeStyle}>Home</span>
         ) : (
           <span style={homeStyle}>{currentSource.rootPath}</span>
         );

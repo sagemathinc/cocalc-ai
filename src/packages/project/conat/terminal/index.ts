@@ -2,4 +2,4 @@
 Terminal
 */
 
-export { createTerminalService } from "./manager";
+export { pidToPath } from "@cocalc/conat/project/terminal";

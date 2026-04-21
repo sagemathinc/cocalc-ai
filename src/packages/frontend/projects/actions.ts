@@ -18,6 +18,7 @@ import type { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import { allow_project_to_run } from "@cocalc/frontend/project/client-side-throttle";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { once } from "@cocalc/util/async-utils";
+import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import {
@@ -389,7 +390,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
               name: null,
               theme: row.theme ?? null,
               host_id: row.host_id ?? null,
-              owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || "bay-0",
+              owning_bay_id:
+                `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
               users: row.users_summary ?? {},
               state: row.state_summary ?? {},
               last_active:

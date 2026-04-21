@@ -14,6 +14,14 @@ jest.mock("@cocalc/frontend/alerts", () => ({
   alert_message: jest.fn(),
 }));
 
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    server_time: jest.fn(() => new Date("2026-02-21T18:00:00.000Z")),
+    mark_file: jest.fn(),
+    conat_client: {},
+  },
+}));
+
 function makeActions(messages: Map<string, any> = new Map()): any {
   const actions: any = new (ChatActions as any)("proj-1", "x.chat");
   const syncdb = {
@@ -123,6 +131,60 @@ describe("sendChat identity fields", () => {
       .find((row: any) => row?.event === "chat-thread-config");
     expect(cfgSet).toBeTruthy();
     expect(cfgSet.thread_id).toBe(chatSet.thread_id);
+  });
+
+  it("honors reserved chat identity", async () => {
+    const actions = makeActions();
+    const sent = actions.sendChat({
+      input: "reserved message",
+      chatIdentity: {
+        date: "2026-02-21T18:02:00.000Z",
+        message_id: "message-reserved",
+        thread_id: "thread-reserved",
+      },
+      skipModelDispatch: true,
+    });
+    await Promise.resolve();
+
+    expect(sent).toBe("2026-02-21T18:02:00.000Z");
+    const chatSet = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find((row: any) => row?.event === "chat");
+    expect(chatSet.message_id).toBe("message-reserved");
+    expect(chatSet.thread_id).toBe("thread-reserved");
+    expect(chatSet.date).toBe("2026-02-21T18:02:00.000Z");
+    expect(actions.processLLM).not.toHaveBeenCalled();
+  });
+
+  it("marks recovered agent messages as not sent", () => {
+    const actions = makeActions();
+    actions.store.get = (key: string) =>
+      key === "project_id"
+        ? "proj-1"
+        : key === "path"
+          ? "x.chat"
+          : key === "acpState"
+            ? new Map()
+            : undefined;
+
+    actions.sendChat({
+      input: "recovered codex message",
+      chatIdentity: {
+        date: "2026-02-21T18:03:00.000Z",
+        message_id: "message-not-sent",
+        thread_id: "thread-not-sent",
+      },
+      skipModelDispatch: true,
+      recoveredNotSent: true,
+    });
+
+    const chatSet = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find((row: any) => row?.event === "chat");
+    expect(chatSet.acp_state).toBe("not-sent");
+    expect(actions.store.setState).toHaveBeenCalledWith({
+      acpState: expect.anything(),
+    });
   });
 
   it("bumps send timestamp when the proposed millisecond already exists", async () => {

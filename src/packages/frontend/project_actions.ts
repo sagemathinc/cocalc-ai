@@ -89,6 +89,10 @@ import {
   acquireSharedProjectDStream,
   type SharedProjectDStreamRelease,
 } from "@cocalc/frontend/conat/project-dstream";
+import {
+  deriveBayControlPlaneOrigin,
+  getControlPlaneOrigin,
+} from "@cocalc/frontend/control-plane-origin";
 import { once, retry_until_success } from "@cocalc/util/async-utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import * as misc from "@cocalc/util/misc";
@@ -132,6 +136,10 @@ import {
   normalizeDirectoryDestination,
 } from "@cocalc/frontend/project/action-paths";
 import { isJupyterPath } from "@cocalc/util/jupyter/names";
+import {
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  projectRuntimeHomeRelativePath,
+} from "@cocalc/util/project-runtime";
 import { canonicalSyncPath } from "@cocalc/frontend/project/sync-path";
 import {
   buildProjectFilesTarget,
@@ -624,11 +632,20 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       if (this.projectLogStream && !this.projectLogStream.isClosed()) {
         return this.projectLogStream;
       }
+      const owning_bay_id = redux
+        .getStore("projects")
+        ?.get_owning_bay_id?.(this.project_id);
+      const controlPlaneOrigin = deriveBayControlPlaneOrigin(
+        getControlPlaneOrigin() ??
+          (typeof window === "undefined" ? undefined : window.location.origin),
+        owning_bay_id,
+      );
       const lease = await acquireSharedProjectDStream<ProjectLogRow>({
         project_id: this.project_id,
         name: PROJECT_LOG_STREAM_NAME,
         noInventory: true,
         maxListeners: 50,
+        controlPlaneOrigin,
       });
       const stream = lease.stream;
       if (this.isClosed()) {
@@ -785,16 +802,39 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return getProjectHomeDirectory(this.project_id);
   };
 
-  // Snapshots/backups currently use virtual listing paths that are not
-  // absolute filesystem paths. Keep those untouched until Ticket 11.
+  private getSnapshotHomeDirectoryForPaths = (): string => {
+    const home = this.getHomeDirectoryForPaths();
+    return home === "/" ? DEFAULT_PROJECT_RUNTIME_HOME : home;
+  };
+
+  private getSnapshotsRouteRelativePath = (
+    path: string,
+  ): string | undefined => {
+    const normalized = normalize(path);
+    if (isSnapshotsPath(normalized) && !normalized.startsWith("/")) {
+      return normalized.replace(/^\/+/, "").replace(/\/+$/, "");
+    }
+    const relative = projectRuntimeHomeRelativePath(normalized);
+    if (relative != null && isSnapshotsPath(relative)) {
+      return relative.replace(/^\/+/, "").replace(/\/+$/, "");
+    }
+  };
+
   private isVirtualListingPath = (path: string): boolean => {
-    return isSnapshotsPath(path) || isBackupsPath(path);
+    return isBackupsPath(path);
   };
 
   private toAbsoluteCurrentPath = (path: string): string => {
     const normalized = normalize(path);
     if (this.isVirtualListingPath(normalized)) {
       return normalized;
+    }
+    const snapshotRelative = this.getSnapshotsRouteRelativePath(normalized);
+    if (snapshotRelative != null) {
+      return normalizeAbsolutePath(
+        snapshotRelative,
+        this.getSnapshotHomeDirectoryForPaths(),
+      );
     }
     return normalizeAbsolutePath(normalized, this.getHomeDirectoryForPaths());
   };
@@ -805,6 +845,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return {
         relativePath: normalized.replace(/^\/+/, "").replace(/\/+$/, ""),
       };
+    }
+    const snapshotRelative = this.getSnapshotsRouteRelativePath(normalized);
+    if (snapshotRelative != null) {
+      return { relativePath: snapshotRelative };
     }
     const homeDirectory = normalizeAbsolutePath(
       this.getHomeDirectoryForPaths(),
@@ -841,6 +885,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
     if (this.isVirtualListingPath(normalized)) {
       return normalized;
+    }
+    if (isSnapshotsPath(normalized)) {
+      return normalizeAbsolutePath(
+        normalized.replace(/^\/+/, ""),
+        this.getSnapshotHomeDirectoryForPaths(),
+      );
     }
     return normalizeAbsolutePath(
       `/${normalized}`,

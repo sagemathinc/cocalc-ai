@@ -27,10 +27,10 @@ import { spawn } from "node:child_process";
 import { delay } from "awaiting";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
-import siteURL from "@cocalc/database/settings/site-url";
 import { normalizeProviderId } from "@cocalc/cloud";
 import { createProjectHostBootstrapToken } from "@cocalc/server/project-host/bootstrap-token";
 import { buildCloudInitStartupScript } from "@cocalc/server/cloud/bootstrap-host";
+import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
 
 const logger = getLogger("server:conat:api:hosts");
 const HOST_BOOTSTRAP_RECONCILE_TIMEOUT_MS = 20 * 60 * 1000;
@@ -295,7 +295,9 @@ export async function reconcileCloudHostBootstrapOverSsh(opts: {
     );
     return;
   }
-  const bootstrapBaseUrl = await siteURL();
+  const { baseUrl: bootstrapBaseUrl } = await resolveLaunchpadBootstrapUrl({
+    preferCurrentBay: true,
+  });
   const bootstrapToken = await createProjectHostBootstrapToken(opts.host_id);
   const bootstrapScript = await buildCloudInitStartupScript(
     opts.row,

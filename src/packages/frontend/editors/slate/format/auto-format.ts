@@ -951,7 +951,9 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
         type: "split_node",
         path: selection.focus.path,
         position: selection.focus.offset,
-        properties: node, // important to preserve text properties on split (seems fine to leave text field)
+        // Slate 0.124 validates split_node properties like set_node properties,
+        // so keep marks/custom text props but never pass the text field.
+        properties: Node.extractProps(node) as Partial<Node>,
       });
       r = markdownAutoformatAt(
         editor,

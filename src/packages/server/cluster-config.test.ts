@@ -86,7 +86,12 @@ describe("cluster-config", () => {
   it("parses configured cluster bay ids from the daemon env", async () => {
     process.env.COCALC_BAY_ID = "bay-0";
     process.env.HUB_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
-    const { getConfiguredClusterBayIds } = await import("./cluster-config");
-    expect(getConfiguredClusterBayIds()).toEqual(["bay-0", "bay-1", "bay-2"]);
+    const { getConfiguredClusterBayIdsForStaticEnumerationOnly } =
+      await import("./cluster-config");
+    expect(getConfiguredClusterBayIdsForStaticEnumerationOnly()).toEqual([
+      "bay-0",
+      "bay-1",
+      "bay-2",
+    ]);
   });
 });

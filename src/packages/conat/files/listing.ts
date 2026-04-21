@@ -80,13 +80,36 @@ export class Listing extends EventEmitter {
 
   init = async () => {
     const { fs, path } = this.opts;
-    // close on unlink is critical so that btrfs snapshots don't get locked when we try to delete them
-    this.watch = await fs.watch(path, { closeOnUnlink: true, stats: true });
+    // Do not block initial directory contents on watch bootstrap. In routed
+    // browser sessions the watch handshake can lag or wedge during startup,
+    // while the one-shot listing succeeds promptly. Rendering current contents
+    // is more important than attaching the live watcher first.
     const { files, truncated } = await fs.getListing(path);
     this.files = files;
     this.truncated = truncated;
     this.emit("ready");
-    this.handleUpdates();
+    // closeOnUnlink is critical so that btrfs snapshots don't get locked when
+    // we try to delete them.
+    void this.attachWatch(
+      fs.watch(path, { closeOnUnlink: true, stats: true }),
+    );
+  };
+
+  private attachWatch = async (watchPromise: Promise<any>) => {
+    try {
+      const watch = await watchPromise;
+      if (this.files == null) {
+        watch?.close?.();
+        return;
+      }
+      this.watch = watch;
+      void this.handleUpdates();
+    } catch (err) {
+      if (this.files == null) {
+        return;
+      }
+      console.warn("WARNING:", err);
+    }
   };
 
   private handleUpdates = async () => {

@@ -9,6 +9,8 @@ import { join } from "path";
 import { debounce } from "lodash";
 import { getOwnedProcessRegistry } from "@cocalc/project/project-info";
 import { supportsTerminalCwdLookup, terminalCwdForPid } from "./terminal/cwd";
+import { console_init_filename, path_split } from "@cocalc/util/misc";
+import { exists } from "@cocalc/backend/misc/async-utils-node";
 
 const logger = getLogger("project:conat:terminal-server");
 
@@ -24,7 +26,54 @@ export function init(opts) {
   });
 }
 
-async function preHook({ options }: { options: Options }) {
+function supportsTerminalInitFile(command?: string): boolean {
+  return typeof command === "string" && command.endsWith("bash");
+}
+
+export async function applyTerminalInitFile({
+  command,
+  args,
+  options,
+}: {
+  command?: string;
+  args?: string[];
+  options: Options;
+}): Promise<{
+  args: string[] | undefined;
+  initFilename?: string;
+  hasTerminalInitFile: boolean;
+}> {
+  if (!supportsTerminalInitFile(command) || !options?.id) {
+    return {
+      args,
+      hasTerminalInitFile: false,
+    };
+  }
+  const initFilename = console_init_filename(options.id);
+  const hasTerminalInitFile = await exists(initFilename);
+  if (!hasTerminalInitFile) {
+    return {
+      args,
+      initFilename,
+      hasTerminalInitFile,
+    };
+  }
+  const nextArgs = [...(args ?? [])];
+  nextArgs.push("--init-file");
+  nextArgs.push(path_split(initFilename).tail);
+  return {
+    args: nextArgs,
+    initFilename,
+    hasTerminalInitFile,
+  };
+}
+
+async function preHook(hook: {
+  command?: string;
+  args?: string[];
+  options: Options;
+}) {
+  const { command, args, options } = hook;
   if (options.env0) {
     for (const key in options.env0) {
       options.env0[key] = options.env0[key].replace(
@@ -36,7 +85,27 @@ async function preHook({ options }: { options: Options }) {
   if (options.env0?.COCALC_CONTROL_DIR != null) {
     options.env0.COCALC_CONTROL_DIR = join(data, "terminal", randomId());
   }
-  return options;
+  const {
+    args: nextArgs,
+    initFilename,
+    hasTerminalInitFile,
+  } = await applyTerminalInitFile({
+    command,
+    args,
+    options,
+  });
+  hook.args = nextArgs;
+  logger.debug("terminal spawn preHook", {
+    id: options?.id,
+    path: options?.path,
+    cwd: options?.cwd,
+    command,
+    args: nextArgs,
+    initFilename,
+    hasTerminalInitFile,
+  });
+  // terminalServer preHook mutates the passed object in place.
+  // Returning a value here is ignored.
 }
 
 async function postHook({ options, pty }) {

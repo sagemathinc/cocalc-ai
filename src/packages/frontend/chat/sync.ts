@@ -49,6 +49,8 @@ function chatRowToAcpState({
   switch (state) {
     case "queued":
       return "queue";
+    case "not-sent":
+      return "not-sent";
     case "running": {
       const threadId = `${(record as any)?.thread_id ?? ""}`.trim();
       const messageId = `${(record as any)?.message_id ?? ""}`.trim();

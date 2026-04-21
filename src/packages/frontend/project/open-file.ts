@@ -29,6 +29,7 @@ import {
   persistSessionSelection,
 } from "@cocalc/frontend/project/workspaces/selection-runtime";
 import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
+import type { WorkspaceSelection } from "@cocalc/frontend/project/workspaces/types";
 import { normalize } from "./utils";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { canonicalSyncPath, toAbsoluteProjectPath } from "./sync-path";
@@ -58,6 +59,7 @@ export interface OpenFileOpts {
   change_history?: boolean;
   // opened via an explicit click
   explicit?: boolean;
+  workspaceSelection?: WorkspaceSelection;
 }
 
 export function findOpenDisplayPathForSyncPath(
@@ -109,15 +111,14 @@ export function isCancelledSyncIdentityResolutionError(err: unknown): boolean {
 export function applyWorkspaceSelectionForForegroundOpen(
   project_id: string,
   path: string,
+  explicitSelection?: WorkspaceSelection,
 ): void {
   const records = getRuntimeWorkspaceRecords(project_id);
   if (records.length === 0) return;
   const currentSelection = loadSessionSelection(project_id);
-  const nextSelection = selectionForPathFollowThrough(
-    currentSelection,
-    records,
-    path,
-  );
+  const nextSelection =
+    explicitSelection ??
+    selectionForPathFollowThrough(currentSelection, records, path);
   const sameSelection =
     currentSelection.kind === nextSelection.kind &&
     (currentSelection.kind !== "workspace" ||
@@ -208,6 +209,7 @@ export async function open_file(
     new_browser_window: false,
     change_history: true,
     explicit: false,
+    workspaceSelection: undefined,
   });
   const projectHome = getProjectHomeDirectory(actions.project_id);
   const hadTrailingSlash = opts.path.endsWith("/");
@@ -219,7 +221,11 @@ export async function open_file(
   opts.path = normalize(opts.path);
   const displayPath = opts.path;
   if (opts.foreground) {
-    applyWorkspaceSelectionForForegroundOpen(actions.project_id, displayPath);
+    applyWorkspaceSelectionForForegroundOpen(
+      actions.project_id,
+      displayPath,
+      opts.workspaceSelection,
+    );
   }
 
   if (opts.line != null && !opts.fragmentId) {

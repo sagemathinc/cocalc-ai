@@ -4,6 +4,7 @@
  */
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { isDefaultBayId } from "@cocalc/util/bay";
 
 const STORAGE_KEY = `cocalc-control-plane-origin:${appBasePath}`;
 
@@ -69,4 +70,30 @@ export function getControlPlaneAppUrl(): string | undefined {
   const origin = getControlPlaneOrigin();
   if (!origin) return;
   return `${origin}${appBasePath === "/" ? "" : appBasePath}`;
+}
+
+function deriveSiteHostname(hostname: string): string {
+  const match = hostname.match(/^bay-\d+-(.+)$/);
+  return match?.[1] ?? hostname;
+}
+
+export function deriveBayControlPlaneOrigin(
+  origin: unknown,
+  bay_id: unknown,
+): string | undefined {
+  const normalized = normalizeControlPlaneOrigin(origin);
+  const bay = `${bay_id ?? ""}`.trim().toLowerCase();
+  if (!normalized || !bay) return;
+  try {
+    const url = new URL(normalized);
+    const siteHostname = deriveSiteHostname(url.hostname);
+    // The default seed bay is addressed by the stable site URL. Deriving
+    // bay-0-<site> breaks single-bay launchpads and seed-bay control-plane use.
+    url.hostname = isDefaultBayId(bay)
+      ? siteHostname
+      : `${bay}-${siteHostname}`;
+    return normalizeControlPlaneOrigin(url.toString());
+  } catch {
+    return;
+  }
 }

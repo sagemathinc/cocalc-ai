@@ -76,6 +76,17 @@ const PAGE_STYLE: CSS = {
   background: "white",
 } as const;
 
+function signInHrefWithCurrentTarget(): string {
+  if (typeof window === "undefined") {
+    return "/auth/sign-in";
+  }
+  const target = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (!target || target === "/" || target.startsWith("/auth/")) {
+    return "/auth/sign-in";
+  }
+  return `/auth/sign-in?target=${encodeURIComponent(target)}`;
+}
+
 export const Page: React.FC = () => {
   const page_actions = useActions("page");
 
@@ -194,7 +205,7 @@ export const Page: React.FC = () => {
     return (
       <Next
         sameTab
-        href="/auth/sign-in"
+        href={signInHrefWithCurrentTarget()}
         style={{
           backgroundColor: COLORS.TOP_BAR.SIGN_IN_BG,
           fontSize: "16pt",

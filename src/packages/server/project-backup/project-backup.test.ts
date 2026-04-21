@@ -5,6 +5,7 @@ let readFileMock: jest.Mock;
 let writeFileMock: jest.Mock;
 let createBucketMock: jest.Mock;
 let listBucketsMock: jest.Mock;
+let seedBackupConfigMock: jest.Mock;
 let settings: Record<string, any> = {};
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -69,9 +70,31 @@ describe("project-backup", () => {
   beforeEach(() => {
     jest.resetModules();
     settings = {};
+    seedBackupConfigMock = jest.fn(async () => ({
+      toml: "seed-toml",
+      ttl_seconds: 123,
+      backup_repo_id: REPO_ID,
+    }));
     jest.doMock("@cocalc/database/settings/server-settings", () => ({
       __esModule: true,
       getServerSettings: jest.fn(async () => settings),
+    }));
+    jest.doMock("@cocalc/server/cluster-config", () => ({
+      getClusterConfig: jest.fn(() => ({
+        role: settings.cluster_role ?? "standalone",
+        seed_bay_id: settings.seed_bay_id ?? "bay-0",
+      })),
+    }));
+    jest.doMock("@cocalc/server/bay-config", () => ({
+      getConfiguredBayId: jest.fn(() => settings.bay_id ?? "bay-0"),
+    }));
+    jest.doMock("@cocalc/server/inter-bay/bridge", () => ({
+      getInterBayBridge: jest.fn(() => ({
+        hostConnection: jest.fn(() => ({
+          getSeedBackupConfig: (...args: any[]) =>
+            seedBackupConfigMock(...args),
+        })),
+      })),
     }));
     createBucketMock = jest.fn(async () => ({
       name: "cocalc-backups-wnam",
@@ -121,12 +144,18 @@ describe("project-backup", () => {
         return { rows: [{ host_id: settings.project_host_id ?? HOST_ID }] };
       }
       if (sql.includes("FROM project_hosts")) {
+        if (settings.host_row_missing) {
+          return { rows: [] };
+        }
         return { rows: [{ region: "us-west1", metadata: {} }] };
       }
       if (sql.includes("FROM project_moves")) {
         return { rows: [] };
       }
       if (sql.includes("CREATE TABLE IF NOT EXISTS project_moves")) {
+        return { rows: [] };
+      }
+      if (sql.includes("project_copies")) {
         return { rows: [] };
       }
       if (sql.includes("FROM project_backup_repos WHERE id=$1")) {
@@ -238,6 +267,60 @@ describe("project-backup", () => {
     expect(result.toml).toContain('root = "rustic/shared-wnam-0001"');
   });
 
+  it("delegates project backup config to the seed bay from attached bays", async () => {
+    settings = {
+      cluster_role: "attached",
+      seed_bay_id: "bay-0",
+      bay_id: "bay-1",
+      project_host_id: HOST_ID,
+      project_region: "wnam",
+    };
+    const { getBackupConfig } = await import("./index");
+    const result = await getBackupConfig({
+      host_id: HOST_ID,
+      project_id: PROJECT_ID,
+      host_region: "us-west1",
+      host_machine: { cloud: "gcp" } as any,
+    });
+    expect(result).toEqual({ toml: "seed-toml", ttl_seconds: 123 });
+    expect(seedBackupConfigMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      project_region: "wnam",
+      backup_repo_id: null,
+    });
+    expect(
+      queryMock.mock.calls.some(
+        ([sql]) =>
+          typeof sql === "string" &&
+          sql.includes("backup_repo_id IS DISTINCT FROM"),
+      ),
+    ).toBe(true);
+  });
+
+  it("builds a seed-managed project backup config without a local project row", async () => {
+    settings = {
+      r2_account_id: "account",
+      r2_api_token: "token",
+      r2_access_key_id: "access",
+      r2_secret_access_key: "secret",
+      r2_bucket_prefix: "cocalc-backups",
+      project_region: "wnam",
+      repo_secret: "repo-secret",
+      repo_root: "rustic/shared-wnam-0001",
+      active_repo: true,
+    };
+    const { getSeedProjectBackupConfig } = await import("./index");
+    const result = await getSeedProjectBackupConfig({
+      project_id: PROJECT_ID,
+      project_region: "wnam",
+    });
+    expect(result.backup_repo_id).toBe(REPO_ID);
+    expect(result.toml).toContain('repository = "opendal:s3"');
+    expect(result.toml).toContain('password = "repo-secret"');
+    expect(result.toml).toContain('bucket = "cocalc-backups-wnam"');
+    expect(result.ttl_seconds).toBeGreaterThan(0);
+  });
+
   it("ensures a region bucket exists for first use", async () => {
     settings = {
       r2_account_id: "account",
@@ -301,7 +384,7 @@ describe("project-backup", () => {
     expect(params?.[1]?.toISOString()).toBe(when.toISOString());
   });
 
-  it("rejects backup access when the assigned host bay mismatches the project bay", async () => {
+  it("allows backup access when the authenticated host is the assigned host across bays", async () => {
     settings = {
       project_host_id: HOST_ID,
       project_region: "wnam",
@@ -314,6 +397,51 @@ describe("project-backup", () => {
         host_id: HOST_ID,
         project_id: PROJECT_ID,
       }),
-    ).rejects.toThrow("project bay does not match assigned host");
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects backup access when a different host requests the project backup config", async () => {
+    settings = {
+      project_host_id: HOST_ID,
+      project_region: "wnam",
+      project_owning_bay_id: "bay-a",
+      host_bay_id: "bay-b",
+    };
+    const { getBackupConfig } = await import("./index");
+    await expect(
+      getBackupConfig({
+        host_id: "55555555-5555-5555-5555-555555555555",
+        project_id: PROJECT_ID,
+      }),
+    ).rejects.toThrow("project not assigned to host");
+  });
+
+  it("accepts delegated host context when the owning bay does not have a local host row", async () => {
+    settings = {
+      project_host_id: HOST_ID,
+      project_region: "wnam",
+      project_owning_bay_id: "bay-a",
+      host_bay_id: "bay-b",
+      active_repo: true,
+      host_row_missing: true,
+      r2_account_id: "account",
+      r2_api_token: "token",
+      r2_access_key_id: "access",
+      r2_secret_access_key: "secret",
+      r2_bucket_prefix: "cocalc-backups",
+      repo_secret: "repo-secret",
+      repo_root: "rustic/shared-wnam-0001",
+    };
+    const { getBackupConfig } = await import("./index");
+    await expect(
+      getBackupConfig({
+        host_id: HOST_ID,
+        project_id: PROJECT_ID,
+        host_region: "us-west1",
+        host_machine: { cloud: "gcp" } as any,
+      }),
+    ).resolves.toMatchObject({
+      ttl_seconds: expect.any(Number),
+    });
   });
 });

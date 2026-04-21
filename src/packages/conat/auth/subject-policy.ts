@@ -166,6 +166,13 @@ export function extractProjectSubject(subject: string): string {
     }
     return "";
   }
+  if (parts[0] === "file-server") {
+    const project_id = parts[1];
+    if (isValidUUID(project_id)) {
+      return project_id;
+    }
+    return "";
+  }
   if (parts[0] === "hub" && parts[1] === "project") {
     const project_id = parts[2];
     if (isValidUUID(project_id)) {
@@ -209,6 +216,9 @@ export function isProjectAllowed({
   subject: string;
 }): boolean {
   if (subject.startsWith(`project.${project_id}.`)) {
+    return true;
+  }
+  if (subject.startsWith(`file-server.${project_id}.`)) {
     return true;
   }
   return subject.split(".")[1] === `project-${project_id}`;

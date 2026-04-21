@@ -2,6 +2,7 @@
 
 import { render, screen } from "@testing-library/react";
 import PublicAuthApp, { getPublicAuthRouteFromPath } from "../app";
+import { getPublicAuthRedirectTargetFromSearch } from "../bootstrap";
 
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -60,6 +61,38 @@ describe("getPublicAuthRouteFromPath", () => {
       code: "CODE12345",
       kind: "redeem",
     });
+  });
+});
+
+describe("getPublicAuthRedirectTargetFromSearch", () => {
+  it("accepts safe app-relative targets", () => {
+    expect(
+      getPublicAuthRedirectTargetFromSearch(
+        "?target=%2Fprojects%2Fproject-id%2Ffiles%2F%3Ffoo%3Dbar%23x",
+      ),
+    ).toBe("/projects/project-id/files/?foo=bar#x");
+  });
+
+  it("rejects external and auth-loop targets", () => {
+    expect(
+      getPublicAuthRedirectTargetFromSearch(
+        "?target=https%3A%2F%2Fexample.com%2Fprojects",
+      ),
+    ).toBeUndefined();
+    expect(
+      getPublicAuthRedirectTargetFromSearch("?target=%2Fauth%2Fsign-in"),
+    ).toBeUndefined();
+    expect(
+      getPublicAuthRedirectTargetFromSearch("?target=%2F%2Fevil.test"),
+    ).toBeUndefined();
+  });
+
+  it("unwraps nested auth shell redirect targets", () => {
+    expect(
+      getPublicAuthRedirectTargetFromSearch(
+        "?target=%2Fauth%2Fsign-in%3Ftarget%3D%252Fprojects%252Fproject-id",
+      ),
+    ).toBe("/projects/project-id");
   });
 });
 

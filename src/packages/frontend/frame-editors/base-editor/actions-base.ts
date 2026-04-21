@@ -278,10 +278,25 @@ export class BaseEditorActions<
     this.close();
   };
   private readonly handleSyncdocDisconnected = () => {
+    if (this.tracksLiveSyncdocStatus()) {
+      this.setState({ rtc_status: "loading" });
+    }
     this.reconnectResource?.requestReconnect({
       reason: "editor_syncdoc_disconnected",
     });
   };
+  private readonly handleSyncdocConnected = () => {
+    if (!this.tracksLiveSyncdocStatus()) {
+      return;
+    }
+    this.setState({
+      rtc_status: this.areSyncdocsLiveConnected() ? "live" : "loading",
+    });
+  };
+
+  private tracksLiveSyncdocStatus(): boolean {
+    return this.doctype !== "none" && !this.isClosed();
+  }
 
   // Centralized merge state between local CM buffer and remote syncstring.
   protected getMergeCoordinator(): MergeCoordinator {
@@ -573,11 +588,12 @@ export class BaseEditorActions<
       }
     }
     this._syncstring.on("disconnected", this.handleSyncdocDisconnected);
+    this._syncstring.on("connected", this.handleSyncdocConnected);
 
     // File-open timing starts when live sync initialization actually begins,
     // not when a tab was created in the background.
     restart_open_timer(this.project_id, this.path, { source: "sync_init" });
-    if (this.doctype === "syncstring") {
+    if (this.doctype !== "none") {
       this.setState({ rtc_status: "loading" });
     }
     this.startOptimisticFastOpen();
@@ -663,8 +679,10 @@ export class BaseEditorActions<
       }
 
       this._syncstring_init = true;
-      if (this.doctype === "syncstring") {
-        this.setState({ rtc_status: "live" });
+      if (this.doctype !== "none") {
+        this.setState({
+          rtc_status: this.areSyncdocsLiveConnected() ? "live" : "loading",
+        });
       }
       this._syncstring_metadata();
       this._init_settings();
@@ -699,7 +717,7 @@ export class BaseEditorActions<
     });
 
     this._syncstring.once("error", (err) => {
-      if (this.doctype === "syncstring") {
+      if (this.doctype !== "none") {
         this.setState({ rtc_status: "error" });
       }
       this.set_error(`${err}\nFix this, then try opening the file again.`);
@@ -756,6 +774,7 @@ export class BaseEditorActions<
       document_activity_interval: 0, // disable document-activity tracking for syncdb auxiliary files
     });
     this._syncdb.on("disconnected", this.handleSyncdocDisconnected);
+    this._syncdb.on("connected", this.handleSyncdocConnected);
     this._syncdb.once("error", (err) => {
       this.set_error(`${err}.\nFix this, then try opening the file again.`);
     });
@@ -955,6 +974,7 @@ export class BaseEditorActions<
     // @ts-ignore
     delete this._syncstring;
     s.removeListener?.("disconnected", this.handleSyncdocDisconnected);
+    s.removeListener?.("connected", this.handleSyncdocConnected);
     s.removeListener?.("closed", this.handleSyncstringClosed);
     s.close(); // this should save synctables in syncstring
   }
@@ -964,6 +984,7 @@ export class BaseEditorActions<
     const s = this._syncdb;
     delete this._syncdb;
     s.removeListener?.("disconnected", this.handleSyncdocDisconnected);
+    s.removeListener?.("connected", this.handleSyncdocConnected);
     s.removeListener?.("closed", this.handleSyncdbClosed);
     s.close();
   }

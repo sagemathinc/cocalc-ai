@@ -1,4 +1,7 @@
-import { resolveHiddenActiveTabForSelection } from "./context";
+import {
+  resolveHiddenActiveTabForSelection,
+  shouldResyncWorkspaceSelectionFromActivePath,
+} from "./context";
 
 describe("resolveHiddenActiveTabForSelection", () => {
   it("shows the file explorer when no open tab remains in the selected scope", () => {
@@ -42,5 +45,31 @@ describe("resolveHiddenActiveTabForSelection", () => {
         matchesPath: () => true,
       }),
     ).toEqual({ kind: "noop" });
+  });
+});
+
+describe("shouldResyncWorkspaceSelectionFromActivePath", () => {
+  it("does not descope back to the old active file while workspace restore is pending", () => {
+    expect(
+      shouldResyncWorkspaceSelectionFromActivePath({
+        workspaceRestorePending: true,
+        activePath: "/repo/unscoped/notes.md",
+        activePathIsOpen: true,
+        selectionChanged: false,
+        previousActivePathClosed: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("allows resync once restore is no longer pending", () => {
+    expect(
+      shouldResyncWorkspaceSelectionFromActivePath({
+        workspaceRestorePending: false,
+        activePath: "/repo/unscoped/notes.md",
+        activePathIsOpen: true,
+        selectionChanged: false,
+        previousActivePathClosed: false,
+      }),
+    ).toBe(true);
   });
 });

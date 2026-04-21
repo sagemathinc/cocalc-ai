@@ -14,7 +14,7 @@ import type {
   AccountFeedProjectRemoveEvent,
   AccountFeedProjectUpsertEvent,
 } from "@cocalc/conat/hub/api/account-feed";
-import type { LroEvent } from "@cocalc/conat/hub/api/lro";
+import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
 import type {
   Host,
   HostConnectionInfo,
@@ -24,7 +24,9 @@ import type {
   ProjectActiveOperationSummary,
   ProjectBackupSchedule,
   ProjectCollabInviteAction,
+  ProjectCollabInviteDirection,
   ProjectCollabInviteRow,
+  ProjectCollabInviteStatus,
   ProjectCourseInfo,
   ProjectCreated,
   ProjectEnv,
@@ -110,6 +112,13 @@ export interface ProjectControlRestartRequest {
   account_id: string;
   lro_op_id?: string;
   source_bay_id?: string;
+  epoch?: number;
+}
+
+export interface ProjectControlBackupRequest {
+  project_id: string;
+  account_id?: string;
+  tags?: string[];
   epoch?: number;
 }
 
@@ -205,6 +214,17 @@ export interface AccountDirectorySearchRequest {
 }
 
 export interface AccountDirectoryHomeBayCountsRequest {}
+
+export interface AccountDirectoryDeleteRequest {
+  account_id: string;
+  only_if_tag?: string;
+}
+
+export interface AccountDirectoryDeleteResult {
+  account_id: string;
+  home_bay_id: string;
+  status: "deleted";
+}
 
 export interface AccountDirectoryEntry extends UserSearchResult {
   email_address?: string;
@@ -307,10 +327,40 @@ export interface ProjectCollabInviteRespondRequest {
   include_email?: boolean;
 }
 
+export interface ProjectCollabInviteCreateRequest {
+  account_id: string;
+  project_id: string;
+  invitee_account_id: string;
+  message?: string;
+  direct?: boolean;
+}
+
+export interface ProjectCollabInviteCreateResultWire {
+  created: boolean;
+  invite: ProjectCollabInviteWire;
+}
+
+export interface ProjectCollabInviteListRequest {
+  account_id: string;
+  project_id?: string;
+  direction?: ProjectCollabInviteDirection;
+  status?: ProjectCollabInviteStatus;
+  limit?: number;
+}
+
+export interface ProjectRemoveCollaboratorRequest {
+  account_id: string;
+  opts: {
+    account_id: string;
+    project_id: string;
+  };
+}
+
 export type ProjectControlMethod =
   | "start"
   | "stop"
   | "restart"
+  | "backup"
   | "state"
   | "address"
   | "move"
@@ -323,6 +373,9 @@ export type HostConnectionMethod =
   | "get"
   | "list"
   | "get-project-start-metadata"
+  | "get-backup-config"
+  | "get-seed-backup-config"
+  | "record-project-backup"
   | "list-host-projects";
 export type HostControlMethod =
   | "create-project"
@@ -358,13 +411,17 @@ export type AccountDirectoryMethod =
   | "get-many"
   | "search"
   | "home-bay-counts"
-  | "create";
-export type AccountLocalMethod = "create";
+  | "create"
+  | "delete";
+export type AccountLocalMethod = "create" | "delete";
 export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
 export type BayRegistryMethod = "register" | "list";
 export type ProjectCollabInviteMethod =
   | "upsert-inbox"
   | "delete-inbox"
+  | "list"
+  | "remove-collaborator"
+  | "create"
   | "respond";
 export type AccountProjectFeedMethod = "upsert" | "remove";
 
@@ -389,6 +446,7 @@ export interface InterBayProjectControlApi {
   start: (opts: ProjectControlStartRequest) => Promise<void>;
   stop: (opts: ProjectControlStopRequest) => Promise<void>;
   restart: (opts: ProjectControlRestartRequest) => Promise<void>;
+  backup: (opts: ProjectControlBackupRequest) => Promise<LroSummary>;
   state: (opts: ProjectControlStateRequest) => Promise<ProjectState>;
   address: (opts: ProjectControlAddressRequest) => Promise<ProjectAddress>;
   move: (
@@ -413,10 +471,31 @@ export interface InterBayHostConnectionApi {
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
+  getBackupConfig: (
+    opts: Parameters<Hosts["getBackupConfig"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getBackupConfig"]>>>;
+  getSeedBackupConfig: (opts: {
+    project_id: string;
+    project_region?: string | null;
+    backup_repo_id?: string | null;
+  }) => Promise<{
+    toml: string;
+    ttl_seconds: number;
+    backup_repo_id: string | null;
+  }>;
+  recordProjectBackup: (
+    opts: Parameters<Hosts["recordProjectBackup"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackup"]>>>;
   listHostProjects: (
     opts: Pick<
       Parameters<Hosts["listHostProjects"]>[0],
-      "id" | "risk_only" | "state_filter" | "project_state"
+      | "account_id"
+      | "id"
+      | "limit"
+      | "cursor"
+      | "risk_only"
+      | "state_filter"
+      | "project_state"
     >,
   ) => Promise<Awaited<ReturnType<Hosts["listHostProjects"]>>>;
 }
@@ -427,6 +506,18 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "getProjectStartMetadata",
     method: "get-project-start-metadata",
+  },
+  {
+    name: "getBackupConfig",
+    method: "get-backup-config",
+  },
+  {
+    name: "getSeedBackupConfig",
+    method: "get-seed-backup-config",
+  },
+  {
+    name: "recordProjectBackup",
+    method: "record-project-backup",
   },
   {
     name: "listHostProjects",
@@ -567,12 +658,18 @@ export interface InterBayAccountDirectoryApi {
   create: (
     opts: AccountDirectoryCreateRequest,
   ) => Promise<AccountDirectoryEntry>;
+  delete: (
+    opts: AccountDirectoryDeleteRequest,
+  ) => Promise<AccountDirectoryDeleteResult>;
 }
 
 export interface InterBayAccountLocalApi {
   create: (
     opts: AccountDirectoryCreateRequest,
   ) => Promise<AccountDirectoryEntry>;
+  delete: (
+    opts: AccountDirectoryDeleteRequest,
+  ) => Promise<AccountDirectoryDeleteResult>;
 }
 
 export interface InterBayBayRegistryApi {
@@ -593,6 +690,13 @@ export interface InterBayAuthTokenApi {
 export interface InterBayProjectCollabInviteApi {
   upsertInbox: (opts: ProjectCollabInviteInboxUpsertRequest) => Promise<void>;
   deleteInbox: (opts: ProjectCollabInviteInboxDeleteRequest) => Promise<void>;
+  list: (
+    opts: ProjectCollabInviteListRequest,
+  ) => Promise<ProjectCollabInviteWire[]>;
+  removeCollaborator: (opts: ProjectRemoveCollaboratorRequest) => Promise<void>;
+  create: (
+    opts: ProjectCollabInviteCreateRequest,
+  ) => Promise<ProjectCollabInviteCreateResultWire>;
   respond: (
     opts: ProjectCollabInviteRespondRequest,
   ) => Promise<ProjectCollabInviteWire>;
@@ -1004,6 +1108,12 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "restart" }),
   });
+  const backupClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "backup">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({ dest_bay, method: "backup" }),
+  });
   const stateClient = createServiceClient<
     Pick<InterBayProjectControlApi, "state">
   >({
@@ -1032,6 +1142,7 @@ export function createInterBayProjectControlClient({
     start: async (opts) => await startClient.start(opts),
     stop: async (opts) => await stopClient.stop(opts),
     restart: async (opts) => await restartClient.restart(opts),
+    backup: async (opts) => await backupClient.backup(opts),
     state: async (opts) => await stateClient.state(opts),
     address: async (opts) => await addressClient.address(opts),
     move: async (opts) => await moveClient.move(opts),
@@ -1321,6 +1432,12 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "create" }),
   });
+  const deleteClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "delete">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "delete" }),
+  });
   return {
     get: async (opts) => await getClient.get(opts),
     getByEmail: async (opts) => await getByEmailClient.getByEmail(opts),
@@ -1329,6 +1446,7 @@ export function createInterBayAccountDirectoryClient({
     getHomeBayCounts: async (opts) =>
       await homeBayCountsClient.getHomeBayCounts(opts),
     create: async (opts) => await createClient.create(opts),
+    delete: async (opts) => await deleteClient.delete(opts),
   };
 }
 
@@ -1389,6 +1507,14 @@ export function createInterBayAccountDirectoryHandlers({
         create: async (opts) => await impl.create(opts),
       },
     }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "delete">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "delete" }),
+      impl: {
+        delete: async (opts) => await impl.delete(opts),
+      },
+    }),
   ];
 }
 
@@ -1407,8 +1533,15 @@ export function createInterBayAccountLocalClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountLocalSubject({ dest_bay, method: "create" }),
   });
+  const deleteClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "delete">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "delete" }),
+  });
   return {
     create: async (opts) => await createClient.create(opts),
+    delete: async (opts) => await deleteClient.delete(opts),
   };
 }
 
@@ -1419,15 +1552,25 @@ export function createInterBayAccountLocalHandler({
 }: ServiceHandlerOptions & {
   bay_id: string;
   impl: InterBayAccountLocalApi;
-}): ConatService {
-  return createServiceHandler<Pick<InterBayAccountLocalApi, "create">>({
-    ...options,
-    service: "inter-bay-account-local",
-    subject: accountLocalSubject({ dest_bay: bay_id, method: "create" }),
-    impl: {
-      create: async (opts) => await impl.create(opts),
-    },
-  });
+}): ConatService[] {
+  return [
+    createServiceHandler<Pick<InterBayAccountLocalApi, "create">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({ dest_bay: bay_id, method: "create" }),
+      impl: {
+        create: async (opts) => await impl.create(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "delete">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({ dest_bay: bay_id, method: "delete" }),
+      impl: {
+        delete: async (opts) => await impl.delete(opts),
+      },
+    }),
+  ];
 }
 
 export function createInterBayBayRegistryClient({
@@ -1565,6 +1708,27 @@ export function createInterBayProjectCollabInviteClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectCollabInviteSubject({ dest_bay, method: "delete-inbox" }),
   });
+  const createClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "create">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({ dest_bay, method: "create" }),
+  });
+  const listClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "list">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({ dest_bay, method: "list" }),
+  });
+  const removeCollaboratorClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "removeCollaborator">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({
+      dest_bay,
+      method: "remove-collaborator",
+    }),
+  });
   const respondClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "respond">
   >({
@@ -1574,6 +1738,10 @@ export function createInterBayProjectCollabInviteClient({
   return {
     upsertInbox: async (opts) => await upsertInboxClient.upsertInbox(opts),
     deleteInbox: async (opts) => await deleteInboxClient.deleteInbox(opts),
+    list: async (opts) => await listClient.list(opts),
+    removeCollaborator: async (opts) =>
+      await removeCollaboratorClient.removeCollaborator(opts),
+    create: async (opts) => await createClient.create(opts),
     respond: async (opts) => await respondClient.respond(opts),
   };
 }
@@ -1634,6 +1802,41 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         deleteInbox: async (opts) => await impl.deleteInbox(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "create">>({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "create",
+      }),
+      impl: {
+        create: async (opts) => await impl.create(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "list">>({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "list",
+      }),
+      impl: {
+        list: async (opts) => await impl.list(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayProjectCollabInviteApi, "removeCollaborator">
+    >({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "remove-collaborator",
+      }),
+      impl: {
+        removeCollaborator: async (opts) => await impl.removeCollaborator(opts),
       },
     }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "respond">>({
@@ -1737,6 +1940,24 @@ export function createInterBayProjectControlRestartHandler({
     subject: projectControlSubject({ dest_bay: bay_id, method: "restart" }),
     impl: {
       restart: async (opts) => await impl.restart(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlBackupHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "backup">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({ dest_bay: bay_id, method: "backup" }),
+    impl: {
+      backup: async (opts) => await impl.backup(opts),
     },
   });
 }

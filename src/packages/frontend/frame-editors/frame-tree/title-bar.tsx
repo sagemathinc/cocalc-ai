@@ -678,6 +678,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         }
         read_only={read_only}
         is_connecting={rtc_status === "loading"}
+        is_sync_error={rtc_status === "error"}
         is_saving={is_saving}
         no_labels={noLabel}
         size={button_size()}

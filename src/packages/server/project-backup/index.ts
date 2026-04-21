@@ -16,6 +16,7 @@ import { ensureCopySchema } from "@cocalc/server/projects/copy-db";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 import { buildLaunchpadRestRusticRepoConfig } from "@cocalc/server/launchpad/rest-repo";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getClusterConfig } from "@cocalc/server/cluster-config";
 
 const DEFAULT_BACKUP_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const DEFAULT_BACKUP_ROOT = "rustic";
@@ -800,12 +801,158 @@ function buildS3ProjectBackupToml({
   ].join("\n");
 }
 
+async function buildTomlForBucket({
+  bucket,
+  password,
+  root,
+}: {
+  bucket: BucketRow;
+  password: string;
+  root: string;
+}): Promise<string> {
+  const accountId =
+    (await getSiteSetting("r2_account_id")) ?? bucket.account_id;
+  const accessKey =
+    (await getSiteSetting("r2_access_key_id")) ?? bucket.access_key_id;
+  const secretKey =
+    (await getSiteSetting("r2_secret_access_key")) ?? bucket.secret_access_key;
+  const endpoint =
+    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined) ??
+    bucket.endpoint;
+  if (!accountId || !accessKey || !secretKey || !endpoint) {
+    return "";
+  }
+  return buildS3ProjectBackupToml({
+    endpoint,
+    bucket: bucket.name,
+    accessKey,
+    secretKey,
+    password,
+    root,
+  });
+}
+
+async function buildBackupConfigFromRepo({
+  repo,
+  fallbackRegion,
+}: {
+  repo: ProjectBackupRepoRow;
+  fallbackRegion: string;
+}): Promise<{ toml: string; ttl_seconds: number; backup_repo_id: string }> {
+  if (!repo.bucket_id || !repo.root) {
+    return { toml: "", ttl_seconds: 0, backup_repo_id: repo.id };
+  }
+  const bucket = await loadBucketById(repo.bucket_id);
+  if (!bucket) {
+    return { toml: "", ttl_seconds: 0, backup_repo_id: repo.id };
+  }
+  await ensureExistingBucketRowIsUsable({
+    bucket,
+    fallbackRegion,
+  });
+  const toml = await buildTomlForBucket({
+    bucket,
+    password: await getProjectBackupRepoSecret(repo),
+    root: repo.root,
+  });
+  return {
+    toml,
+    ttl_seconds: toml ? DEFAULT_BACKUP_TTL_SECONDS : 0,
+    backup_repo_id: repo.id,
+  };
+}
+
+function shouldUseSeedManagedProjectBackups(): boolean {
+  const cluster = getClusterConfig();
+  return (
+    cluster.role === "attached" &&
+    !!cluster.seed_bay_id &&
+    cluster.seed_bay_id !== getConfiguredBayId()
+  );
+}
+
+async function getSeedManagedProjectBackupConfig({
+  project_id,
+  project_region,
+  backup_repo_id,
+}: {
+  project_id: string;
+  project_region: string;
+  backup_repo_id?: string | null;
+}): Promise<{
+  toml: string;
+  ttl_seconds: number;
+  backup_repo_id: string | null;
+}> {
+  const cluster = getClusterConfig();
+  const { getInterBayBridge } = await import("@cocalc/server/inter-bay/bridge");
+  const config = await getInterBayBridge()
+    .hostConnection(cluster.seed_bay_id, { timeout_ms: 30_000 })
+    .getSeedBackupConfig({
+      project_id,
+      project_region,
+      backup_repo_id,
+    });
+  if (config.backup_repo_id && config.toml) {
+    await pool().query(
+      "UPDATE projects SET backup_repo_id=$2 WHERE project_id=$1 AND backup_repo_id IS DISTINCT FROM $2",
+      [project_id, config.backup_repo_id],
+    );
+  }
+  return config;
+}
+
+export async function getSeedProjectBackupConfig({
+  project_id,
+  project_region,
+  backup_repo_id,
+}: {
+  project_id: string;
+  project_region?: string | null;
+  backup_repo_id?: string | null;
+}): Promise<{
+  toml: string;
+  ttl_seconds: number;
+  backup_repo_id: string | null;
+}> {
+  if (!project_id || !isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  if (backup_repo_id && !isValidUUID(backup_repo_id)) {
+    throw new Error("invalid backup_repo_id");
+  }
+  const region =
+    parseR2Region(project_region) ??
+    mapCloudRegionToR2Region(project_region ?? DEFAULT_R2_REGION);
+  if (backup_repo_id) {
+    const repo = await loadProjectBackupRepoById(backup_repo_id);
+    if (repo) {
+      return await buildBackupConfigFromRepo({
+        repo,
+        fallbackRegion: region,
+      });
+    }
+  }
+  const assigned = await getOrCreateProjectBackupRepoForRegion(region);
+  if (!assigned?.repo) {
+    return { toml: "", ttl_seconds: 0, backup_repo_id: null };
+  }
+  return await buildBackupConfigFromRepo({
+    repo: assigned.repo,
+    fallbackRegion: region,
+  });
+}
+
 export async function getBackupConfig({
   host_id,
   project_id,
+  host_region,
+  host_machine,
 }: {
   host_id?: string;
   project_id?: string;
+  host_region?: string | null;
+  host_machine?: HostMachine | null;
 }): Promise<{ toml: string; ttl_seconds: number }> {
   if (!host_id || !isValidUUID(host_id)) {
     throw new Error("invalid host_id");
@@ -820,75 +967,46 @@ export async function getBackupConfig({
     "SELECT region, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
     [host_id],
   );
-  if (!rows[0]) {
+  const hostRow = rows[0];
+  if (!hostRow && host_region == null && host_machine == null) {
     throw new Error("host not found");
   }
 
   await assertHostProjectAccess(host_id, project_id);
 
-  const rowMetadata = rows[0]?.metadata ?? {};
-  const machine: HostMachine = rowMetadata?.machine ?? {};
+  const rowMetadata = hostRow?.metadata ?? {};
+  const machine: HostMachine = (rowMetadata?.machine ??
+    host_machine ??
+    {}) as HostMachine;
   if (isSelfHostLocalMachine(machine)) {
     return await buildSelfHostLocalBackupConfig();
   }
 
-  const hostRegion = rows[0]?.region ?? null;
+  const hostRegion = hostRow?.region ?? host_region ?? null;
   const hostR2Region = mapCloudRegionToR2Region(
     hostRegion ?? DEFAULT_R2_REGION,
   );
   const projectR2Region = project_id
     ? await resolveProjectRegion(project_id, hostRegion)
     : hostR2Region;
-  const buildTomlForBucket = async ({
-    bucket,
-    password,
-    root,
-  }: {
-    bucket: BucketRow;
-    password: string;
-    root: string;
-  }): Promise<string> => {
-    const accountId =
-      (await getSiteSetting("r2_account_id")) ?? bucket.account_id;
-    const accessKey =
-      (await getSiteSetting("r2_access_key_id")) ?? bucket.access_key_id;
-    const secretKey =
-      (await getSiteSetting("r2_secret_access_key")) ??
-      bucket.secret_access_key;
-    const endpoint =
-      (accountId
-        ? `https://${accountId}.r2.cloudflarestorage.com`
-        : undefined) ?? bucket.endpoint;
-    if (!accountId || !accessKey || !secretKey || !endpoint) {
-      return "";
-    }
-    return buildS3ProjectBackupToml({
-      endpoint,
-      bucket: bucket.name,
-      accessKey,
-      secretKey,
-      password,
-      root,
-    });
-  };
-
   const assignment = await getProjectBackupAssignment(project_id);
+  if (shouldUseSeedManagedProjectBackups()) {
+    const config = await getSeedManagedProjectBackupConfig({
+      project_id,
+      project_region: projectR2Region,
+      backup_repo_id: assignment.backup_repo_id,
+    });
+    return { toml: config.toml, ttl_seconds: config.ttl_seconds };
+  }
+
   if (assignment.backup_repo_id) {
     const repo = await loadProjectBackupRepoById(assignment.backup_repo_id);
-    if (repo?.bucket_id && repo.root) {
-      const bucket = await loadBucketById(repo.bucket_id);
-      if (bucket) {
-        await ensureExistingBucketRowIsUsable({
-          bucket,
-          fallbackRegion: projectR2Region,
-        });
-        const toml = await buildTomlForBucket({
-          bucket,
-          password: await getProjectBackupRepoSecret(repo),
-          root: repo.root,
-        });
-        return { toml, ttl_seconds: toml ? DEFAULT_BACKUP_TTL_SECONDS : 0 };
-      }
+    if (repo) {
+      const config = await buildBackupConfigFromRepo({
+        repo,
+        fallbackRegion: projectR2Region,
+      });
+      return { toml: config.toml, ttl_seconds: config.ttl_seconds };
     }
   }
 
@@ -1230,11 +1348,9 @@ async function assertHostProjectAccess(host_id: string, project_id: string) {
     throw new Error("project not assigned to host");
   }
   if (currentHost === host_id) {
-    // Keep the ordinary backup path bay-consistent. Transitional move/copy
-    // access checks below intentionally remain host-based for now.
-    if (row?.project_owning_bay_id !== row?.host_bay_id) {
-      throw new Error("project bay does not match assigned host");
-    }
+    // Backup management is now host-local even when the project owning bay
+    // differs from the host bay. The authenticated host is authorized as long
+    // as it is the project's current assigned host.
     return;
   }
 

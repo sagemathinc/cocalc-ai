@@ -133,16 +133,46 @@ export class SyncTableStream extends EventEmitter {
     this.dstream.on("reject", (err) => {
       console.warn("synctable-stream: rejected - ", err);
     });
+    this.dstream.on("has-unsaved-changes", this.handleHasUnsavedChanges);
+    this.dstream.on("disconnected", this.handleDStreamDisconnected);
+    this.dstream.on("recovering", this.handleDStreamDisconnected);
+    this.dstream.on("paused", this.handleDStreamDisconnected);
+    this.dstream.on("recovered", this.handleDStreamConnected);
     const initial = this.dstream.getAll();
     for (const mesg of initial) {
       this.handle(mesg, false);
     }
-    this.setState("connected");
+    this.setState(
+      this.dstream.getRecoveryState() === "ready"
+        ? "connected"
+        : "disconnected",
+    );
   };
 
   private setState = (state: State): void => {
+    if (this.state === state) {
+      return;
+    }
     this.state = state;
     this.emit(state);
+  };
+
+  private handleHasUnsavedChanges = (hasUnsavedChanges: boolean): void => {
+    this.emit("has-uncommitted-changes", hasUnsavedChanges);
+  };
+
+  private handleDStreamDisconnected = (): void => {
+    if (this.state === "closed") {
+      return;
+    }
+    this.setState("disconnected");
+  };
+
+  private handleDStreamConnected = (): void => {
+    if (this.state === "closed") {
+      return;
+    }
+    this.setState("connected");
   };
 
   get_state = () => {

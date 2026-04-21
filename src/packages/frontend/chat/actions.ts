@@ -181,6 +181,12 @@ export interface NewThreadAppearanceOptions {
   image?: string;
 }
 
+export interface PreparedChatSendIdentity {
+  date: string;
+  message_id: string;
+  thread_id: string;
+}
+
 export interface ThreadMetadataSnapshot {
   thread_date?: string;
   name?: string;
@@ -565,6 +571,21 @@ export class ChatActions extends Actions<ChatState> {
     return state == null || state === "ready";
   };
 
+  reserveChatSendIdentity = ({
+    reply_thread_id,
+  }: {
+    reply_thread_id?: string;
+  } = {}): PreparedChatSendIdentity => {
+    const date = nextChatMessageDate(this);
+    const explicitReplyThreadId =
+      typeof reply_thread_id === "string" ? reply_thread_id.trim() : "";
+    return {
+      date: date.toISOString(),
+      message_id: uuid(),
+      thread_id: explicitReplyThreadId || uuid(),
+    };
+  };
+
   private warnSyncdbNotReady = (): void => {
     const now = Date.now();
     if (now - this.lastSyncdbNotReadyAlertAt < 2000) return;
@@ -813,6 +834,9 @@ export class ChatActions extends Actions<ChatState> {
     acp_loop_config,
     parent_message_id,
     acpConfigOverride,
+    chatIdentity,
+    recoveredNotSent,
+    skipDraftDelete,
   }: {
     input?: string;
     acp_prompt?: string;
@@ -839,6 +863,12 @@ export class ChatActions extends Actions<ChatState> {
     parent_message_id?: string;
     // explicit ACP config snapshot to use for immediate dispatch
     acpConfigOverride?: Partial<CodexThreadConfig>;
+    // stable identity reserved before clearing the composer/outbox entry
+    chatIdentity?: PreparedChatSendIdentity;
+    // recovered agent input should be visible as user-authored but not sent
+    recoveredNotSent?: boolean;
+    // recovery replay should not delete whatever the user is composing now
+    skipDraftDelete?: boolean;
   }): string => {
     if (this.syncdb == null || this.store == null) {
       console.warn("attempt to sendChat before chat actions initialized");
@@ -849,9 +879,17 @@ export class ChatActions extends Actions<ChatState> {
       this.warnSyncdbNotReady();
       return "";
     }
-    const time_stamp: Date = nextChatMessageDate(this);
+    const time_stamp: Date = chatIdentity?.date
+      ? new Date(chatIdentity.date)
+      : nextChatMessageDate(this);
+    if (!Number.isFinite(time_stamp.valueOf())) {
+      console.warn("chat sendChat skipped: invalid reserved timestamp", {
+        date: chatIdentity?.date,
+      });
+      return "";
+    }
     const time_stamp_str = time_stamp.toISOString();
-    const message_id = uuid();
+    const message_id = chatIdentity?.message_id ?? uuid();
     const mentionsInput =
       submitMentionsRef?.current?.({ chat: `${time_stamp.valueOf()}` }) ?? "";
     if (extraInput != null) {
@@ -871,7 +909,7 @@ export class ChatActions extends Actions<ChatState> {
     const explicitReplyThreadId =
       typeof reply_thread_id === "string" ? reply_thread_id.trim() : "";
     if (!explicitReplyThreadId) {
-      thread_id = uuid();
+      thread_id = chatIdentity?.thread_id ?? uuid();
     } else {
       thread_id = explicitReplyThreadId;
       if (!thread_id) {
@@ -910,6 +948,9 @@ export class ChatActions extends Actions<ChatState> {
     if (send_mode === "immediate") {
       (message as any).acp_send_mode = "immediate";
     }
+    if (recoveredNotSent === true) {
+      (message as any).acp_state = "not-sent";
+    }
     if (acp_loop_config != null) {
       (message as any).acp_loop_config = acp_loop_config;
     }
@@ -941,7 +982,9 @@ export class ChatActions extends Actions<ChatState> {
     }
     let selectedThreadKey: string;
     if (!explicitReplyThreadId) {
-      this.deleteDraft(0);
+      if (!skipDraftDelete) {
+        this.deleteDraft(0);
+      }
       if (!preserveSelectedThread) {
         this.clearAllFilters();
       }
@@ -958,6 +1001,13 @@ export class ChatActions extends Actions<ChatState> {
     // Commit locally before async model dispatch. This does NOT wait for
     // backend/client propagation; it just finalizes the local patchflow state.
     this.syncdb.commit();
+    if (recoveredNotSent === true) {
+      const nextAcpState = (this.store.get("acpState") ?? fromJS({})).set(
+        `message:${message_id}`,
+        "not-sent",
+      );
+      this.store.setState({ acpState: nextAcpState });
+    }
 
     const project_id = this.store?.get("project_id");
     const path = this.store?.get("path");

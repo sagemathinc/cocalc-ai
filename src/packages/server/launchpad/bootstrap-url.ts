@@ -1,6 +1,8 @@
 import basePath from "@cocalc/backend/base-path";
 import getLogger from "@cocalc/backend/logger";
 import siteURL from "@cocalc/database/settings/site-url";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
 
 const logger = getLogger("launchpad:bootstrap-url");
 
@@ -21,7 +23,14 @@ function resolveLaunchpadPort(): number {
 export async function resolveLaunchpadBootstrapUrl(opts?: {
   fallbackHost?: string | null;
   fallbackProtocol?: string | null;
+  preferCurrentBay?: boolean;
 }): Promise<BootstrapBase> {
+  if (opts?.preferCurrentBay) {
+    const bayOrigin = await getBayPublicOrigin(getConfiguredBayId());
+    if (bayOrigin) {
+      return { baseUrl: bayOrigin };
+    }
+  }
   const site = await siteURL();
   if (site) {
     return { baseUrl: site };
