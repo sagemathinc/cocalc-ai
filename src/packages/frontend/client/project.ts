@@ -77,7 +77,10 @@ export class ProjectClient {
     }
     return await writeFile({
       ...opts,
-      client: this.client.conat_client.conat(),
+      client: await this.client.conat_client.projectConat({
+        project_id: opts.project_id,
+        caller: "ProjectClient.writeFile",
+      }),
     });
   };
 
@@ -89,7 +92,10 @@ export class ProjectClient {
     const chunks: Uint8Array[] = [];
     for await (const chunk of await readFile({
       ...opts,
-      client: this.client.conat_client.conat(),
+      client: await this.client.conat_client.projectConat({
+        project_id: opts.project_id,
+        caller: "ProjectClient.readFile",
+      }),
     })) {
       chunks.push(chunk);
     }
@@ -280,8 +286,10 @@ export class ProjectClient {
     debug?: string;
   }): Promise<void> {
     try {
-      // Use conat to connect to the project exec-stream service
-      const cn = await this.client.conat_client.conat();
+      const cn = await this.client.conat_client.projectConat({
+        project_id: opts.project_id,
+        caller: "ProjectClient.execStream",
+      });
       const subject = projectSubject({
         project_id: opts.project_id,
         service: EXEC_STREAM_SERVICE,

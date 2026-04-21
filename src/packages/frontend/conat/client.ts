@@ -2134,6 +2134,11 @@ export class ConatClient extends EventEmitter {
         );
       }
     }
+    if (requireRouting) {
+      throw Error(
+        `unable to route '${caller}' to project-host for project ${project_id}; project host id unavailable`,
+      );
+    }
     return this.conat();
   };
 

@@ -236,7 +236,7 @@ Remaining audit targets:
 - [x] any remaining user-hot-path `hub.projects.*` runtime reads
 - [x] convert browser filesystem/listing/storage/project-info wrappers away
       from implicit synchronous `routeSubject(...)` fallback
-- [ ] audit any remaining frontend code that can silently fall back to the default
+- [x] audit any remaining frontend code that can silently fall back to the default
       global Conat client instead of an explicit routed client
 
 Notes:
@@ -283,11 +283,23 @@ Notes:
   shared project dstreams, Codex log AKV reads/deletes, chat project read-state,
   chat activity-log cleanup, Jupyter live-run/usage/run-code clients, recent
   document activity, and course file-use reads
-- the remaining frontend fallback audit is now narrower: account-local stores
+- the final frontend fallback audit is now closed: account-local stores
   intentionally stay on the signed-in/home-bay browser client, while
-  synchronous project syncdoc factories still depend on route-subject cache
-  state and need either an async initialization layer or an earlier project-open
-  prewarm guarantee
+  project-local runtime wrappers either explicitly warm routing or fail closed
+  instead of silently using the default home-bay client
+- syncdoc routing was validated live on 2026-04-21 with the reusable browser QA
+  runner against both a seed-owned project and a bay-1 home/project case through
+  `lite4b.cocalc.ai`; both syncstring and syncdb writes selected the project-host
+  address and persisted to disk
+- the final fallback audit found the remaining silent default-client project
+  traffic in browser `ProjectClient` streaming file read/write and exec-stream
+  helpers; those now obtain an explicit routed project client before sending
+  project subjects
+- synchronous project syncdoc factories now fail closed when `requireRouting` is
+  set but project host routing metadata is cold, instead of returning the default
+  home-bay Conat client; remaining default-client usages in chat draft and git
+  review stores are account-local AKV state and intentionally stay on the
+  account/home-bay client
 
 ### 3. Finish Project-Host Runtime Productionization
 
