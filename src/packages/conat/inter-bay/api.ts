@@ -215,6 +215,17 @@ export interface AccountDirectorySearchRequest {
 
 export interface AccountDirectoryHomeBayCountsRequest {}
 
+export interface AccountDirectoryDeleteRequest {
+  account_id: string;
+  only_if_tag?: string;
+}
+
+export interface AccountDirectoryDeleteResult {
+  account_id: string;
+  home_bay_id: string;
+  status: "deleted";
+}
+
 export interface AccountDirectoryEntry extends UserSearchResult {
   email_address?: string;
   home_bay_id?: string;
@@ -400,8 +411,9 @@ export type AccountDirectoryMethod =
   | "get-many"
   | "search"
   | "home-bay-counts"
-  | "create";
-export type AccountLocalMethod = "create";
+  | "create"
+  | "delete";
+export type AccountLocalMethod = "create" | "delete";
 export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
 export type BayRegistryMethod = "register" | "list";
 export type ProjectCollabInviteMethod =
@@ -646,12 +658,18 @@ export interface InterBayAccountDirectoryApi {
   create: (
     opts: AccountDirectoryCreateRequest,
   ) => Promise<AccountDirectoryEntry>;
+  delete: (
+    opts: AccountDirectoryDeleteRequest,
+  ) => Promise<AccountDirectoryDeleteResult>;
 }
 
 export interface InterBayAccountLocalApi {
   create: (
     opts: AccountDirectoryCreateRequest,
   ) => Promise<AccountDirectoryEntry>;
+  delete: (
+    opts: AccountDirectoryDeleteRequest,
+  ) => Promise<AccountDirectoryDeleteResult>;
 }
 
 export interface InterBayBayRegistryApi {
@@ -1414,6 +1432,12 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "create" }),
   });
+  const deleteClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "delete">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "delete" }),
+  });
   return {
     get: async (opts) => await getClient.get(opts),
     getByEmail: async (opts) => await getByEmailClient.getByEmail(opts),
@@ -1422,6 +1446,7 @@ export function createInterBayAccountDirectoryClient({
     getHomeBayCounts: async (opts) =>
       await homeBayCountsClient.getHomeBayCounts(opts),
     create: async (opts) => await createClient.create(opts),
+    delete: async (opts) => await deleteClient.delete(opts),
   };
 }
 
@@ -1482,6 +1507,14 @@ export function createInterBayAccountDirectoryHandlers({
         create: async (opts) => await impl.create(opts),
       },
     }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "delete">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "delete" }),
+      impl: {
+        delete: async (opts) => await impl.delete(opts),
+      },
+    }),
   ];
 }
 
@@ -1500,8 +1533,15 @@ export function createInterBayAccountLocalClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountLocalSubject({ dest_bay, method: "create" }),
   });
+  const deleteClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "delete">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "delete" }),
+  });
   return {
     create: async (opts) => await createClient.create(opts),
+    delete: async (opts) => await deleteClient.delete(opts),
   };
 }
 
@@ -1512,15 +1552,25 @@ export function createInterBayAccountLocalHandler({
 }: ServiceHandlerOptions & {
   bay_id: string;
   impl: InterBayAccountLocalApi;
-}): ConatService {
-  return createServiceHandler<Pick<InterBayAccountLocalApi, "create">>({
-    ...options,
-    service: "inter-bay-account-local",
-    subject: accountLocalSubject({ dest_bay: bay_id, method: "create" }),
-    impl: {
-      create: async (opts) => await impl.create(opts),
-    },
-  });
+}): ConatService[] {
+  return [
+    createServiceHandler<Pick<InterBayAccountLocalApi, "create">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({ dest_bay: bay_id, method: "create" }),
+      impl: {
+        create: async (opts) => await impl.create(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "delete">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({ dest_bay: bay_id, method: "delete" }),
+      impl: {
+        delete: async (opts) => await impl.delete(opts),
+      },
+    }),
+  ];
 }
 
 export function createInterBayBayRegistryClient({

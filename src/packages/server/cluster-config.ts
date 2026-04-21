@@ -4,6 +4,7 @@
  */
 
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { DEFAULT_SEED_BAY_ID } from "@cocalc/util/bay";
 
 export type ClusterRole = "standalone" | "seed" | "attached";
 
@@ -36,7 +37,9 @@ export function getConfiguredClusterRole(): ClusterRole {
 export function getConfiguredClusterSeedBayId(): string {
   return (
     configuredEnv("COCALC_CLUSTER_SEED_BAY_ID") ??
-    (getConfiguredClusterRole() === "attached" ? "bay-0" : getConfiguredBayId())
+    (getConfiguredClusterRole() === "attached"
+      ? DEFAULT_SEED_BAY_ID
+      : getConfiguredBayId())
   );
 }
 

@@ -13,11 +13,15 @@ const DEFAULT_SCENARIOS = ["sign-in-target", "storage-archives"];
 const INVITE_REDEEM_SCENARIO = "invite-redeem";
 const INVITE_EDGE_CASES_SCENARIO = "invite-edge-cases";
 const PROJECT_LIFECYCLE_SCENARIO = "project-lifecycle";
+const RECONNECT_STABLE_URL_SCENARIO = "reconnect-stable-url";
+const SIGN_UP_HOME_BAY_SCENARIO = "sign-up-home-bay";
 const KNOWN_SCENARIOS = new Set([
   ...DEFAULT_SCENARIOS,
   INVITE_REDEEM_SCENARIO,
   INVITE_EDGE_CASES_SCENARIO,
   PROJECT_LIFECYCLE_SCENARIO,
+  RECONNECT_STABLE_URL_SCENARIO,
+  SIGN_UP_HOME_BAY_SCENARIO,
 ]);
 
 function usageAndExit(message, code = 1) {
@@ -37,7 +41,11 @@ function usageAndExit(message, code = 1) {
       "Options:",
       "  --project-title <text>     Visible project title to require after sign-in",
       "  --scenario <name>          Scenario to run; repeatable. Defaults to all.",
-      "                            Known: sign-in-target, storage-archives, invite-redeem, invite-edge-cases, project-lifecycle",
+      "                            Known: sign-in-target, storage-archives, invite-redeem, invite-edge-cases, project-lifecycle, reconnect-stable-url, sign-up-home-bay",
+      "  --registration-token <t>   Registration token for sign-up-home-bay when required",
+      "  --expected-home-bay <id>   Assert created/signed-in account home bay, e.g. bay-2",
+      "  --first-name <text>        First name for sign-up-home-bay (default: QA)",
+      "  --last-name <text>         Last name for sign-up-home-bay (default: Multibay)",
       "  --owner-email <address>    Inviter account for invite scenarios; defaults to --email",
       "  --owner-password <pass>    Inviter password for invite scenarios; defaults to --password",
       "  --invitee-email <address>  Invitee account for invite scenarios",
@@ -67,6 +75,10 @@ function usageAndExit(message, code = 1) {
       "  COCALC_MULTIBAY_QA_INVITE_RESET_BEFORE",
       "  COCALC_MULTIBAY_QA_INVITE_CLEANUP_AFTER",
       "  COCALC_MULTIBAY_QA_PROJECT_TITLE",
+      "  COCALC_MULTIBAY_QA_REGISTRATION_TOKEN",
+      "  COCALC_MULTIBAY_QA_EXPECTED_HOME_BAY",
+      "  COCALC_MULTIBAY_QA_FIRST_NAME",
+      "  COCALC_MULTIBAY_QA_LAST_NAME",
       "  COCALC_MULTIBAY_QA_SCENARIOS",
       "  COCALC_MULTIBAY_QA_CHROMIUM",
       "  COCALC_MULTIBAY_QA_TIMEOUT_MS",
@@ -131,6 +143,10 @@ function parseArgs(argv) {
       process.env.COCALC_MULTIBAY_QA_INVITE_MESSAGE ??
       "Multibay browser QA invite",
     projectTitle: process.env.COCALC_MULTIBAY_QA_PROJECT_TITLE ?? "",
+    registrationToken: process.env.COCALC_MULTIBAY_QA_REGISTRATION_TOKEN ?? "",
+    expectedHomeBay: process.env.COCALC_MULTIBAY_QA_EXPECTED_HOME_BAY ?? "",
+    firstName: process.env.COCALC_MULTIBAY_QA_FIRST_NAME ?? "QA",
+    lastName: process.env.COCALC_MULTIBAY_QA_LAST_NAME ?? "Multibay",
     scenarios: parseScenarioList(process.env.COCALC_MULTIBAY_QA_SCENARIOS),
     chromiumPath:
       process.env.COCALC_MULTIBAY_QA_CHROMIUM ??
@@ -182,6 +198,18 @@ function parseArgs(argv) {
     } else if (arg === "--project-title") {
       options.projectTitle = takeValue(argv, i, arg);
       i += 1;
+    } else if (arg === "--registration-token") {
+      options.registrationToken = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--expected-home-bay") {
+      options.expectedHomeBay = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--first-name") {
+      options.firstName = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--last-name") {
+      options.lastName = takeValue(argv, i, arg);
+      i += 1;
     } else if (arg === "--scenario") {
       options.scenarios.push(...parseScenarioList(takeValue(argv, i, arg)));
       i += 1;
@@ -216,16 +244,26 @@ function parseArgs(argv) {
   options.ownerEmail = options.ownerEmail.trim() || options.email;
   options.ownerPassword = options.ownerPassword || options.password;
   options.inviteeEmail = options.inviteeEmail.trim();
+  options.registrationToken = options.registrationToken.trim();
+  options.expectedHomeBay = options.expectedHomeBay.trim();
+  options.firstName = options.firstName.trim() || "QA";
+  options.lastName = options.lastName.trim() || "Multibay";
   options.scenarios = normalizeScenarios(options.scenarios);
 
   if (!options.baseUrl) usageAndExit("--base-url is required");
-  if (!options.projectId) usageAndExit("--project is required");
+  if (
+    options.scenarios.some((scenario) => scenario !== SIGN_UP_HOME_BAY_SCENARIO)
+  ) {
+    if (!options.projectId) usageAndExit("--project is required");
+  }
   if (
     options.scenarios.some((scenario) =>
       [
         "sign-in-target",
         "storage-archives",
         PROJECT_LIFECYCLE_SCENARIO,
+        RECONNECT_STABLE_URL_SCENARIO,
+        SIGN_UP_HOME_BAY_SCENARIO,
       ].includes(scenario),
     )
   ) {
@@ -294,6 +332,10 @@ function redact(value) {
       "$1[redacted]",
     )
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/g, "$1[redacted]");
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatError(error) {
@@ -508,6 +550,87 @@ async function waitForRuntime(page, options) {
   );
 }
 
+async function readProjectStateAfterRoutedReconnect(page, options, label) {
+  await waitForRuntime(page, options);
+  const deadline = Date.now() + options.timeoutMs;
+  let lastError = "";
+  while (Date.now() < deadline) {
+    try {
+      return await page.evaluate(
+        async ({ projectId, timeoutMs, label }) => {
+          function toPlain(value) {
+            return JSON.parse(JSON.stringify(value ?? null));
+          }
+
+          let timer;
+          try {
+            const state = await Promise.race([
+              globalThis.cc.conat.hub.projects.getProjectState({
+                project_id: projectId,
+              }),
+              new Promise((_, reject) => {
+                timer = setTimeout(
+                  () =>
+                    reject(
+                      new Error(
+                        `${label}: getProjectState timed out after ${timeoutMs}ms`,
+                      ),
+                    ),
+                  timeoutMs,
+                );
+              }),
+            ]);
+            return toPlain(state);
+          } finally {
+            clearTimeout(timer);
+          }
+        },
+        { projectId: options.projectId, timeoutMs: options.timeoutMs, label },
+      );
+    } catch (error) {
+      lastError = formatError(error);
+      await sleep(1_000);
+    }
+  }
+  throw new Error(
+    `${label}: unable to read routed project state after reconnect; last error: ${lastError}`,
+  );
+}
+
+async function runReconnectStableUrl(page, context, options) {
+  const before = await readProjectStateAfterRoutedReconnect(
+    page,
+    options,
+    "before-reconnect",
+  );
+  const beforeUrl = page.url();
+
+  await context.setOffline(true);
+  await sleep(Math.min(3_000, Math.max(1_000, options.timeoutMs / 20)));
+  await context.setOffline(false);
+
+  await waitForStableProjectUrl(page, options);
+  const after = await readProjectStateAfterRoutedReconnect(
+    page,
+    options,
+    "after-reconnect",
+  );
+  const afterUrl = page.url();
+
+  if (new URL(afterUrl).origin !== options.baseOrigin) {
+    throw new Error(
+      `reconnect changed origin: expected ${options.baseOrigin}, got ${afterUrl}`,
+    );
+  }
+
+  return {
+    beforeUrl: redact(beforeUrl),
+    afterUrl: redact(afterUrl),
+    beforeState: before,
+    afterState: after,
+  };
+}
+
 function assertFiniteNumber(value, label) {
   if (!Number.isFinite(value)) {
     throw new Error(`${label} must be a finite number; got ${value}`);
@@ -533,7 +656,7 @@ async function readStorageArchives(page, options) {
         return JSON.parse(JSON.stringify(value ?? null));
       }
 
-      async function withTimeout(label, promise) {
+      async function withTimeout(label, promise, timeout = timeoutMs) {
         let timer;
         try {
           return await Promise.race([
@@ -541,8 +664,8 @@ async function readStorageArchives(page, options) {
             new Promise((_, reject) => {
               timer = setTimeout(
                 () =>
-                  reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
-                timeoutMs,
+                  reject(new Error(`${label} timed out after ${timeout}ms`)),
+                timeout,
               );
             }),
           ]);
@@ -651,7 +774,7 @@ async function runProjectLifecycle(page, options) {
         return JSON.parse(JSON.stringify(value ?? null));
       }
 
-      async function withTimeout(label, promise) {
+      async function withTimeout(label, promise, timeout = timeoutMs) {
         let timer;
         try {
           return await Promise.race([
@@ -659,8 +782,8 @@ async function runProjectLifecycle(page, options) {
             new Promise((_, reject) => {
               timer = setTimeout(
                 () =>
-                  reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
-                timeoutMs,
+                  reject(new Error(`${label} timed out after ${timeout}ms`)),
+                timeout,
               );
             }),
           ]);
@@ -770,7 +893,7 @@ async function runProjectLifecycle(page, options) {
               "bash",
               [
                 "-lc",
-                `mkdir -p .smoke && printf '%s\\n' '${marker}' > '${path}' && cat '${path}' && sleep 300`,
+                `mkdir -p .smoke && printf '%s\\n' '${marker}' > '${path}' && cat '${path}' && sleep 5`,
               ],
               {
                 id: `.smoke/${marker}.term`,
@@ -797,11 +920,19 @@ async function runProjectLifecycle(page, options) {
           );
         } finally {
           try {
-            await term.destroy();
+            await withTimeout(
+              `${label}:terminal-destroy`,
+              Promise.resolve(term.destroy()),
+              5_000,
+            );
           } catch {
             // Terminal cleanup is best-effort; close below tears down the socket.
           }
-          term.close();
+          try {
+            term.close();
+          } catch {
+            // Nothing actionable; the browser context will close after the scenario.
+          }
         }
       }
 
@@ -873,6 +1004,130 @@ async function getSignedInAccountId(page, options) {
     throw new Error("unable to determine signed-in account id");
   }
   return accountId;
+}
+
+async function getSignedInAccountHomeBay(page, options, accountId) {
+  await waitForRuntime(page, options);
+  const location = await page.evaluate(
+    async (userAccountId) =>
+      await globalThis.cc.conat.hub.system.getAccountBay({
+        user_account_id: userAccountId,
+      }),
+    accountId,
+  );
+  const homeBayId = `${location?.home_bay_id ?? ""}`.trim();
+  if (!homeBayId) {
+    throw new Error("unable to determine signed-in account home bay");
+  }
+  return location;
+}
+
+async function signUpThroughStableUrl(page, options) {
+  const signUpUrl = new URL("/auth/sign-up", options.baseUrl);
+  if (options.registrationToken) {
+    signUpUrl.searchParams.set("registrationToken", options.registrationToken);
+  }
+  await page.goto(signUpUrl.toString(), {
+    waitUntil: "domcontentloaded",
+    timeout: options.timeoutMs,
+  });
+  await assertNoStaleBuild(page);
+
+  const registrationTokenInput = page.getByPlaceholder(
+    "Enter your registration token",
+  );
+  if ((await registrationTokenInput.count()) > 0) {
+    await registrationTokenInput.fill(options.registrationToken);
+  }
+  await page.getByPlaceholder("you@example.com").fill(options.email);
+  await page.locator('input[type="password"]').fill(options.password);
+  await page.getByPlaceholder("First name").fill(options.firstName);
+  await page.getByPlaceholder("Last name").fill(options.lastName);
+  await page.getByRole("button", { name: /^Create account$/i }).click();
+
+  await page.waitForURL(
+    (url) =>
+      url.origin === options.baseOrigin && !url.pathname.startsWith("/auth"),
+    { timeout: options.timeoutMs },
+  );
+  await assertNoStaleBuild(page);
+  await waitForRuntime(page, options);
+  const accountId = await getSignedInAccountId(page, options);
+  const homeBay = await getSignedInAccountHomeBay(page, options, accountId);
+  if (
+    options.expectedHomeBay &&
+    homeBay.home_bay_id !== options.expectedHomeBay
+  ) {
+    throw new Error(
+      `created account home bay mismatch: expected ${options.expectedHomeBay}, got ${homeBay.home_bay_id}`,
+    );
+  }
+  return {
+    finalUrl: redact(page.url()),
+    accountId,
+    homeBay,
+  };
+}
+
+async function runSignUpHomeBayScenario(browser, options) {
+  const diagnostics = createDiagnostics(SIGN_UP_HOME_BAY_SCENARIO);
+  const contexts = [];
+
+  try {
+    const signUp = await newQaPage(browser, options, diagnostics, "sign-up");
+    contexts.push(signUp.context);
+    const signUpResult = await signUpThroughStableUrl(signUp.page, options);
+
+    const signIn = await newQaPage(browser, options, diagnostics, "sign-in");
+    contexts.push(signIn.context);
+    const signInResult = await signInToRoot(
+      signIn.page,
+      options,
+      primaryCredentials(options),
+    );
+    const signedInAccountId = await getSignedInAccountId(signIn.page, options);
+    if (signedInAccountId !== signUpResult.accountId) {
+      throw new Error(
+        `fresh sign-in account mismatch: expected ${signUpResult.accountId}, got ${signedInAccountId}`,
+      );
+    }
+    const signedInHomeBay = await getSignedInAccountHomeBay(
+      signIn.page,
+      options,
+      signedInAccountId,
+    );
+    if (
+      options.expectedHomeBay &&
+      signedInHomeBay.home_bay_id !== options.expectedHomeBay
+    ) {
+      throw new Error(
+        `fresh sign-in home bay mismatch: expected ${options.expectedHomeBay}, got ${signedInHomeBay.home_bay_id}`,
+      );
+    }
+
+    return {
+      scenario: SIGN_UP_HOME_BAY_SCENARIO,
+      status: "pass",
+      signUp: signUpResult,
+      signIn: {
+        ...signInResult,
+        accountId: signedInAccountId,
+        homeBay: signedInHomeBay,
+      },
+      diagnostics: summarizeDiagnostics(diagnostics),
+    };
+  } catch (error) {
+    return {
+      scenario: SIGN_UP_HOME_BAY_SCENARIO,
+      status: "fail",
+      error: formatError(error),
+      diagnostics: summarizeDiagnostics(diagnostics),
+    };
+  } finally {
+    await Promise.all(
+      contexts.map((context) => context.close().catch(() => {})),
+    );
+  }
 }
 
 async function listCollaborators(page, options) {
@@ -1475,6 +1730,9 @@ async function runInviteEdgeCasesScenario(browser, options) {
 }
 
 async function runScenario(browser, scenario, options) {
+  if (scenario === SIGN_UP_HOME_BAY_SCENARIO) {
+    return await runSignUpHomeBayScenario(browser, options);
+  }
   if (scenario === INVITE_REDEEM_SCENARIO) {
     return await runInviteRedeemScenario(browser, options);
   }
@@ -1519,6 +1777,17 @@ async function runScenario(browser, scenario, options) {
         status: "pass",
         signIn,
         lifecycle,
+        diagnostics: summarizeDiagnostics(diagnostics),
+      };
+    }
+    if (scenario === RECONNECT_STABLE_URL_SCENARIO) {
+      const signIn = await signInToProject(page, options);
+      const reconnect = await runReconnectStableUrl(page, context, options);
+      return {
+        scenario,
+        status: "pass",
+        signIn,
+        reconnect,
         diagnostics: summarizeDiagnostics(diagnostics),
       };
     }
@@ -1623,6 +1892,38 @@ function printTextResult(result) {
           : "",
         lifecycle?.terminalAfterStart?.marker ? "terminal_start=1" : "",
         lifecycle?.terminalAfterRestart?.marker ? "terminal_restart=1" : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  } else if (result.scenario === RECONNECT_STABLE_URL_SCENARIO) {
+    const reconnect = result.reconnect;
+    console.log(
+      [
+        `${prefix} reconnect-stable-url`,
+        `final_url=${reconnect?.afterUrl ?? result.currentUrl ?? "<unknown>"}`,
+        reconnect?.beforeState?.state
+          ? `before=${reconnect.beforeState.state}`
+          : "",
+        reconnect?.afterState?.state
+          ? `after=${reconnect.afterState.state}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  } else if (result.scenario === SIGN_UP_HOME_BAY_SCENARIO) {
+    const signUp = result.signUp;
+    const signIn = result.signIn;
+    console.log(
+      [
+        `${prefix} sign-up-home-bay`,
+        `signup_url=${signUp?.finalUrl ?? "<unknown>"}`,
+        `signin_url=${signIn?.finalUrl ?? "<unknown>"}`,
+        signUp?.homeBay?.home_bay_id
+          ? `home_bay=${signUp.homeBay.home_bay_id}`
+          : "",
+        signUp?.accountId ? `account=${signUp.accountId}` : "",
       ]
         .filter(Boolean)
         .join(" "),

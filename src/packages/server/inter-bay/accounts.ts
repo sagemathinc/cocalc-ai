@@ -8,9 +8,13 @@ import {
   createInterBayAccountDirectoryClient,
   createInterBayAccountLocalClient,
   type AccountDirectoryCreateRequest,
+  type AccountDirectoryDeleteRequest,
+  type AccountDirectoryDeleteResult,
   type AccountDirectoryEntry,
 } from "@cocalc/conat/inter-bay/api";
+import getPool from "@cocalc/database/pool";
 import createAccountLocal from "@cocalc/server/accounts/create-account";
+import deleteAccountLocal from "@cocalc/server/accounts/delete";
 import {
   deleteClusterAccountDirectoryEntry,
   getClusterAccountByEmailDirect,
@@ -27,6 +31,7 @@ import {
   isMultiBayCluster,
 } from "@cocalc/server/cluster-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { isValidUUID } from "@cocalc/util/misc";
 
 function currentBayId(): string {
   return getConfiguredBayId();
@@ -205,4 +210,72 @@ export async function createClusterAccount(
   return await createInterBayAccountDirectoryClient({
     client: getInterBayFabricClient(),
   }).create(normalized);
+}
+
+async function assertLocalAccountDeleteAllowed({
+  account_id,
+  only_if_tag,
+}: AccountDirectoryDeleteRequest): Promise<void> {
+  if (!only_if_tag) return;
+  const { rows } = await getPool().query<{ tags: string[] | null }>(
+    "SELECT tags FROM accounts WHERE account_id=$1",
+    [account_id],
+  );
+  const tags = rows[0]?.tags ?? [];
+  if (!tags.includes(only_if_tag)) {
+    throw new Error(
+      `refusing to delete account ${account_id}; missing required tag '${only_if_tag}'`,
+    );
+  }
+}
+
+export async function deleteLocalClusterAccount({
+  account_id,
+  only_if_tag,
+}: AccountDirectoryDeleteRequest): Promise<AccountDirectoryDeleteResult> {
+  if (!isValidUUID(account_id)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  await assertLocalAccountDeleteAllowed({ account_id, only_if_tag });
+  await deleteAccountLocal(account_id);
+  return {
+    account_id,
+    home_bay_id: currentBayId(),
+    status: "deleted",
+  };
+}
+
+async function deleteClusterAccountDirect({
+  account_id,
+  only_if_tag,
+}: AccountDirectoryDeleteRequest): Promise<AccountDirectoryDeleteResult> {
+  if (!isValidUUID(account_id)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  const entry = await getClusterAccountByIdDirect(account_id);
+  const home_bay_id = `${entry?.home_bay_id ?? ""}`.trim() || currentBayId();
+  const result =
+    home_bay_id === currentBayId()
+      ? await deleteLocalClusterAccount({ account_id, only_if_tag })
+      : await createInterBayAccountLocalClient({
+          client: getInterBayFabricClient(),
+          dest_bay: home_bay_id,
+        }).delete({ account_id, only_if_tag });
+
+  await deleteClusterAccountDirectoryEntry(account_id);
+  return {
+    ...result,
+    home_bay_id,
+  };
+}
+
+export async function deleteClusterAccount(
+  opts: AccountDirectoryDeleteRequest,
+): Promise<AccountDirectoryDeleteResult> {
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    return await deleteClusterAccountDirect(opts);
+  }
+  return await createInterBayAccountDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).delete(opts);
 }

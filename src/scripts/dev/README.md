@@ -183,8 +183,9 @@ the UI uses.
 Useful options:
 
 - `--scenario sign-in-target`, `--scenario storage-archives`,
-  `--scenario invite-redeem`, `--scenario invite-edge-cases`, or
-  `--scenario project-lifecycle` to run one check.
+  `--scenario invite-redeem`, `--scenario invite-edge-cases`,
+  `--scenario project-lifecycle`, `--scenario reconnect-stable-url`, or
+  `--scenario sign-up-home-bay` to run one check.
 - `--allow-empty-backups` for fixtures that should not require an existing backup.
 - `--allow-empty-snapshots` for fixtures that should not require snapshots.
 - `--headed` to watch the Chromium run.
@@ -241,6 +242,34 @@ pnpm --dir src qa:multibay-browser -- \
   --project-title '<visible project title>' \
   --email <test-account@example.com> \
   --timeout 120000
+```
+
+Run the stable URL reconnect scenario to validate that a signed-in browser can
+survive a network flap without leaving the stable public origin and can still
+read routed project state afterward:
+
+```bash
+COCALC_MULTIBAY_QA_PASSWORD='<password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --scenario reconnect-stable-url \
+  --base-url https://lite4b.cocalc.ai \
+  --project <project-id> \
+  --project-title '<visible project title>' \
+  --email <test-account@example.com>
+```
+
+Run the sign-up home-bay scenario to create a disposable account through the
+stable public URL, assert the selected home bay, then sign in again from a fresh
+browser context. This scenario does not require `--project`:
+
+```bash
+COCALC_MULTIBAY_QA_PASSWORD='<password>' \
+pnpm --dir src qa:multibay-browser -- \
+  --scenario sign-up-home-bay \
+  --base-url https://lite4b.cocalc.ai \
+  --email <new-test-account@example.com> \
+  --registration-token <registration-token> \
+  --expected-home-bay bay-2
 ```
 
 ## Codex long-thread benchmark

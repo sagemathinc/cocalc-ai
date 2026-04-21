@@ -86,3 +86,82 @@ test("account where resolves an explicit account identifier", async () => {
   assert.equal(captured?.last_name, "Other");
   assert.equal(captured?.name, "Bob Other");
 });
+
+test("account delete refuses to run without --yes", async () => {
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          system: {
+            deleteAccount: async () => {
+              throw new Error("should not delete without --yes");
+            },
+          },
+        },
+      };
+      await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an explicit account");
+    },
+  } as any);
+
+  await assert.rejects(
+    () => program.parseAsync(["node", "test", "account", "delete"]),
+    /without --yes/,
+  );
+});
+
+test("account delete forwards the target account and safety tag", async () => {
+  let captured: any;
+  let resolvedIdentifier: string | undefined;
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          system: {
+            deleteAccount: async (opts) => {
+              captured = opts;
+              return {
+                account_id: opts.user_account_id,
+                home_bay_id: "bay-2",
+                status: "deleted",
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async (_ctx, identifier) => {
+      resolvedIdentifier = identifier;
+      return {
+        account_id: "22222222-2222-2222-2222-222222222222",
+        email_address: "qa@example.com",
+      };
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "account",
+    "delete",
+    "qa@example.com",
+    "--yes",
+    "--only-if-tag",
+    "qa-safe-delete",
+  ]);
+
+  assert.equal(resolvedIdentifier, "qa@example.com");
+  assert.deepEqual(captured, {
+    user_account_id: "22222222-2222-2222-2222-222222222222",
+    only_if_tag: "qa-safe-delete",
+  });
+});

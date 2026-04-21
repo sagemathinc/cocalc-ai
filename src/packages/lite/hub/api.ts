@@ -109,10 +109,10 @@ import {
   uploadLiteSubscriptionAuthFile,
 } from "./codex-auth";
 import { getRow, listRows } from "./sqlite/database";
+import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
-const DEFAULT_BAY_ID = "bay-0";
 
 function syncHistoryWithExplicitClient(
   opts: Parameters<typeof syncHistory>[0],
