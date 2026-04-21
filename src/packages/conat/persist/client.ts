@@ -456,6 +456,13 @@ class PersistStreamClient extends EventEmitter {
             return true;
           }
           try {
+            if (
+              this.socket == null ||
+              this.socket.state === "closed" ||
+              this.socket.state === "disconnected"
+            ) {
+              this.init();
+            }
             await this.socket.waitUntilReady(attemptTimeout);
             if (this.changefeeds.length == 0 || this.state != "ready") {
               return true;
