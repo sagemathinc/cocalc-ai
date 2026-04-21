@@ -218,6 +218,32 @@ export function getLatestSummaryText(
   return latest;
 }
 
+function generatedImageMarkdownBlocks(events: AcpStreamMessage[]): string[] {
+  const seen = new Set<string>();
+  const blocks: string[] = [];
+  for (const evt of events ?? []) {
+    if (evt?.type !== "event" || evt.event?.type !== "image") continue;
+    const url = `${evt.event.blob?.url ?? ""}`.trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    blocks.push(`![Generated image](${url})`);
+  }
+  return blocks;
+}
+
+export function appendGeneratedImageMarkdown(
+  text: string | undefined,
+  events: AcpStreamMessage[],
+): string | undefined {
+  const content = `${text ?? ""}`.trim();
+  const blocks = generatedImageMarkdownBlocks(events).filter(
+    (block) => !content.includes(block),
+  );
+  if (!blocks.length) return content || undefined;
+  if (!content) return blocks.join("\n\n");
+  return `${content}\n\n${blocks.join("\n\n")}`;
+}
+
 export function getLatestEventLineText(
   events: AcpStreamMessage[],
 ): string | undefined {
@@ -308,12 +334,12 @@ export function getLiveResponseMarkdown(
   const blocks = getAgentMessageTexts(events);
   const summary = getLatestSummaryText(events);
   if (blocks.length > 0) {
-    return blocks.join("\n\n");
+    return appendGeneratedImageMarkdown(blocks.join("\n\n"), events);
   }
   if (typeof summary === "string" && summary.trim().length > 0) {
-    return summary;
+    return appendGeneratedImageMarkdown(summary, events);
   }
-  return getLatestEventLineText(events);
+  return appendGeneratedImageMarkdown(getLatestEventLineText(events), events);
 }
 
 // After a Codex turn finishes, keep the mounted intermediate activity visible
@@ -344,5 +370,8 @@ export function getInterruptedResponseMarkdown(
 export function getBestResponseText(
   events: AcpStreamMessage[],
 ): string | undefined {
-  return getLatestSummaryText(events) ?? getLatestMessageText(events);
+  return appendGeneratedImageMarkdown(
+    getLatestSummaryText(events) ?? getLatestMessageText(events),
+    events,
+  );
 }

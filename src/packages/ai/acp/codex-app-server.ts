@@ -37,6 +37,10 @@ import {
 } from "./codex-session-store";
 
 const logger = getLogger("ai:acp:codex-app-server");
+// Codex 0.120 still marks this under-development and disabled by default.
+// The built-in tool has its own auth/model gates, so enabling the feature flag
+// here does not expose image generation to unsupported auth modes.
+const IMAGE_GENERATION_FEATURE_ARGS = ["--enable", "image_generation"];
 const REQUEST_TIMEOUT_MS = Math.max(
   5_000,
   Number(process.env.COCALC_CODEX_APP_SERVER_TIMEOUT_MS ?? 90_000),
@@ -275,6 +279,26 @@ type CodexAppServerOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   model?: string;
+  uploadGeneratedImage?: (opts: {
+    savedPath: string;
+    hostPath: string;
+    codexHomeHostPath?: string;
+    filename: string;
+    imageId?: string;
+    revisedPrompt?: string;
+    cwd: string;
+    projectId?: string;
+    accountId?: string;
+    threadId?: string;
+    turnId?: string;
+  }) => Promise<
+    | {
+        uuid: string;
+        filename: string;
+        url: string;
+      }
+    | undefined
+  >;
 };
 
 type SpawnedCodexAppServer = {
@@ -1206,7 +1230,12 @@ async function spawnStandaloneAppServer(
   env?: NodeJS.ProcessEnv,
 ): Promise<SpawnedCodexAppServer> {
   const cmd = opts.binaryPath ?? "codex";
-  const args = ["app-server", "--listen", "stdio://"];
+  const args = [
+    ...IMAGE_GENERATION_FEATURE_ARGS,
+    "app-server",
+    "--listen",
+    "stdio://",
+  ];
   const HOME = process.env.COCALC_ORIGINAL_HOME ?? process.env.HOME;
   const proc = spawn(cmd, args, {
     cwd: opts.cwd,
@@ -1410,6 +1439,7 @@ export class CodexAppServerAgent implements AcpAgent {
     const completedTerminals = new Set<string>();
     const emittedFileWrites = new Set<string>();
     const emittedFileWritePaths = new Set<string>();
+    const emittedImages = new Set<string>();
     let latestTurnDiffText: string | undefined;
     const siteKeyGovernor = getCodexSiteKeyGovernor();
     const siteKeyEnforced =
@@ -1769,6 +1799,94 @@ export class CodexAppServerAgent implements AcpAgent {
               }
             }
             break;
+          case "imageGeneration": {
+            const imageId =
+              typeof item.id === "string" && item.id.trim()
+                ? item.id.trim()
+                : undefined;
+            const status =
+              typeof item.status === "string" && item.status.trim()
+                ? item.status.trim()
+                : "unknown";
+            const savedPath =
+              typeof item.savedPath === "string" && item.savedPath.trim()
+                ? item.savedPath.trim()
+                : typeof item.saved_path === "string" && item.saved_path.trim()
+                  ? item.saved_path.trim()
+                  : undefined;
+            const revisedPrompt =
+              typeof item.revisedPrompt === "string"
+                ? item.revisedPrompt
+                : typeof item.revised_prompt === "string"
+                  ? item.revised_prompt
+                  : undefined;
+            const normalizedStatus = status.toLowerCase();
+            const terminal =
+              savedPath != null ||
+              normalizedStatus === "completed" ||
+              normalizedStatus === "failed" ||
+              normalizedStatus === "declined" ||
+              normalizedStatus === "cancelled";
+            if (!terminal) {
+              break;
+            }
+            const eventKey =
+              imageId ??
+              `anonymous:${normalizedStatus}:${savedPath ?? ""}:${
+                revisedPrompt ?? ""
+              }`;
+            if (emittedImages.has(eventKey)) {
+              break;
+            }
+            emittedImages.add(eventKey);
+            let blob:
+              | {
+                  uuid: string;
+                  filename: string;
+                  url: string;
+                }
+              | undefined;
+            if (savedPath && this.opts.uploadGeneratedImage) {
+              const hostPath = mapContainerPathToHost(
+                savedPath,
+                spawned.containerPathMap,
+              );
+              try {
+                blob =
+                  (await this.opts.uploadGeneratedImage({
+                    savedPath,
+                    hostPath,
+                    codexHomeHostPath: getCodexHomeHostPath(spawned, cwd),
+                    filename: path.basename(hostPath),
+                    imageId,
+                    revisedPrompt,
+                    cwd,
+                    projectId: request.chat?.project_id ?? request.project_id,
+                    accountId: request.account_id,
+                    threadId: actualThreadId,
+                    turnId,
+                  })) ?? undefined;
+              } catch (err) {
+                logger.warn("codex app-server: generated image upload failed", {
+                  savedPath,
+                  hostPath,
+                  err: `${err}`,
+                });
+              }
+            }
+            await stream({
+              type: "event",
+              event: {
+                type: "image",
+                id: imageId,
+                status,
+                revisedPrompt,
+                savedPath,
+                ...(blob ? { blob } : {}),
+              },
+            });
+            break;
+          }
           default:
             break;
         }

@@ -399,12 +399,15 @@ describe("useCodexLog", () => {
     );
 
     await waitFor(() => {
-      expect(dstreamMock).toHaveBeenCalledWith({
-        project_id: "project-1",
-        name: "live-stream-1",
-        ephemeral: true,
-        maxListeners: 50,
-      });
+      expect(dstreamMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: "project-1",
+          name: "live-stream-1",
+          ephemeral: true,
+          maxListeners: 50,
+          initPhaseReporter: expect.any(Function),
+        }),
+      );
     });
 
     await waitFor(() => {

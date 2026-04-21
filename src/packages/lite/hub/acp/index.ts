@@ -6,6 +6,8 @@ import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
 import { data } from "@cocalc/backend/data";
+import { uuidsha1 } from "@cocalc/backend/misc_node";
+import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
 import {
   CodexAppServerAgent,
   EchoAgent,
@@ -79,6 +81,7 @@ import {
   type MaterializedBlobAttachment,
 } from "./blob-materialization";
 import { getBlobstore } from "../blobs/download";
+import { callRemoteHub, hasRemote } from "../../remote";
 import {
   buildChatMessage,
   buildThreadStateRecord,
@@ -93,6 +96,7 @@ import {
 import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
 import {
   appendStreamMessage,
+  appendGeneratedImageMarkdown,
   extractEventText,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
@@ -103,6 +107,7 @@ import {
   resolveInlineCodeLinks,
   type InlineCodeLink,
 } from "./inline-code-links";
+import { resolveLiteCodexHome } from "../codex-auth";
 import type { SyncDB } from "@cocalc/conat/sync-doc/syncdb";
 import type { AcpStreamUsage } from "@cocalc/ai/acp";
 import { once } from "@cocalc/util/async-utils";
@@ -2189,11 +2194,14 @@ export class ChatStreamWriter {
           preservedContent ??
           this.interruptedMessage;
         if (candidate) {
-          this.content =
+          const interruptedContent =
             appendInterruptedNoticeToContent(
               candidate,
               this.interruptedMessage,
             ) ?? candidate;
+          this.content =
+            appendGeneratedImageMarkdown(interruptedContent, this.events) ??
+            interruptedContent;
         }
         this.finishedBy = "interrupt";
       } else {
@@ -2222,7 +2230,8 @@ export class ChatStreamWriter {
             candidate.trim().length > 0 &&
             !looksLikeErrorEcho(candidate, this.lastErrorText));
         if (candidate != null && shouldApplySummary) {
-          this.content = candidate;
+          this.content =
+            appendGeneratedImageMarkdown(candidate, this.events) ?? candidate;
           this.finishedBy = "summary";
         }
       }
@@ -4920,6 +4929,7 @@ async function ensureAgent(
     const created = await CodexAppServerAgent.create({
       binaryPath: process.env.COCALC_CODEX_BIN,
       cwd: bindings.workspaceRoot ?? process.cwd(),
+      uploadGeneratedImage: uploadGeneratedImageBlob,
     });
     logger.info("codex agent ready", { key, backend: "app-server" });
     agents.set(key, created);
@@ -7424,6 +7434,156 @@ async function materializeBlobs(prompt: string): Promise<{
     await fs.rm(tempDir, { recursive: true, force: true });
     return { prompt, local_images: [], cleanup: async () => {} };
   }
+}
+
+const SAFE_GENERATED_IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".avif",
+  ".bmp",
+]);
+
+function isPathInside(child: string, parent: string): boolean {
+  const relative = path.relative(parent, child);
+  return (
+    relative === "" ||
+    (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative))
+  );
+}
+
+function safeGeneratedImageFilename(filename: string): string {
+  const safe = path
+    .basename(filename || "generated-image.png")
+    .replace(/[^\w.\-()+ ]+/g, "_");
+  const ext = path.extname(safe).toLowerCase();
+  if (!SAFE_GENERATED_IMAGE_EXTENSIONS.has(ext)) {
+    throw Error(`unsupported generated image extension: ${ext || "(none)"}`);
+  }
+  return safe || `generated-image${ext}`;
+}
+
+async function resolveExistingRealPath(
+  candidate: string,
+): Promise<string | undefined> {
+  try {
+    return await fs.realpath(candidate);
+  } catch {
+    return undefined;
+  }
+}
+
+async function generatedImageRoots(
+  codexHomeHostPath?: string,
+): Promise<string[]> {
+  const candidates = [codexHomeHostPath, resolveLiteCodexHome()].filter(
+    (value): value is string =>
+      typeof value === "string" && value.trim().length > 0,
+  );
+  const roots: string[] = [];
+  for (const candidate of candidates) {
+    const root = await resolveExistingRealPath(
+      path.join(candidate, "generated_images"),
+    );
+    if (root && !roots.includes(root)) {
+      roots.push(root);
+    }
+  }
+  return roots;
+}
+
+async function uploadGeneratedImageBlob(opts: {
+  savedPath: string;
+  hostPath: string;
+  codexHomeHostPath?: string;
+  filename: string;
+  imageId?: string;
+  revisedPrompt?: string;
+  cwd: string;
+  projectId?: string;
+  accountId?: string;
+  threadId?: string;
+  turnId?: string;
+}): Promise<{ uuid: string; filename: string; url: string } | undefined> {
+  if (!hasRemote && !blobStore) {
+    logger.warn(
+      "generated image upload skipped because blob store is not ready",
+    );
+    return undefined;
+  }
+  const started = performance.now();
+  const realFile = await fs.realpath(opts.hostPath);
+  const roots = await generatedImageRoots(opts.codexHomeHostPath);
+  if (!roots.some((root) => isPathInside(realFile, root))) {
+    throw Error(
+      `refusing to upload generated image outside Codex image cache: ${opts.savedPath}`,
+    );
+  }
+  const filename = safeGeneratedImageFilename(opts.filename || realFile);
+  const stat = await fs.stat(realFile);
+  if (!stat.isFile()) {
+    throw Error(`generated image is not a file: ${opts.savedPath}`);
+  }
+  if (stat.size > MAX_BLOB_SIZE) {
+    throw Error(
+      `generated image is too large (${stat.size} bytes; max ${MAX_BLOB_SIZE})`,
+    );
+  }
+  const blob = await fs.readFile(realFile);
+  const uuid = uuidsha1(blob);
+  if (hasRemote) {
+    await uploadGeneratedImageBlobToRemoteHub({
+      uuid,
+      blob,
+      accountId: opts.accountId,
+      projectId: opts.projectId,
+    });
+  } else {
+    await blobStore!.set(uuid, blob);
+  }
+  const url = `/blobs/${encodeURIComponent(filename)}?uuid=${encodeURIComponent(
+    uuid,
+  )}`;
+  logger.info("uploaded generated image to blob store", {
+    uuid,
+    filename,
+    bytes: blob.byteLength,
+    elapsedMs: Math.round(performance.now() - started),
+    imageId: opts.imageId,
+    projectId: opts.projectId,
+    threadId: opts.threadId,
+  });
+  return { uuid, filename, url };
+}
+
+async function uploadGeneratedImageBlobToRemoteHub({
+  uuid,
+  blob,
+  accountId,
+  projectId,
+}: {
+  uuid: string;
+  blob: Buffer;
+  accountId?: string;
+  projectId?: string;
+}): Promise<void> {
+  if (!projectId) {
+    throw Error("project_id must be set to upload a generated image blob");
+  }
+  await callRemoteHub({
+    name: "db.saveBlob",
+    args: [
+      {
+        account_id: accountId,
+        project_id: projectId,
+        uuid,
+        blob: blob.toString("base64"),
+      },
+    ],
+    timeout: 60_000,
+  });
 }
 
 async function handleInterruptRequest(
