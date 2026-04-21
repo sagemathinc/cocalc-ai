@@ -82,6 +82,7 @@ export function getId(ids: string[], subject: string) {
 // to a persist server for the lifetime of the client if the persist service
 // restarts.
 export const PERSIST_SERVER_ID_CACHE_TTL_MS = 15000;
+const PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS = 2000;
 
 type CacheEntry = {
   promise: Promise<string>;
@@ -123,9 +124,9 @@ export async function getPersistServerId({
     return await entry.promise;
   }
   entry = {
-    expiresAt: Number.POSITIVE_INFINITY,
+    expiresAt: now + PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS,
     promise: client
-      .request(s, null)
+      .request(s, null, { timeout: PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS })
       .then((resp) => {
         entry!.expiresAt = Date.now() + PERSIST_SERVER_ID_CACHE_TTL_MS;
         return resp.data as string;

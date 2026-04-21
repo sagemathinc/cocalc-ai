@@ -437,6 +437,7 @@ class PersistStreamClient extends EventEmitter {
     stats.getMissedRuns += 1;
     let recovered = false;
     const attemptTimeout = this.recoveryAttemptTimeout(opts);
+    const foreground = opts.priority === "foreground";
     try {
       this.gettingMissed = true;
       this.changesWhenGettingMissed.length = 0;
@@ -472,10 +473,11 @@ class PersistStreamClient extends EventEmitter {
           }
         },
         {
-          start: DEFAULT_RECONNECT_DELAY,
-          min: Math.min(DEFAULT_RECONNECT_DELAY, 250),
-          max: DEFAULT_RECONNECT_DELAY_MAX,
-          decay: DEFAULT_RECONNECT_DELAY_DECAY,
+          start: foreground ? 100 : DEFAULT_RECONNECT_DELAY,
+          min: foreground ? 100 : Math.min(DEFAULT_RECONNECT_DELAY, 250),
+          max: foreground ? 1000 : DEFAULT_RECONNECT_DELAY_MAX,
+          decay: foreground ? 1.3 : DEFAULT_RECONNECT_DELAY_DECAY,
+          timeout: DEFAULT_RECOVERY_TIMEOUT,
         },
       );
     } finally {
