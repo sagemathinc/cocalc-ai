@@ -1,6 +1,6 @@
 # Scalable Architecture Remaining Checklist
 
-Status: active checklist as of 2026-04-20.
+Status: active checklist as of 2026-04-21.
 
 This is the current execution checklist for finishing the scalable control-plane
 work after the recent multibay auth/bootstrap work and the large project-host
@@ -106,7 +106,6 @@ Recent 3-way fixture validation:
 
 What should still be treated as incomplete:
 
-- complete remaining hot-path bay-hairpin audit
 - inter-bay observability / replay / load-test readiness
 - explicit completion of host placement and lifecycle validation under multibay
   failure modes
@@ -305,6 +304,34 @@ Notes:
 
 This is the major new area that changed in the last few days.
 
+Current project-host runtime facts:
+
+- the production shape is now an explicit host-local daemon stack:
+  - `host-agent`: low-churn supervisor and local project-host rollback
+    authority
+  - `project-host`: main project runtime/control process
+  - `conat-router`: managed local ingress/router process for project-host
+    traffic
+  - `conat-persist`: managed local persist daemon
+  - `acp-worker`: policy-managed Codex/ACP worker component
+- `project-host`, `conat-router`, and `conat-persist` use `restart_now`
+  rollout semantics; `acp-worker` uses `drain_then_replace`
+- `host-agent` has a separate pid/log/state file and should not depend on the
+  candidate `project-host` process being healthy enough to roll itself back
+- project-host rollback state is persisted in `host-agent-state.json` as
+  last-known-good, pending rollout, and last automatic rollback metadata
+- supervision events are persisted in `supervision-events.jsonl`; CLI log
+  collection includes `project-host`, `conat-router`, `conat-persist`,
+  `host-agent`, and `supervision-events`
+- the daemon starts and health-checks the managed local router and persist
+  before starting `project-host`; unhealthy project-host recovery preserves the
+  auxiliary router/persist daemons
+- daemon children are launched from the selected current project-host bundle,
+  not from the host-agent's own bundle
+- durable desired runtime deployment state, host overrides, rollback targets,
+  runtime deployment status/history, and resume-default flows exist in the hub
+  and CLI
+
 - [ ] codify and document that qgroups are not part of the intended production
       quota path
 - [ ] validate simple quota behavior under realistic host churn and snapshot
@@ -314,7 +341,11 @@ This is the major new area that changed in the last few days.
       bay queues and runs the actual backup
 - [ ] validate sqlite persistence/concurrency under Codex-heavy workloads after
       the recent locking fixes
-- [ ] validate daemon split behavior under adversarial conditions:
+- [x] write down the intended production runtime layout explicitly:
+  - which daemons are essential
+  - which can degrade independently
+  - which state is persistent vs disposable
+- [ ] validate the implemented daemon split under adversarial live conditions:
   - `project-host` restart
   - `conat-router` restart
   - `conat-persist` restart
@@ -324,10 +355,6 @@ This is the major new area that changed in the last few days.
       actual background load
 - [ ] validate daemon restart ordering and operator UX under partial runtime
       failure
-- [ ] write down the intended production runtime layout explicitly:
-  - which daemons are essential
-  - which can degrade independently
-  - which state is persistent vs disposable
 
 ### 4. Close Phase 6 Placement / Lifecycle Validation
 
