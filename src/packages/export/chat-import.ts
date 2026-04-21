@@ -11,7 +11,6 @@ import {
   type ChatMessageRecordV2,
   type ChatThreadConfigRecord,
   type InlineCodeLink,
-  type ChatThreadLoopConfig,
 } from "@cocalc/chat";
 
 import {
@@ -90,8 +89,6 @@ interface ImportedThreadData {
   agent_model?: string;
   agent_mode?: "interactive" | "single_turn" | string;
   acp_config?: Record<string, unknown>;
-  loop_config?: unknown;
-  loop_state?: unknown;
   runtime_state?: string;
   active_message_id?: string;
   root_message_id?: string;
@@ -264,8 +261,6 @@ export async function importChatBundle(
         agent_model: normalizeString(threadData.agent_model),
         agent_mode: normalizeImportedAgentMode(threadData.agent_mode),
         acp_config: importedConfig,
-        loop_config: normalizeImportedLoopConfig(threadData.loop_config),
-        loop_state: undefined,
       }),
     );
 
@@ -356,15 +351,6 @@ function normalizeImportedAgentMode(
   value: unknown,
 ): ChatThreadConfigRecord["agent_mode"] | undefined {
   return value === "interactive" || value === "single_turn" ? value : undefined;
-}
-
-function normalizeImportedLoopConfig(
-  value: unknown,
-): ChatThreadLoopConfig | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as ChatThreadLoopConfig;
 }
 
 function buildImportedCodexConfig(

@@ -5,7 +5,6 @@ import {
   buildThreadConfigRecord,
   deriveAcpLogRefs,
   type ChatThreadConfigRecord,
-  type ChatThreadLoopConfig,
 } from "@cocalc/chat";
 import { akv } from "@cocalc/conat/sync/akv";
 import { automationAcp } from "@cocalc/conat/ai/acp/client";
@@ -34,8 +33,6 @@ type ThreadConfigPatch = Partial<
     | "archived"
   >
 > & {
-  loop_config?: ChatThreadConfigRecord["loop_config"] | null;
-  loop_state?: ChatThreadConfigRecord["loop_state"] | null;
   automation_config?: ChatThreadConfigRecord["automation_config"] | null;
   automation_state?: ChatThreadConfigRecord["automation_state"] | null;
 };
@@ -130,8 +127,6 @@ function summarizeThread(
     agent_model: row.agent_model ?? null,
     agent_mode: row.agent_mode ?? null,
     acp_config: row.acp_config ?? null,
-    loop_config: row.loop_config ?? null,
-    loop_state: row.loop_state ?? null,
     automation_config: row.automation_config ?? null,
     automation_state: row.automation_state ?? null,
     archived: !!row.archived,
@@ -370,106 +365,6 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     });
   }
 
-  async function projectChatLoopSetData({
-    ctx,
-    projectIdentifier,
-    path,
-    threadId,
-    config,
-    cwd,
-  }: {
-    ctx: Ctx;
-    projectIdentifier?: string;
-    path: string;
-    threadId: string;
-    config: ChatThreadLoopConfig;
-    cwd?: string;
-  }): Promise<Record<string, unknown>> {
-    return await withProjectChatFile({
-      deps,
-      ctx,
-      projectIdentifier,
-      chatPath: path,
-      cwd,
-      fn: async ({ project, client, rows }) => {
-        const existing = getThreadConfigRecord(rows, threadId);
-        if (!existing) {
-          throw new Error(`thread '${threadId}' not found`);
-        }
-        const next = mergeThreadConfigRecord({
-          existing,
-          threadId,
-          accountId: (ctx as any).accountId,
-          patch: {
-            loop_config: config,
-            loop_state: null,
-          },
-        });
-        const nextRows = replaceThreadConfigRecord(rows, next);
-        await writeChatRows({
-          client,
-          project_id: project.project_id,
-          path,
-          rows: nextRows,
-        });
-        return {
-          project_id: project.project_id,
-          path,
-          thread: summarizeThread(next, nextRows),
-        };
-      },
-    });
-  }
-
-  async function projectChatLoopClearData({
-    ctx,
-    projectIdentifier,
-    path,
-    threadId,
-    cwd,
-  }: {
-    ctx: Ctx;
-    projectIdentifier?: string;
-    path: string;
-    threadId: string;
-    cwd?: string;
-  }): Promise<Record<string, unknown>> {
-    return await withProjectChatFile({
-      deps,
-      ctx,
-      projectIdentifier,
-      chatPath: path,
-      cwd,
-      fn: async ({ project, client, rows }) => {
-        const existing = getThreadConfigRecord(rows, threadId);
-        if (!existing) {
-          throw new Error(`thread '${threadId}' not found`);
-        }
-        const next = mergeThreadConfigRecord({
-          existing,
-          threadId,
-          accountId: (ctx as any).accountId,
-          patch: {
-            loop_config: null,
-            loop_state: null,
-          },
-        });
-        const nextRows = replaceThreadConfigRecord(rows, next);
-        await writeChatRows({
-          client,
-          project_id: project.project_id,
-          path,
-          rows: nextRows,
-        });
-        return {
-          project_id: project.project_id,
-          path,
-          thread: summarizeThread(next, nextRows),
-        };
-      },
-    });
-  }
-
   async function projectChatAutomationData({
     ctx,
     projectIdentifier,
@@ -606,8 +501,6 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
   return {
     projectChatThreadCreateData,
     projectChatThreadStatusData,
-    projectChatLoopSetData,
-    projectChatLoopClearData,
     projectChatAutomationData,
     projectChatActivityData,
   };

@@ -193,8 +193,6 @@ describe("ChatPanel ACP thread behavior", () => {
       })),
       getMessagesInThread: jest.fn(() => []),
       deleteDraft: jest.fn(),
-      getThreadLoopConfig: jest.fn(),
-      getThreadLoopState: jest.fn(),
       frameTreeActions: undefined,
       frameId: undefined,
       languageModelStopGenerating: jest.fn(),
@@ -263,8 +261,6 @@ describe("ChatPanel ACP thread behavior", () => {
         ])
         .mockReturnValue([]),
       deleteDraft: jest.fn(),
-      getThreadLoopConfig: jest.fn(),
-      getThreadLoopState: jest.fn(),
       frameTreeActions: undefined,
       frameId: undefined,
       languageModelStopGenerating: jest.fn(),

@@ -151,7 +151,6 @@ describe("ChatPanel selected thread read tracking", () => {
       getCodexConfig: jest.fn(),
       getThreadMetadata: jest.fn(),
       getMessagesInThread: jest.fn(() => []),
-      getThreadLoopConfig: jest.fn(),
       frameTreeActions: undefined,
       frameId: undefined,
     } as any;

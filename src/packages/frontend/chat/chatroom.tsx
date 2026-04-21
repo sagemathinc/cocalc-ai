@@ -80,7 +80,6 @@ import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import type {
   AcpAutomationConfig,
   AcpAutomationState,
-  AcpLoopConfig,
 } from "@cocalc/conat/ai/acp/types";
 import {
   setChatOverlayOpen,
@@ -251,12 +250,6 @@ function buildChatThreadCompletionSnapshots({
   return snapshots;
 }
 
-export function enabledLoopConfig(
-  config?: AcpLoopConfig,
-): AcpLoopConfig | undefined {
-  return config?.enabled === true ? config : undefined;
-}
-
 function visibleAutomationConfig(
   config?: AcpAutomationConfig,
 ): AcpAutomationConfig | undefined {
@@ -278,16 +271,6 @@ function threadSupportsCodexAutomation(
     return true;
   }
   return isCodexModelName(`${metadata.agent_model ?? ""}`.trim());
-}
-
-export function clearThreadLoopRuntime(
-  actions: Pick<ChatActions, "setThreadLoopConfig" | "setThreadLoopState">,
-  threadKey?: string | null,
-): void {
-  const normalizedThreadKey = normalizeThreadKey(threadKey);
-  if (!normalizedThreadKey) return;
-  actions.setThreadLoopConfig?.(normalizedThreadKey, null);
-  actions.setThreadLoopState?.(normalizedThreadKey, null);
 }
 
 export function hasActiveAcpTurnForComposer({
@@ -738,7 +721,6 @@ export function ChatPanel({
           name: pending.name,
           threadAgent: pending.threadAgent,
           threadAppearance: pending.threadAppearance,
-          acp_loop_config: pending.acp_loop_config,
           acpConfigOverride: pending.acpConfigOverride,
           chatIdentity: {
             date: pending.date,
@@ -1887,6 +1869,73 @@ export function ChatPanel({
       next_run_at_ms: selectedThreadAutomationState.next_run_at_ms,
     });
   const automationIsRunning = automationStatus === "running";
+  const automationTitle =
+    selectedThreadAutomationConfig?.title?.trim() || "Automation";
+  const automationStatusTag = (
+    <Tag
+      color={
+        selectedThreadAutomationConfig?.enabled === false
+          ? "default"
+          : automationStatus === "running"
+            ? "processing"
+            : automationStatus === "error"
+              ? "red"
+              : "blue"
+      }
+    >
+      {automationStatus}
+    </Tag>
+  );
+  const automationScheduleInfo = (
+    <>
+      {automationScheduleSummary ? (
+        <span>{automationScheduleSummary}</span>
+      ) : null}
+      {automationHasNextRun ? (
+        <span>
+          Next <TimeAgo date={selectedThreadAutomationState.next_run_at_ms!} />
+        </span>
+      ) : null}
+      {typeof selectedThreadAutomationState?.unacknowledged_runs === "number" &&
+      selectedThreadAutomationState.unacknowledged_runs > 0 ? (
+        <Tag color="orange">
+          {selectedThreadAutomationState.unacknowledged_runs} unacknowledged
+        </Tag>
+      ) : null}
+    </>
+  );
+  const automationActions = (
+    <>
+      <Tooltip title="Start a manual run now. This does not move the next scheduled run. If a run is already active, no extra run is queued.">
+        <Button
+          size="small"
+          disabled={automationIsRunning}
+          onClick={() => void handleAutomationRunNow()}
+        >
+          Run now
+        </Button>
+      </Tooltip>
+      <Tooltip title="Skip only the next scheduled run and move this automation to the following scheduled time.">
+        <Button
+          size="small"
+          disabled={!automationHasNextRun}
+          onClick={() => void handleAutomationSkipNext()}
+        >
+          Skip next
+        </Button>
+      </Tooltip>
+      {automationStatus === "paused" ||
+      selectedThreadAutomationConfig?.enabled === false ? (
+        <Button size="small" onClick={() => void handleAutomationResume()}>
+          Resume
+        </Button>
+      ) : (
+        <Button size="small" onClick={() => void handleAutomationPause()}>
+          Pause
+        </Button>
+      )}
+    </>
+  );
   const automationBanner = selectedThreadAutomationConfig ? (
     <div
       style={{
@@ -1908,77 +1957,16 @@ export function ChatPanel({
         borderRadius: 4,
       }}
     >
-      <Space size="small" wrap>
-        <strong>
-          {selectedThreadAutomationConfig.title?.trim() || "Automation"}
-        </strong>
-        <Tag
-          color={
-            selectedThreadAutomationConfig.enabled === false
-              ? "default"
-              : automationStatus === "running"
-                ? "processing"
-                : automationStatus === "error"
-                  ? "red"
-                  : "blue"
-          }
-        >
-          {automationStatus}
-        </Tag>
-        {automationScheduleSummary ? (
-          <span>{automationScheduleSummary}</span>
-        ) : null}
-        {automationHasNextRun ? (
-          <span>
-            Next{" "}
-            <TimeAgo date={selectedThreadAutomationState.next_run_at_ms!} />
-          </span>
-        ) : null}
-        {typeof selectedThreadAutomationState?.unacknowledged_runs ===
-          "number" && selectedThreadAutomationState.unacknowledged_runs > 0 ? (
-          <Tag color="orange">
-            {selectedThreadAutomationState.unacknowledged_runs} unacknowledged
-          </Tag>
-        ) : null}
-        <Tooltip title="Start a manual run now. This does not move the next scheduled run. If a run is already active, no extra run is queued.">
-          <Button
-            size="small"
-            disabled={automationIsRunning}
-            onClick={() => void handleAutomationRunNow()}
-          >
-            Run now
-          </Button>
-        </Tooltip>
-        <Tooltip title="Skip only the next scheduled run and move this automation to the following scheduled time.">
-          <Button
-            size="small"
-            disabled={!automationHasNextRun}
-            onClick={() => void handleAutomationSkipNext()}
-          >
-            Skip next
-          </Button>
-        </Tooltip>
-        {automationStatus === "paused" ||
-        selectedThreadAutomationConfig.enabled === false ? (
-          <Button size="small" onClick={() => void handleAutomationResume()}>
-            Resume
-          </Button>
-        ) : (
-          <Button size="small" onClick={() => void handleAutomationPause()}>
-            Pause
-          </Button>
-        )}
-        <Button
-          size="small"
-          type="link"
-          onClick={() => setAutomationDetailsOpen((open) => !open)}
-        >
-          {automationDetailsOpen ? "Hide details" : "Details"}
-        </Button>
-      </Space>
       {automationDetailsOpen ? (
-        <div style={{ marginTop: 6 }}>
+        <div style={{ marginBottom: 6 }}>
           <Space size="small" wrap>
+            {IS_MOBILE ? (
+              <>
+                <strong>{automationTitle}</strong>
+                {automationScheduleInfo}
+                {automationActions}
+              </>
+            ) : null}
             {selectedThreadAutomationState?.paused_reason ? (
               <span>
                 {formatAutomationPausedReason(
@@ -2033,6 +2021,27 @@ export function ChatPanel({
           </Space>
         </div>
       ) : null}
+      <Space size="small" wrap={!IS_MOBILE}>
+        <strong>{IS_MOBILE ? "Automation" : automationTitle}</strong>
+        {automationStatusTag}
+        {IS_MOBILE ? null : (
+          <>
+            {automationScheduleInfo}
+            {automationActions}
+          </>
+        )}
+        <Button
+          size="small"
+          type="link"
+          onClick={() => setAutomationDetailsOpen((open) => !open)}
+        >
+          {automationDetailsOpen
+            ? IS_MOBILE
+              ? "Hide"
+              : "Hide details"
+            : "Details"}
+        </Button>
+      </Space>
     </div>
   ) : null;
 

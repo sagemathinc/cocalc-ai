@@ -39,29 +39,6 @@ export function threadStateRecordKey(threadId: string) {
   };
 }
 
-export interface ChatThreadLoopConfig {
-  enabled: boolean;
-  max_turns?: number;
-  max_wall_time_ms?: number;
-  check_in_every_turns?: number;
-  stop_on_repeated_blocker_count?: number;
-  sleep_ms_between_turns?: number;
-}
-
-export interface ChatThreadLoopState {
-  loop_id?: string;
-  status?: "running" | "waiting_decision" | "scheduled" | "paused" | "stopped";
-  started_at_ms?: number;
-  updated_at_ms?: number;
-  iteration?: number;
-  max_turns?: number;
-  max_wall_time_ms?: number;
-  next_prompt?: string;
-  last_blocker_signature?: string;
-  repeated_blocker_count?: number;
-  stop_reason?: string;
-}
-
 export interface ChatThreadAutomationConfig {
   enabled?: boolean;
   automation_id?: string;
@@ -298,8 +275,6 @@ export interface ChatThreadConfigRecord {
   agent_model?: string;
   agent_mode?: "interactive" | "single_turn";
   acp_config?: CodexThreadConfig;
-  loop_config?: ChatThreadLoopConfig;
-  loop_state?: ChatThreadLoopState;
   automation_config?: ChatThreadAutomationConfig;
   automation_state?: ChatThreadAutomationState;
   updated_at: string;
@@ -326,8 +301,6 @@ export interface BuildThreadConfigRecordOptions {
   agent_model?: string;
   agent_mode?: "interactive" | "single_turn";
   acp_config?: CodexThreadConfig;
-  loop_config?: ChatThreadLoopConfig;
-  loop_state?: ChatThreadLoopState;
   automation_config?: ChatThreadAutomationConfig;
   automation_state?: ChatThreadAutomationState;
   schema_version?: number;
@@ -357,8 +330,6 @@ export function buildThreadConfigRecord(
     agent_model: options.agent_model,
     agent_mode: options.agent_mode,
     acp_config: options.acp_config,
-    loop_config: options.loop_config,
-    loop_state: options.loop_state,
     automation_config: options.automation_config,
     automation_state: options.automation_state,
     updated_at: updatedAt,

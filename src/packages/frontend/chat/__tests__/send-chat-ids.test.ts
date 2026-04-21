@@ -1006,7 +1006,6 @@ describe("deleteThread identity targeting", () => {
         sessionId: "session-source-1",
         approvalPolicy: "full-auto",
       },
-      loop_config: { enabled: true, max_turns: 12 },
     };
     actions.syncdb.get_one.mockImplementation((where: any) => {
       if (
@@ -1057,8 +1056,6 @@ describe("deleteThread identity targeting", () => {
         approvalPolicy: "full-auto",
       }),
     );
-    expect(cfgRow.loop_config).toEqual({ enabled: true, max_turns: 12 });
-    expect(cfgRow.loop_state).toBeNull();
     expect(actions.setSelectedThread).toHaveBeenCalledWith(newThreadId);
     expect(
       (webapp_client as any).conat_client.forkAcpSession,

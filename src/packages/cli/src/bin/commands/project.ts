@@ -71,8 +71,6 @@ export type ProjectCommandDeps = {
   resolveProjectConatClient: any;
   projectChatThreadCreateData: any;
   projectChatThreadStatusData: any;
-  projectChatLoopSetData: any;
-  projectChatLoopClearData: any;
   projectChatAutomationData: any;
   projectChatActivityData: any;
   normalizeUserSearchName: any;
