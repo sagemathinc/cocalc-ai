@@ -570,6 +570,7 @@ export function FilesFlyout({
           path: fullPath,
           foreground,
           explicit: true,
+          workspaceSelection: nextSelection,
         });
         setTimeout(() => workspaces.setSelection(nextSelection), 0);
       }

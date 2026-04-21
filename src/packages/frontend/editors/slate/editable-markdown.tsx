@@ -73,6 +73,7 @@ import { createMention } from "./elements/mention/editable";
 import { Mention } from "./elements/mention/index";
 import { withCodeLineInsertBreak } from "./elements/code-block/with-code-line-insert-break";
 import { getCodeBlockText, toCodeLines } from "./elements/code-block/utils";
+import { shouldDirectSetExternalSlateValue } from "./external-value-strategy";
 import { withAutoFormat } from "./format";
 import { getHandler as getKeyboardHandler } from "./keyboard";
 import Leaf from "./leaf-with-cursor";
@@ -2106,14 +2107,15 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
-    const blockPatchEnabled = isBlockPatchEnabled() && isMergeFocused();
+    const mergeFocused = isMergeFocused();
+    const blockPatchEnabled = isBlockPatchEnabled() && mergeFocused;
     const debugLogEnabled =
       typeof window !== "undefined" && Boolean((window as any).__slateDebugLog);
     const blockPatchDebugEnabled =
       isBlockPatchDebugEnabled() || debugLogEnabled;
     const forceDirectSetForClear = normalizedValue.length === 0;
     debugSyncLog("value-normalized", {
-      focused: isMergeFocused(),
+      focused: mergeFocused,
       blockPatchEnabled,
       blockPatchDebugEnabled,
       sameAsLastSet: lastSetValueRef.current == normalizedValue,
@@ -2124,11 +2126,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     const activeBlockIndex = editor.selection?.anchor?.path?.[0];
     const recentlyTyped =
       Date.now() - lastLocalEditAtRef.current < mergeIdleMsRef.current;
-    const shouldDirectSet =
-      forceDirectSetForClear ||
-      (previousEditorValue.length <= 1 &&
-        nextEditorValue.length >= 40 &&
-        !ReactEditor.isFocused(editor));
+    const shouldDirectSet = shouldDirectSetExternalSlateValue({
+      forceDirectSetForClear,
+      previousBlockCount: previousEditorValue.length,
+      nextBlockCount: nextEditorValue.length,
+      nextMarkdownLength: normalizedValue.length,
+      isMergeFocused: mergeFocused,
+    });
     let operations: ReturnType<typeof slateDiff> | null = null;
     if (!blockPatchEnabled) {
       operations = shouldDirectSet
@@ -2139,7 +2143,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (blockPatchDebugEnabled) {
       ensureSlateDebug();
     }
-    if (blockPatchEnabled) {
+    if (blockPatchEnabled && !shouldDirectSet) {
       const chunks = diffBlockSignatures(previousEditorValue, nextEditorValue);
       const defer = shouldDeferBlockPatch(
         chunks,
@@ -2184,7 +2188,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             logSlateDebug("external-set-editor", {
               strategy: shouldDirectSet ? "direct" : "diff",
               operations: operationsLength,
-              focused: isMergeFocused(),
+              focused: mergeFocused,
               current: editor.getMarkdownValue(),
               next: normalizedValue,
             });

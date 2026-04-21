@@ -20,6 +20,7 @@ interface Props {
   delay_ms?: number; // Default = 5000
   show_uncommitted_changes?: boolean;
   set_show_uncommitted_changes?: any;
+  show_visual?: boolean;
 }
 
 const STYLE = {
@@ -44,6 +45,7 @@ export function UncommittedChanges({
   show_uncommitted_changes,
   set_show_uncommitted_changes,
   delay_ms = 5000,
+  show_visual = true,
 }: Props) {
   const { project_id } = useFileContext();
   const init = has_uncommitted_changes && (show_uncommitted_changes ?? false);
@@ -89,7 +91,7 @@ export function UncommittedChanges({
     };
   }, [has_uncommitted_changes, delay_ms, show_uncommitted_changes, init]);
 
-  if (showError) {
+  if (showError && show_visual) {
     return <span style={STYLE}>NOT saved!</span>;
   } else {
     return null;

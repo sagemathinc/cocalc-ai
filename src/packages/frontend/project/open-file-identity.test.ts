@@ -8,6 +8,7 @@ import {
   log_file_open,
   log_opened_time,
   mark_open_phase,
+  open_file,
   resolveSyncPath,
   resolveSyncPathWithRetry,
 } from "./open-file";
@@ -308,5 +309,110 @@ describe("applyWorkspaceSelectionForForegroundOpen", () => {
 
     expect(persist).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("respects an explicit workspace selection for foreground opens", () => {
+    jest
+      .spyOn(workspaceRecordsRuntime, "getRuntimeWorkspaceRecords")
+      .mockReturnValue([workspaceRecord]);
+    jest
+      .spyOn(workspaceSelectionRuntime, "loadSessionSelection")
+      .mockReturnValue({ kind: "unscoped" });
+    const persist = jest.spyOn(
+      workspaceSelectionRuntime,
+      "persistSessionSelection",
+    );
+    const dispatch = jest.spyOn(
+      workspaceSelectionRuntime,
+      "dispatchWorkspaceSelectionEvent",
+    );
+
+    applyWorkspaceSelectionForForegroundOpen(
+      PROJECT_ID,
+      "/repo/workspace/file.ts",
+      { kind: "workspace", workspace_id: "w1" },
+    );
+
+    expect(persist).toHaveBeenCalledWith(PROJECT_ID, {
+      kind: "workspace",
+      workspace_id: "w1",
+    });
+    expect(dispatch).toHaveBeenCalledWith(PROJECT_ID, {
+      kind: "workspace",
+      workspace_id: "w1",
+    });
+  });
+});
+
+describe("open_file workspaceSelection passthrough", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("accepts explicit workspaceSelection opts without defaults errors", async () => {
+    const workspaceRecord = {
+      workspace_id: "w1",
+      project_id: "project-1",
+      root_path: "/repo/workspace",
+      theme: {
+        title: "workspace",
+        description: "",
+        color: null,
+        accent_color: null,
+        icon: null,
+        image_blob: null,
+      },
+      pinned: false,
+      last_used_at: null,
+      last_active_path: null,
+      chat_path: null,
+      notice_thread_id: null,
+      notice: null,
+      activity_viewed_at: null,
+      activity_running_at: null,
+      created_at: 1,
+      updated_at: 1,
+      source: "manual" as const,
+    };
+    const openProject = jest.fn();
+    jest.spyOn(redux as any, "getActions").mockReturnValue({
+      open_project: openProject,
+    });
+    jest.spyOn(redux as any, "getStore").mockReturnValue({
+      get: jest.fn().mockReturnValue(false),
+    });
+    jest
+      .spyOn(workspaceRecordsRuntime, "getRuntimeWorkspaceRecords")
+      .mockReturnValue([workspaceRecord]);
+    jest
+      .spyOn(workspaceSelectionRuntime, "loadSessionSelection")
+      .mockReturnValue({ kind: "unscoped" });
+    const persist = jest.spyOn(
+      workspaceSelectionRuntime,
+      "persistSessionSelection",
+    );
+    const actions = {
+      project_id: "project-1",
+      open_in_new_browser_window: jest.fn(),
+    } as any;
+
+    await expect(
+      open_file(actions, {
+        path: "/repo/workspace/file.ts",
+        foreground: true,
+        foreground_project: false,
+        new_browser_window: true,
+        ignore_kiosk: true,
+        workspaceSelection: {
+          kind: "workspace",
+          workspace_id: "w1",
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(persist).toHaveBeenCalledWith("project-1", {
+      kind: "workspace",
+      workspace_id: "w1",
+    });
   });
 });

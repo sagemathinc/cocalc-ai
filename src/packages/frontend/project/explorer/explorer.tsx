@@ -278,6 +278,18 @@ export function Explorer() {
   }
   const showHidden = useTypedRedux({ project_id }, "show_hidden");
   const flyout = useTypedRedux({ project_id }, "flyout");
+  const applyNavigationWorkspaceSelection = useCallback(
+    (path: string) => {
+      const nextSelection = selectionForPathFollowThrough(
+        workspaces.selection,
+        workspaces.records,
+        path,
+      );
+      workspaces.setSelection(nextSelection);
+      setTimeout(() => workspaces.setSelection(nextSelection), 0);
+    },
+    [workspaces],
+  );
   const navigateExplorerRaw = useCallback(
     (path: string) => {
       navigateBrowsingPath(project_id, path, { updateUrl: true });
@@ -293,10 +305,11 @@ export function Explorer() {
   const navigateExplorer = useCallback(
     (path: string) => {
       const normalized = normalizeBrowsingPath(path);
+      applyNavigationWorkspaceSelection(normalized);
       navigateExplorerRaw(normalized);
       navHistory.recordNavigation(normalized);
     },
-    [navigateExplorerRaw, navHistory],
+    [applyNavigationWorkspaceSelection, navigateExplorerRaw, navHistory],
   );
 
   listing = listingError
@@ -461,7 +474,11 @@ export function Explorer() {
           if (isDir) {
             navigateExplorer(path);
           } else {
-            actions.open_file({ path, foreground: !e.ctrlKey });
+            actions.open_file({
+              path,
+              foreground: !e.ctrlKey,
+              workspaceSelection: nextSelection,
+            });
           }
           setTimeout(() => workspaces.setSelection(nextSelection), 0);
           if (!e.ctrlKey) {

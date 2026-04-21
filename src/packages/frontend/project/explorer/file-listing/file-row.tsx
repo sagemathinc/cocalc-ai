@@ -298,6 +298,7 @@ export function FileRow({
         path,
         foreground,
         explicit: true,
+        workspaceSelection: nextSelection,
       });
       setTimeout(() => workspaces.setSelection(nextSelection), 0);
       if (foreground) {

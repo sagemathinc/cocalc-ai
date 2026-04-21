@@ -668,7 +668,7 @@ export function FileListing({
           icon: <Icon name={record.isDir ? "folder-open" : "edit-filled"} />,
           label: record.isDir ? "Open folder" : "Open file",
           onClick: () => {
-            applyPathSelection(record.fullPath);
+            const nextSelection = applyPathSelection(record.fullPath);
             if (record.isDir) {
               if (onNavigateDirectory) {
                 onNavigateDirectory(record.fullPath);
@@ -681,6 +681,7 @@ export function FileListing({
                 path: record.fullPath,
                 foreground: true,
                 explicit: true,
+                workspaceSelection: nextSelection,
               });
               actions.set_file_search("");
             }
@@ -782,11 +783,12 @@ export function FileListing({
       }
 
       const foreground = should_open_in_foreground(e as any);
-      applyPathSelection(record.fullPath);
+      const nextSelection = applyPathSelection(record.fullPath);
       actions.open_file({
         path: record.fullPath,
         foreground,
         explicit: true,
+        workspaceSelection: nextSelection,
       });
       if (foreground) {
         actions.set_file_search("");
@@ -1087,8 +1089,13 @@ export function FileListing({
               }
               onNavigateDirectory={onNavigateDirectory}
               onOpenFile={(path) => {
-                applyPathSelection(path);
-                actions.open_file({ path, foreground: true, explicit: true });
+                const nextSelection = applyPathSelection(path);
+                actions.open_file({
+                  path,
+                  foreground: true,
+                  explicit: true,
+                  workspaceSelection: nextSelection,
+                });
               }}
             />
           </td>

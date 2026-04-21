@@ -1,4 +1,5 @@
 import { BaseEditorActions } from "../actions-base";
+import type { AppRedux } from "@cocalc/util/redux/types";
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -12,6 +13,14 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 }));
 
 describe("BaseEditorActions reconnect coordination", () => {
+  function makeRedux(): AppRedux {
+    return {
+      getStore: jest.fn(() => ({})),
+      _set_state: jest.fn(),
+      removeActions: jest.fn(),
+    } as unknown as AppRedux;
+  }
+
   it("requests reconnect when a visible editor becomes visible but is not live", async () => {
     const requestReconnect = jest.fn();
     const target: any = {
@@ -57,5 +66,38 @@ describe("BaseEditorActions reconnect coordination", () => {
       target.handleSyncstringClosed,
     );
     expect(close).toHaveBeenCalled();
+  });
+
+  it("marks structured syncdocs as reconnecting when their live stream disconnects", () => {
+    const actions = new BaseEditorActions("test-syncdb", makeRedux()) as any;
+    const requestReconnect = jest.fn();
+    actions.doctype = "syncdb";
+    actions.reconnectResource = { requestReconnect };
+
+    actions.handleSyncdocDisconnected();
+
+    expect(actions.redux._set_state).toHaveBeenCalledWith(
+      { "test-syncdb": { rtc_status: "loading" } },
+      "test-syncdb",
+    );
+    expect(requestReconnect).toHaveBeenCalledWith({
+      reason: "editor_syncdoc_disconnected",
+    });
+  });
+
+  it("marks structured syncdocs live when all registered syncdocs reconnect", () => {
+    const actions = new BaseEditorActions(
+      "test-syncdb-live",
+      makeRedux(),
+    ) as any;
+    actions.doctype = "syncdb";
+    actions.areSyncdocsLiveConnected = jest.fn(() => true);
+
+    actions.handleSyncdocConnected();
+
+    expect(actions.redux._set_state).toHaveBeenCalledWith(
+      { "test-syncdb-live": { rtc_status: "live" } },
+      "test-syncdb-live",
+    );
   });
 });

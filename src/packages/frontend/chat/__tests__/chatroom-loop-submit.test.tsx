@@ -197,6 +197,11 @@ describe("ChatPanel loop submit behavior", () => {
       deleteDraft: jest.fn(),
       getThreadLoopConfig: jest.fn(),
       getThreadLoopState: jest.fn(),
+      reserveChatSendIdentity: jest.fn(() => ({
+        date: "2026-04-19T12:00:00.000Z",
+        message_id: "message-1",
+        thread_id: "t1",
+      })),
       frameTreeActions: undefined,
       frameId: undefined,
       languageModelStopGenerating: jest.fn(),

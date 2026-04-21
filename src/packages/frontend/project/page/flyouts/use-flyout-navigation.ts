@@ -14,6 +14,8 @@ import {
   type NavigationHistory,
   useNavigationHistory,
 } from "@cocalc/frontend/project/explorer/use-navigation-history";
+import { useProjectContext } from "@cocalc/frontend/project/context";
+import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 
 interface FlyoutNavigation extends NavigationHistory {
   flyoutPath: string;
@@ -22,6 +24,7 @@ interface FlyoutNavigation extends NavigationHistory {
 }
 
 export function useFlyoutNavigation(project_id: string): FlyoutNavigation {
+  const { workspaces } = useProjectContext();
   const current_path_abs =
     useTypedRedux({ project_id }, "current_path_abs") ?? "/";
   const history_path_abs =
@@ -32,9 +35,17 @@ export function useFlyoutNavigation(project_id: string): FlyoutNavigation {
 
   const navigateFlyoutRaw = useCallback(
     (path: string) => {
-      navigateBrowsingPath(project_id, path);
+      const normalizedPath = normalizeBrowsingPath(path);
+      const nextSelection = selectionForPathFollowThrough(
+        workspaces.selection,
+        workspaces.records,
+        normalizedPath,
+      );
+      workspaces.setSelection(nextSelection);
+      setTimeout(() => workspaces.setSelection(nextSelection), 0);
+      navigateBrowsingPath(project_id, normalizedPath);
     },
-    [project_id],
+    [project_id, workspaces],
   );
 
   const navHistory = useNavigationHistory(
