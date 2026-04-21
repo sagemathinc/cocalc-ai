@@ -128,13 +128,19 @@ function getDStreamDebugState(stream: DStream<any> | null | undefined): {
     return { kind: "none" };
   }
   try {
+    let length: number | undefined;
+    try {
+      length = stream.length;
+    } catch {
+      length = undefined;
+    }
     return {
       kind: "dstream",
       recoveryState:
         typeof stream.getRecoveryState === "function"
           ? stream.getRecoveryState()
           : undefined,
-      length: stream.length,
+      length,
     };
   } catch (err) {
     return { kind: "error", recoveryState: `${err}` };
@@ -441,17 +447,30 @@ export function useCodexLog({
           const started = Date.now();
           recordActivityDebug({ event: "codex_activity_reconnect_start" });
           setLiveConnectionState(false, "reconnecting");
-          try {
-            const persisted = await fetchPersistedLog({
-              allowDuringGeneration: true,
+          void fetchPersistedLog({
+            allowDuringGeneration: true,
+          })
+            .then((persisted) => {
+              if (mountedRef.current && persisted != null) {
+                setFetchedLog(persisted);
+                setAkvLoaded(true);
+              }
+              recordActivityDebug({
+                event: "codex_activity_persisted_fetch_done",
+                elapsedMs: Date.now() - started,
+              });
+            })
+            .catch((err) => {
+              recordActivityDebug({
+                event: "codex_activity_persisted_fetch_error",
+                elapsedMs: Date.now() - started,
+                error: `${err}`,
+              });
+              console.warn("codex log reconnect fetch failed", err);
             });
-            if (mountedRef.current && persisted != null) {
-              setFetchedLog(persisted);
-              setAkvLoaded(true);
-            }
-          } catch (err) {
-            console.warn("codex log reconnect fetch failed", err);
-          }
+          recordActivityDebug({
+            event: "codex_activity_persisted_fetch_started",
+          });
           if (!mountedRef.current || !hasLiveSource) {
             recordActivityDebug({
               event: "codex_activity_reconnect_skipped",
