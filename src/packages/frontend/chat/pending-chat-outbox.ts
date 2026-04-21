@@ -9,7 +9,6 @@ import {
 } from "@cocalc/frontend/browser-outbox";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { CodexThreadConfig } from "@cocalc/chat";
-import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
 import { uuid } from "@cocalc/util/misc";
 import type {
   NewThreadAgentOptions,
@@ -36,7 +35,6 @@ export type PendingChatSend = {
   name?: string;
   threadAgent?: NewThreadAgentOptions;
   threadAppearance?: NewThreadAppearanceOptions;
-  acp_loop_config?: AcpLoopConfig;
   acpConfigOverride?: Partial<CodexThreadConfig>;
   shouldMarkNotSent?: boolean;
 };

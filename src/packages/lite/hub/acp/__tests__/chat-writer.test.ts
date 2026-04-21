@@ -1150,64 +1150,6 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
-  it("preserves existing thread config fields when persisting loop state", async () => {
-    const { syncdb, sets, setCurrent } = makeFakeSyncDB();
-    setCurrent({
-      event: "chat-thread-config",
-      sender_id: threadConfigSenderId("thread-0"),
-      date: CHAT_THREAD_META_ROW_DATE,
-      thread_id: "thread-0",
-      name: "Fork of bug fixing",
-      acp_config: {
-        model: "gpt-5.4",
-        reasoning: "extra_high",
-        workingDirectory: "/repo",
-      },
-      updated_at: new Date().toISOString(),
-      updated_by: "u",
-    });
-    const writer: any = new ChatStreamWriter({
-      metadata: baseMetadata,
-      client: makeFakeClient(),
-      approverAccountId: "u",
-      syncdbOverride: syncdb as any,
-      logStoreFactory: () =>
-        ({
-          set: async () => {},
-        }) as any,
-    });
-
-    await writer.persistLoopState({
-      loopConfig: { enabled: true, max_turns: 5 },
-      loopState: {
-        loop_id: "loop-1",
-        status: "running",
-        started_at_ms: 1,
-        updated_at_ms: 2,
-        iteration: 1,
-      },
-    });
-
-    const patched = sets[sets.length - 1] as any;
-    expect(patched.name).toBe("Fork of bug fixing");
-    expect(patched.acp_config).toEqual({
-      model: "gpt-5.4",
-      reasoning: "extra_high",
-      workingDirectory: "/repo",
-    });
-    expect(patched.loop_config).toEqual({
-      enabled: true,
-      max_turns: 5,
-    });
-    expect(patched.loop_state).toEqual(
-      expect.objectContaining({
-        loop_id: "loop-1",
-        status: "running",
-      }),
-    );
-    (writer as any).dispose?.(true);
-  });
-
   it("clears generating and queue on error", async () => {
     const { syncdb, sets, setCurrent } = makeFakeSyncDB();
     setCurrent({

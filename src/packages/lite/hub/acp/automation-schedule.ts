@@ -7,8 +7,8 @@ import type { AcpAutomationConfig } from "@cocalc/conat/ai/acp/types";
 
 export const AUTOMATION_ALL_DAYS = [0, 1, 2, 3, 4, 5, 6] as const;
 export const AUTOMATION_DEFAULT_INTERVAL_MINUTES = 120;
-export const AUTOMATION_DEFAULT_WINDOW_START_LOCAL_TIME = "06:00";
-export const AUTOMATION_DEFAULT_WINDOW_END_LOCAL_TIME = "20:00";
+export const AUTOMATION_DEFAULT_WINDOW_START_LOCAL_TIME = "00:00";
+export const AUTOMATION_DEFAULT_WINDOW_END_LOCAL_TIME = "23:59";
 export const AUTOMATION_DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60_000;
 export const AUTOMATION_DEFAULT_COMMAND_MAX_OUTPUT_BYTES = 250_000;
 
@@ -450,4 +450,26 @@ export function computeNextAutomationRunAt(
     );
   }
   return undefined;
+}
+
+export function computeSkippedAutomationRunAt(
+  config: AutomationConfigLike,
+  {
+    nextRunAtMs,
+    nowMs,
+    defaultPauseAfterRuns,
+    defaultTimezone,
+  }: {
+    nextRunAtMs?: number | null;
+    nowMs?: number;
+    defaultPauseAfterRuns: number;
+    defaultTimezone?: string;
+  },
+): number | undefined {
+  return computeNextAutomationRunAt(config, {
+    nowMs:
+      typeof nextRunAtMs === "number" && nextRunAtMs > 0 ? nextRunAtMs : nowMs,
+    defaultPauseAfterRuns,
+    defaultTimezone,
+  });
 }

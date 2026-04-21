@@ -145,7 +145,6 @@ describe("ChatPanel external side chat persistence", () => {
       getCodexConfig: jest.fn(),
       getThreadMetadata: jest.fn(),
       getMessagesInThread: jest.fn(() => []),
-      getThreadLoopConfig: jest.fn(),
       frameTreeActions: {
         set_frame_data: jest.fn(),
       },

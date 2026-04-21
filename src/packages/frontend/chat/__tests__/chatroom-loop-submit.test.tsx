@@ -114,15 +114,9 @@ jest.mock("../chatroom-layout", () => ({
 }));
 
 jest.mock("../composer", () => ({
-  ChatRoomComposer: ({ loopConfig, on_send, onLoopConfigChange }: any) => (
+  ChatRoomComposer: ({ on_send }: any) => (
     <div>
-      <div data-testid="loop-state">
-        {loopConfig?.enabled === true ? "on" : "off"}
-      </div>
       <button onClick={() => on_send()}>send</button>
-      <button onClick={() => onLoopConfigChange?.(undefined)}>
-        disable loop
-      </button>
     </div>
   ),
 }));
@@ -173,7 +167,7 @@ jest.mock("../external-side-chat-selection", () => ({
   persistExternalSideChatSelectedThreadKey: jest.fn(),
 }));
 
-describe("ChatPanel loop submit behavior", () => {
+describe("ChatPanel ACP thread behavior", () => {
   beforeEach(() => {
     setInput.mockClear();
     clearInput.mockClear();
@@ -183,97 +177,6 @@ describe("ChatPanel loop submit behavior", () => {
     currentThreads = [selectedThread];
     currentArchivedThreads = [];
     currentAcpState = immutable.Map();
-  });
-
-  it("turns loop off after a successful send even if thread metadata still has loop enabled", async () => {
-    const actions = {
-      sendChat: jest.fn(() => Date.now()),
-      getThreadMetadata: jest.fn(() => ({
-        agent_kind: "acp",
-        loop_config: { enabled: true, max_turns: 4 },
-        acp_config: { model: "gpt-5.4", sessionMode: "workspace-write" },
-      })),
-      getMessagesInThread: jest.fn(() => []),
-      deleteDraft: jest.fn(),
-      getThreadLoopConfig: jest.fn(),
-      getThreadLoopState: jest.fn(),
-      reserveChatSendIdentity: jest.fn(() => ({
-        date: "2026-04-19T12:00:00.000Z",
-        message_id: "message-1",
-        thread_id: "t1",
-      })),
-      frameTreeActions: undefined,
-      frameId: undefined,
-      languageModelStopGenerating: jest.fn(),
-      getCodexConfig: jest.fn(() => ({
-        model: "gpt-5.4",
-        sessionMode: "workspace-write",
-      })),
-    } as any;
-
-    render(
-      <ChatPanel
-        actions={actions}
-        project_id="project-1"
-        path="chat/test.chat"
-        messages={new Map()}
-        threadIndex={undefined}
-        docVersion={0}
-      />,
-    );
-
-    expect(screen.getByTestId("loop-state").textContent).toBe("on");
-
-    fireEvent.click(screen.getByRole("button", { name: "send" }));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("loop-state").textContent).toBe("off"),
-    );
-  });
-
-  it("keeps loop off immediately after disabling even before stale metadata clears", async () => {
-    const actions = {
-      sendChat: jest.fn(() => Date.now()),
-      getThreadMetadata: jest.fn(() => ({
-        agent_kind: "acp",
-        loop_config: { enabled: true, max_turns: 4 },
-        acp_config: { model: "gpt-5.4", sessionMode: "workspace-write" },
-      })),
-      getMessagesInThread: jest.fn(() => []),
-      deleteDraft: jest.fn(),
-      getThreadLoopConfig: jest.fn(),
-      getThreadLoopState: jest.fn(),
-      setThreadLoopConfig: jest.fn(),
-      setThreadLoopState: jest.fn(),
-      frameTreeActions: undefined,
-      frameId: undefined,
-      languageModelStopGenerating: jest.fn(),
-      getCodexConfig: jest.fn(() => ({
-        model: "gpt-5.4",
-        sessionMode: "workspace-write",
-      })),
-    } as any;
-
-    render(
-      <ChatPanel
-        actions={actions}
-        project_id="project-1"
-        path="chat/test.chat"
-        messages={new Map()}
-        threadIndex={undefined}
-        docVersion={0}
-      />,
-    );
-
-    expect(screen.getByTestId("loop-state").textContent).toBe("on");
-
-    fireEvent.click(screen.getByRole("button", { name: "disable loop" }));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("loop-state").textContent).toBe("off"),
-    );
-    expect(actions.setThreadLoopConfig).toHaveBeenCalledWith("t1", null);
-    expect(actions.setThreadLoopState).toHaveBeenCalledWith("t1", null);
   });
 
   it("indexes archived ai threads as archived even if their acp state is still running", async () => {
@@ -290,8 +193,6 @@ describe("ChatPanel loop submit behavior", () => {
       })),
       getMessagesInThread: jest.fn(() => []),
       deleteDraft: jest.fn(),
-      getThreadLoopConfig: jest.fn(),
-      getThreadLoopState: jest.fn(),
       frameTreeActions: undefined,
       frameId: undefined,
       languageModelStopGenerating: jest.fn(),
@@ -320,87 +221,6 @@ describe("ChatPanel loop submit behavior", () => {
         }),
       ),
     );
-  });
-
-  it("opens the latest activity log from the loop banner", async () => {
-    const latestAcpDate = "2026-03-20T02:00:00.000Z";
-    const olderAcpDate = "2026-03-20T01:00:00.000Z";
-    const actions = {
-      sendChat: jest.fn(() => Date.now()),
-      getThreadMetadata: jest.fn(() => ({
-        agent_kind: "acp",
-        acp_config: { model: "gpt-5.4", sessionMode: "workspace-write" },
-        loop_state: {
-          status: "running",
-          iteration: 2,
-          max_turns: 4,
-          updated_at_ms: Date.now(),
-        },
-      })),
-      getMessagesInThread: jest.fn(() => [
-        {
-          event: "chat",
-          sender_id: "assistant",
-          message_id: "msg-older",
-          thread_id: "t1",
-          date: olderAcpDate,
-          history: [],
-          acp_account_id: "acct",
-        },
-        {
-          event: "chat",
-          sender_id: "assistant",
-          message_id: "msg-non-acp",
-          thread_id: "t1",
-          date: "2026-03-20T01:30:00.000Z",
-          history: [],
-        },
-        {
-          event: "chat",
-          sender_id: "assistant",
-          message_id: "msg-latest",
-          thread_id: "t1",
-          date: latestAcpDate,
-          history: [],
-          acp_account_id: "acct",
-        },
-      ]),
-      deleteDraft: jest.fn(),
-      getThreadLoopConfig: jest.fn(),
-      getThreadLoopState: jest.fn(),
-      frameTreeActions: undefined,
-      frameId: undefined,
-      languageModelStopGenerating: jest.fn(),
-      getCodexConfig: jest.fn(() => ({
-        model: "gpt-5.4",
-        sessionMode: "workspace-write",
-      })),
-    } as any;
-
-    render(
-      <ChatPanel
-        actions={actions}
-        project_id="project-1"
-        path="chat/test.chat"
-        messages={new Map()}
-        threadIndex={undefined}
-        docVersion={0}
-      />,
-    );
-
-    expect(
-      screen.getByRole("button", { name: "View activity log" }),
-    ).not.toBeNull();
-    expect(lastThreadPanelProps?.activityJumpDate).toBeUndefined();
-
-    fireEvent.click(screen.getByRole("button", { name: "View activity log" }));
-
-    await waitFor(() =>
-      expect(lastThreadPanelProps?.activityJumpDate).toBe(
-        `${Date.parse(latestAcpDate)}`,
-      ),
-    );
-    expect(lastThreadPanelProps?.activityJumpToken).toBeGreaterThan(0);
   });
 
   it("lets the completed-turn modal disable notify for the next turn", async () => {
@@ -441,8 +261,6 @@ describe("ChatPanel loop submit behavior", () => {
         ])
         .mockReturnValue([]),
       deleteDraft: jest.fn(),
-      getThreadLoopConfig: jest.fn(),
-      getThreadLoopState: jest.fn(),
       frameTreeActions: undefined,
       frameId: undefined,
       languageModelStopGenerating: jest.fn(),

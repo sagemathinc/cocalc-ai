@@ -3,8 +3,6 @@ import type {
   AcpAutomationConfig,
   AcpAutomationResponse,
   AcpChatContext,
-  AcpLoopConfig,
-  AcpLoopState,
 } from "@cocalc/conat/ai/acp/types";
 import {
   DEFAULT_CODEX_MODEL_NAME,
@@ -72,50 +70,6 @@ function nextAcpMessageDate({
   }
   lastGeneratedAcpMessageMs = candidate;
   return new Date(candidate);
-}
-
-function maybeDecorateLoopPrompt({
-  prompt,
-  loopConfig,
-}: {
-  prompt: string;
-  loopConfig?: AcpLoopConfig;
-}): string {
-  if (loopConfig?.enabled !== true) return prompt;
-  const maxTurns = Number(loopConfig.max_turns ?? 8);
-  const maxWallMinutes = Math.max(
-    1,
-    Math.round(Number(loopConfig.max_wall_time_ms ?? 30 * 60_000) / 60_000),
-  );
-  return [
-    prompt,
-    "",
-    "System loop contract (required):",
-    `This run is in autonomous loop mode (max turns: ${maxTurns}, max wall time: ${maxWallMinutes} minutes).`,
-    "At the END of your response, output exactly one JSON object in a ```json fenced block with this schema:",
-    '{"loop":{"rerun":true|false,"needs_human":true|false,"next_prompt":"string","blocker":"string","confidence":0.0-1.0}}',
-    "Rules:",
-    "- If rerun=true and needs_human=false, set next_prompt to the exact next instruction for the next iteration.",
-    "- If done, set rerun=false.",
-    "- If human input is needed, set needs_human=true and explain blocker.",
-    "- Do not omit the JSON contract block.",
-  ].join("\n");
-}
-
-function maybeDecorateLoopSuppressionPrompt({
-  prompt,
-  suppressLoopContract,
-}: {
-  prompt: string;
-  suppressLoopContract: boolean;
-}): string {
-  if (!suppressLoopContract) return prompt;
-  return [
-    prompt,
-    "",
-    "System loop mode: OFF for this turn.",
-    'Do not include the special loop-control JSON block with schema {"loop":...} unless loop mode is explicitly enabled for this turn.',
-  ].join("\n");
 }
 
 // Clear transient frontend-rendered ACP state for a thread. Persisted queue and
@@ -221,29 +175,6 @@ export async function processAcpLLM({
     });
     return;
   }
-  const loopConfigFromMessage = field<AcpLoopConfig>(
-    message as any,
-    "acp_loop_config",
-  );
-  const loopStateFromMessage = field<AcpLoopState>(
-    message as any,
-    "acp_loop_state",
-  );
-  const loopConfig = loopConfigFromMessage;
-  const loopState =
-    typeof loopStateFromMessage?.loop_id === "string" &&
-    loopStateFromMessage.loop_id.trim()
-      ? loopStateFromMessage
-      : undefined;
-  const threadMetadata = actions.getThreadMetadata?.(thread_id, {
-    threadId: thread_id,
-  });
-  const persistedLoopState = threadMetadata?.loop_state as
-    | AcpLoopState
-    | undefined;
-  const threadHasLoopHistory =
-    typeof persistedLoopState?.loop_id === "string" &&
-    persistedLoopState.loop_id.trim().length > 0;
   const config = {
     ...(actions.getCodexConfig?.(thread_id) ?? {}),
     ...(acpConfigOverride ?? {}),
@@ -307,16 +238,6 @@ export async function processAcpLLM({
     if (typeof syncdb?.save !== "function") return;
     await syncdb.save();
   };
-  const promptForRunWithLoop =
-    loopConfig?.enabled === true
-      ? maybeDecorateLoopPrompt({
-          prompt: workingInput,
-          loopConfig,
-        })
-      : maybeDecorateLoopSuppressionPrompt({
-          prompt: workingInput,
-          suppressLoopContract: threadHasLoopHistory,
-        });
   // Generate a stable assistant-reply key for this turn, but do NOT write any
   // corresponding chat row here. The backend is the sole writer of the assistant
   // reply row (avoids frontend/backend sync races on the same row).
@@ -341,15 +262,13 @@ export async function processAcpLLM({
     message_id,
     parent_message_id: user_message_id,
     sendMode: sendMode,
-    loop_config: loopConfig,
-    loop_state: loopState,
   });
   let acknowledged = false;
   try {
     await ensureChatStatePersisted();
     const acpRequest = {
       project_id,
-      prompt: promptForRunWithLoop,
+      prompt: workingInput,
       session_id: sessionKey,
       config: buildAcpConfig({
         path,
@@ -609,7 +528,14 @@ async function automationRequest({
 }: {
   actions: ChatActions;
   threadId: string;
-  action: "upsert" | "pause" | "resume" | "run_now" | "acknowledge" | "delete";
+  action:
+    | "upsert"
+    | "pause"
+    | "resume"
+    | "run_now"
+    | "skip_next"
+    | "acknowledge"
+    | "delete";
   config?: AcpAutomationConfig | null;
 }): Promise<AcpAutomationResponse | undefined> {
   const { store } = actions;
@@ -682,6 +608,20 @@ export async function runThreadAutomationNow({
     actions,
     threadId,
     action: "run_now",
+  });
+}
+
+export async function skipNextThreadAutomationRun({
+  actions,
+  threadId,
+}: {
+  actions: ChatActions;
+  threadId: string;
+}): Promise<AcpAutomationResponse | undefined> {
+  return await automationRequest({
+    actions,
+    threadId,
+    action: "skip_next",
   });
 }
 
@@ -794,8 +734,6 @@ function buildChatMetadata({
   message_id,
   parent_message_id,
   sendMode,
-  loop_config,
-  loop_state,
 }: {
   project_id?: string;
   path?: string;
@@ -810,8 +748,6 @@ function buildChatMetadata({
   message_id?: string;
   parent_message_id?: string;
   sendMode?: "immediate";
-  loop_config?: AcpLoopConfig;
-  loop_state?: AcpLoopState;
 }): AcpChatContext {
   if (!project_id) {
     throw new Error("Codex requires a project context to run");
@@ -836,7 +772,5 @@ function buildChatMetadata({
     message_id,
     parent_message_id,
     send_mode: sendMode,
-    loop_config,
-    loop_state,
   } as AcpChatContext;
 }

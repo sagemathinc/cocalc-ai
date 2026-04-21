@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { mergeThreadConfigRecord } from "./project-chat";
 
-test("mergeThreadConfigRecord preserves unrelated thread metadata while updating loop settings", () => {
+test("mergeThreadConfigRecord preserves unrelated thread metadata while updating automation settings", () => {
   const merged = mergeThreadConfigRecord({
     existing: {
       event: "chat-thread-config",
@@ -29,11 +29,9 @@ test("mergeThreadConfigRecord preserves unrelated thread metadata while updating
     threadId: "thread-1",
     accountId: "new-account",
     patch: {
-      loop_config: {
-        enabled: true,
-        max_turns: 5,
+      automation_state: {
+        status: "paused",
       },
-      loop_state: null,
     },
   });
 
@@ -46,10 +44,6 @@ test("mergeThreadConfigRecord preserves unrelated thread metadata while updating
     local_time: "09:00",
     timezone: "UTC",
   });
-  assert.deepEqual(merged.loop_config, {
-    enabled: true,
-    max_turns: 5,
-  });
-  assert.equal(merged.loop_state, null);
+  assert.deepEqual(merged.automation_state, { status: "paused" });
   assert.equal(merged.updated_by, "new-account");
 });

@@ -110,8 +110,6 @@ export interface ChatExportThreadData {
   agent_model?: string;
   agent_mode?: string;
   acp_config?: unknown;
-  loop_config?: unknown;
-  loop_state?: unknown;
   runtime_state?: string;
   active_message_id?: string;
   root_message_id?: string;
@@ -331,8 +329,6 @@ export async function collectChatExport(
       agent_model: normalizeString(aggregate.config?.agent_model),
       agent_mode: normalizeString(aggregate.config?.agent_mode),
       acp_config: aggregate.config?.acp_config,
-      loop_config: aggregate.config?.loop_config,
-      loop_state: aggregate.config?.loop_state,
       runtime_state: normalizeString(aggregate.state?.state),
       active_message_id: normalizeString(aggregate.state?.active_message_id),
       root_message_id: aggregate.rootMessageId,

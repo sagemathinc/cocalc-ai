@@ -50,8 +50,6 @@ import {
   type CodexThreadConfig,
   type ChatThreadAutomationConfig,
   type ChatThreadAutomationState,
-  type ChatThreadLoopConfig,
-  type ChatThreadLoopState,
 } from "@cocalc/chat";
 import {
   DEFAULT_CODEX_MODEL_NAME,
@@ -67,7 +65,7 @@ import {
   orderLinearThreadMessages,
   stableDraftKeyFromThreadKey,
 } from "./utils";
-import type { AcpChatContext, AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
+import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
 import {
   openProjectReadState,
   type ProjectReadStateStore,
@@ -202,8 +200,6 @@ export interface ThreadMetadataSnapshot {
   agent_model?: LanguageModel;
   agent_mode?: ThreadAgentMode;
   acp_config?: CodexThreadConfig | null;
-  loop_config?: ChatThreadLoopConfig;
-  loop_state?: ChatThreadLoopState;
   automation_config?: ChatThreadAutomationConfig;
   automation_state?: ChatThreadAutomationState;
 }
@@ -831,7 +827,6 @@ export class ChatActions extends Actions<ChatState> {
     threadAppearance,
     preserveSelectedThread,
     skipModelDispatch,
-    acp_loop_config,
     parent_message_id,
     acpConfigOverride,
     chatIdentity,
@@ -857,8 +852,6 @@ export class ChatActions extends Actions<ChatState> {
     preserveSelectedThread?: boolean;
     // if true, append message but never dispatch to model/agent runtime
     skipModelDispatch?: boolean;
-    // optional ACP loop config attached to this message
-    acp_loop_config?: AcpLoopConfig;
     // direct parent for linear thread placement
     parent_message_id?: string;
     // explicit ACP config snapshot to use for immediate dispatch
@@ -950,9 +943,6 @@ export class ChatActions extends Actions<ChatState> {
     }
     if (recoveredNotSent === true) {
       (message as any).acp_state = "not-sent";
-    }
-    if (acp_loop_config != null) {
-      (message as any).acp_loop_config = acp_loop_config;
     }
     if (trimmedAcpPrompt) {
       (message as any).acp_prompt = trimmedAcpPrompt;
@@ -1815,8 +1805,6 @@ export class ChatActions extends Actions<ChatState> {
     let agent_kind = normalizeAgentKind(field<string>(cfg, "agent_kind"));
     let agent_mode = normalizeAgentMode(field<string>(cfg, "agent_mode"));
     const acp_config = field<CodexThreadConfig | null>(cfg, "acp_config");
-    const loop_config = field<ChatThreadLoopConfig>(cfg, "loop_config");
-    const loop_state = field<ChatThreadLoopState>(cfg, "loop_state");
     const automation_config = field<ChatThreadAutomationConfig>(
       cfg,
       "automation_config",
@@ -1857,43 +1845,9 @@ export class ChatActions extends Actions<ChatState> {
       agent_model,
       agent_mode,
       acp_config,
-      loop_config,
-      loop_state,
       automation_config,
       automation_state,
     };
-  };
-
-  setThreadLoopConfig = (
-    threadKey: string,
-    loopConfig?: ChatThreadLoopConfig | null,
-  ): boolean => {
-    if (this.syncdb == null) return false;
-    if (
-      !this.setThreadConfigRecord(threadKey, {
-        loop_config: loopConfig ?? null,
-      })
-    ) {
-      return false;
-    }
-    this.syncdb.commit();
-    return true;
-  };
-
-  setThreadLoopState = (
-    threadKey: string,
-    loopState?: ChatThreadLoopState | null,
-  ): boolean => {
-    if (this.syncdb == null) return false;
-    if (
-      !this.setThreadConfigRecord(threadKey, {
-        loop_state: loopState ?? null,
-      })
-    ) {
-      return false;
-    }
-    this.syncdb.commit();
-    return true;
   };
 
   setThreadAutomationConfig = (
@@ -2677,8 +2631,6 @@ export class ChatActions extends Actions<ChatState> {
           ? "interactive"
           : (sourceMetadata.agent_mode ?? (isAI ? "interactive" : null)),
       acp_config: nextConfig ?? null,
-      loop_config: sourceMetadata.loop_config ?? null,
-      loop_state: null,
     };
     if (
       !this.setThreadConfigRecord(newThreadId, configPatch, {

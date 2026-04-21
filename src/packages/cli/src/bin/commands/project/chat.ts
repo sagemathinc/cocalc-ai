@@ -33,11 +33,8 @@ export function registerProjectChatCommands(
   const {
     withContext,
     buildCodexSessionConfig,
-    durationToMs,
     projectChatThreadCreateData,
     projectChatThreadStatusData,
-    projectChatLoopSetData,
-    projectChatLoopClearData,
     projectChatAutomationData,
     projectChatActivityData,
   } = deps;
@@ -172,135 +169,6 @@ export function registerProjectChatCommands(
             threadId: normalizeThreadId(opts.threadId),
             messageId: opts.messageId,
           });
-        });
-      },
-    );
-
-  const loop = chat.command("loop").description("project chat loop config");
-
-  loop
-    .command("set")
-    .description("set loop config for a chat thread")
-    .requiredOption("--path <path>", "chat document path inside the project")
-    .requiredOption("--thread-id <id>", "thread id")
-    .option("-w, --project <project>", "project id or name")
-    .option("--max-turns <n>", "maximum loop turns")
-    .option("--max-wall-time <duration>", "maximum wall time", "30m")
-    .option("--check-in-every-turns <n>", "human check-in cadence")
-    .option(
-      "--stop-on-repeated-blocker-count <n>",
-      "stop after this many repeated blockers",
-    )
-    .option("--sleep <duration>", "delay between turns", "0s")
-    .action(
-      async (
-        opts: {
-          path: string;
-          threadId: string;
-          project?: string;
-          maxTurns?: string;
-          maxWallTime?: string;
-          checkInEveryTurns?: string;
-          stopOnRepeatedBlockerCount?: string;
-          sleep?: string;
-        },
-        command: Command,
-      ) => {
-        await withContext(command, "project chat loop set", async (ctx) => {
-          return await projectChatLoopSetData({
-            ctx,
-            projectIdentifier: opts.project,
-            path: normalizePath(opts.path),
-            threadId: normalizeThreadId(opts.threadId),
-            config: {
-              enabled: true,
-              ...(parsePositiveIntegerOrThrow(opts.maxTurns, "--max-turns") !=
-              null
-                ? {
-                    max_turns: parsePositiveIntegerOrThrow(
-                      opts.maxTurns,
-                      "--max-turns",
-                    ),
-                  }
-                : undefined),
-              max_wall_time_ms: durationToMs(opts.maxWallTime, 30 * 60 * 1000),
-              ...(parsePositiveIntegerOrThrow(
-                opts.checkInEveryTurns,
-                "--check-in-every-turns",
-              ) != null
-                ? {
-                    check_in_every_turns: parsePositiveIntegerOrThrow(
-                      opts.checkInEveryTurns,
-                      "--check-in-every-turns",
-                    ),
-                  }
-                : undefined),
-              ...(parsePositiveIntegerOrThrow(
-                opts.stopOnRepeatedBlockerCount,
-                "--stop-on-repeated-blocker-count",
-              ) != null
-                ? {
-                    stop_on_repeated_blocker_count: parsePositiveIntegerOrThrow(
-                      opts.stopOnRepeatedBlockerCount,
-                      "--stop-on-repeated-blocker-count",
-                    ),
-                  }
-                : undefined),
-              sleep_ms_between_turns: durationToMs(opts.sleep, 0),
-            },
-          });
-        });
-      },
-    );
-
-  loop
-    .command("clear")
-    .description("clear loop config/state for a chat thread")
-    .requiredOption("--path <path>", "chat document path inside the project")
-    .requiredOption("--thread-id <id>", "thread id")
-    .option("-w, --project <project>", "project id or name")
-    .action(
-      async (
-        opts: { path: string; threadId: string; project?: string },
-        command: Command,
-      ) => {
-        await withContext(command, "project chat loop clear", async (ctx) => {
-          return await projectChatLoopClearData({
-            ctx,
-            projectIdentifier: opts.project,
-            path: normalizePath(opts.path),
-            threadId: normalizeThreadId(opts.threadId),
-          });
-        });
-      },
-    );
-
-  loop
-    .command("status")
-    .description("show loop config/state for a chat thread")
-    .requiredOption("--path <path>", "chat document path inside the project")
-    .requiredOption("--thread-id <id>", "thread id")
-    .option("-w, --project <project>", "project id or name")
-    .action(
-      async (
-        opts: { path: string; threadId: string; project?: string },
-        command: Command,
-      ) => {
-        await withContext(command, "project chat loop status", async (ctx) => {
-          const result = await projectChatThreadStatusData({
-            ctx,
-            projectIdentifier: opts.project,
-            path: normalizePath(opts.path),
-            threadId: normalizeThreadId(opts.threadId),
-          });
-          const thread = (result as any).thread ?? {};
-          return {
-            project_id: (result as any).project_id,
-            path: (result as any).path,
-            thread_id: thread.thread_id ?? normalizeThreadId(opts.threadId),
-            loop_config: thread.loop_config ?? null,
-            loop_state: thread.loop_state ?? null,
-          };
         });
       },
     );
