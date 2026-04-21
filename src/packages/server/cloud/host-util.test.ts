@@ -41,6 +41,19 @@ describe("buildHostSpec", () => {
     ]);
   });
 
+  it("defaults new hosts to a 25GB boot disk", async () => {
+    const spec = await buildHostSpec({
+      id: "832da43c-d18e-406d-8e1d-c28973378b24",
+      metadata: {
+        machine: {
+          metadata: {},
+        },
+      },
+    });
+
+    expect(spec.metadata.boot_disk_gb).toBe(25);
+  });
+
   it("rejects Nebius spot hosts on platforms that disallow preemptibles", async () => {
     loadNebiusInstanceTypesMock.mockResolvedValue([
       {

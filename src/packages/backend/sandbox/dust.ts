@@ -161,6 +161,9 @@ const whitelist = {
   "-d": validate.int,
   "--depth": validate.int,
 
+  "-T": validate.int,
+  "--threads": validate.int,
+
   "-n": validate.int,
   "--number-of-lines": validate.int,
 

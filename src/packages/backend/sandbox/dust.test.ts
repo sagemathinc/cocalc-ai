@@ -66,7 +66,9 @@ describeDust("dust works", () => {
 
   it("create a file and see it appears in the dust result", async () => {
     await writeFile(join(tempDir, "a.txt"), "hello");
-    const { stdout, truncated } = await dust(tempDir, { options: ["-j"] });
+    const { stdout, truncated } = await dust(tempDir, {
+      options: ["-j", "-T", "2"],
+    });
     const s = JSON.parse(Buffer.from(stdout).toString());
     expect(s).toEqual({
       size: s.size,
