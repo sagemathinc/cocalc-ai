@@ -1974,13 +1974,9 @@ export function ChatPanel({
       {automationDetailsOpen ? (
         <div style={{ marginBottom: 6 }}>
           <Space size="small" wrap>
-            {IS_MOBILE ? (
-              <>
-                <strong>{automationTitle}</strong>
-                {automationScheduleInfo}
-                {automationActions}
-              </>
-            ) : null}
+            <strong>{automationTitle}</strong>
+            {automationScheduleInfo}
+            {automationActions}
             {selectedThreadAutomationState?.paused_reason ? (
               <span>
                 {formatAutomationPausedReason(
@@ -2036,13 +2032,12 @@ export function ChatPanel({
           flexWrap: "nowrap",
           gap: 8,
           minWidth: 0,
-          overflow: "hidden",
         }}
       >
         <strong
           title={automationTitle}
           style={{
-            flex: IS_MOBILE ? "0 0 auto" : "1 1 14em",
+            flex: IS_MOBILE ? "0 1 auto" : "1 1 14em",
             minWidth: 0,
             maxWidth: IS_MOBILE ? undefined : 280,
             overflow: "hidden",
@@ -2053,8 +2048,6 @@ export function ChatPanel({
           {IS_MOBILE ? "Automation" : automationTitle}
         </strong>
         <span style={{ flex: "0 0 auto" }}>{automationStatusTag}</span>
-        {IS_MOBILE ? null : automationScheduleInfo}
-        {IS_MOBILE ? null : automationActions}
         <Button
           size="small"
           type="link"
@@ -2067,6 +2060,22 @@ export function ChatPanel({
               : "Hide details"
             : "Details"}
         </Button>
+        {!IS_MOBILE && !automationDetailsOpen ? (
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              flex: "1 1 auto",
+              flexWrap: "nowrap",
+              gap: 8,
+              minWidth: 0,
+              overflow: "hidden",
+            }}
+          >
+            {automationScheduleInfo}
+            {automationActions}
+          </div>
+        ) : null}
       </div>
     </div>
   ) : null;
