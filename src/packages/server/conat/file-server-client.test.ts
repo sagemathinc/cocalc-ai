@@ -4,10 +4,7 @@ let materializeProjectHostTargetMock: jest.Mock;
 let materializeRemoteProjectHostTargetMock: jest.Mock;
 let fileServerClientMock: jest.Mock;
 let conatWithProjectRoutingMock: jest.Mock;
-let conatWithProjectRoutingForAccountMock: jest.Mock;
 let pingMock: jest.Mock;
-let resolveHostBayAcrossClusterMock: jest.Mock;
-let projectHostAuthTokenIssueMock: jest.Mock;
 
 jest.mock("./route-project", () => ({
   __esModule: true,
@@ -21,28 +18,6 @@ jest.mock("./route-client", () => ({
   __esModule: true,
   conatWithProjectRouting: (...args: any[]) =>
     conatWithProjectRoutingMock(...args),
-  conatWithProjectRoutingForAccount: (...args: any[]) =>
-    conatWithProjectRoutingForAccountMock(...args),
-}));
-
-jest.mock("@cocalc/server/bay-config", () => ({
-  __esModule: true,
-  getConfiguredBayId: () => "bay-local",
-}));
-
-jest.mock("@cocalc/server/inter-bay/bridge", () => ({
-  __esModule: true,
-  getInterBayBridge: () => ({
-    projectHostAuthToken: (bay_id: string, opts?: any) => ({
-      issue: (args: any) => projectHostAuthTokenIssueMock(bay_id, opts, args),
-    }),
-  }),
-}));
-
-jest.mock("@cocalc/server/inter-bay/directory", () => ({
-  __esModule: true,
-  resolveHostBayAcrossCluster: (...args: any[]) =>
-    resolveHostBayAcrossClusterMock(...args),
 }));
 
 jest.mock("@cocalc/conat/files/file-server", () => ({
@@ -59,15 +34,6 @@ describe("conat/file-server-client", () => {
     }));
     materializeRemoteProjectHostTargetMock = jest.fn(async () => undefined);
     conatWithProjectRoutingMock = jest.fn(() => ({ id: "routed-client" }));
-    conatWithProjectRoutingForAccountMock = jest.fn(() => ({
-      id: "account-routed-client",
-    }));
-    resolveHostBayAcrossClusterMock = jest.fn(async () => undefined);
-    projectHostAuthTokenIssueMock = jest.fn(async () => ({
-      host_id: "host-1",
-      token: "token",
-      expires_at: Date.now() + 60_000,
-    }));
     pingMock = jest.fn(async () => undefined);
     fileServerClientMock = jest.fn(() => ({
       createBackup: jest.fn(),
@@ -92,7 +58,6 @@ describe("conat/file-server-client", () => {
       timeout: 1234,
       waitForInterest: true,
     });
-    expect(projectHostAuthTokenIssueMock).not.toHaveBeenCalled();
     expect(client).toBeDefined();
   });
 
@@ -110,11 +75,8 @@ describe("conat/file-server-client", () => {
     expect(fileServerClientMock).not.toHaveBeenCalled();
   });
 
-  it("uses authenticated remote project routing when local route lookup misses", async () => {
+  it("uses hub-authenticated file-server client after remote route discovery", async () => {
     materializeProjectHostTargetMock = jest.fn(async () => undefined);
-    resolveHostBayAcrossClusterMock = jest.fn(async () => ({
-      bay_id: "bay-remote",
-    }));
     materializeRemoteProjectHostTargetMock = jest.fn(async () => ({
       address: "https://remote-host",
       host_id: "host-remote",
@@ -131,28 +93,19 @@ describe("conat/file-server-client", () => {
       account_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
       project_id: "22222222-2222-2222-2222-222222222222",
     });
-    expect(resolveHostBayAcrossClusterMock).toHaveBeenCalledWith("host-remote");
-    expect(projectHostAuthTokenIssueMock).toHaveBeenCalledWith(
-      "bay-remote",
-      { timeout_ms: 15_000 },
-      {
-        account_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        host_id: "host-remote",
-        project_id: "22222222-2222-2222-2222-222222222222",
-        ttl_seconds: 60,
-      },
-    );
-    expect(conatWithProjectRoutingForAccountMock).toHaveBeenCalledWith({
-      account_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-    });
     expect(fileServerClientMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        client: { id: "account-routed-client" },
+        client: { id: "routed-client" },
       }),
     );
   });
 
-  it("uses the local bay when host ownership has not propagated yet", async () => {
+  it("uses account id only for remote route discovery", async () => {
+    materializeProjectHostTargetMock = jest.fn(async () => undefined);
+    materializeRemoteProjectHostTargetMock = jest.fn(async () => ({
+      address: "https://remote-host",
+      host_id: "host-remote",
+    }));
     const { getProjectFileServerClient } = await import("./file-server-client");
 
     await getProjectFileServerClient({
@@ -160,15 +113,14 @@ describe("conat/file-server-client", () => {
       account_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     });
 
-    expect(projectHostAuthTokenIssueMock).toHaveBeenCalledWith(
-      "bay-local",
-      { timeout_ms: 15_000 },
-      {
-        account_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        host_id: "host-1",
-        project_id: "66666666-6666-6666-6666-666666666666",
-        ttl_seconds: 60,
-      },
+    expect(materializeRemoteProjectHostTargetMock).toHaveBeenCalledWith({
+      account_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      project_id: "66666666-6666-6666-6666-666666666666",
+    });
+    expect(fileServerClientMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        client: { id: "routed-client" },
+      }),
     );
   });
 

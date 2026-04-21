@@ -208,6 +208,7 @@ import {
 } from "./hosts-drain";
 import {
   issueProjectHostAgentAuthTokenInternalHelper,
+  issueProjectHostHubAuthTokenInternalHelper,
   issueProjectHostAuthTokenLocalHelper,
   resolveHostConnectionLocalHelper,
 } from "./hosts-connection-auth";
@@ -1235,11 +1236,13 @@ export async function issueProjectHostAuthToken({
 
 export async function issueProjectHostAuthTokenLocal({
   account_id,
+  actor,
   host_id,
   project_id,
   ttl_seconds,
 }: {
   account_id?: string;
+  actor?: "account" | "hub";
   host_id: string;
   project_id?: string;
   ttl_seconds?: number;
@@ -1248,6 +1251,12 @@ export async function issueProjectHostAuthTokenLocal({
   token: string;
   expires_at: number;
 }> {
+  if (actor === "hub") {
+    return await issueProjectHostHubAuthTokenInternalHelper({
+      host_id,
+      ttl_seconds,
+    });
+  }
   const owner = requireAccount(account_id);
   return await issueProjectHostAuthTokenLocalHelper({
     account_id: owner,

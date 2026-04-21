@@ -195,6 +195,27 @@ export async function issueProjectHostAuthTokenLocalHelper({
   return { host_id, token, expires_at };
 }
 
+export async function issueProjectHostHubAuthTokenInternalHelper({
+  host_id,
+  ttl_seconds,
+}: {
+  host_id: string;
+  ttl_seconds?: number;
+}): Promise<{
+  host_id: string;
+  token: string;
+  expires_at: number;
+}> {
+  const { token, expires_at } = issueProjectHostAuthTokenJwt({
+    actor: "hub",
+    hub_id: "hub",
+    host_id,
+    ttl_seconds,
+    private_key: getProjectHostAuthTokenPrivateKey(),
+  });
+  return { host_id, token, expires_at };
+}
+
 export async function issueProjectHostAgentAuthTokenInternalHelper({
   host_id,
   account_id,
