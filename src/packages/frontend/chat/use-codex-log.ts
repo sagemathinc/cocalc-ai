@@ -158,6 +158,9 @@ export function useCodexLog({
   const liveBufferRef = useRef<any[]>([]);
   const liveFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveConnectedRef = useRef<boolean>(false);
+  const liveStreamRef = useRef<DStream<
+    AcpStreamMessage | AcpStreamMessage[]
+  > | null>(null);
   const reconnectResourceRef = useRef<RegisteredReconnectResource | null>(null);
   const mountedRef = useRef<boolean>(true);
   const hasLiveSource =
@@ -373,6 +376,20 @@ export function useCodexLog({
           if (!mountedRef.current || !hasLiveSource) {
             return;
           }
+          const liveStream = liveStreamRef.current;
+          if (liveStream != null && !isDStreamLiveConnected(liveStream)) {
+            try {
+              await liveStream.recoverNow({
+                priority: "foreground",
+                reason: "codex_log_reconnect",
+              });
+            } catch (err) {
+              console.warn("codex log stream recovery failed", err);
+            }
+          }
+          if (liveConnectedRef.current) {
+            return;
+          }
           setLiveReconnectToken((n) => n + 1);
           await waitForLiveReconnect();
         },
@@ -454,6 +471,7 @@ export function useCodexLog({
             maxListeners: 50,
           });
           liveStream = lease.stream;
+          liveStreamRef.current = liveStream;
           releaseLiveStream = lease.release;
           if (stopped) {
             await releaseLiveStream({ immediate: true });
@@ -567,6 +585,9 @@ export function useCodexLog({
     return () => {
       stopped = true;
       liveConnectedRef.current = false;
+      if (liveStreamRef.current === liveStream) {
+        liveStreamRef.current = null;
+      }
       if (liveFlushTimerRef.current != null) {
         clearTimeout(liveFlushTimerRef.current);
         liveFlushTimerRef.current = null;
