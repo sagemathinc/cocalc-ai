@@ -20,7 +20,7 @@ import { ensureInitialized } from "@cocalc/backend/sandbox/rustic";
 import { until } from "@cocalc/util/async-utils";
 import { delay } from "awaiting";
 import { FileSync } from "./sync";
-import bees from "./bees";
+import bees, { signalBeesProcessGroup } from "./bees";
 import { type ChildProcess } from "node:child_process";
 import { install } from "@cocalc/backend/sandbox/install";
 import { getBtrfsQuotaQueueStatus, startBtrfsQuotaQueue } from "./quota-queue";
@@ -59,6 +59,7 @@ export class Filesystem {
   public readonly subvolumes: Subvolumes;
   public readonly fileSync: FileSync;
   private bees?: ChildProcess;
+  private beesRunningExternally = false;
   private beesRestartTimer?: NodeJS.Timeout;
   private beesRestartAttempts = 0;
   private beesDisabledByConfig = false;
@@ -134,11 +135,14 @@ export class Filesystem {
 
   close = () => {
     this.beesStopping = true;
+    this.beesRunningExternally = false;
     if (this.beesRestartTimer) {
       clearTimeout(this.beesRestartTimer);
       this.beesRestartTimer = undefined;
     }
-    this.bees?.kill("SIGQUIT");
+    if (this.bees) {
+      signalBeesProcessGroup(this.bees, "SIGQUIT");
+    }
     this.fileSync.close();
   };
 
@@ -147,10 +151,12 @@ export class Filesystem {
       enabled: !this.beesDisabledByConfig,
       running:
         !this.beesDisabledByConfig &&
-        this.bees != null &&
-        this.bees.killed !== true &&
-        this.bees.exitCode == null,
+        (this.beesRunningExternally ||
+          (this.bees != null &&
+            this.bees.killed !== true &&
+            this.bees.exitCode == null)),
       pid: this.bees?.pid,
+      external: this.beesRunningExternally,
       restartAttempts: this.beesRestartAttempts,
       restartPending: this.beesRestartTimer != null,
       lastExit: this.beesLastExit,
@@ -190,9 +196,10 @@ export class Filesystem {
     if (this.beesStopping) {
       return;
     }
+    this.beesRunningExternally = false;
     try {
-      const child = await bees(this.opts.mount);
-      if (!child) {
+      const result = await bees(this.opts.mount);
+      if (result.status === "disabled") {
         this.bees = undefined;
         this.beesDisabledByConfig = true;
         logger.warn("BEES dedup disabled by configuration", {
@@ -201,6 +208,19 @@ export class Filesystem {
         });
         return;
       }
+      if (result.status === "already-running") {
+        this.bees = undefined;
+        this.beesRunningExternally = true;
+        this.beesDisabledByConfig = false;
+        this.beesRestartAttempts = 0;
+        logger.warn("BEES dedup already running for this mount", {
+          mount: this.opts.mount,
+          reason,
+          detail: result.detail,
+        });
+        return;
+      }
+      const { child } = result;
       this.bees = child;
       this.beesDisabledByConfig = false;
       this.beesRestartAttempts = 0;
@@ -212,6 +232,7 @@ export class Filesystem {
       child.once("exit", (code, signal) => {
         if (this.bees !== child) return;
         this.bees = undefined;
+        this.beesRunningExternally = false;
         this.beesLastExit = {
           code: code ?? null,
           signal: signal ?? null,

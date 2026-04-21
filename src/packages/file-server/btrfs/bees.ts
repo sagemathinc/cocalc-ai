@@ -2,7 +2,7 @@
 Automate running BEES on the btrfs pool.
 */
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { delay } from "awaiting";
 import getLogger from "@cocalc/backend/logger";
 import { sudo, STORAGE_WRAPPER } from "./util";
@@ -10,6 +10,7 @@ import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { join } from "node:path";
 
 const logger = getLogger("file-server:btrfs:bees");
+const BEES_ALREADY_RUNNING_EXIT_CODE = 75;
 
 interface Options {
   // average load target: default=1
@@ -20,7 +21,12 @@ interface Options {
   size?: string;
 }
 
-const children: any[] = [];
+const children: ChildProcess[] = [];
+
+export type BeesStartResult =
+  | { status: "started"; child: ChildProcess }
+  | { status: "already-running"; detail: string }
+  | { status: "disabled" };
 
 function beesDisabledByEnv(): boolean {
   const value = `${process.env.COCALC_DISABLE_BEES ?? ""}`.trim().toLowerCase();
@@ -31,13 +37,13 @@ function beesDisabledByEnv(): boolean {
 export default async function bees(
   mountpoint: string,
   { loadavgTarget = 1, verbose = 1, size = "1G" }: Options = {},
-) {
+): Promise<BeesStartResult> {
   if (beesDisabledByEnv()) {
     logger.debug(
       "bees: COCALC_DISABLE_BEES is set to not running bees",
       mountpoint,
     );
-    return;
+    return { status: "disabled" };
   }
   const beeshome = join(mountpoint, ".beeshome");
   if (!(await exists(beeshome))) {
@@ -62,7 +68,6 @@ export default async function bees(
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.unref();
-  children.push(child);
   let error: string = "";
   child.once("error", (err) => {
     error = `${err}`;
@@ -75,22 +80,42 @@ export default async function bees(
   await delay(1000);
   if (error) {
     error += stderr;
-  } else if (child.exitCode) {
-    error = `failed to started bees: ${stderr}`;
+  } else if (child.exitCode === BEES_ALREADY_RUNNING_EXIT_CODE) {
+    child.stderr.removeListener("data", f);
+    return { status: "already-running", detail: stderr.trim() };
+  } else if (child.exitCode != null) {
+    error = `failed to start bees: exited with code ${child.exitCode}: ${stderr}`;
   }
   if (error) {
     logger.debug("ERROR: ", error);
-    child.kill("SIGKILL");
-    throw error;
+    signalBeesProcessGroup(child, "SIGKILL");
+    throw new Error(error);
   }
   child.stderr.removeListener("data", f);
-  return child;
+  children.push(child);
+  return { status: "started", child };
+}
+
+export function signalBeesProcessGroup(
+  child: ChildProcess,
+  signal: NodeJS.Signals,
+) {
+  if (!child.pid) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch (_err) {
+    try {
+      child.kill(signal);
+    } catch (_err) {
+      // Process is already gone.
+    }
+  }
 }
 
 export function close() {
   for (const child of children) {
-    child.kill("SIGINT");
-    setTimeout(() => child.kill("SIGKILL"), 1000);
+    signalBeesProcessGroup(child, "SIGINT");
+    setTimeout(() => signalBeesProcessGroup(child, "SIGKILL"), 1000);
   }
   children.length = 0;
 }
