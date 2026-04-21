@@ -23,7 +23,10 @@ import { refCacheSync } from "@cocalc/util/refcache";
 import { EventEmitter } from "events";
 import { getLogger } from "@cocalc/conat/logger";
 import { until } from "@cocalc/util/async-utils";
-import { getPersistServerId } from "./load-balancer";
+import {
+  getPersistServerId,
+  PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS,
+} from "./load-balancer";
 import type { JSONValue } from "@cocalc/util/types";
 import type { RegisteredRecoverableResource } from "@cocalc/conat/recovery/scheduler";
 
@@ -326,6 +329,7 @@ class PersistStreamClient extends EventEmitter {
     this.socket = this.client.socket.connect(subject, {
       desc: `persist: ${this.storage.path}`,
       reconnection: false,
+      loadBalancerTimeout: PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS,
       loadBalancer: async (subject: string) =>
         await getPersistServerId({ client: this.client, subject }),
       lifecycleReporter: (phase, details) => {

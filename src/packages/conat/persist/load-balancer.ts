@@ -82,7 +82,7 @@ export function getId(ids: string[], subject: string) {
 // to a persist server for the lifetime of the client if the persist service
 // restarts.
 export const PERSIST_SERVER_ID_CACHE_TTL_MS = 15000;
-const PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS = 2000;
+export const PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS = 2000;
 
 type CacheEntry = {
   promise: Promise<string>;
