@@ -33,6 +33,8 @@ let DEFAULT_RECONNECT_DELAY_DECAY = 1.8;
 let DEFAULT_RECONNECT_DELAY_JITTER = 0.25;
 let DEFAULT_RECONNECT_STABLE_RESET_MS = 60_000;
 let DEFAULT_RECOVERY_TIMEOUT = 30_000;
+const RECOVERY_ATTEMPT_TIMEOUT = 2_500;
+const FOREGROUND_RECOVERY_ATTEMPT_TIMEOUT = 1_000;
 
 export function setDefaultReconnectDelay(delay) {
   DEFAULT_RECONNECT_DELAY = delay;
@@ -268,7 +270,7 @@ class PersistStreamClient extends EventEmitter {
   };
 
   recoverNow = async (
-    _opts: {
+    opts: {
       epoch?: number;
       priority?: "foreground" | "background";
       reason?: string;
@@ -294,7 +296,7 @@ class PersistStreamClient extends EventEmitter {
     }
     if (this.reconnecting) {
       this.setRecoveryState("recovering");
-      await this.getMissed();
+      await this.getMissed(opts);
       return;
     }
     this.setRecoveryState("ready");
@@ -386,19 +388,24 @@ class PersistStreamClient extends EventEmitter {
         this.setRecoveryState("ready");
         return;
       }
-      void this.getMissed();
+      void this.getMissed({ priority: "background", reason: "socket_ready" });
     } else {
       this.setRecoveryState("ready");
     }
   };
 
-  private getMissed = async () => {
+  private getMissed = async (
+    opts: {
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
     if (this.recoveryPromise != null) {
       stats.getMissedJoined += 1;
       await this.recoveryPromise;
       return;
     }
-    this.recoveryPromise = this.getMissed0();
+    this.recoveryPromise = this.getMissed0(opts);
     try {
       await this.recoveryPromise;
     } finally {
@@ -406,12 +413,30 @@ class PersistStreamClient extends EventEmitter {
     }
   };
 
-  private getMissed0 = async () => {
+  private recoveryAttemptTimeout = ({
+    priority,
+  }: {
+    priority?: "foreground" | "background";
+  }): number => {
+    const timeout =
+      priority === "foreground"
+        ? FOREGROUND_RECOVERY_ATTEMPT_TIMEOUT
+        : RECOVERY_ATTEMPT_TIMEOUT;
+    return Math.max(1, Math.min(DEFAULT_RECOVERY_TIMEOUT, timeout));
+  };
+
+  private getMissed0 = async (
+    opts: {
+      priority?: "foreground" | "background";
+      reason?: string;
+    } = {},
+  ) => {
     if (this.changefeeds.length == 0 || this.state != "ready") {
       return;
     }
     stats.getMissedRuns += 1;
     let recovered = false;
+    const attemptTimeout = this.recoveryAttemptTimeout(opts);
     try {
       this.gettingMissed = true;
       this.changesWhenGettingMissed.length = 0;
@@ -426,7 +451,7 @@ class PersistStreamClient extends EventEmitter {
             return true;
           }
           try {
-            await this.socket.waitUntilReady(DEFAULT_RECOVERY_TIMEOUT);
+            await this.socket.waitUntilReady(attemptTimeout);
             if (this.changefeeds.length == 0 || this.state != "ready") {
               return true;
             }
@@ -435,7 +460,7 @@ class PersistStreamClient extends EventEmitter {
             }
             const updates = await this.getAll({
               start_seq: this.lastSeq,
-              timeout: DEFAULT_RECOVERY_TIMEOUT,
+              timeout: attemptTimeout,
               changefeed: true,
             });
             this.changefeedEmit(updates);
