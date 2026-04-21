@@ -279,6 +279,26 @@ type CodexAppServerOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   model?: string;
+  uploadGeneratedImage?: (opts: {
+    savedPath: string;
+    hostPath: string;
+    codexHomeHostPath?: string;
+    filename: string;
+    imageId?: string;
+    revisedPrompt?: string;
+    cwd: string;
+    projectId?: string;
+    accountId?: string;
+    threadId?: string;
+    turnId?: string;
+  }) => Promise<
+    | {
+        uuid: string;
+        filename: string;
+        url: string;
+      }
+    | undefined
+  >;
 };
 
 type SpawnedCodexAppServer = {
@@ -1819,6 +1839,41 @@ export class CodexAppServerAgent implements AcpAgent {
               break;
             }
             emittedImages.add(eventKey);
+            let blob:
+              | {
+                  uuid: string;
+                  filename: string;
+                  url: string;
+                }
+              | undefined;
+            if (savedPath && this.opts.uploadGeneratedImage) {
+              const hostPath = mapContainerPathToHost(
+                savedPath,
+                spawned.containerPathMap,
+              );
+              try {
+                blob =
+                  (await this.opts.uploadGeneratedImage({
+                    savedPath,
+                    hostPath,
+                    codexHomeHostPath: getCodexHomeHostPath(spawned, cwd),
+                    filename: path.basename(hostPath),
+                    imageId,
+                    revisedPrompt,
+                    cwd,
+                    projectId: request.chat?.project_id ?? request.project_id,
+                    accountId: request.account_id,
+                    threadId: actualThreadId,
+                    turnId,
+                  })) ?? undefined;
+              } catch (err) {
+                logger.warn("codex app-server: generated image upload failed", {
+                  savedPath,
+                  hostPath,
+                  err: `${err}`,
+                });
+              }
+            }
             await stream({
               type: "event",
               event: {
@@ -1827,6 +1882,7 @@ export class CodexAppServerAgent implements AcpAgent {
                 status,
                 revisedPrompt,
                 savedPath,
+                ...(blob ? { blob } : {}),
               },
             });
             break;

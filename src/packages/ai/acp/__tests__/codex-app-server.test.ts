@@ -555,7 +555,17 @@ describe("CodexAppServerAgent", () => {
       }),
     });
 
-    const agent = new CodexAppServerAgent();
+    const uploadCalls: any[] = [];
+    const agent = new CodexAppServerAgent({
+      uploadGeneratedImage: async (opts) => {
+        uploadCalls.push(opts);
+        return {
+          uuid: "blob-1",
+          filename: "img-1.png",
+          url: "/blobs/img-1.png?uuid=blob-1",
+        };
+      },
+    });
     const streamPayloads: any[] = [];
     await agent.evaluate({
       project_id: "00000000-0000-4000-8000-000000000000",
@@ -583,8 +593,27 @@ describe("CodexAppServerAgent", () => {
           status: "completed",
           revisedPrompt: "A clean diagram of a reconnect pipeline",
           savedPath: "/tmp/project/.codex/generated_images/img-1.png",
+          blob: {
+            uuid: "blob-1",
+            filename: "img-1.png",
+            url: "/blobs/img-1.png?uuid=blob-1",
+          },
         },
       },
+    ]);
+    expect(uploadCalls).toEqual([
+      expect.objectContaining({
+        savedPath: "/tmp/project/.codex/generated_images/img-1.png",
+        hostPath: "/tmp/project/.codex/generated_images/img-1.png",
+        filename: "img-1.png",
+        imageId: "img-1",
+        revisedPrompt: "A clean diagram of a reconnect pipeline",
+        cwd: "/tmp/project",
+        projectId: "00000000-0000-4000-8000-000000000000",
+        accountId: "00000000-0000-4000-8000-000000000001",
+        threadId: "thr-image-1",
+        turnId: "turn-image-1",
+      }),
     ]);
     expect(JSON.stringify(streamPayloads)).not.toContain("base64-image-data");
   });

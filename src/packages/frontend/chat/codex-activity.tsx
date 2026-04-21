@@ -1204,6 +1204,9 @@ function ImageRow({
   const secondarySize = Math.max(11, fontSize - 2);
   const timestamp = formatEntryTimestamp(entry.time);
   const isCompleted = entry.status.toLowerCase() === "completed";
+  const imageMarkdown = entry.blob?.url
+    ? `![Generated image](${entry.blob.url})`
+    : undefined;
   return (
     <div>
       <Space size={6} wrap align="center" style={{ marginBottom: 4 }}>
@@ -1221,18 +1224,20 @@ function ImageRow({
             {entry.status}
           </Tag>
         ) : null}
-        {entry.savedPath ? (
+        {entry.blob?.url ? (
+          <>
+            <a href={entry.blob.url} target="_blank" rel="noreferrer">
+              Open image
+            </a>
+            <CopyButton markdown value={imageMarkdown} size="small" />
+          </>
+        ) : entry.savedPath ? (
           <PathLink
             path={entry.savedPath}
             projectId={projectId}
             fontSize={secondarySize}
             basePath={basePath}
           />
-        ) : null}
-        {entry.blob?.url ? (
-          <a href={entry.blob.url} target="_blank" rel="noreferrer">
-            Blob
-          </a>
         ) : null}
       </Space>
       {entry.revisedPrompt ? (
