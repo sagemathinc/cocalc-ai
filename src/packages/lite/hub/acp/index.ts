@@ -81,6 +81,7 @@ import {
   type MaterializedBlobAttachment,
 } from "./blob-materialization";
 import { getBlobstore } from "../blobs/download";
+import { callRemoteHub, hasRemote } from "../../remote";
 import {
   buildChatMessage,
   buildThreadStateRecord,
@@ -7506,7 +7507,7 @@ async function uploadGeneratedImageBlob(opts: {
   threadId?: string;
   turnId?: string;
 }): Promise<{ uuid: string; filename: string; url: string } | undefined> {
-  if (!blobStore) {
+  if (!hasRemote && !blobStore) {
     logger.warn(
       "generated image upload skipped because blob store is not ready",
     );
@@ -7532,7 +7533,16 @@ async function uploadGeneratedImageBlob(opts: {
   }
   const blob = await fs.readFile(realFile);
   const uuid = uuidsha1(blob);
-  await blobStore.set(uuid, blob);
+  if (hasRemote) {
+    await uploadGeneratedImageBlobToRemoteHub({
+      uuid,
+      blob,
+      accountId: opts.accountId,
+      projectId: opts.projectId,
+    });
+  } else {
+    await blobStore!.set(uuid, blob);
+  }
   const url = `/blobs/${encodeURIComponent(filename)}?uuid=${encodeURIComponent(
     uuid,
   )}`;
@@ -7546,6 +7556,34 @@ async function uploadGeneratedImageBlob(opts: {
     threadId: opts.threadId,
   });
   return { uuid, filename, url };
+}
+
+async function uploadGeneratedImageBlobToRemoteHub({
+  uuid,
+  blob,
+  accountId,
+  projectId,
+}: {
+  uuid: string;
+  blob: Buffer;
+  accountId?: string;
+  projectId?: string;
+}): Promise<void> {
+  if (!projectId) {
+    throw Error("project_id must be set to upload a generated image blob");
+  }
+  await callRemoteHub({
+    name: "db.saveBlob",
+    args: [
+      {
+        account_id: accountId,
+        project_id: projectId,
+        uuid,
+        blob: blob.toString("base64"),
+      },
+    ],
+    timeout: 60_000,
+  });
 }
 
 async function handleInterruptRequest(
