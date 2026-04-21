@@ -274,7 +274,6 @@ export class SyncDoc extends EventEmitter {
   private updateHasUnsavedChangesDebounced?: ReturnType<typeof debounce>;
   private patchflowStore?: PatchflowPatchStore;
   private patchflowCodec?: DocCodec;
-  private warnedPatchflowRemoteBatchFallback = false;
 
   private last: Document;
   private doc: Document;
@@ -2569,72 +2568,11 @@ export class SyncDoc extends EventEmitter {
   };
 
   private applyPatchflowRemoteBatch = (envs: PatchEnvelope[]): boolean => {
-    const session = this.patchflowSession as any;
-    if (typeof session?.applyRemoteBatch === "function") {
-      session.applyRemoteBatch(envs);
-      return true;
-    }
-    this.warnPatchflowRemoteBatchFallback(envs.length);
-    return this.applyPatchflowRemoteBatchCompat(envs);
-  };
-
-  private applyPatchflowRemoteBatchCompat = (
-    envs: PatchEnvelope[],
-  ): boolean => {
-    const session = this.patchflowSession as any;
-    if (
-      session == null ||
-      session.graph == null ||
-      typeof session.graph.add !== "function" ||
-      typeof session.syncDoc !== "function"
-    ) {
+    if (this.patchflowSession == null) {
       return false;
     }
-    try {
-      // Compatibility path for patchflow versions before Session.applyRemoteBatch.
-      // Remove this after CoCalc requires a patchflow release with that API.
-      session.graph.add(envs);
-      for (const env of envs) {
-        session.lastTimeMs = Math.max(
-          session.lastTimeMs ?? 0,
-          decodePatchId(env.time).timeMs,
-        );
-        if (env.version != null) {
-          session.maxVersion = Math.max(session.maxVersion ?? 0, env.version);
-        } else if (typeof session.graph.versions === "function") {
-          session.maxVersion = Math.max(
-            session.maxVersion ?? 0,
-            session.graph.versions().length,
-          );
-        }
-      }
-      session.syncDoc();
-      for (const env of envs) {
-        session.emit?.("patch", env);
-      }
-      return true;
-    } catch (err) {
-      logger.warn(
-        "CRITICAL PERFORMANCE WARNING: patchflow batch apply failed; falling back to per-patch remote apply. Reconnect replay may recompute and re-render large syncdocs once per patch.",
-        {
-          path: this.path,
-          count: envs.length,
-          err,
-        },
-      );
-      return false;
-    }
-  };
-
-  private warnPatchflowRemoteBatchFallback = (count: number): void => {
-    if (this.warnedPatchflowRemoteBatchFallback) {
-      return;
-    }
-    this.warnedPatchflowRemoteBatchFallback = true;
-    logger.warn(
-      "CRITICAL PERFORMANCE WARNING: patchflow Session.applyRemoteBatch is unavailable; using temporary compatibility access to avoid per-patch reconnect replay. Upgrade patchflow before removing this compatibility path.",
-      { path: this.path, count },
-    );
+    this.patchflowSession.applyRemoteBatch(envs);
+    return true;
   };
 
   private get_patches = (): Patch[] => {

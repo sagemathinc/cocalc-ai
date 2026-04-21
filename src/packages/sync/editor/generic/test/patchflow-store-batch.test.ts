@@ -57,7 +57,7 @@ describe("SyncDoc patchflow store change batching", () => {
     await doc.close();
   });
 
-  it("uses Patchflow's public remote batch API when available", async () => {
+  it("uses Patchflow's remote batch API", async () => {
     const doc = await openSyncString();
     const envA = { time: legacyPatchId(1000), patch: [], version: 4 };
     const envB = { time: legacyPatchId(2000), patch: [], version: 5 };
