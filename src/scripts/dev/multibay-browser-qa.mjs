@@ -15,6 +15,7 @@ const INVITE_EDGE_CASES_SCENARIO = "invite-edge-cases";
 const PROJECT_LIFECYCLE_SCENARIO = "project-lifecycle";
 const RECONNECT_STABLE_URL_SCENARIO = "reconnect-stable-url";
 const SIGN_UP_HOME_BAY_SCENARIO = "sign-up-home-bay";
+const TERMINAL_INTERACTIVE_SCENARIO = "terminal-interactive";
 const KNOWN_SCENARIOS = new Set([
   ...DEFAULT_SCENARIOS,
   INVITE_REDEEM_SCENARIO,
@@ -22,6 +23,7 @@ const KNOWN_SCENARIOS = new Set([
   PROJECT_LIFECYCLE_SCENARIO,
   RECONNECT_STABLE_URL_SCENARIO,
   SIGN_UP_HOME_BAY_SCENARIO,
+  TERMINAL_INTERACTIVE_SCENARIO,
 ]);
 
 function usageAndExit(message, code = 1) {
@@ -41,7 +43,7 @@ function usageAndExit(message, code = 1) {
       "Options:",
       "  --project-title <text>     Visible project title to require after sign-in",
       "  --scenario <name>          Scenario to run; repeatable. Defaults to all.",
-      "                            Known: sign-in-target, storage-archives, invite-redeem, invite-edge-cases, project-lifecycle, reconnect-stable-url, sign-up-home-bay",
+      "                            Known: sign-in-target, storage-archives, invite-redeem, invite-edge-cases, project-lifecycle, reconnect-stable-url, sign-up-home-bay, terminal-interactive",
       "  --registration-token <t>   Registration token for sign-up-home-bay when required",
       "  --expected-home-bay <id>   Assert created/signed-in account home bay, e.g. bay-2",
       "  --first-name <text>        First name for sign-up-home-bay (default: QA)",
@@ -264,6 +266,7 @@ function parseArgs(argv) {
         PROJECT_LIFECYCLE_SCENARIO,
         RECONNECT_STABLE_URL_SCENARIO,
         SIGN_UP_HOME_BAY_SCENARIO,
+        TERMINAL_INTERACTIVE_SCENARIO,
       ].includes(scenario),
     )
   ) {
@@ -560,11 +563,73 @@ async function signInToRoot(page, options, credentials) {
 
 async function waitForRuntime(page, options) {
   await page.waitForFunction(
-    () =>
-      Boolean(
-        globalThis.cc?.conat?.hub?.projects &&
-        typeof globalThis.cc?.conat?.conat === "function",
-      ),
+    () => {
+      function hasRuntimeGlobal() {
+        return Boolean(
+          globalThis.cc?.conat?.hub?.projects &&
+          typeof globalThis.cc?.conat?.conat === "function",
+        );
+      }
+
+      if (hasRuntimeGlobal()) {
+        return true;
+      }
+
+      const chunk = globalThis.webpackChunk_cocalc_static;
+      if (!Array.isArray(chunk)) {
+        return false;
+      }
+
+      let webpackRequire = null;
+      try {
+        chunk.push([
+          [`qa-runtime-${Date.now()}`],
+          {},
+          (req) => {
+            webpackRequire = req;
+          },
+        ]);
+      } catch {
+        return false;
+      }
+
+      const modules = webpackRequire?.c ? Object.values(webpackRequire.c) : [];
+      for (const mod of modules) {
+        const exports = mod?.exports;
+        if (exports == null) {
+          continue;
+        }
+        const candidates = [exports];
+        if (typeof exports === "object" || typeof exports === "function") {
+          for (const key of Object.keys(exports)) {
+            candidates.push(exports[key]);
+          }
+        }
+        for (const candidate of candidates) {
+          if (
+            candidate == null ||
+            (typeof candidate !== "object" && typeof candidate !== "function")
+          ) {
+            continue;
+          }
+          const conat = candidate.conat_client;
+          if (
+            conat?.hub?.projects &&
+            typeof conat.conat === "function" &&
+            candidate.account_id
+          ) {
+            globalThis.cc = {
+              client: candidate,
+              conat,
+              redux: candidate.redux,
+            };
+            return true;
+          }
+        }
+      }
+
+      return hasRuntimeGlobal();
+    },
     undefined,
     { timeout: options.timeoutMs },
   );
@@ -1014,6 +1079,188 @@ async function runProjectLifecycle(page, options) {
   }
   if (!result?.terminalAfterRestart?.marker) {
     throw new Error("missing terminal marker after restart");
+  }
+
+  return result;
+}
+
+async function runTerminalInteractive(page, options) {
+  await waitForRuntime(page, options);
+  const result = await page.evaluate(
+    async ({ projectId, timeoutMs }) => {
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      function toPlain(value) {
+        return JSON.parse(JSON.stringify(value ?? null));
+      }
+
+      async function withTimeout(label, promise, timeout = timeoutMs) {
+        let timer;
+        try {
+          return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(new Error(`${label} timed out after ${timeout}ms`)),
+                timeout,
+              );
+            }),
+          ]);
+        } catch (err) {
+          throw new Error(`${label} failed: ${err}`);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      async function waitForStream(label, predicate) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (predicate(stream)) {
+            return;
+          }
+          await sleep(100);
+        }
+        throw new Error(
+          `${label} timed out; stream tail=${JSON.stringify(stream.slice(-1000))}`,
+        );
+      }
+
+      const conat = globalThis.cc.conat;
+      if (typeof conat.terminalClient !== "function") {
+        throw new Error("cc.conat.terminalClient is not available");
+      }
+
+      const marker = `multibay_terminal_${Date.now()}`;
+      const input = `${marker}_input`;
+      const ready = `STREAM_READY:${marker}`;
+      const inputEcho = `INPUT:${input}`;
+      let currentSize = { rows: 24, cols: 80 };
+      let stream = "";
+      const resizeEvents = [];
+      let exitCount = 0;
+      const term = conat.terminalClient({
+        project_id: projectId,
+        getSize: () => currentSize,
+      });
+
+      term.socket.on("data", (data) => {
+        stream += `${data ?? ""}`;
+      });
+      term.on("resize", (payload) => {
+        resizeEvents.push(payload);
+      });
+      term.on("exit", () => {
+        exitCount += 1;
+      });
+
+      try {
+        await withTimeout(
+          "terminal-spawn",
+          term.spawn(
+            "bash",
+            [
+              "-lc",
+              [
+                `printf '${ready}\\n'`,
+                "IFS= read -r line",
+                `printf 'INPUT:%s\\n' \"$line\"`,
+                `printf 'SIZE:'`,
+                "stty size",
+                "sleep 1",
+              ].join("; "),
+            ],
+            {
+              id: `.smoke/${marker}.term`,
+              timeout: timeoutMs,
+              rows: currentSize.rows,
+              cols: currentSize.cols,
+              maxHistoryLength: 20_000,
+            },
+          ),
+        );
+        await waitForStream("terminal-ready", (value) => value.includes(ready));
+
+        currentSize = { rows: 33, cols: 77 };
+        await withTimeout(
+          "terminal-resize",
+          term.resize({ rows: 33, cols: 77 }),
+        );
+        await sleep(250);
+        const sampledSizes = await withTimeout("terminal-sizes", term.sizes());
+
+        term.socket.write(`${input}\n`);
+        await waitForStream("terminal-input", (value) =>
+          value.includes(inputEcho),
+        );
+        await waitForStream("terminal-stty-size", (value) =>
+          /SIZE:\s*33\s+77/.test(value),
+        );
+
+        const history = `${await withTimeout("terminal-history", term.history())}`;
+        const state = await withTimeout("terminal-state", term.state());
+
+        return toPlain({
+          marker,
+          input,
+          sampledSizes,
+          resizeEvents,
+          exitCount,
+          historyIncludesInput: history.includes(inputEcho),
+          streamIncludesReady: stream.includes(ready),
+          streamIncludesInput: stream.includes(inputEcho),
+          streamIncludesResizeSize: /SIZE:\s*33\s+77/.test(stream),
+          streamTail: stream.slice(-1000),
+          state,
+        });
+      } finally {
+        try {
+          await withTimeout("terminal-destroy", term.destroy(), 5_000);
+        } catch {
+          // Best effort; the browser context close below tears down the socket.
+        }
+        try {
+          term.close();
+        } catch {}
+      }
+    },
+    { projectId: options.projectId, timeoutMs: options.timeoutMs },
+  );
+
+  if (!result?.streamIncludesReady) {
+    throw new Error("terminal stream did not include ready marker");
+  }
+  if (!result?.streamIncludesInput) {
+    throw new Error("terminal stream did not include stdin marker");
+  }
+  if (!result?.historyIncludesInput) {
+    throw new Error("terminal history did not include stdin marker");
+  }
+  if (!result?.streamIncludesResizeSize) {
+    throw new Error(
+      `terminal process did not observe resized stty size; stream tail=${JSON.stringify(result?.streamTail ?? "")}`,
+    );
+  }
+  if (
+    !Array.isArray(result?.sampledSizes) ||
+    !result.sampledSizes.some((size) => size?.rows === 33 && size?.cols === 77)
+  ) {
+    throw new Error(
+      `terminal sizes did not sample resized browser size; sizes=${JSON.stringify(result?.sampledSizes ?? null)}`,
+    );
+  }
+  if (
+    !Array.isArray(result?.resizeEvents) ||
+    !result.resizeEvents.some(
+      (event) => event?.rows === 33 && event?.cols === 77,
+    )
+  ) {
+    throw new Error(
+      `terminal resize broadcast missing; events=${JSON.stringify(result?.resizeEvents ?? null)}`,
+    );
   }
 
   return result;
@@ -1811,6 +2058,17 @@ async function runScenario(browser, scenario, options) {
         diagnostics: summarizeDiagnostics(diagnostics),
       };
     }
+    if (scenario === TERMINAL_INTERACTIVE_SCENARIO) {
+      const signIn = await signInToProject(page, options);
+      const terminalInteractive = await runTerminalInteractive(page, options);
+      return {
+        scenario,
+        status: "pass",
+        signIn,
+        terminalInteractive,
+        diagnostics: summarizeDiagnostics(diagnostics),
+      };
+    }
     if (scenario === RECONNECT_STABLE_URL_SCENARIO) {
       const signIn = await signInToProject(page, options);
       const reconnect = await runReconnectStableUrl(page, context, options);
@@ -1927,6 +2185,25 @@ function printTextResult(result) {
           : "",
         lifecycle?.terminalAfterStart?.marker ? "terminal_start=1" : "",
         lifecycle?.terminalAfterRestart?.marker ? "terminal_restart=1" : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  } else if (result.scenario === TERMINAL_INTERACTIVE_SCENARIO) {
+    const terminal = result.terminalInteractive;
+    console.log(
+      [
+        `${prefix} terminal-interactive`,
+        `final_url=${result.signIn?.finalUrl ?? result.currentUrl ?? "<unknown>"}`,
+        terminal?.streamIncludesReady ? "stream_ready=1" : "",
+        terminal?.streamIncludesInput ? "stdin=1" : "",
+        terminal?.streamIncludesResizeSize ? "resize_stty=1" : "",
+        Array.isArray(terminal?.sampledSizes)
+          ? `sizes=${terminal.sampledSizes.length}`
+          : "",
+        Array.isArray(terminal?.resizeEvents)
+          ? `resize_events=${terminal.resizeEvents.length}`
+          : "",
       ]
         .filter(Boolean)
         .join(" "),

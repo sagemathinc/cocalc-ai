@@ -78,6 +78,10 @@ Recent 3-way fixture validation:
   - stable URL reconnect / network flap passed and stayed on the stable origin
   - browser lifecycle `start`, `restart`, `stop`, and final `start` passed
   - browser terminal attach passed after both start and restart
+  - browser terminal interactive smoke passed after removing the stale
+    `reconnection:false` terminal-editor assumption: stream delivery, stdin,
+    pty resize via `stty`, `sizes()`, resize broadcast, history, and cleanup
+    all validated through the stable URL fixture
   - browser storage / snapshot / backup reads passed
   - browser invite redeem passed with cleanup
   - browser invite duplicate, revoke, already-collaborator, remove, and
@@ -214,7 +218,7 @@ The rule remains:
 
 Remaining audit targets:
 
-- [ ] terminal creation / attach / resize / stream paths
+- [x] terminal creation / attach / resize / stream paths
 - [ ] notebook kernel / session / exec paths
 - [ ] app-server interactive reads / status paths
 - [ ] any remaining user-hot-path `hub.projects.*` runtime reads
@@ -267,6 +271,10 @@ Notes:
   `start`, terminal attach, `restart`, terminal attach, `stop`, and final
   `start`; it passed, but the full run is slow enough that the QA runner now
   emits lifecycle progress messages
+- terminal socket automation found that forcing `reconnection:false` can strand
+  the terminal socket before a routed project-host browser session is ready;
+  the terminal editor should use the default terminal socket reconnection while
+  still routing disconnects through the shared reconnect coordinator
 
 ### 5. Spot Instance Operational Readiness
 
