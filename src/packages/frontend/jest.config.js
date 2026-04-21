@@ -41,9 +41,11 @@ module.exports = {
   },
   testMatch: ["**/?(*.)+(spec|test).ts?(x)", "!**/playwright/**"],
   testPathIgnorePatterns: [
+    "<rootDir>/dist/",
     "<rootDir>/editors/slate/playwright/",
     "<rootDir>/chat/playwright/",
     "/playwright/",
   ],
+  modulePathIgnorePatterns: ["<rootDir>/dist/"],
   setupFilesAfterEnv: ["./test/setup.js"],
 };
