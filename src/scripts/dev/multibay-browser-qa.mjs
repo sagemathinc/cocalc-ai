@@ -338,6 +338,23 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function bestEffortTimeout(label, promise, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timer = setTimeout(() => {
+          console.warn(`${label} timed out after ${timeoutMs}ms`);
+          resolve(undefined);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function formatError(error) {
   if (!error) return "unknown error";
   if (error.stack) return redact(error.stack);
@@ -362,6 +379,9 @@ function createDiagnostics(scenario) {
 
 function attachDiagnostics(page, diagnostics, pageLabel = "") {
   page.on("console", (message) => {
+    if (message.text().startsWith("multibay-qa:")) {
+      console.warn(`${pageLabel}:${message.text()}`);
+    }
     if (!["warning", "error"].includes(message.type())) return;
     diagnostics.console.push({
       page: pageLabel,
@@ -766,6 +786,10 @@ async function runProjectLifecycle(page, options) {
   await waitForRuntime(page, options);
   const result = await page.evaluate(
     async ({ projectId, timeoutMs }) => {
+      function progress(label) {
+        console.warn(`multibay-qa: lifecycle ${label}`);
+      }
+
       function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
       }
@@ -938,12 +962,19 @@ async function runProjectLifecycle(page, options) {
 
       const initialState = await getState();
       try {
+        progress("start:start");
         const start = await startAndWait("start");
+        progress("start:terminal");
         const terminalAfterStart = await terminalSmoke("start");
+        progress("restart:start");
         const restart = await restartAndWait();
+        progress("restart:terminal");
         const terminalAfterRestart = await terminalSmoke("restart");
+        progress("stop:start");
         const stoppedState = await stopAndWait();
+        progress("final-start:start");
         const finalStart = await startAndWait("final-start");
+        progress("done");
 
         return toPlain({
           initialState,
@@ -1801,7 +1832,11 @@ async function runScenario(browser, scenario, options) {
       diagnostics: summarizeDiagnostics(diagnostics),
     };
   } finally {
-    await context.close().catch(() => {});
+    await bestEffortTimeout(
+      `${scenario}:context.close`,
+      context.close().catch(() => {}),
+      5_000,
+    );
   }
 }
 
@@ -1977,7 +2012,11 @@ async function main() {
       }
     }
   } finally {
-    await browser.close().catch(() => {});
+    await bestEffortTimeout(
+      "browser.close",
+      browser.close().catch(() => {}),
+      10_000,
+    );
   }
 
   const summary = {
