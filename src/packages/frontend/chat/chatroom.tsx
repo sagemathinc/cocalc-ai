@@ -98,6 +98,12 @@ import {
   isCodexModelName,
   resolveCodexSessionMode,
 } from "@cocalc/util/ai/codex";
+import { CodexPaymentCredentialsModal } from "./codex";
+import {
+  ensureProjectRunningForCodex,
+  isCodexPaymentSourceUsable,
+  isCodexSubmitTarget,
+} from "./codex-submit-preflight";
 import { tab_to_path } from "@cocalc/util/misc";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
 import type { ChatInputControl } from "./input";
@@ -591,6 +597,7 @@ export function ChatPanel({
   const [newThreadSetup, setNewThreadSetup] = useState<NewThreadSetup>(
     defaultNewThreadSetup,
   );
+  const [codexPaymentConfigOpen, setCodexPaymentConfigOpen] = useState(false);
   const [automationModalOpen, setAutomationModalOpen] = useState(false);
   const [automationDetailsOpen, setAutomationDetailsOpen] = useState(false);
   const [automationModalThreadKey, setAutomationModalThreadKey] = useState<
@@ -1308,7 +1315,7 @@ export function ChatPanel({
     refresh: refreshCodexPaymentSource,
   } = useCodexPaymentSource({
     projectId: project_id,
-    enabled: isSelectedThreadAI,
+    enabled: isSelectedThreadAI || newThreadSetup.agentMode === "codex",
   });
 
   const indexedThreads = useMemo(() => {
@@ -1471,7 +1478,6 @@ export function ChatPanel({
     const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
     const sendingText = rawSendingText.trim();
     if (sendingText.length === 0) return;
-    advanceComposerSession();
     const target = resolveReplyTarget();
     const reply_thread_id = target.thread_id;
     const parent_message_id = target.parent_message_id;
@@ -1481,6 +1487,32 @@ export function ChatPanel({
             threadId: reply_thread_id,
           })
         : undefined;
+    const isCodexSubmit = isCodexSubmitTarget({
+      newThreadAgentMode: !reply_thread_id
+        ? newThreadSetup.agentMode
+        : undefined,
+      existingThreadAgentKind: existingThreadMetadata?.agent_kind,
+      existingThreadAgentModel:
+        existingThreadMetadata?.agent_model ??
+        existingThreadMetadata?.acp_config?.model,
+    });
+    if (isCodexSubmit && !isCodexPaymentSourceUsable(codexPaymentSource)) {
+      refreshCodexPaymentSource?.();
+      setCodexPaymentConfigOpen(true);
+      return;
+    }
+    if (isCodexSubmit) {
+      try {
+        await ensureProjectRunningForCodex({ project_id, redux });
+      } catch (err) {
+        Modal.error({
+          title: "Unable to start project for Codex",
+          content: `${err}`,
+        });
+        return;
+      }
+    }
+    advanceComposerSession();
     if (!reply_thread_id) {
       setAllowAutoSelectThread(false);
     }
@@ -2142,6 +2174,12 @@ export function ChatPanel({
         onComposerReady={onComposerReady}
         codexPaymentSource={codexPaymentSource}
         codexPaymentSourceLoading={codexPaymentSourceLoading}
+      />
+      <CodexPaymentCredentialsModal
+        open={codexPaymentConfigOpen}
+        projectId={project_id}
+        refreshPaymentSource={refreshCodexPaymentSource}
+        onClose={() => setCodexPaymentConfigOpen(false)}
       />
       <Modal
         title="Codex turn finished"
