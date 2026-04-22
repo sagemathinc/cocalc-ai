@@ -55,10 +55,15 @@ import {
 } from "@cocalc/server/projects/offline-move-confirmation";
 import {
   drainProjectRehome as drainProjectRehomeControl,
+  getProjectRehomeOperation as getProjectRehomeOperationControl,
   reconcileProjectRehome as reconcileProjectRehomeControl,
   rehomeProject as rehomeProjectControl,
 } from "@cocalc/server/projects/rehome";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import type {
+  ProjectRehomeOperationSummary,
+  ProjectRehomeResponse,
+} from "@cocalc/conat/hub/api/projects";
 import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
 import {
   getLocalProjectCollaboratorAccessStatus,
@@ -1646,21 +1651,7 @@ export async function rehomeProject({
   dest_bay_id: string;
   reason?: string | null;
   campaign_id?: string | null;
-}): Promise<{
-  op_id?: string;
-  project_id: string;
-  previous_bay_id: string;
-  owning_bay_id: string;
-  operation_stage?:
-    | "requested"
-    | "destination_accepted"
-    | "source_flipped"
-    | "portable_state_copied"
-    | "projected"
-    | "complete";
-  operation_status?: "running" | "succeeded" | "failed";
-  status: "rehomed" | "already-home";
-}> {
+}): Promise<ProjectRehomeResponse> {
   if (!account_id) {
     throw new Error("user must be signed in");
   }
@@ -1673,27 +1664,29 @@ export async function rehomeProject({
   });
 }
 
+export async function getProjectRehomeOperation({
+  account_id,
+  op_id,
+}: {
+  account_id: string;
+  op_id: string;
+}): Promise<ProjectRehomeOperationSummary | null> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  if (!(await isAdmin(account_id))) {
+    throw new Error("project rehome status requires admin privileges");
+  }
+  return (await getProjectRehomeOperationControl(op_id)) ?? null;
+}
+
 export async function reconcileProjectRehome({
   account_id,
   op_id,
 }: {
   account_id: string;
   op_id: string;
-}): Promise<{
-  op_id?: string;
-  project_id: string;
-  previous_bay_id: string;
-  owning_bay_id: string;
-  operation_stage?:
-    | "requested"
-    | "destination_accepted"
-    | "source_flipped"
-    | "portable_state_copied"
-    | "projected"
-    | "complete";
-  operation_status?: "running" | "succeeded" | "failed";
-  status: "rehomed" | "already-home";
-}> {
+}): Promise<ProjectRehomeResponse> {
   if (!account_id) {
     throw new Error("user must be signed in");
   }

@@ -630,7 +630,7 @@ main production reasons to do it are:
 - [x] project fence / quiesce for concurrent metadata writes during rehome
 - [x] live 3-bay happy-path validation for per-project rehome and projection
       convergence
-- [ ] rollback / retry plan for destination-accepted/source-flip-failed cases
+- [x] rollback / retry plan for destination-accepted/source-flip-failed cases
 - [ ] failure-injection validation for destination-accepted/source-flip-failed
       cases and delayed projection convergence
 
@@ -662,6 +662,29 @@ Live 3-bay validation evidence, 2026-04-21 PT:
 - Both disposable rehomed projects were cleaned up with
   `cocalc project delete --hard --purge-backups-now --wait --yes`; both delete
   operations completed with `status=succeeded`.
+
+Retry / rollback plan, 2026-04-22 PT:
+
+- Project rehome is intentionally forward-reconciled, not rolled back, once the
+  destination bay has accepted the project row. The source bay remains the
+  operation owner and durable source of retry state.
+- `requested` failures are safe to retry because the destination accept upserts
+  the same project row idempotently.
+- `destination_accepted` failures are retried by flipping source ownership to
+  the destination bay and then continuing with portable-state copy.
+- `source_flipped` failures are retried by re-reading the preserved project row
+  and copying portable bay-local state, currently the `project-log` stream.
+- `portable_state_copied` failures are retried by updating local projection rows
+  and draining projection state.
+- `projected` failures are retried by marking the operation complete and
+  appending the `project_rehomed` project-log evidence row on the destination
+  bay.
+- Operators can now inspect stuck operation state with
+  `cocalc project rehome-status --op-id ...` and retry with
+  `cocalc project rehome-reconcile --op-id ...`.
+- Unit coverage now validates a failed `destination_accepted` operation can be
+  inspected and then reconciled through source flip, portable project-log copy,
+  projection, and completion.
 
 ### 10. Host Move / Reassignment
 

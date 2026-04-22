@@ -786,6 +786,26 @@ export function registerProjectOpsCommands(
     );
 
   project
+    .command("rehome-status")
+    .description("show a project rehome operation status")
+    .requiredOption("--op-id <id>", "project rehome operation id")
+    .action(async (opts: { opId: string }, command: Command) => {
+      await withContext(command, "project rehome-status", async (ctx) => {
+        const opId = `${opts.opId ?? ""}`.trim();
+        if (!opId) {
+          throw new Error("--op-id is required");
+        }
+        const op = await ctx.hub.projects.getProjectRehomeOperation({
+          op_id: opId,
+        });
+        if (!op) {
+          throw new Error(`project rehome operation ${opId} not found`);
+        }
+        return op;
+      });
+    });
+
+  project
     .command("rehome-reconcile")
     .description("retry a source-bay project rehome operation")
     .requiredOption("--op-id <id>", "project rehome operation id")

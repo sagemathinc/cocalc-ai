@@ -586,6 +586,52 @@ describe("project rehome", () => {
     expect(order).toEqual(["flip-source"]);
   });
 
+  it("summarizes failed project rehome operations for operator retry", async () => {
+    operationRow = {
+      op_id: "33333333-3333-4333-8333-333333333333",
+      project_id: PROJECT_ID,
+      source_bay_id: "bay-0",
+      dest_bay_id: "bay-2",
+      requested_by: ACCOUNT_ID,
+      reason: "maintenance",
+      campaign_id: "drain-bay-0",
+      status: "failed",
+      stage: "destination_accepted",
+      attempt: 2,
+      project: {
+        project_id: PROJECT_ID,
+        owning_bay_id: "bay-0",
+        title: "Project",
+        users: {},
+        deleted: false,
+      },
+      last_error: "source flip failed",
+      created_at: new Date("2026-04-22T00:00:00.000Z"),
+      updated_at: new Date("2026-04-22T00:00:05.000Z"),
+      finished_at: new Date("2026-04-22T00:00:05.000Z"),
+    };
+    const { getProjectRehomeOperation } = await import("./rehome");
+
+    await expect(
+      getProjectRehomeOperation(operationRow.op_id),
+    ).resolves.toEqual({
+      op_id: operationRow.op_id,
+      project_id: PROJECT_ID,
+      source_bay_id: "bay-0",
+      dest_bay_id: "bay-2",
+      requested_by: ACCOUNT_ID,
+      reason: "maintenance",
+      campaign_id: "drain-bay-0",
+      status: "failed",
+      stage: "destination_accepted",
+      attempt: 2,
+      last_error: "source flip failed",
+      created_at: new Date("2026-04-22T00:00:00.000Z"),
+      updated_at: new Date("2026-04-22T00:00:05.000Z"),
+      finished_at: new Date("2026-04-22T00:00:05.000Z"),
+    });
+  });
+
   it("drainProjectRehome dry-runs local source bay candidates", async () => {
     const defaultQueryMock = queryMock;
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
