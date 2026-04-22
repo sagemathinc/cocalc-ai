@@ -650,6 +650,7 @@ Account rehome contract:
   - `account_notification_index`
   - `remember_me`
   - `auth_tokens`
+  - account-wide v2 `api_keys`
 - Source flip updates the source `accounts.home_bay_id` and the cluster account
   directory entry to the destination bay.
 - The operation is forward-reconciled after destination accept. Rollback is not
@@ -660,10 +661,12 @@ Account rehome contract:
   write fence, which uses the cluster account directory as the authoritative
   home-bay source when present.
 - Account rehome must not move project ownership, project data, project-host
-  assignments, API keys, billing/customer records outside the `accounts` row,
-  or historical notification/event outbox rows in the first slice. Account API
-  keys need a separate conflict policy because their local integer primary key
-  is embedded in the secret.
+  assignments, project-scoped API keys, billing/customer records outside the
+  `accounts` row, or historical notification/event outbox rows in the first
+  slice. Account-wide v2 API keys are portable because the presented secret
+  embeds a random `key_id`, not the bay-local integer primary key. Legacy
+  integer-id `sk-...` keys remain accepted for compatibility, but they are not
+  copied by account rehome and should be rotated to v2 keys.
 
 Initial account rehome target:
 
@@ -680,6 +683,7 @@ Initial account rehome target:
   - `account_notification_index`
   - `remember_me`
   - `auth_tokens`
+  - account-wide v2 `api_keys`
 - [x] update the cluster account directory so lookup/search resolves the new
       home bay
 - [x] durable per-account rehome operation record with explicit state machine:
@@ -768,6 +772,23 @@ Live validation, 2026-04-22 PT:
   `f7fba1c9-14bb-40f5-82c6-a1ca2a148bc3`, and
   `bc590ce9-dbf4-4247-ab8f-bcc97544ae15` with
   `cocalc account delete --only-if-tag qa-safe-delete --yes`.
+- Account-wide v2 API-key portability validation used disposable account
+  `78b45145-eb2e-4b3b-9f42-a9e6d5787891` and generated API key
+  `key_id=NWrp5Fz7AJYZmMV0S3PM4-8C`. The new secret format was
+  `sk-cocalc-v2.<random-key-id>.<random-secret>`, and the key authenticated
+  before rehome using only API-key auth.
+- The first live rehome attempt exposed that the destination generic JSON
+  upsert still selected the missing source-local `api_keys.id` column and
+  attempted to insert `id=NULL`. The row-copy helper now only inserts columns
+  present in each copied JSON row, so v2 API keys preserve `key_id` while the
+  destination bay allocates its own local integer `id`.
+- Reconciled operation `5c82b2fb-df2f-4dd3-8516-dd458d0d3ecb` after the fix;
+  it completed `bay-0 -> bay-2` on attempt 2 with `last_error=null`.
+  Post-rehome API-key-only auth through the control plane succeeded for the
+  same v2 secret, proving the copied API-key row was usable after ownership
+  moved. The disposable account was deleted with
+  `cocalc account delete --only-if-tag qa-safe-delete --yes`, and its
+  disposable API-key row was removed.
 
 Non-goals for initial account rehome:
 

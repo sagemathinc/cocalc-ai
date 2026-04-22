@@ -5,6 +5,7 @@ export type Action = "get" | "delete" | "create" | "edit";
 
 export interface ApiKey {
   id: number;
+  key_id?: string;
   account_id: string;
   created: Date;
   hash?: string; // usually NOT available
@@ -34,6 +35,11 @@ Table({
       pg_type: "VARCHAR(173)",
       desc: "Hash of the api key. This is the same hash as for user passwords, which is 1000 iterations of sha512 with salt of length 32.",
     },
+    key_id: {
+      type: "string",
+      pg_type: "VARCHAR(64)",
+      desc: "Random non-sequential lookup id embedded in v2 API keys.",
+    },
     name: {
       type: "string",
       pg_type: "VARCHAR(128)",
@@ -60,5 +66,6 @@ Table({
       "((account_id IS NOT NULL))",
       "project_id",
     ],
+    pg_unique_indexes: ["key_id"],
   },
 });

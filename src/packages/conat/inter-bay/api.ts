@@ -372,6 +372,7 @@ export interface AccountRehomeStateCopyRequest {
   account_notification_index?: Record<string, unknown>[];
   remember_me?: Record<string, unknown>[];
   auth_tokens?: Record<string, unknown>[];
+  api_keys?: Record<string, unknown>[];
 }
 
 export type AccountRehomeOperationStage =

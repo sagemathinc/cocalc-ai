@@ -184,6 +184,7 @@ export function registerAccountCommand(
           action: "get",
         })) as Array<{
           id?: number;
+          key_id?: string;
           name?: string;
           trunc?: string;
           created?: string | Date | null;
@@ -193,6 +194,7 @@ export function registerAccountCommand(
         }>;
         return (rows ?? []).map((row) => ({
           id: row.id,
+          key_id: row.key_id ?? null,
           name: row.name ?? "",
           trunc: row.trunc ?? "",
           created: toIso(row.created),
@@ -238,6 +240,7 @@ export function registerAccountCommand(
             expire,
           })) as Array<{
             id?: number;
+            key_id?: string;
             name?: string;
             trunc?: string;
             secret?: string;
@@ -251,6 +254,7 @@ export function registerAccountCommand(
           }
           return {
             id: key.id,
+            key_id: key.key_id ?? null,
             name: key.name ?? opts.name ?? "",
             trunc: key.trunc ?? "",
             secret: key.secret ?? null,
