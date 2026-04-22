@@ -423,6 +423,7 @@ export const projects = {
   moveProject: authFirstRequireAccount,
   rehomeProject: authFirstRequireAccount,
   reconcileProjectRehome: authFirstRequireAccount,
+  drainProjectRehome: authFirstRequireAccount,
   codexDeviceAuthStart: authFirstRequireAccount,
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
@@ -1003,6 +1004,32 @@ export interface Projects {
       | "complete";
     operation_status?: "running" | "succeeded" | "failed";
     status: "rehomed" | "already-home";
+  }>;
+
+  drainProjectRehome: (opts: {
+    account_id?: string;
+    source_bay_id?: string;
+    dest_bay_id: string;
+    limit?: number;
+    dry_run?: boolean;
+    campaign_id?: string | null;
+    reason?: string | null;
+  }) => Promise<{
+    source_bay_id: string;
+    dest_bay_id: string;
+    dry_run: boolean;
+    limit: number;
+    campaign_id: string | null;
+    candidate_count: number;
+    candidates: string[];
+    rehomed: Array<{
+      op_id?: string;
+      project_id: string;
+      previous_bay_id: string;
+      owning_bay_id: string;
+      status: "rehomed" | "already-home";
+    }>;
+    errors: Array<{ project_id: string; error: string }>;
   }>;
 
   codexDeviceAuthStart: (opts: {

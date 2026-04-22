@@ -33,6 +33,7 @@ import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/contro
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { assertBayAcceptsProjectOwnership } from "@cocalc/server/bay-registry";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
@@ -346,6 +347,7 @@ export default async function createProject(opts: CreateProjectOptions) {
   if (requestedRegion && hostRegion && requestedRegion !== hostRegion) {
     throw Error("project region must match host region");
   }
+  await assertBayAcceptsProjectOwnership(projectOwningBayId);
   const users =
     account_id == null ? null : { [account_id]: { group: "owner" } };
 

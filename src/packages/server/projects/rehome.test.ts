@@ -13,6 +13,7 @@ let rehomeMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
 let drainAccountProjectIndexProjectionMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
+let assertBayAcceptsProjectOwnershipMock: jest.Mock;
 let operationRow: any;
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -40,6 +41,11 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: jest.fn(() => "bay-0"),
+}));
+
+jest.mock("@cocalc/server/bay-registry", () => ({
+  assertBayAcceptsProjectOwnership: (...args: any[]) =>
+    assertBayAcceptsProjectOwnershipMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
@@ -200,6 +206,7 @@ describe("project rehome", () => {
     publishProjectAccountFeedEventsBestEffortMock = jest.fn(
       async () => undefined,
     );
+    assertBayAcceptsProjectOwnershipMock = jest.fn(async () => undefined);
   });
 
   it("routes rehome requests to the current owning bay", async () => {
@@ -403,5 +410,39 @@ describe("project rehome", () => {
 
     expect(acceptRehomeMock).not.toHaveBeenCalled();
     expect(order).toEqual(["flip-source"]);
+  });
+
+  it("drainProjectRehome dry-runs local source bay candidates", async () => {
+    const defaultQueryMock = queryMock;
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("FROM projects") && sql.includes("ORDER BY")) {
+        return {
+          rows: [{ project_id: PROJECT_ID }],
+        };
+      }
+      return await defaultQueryMock(sql, params);
+    });
+    const { drainProjectRehome } = await import("./rehome");
+
+    await expect(
+      drainProjectRehome({
+        account_id: ACCOUNT_ID,
+        source_bay_id: "bay-0",
+        dest_bay_id: "bay-2",
+        limit: 10,
+        dry_run: true,
+        campaign_id: "drain-bay-0",
+      }),
+    ).resolves.toMatchObject({
+      source_bay_id: "bay-0",
+      dest_bay_id: "bay-2",
+      dry_run: true,
+      limit: 10,
+      campaign_id: "drain-bay-0",
+      candidates: [PROJECT_ID],
+      rehomed: [],
+      errors: [],
+    });
+    expect(acceptRehomeMock).not.toHaveBeenCalled();
   });
 });

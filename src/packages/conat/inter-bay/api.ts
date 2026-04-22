@@ -288,6 +288,8 @@ export interface BayRegistryRegisterRequest {
   public_origin?: string | null;
   public_target?: string | null;
   public_target_kind?: string | null;
+  accepts_project_ownership?: boolean;
+  project_ownership_note?: string | null;
 }
 
 export interface BayRegistryListRequest {}
@@ -302,6 +304,8 @@ export interface BayRegistryEntry {
   public_target_kind?: string | null;
   dns_hostname?: string | null;
   dns_record_id?: string | null;
+  accepts_project_ownership?: boolean;
+  project_ownership_note?: string | null;
   last_seen: string;
 }
 

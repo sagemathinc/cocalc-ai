@@ -54,6 +54,7 @@ import {
   offlineMoveConfirmationError,
 } from "@cocalc/server/projects/offline-move-confirmation";
 import {
+  drainProjectRehome as drainProjectRehomeControl,
   reconcileProjectRehome as reconcileProjectRehomeControl,
   rehomeProject as rehomeProjectControl,
 } from "@cocalc/server/projects/rehome";
@@ -1676,6 +1677,37 @@ export async function reconcileProjectRehome({
   return await reconcileProjectRehomeControl({
     account_id,
     op_id,
+  });
+}
+
+export async function drainProjectRehome({
+  account_id,
+  source_bay_id,
+  dest_bay_id,
+  limit,
+  dry_run,
+  campaign_id,
+  reason,
+}: {
+  account_id: string;
+  source_bay_id?: string;
+  dest_bay_id: string;
+  limit?: number;
+  dry_run?: boolean;
+  campaign_id?: string | null;
+  reason?: string | null;
+}) {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  return await drainProjectRehomeControl({
+    account_id,
+    source_bay_id,
+    dest_bay_id,
+    limit,
+    dry_run,
+    campaign_id,
+    reason,
   });
 }
 

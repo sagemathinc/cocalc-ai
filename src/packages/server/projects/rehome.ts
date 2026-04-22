@@ -9,6 +9,7 @@ import { drainAccountProjectIndexProjection } from "@cocalc/database/postgres/ac
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import type { ProjectControlRehomeResponse } from "@cocalc/conat/inter-bay/api";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { assertBayAcceptsProjectOwnership } from "@cocalc/server/bay-registry";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import {
@@ -46,6 +47,18 @@ export type ProjectRehomeOperationSummary = {
   created_at?: Date | string | null;
   updated_at?: Date | string | null;
   finished_at?: Date | string | null;
+};
+
+export type ProjectRehomeDrainResult = {
+  source_bay_id: string;
+  dest_bay_id: string;
+  dry_run: boolean;
+  limit: number;
+  campaign_id: string | null;
+  candidate_count: number;
+  candidates: string[];
+  rehomed: ProjectControlRehomeResponse[];
+  errors: Array<{ project_id: string; error: string }>;
 };
 
 type Queryable = {
@@ -551,6 +564,7 @@ export async function rehomeProjectOnOwningBay({
       status: "already-home",
     };
   }
+  await assertBayAcceptsProjectOwnership(destBayId);
 
   const op = await createProjectRehomeOperation({
     project_id: normalizedProjectId,
@@ -713,6 +727,7 @@ export async function rehomeProject({
   await assertAdmin(account_id);
   const normalizedProjectId = normalizeProjectId(project_id);
   const destBayId = normalizeExplicitBayId("dest_bay_id", dest_bay_id);
+  await assertBayAcceptsProjectOwnership(destBayId);
   const ownership = await resolveProjectBay(normalizedProjectId);
   if (ownership == null) {
     throw new Error(`project ${normalizedProjectId} not found`);
@@ -750,4 +765,88 @@ export async function reconcileProjectRehome({
 }): Promise<ProjectControlRehomeResponse> {
   await assertAdmin(account_id);
   return await runProjectRehomeOperation(op_id);
+}
+
+export async function drainProjectRehome({
+  account_id,
+  source_bay_id,
+  dest_bay_id,
+  limit = 25,
+  dry_run = true,
+  campaign_id,
+  reason,
+}: {
+  account_id: string;
+  source_bay_id?: string;
+  dest_bay_id: string;
+  limit?: number;
+  dry_run?: boolean;
+  campaign_id?: string | null;
+  reason?: string | null;
+}): Promise<ProjectRehomeDrainResult> {
+  await assertAdmin(account_id);
+  const localBayId = getConfiguredBayId();
+  const sourceBayId = normalizeExplicitBayId(
+    "source_bay_id",
+    source_bay_id ?? localBayId,
+  );
+  const destBayId = normalizeExplicitBayId("dest_bay_id", dest_bay_id);
+  if (sourceBayId !== localBayId) {
+    throw new Error(
+      `project rehome drain must run on the source bay (${sourceBayId}); local bay is ${localBayId}`,
+    );
+  }
+  if (sourceBayId === destBayId) {
+    throw new Error("source and destination bay must be different");
+  }
+  await assertBayAcceptsProjectOwnership(destBayId);
+  const normalizedLimit = Math.min(
+    500,
+    Math.max(1, Number.isInteger(limit) ? limit : 25),
+  );
+  const { rows } = await getPool().query<{ project_id: string }>(
+    `
+      SELECT project_id
+        FROM projects
+       WHERE COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $1) = $1
+         AND deleted IS NOT TRUE
+       ORDER BY last_edited ASC NULLS FIRST, created ASC NULLS FIRST
+       LIMIT $2
+    `,
+    [sourceBayId, normalizedLimit],
+  );
+  const candidates = rows.map((row) => row.project_id);
+  const result: ProjectRehomeDrainResult = {
+    source_bay_id: sourceBayId,
+    dest_bay_id: destBayId,
+    dry_run,
+    limit: normalizedLimit,
+    campaign_id: campaign_id ?? null,
+    candidate_count: candidates.length,
+    candidates,
+    rehomed: [],
+    errors: [],
+  };
+  if (dry_run) {
+    return result;
+  }
+  for (const project_id of candidates) {
+    try {
+      result.rehomed.push(
+        await rehomeProjectOnOwningBay({
+          account_id,
+          project_id,
+          dest_bay_id: destBayId,
+          campaign_id: campaign_id ?? `drain:${sourceBayId}->${destBayId}`,
+          reason: reason ?? `drain ${sourceBayId} to ${destBayId}`,
+        }),
+      );
+    } catch (err) {
+      result.errors.push({
+        project_id,
+        error: err instanceof Error ? err.message : `${err}`,
+      });
+    }
+  }
+  return result;
 }

@@ -9,6 +9,7 @@ import {
   resolveHostBay,
   resolveProjectOwningBay,
 } from "@cocalc/server/bay-directory";
+import { setBayProjectOwnershipAdmissionLocal } from "@cocalc/server/bay-registry";
 import { backfillBayOwnership as backfillBayOwnership0 } from "@cocalc/server/bay-backfill";
 import { rebuildAccountProjectIndex as rebuildAccountProjectIndex0 } from "@cocalc/database/postgres/account-project-index";
 import {
@@ -125,6 +126,7 @@ import type {
   BayRestoreRunResult,
   BayRestoreTestRunResult,
   BayBackupsInfo,
+  BayInfo,
   BayLoadBrowserControlStatus,
   BayLoadInfo,
   BayLoadParallelOpsStatus,
@@ -165,6 +167,41 @@ export async function terminate() {}
 
 export async function listBays() {
   return await listConfiguredBays();
+}
+
+export async function setBayProjectOwnershipAdmission({
+  account_id,
+  bay_id,
+  accepts_project_ownership,
+  note,
+}: {
+  account_id?: string;
+  bay_id: string;
+  accepts_project_ownership: boolean;
+  note?: string | null;
+}) {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const entry = await setBayProjectOwnershipAdmissionLocal({
+    bay_id,
+    accepts_project_ownership,
+    note,
+  });
+  const role: BayInfo["role"] =
+    entry.role === "seed" || entry.role === "attached"
+      ? entry.role
+      : "combined";
+  return {
+    bay_id: entry.bay_id,
+    label: entry.label,
+    region: entry.region ?? null,
+    deployment_mode: "multi-bay" as const,
+    role,
+    is_default: entry.bay_id === getConfiguredBayId(),
+    accepts_project_ownership: entry.accepts_project_ownership !== false,
+    project_ownership_note: entry.project_ownership_note ?? null,
+  };
 }
 
 function summarizeProjectionLoad({

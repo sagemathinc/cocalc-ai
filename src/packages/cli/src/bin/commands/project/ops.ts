@@ -802,6 +802,44 @@ export function registerProjectOpsCommands(
     });
 
   project
+    .command("rehome-drain")
+    .description("batch rehome projects off the current/source bay")
+    .requiredOption("--dest-bay <bay>", "destination bay id")
+    .option("--source-bay <bay>", "source bay id; defaults to current bay")
+    .option("--limit <n>", "maximum projects to process", "25")
+    .option("--campaign <id>", "operator campaign/drain identifier")
+    .option("--reason <reason>", "operator reason, e.g. maintenance or load")
+    .option("--write", "apply changes instead of dry run", false)
+    .action(
+      async (
+        opts: {
+          destBay: string;
+          sourceBay?: string;
+          limit?: string;
+          campaign?: string;
+          reason?: string;
+          write?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project rehome-drain", async (ctx) => {
+          const limit = Number(opts.limit ?? "25");
+          if (!Number.isInteger(limit) || limit <= 0) {
+            throw new Error("--limit must be a positive integer");
+          }
+          return await ctx.hub.projects.drainProjectRehome({
+            source_bay_id: opts.sourceBay?.trim() || undefined,
+            dest_bay_id: opts.destBay.trim(),
+            limit,
+            dry_run: opts.write !== true,
+            campaign_id: opts.campaign,
+            reason: opts.reason,
+          });
+        });
+      },
+    );
+
+  project
     .command("copy-path")
     .description("copy a path between projects")
     .requiredOption("--src-project <project>", "source project")
