@@ -74,6 +74,103 @@ export function registerAccountCommand(
       },
     );
 
+  account
+    .command("rehome <account>")
+    .description("move an account's home bay")
+    .requiredOption("--bay <bay>", "destination account home bay")
+    .option("--reason <reason>", "operator-visible reason")
+    .option("--campaign <id>", "operator-visible batch/campaign id")
+    .option("-y, --yes", "skip interactive safety confirmation")
+    .action(
+      async (
+        accountIdentifier: string,
+        opts: {
+          bay?: string;
+          reason?: string;
+          campaign?: string;
+          yes?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "account rehome", async (ctx) => {
+          const target = await resolveAccountByIdentifier(
+            ctx,
+            accountIdentifier.trim(),
+          );
+          const accountId = `${target.account_id ?? ""}`.trim();
+          if (!accountId) {
+            throw new Error("unable to resolve target account");
+          }
+          const destBayId = `${opts.bay ?? ""}`.trim();
+          if (!destBayId) {
+            throw new Error("--bay is required");
+          }
+          if (!opts.yes) {
+            const label =
+              `${target.email_address ?? target.name ?? ""}`.trim() ||
+              accountId;
+            throw new Error(
+              `refusing to rehome account '${label}' without --yes`,
+            );
+          }
+          return await ctx.hub.system.rehomeAccount({
+            user_account_id: accountId,
+            dest_bay_id: destBayId,
+            reason: `${opts.reason ?? ""}`.trim() || undefined,
+            campaign_id: `${opts.campaign ?? ""}`.trim() || undefined,
+          });
+        });
+      },
+    );
+
+  account
+    .command("rehome-status")
+    .description("show an account rehome operation")
+    .requiredOption("--op-id <uuid>", "account rehome operation id")
+    .option("--source-bay <bay>", "source bay that owns the rehome operation")
+    .action(
+      async (
+        opts: {
+          opId?: string;
+          sourceBay?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "account rehome-status", async (ctx) => {
+          const op = await ctx.hub.system.getAccountRehomeOperation({
+            op_id: `${opts.opId ?? ""}`.trim(),
+            source_bay_id: `${opts.sourceBay ?? ""}`.trim() || undefined,
+          });
+          if (!op) {
+            throw new Error(`account rehome operation ${opts.opId} not found`);
+          }
+          return op;
+        });
+      },
+    );
+
+  account
+    .command("rehome-reconcile")
+    .description("retry/resume an account rehome operation")
+    .requiredOption("--op-id <uuid>", "account rehome operation id")
+    .option("--source-bay <bay>", "source bay that owns the rehome operation")
+    .action(
+      async (
+        opts: {
+          opId?: string;
+          sourceBay?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "account rehome-reconcile", async (ctx) => {
+          return await ctx.hub.system.reconcileAccountRehome({
+            op_id: `${opts.opId ?? ""}`.trim(),
+            source_bay_id: `${opts.sourceBay ?? ""}`.trim() || undefined,
+          });
+        });
+      },
+    );
+
   const accountApiKey = account
     .command("api-key")
     .description("manage account API keys");

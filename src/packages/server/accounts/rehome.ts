@@ -1,0 +1,836 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+import getLogger from "@cocalc/backend/logger";
+import getPool from "@cocalc/database/pool";
+import type {
+  AccountRehomeAcceptRequest,
+  AccountRehomeOperationStage,
+  AccountRehomeOperationStatus,
+  AccountRehomeOperationSummary,
+  AccountRehomeRequest,
+  AccountRehomeResponse,
+  AccountRehomeStateCopyRequest,
+} from "@cocalc/conat/inter-bay/api";
+import isAdmin from "@cocalc/server/accounts/is-admin";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
+import {
+  getClusterAccountById,
+  updateClusterAccountHomeBay,
+} from "@cocalc/server/inter-bay/accounts";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import { isValidUUID } from "@cocalc/util/misc";
+
+const log = getLogger("server:accounts:rehome");
+const ACCOUNT_REHOME_OPERATIONS_TABLE = "account_rehome_operations";
+const ACCOUNT_REHOME_TIMEOUT_MS = 5 * 60_000;
+
+const PORTABLE_STATE_TABLES = [
+  "account_project_index",
+  "account_collaborator_index",
+  "account_notification_index",
+] as const;
+
+type PortableStateTable = (typeof PORTABLE_STATE_TABLES)[number];
+
+type AccountRehomeOperationRow = AccountRehomeOperationSummary & {
+  account: Record<string, unknown> | null;
+};
+
+let accountRehomeSchemaReady: Promise<void> | undefined;
+const tableColumnsCache = new Map<string, Promise<string[]>>();
+
+function normalizeUuid(name: string, value: string): string {
+  const normalized = `${value ?? ""}`.trim();
+  if (!isValidUUID(normalized)) {
+    throw new Error(`${name} must be a uuid`);
+  }
+  return normalized;
+}
+
+function normalizeBayId(name: string, value: string): string {
+  const normalized = `${value ?? ""}`.trim();
+  if (!normalized) {
+    throw new Error(`${name} must be specified`);
+  }
+  return normalized;
+}
+
+function requireAccount(account_id?: string): string {
+  if (!account_id) {
+    throw new Error("must be signed in to rehome accounts");
+  }
+  return account_id;
+}
+
+async function assertAdmin(account_id?: string): Promise<string> {
+  const accountId = requireAccount(account_id);
+  if (!(await isAdmin(accountId))) {
+    throw new Error("not authorized");
+  }
+  return accountId;
+}
+
+async function assertBayExists(bay_id: string): Promise<void> {
+  const rows = await listClusterBayRegistry();
+  if (!rows.some((row) => row.bay_id === bay_id)) {
+    throw new Error(`bay ${bay_id} not found`);
+  }
+}
+
+async function ensureAccountRehomeSchema(): Promise<void> {
+  accountRehomeSchemaReady ??= (async () => {
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS ${ACCOUNT_REHOME_OPERATIONS_TABLE} (
+        op_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        account_id UUID NOT NULL,
+        source_bay_id TEXT NOT NULL,
+        dest_bay_id TEXT NOT NULL,
+        requested_by UUID,
+        reason TEXT,
+        campaign_id TEXT,
+        status TEXT NOT NULL DEFAULT 'running',
+        stage TEXT NOT NULL DEFAULT 'requested',
+        attempt INTEGER NOT NULL DEFAULT 0,
+        account JSONB,
+        last_error TEXT,
+        destination_accepted_at TIMESTAMPTZ,
+        source_flipped_at TIMESTAMPTZ,
+        projections_copied_at TIMESTAMPTZ,
+        directory_updated_at TIMESTAMPTZ,
+        finished_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await getPool().query(
+      `CREATE INDEX IF NOT EXISTS account_rehome_operations_account_idx ON ${ACCOUNT_REHOME_OPERATIONS_TABLE}(account_id, status)`,
+    );
+    await getPool().query(
+      `CREATE INDEX IF NOT EXISTS account_rehome_operations_source_idx ON ${ACCOUNT_REHOME_OPERATIONS_TABLE}(source_bay_id, status)`,
+    );
+    await getPool().query(
+      `CREATE INDEX IF NOT EXISTS account_rehome_operations_campaign_idx ON ${ACCOUNT_REHOME_OPERATIONS_TABLE}(campaign_id)`,
+    );
+  })();
+  await accountRehomeSchemaReady;
+}
+
+function durationMs(
+  row: Pick<AccountRehomeOperationRow, "created_at" | "finished_at">,
+): number | null {
+  if (!row.created_at || !row.finished_at) return null;
+  const start = new Date(row.created_at as any).valueOf();
+  const end = new Date(row.finished_at as any).valueOf();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, end - start);
+}
+
+function summarizeOperation(
+  row: AccountRehomeOperationRow,
+): AccountRehomeOperationSummary {
+  return {
+    op_id: row.op_id,
+    account_id: row.account_id,
+    source_bay_id: row.source_bay_id,
+    dest_bay_id: row.dest_bay_id,
+    requested_by: row.requested_by ?? null,
+    reason: row.reason ?? null,
+    campaign_id: row.campaign_id ?? null,
+    status: row.status,
+    stage: row.stage,
+    attempt: row.attempt,
+    last_error: row.last_error ?? null,
+    created_at: row.created_at ?? null,
+    updated_at: row.updated_at ?? null,
+    finished_at: row.finished_at ?? null,
+    duration_ms: durationMs(row),
+  };
+}
+
+async function getTableColumns(table: string): Promise<string[]> {
+  let promise = tableColumnsCache.get(table);
+  if (!promise) {
+    promise = (async () => {
+      const { rows } = await getPool().query<{ column_name: string }>(
+        `
+          SELECT column_name
+            FROM information_schema.columns
+           WHERE table_schema = 'public'
+             AND table_name = $1
+           ORDER BY ordinal_position
+        `,
+        [table],
+      );
+      const columns = rows.map((row) => row.column_name);
+      if (columns.length === 0) {
+        throw new Error(`table ${table} has no columns`);
+      }
+      return columns;
+    })();
+    tableColumnsCache.set(table, promise);
+  }
+  return await promise;
+}
+
+async function upsertJsonRow({
+  table,
+  row,
+  primaryKey,
+}: {
+  table: string;
+  row: Record<string, unknown>;
+  primaryKey: string[];
+}): Promise<void> {
+  const columns = await getTableColumns(table);
+  const updateColumns = columns.filter(
+    (column) => !primaryKey.includes(column),
+  );
+  const insertColumns = columns.map((column) => `"${column}"`).join(", ");
+  const selectColumns = columns.map((column) => `(r)."${column}"`).join(", ");
+  const conflictColumns = primaryKey.map((column) => `"${column}"`).join(", ");
+  const updateSet = updateColumns
+    .map((column) => `"${column}" = EXCLUDED."${column}"`)
+    .join(", ");
+  await getPool().query(
+    `
+      INSERT INTO "${table}" (${insertColumns})
+      SELECT ${selectColumns}
+        FROM jsonb_populate_record(NULL::"${table}", $1::jsonb) AS r
+      ON CONFLICT (${conflictColumns}) DO UPDATE SET ${updateSet}
+    `,
+    [row],
+  );
+}
+
+async function replacePortableRows({
+  table,
+  account_id,
+  rows,
+}: {
+  table: PortableStateTable;
+  account_id: string;
+  rows: Record<string, unknown>[];
+}): Promise<void> {
+  const primaryKey =
+    table === "account_project_index"
+      ? ["account_id", "project_id"]
+      : table === "account_collaborator_index"
+        ? ["account_id", "collaborator_account_id"]
+        : ["account_id", "notification_id"];
+  await getPool().query(`DELETE FROM "${table}" WHERE account_id=$1`, [
+    account_id,
+  ]);
+  for (const row of rows) {
+    await upsertJsonRow({
+      table,
+      row,
+      primaryKey,
+    });
+  }
+}
+
+async function loadAccountRowForRehome(
+  account_id: string,
+): Promise<Record<string, unknown>> {
+  const { rows } = await getPool().query<{ account: Record<string, unknown> }>(
+    `
+      SELECT to_jsonb(accounts) AS account
+        FROM accounts
+       WHERE account_id=$1
+         AND deleted IS NOT TRUE
+       LIMIT 1
+    `,
+    [account_id],
+  );
+  const account = rows[0]?.account;
+  if (!account) {
+    throw new Error(`account ${account_id} not found`);
+  }
+  return account;
+}
+
+async function loadPortableRows(
+  table: PortableStateTable,
+  account_id: string,
+): Promise<Record<string, unknown>[]> {
+  const { rows } = await getPool().query<{
+    rows: Record<string, unknown>[] | null;
+  }>(
+    `
+      SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) AS rows
+        FROM (
+          SELECT *
+            FROM "${table}"
+           WHERE account_id=$1
+        ) t
+    `,
+    [account_id],
+  );
+  return Array.isArray(rows[0]?.rows) ? rows[0].rows! : [];
+}
+
+async function loadPortableState(
+  account_id: string,
+): Promise<AccountRehomeStateCopyRequest> {
+  const [
+    account_project_index,
+    account_collaborator_index,
+    account_notification_index,
+  ] = await Promise.all([
+    loadPortableRows("account_project_index", account_id),
+    loadPortableRows("account_collaborator_index", account_id),
+    loadPortableRows("account_notification_index", account_id),
+  ]);
+  return {
+    target_account_id: account_id,
+    source_bay_id: getConfiguredBayId(),
+    dest_bay_id: "",
+    account_project_index,
+    account_collaborator_index,
+    account_notification_index,
+  };
+}
+
+async function assertLocalHomeAccount(account_id: string): Promise<void> {
+  const account = await loadAccountRowForRehome(account_id);
+  const homeBayId =
+    `${account.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  if (homeBayId !== getConfiguredBayId()) {
+    throw new Error(
+      `account ${account_id} is homed in ${homeBayId}, not local bay ${getConfiguredBayId()}`,
+    );
+  }
+}
+
+async function createOperation({
+  account_id,
+  source_bay_id,
+  dest_bay_id,
+  requested_by,
+  reason,
+  campaign_id,
+}: {
+  account_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  requested_by: string;
+  reason?: string | null;
+  campaign_id?: string | null;
+}): Promise<AccountRehomeOperationRow> {
+  await ensureAccountRehomeSchema();
+  await assertLocalHomeAccount(account_id);
+  const account = await loadAccountRowForRehome(account_id);
+  const { rows } = await getPool().query<AccountRehomeOperationRow>(
+    `
+      INSERT INTO ${ACCOUNT_REHOME_OPERATIONS_TABLE}
+        (account_id, source_bay_id, dest_bay_id, requested_by, reason, campaign_id, account)
+      VALUES
+        ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      RETURNING *
+    `,
+    [
+      account_id,
+      source_bay_id,
+      dest_bay_id,
+      requested_by,
+      reason ?? null,
+      campaign_id ?? null,
+      account,
+    ],
+  );
+  return rows[0]!;
+}
+
+export async function getAccountRehomeOperation(
+  op_id: string,
+): Promise<AccountRehomeOperationSummary | undefined> {
+  await ensureAccountRehomeSchema();
+  const { rows } = await getPool().query<AccountRehomeOperationRow>(
+    `SELECT * FROM ${ACCOUNT_REHOME_OPERATIONS_TABLE} WHERE op_id=$1`,
+    [normalizeUuid("op_id", op_id)],
+  );
+  return rows[0] ? summarizeOperation(rows[0]) : undefined;
+}
+
+export async function getAccountRehomeOperationForOperator({
+  account_id,
+  op_id,
+  source_bay_id,
+}: {
+  account_id?: string;
+  op_id: string;
+  source_bay_id?: string;
+}): Promise<AccountRehomeOperationSummary | undefined> {
+  await assertAdmin(account_id);
+  const opId = normalizeUuid("op_id", op_id);
+  const sourceBayId = `${source_bay_id ?? ""}`.trim();
+  if (sourceBayId && sourceBayId !== getConfiguredBayId()) {
+    return (
+      (await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: sourceBayId,
+        timeout: ACCOUNT_REHOME_TIMEOUT_MS,
+      }).getRehomeOperation({ op_id: opId })) ?? undefined
+    );
+  }
+  return await getAccountRehomeOperation(opId);
+}
+
+async function updateOperation({
+  op_id,
+  status,
+  stage,
+  account,
+  last_error,
+}: {
+  op_id: string;
+  status?: AccountRehomeOperationStatus;
+  stage?: AccountRehomeOperationStage;
+  account?: Record<string, unknown> | null;
+  last_error?: string | null;
+}): Promise<AccountRehomeOperationRow> {
+  await ensureAccountRehomeSchema();
+  const sets = ["updated_at = NOW()"];
+  const values: any[] = [op_id];
+  let i = 2;
+  if (status !== undefined) {
+    sets.push(`status = $${i++}`);
+    values.push(status);
+    if (status === "succeeded" || status === "failed") {
+      sets.push("finished_at = NOW()");
+    }
+    if (status === "running") {
+      sets.push("finished_at = NULL");
+    }
+  }
+  if (stage !== undefined) {
+    sets.push(`stage = $${i++}`);
+    values.push(stage);
+    if (stage === "destination_accepted") {
+      sets.push(
+        "destination_accepted_at = COALESCE(destination_accepted_at, NOW())",
+      );
+    } else if (stage === "source_flipped") {
+      sets.push("source_flipped_at = COALESCE(source_flipped_at, NOW())");
+    } else if (stage === "projections_copied") {
+      sets.push(
+        "projections_copied_at = COALESCE(projections_copied_at, NOW())",
+      );
+    } else if (stage === "directory_updated") {
+      sets.push("directory_updated_at = COALESCE(directory_updated_at, NOW())");
+    }
+  }
+  if (account !== undefined) {
+    sets.push(`account = $${i++}`);
+    values.push(account);
+  }
+  if (last_error !== undefined) {
+    sets.push(`last_error = $${i++}`);
+    values.push(last_error);
+  }
+  const { rows } = await getPool().query<AccountRehomeOperationRow>(
+    `
+      UPDATE ${ACCOUNT_REHOME_OPERATIONS_TABLE}
+         SET ${sets.join(", ")}
+       WHERE op_id = $1
+       RETURNING *
+    `,
+    values,
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`account rehome operation ${op_id} not found`);
+  }
+  return row;
+}
+
+async function startAttempt(op_id: string): Promise<AccountRehomeOperationRow> {
+  await ensureAccountRehomeSchema();
+  const { rows } = await getPool().query<AccountRehomeOperationRow>(
+    `
+      UPDATE ${ACCOUNT_REHOME_OPERATIONS_TABLE}
+         SET attempt = CASE
+               WHEN status = 'succeeded' THEN attempt
+               ELSE attempt + 1
+             END,
+             status = CASE
+               WHEN status = 'succeeded' THEN status
+               ELSE 'running'
+             END,
+             last_error = CASE
+               WHEN status = 'succeeded' THEN last_error
+               ELSE NULL
+             END,
+             finished_at = CASE
+               WHEN status = 'succeeded' THEN finished_at
+               ELSE NULL
+             END,
+             updated_at = NOW()
+       WHERE op_id = $1
+       RETURNING *
+    `,
+    [op_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`account rehome operation ${op_id} not found`);
+  }
+  return row;
+}
+
+async function markFailed({
+  op_id,
+  err,
+}: {
+  op_id: string;
+  err: unknown;
+}): Promise<AccountRehomeOperationRow> {
+  return await updateOperation({
+    op_id,
+    status: "failed",
+    last_error: err instanceof Error ? err.message : `${err}`,
+  });
+}
+
+async function flipSourceHomeBay({
+  account_id,
+  dest_bay_id,
+}: {
+  account_id: string;
+  dest_bay_id: string;
+}): Promise<void> {
+  const { rowCount } = await getPool().query(
+    `
+      UPDATE accounts
+         SET home_bay_id=$2
+       WHERE account_id=$1
+         AND deleted IS NOT TRUE
+    `,
+    [account_id, dest_bay_id],
+  );
+  if (rowCount !== 1) {
+    throw new Error(`account ${account_id} not found while flipping home bay`);
+  }
+}
+
+export async function acceptAccountRehome({
+  target_account_id,
+  source_bay_id,
+  dest_bay_id,
+  account,
+}: AccountRehomeAcceptRequest): Promise<AccountRehomeResponse> {
+  const accountId = normalizeUuid("target_account_id", target_account_id);
+  const sourceBayId = normalizeBayId("source_bay_id", source_bay_id);
+  const destBayId = normalizeBayId("dest_bay_id", dest_bay_id);
+  const localBayId = getConfiguredBayId();
+  if (destBayId !== localBayId) {
+    throw new Error(
+      `account rehome accept for ${accountId} reached ${localBayId}, not destination bay ${destBayId}`,
+    );
+  }
+  await upsertJsonRow({
+    table: "accounts",
+    row: {
+      ...account,
+      account_id: accountId,
+      home_bay_id: destBayId,
+    },
+    primaryKey: ["account_id"],
+  });
+  log.info("account rehome destination accepted", {
+    account_id: accountId,
+    source_bay_id: sourceBayId,
+    dest_bay_id: destBayId,
+  });
+  return {
+    account_id: accountId,
+    previous_bay_id: sourceBayId,
+    home_bay_id: destBayId,
+    status: "rehomed",
+  };
+}
+
+export async function copyAccountRehomeState({
+  target_account_id,
+  source_bay_id,
+  dest_bay_id,
+  account_project_index,
+  account_collaborator_index,
+  account_notification_index,
+}: AccountRehomeStateCopyRequest): Promise<void> {
+  const accountId = normalizeUuid("target_account_id", target_account_id);
+  normalizeBayId("source_bay_id", source_bay_id);
+  const destBayId = normalizeBayId("dest_bay_id", dest_bay_id);
+  const localBayId = getConfiguredBayId();
+  if (destBayId !== localBayId) {
+    throw new Error(
+      `account rehome state copy for ${accountId} reached ${localBayId}, not destination bay ${destBayId}`,
+    );
+  }
+  await replacePortableRows({
+    table: "account_project_index",
+    account_id: accountId,
+    rows: account_project_index ?? [],
+  });
+  await replacePortableRows({
+    table: "account_collaborator_index",
+    account_id: accountId,
+    rows: account_collaborator_index ?? [],
+  });
+  await replacePortableRows({
+    table: "account_notification_index",
+    account_id: accountId,
+    rows: account_notification_index ?? [],
+  });
+  log.info("account rehome destination state copied", {
+    account_id: accountId,
+    source_bay_id,
+    dest_bay_id: destBayId,
+    account_project_index_rows: account_project_index?.length ?? 0,
+    account_collaborator_index_rows: account_collaborator_index?.length ?? 0,
+    account_notification_index_rows: account_notification_index?.length ?? 0,
+  });
+}
+
+export async function rehomeAccountOnHomeBay({
+  account_id,
+  target_account_id,
+  dest_bay_id,
+  reason,
+  campaign_id,
+}: AccountRehomeRequest): Promise<AccountRehomeResponse> {
+  const requestedBy = requireAccount(account_id);
+  const accountId = normalizeUuid("target_account_id", target_account_id);
+  const destBayId = normalizeBayId("dest_bay_id", dest_bay_id);
+  const localBayId = getConfiguredBayId();
+  const account = await loadAccountRowForRehome(accountId);
+  const sourceBayId = `${account.home_bay_id ?? ""}`.trim() || localBayId;
+  if (sourceBayId !== localBayId) {
+    throw new Error(
+      `account ${accountId} is not homed in local bay ${localBayId}`,
+    );
+  }
+  if (destBayId === localBayId) {
+    return {
+      account_id: accountId,
+      previous_bay_id: localBayId,
+      home_bay_id: localBayId,
+      status: "already-home",
+    };
+  }
+  await assertBayExists(destBayId);
+  const op = await createOperation({
+    account_id: accountId,
+    source_bay_id: localBayId,
+    dest_bay_id: destBayId,
+    requested_by: requestedBy,
+    reason,
+    campaign_id,
+  });
+  return await runAccountRehomeOperation(op.op_id);
+}
+
+export async function runAccountRehomeOperation(
+  op_id: string,
+): Promise<AccountRehomeResponse> {
+  let op = await startAttempt(normalizeUuid("op_id", op_id));
+  const localBayId = getConfiguredBayId();
+  if (op.source_bay_id !== localBayId) {
+    throw new Error(
+      `account rehome operation ${op_id} belongs to source bay ${op.source_bay_id}, not local bay ${localBayId}`,
+    );
+  }
+
+  try {
+    let account = op.account;
+    if (!account) {
+      account = await loadAccountRowForRehome(op.account_id);
+      op = await updateOperation({ op_id, account });
+    }
+
+    if (op.stage === "requested") {
+      await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: op.dest_bay_id,
+        timeout: ACCOUNT_REHOME_TIMEOUT_MS,
+      }).acceptRehome({
+        target_account_id: op.account_id,
+        source_bay_id: op.source_bay_id,
+        dest_bay_id: op.dest_bay_id,
+        account,
+      });
+      op = await updateOperation({
+        op_id,
+        stage: "destination_accepted",
+      });
+    }
+
+    if (op.stage === "destination_accepted") {
+      await flipSourceHomeBay({
+        account_id: op.account_id,
+        dest_bay_id: op.dest_bay_id,
+      });
+      op = await updateOperation({
+        op_id,
+        stage: "source_flipped",
+      });
+    }
+
+    if (op.stage === "source_flipped") {
+      const state = await loadPortableState(op.account_id);
+      await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: op.dest_bay_id,
+        timeout: ACCOUNT_REHOME_TIMEOUT_MS,
+      }).copyRehomeState({
+        ...state,
+        source_bay_id: op.source_bay_id,
+        dest_bay_id: op.dest_bay_id,
+      });
+      op = await updateOperation({
+        op_id,
+        stage: "projections_copied",
+      });
+    }
+
+    if (op.stage === "projections_copied") {
+      const accountEntry = await getClusterAccountById(op.account_id);
+      await updateClusterAccountHomeBay({
+        account_id: op.account_id,
+        home_bay_id: op.dest_bay_id,
+      });
+      if (!accountEntry?.account_id) {
+        log.warn("account rehome directory update had no prior entry", {
+          op_id,
+          account_id: op.account_id,
+        });
+      }
+      op = await updateOperation({
+        op_id,
+        stage: "directory_updated",
+      });
+    }
+
+    if (op.stage === "directory_updated") {
+      op = await updateOperation({
+        op_id,
+        status: "succeeded",
+        stage: "complete",
+      });
+    }
+
+    log.info("account rehomed", {
+      op_id,
+      account_id: op.account_id,
+      previous_bay_id: op.source_bay_id,
+      home_bay_id: op.dest_bay_id,
+      stage: op.stage,
+    });
+    return {
+      op_id,
+      account_id: op.account_id,
+      previous_bay_id: op.source_bay_id,
+      home_bay_id: op.dest_bay_id,
+      operation_stage: op.stage,
+      operation_status: op.status,
+      status: "rehomed",
+    };
+  } catch (err) {
+    const failed = await markFailed({ op_id, err });
+    log.warn("account rehome failed", {
+      op_id,
+      account_id: failed.account_id,
+      source_bay_id: failed.source_bay_id,
+      dest_bay_id: failed.dest_bay_id,
+      stage: failed.stage,
+      err: `${err}`,
+    });
+    throw err;
+  }
+}
+
+export async function rehomeAccount({
+  account_id,
+  target_account_id,
+  dest_bay_id,
+  reason,
+  campaign_id,
+}: AccountRehomeRequest): Promise<AccountRehomeResponse> {
+  const requestedBy = await assertAdmin(account_id);
+  const accountId = normalizeUuid("target_account_id", target_account_id);
+  const destBayId = normalizeBayId("dest_bay_id", dest_bay_id);
+  await assertBayExists(destBayId);
+  const account = await getClusterAccountById(accountId);
+  if (!account?.account_id) {
+    throw new Error(`account ${accountId} not found`);
+  }
+  const sourceBayId =
+    `${account.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  if (sourceBayId === destBayId) {
+    return {
+      account_id: accountId,
+      previous_bay_id: sourceBayId,
+      home_bay_id: sourceBayId,
+      status: "already-home",
+    };
+  }
+  if (sourceBayId !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: sourceBayId,
+      timeout: ACCOUNT_REHOME_TIMEOUT_MS,
+    }).rehome({
+      account_id: requestedBy,
+      target_account_id: accountId,
+      dest_bay_id: destBayId,
+      reason,
+      campaign_id,
+    });
+  }
+  return await rehomeAccountOnHomeBay({
+    account_id: requestedBy,
+    target_account_id: accountId,
+    dest_bay_id: destBayId,
+    reason,
+    campaign_id,
+  });
+}
+
+export async function reconcileAccountRehome({
+  account_id,
+  op_id,
+  source_bay_id,
+}: {
+  account_id?: string;
+  op_id: string;
+  source_bay_id?: string;
+}): Promise<AccountRehomeResponse> {
+  await assertAdmin(account_id);
+  const opId = normalizeUuid("op_id", op_id);
+  const sourceBayId = `${source_bay_id ?? ""}`.trim();
+  if (sourceBayId && sourceBayId !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: sourceBayId,
+      timeout: ACCOUNT_REHOME_TIMEOUT_MS,
+    }).reconcileRehome({
+      account_id,
+      op_id: opId,
+      source_bay_id: sourceBayId,
+    });
+  }
+  return await runAccountRehomeOperation(opId);
+}
+
+export async function reconcileAccountRehomeOnSource({
+  op_id,
+}: {
+  op_id: string;
+}): Promise<AccountRehomeResponse> {
+  return await runAccountRehomeOperation(op_id);
+}

@@ -303,6 +303,7 @@ export async function handleProjectControlAcceptRehome(
     source_bay_id: req.source_bay_id,
     dest_bay_id: req.dest_bay_id,
     project: req.project,
+    portable_state: req.portable_state,
   });
 }
 

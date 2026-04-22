@@ -24,6 +24,7 @@ import {
   markClusterAccountProvisioned,
   reserveClusterAccountDirectoryEntry,
   searchClusterAccountsDirect,
+  updateClusterAccountHomeBayDirect,
 } from "@cocalc/server/accounts/cluster-directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
@@ -108,6 +109,18 @@ export async function getClusterAccountHomeBayCounts(): Promise<
   return await createInterBayAccountDirectoryClient({
     client: getInterBayFabricClient(),
   }).getHomeBayCounts({});
+}
+
+export async function updateClusterAccountHomeBay(opts: {
+  account_id: string;
+  home_bay_id: string;
+}): Promise<AccountDirectoryEntry> {
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    return await updateClusterAccountHomeBayDirect(opts);
+  }
+  return await createInterBayAccountDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).updateHomeBay(opts);
 }
 
 export async function provisionLocalClusterAccount(
