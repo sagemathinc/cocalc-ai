@@ -829,9 +829,10 @@ main production reasons to do it are:
       or load-shedding campaign
 - [x] bay admission control so an operator can mark a bay as "do not place new
       project ownership here" before draining existing ownership
-- [x] copy portable bay-local project state during rehome; initially this means
-      merging the `project-log` Conat stream into the destination bay after the
-      source ownership flip and before projection completion
+- [x] copy portable bay-local project state during rehome; this means merging
+      the `project-log` Conat stream and copying project-scoped v2 `api_keys`
+      into the destination bay after the source ownership flip and before
+      projection completion
 - [x] project fence / quiesce for concurrent metadata writes during rehome
 - [x] live 3-bay happy-path validation for per-project rehome and projection
       convergence
@@ -878,7 +879,8 @@ Retry / rollback plan, 2026-04-22 PT:
 - `destination_accepted` failures are retried by flipping source ownership to
   the destination bay and then continuing with portable-state copy.
 - `source_flipped` failures are retried by re-reading the preserved project row
-  and copying portable bay-local state, currently the `project-log` stream.
+  and copying portable bay-local state, currently the `project-log` stream and
+  project-scoped v2 `api_keys`.
 - `portable_state_copied` failures are retried by updating local projection rows
   and draining projection state.
 - `projected` failures are retried by marking the operation complete and
@@ -916,6 +918,18 @@ Failure-injection validation, 2026-04-22 PT:
   `cocalc project delete --hard --purge-backups-now --wait --yes`; delete
   operation `a5f50644-0f9f-4567-b872-e585f815aedd` completed with
   `status=succeeded`.
+- Project-scoped v2 API-key portability validation used disposable project
+  `da9a1d28-fd00-4ca5-9bca-cc25666787cb`, initially owned by `bay-0`, and
+  generated project API key `key_id=1RDddqgzciaaS95tlw-WaeWB`. The same v2
+  secret authenticated as `{ project_id: da9a1d28-fd00-4ca5-9bca-cc25666787cb }`
+  before rehome on `bay-0`.
+- Rehome operation `f9054db5-9f10-46da-8229-7b6d465ba1b8` moved the project
+  `bay-0 -> bay-2` with `status=succeeded`, `stage=complete`. The same v2
+  project API key authenticated after rehome on `bay-2`, proving
+  project-scoped v2 `api_keys` copied correctly by `key_id` while the
+  destination allocated its own local integer `id`. The disposable project was
+  hard-deleted with `--purge-backups-now`, and the disposable key row was gone
+  afterward.
 
 ### 11. Host Move / Reassignment
 

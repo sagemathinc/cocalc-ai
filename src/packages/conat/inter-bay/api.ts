@@ -171,6 +171,7 @@ export interface ProjectControlAcceptRehomeRequest {
 
 export interface ProjectControlPortableProjectState {
   project_log?: ProjectLogRow[];
+  api_keys?: Record<string, unknown>[];
 }
 
 export interface ProjectControlRehomeResponse {
