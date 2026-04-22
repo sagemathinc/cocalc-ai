@@ -771,6 +771,9 @@ export class ConatClient extends EventEmitter {
   ):
     | undefined
     | { host_id: string; address: string; host_session_id?: string } {
+    if (lite) {
+      return;
+    }
     // [ ] TODO: need a ttl cache, since otherwise this gets called
     // on literally every packet sent to the project!
     const project_map = redux.getStore("projects")?.get("project_map");
@@ -796,6 +799,9 @@ export class ConatClient extends EventEmitter {
   }
 
   private getProjectHostId(project_id: string): string | undefined {
+    if (lite) {
+      return;
+    }
     const project_map = redux.getStore("projects")?.get("project_map");
     const host_id = project_map?.getIn([project_id, "host_id"]) as
       | string
@@ -830,6 +836,9 @@ export class ConatClient extends EventEmitter {
   ): Promise<
     undefined | { host_id: string; address: string; host_session_id?: string }
   > => {
+    if (lite) {
+      return;
+    }
     const project_map = redux.getStore("projects")?.get("project_map");
     const host_id = project_map?.getIn([project_id, "host_id"]) as
       | string
@@ -2095,6 +2104,9 @@ export class ConatClient extends EventEmitter {
   }) => {
     if (!isValidUUID(project_id)) {
       throw Error(`project_id = '${project_id}' must be a valid uuid`);
+    }
+    if (lite) {
+      return this.conat();
     }
     const routing = await this.ensureProjectRoutingInfo(project_id);
     if (routing) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -63,6 +63,7 @@ export interface CodexCredentialsPanelProps {
   embedded?: boolean;
   defaultProjectId?: string;
   hidePanelChrome?: boolean;
+  onPaymentSourceChanged?: () => void;
 }
 
 type DeviceAuthState = "pending" | "completed" | "failed" | "canceled";
@@ -97,6 +98,7 @@ function CodexCredentialsPanelBody({
   embedded = false,
   defaultProjectId = "",
   hidePanelChrome = false,
+  onPaymentSourceChanged,
 }: CodexCredentialsPanelProps = {}) {
   const projectMap = useTypedRedux("projects", "project_map");
   const [loading, setLoading] = useState<boolean>(true);
@@ -134,6 +136,10 @@ function CodexCredentialsPanelBody({
   const previousProjectKeyRef = useRef(selectedProjectId.trim());
 
   const refresh = () => setRefreshToken((x) => x + 1);
+  const refreshAfterPaymentSourceChange = useCallback(() => {
+    refresh();
+    onPaymentSourceChanged?.();
+  }, [onPaymentSourceChanged]);
 
   const recentProjectId = useMemo(() => {
     if (!projectMap) return "";
@@ -253,7 +259,7 @@ function CodexCredentialsPanelBody({
                     id: row.id,
                   },
                 );
-                refresh();
+                refreshAfterPaymentSourceChange();
               } catch (err) {
                 setError(`${err}`);
               } finally {
@@ -273,7 +279,7 @@ function CodexCredentialsPanelBody({
         ),
       },
     ],
-    [revokingId],
+    [refreshAfterPaymentSourceChange, revokingId],
   );
 
   const getErrorMessage = (err: unknown): string => {
@@ -316,7 +322,7 @@ function CodexCredentialsPanelBody({
         });
       setDeviceAuth(status as DeviceAuthStatus);
       if ((status as DeviceAuthStatus).state === "completed") {
-        refresh();
+        refreshAfterPaymentSourceChange();
       }
     } catch (err) {
       setDeviceAuthError(getErrorMessage(err));
@@ -385,7 +391,7 @@ function CodexCredentialsPanelBody({
         bytes: result.bytes,
         uploadedAt: Date.now(),
       });
-      refresh();
+      refreshAfterPaymentSourceChange();
       void message.success("Auth file uploaded successfully");
     } catch (err) {
       setDeviceAuthError(getErrorMessage(err));
@@ -776,7 +782,7 @@ function CodexCredentialsPanelBody({
                                   api_key: key,
                                 });
                                 setAccountApiKey("");
-                                refresh();
+                                refreshAfterPaymentSourceChange();
                               } catch (err) {
                                 setError(`${err}`);
                               } finally {
@@ -797,7 +803,7 @@ function CodexCredentialsPanelBody({
                                 await (
                                   webapp_client.conat_client.hub.system as any
                                 ).deleteOpenAiApiKey({});
-                                refresh();
+                                refreshAfterPaymentSourceChange();
                               } catch (err) {
                                 setError(`${err}`);
                               } finally {
@@ -878,7 +884,7 @@ function CodexCredentialsPanelBody({
                                   api_key: key,
                                 });
                                 setProjectApiKey("");
-                                refresh();
+                                refreshAfterPaymentSourceChange();
                               } catch (err) {
                                 setError(`${err}`);
                               } finally {
@@ -902,7 +908,7 @@ function CodexCredentialsPanelBody({
                                 ).deleteOpenAiApiKey({
                                   project_id: selectedProjectId,
                                 });
-                                refresh();
+                                refreshAfterPaymentSourceChange();
                               } catch (err) {
                                 setError(`${err}`);
                               } finally {

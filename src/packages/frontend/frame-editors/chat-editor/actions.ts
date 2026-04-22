@@ -31,9 +31,11 @@ import {
   log_opened_time,
   mark_open_phase,
 } from "@cocalc/frontend/project/open-file";
+import { getLogger } from "@cocalc/frontend/logger";
 
 const FRAME_TYPE = "chatroom";
 const FAST_OPEN_CHAT_STATUS = "Loading live collaboration...";
+const logger = getLogger("frontend:frame-editors:chat-editor");
 const CHAT_FRAME_FOCUS_SELECTORS = [
   '[contenteditable="true"]',
   '[data-slate-editor="true"]',
@@ -78,6 +80,7 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
   private messageCache?: ChatMessageCache;
   private chatFastOpenToken = 0;
   private chatFastOpenApplied = false;
+  private messageCacheRecoveryWarned = false;
 
   private startOptimisticChatFastOpen(syncdb: any): void {
     const fs = this._get_project_actions()?.fs?.();
@@ -125,6 +128,7 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     const syncdb = this._syncstring;
     // Single shared message cache for all chat frames attached to this syncdoc.
     this.messageCache = new ChatMessageCache(syncdb);
+    this.messageCacheRecoveryWarned = false;
     this.startOptimisticChatFastOpen(syncdb);
     syncdb.once("ready", () => {
       initFromSyncDB({ syncdb, store });
@@ -159,18 +163,41 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     }
 
     const syncdb = this._syncstring;
+    const messageCache = this.getOrRecoverMessageCache(frameId);
+    if (!messageCache) {
+      return;
+    }
     const auxPath = this.auxPath + frameId;
     const reduxName = redux_name(this.project_id, auxPath);
     const actions = this.redux.createActions(reduxName, ChatActions);
-    if (!this.messageCache) {
-      throw Error("messageCache must be defined");
-    }
     // our store is not exactly a ChatStore but it's close enough
-    actions.set_syncdb(syncdb, this.store as ChatStore, this.messageCache);
+    actions.set_syncdb(syncdb, this.store as ChatStore, messageCache);
     actions.frameId = frameId;
     actions.frameTreeActions = this as any;
     this.chatActions[frameId] = actions;
     return actions;
+  }
+
+  private getOrRecoverMessageCache(
+    frameId?: string,
+  ): ChatMessageCache | undefined {
+    if (this.messageCache) {
+      return this.messageCache;
+    }
+    if (this.isClosed() || !this._syncstring) {
+      return;
+    }
+    this.messageCache = new ChatMessageCache(this._syncstring);
+    if (!this.messageCacheRecoveryWarned) {
+      this.messageCacheRecoveryWarned = true;
+      logger.warn("recovered missing chat message cache", {
+        project_id: this.project_id,
+        path: this.path,
+        frameId,
+        syncdbState: this._syncstring?.get_state?.(),
+      });
+    }
+    return this.messageCache;
   }
 
   undo() {
