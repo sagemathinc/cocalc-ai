@@ -53,7 +53,7 @@ describe("snapshot-backup-maintenance", () => {
         project_id: "proj-2",
         last_edited: "2026-04-10T21:00:00.000Z",
         snapshots: { disabled: true },
-        backups: null,
+        backups: { frequent: 12 },
       },
     ]);
     runScheduledSnapshotMaintenanceMock.mockResolvedValue(undefined);

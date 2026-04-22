@@ -30,6 +30,7 @@ export default function EditBackupSchedule() {
     return {
       ...DEFAULT_BACKUP_COUNTS,
       ...(counts ?? {}),
+      frequent: 0,
     };
   }
 
@@ -67,7 +68,7 @@ export default function EditBackupSchedule() {
       setError("");
       await webapp_client.query_client.query({
         query: {
-          projects: { project_id, backups: schedule },
+          projects: { project_id, backups: { ...schedule, frequent: 0 } },
         },
       });
       publishProjectDetailInvalidation({
@@ -196,28 +197,6 @@ export default function EditBackupSchedule() {
                       setSchedule({
                         ...schedule,
                         monthly,
-                      });
-                    }
-                  }}
-                />
-              </Flex>
-              <Flex style={{ marginBottom: "5px" }}>
-                <div style={{ flex: 0.5 }}>Frequent (15 min)</div>
-                <InputNumber
-                  suffix="backups"
-                  precision={0}
-                  style={{ flex: 0.5 }}
-                  step={1}
-                  min={0}
-                  max={MAX}
-                  defaultValue={
-                    schedule.frequent ?? DEFAULT_BACKUP_COUNTS.frequent
-                  }
-                  onChange={(frequent) => {
-                    if (frequent != null) {
-                      setSchedule({
-                        ...schedule,
-                        frequent,
                       });
                     }
                   }}

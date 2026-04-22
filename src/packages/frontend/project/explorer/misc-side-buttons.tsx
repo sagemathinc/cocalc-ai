@@ -21,7 +21,7 @@ import track from "@cocalc/frontend/user-tracking";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { type JSX, type MouseEvent } from "react";
-import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
+import { SNAPSHOTS, isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import Snapshots from "@cocalc/frontend/project/snapshots";
 import Backups from "@cocalc/frontend/project/backups";
 import { BACKUPS, isBackupsPath } from "@cocalc/util/consts/backups";
@@ -235,16 +235,12 @@ export function MiscSideButtons({
 
   return (
     <Space style={{ display: "inline-flex" }}>
-      {(effective_current_path == SNAPSHOTS ||
-        effective_current_path.startsWith(SNAPSHOTS + "/")) && (
+      {isSnapshotsPath(effective_current_path) && (
         <Snapshots onCreated={refreshSnapshots} />
       )}
-      {effective_current_path &&
-        isBackupsPath(effective_current_path) &&
-        (effective_current_path === BACKUPS ||
-          effective_current_path.startsWith(`${BACKUPS}/`)) && (
-          <Backups onCreated={refreshBackups} />
-        )}
+      {isBackupsPath(effective_current_path) && (
+        <Backups onCreated={refreshBackups} />
+      )}
       {SHOW_APPS && (
         <Space.Compact>
           {render_jupyterlab_button()}
