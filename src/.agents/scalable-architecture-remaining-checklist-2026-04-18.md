@@ -759,7 +759,13 @@ Failure-injection validation, 2026-04-22 PT:
 This is now a production-critical multibay workflow, not just a spot-instance
 cleanup concern.
 
-- [ ] define whether "host move" means host-bay ownership transfer, project
+- **host rehome** means changing the authoritative bay that owns the
+  `project_hosts` row and host-management authority. It does not move the
+  host VM/container and does not move projects assigned to the host.
+- **project evacuation** means moving projects off a host.
+- **project move** remains project materialization/runtime placement movement.
+
+- [x] define whether "host move" means host-bay ownership transfer, project
       evacuation/reassignment, or both
 - [ ] explicit operator confirmation for any operation that can strand or lose
       project data
@@ -768,6 +774,38 @@ cleanup concern.
 - [ ] recovery behavior when the source host or source bay disappears mid-move
 - [ ] rollback / retry plan
 - [ ] CLI workflow
+
+Initial host rehome target:
+
+- [ ] admin-only CLI workflow:
+      `cocalc host rehome <host> --bay ... --yes`
+- [ ] durable per-host rehome operation record with state machine:
+      `requested -> destination_prepared -> source_flipped -> host_reconnected -> projected -> complete`
+- [ ] destination preparation before source flip:
+  - destination bay has a host-owner SSH identity
+  - host trusts the destination bay's host-owner SSH public key
+  - destination bay can resolve and reach the host management endpoint
+- [ ] source flip changes only `project_hosts.bay_id`; assigned projects remain
+      on the same host unless a separate evacuation/project-move operation is
+      requested
+- [ ] post-flip validation waits for the host-agent/project-host heartbeat or a
+      direct host-control status check to confirm the host is manageable via the
+      destination bay
+- [ ] operator status/retry commands:
+  - `cocalc host rehome-status --op-id ...`
+  - `cocalc host rehome-reconcile --op-id ...`
+- [ ] failure-injection validation for:
+  - destination prepared but source flip failed
+  - source flipped but host did not reconnect to destination bay
+  - source flipped but projection/directory state is stale
+
+Non-goals for initial host rehome:
+
+- moving project data
+- automatically evacuating projects from the host
+- replacing project move
+- handling source-bay disappearance before the destination bay has been
+  prepared
 
 ## What Is No Longer A Priority Bottleneck
 
