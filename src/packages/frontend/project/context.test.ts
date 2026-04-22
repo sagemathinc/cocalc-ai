@@ -1,5 +1,6 @@
 import {
   resolveHiddenActiveTabForSelection,
+  selectionForOutOfScopeFileExplorerPath,
   shouldResyncWorkspaceSelectionFromActivePath,
 } from "./context";
 
@@ -45,6 +46,53 @@ describe("resolveHiddenActiveTabForSelection", () => {
         matchesPath: () => true,
       }),
     ).toEqual({ kind: "noop" });
+  });
+});
+
+describe("selectionForOutOfScopeFileExplorerPath", () => {
+  const records = [
+    {
+      workspace_id: "home",
+      project_id: "project-1",
+      root_path: "/home/user",
+      title: "Home",
+      theme: { title: "Home" },
+      created_at: 0,
+      updated_at: 0,
+    },
+    {
+      workspace_id: "repo",
+      project_id: "project-1",
+      root_path: "/home/user/repo",
+      title: "Repo",
+      theme: { title: "Repo" },
+      created_at: 0,
+      updated_at: 0,
+    },
+  ] as any;
+
+  it("switches from a nested workspace to the containing workspace", () => {
+    expect(
+      selectionForOutOfScopeFileExplorerPath({
+        currentPath: "/home/user/.snapshots",
+        currentRootPath: "/home/user/repo",
+        currentSelection: { kind: "workspace", workspace_id: "repo" },
+        records,
+        selectionChanged: false,
+      }),
+    ).toEqual({ kind: "workspace", workspace_id: "home" });
+  });
+
+  it("does not undo an explicit workspace selection change", () => {
+    expect(
+      selectionForOutOfScopeFileExplorerPath({
+        currentPath: "/home/user/.snapshots",
+        currentRootPath: "/home/user/repo",
+        currentSelection: { kind: "workspace", workspace_id: "repo" },
+        records,
+        selectionChanged: true,
+      }),
+    ).toBeNull();
   });
 });
 

@@ -3,6 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+jest.mock("@cocalc/project/logger", () => ({
+  getLogger: () => ({
+    debug: jest.fn(),
+  }),
+}));
+
 import { cleanup } from "./project-setup";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -31,6 +37,7 @@ describe("project environment cleanup", () => {
     process.env.COCALC_PROXY_PORT = "18080";
     process.env.COCALC_PROJECT_ID = "test-project";
     process.env.COCALC_SECRET_TOKEN = "/tmp/secret-token";
+    process.env.COCALC_LOGS = "/home/user/.cache/cocalc/project";
 
     cleanup();
 
@@ -38,5 +45,6 @@ describe("project environment cleanup", () => {
     expect(process.env.COCALC_PROXY_PORT).toBe("18080");
     expect(process.env.COCALC_PROJECT_ID).toBeUndefined();
     expect(process.env.COCALC_SECRET_TOKEN).toBeUndefined();
+    expect(process.env.COCALC_LOGS).toBeUndefined();
   });
 });

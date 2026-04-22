@@ -302,6 +302,13 @@ export function useBlockSync({
     [saveBlocksNow, saveDebounceMs],
   );
 
+  useEffect(() => {
+    return () => {
+      saveBlocksDebounced.flush();
+      saveBlocksDebounced.cancel();
+    };
+  }, [saveBlocksDebounced]);
+
   const markLocalEdit = useCallback(() => {
     lastLocalEditAtRef.current = Date.now();
     if (

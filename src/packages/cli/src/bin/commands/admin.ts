@@ -124,7 +124,7 @@ export function registerAdminCommand(
     .option("--last-name <lastName>", "last name")
     .option("--name <name>", "full name shorthand (split into first/last)")
     .option("--tag <tag...>", "optional account tags")
-    .option("--no-first-project", "do not create/start an initial project")
+    .option("--no-first-project", "do not start an initial invited project")
     .action(
       async (
         opts: {

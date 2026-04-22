@@ -99,6 +99,33 @@ describe("Base editor action structure", () => {
     expect(actions.hasSyncAdapter()).toBe(false);
   });
 
+  it("TextEditorActions flushes the most recent CodeMirror when saving without an explicit frame id", () => {
+    const staleCm = { getValue: jest.fn(() => "stale source") };
+    const freshCm = { getValue: jest.fn(() => "fresh source") };
+    const sync = {
+      get_state: jest.fn(() => "ready"),
+      exit_undo_mode: jest.fn(),
+      to_str: jest.fn(() => "old source"),
+      from_str: jest.fn(),
+      commit: jest.fn(),
+      save: jest.fn(),
+      emit: jest.fn(),
+    };
+    const actions: any = Object.create(TextEditorActions.prototype);
+    actions._state = undefined;
+    actions._syncstring = sync;
+    actions._get_cm = jest.fn((id?: string, recent?: boolean) =>
+      id == null && recent ? freshCm : staleCm,
+    );
+
+    actions.set_syncstring_to_codemirror(undefined, true);
+
+    expect(actions._get_cm).toHaveBeenCalledWith(undefined, true);
+    expect(staleCm.getValue).not.toHaveBeenCalled();
+    expect(freshCm.getValue).toHaveBeenCalled();
+    expect(sync.from_str).toHaveBeenCalledWith("fresh source");
+  });
+
   it("StructuredEditorActions does not touch to_str", () => {
     const redux = makeRedux();
     const actions = new TestStructuredActions("test-structured", redux);

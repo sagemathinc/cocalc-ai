@@ -18,8 +18,6 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 const LOG_PERSIST_THROTTLE_MS = 250;
 const LIVE_LOG_FLUSH_MS = 100;
 const RECENT_LOG_CACHE_SIZE = 5;
-const RECONNECT_DEBUG_GLOBAL = "__cocalc_syncdoc_reconnect_debug";
-const RECONNECT_DEBUG_LOCAL_STORAGE = "cocalc.debug.syncdoc_reconnect";
 
 const recentLogCache = new LRUCache<string, any[]>({
   max: RECENT_LOG_CACHE_SIZE,
@@ -119,74 +117,6 @@ function isDStreamLiveConnected(stream: DStream<any>): boolean {
   );
 }
 
-function getDStreamDebugState(stream: DStream<any> | null | undefined): {
-  kind: string;
-  recoveryState?: string;
-  length?: number;
-} {
-  if (stream == null) {
-    return { kind: "none" };
-  }
-  try {
-    let length: number | undefined;
-    try {
-      length = stream.length;
-    } catch {
-      length = undefined;
-    }
-    return {
-      kind: "dstream",
-      recoveryState:
-        typeof stream.getRecoveryState === "function"
-          ? stream.getRecoveryState()
-          : undefined,
-      length,
-    };
-  } catch (err) {
-    return { kind: "error", recoveryState: `${err}` };
-  }
-}
-
-function shouldLogReconnectDebug(): boolean {
-  if (typeof window === "undefined") return false;
-  const state = (window as any)[RECONNECT_DEBUG_GLOBAL];
-  if (state?.console === true) return true;
-  try {
-    return window.localStorage.getItem(RECONNECT_DEBUG_LOCAL_STORAGE) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function recordCodexActivityReconnectDebug(event: {
-  [key: string]: any;
-}): void {
-  if (typeof window === "undefined") return;
-  const w = window as any;
-  const state = (w[RECONNECT_DEBUG_GLOBAL] ??= {
-    events: [],
-    console: false,
-    clear() {
-      this.events.length = 0;
-    },
-    print(limit = 80) {
-      console.table(this.events.slice(-limit));
-    },
-  });
-  const entry = {
-    time: new Date().toISOString(),
-    now: performance.now(),
-    ...event,
-  };
-  state.events.push(entry);
-  if (state.events.length > 1000) {
-    state.events.splice(0, state.events.length - 1000);
-  }
-  if (shouldLogReconnectDebug()) {
-    console.info("[codex activity reconnect]", entry);
-  }
-}
-
 /**
  * Fetch Codex/ACP logs from AKV and live stream from conat during generation.
  * Resets state when the log key changes so logs don't bleed across turns.
@@ -254,19 +184,6 @@ export function useCodexLog({
       }
     },
     [],
-  );
-  const recordActivityDebug = useCallback(
-    (event: { [key: string]: any }) => {
-      recordCodexActivityReconnectDebug({
-        projectId,
-        logStore,
-        logKey,
-        liveLogStream,
-        stream: getDStreamDebugState(liveStreamRef.current),
-        ...event,
-      });
-    },
-    [projectId, logStore, logKey, liveLogStream],
   );
 
   const mergeLogs = useMemo(() => {
@@ -447,8 +364,6 @@ export function useCodexLog({
         isConnected: () => !hasLiveSource || liveConnectedRef.current,
         priority: () => "foreground",
         reconnect: async () => {
-          const started = Date.now();
-          recordActivityDebug({ event: "codex_activity_reconnect_start" });
           setLiveConnectionState(false, "reconnecting");
           void fetchPersistedLog({
             allowDuringGeneration: true,
@@ -458,63 +373,29 @@ export function useCodexLog({
                 setFetchedLog(persisted);
                 setAkvLoaded(true);
               }
-              recordActivityDebug({
-                event: "codex_activity_persisted_fetch_done",
-                elapsedMs: Date.now() - started,
-              });
             })
             .catch((err) => {
-              recordActivityDebug({
-                event: "codex_activity_persisted_fetch_error",
-                elapsedMs: Date.now() - started,
-                error: `${err}`,
-              });
               console.warn("codex log reconnect fetch failed", err);
             });
-          recordActivityDebug({
-            event: "codex_activity_persisted_fetch_started",
-          });
           if (!mountedRef.current || !hasLiveSource) {
-            recordActivityDebug({
-              event: "codex_activity_reconnect_skipped",
-              elapsedMs: Date.now() - started,
-            });
             return;
           }
           const liveStream = liveStreamRef.current;
           if (liveStream != null && !isDStreamLiveConnected(liveStream)) {
             try {
-              recordActivityDebug({
-                event: "codex_activity_recover_start",
-              });
               await liveStream.recoverNow({
                 priority: "foreground",
                 reason: "codex_log_reconnect",
               });
-              recordActivityDebug({
-                event: "codex_activity_recover_done",
-              });
             } catch (err) {
-              recordActivityDebug({
-                event: "codex_activity_recover_error",
-                error: `${err}`,
-              });
               console.warn("codex log stream recovery failed", err);
             }
           }
           if (liveConnectedRef.current) {
-            recordActivityDebug({
-              event: "codex_activity_reconnect_done",
-              elapsedMs: Date.now() - started,
-            });
             return;
           }
           setLiveReconnectToken((n) => n + 1);
           await waitForLiveReconnect();
-          recordActivityDebug({
-            event: "codex_activity_reconnect_done",
-            elapsedMs: Date.now() - started,
-          });
         },
       });
     return () => {
@@ -525,7 +406,6 @@ export function useCodexLog({
     canReconnectLive,
     fetchPersistedLog,
     hasLiveSource,
-    recordActivityDebug,
     setLiveConnectionState,
     waitForLiveReconnect,
   ]);
@@ -536,7 +416,6 @@ export function useCodexLog({
       return;
     }
     const handleDisconnected = () => {
-      recordActivityDebug({ event: "codex_activity_transport_disconnected" });
       setLiveConnectionState(false, "reconnecting");
       reconnectResourceRef.current?.requestReconnect({
         reason: "codex_log_disconnected",
@@ -546,7 +425,7 @@ export function useCodexLog({
     return () => {
       webapp_client.conat_client.off("disconnected", handleDisconnected);
     };
-  }, [canReconnectLive, recordActivityDebug, setLiveConnectionState]);
+  }, [canReconnectLive, setLiveConnectionState]);
 
   // Subscribe to live events while generating.
   useEffect(() => {
@@ -586,7 +465,6 @@ export function useCodexLog({
         return;
       }
       setLiveConnectionState(false, "connecting");
-      recordActivityDebug({ event: "codex_activity_subscribe_start" });
       try {
         if (liveLogStream) {
           const lease = await acquireSharedProjectDStream<AcpStreamMessage>({
@@ -594,14 +472,6 @@ export function useCodexLog({
             name: liveLogStream,
             ephemeral: true,
             maxListeners: 50,
-            initPhaseReporter: (phase, details) => {
-              recordActivityDebug({
-                event: "codex_activity_open_phase",
-                phase,
-                openElapsedMs: details?.component_elapsed_ms,
-                payload: { phase, ...(details ?? {}) },
-              });
-            },
           });
           liveStream = lease.stream;
           liveStreamRef.current = liveStream;
@@ -611,10 +481,6 @@ export function useCodexLog({
             return;
           }
           const streamConnected = isDStreamLiveConnected(liveStream);
-          recordActivityDebug({
-            event: "codex_activity_subscribe_acquired",
-            connected: streamConnected,
-          });
           setLiveConnectionState(
             streamConnected,
             streamConnected ? "connected" : "reconnecting",
@@ -626,9 +492,6 @@ export function useCodexLog({
           }
           liveStreamDisconnected = () => {
             if (stopped) return;
-            recordActivityDebug({
-              event: "codex_activity_stream_disconnected",
-            });
             setLiveConnectionState(false, "reconnecting");
             reconnectResourceRef.current?.requestReconnect({
               reason: "codex_log_stream_disconnected",
@@ -636,7 +499,6 @@ export function useCodexLog({
           };
           liveStreamRecovered = () => {
             if (stopped) return;
-            recordActivityDebug({ event: "codex_activity_stream_recovered" });
             setLiveConnectionState(true, "connected");
           };
           liveStream.on("disconnected", liveStreamDisconnected);
@@ -675,10 +537,6 @@ export function useCodexLog({
           if (!stopped && initial.length > 0) {
             setLiveLog((prev) => mergeLogs(prev ?? [], initial));
           }
-          recordActivityDebug({
-            event: "codex_activity_subscribe_done",
-            initialEvents: initial.length,
-          });
           return;
         }
         if (!logSubject) {
@@ -691,7 +549,6 @@ export function useCodexLog({
         });
         sub = await cn.subscribe(logSubject);
         setLiveConnectionState(true, "connected");
-        recordActivityDebug({ event: "codex_activity_subscribe_done" });
         for await (const mesg of sub) {
           if (stopped) break;
           const payload = normalizeIncomingLogPayload(mesg?.data);
@@ -714,10 +571,6 @@ export function useCodexLog({
           });
         }
       } catch (err) {
-        recordActivityDebug({
-          event: "codex_activity_subscribe_error",
-          error: `${err}`,
-        });
         setLiveConnectionState(false, "reconnecting");
         try {
           if (liveStream && liveStreamListener) {
@@ -777,7 +630,6 @@ export function useCodexLog({
     liveLogStream,
     logSubject,
     mergeLogs,
-    recordActivityDebug,
     setLiveConnectionState,
   ]);
 

@@ -193,6 +193,33 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     return this.blockEditorControls[id];
   }
 
+  private getSlateMarkdown(id: string): string | undefined {
+    const blockControl = this.getBlockEditorControl(id);
+    if (typeof blockControl?.getMarkdown === "function") {
+      return blockControl.getMarkdown();
+    }
+    const editor = this.getSlateEditor(id);
+    if (typeof editor?.getMarkdownValue === "function") {
+      return editor.getMarkdownValue();
+    }
+    return undefined;
+  }
+
+  set_syncstring_to_codemirror(
+    id?: string,
+    do_not_exit_undo_mode?: boolean,
+  ): void {
+    const activeId = id ?? this._get_active_id?.();
+    if (activeId != null && this._get_frame_type(activeId) == "slate") {
+      const markdown = this.getSlateMarkdown(activeId);
+      if (markdown != null) {
+        this.set_value(markdown, do_not_exit_undo_mode);
+        return;
+      }
+    }
+    super.set_syncstring_to_codemirror(id, do_not_exit_undo_mode);
+  }
+
   public async show_table_of_contents(
     _id: string | undefined = undefined,
   ): Promise<void> {

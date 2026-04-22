@@ -405,7 +405,6 @@ describe("useCodexLog", () => {
           name: "live-stream-1",
           ephemeral: true,
           maxListeners: 50,
-          initPhaseReporter: expect.any(Function),
         }),
       );
     });

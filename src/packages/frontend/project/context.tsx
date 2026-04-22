@@ -44,9 +44,14 @@ import { useProjectCourseInfo } from "./use-project-course";
 import {
   pathMatchesRoot,
   selectionForPath,
+  selectionForPathFollowThrough,
   useProjectWorkspaces,
 } from "./workspaces/state";
-import type { ProjectWorkspaceState } from "./workspaces/types";
+import type {
+  ProjectWorkspaceState,
+  WorkspaceRecord,
+  WorkspaceSelection,
+} from "./workspaces/types";
 import { EDITOR_PREFIX, path_to_tab, tab_to_path } from "@cocalc/util/misc";
 import {
   notifyProjectFilesystemChange,
@@ -100,6 +105,43 @@ export function resolveHiddenActiveTabForSelection({
   return fallbackPath != null
     ? { kind: "activate-path", path: fallbackPath }
     : { kind: "show-files" };
+}
+
+function sameWorkspaceSelection(
+  a: WorkspaceSelection,
+  b: WorkspaceSelection,
+): boolean {
+  return (
+    a.kind === b.kind &&
+    (a.kind !== "workspace" ||
+      a.workspace_id ===
+        (b as WorkspaceSelection & { workspace_id?: string }).workspace_id)
+  );
+}
+
+export function selectionForOutOfScopeFileExplorerPath({
+  currentPath,
+  currentRootPath,
+  currentSelection,
+  records,
+  selectionChanged,
+}: {
+  currentPath?: string;
+  currentRootPath: string;
+  currentSelection: WorkspaceSelection;
+  records: WorkspaceRecord[];
+  selectionChanged: boolean;
+}): WorkspaceSelection | null {
+  if (selectionChanged || !currentPath) return null;
+  if (pathMatchesRoot(currentPath, currentRootPath)) return null;
+  const nextSelection = selectionForPathFollowThrough(
+    currentSelection,
+    records,
+    currentPath,
+  );
+  return sameWorkspaceSelection(currentSelection, nextSelection)
+    ? null
+    : nextSelection;
 }
 
 export interface ProjectContextState {
@@ -390,6 +432,17 @@ export function useProjectContextProvider({
         if (!confirmWorkspaceRestore()) {
           return;
         }
+        return;
+      }
+      const nextSelection = selectionForOutOfScopeFileExplorerPath({
+        currentPath: current_path_abs,
+        currentRootPath: current.root_path,
+        currentSelection: workspaces.selection,
+        records: workspaces.records,
+        selectionChanged,
+      });
+      if (nextSelection != null) {
+        workspaces.setSelection(nextSelection);
         return;
       }
       if (workspaceRestorePendingRef.current && getFallbackPath()) {
