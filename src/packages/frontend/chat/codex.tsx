@@ -552,6 +552,7 @@ export function CodexConfigButton({
               embedded
               hidePanelChrome
               defaultProjectId={projectId}
+              onPaymentSourceChanged={refreshPaymentSource}
             />
             <Text type="secondary">
               <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
@@ -567,6 +568,7 @@ export function CodexConfigButton({
               embedded
               hidePanelChrome
               defaultProjectId={projectId}
+              onPaymentSourceChanged={refreshPaymentSource}
             />
             <Text type="secondary">
               <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
