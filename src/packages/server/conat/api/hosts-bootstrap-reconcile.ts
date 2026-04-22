@@ -378,6 +378,21 @@ async function trustHostOwnerBaySshKeyViaCloudProvider({
   }
 }
 
+export async function trustSshPublicKeyViaCloudProviderForHostRow({
+  host_id,
+  row,
+  publicKey,
+}: {
+  host_id: string;
+  row: any;
+  publicKey: string;
+}): Promise<{ attempted: boolean; succeeded: boolean }> {
+  return await trustHostOwnerBaySshKeyViaCloudProvider({
+    row: { ...row, id: host_id },
+    publicKey,
+  });
+}
+
 export async function trustHostOwnerBaySshKeyForHostRow({
   host_id,
   row,
@@ -392,8 +407,9 @@ export async function trustHostOwnerBaySshKeyForHostRow({
   cloud_provider_succeeded: boolean;
 }> {
   const sshIdentity = await getHostOwnerBaySshIdentity();
-  const cloudProvider = await trustHostOwnerBaySshKeyViaCloudProvider({
-    row: { ...row, id: host_id },
+  const cloudProvider = await trustSshPublicKeyViaCloudProviderForHostRow({
+    host_id,
+    row,
     publicKey: sshIdentity.publicKey,
   });
   const hostControlSucceeded = await trustHostOwnerBaySshKeyViaHostControl({

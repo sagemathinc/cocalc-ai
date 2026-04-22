@@ -28,9 +28,11 @@ import {
   assertCloudHostBootstrapReconcileSupported,
   reconcileCloudHostBootstrapOverSsh,
   trustHostOwnerBaySshKeyForHostRow,
+  trustSshPublicKeyViaCloudProviderForHostRow,
 } from "@cocalc/server/conat/api/hosts-bootstrap-reconcile";
 import { notifyProjectHostUpdate } from "@cocalc/server/conat/route-project";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
 import {
   resolveHostBay,
   resolveHostBayDirect,
@@ -62,6 +64,48 @@ function normalizeBayId(name: string, value: string): string {
     throw new Error(`${name} must be specified`);
   }
   return normalized;
+}
+
+function cloudHostRequiresProviderSshTrust(
+  host?: Record<string, unknown> | null,
+): boolean {
+  const cloud = `${(host as any)?.metadata?.machine?.cloud ?? ""}`
+    .trim()
+    .toLowerCase();
+  return !!cloud && cloud !== "self-host" && cloud !== "local";
+}
+
+function isLoopbackBootstrapOrigin(origin: string): boolean {
+  try {
+    const hostname = new URL(origin).hostname.toLowerCase();
+    return (
+      hostname === "localhost" ||
+      hostname === "::1" ||
+      hostname.startsWith("127.")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function assertDestinationBootstrapOriginForHost({
+  host_id,
+  host,
+  dest_bay_id,
+}: {
+  host_id: string;
+  host?: Record<string, unknown> | null;
+  dest_bay_id: string;
+}): Promise<void> {
+  if (!cloudHostRequiresProviderSshTrust(host)) return;
+  const { baseUrl } = await resolveLaunchpadBootstrapUrl({
+    preferCurrentBay: true,
+  });
+  if (isLoopbackBootstrapOrigin(baseUrl)) {
+    throw new Error(
+      `host rehome destination bay ${dest_bay_id} has no public bootstrap origin for cloud host ${host_id}; resolved ${baseUrl}`,
+    );
+  }
 }
 
 function requireAccount(account_id?: string): string {
@@ -534,11 +578,20 @@ export async function prepareHostRehomeOnDestination({
   }
   let ownerBayPublicKeyInstalled = false;
   let ownerBayPublicKeyTrustedByCloud = false;
+  let ownerBayPublicKeyCloudAttempted = false;
+  let ownerBayPublicKey: string | undefined;
   if (host != null) {
+    await assertDestinationBootstrapOriginForHost({
+      host_id: hostId,
+      host,
+      dest_bay_id: destBayId,
+    });
     const result = await trustHostOwnerBaySshKeyForHostRow({
       host_id: hostId,
       row: host,
     });
+    ownerBayPublicKey = result.public_key;
+    ownerBayPublicKeyCloudAttempted = result.cloud_provider_attempted;
     ownerBayPublicKeyTrustedByCloud = result.cloud_provider_succeeded;
     ownerBayPublicKeyInstalled =
       result.host_control_succeeded || result.cloud_provider_succeeded;
@@ -547,13 +600,16 @@ export async function prepareHostRehomeOnDestination({
     host_id: hostId,
     source_bay_id: sourceBayId,
     dest_bay_id: destBayId,
+    owner_bay_public_key_cloud_attempted: ownerBayPublicKeyCloudAttempted,
     owner_bay_public_key_installed: ownerBayPublicKeyInstalled,
     owner_bay_public_key_trusted_by_cloud: ownerBayPublicKeyTrustedByCloud,
   });
   return {
     host_id: hostId,
     dest_bay_id: destBayId,
+    owner_bay_public_key: ownerBayPublicKey,
     owner_bay_public_key_installed: ownerBayPublicKeyInstalled,
+    owner_bay_public_key_cloud_attempted: ownerBayPublicKeyCloudAttempted,
     owner_bay_public_key_trusted_by_cloud: ownerBayPublicKeyTrustedByCloud,
   };
 }
@@ -711,7 +767,7 @@ export async function runHostRehomeOperation(
     }
 
     if (op.stage === "requested") {
-      await getInterBayBridge()
+      const prepare = await getInterBayBridge()
         .hostConnection(op.dest_bay_id, {
           timeout_ms: HOST_REHOME_TIMEOUT_MS,
         })
@@ -721,6 +777,34 @@ export async function runHostRehomeOperation(
           dest_bay_id: op.dest_bay_id,
           host: host ?? op.host ?? {},
         });
+      if (
+        cloudHostRequiresProviderSshTrust(host) &&
+        !prepare.owner_bay_public_key_trusted_by_cloud
+      ) {
+        if (!prepare.owner_bay_public_key) {
+          throw new Error(
+            `host rehome destination ${op.dest_bay_id} did not return an owner SSH public key for ${op.host_id}`,
+          );
+        }
+        const sourceRepair = await trustSshPublicKeyViaCloudProviderForHostRow({
+          host_id: op.host_id,
+          row: host ?? op.host ?? {},
+          publicKey: prepare.owner_bay_public_key,
+        });
+        log.info("host rehome source repaired destination ssh trust", {
+          op_id,
+          host_id: op.host_id,
+          source_bay_id: op.source_bay_id,
+          dest_bay_id: op.dest_bay_id,
+          cloud_provider_attempted: sourceRepair.attempted,
+          cloud_provider_succeeded: sourceRepair.succeeded,
+        });
+        if (!sourceRepair.succeeded) {
+          throw new Error(
+            `host rehome could not trust destination bay ${op.dest_bay_id} SSH key in cloud metadata for ${op.host_id} before source flip`,
+          );
+        }
+      }
       op = await updateOperation({
         op_id,
         stage: "destination_prepared",

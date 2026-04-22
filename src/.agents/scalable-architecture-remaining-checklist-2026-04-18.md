@@ -1034,6 +1034,14 @@ Implementation checkpoint, 2026-04-22 PT:
   public key before changing ownership. It uses the source host row on the
   destination bay, so cloud-provider metadata repair can run even when the
   existing routed host-control path is unavailable.
+- If the destination bay cannot repair cloud-provider SSH metadata, it returns
+  its owner public key to the source bay. The source bay then attempts the
+  cloud metadata repair before source flip, so missing destination cloud
+  credentials do not strand the host mid-rehome.
+- Destination prepare refuses cloud-host rehome when the destination bay
+  resolves its bootstrap origin to loopback. That prevents an attached/local
+  bay without a public bootstrap route from flipping ownership and then leaving
+  SSH bootstrap stuck downloading from `localhost`.
 - Destination accept copies the `project_hosts` row to the destination bay with
   `bay_id` set to the destination; source flip updates the source row's
   `bay_id` only, leaving assigned projects untouched.
@@ -1102,6 +1110,16 @@ Live 3-bay validation evidence, 2026-04-22 PT:
   `op_id=56b8aa4d-b89b-425b-8ee8-8eeb3717102a`. Before large host drains,
   existing hosts need a hub-owner SSH trust audit/backfill so destination
   bootstrap reconcile is not blocked by missing SSH authorization.
+- Follow-up validation after adding `host ssh-trust` showed
+  `cocalc host ssh-trust fe625be4-c86f-4fc4-b324-fda2f895e448` succeeded on
+  `bay-0` through both host-control and GCP metadata. A retry to `bay-2`
+  proved source-bay cloud metadata repair works: `bay-0` installed the `bay-2`
+  public key before source flip, and direct SSH with the `bay-2` owner key then
+  worked. That exposed the next safe-blocker: local attached `bay-2` resolves
+  cloud bootstrap to `https://localhost`, which a cloud host cannot download.
+  The final guarded retry failed at `stage=requested` with
+  `op_id=cc9819e8-5344-434b-a90e-d65e0aa28444`, and `host where` confirmed
+  `host2` stayed on `bay-0`.
 
 Known follow-up:
 

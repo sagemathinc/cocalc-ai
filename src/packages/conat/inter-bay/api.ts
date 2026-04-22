@@ -253,7 +253,9 @@ export interface HostRehomeRequest {
 export interface HostRehomePrepareResponse {
   host_id: string;
   dest_bay_id: string;
+  owner_bay_public_key?: string;
   owner_bay_public_key_installed: boolean;
+  owner_bay_public_key_cloud_attempted?: boolean;
   owner_bay_public_key_trusted_by_cloud?: boolean;
 }
 
