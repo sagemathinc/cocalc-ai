@@ -42,6 +42,8 @@ const PORTABLE_STATE_TABLES = [
   "account_project_index",
   "account_collaborator_index",
   "account_notification_index",
+  "remember_me",
+  "auth_tokens",
 ] as const;
 
 type PortableStateTable = (typeof PORTABLE_STATE_TABLES)[number];
@@ -237,7 +239,11 @@ async function replacePortableRows({
       ? ["account_id", "project_id"]
       : table === "account_collaborator_index"
         ? ["account_id", "collaborator_account_id"]
-        : ["account_id", "notification_id"];
+        : table === "account_notification_index"
+          ? ["account_id", "notification_id"]
+          : table === "remember_me"
+            ? ["hash"]
+            : ["auth_token"];
   await getPool().query(`DELETE FROM "${table}" WHERE account_id=$1`, [
     account_id,
   ]);
@@ -298,10 +304,14 @@ async function loadPortableState(
     account_project_index,
     account_collaborator_index,
     account_notification_index,
+    remember_me,
+    auth_tokens,
   ] = await Promise.all([
     loadPortableRows("account_project_index", account_id),
     loadPortableRows("account_collaborator_index", account_id),
     loadPortableRows("account_notification_index", account_id),
+    loadPortableRows("remember_me", account_id),
+    loadPortableRows("auth_tokens", account_id),
   ]);
   return {
     target_account_id: account_id,
@@ -310,6 +320,8 @@ async function loadPortableState(
     account_project_index,
     account_collaborator_index,
     account_notification_index,
+    remember_me,
+    auth_tokens,
   };
 }
 
@@ -675,6 +687,8 @@ export async function copyAccountRehomeState({
   account_project_index,
   account_collaborator_index,
   account_notification_index,
+  remember_me,
+  auth_tokens,
 }: AccountRehomeStateCopyRequest): Promise<void> {
   const accountId = normalizeUuid("target_account_id", target_account_id);
   normalizeBayId("source_bay_id", source_bay_id);
@@ -700,6 +714,16 @@ export async function copyAccountRehomeState({
     account_id: accountId,
     rows: account_notification_index ?? [],
   });
+  await replacePortableRows({
+    table: "remember_me",
+    account_id: accountId,
+    rows: remember_me ?? [],
+  });
+  await replacePortableRows({
+    table: "auth_tokens",
+    account_id: accountId,
+    rows: auth_tokens ?? [],
+  });
   log.info("account rehome destination state copied", {
     account_id: accountId,
     source_bay_id,
@@ -707,6 +731,8 @@ export async function copyAccountRehomeState({
     account_project_index_rows: account_project_index?.length ?? 0,
     account_collaborator_index_rows: account_collaborator_index?.length ?? 0,
     account_notification_index_rows: account_notification_index?.length ?? 0,
+    remember_me_rows: remember_me?.length ?? 0,
+    auth_tokens_rows: auth_tokens?.length ?? 0,
   });
 }
 

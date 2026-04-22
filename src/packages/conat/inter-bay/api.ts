@@ -370,6 +370,8 @@ export interface AccountRehomeStateCopyRequest {
   account_project_index?: Record<string, unknown>[];
   account_collaborator_index?: Record<string, unknown>[];
   account_notification_index?: Record<string, unknown>[];
+  remember_me?: Record<string, unknown>[];
+  auth_tokens?: Record<string, unknown>[];
 }
 
 export type AccountRehomeOperationStage =
