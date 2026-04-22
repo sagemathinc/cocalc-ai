@@ -32,7 +32,11 @@ import {
   buildBackupIndex,
   uploadBackupIndex,
 } from "./backup-index";
-import { type SnapshotCounts, updateRollingSnapshots } from "./snapshots";
+import {
+  TEMP_RUSTIC_SNAPSHOT_PREFIX,
+  type SnapshotCounts,
+  updateRollingSnapshots,
+} from "./snapshots";
 import {
   createRusticProgressHandler,
   type RusticProgressUpdate,
@@ -40,12 +44,11 @@ import {
 
 export const RUSTIC = "rustic";
 
-const RUSTIC_SNAPSHOT_PREFIX = "temp-rustic-snapshot";
 const logger = getLogger("file-server:btrfs:subvolume-rustic");
 
 function makeTempRusticSnapshotName(): string {
   const rand = Math.random().toString(36).slice(2, 10);
-  return `${RUSTIC_SNAPSHOT_PREFIX}-${Date.now().toString(36)}-${rand}`;
+  return `${TEMP_RUSTIC_SNAPSHOT_PREFIX}-${Date.now().toString(36)}-${rand}`;
 }
 
 interface Snapshot {

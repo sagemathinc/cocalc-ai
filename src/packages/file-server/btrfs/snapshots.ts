@@ -13,6 +13,8 @@ export { type SnapshotCounts };
 
 const logger = getLogger("file-server:btrfs:snapshots");
 let loggedRollingSnapshotsDisabled = false;
+export const TEMP_RUSTIC_SNAPSHOT_PREFIX = "temp-rustic-snapshot";
+const STALE_TEMP_RUSTIC_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
 
 export async function updateRollingSnapshots({
   snapshots,
@@ -40,8 +42,9 @@ export async function updateRollingSnapshots({
     changed,
   });
 
+  const allSnapshotNames = await snapshots.readdir();
   // get exactly the iso timestamp snapshot names:
-  const snapshotNames = (await snapshots.readdir()).filter(isISODate);
+  const snapshotNames = allSnapshotNames.filter(isISODate);
   snapshotNames.sort();
   let needNewSnapshot = false;
   if (changed) {
@@ -80,7 +83,10 @@ export async function updateRollingSnapshots({
   }
 
   // delete extra snapshots
-  const toDelete = snapshotsToDelete({ counts, snapshots: snapshotNames });
+  const toDelete = [
+    ...snapshotsToDelete({ counts, snapshots: snapshotNames }),
+    ...tempRusticSnapshotsToDelete(allSnapshotNames),
+  ];
   let deleteError: any = undefined;
   for (const name of toDelete) {
     try {
@@ -104,34 +110,74 @@ export async function updateRollingSnapshots({
   }
 }
 
-function snapshotsToDelete({ counts, snapshots }): string[] {
+export function snapshotsToDelete({
+  counts,
+  snapshots,
+  now = Date.now(),
+}: {
+  counts: Partial<SnapshotCounts>;
+  snapshots: string[];
+  now?: number;
+}): string[] {
   if (snapshots.length == 0) {
     // nothing to do
     return [];
   }
 
-  // sorted from BIGGEST to smallest
-  const times = snapshots.map((x) => new Date(x).valueOf());
-  times.reverse();
+  const entries = snapshots
+    .map((name) => ({ name, time: new Date(name).valueOf() }))
+    .filter(({ time }) => Number.isFinite(time))
+    .sort((a, b) => b.time - a.time);
   const save = new Set<number>();
+  const hasPositiveRetentionCount = Object.values(counts).some(
+    (count) => Number(count) > 0,
+  );
+  // Always retain the newest snapshot. Longer retention buckets intentionally
+  // choose the oldest snapshot in each age bucket, which lets a daily snapshot
+  // survive long enough to become a weekly/monthly snapshot.
+  if (hasPositiveRetentionCount && entries[0] != null) {
+    save.add(entries[0].time);
+  }
   for (const type in counts) {
     const count = counts[type];
     const length_ms = SNAPSHOT_INTERVALS_MS[type];
+    if (!count || !length_ms) continue;
 
-    // Pick the first count newest snapshots at intervals of length
-    // length_ms milliseconds.
-    let n = 0,
-      i = 0,
-      last_tm = 0;
-    while (n < count && i < times.length) {
-      const tm = times[i];
-      if (!last_tm || tm <= last_tm - length_ms) {
-        save.add(tm);
-        last_tm = tm;
-        n += 1; // found one more
+    for (let bucket = 0; bucket < count; bucket++) {
+      const minAge = bucket * length_ms;
+      const maxAge = (bucket + 1) * length_ms;
+      let candidate: number | undefined;
+      for (const { time } of entries) {
+        const age = now - time;
+        if (age < minAge || age >= maxAge) continue;
+        if (candidate == null || time < candidate) {
+          candidate = time;
+        }
       }
-      i += 1; // move to next snapshot
+      if (candidate != null) {
+        save.add(candidate);
+      }
     }
   }
   return snapshots.filter((x) => !save.has(new Date(x).valueOf()));
+}
+
+function tempRusticSnapshotsToDelete(
+  snapshots: string[],
+  now = Date.now(),
+): string[] {
+  return snapshots.filter((name) => {
+    const created = tempRusticSnapshotCreatedAt(name);
+    return created != null && now - created > STALE_TEMP_RUSTIC_SNAPSHOT_MS;
+  });
+}
+
+function tempRusticSnapshotCreatedAt(name: string): number | undefined {
+  if (!name.startsWith(`${TEMP_RUSTIC_SNAPSHOT_PREFIX}-`)) {
+    return;
+  }
+  const rest = name.slice(TEMP_RUSTIC_SNAPSHOT_PREFIX.length + 1);
+  const encodedTime = rest.split("-")[0];
+  const time = parseInt(encodedTime, 36);
+  return Number.isFinite(time) ? time : undefined;
 }
