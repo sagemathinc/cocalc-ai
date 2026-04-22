@@ -11,6 +11,10 @@ let delayMock: jest.Mock;
 let spawnMock: jest.Mock;
 let upgradeHostSoftwareInternalHelperMock: jest.Mock;
 let rolloutHostManagedComponentsInternalHelperMock: jest.Mock;
+let getHostOwnerBaySshIdentityMock: jest.Mock;
+let getRoutedHostControlClientMock: jest.Mock;
+let getProviderContextMock: jest.Mock;
+let ensureSshAccessMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -43,6 +47,26 @@ jest.mock("@cocalc/server/cloud/bootstrap-host", () => ({
   __esModule: true,
   buildCloudInitStartupScript: (...args: any[]) =>
     buildCloudInitStartupScriptMock(...args),
+}));
+
+jest.mock("@cocalc/server/cloud/ssh-key", () => ({
+  __esModule: true,
+  getHostOwnerBaySshIdentity: (...args: any[]) =>
+    getHostOwnerBaySshIdentityMock(...args),
+  getHostSshPublicKeys: jest.fn(async () => [
+    "ssh-ed25519 AAAAOWNER cocalc-host-owner-bay:bay-0",
+  ]),
+}));
+
+jest.mock("@cocalc/server/project-host/client", () => ({
+  __esModule: true,
+  getRoutedHostControlClient: (...args: any[]) =>
+    getRoutedHostControlClientMock(...args),
+}));
+
+jest.mock("@cocalc/server/cloud/provider-context", () => ({
+  __esModule: true,
+  getProviderContext: (...args: any[]) => getProviderContextMock(...args),
 }));
 
 jest.mock("awaiting", () => ({
@@ -171,6 +195,22 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
     buildCloudInitStartupScriptMock = jest.fn(
       async () => "#!/bin/bash\necho hi\n",
     );
+    getHostOwnerBaySshIdentityMock = jest.fn(async () => ({
+      privateKeyPath: "/tmp/cocalc-owner-bay/id_ed25519",
+      publicKey: "ssh-ed25519 AAAAOWNER cocalc-host-owner-bay:bay-0",
+    }));
+    getRoutedHostControlClientMock = jest.fn(async () => ({
+      addHostSshAuthorizedKey: jest.fn(async () => ({ added: true })),
+    }));
+    ensureSshAccessMock = jest.fn(async () => undefined);
+    getProviderContextMock = jest.fn(async () => ({
+      entry: {
+        provider: {
+          ensureSshAccess: ensureSshAccessMock,
+        },
+      },
+      creds: {},
+    }));
     delayMock = jest.fn(async () => undefined);
     upgradeHostSoftwareInternalHelperMock = jest.fn(async () => ({
       results: [],
@@ -194,7 +234,11 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
               status: "running",
               metadata: {
                 owner: ACCOUNT_ID,
-                runtime: { public_ip: "34.11.143.149", ssh_user: "ubuntu" },
+                runtime: {
+                  instance_id: "host-instance",
+                  public_ip: "34.11.143.149",
+                  ssh_user: "ubuntu",
+                },
                 machine: { cloud: "gcp" },
                 bootstrap: {
                   status: "done",
@@ -311,8 +355,25 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
 
     expect(spawnMock).toHaveBeenCalledWith(
       "ssh",
-      expect.arrayContaining(["ubuntu@34.11.143.149", "bash", "-se"]),
+      expect.arrayContaining([
+        "-i",
+        "/tmp/cocalc-owner-bay/id_ed25519",
+        "ubuntu@34.11.143.149",
+        "bash",
+        "-se",
+      ]),
       expect.any(Object),
+    );
+    expect(ensureSshAccessMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance_id: expect.any(String),
+        metadata: expect.objectContaining({
+          ssh_public_keys: [
+            "ssh-ed25519 AAAAOWNER cocalc-host-owner-bay:bay-0",
+          ],
+        }),
+      }),
+      {},
     );
     expect(ssh.getScript()).toContain(
       'BOOTSTRAP_PID="$(sudo -n bash -lc \'nohup bash "$1" >>"$2" 2>&1 </dev/null & echo $!\' -- "$BOOTSTRAP_SH" "$BOOTSTRAP_LOG")"',

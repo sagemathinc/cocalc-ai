@@ -33,6 +33,8 @@ let updateProjectUsersMock: jest.Mock;
 let createLroMock: jest.Mock;
 let createProjectHostBootstrapTokenMock: jest.Mock;
 let buildCloudInitStartupScriptMock: jest.Mock;
+let getHostOwnerBaySshIdentityMock: jest.Mock;
+let getProviderContextMock: jest.Mock;
 let siteUrlMock: jest.Mock;
 let getServerSettingsMock: jest.Mock;
 let fetchMock: jest.Mock;
@@ -148,6 +150,20 @@ jest.mock("@cocalc/server/cloud/bootstrap-host", () => ({
   __esModule: true,
   buildCloudInitStartupScript: (...args: any[]) =>
     buildCloudInitStartupScriptMock(...args),
+}));
+
+jest.mock("@cocalc/server/cloud/ssh-key", () => ({
+  __esModule: true,
+  getHostOwnerBaySshIdentity: (...args: any[]) =>
+    getHostOwnerBaySshIdentityMock(...args),
+  getHostSshPublicKeys: jest.fn(async () => [
+    "ssh-ed25519 AAAAOWNER cocalc-host-owner-bay:bay-0",
+  ]),
+}));
+
+jest.mock("@cocalc/server/cloud/provider-context", () => ({
+  __esModule: true,
+  getProviderContext: (...args: any[]) => getProviderContextMock(...args),
 }));
 
 jest.mock("@cocalc/database/settings/site-url", () => ({
@@ -270,6 +286,18 @@ beforeEach(() => {
   buildCloudInitStartupScriptMock = jest.fn(
     async () => "#!/usr/bin/env bash\necho bootstrap\n",
   );
+  getHostOwnerBaySshIdentityMock = jest.fn(async () => ({
+    privateKeyPath: "/tmp/cocalc-owner-bay/id_ed25519",
+    publicKey: "ssh-ed25519 AAAAOWNER cocalc-host-owner-bay:bay-0",
+  }));
+  getProviderContextMock = jest.fn(async () => ({
+    entry: {
+      provider: {
+        ensureSshAccess: jest.fn(async () => undefined),
+      },
+    },
+    creds: {},
+  }));
   siteUrlMock = jest.fn(async () => "https://hub.example.test");
   getServerSettingsMock = jest.fn(async () => ({}));
   fetchMock = jest.fn();

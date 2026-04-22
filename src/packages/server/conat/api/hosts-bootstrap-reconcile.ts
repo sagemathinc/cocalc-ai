@@ -30,7 +30,13 @@ import getPool from "@cocalc/database/pool";
 import { normalizeProviderId } from "@cocalc/cloud";
 import { createProjectHostBootstrapToken } from "@cocalc/server/project-host/bootstrap-token";
 import { buildCloudInitStartupScript } from "@cocalc/server/cloud/bootstrap-host";
+import {
+  getHostOwnerBaySshIdentity,
+  getHostSshPublicKeys,
+} from "@cocalc/server/cloud/ssh-key";
 import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 
 const logger = getLogger("server:conat:api:hosts");
 const HOST_BOOTSTRAP_RECONCILE_TIMEOUT_MS = 20 * 60 * 1000;
@@ -43,17 +49,23 @@ function pool() {
 async function runSshScript({
   target,
   script,
+  identityFile,
 }: {
   target: string;
   script: string;
+  identityFile: string;
 }): Promise<{ stdout: string; stderr: string }> {
   const args = [
     "-o",
     "BatchMode=yes",
     "-o",
+    "IdentitiesOnly=yes",
+    "-o",
     "StrictHostKeyChecking=accept-new",
     "-o",
     "ConnectTimeout=10",
+    "-i",
+    identityFile,
     target,
     "bash",
     "-se",
@@ -269,6 +281,93 @@ function cloudHostSshTarget(row: {
   return `${sshUser}@${publicIp}`;
 }
 
+async function trustHostOwnerBaySshKeyViaHostControl({
+  host_id,
+  publicKey,
+}: {
+  host_id: string;
+  publicKey: string;
+}): Promise<void> {
+  try {
+    const client = await getRoutedHostControlClient({
+      host_id,
+      timeout: 15_000,
+      fresh: true,
+    });
+    const response = await client.addHostSshAuthorizedKey({
+      public_key: publicKey,
+    });
+    logger.info("host upgrade: ensured owner bay ssh key via host control", {
+      host_id,
+      added: !!response.added,
+    });
+  } catch (err) {
+    logger.warn(
+      "host upgrade: unable to repair owner bay ssh key via host control before ssh reconcile",
+      {
+        host_id,
+        err,
+      },
+    );
+  }
+}
+
+async function trustHostOwnerBaySshKeyViaCloudProvider({
+  row,
+  publicKey,
+}: {
+  row: any;
+  publicKey: string;
+}): Promise<void> {
+  const providerId = normalizeProviderId(row?.metadata?.machine?.cloud);
+  if (!providerId || providerId === "self-host") return;
+  try {
+    const { entry, creds } = await getProviderContext(providerId, {
+      region: row?.region,
+    });
+    if (!entry.provider.ensureSshAccess) return;
+    const machine = row?.metadata?.machine ?? {};
+    const runtime = row?.metadata?.runtime ?? {};
+    const instanceId =
+      `${runtime.instance_id ?? machine.instance_id ?? row?.name ?? ""}`.trim();
+    if (!instanceId) return;
+    const sshUser =
+      `${runtime.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu"}`.trim() ||
+      "ubuntu";
+    const sshPublicKeys = await getHostSshPublicKeys();
+    await entry.provider.ensureSshAccess(
+      {
+        provider: providerId,
+        instance_id: instanceId,
+        public_ip: runtime.public_ip ?? machine.metadata?.public_ip,
+        ssh_user: sshUser,
+        zone: runtime.zone ?? machine.zone ?? machine.metadata?.zone,
+        dns_name: runtime.dns_name,
+        metadata: {
+          ...(runtime.metadata ?? {}),
+          ssh_user: sshUser,
+          ssh_public_key: publicKey,
+          ssh_public_keys: sshPublicKeys,
+        },
+      },
+      creds,
+    );
+    logger.info("host upgrade: ensured owner bay ssh key via cloud provider", {
+      host_id: row?.id,
+      provider: providerId,
+    });
+  } catch (err) {
+    logger.warn(
+      "host upgrade: unable to repair owner bay ssh key via cloud provider before ssh reconcile",
+      {
+        host_id: row?.id,
+        provider: providerId,
+        err,
+      },
+    );
+  }
+}
+
 export function assertCloudHostBootstrapReconcileSupported(row: any): void {
   const machineCloud = normalizeProviderId(row?.metadata?.machine?.cloud);
   if (!machineCloud || machineCloud === "self-host") {
@@ -301,6 +400,15 @@ export async function reconcileCloudHostBootstrapOverSsh(opts: {
     preferCurrentBay: true,
   });
   const bootstrapToken = await createProjectHostBootstrapToken(opts.host_id);
+  const sshIdentity = await getHostOwnerBaySshIdentity();
+  await trustHostOwnerBaySshKeyViaCloudProvider({
+    row: opts.row,
+    publicKey: sshIdentity.publicKey,
+  });
+  await trustHostOwnerBaySshKeyViaHostControl({
+    host_id: opts.host_id,
+    publicKey: sshIdentity.publicKey,
+  });
   const bootstrapScript = await buildCloudInitStartupScript(
     opts.row,
     bootstrapToken.token,
@@ -346,7 +454,11 @@ echo "started bootstrap reconcile pid=$BOOTSTRAP_PID log=$BOOTSTRAP_LOG"
     host_id: opts.host_id,
     target,
   });
-  const { stdout, stderr } = await runSshScript({ target, script });
+  const { stdout, stderr } = await runSshScript({
+    target,
+    script,
+    identityFile: sshIdentity.privateKeyPath,
+  });
   if (stdout.trim()) {
     logger.info("host upgrade: bootstrap reconcile stdout", {
       host_id: opts.host_id,

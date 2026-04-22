@@ -563,6 +563,19 @@ export class GcpProvider implements CloudProvider {
     }
   }
 
+  async ensureSshAccess(runtime: HostRuntime, creds: any): Promise<void> {
+    logger.info("gcp.ensureSshAccess", {
+      instance_id: runtime.instance_id,
+      zone: runtime.zone,
+    });
+    const credentials = parseCredentials(creds ?? {});
+    if (!runtime.zone) {
+      throw new Error("gcp.ensureSshAccess requires zone");
+    }
+    const client = new InstancesClient(credentials);
+    await ensureSshMetadata(runtime, credentials, client);
+  }
+
   async stopHost(runtime: HostRuntime, creds: any): Promise<void> {
     logger.info("gcp.stopHost", {
       instance_id: runtime.instance_id,

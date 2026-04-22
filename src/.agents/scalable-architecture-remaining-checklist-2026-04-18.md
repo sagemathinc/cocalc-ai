@@ -456,6 +456,29 @@ Notes:
   - final status showed `project-host`, `conat-router`, `conat-persist`, and
     `acp-worker` all `running` and `aligned`; foreground project exec succeeded
     after restore
+- host SSH access for bootstrap reconcile is now owned by the host-owning bay
+  instead of depending on manually-installed operator keys:
+  - each bay lazily creates a persistent Ed25519 host-owner SSH identity under
+    its secrets directory
+  - bootstrap/provider metadata includes that public key along with existing
+    `project_hosts_ssh_public_keys`
+  - SSH bootstrap reconcile uses the generated private key explicitly with
+    `IdentitiesOnly=yes`
+  - existing GCP hosts are repaired before SSH fallback by updating instance
+    `ssh-keys` metadata; host-control authorized-key repair remains a secondary
+    best-effort path
+- on 2026-04-21, the retained rollback drill was repeated after adding the
+  owner-bay SSH identity:
+  - the first attempt before provider metadata repair failed with
+    `Permission denied (publickey)` while leaving `host2` restored/aligned
+  - after adding the GCP metadata repair hook, operation
+    `d295f170-4967-4b7f-aa71-9a015d745519` rolled `host2` back to
+    `1776808579069`
+  - hub logs showed `gcp.ensureSshAccess`, cloud-provider SSH repair,
+    host-control key repair, and SSH bootstrap reconcile in that order
+  - restore operation `6333d1c0-4757-4dbf-adcf-e5b65e22a394` returned `host2`
+    to `1776809337586`; final status showed all managed project-host
+    components `running` and `aligned`
 
 ### 4. Close Phase 6 Placement / Lifecycle Validation
 
