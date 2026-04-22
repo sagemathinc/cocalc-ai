@@ -2065,6 +2065,117 @@ describe("hosts.rollbackProjectHostOverSshInternal", () => {
       expect.any(Object),
     );
   });
+
+  it("restores desired state when project-host rollback bootstrap reconcile fails", async () => {
+    const initialRow = {
+      id: HOST_ID,
+      status: "running",
+      version: "ph-v2",
+      metadata: {
+        owner: ACCOUNT_ID,
+        machine: {
+          cloud: "gcp",
+          metadata: {
+            public_ip: "34.1.2.3",
+            ssh_user: "ubuntu",
+          },
+        },
+        software: {
+          project_host: "ph-v2",
+          project_host_build_id: "build-ph-v2",
+        },
+      },
+    };
+    const updatedVersions: string[] = [];
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return { rows: [initialRow] };
+      }
+      if (sql.includes("UPDATE project_hosts") && sql.includes("version=$3")) {
+        updatedVersions.push(params[2]);
+        return { rows: [] };
+      }
+      if (sql.includes("UPDATE project_hosts")) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, metadata FROM project_hosts WHERE id=$1 LIMIT 1",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: false,
+              metadata: {
+                bootstrap: {
+                  status: "done",
+                  updated_at: "2026-04-15T00:00:00.000Z",
+                },
+                bootstrap_lifecycle: {
+                  summary_status: "in_sync",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    spawnMock = jest.fn(() => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        stdin: { end: () => void };
+      };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = {
+        end: () => {
+          setImmediate(() => child.emit("close", 1));
+        },
+      };
+      return child;
+    });
+
+    const { rollbackProjectHostOverSshInternal } = await import("./hosts");
+    await expect(
+      rollbackProjectHostOverSshInternal({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        version: "ph-v1",
+        reason: "test failed rollback",
+      }),
+    ).rejects.toThrow("failed with code 1");
+
+    expect(updatedVersions).toEqual(["ph-v1", "ph-v2"]);
+    expect(setProjectHostRuntimeDeploymentsMock).toHaveBeenCalledTimes(2);
+    expect(setProjectHostRuntimeDeploymentsMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        deployments: expect.arrayContaining([
+          expect.objectContaining({
+            target_type: "artifact",
+            target: "project-host",
+            desired_version: "ph-v1",
+          }),
+        ]),
+      }),
+    );
+    expect(setProjectHostRuntimeDeploymentsMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        deployments: expect.arrayContaining([
+          expect.objectContaining({
+            target_type: "artifact",
+            target: "project-host",
+            desired_version: "ph-v2",
+          }),
+        ]),
+      }),
+    );
+  });
 });
 
 describe("hosts.rolloutHostManagedComponentsInternal local rollback", () => {

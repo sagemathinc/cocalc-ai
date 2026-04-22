@@ -116,6 +116,7 @@ export async function rollbackHostRuntimeDeploymentsInternalHelper({
   upgradeHostSoftwareInternal,
   reconcileProjectHostComponent,
   rolloutProjectHostArtifact,
+  rollbackProjectHostOverSsh,
   assertCloudHostBootstrapReconcileSupported,
   reconcileCloudHostBootstrapOverSsh,
 }: {
@@ -175,6 +176,15 @@ export async function rollbackHostRuntimeDeploymentsInternalHelper({
   }) => Promise<
     HostRuntimeDeploymentRollbackResult["managed_component_rollout"]
   >;
+  rollbackProjectHostOverSsh: (opts: {
+    account_id?: string;
+    id: string;
+    version: string;
+    reason?: string;
+  }) => Promise<{
+    host_id: string;
+    rollback_version: string;
+  }>;
   assertCloudHostBootstrapReconcileSupported: (row: any) => void;
   reconcileCloudHostBootstrapOverSsh: (opts: {
     host_id: string;
@@ -265,6 +275,37 @@ export async function rollbackHostRuntimeDeploymentsInternalHelper({
     | undefined;
   const currentArtifactVersion =
     `${rollbackTarget.current_version ?? ""}`.trim();
+  const retainedArtifactVersions = Array.isArray(
+    rollbackTarget.retained_versions,
+  )
+    ? rollbackTarget.retained_versions.map((version) =>
+        `${version ?? ""}`.trim(),
+      )
+    : [];
+  const rollbackVersionAlreadyRetained =
+    retainedArtifactVersions.includes(rollback_version);
+  if (
+    target === "project-host" &&
+    artifact === "project-host" &&
+    currentArtifactVersion !== rollback_version &&
+    rollbackVersionAlreadyRetained
+  ) {
+    const projectHostRollback = await rollbackProjectHostOverSsh({
+      account_id,
+      id: row.id,
+      version: rollback_version,
+      reason: reason ?? "runtime_rollback",
+    });
+    return {
+      host_id: row.id,
+      target_type,
+      target,
+      artifact,
+      rollback_version,
+      rollback_source,
+      project_host_rollback: projectHostRollback,
+    };
+  }
   if (currentArtifactVersion !== rollback_version) {
     // Preflight artifact availability before mutating desired runtime state.
     // A failed rollback must not leave components pinned to an unavailable

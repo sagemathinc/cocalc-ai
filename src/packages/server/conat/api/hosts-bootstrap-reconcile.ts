@@ -241,12 +241,14 @@ async function waitForHostBootstrapReconcile({
       throw new Error("host deleted during bootstrap reconcile");
     }
     sawActivity ||= hostBootstrapActivityChanged(baseline, state);
-    const failure = hostBootstrapReconcileFailure(state);
-    if (failure) {
-      throw new Error(failure);
-    }
-    if (sawActivity && hostBootstrapReconcileSucceeded(state)) {
-      return;
+    if (sawActivity) {
+      const failure = hostBootstrapReconcileFailure(state);
+      if (failure) {
+        throw new Error(failure);
+      }
+      if (hostBootstrapReconcileSucceeded(state)) {
+        return;
+      }
     }
     await delay(HOST_BOOTSTRAP_RECONCILE_POLL_MS);
   }

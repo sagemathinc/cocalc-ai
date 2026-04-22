@@ -432,9 +432,30 @@ Notes:
   rewritten to the unavailable version. The host kept running the last known
   good daemon, but status showed persistent drift until restoring
   `--last-known-good`.
-- the rollback desired-state mutation has been changed to preflight project-host
-  artifact availability before rewriting component desired state, so this class
-  of failed rollback should not leave persistent drift.
+- the first rollback fix was incomplete: retained project-host versions should
+  not go through software URL download at all. The retained-version rollback
+  path now routes through the host SSH/bootstrap reconciler, which reuses the
+  already-installed bundle on the host.
+- the rollback wait path also ignored stale bootstrap failure metadata only
+  after observing new bootstrap activity. This prevents a previous failed
+  reconcile from making a newly-started rollback LRO fail before the host has
+  done any new work.
+- failed project-host SSH/bootstrap rollback now restores the previous desired
+  project-host version, so a genuine rollback failure does not leave the host in
+  persistent desired/current drift.
+- on 2026-04-21, the retained-version project-host rollback was rerun against
+  `host2`:
+  - rollback operation `8a4c4379-aa09-4517-8768-355821cfde0e` succeeded from
+    `1776809337586` to retained version `1776808579069`
+  - status showed the project-host artifact current version at
+    `1776808579069` with build id `20260421T215608Z-39cf7e213a49`
+  - foreground `cocalc project exec` against
+    `abd37947-fd69-40ea-999c-190a9458e6b2` succeeded while rolled back
+  - restore operation `ad6a0a00-a9b4-4c87-83f2-55006192a1fc` upgraded back to
+    `1776809337586`
+  - final status showed `project-host`, `conat-router`, `conat-persist`, and
+    `acp-worker` all `running` and `aligned`; foreground project exec succeeded
+    after restore
 
 ### 4. Close Phase 6 Placement / Lifecycle Validation
 

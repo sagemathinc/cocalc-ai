@@ -163,6 +163,9 @@ export async function rollbackProjectHostOverSshInternal({
   if (!rollbackVersion) {
     throw new Error("rollback version is required");
   }
+  const previousVersion =
+    `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
+    undefined;
   await rewriteProjectHostDesiredVersionInternal({
     row,
     requested_by,
@@ -184,6 +187,16 @@ export async function rollbackProjectHostOverSshInternal({
       version: rollbackVersion,
       metadata,
     },
+  }).catch(async (err) => {
+    if (previousVersion && previousVersion !== rollbackVersion) {
+      await rewriteProjectHostDesiredVersionInternal({
+        row,
+        requested_by,
+        version: previousVersion,
+        reason: "project_host_rollback_failed_restore",
+      });
+    }
+    throw err;
   });
   return {
     host_id: row.id,

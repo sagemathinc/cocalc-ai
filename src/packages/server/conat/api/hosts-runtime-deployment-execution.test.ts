@@ -41,6 +41,7 @@ describe("rollbackHostRuntimeDeploymentsInternalHelper", () => {
     const upgradeHostSoftwareInternal = jest.fn();
     const reconcileProjectHostComponent = jest.fn();
     const rolloutProjectHostArtifact = jest.fn();
+    const rollbackProjectHostOverSsh = jest.fn();
 
     const result = await rollbackHostRuntimeDeploymentsInternalHelper({
       account_id: "account-1",
@@ -77,6 +78,7 @@ describe("rollbackHostRuntimeDeploymentsInternalHelper", () => {
       upgradeHostSoftwareInternal,
       reconcileProjectHostComponent,
       rolloutProjectHostArtifact,
+      rollbackProjectHostOverSsh,
       assertCloudHostBootstrapReconcileSupported,
       reconcileCloudHostBootstrapOverSsh,
     });
@@ -118,6 +120,7 @@ describe("rollbackHostRuntimeDeploymentsInternalHelper", () => {
     expect(upgradeHostSoftwareInternal).not.toHaveBeenCalled();
     expect(reconcileProjectHostComponent).not.toHaveBeenCalled();
     expect(rolloutProjectHostArtifact).not.toHaveBeenCalled();
+    expect(rollbackProjectHostOverSsh).not.toHaveBeenCalled();
   });
 
   it("does not rewrite component desired state when artifact preflight fails", async () => {
@@ -161,6 +164,7 @@ describe("rollbackHostRuntimeDeploymentsInternalHelper", () => {
         upgradeHostSoftwareInternal,
         reconcileProjectHostComponent: jest.fn(),
         rolloutProjectHostArtifact: jest.fn(),
+        rollbackProjectHostOverSsh: jest.fn(),
         assertCloudHostBootstrapReconcileSupported: jest.fn(),
         reconcileCloudHostBootstrapOverSsh: jest.fn(),
       }),
@@ -172,5 +176,136 @@ describe("rollbackHostRuntimeDeploymentsInternalHelper", () => {
       targets: [{ artifact: "project-host", version: "project-host-v1" }],
     });
     expect(setProjectHostRuntimeDeployments).not.toHaveBeenCalled();
+  });
+
+  it("rolls back project-host to an already retained artifact through the ssh rollback path", async () => {
+    const setProjectHostRuntimeDeployments = jest.fn();
+    const upgradeHostSoftwareInternal = jest.fn();
+    const reconcileProjectHostComponent = jest.fn();
+    const rollbackProjectHostOverSsh = jest.fn(async () => ({
+      host_id: "host-1",
+      rollback_version: "project-host-v1",
+    }));
+
+    const result = await rollbackHostRuntimeDeploymentsInternalHelper({
+      account_id: "account-1",
+      id: "host-1",
+      target_type: "component",
+      target: "project-host",
+      reason: "test retained rollback",
+      loadHostForStartStop: async () => ({ id: "host-1", status: "running" }),
+      assertHostRunningForUpgrade: () => undefined,
+      getHostRuntimeDeploymentStatus: async () => ({
+        effective: [
+          {
+            target_type: "component",
+            target: "project-host",
+            desired_version: "project-host-v2",
+            rollout_policy: "restart_now",
+          },
+        ],
+        rollback_targets: [
+          {
+            target_type: "component",
+            target: "project-host",
+            artifact: "project-host",
+            current_version: "project-host-v2",
+            previous_version: "project-host-v1",
+            retained_versions: ["project-host-v2", "project-host-v1"],
+          },
+        ],
+      }),
+      targetKeyForRuntimeDeployment,
+      resolveRollbackVersion,
+      requestedByForRuntimeDeployments: () => "tester",
+      setProjectHostRuntimeDeployments,
+      upgradeHostSoftwareInternal,
+      reconcileProjectHostComponent,
+      rolloutProjectHostArtifact: jest.fn(),
+      rollbackProjectHostOverSsh,
+      assertCloudHostBootstrapReconcileSupported: jest.fn(),
+      reconcileCloudHostBootstrapOverSsh: jest.fn(),
+    });
+
+    expect(upgradeHostSoftwareInternal).not.toHaveBeenCalled();
+    expect(setProjectHostRuntimeDeployments).not.toHaveBeenCalled();
+    expect(reconcileProjectHostComponent).not.toHaveBeenCalled();
+    expect(rollbackProjectHostOverSsh).toHaveBeenCalledWith({
+      account_id: "account-1",
+      id: "host-1",
+      version: "project-host-v1",
+      reason: "test retained rollback",
+    });
+    expect(result.rollback_version).toBe("project-host-v1");
+    expect(result.project_host_rollback).toEqual({
+      host_id: "host-1",
+      rollback_version: "project-host-v1",
+    });
+  });
+
+  it("rolls back the project-host artifact to a retained version through the ssh rollback path", async () => {
+    const setProjectHostRuntimeDeployments = jest.fn();
+    const upgradeHostSoftwareInternal = jest.fn();
+    const rollbackProjectHostOverSsh = jest.fn(async () => ({
+      host_id: "host-1",
+      rollback_version: "project-host-v1",
+    }));
+
+    const result = await rollbackHostRuntimeDeploymentsInternalHelper({
+      account_id: "account-1",
+      id: "host-1",
+      target_type: "artifact",
+      target: "project-host",
+      reason: "test retained artifact rollback",
+      loadHostForStartStop: async () => ({ id: "host-1", status: "running" }),
+      assertHostRunningForUpgrade: () => undefined,
+      getHostRuntimeDeploymentStatus: async () => ({
+        effective: [
+          {
+            target_type: "artifact",
+            target: "project-host",
+            desired_version: "project-host-v2",
+          },
+        ],
+        rollback_targets: [
+          {
+            target_type: "artifact",
+            target: "project-host",
+            artifact: "project-host",
+            current_version: "project-host-v2",
+            previous_version: "project-host-v1",
+            retained_versions: ["project-host-v2", "project-host-v1"],
+          },
+        ],
+      }),
+      targetKeyForRuntimeDeployment,
+      resolveRollbackVersion,
+      requestedByForRuntimeDeployments: () => "tester",
+      setProjectHostRuntimeDeployments,
+      upgradeHostSoftwareInternal,
+      reconcileProjectHostComponent: jest.fn(),
+      rolloutProjectHostArtifact: jest.fn(),
+      rollbackProjectHostOverSsh,
+      assertCloudHostBootstrapReconcileSupported: jest.fn(),
+      reconcileCloudHostBootstrapOverSsh: jest.fn(),
+    });
+
+    expect(upgradeHostSoftwareInternal).not.toHaveBeenCalled();
+    expect(setProjectHostRuntimeDeployments).not.toHaveBeenCalled();
+    expect(rollbackProjectHostOverSsh).toHaveBeenCalledWith({
+      account_id: "account-1",
+      id: "host-1",
+      version: "project-host-v1",
+      reason: "test retained artifact rollback",
+    });
+    expect(result).toMatchObject({
+      target_type: "artifact",
+      target: "project-host",
+      rollback_version: "project-host-v1",
+      project_host_rollback: {
+        host_id: "host-1",
+        rollback_version: "project-host-v1",
+      },
+    });
   });
 });

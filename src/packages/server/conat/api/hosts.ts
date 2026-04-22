@@ -4412,6 +4412,13 @@ export async function rollbackHostRuntimeDeploymentsInternal({
           reason,
         })
       ).results ?? [],
+    rollbackProjectHostOverSsh: async ({ account_id, id, version, reason }) =>
+      await rollbackProjectHostOverSshInternal({
+        account_id,
+        id,
+        version,
+        reason,
+      }),
     assertCloudHostBootstrapReconcileSupported,
     reconcileCloudHostBootstrapOverSsh,
   });

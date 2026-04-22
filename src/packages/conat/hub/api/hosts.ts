@@ -700,6 +700,10 @@ export interface HostRuntimeDeploymentRollbackResult {
   upgrade_results?: HostSoftwareUpgradeResponse["results"];
   reconcile_result?: HostRuntimeDeploymentReconcileResult;
   managed_component_rollout?: HostManagedComponentRolloutResponse["results"];
+  project_host_rollback?: {
+    host_id: string;
+    rollback_version: string;
+  };
 }
 
 export interface HostRuntimeDeploymentUpsert {
