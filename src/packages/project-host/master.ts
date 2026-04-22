@@ -1,6 +1,7 @@
 import { createServiceClient } from "@cocalc/conat/service/typed";
 import getLogger from "@cocalc/backend/logger";
 import { randomUUID } from "crypto";
+import { readFileSync } from "node:fs";
 import { promises as fsPromises } from "node:fs";
 import { availableParallelism, homedir, totalmem, userInfo } from "node:os";
 import { dirname, join } from "node:path";
@@ -92,6 +93,18 @@ const USER_DELTA_BATCH_LIMIT = Math.max(
     Number(process.env.COCALC_PROJECT_HOST_USER_DELTA_BATCH_LIMIT ?? 500),
   ),
 );
+
+function readHostBootId(): string | undefined {
+  try {
+    const value = readFileSync(
+      "/proc/sys/kernel/random/boot_id",
+      "utf8",
+    ).trim();
+    return value || undefined;
+  } catch {
+    return undefined;
+  }
+}
 const USER_RECONCILE_LIMIT = Math.max(
   100,
   Math.min(
@@ -820,6 +833,7 @@ export async function startMasterRegistration({
     metadata: {
       runnerId,
       host_session_id: randomUUID(),
+      host_boot_id: readHostBootId(),
       host_session_started_at: new Date().toISOString(),
       host_cpu_count: availableParallelism(),
       host_ram_gb: Math.max(1, Math.round(totalmem() / 1024 ** 3)),
