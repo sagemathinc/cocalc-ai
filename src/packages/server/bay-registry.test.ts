@@ -121,9 +121,22 @@ describe("bay-registry", () => {
           dns_hostname: params?.[7],
           dns_record_id: params?.[8],
           managed_tunnel: params?.[9] ? JSON.parse(params[9]) : null,
+          accepts_project_ownership: params?.[10],
+          project_ownership_note: params?.[11],
           last_seen: now,
         });
         return { rows: [] };
+      }
+      if (sql.includes("UPDATE cluster_bay_registry")) {
+        const row = rowsById.get(params?.[0]);
+        if (!row) {
+          return { rows: [] };
+        }
+        Object.assign(row, {
+          accepts_project_ownership: params?.[1],
+          project_ownership_note: params?.[2],
+        });
+        return { rows: [row] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -257,5 +270,37 @@ describe("bay-registry", () => {
     expect(getInterBayFabricClientMock).toHaveBeenCalledTimes(1);
     expect(createInterBayBayRegistryClientMock).toHaveBeenCalledTimes(1);
     expect(listMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("sets and reports project ownership admission", async () => {
+    rowsById.set("bay-2", {
+      bay_id: "bay-2",
+      label: "Sydney",
+      region: "au",
+      role: "attached",
+      public_origin: "https://bay-2-lite4b.cocalc.ai",
+      public_target: null,
+      public_target_kind: null,
+      dns_hostname: "bay-2-lite4b.cocalc.ai",
+      dns_record_id: null,
+      accepts_project_ownership: true,
+      project_ownership_note: null,
+      last_seen: now,
+    });
+
+    const { setBayProjectOwnershipAdmissionLocal } =
+      await import("./bay-registry");
+
+    const entry = await setBayProjectOwnershipAdmissionLocal({
+      bay_id: "bay-2",
+      accepts_project_ownership: false,
+      note: "maintenance drain",
+    });
+
+    expect(entry).toMatchObject({
+      bay_id: "bay-2",
+      accepts_project_ownership: false,
+      project_ownership_note: "maintenance drain",
+    });
   });
 });

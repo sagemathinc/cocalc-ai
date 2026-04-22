@@ -31,6 +31,7 @@ import type {
   ProjectCreated,
   ProjectEnv,
   ProjectLauncherSettings,
+  ProjectLogRow,
   ProjectQuotaSettings,
   ProjectRegion,
   ProjectRootfsConfig,
@@ -149,6 +150,45 @@ export interface ProjectControlMoveResponse {
   stream_name: string;
 }
 
+export interface ProjectControlRehomeRequest {
+  project_id: string;
+  account_id: string;
+  dest_bay_id: string;
+  reason?: string | null;
+  campaign_id?: string | null;
+  epoch?: number;
+}
+
+export interface ProjectControlAcceptRehomeRequest {
+  project_id: string;
+  account_id?: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  project: Record<string, unknown>;
+  portable_state?: ProjectControlPortableProjectState;
+  epoch?: number;
+}
+
+export interface ProjectControlPortableProjectState {
+  project_log?: ProjectLogRow[];
+}
+
+export interface ProjectControlRehomeResponse {
+  op_id?: string;
+  project_id: string;
+  previous_bay_id: string;
+  owning_bay_id: string;
+  operation_stage?:
+    | "requested"
+    | "destination_accepted"
+    | "source_flipped"
+    | "portable_state_copied"
+    | "projected"
+    | "complete";
+  operation_status?: "running" | "succeeded" | "failed";
+  status: "rehomed" | "already-home";
+}
+
 export interface ProjectControlActiveOperationRequest {
   project_id: string;
   epoch?: number;
@@ -255,6 +295,8 @@ export interface BayRegistryRegisterRequest {
   public_origin?: string | null;
   public_target?: string | null;
   public_target_kind?: string | null;
+  accepts_project_ownership?: boolean;
+  project_ownership_note?: string | null;
 }
 
 export interface BayRegistryListRequest {}
@@ -269,6 +311,8 @@ export interface BayRegistryEntry {
   public_target_kind?: string | null;
   dns_hostname?: string | null;
   dns_record_id?: string | null;
+  accepts_project_ownership?: boolean;
+  project_ownership_note?: string | null;
   last_seen: string;
 }
 
@@ -365,6 +409,8 @@ export type ProjectControlMethod =
   | "state"
   | "address"
   | "move"
+  | "rehome"
+  | "accept-rehome"
   | "active-op";
 export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
 export type BayDirectoryMethod = DirectoryMethod;
@@ -453,6 +499,12 @@ export interface InterBayProjectControlApi {
   move: (
     opts: ProjectControlMoveRequest,
   ) => Promise<ProjectControlMoveResponse>;
+  rehome: (
+    opts: ProjectControlRehomeRequest,
+  ) => Promise<ProjectControlRehomeResponse>;
+  acceptRehome: (
+    opts: ProjectControlAcceptRehomeRequest,
+  ) => Promise<ProjectControlRehomeResponse>;
   activeOp: (
     opts: ProjectControlActiveOperationRequest,
   ) => Promise<ProjectActiveOperationSummary | null>;
@@ -1133,6 +1185,18 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "move" }),
   });
+  const rehomeClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "rehome">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({ dest_bay, method: "rehome" }),
+  });
+  const acceptRehomeClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "acceptRehome">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({ dest_bay, method: "accept-rehome" }),
+  });
   const activeOpClient = createServiceClient<
     Pick<InterBayProjectControlApi, "activeOp">
   >({
@@ -1147,6 +1211,8 @@ export function createInterBayProjectControlClient({
     state: async (opts) => await stateClient.state(opts),
     address: async (opts) => await addressClient.address(opts),
     move: async (opts) => await moveClient.move(opts),
+    rehome: async (opts) => await rehomeClient.rehome(opts),
+    acceptRehome: async (opts) => await acceptRehomeClient.acceptRehome(opts),
     activeOp: async (opts) => await activeOpClient.activeOp(opts),
   };
 }
@@ -2013,6 +2079,45 @@ export function createInterBayProjectControlMoveHandler({
     subject: projectControlSubject({ dest_bay: bay_id, method: "move" }),
     impl: {
       move: async (opts) => await impl.move(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlRehomeHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "rehome">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({ dest_bay: bay_id, method: "rehome" }),
+    impl: {
+      rehome: async (opts) => await impl.rehome(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlAcceptRehomeHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "acceptRehome">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({
+      dest_bay: bay_id,
+      method: "accept-rehome",
+    }),
+    impl: {
+      acceptRehome: async (opts) => await impl.acceptRehome(opts),
     },
   });
 }

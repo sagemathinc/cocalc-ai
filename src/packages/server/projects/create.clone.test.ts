@@ -11,6 +11,7 @@ let getUserHostTierMock: jest.Mock;
 let getExplicitHostRoutedClientMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
+let assertBayAcceptsProjectOwnershipMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
@@ -40,6 +41,12 @@ jest.mock("@cocalc/server/account/project-feed", () => ({
   __esModule: true,
   publishProjectAccountFeedEventsBestEffort: (...args: any[]) =>
     publishProjectAccountFeedEventsBestEffortMock(...args),
+}));
+
+jest.mock("@cocalc/server/bay-registry", () => ({
+  __esModule: true,
+  assertBayAcceptsProjectOwnership: (...args: any[]) =>
+    assertBayAcceptsProjectOwnershipMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
@@ -126,6 +133,7 @@ describe("projects.createProject clone routing", () => {
     publishProjectAccountFeedEventsBestEffortMock = jest.fn(
       async () => undefined,
     );
+    assertBayAcceptsProjectOwnershipMock = jest.fn(async () => undefined);
     resolveHostBayMock = jest.fn(async () => null);
     hostConnectionGetMock = jest.fn();
     hostControlCreateProjectMock = jest.fn(async () => ({

@@ -20,7 +20,9 @@ import {
   createInterBayBayDirectoryHandlers,
   createInterBayDirectoryHandlers,
   createInterBayProjectControlHandler,
+  createInterBayProjectControlAcceptRehomeHandler,
   createInterBayProjectControlMoveHandler,
+  createInterBayProjectControlRehomeHandler,
   createInterBayProjectControlRestartHandler,
   createInterBayProjectControlStateHandler,
   createInterBayProjectLroHandler,
@@ -82,7 +84,9 @@ import {
   handleProjectControlAddress,
   handleProjectControlActiveOperation,
   handleProjectControlBackup,
+  handleProjectControlAcceptRehome,
   handleProjectControlMove,
+  handleProjectControlRehome,
   handleProjectControlRestart,
   handleProjectControlStart,
   handleProjectControlState,
@@ -308,6 +312,8 @@ async function startProjectControlStartService(): Promise<void> {
     state: async (opts) => await handleProjectControlState(opts),
     address: async (opts) => await handleProjectControlAddress(opts),
     move: async (opts) => await handleProjectControlMove(opts),
+    rehome: async (opts) => await handleProjectControlRehome(opts),
+    acceptRehome: async (opts) => await handleProjectControlAcceptRehome(opts),
     activeOp: async (opts) => await handleProjectControlActiveOperation(opts),
   };
   const bay_id = getConfiguredBayId();
@@ -347,6 +353,18 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlMoveHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlRehomeHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlAcceptRehomeHandler({
       client,
       bay_id,
       parallel: true,

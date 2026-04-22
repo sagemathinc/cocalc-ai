@@ -91,12 +91,20 @@ async function ensureTable(): Promise<void> {
         dns_hostname TEXT,
         dns_record_id TEXT,
         managed_tunnel JSONB,
+        accepts_project_ownership BOOLEAN NOT NULL DEFAULT TRUE,
+        project_ownership_note TEXT,
         last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
     await pool.query(
       `ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS managed_tunnel JSONB`,
+    );
+    await pool.query(
+      `ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS accepts_project_ownership BOOLEAN NOT NULL DEFAULT TRUE`,
+    );
+    await pool.query(
+      `ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS project_ownership_note TEXT`,
     );
     await pool.query(
       `CREATE INDEX IF NOT EXISTS ${TABLE}_last_seen_idx ON ${TABLE} (last_seen DESC)`,
@@ -116,6 +124,8 @@ function mapRow(row: any): BayRegistryEntry {
     public_target_kind: normalizedNullable(row.public_target_kind),
     dns_hostname: normalizedNullable(row.dns_hostname),
     dns_record_id: normalizedNullable(row.dns_record_id),
+    accepts_project_ownership: row.accepts_project_ownership !== false,
+    project_ownership_note: normalizedNullable(row.project_ownership_note),
     last_seen:
       row.last_seen instanceof Date
         ? row.last_seen.toISOString()
@@ -143,7 +153,8 @@ async function getEntryLocal(bay_id: string): Promise<BayRegistryEntry | null> {
   await ensureTable();
   const { rows } = await getPool().query(
     `SELECT bay_id, label, region, role, public_origin, public_target,
-            public_target_kind, dns_hostname, dns_record_id, last_seen
+            public_target_kind, dns_hostname, dns_record_id,
+            accepts_project_ownership, project_ownership_note, last_seen
        FROM ${TABLE}
       WHERE bay_id=$1
       LIMIT 1`,
@@ -227,6 +238,8 @@ export async function registerBayPresenceLocal(
       null,
     dns_hostname: existing?.dns_hostname ?? null,
     dns_record_id: existing?.dns_record_id ?? null,
+    accepts_project_ownership: existing?.accepts_project_ownership !== false,
+    project_ownership_note: existing?.project_ownership_note ?? null,
     last_seen: new Date().toISOString(),
   };
   let nextManagedTunnel = managedTunnel ?? null;
@@ -255,8 +268,8 @@ export async function registerBayPresenceLocal(
     `INSERT INTO ${TABLE}
        (bay_id, label, region, role, public_origin, public_target,
         public_target_kind, dns_hostname, dns_record_id, managed_tunnel,
-        last_seen, updated)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::JSONB,NOW(),NOW())
+        accepts_project_ownership, project_ownership_note, last_seen, updated)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::JSONB,$11,$12,NOW(),NOW())
      ON CONFLICT (bay_id) DO UPDATE SET
        label=EXCLUDED.label,
        region=EXCLUDED.region,
@@ -267,6 +280,8 @@ export async function registerBayPresenceLocal(
        dns_hostname=EXCLUDED.dns_hostname,
        dns_record_id=EXCLUDED.dns_record_id,
        managed_tunnel=EXCLUDED.managed_tunnel,
+       accepts_project_ownership=${TABLE}.accepts_project_ownership,
+       project_ownership_note=${TABLE}.project_ownership_note,
        last_seen=NOW(),
        updated=NOW()`,
     [
@@ -280,6 +295,8 @@ export async function registerBayPresenceLocal(
       next.dns_hostname,
       next.dns_record_id,
       nextManagedTunnel ? JSON.stringify(nextManagedTunnel) : null,
+      next.accepts_project_ownership !== false,
+      next.project_ownership_note ?? null,
     ],
   );
   return {
@@ -294,11 +311,57 @@ export async function listBayRegistryLocal(
   await ensureTable();
   const { rows } = await getPool().query(
     `SELECT bay_id, label, region, role, public_origin, public_target,
-            public_target_kind, dns_hostname, dns_record_id, last_seen
+            public_target_kind, dns_hostname, dns_record_id,
+            accepts_project_ownership, project_ownership_note, last_seen
        FROM ${TABLE}
       ORDER BY bay_id ASC`,
   );
   return rows.map(mapRow);
+}
+
+export async function setBayProjectOwnershipAdmissionLocal({
+  bay_id,
+  accepts_project_ownership,
+  note,
+}: {
+  bay_id: string;
+  accepts_project_ownership: boolean;
+  note?: string | null;
+}): Promise<BayRegistryEntry> {
+  await ensureTable();
+  if (!(await getEntryLocal(bay_id))) {
+    throw new Error(`bay '${bay_id}' not found`);
+  }
+  const { rows } = await getPool().query(
+    `
+      UPDATE ${TABLE}
+         SET accepts_project_ownership = $2,
+             project_ownership_note = $3,
+             updated = NOW()
+       WHERE bay_id = $1
+       RETURNING bay_id, label, region, role, public_origin, public_target,
+                 public_target_kind, dns_hostname, dns_record_id,
+                 accepts_project_ownership, project_ownership_note, last_seen
+    `,
+    [bay_id, accepts_project_ownership, normalizedNullable(note)],
+  );
+  return mapRow(rows[0]);
+}
+
+export async function assertBayAcceptsProjectOwnership(
+  bay_id: string,
+): Promise<void> {
+  if (!isMultiBayCluster()) {
+    return;
+  }
+  const entry = (await listClusterBayRegistry()).find(
+    (candidate) => candidate.bay_id === bay_id,
+  );
+  if (entry?.accepts_project_ownership === false) {
+    throw new Error(
+      `bay ${bay_id} is not accepting new project ownership${entry.project_ownership_note ? `: ${entry.project_ownership_note}` : ""}`,
+    );
+  }
 }
 
 function getRegistryClient(): InterBayBayRegistryApi {
@@ -328,6 +391,8 @@ export async function listClusterBayInfos(): Promise<BayInfo[]> {
         deployment_mode: isMultiBayCluster() ? "multi-bay" : "single-bay",
         role: currentRoleForRegistry() as BayInfo["role"],
         is_default: true,
+        accepts_project_ownership: true,
+        project_ownership_note: null,
       },
     ];
   }
@@ -342,6 +407,8 @@ export async function listClusterBayInfos(): Promise<BayInfo[]> {
         ? entry.role
         : "combined",
     is_default: entry.bay_id === localBayId,
+    accepts_project_ownership: entry.accepts_project_ownership !== false,
+    project_ownership_note: entry.project_ownership_note ?? null,
   }));
 }
 

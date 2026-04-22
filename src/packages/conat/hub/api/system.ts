@@ -29,6 +29,7 @@ export const system = {
   ping: noAuth,
   terminate: authFirst,
   listBays: authFirst,
+  setBayProjectOwnershipAdmission: authFirstRequireAccount,
   getBayLoad: authFirst,
   getBayBackups: authFirst,
   runBayBackup: authFirst,
@@ -273,6 +274,8 @@ export interface BayInfo {
   deployment_mode: "single-bay" | "multi-bay";
   role: "combined" | "seed" | "attached";
   is_default: boolean;
+  accepts_project_ownership?: boolean;
+  project_ownership_note?: string | null;
 }
 
 export interface BayLoadBrowserControlStatus {
@@ -843,6 +846,13 @@ export interface System {
   terminate: (service: "database" | "api") => Promise<void>;
 
   listBays: (opts?: { account_id?: string }) => Promise<BayInfo[]>;
+
+  setBayProjectOwnershipAdmission: (opts: {
+    account_id?: string;
+    bay_id: string;
+    accepts_project_ownership: boolean;
+    note?: string | null;
+  }) => Promise<BayInfo>;
 
   getBayLoad: (opts?: {
     account_id?: string;

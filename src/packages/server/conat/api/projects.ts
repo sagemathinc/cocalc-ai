@@ -53,6 +53,11 @@ import {
   makeOfflineMoveConfirmationPayload,
   offlineMoveConfirmationError,
 } from "@cocalc/server/projects/offline-move-confirmation";
+import {
+  drainProjectRehome as drainProjectRehomeControl,
+  reconcileProjectRehome as reconcileProjectRehomeControl,
+  rehomeProject as rehomeProjectControl,
+} from "@cocalc/server/projects/rehome";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
 import {
@@ -1606,6 +1611,106 @@ export async function moveProject({
     service: PERSIST_SERVICE,
     stream_name: lroStreamName(op.op_id),
   };
+}
+
+export async function rehomeProject({
+  account_id,
+  project_id,
+  dest_bay_id,
+  reason,
+  campaign_id,
+}: {
+  account_id: string;
+  project_id: string;
+  dest_bay_id: string;
+  reason?: string | null;
+  campaign_id?: string | null;
+}): Promise<{
+  op_id?: string;
+  project_id: string;
+  previous_bay_id: string;
+  owning_bay_id: string;
+  operation_stage?:
+    | "requested"
+    | "destination_accepted"
+    | "source_flipped"
+    | "portable_state_copied"
+    | "projected"
+    | "complete";
+  operation_status?: "running" | "succeeded" | "failed";
+  status: "rehomed" | "already-home";
+}> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  return await rehomeProjectControl({
+    account_id,
+    project_id,
+    dest_bay_id,
+    reason,
+    campaign_id,
+  });
+}
+
+export async function reconcileProjectRehome({
+  account_id,
+  op_id,
+}: {
+  account_id: string;
+  op_id: string;
+}): Promise<{
+  op_id?: string;
+  project_id: string;
+  previous_bay_id: string;
+  owning_bay_id: string;
+  operation_stage?:
+    | "requested"
+    | "destination_accepted"
+    | "source_flipped"
+    | "portable_state_copied"
+    | "projected"
+    | "complete";
+  operation_status?: "running" | "succeeded" | "failed";
+  status: "rehomed" | "already-home";
+}> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  return await reconcileProjectRehomeControl({
+    account_id,
+    op_id,
+  });
+}
+
+export async function drainProjectRehome({
+  account_id,
+  source_bay_id,
+  dest_bay_id,
+  limit,
+  dry_run,
+  campaign_id,
+  reason,
+}: {
+  account_id: string;
+  source_bay_id?: string;
+  dest_bay_id: string;
+  limit?: number;
+  dry_run?: boolean;
+  campaign_id?: string | null;
+  reason?: string | null;
+}) {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  return await drainProjectRehomeControl({
+    account_id,
+    source_bay_id,
+    dest_bay_id,
+    limit,
+    dry_run,
+    campaign_id,
+    reason,
+  });
 }
 
 const HOST_SEEN_TTL_MS = 2 * 60 * 1000;

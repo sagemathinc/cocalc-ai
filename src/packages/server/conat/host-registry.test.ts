@@ -205,9 +205,10 @@ describe("host-registry automatic convergence retry", () => {
     ).toBeUndefined();
   });
 
-  it("marks running projects opened when a host registers with a new session", async () => {
+  it("does not mark running projects opened when only the host process session changes", async () => {
     currentMetadata = {
       host_session_id: "session-old",
+      host_boot_id: "boot-1",
       machine: { cloud: "gcp" },
     };
     ensureAutomaticHostRuntimeDeploymentsReconcileMock = jest.fn(async () => ({
@@ -277,6 +278,94 @@ describe("host-registry automatic convergence retry", () => {
       id: "host-1",
       metadata: {
         host_session_id: "session-new",
+        host_boot_id: "boot-1",
+        machine: { cloud: "gcp" },
+      },
+    } as any);
+
+    expect(connectMock).not.toHaveBeenCalled();
+    expect(appendProjectOutboxEventForProjectMock).not.toHaveBeenCalled();
+    expect(
+      publishProjectAccountFeedEventsBestEffortMock,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("marks running projects opened when a host registers after a boot change", async () => {
+    currentMetadata = {
+      host_session_id: "session-old",
+      host_boot_id: "boot-old",
+      machine: { cloud: "gcp" },
+    };
+    ensureAutomaticHostRuntimeDeploymentsReconcileMock = jest.fn(async () => ({
+      queued: false,
+      host_id: "host-1",
+      reason: "no_reconcile_needed",
+    }));
+    ensureAutomaticHostArtifactDeploymentsReconcileMock = jest.fn(async () => ({
+      queued: false,
+      host_id: "host-1",
+      reason: "no_reconcile_needed",
+    }));
+    const clientQueryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [] };
+      }
+      if (sql.includes("UPDATE projects")) {
+        expect(params[0]).toBe("host-1");
+        expect(params[1]).toMatchObject({
+          state: "opened",
+          reason: "host_boot_replaced",
+          previous_host_boot_id: "boot-old",
+          host_boot_id: "boot-new",
+          previous_host_session_id: "session-old",
+          host_session_id: "session-new",
+        });
+        return {
+          rows: [{ project_id: "proj-1" }, { project_id: "proj-2" }],
+        };
+      }
+      throw new Error(`unexpected client query: ${sql}`);
+    });
+    const client = {
+      query: clientQueryMock,
+      release: jest.fn(),
+    };
+    connectMock = jest.fn(() => client);
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (
+        sql.includes(
+          "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ status: "running" }] };
+      }
+      if (
+        sql.includes(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ metadata: currentMetadata }] };
+      }
+      if (
+        sql.includes(
+          "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        expect(params[0]).toBe("host-1");
+        currentMetadata = params[1];
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { initHostRegistryService } = await import("./host-registry");
+    const service = await initHostRegistryService();
+
+    await service.register({
+      id: "host-1",
+      metadata: {
+        host_session_id: "session-new",
+        host_boot_id: "boot-new",
         machine: { cloud: "gcp" },
       },
     } as any);

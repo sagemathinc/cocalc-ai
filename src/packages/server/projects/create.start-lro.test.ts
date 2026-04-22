@@ -14,6 +14,7 @@ let mirrorStartLroProgressMock: jest.Mock;
 let supersedeOlderProjectStartLrosMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
+let assertBayAcceptsProjectOwnershipMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
 
@@ -41,6 +42,12 @@ jest.mock("@cocalc/server/account/project-feed", () => ({
   __esModule: true,
   publishProjectAccountFeedEventsBestEffort: (...args: any[]) =>
     publishProjectAccountFeedEventsBestEffortMock(...args),
+}));
+
+jest.mock("@cocalc/server/bay-registry", () => ({
+  __esModule: true,
+  assertBayAcceptsProjectOwnership: (...args: any[]) =>
+    assertBayAcceptsProjectOwnershipMock(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -131,6 +138,7 @@ describe("projects.createProject start LRO", () => {
     publishProjectAccountFeedEventsBestEffortMock = jest.fn(
       async () => undefined,
     );
+    assertBayAcceptsProjectOwnershipMock = jest.fn(async () => undefined);
     releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {

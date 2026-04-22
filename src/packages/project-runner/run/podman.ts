@@ -16,7 +16,13 @@ Maybe.  Perhaps we'll have two modes.
 */
 
 import { mountArg } from "@cocalc/backend/podman";
-import { DEFAULT_PROJECT_TOOLS, nodePath } from "./mounts";
+import {
+  DEFAULT_PROJECT_TOOLS,
+  PROJECT_BUNDLE_MOUNT_POINT,
+  PROJECT_BUNDLES_MOUNT_POINT,
+  projectBundleBinPathPrefix,
+  nodePath,
+} from "./mounts";
 import { isValidUUID } from "@cocalc/util/misc";
 import { ensureConfFilesExists, setupDataPath, writeSecretToken } from "./util";
 import { DEFAULT_PROJECT_PROXY_PORT, getEnvironment } from "./env";
@@ -78,8 +84,6 @@ const PROJECT_BUNDLE_ENTRY_CANDIDATES = [
   // Legacy layout: bundle/bundle/index.js from older tarball structure.
   ["bundle", "bundle", "index.js"],
 ] as const;
-const PROJECT_BUNDLE_MOUNT_POINT = "/opt/cocalc/project-bundle";
-const PROJECT_BUNDLE_BIN_PATH = join(PROJECT_BUNDLE_MOUNT_POINT, "bin");
 const DEFAULT_PROJECT_BUNDLES_ROOT = "/opt/cocalc/project-bundles";
 
 // if computing status of a project shows pod is
@@ -315,6 +319,7 @@ async function forceKillContainerProcesses(
 interface ScriptResolution {
   script: string;
   bundleMount?: { source: string; target: string };
+  bundlesMount?: { source: string; target: string };
   bundleVersion?: string;
 }
 
@@ -474,6 +479,7 @@ async function resolveProjectScript(): Promise<ScriptResolution> {
   return {
     script: containerScript,
     bundleMount: { source: bundleDir, target: PROJECT_BUNDLE_MOUNT_POINT },
+    bundlesMount: { source: bundlesRoot, target: PROJECT_BUNDLES_MOUNT_POINT },
     bundleVersion: versionFromPath(bundleDir),
   };
 }
@@ -784,6 +790,7 @@ export async function start({
     const {
       script: projectScript,
       bundleMount,
+      bundlesMount,
       bundleVersion,
     } = await resolveProjectScript();
 
@@ -804,6 +811,9 @@ export async function start({
           { bundleSource: bundleMount.source },
         );
       }
+      if (bundlesMount != null) {
+        mounts[bundlesMount.source] = bundlesMount.target;
+      }
     }
 
     logger.debug("start: resolved project script", {
@@ -820,8 +830,8 @@ export async function start({
 
     if (bundleMount != null) {
       env.PATH = env.PATH
-        ? `${PROJECT_BUNDLE_BIN_PATH}:${env.PATH}`
-        : PROJECT_BUNDLE_BIN_PATH;
+        ? `${projectBundleBinPathPrefix()}:${env.PATH}`
+        : projectBundleBinPathPrefix();
     }
 
     report({
