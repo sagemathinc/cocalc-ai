@@ -3763,6 +3763,7 @@ describe("ConatClient routed project-host reconnect", () => {
       },
       expect.any(Object),
     );
+    expect(ensureHostInfo).not.toHaveBeenCalled();
   });
 
   it("does not require project-host routing for project clients in lite mode", async () => {
@@ -3785,6 +3786,7 @@ describe("ConatClient routed project-host reconnect", () => {
       close: jest.fn(),
       disconnect: jest.fn(),
       request: jest.fn(),
+      publish: jest.fn(async () => ({ bytes: 12, count: 1 })),
     };
 
     jest.resetModules();
@@ -3888,6 +3890,23 @@ describe("ConatClient routed project-host reconnect", () => {
         requireRouting: true,
       }),
     ).resolves.toBe(hubClient);
+    await expect(
+      client._testPublishToProjectHost({
+        project_id: "00000000-1000-4000-8000-000000000000",
+        subject: "project.00000000-1000-4000-8000-000000000000.api",
+        mesg: { ping: 1 },
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      subject: "project.00000000-1000-4000-8000-000000000000.api",
+      bytes: 12,
+      count: 1,
+    });
+    expect(hubClient.publish).toHaveBeenCalledWith(
+      "project.00000000-1000-4000-8000-000000000000.api",
+      { ping: 1 },
+      expect.any(Object),
+    );
     expect(ensureHostInfo).not.toHaveBeenCalled();
   });
 

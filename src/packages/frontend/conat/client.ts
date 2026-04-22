@@ -134,20 +134,6 @@ const PROJECT_HOST_ROUTED_HUB_METHODS = new Set<string>([
   "projects.chatStoreVacuum",
 ]);
 const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK = new Set<string>([]);
-const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK = new Set<string>([
-  "projects.codexDeviceAuthStart",
-  "projects.codexDeviceAuthStatus",
-  "projects.codexDeviceAuthCancel",
-  "projects.codexUploadAuthFile",
-  "projects.chatStoreStats",
-  "projects.chatStoreRotate",
-  "projects.chatStoreListSegments",
-  "projects.chatStoreReadArchived",
-  "projects.chatStoreReadArchivedHit",
-  "projects.chatStoreSearch",
-  "projects.chatStoreDelete",
-  "projects.chatStoreVacuum",
-]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 const PROJECT_HOST_AUTH_TIMEOUT_MS = 4_000;
 const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [1_000, 3_000, 7_000] as const;
@@ -2135,6 +2121,7 @@ export class ConatClient extends EventEmitter {
   }) => {
     const subject = `hub.account.${this.client.account_id}.${service}`;
     const routeToProjectHost =
+      !lite &&
       !!project_id &&
       PROJECT_HOST_ROUTED_HUB_METHODS.has(name) &&
       isValidUUID(project_id);
@@ -2142,9 +2129,7 @@ export class ConatClient extends EventEmitter {
     if (routeToProjectHost) {
       const routing = await this.ensureProjectRoutingInfo(project_id!);
       const allowHubFallback =
-        PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK.has(name) ||
-        (lite &&
-          PROJECT_HOST_ROUTED_HUB_METHODS_WITH_LITE_HUB_FALLBACK.has(name));
+        PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK.has(name);
       if (!routing && !allowHubFallback) {
         throw Error(
           `unable to route '${name}' to project-host for project ${project_id}; host routing info unavailable (open the project first so host info is loaded)`,
@@ -2229,6 +2214,27 @@ export class ConatClient extends EventEmitter {
   }> => {
     if (!isValidUUID(project_id)) {
       throw Error(`project_id='${project_id}' must be a valid uuid`);
+    }
+    if (lite) {
+      try {
+        const { bytes, count } = await this.conat().publish(subject, mesg, {
+          timeout,
+          waitForInterest,
+        });
+        return {
+          ok: true,
+          subject,
+          bytes,
+          count,
+        };
+      } catch (err: any) {
+        return {
+          ok: false,
+          subject,
+          error: `${err?.message ?? err}`,
+          code: err?.code,
+        };
+      }
     }
     const routing = this.getProjectRoutingInfo(project_id);
     if (!routing) {
