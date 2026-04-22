@@ -11,7 +11,6 @@ import { delay } from "awaiting";
 import { fromJS } from "immutable";
 import $ from "jquery";
 import { debounce } from "lodash";
-import { IS_MOBILE } from "@cocalc/frontend/feature";
 import {
   TableOfContentsEntry,
   TableOfContentsEntryList,

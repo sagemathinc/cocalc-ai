@@ -60,6 +60,10 @@ import {
 } from "@cocalc/frontend/rootfs/catalog-ui";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
+import {
+  chooseNewProjectRootfsDefault,
+  isNewProjectRootfsSelectable,
+} from "./create-project-rootfs";
 
 interface Props {
   default_value: string;
@@ -134,7 +138,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     error: rootfsError,
   } = useRootfsImages([managedRootfsCatalogUrl()]);
   const isGpu = selectedHost?.gpu ?? false;
-  const effectiveDefaultRootfs = useMemo(() => {
+  const configuredDefaultRootfs = useMemo(() => {
     const siteDefault = siteDefaultRootfs?.trim() || DEFAULT_PROJECT_IMAGE;
     const siteGpu = siteDefaultRootfsGpu?.trim() || "";
     const accountDefault = accountDefaultRootfs?.trim() || "";
@@ -156,14 +160,42 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     siteDefaultRootfs,
     siteDefaultRootfsGpu,
   ]);
+  const preferredRootfsImages = useMemo(() => {
+    const siteDefault = siteDefaultRootfs?.trim() || DEFAULT_PROJECT_IMAGE;
+    const siteGpu = siteDefaultRootfsGpu?.trim() || "";
+    const accountDefault = accountDefaultRootfs?.trim() || "";
+    const accountDefaultGpu = accountDefaultRootfsGpu?.trim() || "";
+    return isGpu
+      ? [accountDefaultGpu, siteGpu, accountDefault, siteDefault]
+      : [accountDefault, siteDefault];
+  }, [
+    accountDefaultRootfs,
+    accountDefaultRootfsGpu,
+    isGpu,
+    siteDefaultRootfs,
+    siteDefaultRootfsGpu,
+  ]);
   const filteredRootfsImages = useMemo(
     () =>
       rootfsImages.filter((entry) => {
-        if (isGpu) return true;
-        return entry.gpu !== true;
+        return isNewProjectRootfsSelectable({ entry, isGpu });
       }),
     [rootfsImages, isGpu],
   );
+  const effectiveDefaultRootfsEntry = useMemo(
+    () =>
+      chooseNewProjectRootfsDefault({
+        images: rootfsImages,
+        isGpu,
+        preferredImages: preferredRootfsImages,
+        fallbackImage: DEFAULT_PROJECT_IMAGE,
+      }),
+    [isGpu, preferredRootfsImages, rootfsImages],
+  );
+  const effectiveDefaultRootfs =
+    effectiveDefaultRootfsEntry?.image ||
+    configuredDefaultRootfs ||
+    DEFAULT_PROJECT_IMAGE;
   const pickerRootfsImages = useMemo(
     () =>
       latestRootfsVersionEntries(filteredRootfsImages, {
@@ -206,12 +238,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   useEffect(() => {
     if (!rootfsTouched) {
       setRootfsImage(effectiveDefaultRootfs);
-      setRootfsImageId(
-        rootfsImages.find((entry) => entry.image === effectiveDefaultRootfs)
-          ?.id,
-      );
+      setRootfsImageId(effectiveDefaultRootfsEntry?.id);
     }
-  }, [effectiveDefaultRootfs, rootfsImages, rootfsTouched]);
+  }, [effectiveDefaultRootfs, effectiveDefaultRootfsEntry?.id, rootfsTouched]);
 
   const is_mounted_ref = useIsMountedRef();
 
@@ -235,7 +264,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setSaving(false);
     setRootfsTouched(false);
     setRootfsImage(effectiveDefaultRootfs);
-    setRootfsImageId(undefined);
+    setRootfsImageId(effectiveDefaultRootfsEntry?.id);
     setRootfsModalOpen(false);
     setRootfsMode("catalog");
     setRootfsDraft("");
