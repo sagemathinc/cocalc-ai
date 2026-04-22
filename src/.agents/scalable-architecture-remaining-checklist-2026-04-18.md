@@ -403,8 +403,29 @@ Notes:
 - after fixing those two issues, spawned Chromium still failed to register a
   browser heartbeat: HTTP requests authenticated with the CLI-minted
   `remember_me`, but the proxied `/conat` websocket reached the Conat server
-  with no auth cookie. This remains the current browser-session recovery
-  blocker.
+  with no auth cookie. This was fixed in `96b7d62afd` by pinning spawned
+  Playwright sessions to the target control-plane origin before app JavaScript
+  runs; the underlying bug was local QA sessions accepting an account
+  `home_bay_url` pointing at `https://lite4b.cocalc.ai`, then opening Conat
+  against that external origin without the local `remember_me` cookie.
+- after the spawned-browser control-plane pinning fix, browser-session recovery
+  under background load was validated against the local 3-bay hub cluster:
+  - selected project: `abd37947-fd69-40ea-999c-190a9458e6b2`
+  - selected host: `host2`
+  - spawned browser: `UuiQQBRKwf`
+  - four async project exec jobs completed successfully while
+    `conat-persist`, `conat-router`, `project-host`, and `acp-worker` were
+    restarted through managed rollout operations
+  - browser `workspace-state` and foreground project exec succeeded before and
+    after each component restart
+  - rollout operation ids:
+    - `conat-persist`: `d8d24acf-eaea-474a-9623-840c08d5074d`
+    - `conat-router`: `d4f84dcc-5103-4fa4-8075-6662e08cf1c7`
+    - `project-host`: `d6a968de-868d-4b9c-8636-3841b7b33796`
+    - `acp-worker`: `e0272d85-dae2-4c2a-89d7-c52a0df606df`
+  - final host status showed all four managed components `running` and
+    `aligned`
+  - the spawned browser session was destroyed afterward
 - a rollback drill under project exec load found a partial-failure UX bug:
   rolling `project-host` back to the previous retained version failed because
   the software URL returned 404, but desired component state had already been
