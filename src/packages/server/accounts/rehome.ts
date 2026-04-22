@@ -4,6 +4,7 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
+import { conat } from "@cocalc/backend/conat";
 import getPool from "@cocalc/database/pool";
 import type {
   AccountRehomeAcceptRequest,
@@ -14,10 +15,16 @@ import type {
   AccountRehomeResponse,
   AccountRehomeStateCopyRequest,
 } from "@cocalc/conat/inter-bay/api";
+import { createBrowserSessionClient } from "@cocalc/conat/service/browser-session";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { lockAccountRehomeFence } from "@cocalc/server/accounts/rehome-fence";
+import {
+  getBayPublicOrigin,
+  getClusterBayPublicOrigins,
+} from "@cocalc/server/bay-public-origin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
+import { listBrowserSessionsForAccount } from "@cocalc/server/conat/api/browser-sessions";
 import {
   getClusterAccountById,
   updateClusterAccountHomeBay,
@@ -29,6 +36,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 const log = getLogger("server:accounts:rehome");
 const ACCOUNT_REHOME_OPERATIONS_TABLE = "account_rehome_operations";
 const ACCOUNT_REHOME_TIMEOUT_MS = 5 * 60_000;
+const ACCOUNT_REHOME_BROWSER_RECONNECT_TIMEOUT_MS = 5_000;
 
 const PORTABLE_STATE_TABLES = [
   "account_project_index",
@@ -565,6 +573,64 @@ async function flipSourceHomeBay({
   }
 }
 
+async function forceAccountBrowserSessionsToHomeBay({
+  account_id,
+  dest_bay_id,
+  op_id,
+}: {
+  account_id: string;
+  dest_bay_id: string;
+  op_id: string;
+}): Promise<void> {
+  const origin =
+    `${(await getBayPublicOrigin(dest_bay_id)) ?? (await getClusterBayPublicOrigins())[dest_bay_id] ?? ""}`.trim();
+  if (!origin) {
+    log.warn("account rehome browser reconnect skipped; no bay origin", {
+      op_id,
+      account_id,
+      dest_bay_id,
+    });
+    return;
+  }
+  const targetUrl = `${origin.replace(/\/+$/, "")}/app?account-rehome`;
+  const sessions = listBrowserSessionsForAccount({
+    account_id,
+    max_age_ms: 2 * 60_000,
+  });
+  if (sessions.length === 0) {
+    return;
+  }
+  const results = await Promise.allSettled(
+    sessions.map(async ({ browser_id }) => {
+      const browser = createBrowserSessionClient({
+        account_id,
+        browser_id,
+        client: conat(),
+        timeout: ACCOUNT_REHOME_BROWSER_RECONNECT_TIMEOUT_MS,
+      });
+      await browser.action({
+        project_id: "",
+        action: {
+          name: "navigate",
+          url: targetUrl,
+          replace: true,
+          wait_for_url_ms: 500,
+        },
+        posture: "dev",
+      });
+    }),
+  );
+  const failed = results.filter(({ status }) => status === "rejected").length;
+  log.info("account rehome browser reconnect requested", {
+    op_id,
+    account_id,
+    dest_bay_id,
+    target_url: targetUrl,
+    sessions: sessions.length,
+    failed,
+  });
+}
+
 export async function acceptAccountRehome({
   target_account_id,
   source_bay_id,
@@ -750,6 +816,11 @@ export async function runAccountRehomeOperation(
       await updateClusterAccountHomeBay({
         account_id: op.account_id,
         home_bay_id: op.dest_bay_id,
+      });
+      await forceAccountBrowserSessionsToHomeBay({
+        account_id: op.account_id,
+        dest_bay_id: op.dest_bay_id,
+        op_id,
       });
       if (!accountEntry?.account_id) {
         log.warn("account rehome directory update had no prior entry", {

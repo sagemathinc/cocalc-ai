@@ -34,13 +34,17 @@ export async function lockAccountRehomeFence({
   );
 }
 
+async function tableExists(db: Queryable, table: string): Promise<boolean> {
+  const { rows } = await db.query("SELECT to_regclass($1) AS table_name", [
+    `public.${table}`,
+  ]);
+  return rows[0]?.table_name != null;
+}
+
 async function accountRehomeOperationsTableExists(
   db: Queryable,
 ): Promise<boolean> {
-  const { rows } = await db.query(
-    `SELECT to_regclass('public.${ACCOUNT_REHOME_OPERATIONS_TABLE}') AS table_name`,
-  );
-  return rows[0]?.table_name != null;
+  return await tableExists(db, ACCOUNT_REHOME_OPERATIONS_TABLE);
 }
 
 export async function assertAccountNotRehoming({
@@ -83,7 +87,7 @@ export async function assertAccountWriteOnHomeBay({
   account_id: string;
   action?: string;
 }): Promise<void> {
-  const { rows } = await db.query(
+  const { rows: accountRows } = await db.query(
     `
       SELECT home_bay_id
         FROM accounts
@@ -93,12 +97,24 @@ export async function assertAccountWriteOnHomeBay({
     `,
     [account_id],
   );
-  const row = rows[0];
+  const row = accountRows[0];
   if (!row) {
     throw new Error(`cannot ${action}; account ${account_id} not found`);
   }
   const localBayId = getConfiguredBayId();
-  const homeBayId = `${row.home_bay_id ?? ""}`.trim() || localBayId;
+  let homeBayId = `${row.home_bay_id ?? ""}`.trim() || localBayId;
+  if (await tableExists(db, "cluster_account_directory")) {
+    const { rows: directoryRows } = await db.query(
+      `
+        SELECT home_bay_id
+          FROM cluster_account_directory
+         WHERE account_id = $1
+         LIMIT 1
+      `,
+      [account_id],
+    );
+    homeBayId = `${directoryRows[0]?.home_bay_id ?? ""}`.trim() || homeBayId;
+  }
   if (homeBayId !== localBayId) {
     throw new Error(
       `cannot ${action} for account ${account_id} on bay ${localBayId}; account is homed on ${homeBayId}`,
