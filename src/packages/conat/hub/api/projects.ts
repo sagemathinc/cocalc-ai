@@ -421,6 +421,7 @@ export const projects = {
   getSshKeys: authFirstRequireProject,
 
   moveProject: authFirstRequireAccount,
+  rehomeProject: authFirstRequireAccount,
   codexDeviceAuthStart: authFirstRequireAccount,
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
@@ -962,6 +963,17 @@ export interface Projects {
     scope_id: string;
     service: string;
     stream_name: string;
+  }>;
+
+  rehomeProject: (opts: {
+    account_id?: string;
+    project_id: string;
+    dest_bay_id: string;
+  }) => Promise<{
+    project_id: string;
+    previous_bay_id: string;
+    owning_bay_id: string;
+    status: "rehomed" | "already-home";
   }>;
 
   codexDeviceAuthStart: (opts: {

@@ -53,6 +53,7 @@ import {
   makeOfflineMoveConfirmationPayload,
   offlineMoveConfirmationError,
 } from "@cocalc/server/projects/offline-move-confirmation";
+import { rehomeProject as rehomeProjectControl } from "@cocalc/server/projects/rehome";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
 import {
@@ -1606,6 +1607,30 @@ export async function moveProject({
     service: PERSIST_SERVICE,
     stream_name: lroStreamName(op.op_id),
   };
+}
+
+export async function rehomeProject({
+  account_id,
+  project_id,
+  dest_bay_id,
+}: {
+  account_id: string;
+  project_id: string;
+  dest_bay_id: string;
+}): Promise<{
+  project_id: string;
+  previous_bay_id: string;
+  owning_bay_id: string;
+  status: "rehomed" | "already-home";
+}> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  return await rehomeProjectControl({
+    account_id,
+    project_id,
+    dest_bay_id,
+  });
 }
 
 const HOST_SEEN_TTL_MS = 2 * 60 * 1000;

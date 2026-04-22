@@ -11,9 +11,12 @@ import type {
   ProjectReference,
   ProjectControlActiveOperationRequest,
   ProjectControlAddressRequest,
+  ProjectControlAcceptRehomeRequest,
   ProjectControlBackupRequest,
   ProjectControlMoveRequest,
   ProjectControlMoveResponse,
+  ProjectControlRehomeRequest,
+  ProjectControlRehomeResponse,
   ProjectControlRestartRequest,
   ProjectControlStartRequest,
   ProjectControlStateRequest,
@@ -42,6 +45,10 @@ import { createBackup as createBackupLocal } from "@cocalc/server/conat/api/proj
 import { getLro } from "@cocalc/server/lro/lro-db";
 import { BACKUP_TIMEOUT_MS } from "@cocalc/server/projects/backup-lro";
 import { sleep } from "@cocalc/util/async-utils";
+import {
+  acceptProjectRehome,
+  rehomeProjectOnOwningBay,
+} from "@cocalc/server/projects/rehome";
 
 const LRO_TERMINAL_STATUSES = new Set<LroStatus>([
   "succeeded",
@@ -271,6 +278,31 @@ export async function handleProjectControlMove(
   });
 }
 
+export async function handleProjectControlRehome(
+  req: ProjectControlRehomeRequest,
+): Promise<ProjectControlRehomeResponse> {
+  await assertCurrentProjectOwnership({
+    project_id: req.project_id,
+    epoch: req.epoch,
+  });
+  return await rehomeProjectOnOwningBay({
+    project_id: req.project_id,
+    dest_bay_id: req.dest_bay_id,
+  });
+}
+
+export async function handleProjectControlAcceptRehome(
+  req: ProjectControlAcceptRehomeRequest,
+): Promise<ProjectControlRehomeResponse> {
+  return await acceptProjectRehome({
+    account_id: req.account_id,
+    project_id: req.project_id,
+    source_bay_id: req.source_bay_id,
+    dest_bay_id: req.dest_bay_id,
+    project: req.project,
+  });
+}
+
 export async function handleProjectControlActiveOperation(
   req: ProjectControlActiveOperationRequest,
 ) {
@@ -417,6 +449,24 @@ export async function dispatchProjectControlRpc(
   });
   if (subject === moveExpected) {
     return await handleProjectControlMove(payload as ProjectControlMoveRequest);
+  }
+  const rehomeExpected = projectControlSubject({
+    dest_bay: getConfiguredBayId(),
+    method: "rehome",
+  });
+  if (subject === rehomeExpected) {
+    return await handleProjectControlRehome(
+      payload as ProjectControlRehomeRequest,
+    );
+  }
+  const acceptRehomeExpected = projectControlSubject({
+    dest_bay: getConfiguredBayId(),
+    method: "accept-rehome",
+  });
+  if (subject === acceptRehomeExpected) {
+    return await handleProjectControlAcceptRehome(
+      payload as ProjectControlAcceptRehomeRequest,
+    );
   }
   const activeOpExpected = projectControlSubject({
     dest_bay: getConfiguredBayId(),

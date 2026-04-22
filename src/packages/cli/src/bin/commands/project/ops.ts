@@ -40,6 +40,22 @@ export function getMovePlacementFallbackTimeoutMs(
   return Math.min(timeoutMs, 10_000);
 }
 
+export function assertProjectRehomeConfirmed({
+  project_id,
+  dest_bay_id,
+  yes,
+}: {
+  project_id: string;
+  dest_bay_id: string;
+  yes?: boolean;
+}): void {
+  if (!yes) {
+    throw new Error(
+      `refusing to rehome project '${project_id}' to bay '${dest_bay_id}' without --yes`,
+    );
+  }
+}
+
 function normalizeProjectLogTime(value: unknown): Date | null {
   if (value == null) return null;
   const date = value instanceof Date ? value : new Date(`${value}`);
@@ -725,6 +741,36 @@ export function registerProjectOpsCommands(
             warning:
               "move LRO did not report succeeded, but destination placement was verified",
           };
+        });
+      },
+    );
+
+  project
+    .command("rehome")
+    .description("move project control-plane ownership to another bay")
+    .option("-w, --project <project>", "project id or name")
+    .requiredOption("--bay <bay>", "destination bay id")
+    .option("-y, --yes", "confirm the project ownership transfer")
+    .action(
+      async (
+        opts: { project?: string; bay: string; yes?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "project rehome", async (ctx) => {
+          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+          const destBayId = `${opts.bay ?? ""}`.trim();
+          if (!destBayId) {
+            throw new Error("--bay is required");
+          }
+          assertProjectRehomeConfirmed({
+            project_id: ws.project_id,
+            dest_bay_id: destBayId,
+            yes: opts.yes,
+          });
+          return await ctx.hub.projects.rehomeProject({
+            project_id: ws.project_id,
+            dest_bay_id: destBayId,
+          });
         });
       },
     );

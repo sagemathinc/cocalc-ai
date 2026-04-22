@@ -158,6 +158,84 @@ describe("inter-bay bridge", () => {
     );
   });
 
+  it("dispatches typed project rehome requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({
+      data: {
+        project_id: "p1",
+        previous_bay_id: "bay-0",
+        owning_bay_id: "bay-1",
+        status: "rehomed",
+      },
+    });
+    const { getInterBayBridge } = await import("./bridge");
+    const bridge = getInterBayBridge();
+    await expect(
+      bridge.projectControl("bay-0").rehome({
+        project_id: "p1",
+        account_id: "a1",
+        dest_bay_id: "bay-1",
+      } as any),
+    ).resolves.toEqual({
+      project_id: "p1",
+      previous_bay_id: "bay-0",
+      owning_bay_id: "bay-1",
+      status: "rehomed",
+    });
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-0.rpc.project-control.rehome",
+      {
+        name: "rehome",
+        args: [
+          {
+            project_id: "p1",
+            account_id: "a1",
+            dest_bay_id: "bay-1",
+          },
+        ],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
+
+  it("dispatches typed project accept-rehome requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({
+      data: {
+        project_id: "p1",
+        previous_bay_id: "bay-0",
+        owning_bay_id: "bay-1",
+        status: "rehomed",
+      },
+    });
+    const { getInterBayBridge } = await import("./bridge");
+    const bridge = getInterBayBridge();
+    await expect(
+      bridge.projectControl("bay-1").acceptRehome({
+        project_id: "p1",
+        source_bay_id: "bay-0",
+        dest_bay_id: "bay-1",
+        project: { project_id: "p1" },
+      } as any),
+    ).resolves.toMatchObject({
+      project_id: "p1",
+      owning_bay_id: "bay-1",
+    });
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-1.rpc.project-control.accept-rehome",
+      {
+        name: "acceptRehome",
+        args: [
+          {
+            project_id: "p1",
+            source_bay_id: "bay-0",
+            dest_bay_id: "bay-1",
+            project: { project_id: "p1" },
+          },
+        ],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
+
   it("dispatches typed project active-op requests through the fabric client", async () => {
     requestMock.mockResolvedValue({
       data: {
