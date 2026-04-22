@@ -171,7 +171,33 @@ describe("project rehome", () => {
       }
       return { rows: [] };
     });
-    clientQueryMock = jest.fn(async (sql: string) => {
+    clientQueryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes("FROM project_rehome_operations") &&
+        sql.includes("status = 'running'")
+      ) {
+        return { rows: operationRow ? [operationRow] : [] };
+      }
+      if (sql.includes("INSERT INTO project_rehome_operations")) {
+        operationRow = {
+          op_id: "33333333-3333-4333-8333-333333333333",
+          project_id: params?.[0],
+          source_bay_id: params?.[1],
+          dest_bay_id: params?.[2],
+          requested_by: params?.[3],
+          reason: params?.[4],
+          campaign_id: params?.[5],
+          status: "running",
+          stage: "requested",
+          attempt: 0,
+          project: null,
+          last_error: null,
+        };
+        return { rows: [operationRow] };
+      }
       if (sql.includes("information_schema.columns")) {
         return {
           rows: [

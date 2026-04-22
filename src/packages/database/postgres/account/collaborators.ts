@@ -6,6 +6,7 @@
 import { validateOpts } from "./utils";
 import getPool from "@cocalc/database/pool";
 import { appendProjectOutboxEventForProject } from "../project-events-outbox";
+import { assertProjectNotRehoming } from "../project-rehome-fence";
 import type { PostgreSQL } from "../types";
 
 export interface AddUserToProjectOptions {
@@ -25,6 +26,11 @@ export async function addUserToProject(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await assertProjectNotRehoming({
+      db: client,
+      project_id: opts.project_id,
+      action: "add project collaborator",
+    });
     await client.query(
       `UPDATE projects
           SET users = COALESCE(users, '{}'::JSONB) || $2::JSONB
@@ -70,6 +76,11 @@ export async function removeCollaboratorFromProject(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await assertProjectNotRehoming({
+      db: client,
+      project_id: opts.project_id,
+      action: "remove project collaborator",
+    });
     await client.query(
       `UPDATE projects
           SET users = COALESCE(users, '{}'::JSONB) - $2::TEXT
@@ -109,6 +120,11 @@ export async function removeUserFromProject(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await assertProjectNotRehoming({
+      db: client,
+      project_id: opts.project_id,
+      action: "remove project user",
+    });
     await client.query(
       `UPDATE projects
           SET users = COALESCE(users, '{}'::JSONB) - $2::TEXT
