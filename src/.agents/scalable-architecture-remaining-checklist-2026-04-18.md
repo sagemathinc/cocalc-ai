@@ -811,12 +811,17 @@ Live validation, 2026-04-22 PT:
   `96aae9b8-5f19-4f1a-ba9a-3abbba8d9f0a`, both `bay-0 -> bay-2`, with no
   per-account errors. The disposable accounts were deleted with
   `cocalc account delete --only-if-tag qa-safe-delete --yes`.
-- The drain validation exposed a short post-drain seed-side convergence window:
-  immediate `account where` / `account delete` could still see stale `bay-0`
-  routing even though `accounts.home_bay_id` and
-  `cluster_account_directory.home_bay_id` were already `bay-2`. A retry after
-  convergence routed correctly. This is an operator-UX follow-up, not a data
-  correctness failure.
+- Follow-up drain validation fixed the post-drain routing-read window by making
+  direct account/directory lookups use the primary pool instead of the
+  potentially stale `medium` read pool, and by requiring account rehome to wait
+  for the `getAccountBay` read path to observe the destination before marking
+  the operation complete. Disposable accounts
+  `5e891bf2-aefe-4218-ada6-de46547a9c81` and
+  `5bba2932-d1d7-4a47-9b1b-0f642434d05b` drained `bay-0 -> bay-2` with
+  operations `a0fd816e-1cd7-4d37-a205-652a39b71d0e` and
+  `da4b008b-f3c8-4801-9334-1310e4c33316`; immediate `account where` returned
+  `home_bay_id=bay-2` with `source=cluster-directory`, and immediate
+  safety-tagged deletes both routed to `bay-2` successfully.
 
 Non-goals for initial account rehome:
 

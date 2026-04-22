@@ -70,6 +70,7 @@ async function getAccountRow(account_id: string): Promise<{
   last_name?: string | null;
   name?: string | null;
   home_bay_id?: string | null;
+  source: "account-row" | "cluster-directory";
 }> {
   if (!isValidUUID(account_id)) {
     throw new Error(`invalid account id '${account_id}'`);
@@ -83,6 +84,7 @@ async function getAccountRow(account_id: string): Promise<{
       last_name: global.last_name ?? null,
       name: global.name ?? null,
       home_bay_id: global.home_bay_id ?? null,
+      source: "cluster-directory",
     };
   }
   const { rows } = await getPool().query(
@@ -95,7 +97,10 @@ async function getAccountRow(account_id: string): Promise<{
   if (!rows[0]?.account_id) {
     throw new Error(`account '${account_id}' not found`);
   }
-  return rows[0];
+  return {
+    ...rows[0],
+    source: "account-row",
+  };
 }
 
 async function getVisibleProject({
@@ -185,7 +190,7 @@ export async function resolveAccountHomeBay({
     last_name: row.last_name ?? undefined,
     name: row.name ?? undefined,
     home_bay_id: home_bay_id ?? getConfiguredBayId(),
-    source: home_bay_id ? "account-row" : "single-bay-default",
+    source: home_bay_id ? row.source : "single-bay-default",
   };
 }
 

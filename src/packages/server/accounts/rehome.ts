@@ -23,6 +23,7 @@ import {
   getClusterBayPublicOrigins,
 } from "@cocalc/server/bay-public-origin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
 import { listBrowserSessionsForAccount } from "@cocalc/server/conat/api/browser-sessions";
 import {
@@ -37,6 +38,7 @@ const log = getLogger("server:accounts:rehome");
 const ACCOUNT_REHOME_OPERATIONS_TABLE = "account_rehome_operations";
 const ACCOUNT_REHOME_TIMEOUT_MS = 5 * 60_000;
 const ACCOUNT_REHOME_BROWSER_RECONNECT_TIMEOUT_MS = 5_000;
+const ACCOUNT_REHOME_ROUTE_CONVERGENCE_TIMEOUT_MS = 10_000;
 
 const PORTABLE_STATE_TABLES = [
   "account_project_index",
@@ -719,6 +721,50 @@ async function forceAccountBrowserSessionsToHomeBay({
   });
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForAccountHomeBayReadPath({
+  acting_account_id,
+  target_account_id,
+  dest_bay_id,
+  timeout_ms = ACCOUNT_REHOME_ROUTE_CONVERGENCE_TIMEOUT_MS,
+}: {
+  acting_account_id: string;
+  target_account_id: string;
+  dest_bay_id: string;
+  timeout_ms?: number;
+}): Promise<void> {
+  const deadline = Date.now() + timeout_ms;
+  let lastHomeBayId: string | null = null;
+  let lastError: unknown;
+  while (true) {
+    try {
+      const located = await resolveAccountHomeBay({
+        account_id: acting_account_id,
+        user_account_id: target_account_id,
+      });
+      lastHomeBayId = `${located.home_bay_id ?? ""}`.trim() || null;
+      if (lastHomeBayId === dest_bay_id) {
+        return;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      const suffix = lastError
+        ? `; last error: ${lastError instanceof Error ? lastError.message : `${lastError}`}`
+        : `; last home bay: ${lastHomeBayId ?? "unknown"}`;
+      throw new Error(
+        `account ${target_account_id} routing did not converge to ${dest_bay_id}${suffix}`,
+      );
+    }
+    await delay(Math.min(250, Math.max(25, remaining)));
+  }
+}
+
 export async function acceptAccountRehome({
   target_account_id,
   source_bay_id,
@@ -926,6 +972,11 @@ export async function runAccountRehomeOperation(
       await updateClusterAccountHomeBay({
         account_id: op.account_id,
         home_bay_id: op.dest_bay_id,
+      });
+      await waitForAccountHomeBayReadPath({
+        acting_account_id: op.requested_by ?? op.account_id,
+        target_account_id: op.account_id,
+        dest_bay_id: op.dest_bay_id,
       });
       await forceAccountBrowserSessionsToHomeBay({
         account_id: op.account_id,

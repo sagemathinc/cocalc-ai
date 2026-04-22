@@ -115,7 +115,10 @@ async function getLocalAccountById(
   if (!isValidUUID(account_id)) {
     return null;
   }
-  const { rows } = await getPool("medium").query(
+  // Direct account lookups are used for routing and write fencing, so they must
+  // read the primary immediately after rehome updates rather than a possibly
+  // stale read pool.
+  const { rows } = await getPool().query(
     `SELECT account_id, first_name, last_name, name, email_address, home_bay_id,
             created, last_active, banned, email_address_verified
        FROM accounts
@@ -134,7 +137,10 @@ async function getLocalAccountByEmail(
   if (!email) {
     return null;
   }
-  const { rows } = await getPool("medium").query(
+  // Direct account lookups are used for routing and write fencing, so they must
+  // read the primary immediately after rehome updates rather than a possibly
+  // stale read pool.
+  const { rows } = await getPool().query(
     `SELECT account_id, first_name, last_name, name, email_address, home_bay_id,
             created, last_active, banned, email_address_verified
        FROM accounts
@@ -153,7 +159,8 @@ async function getDirectoryAccountById(
     return null;
   }
   await ensureClusterAccountDirectorySchema();
-  const { rows } = await getPool("medium").query(
+  // Direct directory lookups are the cluster routing source of truth.
+  const { rows } = await getPool().query(
     `SELECT account_id, first_name, last_name, name, email_address, home_bay_id,
             created, last_active, banned
        FROM ${TABLE}
@@ -173,7 +180,8 @@ async function getDirectoryAccountByEmail(
     return null;
   }
   await ensureClusterAccountDirectorySchema();
-  const { rows } = await getPool("medium").query(
+  // Direct directory lookups are the cluster routing source of truth.
+  const { rows } = await getPool().query(
     `SELECT account_id, first_name, last_name, name, email_address, home_bay_id,
             created, last_active, banned
        FROM ${TABLE}

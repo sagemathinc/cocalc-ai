@@ -594,7 +594,7 @@ export interface AccountBayLocation {
   last_name?: string;
   name?: string;
   home_bay_id: string;
-  source: "account-row" | "single-bay-default";
+  source: "account-row" | "cluster-directory" | "single-bay-default";
 }
 
 export interface ProjectBayLocation {
