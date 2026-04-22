@@ -610,6 +610,7 @@ Initial read-only page:
   - `cocalc bay list`
   - `cocalc bay show ...`
   - `cocalc bay projection status-account-project-index ...`
+  - `cocalc account rehome-drain --source-bay ... --dest-bay ...`
   - `cocalc project rehome-drain --source-bay ... --dest-bay ...`
   - `cocalc project rehome-status --op-id ...`
   - `cocalc project rehome-reconcile --op-id ...`
@@ -617,8 +618,9 @@ Initial read-only page:
 Later mutating UI, only after the CLI/API paths are proven:
 
 - [ ] mark a bay as accepting or not accepting new ownership
+- [ ] dry-run and execute account ownership drains
 - [ ] dry-run and execute project ownership drains
-- [ ] dry-run and execute future account/host ownership drains
+- [ ] dry-run and execute future host ownership drains
 - [ ] trigger projection drains/rebuilds with bounded limits
 - [ ] restart/update bay software with explicit confirmation and status
       tracking
@@ -694,6 +696,9 @@ Initial account rehome target:
 - [x] forced browser reconnection validation
 - [x] failure-injection validation for destination-accepted/source-flip-failed
       and delayed projection/directory convergence
+- [x] batch/drain wrapper that groups many per-account rehomes into a bay drain
+      with dry-run-by-default execution, bounded limits, campaign/reason
+      metadata, and optional safety-tag filtering
 
 Live validation, 2026-04-22 PT:
 
@@ -796,6 +801,22 @@ Live validation, 2026-04-22 PT:
   same API key authenticated after rehome. The disposable account was deleted
   with `cocalc account delete --only-if-tag qa-safe-delete --yes`, and the
   disposable API-key row was removed.
+- Account drain operator validation used disposable accounts
+  `2f8dce65-390f-4b23-b1d2-5c69a6bcd856` and
+  `85cd5a76-861d-4661-84ee-8a51267dde6b` with safety tags
+  `qa-safe-delete` and `qa-account-drain`. A dry-run
+  `cocalc account rehome-drain --source-bay bay-0 --dest-bay bay-2 --limit 5 --only-if-tag qa-account-drain --campaign qa-account-drain-live`
+  returned exactly those two candidates. The same command with `--write`
+  completed operations `6eee5a29-f701-4450-804e-d45dd07a757c` and
+  `96aae9b8-5f19-4f1a-ba9a-3abbba8d9f0a`, both `bay-0 -> bay-2`, with no
+  per-account errors. The disposable accounts were deleted with
+  `cocalc account delete --only-if-tag qa-safe-delete --yes`.
+- The drain validation exposed a short post-drain seed-side convergence window:
+  immediate `account where` / `account delete` could still see stale `bay-0`
+  routing even though `accounts.home_bay_id` and
+  `cluster_account_directory.home_bay_id` were already `bay-2`. A retry after
+  convergence routed correctly. This is an operator-UX follow-up, not a data
+  correctness failure.
 
 Non-goals for initial account rehome:
 
@@ -804,7 +825,6 @@ Non-goals for initial account rehome:
 - moving project-host assignments
 - moving billing/provider-side state outside the `accounts` row
 - rewriting historical notification target/outbox rows
-- batch account drains before the single-account operation is validated
 
 ### 10. Project Rehome
 

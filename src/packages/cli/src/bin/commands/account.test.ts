@@ -357,3 +357,123 @@ test("account rehome-reconcile forwards source bay", async () => {
     source_bay_id: "bay-0",
   });
 });
+
+test("account rehome-drain defaults to a dry run", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          system: {
+            drainAccountRehome: async (opts) => {
+              captured = opts;
+              return {
+                source_bay_id: "bay-0",
+                dest_bay_id: opts.dest_bay_id,
+                dry_run: opts.dry_run,
+                limit: opts.limit,
+                only_if_tag: opts.only_if_tag ?? null,
+                candidate_count: 0,
+                candidates: [],
+                rehomed: [],
+                errors: [],
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve account identifier");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "account",
+    "rehome-drain",
+    "--dest-bay",
+    "bay-2",
+  ]);
+
+  assert.deepEqual(captured, {
+    source_bay_id: undefined,
+    dest_bay_id: "bay-2",
+    limit: 25,
+    dry_run: true,
+    campaign_id: undefined,
+    reason: undefined,
+    only_if_tag: undefined,
+  });
+});
+
+test("account rehome-drain forwards write mode and metadata", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          system: {
+            drainAccountRehome: async (opts) => {
+              captured = opts;
+              return {
+                source_bay_id: opts.source_bay_id,
+                dest_bay_id: opts.dest_bay_id,
+                dry_run: opts.dry_run,
+                limit: opts.limit,
+                campaign_id: opts.campaign_id,
+                only_if_tag: opts.only_if_tag,
+                candidate_count: 1,
+                candidates: ["22222222-2222-2222-2222-222222222222"],
+                rehomed: [],
+                errors: [],
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve account identifier");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "account",
+    "rehome-drain",
+    "--source-bay",
+    "bay-0",
+    "--dest-bay",
+    "bay-2",
+    "--limit",
+    "7",
+    "--campaign",
+    "drain-accounts",
+    "--reason",
+    "load shed",
+    "--only-if-tag",
+    "qa-drain",
+    "--write",
+  ]);
+
+  assert.deepEqual(captured, {
+    source_bay_id: "bay-0",
+    dest_bay_id: "bay-2",
+    limit: 7,
+    dry_run: false,
+    campaign_id: "drain-accounts",
+    reason: "load shed",
+    only_if_tag: "qa-drain",
+  });
+});

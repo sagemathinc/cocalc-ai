@@ -53,6 +53,19 @@ type AccountRehomeOperationRow = AccountRehomeOperationSummary & {
   account: Record<string, unknown> | null;
 };
 
+export type AccountRehomeDrainResult = {
+  source_bay_id: string;
+  dest_bay_id: string;
+  dry_run: boolean;
+  limit: number;
+  campaign_id: string | null;
+  only_if_tag: string | null;
+  candidate_count: number;
+  candidates: string[];
+  rehomed: AccountRehomeResponse[];
+  errors: Array<{ account_id: string; error: string }>;
+};
+
 type Queryable = {
   query: (
     sql: string,
@@ -1048,4 +1061,94 @@ export async function reconcileAccountRehomeOnSource({
   op_id: string;
 }): Promise<AccountRehomeResponse> {
   return await runAccountRehomeOperation(op_id);
+}
+
+export async function drainAccountRehome({
+  account_id,
+  source_bay_id,
+  dest_bay_id,
+  limit = 25,
+  dry_run = true,
+  campaign_id,
+  reason,
+  only_if_tag,
+}: {
+  account_id?: string;
+  source_bay_id?: string;
+  dest_bay_id: string;
+  limit?: number;
+  dry_run?: boolean;
+  campaign_id?: string | null;
+  reason?: string | null;
+  only_if_tag?: string | null;
+}): Promise<AccountRehomeDrainResult> {
+  const requestedBy = await assertAdmin(account_id);
+  const localBayId = getConfiguredBayId();
+  const sourceBayId = normalizeBayId(
+    "source_bay_id",
+    source_bay_id ?? localBayId,
+  );
+  const destBayId = normalizeBayId("dest_bay_id", dest_bay_id);
+  if (sourceBayId !== localBayId) {
+    throw new Error(
+      `account rehome drain must run on the source bay (${sourceBayId}); local bay is ${localBayId}`,
+    );
+  }
+  if (sourceBayId === destBayId) {
+    throw new Error("source and destination bay must be different");
+  }
+  await assertBayExists(destBayId);
+  const normalizedLimit = Math.min(
+    500,
+    Math.max(1, Number.isInteger(limit) ? limit : 25),
+  );
+  const onlyIfTag = `${only_if_tag ?? ""}`.trim() || null;
+  const { rows } = await getPool().query<{ account_id: string }>(
+    `
+      SELECT account_id
+        FROM accounts
+       WHERE COALESCE(NULLIF(BTRIM(home_bay_id), ''), $1) = $1
+         AND account_id <> $2
+         AND deleted IS NOT TRUE
+         AND ($4::TEXT IS NULL OR $4 = ANY(COALESCE(tags, ARRAY[]::TEXT[])))
+       ORDER BY last_active ASC NULLS FIRST, created ASC NULLS FIRST, account_id ASC
+       LIMIT $3
+    `,
+    [sourceBayId, requestedBy, normalizedLimit, onlyIfTag],
+  );
+  const candidates = rows.map((row) => row.account_id);
+  const result: AccountRehomeDrainResult = {
+    source_bay_id: sourceBayId,
+    dest_bay_id: destBayId,
+    dry_run,
+    limit: normalizedLimit,
+    campaign_id: campaign_id ?? null,
+    only_if_tag: onlyIfTag,
+    candidate_count: candidates.length,
+    candidates,
+    rehomed: [],
+    errors: [],
+  };
+  if (dry_run) {
+    return result;
+  }
+  for (const accountId of candidates) {
+    try {
+      result.rehomed.push(
+        await rehomeAccountOnHomeBay({
+          account_id: requestedBy,
+          target_account_id: accountId,
+          dest_bay_id: destBayId,
+          campaign_id: campaign_id ?? `drain:${sourceBayId}->${destBayId}`,
+          reason: reason ?? `drain ${sourceBayId} to ${destBayId}`,
+        }),
+      );
+    } catch (err) {
+      result.errors.push({
+        account_id: accountId,
+        error: err instanceof Error ? err.message : `${err}`,
+      });
+    }
+  }
+  return result;
 }

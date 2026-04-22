@@ -171,6 +171,51 @@ export function registerAccountCommand(
       },
     );
 
+  account
+    .command("rehome-drain")
+    .description("batch rehome accounts off the current/source bay")
+    .requiredOption("--dest-bay <bay>", "destination account home bay")
+    .option("--source-bay <bay>", "source bay id; defaults to current bay")
+    .option("--limit <n>", "maximum accounts to process", "25")
+    .option("--campaign <id>", "operator campaign/drain identifier")
+    .option("--reason <reason>", "operator reason, e.g. maintenance or load")
+    .option("--only-if-tag <tag>", "only drain accounts with this tag")
+    .option("--write", "apply changes instead of dry run", false)
+    .action(
+      async (
+        opts: {
+          destBay?: string;
+          sourceBay?: string;
+          limit?: string;
+          campaign?: string;
+          reason?: string;
+          onlyIfTag?: string;
+          write?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "account rehome-drain", async (ctx) => {
+          const limit = Number(opts.limit ?? "25");
+          if (!Number.isInteger(limit) || limit <= 0) {
+            throw new Error("--limit must be a positive integer");
+          }
+          const destBayId = `${opts.destBay ?? ""}`.trim();
+          if (!destBayId) {
+            throw new Error("--dest-bay is required");
+          }
+          return await ctx.hub.system.drainAccountRehome({
+            source_bay_id: `${opts.sourceBay ?? ""}`.trim() || undefined,
+            dest_bay_id: destBayId,
+            limit,
+            dry_run: opts.write !== true,
+            campaign_id: `${opts.campaign ?? ""}`.trim() || undefined,
+            reason: `${opts.reason ?? ""}`.trim() || undefined,
+            only_if_tag: `${opts.onlyIfTag ?? ""}`.trim() || undefined,
+          });
+        });
+      },
+    );
+
   const accountApiKey = account
     .command("api-key")
     .description("manage account API keys");
