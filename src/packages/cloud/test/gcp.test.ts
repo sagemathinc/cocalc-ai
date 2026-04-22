@@ -156,6 +156,62 @@ describe("GcpProvider", () => {
     });
   });
 
+  it("recovers a created host when insert times out after GCP accepts it", async () => {
+    insertMock.mockRejectedValueOnce(
+      Object.assign(new Error("read ETIMEDOUT"), { code: "ETIMEDOUT" }),
+    );
+    getMock.mockResolvedValueOnce([
+      {
+        status: "RUNNING",
+        networkInterfaces: [{ accessConfigs: [{ natIP: "203.0.113.11" }] }],
+      },
+    ]);
+    diskGetMock.mockRejectedValueOnce({ code: 404 });
+
+    const provider = new GcpProvider();
+    const runtime = await provider.createHost(buildSpec(), {
+      project_id: "proj-1",
+      client_email: "svc@example.com",
+      private_key: "key",
+    });
+
+    expect(runtime).toMatchObject({
+      provider: "gcp",
+      instance_id: "ph-test",
+      public_ip: "203.0.113.11",
+      zone: "us-west1-a",
+      metadata: {
+        provider_status: "RUNNING",
+      },
+    });
+    expect(waitMock).not.toHaveBeenCalled();
+  });
+
+  it("treats already-existing GCP instances as idempotent create recovery", async () => {
+    insertMock.mockRejectedValueOnce({
+      code: 409,
+      message: "The resource already exists",
+      errors: [{ reason: "alreadyExists" }],
+    });
+    getMock.mockResolvedValueOnce([
+      {
+        status: "PROVISIONING",
+        networkInterfaces: [{ accessConfigs: [{ natIP: "203.0.113.12" }] }],
+      },
+    ]);
+    diskGetMock.mockRejectedValueOnce({ code: 404 });
+
+    const provider = new GcpProvider();
+    const runtime = await provider.createHost(buildSpec(), {
+      project_id: "proj-1",
+      client_email: "svc@example.com",
+      private_key: "key",
+    });
+
+    expect(runtime.public_ip).toBe("203.0.113.12");
+    expect(runtime.metadata?.provider_status).toBe("PROVISIONING");
+  });
+
   it("starts, stops, and deletes a host", async () => {
     startMock.mockResolvedValueOnce([{}]);
     stopMock.mockResolvedValueOnce([{}]);
