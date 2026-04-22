@@ -390,6 +390,7 @@ describe("project rehome", () => {
       },
       portable_state: {
         project_log: [PROJECT_LOG_ROW],
+        api_keys: [],
       },
     });
     expect(acceptRehomeMock).toHaveBeenCalledWith({
@@ -521,6 +522,98 @@ describe("project rehome", () => {
     ]);
   });
 
+  it("destination accept replaces project-scoped v2 api keys by key_id", async () => {
+    const apiKeyRow = {
+      id: 123,
+      key_id: "portable-project-key",
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      created: new Date("2026-04-22T00:00:00.000Z"),
+      hash: "hash",
+      trunc: "sk-co...portable",
+      name: "project key",
+      expire: null,
+      last_active: null,
+    };
+    const defaultQueryMock = queryMock;
+    const apiKeyQueries: Array<{ sql: string; params?: any[] }> = [];
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (
+        sql.includes("ALTER TABLE api_keys ADD COLUMN") ||
+        sql.includes(
+          "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes("information_schema.columns") &&
+        params?.[0] === "api_keys"
+      ) {
+        return {
+          rows: [
+            { column_name: "id" },
+            { column_name: "account_id" },
+            { column_name: "created" },
+            { column_name: "hash" },
+            { column_name: "project_id" },
+            { column_name: "expire" },
+            { column_name: "trunc" },
+            { column_name: "name" },
+            { column_name: "last_active" },
+            { column_name: "key_id" },
+          ],
+        };
+      }
+      if (sql.includes("DELETE FROM api_keys")) {
+        apiKeyQueries.push({ sql, params });
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO api_keys")) {
+        apiKeyQueries.push({ sql, params });
+        return { rows: [], rowCount: 1 };
+      }
+      return await defaultQueryMock(sql, params);
+    });
+    const { acceptProjectRehome } = await import("./rehome");
+
+    await acceptProjectRehome({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      source_bay_id: "bay-1",
+      dest_bay_id: "bay-0",
+      project: {
+        project_id: PROJECT_ID,
+        owning_bay_id: "bay-1",
+        title: "Project",
+        users: {},
+        deleted: false,
+      },
+      portable_state: {
+        api_keys: [apiKeyRow],
+      },
+    });
+
+    expect(apiKeyQueries[0]).toEqual({
+      sql: expect.stringContaining("DELETE FROM api_keys"),
+      params: [PROJECT_ID],
+    });
+    expect(apiKeyQueries[1].sql).toEqual(
+      expect.stringContaining("ON CONFLICT (key_id) DO UPDATE SET"),
+    );
+    expect(apiKeyQueries[1].params).toEqual([
+      ACCOUNT_ID,
+      apiKeyRow.created,
+      "hash",
+      PROJECT_ID,
+      null,
+      "sk-co...portable",
+      "project key",
+      null,
+      "portable-project-key",
+    ]);
+  });
+
   it("reconciles a destination-accepted operation by copying portable state", async () => {
     operationRow = {
       op_id: "33333333-3333-4333-8333-333333333333",
@@ -581,6 +674,7 @@ describe("project rehome", () => {
       },
       portable_state: {
         project_log: [PROJECT_LOG_ROW],
+        api_keys: [],
       },
     });
     expect(order).toEqual(["flip-source"]);

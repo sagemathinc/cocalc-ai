@@ -650,6 +650,7 @@ Account rehome contract:
   - `account_notification_index`
   - `remember_me`
   - `auth_tokens`
+  - account-wide v2 `api_keys`
 - Source flip updates the source `accounts.home_bay_id` and the cluster account
   directory entry to the destination bay.
 - The operation is forward-reconciled after destination accept. Rollback is not
@@ -660,10 +661,11 @@ Account rehome contract:
   write fence, which uses the cluster account directory as the authoritative
   home-bay source when present.
 - Account rehome must not move project ownership, project data, project-host
-  assignments, API keys, billing/customer records outside the `accounts` row,
-  or historical notification/event outbox rows in the first slice. Account API
-  keys need a separate conflict policy because their local integer primary key
-  is embedded in the secret.
+  assignments, project-scoped API keys, billing/customer records outside the
+  `accounts` row, or historical notification/event outbox rows in the first
+  slice. Account-wide v2 API keys are portable because the presented secret
+  embeds a random `key_id`, not the bay-local integer primary key. Pre-v2 API
+  key formats were never released in this multibay path and are not accepted.
 
 Initial account rehome target:
 
@@ -680,6 +682,7 @@ Initial account rehome target:
   - `account_notification_index`
   - `remember_me`
   - `auth_tokens`
+  - account-wide v2 `api_keys`
 - [x] update the cluster account directory so lookup/search resolves the new
       home bay
 - [x] durable per-account rehome operation record with explicit state machine:
@@ -768,6 +771,31 @@ Live validation, 2026-04-22 PT:
   `f7fba1c9-14bb-40f5-82c6-a1ca2a148bc3`, and
   `bc590ce9-dbf4-4247-ab8f-bcc97544ae15` with
   `cocalc account delete --only-if-tag qa-safe-delete --yes`.
+- Account-wide v2 API-key portability validation used disposable account
+  `78b45145-eb2e-4b3b-9f42-a9e6d5787891` and generated API key
+  `key_id=NWrp5Fz7AJYZmMV0S3PM4-8C`. The new secret format was
+  `sk-cocalc-v2.<random-key-id>.<random-secret>`, and the key authenticated
+  before rehome using only API-key auth.
+- The first live rehome attempt exposed that the destination generic JSON
+  upsert still selected the missing source-local `api_keys.id` column and
+  attempted to insert `id=NULL`. The row-copy helper now only inserts columns
+  present in each copied JSON row, so v2 API keys preserve `key_id` while the
+  destination bay allocates its own local integer `id`.
+- Reconciled operation `5c82b2fb-df2f-4dd3-8516-dd458d0d3ecb` after the fix;
+  it completed `bay-0 -> bay-2` on attempt 2 with `last_error=null`.
+  Post-rehome API-key-only auth through the control plane succeeded for the
+  same v2 secret, proving the copied API-key row was usable after ownership
+  moved. The disposable account was deleted with
+  `cocalc account delete --only-if-tag qa-safe-delete --yes`, and its
+  disposable API-key row was removed.
+- Final 3-bay smoke validation used disposable account
+  `ae3f1a39-8a33-4c6b-aa16-4595de6798f7` with v2 account API key
+  `key_id=ogxxAnrL3O6LQMw-581ftWeP`. API-key-only auth succeeded before
+  rehome, operation `862f6f3a-d922-4712-b12a-77d7dadd14bd` moved
+  `bay-0 -> bay-2`, `account where` converged to `home_bay_id=bay-2`, and the
+  same API key authenticated after rehome. The disposable account was deleted
+  with `cocalc account delete --only-if-tag qa-safe-delete --yes`, and the
+  disposable API-key row was removed.
 
 Non-goals for initial account rehome:
 
@@ -808,9 +836,10 @@ main production reasons to do it are:
       or load-shedding campaign
 - [x] bay admission control so an operator can mark a bay as "do not place new
       project ownership here" before draining existing ownership
-- [x] copy portable bay-local project state during rehome; initially this means
-      merging the `project-log` Conat stream into the destination bay after the
-      source ownership flip and before projection completion
+- [x] copy portable bay-local project state during rehome; this means merging
+      the `project-log` Conat stream and copying project-scoped v2 `api_keys`
+      into the destination bay after the source ownership flip and before
+      projection completion
 - [x] project fence / quiesce for concurrent metadata writes during rehome
 - [x] live 3-bay happy-path validation for per-project rehome and projection
       convergence
@@ -857,7 +886,8 @@ Retry / rollback plan, 2026-04-22 PT:
 - `destination_accepted` failures are retried by flipping source ownership to
   the destination bay and then continuing with portable-state copy.
 - `source_flipped` failures are retried by re-reading the preserved project row
-  and copying portable bay-local state, currently the `project-log` stream.
+  and copying portable bay-local state, currently the `project-log` stream and
+  project-scoped v2 `api_keys`.
 - `portable_state_copied` failures are retried by updating local projection rows
   and draining projection state.
 - `projected` failures are retried by marking the operation complete and
@@ -895,6 +925,30 @@ Failure-injection validation, 2026-04-22 PT:
   `cocalc project delete --hard --purge-backups-now --wait --yes`; delete
   operation `a5f50644-0f9f-4567-b872-e585f815aedd` completed with
   `status=succeeded`.
+- Project-scoped v2 API-key portability validation used disposable project
+  `da9a1d28-fd00-4ca5-9bca-cc25666787cb`, initially owned by `bay-0`, and
+  generated project API key `key_id=1RDddqgzciaaS95tlw-WaeWB`. The same v2
+  secret authenticated as `{ project_id: da9a1d28-fd00-4ca5-9bca-cc25666787cb }`
+  before rehome on `bay-0`.
+- Rehome operation `f9054db5-9f10-46da-8229-7b6d465ba1b8` moved the project
+  `bay-0 -> bay-2` with `status=succeeded`, `stage=complete`. The same v2
+  project API key authenticated after rehome on `bay-2`, proving
+  project-scoped v2 `api_keys` copied correctly by `key_id` while the
+  destination allocated its own local integer `id`. The disposable project was
+  hard-deleted with `--purge-backups-now`, and the disposable key row was gone
+  afterward.
+- Final 3-bay smoke validation used disposable project
+  `cb63a8f7-e853-454d-8d31-6b864e7d976d` with project API key
+  `key_id=kOP3SV3RplgiZ2zJinr4P73V`. The project was initially owned by
+  `bay-0`; operation `f4ab1cfc-07a3-466f-8bc3-8595aee3520b` moved it to
+  `bay-1`; `project where` reported `owning_bay_id=bay-1`; and the same
+  project API key authenticated after rehome on `bay-1`. The hub log recorded
+  the post-complete `project_rehomed` project-log write, but
+  `cocalc project log --project ...` returned an empty page even after the
+  disposable project was started. This looks like a follow-up visibility bug in
+  the CLI/read path for project-log streams, not a failed project ownership or
+  API-key move. The disposable project was hard-deleted with
+  `--purge-backups-now`, and the disposable API-key row was gone afterward.
 
 ### 11. Host Move / Reassignment
 
@@ -1005,6 +1059,19 @@ Live 3-bay validation evidence, 2026-04-22 PT:
 - Final restore rehome `f9be98c2-7539-4865-b499-334184313cbb` put `london`
   back on `bay-0`; host bootstrap was `in_sync`, and the host projects CLI
   listed the assigned projects successfully.
+- Final 3-bay smoke validation found an operational blocker on the current
+  local dev hosts. Rehoming deprovisioned host
+  `aaca1d64-1743-4b66-9fb1-dcc295721e6a` failed after source flip because
+  bootstrap reconcile requires a reachable cloud SSH target. Rehoming running
+  host `fe625be4-c86f-4fc4-b324-fda2f895e448` (`host2`) from `bay-0` to
+  `bay-2` failed after source flip because hub SSH to
+  `ubuntu@34.106.199.212` was denied with `Permission denied (publickey)`;
+  failed operation `0b3c8969-de17-4ca4-b2c4-f9724a4f3095` stopped at
+  `stage=source_flipped`. A restore rehome put `host2` back on `bay-0`, and
+  the restore wrote a `cloud_vm_log.action='rehome'` success row with
+  `op_id=56b8aa4d-b89b-425b-8ee8-8eeb3717102a`. Before large host drains,
+  existing hosts need a hub-owner SSH trust audit/backfill so destination
+  bootstrap reconcile is not blocked by missing SSH authorization.
 
 Known follow-up:
 
@@ -1013,6 +1080,11 @@ Known follow-up:
   operation record, but an operator on another bay currently needs to know or
   target that source bay. This should become either source-bay-routed by CLI
   option or admin-only cluster search before large batch drains.
+- Project-log CLI/read-path validation needs a focused follow-up. The rehome
+  write path logged the `project_rehomed` append, but the CLI `project log`
+  reader returned no entries for the rehomed disposable project. The frontend
+  project-log path uses `dstream`; the CLI reader currently uses `astream`, so
+  this may be a reader mismatch rather than missing rehome data.
 
 Non-goals for initial host rehome:
 

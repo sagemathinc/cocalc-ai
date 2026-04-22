@@ -135,7 +135,6 @@ export async function provisionLocalClusterAccount(
     account_id,
     owner_id: opts.owner_id,
     home_bay_id: opts.home_bay_id,
-    noFirstProject: !!opts.no_first_project,
     tags: Array.isArray(opts.tags) && opts.tags.length ? opts.tags : undefined,
     signupReason: opts.signup_reason,
     ephemeral: opts.ephemeral,

@@ -937,7 +937,6 @@ async function ensureSecondarySmokeAccountViaCli({
     "Smoke",
     "--last-name",
     "Drain",
-    "--no-first-project",
   ]);
   const accountId = String(created?.account_id ?? "").trim();
   if (!accountId) {

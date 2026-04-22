@@ -258,7 +258,6 @@ def ensure_account(email: str, name: str) -> str:
         email,
         "--name",
         name,
-        "--no-first-project",
         "--tag",
         "phase3-bench",
         "--tag",

@@ -11,14 +11,13 @@ they have no password, then the provided one is ignored.
 */
 
 import getPool from "@cocalc/database/pool";
-import { generate } from "random-key";
+import { randomBytes } from "node:crypto";
 import { getLocalProjectCollaboratorAccessStatus } from "@cocalc/server/conat/project-local-access";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
 import { getLogger } from "@cocalc/backend/logger";
-import base62 from "base62/lib/ascii";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import type {
   ApiKey as ApiKeyType,
@@ -30,17 +29,48 @@ const log = getLogger("server:api:manage");
 
 // Global per user limit to avoid abuse/bugs. Nobody should ever hit this.
 const MAX_API_KEYS = 100000;
+const API_KEY_V2_PREFIX = "sk-cocalc-v2";
+const API_KEY_ID_BYTES = 18;
+const API_KEY_SECRET_BYTES = 32;
 
-// Converts any 32-bit nonnegative integer as a 6-character base-62 string.
-function encode62(n: number): string {
-  if (!Number.isInteger(n)) {
-    throw Error("n must be an integer");
-  }
-  return base62.encode(n).padStart(6, "0");
+let apiKeysV2SchemaReady: Promise<void> | undefined;
+
+async function ensureApiKeysV2Schema(): Promise<void> {
+  apiKeysV2SchemaReady ??= (async () => {
+    const pool = getPool();
+    await pool.query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
+    );
+    await pool.query(
+      "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx ON api_keys(key_id)",
+    );
+  })();
+  return await apiKeysV2SchemaReady;
 }
 
-function decode62(s: string): number {
-  return base62.decode(s);
+function randomBase64Url(bytes: number): string {
+  return randomBytes(bytes).toString("base64url");
+}
+
+function createApiKeySecret({ key_id }: { key_id: string }): string {
+  return `${API_KEY_V2_PREFIX}.${key_id}.${randomBase64Url(API_KEY_SECRET_BYTES)}`;
+}
+
+function parseApiKeyV2(secret: string): { key_id: string } | undefined {
+  const parts = `${secret ?? ""}`.split(".");
+  if (parts.length !== 3 || parts[0] !== API_KEY_V2_PREFIX) {
+    return undefined;
+  }
+  const key_id = parts[1]?.trim();
+  const secretPart = parts[2]?.trim();
+  if (!key_id || !secretPart) {
+    return undefined;
+  }
+  return { key_id };
+}
+
+function truncApiKey(secret: string): string {
+  return `${secret.slice(0, 5)}...${secret.slice(-8)}`;
 }
 
 interface Options {
@@ -95,15 +125,16 @@ async function getApiKeys({
 }): Promise<ApiKeyType[]> {
   log.debug("getProjectApiKeys", project_id);
   const pool = getPool();
+  await ensureApiKeysV2Schema();
   if (project_id) {
     const { rows } = await pool.query(
-      "SELECT id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE project_id=$1::UUID ORDER BY created DESC",
+      "SELECT id,key_id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE project_id=$1::UUID ORDER BY created DESC",
       [project_id],
     );
     return rows;
   } else {
     const { rows } = await pool.query(
-      "SELECT id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE account_id=$1::UUID AND project_id IS NULL ORDER BY created DESC",
+      "SELECT id,key_id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE account_id=$1::UUID AND project_id IS NULL ORDER BY created DESC",
       [account_id],
     );
     return rows;
@@ -112,15 +143,16 @@ async function getApiKeys({
 
 async function getApiKey({ id, account_id, project_id }) {
   const pool = getPool();
+  await ensureApiKeysV2Schema();
   if (project_id) {
     const { rows } = await pool.query(
-      "SELECT id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE id=$1 AND project_id=$2",
+      "SELECT id,key_id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE id=$1 AND project_id=$2",
       [id, project_id],
     );
     return rows[0];
   } else {
     const { rows } = await pool.query(
-      "SELECT id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE id=$1 AND account_id=$2",
+      "SELECT id,key_id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE id=$1 AND account_id=$2",
       [id, account_id],
     );
     return rows[0];
@@ -168,22 +200,22 @@ async function createApiKey({
   name: string;
 }): Promise<ApiKeyType> {
   const pool = getPool();
+  await ensureApiKeysV2Schema();
   if ((await numKeys(account_id)) >= MAX_API_KEYS) {
     throw Error(
       `There is a limit of ${MAX_API_KEYS} per account; please delete some api keys.`,
     );
   }
   const { rows } = await pool.query(
-    "INSERT INTO api_keys(account_id,created,project_id,expire,name) VALUES($1,NOW(),$2,$3,$4) RETURNING id,account_id,expire,created,name,last_active",
-    [account_id, project_id, expire, name],
+    "INSERT INTO api_keys(account_id,created,project_id,expire,name,key_id) VALUES($1,NOW(),$2,$3,$4,$5) RETURNING id,key_id,account_id,expire,created,name,last_active",
+    [account_id, project_id, expire, name, randomBase64Url(API_KEY_ID_BYTES)],
   );
-  const { id } = rows[0];
-  // We encode the id in the secret so when the user presents the secret we can find the record.
+  const { id, key_id } = rows[0];
   // Note that passwordHash is NOT a "function" -- due to salt every time you call it, the output is different!
   // Thus we have to do this little trick.
-  // New ones start with sk- and old with sk_.
-  const secret = `sk-${generate(16)}${encode62(id)}`;
-  const trunc = secret.slice(0, 3) + "..." + secret.slice(-6);
+  // v2 keys use a random key_id for lookup, not the local integer id.
+  const secret = createApiKeySecret({ key_id });
+  const trunc = truncApiKey(secret);
   const hash = passwordHash(secret);
   await pool.query("UPDATE api_keys SET trunc=$1,hash=$2 WHERE id=$3", [
     trunc,
@@ -279,31 +311,30 @@ export async function getAccountWithApiKey(
 > {
   log.debug("getAccountWithApiKey");
   const pool = getPool("medium");
+  await ensureApiKeysV2Schema();
 
-  // Check for legacy account api key:
-  if (secret.startsWith("sk_")) {
-    const { rows } = await pool.query(
-      "SELECT account_id FROM accounts WHERE api_key = $1::TEXT",
-      [secret],
-    );
-    if (rows.length > 0) {
-      const account_id = rows[0].account_id;
-      if (await isBanned(account_id)) {
-        log.debug("getAccountWithApiKey: banned api key ", account_id);
-        return;
-      }
-      // it's a valid account api key
-      log.debug("getAccountWithApiKey: valid api key for ", account_id);
-      return { account_id };
-    }
+  const v2 = parseApiKeyV2(secret);
+  if (!v2) {
+    return undefined;
   }
-
-  // Check new api_keys table
-  const id = decode62(secret.slice(-6));
   const { rows } = await pool.query(
-    "SELECT account_id,project_id,hash,expire FROM api_keys WHERE id=$1",
-    [id],
+    "SELECT id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
+    [v2.key_id],
   );
+  return await checkApiKeyRows({ rows, secret });
+}
+
+async function checkApiKeyRows({
+  rows,
+  secret,
+}: {
+  rows: any[];
+  secret: string;
+}): Promise<
+  | { account_id: string; project_id?: undefined }
+  | { account_id?: undefined; project_id: string }
+  | undefined
+> {
   if (rows.length == 0) return undefined;
   if (await isBanned(rows[0].account_id)) {
     log.debug("getAccountWithApiKey: banned api key ", rows[0]?.account_id);
@@ -316,7 +347,7 @@ export async function getAccountWithApiKey(
     if (rows[0].project_id) {
       const account_id = rows[0].account_id;
       if (!account_id) {
-        await deleteApiKey({ ...rows[0], id });
+        await deleteApiKey(rows[0]);
         return undefined;
       }
       const access = await getLocalProjectCollaboratorAccessStatus({
@@ -331,7 +362,7 @@ export async function getAccountWithApiKey(
         return undefined;
       }
       if (access !== "local-collaborator") {
-        await deleteApiKey({ ...rows[0], id });
+        await deleteApiKey(rows[0]);
         return undefined;
       }
     }
@@ -339,12 +370,15 @@ export async function getAccountWithApiKey(
     if (expire != null && expire.valueOf() <= Date.now()) {
       // expired entries will get automatically deleted eventually by database
       // maintenance, but we obviously shouldn't depend on that.
-      await deleteApiKey({ ...rows[0], id });
+      await deleteApiKey(rows[0]);
       return undefined;
     }
 
     // Yes, caller definitely has a valid key.
-    await pool.query("UPDATE api_keys SET last_active=NOW() WHERE id=$1", [id]);
+    await getPool("medium").query(
+      "UPDATE api_keys SET last_active=NOW() WHERE id=$1",
+      [rows[0].id],
+    );
     if (rows[0].project_id) {
       return { project_id: rows[0].project_id };
     }

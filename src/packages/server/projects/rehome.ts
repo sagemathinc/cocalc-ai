@@ -83,6 +83,7 @@ type ProjectRehomeOperationRow = ProjectRehomeOperationSummary & {
 };
 
 let projectRehomeSchemaReady: Promise<void> | undefined;
+let projectRehomeApiKeysSchemaReady: Promise<void> | undefined;
 
 async function ensureProjectRehomeSchema(): Promise<void> {
   projectRehomeSchemaReady ??= (async () => {
@@ -125,6 +126,18 @@ async function ensureProjectRehomeSchema(): Promise<void> {
   await projectRehomeSchemaReady;
 }
 
+async function ensureProjectRehomeApiKeysSchema(): Promise<void> {
+  projectRehomeApiKeysSchemaReady ??= (async () => {
+    await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
+    );
+    await getPool().query(
+      "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx ON api_keys(key_id)",
+    );
+  })();
+  await projectRehomeApiKeysSchemaReady;
+}
+
 function normalizeExplicitBayId(name: string, value: unknown): string {
   const bay_id = `${value ?? ""}`.trim();
   if (!bay_id) {
@@ -151,19 +164,30 @@ function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
-async function listWritableProjectColumns(db: Queryable): Promise<string[]> {
+async function listWritableTableColumns({
+  db,
+  table,
+}: {
+  db: Queryable;
+  table: string;
+}): Promise<string[]> {
   const { rows } = await db.query(
     `
       SELECT column_name
       FROM information_schema.columns
       WHERE table_schema = 'public'
-        AND table_name = 'projects'
+        AND table_name = $1
         AND is_generated = 'NEVER'
         AND identity_generation IS NULL
       ORDER BY ordinal_position
     `,
+    [table],
   );
   return rows.map((row) => `${row.column_name}`);
+}
+
+async function listWritableProjectColumns(db: Queryable): Promise<string[]> {
+  return await listWritableTableColumns({ db, table: "projects" });
 }
 
 async function loadProjectRowForRehome(
@@ -580,9 +604,91 @@ async function mergeLocalProjectLogRows({
 async function readPortableProjectState(
   project_id: string,
 ): Promise<ProjectControlPortableProjectState> {
+  const [project_log, api_keys] = await Promise.all([
+    readLocalProjectLogRows(project_id),
+    loadProjectScopedPortableApiKeyRows(project_id),
+  ]);
   return {
-    project_log: await readLocalProjectLogRows(project_id),
+    project_log,
+    api_keys,
   };
+}
+
+async function loadProjectScopedPortableApiKeyRows(
+  project_id: string,
+): Promise<Record<string, unknown>[]> {
+  await ensureProjectRehomeApiKeysSchema();
+  const { rows } = await getPool().query<{
+    rows: Record<string, unknown>[] | null;
+  }>(
+    `
+      SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) AS rows
+        FROM (
+          SELECT *
+            FROM api_keys
+           WHERE project_id=$1
+             AND key_id IS NOT NULL
+        ) t
+    `,
+    [project_id],
+  );
+  return Array.isArray(rows[0]?.rows) ? rows[0].rows! : [];
+}
+
+async function replaceProjectScopedPortableApiKeys({
+  project_id,
+  rows,
+}: {
+  project_id: string;
+  rows: Record<string, unknown>[];
+}): Promise<void> {
+  await ensureProjectRehomeApiKeysSchema();
+  const pool = getPool();
+  await pool.query(
+    `
+      DELETE FROM api_keys
+       WHERE project_id=$1
+         AND key_id IS NOT NULL
+    `,
+    [project_id],
+  );
+  const writableColumns = await listWritableTableColumns({
+    db: pool,
+    table: "api_keys",
+  });
+  for (const row of rows) {
+    const nextRow = {
+      ...Object.fromEntries(
+        Object.entries(row).filter(([column]) => column !== "id"),
+      ),
+      project_id,
+    };
+    const columns = writableColumns.filter((column) =>
+      Object.prototype.hasOwnProperty.call(nextRow, column),
+    );
+    if (!columns.includes("key_id")) {
+      continue;
+    }
+    const values = columns.map((column) => nextRow[column] ?? null);
+    const placeholders = columns.map((_, i) => `$${i + 1}`);
+    const updateColumns = columns.filter((column) => column !== "key_id");
+    const conflictAction = updateColumns.length
+      ? `DO UPDATE SET ${updateColumns
+          .map(
+            (column) =>
+              `${quoteIdent(column)} = EXCLUDED.${quoteIdent(column)}`,
+          )
+          .join(", ")}`
+      : "DO NOTHING";
+    await pool.query(
+      `
+        INSERT INTO api_keys (${columns.map(quoteIdent).join(", ")})
+        VALUES (${placeholders.join(", ")})
+        ON CONFLICT (key_id) ${conflictAction}
+      `,
+      values,
+    );
+  }
 }
 
 async function mergePortableProjectState({
@@ -592,6 +698,16 @@ async function mergePortableProjectState({
   project_id: string;
   portable_state?: ProjectControlPortableProjectState;
 }): Promise<void> {
+  if (portable_state?.api_keys) {
+    await replaceProjectScopedPortableApiKeys({
+      project_id,
+      rows: portable_state.api_keys,
+    });
+    log.info("project rehome copied project api key rows", {
+      project_id,
+      copied: portable_state.api_keys.length,
+    });
+  }
   const copied = await mergeLocalProjectLogRows({
     project_id,
     rows: portable_state?.project_log,
