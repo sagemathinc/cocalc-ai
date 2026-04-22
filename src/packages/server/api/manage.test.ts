@@ -1,7 +1,5 @@
 export {};
 
-import base62 from "base62/lib/ascii";
-
 let queryMock: jest.Mock;
 let isValidAccountMock: jest.Mock;
 let assertProjectCollaboratorAccessAllowRemoteMock: jest.Mock;
@@ -133,9 +131,9 @@ describe("manageApiKeys local bay access", () => {
   });
 
   it("rejects project api keys on the wrong bay without deleting them", async () => {
-    const secret = `sk-test${base62.encode(1).padStart(6, "0")}`;
+    const secret = "sk-cocalc-v2.project-key.wrong-bay-secret";
     queryMock = jest.fn(async (sql) => {
-      if (`${sql}`.includes("SELECT id,account_id,project_id,hash,expire")) {
+      if (`${sql}`.includes("WHERE key_id=$1")) {
         return {
           rows: [
             {
@@ -155,6 +153,10 @@ describe("manageApiKeys local bay access", () => {
     );
     const { getAccountWithApiKey } = await import("./manage");
     await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
+    expect(nonSchemaQueries()[0]).toEqual([
+      "SELECT id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
+      ["project-key"],
+    ]);
     expect(getLocalProjectCollaboratorAccessStatusMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,
@@ -163,9 +165,9 @@ describe("manageApiKeys local bay access", () => {
   });
 
   it("deletes stale project api keys when creator is no longer a collaborator", async () => {
-    const secret = `sk-test${base62.encode(7).padStart(6, "0")}`;
+    const secret = "sk-cocalc-v2.project-key.stale-secret";
     queryMock = jest.fn(async (sql) => {
-      if (`${sql}`.includes("SELECT id,account_id,project_id,hash,expire")) {
+      if (`${sql}`.includes("WHERE key_id=$1")) {
         return {
           rows: [
             {
@@ -255,5 +257,16 @@ describe("manageApiKeys local bay access", () => {
       "SELECT id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
       ["key-id-123"],
     ]);
+  });
+
+  it("rejects pre-v2 api key formats without lookup", async () => {
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(
+      getAccountWithApiKey("sk_legacy-account-key"),
+    ).resolves.toBeUndefined();
+    await expect(
+      getAccountWithApiKey("sk-oldintegerid000001"),
+    ).resolves.toBeUndefined();
+    expect(nonSchemaQueries()).toHaveLength(0);
   });
 });

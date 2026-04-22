@@ -664,9 +664,8 @@ Account rehome contract:
   assignments, project-scoped API keys, billing/customer records outside the
   `accounts` row, or historical notification/event outbox rows in the first
   slice. Account-wide v2 API keys are portable because the presented secret
-  embeds a random `key_id`, not the bay-local integer primary key. Legacy
-  integer-id `sk-...` keys remain accepted for compatibility, but they are not
-  copied by account rehome and should be rotated to v2 keys.
+  embeds a random `key_id`, not the bay-local integer primary key. Pre-v2 API
+  key formats were never released in this multibay path and are not accepted.
 
 Initial account rehome target:
 

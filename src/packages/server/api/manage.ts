@@ -18,7 +18,6 @@ import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
 import { getLogger } from "@cocalc/backend/logger";
-import base62 from "base62/lib/ascii";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import type {
   ApiKey as ApiKeyType,
@@ -72,10 +71,6 @@ function parseApiKeyV2(secret: string): { key_id: string } | undefined {
 
 function truncApiKey(secret: string): string {
   return `${secret.slice(0, 5)}...${secret.slice(-8)}`;
-}
-
-function decode62(s: string): number {
-  return base62.decode(s);
 }
 
 interface Options {
@@ -318,55 +313,23 @@ export async function getAccountWithApiKey(
   const pool = getPool("medium");
   await ensureApiKeysV2Schema();
 
-  // Check for legacy account api key:
-  if (secret.startsWith("sk_")) {
-    const { rows } = await pool.query(
-      "SELECT account_id FROM accounts WHERE api_key = $1::TEXT",
-      [secret],
-    );
-    if (rows.length > 0) {
-      const account_id = rows[0].account_id;
-      if (await isBanned(account_id)) {
-        log.debug("getAccountWithApiKey: banned api key ", account_id);
-        return;
-      }
-      // it's a valid account api key
-      log.debug("getAccountWithApiKey: valid api key for ", account_id);
-      return { account_id };
-    }
-  }
-
   const v2 = parseApiKeyV2(secret);
-  if (v2) {
-    const { rows } = await pool.query(
-      "SELECT id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
-      [v2.key_id],
-    );
-    return await checkApiKeyRows({ rows, secret });
-  }
-
-  // Check legacy sk- api_keys table format, which encoded the local integer id
-  // in the presented secret. New keys must not use this format because ids are
-  // per-bay local state and leak approximate key creation volume.
-  if (!secret.startsWith("sk-")) {
+  if (!v2) {
     return undefined;
   }
-  const id = decode62(secret.slice(-6));
   const { rows } = await pool.query(
-    "SELECT id,account_id,project_id,hash,expire FROM api_keys WHERE id=$1",
-    [id],
+    "SELECT id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
+    [v2.key_id],
   );
-  return await checkApiKeyRows({ rows, secret, legacy_id: id });
+  return await checkApiKeyRows({ rows, secret });
 }
 
 async function checkApiKeyRows({
   rows,
   secret,
-  legacy_id,
 }: {
   rows: any[];
   secret: string;
-  legacy_id?: number;
 }): Promise<
   | { account_id: string; project_id?: undefined }
   | { account_id?: undefined; project_id: string }
@@ -384,7 +347,7 @@ async function checkApiKeyRows({
     if (rows[0].project_id) {
       const account_id = rows[0].account_id;
       if (!account_id) {
-        await deleteApiKey({ ...rows[0], id: rows[0].id ?? legacy_id });
+        await deleteApiKey(rows[0]);
         return undefined;
       }
       const access = await getLocalProjectCollaboratorAccessStatus({
@@ -399,7 +362,7 @@ async function checkApiKeyRows({
         return undefined;
       }
       if (access !== "local-collaborator") {
-        await deleteApiKey({ ...rows[0], id: rows[0].id ?? legacy_id });
+        await deleteApiKey(rows[0]);
         return undefined;
       }
     }
@@ -407,14 +370,14 @@ async function checkApiKeyRows({
     if (expire != null && expire.valueOf() <= Date.now()) {
       // expired entries will get automatically deleted eventually by database
       // maintenance, but we obviously shouldn't depend on that.
-      await deleteApiKey({ ...rows[0], id: rows[0].id ?? legacy_id });
+      await deleteApiKey(rows[0]);
       return undefined;
     }
 
     // Yes, caller definitely has a valid key.
     await getPool("medium").query(
       "UPDATE api_keys SET last_active=NOW() WHERE id=$1",
-      [rows[0].id ?? legacy_id],
+      [rows[0].id],
     );
     if (rows[0].project_id) {
       return { project_id: rows[0].project_id };
