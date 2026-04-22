@@ -2150,6 +2150,13 @@ export class ChatStreamWriter {
     this.publishLivePreview(payload);
     if (payload.type === "event") {
       this.handleAgentEvent(payload.event);
+      if (this.finished) {
+        // Late text events can arrive after the authoritative summary, e.g.
+        // from a steer acknowledgement racing with turn completion. Keep the
+        // event in the ACP log, but don't rewrite the durable chat response.
+        this.commitNow(true);
+        return;
+      }
       if (this.interruptNotified) {
         // Preserve interruption state in chat even if late stream payloads arrive.
         return;
