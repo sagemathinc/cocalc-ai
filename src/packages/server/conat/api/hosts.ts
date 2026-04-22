@@ -31,6 +31,8 @@ import type {
   HostInterruptionRestorePolicy,
   HostMetricsHistory,
   HostManagedComponentRolloutRequest,
+  HostRehomeOperationSummary,
+  HostRehomeResponse,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   HostManagedComponentRolloutResponse,
@@ -134,6 +136,11 @@ import {
 } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import {
+  getHostRehomeOperation as getHostRehomeOperationInternal,
+  reconcileHostRehome as reconcileHostRehomeInternal,
+  rehomeHost as rehomeHostInternal,
+} from "@cocalc/server/project-host/rehome";
 import {
   hostManagedComponentRolloutDedupeKey,
   hostUpgradeDedupeKey,
@@ -3123,6 +3130,55 @@ export async function forceDeprovisionHost({
     account_id,
     input: { id: row.id, account_id },
     dedupe_key: `${HOST_FORCE_DEPROVISION_LRO_KIND}:${row.id}`,
+  });
+}
+
+export async function rehomeHost({
+  account_id,
+  id,
+  dest_bay_id,
+  reason,
+  campaign_id,
+}: {
+  account_id?: string;
+  id: string;
+  dest_bay_id: string;
+  reason?: string | null;
+  campaign_id?: string | null;
+}): Promise<HostRehomeResponse> {
+  return await rehomeHostInternal({
+    account_id,
+    host_id: id,
+    dest_bay_id,
+    reason,
+    campaign_id,
+  });
+}
+
+export async function getHostRehomeOperation({
+  account_id,
+  op_id,
+}: {
+  account_id?: string;
+  op_id: string;
+}): Promise<HostRehomeOperationSummary | null> {
+  const owner = requireAccount(account_id);
+  if (!(await isAdmin(owner))) {
+    throw new Error("not authorized");
+  }
+  return (await getHostRehomeOperationInternal(op_id)) ?? null;
+}
+
+export async function reconcileHostRehome({
+  account_id,
+  op_id,
+}: {
+  account_id?: string;
+  op_id: string;
+}): Promise<HostRehomeResponse> {
+  return await reconcileHostRehomeInternal({
+    account_id,
+    op_id,
   });
 }
 

@@ -767,37 +767,57 @@ cleanup concern.
 
 - [x] define whether "host move" means host-bay ownership transfer, project
       evacuation/reassignment, or both
-- [ ] explicit operator confirmation for any operation that can strand or lose
+- [x] explicit operator confirmation for any operation that can strand or lose
       project data
 - [ ] host/project fencing model during reassignment
-- [ ] directory update and projection convergence
+- [x] directory update and projection convergence
 - [ ] recovery behavior when the source host or source bay disappears mid-move
 - [ ] rollback / retry plan
-- [ ] CLI workflow
+- [x] CLI workflow
 
 Initial host rehome target:
 
-- [ ] admin-only CLI workflow:
+- [x] admin-only CLI workflow:
       `cocalc host rehome <host> --bay ... --yes`
-- [ ] durable per-host rehome operation record with state machine:
-      `requested -> destination_prepared -> source_flipped -> host_reconnected -> projected -> complete`
-- [ ] destination preparation before source flip:
+- [x] durable per-host rehome operation record with state machine:
+      `requested -> destination_prepared -> destination_accepted -> source_flipped -> host_reconnected -> complete`
+- [x] destination preparation before source flip:
   - destination bay has a host-owner SSH identity
   - host trusts the destination bay's host-owner SSH public key
   - destination bay can resolve and reach the host management endpoint
-- [ ] source flip changes only `project_hosts.bay_id`; assigned projects remain
+- [x] source flip changes only `project_hosts.bay_id`; assigned projects remain
       on the same host unless a separate evacuation/project-move operation is
       requested
-- [ ] post-flip validation waits for the host-agent/project-host heartbeat or a
+- [x] post-flip validation waits for the host-agent/project-host heartbeat or a
       direct host-control status check to confirm the host is manageable via the
       destination bay
-- [ ] operator status/retry commands:
+- [x] operator status/retry commands:
   - `cocalc host rehome-status --op-id ...`
   - `cocalc host rehome-reconcile --op-id ...`
 - [ ] failure-injection validation for:
   - destination prepared but source flip failed
   - source flipped but host did not reconnect to destination bay
   - source flipped but projection/directory state is stale
+
+Implementation checkpoint, 2026-04-22 PT:
+
+- Added the first host rehome implementation slice:
+  - hub RPCs `hosts.rehomeHost`, `hosts.getHostRehomeOperation`, and
+    `hosts.reconcileHostRehome`
+  - CLI commands `cocalc host rehome`, `cocalc host rehome-status`, and
+    `cocalc host rehome-reconcile`
+  - inter-bay host rehome RPCs for source-bay orchestration and
+    destination-bay prepare/accept
+  - durable `project_host_rehome_operations` state table
+- Destination preparation installs the destination bay's host-owner SSH public
+  key onto the host through the existing routed host-control API before
+  changing ownership.
+- Destination accept copies the `project_hosts` row to the destination bay with
+  `bay_id` set to the destination; source flip updates the source row's
+  `bay_id` only, leaving assigned projects untouched.
+- Post-flip validation calls `getHostAgentStatus` through the routed host
+  control client, which exercises the new owner-bay route.
+- Remaining work is live 3-bay validation plus explicit failure injection.
 
 Non-goals for initial host rehome:
 

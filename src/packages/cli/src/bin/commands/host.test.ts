@@ -60,6 +60,12 @@ type Capture = {
     scope_id: string;
     include_completed?: boolean;
   }>;
+  rehomeRequests?: Array<{
+    id: string;
+    dest_bay_id: string;
+    reason?: string;
+    campaign_id?: string;
+  }>;
 };
 
 function withConsoleCapture(fn: () => Promise<void> | void): Promise<string> {
@@ -111,6 +117,7 @@ function makeDeps(
   capture.hostProjectStops ??= [];
   capture.hostProjectRestarts ??= [];
   capture.lroListRequests ??= [];
+  capture.rehomeRequests ??= [];
   return {
     withContext: async (_command, _label, fn) => {
       const ctx = {
@@ -227,6 +234,41 @@ function makeDeps(
               });
               return { op_id: `restart-projects-${id}` };
             },
+            rehomeHost: async ({ id, dest_bay_id, reason, campaign_id }) => {
+              capture.rehomeRequests!.push({
+                id,
+                dest_bay_id,
+                reason,
+                campaign_id,
+              });
+              return {
+                op_id: `rehome-${id}`,
+                host_id: id,
+                previous_bay_id: "bay-0",
+                owning_bay_id: dest_bay_id,
+                operation_stage: "complete",
+                operation_status: "succeeded",
+                status: "rehomed",
+              };
+            },
+            getHostRehomeOperation: async ({ op_id }) => ({
+              op_id,
+              host_id: "host-1",
+              source_bay_id: "bay-0",
+              dest_bay_id: "bay-1",
+              status: "succeeded",
+              stage: "complete",
+              attempt: 1,
+            }),
+            reconcileHostRehome: async ({ op_id }) => ({
+              op_id,
+              host_id: "host-1",
+              previous_bay_id: "bay-0",
+              owning_bay_id: "bay-1",
+              operation_stage: "complete",
+              operation_status: "succeeded",
+              status: "rehomed",
+            }),
             rollbackHostRuntimeDeployments: async ({
               id,
               target_type,
@@ -898,6 +940,74 @@ test("host where returns the bay for the resolved host", async () => {
 
   assert.equal(capture.data.host_id, "44444444-4444-4444-4444-444444444444");
   assert.equal(capture.data.bay_id, "bay-0");
+});
+
+test("host rehome refuses to run without --yes", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture);
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await assert.rejects(
+    program.parseAsync([
+      "node",
+      "test",
+      "host",
+      "rehome",
+      "host-1",
+      "--bay",
+      "bay-1",
+    ]),
+    /without --yes/,
+  );
+  assert.deepEqual(capture.rehomeRequests, []);
+});
+
+test("host rehome forwards destination bay and metadata", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture);
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "rehome",
+    "host-1",
+    "--bay",
+    "bay-1",
+    "--reason",
+    "drain old bay",
+    "--campaign",
+    "maint-2026-04",
+    "--yes",
+  ]);
+
+  assert.deepEqual(capture.rehomeRequests, [
+    {
+      id: "host-1",
+      dest_bay_id: "bay-1",
+      reason: "drain old bay",
+      campaign_id: "maint-2026-04",
+    },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.owning_bay_id, "bay-1");
 });
 
 test("host bootstrap-status returns lifecycle drift data", async () => {

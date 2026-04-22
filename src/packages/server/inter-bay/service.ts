@@ -107,6 +107,11 @@ import {
 import { getSeedProjectBackupConfig } from "@cocalc/server/project-backup";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
+  acceptHostRehome,
+  prepareHostRehomeOnDestination,
+  rehomeHostOnOwningBay,
+} from "@cocalc/server/project-host/rehome";
+import {
   deleteProjectedCollabInviteDirect,
   toWire as collabInviteToWire,
   upsertProjectedCollabInviteDirect,
@@ -542,6 +547,23 @@ async function startHostConnectionService(): Promise<void> {
         state_filter,
         project_state,
       }),
+    rehomeHost: async ({
+      account_id,
+      host_id,
+      dest_bay_id,
+      reason,
+      campaign_id,
+    }) =>
+      await rehomeHostOnOwningBay({
+        account_id,
+        host_id,
+        dest_bay_id,
+        reason,
+        campaign_id,
+      }),
+    prepareHostRehome: async (opts) =>
+      await prepareHostRehomeOnDestination(opts),
+    acceptHostRehome: async (opts) => await acceptHostRehome(opts),
   };
   services.push(
     ...createInterBayHostConnectionHandler({

@@ -215,6 +215,43 @@ export interface GetHostConnectionRequest {
   account_id: string;
 }
 
+export interface HostRehomePrepareRequest {
+  host_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  epoch?: number;
+}
+
+export interface HostRehomeRequest {
+  host_id: string;
+  account_id: string;
+  dest_bay_id: string;
+  reason?: string | null;
+  campaign_id?: string | null;
+  epoch?: number;
+}
+
+export interface HostRehomePrepareResponse {
+  host_id: string;
+  dest_bay_id: string;
+  owner_bay_public_key_installed: boolean;
+}
+
+export interface HostRehomeAcceptRequest {
+  host_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  host: Record<string, unknown>;
+  epoch?: number;
+}
+
+export interface HostRehomeResponse {
+  host_id: string;
+  previous_bay_id: string;
+  owning_bay_id: string;
+  status: "rehomed" | "already-home";
+}
+
 export interface IssueProjectHostAuthTokenRequest {
   host_id: string;
   account_id?: string;
@@ -423,7 +460,10 @@ export type HostConnectionMethod =
   | "get-backup-config"
   | "get-seed-backup-config"
   | "record-project-backup"
-  | "list-host-projects";
+  | "list-host-projects"
+  | "rehome-host"
+  | "prepare-host-rehome"
+  | "accept-host-rehome";
 export type HostControlMethod =
   | "create-project"
   | "start-project"
@@ -551,6 +591,13 @@ export interface InterBayHostConnectionApi {
       | "project_state"
     >,
   ) => Promise<Awaited<ReturnType<Hosts["listHostProjects"]>>>;
+  rehomeHost: (opts: HostRehomeRequest) => Promise<HostRehomeResponse>;
+  prepareHostRehome: (
+    opts: HostRehomePrepareRequest,
+  ) => Promise<HostRehomePrepareResponse>;
+  acceptHostRehome: (
+    opts: HostRehomeAcceptRequest,
+  ) => Promise<HostRehomeResponse>;
 }
 
 const HOST_CONNECTION_METHOD_SPECS = [
@@ -575,6 +622,18 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "listHostProjects",
     method: "list-host-projects",
+  },
+  {
+    name: "rehomeHost",
+    method: "rehome-host",
+  },
+  {
+    name: "prepareHostRehome",
+    method: "prepare-host-rehome",
+  },
+  {
+    name: "acceptHostRehome",
+    method: "accept-host-rehome",
   },
 ] as const satisfies ReadonlyArray<{
   name: keyof InterBayHostConnectionApi;

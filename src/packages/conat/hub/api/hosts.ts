@@ -79,6 +79,44 @@ export type HostDrainResult = {
   parallel?: number;
 };
 
+export type HostRehomeOperationStage =
+  | "requested"
+  | "destination_prepared"
+  | "destination_accepted"
+  | "source_flipped"
+  | "host_reconnected"
+  | "complete";
+
+export type HostRehomeOperationStatus = "running" | "succeeded" | "failed";
+
+export interface HostRehomeOperationSummary {
+  op_id: string;
+  host_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  requested_by?: string | null;
+  reason?: string | null;
+  campaign_id?: string | null;
+  status: HostRehomeOperationStatus;
+  stage: HostRehomeOperationStage;
+  attempt: number;
+  last_error?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  finished_at?: string | null;
+  duration_ms?: number;
+}
+
+export interface HostRehomeResponse {
+  op_id?: string;
+  host_id: string;
+  previous_bay_id: string;
+  owning_bay_id: string;
+  operation_stage?: HostRehomeOperationStage;
+  operation_status?: HostRehomeOperationStatus;
+  status: "rehomed" | "already-home";
+}
+
 export interface HostMachine {
   cloud?: string; // e.g., gcp, hyperstack, lambda, nebius, self-host, local
   machine_type?: string; // e.g., n2-standard-4, custom specs
@@ -772,6 +810,9 @@ export const hosts = {
   restartHost: authFirstRequireAccount,
   drainHost: authFirstRequireAccount,
   forceDeprovisionHost: authFirstRequireAccount,
+  rehomeHost: authFirstRequireAccount,
+  getHostRehomeOperation: authFirstRequireAccount,
+  reconcileHostRehome: authFirstRequireAccount,
   removeSelfHostConnector: authFirstRequireAccount,
   renameHost: authFirstRequireAccount,
   updateHostMachine: authFirstRequireAccount,
@@ -1124,6 +1165,21 @@ export interface Hosts {
     account_id?: string;
     id: string;
   }) => Promise<HostLroResponse>;
+  rehomeHost: (opts: {
+    account_id?: string;
+    id: string;
+    dest_bay_id: string;
+    reason?: string | null;
+    campaign_id?: string | null;
+  }) => Promise<HostRehomeResponse>;
+  getHostRehomeOperation: (opts: {
+    account_id?: string;
+    op_id: string;
+  }) => Promise<HostRehomeOperationSummary | null>;
+  reconcileHostRehome: (opts: {
+    account_id?: string;
+    op_id: string;
+  }) => Promise<HostRehomeResponse>;
   removeSelfHostConnector: (opts: {
     account_id?: string;
     id: string;
