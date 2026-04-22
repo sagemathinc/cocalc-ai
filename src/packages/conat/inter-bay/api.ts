@@ -312,6 +312,11 @@ export interface AccountDirectorySearchRequest {
 
 export interface AccountDirectoryHomeBayCountsRequest {}
 
+export interface AccountDirectoryUpdateHomeBayRequest {
+  account_id: string;
+  home_bay_id: string;
+}
+
 export interface AccountDirectoryDeleteRequest {
   account_id: string;
   only_if_tag?: string;
@@ -341,6 +346,68 @@ export interface AccountDirectoryCreateRequest {
   no_first_project?: boolean;
   ephemeral?: number;
   customize?: any;
+}
+
+export interface AccountRehomeRequest {
+  account_id?: string;
+  target_account_id: string;
+  dest_bay_id: string;
+  reason?: string | null;
+  campaign_id?: string | null;
+}
+
+export interface AccountRehomeAcceptRequest {
+  target_account_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  account: Record<string, unknown>;
+}
+
+export interface AccountRehomeStateCopyRequest {
+  target_account_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  account_project_index?: Record<string, unknown>[];
+  account_collaborator_index?: Record<string, unknown>[];
+  account_notification_index?: Record<string, unknown>[];
+}
+
+export type AccountRehomeOperationStage =
+  | "requested"
+  | "destination_accepted"
+  | "source_flipped"
+  | "projections_copied"
+  | "directory_updated"
+  | "complete";
+
+export type AccountRehomeOperationStatus = "running" | "succeeded" | "failed";
+
+export interface AccountRehomeOperationSummary {
+  op_id: string;
+  account_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  requested_by?: string | null;
+  reason?: string | null;
+  campaign_id?: string | null;
+  status: AccountRehomeOperationStatus;
+  stage: AccountRehomeOperationStage;
+  attempt: number;
+  last_error?: string | null;
+  created_at?: string | number | Date | null;
+  updated_at?: string | number | Date | null;
+  finished_at?: string | number | Date | null;
+  duration_ms?: number | null;
+}
+
+export interface AccountRehomeResponse {
+  op_id?: string;
+  account_id: string;
+  previous_bay_id: string;
+  home_bay_id: string;
+  operation_stage?: AccountRehomeOperationStage;
+  operation_status?: AccountRehomeOperationStatus;
+  status: "already-home" | "rehomed";
 }
 
 export interface BayRegistryRegisterRequest {
@@ -520,8 +587,16 @@ export type AccountDirectoryMethod =
   | "search"
   | "home-bay-counts"
   | "create"
-  | "delete";
-export type AccountLocalMethod = "create" | "delete";
+  | "delete"
+  | "update-home-bay";
+export type AccountLocalMethod =
+  | "create"
+  | "delete"
+  | "rehome"
+  | "accept-rehome"
+  | "copy-rehome-state"
+  | "get-rehome-operation"
+  | "reconcile-rehome";
 export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
 export type BayRegistryMethod = "register" | "list";
 export type ProjectCollabInviteMethod =
@@ -798,6 +873,9 @@ export interface InterBayAccountDirectoryApi {
   getHomeBayCounts: (
     opts: AccountDirectoryHomeBayCountsRequest,
   ) => Promise<Record<string, number>>;
+  updateHomeBay: (
+    opts: AccountDirectoryUpdateHomeBayRequest,
+  ) => Promise<AccountDirectoryEntry>;
   create: (
     opts: AccountDirectoryCreateRequest,
   ) => Promise<AccountDirectoryEntry>;
@@ -813,6 +891,19 @@ export interface InterBayAccountLocalApi {
   delete: (
     opts: AccountDirectoryDeleteRequest,
   ) => Promise<AccountDirectoryDeleteResult>;
+  rehome: (opts: AccountRehomeRequest) => Promise<AccountRehomeResponse>;
+  acceptRehome: (
+    opts: AccountRehomeAcceptRequest,
+  ) => Promise<AccountRehomeResponse>;
+  copyRehomeState: (opts: AccountRehomeStateCopyRequest) => Promise<void>;
+  getRehomeOperation: (opts: {
+    op_id: string;
+  }) => Promise<AccountRehomeOperationSummary | null>;
+  reconcileRehome: (opts: {
+    account_id?: string;
+    op_id: string;
+    source_bay_id?: string;
+  }) => Promise<AccountRehomeResponse>;
 }
 
 export interface InterBayBayRegistryApi {
@@ -1583,6 +1674,12 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "home-bay-counts" }),
   });
+  const updateHomeBayClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "updateHomeBay">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "update-home-bay" }),
+  });
   const createClient = createServiceClient<
     Pick<InterBayAccountDirectoryApi, "create">
   >({
@@ -1602,6 +1699,8 @@ export function createInterBayAccountDirectoryClient({
     search: async (opts) => await searchClient.search(opts),
     getHomeBayCounts: async (opts) =>
       await homeBayCountsClient.getHomeBayCounts(opts),
+    updateHomeBay: async (opts) =>
+      await updateHomeBayClient.updateHomeBay(opts),
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
   };
@@ -1656,6 +1755,14 @@ export function createInterBayAccountDirectoryHandlers({
         },
       },
     ),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "updateHomeBay">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "update-home-bay" }),
+      impl: {
+        updateHomeBay: async (opts) => await impl.updateHomeBay(opts),
+      },
+    }),
     createServiceHandler<Pick<InterBayAccountDirectoryApi, "create">>({
       ...options,
       service: "inter-bay-account-directory",
@@ -1696,9 +1803,47 @@ export function createInterBayAccountLocalClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountLocalSubject({ dest_bay, method: "delete" }),
   });
+  const rehomeClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "rehome">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "rehome" }),
+  });
+  const acceptRehomeClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "acceptRehome">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "accept-rehome" }),
+  });
+  const copyRehomeStateClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "copyRehomeState">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "copy-rehome-state" }),
+  });
+  const getRehomeOperationClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getRehomeOperation">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "get-rehome-operation" }),
+  });
+  const reconcileRehomeClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "reconcileRehome">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "reconcile-rehome" }),
+  });
   return {
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
+    rehome: async (opts) => await rehomeClient.rehome(opts),
+    acceptRehome: async (opts) => await acceptRehomeClient.acceptRehome(opts),
+    copyRehomeState: async (opts) =>
+      await copyRehomeStateClient.copyRehomeState(opts),
+    getRehomeOperation: async (opts) =>
+      await getRehomeOperationClient.getRehomeOperation(opts),
+    reconcileRehome: async (opts) =>
+      await reconcileRehomeClient.reconcileRehome(opts),
   };
 }
 
@@ -1725,6 +1870,58 @@ export function createInterBayAccountLocalHandler({
       subject: accountLocalSubject({ dest_bay: bay_id, method: "delete" }),
       impl: {
         delete: async (opts) => await impl.delete(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "rehome">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({ dest_bay: bay_id, method: "rehome" }),
+      impl: {
+        rehome: async (opts) => await impl.rehome(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "acceptRehome">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "accept-rehome",
+      }),
+      impl: {
+        acceptRehome: async (opts) => await impl.acceptRehome(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "copyRehomeState">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "copy-rehome-state",
+      }),
+      impl: {
+        copyRehomeState: async (opts) => await impl.copyRehomeState(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "getRehomeOperation">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-rehome-operation",
+      }),
+      impl: {
+        getRehomeOperation: async (opts) => await impl.getRehomeOperation(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "reconcileRehome">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "reconcile-rehome",
+      }),
+      impl: {
+        reconcileRehome: async (opts) => await impl.reconcileRehome(opts),
       },
     }),
   ];

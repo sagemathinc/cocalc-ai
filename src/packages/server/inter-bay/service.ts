@@ -72,7 +72,15 @@ import {
   getClusterAccountsByIds,
   provisionLocalClusterAccount,
   searchClusterAccounts,
+  updateClusterAccountHomeBay,
 } from "@cocalc/server/inter-bay/accounts";
+import {
+  acceptAccountRehome,
+  copyAccountRehomeState,
+  getAccountRehomeOperation,
+  reconcileAccountRehomeOnSource,
+  rehomeAccountOnHomeBay,
+} from "@cocalc/server/accounts/rehome";
 import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
@@ -257,6 +265,7 @@ async function startAccountDirectoryService(): Promise<void> {
         only_email,
       }),
     getHomeBayCounts: async () => await getClusterAccountHomeBayCounts(),
+    updateHomeBay: async (opts) => await updateClusterAccountHomeBay(opts),
     create: async (opts) => await createClusterAccount(opts),
     delete: async (opts) => await deleteClusterAccount(opts),
   };
@@ -274,6 +283,12 @@ async function startAccountLocalService(): Promise<void> {
   const impl: InterBayAccountLocalApi = {
     create: async (opts) => await provisionLocalClusterAccount(opts),
     delete: async (opts) => await deleteLocalClusterAccount(opts),
+    rehome: async (opts) => await rehomeAccountOnHomeBay(opts),
+    acceptRehome: async (opts) => await acceptAccountRehome(opts),
+    copyRehomeState: async (opts) => await copyAccountRehomeState(opts),
+    getRehomeOperation: async ({ op_id }) =>
+      (await getAccountRehomeOperation(op_id)) ?? null,
+    reconcileRehome: async (opts) => await reconcileAccountRehomeOnSource(opts),
   };
   services.push(
     ...createInterBayAccountLocalHandler({

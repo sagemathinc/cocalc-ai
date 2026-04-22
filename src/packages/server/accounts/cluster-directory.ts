@@ -501,6 +501,36 @@ export async function markClusterAccountProvisioned({
   );
 }
 
+export async function updateClusterAccountHomeBayDirect({
+  account_id,
+  home_bay_id,
+}: {
+  account_id: string;
+  home_bay_id: string;
+}): Promise<AccountDirectoryEntry> {
+  if (!isValidUUID(account_id)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  const normalizedHomeBay = normalizedHomeBayId(home_bay_id);
+  const entry = await getClusterAccountByIdDirect(account_id);
+  if (!entry?.account_id) {
+    throw new Error(`account ${account_id} not found`);
+  }
+  const { rowCount } = await getPool().query(
+    `UPDATE ${TABLE}
+        SET home_bay_id=$2
+      WHERE account_id=$1`,
+    [account_id, normalizedHomeBay],
+  );
+  if (rowCount !== 1) {
+    throw new Error(`account ${account_id} not found`);
+  }
+  return {
+    ...entry,
+    home_bay_id: normalizedHomeBay,
+  };
+}
+
 export async function deleteClusterAccountDirectoryEntry(
   account_id: string,
 ): Promise<void> {

@@ -625,16 +625,72 @@ Later mutating UI, only after the CLI/API paths are proven:
 
 ### 9. Account Rehome
 
-This remains future work, but it is the next major workflow after Phase 5/6
-close-out.
+Account rehome is an invisible operator workflow for changing the bay that owns
+an account's home/account-scoped control plane. It is not a user-facing account
+export/import and it is not a project ownership move. The main production
+reasons to do it are the same as project rehome:
 
+- **maintenance drain:** a bay is old or unhealthy enough that we want to drain
+  account ownership and delete/recreate it instead of upgrading it in place
+- **ops/load shedding:** a bay is approaching a control-plane load limit, so we
+  move account-home ownership to other bays without moving project ownership or
+  project-host materialization
+
+Account rehome contract:
+
+- The source account home bay remains the durable operation owner until the
+  operation is complete.
+- The source bay sends the full `accounts` row to the destination bay before
+  flipping `accounts.home_bay_id`.
+- The destination bay upserts the account row with `home_bay_id` set to the
+  destination bay before the source bay flips ownership.
+- The portable home-bay state copied in the first implementation slice is:
+  - `account_project_index`
+  - `account_collaborator_index`
+  - `account_notification_index`
+- Source flip updates the source `accounts.home_bay_id` and the cluster account
+  directory entry to the destination bay.
+- The operation is forward-reconciled after destination accept. Rollback is not
+  attempted because the destination has already accepted a valid account row.
+- Existing browser sessions may keep working on their old websocket until they
+  naturally reconnect or hit wrong-bay recovery. Forced browser reconnection is
+  a follow-up unless live validation shows stale sessions are unsafe.
+- Account rehome must not move project ownership, project data, project-host
+  assignments, API keys, billing/customer records outside the `accounts` row,
+  or historical notification/event outbox rows in the first slice.
+
+Initial account rehome target:
+
+- [x] define terminology: **account rehome** means moving the authoritative
+      account home/control-plane bay
 - [ ] account-write fencing
-- [ ] home-state copy
-- [ ] projection rebuild / copy
-- [ ] directory update
-- [ ] forced browser reconnection
-- [ ] CLI workflow
-- [ ] rollback / replay plan
+- [x] source bay sends the full account row to the destination bay before
+      flipping `home_bay_id`
+- [x] destination bay accepts/upserts the authoritative account row
+- [x] source bay flips `home_bay_id` only after destination accept succeeds
+- [x] copy portable home-bay state during rehome:
+  - `account_project_index`
+  - `account_collaborator_index`
+  - `account_notification_index`
+- [x] update the cluster account directory so lookup/search resolves the new
+      home bay
+- [x] durable per-account rehome operation record with explicit state machine:
+      `requested -> destination_accepted -> source_flipped -> projections_copied -> directory_updated -> complete`
+- [x] idempotent reconcile command for stuck operation states
+- [x] admin-only CLI workflow:
+      `cocalc account rehome <account> --bay ... --yes`
+- [ ] forced browser reconnection / wrong-bay recovery validation
+- [ ] failure-injection validation for destination-accepted/source-flip-failed
+      and delayed projection/directory convergence
+
+Non-goals for initial account rehome:
+
+- deleting the old source-local account row
+- moving project ownership
+- moving project-host assignments
+- moving billing/provider-side state outside the `accounts` row
+- rewriting historical notification target/outbox rows
+- batch account drains before the single-account operation is validated
 
 ### 10. Project Rehome
 
