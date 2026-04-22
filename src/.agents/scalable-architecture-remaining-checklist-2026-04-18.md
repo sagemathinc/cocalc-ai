@@ -581,7 +581,49 @@ trustworthy than before. This is now high-value work.
   - project-hosts
   - spot vs on-demand mix
 
-### 8. Account Rehome
+### 8. Bay Operations UI / Operator Surface
+
+Bays are now production resources in the same sense that project hosts are
+production resources. The current CLI/API work is useful, but production
+operation should not depend on remembering ad hoc commands and reading logs.
+
+The first browser UI should be intentionally non-fancy and mostly read-only,
+probably under the existing admin surface. It should make bay state visible and
+provide copy/pasteable CLI commands for risky mutating operations until those
+operations have enough validation to deserve direct buttons.
+
+Initial read-only page:
+
+- [ ] add an admin bay list page showing bay id, role, public URL, tunnel/DNS
+      state, software version, uptime/heartbeat, and whether the bay accepts new
+      ownership
+- [ ] add a bay detail page showing owned accounts, owned projects, owned hosts,
+      active sessions/connections, and recent control-plane/inter-bay errors
+- [ ] show projection/replay health: account-project index lag, collaborator
+      index lag, notification index lag, replay backlog, and stale directory
+      indicators
+- [ ] show route/failure signals in one place: wrong-bay auth redirects, stale
+      ownership errors, handoff failures, and inter-bay RPC failures
+- [ ] show backup/config health relevant to bays: seed-delegated backup repo
+      config, bay-local config, public endpoint/tunnel state, and DNS state
+- [ ] include copy/pasteable CLI commands for common operations:
+  - `cocalc bay list`
+  - `cocalc bay show ...`
+  - `cocalc bay projection status-account-project-index ...`
+  - `cocalc project rehome-drain --source-bay ... --dest-bay ...`
+  - `cocalc project rehome-status --op-id ...`
+  - `cocalc project rehome-reconcile --op-id ...`
+
+Later mutating UI, only after the CLI/API paths are proven:
+
+- [ ] mark a bay as accepting or not accepting new ownership
+- [ ] dry-run and execute project ownership drains
+- [ ] dry-run and execute future account/host ownership drains
+- [ ] trigger projection drains/rebuilds with bounded limits
+- [ ] restart/update bay software with explicit confirmation and status
+      tracking
+
+### 9. Account Rehome
 
 This remains future work, but it is the next major workflow after Phase 5/6
 close-out.
@@ -594,7 +636,7 @@ close-out.
 - [ ] CLI workflow
 - [ ] rollback / replay plan
 
-### 9. Project Rehome
+### 10. Project Rehome
 
 Project rehome is an invisible operator workflow for changing the bay that owns
 project control-plane metadata. It is not a user-facing project data move. The
@@ -686,7 +728,7 @@ Retry / rollback plan, 2026-04-22 PT:
   inspected and then reconciled through source flip, portable project-log copy,
   projection, and completion.
 
-### 10. Host Move / Reassignment
+### 11. Host Move / Reassignment
 
 This is now a production-critical multibay workflow, not just a spot-instance
 cleanup concern.
