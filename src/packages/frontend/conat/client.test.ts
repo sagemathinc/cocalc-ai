@@ -3890,6 +3890,13 @@ describe("ConatClient routed project-host reconnect", () => {
         requireRouting: true,
       }),
     ).resolves.toBe(hubClient);
+    expect(
+      client.projectConatSync({
+        project_id: "00000000-1000-4000-8000-000000000000",
+        caller: "chat.syncdb",
+        requireRouting: true,
+      }),
+    ).toBe(hubClient);
     await expect(
       client._testPublishToProjectHost({
         project_id: "00000000-1000-4000-8000-000000000000",

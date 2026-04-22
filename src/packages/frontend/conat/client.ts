@@ -2119,6 +2119,9 @@ export class ConatClient extends EventEmitter {
     if (!isValidUUID(project_id)) {
       throw Error(`project_id = '${project_id}' must be a valid uuid`);
     }
+    if (lite) {
+      return this.conat();
+    }
     const routing = this.getProjectRoutingInfo(project_id);
     if (routing) {
       return this.getOrCreateRoutedHubClient({ ...routing, project_id });
