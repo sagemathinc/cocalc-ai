@@ -2184,7 +2184,7 @@ export class BaseEditorActions<
     id?: string,
     do_not_exit_undo_mode?: boolean,
   ): void {
-    const cm = this._get_cm(id);
+    const cm = id == null ? this._get_cm(undefined, true) : this._get_cm(id);
     if (!cm) {
       return;
     }

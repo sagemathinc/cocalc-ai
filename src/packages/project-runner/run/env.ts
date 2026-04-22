@@ -84,6 +84,7 @@ export async function getEnvironment({
   );
 
   const imageEnv = await getImageEnv(image);
+  delete imageEnv.LOGS;
 
   const USER = DEFAULT_PROJECT_RUNTIME_USER;
   const DATA = dataPath(HOME);
@@ -108,7 +109,7 @@ export async function getEnvironment({
     TERM: "xterm",
     HOME,
     DATA,
-    LOGS: DATA,
+    COCALC_LOGS: DATA,
     // DEBUG: so interesting stuff gets logged, but not too much unless we really need it.
     DEBUG: "cocalc:*,-cocalc:silly:*",
     DEBUG_CONSOLE: "yes",
