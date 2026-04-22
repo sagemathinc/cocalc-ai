@@ -39,6 +39,38 @@ export function registerBayCommand(
     });
 
   bay
+    .command("project-ownership-admission <bay_id>")
+    .description("enable or disable new project ownership placement for a bay")
+    .requiredOption(
+      "--accepts <yes|no>",
+      "whether the bay accepts new project ownership",
+    )
+    .option("--note <note>", "operator note shown when admission is disabled")
+    .action(
+      async (
+        bay_id: string,
+        opts: { accepts: string; note?: string },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "bay project-ownership-admission",
+          async (ctx) => {
+            const accepts = `${opts.accepts ?? ""}`.trim().toLowerCase();
+            if (!["yes", "true", "1", "no", "false", "0"].includes(accepts)) {
+              throw new Error("--accepts must be yes or no");
+            }
+            return await ctx.hub.system.setBayProjectOwnershipAdmission({
+              bay_id,
+              accepts_project_ownership: ["yes", "true", "1"].includes(accepts),
+              note: opts.note,
+            });
+          },
+        );
+      },
+    );
+
+  bay
     .command("load [bay_id]")
     .description("show a live operator load snapshot for one bay")
     .action(async (bay_id: string | undefined, command: Command) => {

@@ -40,6 +40,22 @@ export function getMovePlacementFallbackTimeoutMs(
   return Math.min(timeoutMs, 10_000);
 }
 
+export function assertProjectRehomeConfirmed({
+  project_id,
+  dest_bay_id,
+  yes,
+}: {
+  project_id: string;
+  dest_bay_id: string;
+  yes?: boolean;
+}): void {
+  if (!yes) {
+    throw new Error(
+      `refusing to rehome project '${project_id}' to bay '${dest_bay_id}' without --yes`,
+    );
+  }
+}
+
 function normalizeProjectLogTime(value: unknown): Date | null {
   if (value == null) return null;
   const date = value instanceof Date ? value : new Date(`${value}`);
@@ -725,6 +741,100 @@ export function registerProjectOpsCommands(
             warning:
               "move LRO did not report succeeded, but destination placement was verified",
           };
+        });
+      },
+    );
+
+  project
+    .command("rehome")
+    .description("move project control-plane ownership to another bay")
+    .option("-w, --project <project>", "project id or name")
+    .requiredOption("--bay <bay>", "destination bay id")
+    .option("--reason <reason>", "operator reason, e.g. maintenance or load")
+    .option("--campaign <id>", "operator campaign/drain identifier")
+    .option("-y, --yes", "confirm the project ownership transfer")
+    .action(
+      async (
+        opts: {
+          project?: string;
+          bay: string;
+          reason?: string;
+          campaign?: string;
+          yes?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project rehome", async (ctx) => {
+          const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+          const destBayId = `${opts.bay ?? ""}`.trim();
+          if (!destBayId) {
+            throw new Error("--bay is required");
+          }
+          assertProjectRehomeConfirmed({
+            project_id: ws.project_id,
+            dest_bay_id: destBayId,
+            yes: opts.yes,
+          });
+          return await ctx.hub.projects.rehomeProject({
+            project_id: ws.project_id,
+            dest_bay_id: destBayId,
+            reason: opts.reason,
+            campaign_id: opts.campaign,
+          });
+        });
+      },
+    );
+
+  project
+    .command("rehome-reconcile")
+    .description("retry a source-bay project rehome operation")
+    .requiredOption("--op-id <id>", "project rehome operation id")
+    .action(async (opts: { opId: string }, command: Command) => {
+      await withContext(command, "project rehome-reconcile", async (ctx) => {
+        const opId = `${opts.opId ?? ""}`.trim();
+        if (!opId) {
+          throw new Error("--op-id is required");
+        }
+        return await ctx.hub.projects.reconcileProjectRehome({
+          op_id: opId,
+        });
+      });
+    });
+
+  project
+    .command("rehome-drain")
+    .description("batch rehome projects off the current/source bay")
+    .requiredOption("--dest-bay <bay>", "destination bay id")
+    .option("--source-bay <bay>", "source bay id; defaults to current bay")
+    .option("--limit <n>", "maximum projects to process", "25")
+    .option("--campaign <id>", "operator campaign/drain identifier")
+    .option("--reason <reason>", "operator reason, e.g. maintenance or load")
+    .option("--write", "apply changes instead of dry run", false)
+    .action(
+      async (
+        opts: {
+          destBay: string;
+          sourceBay?: string;
+          limit?: string;
+          campaign?: string;
+          reason?: string;
+          write?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project rehome-drain", async (ctx) => {
+          const limit = Number(opts.limit ?? "25");
+          if (!Number.isInteger(limit) || limit <= 0) {
+            throw new Error("--limit must be a positive integer");
+          }
+          return await ctx.hub.projects.drainProjectRehome({
+            source_bay_id: opts.sourceBay?.trim() || undefined,
+            dest_bay_id: opts.destBay.trim(),
+            limit,
+            dry_run: opts.write !== true,
+            campaign_id: opts.campaign,
+            reason: opts.reason,
+          });
         });
       },
     );

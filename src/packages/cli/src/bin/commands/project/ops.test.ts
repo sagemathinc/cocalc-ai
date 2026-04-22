@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getMovePlacementFallbackTimeoutMs, readProjectLogPage } from "./ops";
+import {
+  assertProjectRehomeConfirmed,
+  getMovePlacementFallbackTimeoutMs,
+  readProjectLogPage,
+} from "./ops";
 
 test("getMovePlacementFallbackTimeoutMs preserves the full timeout for timed out move waits", () => {
   assert.equal(
@@ -30,6 +34,24 @@ test("getMovePlacementFallbackTimeoutMs respects shorter command timeouts", () =
       5_000,
     ),
     5_000,
+  );
+});
+
+test("assertProjectRehomeConfirmed refuses rehome without --yes", () => {
+  assert.throws(
+    () =>
+      assertProjectRehomeConfirmed({
+        project_id: "project-id",
+        dest_bay_id: "bay-2",
+      }),
+    /without --yes/,
+  );
+  assert.doesNotThrow(() =>
+    assertProjectRehomeConfirmed({
+      project_id: "project-id",
+      dest_bay_id: "bay-2",
+      yes: true,
+    }),
   );
 });
 

@@ -112,7 +112,7 @@ What should still be treated as incomplete:
 - 2FA / TOTP auth, which should be added later as a home-bay-owned auth layer
   and not as a project-host or cross-bay runtime concern
 - account rehome workflow
-- project move workflow
+- project rehome workflow
 
 ## Phase Summary
 
@@ -172,7 +172,7 @@ Still, Phase 6 is not complete until:
 These remain future-facing:
 
 - account rehome
-- project move
+- project rehome
 - real multi-bay rollout / sizing guidance
 
 Some groundwork exists, but the workflows do not.
@@ -594,17 +594,42 @@ close-out.
 - [ ] CLI workflow
 - [ ] rollback / replay plan
 
-### 9. Project Move
+### 9. Project Rehome
 
-Also future work.
+Project rehome is an invisible operator workflow for changing the bay that owns
+project control-plane metadata. It is not a user-facing project data move. The
+main production reasons to do it are:
 
-- [ ] project fence / quiesce
-- [ ] data copy
-- [ ] metadata transfer
-- [ ] directory update
-- [ ] projection convergence
-- [ ] rollback / retry plan
-- [ ] CLI workflow
+- **maintenance drain:** a bay is old or unhealthy enough that we want to drain
+  its project ownership and delete/recreate it instead of upgrading it in place
+- **ops/load shedding:** a bay is approaching a control-plane load limit, so we
+  move project ownership to other bays without moving project-host
+  materialization
+
+- [x] define terminology: **project rehome** means moving the authoritative
+      project control-plane/metadata owner bay, while existing `project move`
+      remains host-placement/data relocation
+- [x] initial admin-only CLI workflow: `cocalc project rehome --bay ... --yes`
+- [x] source bay sends the full project row to the destination bay before
+      flipping `owning_bay_id`
+- [x] destination bay accepts/upserts the authoritative project row, emits a
+      project projection event, and drains local account-project projection rows
+- [x] source bay flips `owning_bay_id` only after destination accept succeeds
+      and updates its local account-project projection rows
+- [x] durable per-project rehome operation record with explicit state machine:
+      `requested -> destination_accepted -> source_flipped -> portable_state_copied -> projected -> complete`
+- [x] idempotent reconcile command for stuck operation states, especially
+      destination-accepted/source-flip-failed
+- [x] batch/drain wrapper that groups many per-project rehomes into a bay drain
+      or load-shedding campaign
+- [x] bay admission control so an operator can mark a bay as "do not place new
+      project ownership here" before draining existing ownership
+- [x] copy portable bay-local project state during rehome; initially this means
+      merging the `project-log` Conat stream into the destination bay after the
+      source ownership flip and before projection completion
+- [ ] project fence / quiesce for concurrent metadata writes during rehome
+- [ ] projection convergence validation under real multi-bay lag/failure
+- [ ] rollback / retry plan for destination-accepted/source-flip-failed cases
 
 ### 10. Host Move / Reassignment
 
@@ -639,7 +664,8 @@ above:
 2. Keep Section 4/5 validation opportunistic, only when it blocks safe move
    semantics or exposes a production risk.
 3. Start move workflow design and implementation now:
-   - project move first, because it is the highest data-risk workflow
+   - project rehome first, because it is the highest control-plane ownership
+     workflow
    - host move/reassignment next, because project move needs clear host
      ownership and evacuation semantics
    - account rehome after the project/host data-safety model is explicit

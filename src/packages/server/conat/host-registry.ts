@@ -35,29 +35,36 @@ function getHostSessionId(metadata: any): string | undefined {
   return value || undefined;
 }
 
-async function markStaleRunningProjectsOpened({
+function getHostBootId(metadata: any): string | undefined {
+  const value = `${metadata?.host_boot_id ?? ""}`.trim();
+  return value || undefined;
+}
+
+async function markStaleRunningProjectsOpenedAfterBootChange({
   host_id,
   previous_session_id,
   next_session_id,
+  previous_boot_id,
+  next_boot_id,
   source,
 }: {
   host_id: string;
   previous_session_id?: string;
   next_session_id?: string;
+  previous_boot_id?: string;
+  next_boot_id?: string;
   source: "register" | "heartbeat";
 }): Promise<void> {
-  if (
-    !previous_session_id ||
-    !next_session_id ||
-    previous_session_id === next_session_id
-  ) {
+  if (!previous_boot_id || !next_boot_id || previous_boot_id === next_boot_id) {
     return;
   }
   const defaultBayId = getConfiguredBayId();
   const state = {
     state: "opened",
     time: new Date().toISOString(),
-    reason: "host_session_replaced",
+    reason: "host_boot_replaced",
+    previous_host_boot_id: previous_boot_id,
+    host_boot_id: next_boot_id,
     previous_host_session_id: previous_session_id,
     host_session_id: next_session_id,
   };
@@ -85,8 +92,10 @@ async function markStaleRunningProjectsOpened({
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
-    logger.warn("failed to mark stale host-session projects opened", {
+    logger.warn("failed to mark stale host-boot projects opened", {
       host_id,
+      previous_boot_id,
+      next_boot_id,
       previous_session_id,
       next_session_id,
       source,
@@ -99,8 +108,10 @@ async function markStaleRunningProjectsOpened({
   if (projectIds.length === 0) {
     return;
   }
-  logger.info("marked stale host-session projects opened", {
+  logger.info("marked stale host-boot projects opened", {
     host_id,
+    previous_boot_id,
+    next_boot_id,
     previous_session_id,
     next_session_id,
     source,
@@ -116,7 +127,7 @@ async function markStaleRunningProjectsOpened({
   );
   const failed = settled.filter((result) => result.status === "rejected");
   if (failed.length > 0) {
-    logger.warn("failed to publish some stale host-session project updates", {
+    logger.warn("failed to publish some stale host-boot project updates", {
       host_id,
       source,
       failed: failed.length,
@@ -364,7 +375,9 @@ export async function initHostRegistryService() {
           [info.id],
         );
         const previousSessionId = getHostSessionId(previousRows[0]?.metadata);
+        const previousBootId = getHostBootId(previousRows[0]?.metadata);
         const nextSessionId = getHostSessionId(sanitized.metadata);
+        const nextBootId = getHostBootId(sanitized.metadata);
         await upsertProjectHost({
           ...sanitized,
           bay_id: getConfiguredBayId(),
@@ -372,10 +385,12 @@ export async function initHostRegistryService() {
           last_seen: new Date(),
           host_session_id: nextSessionId,
         });
-        await markStaleRunningProjectsOpened({
+        await markStaleRunningProjectsOpenedAfterBootChange({
           host_id: info.id,
           previous_session_id: previousSessionId,
           next_session_id: nextSessionId,
+          previous_boot_id: previousBootId,
+          next_boot_id: nextBootId,
           source: "register",
         });
         if (previousRows[0] && previousSessionId !== nextSessionId) {
@@ -412,7 +427,9 @@ export async function initHostRegistryService() {
           [info.id],
         );
         const previousSessionId = getHostSessionId(previousRows[0]?.metadata);
+        const previousBootId = getHostBootId(previousRows[0]?.metadata);
         const nextSessionId = getHostSessionId(sanitized.metadata);
+        const nextBootId = getHostBootId(sanitized.metadata);
         await upsertProjectHost({
           ...sanitized,
           bay_id: getConfiguredBayId(),
@@ -420,10 +437,12 @@ export async function initHostRegistryService() {
           last_seen: new Date(),
           host_session_id: nextSessionId,
         });
-        await markStaleRunningProjectsOpened({
+        await markStaleRunningProjectsOpenedAfterBootChange({
           host_id: info.id,
           previous_session_id: previousSessionId,
           next_session_id: nextSessionId,
+          previous_boot_id: previousBootId,
+          next_boot_id: nextBootId,
           source: "heartbeat",
         });
         await attemptAutomaticConvergence({
