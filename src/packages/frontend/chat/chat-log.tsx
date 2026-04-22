@@ -19,6 +19,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import { Button } from "antd";
 import { VirtuosoHandle } from "react-virtuoso";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { chatBotName, isChatBot } from "@cocalc/frontend/account/chatbot";
@@ -160,6 +161,15 @@ const MESSAGE_LIST_CONTAINER_STYLE: CSSProperties = {
   flexDirection: "column",
   flex: "1 1 0",
   minHeight: 0,
+  position: "relative",
+} as const;
+
+const NEWEST_MESSAGES_BUTTON_STYLE: CSSProperties = {
+  position: "absolute",
+  left: "50%",
+  bottom: 14,
+  transform: "translateX(-50%)",
+  zIndex: 5,
 } as const;
 
 function isEditableOrOverlayInteractionTarget(
@@ -671,6 +681,8 @@ export function MessageList({
   const initialIndex = Math.max(sortedDates.length - 1, 0); // start at newest
   const endRef = useRef<HTMLDivElement | null>(null);
   const blockScrollInput = anyOverlayOpen === true;
+  const showNewestMessagesButton =
+    sortedDates.length > 0 && (!atBottom || manualScroll);
   const canNotifyForRunningTurn =
     selectedThread != null && onNotifyOnTurnFinishChange != null;
   const userScrollIntentRef = useRef(false);
@@ -778,6 +790,11 @@ export function MessageList({
     scrollToBottomRef,
     setManualScroll,
   ]);
+
+  const scrollToNewestMessages = useCallback(() => {
+    forceScrollToBottom();
+    setAtBottom(true);
+  }, [forceScrollToBottom]);
 
   const renderMessage = (index: number) => {
     const date = sortedDates[index];
@@ -1050,6 +1067,17 @@ export function MessageList({
           !manualScroll && atBottom && !anyOverlayOpen ? "smooth" : false
         }
       />
+      {showNewestMessagesButton ? (
+        <Button
+          aria-label="Scroll to newest messages"
+          size="small"
+          type="primary"
+          style={NEWEST_MESSAGES_BUTTON_STYLE}
+          onClick={scrollToNewestMessages}
+        >
+          Newest messages
+        </Button>
+      ) : null}
     </div>
   );
 }
