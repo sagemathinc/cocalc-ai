@@ -648,6 +648,8 @@ Account rehome contract:
   - `account_project_index`
   - `account_collaborator_index`
   - `account_notification_index`
+  - `remember_me`
+  - `auth_tokens`
 - Source flip updates the source `accounts.home_bay_id` and the cluster account
   directory entry to the destination bay.
 - The operation is forward-reconciled after destination accept. Rollback is not
@@ -659,7 +661,9 @@ Account rehome contract:
   home-bay source when present.
 - Account rehome must not move project ownership, project data, project-host
   assignments, API keys, billing/customer records outside the `accounts` row,
-  or historical notification/event outbox rows in the first slice.
+  or historical notification/event outbox rows in the first slice. Account API
+  keys need a separate conflict policy because their local integer primary key
+  is embedded in the secret.
 
 Initial account rehome target:
 
@@ -674,6 +678,8 @@ Initial account rehome target:
   - `account_project_index`
   - `account_collaborator_index`
   - `account_notification_index`
+  - `remember_me`
+  - `auth_tokens`
 - [x] update the cluster account directory so lookup/search resolves the new
       home bay
 - [x] durable per-account rehome operation record with explicit state machine:
@@ -682,7 +688,7 @@ Initial account rehome target:
 - [x] admin-only CLI workflow:
       `cocalc account rehome <account> --bay ... --yes`
 - [x] wrong-bay stale-write validation
-- [ ] forced browser reconnection validation
+- [x] forced browser reconnection validation
 - [x] failure-injection validation for destination-accepted/source-flip-failed
       and delayed projection/directory convergence
 
@@ -724,8 +730,8 @@ Live validation, 2026-04-22 PT:
   `481b0ed7-8f08-4d0b-9ca4-8254c2df2363` with safety tags
   `qa-safe-delete`, `qa-account-rehome`, and `qa-browser-reconnect`.
 - A live Playwright browser on the source bay could mutate its account row
-  before rehome, then `cocalc account rehome` moved the account `bay-1 ->
-  bay-2` with operation `53274f78-3f59-4da9-bbef-623f1ed81ee4`.
+  before rehome, then `cocalc account rehome` moved the account from `bay-1`
+  to `bay-2` with operation `53274f78-3f59-4da9-bbef-623f1ed81ee4`.
 - That run exposed an unsafe stale-browser window after operation completion:
   the stale old-bay browser could still issue account `userQuery` mutations
   after the active operation fence was gone. Fixed this by making the account
@@ -738,11 +744,29 @@ Live validation, 2026-04-22 PT:
   not corrupted.
 - Added a best-effort source-bay browser-session navigation request after the
   directory update. The direct Playwright validation page did not register a
-  browser-session heartbeat, so this path still needs validation using the
-  real `cocalc browser session` harness or an explicit registered-session
-  integration test.
+  browser-session heartbeat, so the forced navigation path was validated next
+  with an explicit registered-session integration test.
 - Cleaned up disposable account
   `481b0ed7-8f08-4d0b-9ca4-8254c2df2363` with
+  `cocalc account delete --only-if-tag qa-safe-delete --yes`.
+- Forced browser reconnection validation then used a registered browser-session
+  service integration against disposable account
+  `bc590ce9-dbf4-4247-ab8f-bcc97544ae15`. The source-bay session heartbeat
+  was listed with marker `service-acct-rehome-1776890886360-bkeidu`; rehome
+  operation `a452483f-b3fc-4dde-8ebb-d68cc27255e6` moved `bay-0 -> bay-2`;
+  the source bay delivered a browser-session `navigate` action to
+  `https://bay-2-lite4b.cocalc.ai/app?account-rehome`; and the simulated
+  destination browser session reconnected to `bay-2` using the copied
+  `remember_me` cookie and registered a fresh heartbeat with the same
+  `browser_id`.
+- That validation exposed that `remember_me` and outstanding `auth_tokens`
+  were not part of the account rehome state copy. They are now copied during
+  `copyRehomeState`, which is required for existing browser sessions and
+  outstanding sign-in tokens to survive account-home migration.
+- Cleaned up disposable accounts
+  `c70e4a96-68da-49bf-8828-4d682cf28002`,
+  `f7fba1c9-14bb-40f5-82c6-a1ca2a148bc3`, and
+  `bc590ce9-dbf4-4247-ab8f-bcc97544ae15` with
   `cocalc account delete --only-if-tag qa-safe-delete --yes`.
 
 Non-goals for initial account rehome:
