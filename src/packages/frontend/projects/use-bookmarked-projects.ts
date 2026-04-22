@@ -28,11 +28,34 @@ const PROJECTS_KEY = "projects";
 
 export type BookmarkedProjects = string[]; // array of project UUIDs
 
+let currentBookmarkedProjects: BookmarkedProjects = [];
+const bookmarkedProjectsListeners = new Set<
+  (bookmarkedProjects: BookmarkedProjects) => void
+>();
+
+function setCurrentBookmarkedProjects(bookmarkedProjects: BookmarkedProjects) {
+  const next = uniq(bookmarkedProjects);
+  currentBookmarkedProjects = next;
+  for (const listener of bookmarkedProjectsListeners) {
+    listener(next);
+  }
+}
+
+function subscribeToBookmarkedProjects(
+  listener: (bookmarkedProjects: BookmarkedProjects) => void,
+) {
+  bookmarkedProjectsListeners.add(listener);
+  listener(currentBookmarkedProjects);
+  return () => {
+    bookmarkedProjectsListeners.delete(listener);
+  };
+}
+
 // Bookmarked projects are now managed entirely through conat with in-memory state.
 // No local storage dependency - conat handles synchronization and persistence.
 export function useBookmarkedProjects() {
   const [bookmarkedProjects, setBookmarkedProjects] =
-    useState<BookmarkedProjects>([]);
+    useState<BookmarkedProjects>(currentBookmarkedProjects);
   const [bookmarks, setBookmarks] = useState<any>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const bookmarkedProjectsRef = useRef<BookmarkedProjects>([]);
@@ -46,6 +69,13 @@ export function useBookmarkedProjects() {
       }) => void)
     | null
   >(null);
+
+  useEffect(() => {
+    return subscribeToBookmarkedProjects((next) => {
+      bookmarkedProjectsRef.current = next;
+      setBookmarkedProjects(next);
+    });
+  }, []);
 
   // Initialize conat bookmarks and set up listeners
   useEffect(() => {
@@ -78,9 +108,7 @@ export function useBookmarkedProjects() {
         // Load initial data from conat
         const initialBookmarks = conatBookmarks.get(PROJECTS_KEY) ?? [];
         if (Array.isArray(initialBookmarks)) {
-          const next = uniq(initialBookmarks);
-          bookmarkedProjectsRef.current = next;
-          setBookmarkedProjects(next);
+          setCurrentBookmarkedProjects(initialBookmarks);
         }
 
         // Create stable listener function
@@ -92,9 +120,7 @@ export function useBookmarkedProjects() {
           if (changeEvent.key === PROJECTS_KEY) {
             const remoteBookmarks =
               (changeEvent.value as BookmarkedProjects) ?? [];
-            const next = uniq(remoteBookmarks);
-            bookmarkedProjectsRef.current = next;
-            setBookmarkedProjects(next);
+            setCurrentBookmarkedProjects(remoteBookmarks);
           }
         };
 
@@ -133,9 +159,8 @@ export function useBookmarkedProjects() {
       ? uniq([project_id, ...previous])
       : previous.filter((p) => p !== project_id);
 
-    // Update local state immediately for responsive UI
-    bookmarkedProjectsRef.current = next;
-    setBookmarkedProjects(next);
+    // Update all hook users immediately for responsive UI.
+    setCurrentBookmarkedProjects(next);
 
     // Store to conat (this will also trigger the change event for other clients)
     try {
@@ -143,8 +168,7 @@ export function useBookmarkedProjects() {
     } catch (err) {
       console.warn(`conat bookmark storage warning -- ${err}`);
       // Revert local state on error
-      bookmarkedProjectsRef.current = previous;
-      setBookmarkedProjects(previous);
+      setCurrentBookmarkedProjects(previous);
     }
   }
 
@@ -157,9 +181,8 @@ export function useBookmarkedProjects() {
     }
 
     const previous = bookmarkedProjectsRef.current;
-    // Update local state immediately for responsive UI
-    bookmarkedProjectsRef.current = newBookmarkedProjects;
-    setBookmarkedProjects(newBookmarkedProjects);
+    // Update all hook users immediately for responsive UI.
+    setCurrentBookmarkedProjects(newBookmarkedProjects);
 
     // Store to conat (this will also trigger the change event for other clients)
     try {
@@ -167,8 +190,7 @@ export function useBookmarkedProjects() {
     } catch (err) {
       console.warn(`conat bookmark storage warning -- ${err}`);
       // Revert local state on error
-      bookmarkedProjectsRef.current = previous;
-      setBookmarkedProjects(previous);
+      setCurrentBookmarkedProjects(previous);
     }
   }
 
