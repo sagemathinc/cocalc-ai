@@ -220,7 +220,25 @@ export interface HostRehomePrepareRequest {
   host_id: string;
   source_bay_id: string;
   dest_bay_id: string;
+  host?: Record<string, unknown>;
   epoch?: number;
+}
+
+export interface HostOwnerSshTrustRequest {
+  host_id: string;
+  account_id: string;
+  host?: Record<string, unknown>;
+  epoch?: number;
+}
+
+export interface HostOwnerSshTrustResponse {
+  host_id: string;
+  bay_id: string;
+  public_key: string;
+  host_control_attempted: boolean;
+  host_control_succeeded: boolean;
+  cloud_provider_attempted: boolean;
+  cloud_provider_succeeded: boolean;
 }
 
 export interface HostRehomeRequest {
@@ -236,6 +254,7 @@ export interface HostRehomePrepareResponse {
   host_id: string;
   dest_bay_id: string;
   owner_bay_public_key_installed: boolean;
+  owner_bay_public_key_trusted_by_cloud?: boolean;
 }
 
 export interface HostRehomeAcceptRequest {
@@ -550,6 +569,7 @@ export type HostConnectionMethod =
   | "get-seed-backup-config"
   | "record-project-backup"
   | "list-host-projects"
+  | "ensure-host-owner-ssh-trust"
   | "rehome-host"
   | "prepare-host-rehome"
   | "accept-host-rehome"
@@ -690,6 +710,9 @@ export interface InterBayHostConnectionApi {
       | "project_state"
     >,
   ) => Promise<Awaited<ReturnType<Hosts["listHostProjects"]>>>;
+  ensureHostOwnerSshTrust: (
+    opts: HostOwnerSshTrustRequest,
+  ) => Promise<HostOwnerSshTrustResponse>;
   rehomeHost: (opts: HostRehomeRequest) => Promise<HostRehomeResponse>;
   prepareHostRehome: (
     opts: HostRehomePrepareRequest,
@@ -723,6 +746,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "listHostProjects",
     method: "list-host-projects",
+  },
+  {
+    name: "ensureHostOwnerSshTrust",
+    method: "ensure-host-owner-ssh-trust",
   },
   {
     name: "rehomeHost",

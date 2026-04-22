@@ -116,6 +116,7 @@ import { getSeedProjectBackupConfig } from "@cocalc/server/project-backup";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   acceptHostRehome,
+  ensureHostOwnerSshTrustOnBay,
   prepareHostRehomeOnDestination,
   reconnectHostRehomeOnDestination,
   recordHostRehomeLogOnDestination,
@@ -563,6 +564,12 @@ async function startHostConnectionService(): Promise<void> {
         risk_only,
         state_filter,
         project_state,
+      }),
+    ensureHostOwnerSshTrust: async ({ account_id, host_id, host }) =>
+      await ensureHostOwnerSshTrustOnBay({
+        account_id,
+        host_id,
+        host,
       }),
     rehomeHost: async ({
       account_id,

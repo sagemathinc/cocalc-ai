@@ -14,6 +14,7 @@ import type {
   HostRehomeResponse as InterBayHostRehomeResponse,
 } from "@cocalc/conat/inter-bay/api";
 import type {
+  HostOwnerSshTrustResult,
   HostRehomeOperationStage,
   HostRehomeOperationStatus,
   HostRehomeOperationSummary,
@@ -21,12 +22,12 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { logCloudVmEvent } from "@cocalc/server/cloud";
-import { getHostOwnerBaySshIdentity } from "@cocalc/server/cloud/ssh-key";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
 import {
   assertCloudHostBootstrapReconcileSupported,
   reconcileCloudHostBootstrapOverSsh,
+  trustHostOwnerBaySshKeyForHostRow,
 } from "@cocalc/server/conat/api/hosts-bootstrap-reconcile";
 import { notifyProjectHostUpdate } from "@cocalc/server/conat/route-project";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
@@ -520,6 +521,7 @@ export async function prepareHostRehomeOnDestination({
   host_id,
   source_bay_id,
   dest_bay_id,
+  host,
 }: HostRehomePrepareRequest): Promise<HostRehomePrepareResponse> {
   const hostId = normalizeUuid("host_id", host_id);
   const sourceBayId = normalizeBayId("source_bay_id", source_bay_id);
@@ -530,36 +532,29 @@ export async function prepareHostRehomeOnDestination({
       `host rehome prepare for ${hostId} reached ${localBayId}, not destination bay ${destBayId}`,
     );
   }
-  const identity = await getHostOwnerBaySshIdentity();
   let ownerBayPublicKeyInstalled = false;
-  try {
-    const client = await getRoutedHostControlClient({
+  let ownerBayPublicKeyTrustedByCloud = false;
+  if (host != null) {
+    const result = await trustHostOwnerBaySshKeyForHostRow({
       host_id: hostId,
-      timeout: 30_000,
-      fresh: true,
+      row: host,
     });
-    await client.addHostSshAuthorizedKey({ public_key: identity.publicKey });
-    ownerBayPublicKeyInstalled = true;
-  } catch (err) {
-    // Host-control can be the thing we are recovering from during rehome. The
-    // reconnect stage still has cloud-provider and SSH bootstrap fallback paths.
-    log.warn("host rehome destination key install via host-control failed", {
-      host_id: hostId,
-      source_bay_id: sourceBayId,
-      dest_bay_id: destBayId,
-      err: `${err}`,
-    });
+    ownerBayPublicKeyTrustedByCloud = result.cloud_provider_succeeded;
+    ownerBayPublicKeyInstalled =
+      result.host_control_succeeded || result.cloud_provider_succeeded;
   }
   log.info("host rehome destination prepared", {
     host_id: hostId,
     source_bay_id: sourceBayId,
     dest_bay_id: destBayId,
     owner_bay_public_key_installed: ownerBayPublicKeyInstalled,
+    owner_bay_public_key_trusted_by_cloud: ownerBayPublicKeyTrustedByCloud,
   });
   return {
     host_id: hostId,
     dest_bay_id: destBayId,
     owner_bay_public_key_installed: ownerBayPublicKeyInstalled,
+    owner_bay_public_key_trusted_by_cloud: ownerBayPublicKeyTrustedByCloud,
   };
 }
 
@@ -724,6 +719,7 @@ export async function runHostRehomeOperation(
           host_id: op.host_id,
           source_bay_id: op.source_bay_id,
           dest_bay_id: op.dest_bay_id,
+          host: host ?? op.host ?? {},
         });
       op = await updateOperation({
         op_id,
@@ -872,6 +868,60 @@ export async function rehomeHost({
     dest_bay_id: destBayId,
     reason,
     campaign_id,
+  });
+}
+
+export async function ensureHostOwnerSshTrustOnBay({
+  account_id,
+  host_id,
+  host,
+}: {
+  account_id?: string;
+  host_id: string;
+  host?: Record<string, unknown>;
+}): Promise<HostOwnerSshTrustResult> {
+  await assertAdmin(account_id);
+  const hostId = normalizeUuid("host_id", host_id);
+  const row = host ?? (await loadHostRowForRehome(hostId));
+  const result = await trustHostOwnerBaySshKeyForHostRow({
+    host_id: hostId,
+    row,
+  });
+  return {
+    host_id: hostId,
+    bay_id: getConfiguredBayId(),
+    ...result,
+  };
+}
+
+export async function ensureHostOwnerSshTrust({
+  account_id,
+  host_id,
+}: {
+  account_id?: string;
+  host_id: string;
+}): Promise<HostOwnerSshTrustResult> {
+  const accountId = await assertAdmin(account_id);
+  const hostId = normalizeUuid("host_id", host_id);
+  const ownership = await resolveHostBay(hostId);
+  if (ownership == null) {
+    throw new Error(`host ${hostId} not found`);
+  }
+  const localBayId = getConfiguredBayId();
+  if (ownership.bay_id !== localBayId) {
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id, {
+        timeout_ms: HOST_REHOME_TIMEOUT_MS,
+      })
+      .ensureHostOwnerSshTrust({
+        account_id: accountId,
+        host_id: hostId,
+        epoch: ownership.epoch,
+      });
+  }
+  return await ensureHostOwnerSshTrustOnBay({
+    account_id: accountId,
+    host_id: hostId,
   });
 }
 

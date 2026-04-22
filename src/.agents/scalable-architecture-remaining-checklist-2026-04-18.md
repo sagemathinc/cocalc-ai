@@ -1030,9 +1030,10 @@ Implementation checkpoint, 2026-04-22 PT:
   - inter-bay host rehome RPCs for source-bay orchestration and
     destination-bay prepare/accept
   - durable `project_host_rehome_operations` state table
-- Destination preparation installs the destination bay's host-owner SSH public
-  key onto the host through the existing routed host-control API before
-  changing ownership.
+- Destination preparation installs/trusts the destination bay's host-owner SSH
+  public key before changing ownership. It uses the source host row on the
+  destination bay, so cloud-provider metadata repair can run even when the
+  existing routed host-control path is unavailable.
 - Destination accept copies the `project_hosts` row to the destination bay with
   `bay_id` set to the destination; source flip updates the source row's
   `bay_id` only, leaving assigned projects untouched.
@@ -1041,6 +1042,10 @@ Implementation checkpoint, 2026-04-22 PT:
 - Host-control key installation during destination prepare is now best-effort:
   host-control can itself be the broken path during rehome, and the reconnect
   stage has the cloud-provider/SSH bootstrap reconcile fallback.
+- Added `cocalc host ssh-trust <host>` as an operator preflight/backfill
+  command for existing hosts. It routes to the owning bay and attempts both
+  cloud-provider SSH metadata repair and host-control key installation for the
+  owning bay's SSH key.
 - Destination reconnect now explicitly runs SSH bootstrap reconcile from the
   destination bay before validating host-control status.
 - Host registry heartbeats now preserve existing `project_hosts.bay_id`
