@@ -31,7 +31,6 @@ export interface ServerSettingsDynamic {
   version: {
     version_min_browser?: number;
     version_recommended_browser?: number;
-    version_min_project?: number;
   };
   table: any;
 }
@@ -104,14 +103,11 @@ export default async function getServerSettings(): Promise<ServerSettingsDynamic
       }
     }
 
-    // PRECAUTION: never make the required version bigger than version_recommended_browser. Very important
+    // PRECAUTION: never make the required browser version bigger than version_recommended_browser. Very important
     // not to stupidly completely eliminate all cocalc users by a typo...
-    for (const x of ["project", "browser"]) {
-      const field = `version_min_${x}`;
-      const minver = all[field] || 0;
-      const recomm = all["version_recommended_browser"] || 0;
-      all[field] = Math.min(minver, recomm);
-    }
+    const minBrowser = all.version_min_browser || 0;
+    const recommendedBrowser = all.version_recommended_browser || 0;
+    all.version_min_browser = Math.min(minBrowser, recommendedBrowser);
 
     const { configuration, version: nextVersion } =
       buildPublicSiteSettings(all);

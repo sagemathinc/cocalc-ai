@@ -54,18 +54,11 @@ export function buildPublicSiteSettings(all: Record<string, any>): {
     typeof configuration.version_min_browser === "number"
       ? configuration.version_min_browser
       : normalizeVersionValue(configuration.version_min_browser);
-  const minProject =
-    typeof configuration.version_min_project === "number"
-      ? configuration.version_min_project
-      : normalizeVersionValue(configuration.version_min_project);
 
   const boundedBrowser = Math.min(minBrowser || 0, recommended || 0);
-  const boundedProject = Math.min(minProject || 0, recommended || 0);
 
   configuration.version_min_browser = boundedBrowser;
-  configuration.version_min_project = boundedProject;
   version.version_min_browser = boundedBrowser;
-  version.version_min_project = boundedProject;
   if (!Number.isNaN(recommended)) {
     version.version_recommended_browser = recommended;
   }
