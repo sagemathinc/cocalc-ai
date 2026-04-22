@@ -166,6 +166,7 @@ export function useBlockRowRenderer(args: BlockRowRendererArgs) {
               onFocus?.();
             }}
             onBlur={() => {
+              saveNow?.();
               setFocusedIndex((prev) => (prev === index ? null : prev));
               onBlur?.();
             }}

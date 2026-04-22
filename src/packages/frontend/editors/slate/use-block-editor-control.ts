@@ -13,6 +13,7 @@ import { ReactEditor } from "./slate-react";
 import { blockSelectionPoint } from "./block-selection-utils";
 import type { SlateEditor } from "./types";
 import { Actions } from "./types";
+import { joinBlocks } from "./block-markdown-utils";
 
 export function useBlockEditorControl({
   actions,
@@ -101,6 +102,7 @@ export function useBlockEditorControl({
         };
       },
       getBlocks: () => [...blocksRef.current],
+      getMarkdown: () => joinBlocks(blocksRef.current),
       setMarkdown: (markdown: string) => {
         setBlocksFromValue(markdown);
       },

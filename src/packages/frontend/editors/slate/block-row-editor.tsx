@@ -1152,6 +1152,12 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const showGapAfter =
       gapCursor?.index === index && gapCursor.side === "after";
     const showBoundary = SHOW_BLOCK_BOUNDARIES && index > 0;
+    const saveSoon = useCallback(() => {
+      if (saveNow == null || typeof window === "undefined") return;
+      window.setTimeout(() => {
+        saveNow();
+      }, 0);
+    }, [saveNow]);
 
     const rowBody = (
       <div
@@ -1291,6 +1297,7 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
               onKeyDown={handleKeyDown}
               onPaste={(event) => {
                 handleForcedPlainTextPaste({ editor: editor as any, event });
+                saveSoon();
               }}
               style={{
                 position: "relative",
