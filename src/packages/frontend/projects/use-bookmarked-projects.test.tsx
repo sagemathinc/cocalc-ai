@@ -50,10 +50,18 @@ function TestComponent() {
       <button onClick={() => setProjectBookmarked("project-2", true)}>
         add-2
       </button>
+      <button onClick={() => setProjectBookmarked("project-1", false)}>
+        remove-1
+      </button>
       <span data-testid="ready">{isInitialized ? "yes" : "no"}</span>
       <span data-testid="bookmarks">{bookmarkedProjects.join(",")}</span>
     </div>
   );
+}
+
+function BookmarkMirror() {
+  const { bookmarkedProjects } = useBookmarkedProjects();
+  return <span data-testid="mirror">{bookmarkedProjects.join(",")}</span>;
 }
 
 describe("useBookmarkedProjects", () => {
@@ -93,5 +101,32 @@ describe("useBookmarkedProjects", () => {
       "project-2",
       "project-1",
     ]);
+  });
+
+  it("updates all hook users immediately when a project is unstarred", async () => {
+    const bookmarks = new FakeBookmarks({
+      projects: ["project-1"],
+    });
+    dkvMock.mockResolvedValue(bookmarks);
+
+    render(
+      <>
+        <TestComponent />
+        <BookmarkMirror />
+      </>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ready").textContent).toBe("yes");
+      expect(screen.getByTestId("mirror").textContent).toBe("project-1");
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("remove-1"));
+    });
+
+    expect(screen.getByTestId("bookmarks").textContent).toBe("");
+    expect(screen.getByTestId("mirror").textContent).toBe("");
+    expect(bookmarks.set).toHaveBeenLastCalledWith("projects", []);
   });
 });
