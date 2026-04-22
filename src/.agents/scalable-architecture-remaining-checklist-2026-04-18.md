@@ -673,7 +673,7 @@ main production reasons to do it are:
 - [x] live 3-bay happy-path validation for per-project rehome and projection
       convergence
 - [x] rollback / retry plan for destination-accepted/source-flip-failed cases
-- [ ] failure-injection validation for destination-accepted/source-flip-failed
+- [x] failure-injection validation for destination-accepted/source-flip-failed
       cases and delayed projection convergence
 
 Live 3-bay validation evidence, 2026-04-21 PT:
@@ -727,6 +727,32 @@ Retry / rollback plan, 2026-04-22 PT:
 - Unit coverage now validates a failed `destination_accepted` operation can be
   inspected and then reconciled through source flip, portable project-log copy,
   projection, and completion.
+
+Failure-injection validation, 2026-04-22 PT:
+
+- Created disposable project `2e6b2a22-58d4-4023-aea7-7fcf75d01136` on
+  `bay-0` and completed a normal rehome to `bay-1` with operation
+  `c17ed624-d504-49c3-8ac9-8fe829141206`.
+- Injected a source-flip failure by setting the operation to
+  `status=failed`, `stage=destination_accepted`, rewinding the disposable
+  project and account-project projection to `bay-0`, and setting
+  `last_error='injected source flip failure for Section 9 validation'`.
+  `cocalc project rehome-status --op-id ...` reported the failed
+  `destination_accepted` state, then
+  `cocalc project rehome-reconcile --op-id ...` completed the operation,
+  advanced attempt count from 1 to 2, cleared `last_error`, and converged both
+  project ownership and `account_project_index` to `bay-1`.
+- Injected delayed projection convergence by setting
+  `account_project_index.owning_bay_id=bay-0` and operation
+  `status=failed`, `stage=portable_state_copied`, with
+  `last_error='injected delayed projection convergence for Section 9 validation'`.
+  `rehome-status` exposed the failed portable-state-copied stage, and
+  `rehome-reconcile` completed the operation and restored
+  `account_project_index.owning_bay_id=bay-1`.
+- The disposable project was hard-deleted with
+  `cocalc project delete --hard --purge-backups-now --wait --yes`; delete
+  operation `a5f50644-0f9f-4567-b872-e585f815aedd` completed with
+  `status=succeeded`.
 
 ### 11. Host Move / Reassignment
 
