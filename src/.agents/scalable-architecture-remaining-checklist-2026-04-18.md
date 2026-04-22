@@ -772,7 +772,7 @@ cleanup concern.
 - [ ] host/project fencing model during reassignment
 - [x] directory update and projection convergence
 - [ ] recovery behavior when the source host or source bay disappears mid-move
-- [ ] rollback / retry plan
+- [x] rollback / retry plan
 - [x] CLI workflow
 
 Initial host rehome target:
@@ -794,7 +794,7 @@ Initial host rehome target:
 - [x] operator status/retry commands:
   - `cocalc host rehome-status --op-id ...`
   - `cocalc host rehome-reconcile --op-id ...`
-- [ ] failure-injection validation for:
+- [x] failure-injection validation for:
   - destination prepared but source flip failed
   - source flipped but host did not reconnect to destination bay
   - source flipped but projection/directory state is stale
@@ -817,7 +817,60 @@ Implementation checkpoint, 2026-04-22 PT:
   `bay_id` only, leaving assigned projects untouched.
 - Post-flip validation calls `getHostAgentStatus` through the routed host
   control client, which exercises the new owner-bay route.
-- Remaining work is live 3-bay validation plus explicit failure injection.
+- Host-control key installation during destination prepare is now best-effort:
+  host-control can itself be the broken path during rehome, and the reconnect
+  stage has the cloud-provider/SSH bootstrap reconcile fallback.
+- Destination reconnect now explicitly runs SSH bootstrap reconcile from the
+  destination bay before validating host-control status.
+- Host registry heartbeats now preserve existing `project_hosts.bay_id`
+  ownership instead of letting stale old-bay heartbeats pull ownership back
+  during a rehome.
+- Completed host rehomes write a `cloud_vm_log.action='rehome'` evidence row on
+  the destination/owner bay, including source bay, destination bay, operation
+  id, reason, campaign, requester, and duration.
+
+Live 3-bay validation evidence, 2026-04-22 PT:
+
+- Validated host `b8d594c4-5fac-492a-b761-4284b904beaf` (`london`) through
+  multiple `bay-0 <-> bay-1` rehomes on the local 3-bay hub cluster.
+- Same-bay request returned `status='already-home'` without changing
+  ownership.
+- Invalid destination bay failed before changing ownership with
+  `bay missing-bay not found`.
+- Forward rehome `bd83a0af-6c2e-40af-a59e-58a17589562e` completed
+  `bay-0 -> bay-1`; `host where` reported `bay-1`, bootstrap status was
+  `in_sync`, and a destination-bay host-log `rehome` row was present on
+  `bay-1`.
+- Restore rehome `1098a81c-0bef-4514-aa98-32a2e06bc772` completed
+  `bay-1 -> bay-0`; `host where` reported `bay-0`, bootstrap status remained
+  `in_sync`, and a destination-bay host-log `rehome` row was present on
+  `bay-0`.
+- Injected a failed `destination_accepted` operation to simulate "destination
+  prepared/accepted but source flip failed". `cocalc host rehome-status`
+  exposed the failed state, and `cocalc host rehome-reconcile` completed the
+  operation after source flip, destination reconnect, routed host-control
+  validation, and destination-bay host-log write. Final injected operation:
+  `024b8d12-c857-4bb4-a0f1-86bd00230244`, `attempt=2`,
+  `status='succeeded'`, `stage='complete'`.
+- The initial live validation found and fixed a real
+  `source_flipped -> host_reconnected` failure: flipping `project_hosts.bay_id`
+  alone left the live host-agent connected to the old bay. The fix is the
+  destination-bay SSH bootstrap reconcile step before host-control validation.
+- The initial live validation also found and fixed a stale-heartbeat ownership
+  failure: old-bay heartbeats could overwrite the authoritative host bay after
+  the source flip. The fix is preserving existing host-bay ownership during
+  heartbeat upserts.
+- Final restore rehome `f9be98c2-7539-4865-b499-334184313cbb` put `london`
+  back on `bay-0`; host bootstrap was `in_sync`, and the host projects CLI
+  listed the assigned projects successfully.
+
+Known follow-up:
+
+- `cocalc host rehome-status --op-id ...` and `host rehome-reconcile --op-id`
+  are source-bay-local. They work when run against the source bay that owns the
+  operation record, but an operator on another bay currently needs to know or
+  target that source bay. This should become either source-bay-routed by CLI
+  option or admin-only cluster search before large batch drains.
 
 Non-goals for initial host rehome:
 

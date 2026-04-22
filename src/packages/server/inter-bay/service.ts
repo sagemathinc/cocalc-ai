@@ -109,6 +109,7 @@ import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   acceptHostRehome,
   prepareHostRehomeOnDestination,
+  reconnectHostRehomeOnDestination,
   recordHostRehomeLogOnDestination,
   rehomeHostOnOwningBay,
 } from "@cocalc/server/project-host/rehome";
@@ -565,6 +566,8 @@ async function startHostConnectionService(): Promise<void> {
     prepareHostRehome: async (opts) =>
       await prepareHostRehomeOnDestination(opts),
     acceptHostRehome: async (opts) => await acceptHostRehome(opts),
+    reconnectHostRehome: async (opts) =>
+      await reconnectHostRehomeOnDestination(opts),
     recordHostRehomeLog: async (opts) =>
       await recordHostRehomeLogOnDestination(opts),
   };

@@ -40,6 +40,15 @@ function getHostBootId(metadata: any): string | undefined {
   return value || undefined;
 }
 
+function registryBayIdForHeartbeat(previousBayId: unknown): string {
+  const localBayId = getConfiguredBayId();
+  const current = `${previousBayId ?? ""}`.trim();
+  // Heartbeats prove this bay currently has a host connection; they do not
+  // grant metadata ownership. During host rehome, the old bay can keep seeing
+  // heartbeats until bootstrap reconcile restarts the host agent.
+  return current || localBayId;
+}
+
 async function markStaleRunningProjectsOpenedAfterBootChange({
   host_id,
   previous_session_id,
@@ -370,9 +379,15 @@ export async function initHostRegistryService() {
           public_url: sanitized.public_url,
           internal_url: sanitized.internal_url,
         });
-        const { rows: previousRows } = await pool().query<{ metadata: any }>(
-          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        const { rows: previousRows } = await pool().query<{
+          metadata: any;
+          bay_id?: string | null;
+        }>(
+          "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
           [info.id],
+        );
+        const registryBayId = registryBayIdForHeartbeat(
+          previousRows[0]?.bay_id,
         );
         const previousSessionId = getHostSessionId(previousRows[0]?.metadata);
         const previousBootId = getHostBootId(previousRows[0]?.metadata);
@@ -380,7 +395,7 @@ export async function initHostRegistryService() {
         const nextBootId = getHostBootId(sanitized.metadata);
         await upsertProjectHost({
           ...sanitized,
-          bay_id: getConfiguredBayId(),
+          bay_id: registryBayId,
           status: "running",
           last_seen: new Date(),
           host_session_id: nextSessionId,
@@ -422,9 +437,15 @@ export async function initHostRegistryService() {
         const sanitized = isLocalSelfHost
           ? { ...info, public_url: undefined, internal_url: undefined }
           : info;
-        const { rows: previousRows } = await pool().query<{ metadata: any }>(
-          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        const { rows: previousRows } = await pool().query<{
+          metadata: any;
+          bay_id?: string | null;
+        }>(
+          "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
           [info.id],
+        );
+        const registryBayId = registryBayIdForHeartbeat(
+          previousRows[0]?.bay_id,
         );
         const previousSessionId = getHostSessionId(previousRows[0]?.metadata);
         const previousBootId = getHostBootId(previousRows[0]?.metadata);
@@ -432,7 +453,7 @@ export async function initHostRegistryService() {
         const nextBootId = getHostBootId(sanitized.metadata);
         await upsertProjectHost({
           ...sanitized,
-          bay_id: getConfiguredBayId(),
+          bay_id: registryBayId,
           status: "running",
           last_seen: new Date(),
           host_session_id: nextSessionId,

@@ -245,6 +245,13 @@ export interface HostRehomeAcceptRequest {
   epoch?: number;
 }
 
+export interface HostRehomeReconnectRequest {
+  host_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  epoch?: number;
+}
+
 export interface HostRehomeResponse {
   host_id: string;
   previous_bay_id: string;
@@ -476,6 +483,7 @@ export type HostConnectionMethod =
   | "rehome-host"
   | "prepare-host-rehome"
   | "accept-host-rehome"
+  | "reconnect-host-rehome"
   | "record-host-rehome-log";
 export type HostControlMethod =
   | "create-project"
@@ -611,6 +619,7 @@ export interface InterBayHostConnectionApi {
   acceptHostRehome: (
     opts: HostRehomeAcceptRequest,
   ) => Promise<HostRehomeResponse>;
+  reconnectHostRehome: (opts: HostRehomeReconnectRequest) => Promise<void>;
   recordHostRehomeLog: (opts: HostRehomeLogRequest) => Promise<void>;
 }
 
@@ -648,6 +657,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "acceptHostRehome",
     method: "accept-host-rehome",
+  },
+  {
+    name: "reconnectHostRehome",
+    method: "reconnect-host-rehome",
   },
   {
     name: "recordHostRehomeLog",

@@ -137,6 +137,9 @@ describe("host-registry automatic convergence retry", () => {
       }
       if (
         sql.includes(
+          "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        ) ||
+        sql.includes(
           "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
         )
       ) {
@@ -205,6 +208,59 @@ describe("host-registry automatic convergence retry", () => {
     ).toBeUndefined();
   });
 
+  it("preserves existing host bay ownership when heartbeats arrive on another bay", async () => {
+    currentMetadata = {
+      host_session_id: "session-1",
+      host_boot_id: "boot-1",
+      machine: { cloud: "gcp" },
+    };
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ status: "running" }] };
+      }
+      if (
+        sql.includes(
+          "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        ) ||
+        sql.includes(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ metadata: currentMetadata, bay_id: "bay-1" }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    ensureAutomaticHostRuntimeDeploymentsReconcileMock = jest.fn(async () => ({
+      queued: false,
+      host_id: "host-1",
+      reason: "no_reconcile_needed",
+    }));
+    ensureAutomaticHostArtifactDeploymentsReconcileMock = jest.fn(async () => ({
+      queued: false,
+      host_id: "host-1",
+      reason: "no_reconcile_needed",
+    }));
+
+    const { initHostRegistryService } = await import("./host-registry");
+    const service = await initHostRegistryService();
+
+    await service.heartbeat({
+      id: "host-1",
+      metadata: currentMetadata,
+    } as any);
+
+    expect(upsertProjectHostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "host-1",
+        bay_id: "bay-1",
+      }),
+    );
+  });
+
   it("does not mark running projects opened when only the host process session changes", async () => {
     currentMetadata = {
       host_session_id: "session-old",
@@ -253,6 +309,9 @@ describe("host-registry automatic convergence retry", () => {
         return { rows: [{ status: "running" }] };
       }
       if (
+        sql.includes(
+          "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        ) ||
         sql.includes(
           "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
         )
@@ -340,6 +399,9 @@ describe("host-registry automatic convergence retry", () => {
         return { rows: [{ status: "running" }] };
       }
       if (
+        sql.includes(
+          "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        ) ||
         sql.includes(
           "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
         )

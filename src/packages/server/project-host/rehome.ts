@@ -10,6 +10,7 @@ import type {
   HostRehomeLogRequest,
   HostRehomePrepareRequest,
   HostRehomePrepareResponse,
+  HostRehomeReconnectRequest,
   HostRehomeResponse as InterBayHostRehomeResponse,
 } from "@cocalc/conat/inter-bay/api";
 import type {
@@ -23,6 +24,10 @@ import { logCloudVmEvent } from "@cocalc/server/cloud";
 import { getHostOwnerBaySshIdentity } from "@cocalc/server/cloud/ssh-key";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
+import {
+  assertCloudHostBootstrapReconcileSupported,
+  reconcileCloudHostBootstrapOverSsh,
+} from "@cocalc/server/conat/api/hosts-bootstrap-reconcile";
 import { notifyProjectHostUpdate } from "@cocalc/server/conat/route-project";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import {
@@ -34,7 +39,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 
 const log = getLogger("server:project-host:rehome");
 const HOST_REHOME_OPERATIONS_TABLE = "project_host_rehome_operations";
-const HOST_REHOME_TIMEOUT_MS = 60_000;
+const HOST_REHOME_TIMEOUT_MS = 25 * 60_000;
 
 type HostRehomeOperationRow = HostRehomeOperationSummary & {
   host: Record<string, unknown> | null;
@@ -343,7 +348,7 @@ async function updateOperation({
     sets.push(`status = $${i++}`);
     values.push(status);
     if (status === "succeeded" || status === "failed") {
-      sets.push("finished_at = COALESCE(finished_at, NOW())");
+      sets.push("finished_at = NOW()");
     }
     if (status === "running") {
       sets.push("finished_at = NULL");
@@ -398,6 +403,7 @@ async function startAttempt(op_id: string): Promise<HostRehomeOperationRow> {
          SET attempt = attempt + 1,
              status = 'running',
              last_error = NULL,
+             finished_at = NULL,
              updated_at = NOW()
        WHERE op_id = $1
        RETURNING *
@@ -477,21 +483,37 @@ async function writeHostRehomeLog({
 async function appendHostRehomeLogEntry(
   op: HostRehomeOperationRow,
 ): Promise<void> {
-  const duration_ms = durationMs(op) ?? null;
-  await getInterBayBridge()
-    .hostConnection(op.dest_bay_id, {
-      timeout_ms: HOST_REHOME_TIMEOUT_MS,
-    })
-    .recordHostRehomeLog({
-      host_id: op.host_id,
+  const entry: HostRehomeLogRequest = {
+    host_id: op.host_id,
+    op_id: op.op_id,
+    source_bay_id: op.source_bay_id,
+    dest_bay_id: op.dest_bay_id,
+    requested_by: op.requested_by ?? null,
+    reason: op.reason ?? null,
+    campaign_id: op.campaign_id ?? null,
+    duration_ms: durationMs(op) ?? null,
+  };
+  const localBayId = getConfiguredBayId();
+  if (op.dest_bay_id === localBayId) {
+    await writeHostRehomeLog(entry);
+    return;
+  }
+  try {
+    await getInterBayBridge()
+      .hostConnection(op.dest_bay_id, {
+        timeout_ms: HOST_REHOME_TIMEOUT_MS,
+      })
+      .recordHostRehomeLog(entry);
+  } catch (err) {
+    log.warn("host rehome destination log entry write failed", {
       op_id: op.op_id,
+      host_id: op.host_id,
       source_bay_id: op.source_bay_id,
       dest_bay_id: op.dest_bay_id,
-      requested_by: op.requested_by ?? null,
-      reason: op.reason ?? null,
-      campaign_id: op.campaign_id ?? null,
-      duration_ms,
+      err: `${err}`,
     });
+    await writeHostRehomeLog(entry);
+  }
 }
 
 export async function prepareHostRehomeOnDestination({
@@ -509,21 +531,35 @@ export async function prepareHostRehomeOnDestination({
     );
   }
   const identity = await getHostOwnerBaySshIdentity();
-  const client = await getRoutedHostControlClient({
-    host_id: hostId,
-    timeout: HOST_REHOME_TIMEOUT_MS,
-    fresh: true,
-  });
-  await client.addHostSshAuthorizedKey({ public_key: identity.publicKey });
+  let ownerBayPublicKeyInstalled = false;
+  try {
+    const client = await getRoutedHostControlClient({
+      host_id: hostId,
+      timeout: 30_000,
+      fresh: true,
+    });
+    await client.addHostSshAuthorizedKey({ public_key: identity.publicKey });
+    ownerBayPublicKeyInstalled = true;
+  } catch (err) {
+    // Host-control can be the thing we are recovering from during rehome. The
+    // reconnect stage still has cloud-provider and SSH bootstrap fallback paths.
+    log.warn("host rehome destination key install via host-control failed", {
+      host_id: hostId,
+      source_bay_id: sourceBayId,
+      dest_bay_id: destBayId,
+      err: `${err}`,
+    });
+  }
   log.info("host rehome destination prepared", {
     host_id: hostId,
     source_bay_id: sourceBayId,
     dest_bay_id: destBayId,
+    owner_bay_public_key_installed: ownerBayPublicKeyInstalled,
   });
   return {
     host_id: hostId,
     dest_bay_id: destBayId,
-    owner_bay_public_key_installed: true,
+    owner_bay_public_key_installed: ownerBayPublicKeyInstalled,
   };
 }
 
@@ -559,6 +595,30 @@ export async function acceptHostRehome({
     owning_bay_id: destBayId,
     status: sourceBayId === destBayId ? "already-home" : "rehomed",
   };
+}
+
+export async function reconnectHostRehomeOnDestination({
+  host_id,
+  source_bay_id,
+  dest_bay_id,
+}: HostRehomeReconnectRequest): Promise<void> {
+  const hostId = normalizeUuid("host_id", host_id);
+  const sourceBayId = normalizeBayId("source_bay_id", source_bay_id);
+  const destBayId = normalizeBayId("dest_bay_id", dest_bay_id);
+  const localBayId = getConfiguredBayId();
+  if (destBayId !== localBayId) {
+    throw new Error(
+      `host rehome reconnect for ${hostId} reached ${localBayId}, not destination bay ${destBayId}`,
+    );
+  }
+  const row = await loadHostRowForRehome(hostId);
+  assertCloudHostBootstrapReconcileSupported(row);
+  await reconcileCloudHostBootstrapOverSsh({ host_id: hostId, row });
+  log.info("host rehome destination reconnected", {
+    host_id: hostId,
+    source_bay_id: sourceBayId,
+    dest_bay_id: destBayId,
+  });
 }
 
 export async function recordHostRehomeLogOnDestination(
@@ -700,6 +760,15 @@ export async function runHostRehomeOperation(
     }
 
     if (op.stage === "source_flipped") {
+      await getInterBayBridge()
+        .hostConnection(op.dest_bay_id, {
+          timeout_ms: HOST_REHOME_TIMEOUT_MS,
+        })
+        .reconnectHostRehome({
+          host_id: op.host_id,
+          source_bay_id: op.source_bay_id,
+          dest_bay_id: op.dest_bay_id,
+        });
       const client = await getRoutedHostControlClient({
         host_id: op.host_id,
         timeout: HOST_REHOME_TIMEOUT_MS,
