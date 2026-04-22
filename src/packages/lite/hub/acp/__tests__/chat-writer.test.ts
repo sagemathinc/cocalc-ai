@@ -1759,6 +1759,48 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("does not let late text events after summary replace durable content", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "substantive final response",
+      } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "substantive final response",
+      seq: 1,
+    } as AcpStreamMessage);
+    await (writer as any).handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "Sure.",
+      } as any,
+      seq: 2,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect((writer as any).content).toBe("substantive final response");
+    const final = findLastChatSet(sets) as any;
+    expect(final.history?.[0]?.content).toBe("substantive final response");
+    (writer as any).dispose?.(true);
+  });
+
   it("aggregates multiple summary payloads", async () => {
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
