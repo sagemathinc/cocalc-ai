@@ -228,6 +228,68 @@ describe("ChatLog sidechat search jumps", () => {
     await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(false));
   });
 
+  it("shows a newest messages button when the thread is not at the bottom", async () => {
+    activeTopTab = "project-1";
+    activeProjectTab = "editor-thread.chat";
+    const scrollToBottomRef = { current: undefined as any };
+
+    render(
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        messages={
+          new Map([
+            [
+              "1000",
+              {
+                date: 1000,
+                sender_id: "acct-1",
+                history: [{ content: "first message" }],
+              },
+            ],
+            [
+              "2000",
+              {
+                date: 2000,
+                sender_id: "acct-2",
+                history: [{ content: "newest message" }],
+              },
+            ],
+          ]) as any
+        }
+        mode="standalone"
+        actions={{ clearScrollRequest: jest.fn() } as any}
+        selectedThread="thread-1"
+        scrollToBottomRef={scrollToBottomRef}
+      />,
+    );
+
+    await waitFor(() => expect(scrollToBottomRef.current).toBeDefined());
+    expect(screen.queryByRole("button", { name: /newest messages/i })).toBe(
+      null,
+    );
+
+    act(() => {
+      latestVirtuosoProps?.atBottomStateChange?.(false);
+    });
+
+    const button = await screen.findByRole("button", {
+      name: /newest messages/i,
+    });
+    fireEvent.click(button);
+
+    await waitFor(() =>
+      expect(mockScrollToIndex).toHaveBeenCalledWith({
+        index: Number.MAX_SAFE_INTEGER,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /newest messages/i })).toBe(
+        null,
+      ),
+    );
+  });
+
   it("re-applies bottom scroll after an image loads in a bottom-anchored thread", async () => {
     activeTopTab = "project-1";
     activeProjectTab = "editor-thread.chat";
