@@ -4,15 +4,25 @@
  */
 
 import type { PostgreSQL } from "../types";
+import { withProjectRehomeWriteFence } from "../project-rehome-fence";
 
 export async function setRunQuota(
-  db: PostgreSQL,
+  _db: PostgreSQL,
   project_id: string,
   run_quota: Record<string, unknown>,
 ): Promise<void> {
-  await db.async_query({
-    query: "UPDATE projects",
-    jsonb_merge: { run_quota },
-    where: { project_id },
+  await withProjectRehomeWriteFence({
+    project_id,
+    action: "set project run quota",
+    fn: async (db) => {
+      await db.query(
+        `
+          UPDATE projects
+             SET run_quota = COALESCE(run_quota, '{}'::jsonb) || $2::jsonb
+           WHERE project_id = $1::uuid
+        `,
+        [project_id, JSON.stringify(run_quota)],
+      );
+    },
   });
 }

@@ -64,7 +64,13 @@ describe("getProjectLauncher", () => {
         },
       ],
     }));
-    getPoolMock = jest.fn(() => ({ query: queryMock }));
+    getPoolMock = jest.fn(() => ({
+      query: queryMock,
+      connect: jest.fn(async () => ({
+        query: queryMock,
+        release: jest.fn(),
+      })),
+    }));
     publishProjectDetailInvalidationBestEffortMock = jest.fn(
       async () => undefined,
     );
@@ -120,7 +126,13 @@ describe("getProjectLauncher", () => {
 
   it("updates launcher settings and publishes detail invalidation", async () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
-    getPoolMock = jest.fn(() => ({ query: queryMock }));
+    getPoolMock = jest.fn(() => ({
+      query: queryMock,
+      connect: jest.fn(async () => ({
+        query: queryMock,
+        release: jest.fn(),
+      })),
+    }));
     const { setProjectLauncher } = await import("./projects");
 
     await expect(

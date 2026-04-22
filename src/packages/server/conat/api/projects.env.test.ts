@@ -64,7 +64,13 @@ describe("project env helpers", () => {
         },
       ],
     }));
-    getPoolMock = jest.fn(() => ({ query: queryMock }));
+    getPoolMock = jest.fn(() => ({
+      query: queryMock,
+      connect: jest.fn(async () => ({
+        query: queryMock,
+        release: jest.fn(),
+      })),
+    }));
     publishProjectDetailInvalidationBestEffortMock = jest.fn(
       async () => undefined,
     );
@@ -100,7 +106,13 @@ describe("project env helpers", () => {
 
   it("updates project env and publishes detail invalidation", async () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
-    getPoolMock = jest.fn(() => ({ query: queryMock }));
+    getPoolMock = jest.fn(() => ({
+      query: queryMock,
+      connect: jest.fn(async () => ({
+        query: queryMock,
+        release: jest.fn(),
+      })),
+    }));
     const { setProjectEnv } = await import("./projects");
 
     await expect(

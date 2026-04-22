@@ -1,6 +1,7 @@
 import getPool from "@cocalc/database/pool";
 import { jsonbSet } from "@cocalc/database/postgres/jsonb-utils";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import { assertProjectNotRehoming } from "@cocalc/database/postgres/project-rehome-fence";
 import { isValidUUID } from "@cocalc/util/misc";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
@@ -27,6 +28,11 @@ export default async function addUserToProject({
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await assertProjectNotRehoming({
+      db: client,
+      project_id,
+      action: "add project user",
+    });
     await client.query(
       `UPDATE projects SET ${set} WHERE project_id=$${params.length + 1}`,
       params.concat(project_id),
