@@ -21,6 +21,7 @@ import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
 import getPool from "@cocalc/database/pool";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { checkRequiredSSO } from "@cocalc/server/auth/sso/check-required-sso";
 import getStrategies from "@cocalc/database/settings/get-sso-strategies";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
@@ -80,10 +81,16 @@ export default async function setEmailAddress({
   if (strategy != null) {
     // user has no password set, so we can set it – but not the email address
     if (!password_hash) {
-      await pool.query(
-        "UPDATE accounts SET password_hash=$1 WHERE account_id=$2",
-        [passwordHash(password), account_id],
-      );
+      await withAccountRehomeWriteFence({
+        account_id,
+        action: "set password",
+        fn: async (db) => {
+          await db.query(
+            "UPDATE accounts SET password_hash=$1 WHERE account_id=$2",
+            [passwordHash(password), account_id],
+          );
+        },
+      });
     }
     throw new Error(`You are not allowed to change your email address`);
   }
@@ -97,10 +104,16 @@ export default async function setEmailAddress({
 
   if (!password_hash) {
     // setting both the email_address *and* password at once.
-    await pool.query(
-      "UPDATE accounts SET password_hash=$1, email_address=$2 WHERE account_id=$3",
-      [passwordHash(password), email_address, account_id],
-    );
+    await withAccountRehomeWriteFence({
+      account_id,
+      action: "set email address",
+      fn: async (db) => {
+        await db.query(
+          "UPDATE accounts SET password_hash=$1, email_address=$2 WHERE account_id=$3",
+          [passwordHash(password), email_address, account_id],
+        );
+      },
+    });
     return;
   }
   // Verify that existing password is correct.
@@ -123,10 +136,16 @@ export default async function setEmailAddress({
   }
 
   // Set the email address:
-  await pool.query("UPDATE accounts SET email_address=$1 WHERE account_id=$2", [
-    email_address,
+  await withAccountRehomeWriteFence({
     account_id,
-  ]);
+    action: "set email address",
+    fn: async (db) => {
+      await db.query(
+        "UPDATE accounts SET email_address=$1 WHERE account_id=$2",
+        [email_address, account_id],
+      );
+    },
+  });
 
   // Do any pending account creation actions for this email.
   await accountCreationActions({ email_address, account_id });

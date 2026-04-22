@@ -3,6 +3,7 @@
 
 import getPool from "@cocalc/database/pool";
 import addUserToProject from "@cocalc/server/projects/add-user-to-project";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import getOneProject from "@cocalc/server/projects/get-one";
 import { getProject } from "@cocalc/server/projects/control";
 import { getLogger } from "@cocalc/backend/logger";
@@ -56,9 +57,14 @@ export default async function accountCreationActions({
 }
 
 export async function creationActionsDone(account_id: string): Promise<void> {
-  const pool = getPool();
-  await pool.query(
-    "UPDATE accounts SET creation_actions_done=true WHERE account_id=$1::UUID",
-    [account_id],
-  );
+  await withAccountRehomeWriteFence({
+    account_id,
+    action: "mark account creation actions done",
+    fn: async (db) => {
+      await db.query(
+        "UPDATE accounts SET creation_actions_done=true WHERE account_id=$1::UUID",
+        [account_id],
+      );
+    },
+  });
 }

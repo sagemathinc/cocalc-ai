@@ -15,6 +15,7 @@ import type {
   AccountRehomeStateCopyRequest,
 } from "@cocalc/conat/inter-bay/api";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { lockAccountRehomeFence } from "@cocalc/server/accounts/rehome-fence";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
 import {
@@ -39,6 +40,13 @@ type PortableStateTable = (typeof PORTABLE_STATE_TABLES)[number];
 
 type AccountRehomeOperationRow = AccountRehomeOperationSummary & {
   account: Record<string, unknown> | null;
+};
+
+type Queryable = {
+  query: (
+    sql: string,
+    params?: any[],
+  ) => Promise<{ rows: any[]; rowCount?: number | null }>;
 };
 
 let accountRehomeSchemaReady: Promise<void> | undefined;
@@ -236,8 +244,9 @@ async function replacePortableRows({
 
 async function loadAccountRowForRehome(
   account_id: string,
+  db: Queryable = getPool(),
 ): Promise<Record<string, unknown>> {
-  const { rows } = await getPool().query<{ account: Record<string, unknown> }>(
+  const { rows } = await db.query(
     `
       SELECT to_jsonb(accounts) AS account
         FROM accounts
@@ -247,7 +256,7 @@ async function loadAccountRowForRehome(
     `,
     [account_id],
   );
-  const account = rows[0]?.account;
+  const account = rows[0]?.account as Record<string, unknown> | undefined;
   if (!account) {
     throw new Error(`account ${account_id} not found`);
   }
@@ -296,8 +305,11 @@ async function loadPortableState(
   };
 }
 
-async function assertLocalHomeAccount(account_id: string): Promise<void> {
-  const account = await loadAccountRowForRehome(account_id);
+async function assertLocalHomeAccount(
+  account_id: string,
+  db: Queryable = getPool(),
+): Promise<Record<string, unknown>> {
+  const account = await loadAccountRowForRehome(account_id, db);
   const homeBayId =
     `${account.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
   if (homeBayId !== getConfiguredBayId()) {
@@ -305,6 +317,7 @@ async function assertLocalHomeAccount(account_id: string): Promise<void> {
       `account ${account_id} is homed in ${homeBayId}, not local bay ${getConfiguredBayId()}`,
     );
   }
+  return account;
 }
 
 async function createOperation({
@@ -323,27 +336,61 @@ async function createOperation({
   campaign_id?: string | null;
 }): Promise<AccountRehomeOperationRow> {
   await ensureAccountRehomeSchema();
-  await assertLocalHomeAccount(account_id);
-  const account = await loadAccountRowForRehome(account_id);
-  const { rows } = await getPool().query<AccountRehomeOperationRow>(
-    `
-      INSERT INTO ${ACCOUNT_REHOME_OPERATIONS_TABLE}
-        (account_id, source_bay_id, dest_bay_id, requested_by, reason, campaign_id, account)
-      VALUES
-        ($1, $2, $3, $4, $5, $6, $7::jsonb)
-      RETURNING *
-    `,
-    [
-      account_id,
-      source_bay_id,
-      dest_bay_id,
-      requested_by,
-      reason ?? null,
-      campaign_id ?? null,
-      account,
-    ],
-  );
-  return rows[0]!;
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await lockAccountRehomeFence({ db: client, account_id });
+    const active = await client.query(
+      `
+        SELECT *
+          FROM ${ACCOUNT_REHOME_OPERATIONS_TABLE}
+         WHERE account_id = $1
+           AND status = 'running'
+         ORDER BY created_at DESC
+         LIMIT 1
+      `,
+      [account_id],
+    );
+    const existing = active.rows[0] as AccountRehomeOperationRow | undefined;
+    if (existing) {
+      if (
+        existing.source_bay_id === source_bay_id &&
+        existing.dest_bay_id === dest_bay_id
+      ) {
+        await client.query("COMMIT");
+        return existing;
+      }
+      throw new Error(
+        `account ${account_id} already has running rehome operation ${existing.op_id} from ${existing.source_bay_id} to ${existing.dest_bay_id}`,
+      );
+    }
+    const account = await assertLocalHomeAccount(account_id, client);
+    const { rows } = await client.query(
+      `
+        INSERT INTO ${ACCOUNT_REHOME_OPERATIONS_TABLE}
+          (account_id, source_bay_id, dest_bay_id, requested_by, reason, campaign_id, account)
+        VALUES
+          ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        RETURNING *
+      `,
+      [
+        account_id,
+        source_bay_id,
+        dest_bay_id,
+        requested_by,
+        reason ?? null,
+        campaign_id ?? null,
+        account,
+      ],
+    );
+    await client.query("COMMIT");
+    return rows[0]! as AccountRehomeOperationRow;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getAccountRehomeOperation(

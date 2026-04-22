@@ -663,7 +663,7 @@ Initial account rehome target:
 
 - [x] define terminology: **account rehome** means moving the authoritative
       account home/control-plane bay
-- [ ] account-write fencing
+- [x] account-write fencing for identity/security/org account-row mutations
 - [x] source bay sends the full account row to the destination bay before
       flipping `home_bay_id`
 - [x] destination bay accepts/upserts the authoritative account row
@@ -679,9 +679,45 @@ Initial account rehome target:
 - [x] idempotent reconcile command for stuck operation states
 - [x] admin-only CLI workflow:
       `cocalc account rehome <account> --bay ... --yes`
-- [ ] forced browser reconnection / wrong-bay recovery validation
-- [ ] failure-injection validation for destination-accepted/source-flip-failed
+- [x] wrong-bay stale-write validation
+- [ ] forced browser reconnection validation
+- [x] failure-injection validation for destination-accepted/source-flip-failed
       and delayed projection/directory convergence
+
+Live validation, 2026-04-22 PT:
+
+- Created disposable account
+  `9fe19ee5-c9d9-4659-a2ef-0fcbfff19997` with safety tags
+  `qa-safe-delete` and `qa-account-rehome`.
+- Rehomed `bay-0 -> bay-1` with operation
+  `3cdc2643-f71b-450e-96d6-4853acd1d7e4`; `account where` reported
+  `home_bay_id=bay-1`, `rehome-status` reported `status=succeeded`,
+  `stage=complete`, and `rehome-reconcile` was idempotent.
+- Validated stale old-bay write fencing by invoking the server-side password
+  mutation as `COCALC_BAY_ID=bay-0` after the account was homed on `bay-1`;
+  the write was rejected with `account is homed on bay-1`.
+- Rehomed `bay-1 -> bay-2` with operation
+  `20ea7c4d-8b52-4d0a-ae86-f73ca42d138e`; the run exposed that seed-side
+  account lookups could prefer a stale local account row over the cluster
+  directory. Fixed the merge precedence so directory `home_bay_id` is
+  authoritative for routing.
+- Injected source-flip failure by rewinding bay-1's account row and the seed
+  directory to `bay-1`, setting operation
+  `20ea7c4d-8b52-4d0a-ae86-f73ca42d138e` to `status=failed`,
+  `stage=destination_accepted`, and setting
+  `last_error='injected source flip failure for account rehome validation'`.
+  `account rehome-reconcile --source-bay bay-1` completed the operation,
+  advanced attempt count from 1 to 2, cleared `last_error`, and restored
+  bay-1 source state to `home_bay_id=bay-2`.
+- Injected delayed directory convergence by setting the seed directory back to
+  `bay-1` and the same operation to `status=failed`,
+  `stage=projections_copied`, with
+  `last_error='injected delayed directory convergence for account rehome validation'`.
+  Reconcile completed the operation and restored the seed directory to
+  `home_bay_id=bay-2`.
+- Rebuilt/restarted the local 3-bay hub, verified `account where` reported
+  `home_bay_id=bay-2`, and deleted the disposable account with
+  `cocalc account delete --only-if-tag qa-safe-delete --yes`.
 
 Non-goals for initial account rehome:
 

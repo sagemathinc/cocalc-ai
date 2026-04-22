@@ -6,6 +6,7 @@ import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
 import getPool from "@cocalc/database/pool";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import passwordStrength from "@cocalc/server/auth/password-strength";
 import { MIN_PASSWORD_STRENGTH } from "@cocalc/util/auth";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -42,8 +43,14 @@ export default async function setPassword(
   }
 
   // save the hash (only!) of the new password.
-  await pool.query("UPDATE accounts SET password_hash=$1 WHERE account_id=$2", [
-    passwordHash(new_password),
+  await withAccountRehomeWriteFence({
     account_id,
-  ]);
+    action: "set password",
+    fn: async (db) => {
+      await db.query(
+        "UPDATE accounts SET password_hash=$1 WHERE account_id=$2",
+        [passwordHash(new_password), account_id],
+      );
+    },
+  });
 }

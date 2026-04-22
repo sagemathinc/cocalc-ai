@@ -1,4 +1,5 @@
 import getPool from "@cocalc/database/pool";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { generate } from "random-key";
 import siteURL from "@cocalc/database/settings/site-url";
 
@@ -32,10 +33,16 @@ async function getToken(email_address: string): Promise<string> {
   }
   const token = generate(16).toLowerCase();
   const data = { email: email_address, token, time: new Date() };
-  await pool.query(
-    "UPDATE accounts SET email_address_challenge = $1::JSONB WHERE account_id = $2::UUID",
-    [data, account_id],
-  );
+  await withAccountRehomeWriteFence({
+    account_id,
+    action: "set email verification challenge",
+    fn: async (db) => {
+      await db.query(
+        "UPDATE accounts SET email_address_challenge = $1::JSONB WHERE account_id = $2::UUID",
+        [data, account_id],
+      );
+    },
+  });
   return token;
 }
 

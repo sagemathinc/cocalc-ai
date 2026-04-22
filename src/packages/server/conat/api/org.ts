@@ -1,5 +1,6 @@
 import getPool from "@cocalc/database/pool";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { uuid } from "@cocalc/util/misc";
 import createAccount from "@cocalc/server/accounts/create-account";
 import {
@@ -222,11 +223,16 @@ export async function addUser({
   if (!user_account_id) {
     throw Error(`cannot find user '${user}'`);
   }
-  const pool = getPool();
-  await pool.query("UPDATE accounts SET org=$1 WHERE account_id=$2", [
-    name,
-    user_account_id,
-  ]);
+  await withAccountRehomeWriteFence({
+    account_id: user_account_id,
+    action: "add account to organization",
+    fn: async (db) => {
+      await db.query("UPDATE accounts SET org=$1 WHERE account_id=$2", [
+        name,
+        user_account_id,
+      ]);
+    },
+  });
 }
 
 export async function createUser({
@@ -257,11 +263,16 @@ export async function createUser({
     password,
   });
   // add account to org
-  const pool = getPool();
-  await pool.query("UPDATE accounts SET org=$1 WHERE account_id=$2", [
-    name,
-    new_account_id,
-  ]);
+  await withAccountRehomeWriteFence({
+    account_id: new_account_id,
+    action: "add account to organization",
+    fn: async (db) => {
+      await db.query("UPDATE accounts SET org=$1 WHERE account_id=$2", [
+        name,
+        new_account_id,
+      ]);
+    },
+  });
   return new_account_id;
 }
 
@@ -284,10 +295,15 @@ export async function removeUser({
       "admin cannot be removed from org; first remove them from being an admin",
     );
   }
-  const pool = getPool();
-  await pool.query("UPDATE accounts SET org=NULL WHERE account_id=$1", [
-    user_account_id,
-  ]);
+  await withAccountRehomeWriteFence({
+    account_id: user_account_id,
+    action: "remove account from organization",
+    fn: async (db) => {
+      await db.query("UPDATE accounts SET org=NULL WHERE account_id=$1", [
+        user_account_id,
+      ]);
+    },
+  });
 }
 
 export async function removeAdmin({
