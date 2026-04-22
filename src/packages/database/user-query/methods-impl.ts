@@ -7,6 +7,7 @@ import async from "async";
 import lodash from "lodash";
 
 import { appendMentionNotificationOutboxEvent } from "@cocalc/database/postgres/notification-events-outbox";
+import { withAccountRehomeUserQueryFence } from "@cocalc/database/postgres/account-rehome-fence";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { withProjectRehomeWriteFence } from "@cocalc/database/postgres/project-rehome-fence";
 import { sanitizeManageUsersOwnerOnly } from "@cocalc/database/postgres/project/manage-users-owner-only";
@@ -1384,24 +1385,42 @@ export async function user_set_query(
     if (r.check_hook != null) {
       await callWithCb(r.check_hook, this, query, r.account_id, r.project_id);
     }
-    await callWithCb(this._user_set_query_hooks_prepare.bind(this), r);
-    if (r.before_change_hook != null) {
-      r.done = await callWithCb<boolean | undefined>(
-        r.before_change_hook,
-        this,
-        r.old_val,
-        query,
-        r.account_id,
-      );
-    }
-    if (!r.done) {
-      if (r.instead_of_query != null) {
-        const opts1 = misc.copy_without(opts, ["cb", "changes", "table"]);
-        await callWithCb(r.instead_of_query, this, opts1);
-      } else {
-        await callWithCb(this._user_set_query_main_query.bind(this), r);
+
+    const runMutation = async (): Promise<void> => {
+      await callWithCb(this._user_set_query_hooks_prepare.bind(this), r);
+      if (r.before_change_hook != null) {
+        r.done = await callWithCb<boolean | undefined>(
+          r.before_change_hook,
+          this,
+          r.old_val,
+          query,
+          r.account_id,
+        );
       }
+      if (!r.done) {
+        if (r.instead_of_query != null) {
+          const opts1 = misc.copy_without(opts, ["cb", "changes", "table"]);
+          await callWithCb(r.instead_of_query, this, opts1);
+        } else {
+          await callWithCb(this._user_set_query_main_query.bind(this), r);
+        }
+      }
+    };
+
+    const changedAccountId =
+      r.db_table === "accounts"
+        ? `${query?.account_id ?? r.old_val?.account_id ?? r.account_id ?? ""}`.trim()
+        : "";
+    if (changedAccountId) {
+      await withAccountRehomeUserQueryFence({
+        database: this,
+        account_id: changedAccountId,
+        fn: runMutation,
+      });
+    } else {
+      await runMutation();
     }
+
     if (!r.done && r.on_change_hook != null) {
       await callWithCb(r.on_change_hook, this, r.old_val, query, r.account_id);
     }

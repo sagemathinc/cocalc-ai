@@ -648,22 +648,28 @@ Account rehome contract:
   - `account_project_index`
   - `account_collaborator_index`
   - `account_notification_index`
+  - `remember_me`
+  - `auth_tokens`
 - Source flip updates the source `accounts.home_bay_id` and the cluster account
   directory entry to the destination bay.
 - The operation is forward-reconciled after destination accept. Rollback is not
   attempted because the destination has already accepted a valid account row.
-- Existing browser sessions may keep working on their old websocket until they
-  naturally reconnect or hit wrong-bay recovery. Forced browser reconnection is
-  a follow-up unless live validation shows stale sessions are unsafe.
+- After the directory update, the source bay best-effort asks active
+  browser-session services for the account to navigate to the destination home
+  bay. Stale sessions that do not reconnect are still protected by the account
+  write fence, which uses the cluster account directory as the authoritative
+  home-bay source when present.
 - Account rehome must not move project ownership, project data, project-host
   assignments, API keys, billing/customer records outside the `accounts` row,
-  or historical notification/event outbox rows in the first slice.
+  or historical notification/event outbox rows in the first slice. Account API
+  keys need a separate conflict policy because their local integer primary key
+  is embedded in the secret.
 
 Initial account rehome target:
 
 - [x] define terminology: **account rehome** means moving the authoritative
       account home/control-plane bay
-- [ ] account-write fencing
+- [x] account-write fencing for identity/security/org account-row mutations
 - [x] source bay sends the full account row to the destination bay before
       flipping `home_bay_id`
 - [x] destination bay accepts/upserts the authoritative account row
@@ -672,6 +678,8 @@ Initial account rehome target:
   - `account_project_index`
   - `account_collaborator_index`
   - `account_notification_index`
+  - `remember_me`
+  - `auth_tokens`
 - [x] update the cluster account directory so lookup/search resolves the new
       home bay
 - [x] durable per-account rehome operation record with explicit state machine:
@@ -679,9 +687,87 @@ Initial account rehome target:
 - [x] idempotent reconcile command for stuck operation states
 - [x] admin-only CLI workflow:
       `cocalc account rehome <account> --bay ... --yes`
-- [ ] forced browser reconnection / wrong-bay recovery validation
-- [ ] failure-injection validation for destination-accepted/source-flip-failed
+- [x] wrong-bay stale-write validation
+- [x] forced browser reconnection validation
+- [x] failure-injection validation for destination-accepted/source-flip-failed
       and delayed projection/directory convergence
+
+Live validation, 2026-04-22 PT:
+
+- Created disposable account
+  `9fe19ee5-c9d9-4659-a2ef-0fcbfff19997` with safety tags
+  `qa-safe-delete` and `qa-account-rehome`.
+- Rehomed `bay-0 -> bay-1` with operation
+  `3cdc2643-f71b-450e-96d6-4853acd1d7e4`; `account where` reported
+  `home_bay_id=bay-1`, `rehome-status` reported `status=succeeded`,
+  `stage=complete`, and `rehome-reconcile` was idempotent.
+- Validated stale old-bay write fencing by invoking the server-side password
+  mutation as `COCALC_BAY_ID=bay-0` after the account was homed on `bay-1`;
+  the write was rejected with `account is homed on bay-1`.
+- Rehomed `bay-1 -> bay-2` with operation
+  `20ea7c4d-8b52-4d0a-ae86-f73ca42d138e`; the run exposed that seed-side
+  account lookups could prefer a stale local account row over the cluster
+  directory. Fixed the merge precedence so directory `home_bay_id` is
+  authoritative for routing.
+- Injected source-flip failure by rewinding bay-1's account row and the seed
+  directory to `bay-1`, setting operation
+  `20ea7c4d-8b52-4d0a-ae86-f73ca42d138e` to `status=failed`,
+  `stage=destination_accepted`, and setting
+  `last_error='injected source flip failure for account rehome validation'`.
+  `account rehome-reconcile --source-bay bay-1` completed the operation,
+  advanced attempt count from 1 to 2, cleared `last_error`, and restored
+  bay-1 source state to `home_bay_id=bay-2`.
+- Injected delayed directory convergence by setting the seed directory back to
+  `bay-1` and the same operation to `status=failed`,
+  `stage=projections_copied`, with
+  `last_error='injected delayed directory convergence for account rehome validation'`.
+  Reconcile completed the operation and restored the seed directory to
+  `home_bay_id=bay-2`.
+- Rebuilt/restarted the local 3-bay hub, verified `account where` reported
+  `home_bay_id=bay-2`, and deleted the disposable account with
+  `cocalc account delete --only-if-tag qa-safe-delete --yes`.
+- Additional account browser validation used disposable account
+  `481b0ed7-8f08-4d0b-9ca4-8254c2df2363` with safety tags
+  `qa-safe-delete`, `qa-account-rehome`, and `qa-browser-reconnect`.
+- A live Playwright browser on the source bay could mutate its account row
+  before rehome, then `cocalc account rehome` moved the account from `bay-1`
+  to `bay-2` with operation `53274f78-3f59-4da9-bbef-623f1ed81ee4`.
+- That run exposed an unsafe stale-browser window after operation completion:
+  the stale old-bay browser could still issue account `userQuery` mutations
+  after the active operation fence was gone. Fixed this by making the account
+  write fence use `cluster_account_directory.home_bay_id` as the authoritative
+  post-rehome home bay when the directory row exists.
+- After rebuilding/restarting the local 3-bay hub, the same browser flow moved
+  `bay-1 -> bay-2` with operation
+  `c5207eff-df06-462e-909b-3c4270a7f2d2`; the stale browser write after
+  rehome was rejected with `account is homed on bay-2`, and the account row was
+  not corrupted.
+- Added a best-effort source-bay browser-session navigation request after the
+  directory update. The direct Playwright validation page did not register a
+  browser-session heartbeat, so the forced navigation path was validated next
+  with an explicit registered-session integration test.
+- Cleaned up disposable account
+  `481b0ed7-8f08-4d0b-9ca4-8254c2df2363` with
+  `cocalc account delete --only-if-tag qa-safe-delete --yes`.
+- Forced browser reconnection validation then used a registered browser-session
+  service integration against disposable account
+  `bc590ce9-dbf4-4247-ab8f-bcc97544ae15`. The source-bay session heartbeat
+  was listed with marker `service-acct-rehome-1776890886360-bkeidu`; rehome
+  operation `a452483f-b3fc-4dde-8ebb-d68cc27255e6` moved `bay-0 -> bay-2`;
+  the source bay delivered a browser-session `navigate` action to
+  `https://bay-2-lite4b.cocalc.ai/app?account-rehome`; and the simulated
+  destination browser session reconnected to `bay-2` using the copied
+  `remember_me` cookie and registered a fresh heartbeat with the same
+  `browser_id`.
+- That validation exposed that `remember_me` and outstanding `auth_tokens`
+  were not part of the account rehome state copy. They are now copied during
+  `copyRehomeState`, which is required for existing browser sessions and
+  outstanding sign-in tokens to survive account-home migration.
+- Cleaned up disposable accounts
+  `c70e4a96-68da-49bf-8828-4d682cf28002`,
+  `f7fba1c9-14bb-40f5-82c6-a1ca2a148bc3`, and
+  `bc590ce9-dbf4-4247-ab8f-bcc97544ae15` with
+  `cocalc account delete --only-if-tag qa-safe-delete --yes`.
 
 Non-goals for initial account rehome:
 

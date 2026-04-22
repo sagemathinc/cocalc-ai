@@ -10,6 +10,7 @@ upstream SSO provider.
 */
 
 import getPool from "@cocalc/database/pool";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
 import { checkRequiredSSO } from "./check-required-sso";
 import getStrategies from "@cocalc/database/settings/get-sso-strategies";
@@ -33,17 +34,21 @@ export default async function unlinkStrategy(opts: Options): Promise<void> {
 
   const strategyName = name.split("-")[0];
 
-  const pool = getPool();
-
   if (await isBlockedUnlinkStrategy({ strategyName, account_id })) {
     throw new Error("You are not allowed to unlink this SSO account");
   }
 
   // if we can't find the strategy, we still let users unlink it – maybe no longer available?
-  await pool.query(
-    "UPDATE accounts SET passports = passports - $2 WHERE account_id=$1",
-    [account_id, name],
-  );
+  await withAccountRehomeWriteFence({
+    account_id,
+    action: "unlink SSO strategy",
+    fn: async (db) => {
+      await db.query(
+        "UPDATE accounts SET passports = passports - $2 WHERE account_id=$1",
+        [account_id, name],
+      );
+    },
+  });
 }
 
 interface Opts {

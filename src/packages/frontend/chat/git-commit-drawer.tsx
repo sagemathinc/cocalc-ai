@@ -84,6 +84,7 @@ const DIFF_FILE_HEADER_BORDER = COLORS.GRAY_LL;
 const DIFF_FILE_HEADER_TEXT = COLORS.GRAY_D;
 const DIFF_FILE_HEADER_SECONDARY = COLORS.GRAY_M;
 const DELETE_ALL_REVIEWS_CONFIRM_TEXT = "delete all";
+const EMPTY_GIT_REVIEW_COMMENTS: GitReviewCommentV2[] = [];
 
 export function getCommitReviewIndicatorState(
   reviewedByCommit: Record<string, boolean>,
@@ -392,6 +393,16 @@ export function buildGitShowArgs({
     `-U${contextLines}`,
     "--format=fuller",
     `${commit ?? ""}`,
+  ];
+}
+
+export function buildGitLogArgs(): string[] {
+  return [
+    "log",
+    "--no-merges",
+    `-n${GIT_LOG_FETCH_COUNT}`,
+    "--format=%H%x09%s",
+    "--date-order",
   ];
 }
 
@@ -897,6 +908,119 @@ export function MarkdownHistoryInput({
   );
 }
 
+function InlineDraftCommentEditor({
+  filePath,
+  anchorId,
+  fontSize,
+  loading,
+  onCancel,
+  onSave,
+}: {
+  filePath: string;
+  anchorId: string;
+  fontSize: number;
+  loading: boolean;
+  onCancel: () => void;
+  onSave: (value: string) => void;
+}) {
+  const [value, setValue] = useState("");
+  return (
+    <>
+      <MarkdownHistoryInput
+        historyId={`git-inline-draft:${filePath}:${anchorId}`}
+        cacheId={`git-inline-draft:${filePath}:${anchorId}`}
+        value={value}
+        onChange={setValue}
+        onShiftEnter={(next) => onSave(next)}
+        placeholder="Add inline review comment..."
+        fontSize={fontSize}
+        autoGrow
+        autoGrowMaxHeight={220}
+        hideHelp
+        minimal
+        compact
+        enableMentions={false}
+        enableUpload={true}
+      />
+      <div
+        style={{
+          marginTop: 6,
+          display: "flex",
+          justifyContent: "flex-end",
+          gap: 8,
+        }}
+      >
+        <Button size="small" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button
+          size="small"
+          type="primary"
+          onClick={() => onSave(value)}
+          disabled={!value.trim()}
+          loading={loading}
+        >
+          Add comment
+        </Button>
+      </div>
+    </>
+  );
+}
+
+function InlineEditCommentEditor({
+  filePath,
+  commentId,
+  initialValue,
+  fontSize,
+  loading,
+  onCancel,
+  onSave,
+}: {
+  filePath: string;
+  commentId: string;
+  initialValue: string;
+  fontSize: number;
+  loading: boolean;
+  onCancel: () => void;
+  onSave: (value: string) => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+  return (
+    <>
+      <MarkdownHistoryInput
+        historyId={`git-inline-edit:${filePath}:${commentId}`}
+        cacheId={`git-inline-edit:${filePath}:${commentId}`}
+        value={value}
+        onChange={setValue}
+        onShiftEnter={(next) => onSave(next)}
+        placeholder="Edit inline review comment..."
+        fontSize={fontSize}
+        autoGrow
+        autoGrowMaxHeight={220}
+        hideHelp
+        minimal
+        compact
+        enableMentions={false}
+        enableUpload={true}
+      />
+      <Space.Compact size="small">
+        <Button size="small" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button
+          size="small"
+          type="primary"
+          onClick={() => onSave(value)}
+          disabled={!value.trim()}
+          loading={loading}
+        >
+          Save
+        </Button>
+      </Space.Compact>
+    </>
+  );
+}
+
 export const DiffBlock = memo(function DiffBlock({
   filePath,
   lines,
@@ -959,9 +1083,7 @@ export const DiffBlock = memo(function DiffBlock({
   const [draftAnchor, setDraftAnchor] = useState<CommentAnchor | undefined>(
     undefined,
   );
-  const [draftText, setDraftText] = useState("");
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
-  const [editingText, setEditingText] = useState("");
   const [pendingKey, setPendingKey] = useState<string>("");
   const [hoveredLineIdx, setHoveredLineIdx] = useState<number | undefined>(
     undefined,
@@ -979,12 +1101,11 @@ export const DiffBlock = memo(function DiffBlock({
 
   const closeDraft = () => {
     setDraftAnchor(undefined);
-    setDraftText("");
   };
 
-  const saveDraft = async (rawValue?: string) => {
+  const saveDraft = async (rawValue: string) => {
     if (!draftAnchor) return;
-    const trimmed = `${rawValue ?? draftText}`.trim();
+    const trimmed = `${rawValue ?? ""}`.trim();
     if (!trimmed) return;
     const key = `create:${commentAnchorKey(draftAnchor)}`;
     setPendingKey(key);
@@ -996,16 +1117,15 @@ export const DiffBlock = memo(function DiffBlock({
     }
   };
 
-  const saveEdit = async (rawValue?: string) => {
-    if (!editingId) return;
-    const trimmed = `${rawValue ?? editingText}`.trim();
+  const saveEdit = async (id: string, rawValue: string) => {
+    if (editingId !== id) return;
+    const trimmed = `${rawValue ?? ""}`.trim();
     if (!trimmed) return;
-    const key = `edit:${editingId}`;
+    const key = `edit:${id}`;
     setPendingKey(key);
     try {
-      await onUpdateComment(editingId, trimmed);
+      await onUpdateComment(id, trimmed);
       setEditingId(undefined);
-      setEditingText("");
     } finally {
       setPendingKey("");
     }
@@ -1018,7 +1138,6 @@ export const DiffBlock = memo(function DiffBlock({
       await onResolveComment(id);
       if (editingId === id) {
         setEditingId(undefined);
-        setEditingText("");
       }
     } finally {
       setPendingKey("");
@@ -1032,7 +1151,6 @@ export const DiffBlock = memo(function DiffBlock({
       await onReopenComment(id);
       if (editingId === id) {
         setEditingId(undefined);
-        setEditingText("");
       }
     } finally {
       setPendingKey("");
@@ -1139,7 +1257,6 @@ export const DiffBlock = memo(function DiffBlock({
                           return;
                         }
                         setDraftAnchor(anchor);
-                        setDraftText("");
                       }}
                       title={
                         commentEnabled
@@ -1197,21 +1314,15 @@ export const DiffBlock = memo(function DiffBlock({
                         </Typography.Text>
                       </div>
                       {isEditing ? (
-                        <MarkdownHistoryInput
-                          historyId={`git-inline-edit:${filePath}:${comment.id}`}
-                          cacheId={`git-inline-edit:${filePath}:${comment.id}`}
-                          value={editingText}
-                          onChange={setEditingText}
-                          onShiftEnter={(value) => void saveEdit(value)}
-                          placeholder="Edit inline review comment..."
+                        <InlineEditCommentEditor
+                          key={comment.id}
+                          filePath={filePath}
+                          commentId={comment.id}
+                          initialValue={comment.body_md}
                           fontSize={commentFontSize}
-                          autoGrow
-                          autoGrowMaxHeight={220}
-                          hideHelp
-                          minimal
-                          compact
-                          enableMentions={false}
-                          enableUpload={true}
+                          loading={pendingKey === `edit:${comment.id}`}
+                          onCancel={() => setEditingId(undefined)}
+                          onSave={(value) => void saveEdit(comment.id, value)}
                         />
                       ) : (
                         <StaticMarkdown
@@ -1243,67 +1354,35 @@ export const DiffBlock = memo(function DiffBlock({
                               ? "Submitted"
                               : "Draft"}
                         </Typography.Text>
-                        <Space.Compact size="small">
-                          {isEditing ? (
-                            <>
-                              <Button
-                                size="small"
-                                onClick={() => {
-                                  setEditingId(undefined);
-                                  setEditingText("");
-                                }}
-                              >
-                                Cancel
-                              </Button>
+                        {isEditing ? null : (
+                          <Space.Compact size="small">
+                            <Button
+                              size="small"
+                              onClick={() => setEditingId(comment.id)}
+                            >
+                              Edit
+                            </Button>
+                            {comment.status === "resolved" ? (
                               <Button
                                 size="small"
                                 type="primary"
-                                onClick={() => void saveEdit(editingText)}
-                                disabled={!editingText.trim()}
-                                loading={pendingKey === `edit:${comment.id}`}
+                                onClick={() => void reopenComment(comment.id)}
+                                loading={pendingKey === `reopen:${comment.id}`}
                               >
-                                Save
+                                Reopen
                               </Button>
-                            </>
-                          ) : (
-                            <>
+                            ) : (
                               <Button
                                 size="small"
-                                onClick={() => {
-                                  setEditingId(comment.id);
-                                  setEditingText(comment.body_md);
-                                }}
+                                type="primary"
+                                onClick={() => void resolveComment(comment.id)}
+                                loading={pendingKey === `resolve:${comment.id}`}
                               >
-                                Edit
+                                Resolve
                               </Button>
-                              {comment.status === "resolved" ? (
-                                <Button
-                                  size="small"
-                                  type="primary"
-                                  onClick={() => void reopenComment(comment.id)}
-                                  loading={
-                                    pendingKey === `reopen:${comment.id}`
-                                  }
-                                >
-                                  Reopen
-                                </Button>
-                              ) : (
-                                <Button
-                                  size="small"
-                                  type="primary"
-                                  onClick={() =>
-                                    void resolveComment(comment.id)
-                                  }
-                                  loading={
-                                    pendingKey === `resolve:${comment.id}`
-                                  }
-                                >
-                                  Resolve
-                                </Button>
-                              )}
-                            </>
-                          )}
-                        </Space.Compact>
+                            )}
+                          </Space.Compact>
+                        )}
                       </div>
                     </div>
                   );
@@ -1325,43 +1404,15 @@ export const DiffBlock = memo(function DiffBlock({
                 <Typography.Text strong style={{ fontSize: 13 }}>
                   Add inline review comment
                 </Typography.Text>
-                <MarkdownHistoryInput
-                  historyId={`git-inline-draft:${filePath}:${anchorId}`}
-                  cacheId={`git-inline-draft:${filePath}:${anchorId}`}
-                  value={draftText}
-                  onChange={setDraftText}
-                  onShiftEnter={(value) => void saveDraft(value)}
-                  placeholder="Add inline review comment..."
+                <InlineDraftCommentEditor
+                  key={anchorId}
+                  filePath={filePath}
+                  anchorId={anchorId}
                   fontSize={commentFontSize}
-                  autoGrow
-                  autoGrowMaxHeight={220}
-                  hideHelp
-                  minimal
-                  compact
-                  enableMentions={false}
-                  enableUpload={true}
+                  loading={pendingKey === `create:${anchorId}`}
+                  onCancel={closeDraft}
+                  onSave={(value) => void saveDraft(value)}
                 />
-                <div
-                  style={{
-                    marginTop: 6,
-                    display: "flex",
-                    justifyContent: "flex-end",
-                    gap: 8,
-                  }}
-                >
-                  <Button size="small" onClick={closeDraft}>
-                    Cancel
-                  </Button>
-                  <Button
-                    size="small"
-                    type="primary"
-                    onClick={() => void saveDraft(draftText)}
-                    disabled={!draftText.trim()}
-                    loading={pendingKey === `create:${anchorId}`}
-                  >
-                    Add comment
-                  </Button>
-                </div>
               </div>
             ) : null}
           </div>
@@ -1550,12 +1601,7 @@ export function GitCommitDrawer({
         const logResult = await runGitCommand({
           projectId,
           cwd: root || cwd,
-          args: [
-            "log",
-            `-n${GIT_LOG_FETCH_COUNT}`,
-            "--format=%H%x09%s",
-            "--date-order",
-          ],
+          args: buildGitLogArgs(),
         });
         if (logResult.exit_code !== 0) {
           throw new Error(
@@ -2046,79 +2092,82 @@ export function GitCommitDrawer({
     [exportReviewData, onOpenActivityLog],
   );
 
-  const saveReview = async (
-    next: Partial<
-      Pick<
-        GitReviewRecordV2,
-        | "reviewed"
-        | "note"
-        | "comments"
-        | "last_submitted_at"
-        | "last_submission_turn_id"
-      >
-    > = {},
-  ) => {
-    if (!accountId || !commit || isHeadCommit(commit)) return;
-    const normalizedCommit = normalizeCommitSha(commit);
-    if (!normalizedCommit) return;
-    const nextReviewed = next.reviewed ?? reviewed;
-    const nextNote = next.note ?? reviewNote;
-    const nextComments = next.comments ?? reviewRecord?.comments ?? {};
-    const isActiveCommit = activeReviewCommitRef.current === normalizedCommit;
-    if (isActiveCommit) {
-      setReviewSaving(true);
-      setReviewError("");
-    }
-    try {
-      const base =
-        reviewRecord ??
-        ({
-          version: 2,
-          account_id: accountId,
-          commit_sha: normalizedCommit,
-          reviewed: false,
-          note: "",
-          comments: {},
-          created_at: Date.now(),
-          updated_at: Date.now(),
-          revision: 1,
-        } as GitReviewRecordV2);
-      const payload = await saveReviewRecord({
-        ...base,
-        account_id: accountId,
-        commit_sha: normalizedCommit,
-        reviewed: Boolean(nextReviewed),
-        note: `${nextNote ?? ""}`,
-        comments: nextComments,
-        last_submitted_at:
-          typeof next.last_submitted_at === "number"
-            ? next.last_submitted_at
-            : base.last_submitted_at,
-        last_submission_turn_id:
-          typeof next.last_submission_turn_id === "string"
-            ? next.last_submission_turn_id
-            : base.last_submission_turn_id,
-      });
-      setReviewedByCommit((prev) => ({
-        ...prev,
-        [normalizedCommit]: payload.reviewed,
-      }));
-      if (activeReviewCommitRef.current === normalizedCommit) {
-        setReviewRecord(payload);
-        setReviewUpdatedAt(payload.updated_at);
-        setReviewDirty(false);
+  const saveReview = useCallback(
+    async (
+      next: Partial<
+        Pick<
+          GitReviewRecordV2,
+          | "reviewed"
+          | "note"
+          | "comments"
+          | "last_submitted_at"
+          | "last_submission_turn_id"
+        >
+      > = {},
+    ) => {
+      if (!accountId || !commit || isHeadCommit(commit)) return;
+      const normalizedCommit = normalizeCommitSha(commit);
+      if (!normalizedCommit) return;
+      const nextReviewed = next.reviewed ?? reviewed;
+      const nextNote = next.note ?? reviewNote;
+      const nextComments = next.comments ?? reviewRecord?.comments ?? {};
+      const isActiveCommit = activeReviewCommitRef.current === normalizedCommit;
+      if (isActiveCommit) {
+        setReviewSaving(true);
         setReviewError("");
       }
-    } catch (err) {
-      if (activeReviewCommitRef.current === normalizedCommit) {
-        setReviewError(`${err ?? "Unable to save review state."}`);
+      try {
+        const base =
+          reviewRecord ??
+          ({
+            version: 2,
+            account_id: accountId,
+            commit_sha: normalizedCommit,
+            reviewed: false,
+            note: "",
+            comments: {},
+            created_at: Date.now(),
+            updated_at: Date.now(),
+            revision: 1,
+          } as GitReviewRecordV2);
+        const payload = await saveReviewRecord({
+          ...base,
+          account_id: accountId,
+          commit_sha: normalizedCommit,
+          reviewed: Boolean(nextReviewed),
+          note: `${nextNote ?? ""}`,
+          comments: nextComments,
+          last_submitted_at:
+            typeof next.last_submitted_at === "number"
+              ? next.last_submitted_at
+              : base.last_submitted_at,
+          last_submission_turn_id:
+            typeof next.last_submission_turn_id === "string"
+              ? next.last_submission_turn_id
+              : base.last_submission_turn_id,
+        });
+        setReviewedByCommit((prev) => ({
+          ...prev,
+          [normalizedCommit]: payload.reviewed,
+        }));
+        if (activeReviewCommitRef.current === normalizedCommit) {
+          setReviewRecord(payload);
+          setReviewUpdatedAt(payload.updated_at);
+          setReviewDirty(false);
+          setReviewError("");
+        }
+      } catch (err) {
+        if (activeReviewCommitRef.current === normalizedCommit) {
+          setReviewError(`${err ?? "Unable to save review state."}`);
+        }
+      } finally {
+        if (activeReviewCommitRef.current === normalizedCommit) {
+          setReviewSaving(false);
+        }
       }
-    } finally {
-      if (activeReviewCommitRef.current === normalizedCommit) {
-        setReviewSaving(false);
-      }
-    }
-  };
+    },
+    [accountId, commit, reviewed, reviewNote, reviewRecord],
+  );
 
   const allInlineComments = useMemo(
     () => Object.values(reviewRecord?.comments ?? {}),
@@ -3583,7 +3632,9 @@ export function GitCommitDrawer({
             ) : (
               data.files.map((file, idx) => {
                 const languageHint = languageHintFromPath(file.path);
-                const fileComments = inlineCommentsByFile.get(file.path) ?? [];
+                const fileComments =
+                  inlineCommentsByFile.get(file.path) ??
+                  EMPTY_GIT_REVIEW_COMMENTS;
                 return (
                   <div key={`${file.path}-${idx}`} style={{ marginBottom: 18 }}>
                     <div

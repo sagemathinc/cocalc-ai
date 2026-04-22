@@ -5,6 +5,7 @@ import {
   diffLineNumberColumnWidth,
   getCommitReviewIndicatorState,
   MarkdownHistoryInput,
+  buildGitLogArgs,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
   isMergeCommitSummary,
@@ -12,7 +13,7 @@ import {
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
 } from "../git-commit-drawer";
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 
 let latestMarkdownInputProps: any = null;
 const noopAsync = async () => {};
@@ -85,6 +86,10 @@ describe("git commit drawer merge commit formatting", () => {
       "-U7",
       "HEAD",
     ]);
+  });
+
+  it("excludes merge commits from the git review log", () => {
+    expect(buildGitLogArgs()).toContain("--no-merges");
   });
 
   it("keeps undo and redo local for git review note/comment editors", () => {
@@ -183,6 +188,55 @@ describe("git commit drawer merge commit formatting", () => {
       });
 
       expect(renders).toHaveLength(1);
+    } finally {
+      (DiffBlock as any).type = originalType;
+    }
+  });
+
+  it("keeps inline draft typing local to the small editor", () => {
+    const renders: number[] = [];
+    const originalType = (DiffBlock as any).type;
+    (DiffBlock as any).type = function WrappedDiffBlock(props: any) {
+      renders.push(Date.now());
+      return originalType(props);
+    };
+
+    try {
+      const rendered = render(
+        React.createElement(DiffBlock, {
+          filePath: "src/example.ts",
+          lines: stableDiffLines,
+          languageHint: "ts",
+          fontSize: 14,
+          comments: stableComments,
+          showResolvedComments: false,
+          commentEnabled: true,
+          onCreateComment: noopAsync,
+          onUpdateComment: noopAsync,
+          onResolveComment: noopAsync,
+          onReopenComment: noopAsync,
+        }),
+      );
+      expect(renders).toHaveLength(1);
+
+      const line = rendered.container.querySelector("[data-git-anchor-id]");
+      expect(line).toBeTruthy();
+      act(() => {
+        fireEvent.mouseEnter(line!);
+      });
+      expect(renders).toHaveLength(2);
+
+      act(() => {
+        rendered.getByTitle("Add inline comment").click();
+      });
+      expect(renders).toHaveLength(3);
+      expect(latestMarkdownInputProps).toBeTruthy();
+
+      act(() => {
+        latestMarkdownInputProps.onChange("draft text");
+      });
+
+      expect(renders).toHaveLength(3);
     } finally {
       (DiffBlock as any).type = originalType;
     }

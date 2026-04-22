@@ -4,6 +4,7 @@ has been verified.
 */
 
 import getPool from "@cocalc/database/pool";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 
 export default async function redeemVerifyEmail(
@@ -39,10 +40,19 @@ export default async function redeemVerifyEmail(
     throw Error("tokens do not match");
   }
   // we're good, save this in the email_address_verified JSONB record and also delete the challenge
-  await pool.query(
-    "UPDATE accounts SET email_address_challenge=NULL, email_address_verified=$1::JSONB WHERE account_id=$2",
-    [{ ...email_address_verified, [email_address]: new Date() }, account_id],
-  );
+  await withAccountRehomeWriteFence({
+    account_id,
+    action: "verify email address",
+    fn: async (db) => {
+      await db.query(
+        "UPDATE accounts SET email_address_challenge=NULL, email_address_verified=$1::JSONB WHERE account_id=$2",
+        [
+          { ...email_address_verified, [email_address]: new Date() },
+          account_id,
+        ],
+      );
+    },
+  });
 }
 
 export async function isEmailVerified(email_address: string): Promise<boolean> {

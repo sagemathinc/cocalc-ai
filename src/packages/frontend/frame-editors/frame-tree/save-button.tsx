@@ -7,15 +7,8 @@ import type { ButtonProps } from "antd";
 import { Button } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import { useIntl } from "react-intl";
 
-import {
-  Icon,
-  Tooltip,
-  UncommittedChanges,
-  VisibleMDLG,
-} from "@cocalc/frontend/components";
-import { labels } from "@cocalc/frontend/i18n";
+import { Icon, Tooltip, UncommittedChanges } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 
 interface Props {
@@ -34,7 +27,6 @@ interface Props {
 }
 
 const CONNECTING_INDICATOR_DELAY_MS = 2000;
-const READ_ONLY_INDICATOR_DELAY_MS = 2000;
 const STATUS_UPDATE_DELAY_MS = 750;
 const STATUS_CHIP_WIDTH = 94;
 const STATUS_DOT_WIDTH = 18;
@@ -177,9 +169,7 @@ export function SaveButton({
   set_show_uncommitted_changes,
   style,
 }: Props) {
-  const intl = useIntl();
   const [showConnecting, setShowConnecting] = useState(false);
-  const [showReadOnly, setShowReadOnly] = useState(false);
   const rawStatus = saveStatus({
     has_unsaved_changes,
     has_uncommitted_changes,
@@ -205,38 +195,11 @@ export function SaveButton({
     return () => globalThis.clearTimeout(timer);
   }, [is_connecting]);
 
-  useEffect(() => {
-    if (!read_only) {
-      setShowReadOnly(false);
-      return;
-    }
-    const timer = globalThis.setTimeout(() => {
-      setShowReadOnly(true);
-    }, READ_ONLY_INDICATOR_DELAY_MS);
-    return () => globalThis.clearTimeout(timer);
-  }, [read_only]);
-
-  const label = useMemo(() => {
-    if (showReadOnly) {
-      return intl.formatMessage(labels.frame_editors_title_bar_save_label, {
-        type: "read_only",
-      });
-    } else {
-      return null;
-    }
-  }, [intl, no_labels, showReadOnly]);
-
   const icon = useMemo(
     () =>
       showConnecting ? "spinner" : is_saving ? "arrow-circle-o-left" : "save",
     [showConnecting, is_saving],
   );
-
-  function renderLabel() {
-    if (label) {
-      return <VisibleMDLG>{` ${label}`}</VisibleMDLG>;
-    }
-  }
 
   function renderStatus() {
     const width = no_labels ? STATUS_DOT_WIDTH : STATUS_CHIP_WIDTH;
@@ -289,7 +252,6 @@ export function SaveButton({
         spin={!!showConnecting || !!is_saving}
         style={{ display: "inline-block" }}
       />
-      {renderLabel()}
       {renderStatus()}
       <UncommittedChanges
         has_uncommitted_changes={has_uncommitted_changes}

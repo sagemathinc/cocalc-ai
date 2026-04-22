@@ -4,6 +4,7 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
+import { conat } from "@cocalc/backend/conat";
 import getPool from "@cocalc/database/pool";
 import type {
   AccountRehomeAcceptRequest,
@@ -14,9 +15,16 @@ import type {
   AccountRehomeResponse,
   AccountRehomeStateCopyRequest,
 } from "@cocalc/conat/inter-bay/api";
+import { createBrowserSessionClient } from "@cocalc/conat/service/browser-session";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { lockAccountRehomeFence } from "@cocalc/server/accounts/rehome-fence";
+import {
+  getBayPublicOrigin,
+  getClusterBayPublicOrigins,
+} from "@cocalc/server/bay-public-origin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
+import { listBrowserSessionsForAccount } from "@cocalc/server/conat/api/browser-sessions";
 import {
   getClusterAccountById,
   updateClusterAccountHomeBay,
@@ -28,17 +36,27 @@ import { isValidUUID } from "@cocalc/util/misc";
 const log = getLogger("server:accounts:rehome");
 const ACCOUNT_REHOME_OPERATIONS_TABLE = "account_rehome_operations";
 const ACCOUNT_REHOME_TIMEOUT_MS = 5 * 60_000;
+const ACCOUNT_REHOME_BROWSER_RECONNECT_TIMEOUT_MS = 5_000;
 
 const PORTABLE_STATE_TABLES = [
   "account_project_index",
   "account_collaborator_index",
   "account_notification_index",
+  "remember_me",
+  "auth_tokens",
 ] as const;
 
 type PortableStateTable = (typeof PORTABLE_STATE_TABLES)[number];
 
 type AccountRehomeOperationRow = AccountRehomeOperationSummary & {
   account: Record<string, unknown> | null;
+};
+
+type Queryable = {
+  query: (
+    sql: string,
+    params?: any[],
+  ) => Promise<{ rows: any[]; rowCount?: number | null }>;
 };
 
 let accountRehomeSchemaReady: Promise<void> | undefined;
@@ -221,7 +239,11 @@ async function replacePortableRows({
       ? ["account_id", "project_id"]
       : table === "account_collaborator_index"
         ? ["account_id", "collaborator_account_id"]
-        : ["account_id", "notification_id"];
+        : table === "account_notification_index"
+          ? ["account_id", "notification_id"]
+          : table === "remember_me"
+            ? ["hash"]
+            : ["auth_token"];
   await getPool().query(`DELETE FROM "${table}" WHERE account_id=$1`, [
     account_id,
   ]);
@@ -236,8 +258,9 @@ async function replacePortableRows({
 
 async function loadAccountRowForRehome(
   account_id: string,
+  db: Queryable = getPool(),
 ): Promise<Record<string, unknown>> {
-  const { rows } = await getPool().query<{ account: Record<string, unknown> }>(
+  const { rows } = await db.query(
     `
       SELECT to_jsonb(accounts) AS account
         FROM accounts
@@ -247,7 +270,7 @@ async function loadAccountRowForRehome(
     `,
     [account_id],
   );
-  const account = rows[0]?.account;
+  const account = rows[0]?.account as Record<string, unknown> | undefined;
   if (!account) {
     throw new Error(`account ${account_id} not found`);
   }
@@ -281,10 +304,14 @@ async function loadPortableState(
     account_project_index,
     account_collaborator_index,
     account_notification_index,
+    remember_me,
+    auth_tokens,
   ] = await Promise.all([
     loadPortableRows("account_project_index", account_id),
     loadPortableRows("account_collaborator_index", account_id),
     loadPortableRows("account_notification_index", account_id),
+    loadPortableRows("remember_me", account_id),
+    loadPortableRows("auth_tokens", account_id),
   ]);
   return {
     target_account_id: account_id,
@@ -293,11 +320,16 @@ async function loadPortableState(
     account_project_index,
     account_collaborator_index,
     account_notification_index,
+    remember_me,
+    auth_tokens,
   };
 }
 
-async function assertLocalHomeAccount(account_id: string): Promise<void> {
-  const account = await loadAccountRowForRehome(account_id);
+async function assertLocalHomeAccount(
+  account_id: string,
+  db: Queryable = getPool(),
+): Promise<Record<string, unknown>> {
+  const account = await loadAccountRowForRehome(account_id, db);
   const homeBayId =
     `${account.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
   if (homeBayId !== getConfiguredBayId()) {
@@ -305,6 +337,7 @@ async function assertLocalHomeAccount(account_id: string): Promise<void> {
       `account ${account_id} is homed in ${homeBayId}, not local bay ${getConfiguredBayId()}`,
     );
   }
+  return account;
 }
 
 async function createOperation({
@@ -323,27 +356,61 @@ async function createOperation({
   campaign_id?: string | null;
 }): Promise<AccountRehomeOperationRow> {
   await ensureAccountRehomeSchema();
-  await assertLocalHomeAccount(account_id);
-  const account = await loadAccountRowForRehome(account_id);
-  const { rows } = await getPool().query<AccountRehomeOperationRow>(
-    `
-      INSERT INTO ${ACCOUNT_REHOME_OPERATIONS_TABLE}
-        (account_id, source_bay_id, dest_bay_id, requested_by, reason, campaign_id, account)
-      VALUES
-        ($1, $2, $3, $4, $5, $6, $7::jsonb)
-      RETURNING *
-    `,
-    [
-      account_id,
-      source_bay_id,
-      dest_bay_id,
-      requested_by,
-      reason ?? null,
-      campaign_id ?? null,
-      account,
-    ],
-  );
-  return rows[0]!;
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await lockAccountRehomeFence({ db: client, account_id });
+    const active = await client.query(
+      `
+        SELECT *
+          FROM ${ACCOUNT_REHOME_OPERATIONS_TABLE}
+         WHERE account_id = $1
+           AND status = 'running'
+         ORDER BY created_at DESC
+         LIMIT 1
+      `,
+      [account_id],
+    );
+    const existing = active.rows[0] as AccountRehomeOperationRow | undefined;
+    if (existing) {
+      if (
+        existing.source_bay_id === source_bay_id &&
+        existing.dest_bay_id === dest_bay_id
+      ) {
+        await client.query("COMMIT");
+        return existing;
+      }
+      throw new Error(
+        `account ${account_id} already has running rehome operation ${existing.op_id} from ${existing.source_bay_id} to ${existing.dest_bay_id}`,
+      );
+    }
+    const account = await assertLocalHomeAccount(account_id, client);
+    const { rows } = await client.query(
+      `
+        INSERT INTO ${ACCOUNT_REHOME_OPERATIONS_TABLE}
+          (account_id, source_bay_id, dest_bay_id, requested_by, reason, campaign_id, account)
+        VALUES
+          ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        RETURNING *
+      `,
+      [
+        account_id,
+        source_bay_id,
+        dest_bay_id,
+        requested_by,
+        reason ?? null,
+        campaign_id ?? null,
+        account,
+      ],
+    );
+    await client.query("COMMIT");
+    return rows[0]! as AccountRehomeOperationRow;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getAccountRehomeOperation(
@@ -518,6 +585,64 @@ async function flipSourceHomeBay({
   }
 }
 
+async function forceAccountBrowserSessionsToHomeBay({
+  account_id,
+  dest_bay_id,
+  op_id,
+}: {
+  account_id: string;
+  dest_bay_id: string;
+  op_id: string;
+}): Promise<void> {
+  const origin =
+    `${(await getBayPublicOrigin(dest_bay_id)) ?? (await getClusterBayPublicOrigins())[dest_bay_id] ?? ""}`.trim();
+  if (!origin) {
+    log.warn("account rehome browser reconnect skipped; no bay origin", {
+      op_id,
+      account_id,
+      dest_bay_id,
+    });
+    return;
+  }
+  const targetUrl = `${origin.replace(/\/+$/, "")}/app?account-rehome`;
+  const sessions = listBrowserSessionsForAccount({
+    account_id,
+    max_age_ms: 2 * 60_000,
+  });
+  if (sessions.length === 0) {
+    return;
+  }
+  const results = await Promise.allSettled(
+    sessions.map(async ({ browser_id }) => {
+      const browser = createBrowserSessionClient({
+        account_id,
+        browser_id,
+        client: conat(),
+        timeout: ACCOUNT_REHOME_BROWSER_RECONNECT_TIMEOUT_MS,
+      });
+      await browser.action({
+        project_id: "",
+        action: {
+          name: "navigate",
+          url: targetUrl,
+          replace: true,
+          wait_for_url_ms: 500,
+        },
+        posture: "dev",
+      });
+    }),
+  );
+  const failed = results.filter(({ status }) => status === "rejected").length;
+  log.info("account rehome browser reconnect requested", {
+    op_id,
+    account_id,
+    dest_bay_id,
+    target_url: targetUrl,
+    sessions: sessions.length,
+    failed,
+  });
+}
+
 export async function acceptAccountRehome({
   target_account_id,
   source_bay_id,
@@ -562,6 +687,8 @@ export async function copyAccountRehomeState({
   account_project_index,
   account_collaborator_index,
   account_notification_index,
+  remember_me,
+  auth_tokens,
 }: AccountRehomeStateCopyRequest): Promise<void> {
   const accountId = normalizeUuid("target_account_id", target_account_id);
   normalizeBayId("source_bay_id", source_bay_id);
@@ -587,6 +714,16 @@ export async function copyAccountRehomeState({
     account_id: accountId,
     rows: account_notification_index ?? [],
   });
+  await replacePortableRows({
+    table: "remember_me",
+    account_id: accountId,
+    rows: remember_me ?? [],
+  });
+  await replacePortableRows({
+    table: "auth_tokens",
+    account_id: accountId,
+    rows: auth_tokens ?? [],
+  });
   log.info("account rehome destination state copied", {
     account_id: accountId,
     source_bay_id,
@@ -594,6 +731,8 @@ export async function copyAccountRehomeState({
     account_project_index_rows: account_project_index?.length ?? 0,
     account_collaborator_index_rows: account_collaborator_index?.length ?? 0,
     account_notification_index_rows: account_notification_index?.length ?? 0,
+    remember_me_rows: remember_me?.length ?? 0,
+    auth_tokens_rows: auth_tokens?.length ?? 0,
   });
 }
 
@@ -703,6 +842,11 @@ export async function runAccountRehomeOperation(
       await updateClusterAccountHomeBay({
         account_id: op.account_id,
         home_bay_id: op.dest_bay_id,
+      });
+      await forceAccountBrowserSessionsToHomeBay({
+        account_id: op.account_id,
+        dest_bay_id: op.dest_bay_id,
+        op_id,
       });
       if (!accountEntry?.account_id) {
         log.warn("account rehome directory update had no prior entry", {

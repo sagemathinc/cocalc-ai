@@ -1,5 +1,6 @@
 import { isValidUUID } from "@cocalc/util/misc";
 import getPool from "@cocalc/database/pool";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { deleteAllRememberMe } from "@cocalc/server/auth/remember-me";
 import { StripeClient } from "@cocalc/server/stripe/client";
 
@@ -43,10 +44,16 @@ export async function markAccountDeleted(account_id: string): Promise<void> {
     throw Error(`no account with account_id=${account_id}`);
   }
   const email_address_before_delete = rows[0].email_address ?? "";
-  await pool.query(
-    "UPDATE accounts SET deleted=true, email_address_before_delete=$1::TEXT, email_address=NULL, passports=NULL WHERE account_id=$2::UUID",
-    [email_address_before_delete, account_id],
-  );
+  await withAccountRehomeWriteFence({
+    account_id,
+    action: "delete account",
+    fn: async (db) => {
+      await db.query(
+        "UPDATE accounts SET deleted=true, email_address_before_delete=$1::TEXT, email_address=NULL, passports=NULL WHERE account_id=$2::UUID",
+        [email_address_before_delete, account_id],
+      );
+    },
+  });
 }
 
 export async function cancelStripeEverything(

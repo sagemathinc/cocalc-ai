@@ -64,6 +64,32 @@ function isNotFoundError(err: unknown): boolean {
   return /not found/i.test(msg);
 }
 
+function isAlreadyExistsError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const anyErr = err as {
+    code?: number;
+    status?: number;
+    statusCode?: number;
+    message?: string;
+    details?: string;
+    errors?: { reason?: string; message?: string }[];
+  };
+  const code = anyErr.code ?? anyErr.status ?? anyErr.statusCode;
+  if (code === 409 || code === 6) return true;
+  const errors = Array.isArray(anyErr.errors) ? anyErr.errors : [];
+  if (
+    errors.some(
+      (err) =>
+        /alreadyExists/i.test(`${err.reason ?? ""}`) ||
+        /already exists/i.test(`${err.message ?? ""}`),
+    )
+  ) {
+    return true;
+  }
+  const msg = String(anyErr.message ?? anyErr.details ?? "");
+  return /alreadyExists/i.test(msg) || /already exists/i.test(msg);
+}
+
 function isFingerprintConflictError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const anyErr = err as {
@@ -107,6 +133,18 @@ function isRetryableOperationWaitError(err: unknown): boolean {
   }
   const msg = String(anyErr.message ?? anyErr.details ?? "");
   return /timed out/i.test(msg) || /ECONNRESET/i.test(msg);
+}
+
+function publicIpFromInstance(instance: any): string {
+  return instance?.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP ?? "";
+}
+
+function dataDiskUriFromInstance(instance: any): string | undefined {
+  const disks = instance?.disks ?? [];
+  const dataDisk =
+    disks.find((disk) => !disk.boot && disk.type !== "SCRATCH") ??
+    disks.find((disk) => !disk.boot);
+  return dataDisk?.source ?? undefined;
 }
 
 function diskTypeFor(spec: HostSpec): string {
@@ -476,21 +514,82 @@ export class GcpProvider implements CloudProvider {
       scheduling,
     };
 
-    const [response] = await client.insert({
-      project: credentials.projectId,
-      zone,
-      instanceResource,
-    });
-    logger.debug("gcp.createHost insert submitted", {
-      project: credentials.projectId,
-      zone,
-      name: spec.name,
-    });
-    await waitUntilOperationComplete({
-      response,
-      zone,
-      credentials,
-    });
+    const runtimeFromInstance = (instance: any): HostRuntime => {
+      const publicIp = publicIpFromInstance(instance);
+      return {
+        provider: "gcp",
+        instance_id: spec.name,
+        public_ip: publicIp,
+        ssh_user: "ubuntu",
+        zone,
+        metadata: {
+          machine_type: machineType,
+          disk_type: diskType,
+          boot_disk_gb: bootDiskGb,
+          data_disk_gb: spec.disk_gb,
+          data_disk_name: dataDiskName,
+          data_disk_uri: dataDiskSource ?? dataDiskUriFromInstance(instance),
+          ssh_public_key: spec.metadata?.ssh_public_key,
+          ssh_public_keys: sshPublicKeys,
+          ssh_user: sshUserFor(spec),
+          provider_status: instance?.status ?? undefined,
+        },
+      };
+    };
+    const recoverExistingRuntime = async (
+      err: unknown,
+    ): Promise<HostRuntime | undefined> => {
+      try {
+        const [instance] = await client.get({
+          project: credentials.projectId,
+          zone,
+          instance: spec.name,
+        });
+        if (!instance) return undefined;
+        logger.warn("gcp.createHost recovered existing instance", {
+          project: credentials.projectId,
+          zone,
+          name: spec.name,
+          err: String(err),
+          status: instance.status,
+        });
+        return runtimeFromInstance(instance);
+      } catch (lookupErr) {
+        if (isNotFoundError(lookupErr)) return undefined;
+        logger.warn("gcp.createHost existing instance lookup failed", {
+          project: credentials.projectId,
+          zone,
+          name: spec.name,
+          err: String(err),
+          lookupErr: String(lookupErr),
+        });
+        return undefined;
+      }
+    };
+
+    try {
+      const [response] = await client.insert({
+        project: credentials.projectId,
+        zone,
+        instanceResource,
+      });
+      logger.debug("gcp.createHost insert submitted", {
+        project: credentials.projectId,
+        zone,
+        name: spec.name,
+      });
+      await waitUntilOperationComplete({
+        response,
+        zone,
+        credentials,
+      });
+    } catch (err) {
+      if (isAlreadyExistsError(err) || isRetryableOperationWaitError(err)) {
+        const recovered = await recoverExistingRuntime(err);
+        if (recovered) return recovered;
+      }
+      throw err;
+    }
 
     const [instance] = await client.get({
       project: credentials.projectId,
@@ -498,26 +597,7 @@ export class GcpProvider implements CloudProvider {
       instance: spec.name,
     });
 
-    const publicIp =
-      instance?.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP ?? "";
-    return {
-      provider: "gcp",
-      instance_id: spec.name,
-      public_ip: publicIp,
-      ssh_user: "ubuntu",
-      zone,
-      metadata: {
-        machine_type: machineType,
-        disk_type: diskType,
-        boot_disk_gb: bootDiskGb,
-        data_disk_gb: spec.disk_gb,
-        data_disk_name: dataDiskName,
-        data_disk_uri: dataDiskSource,
-        ssh_public_key: spec.metadata?.ssh_public_key,
-        ssh_public_keys: sshPublicKeys,
-        ssh_user: sshUserFor(spec),
-      },
-    };
+    return runtimeFromInstance(instance);
   }
 
   async startHost(runtime: HostRuntime, creds: any): Promise<void> {
