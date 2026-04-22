@@ -109,6 +109,7 @@ import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   acceptHostRehome,
   prepareHostRehomeOnDestination,
+  recordHostRehomeLogOnDestination,
   rehomeHostOnOwningBay,
 } from "@cocalc/server/project-host/rehome";
 import {
@@ -564,6 +565,8 @@ async function startHostConnectionService(): Promise<void> {
     prepareHostRehome: async (opts) =>
       await prepareHostRehomeOnDestination(opts),
     acceptHostRehome: async (opts) => await acceptHostRehome(opts),
+    recordHostRehomeLog: async (opts) =>
+      await recordHostRehomeLogOnDestination(opts),
   };
   services.push(
     ...createInterBayHostConnectionHandler({

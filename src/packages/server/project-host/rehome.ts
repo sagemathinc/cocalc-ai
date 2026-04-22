@@ -7,6 +7,7 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import type {
   HostRehomeAcceptRequest,
+  HostRehomeLogRequest,
   HostRehomePrepareRequest,
   HostRehomePrepareResponse,
   HostRehomeResponse as InterBayHostRehomeResponse,
@@ -18,6 +19,7 @@ import type {
   HostRehomeResponse,
 } from "@cocalc/conat/hub/api/hosts";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { logCloudVmEvent } from "@cocalc/server/cloud";
 import { getHostOwnerBaySshIdentity } from "@cocalc/server/cloud/ssh-key";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
@@ -446,6 +448,52 @@ async function flipSourceOwnershipIfNeeded({
   }
 }
 
+async function writeHostRehomeLog({
+  host_id,
+  op_id,
+  source_bay_id,
+  dest_bay_id,
+  requested_by,
+  reason,
+  campaign_id,
+  duration_ms,
+}: HostRehomeLogRequest): Promise<void> {
+  await logCloudVmEvent({
+    vm_id: host_id,
+    action: "rehome",
+    status: "success",
+    spec: {
+      op_id,
+      source_bay_id,
+      dest_bay_id,
+      requested_by: requested_by ?? null,
+      reason: reason ?? null,
+      campaign_id: campaign_id ?? null,
+      duration_ms: duration_ms ?? null,
+    },
+  });
+}
+
+async function appendHostRehomeLogEntry(
+  op: HostRehomeOperationRow,
+): Promise<void> {
+  const duration_ms = durationMs(op) ?? null;
+  await getInterBayBridge()
+    .hostConnection(op.dest_bay_id, {
+      timeout_ms: HOST_REHOME_TIMEOUT_MS,
+    })
+    .recordHostRehomeLog({
+      host_id: op.host_id,
+      op_id: op.op_id,
+      source_bay_id: op.source_bay_id,
+      dest_bay_id: op.dest_bay_id,
+      requested_by: op.requested_by ?? null,
+      reason: op.reason ?? null,
+      campaign_id: op.campaign_id ?? null,
+      duration_ms,
+    });
+}
+
 export async function prepareHostRehomeOnDestination({
   host_id,
   source_bay_id,
@@ -511,6 +559,25 @@ export async function acceptHostRehome({
     owning_bay_id: destBayId,
     status: sourceBayId === destBayId ? "already-home" : "rehomed",
   };
+}
+
+export async function recordHostRehomeLogOnDestination(
+  req: HostRehomeLogRequest,
+): Promise<void> {
+  const hostId = normalizeUuid("host_id", req.host_id);
+  const destBayId = normalizeBayId("dest_bay_id", req.dest_bay_id);
+  const localBayId = getConfiguredBayId();
+  if (destBayId !== localBayId) {
+    throw new Error(
+      `host rehome log for ${hostId} reached ${localBayId}, not destination bay ${destBayId}`,
+    );
+  }
+  await writeHostRehomeLog({
+    ...req,
+    host_id: hostId,
+    source_bay_id: normalizeBayId("source_bay_id", req.source_bay_id),
+    dest_bay_id: destBayId,
+  });
 }
 
 export async function rehomeHostOnOwningBay({
@@ -651,6 +718,17 @@ export async function runHostRehomeOperation(
         status: "succeeded",
         stage: "complete",
       });
+      try {
+        await appendHostRehomeLogEntry(op);
+      } catch (err) {
+        log.warn("host rehome log entry write failed", {
+          op_id,
+          host_id: op.host_id,
+          source_bay_id: op.source_bay_id,
+          dest_bay_id: op.dest_bay_id,
+          err: `${err}`,
+        });
+      }
     }
 
     log.info("host rehomed", {

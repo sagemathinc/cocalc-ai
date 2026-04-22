@@ -252,6 +252,18 @@ export interface HostRehomeResponse {
   status: "rehomed" | "already-home";
 }
 
+export interface HostRehomeLogRequest {
+  host_id: string;
+  op_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  requested_by?: string | null;
+  reason?: string | null;
+  campaign_id?: string | null;
+  duration_ms?: number | null;
+  epoch?: number;
+}
+
 export interface IssueProjectHostAuthTokenRequest {
   host_id: string;
   account_id?: string;
@@ -463,7 +475,8 @@ export type HostConnectionMethod =
   | "list-host-projects"
   | "rehome-host"
   | "prepare-host-rehome"
-  | "accept-host-rehome";
+  | "accept-host-rehome"
+  | "record-host-rehome-log";
 export type HostControlMethod =
   | "create-project"
   | "start-project"
@@ -598,6 +611,7 @@ export interface InterBayHostConnectionApi {
   acceptHostRehome: (
     opts: HostRehomeAcceptRequest,
   ) => Promise<HostRehomeResponse>;
+  recordHostRehomeLog: (opts: HostRehomeLogRequest) => Promise<void>;
 }
 
 const HOST_CONNECTION_METHOD_SPECS = [
@@ -634,6 +648,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "acceptHostRehome",
     method: "accept-host-rehome",
+  },
+  {
+    name: "recordHostRehomeLog",
+    method: "record-host-rehome-log",
   },
 ] as const satisfies ReadonlyArray<{
   name: keyof InterBayHostConnectionApi;
