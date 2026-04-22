@@ -788,6 +788,14 @@ Live validation, 2026-04-22 PT:
   moved. The disposable account was deleted with
   `cocalc account delete --only-if-tag qa-safe-delete --yes`, and its
   disposable API-key row was removed.
+- Final 3-bay smoke validation used disposable account
+  `ae3f1a39-8a33-4c6b-aa16-4595de6798f7` with v2 account API key
+  `key_id=ogxxAnrL3O6LQMw-581ftWeP`. API-key-only auth succeeded before
+  rehome, operation `862f6f3a-d922-4712-b12a-77d7dadd14bd` moved
+  `bay-0 -> bay-2`, `account where` converged to `home_bay_id=bay-2`, and the
+  same API key authenticated after rehome. The disposable account was deleted
+  with `cocalc account delete --only-if-tag qa-safe-delete --yes`, and the
+  disposable API-key row was removed.
 
 Non-goals for initial account rehome:
 
@@ -929,6 +937,18 @@ Failure-injection validation, 2026-04-22 PT:
   destination allocated its own local integer `id`. The disposable project was
   hard-deleted with `--purge-backups-now`, and the disposable key row was gone
   afterward.
+- Final 3-bay smoke validation used disposable project
+  `cb63a8f7-e853-454d-8d31-6b864e7d976d` with project API key
+  `key_id=kOP3SV3RplgiZ2zJinr4P73V`. The project was initially owned by
+  `bay-0`; operation `f4ab1cfc-07a3-466f-8bc3-8595aee3520b` moved it to
+  `bay-1`; `project where` reported `owning_bay_id=bay-1`; and the same
+  project API key authenticated after rehome on `bay-1`. The hub log recorded
+  the post-complete `project_rehomed` project-log write, but
+  `cocalc project log --project ...` returned an empty page even after the
+  disposable project was started. This looks like a follow-up visibility bug in
+  the CLI/read path for project-log streams, not a failed project ownership or
+  API-key move. The disposable project was hard-deleted with
+  `--purge-backups-now`, and the disposable API-key row was gone afterward.
 
 ### 11. Host Move / Reassignment
 
@@ -1039,6 +1059,19 @@ Live 3-bay validation evidence, 2026-04-22 PT:
 - Final restore rehome `f9be98c2-7539-4865-b499-334184313cbb` put `london`
   back on `bay-0`; host bootstrap was `in_sync`, and the host projects CLI
   listed the assigned projects successfully.
+- Final 3-bay smoke validation found an operational blocker on the current
+  local dev hosts. Rehoming deprovisioned host
+  `aaca1d64-1743-4b66-9fb1-dcc295721e6a` failed after source flip because
+  bootstrap reconcile requires a reachable cloud SSH target. Rehoming running
+  host `fe625be4-c86f-4fc4-b324-fda2f895e448` (`host2`) from `bay-0` to
+  `bay-2` failed after source flip because hub SSH to
+  `ubuntu@34.106.199.212` was denied with `Permission denied (publickey)`;
+  failed operation `0b3c8969-de17-4ca4-b2c4-f9724a4f3095` stopped at
+  `stage=source_flipped`. A restore rehome put `host2` back on `bay-0`, and
+  the restore wrote a `cloud_vm_log.action='rehome'` success row with
+  `op_id=56b8aa4d-b89b-425b-8ee8-8eeb3717102a`. Before large host drains,
+  existing hosts need a hub-owner SSH trust audit/backfill so destination
+  bootstrap reconcile is not blocked by missing SSH authorization.
 
 Known follow-up:
 
@@ -1047,6 +1080,11 @@ Known follow-up:
   operation record, but an operator on another bay currently needs to know or
   target that source bay. This should become either source-bay-routed by CLI
   option or admin-only cluster search before large batch drains.
+- Project-log CLI/read-path validation needs a focused follow-up. The rehome
+  write path logged the `project_rehomed` append, but the CLI `project log`
+  reader returned no entries for the rehomed disposable project. The frontend
+  project-log path uses `dstream`; the CLI reader currently uses `astream`, so
+  this may be a reader mismatch rather than missing rehome data.
 
 Non-goals for initial host rehome:
 
