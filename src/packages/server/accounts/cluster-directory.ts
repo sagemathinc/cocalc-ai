@@ -299,7 +299,9 @@ function mergeEntries(
     merged.set(entry.account_id, {
       ...entry,
       email_address: current.email_address ?? entry.email_address,
-      home_bay_id: current.home_bay_id ?? entry.home_bay_id,
+      // The directory is the cluster routing source of truth. A stale local
+      // account row on the seed must not win after an attached-bay rehome.
+      home_bay_id: entry.home_bay_id ?? current.home_bay_id,
     });
   }
   return [...merged.values()];
