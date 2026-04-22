@@ -38,6 +38,11 @@ import {
   deleteClusterAccount,
   searchClusterAccounts,
 } from "@cocalc/server/inter-bay/accounts";
+import {
+  getAccountRehomeOperationForOperator,
+  reconcileAccountRehome as reconcileAccountRehomeInternal,
+  rehomeAccount as rehomeAccountInternal,
+} from "@cocalc/server/accounts/rehome";
 export { getNames } from "@cocalc/server/accounts/get-name";
 import { callback2 } from "@cocalc/util/async-utils";
 import getLogger from "@cocalc/backend/logger";
@@ -1260,6 +1265,62 @@ export async function deleteAccount({
   return await deleteClusterAccount({
     account_id: targetAccountId,
     only_if_tag: `${only_if_tag ?? ""}`.trim() || undefined,
+  });
+}
+
+export async function rehomeAccount({
+  account_id,
+  user_account_id,
+  dest_bay_id,
+  reason,
+  campaign_id,
+}: {
+  account_id?: string;
+  user_account_id: string;
+  dest_bay_id: string;
+  reason?: string | null;
+  campaign_id?: string | null;
+}) {
+  return await rehomeAccountInternal({
+    account_id,
+    target_account_id: user_account_id,
+    dest_bay_id,
+    reason,
+    campaign_id,
+  });
+}
+
+export async function getAccountRehomeOperation({
+  account_id,
+  op_id,
+  source_bay_id,
+}: {
+  account_id?: string;
+  op_id: string;
+  source_bay_id?: string;
+}) {
+  return (
+    (await getAccountRehomeOperationForOperator({
+      account_id,
+      op_id,
+      source_bay_id,
+    })) ?? null
+  );
+}
+
+export async function reconcileAccountRehome({
+  account_id,
+  op_id,
+  source_bay_id,
+}: {
+  account_id?: string;
+  op_id: string;
+  source_bay_id?: string;
+}) {
+  return await reconcileAccountRehomeInternal({
+    account_id,
+    op_id,
+    source_bay_id,
   });
 }
 

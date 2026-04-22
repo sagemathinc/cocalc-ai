@@ -22,6 +22,10 @@ import type {
   RootfsReleaseGcRunResult,
 } from "@cocalc/util/rootfs-images";
 import type { NewsItemWebapp } from "@cocalc/util/types/news";
+import type {
+  AccountRehomeOperationSummary,
+  AccountRehomeResponse,
+} from "@cocalc/conat/inter-bay/api";
 
 export const system = {
   getCustomize: noAuth,
@@ -62,6 +66,9 @@ export const system = {
   getNames: requireSignedIn,
   adminCreateUser: authFirst,
   deleteAccount: authFirst,
+  rehomeAccount: authFirstRequireAccount,
+  getAccountRehomeOperation: authFirstRequireAccount,
+  reconcileAccountRehome: authFirstRequireAccount,
   adminResetPasswordLink: authFirst,
   sendEmailVerification: authFirst,
   deletePassport: authFirst,
@@ -1006,6 +1013,26 @@ export interface System {
     home_bay_id: string;
     status: "deleted";
   }>;
+
+  rehomeAccount: (opts: {
+    account_id?: string;
+    user_account_id: string;
+    dest_bay_id: string;
+    reason?: string | null;
+    campaign_id?: string | null;
+  }) => Promise<AccountRehomeResponse>;
+
+  getAccountRehomeOperation: (opts: {
+    account_id?: string;
+    op_id: string;
+    source_bay_id?: string;
+  }) => Promise<AccountRehomeOperationSummary | null>;
+
+  reconcileAccountRehome: (opts: {
+    account_id?: string;
+    op_id: string;
+    source_bay_id?: string;
+  }) => Promise<AccountRehomeResponse>;
 
   backfillBayOwnership: (opts: {
     account_id?: string;

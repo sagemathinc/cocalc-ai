@@ -249,6 +249,43 @@ export interface ProjectLogPage {
 
 export const PROJECT_LOG_STREAM_NAME = "project-log";
 
+export type ProjectRehomeOperationStage =
+  | "requested"
+  | "destination_accepted"
+  | "source_flipped"
+  | "portable_state_copied"
+  | "projected"
+  | "complete";
+
+export type ProjectRehomeOperationStatus = "running" | "succeeded" | "failed";
+
+export interface ProjectRehomeOperationSummary {
+  op_id: string;
+  project_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  requested_by: string | null;
+  reason: string | null;
+  campaign_id: string | null;
+  status: ProjectRehomeOperationStatus;
+  stage: ProjectRehomeOperationStage;
+  attempt: number;
+  last_error: string | null;
+  created_at?: Date | string | null;
+  updated_at?: Date | string | null;
+  finished_at?: Date | string | null;
+}
+
+export interface ProjectRehomeResponse {
+  op_id?: string;
+  project_id: string;
+  previous_bay_id: string;
+  owning_bay_id: string;
+  operation_stage?: ProjectRehomeOperationStage;
+  operation_status?: ProjectRehomeOperationStatus;
+  status: "rehomed" | "already-home";
+}
+
 export type ChatStoreScope = "chat" | "before_date" | "thread" | "messages";
 
 export interface ChatStoreStats {
@@ -422,6 +459,7 @@ export const projects = {
 
   moveProject: authFirstRequireAccount,
   rehomeProject: authFirstRequireAccount,
+  getProjectRehomeOperation: authFirstRequireAccount,
   reconcileProjectRehome: authFirstRequireAccount,
   drainProjectRehome: authFirstRequireAccount,
   codexDeviceAuthStart: authFirstRequireAccount,
@@ -973,40 +1011,17 @@ export interface Projects {
     dest_bay_id: string;
     reason?: string | null;
     campaign_id?: string | null;
-  }) => Promise<{
-    op_id?: string;
-    project_id: string;
-    previous_bay_id: string;
-    owning_bay_id: string;
-    operation_stage?:
-      | "requested"
-      | "destination_accepted"
-      | "source_flipped"
-      | "portable_state_copied"
-      | "projected"
-      | "complete";
-    operation_status?: "running" | "succeeded" | "failed";
-    status: "rehomed" | "already-home";
-  }>;
+  }) => Promise<ProjectRehomeResponse>;
+
+  getProjectRehomeOperation: (opts: {
+    account_id?: string;
+    op_id: string;
+  }) => Promise<ProjectRehomeOperationSummary | null>;
 
   reconcileProjectRehome: (opts: {
     account_id?: string;
     op_id: string;
-  }) => Promise<{
-    op_id?: string;
-    project_id: string;
-    previous_bay_id: string;
-    owning_bay_id: string;
-    operation_stage?:
-      | "requested"
-      | "destination_accepted"
-      | "source_flipped"
-      | "portable_state_copied"
-      | "projected"
-      | "complete";
-    operation_status?: "running" | "succeeded" | "failed";
-    status: "rehomed" | "already-home";
-  }>;
+  }) => Promise<ProjectRehomeResponse>;
 
   drainProjectRehome: (opts: {
     account_id?: string;
@@ -1024,13 +1039,7 @@ export interface Projects {
     campaign_id: string | null;
     candidate_count: number;
     candidates: string[];
-    rehomed: Array<{
-      op_id?: string;
-      project_id: string;
-      previous_bay_id: string;
-      owning_bay_id: string;
-      status: "rehomed" | "already-home";
-    }>;
+    rehomed: ProjectRehomeResponse[];
     errors: Array<{ project_id: string; error: string }>;
   }>;
 

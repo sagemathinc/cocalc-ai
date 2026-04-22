@@ -33,6 +33,22 @@ const HOST_DEPLOY_HISTORY_KINDS = new Set([
   "host-rollout-managed-components",
 ]);
 
+export function assertHostRehomeConfirmed({
+  host_id,
+  dest_bay_id,
+  yes,
+}: {
+  host_id: string;
+  dest_bay_id: string;
+  yes?: boolean;
+}): void {
+  if (!yes) {
+    throw new Error(
+      `refusing to rehome host '${host_id}' to bay '${dest_bay_id}' without --yes`,
+    );
+  }
+}
+
 export type HostCommandDeps = {
   withContext: any;
   listHosts: any;
@@ -1015,6 +1031,69 @@ export function registerHostCommand(
       await withContext(command, "host where", async (ctx) => {
         const h = await resolveHost(ctx, hostIdentifier);
         return await ctx.hub.system.getHostBay({ host_id: h.id });
+      });
+    });
+
+  host
+    .command("rehome <host>")
+    .description("change the bay that owns host control metadata")
+    .requiredOption("--bay <bay_id>", "destination bay id")
+    .option("--reason <text>", "operator-visible reason")
+    .option("--campaign <id>", "batch/campaign identifier")
+    .option("--yes", "confirm the host ownership rehome")
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: {
+          bay: string;
+          reason?: string;
+          campaign?: string;
+          yes?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "host rehome", async (ctx) => {
+          const h = await resolveHost(ctx, hostIdentifier);
+          assertHostRehomeConfirmed({
+            host_id: h.id,
+            dest_bay_id: opts.bay,
+            yes: !!opts.yes,
+          });
+          return await ctx.hub.hosts.rehomeHost({
+            id: h.id,
+            dest_bay_id: opts.bay,
+            reason: opts.reason,
+            campaign_id: opts.campaign,
+          });
+        });
+      },
+    );
+
+  host
+    .command("rehome-status")
+    .description("show a host rehome operation")
+    .requiredOption("--op-id <uuid>", "host rehome operation id")
+    .action(async (opts: { opId: string }, command: Command) => {
+      await withContext(command, "host rehome-status", async (ctx) => {
+        const op = await ctx.hub.hosts.getHostRehomeOperation({
+          op_id: opts.opId,
+        });
+        if (!op) {
+          throw new Error(`host rehome operation ${opts.opId} not found`);
+        }
+        return op;
+      });
+    });
+
+  host
+    .command("rehome-reconcile")
+    .description("retry/resume a host rehome operation")
+    .requiredOption("--op-id <uuid>", "host rehome operation id")
+    .action(async (opts: { opId: string }, command: Command) => {
+      await withContext(command, "host rehome-reconcile", async (ctx) => {
+        return await ctx.hub.hosts.reconcileHostRehome({
+          op_id: opts.opId,
+        });
       });
     });
 

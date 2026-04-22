@@ -581,20 +581,118 @@ trustworthy than before. This is now high-value work.
   - project-hosts
   - spot vs on-demand mix
 
-### 8. Account Rehome
+### 8. Bay Operations UI / Operator Surface
 
-This remains future work, but it is the next major workflow after Phase 5/6
-close-out.
+Bays are now production resources in the same sense that project hosts are
+production resources. The current CLI/API work is useful, but production
+operation should not depend on remembering ad hoc commands and reading logs.
 
+The first browser UI should be intentionally non-fancy and mostly read-only,
+probably under the existing admin surface. It should make bay state visible and
+provide copy/pasteable CLI commands for risky mutating operations until those
+operations have enough validation to deserve direct buttons.
+
+Initial read-only page:
+
+- [ ] add an admin bay list page showing bay id, role, public URL, tunnel/DNS
+      state, software version, uptime/heartbeat, and whether the bay accepts new
+      ownership
+- [ ] add a bay detail page showing owned accounts, owned projects, owned hosts,
+      active sessions/connections, and recent control-plane/inter-bay errors
+- [ ] show projection/replay health: account-project index lag, collaborator
+      index lag, notification index lag, replay backlog, and stale directory
+      indicators
+- [ ] show route/failure signals in one place: wrong-bay auth redirects, stale
+      ownership errors, handoff failures, and inter-bay RPC failures
+- [ ] show backup/config health relevant to bays: seed-delegated backup repo
+      config, bay-local config, public endpoint/tunnel state, and DNS state
+- [ ] include copy/pasteable CLI commands for common operations:
+  - `cocalc bay list`
+  - `cocalc bay show ...`
+  - `cocalc bay projection status-account-project-index ...`
+  - `cocalc project rehome-drain --source-bay ... --dest-bay ...`
+  - `cocalc project rehome-status --op-id ...`
+  - `cocalc project rehome-reconcile --op-id ...`
+
+Later mutating UI, only after the CLI/API paths are proven:
+
+- [ ] mark a bay as accepting or not accepting new ownership
+- [ ] dry-run and execute project ownership drains
+- [ ] dry-run and execute future account/host ownership drains
+- [ ] trigger projection drains/rebuilds with bounded limits
+- [ ] restart/update bay software with explicit confirmation and status
+      tracking
+
+### 9. Account Rehome
+
+Account rehome is an invisible operator workflow for changing the bay that owns
+an account's home/account-scoped control plane. It is not a user-facing account
+export/import and it is not a project ownership move. The main production
+reasons to do it are the same as project rehome:
+
+- **maintenance drain:** a bay is old or unhealthy enough that we want to drain
+  account ownership and delete/recreate it instead of upgrading it in place
+- **ops/load shedding:** a bay is approaching a control-plane load limit, so we
+  move account-home ownership to other bays without moving project ownership or
+  project-host materialization
+
+Account rehome contract:
+
+- The source account home bay remains the durable operation owner until the
+  operation is complete.
+- The source bay sends the full `accounts` row to the destination bay before
+  flipping `accounts.home_bay_id`.
+- The destination bay upserts the account row with `home_bay_id` set to the
+  destination bay before the source bay flips ownership.
+- The portable home-bay state copied in the first implementation slice is:
+  - `account_project_index`
+  - `account_collaborator_index`
+  - `account_notification_index`
+- Source flip updates the source `accounts.home_bay_id` and the cluster account
+  directory entry to the destination bay.
+- The operation is forward-reconciled after destination accept. Rollback is not
+  attempted because the destination has already accepted a valid account row.
+- Existing browser sessions may keep working on their old websocket until they
+  naturally reconnect or hit wrong-bay recovery. Forced browser reconnection is
+  a follow-up unless live validation shows stale sessions are unsafe.
+- Account rehome must not move project ownership, project data, project-host
+  assignments, API keys, billing/customer records outside the `accounts` row,
+  or historical notification/event outbox rows in the first slice.
+
+Initial account rehome target:
+
+- [x] define terminology: **account rehome** means moving the authoritative
+      account home/control-plane bay
 - [ ] account-write fencing
-- [ ] home-state copy
-- [ ] projection rebuild / copy
-- [ ] directory update
-- [ ] forced browser reconnection
-- [ ] CLI workflow
-- [ ] rollback / replay plan
+- [x] source bay sends the full account row to the destination bay before
+      flipping `home_bay_id`
+- [x] destination bay accepts/upserts the authoritative account row
+- [x] source bay flips `home_bay_id` only after destination accept succeeds
+- [x] copy portable home-bay state during rehome:
+  - `account_project_index`
+  - `account_collaborator_index`
+  - `account_notification_index`
+- [x] update the cluster account directory so lookup/search resolves the new
+      home bay
+- [x] durable per-account rehome operation record with explicit state machine:
+      `requested -> destination_accepted -> source_flipped -> projections_copied -> directory_updated -> complete`
+- [x] idempotent reconcile command for stuck operation states
+- [x] admin-only CLI workflow:
+      `cocalc account rehome <account> --bay ... --yes`
+- [ ] forced browser reconnection / wrong-bay recovery validation
+- [ ] failure-injection validation for destination-accepted/source-flip-failed
+      and delayed projection/directory convergence
 
-### 9. Project Rehome
+Non-goals for initial account rehome:
+
+- deleting the old source-local account row
+- moving project ownership
+- moving project-host assignments
+- moving billing/provider-side state outside the `accounts` row
+- rewriting historical notification target/outbox rows
+- batch account drains before the single-account operation is validated
+
+### 10. Project Rehome
 
 Project rehome is an invisible operator workflow for changing the bay that owns
 project control-plane metadata. It is not a user-facing project data move. The
@@ -630,8 +728,8 @@ main production reasons to do it are:
 - [x] project fence / quiesce for concurrent metadata writes during rehome
 - [x] live 3-bay happy-path validation for per-project rehome and projection
       convergence
-- [ ] rollback / retry plan for destination-accepted/source-flip-failed cases
-- [ ] failure-injection validation for destination-accepted/source-flip-failed
+- [x] rollback / retry plan for destination-accepted/source-flip-failed cases
+- [x] failure-injection validation for destination-accepted/source-flip-failed
       cases and delayed projection convergence
 
 Live 3-bay validation evidence, 2026-04-21 PT:
@@ -663,20 +761,180 @@ Live 3-bay validation evidence, 2026-04-21 PT:
   `cocalc project delete --hard --purge-backups-now --wait --yes`; both delete
   operations completed with `status=succeeded`.
 
-### 10. Host Move / Reassignment
+Retry / rollback plan, 2026-04-22 PT:
+
+- Project rehome is intentionally forward-reconciled, not rolled back, once the
+  destination bay has accepted the project row. The source bay remains the
+  operation owner and durable source of retry state.
+- `requested` failures are safe to retry because the destination accept upserts
+  the same project row idempotently.
+- `destination_accepted` failures are retried by flipping source ownership to
+  the destination bay and then continuing with portable-state copy.
+- `source_flipped` failures are retried by re-reading the preserved project row
+  and copying portable bay-local state, currently the `project-log` stream.
+- `portable_state_copied` failures are retried by updating local projection rows
+  and draining projection state.
+- `projected` failures are retried by marking the operation complete and
+  appending the `project_rehomed` project-log evidence row on the destination
+  bay.
+- Operators can now inspect stuck operation state with
+  `cocalc project rehome-status --op-id ...` and retry with
+  `cocalc project rehome-reconcile --op-id ...`.
+- Unit coverage now validates a failed `destination_accepted` operation can be
+  inspected and then reconciled through source flip, portable project-log copy,
+  projection, and completion.
+
+Failure-injection validation, 2026-04-22 PT:
+
+- Created disposable project `2e6b2a22-58d4-4023-aea7-7fcf75d01136` on
+  `bay-0` and completed a normal rehome to `bay-1` with operation
+  `c17ed624-d504-49c3-8ac9-8fe829141206`.
+- Injected a source-flip failure by setting the operation to
+  `status=failed`, `stage=destination_accepted`, rewinding the disposable
+  project and account-project projection to `bay-0`, and setting
+  `last_error='injected source flip failure for Section 9 validation'`.
+  `cocalc project rehome-status --op-id ...` reported the failed
+  `destination_accepted` state, then
+  `cocalc project rehome-reconcile --op-id ...` completed the operation,
+  advanced attempt count from 1 to 2, cleared `last_error`, and converged both
+  project ownership and `account_project_index` to `bay-1`.
+- Injected delayed projection convergence by setting
+  `account_project_index.owning_bay_id=bay-0` and operation
+  `status=failed`, `stage=portable_state_copied`, with
+  `last_error='injected delayed projection convergence for Section 9 validation'`.
+  `rehome-status` exposed the failed portable-state-copied stage, and
+  `rehome-reconcile` completed the operation and restored
+  `account_project_index.owning_bay_id=bay-1`.
+- The disposable project was hard-deleted with
+  `cocalc project delete --hard --purge-backups-now --wait --yes`; delete
+  operation `a5f50644-0f9f-4567-b872-e585f815aedd` completed with
+  `status=succeeded`.
+
+### 11. Host Move / Reassignment
 
 This is now a production-critical multibay workflow, not just a spot-instance
 cleanup concern.
 
-- [ ] define whether "host move" means host-bay ownership transfer, project
+- **host rehome** means changing the authoritative bay that owns the
+  `project_hosts` row and host-management authority. It does not move the
+  host VM/container and does not move projects assigned to the host.
+- **project evacuation** means moving projects off a host.
+- **project move** remains project materialization/runtime placement movement.
+
+- [x] define whether "host move" means host-bay ownership transfer, project
       evacuation/reassignment, or both
-- [ ] explicit operator confirmation for any operation that can strand or lose
+- [x] explicit operator confirmation for any operation that can strand or lose
       project data
 - [ ] host/project fencing model during reassignment
-- [ ] directory update and projection convergence
+- [x] directory update and projection convergence
 - [ ] recovery behavior when the source host or source bay disappears mid-move
-- [ ] rollback / retry plan
-- [ ] CLI workflow
+- [x] rollback / retry plan
+- [x] CLI workflow
+
+Initial host rehome target:
+
+- [x] admin-only CLI workflow:
+      `cocalc host rehome <host> --bay ... --yes`
+- [x] durable per-host rehome operation record with state machine:
+      `requested -> destination_prepared -> destination_accepted -> source_flipped -> host_reconnected -> complete`
+- [x] destination preparation before source flip:
+  - destination bay has a host-owner SSH identity
+  - host trusts the destination bay's host-owner SSH public key
+  - destination bay can resolve and reach the host management endpoint
+- [x] source flip changes only `project_hosts.bay_id`; assigned projects remain
+      on the same host unless a separate evacuation/project-move operation is
+      requested
+- [x] post-flip validation waits for the host-agent/project-host heartbeat or a
+      direct host-control status check to confirm the host is manageable via the
+      destination bay
+- [x] operator status/retry commands:
+  - `cocalc host rehome-status --op-id ...`
+  - `cocalc host rehome-reconcile --op-id ...`
+- [x] failure-injection validation for:
+  - destination prepared but source flip failed
+  - source flipped but host did not reconnect to destination bay
+  - source flipped but projection/directory state is stale
+
+Implementation checkpoint, 2026-04-22 PT:
+
+- Added the first host rehome implementation slice:
+  - hub RPCs `hosts.rehomeHost`, `hosts.getHostRehomeOperation`, and
+    `hosts.reconcileHostRehome`
+  - CLI commands `cocalc host rehome`, `cocalc host rehome-status`, and
+    `cocalc host rehome-reconcile`
+  - inter-bay host rehome RPCs for source-bay orchestration and
+    destination-bay prepare/accept
+  - durable `project_host_rehome_operations` state table
+- Destination preparation installs the destination bay's host-owner SSH public
+  key onto the host through the existing routed host-control API before
+  changing ownership.
+- Destination accept copies the `project_hosts` row to the destination bay with
+  `bay_id` set to the destination; source flip updates the source row's
+  `bay_id` only, leaving assigned projects untouched.
+- Post-flip validation calls `getHostAgentStatus` through the routed host
+  control client, which exercises the new owner-bay route.
+- Host-control key installation during destination prepare is now best-effort:
+  host-control can itself be the broken path during rehome, and the reconnect
+  stage has the cloud-provider/SSH bootstrap reconcile fallback.
+- Destination reconnect now explicitly runs SSH bootstrap reconcile from the
+  destination bay before validating host-control status.
+- Host registry heartbeats now preserve existing `project_hosts.bay_id`
+  ownership instead of letting stale old-bay heartbeats pull ownership back
+  during a rehome.
+- Completed host rehomes write a `cloud_vm_log.action='rehome'` evidence row on
+  the destination/owner bay, including source bay, destination bay, operation
+  id, reason, campaign, requester, and duration.
+
+Live 3-bay validation evidence, 2026-04-22 PT:
+
+- Validated host `b8d594c4-5fac-492a-b761-4284b904beaf` (`london`) through
+  multiple `bay-0 <-> bay-1` rehomes on the local 3-bay hub cluster.
+- Same-bay request returned `status='already-home'` without changing
+  ownership.
+- Invalid destination bay failed before changing ownership with
+  `bay missing-bay not found`.
+- Forward rehome `bd83a0af-6c2e-40af-a59e-58a17589562e` completed
+  `bay-0 -> bay-1`; `host where` reported `bay-1`, bootstrap status was
+  `in_sync`, and a destination-bay host-log `rehome` row was present on
+  `bay-1`.
+- Restore rehome `1098a81c-0bef-4514-aa98-32a2e06bc772` completed
+  `bay-1 -> bay-0`; `host where` reported `bay-0`, bootstrap status remained
+  `in_sync`, and a destination-bay host-log `rehome` row was present on
+  `bay-0`.
+- Injected a failed `destination_accepted` operation to simulate "destination
+  prepared/accepted but source flip failed". `cocalc host rehome-status`
+  exposed the failed state, and `cocalc host rehome-reconcile` completed the
+  operation after source flip, destination reconnect, routed host-control
+  validation, and destination-bay host-log write. Final injected operation:
+  `024b8d12-c857-4bb4-a0f1-86bd00230244`, `attempt=2`,
+  `status='succeeded'`, `stage='complete'`.
+- The initial live validation found and fixed a real
+  `source_flipped -> host_reconnected` failure: flipping `project_hosts.bay_id`
+  alone left the live host-agent connected to the old bay. The fix is the
+  destination-bay SSH bootstrap reconcile step before host-control validation.
+- The initial live validation also found and fixed a stale-heartbeat ownership
+  failure: old-bay heartbeats could overwrite the authoritative host bay after
+  the source flip. The fix is preserving existing host-bay ownership during
+  heartbeat upserts.
+- Final restore rehome `f9be98c2-7539-4865-b499-334184313cbb` put `london`
+  back on `bay-0`; host bootstrap was `in_sync`, and the host projects CLI
+  listed the assigned projects successfully.
+
+Known follow-up:
+
+- `cocalc host rehome-status --op-id ...` and `host rehome-reconcile --op-id`
+  are source-bay-local. They work when run against the source bay that owns the
+  operation record, but an operator on another bay currently needs to know or
+  target that source bay. This should become either source-bay-routed by CLI
+  option or admin-only cluster search before large batch drains.
+
+Non-goals for initial host rehome:
+
+- moving project data
+- automatically evacuating projects from the host
+- replacing project move
+- handling source-bay disappearance before the destination bay has been
+  prepared
 
 ## What Is No Longer A Priority Bottleneck
 

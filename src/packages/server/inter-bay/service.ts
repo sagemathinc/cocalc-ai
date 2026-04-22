@@ -72,7 +72,15 @@ import {
   getClusterAccountsByIds,
   provisionLocalClusterAccount,
   searchClusterAccounts,
+  updateClusterAccountHomeBay,
 } from "@cocalc/server/inter-bay/accounts";
+import {
+  acceptAccountRehome,
+  copyAccountRehomeState,
+  getAccountRehomeOperation,
+  reconcileAccountRehomeOnSource,
+  rehomeAccountOnHomeBay,
+} from "@cocalc/server/accounts/rehome";
 import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
@@ -106,6 +114,13 @@ import {
 } from "@cocalc/server/conat/api/hosts";
 import { getSeedProjectBackupConfig } from "@cocalc/server/project-backup";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import {
+  acceptHostRehome,
+  prepareHostRehomeOnDestination,
+  reconnectHostRehomeOnDestination,
+  recordHostRehomeLogOnDestination,
+  rehomeHostOnOwningBay,
+} from "@cocalc/server/project-host/rehome";
 import {
   deleteProjectedCollabInviteDirect,
   toWire as collabInviteToWire,
@@ -250,6 +265,7 @@ async function startAccountDirectoryService(): Promise<void> {
         only_email,
       }),
     getHomeBayCounts: async () => await getClusterAccountHomeBayCounts(),
+    updateHomeBay: async (opts) => await updateClusterAccountHomeBay(opts),
     create: async (opts) => await createClusterAccount(opts),
     delete: async (opts) => await deleteClusterAccount(opts),
   };
@@ -267,6 +283,12 @@ async function startAccountLocalService(): Promise<void> {
   const impl: InterBayAccountLocalApi = {
     create: async (opts) => await provisionLocalClusterAccount(opts),
     delete: async (opts) => await deleteLocalClusterAccount(opts),
+    rehome: async (opts) => await rehomeAccountOnHomeBay(opts),
+    acceptRehome: async (opts) => await acceptAccountRehome(opts),
+    copyRehomeState: async (opts) => await copyAccountRehomeState(opts),
+    getRehomeOperation: async ({ op_id }) =>
+      (await getAccountRehomeOperation(op_id)) ?? null,
+    reconcileRehome: async (opts) => await reconcileAccountRehomeOnSource(opts),
   };
   services.push(
     ...createInterBayAccountLocalHandler({
@@ -542,6 +564,27 @@ async function startHostConnectionService(): Promise<void> {
         state_filter,
         project_state,
       }),
+    rehomeHost: async ({
+      account_id,
+      host_id,
+      dest_bay_id,
+      reason,
+      campaign_id,
+    }) =>
+      await rehomeHostOnOwningBay({
+        account_id,
+        host_id,
+        dest_bay_id,
+        reason,
+        campaign_id,
+      }),
+    prepareHostRehome: async (opts) =>
+      await prepareHostRehomeOnDestination(opts),
+    acceptHostRehome: async (opts) => await acceptHostRehome(opts),
+    reconnectHostRehome: async (opts) =>
+      await reconnectHostRehomeOnDestination(opts),
+    recordHostRehomeLog: async (opts) =>
+      await recordHostRehomeLogOnDestination(opts),
   };
   services.push(
     ...createInterBayHostConnectionHandler({

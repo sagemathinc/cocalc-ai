@@ -40,9 +40,12 @@ function mergeSchedule(
   };
 }
 
-function scheduleToCounts(schedule: SnapshotSchedule): SnapshotCounts {
+function scheduleToCounts(
+  schedule: SnapshotSchedule,
+  { allowFrequent = true }: { allowFrequent?: boolean } = {},
+): SnapshotCounts {
   return {
-    frequent: schedule.frequent,
+    frequent: allowFrequent ? schedule.frequent : 0,
     daily: schedule.daily,
     weekly: schedule.weekly,
     monthly: schedule.monthly,
@@ -124,7 +127,7 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
       if (!backupSchedule.disabled) {
         await runScheduledBackupMaintenance({
           project_id,
-          counts: scheduleToCounts(backupSchedule),
+          counts: scheduleToCounts(backupSchedule, { allowFrequent: false }),
         });
       }
     } catch (err) {
