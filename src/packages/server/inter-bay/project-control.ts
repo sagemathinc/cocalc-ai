@@ -286,8 +286,11 @@ export async function handleProjectControlRehome(
     epoch: req.epoch,
   });
   return await rehomeProjectOnOwningBay({
+    account_id: req.account_id,
     project_id: req.project_id,
     dest_bay_id: req.dest_bay_id,
+    reason: req.reason,
+    campaign_id: req.campaign_id,
   });
 }
 

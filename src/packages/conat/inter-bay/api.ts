@@ -153,6 +153,8 @@ export interface ProjectControlRehomeRequest {
   project_id: string;
   account_id: string;
   dest_bay_id: string;
+  reason?: string | null;
+  campaign_id?: string | null;
   epoch?: number;
 }
 
@@ -166,9 +168,17 @@ export interface ProjectControlAcceptRehomeRequest {
 }
 
 export interface ProjectControlRehomeResponse {
+  op_id?: string;
   project_id: string;
   previous_bay_id: string;
   owning_bay_id: string;
+  operation_stage?:
+    | "requested"
+    | "destination_accepted"
+    | "source_flipped"
+    | "projected"
+    | "complete";
+  operation_status?: "running" | "succeeded" | "failed";
   status: "rehomed" | "already-home";
 }
 

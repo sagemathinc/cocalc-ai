@@ -13,6 +13,7 @@ let rehomeMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
 let drainAccountProjectIndexProjectionMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
+let operationRow: any;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -74,7 +75,81 @@ describe("project rehome", () => {
 
   beforeEach(() => {
     jest.resetModules();
-    queryMock = jest.fn(async () => ({ rows: [] }));
+    operationRow = undefined;
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (
+        sql.includes("CREATE TABLE IF NOT EXISTS project_rehome_operations") ||
+        sql.includes("CREATE INDEX IF NOT EXISTS project_rehome_operations")
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes("FROM project_rehome_operations") &&
+        sql.includes("status = 'running'")
+      ) {
+        return { rows: operationRow ? [operationRow] : [] };
+      }
+      if (sql.includes("INSERT INTO project_rehome_operations")) {
+        operationRow = {
+          op_id: "33333333-3333-4333-8333-333333333333",
+          project_id: params?.[0],
+          source_bay_id: params?.[1],
+          dest_bay_id: params?.[2],
+          requested_by: params?.[3],
+          reason: params?.[4],
+          campaign_id: params?.[5],
+          status: "running",
+          stage: "requested",
+          attempt: 0,
+          project: null,
+          last_error: null,
+        };
+        return { rows: [operationRow] };
+      }
+      if (
+        sql.includes("UPDATE project_rehome_operations") &&
+        sql.includes("attempt = attempt + 1")
+      ) {
+        operationRow = {
+          ...operationRow,
+          status: "running",
+          attempt: (operationRow?.attempt ?? 0) + 1,
+          last_error: null,
+        };
+        return { rows: [operationRow] };
+      }
+      if (sql.includes("UPDATE project_rehome_operations")) {
+        const stage = params?.find((value) =>
+          [
+            "requested",
+            "destination_accepted",
+            "source_flipped",
+            "projected",
+            "complete",
+          ].includes(value),
+        );
+        const status = params?.find((value) =>
+          ["running", "succeeded", "failed"].includes(value),
+        );
+        const project = params?.find(
+          (value) =>
+            value &&
+            typeof value === "object" &&
+            value.project_id === PROJECT_ID,
+        );
+        operationRow = {
+          ...operationRow,
+          ...(stage ? { stage } : {}),
+          ...(status ? { status } : {}),
+          ...(project ? { project } : {}),
+        };
+        return { rows: [operationRow] };
+      }
+      if (sql.includes("FROM project_rehome_operations")) {
+        return { rows: operationRow ? [operationRow] : [] };
+      }
+      return { rows: [] };
+    });
     clientQueryMock = jest.fn(async (sql: string) => {
       if (sql.includes("information_schema.columns")) {
         return {
@@ -148,6 +223,8 @@ describe("project rehome", () => {
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,
       dest_bay_id: "bay-2",
+      reason: undefined,
+      campaign_id: undefined,
       epoch: 3,
     });
     expect(acceptRehomeMock).not.toHaveBeenCalled();
@@ -155,12 +232,16 @@ describe("project rehome", () => {
 
   it("accepts on destination before flipping source ownership", async () => {
     const order: string[] = [];
+    const defaultQueryMock = queryMock;
     acceptRehomeMock = jest.fn(async () => {
       order.push("accept-destination");
       return {
         project_id: PROJECT_ID,
+        op_id: "33333333-3333-4333-8333-333333333333",
         previous_bay_id: "bay-0",
         owning_bay_id: "bay-2",
+        operation_stage: "complete",
+        operation_status: "succeeded",
         status: "rehomed",
       };
     });
@@ -168,7 +249,7 @@ describe("project rehome", () => {
       acceptRehome: acceptRehomeMock,
       rehome: rehomeMock,
     }));
-    queryMock = jest.fn(async (sql: string) => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (sql.includes("SELECT to_jsonb(projects.*) AS project")) {
         return {
           rows: [
@@ -186,8 +267,9 @@ describe("project rehome", () => {
       }
       if (sql.includes("UPDATE projects")) {
         order.push("flip-source");
+        return { rows: [] };
       }
-      return { rows: [] };
+      return await defaultQueryMock(sql, params);
     });
     const { rehomeProject } = await import("./rehome");
 
@@ -198,9 +280,12 @@ describe("project rehome", () => {
     });
 
     expect(result).toEqual({
+      op_id: "33333333-3333-4333-8333-333333333333",
       project_id: PROJECT_ID,
       previous_bay_id: "bay-0",
       owning_bay_id: "bay-2",
+      operation_stage: "complete",
+      operation_status: "succeeded",
       status: "rehomed",
     });
     expect(order).toEqual(["accept-destination", "flip-source"]);
@@ -215,7 +300,6 @@ describe("project rehome", () => {
         users: {},
         deleted: false,
       },
-      epoch: 0,
     });
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE account_project_index"),
@@ -268,5 +352,56 @@ describe("project rehome", () => {
       project_id: PROJECT_ID,
       default_bay_id: "bay-0",
     });
+  });
+
+  it("reconciles a destination-accepted operation without reaccepting", async () => {
+    operationRow = {
+      op_id: "33333333-3333-4333-8333-333333333333",
+      project_id: PROJECT_ID,
+      source_bay_id: "bay-0",
+      dest_bay_id: "bay-2",
+      requested_by: ACCOUNT_ID,
+      reason: "maintenance",
+      campaign_id: "drain-bay-0",
+      status: "failed",
+      stage: "destination_accepted",
+      attempt: 1,
+      project: {
+        project_id: PROJECT_ID,
+        owning_bay_id: "bay-0",
+        title: "Project",
+        users: {},
+        deleted: false,
+      },
+      last_error: "source flip failed",
+    };
+    const order: string[] = [];
+    const defaultQueryMock = queryMock;
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("UPDATE projects")) {
+        order.push("flip-source");
+        return { rows: [] };
+      }
+      return await defaultQueryMock(sql, params);
+    });
+    const { reconcileProjectRehome } = await import("./rehome");
+
+    await expect(
+      reconcileProjectRehome({
+        account_id: ACCOUNT_ID,
+        op_id: operationRow.op_id,
+      }),
+    ).resolves.toEqual({
+      op_id: operationRow.op_id,
+      project_id: PROJECT_ID,
+      previous_bay_id: "bay-0",
+      owning_bay_id: "bay-2",
+      operation_stage: "complete",
+      operation_status: "succeeded",
+      status: "rehomed",
+    });
+
+    expect(acceptRehomeMock).not.toHaveBeenCalled();
+    expect(order).toEqual(["flip-source"]);
   });
 });

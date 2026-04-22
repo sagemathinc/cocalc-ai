@@ -596,7 +596,15 @@ close-out.
 
 ### 9. Project Rehome
 
-Also future work.
+Project rehome is an invisible operator workflow for changing the bay that owns
+project control-plane metadata. It is not a user-facing project data move. The
+main production reasons to do it are:
+
+- **maintenance drain:** a bay is old or unhealthy enough that we want to drain
+  its project ownership and delete/recreate it instead of upgrading it in place
+- **ops/load shedding:** a bay is approaching a control-plane load limit, so we
+  move project ownership to other bays without moving project-host
+  materialization
 
 - [x] define terminology: **project rehome** means moving the authoritative
       project control-plane/metadata owner bay, while existing `project move`
@@ -608,6 +616,15 @@ Also future work.
       project projection event, and drains local account-project projection rows
 - [x] source bay flips `owning_bay_id` only after destination accept succeeds
       and updates its local account-project projection rows
+- [x] durable per-project rehome operation record with explicit state machine:
+      `requested -> destination_accepted -> source_flipped -> projected ->
+    complete`
+- [x] idempotent reconcile command for stuck operation states, especially
+      destination-accepted/source-flip-failed
+- [ ] batch/drain wrapper that groups many per-project rehomes into a bay drain
+      or load-shedding campaign
+- [ ] bay admission control so an operator can mark a bay as "do not place new
+      project ownership here" before draining existing ownership
 - [ ] project fence / quiesce for concurrent metadata writes during rehome
 - [ ] projection convergence validation under real multi-bay lag/failure
 - [ ] rollback / retry plan for destination-accepted/source-flip-failed cases

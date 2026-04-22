@@ -422,6 +422,7 @@ export const projects = {
 
   moveProject: authFirstRequireAccount,
   rehomeProject: authFirstRequireAccount,
+  reconcileProjectRehome: authFirstRequireAccount,
   codexDeviceAuthStart: authFirstRequireAccount,
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
@@ -969,10 +970,38 @@ export interface Projects {
     account_id?: string;
     project_id: string;
     dest_bay_id: string;
+    reason?: string | null;
+    campaign_id?: string | null;
   }) => Promise<{
+    op_id?: string;
     project_id: string;
     previous_bay_id: string;
     owning_bay_id: string;
+    operation_stage?:
+      | "requested"
+      | "destination_accepted"
+      | "source_flipped"
+      | "projected"
+      | "complete";
+    operation_status?: "running" | "succeeded" | "failed";
+    status: "rehomed" | "already-home";
+  }>;
+
+  reconcileProjectRehome: (opts: {
+    account_id?: string;
+    op_id: string;
+  }) => Promise<{
+    op_id?: string;
+    project_id: string;
+    previous_bay_id: string;
+    owning_bay_id: string;
+    operation_stage?:
+      | "requested"
+      | "destination_accepted"
+      | "source_flipped"
+      | "projected"
+      | "complete";
+    operation_status?: "running" | "succeeded" | "failed";
     status: "rehomed" | "already-home";
   }>;
 

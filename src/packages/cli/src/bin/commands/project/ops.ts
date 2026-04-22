@@ -750,10 +750,18 @@ export function registerProjectOpsCommands(
     .description("move project control-plane ownership to another bay")
     .option("-w, --project <project>", "project id or name")
     .requiredOption("--bay <bay>", "destination bay id")
+    .option("--reason <reason>", "operator reason, e.g. maintenance or load")
+    .option("--campaign <id>", "operator campaign/drain identifier")
     .option("-y, --yes", "confirm the project ownership transfer")
     .action(
       async (
-        opts: { project?: string; bay: string; yes?: boolean },
+        opts: {
+          project?: string;
+          bay: string;
+          reason?: string;
+          campaign?: string;
+          yes?: boolean;
+        },
         command: Command,
       ) => {
         await withContext(command, "project rehome", async (ctx) => {
@@ -770,10 +778,28 @@ export function registerProjectOpsCommands(
           return await ctx.hub.projects.rehomeProject({
             project_id: ws.project_id,
             dest_bay_id: destBayId,
+            reason: opts.reason,
+            campaign_id: opts.campaign,
           });
         });
       },
     );
+
+  project
+    .command("rehome-reconcile")
+    .description("retry a source-bay project rehome operation")
+    .requiredOption("--op-id <id>", "project rehome operation id")
+    .action(async (opts: { opId: string }, command: Command) => {
+      await withContext(command, "project rehome-reconcile", async (ctx) => {
+        const opId = `${opts.opId ?? ""}`.trim();
+        if (!opId) {
+          throw new Error("--op-id is required");
+        }
+        return await ctx.hub.projects.reconcileProjectRehome({
+          op_id: opId,
+        });
+      });
+    });
 
   project
     .command("copy-path")

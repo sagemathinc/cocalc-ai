@@ -53,7 +53,10 @@ import {
   makeOfflineMoveConfirmationPayload,
   offlineMoveConfirmationError,
 } from "@cocalc/server/projects/offline-move-confirmation";
-import { rehomeProject as rehomeProjectControl } from "@cocalc/server/projects/rehome";
+import {
+  reconcileProjectRehome as reconcileProjectRehomeControl,
+  rehomeProject as rehomeProjectControl,
+} from "@cocalc/server/projects/rehome";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
 import {
@@ -1613,14 +1616,26 @@ export async function rehomeProject({
   account_id,
   project_id,
   dest_bay_id,
+  reason,
+  campaign_id,
 }: {
   account_id: string;
   project_id: string;
   dest_bay_id: string;
+  reason?: string | null;
+  campaign_id?: string | null;
 }): Promise<{
+  op_id?: string;
   project_id: string;
   previous_bay_id: string;
   owning_bay_id: string;
+  operation_stage?:
+    | "requested"
+    | "destination_accepted"
+    | "source_flipped"
+    | "projected"
+    | "complete";
+  operation_status?: "running" | "succeeded" | "failed";
   status: "rehomed" | "already-home";
 }> {
   if (!account_id) {
@@ -1630,6 +1645,37 @@ export async function rehomeProject({
     account_id,
     project_id,
     dest_bay_id,
+    reason,
+    campaign_id,
+  });
+}
+
+export async function reconcileProjectRehome({
+  account_id,
+  op_id,
+}: {
+  account_id: string;
+  op_id: string;
+}): Promise<{
+  op_id?: string;
+  project_id: string;
+  previous_bay_id: string;
+  owning_bay_id: string;
+  operation_stage?:
+    | "requested"
+    | "destination_accepted"
+    | "source_flipped"
+    | "projected"
+    | "complete";
+  operation_status?: "running" | "succeeded" | "failed";
+  status: "rehomed" | "already-home";
+}> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  return await reconcileProjectRehomeControl({
+    account_id,
+    op_id,
   });
 }
 
