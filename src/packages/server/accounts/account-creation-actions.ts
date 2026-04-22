@@ -4,8 +4,6 @@
 import getPool from "@cocalc/database/pool";
 import addUserToProject from "@cocalc/server/projects/add-user-to-project";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
-import getOneProject from "@cocalc/server/projects/get-one";
-import { getProject } from "@cocalc/server/projects/control";
 import { getLogger } from "@cocalc/backend/logger";
 
 const log = getLogger("server:accounts:creation-actions");
@@ -14,13 +12,10 @@ export default async function accountCreationActions({
   email_address,
   account_id,
   tags,
-  noFirstProject,
 }: {
   email_address?: string;
   account_id: string;
   tags?: string[];
-  // if set, don't do any initial project actions (i.e., starting invited projects)
-  noFirstProject?: boolean;
 }): Promise<void> {
   log.debug({ account_id, email_address, tags });
 
@@ -42,18 +37,6 @@ export default async function accountCreationActions({
     }
   }
   log.debug("added user to", numProjects, "projects");
-  if (!noFirstProject && numProjects > 0) {
-    // Make sure project is running so they have a good first experience.
-    (async () => {
-      try {
-        const { project_id } = await getOneProject(account_id);
-        const project = getProject(project_id);
-        await project.start({ account_id });
-      } catch (err) {
-        log.error("failed to start newest project invited to", err, account_id);
-      }
-    })();
-  }
 }
 
 export async function creationActionsDone(account_id: string): Promise<void> {

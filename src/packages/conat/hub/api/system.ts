@@ -991,7 +991,6 @@ export interface System {
     password?: string;
     first_name?: string;
     last_name?: string;
-    no_first_project?: boolean;
     tags?: string[];
   }) => Promise<{
     account_id: string;
@@ -999,7 +998,6 @@ export interface System {
     first_name: string;
     last_name: string;
     created_by: string;
-    no_first_project: boolean;
     password_generated: boolean;
     generated_password?: string;
   }>;

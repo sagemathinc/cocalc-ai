@@ -44,6 +44,7 @@ const PORTABLE_STATE_TABLES = [
   "account_notification_index",
   "remember_me",
   "auth_tokens",
+  "api_keys",
 ] as const;
 
 type PortableStateTable = (typeof PORTABLE_STATE_TABLES)[number];
@@ -60,6 +61,7 @@ type Queryable = {
 };
 
 let accountRehomeSchemaReady: Promise<void> | undefined;
+let accountRehomeApiKeysSchemaReady: Promise<void> | undefined;
 const tableColumnsCache = new Map<string, Promise<string[]>>();
 
 function normalizeUuid(name: string, value: string): string {
@@ -138,6 +140,18 @@ async function ensureAccountRehomeSchema(): Promise<void> {
   await accountRehomeSchemaReady;
 }
 
+async function ensureAccountRehomeApiKeysSchema(): Promise<void> {
+  accountRehomeApiKeysSchemaReady ??= (async () => {
+    await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
+    );
+    await getPool().query(
+      "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx ON api_keys(key_id)",
+    );
+  })();
+  await accountRehomeApiKeysSchemaReady;
+}
+
 function durationMs(
   row: Pick<AccountRehomeOperationRow, "created_at" | "finished_at">,
 ): number | null {
@@ -204,7 +218,11 @@ async function upsertJsonRow({
   row: Record<string, unknown>;
   primaryKey: string[];
 }): Promise<void> {
-  const columns = await getTableColumns(table);
+  const columns = (await getTableColumns(table)).filter(
+    (column) =>
+      Object.prototype.hasOwnProperty.call(row, column) ||
+      primaryKey.includes(column),
+  );
   const updateColumns = columns.filter(
     (column) => !primaryKey.includes(column),
   );
@@ -243,17 +261,59 @@ async function replacePortableRows({
           ? ["account_id", "notification_id"]
           : table === "remember_me"
             ? ["hash"]
-            : ["auth_token"];
-  await getPool().query(`DELETE FROM "${table}" WHERE account_id=$1`, [
-    account_id,
-  ]);
+            : table === "auth_tokens"
+              ? ["auth_token"]
+              : ["key_id"];
+  if (table === "api_keys") {
+    await getPool().query(
+      `
+        DELETE FROM api_keys
+         WHERE account_id=$1
+           AND project_id IS NULL
+           AND key_id IS NOT NULL
+      `,
+      [account_id],
+    );
+  } else {
+    await getPool().query(`DELETE FROM "${table}" WHERE account_id=$1`, [
+      account_id,
+    ]);
+  }
   for (const row of rows) {
+    const nextRow =
+      table === "api_keys"
+        ? Object.fromEntries(
+            Object.entries(row).filter(([column]) => column !== "id"),
+          )
+        : row;
     await upsertJsonRow({
       table,
-      row,
+      row: nextRow,
       primaryKey,
     });
   }
+}
+
+async function loadAccountWidePortableApiKeyRows(
+  account_id: string,
+): Promise<Record<string, unknown>[]> {
+  await ensureAccountRehomeApiKeysSchema();
+  const { rows } = await getPool().query<{
+    rows: Record<string, unknown>[] | null;
+  }>(
+    `
+      SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) AS rows
+        FROM (
+          SELECT *
+            FROM api_keys
+           WHERE account_id=$1
+             AND project_id IS NULL
+             AND key_id IS NOT NULL
+        ) t
+    `,
+    [account_id],
+  );
+  return Array.isArray(rows[0]?.rows) ? rows[0].rows! : [];
 }
 
 async function loadAccountRowForRehome(
@@ -306,12 +366,14 @@ async function loadPortableState(
     account_notification_index,
     remember_me,
     auth_tokens,
+    api_keys,
   ] = await Promise.all([
     loadPortableRows("account_project_index", account_id),
     loadPortableRows("account_collaborator_index", account_id),
     loadPortableRows("account_notification_index", account_id),
     loadPortableRows("remember_me", account_id),
     loadPortableRows("auth_tokens", account_id),
+    loadAccountWidePortableApiKeyRows(account_id),
   ]);
   return {
     target_account_id: account_id,
@@ -322,6 +384,7 @@ async function loadPortableState(
     account_notification_index,
     remember_me,
     auth_tokens,
+    api_keys,
   };
 }
 
@@ -689,6 +752,7 @@ export async function copyAccountRehomeState({
   account_notification_index,
   remember_me,
   auth_tokens,
+  api_keys,
 }: AccountRehomeStateCopyRequest): Promise<void> {
   const accountId = normalizeUuid("target_account_id", target_account_id);
   normalizeBayId("source_bay_id", source_bay_id);
@@ -724,6 +788,12 @@ export async function copyAccountRehomeState({
     account_id: accountId,
     rows: auth_tokens ?? [],
   });
+  await ensureAccountRehomeApiKeysSchema();
+  await replacePortableRows({
+    table: "api_keys",
+    account_id: accountId,
+    rows: api_keys ?? [],
+  });
   log.info("account rehome destination state copied", {
     account_id: accountId,
     source_bay_id,
@@ -733,6 +803,7 @@ export async function copyAccountRehomeState({
     account_notification_index_rows: account_notification_index?.length ?? 0,
     remember_me_rows: remember_me?.length ?? 0,
     auth_tokens_rows: auth_tokens?.length ?? 0,
+    api_keys_rows: api_keys?.length ?? 0,
   });
 }
 

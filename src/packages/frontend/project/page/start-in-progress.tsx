@@ -12,6 +12,11 @@ import {
   formatProgressDetail,
   lroStatusColor,
 } from "../explorer/lro-timeline-utils";
+import {
+  isActiveOpStartLike,
+  isStartActive,
+  isStartInProgressActive,
+} from "./start-in-progress-state";
 
 const START_PANEL_DELAY_MS = 5000;
 
@@ -77,27 +82,6 @@ function toTimestamp(value?: Date | string | null): number | undefined {
   return Number.isFinite(ts) ? ts : undefined;
 }
 
-function isStartActive(startLro?: StartLroState): boolean {
-  return (
-    startLro != null &&
-    (!startLro.summary ||
-      startLro.summary.status === "queued" ||
-      startLro.summary.status === "running")
-  );
-}
-
-function isActiveOpStartLike(
-  activeOp?: {
-    kind?: string;
-    status?: string;
-  } | null,
-): boolean {
-  return (
-    activeOp?.kind === "project-start" &&
-    (activeOp.status === "queued" || activeOp.status === "running")
-  );
-}
-
 function phaseFromStart(
   startLro?: StartLroState,
   activeOp?: {
@@ -152,16 +136,17 @@ export default function StartInProgress({
     [startLroRecord],
   );
   const { activeOp } = useProjectActiveOperation(project_id);
-  const startLroActive = isStartActive(startLro);
   const activeOpStartLike = isActiveOpStartLike(activeOp);
   const lifecycleState = `${
     projectMap?.getIn([project_id, "state", "state"]) ?? ""
   }`
     .trim()
     .toLowerCase();
-  const lifecycleActive =
-    lifecycleState === "starting" || lifecycleState === "opening";
-  const active = startLroActive || activeOpStartLike || lifecycleActive;
+  const active = isStartInProgressActive({
+    startLro,
+    activeOp,
+    lifecycleState,
+  });
   const startTsFromLro = toTimestamp(
     startLro?.summary?.started_at ??
       startLro?.summary?.created_at ??
@@ -226,13 +211,16 @@ export default function StartInProgress({
     activeOp?.message ??
     ""
   }`.trim();
+  const startLroActive = isStartActive(startLro);
   const phaseLabel = START_PHASES[current]?.label ?? "Starting";
   const actionLabel =
     activeOp?.action === "restart" ? "Restarting" : "Starting";
   const message =
     rawMessage && rawMessage.toLowerCase() !== phase
       ? rawMessage
-      : !startLroActive && !activeOpStartLike && lifecycleActive
+      : !startLroActive &&
+          !activeOpStartLike &&
+          (lifecycleState === "starting" || lifecycleState === "opening")
         ? "Project is starting. Detailed startup progress has not arrived yet."
         : (START_PHASES[current]?.description ?? "Starting project");
 

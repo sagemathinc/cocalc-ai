@@ -13,6 +13,7 @@ import {
 } from "@cocalc/server/lro/lro-db";
 import { publishLroSummary } from "@cocalc/server/lro/stream";
 import { cancelCopiesByOpId } from "@cocalc/server/projects/copy-db";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const DISMISSABLE_STATUSES: LroStatus[] = [
   "succeeded",
@@ -25,10 +26,12 @@ async function assertScopeAccess({
   account_id,
   scope_type,
   scope_id,
+  mode = "manage",
 }: {
   account_id?: string;
   scope_type: LroScopeType;
   scope_id: string;
+  mode?: "read" | "manage";
 }) {
   if (scope_type === "project") {
     await assertCollabAllowRemoteProjectAccess({
@@ -60,6 +63,26 @@ async function assertScopeAccess({
     if (isOwner || collabs.includes(account_id)) {
       return;
     }
+    if (mode === "read") {
+      const { rowCount } = await getPool().query(
+        `
+          SELECT 1
+          FROM projects
+          LEFT JOIN project_hosts
+            ON project_hosts.id = projects.host_id
+           AND project_hosts.deleted IS NULL
+          WHERE projects.host_id=$1
+            AND projects.deleted IS NOT true
+            AND COALESCE(projects.owning_bay_id, $3) = COALESCE(project_hosts.bay_id, $3)
+            AND (projects.users -> $2::text ->> 'group') IN ('owner', 'collaborator')
+          LIMIT 1
+        `,
+        [scope_id, account_id, getConfiguredBayId()],
+      );
+      if (rowCount) {
+        return;
+      }
+    }
     throw new Error("not authorized");
   }
   throw new Error("unsupported scope");
@@ -78,6 +101,7 @@ export async function get({
     account_id,
     scope_type: row.scope_type,
     scope_id: row.scope_id,
+    mode: "read",
   });
   return row;
 }
@@ -93,7 +117,7 @@ export async function list({
   scope_id: string;
   include_completed?: boolean;
 }): Promise<LroSummary[]> {
-  await assertScopeAccess({ account_id, scope_type, scope_id });
+  await assertScopeAccess({ account_id, scope_type, scope_id, mode: "read" });
   return await listLro({ scope_type, scope_id, include_completed });
 }
 

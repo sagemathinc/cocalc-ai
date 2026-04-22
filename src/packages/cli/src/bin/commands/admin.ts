@@ -124,7 +124,6 @@ export function registerAdminCommand(
     .option("--last-name <lastName>", "last name")
     .option("--name <name>", "full name shorthand (split into first/last)")
     .option("--tag <tag...>", "optional account tags")
-    .option("--no-first-project", "do not start an initial invited project")
     .action(
       async (
         opts: {
@@ -134,7 +133,6 @@ export function registerAdminCommand(
           lastName?: string;
           name?: string;
           tag?: string[];
-          noFirstProject?: boolean;
         },
         command: Command,
       ) => {
@@ -161,7 +159,6 @@ export function registerAdminCommand(
             password: opts.password,
             first_name: firstName,
             last_name: lastName,
-            no_first_project: !!opts.noFirstProject,
             tags: opts.tag && opts.tag.length ? opts.tag : undefined,
           });
 

@@ -171,6 +171,7 @@ export interface ProjectControlAcceptRehomeRequest {
 
 export interface ProjectControlPortableProjectState {
   project_log?: ProjectLogRow[];
+  api_keys?: Record<string, unknown>[];
 }
 
 export interface ProjectControlRehomeResponse {
@@ -343,7 +344,6 @@ export interface AccountDirectoryCreateRequest {
   owner_id?: string;
   tags?: string[];
   signup_reason?: string;
-  no_first_project?: boolean;
   ephemeral?: number;
   customize?: any;
 }
@@ -372,6 +372,7 @@ export interface AccountRehomeStateCopyRequest {
   account_notification_index?: Record<string, unknown>[];
   remember_me?: Record<string, unknown>[];
   auth_tokens?: Record<string, unknown>[];
+  api_keys?: Record<string, unknown>[];
 }
 
 export type AccountRehomeOperationStage =

@@ -765,7 +765,6 @@ export function registerLoadCommand(
                     password: opts.password,
                     first_name: "Load",
                     last_name: `${prefix}-${index}`,
-                    no_first_project: true,
                     tags,
                   });
                   account = createdAccount;
