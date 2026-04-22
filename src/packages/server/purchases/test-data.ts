@@ -14,7 +14,6 @@ export async function createTestAccount(account_id: string) {
     firstName: "Test",
     lastName: "User",
     account_id,
-    noFirstProject: true,
   });
 }
 

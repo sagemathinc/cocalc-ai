@@ -344,7 +344,6 @@ export interface AccountDirectoryCreateRequest {
   owner_id?: string;
   tags?: string[];
   signup_reason?: string;
-  no_first_project?: boolean;
   ephemeral?: number;
   customize?: any;
 }

@@ -1168,7 +1168,6 @@ export async function adminCreateUser({
   password,
   first_name,
   last_name,
-  no_first_project,
   tags,
 }: {
   account_id?: string;
@@ -1176,7 +1175,6 @@ export async function adminCreateUser({
   password?: string;
   first_name?: string;
   last_name?: string;
-  no_first_project?: boolean;
   tags?: string[];
 }): Promise<{
   account_id: string;
@@ -1184,7 +1182,6 @@ export async function adminCreateUser({
   first_name: string;
   last_name: string;
   created_by: string;
-  no_first_project: boolean;
   password_generated: boolean;
   generated_password?: string;
 }> {
@@ -1217,7 +1214,6 @@ export async function adminCreateUser({
       last_name: lastName,
       home_bay_id: getConfiguredBayId(),
       owner_id: account_id,
-      no_first_project: !!no_first_project,
       tags: Array.isArray(tags) && tags.length ? tags : undefined,
       signup_reason: "Admin created account",
     });
@@ -1227,7 +1223,6 @@ export async function adminCreateUser({
       first_name: firstName,
       last_name: lastName,
       created_by: account_id,
-      no_first_project: !!no_first_project,
       password_generated: !!generatedPassword,
       generated_password: generatedPassword,
     };

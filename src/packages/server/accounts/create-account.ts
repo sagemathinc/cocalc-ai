@@ -24,10 +24,6 @@ interface Params {
   signupReason?: string;
   owner_id?: string;
   home_bay_id?: string;
-  // if set, do not do any of the various heuristics to start a user's initial invited project.
-  // I added this to avoid leaks with unit testing, but it may be useful in other contexts, e.g.,
-  // avoiding confusion with self-hosted installs.
-  noFirstProject?: boolean;
   ephemeral?: number;
   customize?: any;
 }
@@ -42,7 +38,6 @@ export default async function createAccount({
   signupReason,
   owner_id,
   home_bay_id,
-  noFirstProject,
   ephemeral,
   customize,
 }: Params): Promise<void> {
@@ -80,7 +75,6 @@ export default async function createAccount({
       email_address: email,
       account_id,
       tags,
-      noFirstProject,
     });
     await creationActionsDone(account_id);
   } catch (error) {
