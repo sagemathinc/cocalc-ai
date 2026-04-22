@@ -353,7 +353,7 @@ Current project-host runtime facts:
   - `host-agent` rollback path
 - [ ] validate upgrade / rollback / resume-default flows on live hosts under
       actual background load
-- [ ] validate daemon restart ordering and operator UX under partial runtime
+- [x] validate daemon restart ordering and operator UX under partial runtime
       failure
 
 Notes:
@@ -479,6 +479,20 @@ Notes:
   - restore operation `6333d1c0-4757-4dbf-adcf-e5b65e22a394` returned `host2`
     to `1776809337586`; final status showed all managed project-host
     components `running` and `aligned`
+- on 2026-04-22, partial runtime failure UX was validated on `host2` by
+  terminating host-local auxiliary daemons out-of-band:
+  - terminating `conat-router` left the other managed components running; the
+    host-agent detected a stale pid file and restarted `conat-router` as pid
+    `1971904`
+  - terminating `conat-persist` likewise left the rest of the stack running;
+    the host-agent detected the stale pid file and restarted `conat-persist` as
+    pid `1973134`
+  - `cocalc host logs --source supervision-events` exposed the useful operator
+    trail: stale pid detection followed by managed component start events
+  - final `host deploy status` showed `project-host`, `conat-router`,
+    `conat-persist`, and `acp-worker` all `running` and `aligned`; foreground
+    `cocalc project exec` against `abd37947-fd69-40ea-999c-190a9458e6b2`
+    succeeded after each injected failure
 
 ### 4. Close Phase 6 Placement / Lifecycle Validation
 
