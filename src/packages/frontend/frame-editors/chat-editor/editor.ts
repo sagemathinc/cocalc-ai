@@ -10,6 +10,7 @@ Top-level react component for editing chat
 import { createElement } from "react";
 
 import { ChatRoom } from "@cocalc/frontend/chat/chatroom";
+import { Loading } from "@cocalc/frontend/components";
 import { createEditor } from "@cocalc/frontend/frame-editors/frame-tree/editor";
 import type {
   EditorComponentProps,
@@ -27,6 +28,9 @@ export const chatroom: EditorDescription = {
   icon: "comment",
   component: (props: EditorComponentProps) => {
     const actions = props.actions.getChatActions(props.id);
+    if (actions == null) {
+      return createElement(Loading, { theme: "medium" });
+    }
     return createElement(ChatRoom, {
       ...props,
       actions,

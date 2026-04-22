@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { focusChatFrameInput } from "../actions";
+import { Actions, focusChatFrameInput } from "../actions";
 
 describe("chat editor focus", () => {
   beforeEach(() => {
@@ -54,5 +54,17 @@ describe("chat editor focus", () => {
 
   it("returns false when the frame does not exist", () => {
     expect(focusChatFrameInput("missing")).toBe(false);
+  });
+
+  it("does not throw if chat actions are requested after close", () => {
+    const fakeActions = Object.assign(Object.create(Actions.prototype), {
+      chatActions: {},
+      _get_frame_type: () => "chatroom",
+      isClosed: () => true,
+    });
+
+    expect(
+      Actions.prototype.getChatActions.call(fakeActions as any, "frame-a"),
+    ).toBeUndefined();
   });
 });
