@@ -106,9 +106,18 @@ describe("SSHPanel", () => {
     );
 
     expect(
-      screen.getByText(/For workspace SSH from your machine, install the/i),
+      screen.getByText(/Launchpad project SSH is routed through Cloudflare/i),
     ).toBeTruthy();
-    expect(screen.getByText("cocalc project ssh -w project-1")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "COCALC_API_KEY=<account-api-key> cocalc --api http://localhost project ssh -w project-1",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "COCALC_API_KEY=<account-api-key> cocalc --api http://localhost project ssh-config add -w project-1",
+      ),
+    ).toBeTruthy();
     expect(
       screen.getByText(
         "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash",
@@ -116,6 +125,7 @@ describe("SSHPanel", () => {
     ).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "CoCalc CLI" }).getAttribute("href"),
-    ).toBe("https://software.cocalc.ai/software/cocalc/install.sh");
+    ).toBe("https://software.cocalc.ai/software/cocalc/index.html");
+    expect(screen.queryByText(/must be running/i)).toBeNull();
   });
 });

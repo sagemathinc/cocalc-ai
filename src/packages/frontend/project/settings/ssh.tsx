@@ -18,8 +18,10 @@ import { Project } from "./types";
 import { lite } from "@cocalc/frontend/lite";
 
 const { Text, Paragraph } = Typography;
-const COCALC_CLI_INSTALL_URL =
-  "https://software.cocalc.ai/software/cocalc/install.sh";
+const COCALC_CLI_DOWNLOAD_URL =
+  "https://software.cocalc.ai/software/cocalc/index.html";
+const COCALC_CLI_INSTALL_COMMAND =
+  "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash";
 
 interface Props {
   project: Project;
@@ -65,9 +67,10 @@ export function SSHPanel({ project, mode = "project" }: Props) {
         ? `ssh -p ${sshInfo.port} ${projectId}@${sshInfo.host}`
         : `ssh ${projectId}@${sshInfo.host}`
       : null;
-  const cliInstallCommand =
-    "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash";
-  const cliSshCommand = `cocalc project ssh -w ${projectId}`;
+  const apiUrl =
+    typeof window === "undefined" ? "<hub-url>" : window.location.origin;
+  const cliSshCommand = `COCALC_API_KEY=<account-api-key> cocalc --api ${apiUrl} project ssh -w ${projectId}`;
+  const cliSshConfigCommand = `COCALC_API_KEY=<account-api-key> cocalc --api ${apiUrl} project ssh-config add -w ${projectId}`;
 
   useEffect(() => {
     setSshCopied(false);
@@ -112,12 +115,46 @@ export function SSHPanel({ project, mode = "project" }: Props) {
             add your key to ~/.ssh/authorized_keys
           </Button>
         </p>
-        <p>
-          The {projectLabelLower} <Text strong>must be running</Text> in order
-          to connect via ssh. It is not necessary to restart the{" "}
-          {projectLabelLower} after you add or remove a key.
-        </p>
-        {sshCommand && (
+        <Paragraph>
+          SSH access is full OpenSSH access to this {projectLabelLower},
+          including remote commands, port forwarding, and X11 forwarding when
+          your local SSH setup supports them. If the {projectLabelLower} is not
+          running, SSH access will request that it starts; if your first attempt
+          only wakes it up, try the same command again after a moment.
+        </Paragraph>
+        {localProxy ? (
+          <>
+            <Paragraph>
+              Launchpad project SSH is routed through Cloudflare. Direct host
+              ports are not exposed, so use the{" "}
+              <A href={COCALC_CLI_DOWNLOAD_URL}>CoCalc CLI</A>, which starts a
+              local Cloudflare tunnel and configures SSH for this route.
+            </Paragraph>
+            <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+              Install command: <Text code>{COCALC_CLI_INSTALL_COMMAND}</Text>
+            </Paragraph>
+            <Paragraph>
+              Create an account API key using the button below, then run:
+            </Paragraph>
+            <Paragraph style={{ marginBottom: 8 }}>
+              <Text code copyable={{ text: cliSshCommand }}>
+                {cliSshCommand}
+              </Text>
+            </Paragraph>
+            <Paragraph>
+              To add a reusable <Text code>~/.ssh/config</Text> entry:
+            </Paragraph>
+            <Paragraph style={{ marginBottom: 8 }}>
+              <Text code copyable={{ text: cliSshConfigCommand }}>
+                {cliSshConfigCommand}
+              </Text>
+            </Paragraph>
+            <Paragraph type="secondary">
+              The CLI will create a local SSH key if needed and install the
+              public key into this {projectLabelLower}.
+            </Paragraph>
+          </>
+        ) : sshCommand ? (
           <>
             <p>{localProxy ? "SSH target (via hub):" : "SSH target:"}</p>
             <div
@@ -147,28 +184,8 @@ export function SSHPanel({ project, mode = "project" }: Props) {
                 </Tooltip>
               </CopyToClipboard>
             </div>
-            {localProxy && (
-              <Paragraph type="secondary" style={{ marginTop: 0 }}>
-                This SSH target routes through the hub’s reverse tunnel. Ensure
-                you can reach the hub host and port from your machine.
-              </Paragraph>
-            )}
           </>
-        )}
-        {localProxy && (
-          <>
-            <Paragraph>
-              For workspace SSH from your machine, install the{" "}
-              <A href={COCALC_CLI_INSTALL_URL}>CoCalc CLI</A> once, then run{" "}
-              <Text code>{cliSshCommand}</Text>. The CLI installs your local SSH
-              key automatically and configures the proxy command for this
-              workspace route.
-            </Paragraph>
-            <Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              Install command: <Text code>{cliInstallCommand}</Text>
-            </Paragraph>
-          </>
-        )}
+        ) : null}
         <Paragraph>
           <A href="https://doc.cocalc.com/account/ssh.html">
             <Icon name="life-ring" /> Docs...
