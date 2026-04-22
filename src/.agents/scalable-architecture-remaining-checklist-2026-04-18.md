@@ -617,13 +617,16 @@ main production reasons to do it are:
 - [x] source bay flips `owning_bay_id` only after destination accept succeeds
       and updates its local account-project projection rows
 - [x] durable per-project rehome operation record with explicit state machine:
-      `requested -> destination_accepted -> source_flipped -> projected -> complete`
+      `requested -> destination_accepted -> source_flipped -> portable_state_copied -> projected -> complete`
 - [x] idempotent reconcile command for stuck operation states, especially
       destination-accepted/source-flip-failed
 - [x] batch/drain wrapper that groups many per-project rehomes into a bay drain
       or load-shedding campaign
 - [x] bay admission control so an operator can mark a bay as "do not place new
       project ownership here" before draining existing ownership
+- [x] copy portable bay-local project state during rehome; initially this means
+      merging the `project-log` Conat stream into the destination bay after the
+      source ownership flip and before projection completion
 - [ ] project fence / quiesce for concurrent metadata writes during rehome
 - [ ] projection convergence validation under real multi-bay lag/failure
 - [ ] rollback / retry plan for destination-accepted/source-flip-failed cases

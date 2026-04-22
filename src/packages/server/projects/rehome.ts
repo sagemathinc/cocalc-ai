@@ -4,10 +4,18 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
+import { dstream } from "@cocalc/backend/conat/sync";
 import getPool from "@cocalc/database/pool";
 import { drainAccountProjectIndexProjection } from "@cocalc/database/postgres/account-project-index-projector";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
-import type { ProjectControlRehomeResponse } from "@cocalc/conat/inter-bay/api";
+import {
+  type ProjectControlPortableProjectState,
+  type ProjectControlRehomeResponse,
+} from "@cocalc/conat/inter-bay/api";
+import {
+  PROJECT_LOG_STREAM_NAME,
+  type ProjectLogRow,
+} from "@cocalc/conat/hub/api/projects";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { assertBayAcceptsProjectOwnership } from "@cocalc/server/bay-registry";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -27,6 +35,7 @@ export type ProjectRehomeOperationStage =
   | "requested"
   | "destination_accepted"
   | "source_flipped"
+  | "portable_state_copied"
   | "projected"
   | "complete";
 
@@ -92,6 +101,7 @@ async function ensureProjectRehomeSchema(): Promise<void> {
         last_error TEXT,
         destination_accepted_at TIMESTAMPTZ,
         source_flipped_at TIMESTAMPTZ,
+        portable_state_copied_at TIMESTAMPTZ,
         projected_at TIMESTAMPTZ,
         finished_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -106,6 +116,9 @@ async function ensureProjectRehomeSchema(): Promise<void> {
     );
     await getPool().query(
       `CREATE INDEX IF NOT EXISTS project_rehome_operations_campaign_idx ON ${PROJECT_REHOME_OPERATIONS_TABLE}(campaign_id)`,
+    );
+    await getPool().query(
+      `ALTER TABLE ${PROJECT_REHOME_OPERATIONS_TABLE} ADD COLUMN IF NOT EXISTS portable_state_copied_at TIMESTAMPTZ`,
     );
   })();
   await projectRehomeSchemaReady;
@@ -372,6 +385,10 @@ async function updateProjectRehomeOperation({
       );
     } else if (stage === "source_flipped") {
       sets.push("source_flipped_at = COALESCE(source_flipped_at, NOW())");
+    } else if (stage === "portable_state_copied") {
+      sets.push(
+        "portable_state_copied_at = COALESCE(portable_state_copied_at, NOW())",
+      );
     } else if (stage === "projected") {
       sets.push("projected_at = COALESCE(projected_at, NOW())");
     }
@@ -460,17 +477,142 @@ async function flipSourceOwnershipIfNeeded({
   });
 }
 
+async function openProjectLogStream(project_id: string) {
+  return await dstream<ProjectLogRow>({
+    project_id,
+    name: PROJECT_LOG_STREAM_NAME,
+    noAutosave: true,
+    noCache: true,
+    noInventory: true,
+  });
+}
+
+function normalizeProjectLogRows(
+  project_id: string,
+  rows: ProjectLogRow[] | undefined,
+): ProjectLogRow[] {
+  if (!rows?.length) return [];
+  const normalized: ProjectLogRow[] = [];
+  for (const row of rows) {
+    if (
+      row == null ||
+      typeof row !== "object" ||
+      !row.id ||
+      row.project_id !== project_id
+    ) {
+      continue;
+    }
+    normalized.push(row);
+  }
+  return normalized;
+}
+
+async function readLocalProjectLogRows(
+  project_id: string,
+): Promise<ProjectLogRow[]> {
+  const stream = await openProjectLogStream(project_id);
+  try {
+    return normalizeProjectLogRows(project_id, stream.getAll());
+  } finally {
+    stream.close();
+  }
+}
+
+async function mergeLocalProjectLogRows({
+  project_id,
+  rows,
+}: {
+  project_id: string;
+  rows: ProjectLogRow[] | undefined;
+}): Promise<number> {
+  const normalized = normalizeProjectLogRows(project_id, rows);
+  if (!normalized.length) return 0;
+  const stream = await openProjectLogStream(project_id);
+  try {
+    const existing = new Set(
+      normalizeProjectLogRows(project_id, stream.getAll()).map((row) => row.id),
+    );
+    let copied = 0;
+    for (const row of normalized) {
+      if (existing.has(row.id)) continue;
+      stream.publish(row);
+      existing.add(row.id);
+      copied += 1;
+    }
+    if (copied) {
+      await stream.save();
+    }
+    return copied;
+  } finally {
+    stream.close();
+  }
+}
+
+async function readPortableProjectState(
+  project_id: string,
+): Promise<ProjectControlPortableProjectState> {
+  return {
+    project_log: await readLocalProjectLogRows(project_id),
+  };
+}
+
+async function mergePortableProjectState({
+  project_id,
+  portable_state,
+}: {
+  project_id: string;
+  portable_state?: ProjectControlPortableProjectState;
+}): Promise<void> {
+  const copied = await mergeLocalProjectLogRows({
+    project_id,
+    rows: portable_state?.project_log,
+  });
+  if (copied) {
+    log.info("project rehome copied project log rows", {
+      project_id,
+      copied,
+    });
+  }
+}
+
+async function copyPortableProjectStateToDestination({
+  project_id,
+  source_bay_id,
+  dest_bay_id,
+  project,
+}: {
+  project_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  project: Record<string, unknown>;
+}): Promise<void> {
+  const portable_state = await readPortableProjectState(project_id);
+  await getInterBayBridge()
+    .projectControl(dest_bay_id, {
+      timeout_ms: ACCEPT_REHOME_TIMEOUT_MS,
+    })
+    .acceptRehome({
+      project_id,
+      source_bay_id,
+      dest_bay_id,
+      project,
+      portable_state,
+    });
+}
+
 export async function acceptProjectRehome({
   project_id,
   source_bay_id,
   dest_bay_id,
   project,
+  portable_state,
 }: {
   account_id?: string;
   project_id: string;
   source_bay_id: string;
   dest_bay_id: string;
   project: Record<string, unknown>;
+  portable_state?: ProjectControlPortableProjectState;
 }): Promise<ProjectControlRehomeResponse> {
   const normalizedProjectId = normalizeProjectId(project_id);
   const sourceBayId = normalizeExplicitBayId("source_bay_id", source_bay_id);
@@ -509,6 +651,11 @@ export async function acceptProjectRehome({
   } finally {
     client.release();
   }
+
+  await mergePortableProjectState({
+    project_id: normalizedProjectId,
+    portable_state,
+  });
 
   await drainAccountProjectIndexProjection({
     bay_id: destBayId,
@@ -611,9 +758,11 @@ export async function runProjectRehomeOperation(
     if (!project) {
       const currentOwningBay = await loadLocalProjectOwningBay(op.project_id);
       if (currentOwningBay === op.dest_bay_id) {
+        project = await loadProjectRowForRehome(op.project_id);
         op = await updateProjectRehomeOperation({
           op_id,
           stage: "source_flipped",
+          project,
         });
       } else {
         const directOwnership = await resolveProjectBayDirect(op.project_id);
@@ -662,6 +811,21 @@ export async function runProjectRehomeOperation(
     }
 
     if (op.stage === "source_flipped") {
+      project =
+        project ?? op.project ?? (await loadProjectRowForRehome(op.project_id));
+      await copyPortableProjectStateToDestination({
+        project_id: op.project_id,
+        source_bay_id: op.source_bay_id,
+        dest_bay_id: op.dest_bay_id,
+        project,
+      });
+      op = await updateProjectRehomeOperation({
+        op_id,
+        stage: "portable_state_copied",
+      });
+    }
+
+    if (op.stage === "portable_state_copied") {
       await updateLocalProjectionRows({
         project_id: op.project_id,
         dest_bay_id: op.dest_bay_id,

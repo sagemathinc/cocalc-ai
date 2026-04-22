@@ -982,6 +982,7 @@ export interface Projects {
       | "requested"
       | "destination_accepted"
       | "source_flipped"
+      | "portable_state_copied"
       | "projected"
       | "complete";
     operation_status?: "running" | "succeeded" | "failed";
@@ -1000,6 +1001,7 @@ export interface Projects {
       | "requested"
       | "destination_accepted"
       | "source_flipped"
+      | "portable_state_copied"
       | "projected"
       | "complete";
     operation_status?: "running" | "succeeded" | "failed";

@@ -31,6 +31,7 @@ import type {
   ProjectCreated,
   ProjectEnv,
   ProjectLauncherSettings,
+  ProjectLogRow,
   ProjectQuotaSettings,
   ProjectRegion,
   ProjectRootfsConfig,
@@ -164,7 +165,12 @@ export interface ProjectControlAcceptRehomeRequest {
   source_bay_id: string;
   dest_bay_id: string;
   project: Record<string, unknown>;
+  portable_state?: ProjectControlPortableProjectState;
   epoch?: number;
+}
+
+export interface ProjectControlPortableProjectState {
+  project_log?: ProjectLogRow[];
 }
 
 export interface ProjectControlRehomeResponse {
@@ -176,6 +182,7 @@ export interface ProjectControlRehomeResponse {
     | "requested"
     | "destination_accepted"
     | "source_flipped"
+    | "portable_state_copied"
     | "projected"
     | "complete";
   operation_status?: "running" | "succeeded" | "failed";

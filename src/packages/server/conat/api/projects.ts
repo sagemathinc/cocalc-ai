@@ -1634,6 +1634,7 @@ export async function rehomeProject({
     | "requested"
     | "destination_accepted"
     | "source_flipped"
+    | "portable_state_copied"
     | "projected"
     | "complete";
   operation_status?: "running" | "succeeded" | "failed";
@@ -1666,6 +1667,7 @@ export async function reconcileProjectRehome({
     | "requested"
     | "destination_accepted"
     | "source_flipped"
+    | "portable_state_copied"
     | "projected"
     | "complete";
   operation_status?: "running" | "succeeded" | "failed";

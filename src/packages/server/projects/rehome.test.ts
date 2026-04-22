@@ -14,6 +14,9 @@ let appendProjectOutboxEventForProjectMock: jest.Mock;
 let drainAccountProjectIndexProjectionMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let assertBayAcceptsProjectOwnershipMock: jest.Mock;
+let dstreamMock: jest.Mock;
+let dstreamRowsQueue: any[][];
+let dstreamPublishedRows: any[];
 let operationRow: any;
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -75,9 +78,20 @@ jest.mock("@cocalc/server/account/project-feed", () => ({
     publishProjectAccountFeedEventsBestEffortMock(...args),
 }));
 
+jest.mock("@cocalc/backend/conat/sync", () => ({
+  dstream: (...args: any[]) => dstreamMock(...args),
+}));
+
 describe("project rehome", () => {
   const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
   const ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
+  const PROJECT_LOG_ROW = {
+    id: "log-1",
+    project_id: PROJECT_ID,
+    account_id: ACCOUNT_ID,
+    time: new Date("2026-04-22T00:00:00.000Z"),
+    event: { event: "open", path: "a.txt" },
+  };
 
   beforeEach(() => {
     jest.resetModules();
@@ -130,6 +144,7 @@ describe("project rehome", () => {
             "requested",
             "destination_accepted",
             "source_flipped",
+            "portable_state_copied",
             "projected",
             "complete",
           ].includes(value),
@@ -207,6 +222,17 @@ describe("project rehome", () => {
       async () => undefined,
     );
     assertBayAcceptsProjectOwnershipMock = jest.fn(async () => undefined);
+    dstreamRowsQueue = [[PROJECT_LOG_ROW]];
+    dstreamPublishedRows = [];
+    dstreamMock = jest.fn(async () => {
+      const rows = dstreamRowsQueue.length ? dstreamRowsQueue.shift()! : [];
+      return {
+        getAll: jest.fn(() => rows),
+        publish: jest.fn((row) => dstreamPublishedRows.push(row)),
+        save: jest.fn(async () => undefined),
+        close: jest.fn(),
+      };
+    });
   });
 
   it("routes rehome requests to the current owning bay", async () => {
@@ -295,7 +321,11 @@ describe("project rehome", () => {
       operation_status: "succeeded",
       status: "rehomed",
     });
-    expect(order).toEqual(["accept-destination", "flip-source"]);
+    expect(order).toEqual([
+      "accept-destination",
+      "flip-source",
+      "accept-destination",
+    ]);
     expect(acceptRehomeMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
       source_bay_id: "bay-0",
@@ -306,6 +336,21 @@ describe("project rehome", () => {
         title: "Project",
         users: {},
         deleted: false,
+      },
+    });
+    expect(acceptRehomeMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      source_bay_id: "bay-0",
+      dest_bay_id: "bay-2",
+      project: {
+        project_id: PROJECT_ID,
+        owning_bay_id: "bay-0",
+        title: "Project",
+        users: {},
+        deleted: false,
+      },
+      portable_state: {
+        project_log: [PROJECT_LOG_ROW],
       },
     });
     expect(queryMock).toHaveBeenCalledWith(
@@ -361,7 +406,51 @@ describe("project rehome", () => {
     });
   });
 
-  it("reconciles a destination-accepted operation without reaccepting", async () => {
+  it("destination accept merges portable project log rows", async () => {
+    dstreamRowsQueue = [[PROJECT_LOG_ROW]];
+    const { acceptProjectRehome } = await import("./rehome");
+
+    await acceptProjectRehome({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      source_bay_id: "bay-1",
+      dest_bay_id: "bay-0",
+      project: {
+        project_id: PROJECT_ID,
+        owning_bay_id: "bay-1",
+        title: "Project",
+        users: {},
+        deleted: false,
+      },
+      portable_state: {
+        project_log: [
+          PROJECT_LOG_ROW,
+          {
+            ...PROJECT_LOG_ROW,
+            id: "log-2",
+            event: { event: "open", path: "b.txt" },
+          },
+        ],
+      },
+    });
+
+    expect(dstreamMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      name: "project-log",
+      noAutosave: true,
+      noCache: true,
+      noInventory: true,
+    });
+    expect(dstreamPublishedRows).toEqual([
+      {
+        ...PROJECT_LOG_ROW,
+        id: "log-2",
+        event: { event: "open", path: "b.txt" },
+      },
+    ]);
+  });
+
+  it("reconciles a destination-accepted operation by copying portable state", async () => {
     operationRow = {
       op_id: "33333333-3333-4333-8333-333333333333",
       project_id: PROJECT_ID,
@@ -408,7 +497,21 @@ describe("project rehome", () => {
       status: "rehomed",
     });
 
-    expect(acceptRehomeMock).not.toHaveBeenCalled();
+    expect(acceptRehomeMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      source_bay_id: "bay-0",
+      dest_bay_id: "bay-2",
+      project: {
+        project_id: PROJECT_ID,
+        owning_bay_id: "bay-0",
+        title: "Project",
+        users: {},
+        deleted: false,
+      },
+      portable_state: {
+        project_log: [PROJECT_LOG_ROW],
+      },
+    });
     expect(order).toEqual(["flip-source"]);
   });
 
