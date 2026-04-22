@@ -627,9 +627,41 @@ main production reasons to do it are:
 - [x] copy portable bay-local project state during rehome; initially this means
       merging the `project-log` Conat stream into the destination bay after the
       source ownership flip and before projection completion
-- [ ] project fence / quiesce for concurrent metadata writes during rehome
-- [ ] projection convergence validation under real multi-bay lag/failure
+- [x] project fence / quiesce for concurrent metadata writes during rehome
+- [x] live 3-bay happy-path validation for per-project rehome and projection
+      convergence
 - [ ] rollback / retry plan for destination-accepted/source-flip-failed cases
+- [ ] failure-injection validation for destination-accepted/source-flip-failed
+      cases and delayed projection convergence
+
+Live 3-bay validation evidence, 2026-04-21 PT:
+
+- Started the local 3-bay hub cluster and verified `bay-0`, `bay-1`, and
+  `bay-2` were running and accepting project ownership.
+- Created disposable project
+  `4f9b5b19-69c8-4572-bafa-86452513f061`, initially owned by `bay-0`,
+  then ran `cocalc project rehome --bay bay-1 --yes`. Operation
+  `129fddf3-c2bd-44c5-99d6-35949923ce70` completed with
+  `status=succeeded`, `stage=complete`, `portable_state_copied_at`,
+  `projected_at`, and `finished_at` all set. `project where` reported
+  `owning_bay_id=bay-1`, and `account_project_index` converged to `bay-1`.
+- Created host-assigned disposable project
+  `f389c8bb-6912-4c7c-88a4-ab86a542f701` on host
+  `fe625be4-c86f-4fc4-b324-fda2f895e448`, initially owned by `bay-0`,
+  then ran `cocalc project rehome --bay bay-2 --yes`. Operation
+  `2cca11ff-d2df-41c6-9adf-f1aff63becf2` completed with
+  `status=succeeded`, `stage=complete`, `portable_state_copied_at`,
+  `projected_at`, and `finished_at` all set. `project where` reported
+  `owning_bay_id=bay-2`, the host assignment was preserved, `project log`
+  routed successfully after rehome, and `account_project_index` converged to
+  `bay-2`.
+- `cocalc project rehome-drain --source-bay bay-0 --dest-bay bay-2` dry-run
+  returned five source-bay candidates and no errors. Running the same command
+  from the seed while specifying `--source-bay bay-1` correctly failed because
+  drain execution must happen on the source bay.
+- Both disposable rehomed projects were cleaned up with
+  `cocalc project delete --hard --purge-backups-now --wait --yes`; both delete
+  operations completed with `status=succeeded`.
 
 ### 10. Host Move / Reassignment
 
