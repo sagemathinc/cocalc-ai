@@ -396,6 +396,16 @@ export function buildGitShowArgs({
   ];
 }
 
+export function buildGitLogArgs(): string[] {
+  return [
+    "log",
+    "--no-merges",
+    `-n${GIT_LOG_FETCH_COUNT}`,
+    "--format=%H%x09%s",
+    "--date-order",
+  ];
+}
+
 function parseGitShowOutput(stdout: string, repoRoot?: string): GitShowParsed {
   const allLines = `${stdout ?? ""}`.split(/\r?\n/);
   const linesTruncated = allLines.length > MAX_GIT_SHOW_LINES;
@@ -1591,12 +1601,7 @@ export function GitCommitDrawer({
         const logResult = await runGitCommand({
           projectId,
           cwd: root || cwd,
-          args: [
-            "log",
-            `-n${GIT_LOG_FETCH_COUNT}`,
-            "--format=%H%x09%s",
-            "--date-order",
-          ],
+          args: buildGitLogArgs(),
         });
         if (logResult.exit_code !== 0) {
           throw new Error(

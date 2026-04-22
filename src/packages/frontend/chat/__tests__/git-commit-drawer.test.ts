@@ -5,6 +5,7 @@ import {
   diffLineNumberColumnWidth,
   getCommitReviewIndicatorState,
   MarkdownHistoryInput,
+  buildGitLogArgs,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
   isMergeCommitSummary,
@@ -85,6 +86,10 @@ describe("git commit drawer merge commit formatting", () => {
       "-U7",
       "HEAD",
     ]);
+  });
+
+  it("excludes merge commits from the git review log", () => {
+    expect(buildGitLogArgs()).toContain("--no-merges");
   });
 
   it("keeps undo and redo local for git review note/comment editors", () => {
