@@ -14,6 +14,7 @@ import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run"
 import { init as initProjectRunnerFilesystem } from "@cocalc/project-runner/run/filesystem";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { initCodexProjectRunner } from "./codex/codex-project";
+import { initCodexGeneratedImageBlobWriter } from "./codex/generated-image-blobs";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { configureProjectHostAcpContainerFileIO } from "./file-server";
 import { PROJECT_RUNNER_RPC_TIMEOUT_MS, wireProjectsApi } from "./hub/projects";
@@ -79,6 +80,7 @@ function configureProjectHostAcpRuntime(): void {
   configureProjectHostAcpContainerFileIO();
   initCodexProjectRunner();
   initCodexSiteKeyGovernor();
+  initCodexGeneratedImageBlobWriter();
 }
 
 function connectMasterClient() {

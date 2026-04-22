@@ -3,6 +3,7 @@ import { CodexCredentialsPanel } from "./codex-credentials-panel";
 
 const getCodexPaymentSource = jest.fn();
 const codexDeviceAuthStart = jest.fn();
+const codexDeviceAuthStatus = jest.fn();
 
 jest.mock("antd", () => {
   const Button = ({ children, onClick }: any) => (
@@ -84,6 +85,8 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
         projects: {
           codexDeviceAuthStart: (...args: any[]) =>
             codexDeviceAuthStart(...args),
+          codexDeviceAuthStatus: (...args: any[]) =>
+            codexDeviceAuthStatus(...args),
         },
         system: {
           getCodexPaymentSource: (...args: any[]) =>
@@ -105,6 +108,7 @@ function deferred<T>() {
 describe("CodexCredentialsPanel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.useRealTimers();
   });
 
   it("clears the previous payment source label immediately when the project changes", async () => {
@@ -186,6 +190,65 @@ describe("CodexCredentialsPanel", () => {
         ),
       ).toBeNull();
       expect(screen.getByText("loading")).toBeTruthy();
+    });
+  });
+
+  it("notifies parent state when device auth completes", async () => {
+    jest.useFakeTimers();
+    getCodexPaymentSource.mockResolvedValue({ source: "none" });
+    codexDeviceAuthStart.mockResolvedValue({
+      id: "auth-1",
+      projectId: "project-1",
+      accountId: "account-1",
+      codexHome: "/tmp/.codex",
+      state: "pending",
+      output: "",
+      startedAt: 1,
+      updatedAt: 1,
+    });
+    codexDeviceAuthStatus.mockResolvedValue({
+      id: "auth-1",
+      projectId: "project-1",
+      accountId: "account-1",
+      codexHome: "/tmp/.codex",
+      state: "completed",
+      output: "",
+      startedAt: 1,
+      updatedAt: 2,
+    });
+    const onPaymentSourceChanged = jest.fn();
+
+    render(
+      <CodexCredentialsPanel
+        embedded
+        defaultProjectId="project-1"
+        onPaymentSourceChanged={onPaymentSourceChanged}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Not configured")).toBeTruthy();
+    });
+
+    await act(async () => {
+      screen.getByText("Start device login").click();
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText((text) =>
+          text.includes("Device auth status: pending"),
+        ),
+      ).toBeTruthy();
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(onPaymentSourceChanged).toHaveBeenCalled();
     });
   });
 });

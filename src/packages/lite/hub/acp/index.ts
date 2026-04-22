@@ -228,6 +228,21 @@ const ACP_INSTANCE_ID =
   `${process.env.COCALC_ACP_INSTANCE_ID ?? ""}`.trim() || randomUUID();
 
 let blobStore: AKV | null = null;
+type GeneratedImageBlobWriter = (opts: {
+  uuid: string;
+  blob: Buffer;
+  accountId?: string;
+  projectId?: string;
+}) => Promise<void>;
+
+let generatedImageBlobWriter: GeneratedImageBlobWriter | undefined;
+
+export function setGeneratedImageBlobWriter(
+  writer: GeneratedImageBlobWriter | undefined,
+): void {
+  generatedImageBlobWriter = writer;
+}
+
 const agents = new Map<string, AcpAgent>();
 let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
@@ -7533,7 +7548,17 @@ async function uploadGeneratedImageBlob(opts: {
   }
   const blob = await fs.readFile(realFile);
   const uuid = uuidsha1(blob);
-  if (hasRemote) {
+  let storage: "custom" | "remote-hub" | "local" = "local";
+  if (generatedImageBlobWriter) {
+    storage = "custom";
+    await generatedImageBlobWriter({
+      uuid,
+      blob,
+      accountId: opts.accountId,
+      projectId: opts.projectId,
+    });
+  } else if (hasRemote) {
+    storage = "remote-hub";
     await uploadGeneratedImageBlobToRemoteHub({
       uuid,
       blob,
@@ -7550,6 +7575,7 @@ async function uploadGeneratedImageBlob(opts: {
     uuid,
     filename,
     bytes: blob.byteLength,
+    storage,
     elapsedMs: Math.round(performance.now() - started),
     imageId: opts.imageId,
     projectId: opts.projectId,
