@@ -178,9 +178,15 @@ export type ProjectControlEvent = {
     | "project_restart_requested"
     | "project_stopped"
     | "project_moved"
+    | "project_rehomed"
     | "project_started";
   time?: number;
   duration_ms?: number;
+  op_id?: string;
+  source_bay_id?: string;
+  dest_bay_id?: string;
+  reason?: string;
+  campaign_id?: string;
 };
 
 export type FileActionEvent =

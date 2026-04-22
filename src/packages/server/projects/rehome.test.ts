@@ -123,6 +123,9 @@ describe("project rehome", () => {
           attempt: 0,
           project: null,
           last_error: null,
+          created_at: new Date("2026-04-22T00:00:00.000Z"),
+          updated_at: new Date("2026-04-22T00:00:00.000Z"),
+          finished_at: null,
         };
         return { rows: [operationRow] };
       }
@@ -135,6 +138,7 @@ describe("project rehome", () => {
           status: "running",
           attempt: (operationRow?.attempt ?? 0) + 1,
           last_error: null,
+          finished_at: null,
         };
         return { rows: [operationRow] };
       }
@@ -163,6 +167,10 @@ describe("project rehome", () => {
           ...(stage ? { stage } : {}),
           ...(status ? { status } : {}),
           ...(project ? { project } : {}),
+          updated_at: new Date("2026-04-22T00:00:05.000Z"),
+          ...(status === "succeeded"
+            ? { finished_at: new Date("2026-04-22T00:00:05.000Z") }
+            : {}),
         };
         return { rows: [operationRow] };
       }
@@ -195,6 +203,9 @@ describe("project rehome", () => {
           attempt: 0,
           project: null,
           last_error: null,
+          created_at: new Date("2026-04-22T00:00:00.000Z"),
+          updated_at: new Date("2026-04-22T00:00:00.000Z"),
+          finished_at: null,
         };
         return { rows: [operationRow] };
       }
@@ -351,9 +362,11 @@ describe("project rehome", () => {
       "accept-destination",
       "flip-source",
       "accept-destination",
+      "accept-destination",
     ]);
     expect(acceptRehomeMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
+      account_id: ACCOUNT_ID,
       source_bay_id: "bay-0",
       dest_bay_id: "bay-2",
       project: {
@@ -377,6 +390,38 @@ describe("project rehome", () => {
       },
       portable_state: {
         project_log: [PROJECT_LOG_ROW],
+      },
+    });
+    expect(acceptRehomeMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      account_id: ACCOUNT_ID,
+      source_bay_id: "bay-0",
+      dest_bay_id: "bay-2",
+      project: {
+        project_id: PROJECT_ID,
+        owning_bay_id: "bay-0",
+        title: "Project",
+        users: {},
+        deleted: false,
+      },
+      portable_state: {
+        project_log: [
+          {
+            id: "project-rehome:33333333-3333-4333-8333-333333333333",
+            project_id: PROJECT_ID,
+            account_id: ACCOUNT_ID,
+            time: new Date("2026-04-22T00:00:05.000Z"),
+            event: {
+              event: "project_rehomed",
+              op_id: "33333333-3333-4333-8333-333333333333",
+              source_bay_id: "bay-0",
+              dest_bay_id: "bay-2",
+              duration_ms: 5000,
+              reason: undefined,
+              campaign_id: undefined,
+            },
+          },
+        ],
       },
     });
     expect(queryMock).toHaveBeenCalledWith(

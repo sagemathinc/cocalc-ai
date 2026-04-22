@@ -362,6 +362,22 @@ function summarizeProjectRehomeOperation(
   };
 }
 
+function dateValueMs(value: Date | string | null | undefined): number | null {
+  if (value == null) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  const ms = date.getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function projectRehomeDurationMs(
+  row: Pick<ProjectRehomeOperationRow, "created_at" | "finished_at">,
+): number | undefined {
+  const start = dateValueMs(row.created_at);
+  const finish = dateValueMs(row.finished_at);
+  if (start == null || finish == null || finish < start) return undefined;
+  return finish - start;
+}
+
 async function updateProjectRehomeOperation({
   op_id,
   status,
@@ -588,6 +604,64 @@ async function mergePortableProjectState({
   }
 }
 
+function projectRehomeLogRow(
+  op: ProjectRehomeOperationRow,
+): ProjectLogRow | undefined {
+  if (!op.requested_by) return undefined;
+  return {
+    id: `project-rehome:${op.op_id}`,
+    project_id: op.project_id,
+    account_id: op.requested_by,
+    time: op.finished_at ? new Date(op.finished_at) : new Date(),
+    event: {
+      event: "project_rehomed",
+      op_id: op.op_id,
+      source_bay_id: op.source_bay_id,
+      dest_bay_id: op.dest_bay_id,
+      duration_ms: projectRehomeDurationMs(op),
+      reason: op.reason ?? undefined,
+      campaign_id: op.campaign_id ?? undefined,
+    },
+  };
+}
+
+async function appendProjectRehomeLogEntry({
+  op,
+  project,
+}: {
+  op: ProjectRehomeOperationRow;
+  project: Record<string, unknown>;
+}): Promise<void> {
+  const row = projectRehomeLogRow(op);
+  if (!row) return;
+  log.info("project rehome writing project-log entry", {
+    op_id: op.op_id,
+    project_id: op.project_id,
+    source_bay_id: op.source_bay_id,
+    dest_bay_id: op.dest_bay_id,
+    duration_ms: (row.event as Record<string, unknown>).duration_ms,
+  });
+  await getInterBayBridge()
+    .projectControl(op.dest_bay_id, {
+      timeout_ms: ACCEPT_REHOME_TIMEOUT_MS,
+    })
+    .acceptRehome({
+      account_id: op.requested_by ?? undefined,
+      project_id: op.project_id,
+      source_bay_id: op.source_bay_id,
+      dest_bay_id: op.dest_bay_id,
+      project,
+      portable_state: {
+        project_log: [row],
+      },
+    });
+  log.info("project rehome wrote project-log entry", {
+    op_id: op.op_id,
+    project_id: op.project_id,
+    dest_bay_id: op.dest_bay_id,
+  });
+}
+
 async function copyPortableProjectStateToDestination({
   project_id,
   source_bay_id,
@@ -802,6 +876,7 @@ export async function runProjectRehomeOperation(
         })
         .acceptRehome({
           project_id: op.project_id,
+          account_id: op.requested_by ?? undefined,
           source_bay_id: op.source_bay_id,
           dest_bay_id: op.dest_bay_id,
           project: project ?? op.project ?? {},
@@ -855,6 +930,19 @@ export async function runProjectRehomeOperation(
         status: "succeeded",
         stage: "complete",
       });
+      project =
+        project ?? op.project ?? (await loadProjectRowForRehome(op.project_id));
+      try {
+        await appendProjectRehomeLogEntry({ op, project });
+      } catch (err) {
+        log.warn("project rehome log entry write failed", {
+          op_id,
+          project_id: op.project_id,
+          source_bay_id: op.source_bay_id,
+          dest_bay_id: op.dest_bay_id,
+          err: `${err}`,
+        });
+      }
     }
 
     log.info("project rehomed", {

@@ -349,6 +349,18 @@ export const LogEntry: React.FC<Props> = React.memo(
       );
     }
 
+    function render_project_rehomed(
+      event: ProjectControlEvent,
+    ): React.JSX.Element {
+      return (
+        <span>
+          rehomed this project from <code>{event.source_bay_id ?? "?"}</code> to{" "}
+          <code>{event.dest_bay_id ?? "?"}</code>
+          {event.reason ? <> ({event.reason})</> : null}
+        </span>
+      );
+    }
+
     function render_miniterm_command(cmd: string): React.JSX.Element {
       if (cmd.length > 50) {
         return (
@@ -787,6 +799,8 @@ export const LogEntry: React.FC<Props> = React.memo(
           return render_project_stopped();
         case "project_moved":
           return render_project_moved();
+        case "project_rehomed":
+          return render_project_rehomed(event);
         case "project_start_requested":
           return render_project_start_requested();
         case "project_started":
