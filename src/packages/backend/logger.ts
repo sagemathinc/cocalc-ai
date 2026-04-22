@@ -104,6 +104,13 @@ function initTransports() {
     fileStream = createWriteStream(file, {
       flags: "a",
     });
+    fileStream.on("error", (err) => {
+      if (transports.console) {
+        console.warn(`CoCalc debug file logging disabled for "${file}":`, err);
+      }
+      transports.file = undefined;
+      fileStream = undefined;
+    });
     _trimLogFileSizePath = file;
     trimLogFileSize();
   }

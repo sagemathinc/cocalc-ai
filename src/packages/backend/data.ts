@@ -21,7 +21,7 @@ const DEFINITION = `CoCalc Environment Variables:
               This is where project home directories are (or shared files for share server), and it MUST
               contain the string "[project_id]".
 - secrets -- if env var SECRETS is set, use that; otherwise, it is {data}/secrets:  where to store secrets
-- logs -- if env var LOGS is set, use that; otherwise, {data}/logs:  directory in which to store logs
+- logs -- if env var COCALC_LOGS or legacy LOGS is set, use that; otherwise, {data}/logs: directory in which to store logs
 `;
 
 import { dirname, join, resolve } from "path";
@@ -277,7 +277,8 @@ if (!existsSync(secrets)) {
   }
 }
 
-export const logs: string = process.env.LOGS ?? join(data, "logs");
+export const logs: string =
+  process.env.COCALC_LOGS ?? process.env.LOGS ?? join(data, "logs");
 
 // CONAT server and password
 export let conatServer =
