@@ -10,6 +10,18 @@ export const COCALC_BIN2 = "/opt/cocalc/bin2";
 export const COCALC_LIB = "/opt/cocalc/lib";
 export const COCALC_SRC = "/opt/cocalc/src";
 export const DEFAULT_PROJECT_TOOLS = "/opt/cocalc/tools/current";
+export const PROJECT_BUNDLE_MOUNT_POINT = "/opt/cocalc/project-bundle";
+export const PROJECT_BUNDLE_BIN_PATH = join(PROJECT_BUNDLE_MOUNT_POINT, "bin");
+export const PROJECT_BUNDLES_MOUNT_POINT = "/opt/cocalc/project-bundles";
+export const PROJECT_BUNDLES_CURRENT_BIN_PATH = join(
+  PROJECT_BUNDLES_MOUNT_POINT,
+  "current",
+  "bin",
+);
+
+export function projectBundleBinPathPrefix(): string {
+  return `${PROJECT_BUNDLES_CURRENT_BIN_PATH}:${PROJECT_BUNDLE_BIN_PATH}`;
+}
 
 export function getNodeRuntimeMounts(
   nodeExecPath = process.execPath,

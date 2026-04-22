@@ -3,8 +3,11 @@ import {
   COCALC_BIN2,
   COCALC_LIB,
   DEFAULT_PROJECT_TOOLS,
+  PROJECT_BUNDLE_BIN_PATH,
+  PROJECT_BUNDLES_CURRENT_BIN_PATH,
   getCoCalcMounts,
   getNodeRuntimeMounts,
+  projectBundleBinPathPrefix,
 } from "./run/mounts";
 
 describe("getNodeRuntimeMounts", () => {
@@ -51,5 +54,13 @@ describe("getCoCalcMounts", () => {
 
     expect(mounts[explicitTools]).toBe(COCALC_BIN2);
     expect(mounts[DEFAULT_PROJECT_TOOLS]).toBeUndefined();
+  });
+});
+
+describe("project bundle runtime paths", () => {
+  it("prefers the stable current bundle bin before the version-specific fallback", () => {
+    expect(projectBundleBinPathPrefix()).toBe(
+      `${PROJECT_BUNDLES_CURRENT_BIN_PATH}:${PROJECT_BUNDLE_BIN_PATH}`,
+    );
   });
 });
