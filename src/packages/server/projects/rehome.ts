@@ -8,6 +8,7 @@ import { dstream } from "@cocalc/backend/conat/sync";
 import getPool from "@cocalc/database/pool";
 import { drainAccountProjectIndexProjection } from "@cocalc/database/postgres/account-project-index-projector";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import { lockProjectRehomeFence } from "@cocalc/database/postgres/project-rehome-fence";
 import {
   type ProjectControlPortableProjectState,
   type ProjectControlRehomeResponse,
@@ -272,47 +273,59 @@ async function createProjectRehomeOperation({
   campaign_id?: string | null;
 }): Promise<ProjectRehomeOperationRow> {
   await ensureProjectRehomeSchema();
-  const active = await getPool().query<ProjectRehomeOperationRow>(
-    `
-      SELECT *
-        FROM ${PROJECT_REHOME_OPERATIONS_TABLE}
-       WHERE project_id = $1
-         AND status = 'running'
-       ORDER BY created_at DESC
-       LIMIT 1
-    `,
-    [project_id],
-  );
-  const existing = active.rows[0];
-  if (existing) {
-    if (
-      existing.source_bay_id === source_bay_id &&
-      existing.dest_bay_id === dest_bay_id
-    ) {
-      return existing;
-    }
-    throw new Error(
-      `project ${project_id} already has running rehome operation ${existing.op_id} from ${existing.source_bay_id} to ${existing.dest_bay_id}`,
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await lockProjectRehomeFence({ db: client, project_id });
+    const active = await client.query<ProjectRehomeOperationRow>(
+      `
+        SELECT *
+          FROM ${PROJECT_REHOME_OPERATIONS_TABLE}
+         WHERE project_id = $1
+           AND status = 'running'
+         ORDER BY created_at DESC
+         LIMIT 1
+      `,
+      [project_id],
     );
-  }
+    const existing = active.rows[0];
+    if (existing) {
+      if (
+        existing.source_bay_id === source_bay_id &&
+        existing.dest_bay_id === dest_bay_id
+      ) {
+        await client.query("COMMIT");
+        return existing;
+      }
+      throw new Error(
+        `project ${project_id} already has running rehome operation ${existing.op_id} from ${existing.source_bay_id} to ${existing.dest_bay_id}`,
+      );
+    }
 
-  const { rows } = await getPool().query<ProjectRehomeOperationRow>(
-    `
-      INSERT INTO ${PROJECT_REHOME_OPERATIONS_TABLE}
-        (project_id, source_bay_id, dest_bay_id, requested_by, reason, campaign_id)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING *
-    `,
-    [
-      project_id,
-      source_bay_id,
-      dest_bay_id,
-      account_id,
-      reason ?? null,
-      campaign_id ?? null,
-    ],
-  );
-  return rows[0];
+    const { rows } = await client.query<ProjectRehomeOperationRow>(
+      `
+        INSERT INTO ${PROJECT_REHOME_OPERATIONS_TABLE}
+          (project_id, source_bay_id, dest_bay_id, requested_by, reason, campaign_id)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+      `,
+      [
+        project_id,
+        source_bay_id,
+        dest_bay_id,
+        account_id,
+        reason ?? null,
+        campaign_id ?? null,
+      ],
+    );
+    await client.query("COMMIT");
+    return rows[0];
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getProjectRehomeOperation(

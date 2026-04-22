@@ -8,6 +8,7 @@ import lodash from "lodash";
 
 import { appendMentionNotificationOutboxEvent } from "@cocalc/database/postgres/notification-events-outbox";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import { withProjectRehomeWriteFence } from "@cocalc/database/postgres/project-rehome-fence";
 import { sanitizeManageUsersOwnerOnly } from "@cocalc/database/postgres/project/manage-users-owner-only";
 import { sanitizeUserSetQueryProjectUsers } from "@cocalc/database/postgres/project/user-set-query-project-users";
 import { all_results } from "@cocalc/database/postgres/utils/all-results";
@@ -1562,6 +1563,20 @@ export async function _user_set_query_project_change_before(
   let err;
   const dbg = this._dbg(`_user_set_query_project_change_before ${account_id}`);
   dbg();
+  const project_id =
+    `${new_val?.project_id ?? old_val?.project_id ?? ""}`.trim();
+  if (project_id) {
+    try {
+      await withProjectRehomeWriteFence({
+        project_id,
+        action: "modify project metadata",
+        fn: async () => undefined,
+      });
+    } catch (error) {
+      cb(error instanceof Error ? error.message : `${error}`);
+      return;
+    }
+  }
 
   if (
     (new_val != null ? new_val.name : undefined) &&

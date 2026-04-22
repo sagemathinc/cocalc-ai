@@ -4,6 +4,7 @@ import { getProject } from "@cocalc/server/projects/control";
 import { getLogger } from "@cocalc/backend/logger";
 import { isValidUUID } from "@cocalc/util/misc";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import { assertProjectNotRehoming } from "@cocalc/database/postgres/project-rehome-fence";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 
@@ -71,6 +72,11 @@ export async function setProjectDeleted({
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await assertProjectNotRehoming({
+      db: client,
+      project_id,
+      action: deleted ? "delete project" : "undelete project",
+    });
     const result = await client.query(
       "UPDATE projects SET deleted=$2 WHERE project_id=$1",
       [project_id, deleted],

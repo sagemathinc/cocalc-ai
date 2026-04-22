@@ -43,6 +43,12 @@ describe("setProjectHidden bay-aware update", () => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return { rowCount: null };
       }
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [], rowCount: null };
+      }
+      if (sql.includes("to_regclass")) {
+        return { rows: [{ table_name: null }], rowCount: 1 };
+      }
       return { rowCount: 1 };
     });
     poolConnectMock = jest.fn(async () => ({
@@ -55,6 +61,12 @@ describe("setProjectHidden bay-aware update", () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql === "BEGIN" || sql === "ROLLBACK") {
         return { rowCount: null };
+      }
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [], rowCount: null };
+      }
+      if (sql.includes("to_regclass")) {
+        return { rows: [{ table_name: null }], rowCount: 1 };
       }
       return { rowCount: 0 };
     });
@@ -74,9 +86,11 @@ describe("setProjectHidden bay-aware update", () => {
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,
     });
-    expect(`${queryMock.mock.calls[1]?.[0] ?? ""}`).toContain(
-      "COALESCE(owning_bay_id, $4) = $4",
-    );
+    expect(
+      queryMock.mock.calls.some((call) =>
+        `${call[0] ?? ""}`.includes("COALESCE(owning_bay_id, $4) = $4"),
+      ),
+    ).toBe(true);
     expect(appendOutboxMock).not.toHaveBeenCalled();
   });
 

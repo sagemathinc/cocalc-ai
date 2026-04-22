@@ -5,6 +5,7 @@
 
 import getPool from "@cocalc/database/pool";
 import { appendProjectOutboxEventForProject } from "../project-events-outbox";
+import { assertProjectNotRehoming } from "../project-rehome-fence";
 import type { PostgreSQL } from "../types";
 
 export interface SetProjectHostOptions {
@@ -20,6 +21,11 @@ export async function setProjectHost(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await assertProjectNotRehoming({
+      db: client,
+      project_id: opts.project_id,
+      action: "set project host",
+    });
     await client.query(
       `UPDATE projects
           SET host_id = $2
@@ -53,6 +59,11 @@ export async function unsetProjectHost(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await assertProjectNotRehoming({
+      db: client,
+      project_id: opts.project_id,
+      action: "unset project host",
+    });
     await client.query(
       `UPDATE projects
           SET host_id = NULL

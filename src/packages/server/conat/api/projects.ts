@@ -98,6 +98,10 @@ import {
   PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
 } from "@cocalc/server/conat/project-host-assignment";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import {
+  assertProjectNotRehoming,
+  withProjectRehomeWriteFence,
+} from "@cocalc/database/postgres/project-rehome-fence";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -566,10 +570,16 @@ export async function setProjectLauncher({
   launcher: ProjectLauncherSettings;
 }): Promise<void> {
   await assertCollab({ account_id, project_id });
-  await getPool().query(
-    "UPDATE projects SET launcher = $2 WHERE project_id = $1",
-    [project_id, launcher],
-  );
+  await withProjectRehomeWriteFence({
+    project_id,
+    action: "set project launcher",
+    fn: async (db) => {
+      await db.query(
+        "UPDATE projects SET launcher = $2 WHERE project_id = $1",
+        [project_id, launcher],
+      );
+    },
+  });
   await publishProjectDetailInvalidationBestEffort({
     project_id,
     fields: ["launcher"],
@@ -630,10 +640,16 @@ export async function setProjectEnv({
   env: ProjectEnv;
 }): Promise<void> {
   await assertCollab({ account_id, project_id });
-  await getPool().query("UPDATE projects SET env = $2 WHERE project_id = $1", [
+  await withProjectRehomeWriteFence({
     project_id,
-    env,
-  ]);
+    action: "set project environment",
+    fn: async (db) => {
+      await db.query("UPDATE projects SET env = $2 WHERE project_id = $1", [
+        project_id,
+        env,
+      ]);
+    },
+  });
   await publishProjectDetailInvalidationBestEffort({
     project_id,
     fields: ["env"],
@@ -1418,6 +1434,11 @@ export async function setProjectHidden({
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await assertProjectNotRehoming({
+      db: client,
+      project_id,
+      action: "set project hidden state",
+    });
     const result = await client.query(
       `UPDATE projects
           SET users = jsonb_set(

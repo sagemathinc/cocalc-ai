@@ -6,6 +6,7 @@
 import { copy, coerce_codomain_to_numbers } from "@cocalc/util/misc";
 import { DEFAULT_QUOTAS } from "@cocalc/util/schema";
 import type { PostgreSQL } from "../types";
+import { withProjectRehomeWriteFence } from "../project-rehome-fence";
 
 export interface GetProjectSettingsOptions {
   project_id: string;
@@ -46,12 +47,21 @@ export interface SetProjectSettingsOptions {
 }
 
 export async function setProjectSettings(
-  db: PostgreSQL,
+  _db: PostgreSQL,
   opts: SetProjectSettingsOptions,
 ): Promise<void> {
-  await db.async_query({
-    query: "UPDATE projects",
-    where: { "project_id = $::UUID": opts.project_id },
-    jsonb_merge: { settings: opts.settings },
+  await withProjectRehomeWriteFence({
+    project_id: opts.project_id,
+    action: "set project settings",
+    fn: async (db) => {
+      await db.query(
+        `
+          UPDATE projects
+             SET settings = COALESCE(settings, '{}'::jsonb) || $2::jsonb
+           WHERE project_id = $1::uuid
+        `,
+        [opts.project_id, JSON.stringify(opts.settings)],
+      );
+    },
   });
 }
