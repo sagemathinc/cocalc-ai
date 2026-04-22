@@ -332,26 +332,26 @@ Current project-host runtime facts:
   runtime deployment status/history, and resume-default flows exist in the hub
   and CLI
 
-- [ ] codify and document that qgroups are not part of the intended production
+- [x] codify and document that qgroups are not part of the intended production
       quota path
-- [ ] validate simple quota behavior under realistic host churn and snapshot
+- [x] validate simple quota behavior under realistic host churn and snapshot
       load
 - [x] fix project backup creation LRO routing when the caller bay is not the
       owning bay; the caller bay keeps the waitable source LRO while the owning
       bay queues and runs the actual backup
-- [ ] validate sqlite persistence/concurrency under Codex-heavy workloads after
+- [x] validate sqlite persistence/concurrency under Codex-heavy workloads after
       the recent locking fixes
 - [x] write down the intended production runtime layout explicitly:
   - which daemons are essential
   - which can degrade independently
   - which state is persistent vs disposable
-- [ ] validate the implemented daemon split under adversarial live conditions:
+- [x] validate the implemented daemon split under adversarial live conditions:
   - `project-host` restart
   - `conat-router` restart
   - `conat-persist` restart
   - `acp-worker` crash / restart
   - `host-agent` rollback path
-- [ ] validate upgrade / rollback / resume-default flows on live hosts under
+- [x] validate upgrade / rollback / resume-default flows on live hosts under
       actual background load
 - [x] validate daemon restart ordering and operator UX under partial runtime
       failure
@@ -493,6 +493,18 @@ Notes:
     `conat-persist`, and `acp-worker` all `running` and `aligned`; foreground
     `cocalc project exec` against `abd37947-fd69-40ea-999c-190a9458e6b2`
     succeeded after each injected failure
+- on 2026-04-22, Section 3 was closed for this phase based on the combined
+  implementation and production-use evidence:
+  - qgroups are explicitly not the production quota path; the code comments now
+    document the simpler quota approach, and qgroups were empirically associated
+    with lag/hangs
+  - simple quotas have been used for several days, with spot checks comparing
+    quota usage against actual usage showing reasonable results
+  - sqlite persistence has held up under several days of Codex-heavy workloads
+    after the locking fixes, with no recurring lock failures observed
+  - managed daemon restart, browser recovery under load, retained rollback,
+    owner-bay SSH bootstrap, and partial auxiliary-daemon crash recovery have
+    all been validated enough to move on under the current deadline
 
 ### 4. Close Phase 6 Placement / Lifecycle Validation
 
@@ -594,6 +606,21 @@ Also future work.
 - [ ] rollback / retry plan
 - [ ] CLI workflow
 
+### 10. Host Move / Reassignment
+
+This is now a production-critical multibay workflow, not just a spot-instance
+cleanup concern.
+
+- [ ] define whether "host move" means host-bay ownership transfer, project
+      evacuation/reassignment, or both
+- [ ] explicit operator confirmation for any operation that can strand or lose
+      project data
+- [ ] host/project fencing model during reassignment
+- [ ] directory update and projection convergence
+- [ ] recovery behavior when the source host or source bay disappears mid-move
+- [ ] rollback / retry plan
+- [ ] CLI workflow
+
 ## What Is No Longer A Priority Bottleneck
 
 These should not distract the team unless they block one of the checklist items
@@ -608,8 +635,13 @@ above:
 
 ## Recommended Next Order
 
-1. Finish the remaining runtime bay-hairpin audit.
-2. Finish project-host runtime productionization and explicit Phase 6
-   lifecycle/placement validation.
-3. Start real multibay load measurement now that the connection leak is fixed.
-4. Only then move to account rehome and project move.
+1. Treat Section 2 and Section 3 as closed for this phase.
+2. Keep Section 4/5 validation opportunistic, only when it blocks safe move
+   semantics or exposes a production risk.
+3. Start move workflow design and implementation now:
+   - project move first, because it is the highest data-risk workflow
+   - host move/reassignment next, because project move needs clear host
+     ownership and evacuation semantics
+   - account rehome after the project/host data-safety model is explicit
+4. Start real multibay load measurement in parallel when it can reuse the same
+   move/recovery fixtures, rather than as a separate prerequisite.
