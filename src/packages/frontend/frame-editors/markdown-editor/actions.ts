@@ -71,22 +71,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   }
 
   _raw_default_frame_tree(): FrameTree {
-    if (IS_MOBILE) {
-      // the split below wastes valuable space; also very unlikely to want to EDIT
-      // on mobile, so make it static.
-      return { type: "markdown" };
-    }
-    return {
-      direction: "col",
-      type: "node",
-      first: {
-        type: "slate", // if hit issues, switch to "markdown"
-      },
-      second: {
-        type: "markdown_table_of_contents",
-      },
-      pos: 0.75,
-    };
+    return { type: "slate" };
   }
 
   toggle_markdown_checkbox(id: string, index: number, checked: boolean): void {
