@@ -615,10 +615,17 @@ answer must be based on an explicit model, not a single benchmark number:
   - terminal/notebook latency
   - exec latency
   - inter-bay request volume
+  - real browser-session traffic classified by hub vs project-host target
+  - real browser-session traffic classified by Conat subject category
   - bay CPU / Postgres pressure
   - project-host daemon pressure
 - [ ] specifically measure the impact of project-host cookie-based reconnect
       auth on bay traffic reduction
+- [x] add opt-in browser traffic summary tooling:
+  - `cocalc browser network summary --duration ...`
+  - records Conat/HTTP/WS trace events without decoded payloads by default
+  - summarizes message and byte rates by target, protocol, direction, subject
+    category, top subjects, and top addresses
 - [ ] write the first real sizing guidance for:
   - bays
   - project-hosts
@@ -665,6 +672,17 @@ Initial local 3-bay evidence from 2026-04-23:
   sequential control-plane reads, that is roughly 265-275 measured component
   reads/sec, but this is only a local regression/sizing baseline. It is not yet
   evidence for production multi-VM bay capacity.
+- A 10s live browser traffic summary against the active `host2` session showed
+  the kind of evidence needed for a real "one active user" model:
+  - hub/stable URL target: about 0.69 messages/sec and about 98 message
+    bytes/sec
+  - project-host target: about 11.1 messages/sec and about 17 message bytes/sec
+  - subject-category split: `hub-api` about 0.30 messages/sec,
+    `project-terminal` about 4.75 messages/sec, and project filesystem watch
+    about 0.79 messages/sec
+  - this was a tiny sample and not a stable capacity number, but it proves the
+    instrumentation can distinguish hidden bay/control-plane chatter from
+    project-host interactive traffic in a real browser session
 
 ### 8. Bay Operations UI / Operator Surface
 
