@@ -99,7 +99,6 @@ import {
   markdownPositionToSlatePoint,
   nearestMarkdownPositionForSlatePoint,
 } from "./sync";
-import { isSyncstringLiveConnected } from "./sync-connection";
 import { ensureRange, pointAtPath } from "./slate-util";
 import { handleForcedPlainTextPaste } from "./clipboard";
 import {
@@ -791,13 +790,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   function flushPendingRemoteMerge(force = false) {
     const pending = pendingRemoteRef.current;
     if (pending == null) return;
-    if (!isSyncstringLiveConnected(actions)) {
-      debugSyncLog("pending-remote:skip-offline", {
-        focused: isMergeFocused(),
-        force,
-      });
-      return;
-    }
     if (!force && shouldDeferRemoteMerge()) {
       debugSyncLog("pending-remote:defer", {
         focused: isMergeFocused(),
@@ -2681,14 +2673,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
               blurMergeTimerRef.current = window.setTimeout(() => {
                 blurMergeTimerRef.current = null;
                 if (!isMergeFocused()) {
-                  if (isSyncstringLiveConnected(actions)) {
-                    flushPendingRemoteMerge();
-                    const pendingSlate = pendingSlateValueRef.current;
-                    if (pendingSlate != null) {
-                      pendingSlateValueRef.current = null;
-                      allowFocusedValueUpdateRef.current = true;
-                      setEditorToSlateValue(pendingSlate);
-                    }
+                  flushPendingRemoteMerge();
+                  const pendingSlate = pendingSlateValueRef.current;
+                  if (pendingSlate != null) {
+                    pendingSlateValueRef.current = null;
+                    allowFocusedValueUpdateRef.current = true;
+                    setEditorToSlateValue(pendingSlate);
                   }
                 }
               }, 150);
