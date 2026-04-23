@@ -109,8 +109,13 @@ What should still be treated as incomplete:
 - inter-bay observability / replay / load-test readiness
 - explicit completion of host placement and lifecycle validation under multibay
   failure modes
-- 2FA / TOTP auth, which should be added later as a home-bay-owned auth layer
-  and not as a project-host or cross-bay runtime concern
+- security/ops hardening before Bay Operations becomes heavily mutating:
+  - 2FA / TOTP auth for admin/operator accounts, implemented as a
+    home-bay-owned auth layer and not as a project-host or cross-bay runtime
+    concern
+  - scoped, short-lived operator credentials for `cocalc-cli` instead of
+    relying on full admin account API keys for production operations
+  - audit records for all bay/account/project/host ownership mutations
 - account rehome workflow
 - project rehome workflow
 
@@ -629,6 +634,45 @@ Later mutating UI, only after the CLI/API paths are proven:
 - [ ] trigger projection drains/rebuilds with bounded limits
 - [ ] restart/update bay software with explicit confirmation and status
       tracking
+
+Security/ops gate before expanding Bay Operations mutations:
+
+- [ ] add admin/operator 2FA/TOTP before treating the browser admin surface as
+      a safe place for high-impact multibay actions
+- [ ] make 2FA home-bay-owned:
+  - TOTP secrets, backup codes, and challenge verification belong to the
+    account home bay
+  - cross-bay routing should wait for the home bay to issue a post-2FA session
+    or step-up assertion
+  - project hosts should not own or verify operator 2FA state
+- [ ] add scoped operator credentials for `cocalc-cli`:
+  - avoid production use of full admin account API keys for Bay Ops
+  - credentials should be capability-scoped, e.g. `bay_ops:read`,
+    `bay_ops:drain`, `host_ops:update`, and `backup_restore:run`
+  - credentials should be short-lived, revocable, labeled, and visible in audit
+    records
+- [ ] add step-up auth for dangerous operations:
+  - normal admin auth is enough for read-only status pages
+  - admission changes, drain/rehome execution, host rehome, backup restore, bay
+    software update, and decommission/delete flows require recent 2FA or a
+    short-lived scoped operator token
+- [ ] align CLI and browser policies:
+  - if a browser button requires step-up auth, the matching CLI command must
+    require an equivalent scoped token or recent operator assertion
+  - do not leave weaker CLI backdoors for operations blocked in the browser UI
+- [ ] audit every ops mutation with enough context for support/security review:
+  - actor account id
+  - auth method and credential id
+  - browser/session id or CLI invocation context when available
+  - source bay, destination bay, and target account/project/host ids
+  - reason/campaign id, operation id, start/finish timestamps, result, and
+    error
+
+Until this security/ops gate is addressed, Bay Operations UI should remain
+mostly read-only. Copy/paste CLI commands are acceptable because they preserve
+operator friction and make the intended workflow visible, but direct buttons for
+drain/rehome/delete/restore/update should remain gated behind the stronger auth
+plan above.
 
 ### 9. Account Rehome
 
