@@ -567,6 +567,11 @@ trustworthy than before. This is now high-value work.
 
 - [ ] add repeatable N-bay load-test fixture setup on top of the current
       multibay dev harness
+- [x] add first repeatable CLI 3-bay control-plane load probe:
+  - `cocalc load three-bay --project ...`
+  - records aggregate latency plus component latency for account-home lookup,
+    project listing, project-owning-bay lookup, host-bay lookup, collaborator
+    reads, Bay Ops overview, and routed Bay Ops detail
 - [ ] create a canonical 3-bay load scenario:
   - many accounts on bay A
   - projects owned on bay B
@@ -585,6 +590,23 @@ trustworthy than before. This is now high-value work.
   - bays
   - project-hosts
   - spot vs on-demand mix
+
+Initial local 3-bay evidence from 2026-04-23:
+
+- `cocalc load three-bay --project $COCALC_PROJECT_ID --iterations 10 --warmup 2 --concurrency 4 --project-limit 10 --no-bay-detail`
+  succeeded with 0 failures. Baseline control-plane p50 was about 81ms and
+  average was about 84ms. Component averages were roughly:
+  `account-home-bay=8ms`, `project-list=9ms`, `project-owning-bay=5ms`,
+  `host-bay=45ms`, `project-collaborators=9ms`, and
+  `bay-ops-overview=8ms`.
+- Including `--detail-bays bay-0,bay-1,bay-2` succeeded with 0 failures, but
+  total p50 jumped to about 9.4s because routed Bay Ops detail averaged about
+  9.1s. This is expected to be a heavy admin-health path, not a user-hot path,
+  but it is now the first obvious Bay Ops performance target.
+- The first smoke used the active `host2` project, which is currently
+  `account_home=bay-0`, `project_owner=bay-0`, `host_bay=bay-0`. The command is
+  ready, but final canonical capacity evidence still needs a deliberate split
+  fixture with account home, project owner, and project host on separate bays.
 
 ### 8. Bay Operations UI / Operator Surface
 

@@ -3,6 +3,16 @@ import { Command } from "commander";
 
 type LoadScenarioResult = Record<string, unknown> | null | undefined;
 type SeedScenarioResult = Record<string, unknown>;
+type LoadComponentTiming = {
+  name: string;
+  duration_ms: number;
+  error?: string;
+};
+type LoadComponentSummary = LoadSummary["latency_ms"] & {
+  samples: number;
+  failures: number;
+  sample_errors: string[];
+};
 
 type LoadSummary = {
   scenario: string;
@@ -25,6 +35,7 @@ type LoadSummary = {
   };
   sample_errors: string[];
   last_result: LoadScenarioResult;
+  component_latency_ms?: Record<string, LoadComponentSummary>;
 };
 
 export type LoadCommandDeps = {
@@ -84,6 +95,43 @@ function summarizeLatencies(latencies: number[]): LoadSummary["latency_ms"] {
   };
 }
 
+function summarizeComponentTimings(
+  timings: LoadComponentTiming[],
+): Record<string, LoadComponentSummary> {
+  const byName = new Map<
+    string,
+    { latencies: number[]; failures: number; errors: string[] }
+  >();
+  for (const timing of timings) {
+    const row =
+      byName.get(timing.name) ??
+      ({ latencies: [], failures: 0, errors: [] } as {
+        latencies: number[];
+        failures: number;
+        errors: string[];
+      });
+    row.latencies.push(timing.duration_ms);
+    if (timing.error) {
+      row.failures += 1;
+      if (row.errors.length < 5) {
+        row.errors.push(timing.error);
+      }
+    }
+    byName.set(timing.name, row);
+  }
+  return Object.fromEntries(
+    [...byName.entries()].map(([name, row]) => [
+      name,
+      {
+        ...summarizeLatencies(row.latencies),
+        samples: row.latencies.length,
+        failures: row.failures,
+        sample_errors: row.errors,
+      },
+    ]),
+  );
+}
+
 function normalizeNonEmpty(raw: string | undefined, flag: string): string {
   const value = `${raw ?? ""}`.trim();
   if (!value) {
@@ -130,6 +178,13 @@ async function findAccountByEmailExact(ctx: any, email: string) {
       (row) => `${row.email_address ?? ""}`.trim().toLowerCase() === normalized,
     ) ?? null
   );
+}
+
+function splitCommaList(raw: string | undefined): string[] {
+  return `${raw ?? ""}`
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
 async function runLoadScenario({
@@ -211,6 +266,118 @@ async function runLoadScenario({
   };
 }
 
+async function runInstrumentedLoadScenario({
+  scenario,
+  iterations,
+  warmup,
+  concurrency,
+  execute,
+}: {
+  scenario: string;
+  iterations: number;
+  warmup: number;
+  concurrency: number;
+  execute: (
+    index: number,
+    workerIndex: number,
+    measure: <T>(name: string, fn: () => Promise<T>) => Promise<T>,
+  ) => Promise<LoadScenarioResult>;
+}): Promise<LoadSummary> {
+  const componentTimings: LoadComponentTiming[] = [];
+  const total = iterations + warmup;
+  const workerCount = Math.min(concurrency, Math.max(1, total));
+  const startedAt = new Date();
+  const started = performance.now();
+  const latencies: number[] = [];
+  const sampleErrors: string[] = [];
+  let lastResult: LoadScenarioResult = null;
+  let successes = 0;
+  let failures = 0;
+  let nextIndex = 0;
+
+  const workers = Array.from(
+    { length: workerCount },
+    async (_, workerIndex) => {
+      while (true) {
+        const index = nextIndex++;
+        if (index >= total) {
+          return;
+        }
+        const sampleStart = performance.now();
+        const sampleComponents: LoadComponentTiming[] = [];
+        const measure = async <T>(
+          name: string,
+          fn: () => Promise<T>,
+        ): Promise<T> => {
+          const componentStart = performance.now();
+          let recorded = false;
+          try {
+            return await fn();
+          } catch (err) {
+            sampleComponents.push({
+              name,
+              duration_ms: performance.now() - componentStart,
+              error: err instanceof Error ? err.message : `${err}`,
+            });
+            recorded = true;
+            throw err;
+          } finally {
+            if (!recorded) {
+              sampleComponents.push({
+                name,
+                duration_ms: performance.now() - componentStart,
+              });
+            }
+          }
+        };
+        try {
+          const result = await execute(index, workerIndex, measure);
+          if (index >= warmup) {
+            successes += 1;
+            lastResult = result ?? null;
+          }
+        } catch (err) {
+          if (index >= warmup) {
+            failures += 1;
+            if (sampleErrors.length < 5) {
+              sampleErrors.push(err instanceof Error ? err.message : `${err}`);
+            }
+          }
+        } finally {
+          if (index >= warmup) {
+            latencies.push(performance.now() - sampleStart);
+            componentTimings.push(...sampleComponents);
+          }
+        }
+      }
+    },
+  );
+
+  await Promise.all(workers);
+
+  const elapsed = performance.now() - started;
+  const measuredAttempts = successes + failures;
+  return {
+    scenario,
+    iterations,
+    warmup,
+    concurrency: workerCount,
+    successes,
+    failures,
+    started_at: startedAt.toISOString(),
+    finished_at: new Date().toISOString(),
+    wall_ms: roundMs(elapsed),
+    ops_per_sec:
+      measuredAttempts === 0 || elapsed <= 0
+        ? 0
+        : roundMs((measuredAttempts * 1000) / elapsed),
+    latency_ms: summarizeLatencies(latencies),
+    component_latency_ms: summarizeComponentTimings(componentTimings),
+    sample_errors: sampleErrors,
+    last_result: lastResult ?? null,
+  };
+}
+
 async function ensureProjectCollaboratorPresent({
   ctx,
   project_id,
@@ -282,7 +449,7 @@ export function registerLoadCommand(
               const bays = await ctx.hub.system.listBays({});
               return {
                 account_id: ctx.accountId,
-                home_bay_id: homeBay?.bay_id ?? null,
+                home_bay_id: homeBay?.home_bay_id ?? homeBay?.bay_id ?? null,
                 visible_bay_count: Array.isArray(bays) ? bays.length : 0,
               };
             },
@@ -524,6 +691,163 @@ export function registerLoadCommand(
                 first_project_id: rows[0]?.project_id ?? null,
                 first_path: rows[0]?.path ?? null,
                 first_target: rows[0]?.target ?? null,
+              };
+            },
+          });
+        });
+      },
+    );
+
+  load
+    .command("three-bay")
+    .description(
+      "measure a canonical 3-bay control-plane scenario: account home, project owner, and host bay split",
+    )
+    .requiredOption("-w, --project <project>", "project id or name")
+    .option("--iterations <n>", "measured iterations", "20")
+    .option("--warmup <n>", "warmup iterations", "2")
+    .option("--concurrency <n>", "parallel workers", "1")
+    .option(
+      "--project-limit <n>",
+      "projects to fetch per project-list sample",
+      "25",
+    )
+    .option(
+      "--detail-bays <bay-ids>",
+      "comma-separated bay ids to probe with Bay Ops detail; defaults to the first three visible bays",
+    )
+    .option("--no-bay-detail", "skip routed Bay Ops detail probes")
+    .action(
+      async (
+        opts: {
+          project?: string;
+          iterations?: string;
+          warmup?: string;
+          concurrency?: string;
+          projectLimit?: string;
+          detailBays?: string;
+          bayDetail?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "load three-bay", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            opts.project,
+          );
+          const iterations = parsePositiveInteger(
+            opts.iterations,
+            "--iterations",
+            20,
+          );
+          const warmup = parsePositiveInteger(opts.warmup, "--warmup", 2);
+          const concurrency = parsePositiveInteger(
+            opts.concurrency,
+            "--concurrency",
+            1,
+          );
+          const projectLimit = parsePositiveInteger(
+            opts.projectLimit,
+            "--project-limit",
+            25,
+          );
+          const bays = (await ctx.hub.system.listBays({})) as Array<{
+            bay_id?: string;
+          }>;
+          const detailBayIds =
+            opts.bayDetail === false
+              ? []
+              : splitCommaList(opts.detailBays).length
+                ? splitCommaList(opts.detailBays)
+                : bays
+                    .map((bay) => `${bay.bay_id ?? ""}`.trim())
+                    .filter(Boolean)
+                    .slice(0, 3);
+
+          return await runInstrumentedLoadScenario({
+            scenario: "three-bay-control-plane",
+            iterations,
+            warmup,
+            concurrency,
+            execute: async (_sampleIndex, _workerIndex, measure) => {
+              const accountBay = await measure("account-home-bay", async () =>
+                ctx.hub.system.getAccountBay({
+                  user_account_id: ctx.accountId,
+                }),
+              );
+              const projectRows = (await measure("project-list", async () =>
+                queryProjects({
+                  ctx,
+                  limit: projectLimit,
+                }),
+              )) as Array<{ project_id?: string; host_id?: string | null }>;
+              const projectBay = await measure("project-owning-bay", async () =>
+                ctx.hub.system.getProjectBay({
+                  project_id: project.project_id,
+                }),
+              );
+              const hostId =
+                (project as { host_id?: string | null }).host_id ??
+                projectRows.find((row) => row.project_id === project.project_id)
+                  ?.host_id ??
+                projectRows[0]?.host_id ??
+                null;
+              const hostBay = hostId
+                ? await measure("host-bay", async () =>
+                    ctx.hub.system.getHostBay({
+                      host_id: hostId,
+                    }),
+                  )
+                : null;
+              const collaborators = (await measure(
+                "project-collaborators",
+                async () =>
+                  ctx.hub.projects.listCollaborators({
+                    project_id: project.project_id,
+                  }),
+              )) as Array<{ account_id?: string; group?: string }>;
+              const overview = (await measure("bay-ops-overview", async () =>
+                ctx.hub.system.getBayOpsOverview({}),
+              )) as { bays?: Array<{ bay_id?: string }> };
+              const details = detailBayIds.length
+                ? await measure("bay-ops-detail", async () =>
+                    Promise.all(
+                      detailBayIds.map(async (bay_id) => {
+                        const detail = await ctx.hub.system.getBayOpsDetail({
+                          bay_id,
+                        });
+                        return {
+                          bay_id,
+                          routed: detail.routed,
+                          load_ok: !!detail.load,
+                          backups_ok: !!detail.backups,
+                          load_error: detail.load_error ?? null,
+                          backups_error: detail.backups_error ?? null,
+                        };
+                      }),
+                    ),
+                  )
+                : [];
+              return {
+                account_id: ctx.accountId,
+                account_home_bay_id:
+                  accountBay?.home_bay_id ?? accountBay?.bay_id ?? null,
+                project_id: project.project_id,
+                project_title: project.title,
+                project_owning_bay_id:
+                  projectBay?.owning_bay_id ?? projectBay?.bay_id ?? null,
+                host_id: hostId,
+                host_bay_id: hostBay?.bay_id ?? null,
+                project_list_count: projectRows.length,
+                collaborator_count: collaborators.length,
+                owner_count: collaborators.filter(
+                  (row) => row.group === "owner",
+                ).length,
+                visible_bay_count: Array.isArray(overview?.bays)
+                  ? overview.bays.length
+                  : 0,
+                detail_bay_count: details.length,
+                detail_bays: details,
               };
             },
           });
