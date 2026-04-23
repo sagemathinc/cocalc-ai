@@ -71,7 +71,7 @@ Codex and the CoCalc CLI should choose the right path automatically.
 - CLI agent mode now prefers the hub URL for its initial account context when a
   bearer token and `COCALC_API_URL` are present.
 - The CLI can then use routed project-host clients for project-scoped services.
-- `browser files --browser ... --session-project-id ...` can list live open
+- `browser files --browser ... --project-id ...` can list live open
   files/tabs in the user's browser session.
 - `browser screenshot` can capture live browser state and has been useful for
   checking live editor content.
@@ -85,17 +85,16 @@ Codex and the CoCalc CLI should choose the right path automatically.
   hub `COCALC_API_URL`.
 - Project-host Conat auth now defensively accepts bearer auth before
   project-secret auth.
+- `browser files` accepts `--project-id`, and `browser tabs` is a user-facing
+  alias.
+- The active Codex runtime guidance now recommends `browser files` first for
+  open-tab/file questions.
 
 ### Still Fragile
 
 - `browser workspace-state` can fail with:
   - `quickjs sandbox execution failed: [object Object]`
 - `browser exec` can fail with the same opaque QuickJS error.
-- `browser files` does not accept `--project-id`, unlike nearby browser
-  commands.
-- The active Codex instructions currently recommend `workspace-state` first for
-  browser-workspace questions, even when `browser files` is the more robust
-  source for "what tabs are open?"
 - Agents often inspect `exec-api` or retry raw `browser exec` when a higher
   signal typed command exists.
 - Error messages often expose implementation details but not user-actionable
@@ -160,9 +159,9 @@ Make high-signal commands consistent and discoverable.
 Tasks:
 
 - Add `--project-id` to `browser files` as an alias/filter parallel to other
-  browser commands.
-- Make `browser files` the documented command for open tab/file listing.
-- Consider `browser tabs` as a user-facing alias for `browser files`.
+  browser commands. (Done.)
+- Make `browser files` the documented command for open tab/file listing. (Done.)
+- Consider `browser tabs` as a user-facing alias for `browser files`. (Done.)
 - Ensure `browser workspace-state` clearly documents that it is for workspace
   selection/records, not just open tabs.
 - Improve `browser --help` examples for agent-mode usage:
@@ -183,7 +182,7 @@ Update the skill and system guidance so Codex chooses robust paths first.
 Tasks:
 
 - For "what tabs/files are open?", use:
-  - `browser files --browser "$COCALC_BROWSER_ID" --session-project-id "$COCALC_PROJECT_ID"`
+  - `browser files --browser "$COCALC_BROWSER_ID" --project-id "$COCALC_PROJECT_ID"`
 - Use `workspace-state` only for questions involving:
   - selected workspace,
   - workspace records,
@@ -347,9 +346,10 @@ Acceptance criteria:
 
 1. Fix QuickJS error serialization.
 2. Fix or bypass the `workspace-state` QuickJS failure.
-3. Add `--project-id` support to `browser files`.
-4. Add the one-turn Chromium harness for Launchpad Codex chat.
+3. Add `--project-id` support to `browser files`. (Done.)
+4. Add the one-turn Chromium harness for Launchpad Codex chat. (Done.)
 5. Update the CoCalc skill/instructions for tab listing and live editor checks.
+   (Runtime guidance done; skill/checklist updates still need follow-up.)
 6. Add one Launchpad smoke script/checklist.
 
 This sequence targets the observed false starts directly and should make the

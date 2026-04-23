@@ -378,7 +378,12 @@ export function registerBrowserCommand(
 
   browser
     .command("files")
-    .description("list files currently open in a browser session")
+    .alias("tabs")
+    .description("list files/tabs currently open in a browser session")
+    .option(
+      "--project-id <id>",
+      "filter to this project id; defaults to COCALC_PROJECT_ID when set",
+    )
     .option(
       "--browser <id>",
       "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
@@ -391,6 +396,7 @@ export function registerBrowserCommand(
     .action(
       async (
         opts: {
+          projectId?: string;
           browser?: string;
           sessionProjectId?: string;
           activeOnly?: boolean;
@@ -399,12 +405,16 @@ export function registerBrowserCommand(
       ) => {
         await deps.withContext(command, "browser files", async (ctx) => {
           const profileSelection = loadProfileSelection(deps, command);
+          const projectId =
+            `${opts.projectId ?? ""}`.trim() ||
+            `${process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
+            undefined;
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
             sessionProjectId:
-              `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+              `${opts.sessionProjectId ?? ""}`.trim() || projectId || undefined,
             activeOnly: !!opts.activeOnly,
           });
           const browserClient = deps.createBrowserSessionClient({
@@ -413,13 +423,15 @@ export function registerBrowserCommand(
             client: ctx.remote.client,
           });
           const files = await browserClient.listOpenFiles();
-          return files.map((row) => ({
-            browser_id: sessionInfo.browser_id,
-            project_id: row.project_id,
-            title: row.title ?? "",
-            path: row.path,
-            ...sessionTargetContext(ctx, sessionInfo, row.project_id),
-          }));
+          return files
+            .filter((row) => projectId == null || row.project_id === projectId)
+            .map((row) => ({
+              browser_id: sessionInfo.browser_id,
+              project_id: row.project_id,
+              title: row.title ?? "",
+              path: row.path,
+              ...sessionTargetContext(ctx, sessionInfo, row.project_id),
+            }));
         });
       },
     );
@@ -427,7 +439,7 @@ export function registerBrowserCommand(
   browser
     .command("workspace-state [project]")
     .description(
-      "summarize the selected workspace, workspace records, and open files for a target browser session",
+      "summarize workspace selection/records and open files for a target browser session",
     )
     .option(
       "--project-id <id>",
