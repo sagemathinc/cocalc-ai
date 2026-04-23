@@ -211,13 +211,18 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
   }
 
   focus(id?: string): void {
+    const actions = this.actions;
+    const terminals = this.terminals;
+    if (terminals == null) {
+      return;
+    }
     if (id === undefined) {
-      id = this.actions._get_most_recent_terminal_id();
+      id = actions?._get_most_recent_terminal_id?.();
       if (id === undefined) {
         return; // no terminals
       }
     }
-    const t = this.terminals[id];
+    const t = terminals[id];
     if (t !== undefined) {
       t.focus();
     }
@@ -228,11 +233,12 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
   }
 
   kill(id: string): void {
-    if (this.terminals?.[id] == null) {
+    const terminals = this.terminals;
+    if (terminals?.[id] == null) {
       // graceful no-op if no such terminal.
       return;
     }
-    this.terminals[id].kill();
+    terminals[id].kill();
   }
 
   set_command(
@@ -240,10 +246,11 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
     command: string | undefined,
     args: string[] | undefined,
   ): void {
-    if (this.terminals[id] == null) {
+    const terminals = this.terminals;
+    if (terminals?.[id] == null) {
       // graceful no-op if no such terminal.
       return;
     }
-    this.terminals[id].set_command(command, args);
+    terminals[id].set_command(command, args);
   }
 }
