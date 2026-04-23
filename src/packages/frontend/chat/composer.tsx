@@ -367,7 +367,11 @@ export function ChatRoomComposer({
   };
 
   return (
-    <div ref={zenContainerRef} style={composerStyle}>
+    <div
+      ref={zenContainerRef}
+      data-testid="chat-composer"
+      style={composerStyle}
+    >
       <div
         style={{
           flex: "1",
@@ -435,7 +439,7 @@ export function ChatRoomComposer({
             <span>{stripHtml(threadLabel)}</span>
           </div>
         )}
-        <div ref={inputContainerRef}>
+        <div ref={inputContainerRef} data-testid="chat-composer-input">
           <ChatInput
             key={`${path}${project_id}-draft-${composerDraftKey}`}
             inputControlRef={chatInputControlRef}
@@ -504,6 +508,7 @@ export function ChatRoomComposer({
                 onClick={handleSend}
                 disabled={!hasInput}
                 type="primary"
+                data-testid="chat-composer-send"
                 icon={<Icon name="paper-plane" />}
               >
                 {hasActiveAcpTurn && isSelectedThreadAI ? (
@@ -531,6 +536,7 @@ export function ChatRoomComposer({
                   onClick={handleSend}
                   disabled={!hasInput}
                   type="primary"
+                  data-testid="chat-composer-send"
                   icon={<Icon name="paper-plane" />}
                 >
                   <FormattedMessage

@@ -108,7 +108,7 @@ Codex and the CoCalc CLI should choose the right path automatically.
 The CLI should behave like the browser:
 
 - Account and browser-session questions start at the hub.
-  - But we need to be aware of `/home/user/cocalc-ai/src/.agents/scalable-architecture.md` , which is now mostly implemented.  
+  - But we need to be aware of `/home/user/cocalc-ai/src/.agents/scalable-architecture.md` , which is now mostly implemented.
 - Project file, terminal, notebook, sync, and filesystem questions route to the
   project-host that owns the project.
 - Runtime-local commands execute inside the project container only when that is
@@ -236,6 +236,9 @@ Acceptance criteria:
 ### 5. One-Turn Chromium Harness
 
 Make it easy to start exactly one Codex turn through the real Launchpad UI.
+
+Initial implementation: `src/scripts/dev/codex-launchpad-one-turn-chromium.mjs`
+and `pnpm smoke:codex-launchpad-ui`.
 
 This is the highest-value test harness for the integration because it exercises
 the same path as a user:
@@ -386,3 +389,4 @@ Codex-in-CoCalc should feel native when it can:
 
 The near-term bar is not "perfect autonomous IDE." The near-term bar is: common
 CoCalc questions should work on the first path Codex chooses.
+

@@ -1,0 +1,889 @@
+#!/usr/bin/env node
+
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const SRC_ROOT = path.resolve(SCRIPT_DIR, "../..");
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+const POLL_MS = 2500;
+
+function usageAndExit(message, code = 1) {
+  if (message) {
+    console.error(message);
+  }
+  console.error(
+    [
+      "Usage: node scripts/dev/codex-launchpad-one-turn-chromium.mjs --project <project-id> --prompt <text> [options]",
+      "",
+      "Options:",
+      "  --base-url <url>           CoCalc hub URL (default: COCALC_API_URL)",
+      "  --project <id>             Project id containing the chat",
+      "  --chat-path <path>         Chat file path (default: /home/user/a.chat)",
+      "  --target-url <url>         Exact chat URL; overrides --chat-path URL construction",
+      "  --prompt <text>            Prompt to send as exactly one browser chat turn",
+      "  --prompt-file <path>       Read prompt from a file instead of --prompt",
+      "  --model <id>               Codex model for fallback frontend send (default: gpt-5.5)",
+      "  --reasoning <level>        Codex reasoning for fallback frontend send (default: low)",
+      "  --session-mode <mode>      Codex session mode for fallback send (default: full-access)",
+      "  --browser <id>             Use an existing browser session instead of spawning Chromium",
+      "  --out-dir <path>           Artifact directory (default: ./.cocalc-codex-one-turn/<ts>)",
+      "  --timeout <ms>             Overall turn timeout (default: 600000)",
+      "  --chromium <path>          Chromium path for spawned sessions",
+      "  --headed                   Spawn a visible browser instead of headless",
+      "  --keep-browser             Do not destroy the spawned browser session",
+      "  --json                     Print only the final JSON summary",
+      "  --help                     Show this help",
+      "",
+      "The script uses the CoCalc CLI browser-session machinery, so the spawned",
+      "Chromium receives the same hub auth cookies as the active CLI profile.",
+    ].join("\n"),
+  );
+  process.exit(code);
+}
+
+function takeValue(argv, index, flag) {
+  const value = argv[index + 1];
+  if (value == null || value.startsWith("--")) {
+    usageAndExit(`${flag} requires a value`);
+  }
+  return value;
+}
+
+function envFlag(name) {
+  const value = `${process.env[name] ?? ""}`.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+function normalizeChatPath(value) {
+  const clean = `${value ?? ""}`.trim() || "/home/user/a.chat";
+  return clean.startsWith("/") ? clean : `/${clean}`;
+}
+
+function parseArgs(argv) {
+  const options = {
+    baseUrl:
+      process.env.COCALC_CODEX_ONE_TURN_BASE_URL ??
+      process.env.COCALC_API_URL ??
+      "",
+    projectId: process.env.COCALC_PROJECT_ID ?? "",
+    chatPath:
+      process.env.COCALC_CODEX_ONE_TURN_CHAT_PATH ?? "/home/user/a.chat",
+    targetUrl: process.env.COCALC_CODEX_ONE_TURN_TARGET_URL ?? "",
+    prompt: process.env.COCALC_CODEX_ONE_TURN_PROMPT ?? "",
+    promptFile: "",
+    model: process.env.COCALC_CODEX_ONE_TURN_MODEL ?? "gpt-5.5",
+    reasoning: process.env.COCALC_CODEX_ONE_TURN_REASONING ?? "low",
+    sessionMode:
+      process.env.COCALC_CODEX_ONE_TURN_SESSION_MODE ?? "full-access",
+    browserId: process.env.COCALC_BROWSER_ID ?? "",
+    outDir: process.env.COCALC_CODEX_ONE_TURN_OUT_DIR ?? "",
+    timeoutMs: Number(
+      process.env.COCALC_CODEX_ONE_TURN_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS,
+    ),
+    chromiumPath:
+      process.env.COCALC_CODEX_ONE_TURN_CHROMIUM ??
+      process.env.COCALC_CHROMIUM_BIN ??
+      "",
+    headed: envFlag("COCALC_CODEX_ONE_TURN_HEADED"),
+    keepBrowser: envFlag("COCALC_CODEX_ONE_TURN_KEEP_BROWSER"),
+    json: envFlag("COCALC_CODEX_ONE_TURN_JSON"),
+  };
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--help") {
+      usageAndExit("", 0);
+    } else if (arg === "--base-url") {
+      options.baseUrl = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--project") {
+      options.projectId = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--chat-path") {
+      options.chatPath = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--target-url") {
+      options.targetUrl = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--prompt") {
+      options.prompt = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--prompt-file") {
+      options.promptFile = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--model") {
+      options.model = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--reasoning") {
+      options.reasoning = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--session-mode") {
+      options.sessionMode = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--browser") {
+      options.browserId = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--out-dir") {
+      options.outDir = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--timeout") {
+      options.timeoutMs = Number(takeValue(argv, i, arg));
+      i += 1;
+    } else if (arg === "--chromium") {
+      options.chromiumPath = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--headed") {
+      options.headed = true;
+    } else if (arg === "--keep-browser") {
+      options.keepBrowser = true;
+    } else if (arg === "--json") {
+      options.json = true;
+    } else {
+      usageAndExit(`unknown argument: ${arg}`);
+    }
+  }
+
+  options.baseUrl = options.baseUrl.replace(/\/+$/, "");
+  options.projectId = options.projectId.trim();
+  options.chatPath = normalizeChatPath(options.chatPath);
+  options.targetUrl = options.targetUrl.trim();
+  options.model = options.model.trim() || "gpt-5.5";
+  options.reasoning = options.reasoning.trim() || "low";
+  options.sessionMode = options.sessionMode.trim() || "full-access";
+  options.browserId = options.browserId.trim();
+  options.outDir =
+    options.outDir.trim() ||
+    path.join(
+      SRC_ROOT,
+      ".cocalc-codex-one-turn",
+      new Date().toISOString().replace(/[:.]/g, "-"),
+    );
+
+  if (!options.baseUrl) usageAndExit("--base-url is required");
+  if (!options.projectId) usageAndExit("--project is required");
+  if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
+    usageAndExit("--timeout must be a positive number of milliseconds");
+  }
+
+  return options;
+}
+
+async function loadPrompt(options) {
+  if (options.promptFile) {
+    return (await readFile(options.promptFile, "utf8")).trim();
+  }
+  return `${options.prompt ?? ""}`.trim();
+}
+
+function encodePathPreservingSlashes(value) {
+  return value
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+function chatUrl(options) {
+  if (options.targetUrl) return options.targetUrl;
+  return `${options.baseUrl}/projects/${encodeURIComponent(
+    options.projectId,
+  )}/files${encodePathPreservingSlashes(options.chatPath)}`;
+}
+
+function shellQuote(value) {
+  return `'${`${value ?? ""}`.replace(/'/g, `'\\''`)}'`;
+}
+
+function cliCommand() {
+  const configured = `${process.env.COCALC_CLI_CMD ?? ""}`.trim();
+  if (configured) return configured;
+  const bin = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
+  if (bin) return shellQuote(bin);
+
+  const optNode = "/opt/cocalc/bin/node";
+  const optCli = "/opt/cocalc/bin2/cocalc-cli.js";
+  if (existsSync(optNode) && existsSync(optCli)) {
+    return `${shellQuote(optNode)} ${shellQuote(optCli)}`;
+  }
+  return shellQuote(path.join(SRC_ROOT, "packages/cli/dist/bin/cocalc.js"));
+}
+
+function spawnCapture(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: SRC_ROOT,
+      stdio: ["ignore", "pipe", "pipe"],
+      ...options,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+async function runCocalcJson({ apiUrl, argv }, { timeoutMs = 120_000 } = {}) {
+  const timeoutSeconds = Math.ceil(timeoutMs / 1000);
+  const cmd = [
+    cliCommand(),
+    "--api",
+    shellQuote(apiUrl),
+    "--json",
+    "--timeout",
+    shellQuote(`${timeoutSeconds}s`),
+    "--rpc-timeout",
+    shellQuote(`${timeoutSeconds}s`),
+    ...argv.map(shellQuote),
+  ].join(" ");
+  const result = await spawnCapture("bash", ["-lc", cmd], {
+    env: process.env,
+  });
+  if (result.code !== 0) {
+    throw new Error(
+      [
+        `cocalc exited with code ${result.code}`,
+        result.stderr.trim(),
+        result.stdout.trim(),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (err) {
+    throw new Error(
+      `unable to parse cocalc JSON output: ${err}\n${result.stdout}`,
+    );
+  }
+  if (!parsed?.ok) {
+    throw new Error(JSON.stringify(parsed, null, 2));
+  }
+  return parsed;
+}
+
+async function browserExec({ options, browserId, code, timeoutMs }) {
+  const scriptPath = path.join(options.outDir, `exec-${Date.now()}.js`);
+  await writeFile(scriptPath, code);
+  const response = await runCocalcJson(
+    {
+      apiUrl: options.baseUrl,
+      argv: [
+        "browser",
+        "exec",
+        "--browser",
+        browserId,
+        "--project-id",
+        options.projectId,
+        "--allow-raw-exec",
+        "--file",
+        scriptPath,
+      ],
+    },
+    { timeoutMs },
+  );
+  return response.data?.result ?? response.data;
+}
+
+async function browserAction({ options, browserId, argv, timeoutMs }) {
+  return await runCocalcJson(
+    {
+      apiUrl: options.baseUrl,
+      argv: [
+        "browser",
+        "action",
+        ...argv,
+        "--browser",
+        browserId,
+        "--project-id",
+        options.projectId,
+        "--timeout",
+        `${Math.ceil(timeoutMs / 1000)}s`,
+      ],
+    },
+    { timeoutMs },
+  );
+}
+
+async function spawnBrowser(options, targetUrl) {
+  const argv = [
+    "browser",
+    "session",
+    "spawn",
+    "--api-url",
+    options.baseUrl,
+    "--target-url",
+    targetUrl,
+    "--project-id",
+    options.projectId,
+    "--session-name",
+    "CoCalc Codex one-turn harness",
+    options.headed ? "--headed" : "--headless",
+  ];
+  if (options.chromiumPath) {
+    argv.push("--chromium", options.chromiumPath);
+  }
+  return await runCocalcJson(
+    {
+      apiUrl: options.baseUrl,
+      argv,
+    },
+    { timeoutMs: Math.min(options.timeoutMs, 120_000) },
+  );
+}
+
+async function destroyBrowser(options, id) {
+  if (!id) return;
+  await runCocalcJson(
+    {
+      apiUrl: options.baseUrl,
+      argv: ["browser", "session", "destroy", id],
+    },
+    { timeoutMs: 30_000 },
+  ).catch(() => undefined);
+}
+
+function chatReadyScript() {
+  return `
+return (() => {
+  const buttons = Array.from(document.querySelectorAll("button"));
+  const create = buttons.find((button) =>
+    /create chat/i.test(button.textContent || "")
+  );
+  if (create) create.click();
+  return {
+    clickedCreateChat: Boolean(create),
+    url: location.href,
+    hasComposer: Boolean(document.querySelector('[data-testid="chat-composer"]')),
+    bodyText: (document.body?.innerText || "").slice(0, 4000),
+  };
+})()
+`;
+}
+
+function runtimeBootstrapScript() {
+  return `
+  function getRedux() {
+    if (
+      globalThis.cc?.redux &&
+      typeof globalThis.cc.redux.currentEditor === "function"
+    ) {
+      return globalThis.cc.redux;
+    }
+    const chunk = globalThis.webpackChunk_cocalc_static;
+    if (!Array.isArray(chunk)) return undefined;
+    let webpackRequire = null;
+    try {
+      chunk.push([
+        ["codex-one-turn-runtime-" + Date.now()],
+        {},
+        (req) => {
+          webpackRequire = req;
+        },
+      ]);
+    } catch {
+      return undefined;
+    }
+    const modules = webpackRequire?.c ? Object.values(webpackRequire.c) : [];
+    for (const mod of modules) {
+      const exports = mod?.exports;
+      if (exports == null) continue;
+      const candidates = [exports];
+      if (typeof exports === "object" || typeof exports === "function") {
+        for (const key of Object.keys(exports)) candidates.push(exports[key]);
+      }
+      for (const candidate of candidates) {
+        if (
+          candidate != null &&
+          typeof candidate === "object" &&
+          typeof candidate.getStore === "function" &&
+          typeof candidate.getActions === "function"
+        ) {
+          return candidate;
+        }
+      }
+    }
+    return undefined;
+  }
+`;
+}
+
+function preparePromptInputScript() {
+  return `
+return (() => {
+  function isVisible(element) {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return (
+      style.visibility !== "hidden" &&
+      style.display !== "none" &&
+      rect.width > 0 &&
+      rect.height > 0
+    );
+  }
+
+  const root =
+    document.querySelector('[data-testid="chat-composer-input"]') ??
+    document.body;
+  const candidates = Array.from(
+    root.querySelectorAll('[contenteditable="true"], textarea'),
+  ).filter(isVisible);
+  const target = candidates[candidates.length - 1];
+  if (!target) {
+    return {
+      ok: false,
+      error: "unable to find visible chat composer input",
+      bodyText: (document.body?.innerText ?? "").slice(-4000),
+    };
+  }
+
+  for (const element of document.querySelectorAll("[data-cocalc-one-turn-input]")) {
+    element.removeAttribute("data-cocalc-one-turn-input");
+  }
+  target.setAttribute("data-cocalc-one-turn-input", "true");
+  target.focus();
+  return {
+    ok: true,
+    tagName: target.tagName,
+    textBefore: target.textContent ?? target.value ?? "",
+  };
+})()
+`;
+}
+
+function clickSendScript({ prompt, model, reasoning, sessionMode }) {
+  return `
+return new Promise((resolve) => {
+  const prompt = ${JSON.stringify(prompt)};
+  const model = ${JSON.stringify(model)};
+  const reasoning = ${JSON.stringify(reasoning)};
+  const sessionMode = ${JSON.stringify(sessionMode)};
+  ${runtimeBootstrapScript()}
+
+  function isVisible(element) {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return (
+      style.visibility !== "hidden" &&
+      style.display !== "none" &&
+      rect.width > 0 &&
+      rect.height > 0
+    );
+  }
+
+  const started = Date.now();
+  const clickWhenReady = () => {
+    const buttons = Array.from(document.querySelectorAll("button")).filter(
+      isVisible,
+    );
+    const send =
+      document.querySelector('[data-testid="chat-composer-send"]') ??
+      buttons.find((button) => /^(send|queue)$/i.test((button.textContent ?? "").trim()));
+    if (!send) {
+      if (Date.now() - started < 5000) {
+        setTimeout(clickWhenReady, 100);
+        return;
+      }
+      const editorActions = getRedux()?.currentEditor?.()?.actions;
+      const actions =
+        editorActions?.getChatActions?.() ??
+        editorActions?.chatActions ??
+        editorActions;
+      if (typeof actions?.sendChat === "function") {
+        const codexConfig = {
+          model,
+          reasoning,
+          sessionMode,
+          allowWrite: sessionMode !== "read-only",
+        };
+        const result = actions.sendChat({
+          input: prompt,
+          threadAgent: {
+            mode: "codex",
+            model,
+            codexConfig,
+          },
+          acpConfigOverride: codexConfig,
+        });
+        resolve({
+          ok: true,
+          method: "actions.sendChat",
+          result,
+        });
+        return;
+      }
+      resolve({
+        ok: false,
+        error: "unable to find visible Send button",
+        buttons: buttons.map((button) => (button.textContent ?? "").trim()).slice(-20),
+      });
+      return;
+    }
+    send.click();
+    resolve({
+      ok: true,
+      inputText: target.textContent ?? target.value ?? "",
+      buttonText: send.textContent ?? "",
+    });
+  };
+  clickWhenReady();
+})
+`;
+}
+
+function scrapeChatStateScript({ prompt, submittedAtMs }) {
+  return `
+return (() => {
+  const prompt = ${JSON.stringify(prompt)};
+  const submittedAtMs = ${JSON.stringify(submittedAtMs)};
+  const activeStates = new Set(["queue", "sending", "sent", "running"]);
+  ${runtimeBootstrapScript()}
+
+  function toPlain(value) {
+    if (value == null) return value;
+    if (typeof value.toJS === "function") return value.toJS();
+    if (Array.isArray(value)) return value.map(toPlain);
+    if (value instanceof Map) {
+      return Array.from(value.entries()).map(([key, entry]) => [
+        key,
+        toPlain(entry),
+      ]);
+    }
+    if (typeof value === "object") {
+      const out = {};
+      for (const [key, entry] of Object.entries(value)) out[key] = toPlain(entry);
+      return out;
+    }
+    return value;
+  }
+
+  function messageContent(message) {
+    const history = Array.isArray(message?.history) ? message.history : [];
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      const content = history[i]?.content;
+      if (typeof content === "string" && content.trim()) return content;
+    }
+    for (const key of ["value", "input", "content"]) {
+      const content = message?.[key];
+      if (typeof content === "string" && content.trim()) return content;
+    }
+    return "";
+  }
+
+  function messageMs(key, message) {
+    const parsedKey = Number(key);
+    if (Number.isFinite(parsedKey)) return parsedKey;
+    const parsedDate = Date.parse(message?.date ?? "");
+    return Number.isFinite(parsedDate) ? parsedDate : 0;
+  }
+
+  const redux = getRedux();
+  const editorActions = redux?.currentEditor?.()?.actions;
+  const actions =
+    editorActions?.getChatActions?.() ??
+    editorActions?.chatActions ??
+    editorActions;
+  const accountStore = redux?.getStore?.("account");
+  const accountId =
+    accountStore?.get_account_id?.() ?? accountStore?.get?.("account_id") ?? "";
+  const store = actions?.redux?.getStore?.(actions?.name);
+  const acpStateRaw = store?.get?.("acpState") ?? store?.get?.("acp_state");
+  const acpStateEntries = Array.from(
+    typeof acpStateRaw?.entries === "function"
+      ? acpStateRaw.entries()
+      : Object.entries(toPlain(acpStateRaw) ?? {}),
+  ).map(([key, value]) => [String(key), String(value)]);
+  const messages = Array.from(actions?.getAllMessages?.() ?? [])
+    .map(([key, message]) => {
+      const plain = toPlain(message) ?? {};
+      return {
+        key: String(key),
+        ms: messageMs(key, plain),
+        sender_id: String(plain.sender_id ?? ""),
+        thread_id: String(plain.thread_id ?? ""),
+        message_id: String(plain.message_id ?? ""),
+        acp_account_id: String(plain.acp_account_id ?? ""),
+        generating: plain.generating === true,
+        content: messageContent(plain),
+      };
+    })
+    .sort((a, b) => a.ms - b.ms);
+
+  const matchingUser = [...messages].reverse().find(
+    (message) =>
+      message.ms >= submittedAtMs - 10000 &&
+      message.sender_id === accountId &&
+      message.content.trim() === prompt.trim(),
+  );
+  const fallbackUser = [...messages].reverse().find(
+    (message) =>
+      message.ms >= submittedAtMs - 10000 && message.sender_id === accountId,
+  );
+  const userMessage = matchingUser ?? fallbackUser;
+  const threadId = userMessage?.thread_id ?? "";
+  const relevantMessages = threadId
+    ? messages.filter((message) => message.thread_id === threadId)
+    : messages.filter((message) => message.ms >= submittedAtMs - 10000);
+  const activeAcpStates = acpStateEntries.filter(([key, value]) => {
+    if (!activeStates.has(value)) return false;
+    if (!threadId) return true;
+    if (key === "thread:" + threadId) return true;
+    return relevantMessages.some(
+      (message) => key === message.key || key === "message:" + message.message_id,
+    );
+  });
+  const generatingMessages = relevantMessages.filter(
+    (message) => message.generating && message.acp_account_id,
+  );
+  const assistantMessages = relevantMessages.filter(
+    (message) =>
+      message.sender_id &&
+      message.sender_id !== accountId &&
+      message.sender_id !== "__thread_config__" &&
+      message.content.trim(),
+  );
+  const finalMessage = assistantMessages[assistantMessages.length - 1] ?? null;
+  const active = activeAcpStates.length > 0 || generatingMessages.length > 0;
+  const bodyText = document.body?.innerText ?? "";
+
+  return {
+    ok: Boolean(actions),
+    url: location.href,
+    actionsName: actions?.name ?? "",
+    actionsState: actions?._state ?? "",
+    syncdbState: actions?.syncdb?.get_state?.() ?? "",
+    accountId,
+    threadId,
+    active,
+    activeAcpStates,
+    generatingMessages,
+    userMessage,
+    finalMessage,
+    finalAnswer: finalMessage?.content ?? "",
+    messages: messages.slice(-20),
+    bodyTextTail: bodyText.slice(Math.max(0, bodyText.length - 8000)),
+  };
+})()
+`;
+}
+
+async function waitForFinalAnswer({
+  options,
+  browserId,
+  prompt,
+  submittedAtMs,
+}) {
+  const started = Date.now();
+  let lastState = undefined;
+  while (Date.now() - started < options.timeoutMs) {
+    const result = await browserExec({
+      options,
+      browserId,
+      code: scrapeChatStateScript({ prompt, submittedAtMs }),
+      timeoutMs: 45_000,
+    });
+    lastState = result;
+    await writeFile(
+      path.join(options.outDir, "latest-chat-state.json"),
+      JSON.stringify(lastState, null, 2),
+    );
+    if (lastState?.finalAnswer && !lastState?.active) {
+      return lastState;
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  }
+  throw new Error(
+    `timed out waiting for final Codex answer; last state:\n${JSON.stringify(
+      lastState,
+      null,
+      2,
+    )}`,
+  );
+}
+
+async function captureScreenshot({ options, browserId, label }) {
+  const result = await runCocalcJson(
+    {
+      apiUrl: options.baseUrl,
+      argv: [
+        "browser",
+        "screenshot",
+        "--browser",
+        browserId,
+        "--project-id",
+        options.projectId,
+        "--out",
+        path.join(options.outDir, `${label}.png`),
+      ],
+    },
+    { timeoutMs: 60_000 },
+  ).catch((err) => ({ ok: false, error: `${err}` }));
+  await writeFile(
+    path.join(options.outDir, `${label}-screenshot.json`),
+    JSON.stringify(result, null, 2),
+  );
+  return result;
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  const prompt = await loadPrompt(options);
+  if (!prompt) usageAndExit("--prompt or --prompt-file is required");
+  await mkdir(options.outDir, { recursive: true });
+
+  const targetUrl = chatUrl(options);
+  let spawnId = "";
+  let browserId = options.browserId;
+  const artifacts = {
+    out_dir: options.outDir,
+    target_url: targetUrl,
+    run_json: path.join(options.outDir, "run.json"),
+    latest_chat_state_json: path.join(options.outDir, "latest-chat-state.json"),
+  };
+
+  if (!browserId) {
+    if (!options.json) console.error(`spawning Chromium at ${targetUrl}`);
+    const spawned = await spawnBrowser(options, targetUrl);
+    await writeFile(
+      path.join(options.outDir, "spawn.json"),
+      JSON.stringify(spawned, null, 2),
+    );
+    spawnId = `${spawned.data?.spawn_id ?? ""}`.trim();
+    browserId = `${spawned.data?.browser_id ?? ""}`.trim();
+    if (!browserId) {
+      throw new Error(
+        `spawn did not return browser_id:\n${JSON.stringify(spawned, null, 2)}`,
+      );
+    }
+  } else {
+    if (!options.json) console.error(`using browser ${browserId}`);
+    await browserAction({
+      options,
+      browserId,
+      argv: ["navigate", targetUrl],
+      timeoutMs: 60_000,
+    });
+  }
+
+  let summary;
+  try {
+    await browserAction({
+      options,
+      browserId,
+      argv: ["wait-for-selector", "body"],
+      timeoutMs: 60_000,
+    });
+    await browserExec({
+      options,
+      browserId,
+      code: chatReadyScript(),
+      timeoutMs: 45_000,
+    });
+    await browserAction({
+      options,
+      browserId,
+      argv: [
+        "wait-for-selector",
+        '[data-testid="chat-composer"], [contenteditable="true"], textarea',
+      ],
+      timeoutMs: 90_000,
+    });
+    const inputResult = await browserExec({
+      options,
+      browserId,
+      code: preparePromptInputScript(),
+      timeoutMs: 60_000,
+    });
+    if (!inputResult?.ok) {
+      throw new Error(
+        `unable to find prompt input:\n${JSON.stringify(inputResult, null, 2)}`,
+      );
+    }
+    await browserAction({
+      options,
+      browserId,
+      argv: ["type", '[data-cocalc-one-turn-input="true"]', prompt, "--clear"],
+      timeoutMs: 60_000,
+    });
+    const submittedAtMs = Date.now();
+    const submitResult = await browserExec({
+      options,
+      browserId,
+      code: clickSendScript({
+        prompt,
+        model: options.model,
+        reasoning: options.reasoning,
+        sessionMode: options.sessionMode,
+      }),
+      timeoutMs: 60_000,
+    });
+    if (!submitResult?.ok) {
+      throw new Error(
+        `unable to submit prompt:\n${JSON.stringify(submitResult, null, 2)}`,
+      );
+    }
+    const finalState = await waitForFinalAnswer({
+      options,
+      browserId,
+      prompt,
+      submittedAtMs,
+    });
+    await captureScreenshot({ options, browserId, label: "final" });
+    summary = {
+      ok: true,
+      base_url: options.baseUrl,
+      project_id: options.projectId,
+      chat_path: options.chatPath,
+      model: options.model,
+      reasoning: options.reasoning,
+      session_mode: options.sessionMode,
+      browser_id: browserId,
+      spawn_id: spawnId || undefined,
+      prompt,
+      final_answer: finalState.finalAnswer,
+      final_state: finalState,
+      artifacts,
+    };
+    await writeFile(artifacts.run_json, JSON.stringify(summary, null, 2));
+  } catch (err) {
+    await captureScreenshot({ options, browserId, label: "failure" });
+    summary = {
+      ok: false,
+      base_url: options.baseUrl,
+      project_id: options.projectId,
+      chat_path: options.chatPath,
+      model: options.model,
+      reasoning: options.reasoning,
+      session_mode: options.sessionMode,
+      browser_id: browserId,
+      spawn_id: spawnId || undefined,
+      prompt,
+      error: err?.stack ?? `${err}`,
+      artifacts,
+    };
+    await writeFile(artifacts.run_json, JSON.stringify(summary, null, 2));
+    throw err;
+  } finally {
+    if (spawnId && !options.keepBrowser) {
+      await destroyBrowser(options, spawnId);
+    }
+  }
+
+  process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+}
+
+main().catch((err) => {
+  console.error(err?.stack ?? `${err}`);
+  process.exit(1);
+});
