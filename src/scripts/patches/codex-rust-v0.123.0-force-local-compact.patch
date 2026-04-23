@@ -1,0 +1,22 @@
+diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
+--- a/codex-rs/core/src/compact.rs
++++ b/codex-rs/core/src/compact.rs
+@@ -54,8 +54,18 @@ pub(crate) enum InitialContextInjection {
+     DoNotInject,
+ }
+ 
+ pub(crate) fn should_use_remote_compact_task(provider: &ModelProviderInfo) -> bool {
++    if let Ok(value) = std::env::var("CODEX_FORCE_LOCAL_COMPACT") {
++        let value = value.trim();
++        if value == "1"
++            || value.eq_ignore_ascii_case("true")
++            || value.eq_ignore_ascii_case("yes")
++            || value.eq_ignore_ascii_case("on")
++        {
++            return false;
++        }
++    }
+     provider.supports_remote_compaction()
+ }
+ 
+ pub(crate) async fn run_inline_auto_compact_task(
