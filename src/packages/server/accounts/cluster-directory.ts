@@ -7,7 +7,10 @@ import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
 import searchLocalAccounts from "@cocalc/server/accounts/search";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import type { AccountDirectoryEntry } from "@cocalc/conat/inter-bay/api";
+import type {
+  AccountApiKeyDirectoryEntry,
+  AccountDirectoryEntry,
+} from "@cocalc/conat/inter-bay/api";
 import {
   ADMIN_SEARCH_LIMIT,
   USER_SEARCH_LIMIT,
@@ -23,6 +26,7 @@ import {
 const logger = getLogger("server:accounts:cluster-directory");
 
 const TABLE = "cluster_account_directory";
+const API_KEY_TABLE = "cluster_account_api_key_directory";
 
 function normalizedEmail(value: string): string {
   return `${value ?? ""}`.trim().toLowerCase();
@@ -62,6 +66,26 @@ export async function ensureClusterAccountDirectorySchema(): Promise<void> {
   );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS ${TABLE}_created_idx ON ${TABLE} (created)`,
+  );
+}
+
+export async function ensureClusterAccountApiKeyDirectorySchema(): Promise<void> {
+  const pool = getPool();
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${API_KEY_TABLE} (
+      key_id TEXT PRIMARY KEY,
+      account_id UUID NOT NULL,
+      home_bay_id VARCHAR(64) NOT NULL,
+      hash TEXT NOT NULL,
+      expire TIMESTAMPTZ,
+      last_active TIMESTAMPTZ
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${API_KEY_TABLE}_account_idx ON ${API_KEY_TABLE} (account_id)`,
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${API_KEY_TABLE}_home_bay_idx ON ${API_KEY_TABLE} (home_bay_id)`,
   );
 }
 
@@ -106,6 +130,21 @@ function canonicalDirectoryEntry(row: any): AccountDirectoryEntry {
         ? row.last_active.valueOf()
         : (row.last_active ?? undefined),
     banned: row.banned == null ? undefined : !!row.banned,
+  };
+}
+
+function canonicalApiKeyDirectoryEntry(row: any): AccountApiKeyDirectoryEntry {
+  return {
+    key_id: row.key_id,
+    account_id: row.account_id,
+    home_bay_id: normalizedHomeBayId(row.home_bay_id),
+    hash: row.hash,
+    expire:
+      row.expire instanceof Date ? row.expire.valueOf() : (row.expire ?? null),
+    last_active:
+      row.last_active instanceof Date
+        ? row.last_active.valueOf()
+        : (row.last_active ?? null),
   };
 }
 
@@ -191,6 +230,24 @@ async function getDirectoryAccountByEmail(
     [email],
   );
   return rows[0] ? canonicalDirectoryEntry(rows[0]) : null;
+}
+
+export async function getClusterAccountApiKeyByKeyIdDirect(
+  key_id: string,
+): Promise<AccountApiKeyDirectoryEntry | null> {
+  const normalized = `${key_id ?? ""}`.trim();
+  if (!normalized) {
+    return null;
+  }
+  await ensureClusterAccountApiKeyDirectorySchema();
+  const { rows } = await getPool().query(
+    `SELECT key_id, account_id, home_bay_id, hash, expire, last_active
+       FROM ${API_KEY_TABLE}
+      WHERE key_id=$1
+      LIMIT 1`,
+    [normalized],
+  );
+  return rows[0] ? canonicalApiKeyDirectoryEntry(rows[0]) : null;
 }
 
 async function searchDirectoryAccounts({
@@ -539,6 +596,102 @@ export async function updateClusterAccountHomeBayDirect({
     ...entry,
     home_bay_id: normalizedHomeBay,
   };
+}
+
+export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
+  key_id,
+  account_id,
+  home_bay_id,
+  hash,
+  expire,
+  last_active,
+}: {
+  key_id: string;
+  account_id: string;
+  home_bay_id: string;
+  hash: string;
+  expire?: number | null;
+  last_active?: number | null;
+}): Promise<void> {
+  const normalizedKeyId = `${key_id ?? ""}`.trim();
+  if (!normalizedKeyId) {
+    throw new Error("key_id must be specified");
+  }
+  if (!isValidUUID(account_id)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  if (!hash?.trim()) {
+    throw new Error("hash must be specified");
+  }
+  await ensureClusterAccountApiKeyDirectorySchema();
+  await getPool().query(
+    `INSERT INTO ${API_KEY_TABLE}
+       (key_id, account_id, home_bay_id, hash, expire, last_active)
+     VALUES
+       ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (key_id) DO UPDATE SET
+       account_id=EXCLUDED.account_id,
+       home_bay_id=EXCLUDED.home_bay_id,
+       hash=EXCLUDED.hash,
+       expire=EXCLUDED.expire,
+       last_active=EXCLUDED.last_active`,
+    [
+      normalizedKeyId,
+      account_id,
+      normalizedHomeBayId(home_bay_id),
+      hash,
+      expire == null ? null : new Date(expire),
+      last_active == null ? null : new Date(last_active),
+    ],
+  );
+}
+
+export async function deleteClusterAccountApiKeyDirectoryEntryDirect(
+  key_id: string,
+): Promise<void> {
+  const normalized = `${key_id ?? ""}`.trim();
+  if (!normalized) {
+    return;
+  }
+  await ensureClusterAccountApiKeyDirectorySchema();
+  await getPool().query(`DELETE FROM ${API_KEY_TABLE} WHERE key_id=$1`, [
+    normalized,
+  ]);
+}
+
+export async function updateClusterAccountApiKeysHomeBayDirect({
+  account_id,
+  home_bay_id,
+}: {
+  account_id: string;
+  home_bay_id: string;
+}): Promise<void> {
+  if (!isValidUUID(account_id)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  await ensureClusterAccountApiKeyDirectorySchema();
+  await getPool().query(
+    `UPDATE ${API_KEY_TABLE}
+        SET home_bay_id=$2
+      WHERE account_id=$1`,
+    [account_id, normalizedHomeBayId(home_bay_id)],
+  );
+}
+
+export async function touchClusterAccountApiKeyDirectoryEntryDirect(
+  key_id: string,
+): Promise<void> {
+  const normalized = `${key_id ?? ""}`.trim();
+  if (!normalized) {
+    return;
+  }
+  await ensureClusterAccountApiKeyDirectorySchema();
+  await getPool().query(
+    `UPDATE ${API_KEY_TABLE}
+        SET last_active=NOW()
+      WHERE key_id=$1`,
+    [normalized],
+  );
 }
 
 export async function deleteClusterAccountDirectoryEntry(

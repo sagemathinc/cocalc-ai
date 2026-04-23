@@ -11,6 +11,7 @@ import {
   getBlockDeferChars,
   getBlockDeferMs,
 } from "./block-sync-utils";
+import { isSyncstringLiveConnected } from "./sync-connection";
 
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
 
@@ -214,6 +215,10 @@ export function useBlockSync({
   function flushPendingRemoteMerge(force = false) {
     const pending = pendingRemoteRef.current;
     if (pending == null) return;
+    if (!isSyncstringLiveConnected(actions)) {
+      debugSyncLog("pending-remote:skip-offline", { force });
+      return;
+    }
     if (!force && shouldDeferRemoteMerge()) {
       debugSyncLog("pending-remote:defer", {
         idleMs: mergeIdleMsRef.current,
@@ -282,9 +287,9 @@ export function useBlockSync({
   useEffect(() => {
     if (!ignoreRemoteWhileFocused) return;
     if (focusedIndex == null) {
-      flushPendingRemoteMerge(true);
+      flushPendingRemoteMerge();
     }
-  }, [focusedIndex, ignoreRemoteWhileFocused]);
+  }, [focusedIndex, ignoreRemoteWhileFocused, flushPendingRemoteMerge]);
 
   const saveBlocksNow = useCallback(() => {
     if (actions?.set_value == null) return;

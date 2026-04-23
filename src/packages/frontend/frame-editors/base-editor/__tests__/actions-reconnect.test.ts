@@ -39,6 +39,31 @@ describe("BaseEditorActions reconnect coordination", () => {
       reason: "editor_became_visible",
       resetBackoff: true,
     });
+    expect(target.setState).toHaveBeenCalledWith({
+      visible: true,
+      rtc_status: "loading",
+    });
+  });
+
+  it("refreshes editor sync status when a visible editor is already live", async () => {
+    const requestReconnect = jest.fn();
+    const target: any = {
+      setState: jest.fn(),
+      areSyncdocsLiveConnected: jest.fn(() => true),
+      reconnectResource: { requestReconnect },
+      isClosed: jest.fn(() => false),
+      set_resize: jest.fn(),
+      refresh_visible: jest.fn(),
+      focus: jest.fn(),
+    };
+
+    await BaseEditorActions.prototype.show.call(target);
+
+    expect(target.setState).toHaveBeenCalledWith({
+      visible: true,
+      rtc_status: "live",
+    });
+    expect(requestReconnect).not.toHaveBeenCalled();
   });
 
   it("removes the syncstring disconnected-listener before manual close", async () => {

@@ -28,6 +28,7 @@ import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
 import { listBrowserSessionsForAccount } from "@cocalc/server/conat/api/browser-sessions";
 import {
   getClusterAccountById,
+  updateClusterAccountApiKeysHomeBay,
   updateClusterAccountHomeBay,
 } from "@cocalc/server/inter-bay/accounts";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
@@ -852,6 +853,10 @@ export async function copyAccountRehomeState({
     table: "api_keys",
     account_id: accountId,
     rows: api_keys ?? [],
+  });
+  await updateClusterAccountApiKeysHomeBay({
+    account_id: accountId,
+    home_bay_id: destBayId,
   });
   log.info("account rehome destination state copied", {
     account_id: accountId,

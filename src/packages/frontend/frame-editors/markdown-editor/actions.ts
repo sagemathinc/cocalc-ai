@@ -165,6 +165,30 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     this.slateEditors[id] = editor;
   }
 
+  public focus(id?: string): void {
+    const targetId = id ?? this._get_active_id();
+    if (targetId == null) {
+      super.focus(id);
+      return;
+    }
+    if (this._get_frame_type(targetId) !== "slate") {
+      super.focus(targetId);
+      return;
+    }
+    const blockControl = this.getBlockEditorControl(targetId);
+    const focusedIndex = blockControl?.getFocusedIndex?.();
+    if (typeof blockControl?.focusBlock === "function") {
+      blockControl.focusBlock(focusedIndex ?? 0);
+      return;
+    }
+    const editor = this.getSlateEditor(targetId);
+    if (editor != null) {
+      ReactEditor.focus(editor);
+      return;
+    }
+    super.focus(targetId);
+  }
+
   public registerBlockEditorControl(id: string, control: any): void {
     this.blockEditorControls[id] = control;
   }

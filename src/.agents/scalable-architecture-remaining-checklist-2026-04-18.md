@@ -701,8 +701,12 @@ Initial local 3-bay evidence from 2026-04-23:
     CPU; this points toward request latency/choreography, Conat RPC/socket.io
     overhead, cluster forwarding asymmetry, or benchmark shape rather than a
     single fully saturated CPU process
-  - next capacity-tooling step: add fixed-duration split-client load mode plus
-    event-loop delay and Conat cluster-forwarding counters
+  - fixed-duration split-client load mode now exists for
+    `cocalc load three-bay --duration ...` and
+    `COCALC_BAY_WORKER_SCALE_DURATION=...`, so split-router runs can use a true
+    sustained wall-clock aggregate instead of fixed iterations per client group
+  - next capacity-tooling step: add event-loop delay and Conat
+    cluster-forwarding counters to the fixed-duration split-client runs
 - A 10s live browser traffic summary against the active `host2` session showed
   the kind of evidence needed for a real "one active user" model:
   - hub/stable URL target: about 0.69 messages/sec and about 98 message
@@ -1008,6 +1012,19 @@ Non-goals for initial account rehome:
 - moving project-host assignments
 - moving billing/provider-side state outside the `accounts` row
 - rewriting historical notification target/outbox rows
+
+Deferred billing/purchases follow-up:
+
+- [ ] Codify and enforce seed-owned billing/purchases. Current multibay code
+  still treats the `purchases` table as bay-local state: billing/purchases APIs
+  query local Postgres directly, the frontend calls same-origin
+  `billing/*` / `purchases/*` endpoints, and periodic purchases maintenance
+  runs wherever a hub process is running. Account rehome intentionally does not
+  move `purchases` or other billing/provider-side state outside the `accounts`
+  row. Before relying on account rehome in production for billing-active
+  accounts, attached bays should delegate billing/purchases APIs to the seed
+  bay, purchases maintenance should be seed-only, and the seed bay must have
+  enough account billing identity for attached-bay-created accounts.
 
 ### 10. Project Rehome
 

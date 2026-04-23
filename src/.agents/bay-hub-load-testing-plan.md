@@ -148,18 +148,19 @@ COCALC_BAY_WORKER_SCALE_COUNT=8 \
 COCALC_BAY_WORKER_SCALE_CONAT_SERVERS="http://localhost:9102 http://localhost:9103" \
 COCALC_BAY_WORKER_SCALE_APIS="http://localhost:9102 http://localhost:9103" \
 COCALC_BAY_WORKER_SCALE_CONCURRENCIES="128 256 384" \
-COCALC_BAY_WORKER_SCALE_ITERATIONS=800 \
+COCALC_BAY_WORKER_SCALE_DURATION=30s \
 COCALC_BAY_WORKER_SCALE_WARMUP=80 \
   ./scripts/dev/bay-worker-scale-benchmark.sh start-run
 ```
 
 Read split-router results carefully:
 
-- `aggregate_scenarios_per_sec` is the completed fixed-iteration batch rate
-  using the parent wall time.
-- `sum_child_scenarios_per_sec` is the sum of each client group's independent
-  rate and is closer to a sustained active-user model where both router groups
-  keep generating work for the full interval.
+- With `COCALC_BAY_WORKER_SCALE_DURATION`, `aggregate_scenarios_per_sec` is the
+  preferred sustained-load rate because all split client groups run for the same
+  measured wall-clock duration.
+- Without duration mode, fixed iterations can make the faster router group
+  finish early. In that case, `sum_child_scenarios_per_sec` is often more useful
+  than the parent wall-clock aggregate for estimating steady-state capacity.
 
 After split-router experiments, stop the extra workers and restart the dev hub
 without `CONAT_SOCKETIO_COUNT=2` unless the next test explicitly needs the
@@ -178,13 +179,13 @@ Host shape:
 
 Observed peak throughput:
 
-| API workers | Best concurrency | Scenarios/sec | Component reads/sec |
-| --- | ---: | ---: | ---: |
-| 1 existing dev hub process | 32-64 | ~55 | ~275 |
-| 4 extra `--conat-api` workers | 32 | ~137 | ~685 |
-| 8 extra `--conat-api` workers | 256 | ~177 | ~883 |
-| 12 extra `--conat-api` workers | 384 | ~171 | ~855 |
-| 8 extra workers + 2 router ports split on clients and workers | 256 | ~223 sustained child-sum | ~1115 sustained child-sum |
+| API workers                                                   | Best concurrency |            Scenarios/sec |       Component reads/sec |
+| ------------------------------------------------------------- | ---------------: | -----------------------: | ------------------------: |
+| 1 existing dev hub process                                    |            32-64 |                      ~55 |                      ~275 |
+| 4 extra `--conat-api` workers                                 |               32 |                     ~137 |                      ~685 |
+| 8 extra `--conat-api` workers                                 |              256 |                     ~177 |                      ~883 |
+| 12 extra `--conat-api` workers                                |              384 |                     ~171 |                      ~855 |
+| 8 extra workers + 2 router ports split on clients and workers |              256 | ~223 sustained child-sum | ~1115 sustained child-sum |
 
 The first split-router probe shows a real improvement over single-router ingress
 when both worker registration and client entry are split, but it is not yet a
@@ -211,8 +212,9 @@ This shifts the current hypothesis away from raw CPU saturation in a single
 router or Postgres. The remaining likely bottlenecks are request choreography
 and latency: sequential hot-path component reads, Conat RPC/socket.io overhead,
 cluster forwarding asymmetry, or benchmark/load-generator shape. A duration-based
-load mode would make the split-client aggregate rate cleaner than fixed
-iterations per client group.
+load mode now exists for `cocalc load three-bay --duration ...` and
+`COCALC_BAY_WORKER_SCALE_DURATION=...`, so future split-router runs should use
+duration mode by default.
 
 Interpretation:
 
@@ -226,8 +228,7 @@ Interpretation:
   overhead, cluster forwarding asymmetry, client-side load generation, or a
   serialized server path.
 - The next useful benchmark should add event-loop delay and Conat
-  cluster-forwarding counters, then switch from fixed iterations per split
-  client group to fixed-duration split clients.
+  cluster-forwarding counters on top of fixed-duration split-client runs.
 
 ## Required Metrics
 

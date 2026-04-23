@@ -11,6 +11,7 @@ import {
 import getLogger from "@cocalc/backend/logger";
 import { conatPassword, conatServer, data } from "@cocalc/backend/data";
 import { listQueuedAcpJobs, listRunningAcpJobs } from "../sqlite/acp-jobs";
+import { resolveLiteAcpWorkerLaunch } from "./worker-launch";
 
 const logger = getLogger("lite:hub:acp:worker-manager");
 const ACP_WORKER_PID_FILE = path.join(data, "acp-worker.pid");
@@ -57,11 +58,6 @@ function clearWorkerPidFile(): void {
   }
 }
 
-function resolveWorkerScript(): string {
-  const distMain = require.resolve("@cocalc/lite/main");
-  return path.join(path.dirname(distMain), "..", "bin", "acp-worker.js");
-}
-
 export async function ensureAcpWorkerRunning({
   force = false,
 }: {
@@ -80,7 +76,7 @@ export async function ensureAcpWorkerRunning({
     return false;
   }
   clearWorkerPidFile();
-  const script = resolveWorkerScript();
+  const { command, args } = resolveLiteAcpWorkerLaunch();
   mkdirSync(path.dirname(ACP_WORKER_LOG_FILE), { recursive: true });
   const stdout = openSync(ACP_WORKER_LOG_FILE, "a");
   const env = {
@@ -97,8 +93,10 @@ export async function ensureAcpWorkerRunning({
     // in that file instead of being redirected again into the shared dev log.
     DEBUG_CONSOLE: "yes",
     DEBUG_FILE: "",
+    COCALC_LITE_ACP_WORKER: "1",
   };
-  const child = spawn(process.execPath, [script], {
+  const child = spawn(command, args, {
+    cwd: process.cwd(),
     detached: true,
     stdio: ["ignore", stdout, stdout],
     env,
@@ -108,7 +106,8 @@ export async function ensureAcpWorkerRunning({
   writeFileSync(ACP_WORKER_PID_FILE, `${child.pid}\n`);
   logger.warn("spawned ACP worker", {
     pid: child.pid,
-    script,
+    command,
+    args,
     log: ACP_WORKER_LOG_FILE,
   });
   return true;

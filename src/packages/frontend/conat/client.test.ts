@@ -2136,6 +2136,155 @@ describe("ConatClient routed project-host reconnect", () => {
     hasFocusSpy.mockRestore();
   });
 
+  it("keeps routed host clients alive during a hub reconnect", () => {
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: false,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(async () => ({ data: null })),
+      stats: undefined,
+    };
+
+    const routedClient = {
+      conn: {
+        connected: true,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      request: jest.fn(),
+      stats: undefined,
+    };
+
+    jest.resetModules();
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            project_map: immutable.Map({
+              "00000000-0000-4000-8000-000000000001": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-1",
+              }),
+            }),
+            host_info: immutable.Map({
+              "host-1": immutable.Map({
+                bay_id: "bay-1",
+                connect_url: "http://project-host",
+                host_session_id: "session-1",
+                updated_at: Date.now(),
+              }),
+            }),
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: jest.fn(),
+        })),
+      },
+    }));
+
+    jest.doMock("@cocalc/util/reuse-in-flight", () => ({
+      reuseInFlight: (fn: any) => fn,
+    }));
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn((opts?: any) =>
+        opts?.address === "http://project-host" ? routedClient : hubClient,
+      ),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    client.getOrCreateRoutedHubClient({
+      host_id: "host-1",
+      address: "http://project-host",
+      host_session_id: "session-1",
+      project_id: "00000000-0000-4000-8000-000000000001",
+    });
+    client.conat();
+
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    client.reconnect();
+    warnSpy.mockRestore();
+
+    expect(routedClient.close).not.toHaveBeenCalled();
+    expect(client.routedHubClients["host-1"]?.client).toBe(routedClient);
+    expect(hubClient.disconnect).toHaveBeenCalledTimes(1);
+    expect(hubClient.conn.io.engine.close).toHaveBeenCalledTimes(1);
+  });
+
   it("waits for a fresh project-host auth token before connecting the routed host", async () => {
     jest.useFakeTimers();
 

@@ -66,15 +66,20 @@ import {
 } from "@cocalc/server/account/project-feed";
 import {
   createClusterAccount,
+  deleteClusterAccountApiKeyDirectoryEntry,
   deleteClusterAccount,
   deleteLocalClusterAccount,
+  getClusterAccountApiKeyByKeyId,
   getClusterAccountByEmail,
   getClusterAccountById,
   getClusterAccountHomeBayCounts,
   getClusterAccountsByIds,
   provisionLocalClusterAccount,
   searchClusterAccounts,
+  touchClusterAccountApiKeyDirectoryEntry,
+  updateClusterAccountApiKeysHomeBay,
   updateClusterAccountHomeBay,
+  upsertClusterAccountApiKeyDirectoryEntry,
 } from "@cocalc/server/inter-bay/accounts";
 import {
   acceptAccountRehome,
@@ -304,6 +309,16 @@ async function startAccountDirectoryService(): Promise<void> {
     updateHomeBay: async (opts) => await updateClusterAccountHomeBay(opts),
     create: async (opts) => await createClusterAccount(opts),
     delete: async (opts) => await deleteClusterAccount(opts),
+    getApiKey: async ({ key_id }) =>
+      await getClusterAccountApiKeyByKeyId(`${key_id ?? ""}`),
+    upsertApiKey: async (opts) =>
+      await upsertClusterAccountApiKeyDirectoryEntry(opts),
+    deleteApiKey: async (opts) =>
+      await deleteClusterAccountApiKeyDirectoryEntry(opts),
+    updateApiKeysHomeBay: async (opts) =>
+      await updateClusterAccountApiKeysHomeBay(opts),
+    touchApiKey: async (opts) =>
+      await touchClusterAccountApiKeyDirectoryEntry(opts),
   };
   services.push(
     ...createInterBayAccountDirectoryHandlers({

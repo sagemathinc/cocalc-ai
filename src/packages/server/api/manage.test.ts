@@ -6,6 +6,11 @@ let assertProjectCollaboratorAccessAllowRemoteMock: jest.Mock;
 let getLocalProjectCollaboratorAccessStatusMock: jest.Mock;
 let verifyPasswordMock: jest.Mock;
 let isBannedMock: jest.Mock;
+let getClusterAccountByIdMock: jest.Mock;
+let getClusterAccountApiKeyByKeyIdMock: jest.Mock;
+let touchClusterAccountApiKeyDirectoryEntryMock: jest.Mock;
+let upsertClusterAccountApiKeyDirectoryEntryMock: jest.Mock;
+let deleteClusterAccountApiKeyDirectoryEntryMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -38,6 +43,19 @@ jest.mock("@cocalc/backend/auth/password-hash", () => ({
 jest.mock("@cocalc/server/accounts/is-banned", () => ({
   __esModule: true,
   default: (...args: any[]) => isBannedMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  __esModule: true,
+  getClusterAccountById: (...args: any[]) => getClusterAccountByIdMock(...args),
+  getClusterAccountApiKeyByKeyId: (...args: any[]) =>
+    getClusterAccountApiKeyByKeyIdMock(...args),
+  touchClusterAccountApiKeyDirectoryEntry: (...args: any[]) =>
+    touchClusterAccountApiKeyDirectoryEntryMock(...args),
+  upsertClusterAccountApiKeyDirectoryEntry: (...args: any[]) =>
+    upsertClusterAccountApiKeyDirectoryEntryMock(...args),
+  deleteClusterAccountApiKeyDirectoryEntry: (...args: any[]) =>
+    deleteClusterAccountApiKeyDirectoryEntryMock(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -78,6 +96,20 @@ describe("manageApiKeys local bay access", () => {
     );
     verifyPasswordMock = jest.fn(() => true);
     isBannedMock = jest.fn(async () => false);
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      home_bay_id: "bay-0",
+    }));
+    getClusterAccountApiKeyByKeyIdMock = jest.fn(async () => null);
+    touchClusterAccountApiKeyDirectoryEntryMock = jest.fn(
+      async () => undefined,
+    );
+    upsertClusterAccountApiKeyDirectoryEntryMock = jest.fn(
+      async () => undefined,
+    );
+    deleteClusterAccountApiKeyDirectoryEntryMock = jest.fn(
+      async () => undefined,
+    );
   });
 
   it("allows project-scoped api key management for remote collaborators", async () => {
@@ -154,7 +186,7 @@ describe("manageApiKeys local bay access", () => {
     const { getAccountWithApiKey } = await import("./manage");
     await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
     expect(nonSchemaQueries()[0]).toEqual([
-      "SELECT id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
+      "SELECT id,key_id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
       ["project-key"],
     ]);
     expect(getLocalProjectCollaboratorAccessStatusMock).toHaveBeenCalledWith({
@@ -187,7 +219,7 @@ describe("manageApiKeys local bay access", () => {
     );
     const { getAccountWithApiKey } = await import("./manage");
     await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
-    expect(nonSchemaQueries()[1]).toEqual([
+    expect(nonSchemaQueries()[2]).toEqual([
       "DELETE FROM api_keys WHERE project_id=$1 AND id=$2",
       [PROJECT_ID, 7],
     ]);
@@ -254,9 +286,31 @@ describe("manageApiKeys local bay access", () => {
       account_id: ACCOUNT_ID,
     });
     expect(nonSchemaQueries()[0]).toEqual([
-      "SELECT id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
+      "SELECT id,key_id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
       ["key-id-123"],
     ]);
+  });
+
+  it("falls back to the cluster api key directory when the local bay lacks the key row", async () => {
+    const secret = "sk-cocalc-v2.key-id-remote.secret-part";
+    getClusterAccountApiKeyByKeyIdMock = jest.fn(async () => ({
+      key_id: "key-id-remote",
+      account_id: ACCOUNT_ID,
+      home_bay_id: "bay-1",
+      hash: "hash",
+      expire: null,
+      last_active: null,
+    }));
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(getAccountWithApiKey(secret)).resolves.toEqual({
+      account_id: ACCOUNT_ID,
+    });
+    expect(getClusterAccountApiKeyByKeyIdMock).toHaveBeenCalledWith(
+      "key-id-remote",
+    );
+    expect(touchClusterAccountApiKeyDirectoryEntryMock).toHaveBeenCalledWith({
+      key_id: "key-id-remote",
+    });
   });
 
   it("rejects pre-v2 api key formats without lookup", async () => {
