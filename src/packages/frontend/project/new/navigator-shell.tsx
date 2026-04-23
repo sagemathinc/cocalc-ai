@@ -58,6 +58,7 @@ const NAVIGATOR_DEFAULT_THREAD_TITLE = "Navigator";
 const NAVIGATOR_DEFAULT_THREAD_ICON = "sitemap";
 const NAVIGATOR_DEFAULT_THREAD_COLOR = "#c8e6c9";
 const ACTIVE_THREAD_STATES = new Set(["queue", "sending", "sent", "running"]);
+const NAVIGATOR_CHAT_INIT_RETRY_MS = 2000;
 
 type NavigatorCodexErrorPresentation = {
   kind: "missing-auth" | "expired-auth" | "other";
@@ -84,6 +85,33 @@ function navigatorChatPath(accountId?: string): string {
   }
   const key = sanitizeAccountId(accountId?.trim() || "unknown-account");
   return `.local/share/cocalc/navigator-${key}.chat`;
+}
+
+export function isNavigatorChatInitRetryable({
+  error,
+  projectState,
+}: {
+  error: string;
+  projectState?: string;
+}): boolean {
+  const normalizedState = `${projectState ?? ""}`.trim().toLowerCase();
+  const normalizedError = `${error ?? ""}`.trim().toLowerCase();
+  if (normalizedState === "starting" || normalizedState === "opening") {
+    return true;
+  }
+  if (!normalizedError) {
+    return normalizedState !== "running";
+  }
+  return (
+    normalizedError.includes("file server not initialized") ||
+    normalizedError.includes("canonical sync identity resolution failed") ||
+    normalizedError.includes("project host id unavailable") ||
+    normalizedError.includes("project is not running") ||
+    normalizedError.includes("project not running") ||
+    normalizedError.includes("start the project") ||
+    normalizedError.includes("unable to route") ||
+    normalizedError.includes("managed rootfs release artifacts require")
+  );
 }
 
 function latestThreadKey(actions?: ChatActions): string | null {
@@ -371,6 +399,11 @@ export function NavigatorShell({
     { project_id },
     "available_features",
   );
+  const projectState = useTypedRedux("projects", "project_map")?.getIn([
+    project_id,
+    "state",
+    "state",
+  ]) as string | undefined;
 
   const homeDirectory = useMemo(() => {
     const resolvedHome = available_features?.get?.("homeDirectory");
@@ -396,6 +429,8 @@ export function NavigatorShell({
     );
   });
   const [error, setError] = useState<string>("");
+  const [initRetrying, setInitRetrying] = useState<boolean>(false);
+  const [initRetryTick, setInitRetryTick] = useState<number>(0);
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(
     null,
   );
@@ -438,6 +473,7 @@ export function NavigatorShell({
       instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
     });
     if (sharedActions) {
+      setInitRetrying(false);
       setActions((current) =>
         current === sharedActions ? current : sharedActions,
       );
@@ -463,11 +499,31 @@ export function NavigatorShell({
           instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
         });
         if (!mounted) return;
+        setInitRetrying(false);
+        setError("");
         setActions(chatActions);
       } catch (err) {
         if (!mounted) return;
+        const message = `${err}`;
+        if (
+          isNavigatorChatInitRetryable({
+            error: message,
+            projectState,
+          })
+        ) {
+          setActions(null);
+          setError("");
+          setInitRetrying(true);
+          window.setTimeout(() => {
+            if (mounted) {
+              setInitRetryTick((tick) => tick + 1);
+            }
+          }, NAVIGATOR_CHAT_INIT_RETRY_MS);
+          return;
+        }
         setActions(null);
-        setError(`${err}`);
+        setInitRetrying(false);
+        setError(message);
       }
     };
     void run();
@@ -475,7 +531,7 @@ export function NavigatorShell({
     return () => {
       mounted = false;
     };
-  }, [projectActions, project_id, navigatorPath]);
+  }, [projectActions, project_id, navigatorPath, projectState, initRetryTick]);
 
   useEffect(() => {
     if (!actions) return;
@@ -1282,6 +1338,15 @@ export function NavigatorShell({
           </div>
         )}
       />
+      {initRetrying && !actions && !error ? (
+        <Alert
+          type="info"
+          title="Navigator is waiting for this project to finish starting."
+          description="This can take longer the first time a RootFS image is prepared on a project host. The chat will connect automatically when the project filesystem is ready."
+          showIcon
+          style={{ marginBottom: 8 }}
+        />
+      ) : null}
       {error ? (
         <Alert
           type="error"

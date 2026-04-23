@@ -141,6 +141,7 @@ jest.mock("@cocalc/frontend/project/page/url-transform", () => ({
 const {
   NavigatorShell,
   classifyNavigatorCodexError,
+  isNavigatorChatInitRetryable,
   resolveSelectedAcpConfig,
   resolveSelectedSessionStatus,
 } = require("./navigator-shell");
@@ -236,5 +237,30 @@ describe("NavigatorShell keyboard suppression", () => {
       title: "Codex needs you to sign in again.",
       actionLabel: "Sign in again",
     });
+  });
+
+  it("retries Navigator chat initialization while the project is starting", () => {
+    expect(
+      isNavigatorChatInitRetryable({
+        error: "Error: permission denied",
+        projectState: "starting",
+      }),
+    ).toBe(true);
+  });
+
+  it("retries transient filesystem initialization errors after startup", () => {
+    expect(
+      isNavigatorChatInitRetryable({
+        error:
+          "Cannot safely open /home/user/.local/share/cocalc/navigator.chat: canonical sync identity resolution failed: file server not initialized.",
+        projectState: "running",
+      }),
+    ).toBe(true);
+    expect(
+      isNavigatorChatInitRetryable({
+        error: "Error: invalid path",
+        projectState: "running",
+      }),
+    ).toBe(false);
   });
 });
