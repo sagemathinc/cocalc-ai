@@ -74,6 +74,7 @@ function commandList(bay: BayOpsOverviewBay): string[] {
     `cocalc bay show ${id}`,
     `cocalc bay load ${id}`,
     `cocalc bay backups ${id}`,
+    `cocalc bay backup ${id}`,
     `cocalc bay restore-test ${id} --remote-only`,
     `cocalc bay project-ownership-admission ${id} --accepts no --note "maintenance drain"`,
     `cocalc project rehome-drain --source-bay ${id} --dest-bay <dest-bay> --limit 25 --reason maintenance`,
@@ -118,10 +119,53 @@ function ProjectionStatus({
   );
 }
 
+function BackupStoredError({
+  title,
+  error,
+  timestamp,
+}: {
+  title: string;
+  error: string | null;
+  timestamp: string | null;
+}) {
+  if (!error) return null;
+  return (
+    <Alert
+      type="warning"
+      showIcon
+      message={title}
+      description={
+        <Space direction="vertical" size={0}>
+          <Typography.Text type="secondary">
+            This is persisted bay backup state, not a failure to load this admin
+            panel.
+            {timestamp ? (
+              <>
+                {" "}
+                Recorded <TimeAgo date={timestamp} />.
+              </>
+            ) : null}
+          </Typography.Text>
+          <Typography.Text code copyable={{ text: error }}>
+            {error}
+          </Typography.Text>
+        </Space>
+      }
+    />
+  );
+}
+
 function BackupHealth({ detail }: { detail: BayOpsDetail }) {
   const backups = detail.backups;
   if (detail.backups_error) {
-    return <Alert type="warning" showIcon message={detail.backups_error} />;
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="Failed to load backup health"
+        description={detail.backups_error}
+      />
+    );
   }
   if (!backups) {
     return (
@@ -136,8 +180,11 @@ function BackupHealth({ detail }: { detail: BayOpsDetail }) {
         <Tag color={backup.enabled ? "green" : "orange"}>
           backups {backup.enabled ? "enabled" : "disabled"}
         </Tag>
-        <Tag color={backup.last_error ? "red" : "green"}>
-          last error {backup.last_error ? "yes" : "none"}
+        <Tag color={backup.last_error ? "orange" : "green"}>
+          last full backup {backup.last_error ? "failed" : "ok"}
+        </Tag>
+        <Tag color={backup.maintenance_last_error ? "orange" : "green"}>
+          scheduler {backup.maintenance_last_error ? "failed" : "ok"}
         </Tag>
         <Tag color={readiness.gold_star ? "green" : "orange"}>
           restore readiness {readiness.gold_star ? "gold" : "check"}
@@ -169,9 +216,16 @@ function BackupHealth({ detail }: { detail: BayOpsDetail }) {
           PITR: {readiness.latest_backup_pitr_test_status}
         </Typography.Text>
       </Space>
-      {backup.last_error ? (
-        <Typography.Text type="danger">{backup.last_error}</Typography.Text>
-      ) : null}
+      <BackupStoredError
+        title="Last full backup attempt failed"
+        error={backup.last_error}
+        timestamp={backup.last_error_at}
+      />
+      <BackupStoredError
+        title="Last scheduled backup maintenance failed"
+        error={backup.maintenance_last_error}
+        timestamp={backup.maintenance_last_error_at}
+      />
       <Typography.Text type="secondary">{readiness.summary}</Typography.Text>
     </Space>
   );
