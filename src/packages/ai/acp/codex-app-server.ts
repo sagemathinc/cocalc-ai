@@ -622,9 +622,50 @@ function normalizeErrorMessages(errors: string[]): string[] {
 
 function formatAppServerError(errors: string[]): string {
   const normalized = normalizeErrorMessages(errors);
+  const authError = formatCodexAuthError(normalized);
+  if (authError) return authError;
   if (normalized.length === 0) return "Codex app-server request failed.";
   if (normalized.length === 1) return normalized[0];
   return normalized.join("\n\n");
+}
+
+function classifyCodexAuthError(
+  errors: string[],
+): "expired-auth" | "missing-auth" | undefined {
+  const normalized = errors.join("\n").toLowerCase();
+  if (
+    normalized.includes("token_expired") ||
+    normalized.includes("provided authentication token is expired") ||
+    normalized.includes("please try signing in again")
+  ) {
+    return "expired-auth";
+  }
+  if (
+    normalized.includes("missing bearer or basic authentication") ||
+    normalized.includes("missing authentication in header")
+  ) {
+    return "missing-auth";
+  }
+  return undefined;
+}
+
+function formatCodexAuthError(errors: string[]): string | undefined {
+  switch (classifyCodexAuthError(errors)) {
+    case "expired-auth":
+      return [
+        "Codex authentication expired.",
+        "",
+        "Sign in again with your ChatGPT Plan or update your OpenAI API key, then retry this message.",
+      ].join("\n");
+    case "missing-auth":
+      return [
+        "Codex is not configured.",
+        "",
+        "Connect a ChatGPT Plan or add an OpenAI API key, then retry this message.",
+      ].join("\n");
+    default:
+      return undefined;
+  }
 }
 
 function getRemoteCompactRetryLimit(): number {
@@ -2196,6 +2237,9 @@ export class CodexAppServerAgent implements AcpAgent {
       }
       const stderrTail = client.getStderrTail();
       const primaryError = (err as Error)?.message ?? `${err}`;
+      const userFacingPrimaryError =
+        formatCodexAuthError(normalizeErrorMessages([primaryError])) ??
+        primaryError;
       const diagnosticError = [
         primaryError,
         ...stderrTail.filter((line) => !errors.includes(line)),
@@ -2256,7 +2300,7 @@ export class CodexAppServerAgent implements AcpAgent {
           },
         );
       }
-      throw new Error(primaryError);
+      throw new Error(userFacingPrimaryError);
     } finally {
       this.running.delete(currentThreadId);
       if (spawned.proc.exitCode == null && !spawned.proc.killed) {
