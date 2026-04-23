@@ -1,20 +1,38 @@
 import immutable from "immutable";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SSHPanel } from "./ssh";
 
 const useHostInfo = jest.fn();
 const useTypedRedux = jest.fn();
+const apiKeys = jest.fn();
 
 jest.mock("antd", () => {
   const Text = ({ children }: any) => <span>{children}</span>;
   const Paragraph = ({ children }: any) => <p>{children}</p>;
-  const Button = ({ children, onClick }: any) => (
-    <button type="button" onClick={onClick}>
+  const Button = ({ children, onClick, loading }: any) => (
+    <button type="button" onClick={onClick} disabled={loading}>
       {children}
     </button>
   );
+  const Modal = ({ children, open, title }: any) =>
+    open ? (
+      <div role="dialog">
+        <h2>{title}</h2>
+        {children}
+      </div>
+    ) : null;
+  const Space = ({ children }: any) => <div>{children}</div>;
+  const Alert = ({ description, message }: any) => (
+    <div>
+      {message}
+      {description}
+    </div>
+  );
   return {
+    Alert,
     Button,
+    Modal,
+    Space,
     Tooltip: ({ children }: any) => <>{children}</>,
     Typography: {
       Text,
@@ -45,6 +63,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 
 jest.mock("@cocalc/frontend/components", () => ({
   A: ({ children, href }: any) => <a href={href}>{children}</a>,
+  CopyToClipBoard: ({ value }: any) => <div>{value}</div>,
   Icon: () => null,
   Tooltip: ({ children }: any) => <>{children}</>,
 }));
@@ -67,6 +86,9 @@ jest.mock("@cocalc/frontend/i18n", () => ({
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     account_id: "acct-1",
+    account_client: {
+      api_keys: (...args: any[]) => apiKeys(...args),
+    },
   },
 }));
 
@@ -81,13 +103,14 @@ jest.mock("@cocalc/frontend/lite", () => ({
 describe("SSHPanel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    apiKeys.mockResolvedValue([{ secret: "sk-test-secret" }]);
     useTypedRedux.mockImplementation((_store: string, key: string) => {
       if (key === "is_launchpad") return true;
       return undefined;
     });
   });
 
-  it("shows CoCalc CLI install and ssh instructions for launchpad projects", () => {
+  it("shows CoCalc CLI install and generated ssh setup command for launchpad projects", async () => {
     useHostInfo.mockReturnValue(
       immutable.Map({
         ssh_server: "hub.example.com:2200",
@@ -112,17 +135,7 @@ describe("SSHPanel", () => {
     );
 
     expect(
-      screen.getByText(/Launchpad project SSH is routed through Cloudflare/i),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(
-        "COCALC_API_KEY=<account-api-key> cocalc --api http://localhost project ssh -w project-1",
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(
-        "COCALC_API_KEY=<account-api-key> cocalc --api http://localhost project ssh-config add -w project-1",
-      ),
+      screen.getByText(/Launchpad SSH is routed through Cloudflare/i),
     ).toBeTruthy();
     expect(
       screen.getByText(
@@ -135,5 +148,22 @@ describe("SSHPanel", () => {
     expect(screen.queryByText(/SSH target:/i)).toBeNull();
     expect(screen.queryByText(/Docs/i)).toBeNull();
     expect(screen.queryByText(/must be running/i)).toBeNull();
+    expect(screen.queryByText(/<account-api-key>/i)).toBeNull();
+
+    fireEvent.click(screen.getByText("Generate setup command"));
+
+    await waitFor(() => {
+      expect(apiKeys).toHaveBeenCalledWith({
+        action: "create",
+        name: "SSH setup for project-1",
+        expire: expect.any(Date),
+      });
+    });
+    expect(
+      screen.getByText(
+        "COCALC_API_KEY='sk-test-secret' cocalc --api 'http://localhost' project ssh-config add -w 'project-1'",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("ssh 'project-1'")).toBeTruthy();
   });
 });

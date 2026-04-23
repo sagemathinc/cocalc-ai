@@ -3,12 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Typography } from "antd";
+import { Alert, Button, Modal, Space, Typography } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import SSHKeyList from "@cocalc/frontend/account/ssh-keys/ssh-key-list";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { A, Tooltip } from "@cocalc/frontend/components";
+import { A, CopyToClipBoard, Tooltip } from "@cocalc/frontend/components";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { CopyToClipboard } from "react-copy-to-clipboard";
 import { labels } from "@cocalc/frontend/i18n";
@@ -22,11 +22,16 @@ const COCALC_CLI_DOWNLOAD_URL =
   "https://software.cocalc.ai/software/cocalc/index.html";
 const COCALC_CLI_INSTALL_COMMAND =
   "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash";
+const SETUP_KEY_EXPIRE_MS = 60 * 60 * 1000;
 
 interface Props {
   project: Project;
   account_id?: string;
   mode?: "project" | "flyout";
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 export function SSHPanel({ project, mode = "project" }: Props) {
@@ -41,6 +46,10 @@ export function SSHPanel({ project, mode = "project" }: Props) {
   const localProxy = !!hostInfo?.get?.("local_proxy");
   const useCliSsh = localProxy || isLaunchpad;
   const [sshCopied, setSshCopied] = useState(false);
+  const [setupModalOpen, setSetupModalOpen] = useState(false);
+  const [setupLoading, setSetupLoading] = useState(false);
+  const [setupError, setSetupError] = useState<string | undefined>();
+  const [setupApiKey, setSetupApiKey] = useState<string | undefined>();
   const copyTimeoutRef = useRef<number | null>(null);
 
   const ssh_keys = project.getIn([
@@ -73,8 +82,10 @@ export function SSHPanel({ project, mode = "project" }: Props) {
       : null;
   const apiUrl =
     typeof window === "undefined" ? "<hub-url>" : window.location.origin;
-  const cliSshCommand = `COCALC_API_KEY=<account-api-key> cocalc --api ${apiUrl} project ssh -w ${projectId}`;
-  const cliSshConfigCommand = `COCALC_API_KEY=<account-api-key> cocalc --api ${apiUrl} project ssh-config add -w ${projectId}`;
+  const setupCommand = setupApiKey
+    ? `COCALC_API_KEY=${shellQuote(setupApiKey)} cocalc --api ${shellQuote(apiUrl)} project ssh-config add -w ${shellQuote(projectId)}`
+    : "";
+  const connectCommand = `ssh ${shellQuote(projectId)}`;
 
   useEffect(() => {
     setSshCopied(false);
@@ -99,6 +110,30 @@ export function SSHPanel({ project, mode = "project" }: Props) {
     }, 1200);
   };
 
+  const createSshSetupKey = async () => {
+    setSetupModalOpen(true);
+    if (setupApiKey || setupLoading) return;
+    setSetupError(undefined);
+    setSetupLoading(true);
+    try {
+      const title = project.get("title") || project.get("name") || projectId;
+      const response = await webapp_client.account_client.api_keys({
+        action: "create",
+        name: `SSH setup for ${title}`,
+        expire: new Date(Date.now() + SETUP_KEY_EXPIRE_MS),
+      });
+      const secret = response?.[0]?.secret;
+      if (!secret) {
+        throw Error("failed to create account API key");
+      }
+      setSetupApiKey(secret);
+    } catch (err) {
+      setSetupError(`${err}`);
+    } finally {
+      setSetupLoading(false);
+    }
+  };
+
   return (
     <SSHKeyList
       ssh_keys={ssh_keys}
@@ -106,19 +141,21 @@ export function SSHPanel({ project, mode = "project" }: Props) {
       mode={mode}
     >
       <>
-        <p>
-          To SSH to your {projectLabelLower} add your public key below, or{" "}
-          <Button
-            type="link"
-            onClick={() => {
-              redux
-                .getProjectActions(project.get("project_id"))
-                .open_file({ path: ".ssh/authorized_keys" });
-            }}
-          >
-            add your key to ~/.ssh/authorized_keys
-          </Button>
-        </p>
+        {!useCliSsh && (
+          <p>
+            To SSH to your {projectLabelLower} add your public key below, or{" "}
+            <Button
+              type="link"
+              onClick={() => {
+                redux
+                  .getProjectActions(project.get("project_id"))
+                  .open_file({ path: ".ssh/authorized_keys" });
+              }}
+            >
+              add your key to ~/.ssh/authorized_keys
+            </Button>
+          </p>
+        )}
         <Paragraph>
           SSH access is full OpenSSH access to this {projectLabelLower},
           including remote commands, port forwarding, and X11 forwarding when
@@ -128,35 +165,100 @@ export function SSHPanel({ project, mode = "project" }: Props) {
         </Paragraph>
         {useCliSsh ? (
           <>
-            <Paragraph>
-              Launchpad project SSH is routed through Cloudflare. Direct host
-              ports are not exposed, so use the{" "}
-              <A href={COCALC_CLI_DOWNLOAD_URL}>CoCalc CLI</A>, which starts a
-              local Cloudflare tunnel and configures SSH for this route.
-            </Paragraph>
-            <Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              Install command: <Text code>{COCALC_CLI_INSTALL_COMMAND}</Text>
-            </Paragraph>
-            <Paragraph>
-              Create an account API key using the button below, then run:
-            </Paragraph>
-            <Paragraph style={{ marginBottom: 8 }}>
-              <Text code copyable={{ text: cliSshCommand }}>
-                {cliSshCommand}
-              </Text>
-            </Paragraph>
-            <Paragraph>
-              To add a reusable <Text code>~/.ssh/config</Text> entry:
-            </Paragraph>
-            <Paragraph style={{ marginBottom: 8 }}>
-              <Text code copyable={{ text: cliSshConfigCommand }}>
-                {cliSshConfigCommand}
-              </Text>
-            </Paragraph>
-            <Paragraph type="secondary">
-              The CLI will create a local SSH key if needed and install the
-              public key into this {projectLabelLower}.
-            </Paragraph>
+            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              <Paragraph style={{ marginBottom: 0 }}>
+                Launchpad SSH is routed through Cloudflare. Use the{" "}
+                <A href={COCALC_CLI_DOWNLOAD_URL}>CoCalc CLI</A> to configure a
+                standard <Text code>~/.ssh/config</Text> entry for this{" "}
+                {projectLabelLower}.
+              </Paragraph>
+              <div>
+                <Text strong>1. Install CoCalc CLI</Text>
+                <CopyToClipBoard
+                  value={COCALC_CLI_INSTALL_COMMAND}
+                  inputWidth="100%"
+                  style={{ marginTop: 6 }}
+                />
+              </div>
+              <div>
+                <Text strong>
+                  2. Configure SSH for this {projectLabelLower}
+                </Text>
+                <div style={{ marginTop: 6 }}>
+                  <Button
+                    type="primary"
+                    loading={setupLoading}
+                    onClick={createSshSetupKey}
+                  >
+                    Generate setup command
+                  </Button>
+                </div>
+              </div>
+              <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                The setup command creates a one-hour account API key, creates or
+                reuses your local SSH key, installs the public key in this{" "}
+                {projectLabelLower}, and writes the SSH route to{" "}
+                <Text code>~/.ssh/config</Text>. The API key is not stored in
+                your SSH config.
+              </Paragraph>
+            </Space>
+            <Modal
+              open={setupModalOpen}
+              title="Set up SSH for this project"
+              onCancel={() => setSetupModalOpen(false)}
+              footer={
+                <Button onClick={() => setSetupModalOpen(false)}>Close</Button>
+              }
+              width={760}
+            >
+              <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                <Paragraph style={{ marginBottom: 0 }}>
+                  Run this once in your terminal. It uses a temporary one-hour
+                  account API key to install SSH access for this{" "}
+                  {projectLabelLower}.
+                </Paragraph>
+                {setupError && (
+                  <Alert
+                    type="error"
+                    showIcon
+                    message="Unable to create setup command"
+                    description={setupError}
+                  />
+                )}
+                {setupLoading && (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="Creating a one-hour account API key..."
+                  />
+                )}
+                {setupCommand && (
+                  <>
+                    <div>
+                      <Text strong>Configure SSH</Text>
+                      <CopyToClipBoard
+                        value={setupCommand}
+                        inputWidth="100%"
+                        style={{ marginTop: 6 }}
+                      />
+                    </div>
+                    <div>
+                      <Text strong>Connect</Text>
+                      <CopyToClipBoard
+                        value={connectCommand}
+                        inputWidth="100%"
+                        style={{ marginTop: 6 }}
+                      />
+                    </div>
+                    <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                      Existing SSH access keeps working after this API key
+                      expires because SSH uses the installed public key and the
+                      generated <Text code>~/.ssh/config</Text> entry.
+                    </Paragraph>
+                  </>
+                )}
+              </Space>
+            </Modal>
           </>
         ) : sshCommand ? (
           <>

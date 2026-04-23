@@ -289,7 +289,7 @@ export function HostPickerModal({
           title={
             currentHost?.status === "deprovisioned"
               ? "Source host is deprovisioned. The host disk no longer exists; this move restores from backups."
-              : "Files in /scratch (if any) will be discarded. Snapshots are not moved; only backups are preserved."
+              : "Files in /scratch (if any) will be discarded. Snapshots are not moved; only backups are preserved. SSH access must be reconfigured after the move."
           }
           style={{ marginBottom: 12 }}
         />
