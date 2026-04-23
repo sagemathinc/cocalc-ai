@@ -727,6 +727,7 @@ function isRetryableRemoteCompactTimeoutText(text: string): boolean {
     return false;
   }
   return (
+    normalized.includes("timeout waiting for child process to exit") ||
     normalized.includes(
       "compact_error=timeout waiting for child process to exit",
     ) ||

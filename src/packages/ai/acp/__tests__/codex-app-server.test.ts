@@ -1010,6 +1010,113 @@ describe("CodexAppServerAgent", () => {
     ).toBeUndefined();
   });
 
+  it("retries short-form remote compaction timeout errors", async () => {
+    process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES = "1";
+    process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS = "1";
+
+    let spawnCount = 0;
+    const compactTimeout =
+      "Error running remote compact task: timeout waiting for child process to exit";
+
+    const makeProc = (spawn: number) =>
+      new FakeCodexAppServerProc((fake, message) => {
+        switch (message.method) {
+          case "initialize":
+            fake.sendResponse(message.id, { ok: true });
+            break;
+          case "thread/start":
+            fake.sendResponse(message.id, {
+              thread: { id: "thr-compact-short-1" },
+            });
+            break;
+          case "turn/start": {
+            const turnId = `turn-compact-short-${spawn}`;
+            fake.sendResponse(message.id, { turn: { id: turnId } });
+            setImmediate(() => {
+              fake.sendNotification("turn/started", {
+                turn: { id: turnId, status: "inProgress" },
+              });
+              if (spawn === 1) {
+                fake.sendNotification("error", {
+                  turnId,
+                  error: { message: compactTimeout },
+                });
+                fake.sendNotification("turn/completed", {
+                  turn: {
+                    id: turnId,
+                    status: "failed",
+                    error: { message: compactTimeout },
+                  },
+                });
+              } else {
+                fake.sendNotification("item/agentMessage/delta", {
+                  threadId: "thr-compact-short-1",
+                  turnId,
+                  itemId: "msg-compact-short-1",
+                  delta: "Recovered",
+                });
+                fake.sendNotification("turn/completed", {
+                  turn: { id: turnId, status: "completed" },
+                });
+              }
+            });
+            break;
+          }
+          default:
+            if (typeof message.id === "number") {
+              fake.sendResponse(message.id, {});
+            }
+        }
+      });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: makeProc(++spawnCount) as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    expect(spawnCount).toBe(2);
+    expect(streamPayloads).toEqual(
+      expect.arrayContaining([
+        {
+          type: "event",
+          event: {
+            type: "thinking",
+            text: "Remote context compaction timed out. Retrying (1/1)...",
+          },
+        },
+        {
+          type: "summary",
+          finalResponse: "Recovered",
+          usage: undefined,
+          threadId: "thr-compact-short-1",
+        },
+      ]),
+    );
+  });
+
   it("stops after bounded remote compaction retries and adds guidance", async () => {
     process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES = "1";
     process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS = "1";
