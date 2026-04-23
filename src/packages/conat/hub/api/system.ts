@@ -34,6 +34,7 @@ export const system = {
   terminate: authFirst,
   listBays: authFirst,
   getBayOpsOverview: authFirstRequireAccount,
+  getBayOpsDetail: authFirstRequireAccount,
   setBayProjectOwnershipAdmission: authFirstRequireAccount,
   getBayLoad: authFirst,
   getBayBackups: authFirst,
@@ -324,6 +325,16 @@ export interface BayOpsOverview {
   checked_at: string;
   current_bay_id: string;
   bays: BayOpsOverviewBay[];
+}
+
+export interface BayOpsDetail {
+  bay_id: string;
+  checked_at: string;
+  load?: BayLoadInfo;
+  backups?: BayBackupsInfo;
+  load_error?: string | null;
+  backups_error?: string | null;
+  routed: boolean;
 }
 
 export interface BayLoadBrowserControlStatus {
@@ -911,6 +922,11 @@ export interface System {
   getBayOpsOverview: (opts?: {
     account_id?: string;
   }) => Promise<BayOpsOverview>;
+
+  getBayOpsDetail: (opts: {
+    account_id?: string;
+    bay_id: string;
+  }) => Promise<BayOpsDetail>;
 
   setBayProjectOwnershipAdmission: (opts: {
     account_id?: string;
