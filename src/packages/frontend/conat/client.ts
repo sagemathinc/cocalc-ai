@@ -1156,6 +1156,30 @@ export class ConatClient extends EventEmitter {
     }, 50);
   };
 
+  private requestRoutedHostReconnects = ({
+    onlyDisconnected = false,
+  }: {
+    onlyDisconnected?: boolean;
+  } = {}): void => {
+    for (const [host_id, state] of Object.entries(this.routedHubClients)) {
+      if (!this.isCurrentRoutedHostState(host_id, state)) {
+        continue;
+      }
+      if (onlyDisconnected && state.client.conn?.connected) {
+        continue;
+      }
+      if (state.reconnectTimer != null) {
+        clearTimeout(state.reconnectTimer);
+        delete state.reconnectTimer;
+      }
+      void this.runRoutedHostReconnect({
+        host_id,
+        state,
+        project_id: this.pickTrackedProjectForHost(host_id, state),
+      });
+    }
+  };
+
   refreshProjectHostRouting = ({
     source_host_id,
     dest_host_id,
@@ -1921,17 +1945,6 @@ export class ConatClient extends EventEmitter {
       clearTimeout(this.routedHostRecoveryTimer);
       delete this.routedHostRecoveryTimer;
     }
-    for (const host_id in this.routedHubClients) {
-      try {
-        this.routedHubClients[host_id]?.client?.close();
-      } catch (err) {
-        console.warn(
-          `failed closing routed hub client for host ${host_id}`,
-          err,
-        );
-      }
-    }
-    this.routedHubClients = {};
     this.projectHostTokens = {};
     try {
       this._conatClient?.disconnect();
@@ -1945,6 +1958,7 @@ export class ConatClient extends EventEmitter {
       priority: "foreground",
       resetBackoff: true,
     });
+    this.requestRoutedHostReconnects({ onlyDisconnected: true });
   };
 
   requestReconnect = ({

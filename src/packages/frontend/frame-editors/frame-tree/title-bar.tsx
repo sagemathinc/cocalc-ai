@@ -684,6 +684,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         size={button_size()}
         style={button_style()}
         onClick={() => {
+          props.actions.set_active_id(props.id, true);
           props.editor_actions.save(true);
           props.actions.focus(props.id);
         }}

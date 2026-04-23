@@ -186,6 +186,21 @@ describe("NavigatorShell keyboard suppression", () => {
     expect(screen.queryByTestId("navigator-composer")).toBeNull();
   });
 
+  it("uses the live shared chat readiness on rerender if the ready event was missed", () => {
+    mockSharedChatReady = false;
+
+    const { rerender } = render(<NavigatorShell project_id="project-1" />);
+
+    expect(screen.getByText("Loading...")).toBeTruthy();
+    expect(screen.queryByTestId("navigator-composer")).toBeNull();
+
+    mockSharedChatReady = true;
+    rerender(<NavigatorShell project_id="project-1" />);
+
+    expect(screen.queryByText("Loading...")).toBeNull();
+    expect(screen.getByTestId("navigator-composer")).toBeTruthy();
+  });
+
   it("prefers latest thread metadata acp_config over stale root-message config", () => {
     const latestConfig = {
       model: "gpt-5.3-codex-spark",

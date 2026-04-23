@@ -445,6 +445,8 @@ export function NavigatorShell({
       : undefined;
     return initialActions?.isSyncdbReady?.() ?? false;
   });
+  const navigatorChatReady =
+    syncdbReady || (actions?.isSyncdbReady?.() ?? false);
   const [error, setError] = useState<string>("");
   const [initRetrying, setInitRetrying] = useState<boolean>(false);
   const [initRetryTick, setInitRetryTick] = useState<number>(0);
@@ -875,7 +877,7 @@ export function NavigatorShell({
 
   const submitIntent = useCallback(
     (intent: NavigatorSubmitPromptDetail): boolean => {
-      if (!actions || !syncdbReady) return false;
+      if (!actions || !navigatorChatReady) return false;
       const basePrompt = `${intent?.prompt ?? ""}`.trim();
       if (!basePrompt) {
         removeQueuedNavigatorPromptIntent(intent.id);
@@ -1001,12 +1003,12 @@ export function NavigatorShell({
       homeDirectory,
       selectedRootMessage,
       selectedThreadKey,
-      syncdbReady,
+      navigatorChatReady,
     ],
   );
 
   useEffect(() => {
-    if (!actions || !syncdbReady) return;
+    if (!actions || !navigatorChatReady) return;
     let retryNeeded = false;
     const queued = takeQueuedNavigatorPromptIntents();
     for (const intent of queued) {
@@ -1028,14 +1030,14 @@ export function NavigatorShell({
       setIntentRetryTick((v) => v + 1);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [actions, submitIntent, intentRetryTick, syncdbReady]);
+  }, [actions, submitIntent, intentRetryTick, navigatorChatReady]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onPromptIntent = (evt: Event) => {
       const detail = (evt as CustomEvent<NavigatorSubmitPromptDetail>).detail;
       if (!detail?.id) return;
-      if (!actions || !syncdbReady) {
+      if (!actions || !navigatorChatReady) {
         queueNavigatorPromptIntent(detail);
         setIntentRetryTick((v) => v + 1);
         return;
@@ -1060,7 +1062,7 @@ export function NavigatorShell({
         onPromptIntent as EventListener,
       );
     };
-  }, [actions, submitIntent, syncdbReady]);
+  }, [actions, submitIntent, navigatorChatReady]);
 
   const desc = useMemo(() => {
     const data: Record<string, any> = {
@@ -1470,7 +1472,7 @@ export function NavigatorShell({
         }}
         {...keyboardBoundaryProps}
       >
-        {actions && syncdbReady ? (
+        {actions && navigatorChatReady ? (
           <FileContext.Provider value={chatFileContext}>
             <SideChat
               actions={actions}
