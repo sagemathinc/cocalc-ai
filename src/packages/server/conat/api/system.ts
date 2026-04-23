@@ -136,6 +136,7 @@ import type {
   BayRestoreTestRunResult,
   BayBackupsInfo,
   BayInfo,
+  BayOpsDetail,
   BayOpsOverview,
   BayOpsOverviewBay,
   BayOpsRehomeCounts,
@@ -146,6 +147,7 @@ import type {
   BayLoadParallelOpsStatus,
   BayLoadProjectionStatus,
 } from "@cocalc/conat/hub/api/system";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 
 const logger = getLogger("server:conat:api:system");
 const ROOTFS_PUBLISH_LRO_KIND = "project-rootfs-publish";
@@ -403,6 +405,49 @@ export async function getBayOpsOverview({
     bays: [...rowsByBay.values()].sort((a, b) =>
       a.bay_id.localeCompare(b.bay_id),
     ),
+  };
+}
+
+function settledError(result: PromiseSettledResult<unknown>): string | null {
+  return result.status === "rejected" ? `${result.reason}` : null;
+}
+
+export async function getBayOpsDetail({
+  account_id,
+  bay_id,
+}: {
+  account_id?: string;
+  bay_id: string;
+}): Promise<BayOpsDetail> {
+  await assertAdmin(account_id);
+  const requestedBayId = `${bay_id ?? ""}`.trim();
+  if (!requestedBayId) {
+    throw Error("bay_id is required");
+  }
+  const currentBayId = getConfiguredBayId();
+  const api =
+    requestedBayId === currentBayId
+      ? {
+          getLoad: async (_opts: { account_id?: string }) =>
+            await getBayLoad({ account_id, bay_id: currentBayId }),
+          getBackups: async (_opts: { account_id?: string }) =>
+            await getBayBackups({ account_id, bay_id: currentBayId }),
+        }
+      : getInterBayBridge().bayOps(requestedBayId, { timeout_ms: 15_000 });
+  const [loadResult, backupsResult] = await Promise.allSettled([
+    api.getLoad({ account_id }),
+    api.getBackups({ account_id }),
+  ]);
+
+  return {
+    bay_id: requestedBayId,
+    checked_at: new Date().toISOString(),
+    routed: requestedBayId !== currentBayId,
+    load: loadResult.status === "fulfilled" ? loadResult.value : undefined,
+    backups:
+      backupsResult.status === "fulfilled" ? backupsResult.value : undefined,
+    load_error: settledError(loadResult),
+    backups_error: settledError(backupsResult),
   };
 }
 

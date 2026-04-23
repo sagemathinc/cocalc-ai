@@ -20,6 +20,7 @@ import type {
   HostConnectionInfo,
   Hosts,
 } from "@cocalc/conat/hub/api/hosts";
+import type { BayBackupsInfo, BayLoadInfo } from "@cocalc/conat/hub/api/system";
 import type {
   ProjectActiveOperationSummary,
   ProjectBackupSchedule,
@@ -477,6 +478,10 @@ export interface BayRegistryRegisterResult extends BayRegistryEntry {
   managed_tunnel?: BayRegistryManagedTunnel | null;
 }
 
+export interface BayOpsHealthRequest {
+  account_id?: string;
+}
+
 export interface AuthTokenRequiresRequest {}
 
 export interface AuthTokenRedeemRequest {
@@ -624,6 +629,7 @@ export type AccountLocalMethod =
   | "reconcile-rehome";
 export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
 export type BayRegistryMethod = "register" | "list";
+export type BayOpsMethod = "get-load" | "get-backups";
 export type ProjectCollabInviteMethod =
   | "upsert-inbox"
   | "delete-inbox"
@@ -945,6 +951,11 @@ export interface InterBayBayRegistryApi {
   list: (opts: BayRegistryListRequest) => Promise<BayRegistryEntry[]>;
 }
 
+export interface InterBayBayOpsApi {
+  getLoad: (opts: BayOpsHealthRequest) => Promise<BayLoadInfo>;
+  getBackups: (opts: BayOpsHealthRequest) => Promise<BayBackupsInfo>;
+}
+
 export interface InterBayAuthTokenApi {
   requiresToken: (opts: AuthTokenRequiresRequest) => Promise<boolean>;
   redeem: (
@@ -1203,6 +1214,16 @@ export function bayRegistrySubject({
   method: BayRegistryMethod;
 }): string {
   return `global.bay-registry.rpc.${method}`;
+}
+
+export function bayOpsSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: BayOpsMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.bay-ops.${method}`;
 }
 
 export function authTokenSubject({
@@ -1982,6 +2003,31 @@ export function createInterBayBayRegistryClient({
   };
 }
 
+export function createInterBayBayOpsClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayBayOpsApi {
+  const loadClient = createServiceClient<Pick<InterBayBayOpsApi, "getLoad">>({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({ dest_bay, method: "get-load" }),
+  });
+  const backupsClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getBackups">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({ dest_bay, method: "get-backups" }),
+  });
+  return {
+    getLoad: async (opts) => await loadClient.getLoad(opts),
+    getBackups: async (opts) => await backupsClient.getBackups(opts),
+  };
+}
+
 export function createInterBayBayRegistryHandlers({
   impl,
   ...options
@@ -2003,6 +2049,34 @@ export function createInterBayBayRegistryHandlers({
       subject: bayRegistrySubject({ method: "list" }),
       impl: {
         list: async (opts) => await impl.list(opts),
+      },
+    }),
+  ];
+}
+
+export function createInterBayBayOpsHandlers({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayBayOpsApi;
+}): ConatService[] {
+  return [
+    createServiceHandler<Pick<InterBayBayOpsApi, "getLoad">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({ dest_bay: bay_id, method: "get-load" }),
+      impl: {
+        getLoad: async (opts) => await impl.getLoad(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "getBackups">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({ dest_bay: bay_id, method: "get-backups" }),
+      impl: {
+        getBackups: async (opts) => await impl.getBackups(opts),
       },
     }),
   ];

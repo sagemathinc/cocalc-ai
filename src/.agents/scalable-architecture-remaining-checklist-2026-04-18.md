@@ -597,6 +597,8 @@ Initial read-only page:
 - [x] add first admin Bay Operations panel with registry rows, heartbeat
       freshness, ownership counts, recent rehome status, and copy/pasteable CLI
       commands
+- [x] add expandable drain-readiness health that routes to each bay for live
+      load, projection backlog/maintenance, backup health, and restore readiness
 - [ ] add an admin bay list page showing bay id, role, public URL, tunnel/DNS
       state, software version, uptime/heartbeat, and whether the bay accepts new
       ownership
