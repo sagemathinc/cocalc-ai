@@ -1,6 +1,8 @@
 import { performance } from "node:perf_hooks";
 import { Command } from "commander";
 
+import { durationToMs } from "../../core/utils";
+
 type LoadScenarioResult = Record<string, unknown> | null | undefined;
 type SeedScenarioResult = Record<string, unknown>;
 type LoadComponentTiming = {
@@ -18,6 +20,7 @@ type LoadSummary = {
   scenario: string;
   iterations: number;
   warmup: number;
+  duration_ms?: number;
   concurrency: number;
   successes: number;
   failures: number;
@@ -57,6 +60,13 @@ function parsePositiveInteger(
     throw new Error(`${flag} must be a positive integer`);
   }
   return value;
+}
+
+function parseOptionalDurationMs(raw: string | undefined): number | undefined {
+  if (raw == null || `${raw}`.trim() === "") {
+    return undefined;
+  }
+  return Math.max(1, durationToMs(raw, 0));
 }
 
 function roundMs(value: number): number {
@@ -192,16 +202,21 @@ async function runLoadScenario({
   iterations,
   warmup,
   concurrency,
+  durationMs,
   execute,
 }: {
   scenario: string;
   iterations: number;
   warmup: number;
   concurrency: number;
+  durationMs?: number;
   execute: (index: number, workerIndex: number) => Promise<LoadScenarioResult>;
 }): Promise<LoadSummary> {
-  const total = iterations + warmup;
-  const workerCount = Math.min(concurrency, Math.max(1, total));
+  const fixedTotal = iterations + warmup;
+  const durationMode = durationMs != null;
+  const workerCount = durationMode
+    ? concurrency
+    : Math.min(concurrency, Math.max(1, fixedTotal));
   const startedAt = new Date();
   const started = performance.now();
   const latencies: number[] = [];
@@ -210,31 +225,44 @@ async function runLoadScenario({
   let successes = 0;
   let failures = 0;
   let nextIndex = 0;
+  let measuredStartedAt: number | null = null;
 
   const workers = Array.from(
     { length: workerCount },
     async (_, workerIndex) => {
       while (true) {
         const index = nextIndex++;
-        if (index >= total) {
+        if (!durationMode && index >= fixedTotal) {
+          return;
+        }
+        const measuredStarted = performance.now();
+        if (durationMode && index >= warmup && measuredStartedAt == null) {
+          measuredStartedAt = measuredStarted;
+        }
+        const measured =
+          durationMode && index >= warmup
+            ? measuredStarted - (measuredStartedAt ?? measuredStarted) <
+              durationMs!
+            : index >= warmup;
+        if (durationMode && index >= warmup && !measured) {
           return;
         }
         const sampleStart = performance.now();
         try {
           const result = await execute(index, workerIndex);
-          if (index >= warmup) {
+          if (measured) {
             successes += 1;
             lastResult = result ?? null;
           }
         } catch (err) {
-          if (index >= warmup) {
+          if (measured) {
             failures += 1;
             if (sampleErrors.length < 5) {
               sampleErrors.push(err instanceof Error ? err.message : `${err}`);
             }
           }
         } finally {
-          if (index >= warmup) {
+          if (measured) {
             latencies.push(performance.now() - sampleStart);
           }
         }
@@ -248,8 +276,9 @@ async function runLoadScenario({
   const measuredAttempts = successes + failures;
   return {
     scenario,
-    iterations,
+    iterations: measuredAttempts,
     warmup,
+    ...(durationMs == null ? {} : { duration_ms: durationMs }),
     concurrency: workerCount,
     successes,
     failures,
@@ -271,12 +300,14 @@ async function runInstrumentedLoadScenario({
   iterations,
   warmup,
   concurrency,
+  durationMs,
   execute,
 }: {
   scenario: string;
   iterations: number;
   warmup: number;
   concurrency: number;
+  durationMs?: number;
   execute: (
     index: number,
     workerIndex: number,
@@ -284,8 +315,11 @@ async function runInstrumentedLoadScenario({
   ) => Promise<LoadScenarioResult>;
 }): Promise<LoadSummary> {
   const componentTimings: LoadComponentTiming[] = [];
-  const total = iterations + warmup;
-  const workerCount = Math.min(concurrency, Math.max(1, total));
+  const fixedTotal = iterations + warmup;
+  const durationMode = durationMs != null;
+  const workerCount = durationMode
+    ? concurrency
+    : Math.min(concurrency, Math.max(1, fixedTotal));
   const startedAt = new Date();
   const started = performance.now();
   const latencies: number[] = [];
@@ -294,13 +328,26 @@ async function runInstrumentedLoadScenario({
   let successes = 0;
   let failures = 0;
   let nextIndex = 0;
+  let measuredStartedAt: number | null = null;
 
   const workers = Array.from(
     { length: workerCount },
     async (_, workerIndex) => {
       while (true) {
         const index = nextIndex++;
-        if (index >= total) {
+        if (!durationMode && index >= fixedTotal) {
+          return;
+        }
+        const measuredStarted = performance.now();
+        if (durationMode && index >= warmup && measuredStartedAt == null) {
+          measuredStartedAt = measuredStarted;
+        }
+        const measured =
+          durationMode && index >= warmup
+            ? measuredStarted - (measuredStartedAt ?? measuredStarted) <
+              durationMs!
+            : index >= warmup;
+        if (durationMode && index >= warmup && !measured) {
           return;
         }
         const sampleStart = performance.now();
@@ -332,19 +379,19 @@ async function runInstrumentedLoadScenario({
         };
         try {
           const result = await execute(index, workerIndex, measure);
-          if (index >= warmup) {
+          if (measured) {
             successes += 1;
             lastResult = result ?? null;
           }
         } catch (err) {
-          if (index >= warmup) {
+          if (measured) {
             failures += 1;
             if (sampleErrors.length < 5) {
               sampleErrors.push(err instanceof Error ? err.message : `${err}`);
             }
           }
         } finally {
-          if (index >= warmup) {
+          if (measured) {
             latencies.push(performance.now() - sampleStart);
             componentTimings.push(...sampleComponents);
           }
@@ -359,8 +406,9 @@ async function runInstrumentedLoadScenario({
   const measuredAttempts = successes + failures;
   return {
     scenario,
-    iterations,
+    iterations: measuredAttempts,
     warmup,
+    ...(durationMs == null ? {} : { duration_ms: durationMs }),
     concurrency: workerCount,
     successes,
     failures,
@@ -705,6 +753,10 @@ export function registerLoadCommand(
     )
     .requiredOption("-w, --project <project>", "project id or name")
     .option("--iterations <n>", "measured iterations", "20")
+    .option(
+      "--duration <duration>",
+      "measured wall-clock duration, e.g. 30s; overrides --iterations",
+    )
     .option("--warmup <n>", "warmup iterations", "2")
     .option("--concurrency <n>", "parallel workers", "1")
     .option(
@@ -726,6 +778,7 @@ export function registerLoadCommand(
         opts: {
           project?: string;
           iterations?: string;
+          duration?: string;
           warmup?: string;
           concurrency?: string;
           projectLimit?: string;
@@ -745,6 +798,7 @@ export function registerLoadCommand(
             "--iterations",
             20,
           );
+          const durationMs = parseOptionalDurationMs(opts.duration);
           const warmup = parsePositiveInteger(opts.warmup, "--warmup", 2);
           const concurrency = parsePositiveInteger(
             opts.concurrency,
@@ -773,6 +827,7 @@ export function registerLoadCommand(
             scenario: "three-bay-control-plane",
             iterations,
             warmup,
+            durationMs,
             concurrency,
             execute: async (_sampleIndex, _workerIndex, measure) => {
               const accountBay = await measure("account-home-bay", async () =>

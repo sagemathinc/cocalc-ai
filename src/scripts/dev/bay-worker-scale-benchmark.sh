@@ -12,6 +12,7 @@ ENTRYPOINT_APIS="${COCALC_BAY_WORKER_SCALE_APIS:-$ENTRYPOINT_API}"
 CONAT_SERVERS="${COCALC_BAY_WORKER_SCALE_CONAT_SERVERS:-$ENTRYPOINT_API}"
 CONCURRENCIES="${COCALC_BAY_WORKER_SCALE_CONCURRENCIES:-32 64 128}"
 ITERATIONS="${COCALC_BAY_WORKER_SCALE_ITERATIONS:-400}"
+DURATION="${COCALC_BAY_WORKER_SCALE_DURATION:-}"
 WARMUP="${COCALC_BAY_WORKER_SCALE_WARMUP:-40}"
 
 log() {
@@ -193,13 +194,22 @@ status_workers() {
 
 run_load_once() {
   local api="$1" concurrency="$2" output="$3"
-  node "$SRC_DIR/packages/cli/dist/bin/main.js" --api "$api" --json \
-    load three-bay \
-    --project "$COCALC_PROJECT_ID" \
-    --iterations "$ITERATIONS" \
-    --warmup "$WARMUP" \
-    --concurrency "$concurrency" \
-    --hot-path > "$output"
+  local args=(
+    "$SRC_DIR/packages/cli/dist/bin/main.js"
+    --api "$api"
+    --json
+    load three-bay
+    --project "$COCALC_PROJECT_ID"
+    --warmup "$WARMUP"
+    --concurrency "$concurrency"
+    --hot-path
+  )
+  if [[ -n "$DURATION" ]]; then
+    args+=(--duration "$DURATION")
+  else
+    args+=(--iterations "$ITERATIONS")
+  fi
+  node "${args[@]}" > "$output"
 }
 
 run_split_load() {
@@ -248,6 +258,7 @@ console.log(JSON.stringify({
   sum_child_scenarios_per_sec: Number(childScenariosPerSec.toFixed(3)),
   sum_child_component_reads_per_sec: Number((childScenariosPerSec * 5).toFixed(3)),
   child_ops_per_sec: rows.map((row) => row.data.ops_per_sec),
+  child_iterations: rows.map((row) => row.data.iterations),
   child_p50_ms: rows.map((row) => row.data.latency_ms.p50),
   child_p95_ms: rows.map((row) => row.data.latency_ms.p95),
 }));
@@ -282,6 +293,7 @@ Environment:
   COCALC_BAY_WORKER_SCALE_CONAT_SERVERS="$CONAT_SERVERS"
   COCALC_BAY_WORKER_SCALE_CONCURRENCIES="$CONCURRENCIES"
   COCALC_BAY_WORKER_SCALE_ITERATIONS=$ITERATIONS
+  COCALC_BAY_WORKER_SCALE_DURATION=${DURATION:-}
   COCALC_BAY_WORKER_SCALE_WARMUP=$WARMUP
 EOF
 }
