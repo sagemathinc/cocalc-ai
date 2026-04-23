@@ -11,6 +11,7 @@ import {
   getBlockDeferChars,
   getBlockDeferMs,
 } from "./block-sync-utils";
+import { isSyncstringLiveConnected } from "./sync-connection";
 
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
 
@@ -39,20 +40,6 @@ type UseBlockSyncResult = {
   lastLocalEditAtRef: React.MutableRefObject<number>;
   lastRemoteMergeAtRef: React.MutableRefObject<number>;
 };
-
-function isSyncstringLiveConnected(actions?: Actions): boolean {
-  const syncstring = actions?._syncstring as
-    | {
-        is_live_connected?: () => boolean;
-        get_state?: () => string;
-      }
-    | undefined;
-  if (syncstring == null) return true;
-  if (typeof syncstring.is_live_connected === "function") {
-    return syncstring.is_live_connected();
-  }
-  return syncstring.get_state?.() === "ready";
-}
 
 export function useBlockSync({
   actions,

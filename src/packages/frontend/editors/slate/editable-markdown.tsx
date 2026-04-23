@@ -99,6 +99,7 @@ import {
   markdownPositionToSlatePoint,
   nearestMarkdownPositionForSlatePoint,
 } from "./sync";
+import { isSyncstringLiveConnected } from "./sync-connection";
 import { ensureRange, pointAtPath } from "./slate-util";
 import { handleForcedPlainTextPaste } from "./clipboard";
 import {
@@ -184,20 +185,6 @@ export function resolveMarkdownClipboardPayload({
     }
   }
   return resolved?.trim() ? resolved : null;
-}
-
-function isSyncstringLiveConnected(actions?: Actions): boolean {
-  const syncstring = actions?._syncstring as
-    | {
-        is_live_connected?: () => boolean;
-        get_state?: () => string;
-      }
-    | undefined;
-  if (syncstring == null) return true;
-  if (typeof syncstring.is_live_connected === "function") {
-    return syncstring.is_live_connected();
-  }
-  return syncstring.get_state?.() === "ready";
 }
 
 export function handleEditableMarkdownProjectNavigationKeydown({
