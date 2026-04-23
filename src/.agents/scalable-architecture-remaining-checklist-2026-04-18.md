@@ -565,6 +565,39 @@ Spot support is strategically important now and should be treated as first-class
 The connection leak fix means future measurements should be much more
 trustworthy than before. This is now high-value work.
 
+The big capacity question is whether the multibay control plane can support
+10K, 100K, or eventually 1M active users at a plausible operating cost. The
+answer must be based on an explicit model, not a single benchmark number:
+
+- define "active user" in measurable terms:
+  - connected browser sessions
+  - active project sessions
+  - control-plane requests per minute
+  - project-host runtime requests per minute
+  - open/reconnect/start/stop/restart rates
+- measure each tier separately:
+  - bay control-plane routing and metadata reads
+  - account/project/host ownership lookups
+  - browser bootstrap and reconnect paths
+  - project open and project-host auth paths
+  - terminal/notebook/app runtime traffic after direct project-host routing
+  - background maintenance, projection replay, backup health, and Bay Ops reads
+- keep hot-path and operator-path results separate:
+  - Bay Ops detail is intentionally heavy and should not be included in user
+    hot-path capacity numbers
+  - operator dashboards need their own budgets, caching, and rate limits
+- require two classes of evidence before making production claims:
+  - local 3-bay single-host results for correctness, regression detection, and
+    component attribution
+  - multi-VM/systemd bay results for real network, CPU, Postgres, websocket,
+    and failure-mode behavior
+- convert measurements into sizing guidance:
+  - max sustainable requests/sec per bay at target p95/p99 latency
+  - max connected browser sessions per bay
+  - max project opens/sec and reconnects/sec per bay
+  - project-host count and size needed per active-project cohort
+  - spot/on-demand mix and expected monthly cost envelope
+
 - [ ] add repeatable N-bay load-test fixture setup on top of the current
       multibay dev harness
 - [x] add first repeatable CLI 3-bay control-plane load probe:
@@ -590,6 +623,13 @@ trustworthy than before. This is now high-value work.
   - bays
   - project-hosts
   - spot vs on-demand mix
+- [ ] build a first capacity model spreadsheet/document with:
+  - measured per-bay hot-path throughput
+  - active-user action-rate assumptions
+  - active-project runtime assumptions
+  - monthly cost assumptions for bay VMs, project-host VMs, Postgres/storage,
+    and bandwidth
+  - explicit confidence level for 10K, 100K, and 1M active-user scenarios
 
 Initial local 3-bay evidence from 2026-04-23:
 
@@ -607,6 +647,24 @@ Initial local 3-bay evidence from 2026-04-23:
   `account_home=bay-0`, `project_owner=bay-0`, `host_bay=bay-0`. The command is
   ready, but final canonical capacity evidence still needs a deliberate split
   fixture with account home, project owner, and project host on separate bays.
+- `cocalc load three-bay --hot-path --no-bay-detail` was added so user-capacity
+  measurements can exclude Bay Ops overview/detail. On the same single-host
+  local 3-bay setup, the hot-path sweep was:
+  - concurrency 1: 100 iterations, 0 failures, p50 about 28ms, about
+    31 scenario ops/sec
+  - concurrency 4: 200 iterations, 0 failures, p50 about 68ms, about
+    52 scenario ops/sec
+  - concurrency 16: 400 iterations, 0 failures, p50 about 269ms, about
+    53 scenario ops/sec
+  - concurrency 32: 400 iterations, 0 failures, p50 about 521ms, about
+    55 scenario ops/sec
+  - concurrency 64: 400 iterations, 0 failures, p50 about 1086ms, about
+    54 scenario ops/sec
+- This shows the local single-host dev stack saturating around 53-55 synthetic
+  hot-path scenarios/sec for this probe shape. Since each scenario does five
+  sequential control-plane reads, that is roughly 265-275 measured component
+  reads/sec, but this is only a local regression/sizing baseline. It is not yet
+  evidence for production multi-VM bay capacity.
 
 ### 8. Bay Operations UI / Operator Surface
 

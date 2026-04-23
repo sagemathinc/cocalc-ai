@@ -510,6 +510,63 @@ test("load three-bay measures the canonical split control-plane path", async () 
   assert.ok(capture.data.component_latency_ms["bay-ops-detail"].samples > 0);
 });
 
+test("load three-bay hot-path skips Bay Ops probes", async () => {
+  const capture: Capture = {
+    accountBayCalls: 0,
+    listBayCalls: 0,
+    projectBayCalls: [],
+    hostBayCalls: [],
+    bayOpsOverviewCalls: 0,
+    bayOpsDetailCalls: [],
+    projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
+    adminCreateCalls: [],
+    userSearchCalls: [],
+    createCollabCalls: [],
+    removeCollabCalls: [],
+  };
+  const program = new Command();
+  registerLoadCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "load",
+    "three-bay",
+    "--project",
+    "demo",
+    "--iterations",
+    "2",
+    "--warmup",
+    "1",
+    "--concurrency",
+    "2",
+    "--hot-path",
+  ]);
+
+  assert.equal(capture.accountBayCalls, 3);
+  assert.equal(capture.projectQueryCalls, 3);
+  assert.deepEqual(capture.projectBayCalls, [
+    "project-demo",
+    "project-demo",
+    "project-demo",
+  ]);
+  assert.deepEqual(capture.hostBayCalls, ["host-2", "host-2", "host-2"]);
+  assert.equal(capture.bayOpsOverviewCalls, 0);
+  assert.deepEqual(capture.bayOpsDetailCalls, []);
+  assert.equal(capture.data.last_result.hot_path, true);
+  assert.equal(capture.data.last_result.bay_ops_overview_enabled, false);
+  assert.equal(capture.data.last_result.visible_bay_count, null);
+  assert.equal(capture.data.last_result.detail_bay_count, 0);
+  assert.equal(
+    capture.data.component_latency_ms["bay-ops-overview"],
+    undefined,
+  );
+  assert.equal(capture.data.component_latency_ms["bay-ops-detail"], undefined);
+});
+
 test("load collaborator-cycle uses a seeded per-worker account pool", async () => {
   const capture: Capture = {
     accountBayCalls: 0,

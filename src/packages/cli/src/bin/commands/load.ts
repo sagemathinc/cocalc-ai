@@ -717,6 +717,10 @@ export function registerLoadCommand(
       "comma-separated bay ids to probe with Bay Ops detail; defaults to the first three visible bays",
     )
     .option("--no-bay-detail", "skip routed Bay Ops detail probes")
+    .option(
+      "--hot-path",
+      "measure only user hot-path routing reads; skip Bay Ops overview and detail",
+    )
     .action(
       async (
         opts: {
@@ -727,6 +731,7 @@ export function registerLoadCommand(
           projectLimit?: string;
           detailBays?: string;
           bayDetail?: boolean;
+          hotPath?: boolean;
         },
         command: Command,
       ) => {
@@ -755,7 +760,7 @@ export function registerLoadCommand(
             bay_id?: string;
           }>;
           const detailBayIds =
-            opts.bayDetail === false
+            opts.hotPath || opts.bayDetail === false
               ? []
               : splitCommaList(opts.detailBays).length
                 ? splitCommaList(opts.detailBays)
@@ -806,9 +811,11 @@ export function registerLoadCommand(
                     project_id: project.project_id,
                   }),
               )) as Array<{ account_id?: string; group?: string }>;
-              const overview = (await measure("bay-ops-overview", async () =>
-                ctx.hub.system.getBayOpsOverview({}),
-              )) as { bays?: Array<{ bay_id?: string }> };
+              const overview = opts.hotPath
+                ? null
+                : ((await measure("bay-ops-overview", async () =>
+                    ctx.hub.system.getBayOpsOverview({}),
+                  )) as { bays?: Array<{ bay_id?: string }> });
               const details = detailBayIds.length
                 ? await measure("bay-ops-detail", async () =>
                     Promise.all(
@@ -843,9 +850,14 @@ export function registerLoadCommand(
                 owner_count: collaborators.filter(
                   (row) => row.group === "owner",
                 ).length,
-                visible_bay_count: Array.isArray(overview?.bays)
-                  ? overview.bays.length
-                  : 0,
+                hot_path: !!opts.hotPath,
+                bay_ops_overview_enabled: !opts.hotPath,
+                visible_bay_count:
+                  overview == null
+                    ? null
+                    : Array.isArray(overview?.bays)
+                      ? overview.bays.length
+                      : 0,
                 detail_bay_count: details.length,
                 detail_bays: details,
               };
