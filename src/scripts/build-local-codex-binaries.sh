@@ -20,6 +20,7 @@ ARM64_PKG_CONFIG_PATH="${AARCH64_UNKNOWN_LINUX_GNU_PKG_CONFIG_PATH:-/usr/lib/aar
 ARM64_RELEASE_LTO="${CODEX_ARM64_RELEASE_LTO:-off}"
 ARM64_RELEASE_CODEGEN_UNITS="${CODEX_ARM64_RELEASE_CODEGEN_UNITS:-16}"
 ARM64_SYSROOT_LIB_DIR="${AARCH64_UNKNOWN_LINUX_GNU_LIB_DIR:-/usr/lib/aarch64-linux-gnu}"
+PUBLISH_AFTER_BUILD="${CODEX_PUBLISH_RELEASE:-0}"
 
 if [[ ! -d "${UPSTREAM_DIR}/.git" ]]; then
   echo "Missing upstream codex checkout at ${UPSTREAM_DIR}" >&2
@@ -150,3 +151,9 @@ echo "  x64:   ${X64_DEST}/codex"
 echo "  arm64: ${ARM64_DEST}/codex"
 echo "Manifest:"
 echo "  ${LOCAL_BIN_ROOT}/${CODEX_VERSION}/manifest.json"
+
+if [[ "${PUBLISH_AFTER_BUILD}" == "1" ]]; then
+  echo
+  echo "Publishing release assets for v${CODEX_VERSION}"
+  "${SCRIPT_DIR}/publish-local-codex-binaries.sh"
+fi
