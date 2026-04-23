@@ -7,6 +7,12 @@ source "${SCRIPT_DIR}/lib.sh"
 ensure_dirs
 target="$(current_version || true)"
 previous="$(previous_version || true)"
+if [[ -f "$COCALC_BAY_SKIP_NEXT_MIGRATIONS_MARKER" ]]; then
+  rm -f "$COCALC_BAY_SKIP_NEXT_MIGRATIONS_MARKER"
+  write_event migrate full succeeded "$target" "$previous" "migrations skipped by one-shot restore marker"
+  bay_log "skipping migrations due to one-shot restore marker"
+  exit 0
+fi
 write_event migrate full running "$target" "$previous" "starting migrations"
 if run_env_cmd_once COCALC_BAY_MIGRATE_CMD; then
   write_event migrate full succeeded "$target" "$previous" "migrations completed"

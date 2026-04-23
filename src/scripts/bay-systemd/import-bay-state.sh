@@ -8,6 +8,7 @@ INPUT_DIR=""
 START_BAY=0
 RECREATE_DB=1
 PRUNE_CLOUDFLARE=1
+SKIP_NEXT_MIGRATIONS=1
 
 usage() {
   cat <<'EOF'
@@ -26,6 +27,7 @@ Options:
   --input <dir>       exported state directory (required)
   --start             start cocalc-bay.target after import
   --no-db-recreate    restore into the existing DB instead of drop/create
+  --run-migrations    do not install the one-shot migration skip marker
   --keep-cloudflare   preserve an existing launchpad-cloudflare secret tree
   -h, --help          show help
 EOF
@@ -186,6 +188,10 @@ main() {
         RECREATE_DB=0
         shift
         ;;
+      --run-migrations)
+        SKIP_NEXT_MIGRATIONS=0
+        shift
+        ;;
       --keep-cloudflare)
         PRUNE_CLOUDFLARE=0
         shift
@@ -275,6 +281,12 @@ main() {
   fi
   if [[ -d "${COCALC_BAY_ROOT}/imported-extra-secrets" ]]; then
     run chown -R "${COCALC_BAY_POSTGRES_USER}:${COCALC_BAY_POSTGRES_USER}" "${COCALC_BAY_ROOT}/imported-extra-secrets"
+  fi
+
+  if [[ "$SKIP_NEXT_MIGRATIONS" -eq 1 ]]; then
+    run mkdir -p "$COCALC_BAY_STATE_DIR"
+    run touch "$COCALC_BAY_SKIP_NEXT_MIGRATIONS_MARKER"
+    run chown "${COCALC_BAY_POSTGRES_USER}:${COCALC_BAY_POSTGRES_USER}" "$COCALC_BAY_SKIP_NEXT_MIGRATIONS_MARKER"
   fi
 
   if [[ "$START_BAY" -eq 1 ]]; then

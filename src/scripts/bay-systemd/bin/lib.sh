@@ -41,6 +41,7 @@ load_bay_env
 : "${COCALC_BAY_HEALTH_TIMEOUT_S:=15}"
 : "${COCALC_BAY_MIN_FREE_MB:=1024}"
 : "${COCALC_BAY_EVENT_LOG:=${COCALC_BAY_STATE_DIR}/rollout-events.jsonl}"
+: "${COCALC_BAY_SKIP_NEXT_MIGRATIONS_MARKER:=${COCALC_BAY_STATE_DIR}/skip-next-migrations}"
 
 bay_log() {
   printf '[bay:%s] %s\n' "$COCALC_BAY_ID" "$*" >&2
