@@ -13,6 +13,18 @@ const dynamicImport = new Function("p", "return import(p);") as (
   p: string,
 ) => Promise<any>;
 
+function configureProcessMaxListeners() {
+  const configured = Number.parseInt(
+    `${process.env.COCALC_PROCESS_MAX_LISTENERS ?? ""}`,
+    10,
+  );
+  const limit =
+    Number.isInteger(configured) && configured > 0 ? configured : 50;
+  if (process.getMaxListeners() < limit) {
+    process.setMaxListeners(limit);
+  }
+}
+
 function usage() {
   console.log(`Usage:
   cocalc-plus version
@@ -285,6 +297,8 @@ function writeVersionInfo() {
 }
 
 async function runCli() {
+  configureProcessMaxListeners();
+
   if (process.argv.includes("--run-reflect-scheduler")) {
     if (!process.env.REFLECT_HOME) {
       process.env.REFLECT_HOME = defaultReflectHome();

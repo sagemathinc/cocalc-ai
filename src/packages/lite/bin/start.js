@@ -13,7 +13,21 @@ function defaultLiteDataDir() {
   return join(home, ".local", "share", "cocalc-lite");
 }
 
+function configureProcessMaxListeners() {
+  const configured = Number.parseInt(
+    `${process.env.COCALC_PROCESS_MAX_LISTENERS ?? ""}`,
+    10,
+  );
+  const limit =
+    Number.isInteger(configured) && configured > 0 ? configured : 50;
+  if (process.getMaxListeners() < limit) {
+    process.setMaxListeners(limit);
+  }
+}
+
 (async () => {
+  configureProcessMaxListeners();
+
   if (`${process.env.COCALC_LITE_ACP_WORKER ?? ""}`.trim() === "1") {
     await require("@cocalc/lite/acp-worker").main();
     return;

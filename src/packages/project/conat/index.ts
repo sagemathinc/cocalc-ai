@@ -45,6 +45,6 @@ export default async function init(opts?: {
       "project info services disabled by COCALC_ENABLE_PROJECT_INFO=0",
     );
   }
-  initExecStream();
+  initExecStream(opts);
   await initAuthorizedKeys(opts);
 }

@@ -6,19 +6,22 @@ Similar to how the project API service works, but specifically for streaming exe
 import { executeStream, StreamEvent } from "@cocalc/backend/exec-stream";
 import { Message, Subscription } from "@cocalc/conat/core/client";
 import { projectSubject, EXEC_STREAM_SERVICE } from "@cocalc/conat/names";
-import { connectToConat } from "@cocalc/project/conat/connection";
+import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 import { project_id } from "@cocalc/project/data";
 import { getLogger } from "@cocalc/project/logger";
+import type { Client as ConatClient } from "@cocalc/conat/core/client";
 
 const logger = getLogger("project:exec-stream");
 
-export function init() {
-  serve();
+export function init(opts?: { client?: ConatClient }) {
+  void serve(opts).catch((err) => {
+    logger.warn("exec-stream service failed during startup", err);
+  });
 }
 
-async function serve() {
+async function serve(opts?: { client?: ConatClient }) {
   logger.debug("serve: create project exec-stream service");
-  const cn = connectToConat();
+  const cn = opts?.client ?? getProjectConatClient();
   const subject = projectSubject({
     project_id,
     service: EXEC_STREAM_SERVICE,

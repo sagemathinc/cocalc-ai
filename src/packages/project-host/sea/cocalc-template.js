@@ -31,6 +31,20 @@ function log(...args) {
   }
 }
 
+function configureProcessMaxListeners() {
+  const configured = Number.parseInt(
+    `${process.env.COCALC_PROCESS_MAX_LISTENERS ?? ""}`,
+    10,
+  );
+  const limit =
+    Number.isInteger(configured) && configured > 0 ? configured : 50;
+  if (process.getMaxListeners() < limit) {
+    process.setMaxListeners(limit);
+  }
+}
+
+configureProcessMaxListeners();
+
 function extractAssetsSync() {
   const { getRawAsset } = require("node:sea");
   const os = require("node:os");

@@ -61,6 +61,8 @@ export function connectToConat(
   const project_id =
     normalizeProjectId(options?.project_id) ?? projectData.project_id;
   const secretToken = options?.secretToken ?? projectData.secretToken;
+  const systemAccountPassword =
+    options?.systemAccountPassword ?? backendData.conatPassword;
   // NOTE: read mutable backendData.conatServer at call-time (not module init),
   // so lite can override with setConatServer(...) after boot.
   const address = options?.address ?? backendData.conatServer;
@@ -76,6 +78,7 @@ export function connectToConat(
   const conn = connect({
     address,
     inboxPrefix: inboxPrefix({ project_id }),
+    systemAccountPassword,
     extraHeaders: { Cookie },
     ...options,
   });
