@@ -1,5 +1,5 @@
 diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth/default_client.rs
-index 7923c7478..a8c63a26d 100644
+index 0c2a3b2..1aa11f7 100644
 --- a/codex-rs/login/src/auth/default_client.rs
 +++ b/codex-rs/login/src/auth/default_client.rs
 @@ -14,6 +14,7 @@ use reqwest::header::HeaderValue;
