@@ -107,6 +107,67 @@ The measurement question is not just raw max throughput. It is:
 - whether DB or router/persist becomes the limiting factor
 - whether worker count reduces tail latency or just moves contention elsewhere
 
+## Same-Host Worker Scale Probe
+
+Before spending time on a fresh VM, run the same worker shape against the
+current dogfood-sized dev host. The helper below starts extra `--conat-api`
+workers that connect to the existing seed bay entrypoint and then runs the
+hot-path probe through the normal bay URL:
+
+```sh
+cd src
+COCALC_BAY_WORKER_SCALE_COUNT=8 \
+COCALC_BAY_WORKER_SCALE_CONCURRENCIES="32 64 128 256" \
+COCALC_BAY_WORKER_SCALE_ITERATIONS=600 \
+COCALC_BAY_WORKER_SCALE_WARMUP=60 \
+  ./scripts/dev/bay-worker-scale-benchmark.sh start-run
+```
+
+Stop the extra workers after the run:
+
+```sh
+cd src
+./scripts/dev/bay-worker-scale-benchmark.sh stop
+```
+
+This is not a substitute for the final systemd VM test. It is a fast way to
+answer whether one Node process is the obvious limiting factor before adding
+deployment friction.
+
+### Initial Same-Host Evidence
+
+Host shape:
+
+- GCE `t2d-standard-16`
+- `16` vCPU / `63 GiB`
+- current dev hub running a local 3-bay cluster inside the project container
+- load target: `cocalc load three-bay --hot-path`
+- scenario shape: five sequential user hot-path control-plane reads per
+  scenario
+
+Observed peak throughput:
+
+| API workers | Best concurrency | Scenarios/sec | Component reads/sec |
+| --- | ---: | ---: | ---: |
+| 1 existing dev hub process | 32-64 | ~55 | ~275 |
+| 4 extra `--conat-api` workers | 32 | ~137 | ~685 |
+| 8 extra `--conat-api` workers | 256 | ~177 | ~883 |
+| 12 extra `--conat-api` workers | 384 | ~171 | ~855 |
+
+Interpretation:
+
+- Multi-process hub API workers materially improve the measured hot path.
+- The first jump is large: roughly `2.5x` from one process to four extra API
+  workers.
+- Eight workers nearly reaches the `1000` component-read/sec target on this
+  host.
+- Twelve workers did not improve this workload, so the current same-host
+  bottleneck is probably shared: router fanout, Postgres connection/query
+  behavior, client-side load generation, or a serialized server path.
+- The next useful benchmark should collect per-process CPU, router CPU,
+  Postgres active connections, and event-loop delay during the run instead of
+  only end-of-run throughput.
+
 ## Required Metrics
 
 For every benchmark run, record at minimum:
