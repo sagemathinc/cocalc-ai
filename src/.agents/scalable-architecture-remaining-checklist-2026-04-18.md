@@ -686,10 +686,23 @@ Initial local 3-bay evidence from 2026-04-23:
     component reads/sec
   - 12 extra API workers did not improve this workload, peaking around
     171 scenarios/sec
-  - the useful next measurement is not "add more workers"; it is collecting
+  - a first corrected two-router probe split both client entry and hub/API
+    worker registration across `9102` and `9103`; at total concurrency 256 it
+    measured about 223 sustained child-sum scenarios/sec, or about 1115
+    component reads/sec
+  - the split-router run was asymmetric: the seed router port was consistently
+    slower than the child router port, so final sizing still needs
     per-process CPU, router CPU, Postgres active connections/query pressure,
-    and event-loop delay during the 8-worker run to identify the shared
-    bottleneck
+    event-loop delay, and cluster-forwarding counts during the 8-worker run
+    to identify the shared bottleneck
+  - the first process-sampling attribution run did not show raw CPU saturation:
+    extra API workers averaged about 32-39% CPU, the seed hub process about
+    40% CPU, the seed router child about 16% CPU, and seed Postgres about 2%
+    CPU; this points toward request latency/choreography, Conat RPC/socket.io
+    overhead, cluster forwarding asymmetry, or benchmark shape rather than a
+    single fully saturated CPU process
+  - next capacity-tooling step: add fixed-duration split-client load mode plus
+    event-loop delay and Conat cluster-forwarding counters
 - A 10s live browser traffic summary against the active `host2` session showed
   the kind of evidence needed for a real "one active user" model:
   - hub/stable URL target: about 0.69 messages/sec and about 98 message
