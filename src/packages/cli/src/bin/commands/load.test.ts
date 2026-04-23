@@ -567,6 +567,50 @@ test("load three-bay hot-path skips Bay Ops probes", async () => {
   assert.equal(capture.data.component_latency_ms["bay-ops-detail"], undefined);
 });
 
+test("load three-bay duration mode reports sustained measured attempts", async () => {
+  const capture: Capture = {
+    accountBayCalls: 0,
+    listBayCalls: 0,
+    projectBayCalls: [],
+    hostBayCalls: [],
+    bayOpsOverviewCalls: 0,
+    bayOpsDetailCalls: [],
+    projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
+    adminCreateCalls: [],
+    userSearchCalls: [],
+    createCollabCalls: [],
+    removeCollabCalls: [],
+  };
+  const program = new Command();
+  registerLoadCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "load",
+    "three-bay",
+    "--project",
+    "demo",
+    "--duration",
+    "1ms",
+    "--warmup",
+    "1",
+    "--concurrency",
+    "2",
+    "--hot-path",
+  ]);
+
+  assert.equal(capture.data.duration_ms, 1);
+  assert.equal(capture.data.concurrency, 2);
+  assert.equal(capture.data.failures, 0);
+  assert.ok(capture.data.successes > 0);
+  assert.equal(capture.data.iterations, capture.data.successes);
+  assert.ok(capture.accountBayCalls >= capture.data.successes + 1);
+});
+
 test("load collaborator-cycle uses a seeded per-worker account pool", async () => {
   const capture: Capture = {
     accountBayCalls: 0,

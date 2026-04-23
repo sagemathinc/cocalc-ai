@@ -24,6 +24,13 @@ import type {
   Action as ApiKeyAction,
 } from "@cocalc/util/db-schema/api-keys";
 import isBanned from "@cocalc/server/accounts/is-banned";
+import {
+  getClusterAccountApiKeyByKeyId,
+  getClusterAccountById,
+  touchClusterAccountApiKeyDirectoryEntry,
+  upsertClusterAccountApiKeyDirectoryEntry,
+  deleteClusterAccountApiKeyDirectoryEntry,
+} from "@cocalc/server/inter-bay/accounts";
 
 const log = getLogger("server:api:manage");
 
@@ -71,6 +78,36 @@ function parseApiKeyV2(secret: string): { key_id: string } | undefined {
 
 function truncApiKey(secret: string): string {
   return `${secret.slice(0, 5)}...${secret.slice(-8)}`;
+}
+
+async function syncAccountApiKeyDirectory({
+  key_id,
+  account_id,
+  hash,
+  expire,
+  last_active,
+}: {
+  key_id?: string | null;
+  account_id: string;
+  hash: string;
+  expire?: Date | null;
+  last_active?: Date | null;
+}): Promise<void> {
+  const normalizedKeyId = `${key_id ?? ""}`.trim();
+  if (!normalizedKeyId) return;
+  const account = await getClusterAccountById(account_id);
+  const home_bay_id = `${account?.home_bay_id ?? ""}`.trim();
+  if (!home_bay_id) {
+    throw new Error(`unable to resolve home bay for account ${account_id}`);
+  }
+  await upsertClusterAccountApiKeyDirectoryEntry({
+    key_id: normalizedKeyId,
+    account_id,
+    home_bay_id,
+    hash,
+    expire: expire == null ? null : new Date(expire).valueOf(),
+    last_active: last_active == null ? null : new Date(last_active).valueOf(),
+  });
 }
 
 interface Options {
@@ -164,6 +201,7 @@ async function getApiKey({ id, account_id, project_id }) {
 // Edge case: we're not allowing
 async function deleteApiKey({ account_id, project_id, id }) {
   const pool = getPool();
+  const existing = await getApiKey({ id, account_id, project_id });
   if (project_id) {
     // We allow a collab on a project to delete any api key for that project,
     // even from another user.  This increases security, rather than reducing it.
@@ -176,6 +214,9 @@ async function deleteApiKey({ account_id, project_id, id }) {
       account_id,
       id,
     ]);
+    await deleteClusterAccountApiKeyDirectoryEntry({
+      key_id: `${existing?.key_id ?? ""}`.trim(),
+    });
   }
 }
 
@@ -222,13 +263,20 @@ async function createApiKey({
     hash,
     id,
   ]);
+  await syncAccountApiKeyDirectory({
+    key_id,
+    account_id,
+    hash,
+    expire: expire ?? null,
+    last_active: null,
+  });
   return { ...rows[0], trunc, secret };
 }
 
 async function updateApiKey({ apiKey, account_id, project_id }) {
   log.debug("udpateApiKey", apiKey);
   const pool = getPool();
-  const { id, expire, name, last_active } = apiKey;
+  const { id, key_id, expire, name, last_active } = apiKey;
   if (project_id) {
     // including account_id and project_id so so you can't edit an api_key
     // for some other random project or user.
@@ -241,6 +289,20 @@ async function updateApiKey({ apiKey, account_id, project_id }) {
       "UPDATE api_keys SET expire=$3,name=$4,last_active=$5 WHERE id=$1 AND account_id=$2",
       [id, account_id, expire, name, last_active],
     );
+    const { rows } = await pool.query(
+      "SELECT hash FROM api_keys WHERE id=$1 AND account_id=$2",
+      [id, account_id],
+    );
+    const hash = `${rows[0]?.hash ?? ""}`.trim();
+    if (hash) {
+      await syncAccountApiKeyDirectory({
+        key_id,
+        account_id,
+        hash,
+        expire: expire ?? null,
+        last_active: last_active ?? null,
+      });
+    }
   }
 }
 
@@ -318,10 +380,13 @@ export async function getAccountWithApiKey(
     return undefined;
   }
   const { rows } = await pool.query(
-    "SELECT id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
+    "SELECT id,key_id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
     [v2.key_id],
   );
-  return await checkApiKeyRows({ rows, secret });
+  return (
+    (await checkApiKeyRows({ rows, secret })) ??
+    (await checkClusterAccountApiKeyDirectoryEntry({ secret }))
+  );
 }
 
 async function checkApiKeyRows({
@@ -383,8 +448,39 @@ async function checkApiKeyRows({
       return { project_id: rows[0].project_id };
     }
     if (rows[0].account_id) {
+      await syncAccountApiKeyDirectory({
+        key_id: rows[0].key_id ?? parseApiKeyV2(secret)?.key_id ?? null,
+        account_id: rows[0].account_id,
+        hash: rows[0].hash,
+        expire: rows[0].expire ?? null,
+        last_active: new Date(),
+      });
       return { account_id: rows[0].account_id };
     }
   }
   return undefined;
+}
+
+async function checkClusterAccountApiKeyDirectoryEntry({
+  secret,
+}: {
+  secret: string;
+}): Promise<{ account_id: string } | undefined> {
+  const v2 = parseApiKeyV2(secret);
+  if (!v2) return undefined;
+  const entry = await getClusterAccountApiKeyByKeyId(v2.key_id);
+  if (!entry?.account_id || !entry.hash) return undefined;
+  const account = await getClusterAccountById(entry.account_id);
+  if (account?.banned) {
+    return undefined;
+  }
+  if (!verifyPassword(secret, entry.hash)) {
+    return undefined;
+  }
+  if (entry.expire != null && entry.expire <= Date.now()) {
+    await deleteClusterAccountApiKeyDirectoryEntry({ key_id: v2.key_id });
+    return undefined;
+  }
+  await touchClusterAccountApiKeyDirectoryEntry({ key_id: v2.key_id });
+  return { account_id: entry.account_id };
 }
