@@ -150,6 +150,9 @@ import type {
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 
 const logger = getLogger("server:conat:api:system");
+// Non-serializable capability used only by trusted in-process inter-bay handlers.
+// Public Conat API callers cannot supply this value over JSON.
+export const BAY_OPS_INTERNAL_AUTH = Symbol("bay-ops-internal-auth");
 const ROOTFS_PUBLISH_LRO_KIND = "project-rootfs-publish";
 const DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS = 12 * 3600 * 1000;
 
@@ -595,11 +598,15 @@ async function getLiveBrowserControlStatus(): Promise<BayLoadBrowserControlStatu
 export async function getBayLoad({
   account_id,
   bay_id,
+  internalAuth,
 }: {
   account_id?: string;
   bay_id?: string;
+  internalAuth?: typeof BAY_OPS_INTERNAL_AUTH;
 }): Promise<BayLoadInfo> {
-  await assertAdmin(account_id);
+  if (internalAuth !== BAY_OPS_INTERNAL_AUTH) {
+    await assertAdmin(account_id);
+  }
   const currentBay = getSingleBayInfo();
   const requestedBayId = `${bay_id ?? ""}`.trim();
   if (requestedBayId && requestedBayId !== currentBay.bay_id) {
@@ -663,11 +670,15 @@ export async function getBayLoad({
 export async function getBayBackups({
   account_id,
   bay_id,
+  internalAuth,
 }: {
   account_id?: string;
   bay_id?: string;
+  internalAuth?: typeof BAY_OPS_INTERNAL_AUTH;
 }): Promise<BayBackupsInfo> {
-  await assertAdmin(account_id);
+  if (internalAuth !== BAY_OPS_INTERNAL_AUTH) {
+    await assertAdmin(account_id);
+  }
   const currentBay = getSingleBayInfo();
   const requestedBayId = `${bay_id ?? ""}`.trim();
   if (requestedBayId && requestedBayId !== currentBay.bay_id) {
