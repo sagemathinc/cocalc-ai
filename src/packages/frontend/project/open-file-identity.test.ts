@@ -124,6 +124,24 @@ describe("isTransientSyncIdentityResolutionError", () => {
     ).toBe(true);
   });
 
+  it("treats project-host routing failures as retryable", () => {
+    expect(
+      isTransientSyncIdentityResolutionError(
+        new Error(
+          "unable to route 'filesystem' to project-host for project project-1",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("treats file-server readiness timeouts as retryable", () => {
+    expect(
+      isTransientSyncIdentityResolutionError(
+        new Error('timeout of 30000ms waiting for "info"'),
+      ),
+    ).toBe(true);
+  });
+
   it("does not treat permanent support failures as retryable", () => {
     expect(
       isTransientSyncIdentityResolutionError(
@@ -145,6 +163,23 @@ describe("resolveSyncPathWithRetry", () => {
       canonicalSyncIdentityPath: jest
         .fn()
         .mockRejectedValueOnce(new Error("file server not initialized"))
+        .mockResolvedValue("/root/file.txt"),
+    };
+    await expect(
+      resolveSyncPathWithRetry(fs, "/root/file.txt", HOME),
+    ).resolves.toBe("/root/file.txt");
+    expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries transient project-host routing failures", async () => {
+    const fs = {
+      canonicalSyncIdentityPath: jest
+        .fn()
+        .mockRejectedValueOnce(
+          new Error(
+            "unable to route 'filesystem' to project-host for project project-1",
+          ),
+        )
         .mockResolvedValue("/root/file.txt"),
     };
     await expect(

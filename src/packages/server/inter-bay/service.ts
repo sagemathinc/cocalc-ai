@@ -6,6 +6,7 @@
 import {
   createInterBayAuthTokenHandlers,
   createInterBayAccountProjectFeedHandlers,
+  createInterBayBayOpsHandlers,
   createInterBayBayRegistryHandlers,
   createInterBayAccountDirectoryHandlers,
   createInterBayAccountLocalHandler,
@@ -30,6 +31,7 @@ import {
   createInterBayProjectControlStopHandler,
   type InterBayAuthTokenApi,
   type InterBayAccountProjectFeedApi,
+  type InterBayBayOpsApi,
   type InterBayBayRegistryApi,
   type InterBayAccountDirectoryApi,
   type InterBayAccountLocalApi,
@@ -133,6 +135,11 @@ import {
   removeCollaborator,
   respondCollabInviteCanonical,
 } from "@cocalc/server/projects/collaborators";
+import {
+  BAY_OPS_INTERNAL_AUTH,
+  getBayBackups,
+  getBayLoad,
+} from "@cocalc/server/conat/api/system";
 
 const logger = getLogger("server:inter-bay:service");
 
@@ -148,6 +155,7 @@ export async function initInterBayServices(): Promise<void> {
     await startDirectoryService();
     await startAuthTokenService();
     await startBayRegistryService();
+    await startBayOpsService();
     await startAccountDirectoryService();
     await startAccountLocalService();
     await startAccountProjectFeedService();
@@ -180,6 +188,33 @@ async function startBayRegistryService(): Promise<void> {
   services.push(
     ...createInterBayBayRegistryHandlers({
       client,
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startBayOpsService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const bay_id = getConfiguredBayId();
+  const impl: InterBayBayOpsApi = {
+    getLoad: async ({ account_id }) =>
+      await getBayLoad({
+        account_id,
+        bay_id,
+        internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
+    getBackups: async ({ account_id }) =>
+      await getBayBackups({
+        account_id,
+        bay_id,
+        internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
+  };
+  services.push(
+    ...createInterBayBayOpsHandlers({
+      client,
+      bay_id,
       parallel: true,
       impl,
     }),

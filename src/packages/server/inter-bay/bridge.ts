@@ -6,6 +6,8 @@
 import {
   createInterBayBayDirectoryClient,
   type InterBayDirectoryApi,
+  createInterBayBayOpsClient,
+  type InterBayBayOpsApi,
   createInterBayProjectDetailsClient,
   type InterBayProjectDetailsApi,
   createInterBayHostConnectionClient,
@@ -64,6 +66,7 @@ export interface InterBayBridge {
     dest_bay: string,
     opts?: { timeout_ms?: number },
   ): InterBayProjectCollabInviteApi;
+  bayOps(dest_bay: string, opts?: { timeout_ms?: number }): InterBayBayOpsApi;
 }
 
 class LocalOnlyInterBayBridge implements InterBayBridge {
@@ -163,6 +166,17 @@ class LocalOnlyInterBayBridge implements InterBayBridge {
     opts: { timeout_ms?: number } = {},
   ): InterBayProjectCollabInviteApi {
     return createInterBayProjectCollabInviteClient({
+      client: this.client,
+      dest_bay,
+      timeout: opts.timeout_ms,
+    });
+  }
+
+  bayOps(
+    dest_bay: string,
+    opts: { timeout_ms?: number } = {},
+  ): InterBayBayOpsApi {
+    return createInterBayBayOpsClient({
       client: this.client,
       dest_bay,
       timeout: opts.timeout_ms,

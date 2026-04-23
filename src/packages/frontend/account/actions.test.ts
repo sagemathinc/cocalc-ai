@@ -101,6 +101,25 @@ describe("AccountActions.refresh_home_bay", () => {
     });
   });
 
+  it("stores a cluster-directory resolved home bay source", async () => {
+    const setState = jest.fn();
+    (webapp_client as any).account_id = "acct-1";
+    (
+      webapp_client as any
+    ).conat_client.hub.system.getAccountBay.mockResolvedValue({
+      account_id: "acct-1",
+      home_bay_id: "bay-7",
+      source: "cluster-directory",
+    });
+
+    await AccountActions.prototype.refresh_home_bay.call({ setState });
+
+    expect(setState).toHaveBeenCalledWith({
+      home_bay_id: "bay-7",
+      home_bay_source: "cluster-directory",
+    });
+  });
+
   it("clears the stored home bay when no account is signed in", async () => {
     const setState = jest.fn();
     (webapp_client as any).account_id = undefined;

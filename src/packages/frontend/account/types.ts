@@ -107,7 +107,7 @@ export interface AccountState {
   show_sign_out?: boolean;
   hub?: string;
   home_bay_id?: string;
-  home_bay_source?: "account-row" | "single-bay-default";
+  home_bay_source?: "account-row" | "cluster-directory" | "single-bay-default";
   remember_me?: boolean;
   has_remember_me?: boolean;
   passports?: Map<string, any>;

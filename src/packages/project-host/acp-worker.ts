@@ -17,6 +17,7 @@ import { initCodexProjectRunner } from "./codex/codex-project";
 import { initCodexGeneratedImageBlobWriter } from "./codex/generated-image-blobs";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { configureProjectHostAcpContainerFileIO } from "./file-server";
+import { wireHostsApi } from "./hub/hosts";
 import { PROJECT_RUNNER_RPC_TIMEOUT_MS, wireProjectsApi } from "./hub/projects";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
 import { setMasterConatClient } from "./master-status";
@@ -70,6 +71,7 @@ function registerPidFile(
 
 function configureProjectHostAcpRuntime(): void {
   setPreferContainerExecutor(true);
+  wireHostsApi();
   setContainerExec((opts) =>
     sandboxExec({
       ...opts,

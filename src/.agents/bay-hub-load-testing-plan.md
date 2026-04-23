@@ -107,6 +107,128 @@ The measurement question is not just raw max throughput. It is:
 - whether DB or router/persist becomes the limiting factor
 - whether worker count reduces tail latency or just moves contention elsewhere
 
+## Same-Host Worker Scale Probe
+
+Before spending time on a fresh VM, run the same worker shape against the
+current dogfood-sized dev host. The helper below starts extra `--conat-api`
+workers that connect to the existing seed bay entrypoint and then runs the
+hot-path probe through the normal bay URL:
+
+```sh
+cd src
+COCALC_BAY_WORKER_SCALE_COUNT=8 \
+COCALC_BAY_WORKER_SCALE_CONCURRENCIES="32 64 128 256" \
+COCALC_BAY_WORKER_SCALE_ITERATIONS=600 \
+COCALC_BAY_WORKER_SCALE_WARMUP=60 \
+  ./scripts/dev/bay-worker-scale-benchmark.sh start-run
+```
+
+Stop the extra workers after the run:
+
+```sh
+cd src
+./scripts/dev/bay-worker-scale-benchmark.sh stop
+```
+
+This is not a substitute for the final systemd VM test. It is a fast way to
+answer whether one Node process is the obvious limiting factor before adding
+deployment friction.
+
+When testing split Conat router ingress, split both sides of the topology. If
+clients enter through two router ports but all hub/API workers still register
+through one router, the measurement is mostly a single-router test plus extra
+cluster forwarding. The helper supports comma- or space-separated lists for
+both axes:
+
+```sh
+cd src
+CONAT_SOCKETIO_COUNT=2 ./scripts/dev/hub-daemon.sh restart
+
+COCALC_BAY_WORKER_SCALE_COUNT=8 \
+COCALC_BAY_WORKER_SCALE_CONAT_SERVERS="http://localhost:9102 http://localhost:9103" \
+COCALC_BAY_WORKER_SCALE_APIS="http://localhost:9102 http://localhost:9103" \
+COCALC_BAY_WORKER_SCALE_CONCURRENCIES="128 256 384" \
+COCALC_BAY_WORKER_SCALE_ITERATIONS=800 \
+COCALC_BAY_WORKER_SCALE_WARMUP=80 \
+  ./scripts/dev/bay-worker-scale-benchmark.sh start-run
+```
+
+Read split-router results carefully:
+
+- `aggregate_scenarios_per_sec` is the completed fixed-iteration batch rate
+  using the parent wall time.
+- `sum_child_scenarios_per_sec` is the sum of each client group's independent
+  rate and is closer to a sustained active-user model where both router groups
+  keep generating work for the full interval.
+
+After split-router experiments, stop the extra workers and restart the dev hub
+without `CONAT_SOCKETIO_COUNT=2` unless the next test explicitly needs the
+split-router shape.
+
+### Initial Same-Host Evidence
+
+Host shape:
+
+- GCE `t2d-standard-16`
+- `16` vCPU / `63 GiB`
+- current dev hub running a local 3-bay cluster inside the project container
+- load target: `cocalc load three-bay --hot-path`
+- scenario shape: five sequential user hot-path control-plane reads per
+  scenario
+
+Observed peak throughput:
+
+| API workers | Best concurrency | Scenarios/sec | Component reads/sec |
+| --- | ---: | ---: | ---: |
+| 1 existing dev hub process | 32-64 | ~55 | ~275 |
+| 4 extra `--conat-api` workers | 32 | ~137 | ~685 |
+| 8 extra `--conat-api` workers | 256 | ~177 | ~883 |
+| 12 extra `--conat-api` workers | 384 | ~171 | ~855 |
+| 8 extra workers + 2 router ports split on clients and workers | 256 | ~223 sustained child-sum | ~1115 sustained child-sum |
+
+The first split-router probe shows a real improvement over single-router ingress
+when both worker registration and client entry are split, but it is not yet a
+clean capacity number. The seed router port was consistently slower than the
+child router port, so the next attribution pass should measure router CPU,
+event-loop delay, cluster-forwarding counts, and Postgres pressure on the same
+run.
+
+First attribution pass for the corrected split-router run:
+
+- run shape: `CONAT_SOCKETIO_COUNT=2`, 8 extra API workers, workers split
+  round-robin across `9102` and `9103`, clients split across `9102` and `9103`,
+  total concurrency 256
+- measured throughput: about 210 sustained child-sum scenarios/sec, or about
+  1052 component reads/sec, with 0 failures
+- extra API workers averaged roughly 32-39% CPU each
+- the seed bay main hub process averaged about 40% CPU
+- attached bay hub processes averaged about 25-27% CPU
+- the seed router child averaged about 16% CPU; attached bay router children
+  were much lower
+- seed Postgres averaged about 2% CPU in this sample
+
+This shifts the current hypothesis away from raw CPU saturation in a single
+router or Postgres. The remaining likely bottlenecks are request choreography
+and latency: sequential hot-path component reads, Conat RPC/socket.io overhead,
+cluster forwarding asymmetry, or benchmark/load-generator shape. A duration-based
+load mode would make the split-client aggregate rate cleaner than fixed
+iterations per client group.
+
+Interpretation:
+
+- Multi-process hub API workers materially improve the measured hot path.
+- The first jump is large: roughly `2.5x` from one process to four extra API
+  workers.
+- Eight workers nearly reaches the `1000` component-read/sec target on this
+  host.
+- Twelve workers did not improve this workload, so the current same-host
+  bottleneck is probably shared: request choreography, Conat RPC/socket.io
+  overhead, cluster forwarding asymmetry, client-side load generation, or a
+  serialized server path.
+- The next useful benchmark should add event-loop delay and Conat
+  cluster-forwarding counters, then switch from fixed iterations per split
+  client group to fixed-duration split clients.
+
 ## Required Metrics
 
 For every benchmark run, record at minimum:

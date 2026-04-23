@@ -109,8 +109,13 @@ What should still be treated as incomplete:
 - inter-bay observability / replay / load-test readiness
 - explicit completion of host placement and lifecycle validation under multibay
   failure modes
-- 2FA / TOTP auth, which should be added later as a home-bay-owned auth layer
-  and not as a project-host or cross-bay runtime concern
+- security/ops hardening before Bay Operations becomes heavily mutating:
+  - 2FA / TOTP auth for admin/operator accounts, implemented as a
+    home-bay-owned auth layer and not as a project-host or cross-bay runtime
+    concern
+  - scoped, short-lived operator credentials for `cocalc-cli` instead of
+    relying on full admin account API keys for production operations
+  - audit records for all bay/account/project/host ownership mutations
 - account rehome workflow
 - project rehome workflow
 
@@ -560,8 +565,46 @@ Spot support is strategically important now and should be treated as first-class
 The connection leak fix means future measurements should be much more
 trustworthy than before. This is now high-value work.
 
+The big capacity question is whether the multibay control plane can support
+10K, 100K, or eventually 1M active users at a plausible operating cost. The
+answer must be based on an explicit model, not a single benchmark number:
+
+- define "active user" in measurable terms:
+  - connected browser sessions
+  - active project sessions
+  - control-plane requests per minute
+  - project-host runtime requests per minute
+  - open/reconnect/start/stop/restart rates
+- measure each tier separately:
+  - bay control-plane routing and metadata reads
+  - account/project/host ownership lookups
+  - browser bootstrap and reconnect paths
+  - project open and project-host auth paths
+  - terminal/notebook/app runtime traffic after direct project-host routing
+  - background maintenance, projection replay, backup health, and Bay Ops reads
+- keep hot-path and operator-path results separate:
+  - Bay Ops detail is intentionally heavy and should not be included in user
+    hot-path capacity numbers
+  - operator dashboards need their own budgets, caching, and rate limits
+- require two classes of evidence before making production claims:
+  - local 3-bay single-host results for correctness, regression detection, and
+    component attribution
+  - multi-VM/systemd bay results for real network, CPU, Postgres, websocket,
+    and failure-mode behavior
+- convert measurements into sizing guidance:
+  - max sustainable requests/sec per bay at target p95/p99 latency
+  - max connected browser sessions per bay
+  - max project opens/sec and reconnects/sec per bay
+  - project-host count and size needed per active-project cohort
+  - spot/on-demand mix and expected monthly cost envelope
+
 - [ ] add repeatable N-bay load-test fixture setup on top of the current
       multibay dev harness
+- [x] add first repeatable CLI 3-bay control-plane load probe:
+  - `cocalc load three-bay --project ...`
+  - records aggregate latency plus component latency for account-home lookup,
+    project listing, project-owning-bay lookup, host-bay lookup, collaborator
+    reads, Bay Ops overview, and routed Bay Ops detail
 - [ ] create a canonical 3-bay load scenario:
   - many accounts on bay A
   - projects owned on bay B
@@ -572,14 +615,105 @@ trustworthy than before. This is now high-value work.
   - terminal/notebook latency
   - exec latency
   - inter-bay request volume
+  - real browser-session traffic classified by hub vs project-host target
+  - real browser-session traffic classified by Conat subject category
   - bay CPU / Postgres pressure
   - project-host daemon pressure
 - [ ] specifically measure the impact of project-host cookie-based reconnect
       auth on bay traffic reduction
+- [x] add opt-in browser traffic summary tooling:
+  - `cocalc browser network summary --duration ...`
+  - records Conat/HTTP/WS trace events without decoded payloads by default
+  - summarizes message and byte rates by target, protocol, direction, subject
+    category, top subjects, and top addresses
+- [x] add same-host bay API worker scale helper:
+  - `src/scripts/dev/bay-worker-scale-benchmark.sh`
+  - starts extra `--conat-api --proxy-server` hub workers against the existing
+    seed bay router, runs `cocalc load three-bay --hot-path` through the normal
+    bay entrypoint, and stores JSONL results under
+    `src/.local/bay-worker-scale/results`
 - [ ] write the first real sizing guidance for:
   - bays
   - project-hosts
   - spot vs on-demand mix
+- [ ] build a first capacity model spreadsheet/document with:
+  - measured per-bay hot-path throughput
+  - active-user action-rate assumptions
+  - active-project runtime assumptions
+  - monthly cost assumptions for bay VMs, project-host VMs, Postgres/storage,
+    and bandwidth
+  - explicit confidence level for 10K, 100K, and 1M active-user scenarios
+
+Initial local 3-bay evidence from 2026-04-23:
+
+- `cocalc load three-bay --project $COCALC_PROJECT_ID --iterations 10 --warmup 2 --concurrency 4 --project-limit 10 --no-bay-detail`
+  succeeded with 0 failures. Baseline control-plane p50 was about 81ms and
+  average was about 84ms. Component averages were roughly:
+  `account-home-bay=8ms`, `project-list=9ms`, `project-owning-bay=5ms`,
+  `host-bay=45ms`, `project-collaborators=9ms`, and
+  `bay-ops-overview=8ms`.
+- Including `--detail-bays bay-0,bay-1,bay-2` succeeded with 0 failures, but
+  total p50 jumped to about 9.4s because routed Bay Ops detail averaged about
+  9.1s. This is expected to be a heavy admin-health path, not a user-hot path,
+  but it is now the first obvious Bay Ops performance target.
+- The first smoke used the active `host2` project, which is currently
+  `account_home=bay-0`, `project_owner=bay-0`, `host_bay=bay-0`. The command is
+  ready, but final canonical capacity evidence still needs a deliberate split
+  fixture with account home, project owner, and project host on separate bays.
+- `cocalc load three-bay --hot-path --no-bay-detail` was added so user-capacity
+  measurements can exclude Bay Ops overview/detail. On the same single-host
+  local 3-bay setup, the hot-path sweep was:
+  - concurrency 1: 100 iterations, 0 failures, p50 about 28ms, about
+    31 scenario ops/sec
+  - concurrency 4: 200 iterations, 0 failures, p50 about 68ms, about
+    52 scenario ops/sec
+  - concurrency 16: 400 iterations, 0 failures, p50 about 269ms, about
+    53 scenario ops/sec
+  - concurrency 32: 400 iterations, 0 failures, p50 about 521ms, about
+    55 scenario ops/sec
+  - concurrency 64: 400 iterations, 0 failures, p50 about 1086ms, about
+    54 scenario ops/sec
+- This shows the local single-host dev stack saturating around 53-55 synthetic
+  hot-path scenarios/sec for this probe shape. Since each scenario does five
+  sequential control-plane reads, that is roughly 265-275 measured component
+  reads/sec, but this is only a local regression/sizing baseline. It is not yet
+  evidence for production multi-VM bay capacity.
+- Same-host multi-process probe on the `t2d-standard-16` dogfood host showed
+  that adding `--conat-api` workers materially increases this hot path:
+  - 4 extra API workers peaked at about 137 scenarios/sec, or about 685
+    component reads/sec
+  - 8 extra API workers peaked at about 177 scenarios/sec, or about 883
+    component reads/sec
+  - 12 extra API workers did not improve this workload, peaking around
+    171 scenarios/sec
+  - a first corrected two-router probe split both client entry and hub/API
+    worker registration across `9102` and `9103`; at total concurrency 256 it
+    measured about 223 sustained child-sum scenarios/sec, or about 1115
+    component reads/sec
+  - the split-router run was asymmetric: the seed router port was consistently
+    slower than the child router port, so final sizing still needs
+    per-process CPU, router CPU, Postgres active connections/query pressure,
+    event-loop delay, and cluster-forwarding counts during the 8-worker run
+    to identify the shared bottleneck
+  - the first process-sampling attribution run did not show raw CPU saturation:
+    extra API workers averaged about 32-39% CPU, the seed hub process about
+    40% CPU, the seed router child about 16% CPU, and seed Postgres about 2%
+    CPU; this points toward request latency/choreography, Conat RPC/socket.io
+    overhead, cluster forwarding asymmetry, or benchmark shape rather than a
+    single fully saturated CPU process
+  - next capacity-tooling step: add fixed-duration split-client load mode plus
+    event-loop delay and Conat cluster-forwarding counters
+- A 10s live browser traffic summary against the active `host2` session showed
+  the kind of evidence needed for a real "one active user" model:
+  - hub/stable URL target: about 0.69 messages/sec and about 98 message
+    bytes/sec
+  - project-host target: about 11.1 messages/sec and about 17 message bytes/sec
+  - subject-category split: `hub-api` about 0.30 messages/sec,
+    `project-terminal` about 4.75 messages/sec, and project filesystem watch
+    about 0.79 messages/sec
+  - this was a tiny sample and not a stable capacity number, but it proves the
+    instrumentation can distinguish hidden bay/control-plane chatter from
+    project-host interactive traffic in a real browser session
 
 ### 8. Bay Operations UI / Operator Surface
 
@@ -594,6 +728,11 @@ operations have enough validation to deserve direct buttons.
 
 Initial read-only page:
 
+- [x] add first admin Bay Operations panel with registry rows, heartbeat
+      freshness, ownership counts, recent rehome status, and copy/pasteable CLI
+      commands
+- [x] add expandable drain-readiness health that routes to each bay for live
+      load, projection backlog/maintenance, backup health, and restore readiness
 - [ ] add an admin bay list page showing bay id, role, public URL, tunnel/DNS
       state, software version, uptime/heartbeat, and whether the bay accepts new
       ownership
@@ -624,6 +763,45 @@ Later mutating UI, only after the CLI/API paths are proven:
 - [ ] trigger projection drains/rebuilds with bounded limits
 - [ ] restart/update bay software with explicit confirmation and status
       tracking
+
+Security/ops gate before expanding Bay Operations mutations:
+
+- [ ] add admin/operator 2FA/TOTP before treating the browser admin surface as
+      a safe place for high-impact multibay actions
+- [ ] make 2FA home-bay-owned:
+  - TOTP secrets, backup codes, and challenge verification belong to the
+    account home bay
+  - cross-bay routing should wait for the home bay to issue a post-2FA session
+    or step-up assertion
+  - project hosts should not own or verify operator 2FA state
+- [ ] add scoped operator credentials for `cocalc-cli`:
+  - avoid production use of full admin account API keys for Bay Ops
+  - credentials should be capability-scoped, e.g. `bay_ops:read`,
+    `bay_ops:drain`, `host_ops:update`, and `backup_restore:run`
+  - credentials should be short-lived, revocable, labeled, and visible in audit
+    records
+- [ ] add step-up auth for dangerous operations:
+  - normal admin auth is enough for read-only status pages
+  - admission changes, drain/rehome execution, host rehome, backup restore, bay
+    software update, and decommission/delete flows require recent 2FA or a
+    short-lived scoped operator token
+- [ ] align CLI and browser policies:
+  - if a browser button requires step-up auth, the matching CLI command must
+    require an equivalent scoped token or recent operator assertion
+  - do not leave weaker CLI backdoors for operations blocked in the browser UI
+- [ ] audit every ops mutation with enough context for support/security review:
+  - actor account id
+  - auth method and credential id
+  - browser/session id or CLI invocation context when available
+  - source bay, destination bay, and target account/project/host ids
+  - reason/campaign id, operation id, start/finish timestamps, result, and
+    error
+
+Until this security/ops gate is addressed, Bay Operations UI should remain
+mostly read-only. Copy/paste CLI commands are acceptable because they preserve
+operator friction and make the intended workflow visible, but direct buttons for
+drain/rehome/delete/restore/update should remain gated behind the stronger auth
+plan above.
 
 ### 9. Account Rehome
 

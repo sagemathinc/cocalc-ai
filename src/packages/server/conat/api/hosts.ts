@@ -42,6 +42,7 @@ import type {
 import type {
   ProjectCopyRow,
   ProjectCopyState,
+  ProjectEnv,
 } from "@cocalc/conat/hub/api/projects";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
@@ -1061,6 +1062,7 @@ export async function getProjectStartMetadata({
   image?: string;
   authorized_keys?: string;
   run_quota?: any;
+  env?: ProjectEnv;
 }> {
   if (!host_id) {
     throw new Error("host_id must be specified");
@@ -1101,6 +1103,7 @@ export async function getProjectStartMetadataLocal({
   image?: string;
   authorized_keys?: string;
   run_quota?: any;
+  env?: ProjectEnv;
 } | null> {
   if (!host_id) {
     throw new Error("host_id must be specified");
@@ -1109,7 +1112,7 @@ export async function getProjectStartMetadataLocal({
     throw new Error("project_id must be specified");
   }
   const { rows } = await pool().query(
-    `SELECT title, users, rootfs_image AS image, run_quota
+    `SELECT title, users, rootfs_image AS image, run_quota, env
        FROM projects
       WHERE project_id=$1
         AND host_id=$2
@@ -1137,6 +1140,7 @@ export async function getProjectStartMetadataLocal({
     image,
     authorized_keys: authorized_keys || undefined,
     run_quota: row.run_quota ?? undefined,
+    env: row.env ?? undefined,
   };
 }
 

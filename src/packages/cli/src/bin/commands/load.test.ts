@@ -8,6 +8,10 @@ type Capture = {
   data?: any;
   accountBayCalls: number;
   listBayCalls: number;
+  projectBayCalls?: string[];
+  hostBayCalls?: string[];
+  bayOpsOverviewCalls?: number;
+  bayOpsDetailCalls?: string[];
   projectQueryCalls: number;
   lastLimit?: number;
   projectCollaboratorListCalls: string[];
@@ -20,6 +24,10 @@ type Capture = {
 };
 
 function makeDeps(capture: Capture): LoadCommandDeps {
+  capture.projectBayCalls ??= [];
+  capture.hostBayCalls ??= [];
+  capture.bayOpsOverviewCalls ??= 0;
+  capture.bayOpsDetailCalls ??= [];
   return {
     withContext: async (_command, _label, fn) => {
       const ctx = {
@@ -49,11 +57,40 @@ function makeDeps(capture: Capture): LoadCommandDeps {
           system: {
             getAccountBay: async () => {
               capture.accountBayCalls += 1;
-              return { bay_id: "bay-0" };
+              return { home_bay_id: "bay-0" };
             },
             listBays: async () => {
               capture.listBayCalls += 1;
               return [{ bay_id: "bay-0" }, { bay_id: "bay-1" }];
+            },
+            getProjectBay: async ({ project_id }) => {
+              capture.projectBayCalls!.push(project_id);
+              return { project_id, owning_bay_id: "bay-1" };
+            },
+            getHostBay: async ({ host_id }) => {
+              capture.hostBayCalls!.push(host_id);
+              return { host_id, bay_id: "bay-2" };
+            },
+            getBayOpsOverview: async () => {
+              capture.bayOpsOverviewCalls! += 1;
+              return {
+                bays: [
+                  { bay_id: "bay-0" },
+                  { bay_id: "bay-1" },
+                  { bay_id: "bay-2" },
+                ],
+              };
+            },
+            getBayOpsDetail: async ({ bay_id }) => {
+              capture.bayOpsDetailCalls!.push(bay_id);
+              return {
+                bay_id,
+                routed: bay_id !== "bay-0",
+                load: { bay_id },
+                backups: { bay_id },
+                load_error: null,
+                backups_error: null,
+              };
             },
             adminCreateUser: async (opts) => {
               capture.adminCreateCalls.push(opts.email);
@@ -162,11 +199,16 @@ function makeDeps(capture: Capture): LoadCommandDeps {
           project_id: "22222222-2222-4222-8222-222222222222",
           host_id: "host-1",
         },
+        {
+          project_id: "project-demo",
+          host_id: "host-2",
+        },
       ];
     },
     resolveProjectFromArgOrContext: async (_ctx, identifier) => ({
       project_id: `project-${identifier}`,
       title: `Project ${identifier}`,
+      host_id: "host-2",
     }),
   };
 }
@@ -392,6 +434,137 @@ test("load mentions respects the requested limit", async () => {
   assert.equal(capture.data.last_result.first_project_id, "mention-project-1");
   assert.equal(capture.data.last_result.first_path, "notes/chat.sage-chat");
   assert.equal(capture.data.last_result.first_target, "target-1");
+});
+
+test("load three-bay measures the canonical split control-plane path", async () => {
+  const capture: Capture = {
+    accountBayCalls: 0,
+    listBayCalls: 0,
+    projectBayCalls: [],
+    hostBayCalls: [],
+    bayOpsOverviewCalls: 0,
+    bayOpsDetailCalls: [],
+    projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
+    adminCreateCalls: [],
+    userSearchCalls: [],
+    createCollabCalls: [],
+    removeCollabCalls: [],
+  };
+  const program = new Command();
+  registerLoadCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "load",
+    "three-bay",
+    "--project",
+    "demo",
+    "--iterations",
+    "2",
+    "--warmup",
+    "1",
+    "--concurrency",
+    "2",
+    "--project-limit",
+    "10",
+    "--detail-bays",
+    "bay-0,bay-1,bay-2",
+  ]);
+
+  assert.equal(capture.accountBayCalls, 3);
+  assert.equal(capture.projectQueryCalls, 3);
+  assert.equal(capture.lastLimit, 10);
+  assert.deepEqual(capture.projectBayCalls, [
+    "project-demo",
+    "project-demo",
+    "project-demo",
+  ]);
+  assert.deepEqual(capture.hostBayCalls, ["host-2", "host-2", "host-2"]);
+  assert.equal(capture.bayOpsOverviewCalls, 3);
+  assert.deepEqual(capture.bayOpsDetailCalls, [
+    "bay-0",
+    "bay-1",
+    "bay-2",
+    "bay-0",
+    "bay-1",
+    "bay-2",
+    "bay-0",
+    "bay-1",
+    "bay-2",
+  ]);
+  assert.equal(capture.data.scenario, "three-bay-control-plane");
+  assert.equal(capture.data.iterations, 2);
+  assert.equal(capture.data.warmup, 1);
+  assert.equal(capture.data.concurrency, 2);
+  assert.equal(capture.data.successes, 2);
+  assert.equal(capture.data.failures, 0);
+  assert.equal(capture.data.last_result.account_home_bay_id, "bay-0");
+  assert.equal(capture.data.last_result.project_owning_bay_id, "bay-1");
+  assert.equal(capture.data.last_result.host_bay_id, "bay-2");
+  assert.equal(capture.data.last_result.detail_bay_count, 3);
+  assert.ok(capture.data.component_latency_ms["account-home-bay"].samples > 0);
+  assert.ok(capture.data.component_latency_ms["bay-ops-detail"].samples > 0);
+});
+
+test("load three-bay hot-path skips Bay Ops probes", async () => {
+  const capture: Capture = {
+    accountBayCalls: 0,
+    listBayCalls: 0,
+    projectBayCalls: [],
+    hostBayCalls: [],
+    bayOpsOverviewCalls: 0,
+    bayOpsDetailCalls: [],
+    projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
+    adminCreateCalls: [],
+    userSearchCalls: [],
+    createCollabCalls: [],
+    removeCollabCalls: [],
+  };
+  const program = new Command();
+  registerLoadCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "load",
+    "three-bay",
+    "--project",
+    "demo",
+    "--iterations",
+    "2",
+    "--warmup",
+    "1",
+    "--concurrency",
+    "2",
+    "--hot-path",
+  ]);
+
+  assert.equal(capture.accountBayCalls, 3);
+  assert.equal(capture.projectQueryCalls, 3);
+  assert.deepEqual(capture.projectBayCalls, [
+    "project-demo",
+    "project-demo",
+    "project-demo",
+  ]);
+  assert.deepEqual(capture.hostBayCalls, ["host-2", "host-2", "host-2"]);
+  assert.equal(capture.bayOpsOverviewCalls, 0);
+  assert.deepEqual(capture.bayOpsDetailCalls, []);
+  assert.equal(capture.data.last_result.hot_path, true);
+  assert.equal(capture.data.last_result.bay_ops_overview_enabled, false);
+  assert.equal(capture.data.last_result.visible_bay_count, null);
+  assert.equal(capture.data.last_result.detail_bay_count, 0);
+  assert.equal(
+    capture.data.component_latency_ms["bay-ops-overview"],
+    undefined,
+  );
+  assert.equal(capture.data.component_latency_ms["bay-ops-detail"], undefined);
 });
 
 test("load collaborator-cycle uses a seeded per-worker account pool", async () => {

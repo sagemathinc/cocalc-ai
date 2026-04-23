@@ -55,7 +55,7 @@ function parseCookies(header: string): Record<string, string> {
   return out;
 }
 
-function readBearerToken(socket): string {
+function readBearerToken(socket): string | undefined {
   const fromAuth = socket?.handshake?.auth?.bearer;
   if (typeof fromAuth === "string" && fromAuth.trim()) {
     return fromAuth.trim();
@@ -67,7 +67,37 @@ function readBearerToken(socket): string {
       return m[1].trim();
     }
   }
-  throw new Error("missing project-host bearer token");
+  return undefined;
+}
+
+function userFromBearerToken({
+  token,
+  host_id,
+}: {
+  token: string;
+  host_id: string;
+}): CoCalcUser {
+  const claims = verifyProjectHostAuthToken({
+    token,
+    host_id,
+    // Verify-only key: project-host does not get signing capability.
+    public_key: getProjectHostAuthPublicKey(),
+  });
+  if (claims.act === "hub") {
+    return { hub_id: claims.sub || "hub" };
+  }
+  if (
+    isAccountSessionRevoked({
+      account_id: claims.sub,
+      issued_at_s: claims.iat,
+    })
+  ) {
+    throw new Error("session revoked");
+  }
+  return {
+    account_id: claims.sub,
+    auth_iat_s: claims.iat,
+  } satisfies CoCalcUser;
 }
 
 function isProjectCollaboratorLocal({
@@ -153,6 +183,10 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     ) {
       return { hub_id: "system" };
     }
+    const token = readBearerToken(socket);
+    if (token) {
+      return userFromBearerToken({ token, host_id });
+    }
     const handshakeProjectAuth = readProjectScopedAuth(socket);
     if (handshakeProjectAuth) {
       const row = getProject(handshakeProjectAuth.project_id);
@@ -195,28 +229,7 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         auth_iat_s: browserSession.iat_s,
       } satisfies CoCalcUser;
     }
-    const token = readBearerToken(socket);
-    const claims = verifyProjectHostAuthToken({
-      token,
-      host_id,
-      // Verify-only key: project-host does not get signing capability.
-      public_key: getProjectHostAuthPublicKey(),
-    });
-    if (claims.act === "hub") {
-      return { hub_id: claims.sub || "hub" };
-    }
-    if (
-      isAccountSessionRevoked({
-        account_id: claims.sub,
-        issued_at_s: claims.iat,
-      })
-    ) {
-      throw new Error("session revoked");
-    }
-    return {
-      account_id: claims.sub,
-      auth_iat_s: claims.iat,
-    } satisfies CoCalcUser;
+    throw new Error("missing project-host bearer token");
   };
 
   const isAllowed: AllowFunction = async ({ user, subject, type }) => {

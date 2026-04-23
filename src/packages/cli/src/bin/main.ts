@@ -418,6 +418,13 @@ function defaultApiBaseUrl(): string {
 function defaultConatAddress(apiBaseUrl: string): string {
   const fromEnv = `${process.env.CONAT_SERVER ?? ""}`.trim();
   if (fromEnv) {
+    // Agent-mode CLI commands first need an account/hub context. Project
+    // runtimes also set CONAT_SERVER to the host-local project Conat endpoint,
+    // but project-host connections are opened later via resolveProjectConatClient
+    // only when a command actually needs project-scoped services.
+    if (shouldPreferHubConatAddressForAgentMode()) {
+      return apiBaseUrl;
+    }
     const normalized = normalizeUrl(fromEnv);
     // In local hub dev, stale Lite CONAT_SERVER values are a common source of
     // misleading auth/session failures. Prefer the requested API target.
@@ -431,6 +438,21 @@ function defaultConatAddress(apiBaseUrl: string): string {
     return normalized;
   }
   return apiBaseUrl;
+}
+
+function shouldPreferHubConatAddressForAgentMode(): boolean {
+  if (!isCliAgentModeEnabled()) {
+    return false;
+  }
+  const apiUrl =
+    `${process.env.COCALC_API_URL ?? process.env.BASE_URL ?? ""}`.trim();
+  if (!apiUrl) {
+    return false;
+  }
+  const bearer =
+    `${process.env.COCALC_BEARER_TOKEN ?? ""}`.trim() ||
+    `${process.env.COCALC_AGENT_TOKEN ?? ""}`.trim();
+  return !!bearer;
 }
 
 function asUtf8(value: unknown): string {

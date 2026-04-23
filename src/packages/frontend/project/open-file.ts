@@ -95,12 +95,22 @@ const SYNC_IDENTITY_RETRY_START_MS = 150;
 const SYNC_IDENTITY_RETRY_MAX_MS = 1500;
 
 export function isTransientSyncIdentityResolutionError(err: unknown): boolean {
-  const message = `${err}`;
+  const message = `${err}`.toLowerCase();
   return (
     message.includes("file server not initialized") ||
+    message.includes("not initialized") ||
     message.includes("socket has been disconnected") ||
+    message.includes("disconnected") ||
+    message.includes("connection closed") ||
+    message.includes("connection refused") ||
+    message.includes("not connected") ||
+    message.includes("no responders") ||
+    message.includes("unable to route") ||
+    message.includes("project-host") ||
+    message.includes("project host") ||
     message.includes("code=408") ||
-    message.includes('timeout of 30000ms waiting for "ready"')
+    message.includes("timeout") ||
+    message.includes("waiting for")
   );
 }
 

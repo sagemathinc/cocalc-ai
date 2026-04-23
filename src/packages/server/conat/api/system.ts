@@ -9,7 +9,10 @@ import {
   resolveHostBay,
   resolveProjectOwningBay,
 } from "@cocalc/server/bay-directory";
-import { setBayProjectOwnershipAdmissionLocal } from "@cocalc/server/bay-registry";
+import {
+  listClusterBayRegistry,
+  setBayProjectOwnershipAdmissionLocal,
+} from "@cocalc/server/bay-registry";
 import { backfillBayOwnership as backfillBayOwnership0 } from "@cocalc/server/bay-backfill";
 import { rebuildAccountProjectIndex as rebuildAccountProjectIndex0 } from "@cocalc/database/postgres/account-project-index";
 import {
@@ -133,13 +136,23 @@ import type {
   BayRestoreTestRunResult,
   BayBackupsInfo,
   BayInfo,
+  BayOpsDetail,
+  BayOpsOverview,
+  BayOpsOverviewBay,
+  BayOpsRehomeCounts,
+  BayOpsRehomeDirectionCounts,
+  BayOpsRehomeStatus,
   BayLoadBrowserControlStatus,
   BayLoadInfo,
   BayLoadParallelOpsStatus,
   BayLoadProjectionStatus,
 } from "@cocalc/conat/hub/api/system";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 
 const logger = getLogger("server:conat:api:system");
+// Non-serializable capability used only by trusted in-process inter-bay handlers.
+// Public Conat API callers cannot supply this value over JSON.
+export const BAY_OPS_INTERNAL_AUTH = Symbol("bay-ops-internal-auth");
 const ROOTFS_PUBLISH_LRO_KIND = "project-rootfs-publish";
 const DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS = 12 * 3600 * 1000;
 
@@ -173,6 +186,272 @@ export async function terminate() {}
 
 export async function listBays() {
   return await listConfiguredBays();
+}
+
+function zeroRehomeDirectionCounts(): BayOpsRehomeDirectionCounts {
+  return {
+    running: 0,
+    failed: 0,
+    recent_success: 0,
+  };
+}
+
+function zeroRehomeCounts(): BayOpsRehomeCounts {
+  return {
+    outbound: zeroRehomeDirectionCounts(),
+    inbound: zeroRehomeDirectionCounts(),
+  };
+}
+
+function zeroRehomeStatus(): BayOpsRehomeStatus {
+  return {
+    account: zeroRehomeCounts(),
+    project: zeroRehomeCounts(),
+    project_host: zeroRehomeCounts(),
+  };
+}
+
+function addCount(
+  rowsByBay: Map<string, number>,
+  bay_id: string,
+  count: unknown,
+): void {
+  const n = Number(count);
+  rowsByBay.set(bay_id, Math.max(0, Number.isFinite(n) ? n : 0));
+}
+
+async function getOwnershipCountMaps(defaultBayId: string): Promise<{
+  accounts: Map<string, number>;
+  projects: Map<string, number>;
+  project_hosts: Map<string, number>;
+}> {
+  const [accountsResult, projectsResult, hostsResult] = await Promise.all([
+    getPool().query<{ bay_id: string; count: string }>(
+      `SELECT COALESCE(NULLIF(BTRIM(home_bay_id), ''), $1::TEXT) AS bay_id,
+              COUNT(*)::TEXT AS count
+         FROM accounts
+        WHERE deleted IS NOT TRUE
+        GROUP BY 1`,
+      [defaultBayId],
+    ),
+    getPool().query<{ bay_id: string; count: string }>(
+      `SELECT COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $1::TEXT) AS bay_id,
+              COUNT(*)::TEXT AS count
+         FROM projects
+        WHERE deleted IS NOT TRUE
+        GROUP BY 1`,
+      [defaultBayId],
+    ),
+    getPool().query<{ bay_id: string; count: string }>(
+      `SELECT COALESCE(NULLIF(BTRIM(bay_id), ''), $1::TEXT) AS bay_id,
+              COUNT(*)::TEXT AS count
+         FROM project_hosts
+        WHERE deleted IS NULL
+        GROUP BY 1`,
+      [defaultBayId],
+    ),
+  ]);
+
+  const accounts = new Map<string, number>();
+  const projects = new Map<string, number>();
+  const project_hosts = new Map<string, number>();
+  for (const row of accountsResult.rows)
+    addCount(accounts, row.bay_id, row.count);
+  for (const row of projectsResult.rows)
+    addCount(projects, row.bay_id, row.count);
+  for (const row of hostsResult.rows)
+    addCount(project_hosts, row.bay_id, row.count);
+  return { accounts, projects, project_hosts };
+}
+
+async function tableExists(table: string): Promise<boolean> {
+  const { rows } = await getPool().query<{ exists: boolean }>(
+    "SELECT to_regclass($1) IS NOT NULL AS exists",
+    [`public.${table}`],
+  );
+  return rows[0]?.exists === true;
+}
+
+type RehomeKind = keyof BayOpsRehomeStatus;
+
+async function addRehomeCounts({
+  rows,
+  kind,
+  table,
+}: {
+  rows: Map<string, BayOpsOverviewBay>;
+  kind: RehomeKind;
+  table: string;
+}): Promise<void> {
+  if (!(await tableExists(table))) return;
+  const { rows: resultRows } = await getPool().query<{
+    source_bay_id: string;
+    dest_bay_id: string;
+    running: string;
+    failed: string;
+    recent_success: string;
+  }>(
+    `SELECT source_bay_id,
+            dest_bay_id,
+            COUNT(*) FILTER (WHERE status IN ('running', 'requested'))::TEXT AS running,
+            COUNT(*) FILTER (WHERE status = 'failed')::TEXT AS failed,
+            COUNT(*) FILTER (
+              WHERE status = 'succeeded'
+                AND finished_at >= NOW() - INTERVAL '24 hours'
+            )::TEXT AS recent_success
+       FROM ${table}
+      WHERE status IN ('running', 'requested', 'failed')
+         OR finished_at >= NOW() - INTERVAL '24 hours'
+      GROUP BY source_bay_id, dest_bay_id`,
+  );
+  for (const row of resultRows) {
+    const running = Number(row.running) || 0;
+    const failed = Number(row.failed) || 0;
+    const recentSuccess = Number(row.recent_success) || 0;
+    const outbound = rows.get(row.source_bay_id)?.rehome[kind]?.outbound;
+    const inbound = rows.get(row.dest_bay_id)?.rehome[kind]?.inbound;
+    if (outbound) {
+      outbound.running += running;
+      outbound.failed += failed;
+      outbound.recent_success += recentSuccess;
+    }
+    if (inbound) {
+      inbound.running += running;
+      inbound.failed += failed;
+      inbound.recent_success += recentSuccess;
+    }
+  }
+}
+
+export async function getBayOpsOverview({
+  account_id,
+}: {
+  account_id?: string;
+} = {}): Promise<BayOpsOverview> {
+  await assertAdmin(account_id);
+  const defaultBayId = getConfiguredBayId();
+  const [configuredBays, registryRows, counts] = await Promise.all([
+    listConfiguredBays(),
+    listClusterBayRegistry(),
+    getOwnershipCountMaps(defaultBayId),
+  ]);
+  const registryByBay = new Map(registryRows.map((row) => [row.bay_id, row]));
+  const rowsByBay = new Map<string, BayOpsOverviewBay>();
+
+  for (const bay of configuredBays) {
+    const registry = registryByBay.get(bay.bay_id);
+    rowsByBay.set(bay.bay_id, {
+      ...bay,
+      public_origin: registry?.public_origin ?? null,
+      public_target: registry?.public_target ?? null,
+      public_target_kind: registry?.public_target_kind ?? null,
+      dns_hostname: registry?.dns_hostname ?? null,
+      last_seen: registry?.last_seen ?? null,
+      ownership: {
+        accounts: counts.accounts.get(bay.bay_id) ?? 0,
+        projects: counts.projects.get(bay.bay_id) ?? 0,
+        project_hosts: counts.project_hosts.get(bay.bay_id) ?? 0,
+      },
+      rehome: zeroRehomeStatus(),
+    });
+  }
+
+  for (const registry of registryRows) {
+    if (rowsByBay.has(registry.bay_id)) continue;
+    rowsByBay.set(registry.bay_id, {
+      bay_id: registry.bay_id,
+      label: registry.label || registry.bay_id,
+      region: registry.region ?? null,
+      deployment_mode: "multi-bay",
+      role:
+        registry.role === "seed" || registry.role === "attached"
+          ? registry.role
+          : "combined",
+      is_default: registry.bay_id === defaultBayId,
+      accepts_project_ownership: registry.accepts_project_ownership !== false,
+      project_ownership_note: registry.project_ownership_note ?? null,
+      public_origin: registry.public_origin ?? null,
+      public_target: registry.public_target ?? null,
+      public_target_kind: registry.public_target_kind ?? null,
+      dns_hostname: registry.dns_hostname ?? null,
+      last_seen: registry.last_seen ?? null,
+      ownership: {
+        accounts: counts.accounts.get(registry.bay_id) ?? 0,
+        projects: counts.projects.get(registry.bay_id) ?? 0,
+        project_hosts: counts.project_hosts.get(registry.bay_id) ?? 0,
+      },
+      rehome: zeroRehomeStatus(),
+    });
+  }
+
+  await Promise.all([
+    addRehomeCounts({
+      rows: rowsByBay,
+      kind: "account",
+      table: "account_rehome_operations",
+    }),
+    addRehomeCounts({
+      rows: rowsByBay,
+      kind: "project",
+      table: "project_rehome_operations",
+    }),
+    addRehomeCounts({
+      rows: rowsByBay,
+      kind: "project_host",
+      table: "project_host_rehome_operations",
+    }),
+  ]);
+
+  return {
+    checked_at: new Date().toISOString(),
+    current_bay_id: defaultBayId,
+    bays: [...rowsByBay.values()].sort((a, b) =>
+      a.bay_id.localeCompare(b.bay_id),
+    ),
+  };
+}
+
+function settledError(result: PromiseSettledResult<unknown>): string | null {
+  return result.status === "rejected" ? `${result.reason}` : null;
+}
+
+export async function getBayOpsDetail({
+  account_id,
+  bay_id,
+}: {
+  account_id?: string;
+  bay_id: string;
+}): Promise<BayOpsDetail> {
+  await assertAdmin(account_id);
+  const requestedBayId = `${bay_id ?? ""}`.trim();
+  if (!requestedBayId) {
+    throw Error("bay_id is required");
+  }
+  const currentBayId = getConfiguredBayId();
+  const api =
+    requestedBayId === currentBayId
+      ? {
+          getLoad: async (_opts: { account_id?: string }) =>
+            await getBayLoad({ account_id, bay_id: currentBayId }),
+          getBackups: async (_opts: { account_id?: string }) =>
+            await getBayBackups({ account_id, bay_id: currentBayId }),
+        }
+      : getInterBayBridge().bayOps(requestedBayId, { timeout_ms: 15_000 });
+  const [loadResult, backupsResult] = await Promise.allSettled([
+    api.getLoad({ account_id }),
+    api.getBackups({ account_id }),
+  ]);
+
+  return {
+    bay_id: requestedBayId,
+    checked_at: new Date().toISOString(),
+    routed: requestedBayId !== currentBayId,
+    load: loadResult.status === "fulfilled" ? loadResult.value : undefined,
+    backups:
+      backupsResult.status === "fulfilled" ? backupsResult.value : undefined,
+    load_error: settledError(loadResult),
+    backups_error: settledError(backupsResult),
+  };
 }
 
 export async function setBayProjectOwnershipAdmission({
@@ -319,11 +598,15 @@ async function getLiveBrowserControlStatus(): Promise<BayLoadBrowserControlStatu
 export async function getBayLoad({
   account_id,
   bay_id,
+  internalAuth,
 }: {
   account_id?: string;
   bay_id?: string;
+  internalAuth?: typeof BAY_OPS_INTERNAL_AUTH;
 }): Promise<BayLoadInfo> {
-  await assertAdmin(account_id);
+  if (internalAuth !== BAY_OPS_INTERNAL_AUTH) {
+    await assertAdmin(account_id);
+  }
   const currentBay = getSingleBayInfo();
   const requestedBayId = `${bay_id ?? ""}`.trim();
   if (requestedBayId && requestedBayId !== currentBay.bay_id) {
@@ -387,11 +670,15 @@ export async function getBayLoad({
 export async function getBayBackups({
   account_id,
   bay_id,
+  internalAuth,
 }: {
   account_id?: string;
   bay_id?: string;
+  internalAuth?: typeof BAY_OPS_INTERNAL_AUTH;
 }): Promise<BayBackupsInfo> {
-  await assertAdmin(account_id);
+  if (internalAuth !== BAY_OPS_INTERNAL_AUTH) {
+    await assertAdmin(account_id);
+  }
   const currentBay = getSingleBayInfo();
   const requestedBayId = `${bay_id ?? ""}`.trim();
   if (requestedBayId && requestedBayId !== currentBay.bay_id) {

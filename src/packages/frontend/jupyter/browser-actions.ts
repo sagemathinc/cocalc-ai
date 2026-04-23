@@ -325,7 +325,7 @@ export class JupyterActions extends JupyterActions0 {
         typeof performance !== "undefined" ? performance.now() : undefined,
       path: this.path,
       runningNow: this.runningNow,
-      runQueue: this.runQueue.length,
+      runQueue: this.getRunQueueLength(),
       pendingSize,
       syncdbState: this.syncdb?.get_state?.(),
       readOnly: this.store?.get?.("read_only") ?? undefined,
@@ -336,6 +336,17 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
     console.log(`[jupyter-run-debug] ${event}`, payload);
+  };
+
+  private getRunQueueLength = (): number => {
+    return Array.isArray(this.runQueue) ? this.runQueue.length : 0;
+  };
+
+  private getMutableRunQueue = (): any[] => {
+    if (!Array.isArray(this.runQueue)) {
+      this.runQueue = [];
+    }
+    return this.runQueue;
   };
 
   private summarizeMesg = (mesg: any) => {
@@ -2650,15 +2661,19 @@ export class JupyterActions extends JupyterActions0 {
 
   // uses inheritence so NOT arrow function
   protected clearRunQueue() {
+    if (this.isClosed()) {
+      return;
+    }
+    const runQueue = this.getMutableRunQueue();
     const pending = this.store?.get("pendingCells");
     if (pending != null && pending.size > 0) {
       this.clearQueuedCellState(pending.toArray());
     }
     this.runDebug("runQueue.clear", {
-      queuedRuns: this.runQueue.length,
+      queuedRuns: runQueue.length,
     });
     this.store?.setState({ pendingCells: iSet() });
-    this.runQueue.length = 0;
+    runQueue.length = 0;
   }
 
   private jupyterClient?: JupyterClient;
@@ -2694,6 +2709,9 @@ export class JupyterActions extends JupyterActions0 {
       },
     });
     c.socket.on("closed", () => {
+      if (this.isClosed()) {
+        return;
+      }
       this.runDebug("client.socket.closed", {
         previousState: c?.socket?.state,
       });
@@ -2741,11 +2759,12 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
     if (this.runningNow) {
-      this.runQueue.push([ids, opts]);
+      const runQueue = this.getMutableRunQueue();
+      runQueue.push([ids, opts]);
       this.addPendingCells(ids);
       this.runDebug("runCells.queued", {
         runId,
-        queuedRuns: this.runQueue.length,
+        queuedRuns: runQueue.length,
       });
       return;
     }
@@ -3016,9 +3035,10 @@ export class JupyterActions extends JupyterActions0 {
       this.rememberIgnoredLiveRunId(runId);
       if (this.isClosed()) return;
       this.runningNow = false;
+      const runQueue = this.getMutableRunQueue();
       this.runDebug("runCells.finally", {
         runId,
-        queuedRuns: this.runQueue.length,
+        queuedRuns: runQueue.length,
       });
       this.runDebug("runCells.summary", {
         runId,
@@ -3053,13 +3073,13 @@ export class JupyterActions extends JupyterActions0 {
         totalMesgs,
         error: runError,
       });
-      if (this.runQueue.length > 0) {
-        const [ids, opts] = this.runQueue.shift();
+      if (runQueue.length > 0) {
+        const [ids, opts] = runQueue.shift();
         this.runDebug("runCells.dequeue", {
           runId,
           nextIds: ids,
           nextOpts: opts,
-          queuedRuns: this.runQueue.length,
+          queuedRuns: runQueue.length,
         });
         this.runCells(ids, opts);
       }

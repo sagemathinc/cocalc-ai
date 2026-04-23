@@ -327,6 +327,7 @@ export function AgentActivityChip({
         background: COLORS.GRAY_LLL,
         border: `1px solid ${COLORS.GRAY_LL}`,
         lineHeight: 1.2,
+        zoom: 1.4,
         cursor: "pointer",
         ...style,
       }}

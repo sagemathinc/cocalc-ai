@@ -7,7 +7,13 @@ const mockMessageApi = {
   success: jest.fn(),
   error: jest.fn(),
 };
+let mockSharedChatReady = true;
 const mockSharedChatActions = {
+  syncdb: {
+    on: jest.fn(),
+    removeListener: jest.fn(),
+  },
+  isSyncdbReady: jest.fn(() => mockSharedChatReady),
   messageCache: {
     getThreadIndex: () => new Map(),
     on: jest.fn(),
@@ -72,6 +78,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 jest.mock("@cocalc/frontend/chat/register", () => ({
   getChatActions: () => mockSharedChatActions,
   initChat: () => mockSharedChatActions,
+  removeWithInstance: jest.fn(),
 }));
 
 jest.mock("@cocalc/frontend/project/page/agent-chat-font-size", () => ({
@@ -141,6 +148,7 @@ jest.mock("@cocalc/frontend/project/page/url-transform", () => ({
 const {
   NavigatorShell,
   classifyNavigatorCodexError,
+  isNavigatorChatInitRetryable,
   resolveSelectedAcpConfig,
   resolveSelectedSessionStatus,
 } = require("./navigator-shell");
@@ -150,6 +158,10 @@ describe("NavigatorShell keyboard suppression", () => {
     mockEraseActiveKeyHandler.mockClear();
     mockMessageApi.success.mockClear();
     mockMessageApi.error.mockClear();
+    mockSharedChatReady = true;
+    mockSharedChatActions.syncdb.on.mockClear();
+    mockSharedChatActions.syncdb.removeListener.mockClear();
+    mockSharedChatActions.isSyncdbReady.mockClear();
     mockSharedChatActions.messageCache.on.mockClear();
     mockSharedChatActions.messageCache.removeListener.mockClear();
     mockSharedChatActions.getThreadMetadata.mockClear();
@@ -163,6 +175,15 @@ describe("NavigatorShell keyboard suppression", () => {
     fireEvent.focus(screen.getByTestId("navigator-composer"));
 
     expect(mockEraseActiveKeyHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the navigator chat loading until syncdb is ready", () => {
+    mockSharedChatReady = false;
+
+    render(<NavigatorShell project_id="project-1" />);
+
+    expect(screen.getByText("Loading...")).toBeTruthy();
+    expect(screen.queryByTestId("navigator-composer")).toBeNull();
   });
 
   it("prefers latest thread metadata acp_config over stale root-message config", () => {
@@ -236,5 +257,30 @@ describe("NavigatorShell keyboard suppression", () => {
       title: "Codex needs you to sign in again.",
       actionLabel: "Sign in again",
     });
+  });
+
+  it("retries Navigator chat initialization while the project is starting", () => {
+    expect(
+      isNavigatorChatInitRetryable({
+        error: "Error: permission denied",
+        projectState: "starting",
+      }),
+    ).toBe(true);
+  });
+
+  it("retries transient filesystem initialization errors after startup", () => {
+    expect(
+      isNavigatorChatInitRetryable({
+        error:
+          "Cannot safely open /home/user/.local/share/cocalc/navigator.chat: canonical sync identity resolution failed: file server not initialized.",
+        projectState: "running",
+      }),
+    ).toBe(true);
+    expect(
+      isNavigatorChatInitRetryable({
+        error: "Error: invalid path",
+        projectState: "running",
+      }),
+    ).toBe(false);
   });
 });

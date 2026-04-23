@@ -6,6 +6,16 @@ import { hubApi } from "../api";
 
 const logger = getLogger("lite:hub:acp:runtime-env");
 
+const RUNTIME_AUTH_ENV_KEYS = new Set([
+  "COCALC_ACCOUNT_ID",
+  "COCALC_AGENT_TOKEN",
+  "COCALC_API_URL",
+  "COCALC_BEARER_TOKEN",
+  "COCALC_BROWSER_ID",
+  "COCALC_CLI_AGENT_MODE",
+  "COCALC_PROJECT_ID",
+]);
+
 function isLoopbackHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1";
 }
@@ -88,7 +98,9 @@ async function resolveCodexRuntimeBearer({
     return directBearer;
   }
 
-  const accountId = `${request.account_id ?? ""}`.trim();
+  const accountId =
+    `${request.account_id ?? ""}`.trim() ||
+    `${request.runtime_env?.COCALC_ACCOUNT_ID ?? ""}`.trim();
   if (!isValidUUID(accountId) || !isValidUUID(projectId)) {
     return;
   }
@@ -125,7 +137,17 @@ export async function buildCodexRuntimeEnv({
   useContainer: boolean;
 }): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
-  const accountId = `${request.account_id ?? ""}`.trim();
+  if (request.runtime_env) {
+    for (const [key, value] of Object.entries(request.runtime_env)) {
+      const normalized = typeof value === "string" ? value.trim() : "";
+      if (normalized && !RUNTIME_AUTH_ENV_KEYS.has(key)) {
+        out[key] = normalized;
+      }
+    }
+  }
+  const accountId =
+    `${request.account_id ?? ""}`.trim() ||
+    `${request.runtime_env?.COCALC_ACCOUNT_ID ?? ""}`.trim();
   if (accountId) out.COCALC_ACCOUNT_ID = accountId;
   if (projectId) out.COCALC_PROJECT_ID = projectId;
   const browserId = `${request.chat?.browser_id ?? ""}`.trim();
@@ -150,14 +172,6 @@ export async function buildCodexRuntimeEnv({
     if (cliBin) out.COCALC_CLI_BIN = cliBin;
     if (!out.COCALC_CLI_CMD && cliBin) {
       out.COCALC_CLI_CMD = `"${cliBin}"`;
-    }
-  }
-  if (request.runtime_env) {
-    for (const [key, value] of Object.entries(request.runtime_env)) {
-      const normalized = typeof value === "string" ? value.trim() : "";
-      if (normalized) {
-        out[key] = normalized;
-      }
     }
   }
   return out;
