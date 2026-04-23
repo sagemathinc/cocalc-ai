@@ -1135,6 +1135,26 @@ Live 3-bay validation evidence, 2026-04-22 PT:
   next host-rehome blocker. Restore operation
   `4d377c6b-f88c-4c50-bcb5-ce61f9071c11` returned `host2` to `bay-0`, and
   `host where` plus `host bootstrap-status` confirmed the restored state.
+- The host-control timeout split into two bootstrap configuration bugs:
+  destination-bay reconcile was first falling back from a loopback forced
+  software base to `software.cocalc.ai`, which started the old `0.7.20`
+  project-host bundle; after that fix, `bay-2` still treated the host as direct
+  HTTPS because the destination bay could not manage Cloudflare and discarded
+  existing tunnel metadata, so the host repeatedly tried to start the local
+  router on privileged ports `443/543/444`.
+- Both blockers are now fixed in code. Cloud-host bootstrap rewrites loopback
+  software bases through the public launchpad origin supplied to the bootstrap
+  script, and existing Cloudflare tunnel metadata is reused even when the
+  current bay cannot manage Cloudflare itself.
+- Live validation after hub restart succeeded: operation
+  `9de7e615-ce40-4b18-b672-0f1d4bc3f1e8` rehomed `host2` from `bay-0` to
+  `bay-2` and completed. The host env during `bay-2` ownership showed
+  `MASTER_CONAT_SERVER=https://bay-2-lite4b.cocalc.ai`,
+  `COCALC_PROJECT_HOST_SOFTWARE_BASE_URL=https://bay-2-lite4b.cocalc.ai/software`,
+  `COCALC_PROJECT_HOST_HTTPS=0`, and `PORT=9002`; supervision events showed
+  conat-router starting on `9102` with public ingress `9002` and upstream
+  `9003`. Restore operation `aaeee9eb-f854-4325-9924-ed115487c0a8` returned
+  `host2` to `bay-0`, and `host where` confirmed the restored state.
 
 Known follow-up:
 

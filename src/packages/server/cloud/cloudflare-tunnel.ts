@@ -550,7 +550,7 @@ export async function ensureCloudflareTunnelForHost(opts: {
   existing?: CloudflareTunnel;
 }): Promise<CloudflareTunnel | undefined> {
   const config = await getConfig();
-  if (!config) return undefined;
+  if (!config) return opts.existing;
   const suffix = config.hostSuffix ?? `.${config.dns}`;
   const hostname = `host-${opts.host_id}${suffix}`;
   const sshHostname = `ssh-host-${opts.host_id}${suffix}`;
