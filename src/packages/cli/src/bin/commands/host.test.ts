@@ -66,6 +66,9 @@ type Capture = {
     reason?: string;
     campaign_id?: string;
   }>;
+  sshTrustRequests?: Array<{
+    id: string;
+  }>;
 };
 
 function withConsoleCapture(fn: () => Promise<void> | void): Promise<string> {
@@ -118,6 +121,7 @@ function makeDeps(
   capture.hostProjectRestarts ??= [];
   capture.lroListRequests ??= [];
   capture.rehomeRequests ??= [];
+  capture.sshTrustRequests ??= [];
   return {
     withContext: async (_command, _label, fn) => {
       const ctx = {
@@ -249,6 +253,18 @@ function makeDeps(
                 operation_stage: "complete",
                 operation_status: "succeeded",
                 status: "rehomed",
+              };
+            },
+            ensureHostOwnerSshTrust: async ({ id }) => {
+              capture.sshTrustRequests!.push({ id });
+              return {
+                host_id: id,
+                bay_id: "bay-0",
+                public_key: "ssh-ed25519 AAAATEST cocalc-host-owner",
+                host_control_attempted: true,
+                host_control_succeeded: false,
+                cloud_provider_attempted: true,
+                cloud_provider_succeeded: true,
               };
             },
             getHostRehomeOperation: async ({ op_id }) => ({
@@ -940,6 +956,27 @@ test("host where returns the bay for the resolved host", async () => {
 
   assert.equal(capture.data.host_id, "44444444-4444-4444-4444-444444444444");
   assert.equal(capture.data.bay_id, "bay-0");
+});
+
+test("host ssh-trust forwards the resolved host", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture);
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync(["node", "test", "host", "ssh-trust", "host-1"]);
+
+  assert.deepEqual(capture.sshTrustRequests, [{ id: "host-1" }]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.bay_id, "bay-0");
+  assert.equal(capture.data.cloud_provider_succeeded, true);
 });
 
 test("host rehome refuses to run without --yes", async () => {

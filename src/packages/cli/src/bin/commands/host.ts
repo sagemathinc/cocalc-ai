@@ -1035,6 +1035,16 @@ export function registerHostCommand(
     });
 
   host
+    .command("ssh-trust <host>")
+    .description("ensure the host trusts its owning bay SSH key")
+    .action(async (hostIdentifier: string, command: Command) => {
+      await withContext(command, "host ssh-trust", async (ctx) => {
+        const h = await resolveHost(ctx, hostIdentifier);
+        return await ctx.hub.hosts.ensureHostOwnerSshTrust({ id: h.id });
+      });
+    });
+
+  host
     .command("rehome <host>")
     .description("change the bay that owns host control metadata")
     .requiredOption("--bay <bay_id>", "destination bay id")

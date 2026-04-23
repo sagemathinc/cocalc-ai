@@ -115,14 +115,35 @@ function isLoopbackHostname(hostname: string): boolean {
   );
 }
 
-async function resolveSoftwareBaseUrl({
+function softwareBaseUrlFromLaunchpadBaseUrl(
+  launchpadBaseUrl?: string,
+): string | undefined {
+  const raw = `${launchpadBaseUrl ?? ""}`.trim();
+  if (!raw) return;
+  try {
+    const parsed = new URL(raw);
+    if (isLoopbackHostname(parsed.hostname)) {
+      return;
+    }
+    parsed.pathname = `${parsed.pathname.replace(/\/+$/, "")}/software`;
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return;
+  }
+}
+
+export async function resolveSoftwareBaseUrl({
   configured,
   useOnPremSettings,
   host_id,
+  launchpadBaseUrl,
 }: {
   configured: string;
   useOnPremSettings: boolean;
   host_id: string;
+  launchpadBaseUrl?: string;
 }): Promise<string> {
   const normalized = normalizeSoftwareBaseUrl(configured);
   if (useOnPremSettings) {
@@ -136,18 +157,25 @@ async function resolveSoftwareBaseUrl({
   } catch {
     return normalized;
   }
-  let replacement = DEFAULT_SOFTWARE_BASE_URL;
-  let source: "site-url" | "default" = "default";
-  try {
-    const publicSite = (await siteURL()).replace(/\/+$/, "");
-    const candidate = `${publicSite}/software`;
-    const parsedCandidate = new URL(candidate);
-    if (!isLoopbackHostname(parsedCandidate.hostname)) {
-      replacement = candidate.replace(/\/+$/, "");
-      source = "site-url";
+  let replacement =
+    softwareBaseUrlFromLaunchpadBaseUrl(launchpadBaseUrl) ??
+    DEFAULT_SOFTWARE_BASE_URL;
+  let source: "launchpad-base-url" | "site-url" | "default" =
+    replacement === DEFAULT_SOFTWARE_BASE_URL
+      ? "default"
+      : "launchpad-base-url";
+  if (source !== "launchpad-base-url") {
+    try {
+      const publicSite = (await siteURL()).replace(/\/+$/, "");
+      const candidate = `${publicSite}/software`;
+      const parsedCandidate = new URL(candidate);
+      if (!isLoopbackHostname(parsedCandidate.hostname)) {
+        replacement = candidate.replace(/\/+$/, "");
+        source = "site-url";
+      }
+    } catch {
+      // keep default replacement
     }
-  } catch {
-    // keep default replacement
   }
   logger.warn("bootstrap host: replaced loopback software base url", {
     host_id,
@@ -578,6 +606,7 @@ export async function buildBootstrapScripts(
     configured: softwareBaseConfigured,
     useOnPremSettings,
     host_id: row.id,
+    launchpadBaseUrl: opts.launchpadBaseUrl,
   });
   if (!softwareBaseUrl) {
     throw new Error("project host software base URL is not configured");

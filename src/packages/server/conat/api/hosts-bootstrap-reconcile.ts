@@ -287,7 +287,7 @@ async function trustHostOwnerBaySshKeyViaHostControl({
 }: {
   host_id: string;
   publicKey: string;
-}): Promise<void> {
+}): Promise<boolean> {
   try {
     const client = await getRoutedHostControlClient({
       host_id,
@@ -301,6 +301,7 @@ async function trustHostOwnerBaySshKeyViaHostControl({
       host_id,
       added: !!response.added,
     });
+    return true;
   } catch (err) {
     logger.warn(
       "host upgrade: unable to repair owner bay ssh key via host control before ssh reconcile",
@@ -309,6 +310,7 @@ async function trustHostOwnerBaySshKeyViaHostControl({
         err,
       },
     );
+    return false;
   }
 }
 
@@ -318,19 +320,25 @@ async function trustHostOwnerBaySshKeyViaCloudProvider({
 }: {
   row: any;
   publicKey: string;
-}): Promise<void> {
+}): Promise<{ attempted: boolean; succeeded: boolean }> {
   const providerId = normalizeProviderId(row?.metadata?.machine?.cloud);
-  if (!providerId || providerId === "self-host") return;
+  if (!providerId || providerId === "self-host") {
+    return { attempted: false, succeeded: false };
+  }
   try {
     const { entry, creds } = await getProviderContext(providerId, {
       region: row?.region,
     });
-    if (!entry.provider.ensureSshAccess) return;
+    if (!entry.provider.ensureSshAccess) {
+      return { attempted: false, succeeded: false };
+    }
     const machine = row?.metadata?.machine ?? {};
     const runtime = row?.metadata?.runtime ?? {};
     const instanceId =
       `${runtime.instance_id ?? machine.instance_id ?? row?.name ?? ""}`.trim();
-    if (!instanceId) return;
+    if (!instanceId) {
+      return { attempted: false, succeeded: false };
+    }
     const sshUser =
       `${runtime.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu"}`.trim() ||
       "ubuntu";
@@ -356,6 +364,7 @@ async function trustHostOwnerBaySshKeyViaCloudProvider({
       host_id: row?.id,
       provider: providerId,
     });
+    return { attempted: true, succeeded: true };
   } catch (err) {
     logger.warn(
       "host upgrade: unable to repair owner bay ssh key via cloud provider before ssh reconcile",
@@ -365,7 +374,55 @@ async function trustHostOwnerBaySshKeyViaCloudProvider({
         err,
       },
     );
+    return { attempted: true, succeeded: false };
   }
+}
+
+export async function trustSshPublicKeyViaCloudProviderForHostRow({
+  host_id,
+  row,
+  publicKey,
+}: {
+  host_id: string;
+  row: any;
+  publicKey: string;
+}): Promise<{ attempted: boolean; succeeded: boolean }> {
+  return await trustHostOwnerBaySshKeyViaCloudProvider({
+    row: { ...row, id: host_id },
+    publicKey,
+  });
+}
+
+export async function trustHostOwnerBaySshKeyForHostRow({
+  host_id,
+  row,
+}: {
+  host_id: string;
+  row: any;
+}): Promise<{
+  public_key: string;
+  host_control_attempted: boolean;
+  host_control_succeeded: boolean;
+  cloud_provider_attempted: boolean;
+  cloud_provider_succeeded: boolean;
+}> {
+  const sshIdentity = await getHostOwnerBaySshIdentity();
+  const cloudProvider = await trustSshPublicKeyViaCloudProviderForHostRow({
+    host_id,
+    row,
+    publicKey: sshIdentity.publicKey,
+  });
+  const hostControlSucceeded = await trustHostOwnerBaySshKeyViaHostControl({
+    host_id,
+    publicKey: sshIdentity.publicKey,
+  });
+  return {
+    public_key: sshIdentity.publicKey,
+    host_control_attempted: true,
+    host_control_succeeded: hostControlSucceeded,
+    cloud_provider_attempted: cloudProvider.attempted,
+    cloud_provider_succeeded: cloudProvider.succeeded,
+  };
 }
 
 export function assertCloudHostBootstrapReconcileSupported(row: any): void {
@@ -398,16 +455,13 @@ export async function reconcileCloudHostBootstrapOverSsh(opts: {
   }
   const { baseUrl: bootstrapBaseUrl } = await resolveLaunchpadBootstrapUrl({
     preferCurrentBay: true,
+    requirePublic: true,
   });
   const bootstrapToken = await createProjectHostBootstrapToken(opts.host_id);
   const sshIdentity = await getHostOwnerBaySshIdentity();
-  await trustHostOwnerBaySshKeyViaCloudProvider({
-    row: opts.row,
-    publicKey: sshIdentity.publicKey,
-  });
-  await trustHostOwnerBaySshKeyViaHostControl({
+  await trustHostOwnerBaySshKeyForHostRow({
     host_id: opts.host_id,
-    publicKey: sshIdentity.publicKey,
+    row: opts.row,
   });
   const bootstrapScript = await buildCloudInitStartupScript(
     opts.row,

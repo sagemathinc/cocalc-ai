@@ -23,6 +23,7 @@ import {
   getClusterBayPublicOrigins,
 } from "@cocalc/server/bay-public-origin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
 import { listBrowserSessionsForAccount } from "@cocalc/server/conat/api/browser-sessions";
 import {
@@ -37,6 +38,7 @@ const log = getLogger("server:accounts:rehome");
 const ACCOUNT_REHOME_OPERATIONS_TABLE = "account_rehome_operations";
 const ACCOUNT_REHOME_TIMEOUT_MS = 5 * 60_000;
 const ACCOUNT_REHOME_BROWSER_RECONNECT_TIMEOUT_MS = 5_000;
+const ACCOUNT_REHOME_ROUTE_CONVERGENCE_TIMEOUT_MS = 10_000;
 
 const PORTABLE_STATE_TABLES = [
   "account_project_index",
@@ -51,6 +53,19 @@ type PortableStateTable = (typeof PORTABLE_STATE_TABLES)[number];
 
 type AccountRehomeOperationRow = AccountRehomeOperationSummary & {
   account: Record<string, unknown> | null;
+};
+
+export type AccountRehomeDrainResult = {
+  source_bay_id: string;
+  dest_bay_id: string;
+  dry_run: boolean;
+  limit: number;
+  campaign_id: string | null;
+  only_if_tag: string | null;
+  candidate_count: number;
+  candidates: string[];
+  rehomed: AccountRehomeResponse[];
+  errors: Array<{ account_id: string; error: string }>;
 };
 
 type Queryable = {
@@ -706,6 +721,50 @@ async function forceAccountBrowserSessionsToHomeBay({
   });
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForAccountHomeBayReadPath({
+  acting_account_id,
+  target_account_id,
+  dest_bay_id,
+  timeout_ms = ACCOUNT_REHOME_ROUTE_CONVERGENCE_TIMEOUT_MS,
+}: {
+  acting_account_id: string;
+  target_account_id: string;
+  dest_bay_id: string;
+  timeout_ms?: number;
+}): Promise<void> {
+  const deadline = Date.now() + timeout_ms;
+  let lastHomeBayId: string | null = null;
+  let lastError: unknown;
+  while (true) {
+    try {
+      const located = await resolveAccountHomeBay({
+        account_id: acting_account_id,
+        user_account_id: target_account_id,
+      });
+      lastHomeBayId = `${located.home_bay_id ?? ""}`.trim() || null;
+      if (lastHomeBayId === dest_bay_id) {
+        return;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      const suffix = lastError
+        ? `; last error: ${lastError instanceof Error ? lastError.message : `${lastError}`}`
+        : `; last home bay: ${lastHomeBayId ?? "unknown"}`;
+      throw new Error(
+        `account ${target_account_id} routing did not converge to ${dest_bay_id}${suffix}`,
+      );
+    }
+    await delay(Math.min(250, Math.max(25, remaining)));
+  }
+}
+
 export async function acceptAccountRehome({
   target_account_id,
   source_bay_id,
@@ -914,6 +973,11 @@ export async function runAccountRehomeOperation(
         account_id: op.account_id,
         home_bay_id: op.dest_bay_id,
       });
+      await waitForAccountHomeBayReadPath({
+        acting_account_id: op.requested_by ?? op.account_id,
+        target_account_id: op.account_id,
+        dest_bay_id: op.dest_bay_id,
+      });
       await forceAccountBrowserSessionsToHomeBay({
         account_id: op.account_id,
         dest_bay_id: op.dest_bay_id,
@@ -1048,4 +1112,94 @@ export async function reconcileAccountRehomeOnSource({
   op_id: string;
 }): Promise<AccountRehomeResponse> {
   return await runAccountRehomeOperation(op_id);
+}
+
+export async function drainAccountRehome({
+  account_id,
+  source_bay_id,
+  dest_bay_id,
+  limit = 25,
+  dry_run = true,
+  campaign_id,
+  reason,
+  only_if_tag,
+}: {
+  account_id?: string;
+  source_bay_id?: string;
+  dest_bay_id: string;
+  limit?: number;
+  dry_run?: boolean;
+  campaign_id?: string | null;
+  reason?: string | null;
+  only_if_tag?: string | null;
+}): Promise<AccountRehomeDrainResult> {
+  const requestedBy = await assertAdmin(account_id);
+  const localBayId = getConfiguredBayId();
+  const sourceBayId = normalizeBayId(
+    "source_bay_id",
+    source_bay_id ?? localBayId,
+  );
+  const destBayId = normalizeBayId("dest_bay_id", dest_bay_id);
+  if (sourceBayId !== localBayId) {
+    throw new Error(
+      `account rehome drain must run on the source bay (${sourceBayId}); local bay is ${localBayId}`,
+    );
+  }
+  if (sourceBayId === destBayId) {
+    throw new Error("source and destination bay must be different");
+  }
+  await assertBayExists(destBayId);
+  const normalizedLimit = Math.min(
+    500,
+    Math.max(1, Number.isInteger(limit) ? limit : 25),
+  );
+  const onlyIfTag = `${only_if_tag ?? ""}`.trim() || null;
+  const { rows } = await getPool().query<{ account_id: string }>(
+    `
+      SELECT account_id
+        FROM accounts
+       WHERE COALESCE(NULLIF(BTRIM(home_bay_id), ''), $1) = $1
+         AND account_id <> $2
+         AND deleted IS NOT TRUE
+         AND ($4::TEXT IS NULL OR $4 = ANY(COALESCE(tags, ARRAY[]::TEXT[])))
+       ORDER BY last_active ASC NULLS FIRST, created ASC NULLS FIRST, account_id ASC
+       LIMIT $3
+    `,
+    [sourceBayId, requestedBy, normalizedLimit, onlyIfTag],
+  );
+  const candidates = rows.map((row) => row.account_id);
+  const result: AccountRehomeDrainResult = {
+    source_bay_id: sourceBayId,
+    dest_bay_id: destBayId,
+    dry_run,
+    limit: normalizedLimit,
+    campaign_id: campaign_id ?? null,
+    only_if_tag: onlyIfTag,
+    candidate_count: candidates.length,
+    candidates,
+    rehomed: [],
+    errors: [],
+  };
+  if (dry_run) {
+    return result;
+  }
+  for (const accountId of candidates) {
+    try {
+      result.rehomed.push(
+        await rehomeAccountOnHomeBay({
+          account_id: requestedBy,
+          target_account_id: accountId,
+          dest_bay_id: destBayId,
+          campaign_id: campaign_id ?? `drain:${sourceBayId}->${destBayId}`,
+          reason: reason ?? `drain ${sourceBayId} to ${destBayId}`,
+        }),
+      );
+    } catch (err) {
+      result.errors.push({
+        account_id: accountId,
+        error: err instanceof Error ? err.message : `${err}`,
+      });
+    }
+  }
+  return result;
 }

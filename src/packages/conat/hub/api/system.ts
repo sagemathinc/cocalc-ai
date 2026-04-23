@@ -69,6 +69,7 @@ export const system = {
   rehomeAccount: authFirstRequireAccount,
   getAccountRehomeOperation: authFirstRequireAccount,
   reconcileAccountRehome: authFirstRequireAccount,
+  drainAccountRehome: authFirstRequireAccount,
   adminResetPasswordLink: authFirst,
   sendEmailVerification: authFirst,
   deletePassport: authFirst,
@@ -593,7 +594,7 @@ export interface AccountBayLocation {
   last_name?: string;
   name?: string;
   home_bay_id: string;
-  source: "account-row" | "single-bay-default";
+  source: "account-row" | "cluster-directory" | "single-bay-default";
 }
 
 export interface ProjectBayLocation {
@@ -609,6 +610,19 @@ export interface HostBayLocation {
   bay_id: string;
   name: string;
   source: "host-row" | "single-bay-default";
+}
+
+export interface AccountRehomeDrainResult {
+  source_bay_id: string;
+  dest_bay_id: string;
+  dry_run: boolean;
+  limit: number;
+  campaign_id: string | null;
+  only_if_tag: string | null;
+  candidate_count: number;
+  candidates: string[];
+  rehomed: AccountRehomeResponse[];
+  errors: Array<{ account_id: string; error: string }>;
 }
 
 export interface BayOwnershipBackfillResult {
@@ -1031,6 +1045,17 @@ export interface System {
     op_id: string;
     source_bay_id?: string;
   }) => Promise<AccountRehomeResponse>;
+
+  drainAccountRehome: (opts: {
+    account_id?: string;
+    source_bay_id?: string;
+    dest_bay_id: string;
+    limit?: number;
+    dry_run?: boolean;
+    campaign_id?: string | null;
+    reason?: string | null;
+    only_if_tag?: string | null;
+  }) => Promise<AccountRehomeDrainResult>;
 
   backfillBayOwnership: (opts: {
     account_id?: string;

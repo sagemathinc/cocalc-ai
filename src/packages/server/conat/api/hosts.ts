@@ -137,6 +137,7 @@ import {
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
+  ensureHostOwnerSshTrust as ensureHostOwnerSshTrustInternal,
   getHostRehomeOperation as getHostRehomeOperationInternal,
   reconcileHostRehome as reconcileHostRehomeInternal,
   rehomeHost as rehomeHostInternal,
@@ -3130,6 +3131,19 @@ export async function forceDeprovisionHost({
     account_id,
     input: { id: row.id, account_id },
     dedupe_key: `${HOST_FORCE_DEPROVISION_LRO_KIND}:${row.id}`,
+  });
+}
+
+export async function ensureHostOwnerSshTrust({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}) {
+  return await ensureHostOwnerSshTrustInternal({
+    account_id,
+    host_id: id,
   });
 }
 

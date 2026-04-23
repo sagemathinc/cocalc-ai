@@ -39,6 +39,7 @@ import {
   searchClusterAccounts,
 } from "@cocalc/server/inter-bay/accounts";
 import {
+  drainAccountRehome as drainAccountRehomeInternal,
   getAccountRehomeOperationForOperator,
   reconcileAccountRehome as reconcileAccountRehomeInternal,
   rehomeAccount as rehomeAccountInternal,
@@ -1316,6 +1317,37 @@ export async function reconcileAccountRehome({
     account_id,
     op_id,
     source_bay_id,
+  });
+}
+
+export async function drainAccountRehome({
+  account_id,
+  source_bay_id,
+  dest_bay_id,
+  limit,
+  dry_run,
+  campaign_id,
+  reason,
+  only_if_tag,
+}: {
+  account_id?: string;
+  source_bay_id?: string;
+  dest_bay_id: string;
+  limit?: number;
+  dry_run?: boolean;
+  campaign_id?: string | null;
+  reason?: string | null;
+  only_if_tag?: string | null;
+}) {
+  return await drainAccountRehomeInternal({
+    account_id,
+    source_bay_id,
+    dest_bay_id,
+    limit,
+    dry_run,
+    campaign_id,
+    reason,
+    only_if_tag,
   });
 }
 
