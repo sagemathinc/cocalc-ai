@@ -258,6 +258,63 @@ describe("initCodexProjectRunner", () => {
     });
   });
 
+  it("uses runtime account id to issue the CLI agent bearer", async () => {
+    spawnMock.mockReturnValue(new FakeProc());
+    execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
+      if (args[0] === "inspect" && args[1] === "-f") {
+        cb(null, "true\n", "");
+        return;
+      }
+      cb(null, "", "");
+    });
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const bin = path.join(tmp, "bin");
+    await fs.mkdir(bin, { recursive: true });
+    await fs.writeFile(path.join(bin, "codex"), "");
+    const home = path.join(tmp, "home");
+    await fs.mkdir(home, { recursive: true });
+    filesystem.localPath.mockResolvedValue({ home, scratch: undefined });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "account-api-key",
+      contextId: "acct-key-1234",
+      env: { OPENAI_API_KEY: "secret-key" },
+    });
+    process.env.COCALC_BIN_PATH = bin;
+
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawner = getCodexProjectSpawner();
+
+    const spawned = await spawner!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      cwd: "/home/user",
+      env: {
+        COCALC_ACCOUNT_ID: "00000000-0000-4000-8000-000000000001",
+      },
+    });
+
+    const [, args] = spawnMock.mock.calls[0];
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "-e",
+        "COCALC_BEARER_TOKEN=issued-project-host-token",
+        "-e",
+        "COCALC_AGENT_TOKEN=issued-project-host-token",
+        "-e",
+        "COCALC_ACCOUNT_ID=00000000-0000-4000-8000-000000000001",
+      ]),
+    );
+    expect(spawned.runtimeEnv).toMatchObject({
+      COCALC_BEARER_TOKEN: "issued-project-host-token",
+      COCALC_AGENT_TOKEN: "issued-project-host-token",
+      COCALC_ACCOUNT_ID: "00000000-0000-4000-8000-000000000001",
+    });
+    expect(hubApi.hosts.issueProjectHostAgentAuthToken).toHaveBeenCalledWith({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+    });
+  });
+
   it("falls back to the bundled project runtime cocalc command when no host cli is resolvable", async () => {
     spawnMock.mockReturnValue(new FakeProc());
     execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
