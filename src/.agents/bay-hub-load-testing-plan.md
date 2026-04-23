@@ -134,6 +134,37 @@ This is not a substitute for the final systemd VM test. It is a fast way to
 answer whether one Node process is the obvious limiting factor before adding
 deployment friction.
 
+When testing split Conat router ingress, split both sides of the topology. If
+clients enter through two router ports but all hub/API workers still register
+through one router, the measurement is mostly a single-router test plus extra
+cluster forwarding. The helper supports comma- or space-separated lists for
+both axes:
+
+```sh
+cd src
+CONAT_SOCKETIO_COUNT=2 ./scripts/dev/hub-daemon.sh restart
+
+COCALC_BAY_WORKER_SCALE_COUNT=8 \
+COCALC_BAY_WORKER_SCALE_CONAT_SERVERS="http://localhost:9102 http://localhost:9103" \
+COCALC_BAY_WORKER_SCALE_APIS="http://localhost:9102 http://localhost:9103" \
+COCALC_BAY_WORKER_SCALE_CONCURRENCIES="128 256 384" \
+COCALC_BAY_WORKER_SCALE_ITERATIONS=800 \
+COCALC_BAY_WORKER_SCALE_WARMUP=80 \
+  ./scripts/dev/bay-worker-scale-benchmark.sh start-run
+```
+
+Read split-router results carefully:
+
+- `aggregate_scenarios_per_sec` is the completed fixed-iteration batch rate
+  using the parent wall time.
+- `sum_child_scenarios_per_sec` is the sum of each client group's independent
+  rate and is closer to a sustained active-user model where both router groups
+  keep generating work for the full interval.
+
+After split-router experiments, stop the extra workers and restart the dev hub
+without `CONAT_SOCKETIO_COUNT=2` unless the next test explicitly needs the
+split-router shape.
+
 ### Initial Same-Host Evidence
 
 Host shape:
@@ -153,6 +184,14 @@ Observed peak throughput:
 | 4 extra `--conat-api` workers | 32 | ~137 | ~685 |
 | 8 extra `--conat-api` workers | 256 | ~177 | ~883 |
 | 12 extra `--conat-api` workers | 384 | ~171 | ~855 |
+| 8 extra workers + 2 router ports split on clients and workers | 256 | ~223 sustained child-sum | ~1115 sustained child-sum |
+
+The first split-router probe shows a real improvement over single-router ingress
+when both worker registration and client entry are split, but it is not yet a
+clean capacity number. The seed router port was consistently slower than the
+child router port, so the next attribution pass should measure router CPU,
+event-loop delay, cluster-forwarding counts, and Postgres pressure on the same
+run.
 
 Interpretation:
 
