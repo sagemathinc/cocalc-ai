@@ -40,6 +40,20 @@ type UseBlockSyncResult = {
   lastRemoteMergeAtRef: React.MutableRefObject<number>;
 };
 
+function isSyncstringLiveConnected(actions?: Actions): boolean {
+  const syncstring = actions?._syncstring as
+    | {
+        is_live_connected?: () => boolean;
+        get_state?: () => string;
+      }
+    | undefined;
+  if (syncstring == null) return true;
+  if (typeof syncstring.is_live_connected === "function") {
+    return syncstring.is_live_connected();
+  }
+  return syncstring.get_state?.() === "ready";
+}
+
 export function useBlockSync({
   actions,
   value,
@@ -214,6 +228,10 @@ export function useBlockSync({
   function flushPendingRemoteMerge(force = false) {
     const pending = pendingRemoteRef.current;
     if (pending == null) return;
+    if (!isSyncstringLiveConnected(actions)) {
+      debugSyncLog("pending-remote:skip-offline", { force });
+      return;
+    }
     if (!force && shouldDeferRemoteMerge()) {
       debugSyncLog("pending-remote:defer", {
         idleMs: mergeIdleMsRef.current,

@@ -3137,10 +3137,15 @@ export class BaseEditorActions<
   // If you override show, make sure to still call this
   // super class!
   public async show(): Promise<void> {
-    this.setState({
+    const liveConnected = this.areSyncdocsLiveConnected();
+    const nextState: { visible: boolean; rtc_status?: "loading" | "live" } = {
       visible: true,
-    });
-    if (!this.areSyncdocsLiveConnected()) {
+    };
+    if (this.doctype !== "none") {
+      nextState.rtc_status = liveConnected ? "live" : "loading";
+    }
+    this.setState(nextState);
+    if (!liveConnected) {
       this.reconnectResource?.requestReconnect({
         reason: "editor_became_visible",
         resetBackoff: true,

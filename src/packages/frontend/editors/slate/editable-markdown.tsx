@@ -186,6 +186,20 @@ export function resolveMarkdownClipboardPayload({
   return resolved?.trim() ? resolved : null;
 }
 
+function isSyncstringLiveConnected(actions?: Actions): boolean {
+  const syncstring = actions?._syncstring as
+    | {
+        is_live_connected?: () => boolean;
+        get_state?: () => string;
+      }
+    | undefined;
+  if (syncstring == null) return true;
+  if (typeof syncstring.is_live_connected === "function") {
+    return syncstring.is_live_connected();
+  }
+  return syncstring.get_state?.() === "ready";
+}
+
 export function handleEditableMarkdownProjectNavigationKeydown({
   event,
   projectId,
@@ -790,6 +804,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   function flushPendingRemoteMerge(force = false) {
     const pending = pendingRemoteRef.current;
     if (pending == null) return;
+    if (!isSyncstringLiveConnected(actions)) {
+      debugSyncLog("pending-remote:skip-offline", {
+        focused: isMergeFocused(),
+        force,
+      });
+      return;
+    }
     if (!force && shouldDeferRemoteMerge()) {
       debugSyncLog("pending-remote:defer", {
         focused: isMergeFocused(),
@@ -2673,12 +2694,14 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
               blurMergeTimerRef.current = window.setTimeout(() => {
                 blurMergeTimerRef.current = null;
                 if (!isMergeFocused()) {
-                  flushPendingRemoteMerge();
-                  const pendingSlate = pendingSlateValueRef.current;
-                  if (pendingSlate != null) {
-                    pendingSlateValueRef.current = null;
-                    allowFocusedValueUpdateRef.current = true;
-                    setEditorToSlateValue(pendingSlate);
+                  if (isSyncstringLiveConnected(actions)) {
+                    flushPendingRemoteMerge();
+                    const pendingSlate = pendingSlateValueRef.current;
+                    if (pendingSlate != null) {
+                      pendingSlateValueRef.current = null;
+                      allowFocusedValueUpdateRef.current = true;
+                      setEditorToSlateValue(pendingSlate);
+                    }
                   }
                 }
               }, 150);
