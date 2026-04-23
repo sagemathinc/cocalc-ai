@@ -298,6 +298,11 @@ async function runCli() {
     return;
   }
 
+  if (`${process.env.COCALC_LITE_ACP_WORKER ?? ""}`.trim() === "1") {
+    await require("@cocalc/lite/acp-worker").main();
+    return;
+  }
+
   const isCommand = (arg?: string) =>
     arg &&
     (arg.startsWith("-") ||

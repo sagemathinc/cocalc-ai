@@ -14,6 +14,11 @@ function defaultLiteDataDir() {
 }
 
 (async () => {
+  if (`${process.env.COCALC_LITE_ACP_WORKER ?? ""}`.trim() === "1") {
+    await require("@cocalc/lite/acp-worker").main();
+    return;
+  }
+
   // Lite always uses one canonical local account/project identity.
   process.env.COCALC_PROJECT_ID = FALLBACK_PROJECT_UUID;
   process.env.COCALC_ACCOUNT_ID = FALLBACK_ACCOUNT_UUID;
