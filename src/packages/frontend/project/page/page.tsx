@@ -137,7 +137,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
       moveLro.summary.status === "queued" ||
       moveLro.summary.status === "running");
   const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
-  const workspaceBlocked = hostUnavailable || moveInProgress;
+  const workspaceBlocked = moveInProgress;
   const hostUnavailableReason =
     hostOperational.reason ?? "Assigned host is unavailable.";
   const assignedHostLabel = hostLabel(hostInfo, host_id);
@@ -493,6 +493,53 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     );
   }
 
+  function renderHostUnavailableBanner() {
+    if (!hostUnavailable) return;
+    return (
+      <Alert
+        showIcon
+        type="warning"
+        banner
+        message="Project host is not available"
+        description={
+          <Space wrap>
+            <span>
+              This project is assigned to {assignedHostLabel}, which is
+              unavailable ({hostUnavailableReason}). File access may fail until
+              the host comes back online, but project settings and cached
+              metadata are still available.
+            </span>
+            <Button
+              size="small"
+              loading={checkingHost}
+              onClick={async () => {
+                if (!host_id) return;
+                try {
+                  setCheckingHost(true);
+                  await redux
+                    .getActions("projects")
+                    ?.ensure_host_info(host_id, true);
+                } catch (err) {
+                  console.warn("failed to refresh host status", err);
+                } finally {
+                  setCheckingHost(false);
+                }
+              }}
+            >
+              <Icon name="refresh" /> Check Host Status
+            </Button>
+            <MoveProject
+              project_id={project_id}
+              size="small"
+              label="Move Project"
+              showHostName={false}
+            />
+          </Space>
+        }
+      />
+    );
+  }
+
   function renderActivityBarButtons() {
     if (fullscreen && fullscreen !== "project") return;
 
@@ -534,62 +581,6 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   function renderMainContent() {
     if (moveInProgress && moveLro) {
       return <MoveInProgress project_id={project_id} moveLro={moveLro} />;
-    }
-
-    if (hostUnavailable) {
-      return (
-        <div
-          ref={mainRef}
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            overflowX: "auto",
-            justifyContent: "center",
-            alignItems: "center",
-          }}
-        >
-          <div style={{ maxWidth: "900px", width: "100%", padding: "0 24px" }}>
-            <Alert
-              showIcon
-              type="warning"
-              title="Project host is not available"
-              description={`This project is assigned to ${assignedHostLabel}, which is unavailable (${hostUnavailableReason}).
-
-You can wait for this host to become available again, or move this project to another host.`}
-            />
-            <div style={{ marginTop: "12px" }}>
-              <Space wrap>
-                <Button
-                  size="large"
-                  loading={checkingHost}
-                  onClick={async () => {
-                    if (!host_id) return;
-                    try {
-                      setCheckingHost(true);
-                      await redux
-                        .getActions("projects")
-                        ?.ensure_host_info(host_id, true);
-                    } catch (err) {
-                      console.warn("failed to refresh host status", err);
-                    } finally {
-                      setCheckingHost(false);
-                    }
-                  }}
-                >
-                  <Icon name="refresh" /> Check Host Status
-                </Button>
-                <MoveProject
-                  project_id={project_id}
-                  size="large"
-                  label="Move Project"
-                  showHostName={false}
-                />
-              </Space>
-            </div>
-          </div>
-        </div>
-      );
     }
 
     return (
@@ -658,6 +649,7 @@ You can wait for this host to become available again, or move this project to an
         <RamWarning project_id={project_id} />
         <OOMWarning project_id={project_id} />
         <ProjectWarningBanner />
+        {renderHostUnavailableBanner()}
         {renderTopRow()}
         {is_deleted && <DeletedProjectWarning />}
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>

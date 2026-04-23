@@ -10,7 +10,11 @@ import {
 } from "antd";
 import type { MenuProps } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useActions,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import {
   upsertAgentSessionRecord,
@@ -25,7 +29,11 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { useKeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { lite } from "@cocalc/frontend/lite";
-import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
+import {
+  getChatActions,
+  initChat,
+  removeWithInstance,
+} from "@cocalc/frontend/chat/register";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
@@ -58,6 +66,8 @@ const NAVIGATOR_DEFAULT_THREAD_TITLE = "Navigator";
 const NAVIGATOR_DEFAULT_THREAD_ICON = "sitemap";
 const NAVIGATOR_DEFAULT_THREAD_COLOR = "#c8e6c9";
 const ACTIVE_THREAD_STATES = new Set(["queue", "sending", "sent", "running"]);
+const NAVIGATOR_CHAT_INIT_RETRY_MS = 2000;
+const NAVIGATOR_CHAT_READY_STALE_RETRY_MS = 15_000;
 
 type NavigatorCodexErrorPresentation = {
   kind: "missing-auth" | "expired-auth" | "other";
@@ -84,6 +94,33 @@ function navigatorChatPath(accountId?: string): string {
   }
   const key = sanitizeAccountId(accountId?.trim() || "unknown-account");
   return `.local/share/cocalc/navigator-${key}.chat`;
+}
+
+export function isNavigatorChatInitRetryable({
+  error,
+  projectState,
+}: {
+  error: string;
+  projectState?: string;
+}): boolean {
+  const normalizedState = `${projectState ?? ""}`.trim().toLowerCase();
+  const normalizedError = `${error ?? ""}`.trim().toLowerCase();
+  if (normalizedState === "starting" || normalizedState === "opening") {
+    return true;
+  }
+  if (!normalizedError) {
+    return normalizedState !== "running";
+  }
+  return (
+    normalizedError.includes("file server not initialized") ||
+    normalizedError.includes("canonical sync identity resolution failed") ||
+    normalizedError.includes("project host id unavailable") ||
+    normalizedError.includes("project is not running") ||
+    normalizedError.includes("project not running") ||
+    normalizedError.includes("start the project") ||
+    normalizedError.includes("unable to route") ||
+    normalizedError.includes("managed rootfs release artifacts require")
+  );
 }
 
 function latestThreadKey(actions?: ChatActions): string | null {
@@ -371,6 +408,11 @@ export function NavigatorShell({
     { project_id },
     "available_features",
   );
+  const projectState = useTypedRedux("projects", "project_map")?.getIn([
+    project_id,
+    "state",
+    "state",
+  ]) as string | undefined;
 
   const homeDirectory = useMemo(() => {
     const resolvedHome = available_features?.get?.("homeDirectory");
@@ -395,7 +437,17 @@ export function NavigatorShell({
       }) ?? null
     );
   });
+  const [syncdbReady, setSyncdbReady] = useState<boolean>(() => {
+    const initialActions = navigatorPath
+      ? getChatActions(project_id, navigatorPath, {
+          instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+        })
+      : undefined;
+    return initialActions?.isSyncdbReady?.() ?? false;
+  });
   const [error, setError] = useState<string>("");
+  const [initRetrying, setInitRetrying] = useState<boolean>(false);
+  const [initRetryTick, setInitRetryTick] = useState<number>(0);
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(
     null,
   );
@@ -438,6 +490,7 @@ export function NavigatorShell({
       instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
     });
     if (sharedActions) {
+      setInitRetrying(false);
       setActions((current) =>
         current === sharedActions ? current : sharedActions,
       );
@@ -463,11 +516,31 @@ export function NavigatorShell({
           instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
         });
         if (!mounted) return;
+        setInitRetrying(false);
+        setError("");
         setActions(chatActions);
       } catch (err) {
         if (!mounted) return;
+        const message = `${err}`;
+        if (
+          isNavigatorChatInitRetryable({
+            error: message,
+            projectState,
+          })
+        ) {
+          setActions(null);
+          setError("");
+          setInitRetrying(true);
+          window.setTimeout(() => {
+            if (mounted) {
+              setInitRetryTick((tick) => tick + 1);
+            }
+          }, NAVIGATOR_CHAT_INIT_RETRY_MS);
+          return;
+        }
         setActions(null);
-        setError(`${err}`);
+        setInitRetrying(false);
+        setError(message);
       }
     };
     void run();
@@ -475,7 +548,49 @@ export function NavigatorShell({
     return () => {
       mounted = false;
     };
-  }, [projectActions, project_id, navigatorPath]);
+  }, [projectActions, project_id, navigatorPath, projectState, initRetryTick]);
+
+  useEffect(() => {
+    if (!actions) {
+      setSyncdbReady(false);
+      return;
+    }
+    let mounted = true;
+    const syncdb = actions.syncdb;
+    const updateReady = () => {
+      if (mounted) {
+        setSyncdbReady(actions.isSyncdbReady?.() ?? false);
+      }
+    };
+    updateReady();
+    syncdb?.on?.("ready", updateReady);
+    syncdb?.on?.("close", updateReady);
+    const poll = setInterval(updateReady, 500);
+    const staleTimer =
+      projectState === "running" && !(actions.isSyncdbReady?.() ?? false)
+        ? setTimeout(() => {
+            if (!mounted || (actions.isSyncdbReady?.() ?? false)) {
+              return;
+            }
+            removeWithInstance(navigatorPath, redux, project_id, {
+              instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+            });
+            setActions(null);
+            setSyncdbReady(false);
+            setInitRetrying(true);
+            setInitRetryTick((tick) => tick + 1);
+          }, NAVIGATOR_CHAT_READY_STALE_RETRY_MS)
+        : undefined;
+    return () => {
+      mounted = false;
+      clearInterval(poll);
+      if (staleTimer != null) {
+        clearTimeout(staleTimer);
+      }
+      syncdb?.removeListener?.("ready", updateReady);
+      syncdb?.removeListener?.("close", updateReady);
+    };
+  }, [actions, navigatorPath, project_id, projectState]);
 
   useEffect(() => {
     if (!actions) return;
@@ -760,7 +875,7 @@ export function NavigatorShell({
 
   const submitIntent = useCallback(
     (intent: NavigatorSubmitPromptDetail): boolean => {
-      if (!actions) return false;
+      if (!actions || !syncdbReady) return false;
       const basePrompt = `${intent?.prompt ?? ""}`.trim();
       if (!basePrompt) {
         removeQueuedNavigatorPromptIntent(intent.id);
@@ -881,11 +996,17 @@ export function NavigatorShell({
       setTimeout(() => actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER), 100);
       return true;
     },
-    [actions, homeDirectory, selectedRootMessage, selectedThreadKey],
+    [
+      actions,
+      homeDirectory,
+      selectedRootMessage,
+      selectedThreadKey,
+      syncdbReady,
+    ],
   );
 
   useEffect(() => {
-    if (!actions) return;
+    if (!actions || !syncdbReady) return;
     let retryNeeded = false;
     const queued = takeQueuedNavigatorPromptIntents();
     for (const intent of queued) {
@@ -907,14 +1028,18 @@ export function NavigatorShell({
       setIntentRetryTick((v) => v + 1);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [actions, submitIntent, intentRetryTick]);
+  }, [actions, submitIntent, intentRetryTick, syncdbReady]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onPromptIntent = (evt: Event) => {
       const detail = (evt as CustomEvent<NavigatorSubmitPromptDetail>).detail;
       if (!detail?.id) return;
-      if (!actions) return;
+      if (!actions || !syncdbReady) {
+        queueNavigatorPromptIntent(detail);
+        setIntentRetryTick((v) => v + 1);
+        return;
+      }
       try {
         const consumed = submitIntent(detail);
         if (!consumed) {
@@ -935,7 +1060,7 @@ export function NavigatorShell({
         onPromptIntent as EventListener,
       );
     };
-  }, [actions, submitIntent]);
+  }, [actions, submitIntent, syncdbReady]);
 
   const desc = useMemo(() => {
     const data: Record<string, any> = {
@@ -1282,6 +1407,15 @@ export function NavigatorShell({
           </div>
         )}
       />
+      {initRetrying && !actions && !error ? (
+        <Alert
+          type="info"
+          title="Navigator is waiting for this project to finish starting."
+          description="This can take longer the first time a RootFS image is prepared on a project host. The chat will connect automatically when the project filesystem is ready."
+          showIcon
+          style={{ marginBottom: 8 }}
+        />
+      ) : null}
       {error ? (
         <Alert
           type="error"
@@ -1336,7 +1470,7 @@ export function NavigatorShell({
         }}
         {...keyboardBoundaryProps}
       >
-        {actions ? (
+        {actions && syncdbReady ? (
           <FileContext.Provider value={chatFileContext}>
             <SideChat
               actions={actions}

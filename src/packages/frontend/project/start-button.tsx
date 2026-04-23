@@ -247,6 +247,50 @@ export function StartButton({
       { starting, projectLabel },
     );
 
+    const compactTxt = intl.formatMessage(
+      {
+        id: "project.start-button.button.compact.txt",
+        defaultMessage: `{starting, select, true {Starting} other {Start}}`,
+        description:
+          "Compact label on a project start button in a project tab bar.",
+      },
+      { starting },
+    );
+
+    const startProject = async () => {
+      try {
+        await redux.getActions("projects").start_project(project_id);
+      } catch (err) {
+        // maybe ui should show this some other way
+        console.warn("WARNING -- issue starting project ", err);
+      }
+    };
+
+    if (minimal) {
+      return (
+        <Button
+          type="primary"
+          size={size}
+          style={{
+            ...style,
+            width: "112px",
+            whiteSpace: "nowrap",
+          }}
+          title={
+            starting ? `${projectLabel} is starting` : `Start ${projectLabel}`
+          }
+          danger={danger}
+          disabled={starting || !enabled || disabled}
+          onClick={startProject}
+        >
+          <Space size={6}>
+            {starting ? <Icon name="cocalc-ring" spin /> : <Icon name="play" />}
+            {compactTxt}
+          </Space>
+        </Button>
+      );
+    }
+
     const membership_hint = `This ${projectLabel.toLowerCase()} will start with the upgrades that your membership level provides.`;
 
     return (
@@ -305,18 +349,10 @@ export function StartButton({
           >
             <Button
               type="primary"
-              size={size ?? (minimal ? undefined : "large")}
-              style={minimal ? style : undefined}
+              size={size ?? "large"}
               danger={danger}
               disabled={!enabled || disabled}
-              onClick={async () => {
-                try {
-                  await redux.getActions("projects").start_project(project_id);
-                } catch (err) {
-                  // maybe ui should show this some other way
-                  console.warn("WARNING -- issue starting project ", err);
-                }
-              }}
+              onClick={startProject}
             >
               <Space>
                 {starting ? (

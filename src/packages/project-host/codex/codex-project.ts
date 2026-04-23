@@ -232,6 +232,25 @@ function applyProjectRuntimeCliEnv(
   env.PATH = normalizeProjectRuntimePath(env.PATH);
 }
 
+function shouldProtectResolvedRuntimeEnv({
+  key,
+  value,
+  env,
+}: {
+  key: string;
+  value: string;
+  env: Record<string, string>;
+}): boolean {
+  if (
+    key !== "COCALC_BEARER_TOKEN" &&
+    key !== "COCALC_AGENT_TOKEN" &&
+    key !== "COCALC_ACCOUNT_ID"
+  ) {
+    return false;
+  }
+  return !!env[key]?.trim() && env[key] !== value;
+}
+
 function resolveProjectRuntimeApiUrl(explicit?: string): string {
   const masterConat =
     `${process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER ?? ""}`.trim();
@@ -360,7 +379,9 @@ async function resolveProjectCliBearer({
     `${currentEnv?.COCALC_BEARER_TOKEN ?? ""}`.trim() ||
     `${currentEnv?.COCALC_AGENT_TOKEN ?? ""}`.trim();
   if (existing) return existing;
-  const resolvedAccountId = `${accountId ?? ""}`.trim();
+  const resolvedAccountId =
+    `${accountId ?? ""}`.trim() ||
+    `${currentEnv?.COCALC_ACCOUNT_ID ?? ""}`.trim();
   if (!projectId.trim() || !resolvedAccountId) {
     return;
   }
@@ -950,6 +971,9 @@ async function ensureContainer({
         const value = `${extraEnv[key]}`;
         if (key === "OPENAI_API_KEY" && !value.trim()) {
           // Do not let an empty per-turn env override a resolved auth key.
+          continue;
+        }
+        if (shouldProtectResolvedRuntimeEnv({ key, value, env })) {
           continue;
         }
         env[key] = value;

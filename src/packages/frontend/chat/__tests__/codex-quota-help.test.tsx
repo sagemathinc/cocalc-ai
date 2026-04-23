@@ -1,5 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { CodexQuotaHelp, isCodexUsageLimitMessage } from "../codex-quota-help";
+import {
+  CodexQuotaHelp,
+  classifyCodexAuthErrorMessage,
+  isCodexUsageLimitMessage,
+} from "../codex-quota-help";
 
 jest.mock("@cocalc/frontend/account/membership-purchase-modal", () => ({
   __esModule: true,
@@ -50,6 +54,30 @@ describe("isCodexUsageLimitMessage", () => {
   });
 });
 
+describe("classifyCodexAuthErrorMessage", () => {
+  it("detects expired ChatGPT auth", () => {
+    expect(
+      classifyCodexAuthErrorMessage(
+        "unexpected status 401 Unauthorized: Provided authentication token is expired. Please try signing in again. auth error code: token_expired",
+      ),
+    ).toMatchObject({
+      kind: "expired-auth",
+      actionLabel: "Sign in again",
+    });
+  });
+
+  it("detects missing API auth", () => {
+    expect(
+      classifyCodexAuthErrorMessage(
+        "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header",
+      ),
+    ).toMatchObject({
+      kind: "missing-auth",
+      actionLabel: "Configure Codex",
+    });
+  });
+});
+
 describe("CodexQuotaHelp", () => {
   it("renders inline actions only for quota messages", () => {
     const { rerender } = render(<CodexQuotaHelp message="Normal reply" />);
@@ -74,6 +102,21 @@ describe("CodexQuotaHelp", () => {
     expect(screen.getByTestId("membership-purchase-modal")).toBeTruthy();
 
     fireEvent.click(screen.getByText("Open AI settings"));
+    expect(screen.getByTestId("codex-credentials-panel").textContent).toContain(
+      "project-1",
+    );
+  });
+
+  it("opens the credentials modal for expired auth errors", () => {
+    render(
+      <CodexQuotaHelp
+        message="Codex authentication expired."
+        projectId="project-1"
+      />,
+    );
+
+    expect(screen.getByText("Sign in again")).toBeTruthy();
+    fireEvent.click(screen.getByText("Sign in again"));
     expect(screen.getByTestId("codex-credentials-panel").textContent).toContain(
       "project-1",
     );

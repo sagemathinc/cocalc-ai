@@ -370,6 +370,227 @@ describe("CodexAppServerAgent", () => {
     ]);
   });
 
+  it("summarizes expired ChatGPT auth failures", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-auth-expired" },
+          });
+          break;
+        case "turn/start": {
+          const turnId = "turn-auth-expired";
+          fake.sendResponse(message.id, { turn: { id: turnId } });
+          setImmediate(() => {
+            fake.stderr.write(
+              "2026-04-02T14:32:45Z ERROR codex_app_server: unrelated stderr\n",
+            );
+            fake.sendNotification("error", {
+              threadId: "thr-auth-expired",
+              turnId,
+              error: {
+                message:
+                  "unexpected status 401 Unauthorized: Provided authentication token is expired. Please try signing in again., cf-ray: test, auth error code: token_expired",
+              },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: {
+                id: turnId,
+                status: "failed",
+                error: {
+                  message: "HTTP error: 401 Unauthorized",
+                },
+              },
+            });
+          });
+          break;
+        }
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "say hello",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    const error = streamPayloads.find((payload) => payload.type === "error");
+    expect(error?.error).toBe(
+      "Codex authentication expired.\n\nSign in again with your ChatGPT Plan or update your OpenAI API key, then retry this message.",
+    );
+    expect(error?.error).not.toContain("cf-ray");
+    expect(error?.error).not.toContain("unrelated stderr");
+  });
+
+  it("summarizes missing API authentication failures", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-auth-missing" },
+          });
+          break;
+        case "turn/start": {
+          const turnId = "turn-auth-missing";
+          fake.sendResponse(message.id, { turn: { id: turnId } });
+          setImmediate(() => {
+            fake.sendNotification("error", {
+              threadId: "thr-auth-missing",
+              turnId,
+              error: {
+                message:
+                  "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, request id: req-test",
+              },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: {
+                id: turnId,
+                status: "failed",
+                error: {
+                  message: "HTTP error: 401 Unauthorized",
+                },
+              },
+            });
+          });
+          break;
+        }
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "say hello",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    const error = streamPayloads.find((payload) => payload.type === "error");
+    expect(error?.error).toBe(
+      "Codex is not configured.\n\nConnect a ChatGPT Plan or add an OpenAI API key, then retry this message.",
+    );
+    expect(error?.error).not.toContain("request id");
+  });
+
+  it("summarizes direct app-server request auth failures", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-direct-auth" },
+          });
+          break;
+        case "turn/start":
+          fake.stdout.write(
+            `${JSON.stringify({
+              id: message.id,
+              error: {
+                message:
+                  "unexpected status 401 Unauthorized: Provided authentication token is expired. Please try signing in again.",
+              },
+            })}\n`,
+          );
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "say hello",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    const error = streamPayloads.find((payload) => payload.type === "error");
+    expect(error?.error).toBe(
+      "Codex authentication expired.\n\nSign in again with your ChatGPT Plan or update your OpenAI API key, then retry this message.",
+    );
+  });
+
   it("backfills terminal command metadata when output arrives before item start", async () => {
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {
