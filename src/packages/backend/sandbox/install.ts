@@ -38,9 +38,6 @@ const logger = getLogger("files:sandbox:install");
 const SYSTEM_BIN_PATH = "/opt/cocalc/tools/current";
 const INSTALL_MAX_RETRIES = 3;
 const INSTALL_RETRY_DELAY_MS = 2000;
-const packageRoot = packageDirectorySync(__dirname) ?? "/tmp";
-const repoRoot = join(packageRoot, "..", "..");
-const DEFAULT_LOCAL_CODEX_BIN_DIR = join(repoRoot, ".cache", "codex-binaries");
 
 function hasBinary(dir: string | undefined, name: string): boolean {
   if (!dir) return false;
@@ -105,69 +102,22 @@ function effectiveArch(): string {
   return normalizeArch(overrideArch ?? arch());
 }
 
-type CodexInstallSource = "auto" | "local" | "upstream";
-
-function getCodexInstallSource(): CodexInstallSource {
-  const value = `${process.env.COCALC_CODEX_INSTALL_SOURCE ?? "auto"}`
-    .trim()
-    .toLowerCase();
-  switch (value) {
-    case "local":
-    case "upstream":
-      return value;
-    default:
-      return "auto";
-  }
-}
-
-function getLocalCodexBinDir(): string {
-  return (
-    `${process.env.COCALC_CODEX_LOCAL_BIN_DIR ?? ""}`.trim() ||
-    DEFAULT_LOCAL_CODEX_BIN_DIR
-  );
-}
-
-function getLocalCodexBinaryPath(version: string): string | undefined {
+function getCodexReleaseAssetName(version: string): string {
   if (effectivePlatform() !== "linux") {
-    return;
+    throw Error(`unsupported codex platform ${effectivePlatform()}`);
   }
   const currentArch = effectiveArch();
   if (currentArch !== "x64" && currentArch !== "arm64") {
-    return;
+    throw Error(`unsupported codex arch ${currentArch}`);
   }
-  return join(getLocalCodexBinDir(), version, `linux-${currentArch}`, "codex");
-}
-
-function getUpstreamCodexInstallScript(version: string): string {
-  let p;
-  switch (effectivePlatform()) {
-    case "darwin":
-      p = "apple-darwin";
-      break;
-    case "linux":
-      p = "unknown-linux-musl";
-      break;
-    default:
-      throw Error(`unsupported platform ${platform()}`);
-  }
-  const a = effectiveArch() == "x64" ? "x86_64" : "aarch64";
-  const dest = join(binPath, "codex");
-  return `curl -L https://github.com/openai/codex/releases/download/rust-v${version}/codex-${a}-${p}.tar.gz | tar -xz -C "${binPath}" && mv "${join(binPath, `codex-${a}-${p}`)}" "${dest}"`;
+  return `codex-v${version}-linux-${currentArch}`;
 }
 
 function getCodexInstallScript(version: string): string {
-  const source = getCodexInstallSource();
-  const upstream = getUpstreamCodexInstallScript(version);
-  const localBinary = getLocalCodexBinaryPath(version);
-  if (!localBinary || source === "upstream") {
-    return upstream;
-  }
+  const assetName = getCodexReleaseAssetName(version);
   const dest = join(binPath, "codex");
-  const localInstall = `echo "Installing local codex from ${localBinary}" && cp "${localBinary}" "${dest}" && chmod a+x "${dest}"`;
-  if (source === "local") {
-    return `test -x "${localBinary}" || (echo "Local codex binary not found at ${localBinary}" >&2; exit 1); ${localInstall}`;
-  }
-  return `if [ -x "${localBinary}" ]; then ${localInstall}; else echo "Local codex binary not found at ${localBinary}; falling back to upstream release" >&2; ${upstream}; fi`;
+  const url = `https://github.com/sagemathinc/codex/releases/download/v${version}/${assetName}`;
+  return `curl -fL "${url}" -o "${dest}" && chmod a+x "${dest}"`;
 }
 
 interface Spec {
@@ -288,15 +238,15 @@ export const SPEC = {
     },
     BASE: "https://github.com/sagemathinc/sshpiper-binaries/releases",
   },
-  // https://github.com/openai/codex/releases
+  // https://github.com/sagemathinc/codex/releases
   codex: {
     optional: false,
     desc: "codex",
     path: join(binPath, "codex"),
     getVersion: "codex --version | awk '{print $2}'",
-    VERSION: "0.118.0",
+    VERSION: "0.123.0",
     script: () => getCodexInstallScript(SPEC.codex.VERSION),
-    BASE: "https://github.com/openai/codex/releases",
+    BASE: "https://github.com/sagemathinc/codex/releases",
   },
   btm: {
     optional: true,
