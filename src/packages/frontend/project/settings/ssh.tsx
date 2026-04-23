@@ -7,8 +7,8 @@ import { Button, Typography } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import SSHKeyList from "@cocalc/frontend/account/ssh-keys/ssh-key-list";
-import { redux } from "@cocalc/frontend/app-framework";
-import { A, Icon, Tooltip } from "@cocalc/frontend/components";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { A, Tooltip } from "@cocalc/frontend/components";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { CopyToClipboard } from "react-copy-to-clipboard";
 import { labels } from "@cocalc/frontend/i18n";
@@ -33,9 +33,13 @@ export function SSHPanel({ project, mode = "project" }: Props) {
   const intl = useIntl();
   const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
   const hostInfo = useHostInfo(project.get("host_id"));
+  const isLaunchpadSite = useTypedRedux("customize", "is_launchpad");
+  const launchpadMode = useTypedRedux("customize", "launchpad_mode");
+  const isLaunchpad = !!isLaunchpadSite || !!launchpadMode;
   const projectId = project.get("project_id") as string;
   const sshServer = hostInfo?.get?.("ssh_server");
   const localProxy = !!hostInfo?.get?.("local_proxy");
+  const useCliSsh = localProxy || isLaunchpad;
   const [sshCopied, setSshCopied] = useState(false);
   const copyTimeoutRef = useRef<number | null>(null);
 
@@ -122,7 +126,7 @@ export function SSHPanel({ project, mode = "project" }: Props) {
           running, SSH access will request that it starts; if your first attempt
           only wakes it up, try the same command again after a moment.
         </Paragraph>
-        {localProxy ? (
+        {useCliSsh ? (
           <>
             <Paragraph>
               Launchpad project SSH is routed through Cloudflare. Direct host
@@ -186,11 +190,6 @@ export function SSHPanel({ project, mode = "project" }: Props) {
             </div>
           </>
         ) : null}
-        <Paragraph>
-          <A href="https://doc.cocalc.com/account/ssh.html">
-            <Icon name="life-ring" /> Docs...
-          </A>
-        </Paragraph>
       </>
     </SSHKeyList>
   );

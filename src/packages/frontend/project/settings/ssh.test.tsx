@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { SSHPanel } from "./ssh";
 
 const useHostInfo = jest.fn();
+const useTypedRedux = jest.fn();
 
 jest.mock("antd", () => {
   const Text = ({ children }: any) => <span>{children}</span>;
@@ -39,6 +40,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       open_file: jest.fn(),
     }),
   },
+  useTypedRedux: (...args: any[]) => useTypedRedux(...args),
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({
@@ -79,13 +81,17 @@ jest.mock("@cocalc/frontend/lite", () => ({
 describe("SSHPanel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    useTypedRedux.mockImplementation((_store: string, key: string) => {
+      if (key === "is_launchpad") return true;
+      return undefined;
+    });
   });
 
-  it("shows CoCalc CLI install and ssh instructions for hub-routed workspaces", () => {
+  it("shows CoCalc CLI install and ssh instructions for launchpad projects", () => {
     useHostInfo.mockReturnValue(
       immutable.Map({
         ssh_server: "hub.example.com:2200",
-        local_proxy: true,
+        local_proxy: false,
       }),
     );
 
@@ -126,6 +132,8 @@ describe("SSHPanel", () => {
     expect(
       screen.getByRole("link", { name: "CoCalc CLI" }).getAttribute("href"),
     ).toBe("https://software.cocalc.ai/software/cocalc/index.html");
+    expect(screen.queryByText(/SSH target:/i)).toBeNull();
+    expect(screen.queryByText(/Docs/i)).toBeNull();
     expect(screen.queryByText(/must be running/i)).toBeNull();
   });
 });
