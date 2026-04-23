@@ -356,6 +356,41 @@ export interface AccountDirectoryEntry extends UserSearchResult {
   home_bay_id?: string;
 }
 
+export interface AccountApiKeyDirectoryEntry {
+  key_id: string;
+  account_id: string;
+  home_bay_id: string;
+  hash: string;
+  expire?: number | null;
+  last_active?: number | null;
+}
+
+export interface AccountApiKeyDirectoryGetRequest {
+  key_id: string;
+}
+
+export interface AccountApiKeyDirectoryUpsertRequest {
+  key_id: string;
+  account_id: string;
+  home_bay_id: string;
+  hash: string;
+  expire?: number | null;
+  last_active?: number | null;
+}
+
+export interface AccountApiKeyDirectoryDeleteRequest {
+  key_id: string;
+}
+
+export interface AccountApiKeyDirectoryUpdateHomeBayRequest {
+  account_id: string;
+  home_bay_id: string;
+}
+
+export interface AccountApiKeyDirectoryTouchRequest {
+  key_id: string;
+}
+
 export interface AccountDirectoryCreateRequest {
   email_address: string;
   password: string;
@@ -618,7 +653,12 @@ export type AccountDirectoryMethod =
   | "home-bay-counts"
   | "create"
   | "delete"
-  | "update-home-bay";
+  | "update-home-bay"
+  | "get-api-key"
+  | "upsert-api-key"
+  | "delete-api-key"
+  | "update-api-keys-home-bay"
+  | "touch-api-key";
 export type AccountLocalMethod =
   | "create"
   | "delete"
@@ -920,6 +960,15 @@ export interface InterBayAccountDirectoryApi {
   delete: (
     opts: AccountDirectoryDeleteRequest,
   ) => Promise<AccountDirectoryDeleteResult>;
+  getApiKey: (
+    opts: AccountApiKeyDirectoryGetRequest,
+  ) => Promise<AccountApiKeyDirectoryEntry | null>;
+  upsertApiKey: (opts: AccountApiKeyDirectoryUpsertRequest) => Promise<void>;
+  deleteApiKey: (opts: AccountApiKeyDirectoryDeleteRequest) => Promise<void>;
+  updateApiKeysHomeBay: (
+    opts: AccountApiKeyDirectoryUpdateHomeBayRequest,
+  ) => Promise<void>;
+  touchApiKey: (opts: AccountApiKeyDirectoryTouchRequest) => Promise<void>;
 }
 
 export interface InterBayAccountLocalApi {
@@ -1745,6 +1794,36 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "delete" }),
   });
+  const getApiKeyClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "getApiKey">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "get-api-key" }),
+  });
+  const upsertApiKeyClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "upsertApiKey">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "upsert-api-key" }),
+  });
+  const deleteApiKeyClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "deleteApiKey">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "delete-api-key" }),
+  });
+  const updateApiKeysHomeBayClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "updateApiKeysHomeBay">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "update-api-keys-home-bay" }),
+  });
+  const touchApiKeyClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "touchApiKey">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "touch-api-key" }),
+  });
   return {
     get: async (opts) => await getClient.get(opts),
     getByEmail: async (opts) => await getByEmailClient.getByEmail(opts),
@@ -1756,6 +1835,12 @@ export function createInterBayAccountDirectoryClient({
       await updateHomeBayClient.updateHomeBay(opts),
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
+    getApiKey: async (opts) => await getApiKeyClient.getApiKey(opts),
+    upsertApiKey: async (opts) => await upsertApiKeyClient.upsertApiKey(opts),
+    deleteApiKey: async (opts) => await deleteApiKeyClient.deleteApiKey(opts),
+    updateApiKeysHomeBay: async (opts) =>
+      await updateApiKeysHomeBayClient.updateApiKeysHomeBay(opts),
+    touchApiKey: async (opts) => await touchApiKeyClient.touchApiKey(opts),
   };
 }
 
@@ -1830,6 +1915,49 @@ export function createInterBayAccountDirectoryHandlers({
       subject: accountDirectorySubject({ method: "delete" }),
       impl: {
         delete: async (opts) => await impl.delete(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "getApiKey">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "get-api-key" }),
+      impl: {
+        getApiKey: async (opts) => await impl.getApiKey(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "upsertApiKey">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "upsert-api-key" }),
+      impl: {
+        upsertApiKey: async (opts) => await impl.upsertApiKey(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "deleteApiKey">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "delete-api-key" }),
+      impl: {
+        deleteApiKey: async (opts) => await impl.deleteApiKey(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "updateApiKeysHomeBay">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "update-api-keys-home-bay" }),
+      impl: {
+        updateApiKeysHomeBay: async (opts) =>
+          await impl.updateApiKeysHomeBay(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "touchApiKey">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "touch-api-key" }),
+      impl: {
+        touchApiKey: async (opts) => await impl.touchApiKey(opts),
       },
     }),
   ];

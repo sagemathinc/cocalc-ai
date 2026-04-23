@@ -5,8 +5,13 @@
 
 import { v4 as uuid } from "uuid";
 import {
+  type AccountApiKeyDirectoryEntry,
   createInterBayAccountDirectoryClient,
   createInterBayAccountLocalClient,
+  type AccountApiKeyDirectoryDeleteRequest,
+  type AccountApiKeyDirectoryTouchRequest,
+  type AccountApiKeyDirectoryUpdateHomeBayRequest,
+  type AccountApiKeyDirectoryUpsertRequest,
   type AccountDirectoryCreateRequest,
   type AccountDirectoryDeleteRequest,
   type AccountDirectoryDeleteResult,
@@ -16,7 +21,9 @@ import getPool from "@cocalc/database/pool";
 import createAccountLocal from "@cocalc/server/accounts/create-account";
 import deleteAccountLocal from "@cocalc/server/accounts/delete";
 import {
+  deleteClusterAccountApiKeyDirectoryEntryDirect,
   deleteClusterAccountDirectoryEntry,
+  getClusterAccountApiKeyByKeyIdDirect,
   getClusterAccountByEmailDirect,
   getClusterAccountByIdDirect,
   getClusterAccountHomeBayCountsDirect,
@@ -24,7 +31,10 @@ import {
   markClusterAccountProvisioned,
   reserveClusterAccountDirectoryEntry,
   searchClusterAccountsDirect,
+  touchClusterAccountApiKeyDirectoryEntryDirect,
+  updateClusterAccountApiKeysHomeBayDirect,
   updateClusterAccountHomeBayDirect,
+  upsertClusterAccountApiKeyDirectoryEntryDirect,
 } from "@cocalc/server/accounts/cluster-directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
@@ -121,6 +131,65 @@ export async function updateClusterAccountHomeBay(opts: {
   return await createInterBayAccountDirectoryClient({
     client: getInterBayFabricClient(),
   }).updateHomeBay(opts);
+}
+
+export async function getClusterAccountApiKeyByKeyId(
+  key_id: string,
+): Promise<AccountApiKeyDirectoryEntry | null> {
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    return await getClusterAccountApiKeyByKeyIdDirect(key_id);
+  }
+  return await createInterBayAccountDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).getApiKey({ key_id });
+}
+
+export async function upsertClusterAccountApiKeyDirectoryEntry(
+  opts: AccountApiKeyDirectoryUpsertRequest,
+): Promise<void> {
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    await upsertClusterAccountApiKeyDirectoryEntryDirect(opts);
+    return;
+  }
+  await createInterBayAccountDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).upsertApiKey(opts);
+}
+
+export async function deleteClusterAccountApiKeyDirectoryEntry(
+  opts: AccountApiKeyDirectoryDeleteRequest,
+): Promise<void> {
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    await deleteClusterAccountApiKeyDirectoryEntryDirect(opts.key_id);
+    return;
+  }
+  await createInterBayAccountDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).deleteApiKey(opts);
+}
+
+export async function updateClusterAccountApiKeysHomeBay(
+  opts: AccountApiKeyDirectoryUpdateHomeBayRequest,
+): Promise<void> {
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    await updateClusterAccountApiKeysHomeBayDirect(opts);
+    return;
+  }
+  await createInterBayAccountDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).updateApiKeysHomeBay(opts);
+}
+
+export async function touchClusterAccountApiKeyDirectoryEntry(
+  opts: AccountApiKeyDirectoryTouchRequest,
+): Promise<void> {
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    await touchClusterAccountApiKeyDirectoryEntryDirect(opts.key_id);
+    return;
+  }
+  await createInterBayAccountDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).touchApiKey(opts);
 }
 
 export async function provisionLocalClusterAccount(
