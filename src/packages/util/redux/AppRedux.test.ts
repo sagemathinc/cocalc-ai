@@ -81,4 +81,23 @@ describe("AppRedux editor path fallback", () => {
     expect(app.getEditorActions(projectId, "/tmp/missing.txt")).toBeUndefined();
     expect(app.getEditorStore(projectId, "/tmp/missing.txt")).toBeUndefined();
   });
+
+  it("ignores closed direct actions and falls back to the sync-path actions", () => {
+    const app = new TestAppRedux();
+    const displayPath = "/tmp/b.txt";
+    const syncPath = "/tmp/a.txt";
+
+    app.createStore(project_redux_name(projectId), undefined, {
+      open_files: {
+        [displayPath]: {
+          sync_path: syncPath,
+        },
+      },
+    });
+    const directActions = app.createActions(redux_name(projectId, displayPath));
+    (directActions as any).isClosed = () => true;
+    const syncActions = app.createActions(redux_name(projectId, syncPath));
+
+    expect(app.getEditorActions(projectId, displayPath)).toBe(syncActions);
+  });
 });

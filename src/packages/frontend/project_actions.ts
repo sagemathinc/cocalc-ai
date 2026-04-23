@@ -19,6 +19,7 @@ import {
   Actions,
   project_redux_name,
   redux,
+  redux_name,
 } from "@cocalc/frontend/app-framework";
 import type { ChatState } from "@cocalc/frontend/chat/chat-indicator";
 import { initChat } from "@cocalc/frontend/chat/register";
@@ -1554,6 +1555,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       const cur = redux.getEditorActions(this.project_id, path);
       if (cur != null) {
         return cur.name;
+      }
+      const staleName = redux_name(this.project_id, path);
+      const staleActions: any = redux.getActions(staleName);
+      if (
+        staleActions != null &&
+        typeof staleActions.isClosed === "function" &&
+        staleActions.isClosed()
+      ) {
+        redux.removeActions(staleName);
+        redux.removeStore(staleName);
       }
       // LAZY IMPORT, so that editors are only available
       // when you are going to use them.  Helps with code splitting.

@@ -215,14 +215,23 @@ export abstract class AppRedux implements AppReduxInterface {
       throw Error(`getEditorActions: INVALID project_id -- "${project_id}"`);
     }
     const direct = this.getActions(redux_name(project_id, path));
-    if (direct != null) {
+    if (
+      direct != null &&
+      !(typeof direct.isClosed === "function" && direct.isClosed())
+    ) {
       return direct;
     }
     const sync_path = this.getOpenFileSyncPath(project_id, path);
     if (sync_path != null && sync_path !== path) {
-      return this.getActions(redux_name(project_id, sync_path));
+      const sync = this.getActions(redux_name(project_id, sync_path));
+      if (
+        sync != null &&
+        !(typeof sync.isClosed === "function" && sync.isClosed())
+      ) {
+        return sync;
+      }
     }
-    return direct;
+    return undefined;
   }
 
   private getOpenFileSyncPath(
