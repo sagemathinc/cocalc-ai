@@ -1,8 +1,8 @@
 diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth/default_client.rs
-index 0c2a3b2..1aa11f7 100644
+index 45c80a36d5..87143c011e 100644
 --- a/codex-rs/login/src/auth/default_client.rs
 +++ b/codex-rs/login/src/auth/default_client.rs
-@@ -14,6 +14,7 @@ use reqwest::header::HeaderValue;
+@@ -15,6 +15,7 @@ use reqwest::header::HeaderValue;
  use std::sync::LazyLock;
  use std::sync::Mutex;
  use std::sync::RwLock;
@@ -10,7 +10,7 @@ index 0c2a3b2..1aa11f7 100644
  
  /// Set this to add a suffix to the User-Agent string.
  ///
-@@ -33,7 +34,9 @@ use std::sync::RwLock;
+@@ -34,7 +35,9 @@ use std::sync::RwLock;
  pub static USER_AGENT_SUFFIX: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
  pub const DEFAULT_ORIGINATOR: &str = "codex_cli_rs";
  pub const CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR: &str = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE";
@@ -20,7 +20,7 @@ index 0c2a3b2..1aa11f7 100644
  
  pub use codex_config::ResidencyRequirement;
  
-@@ -216,6 +219,9 @@ pub fn try_build_reqwest_client() -> Result<reqwest::Client, BuildCustomCaTransp
+@@ -225,6 +228,9 @@ pub fn try_build_reqwest_client() -> Result<reqwest::Client, BuildCustomCaTransp
          // Set UA via dedicated helper to avoid header validation pitfalls
          .user_agent(ua)
          .default_headers(default_headers());
@@ -30,7 +30,7 @@ index 0c2a3b2..1aa11f7 100644
      if is_sandboxed() {
          builder = builder.no_proxy();
      }
-@@ -223,6 +229,36 @@ pub fn try_build_reqwest_client() -> Result<reqwest::Client, BuildCustomCaTransp
+@@ -233,6 +239,36 @@ pub fn try_build_reqwest_client() -> Result<reqwest::Client, BuildCustomCaTransp
      build_reqwest_client_with_custom_ca(builder)
  }
  

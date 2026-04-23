@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
+index 4ae9e9fcdc..aaacf57f8e 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
-@@ -54,8 +54,18 @@ pub(crate) enum InitialContextInjection {
-     DoNotInject,
+@@ -60,6 +60,16 @@ pub(crate) enum InitialContextInjection {
  }
  
  pub(crate) fn should_use_remote_compact_task(provider: &ModelProviderInfo) -> bool {
@@ -19,4 +19,3 @@ diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
      provider.supports_remote_compaction()
  }
  
- pub(crate) async fn run_inline_auto_compact_task(

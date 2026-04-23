@@ -3,7 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-CODEX_VERSION="${CODEX_VERSION:-0.123.0}"
+UPSTREAM_DIR="${CODEX_UPSTREAM_DIR:-/home/user/upstream/codex}"
+CODEX_VERSION="${CODEX_VERSION:-0.124.0}"
 RELEASE_REPO="${CODEX_RELEASE_REPO:-sagemathinc/codex}"
 RELEASE_TAG="${CODEX_RELEASE_TAG:-v${CODEX_VERSION}}"
 LOCAL_BIN_ROOT="${COCALC_CODEX_LOCAL_BIN_DIR:-${REPO_ROOT}/src/.cache/codex-binaries}"
@@ -58,8 +59,10 @@ else
   exit 1
 fi
 
+MANIFEST_TAG="$(get_manifest_field tag)"
 UPSTREAM_HEAD="$(get_manifest_field upstream_head)"
 BUILD_TIMESTAMP="$(get_manifest_field built_at_utc)"
+RELEASE_TARGET="${CODEX_RELEASE_TARGET:-${MANIFEST_TAG}}"
 STAGING_DIR="$(mktemp -d)"
 trap 'rm -rf "${STAGING_DIR}"' EXIT
 
@@ -97,15 +100,37 @@ ASSETS=(
   "${STAGING_DIR}/${CHECKSUM_ASSET}"
 )
 
-if gh release view "${RELEASE_TAG}" --repo "${RELEASE_REPO}" >/dev/null 2>&1; then
-  gh release upload "${RELEASE_TAG}" "${ASSETS[@]}" --repo "${RELEASE_REPO}" --clobber
-  gh release edit "${RELEASE_TAG}" --repo "${RELEASE_REPO}" --title "v${CODEX_VERSION}" --notes-file "${RELEASE_NOTES}"
-else
-  gh release create "${RELEASE_TAG}" "${ASSETS[@]}" \
-    --repo "${RELEASE_REPO}" \
-    --target "${UPSTREAM_HEAD}" \
-    --title "v${CODEX_VERSION}" \
-    --notes-file "${RELEASE_NOTES}"
+if ! gh release view "${RELEASE_TAG}" --repo "${RELEASE_REPO}" >/dev/null 2>&1; then
+  if [[ ! -d "${UPSTREAM_DIR}/.git" ]]; then
+    echo "Missing upstream codex checkout at ${UPSTREAM_DIR}" >&2
+    exit 1
+  fi
+  if [[ "${RELEASE_TARGET}" == "${MANIFEST_TAG}" ]]; then
+    if ! git -C "${UPSTREAM_DIR}" rev-parse --verify "${MANIFEST_TAG}^{commit}" >/dev/null 2>&1; then
+      echo "Missing source tag ${MANIFEST_TAG} in ${UPSTREAM_DIR}" >&2
+      exit 1
+    fi
+    if ! git -C "${UPSTREAM_DIR}" ls-remote --exit-code origin "refs/tags/${MANIFEST_TAG}" >/dev/null 2>&1; then
+      git -C "${UPSTREAM_DIR}" push origin "refs/tags/${MANIFEST_TAG}:refs/tags/${MANIFEST_TAG}"
+    fi
+  fi
+  if ! git -C "${UPSTREAM_DIR}" rev-parse --verify "${RELEASE_TARGET}^{commit}" >/dev/null 2>&1; then
+    echo "Missing release target ${RELEASE_TARGET} in ${UPSTREAM_DIR}" >&2
+    exit 1
+  fi
+  git -C "${UPSTREAM_DIR}" tag -f "${RELEASE_TAG}" "${RELEASE_TARGET}" >/dev/null
+  git -C "${UPSTREAM_DIR}" push origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" --force
 fi
+
+if ! gh release view "${RELEASE_TAG}" --repo "${RELEASE_REPO}" >/dev/null 2>&1; then
+  RELEASE_BODY="$(cat "${RELEASE_NOTES}")"
+  gh api "repos/${RELEASE_REPO}/releases" --method POST \
+    -f tag_name="${RELEASE_TAG}" \
+    -f name="v${CODEX_VERSION}" \
+    -f body="${RELEASE_BODY}" >/dev/null
+fi
+
+gh release upload "${RELEASE_TAG}" "${ASSETS[@]}" --repo "${RELEASE_REPO}" --clobber
+gh release edit "${RELEASE_TAG}" --repo "${RELEASE_REPO}" --title "v${CODEX_VERSION}" --notes-file "${RELEASE_NOTES}"
 
 echo "Published ${RELEASE_REPO} release ${RELEASE_TAG}"
