@@ -193,6 +193,27 @@ child router port, so the next attribution pass should measure router CPU,
 event-loop delay, cluster-forwarding counts, and Postgres pressure on the same
 run.
 
+First attribution pass for the corrected split-router run:
+
+- run shape: `CONAT_SOCKETIO_COUNT=2`, 8 extra API workers, workers split
+  round-robin across `9102` and `9103`, clients split across `9102` and `9103`,
+  total concurrency 256
+- measured throughput: about 210 sustained child-sum scenarios/sec, or about
+  1052 component reads/sec, with 0 failures
+- extra API workers averaged roughly 32-39% CPU each
+- the seed bay main hub process averaged about 40% CPU
+- attached bay hub processes averaged about 25-27% CPU
+- the seed router child averaged about 16% CPU; attached bay router children
+  were much lower
+- seed Postgres averaged about 2% CPU in this sample
+
+This shifts the current hypothesis away from raw CPU saturation in a single
+router or Postgres. The remaining likely bottlenecks are request choreography
+and latency: sequential hot-path component reads, Conat RPC/socket.io overhead,
+cluster forwarding asymmetry, or benchmark/load-generator shape. A duration-based
+load mode would make the split-client aggregate rate cleaner than fixed
+iterations per client group.
+
 Interpretation:
 
 - Multi-process hub API workers materially improve the measured hot path.
@@ -201,11 +222,12 @@ Interpretation:
 - Eight workers nearly reaches the `1000` component-read/sec target on this
   host.
 - Twelve workers did not improve this workload, so the current same-host
-  bottleneck is probably shared: router fanout, Postgres connection/query
-  behavior, client-side load generation, or a serialized server path.
-- The next useful benchmark should collect per-process CPU, router CPU,
-  Postgres active connections, and event-loop delay during the run instead of
-  only end-of-run throughput.
+  bottleneck is probably shared: request choreography, Conat RPC/socket.io
+  overhead, cluster forwarding asymmetry, client-side load generation, or a
+  serialized server path.
+- The next useful benchmark should add event-loop delay and Conat
+  cluster-forwarding counters, then switch from fixed iterations per split
+  client group to fixed-duration split clients.
 
 ## Required Metrics
 
