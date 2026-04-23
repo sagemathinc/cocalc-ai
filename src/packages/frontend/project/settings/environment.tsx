@@ -3,17 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-/* environment.tsx -- this is just meant to be a quick easy UI for
-people to configure extra environment variables for a particular
-project.  We will likely spend more time on a more sophisticated
-UI later.
-
-NOTE: we haven't implemented deleting of keys in JSONB maps for
-the database yet, so we complicate the code below by making *empty*
-values be treated as deleted.
-*/
-import { Alert, Button } from "antd";
-import jsonic from "jsonic";
+import { Alert, Button, Input, Space, Typography } from "antd";
 import { useIntl } from "react-intl";
 
 import {
@@ -22,6 +12,7 @@ import {
   useEffect,
   useIsMountedRef,
   useMemo,
+  useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
 import { ErrorDisplay, Gap, SettingBox } from "@cocalc/frontend/components";
@@ -29,25 +20,76 @@ import { labels } from "@cocalc/frontend/i18n";
 import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
 
 export const ENV_VARS_ICON = "bars";
+
 interface Props {
   project_id: string;
   mode?: "project" | "flyout";
 }
 
-function process_env(env): object {
-  if (typeof env != "object") return {};
-  const obj: any = {};
+type EnvRow = {
+  id: string;
+  key: string;
+  value: string;
+};
+
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function normalizeEnv(env: unknown): Record<string, string> {
+  if (typeof env != "object" || env == null || Array.isArray(env)) return {};
+  const obj: Record<string, string> = {};
   for (const key in env) {
-    const v = `${env[key]}`;
-    if (v != "") {
-      obj[key] = v;
+    const value = `${(env as Record<string, unknown>)[key]}`;
+    if (value !== "") {
+      obj[key] = value;
     }
   }
   return obj;
 }
 
-function to_json(env): string {
-  return JSON.stringify(process_env(env), null, 2);
+function envToRows(env: unknown): EnvRow[] {
+  const normalized = normalizeEnv(env);
+  return Object.keys(normalized)
+    .sort()
+    .map((key) => ({ id: `env:${key}`, key, value: normalized[key] }));
+}
+
+function envFingerprint(env: unknown): string {
+  const normalized = normalizeEnv(env);
+  return JSON.stringify(
+    Object.keys(normalized)
+      .sort()
+      .map((key) => [key, normalized[key]]),
+  );
+}
+
+function rowsToEnv(rows: EnvRow[]): {
+  env: Record<string, string>;
+  error?: string;
+} {
+  const env: Record<string, string> = {};
+  for (const row of rows) {
+    const key = row.key.trim();
+    const value = row.value;
+    if (key === "" && value === "") {
+      continue;
+    }
+    if (key === "") {
+      return { env, error: "Environment variable names cannot be empty." };
+    }
+    if (!ENV_NAME_RE.test(key)) {
+      return {
+        env,
+        error: `Invalid environment variable name "${key}". Use letters, numbers, and underscores, and do not start with a number.`,
+      };
+    }
+    if (Object.prototype.hasOwnProperty.call(env, key)) {
+      return { env, error: `Duplicate environment variable "${key}".` };
+    }
+    if (value !== "") {
+      env[key] = value;
+    }
+  }
+  return { env };
 }
 
 export const Environment: React.FC<Props> = ({
@@ -58,110 +100,187 @@ export const Environment: React.FC<Props> = ({
   const intl = useIntl();
   const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
   const { env, setEnv } = useProjectEnv(project_id);
-  const [focused, set_focused] = useState<boolean>(false);
-  const envJson = useMemo(() => to_json(env), [env]);
-  const [editing, set_editing] = useState<string>(envJson);
-  const [error, set_error] = useState<string>("");
   const actions = useActions({ project_id });
   const is_mounted_ref = useIsMountedRef();
-  const [saving, set_saving] = useState<boolean>(false);
-  const disabled = useMemo(() => {
-    return envJson == editing;
-  }, [envJson, editing]);
+  const nextRowIdRef = useRef<number>(0);
+  const envRows = useMemo(() => envToRows(env), [env]);
+  const envKey = useMemo(() => envFingerprint(env), [env]);
+  const lastEnvKeyRef = useRef<string>(envKey);
+  const [rows, setRows] = useState<EnvRow[]>(envRows);
+  const [error, setError] = useState<string>("");
+  const [saving, setSaving] = useState<boolean>(false);
+
+  const current = useMemo(() => rowsToEnv(rows), [rows]);
+  const currentKey = useMemo(() => envFingerprint(current.env), [current.env]);
+  const dirty = currentKey !== envKey;
 
   useEffect(() => {
-    if (focused || saving) {
+    const previousEnvKey = lastEnvKeyRef.current;
+    if (envKey === previousEnvKey || saving) {
       return;
     }
-    set_editing(envJson);
-  }, [envJson, focused, saving]);
+    if (currentKey === previousEnvKey) {
+      setRows(envRows);
+    }
+    lastEnvKeyRef.current = envKey;
+  }, [currentKey, envKey, envRows, saving]);
+
+  function updateRow(id: string, patch: Partial<EnvRow>): void {
+    setRows((rows) =>
+      rows.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+    );
+    setError("");
+  }
+
+  function addRow(): void {
+    setRows((rows) => [
+      ...rows,
+      { id: `new:${nextRowIdRef.current++}`, key: "", value: "" },
+    ]);
+    setError("");
+  }
+
+  function removeRow(id: string): void {
+    setRows((rows) => rows.filter((row) => row.id !== id));
+    setError("");
+  }
 
   async function save(): Promise<void> {
-    let new_env;
-    try {
-      new_env = jsonic(editing);
-    } catch (err) {
-      set_error(err.toString());
+    if (current.error) {
+      setError(current.error);
       return;
     }
-    const nextEnv = process_env(new_env) as Record<string, string>;
-    set_editing(to_json(nextEnv));
-    set_saving(true);
-    await actions?.set_environment(new_env);
-    setEnv(nextEnv);
-    if (!is_mounted_ref.current) return;
-    set_saving(false);
+    setSaving(true);
+    setError("");
+    try {
+      await actions?.set_environment(current.env);
+      setEnv(current.env);
+      if (!is_mounted_ref.current) return;
+      setRows(envToRows(current.env));
+    } catch (err) {
+      if (!is_mounted_ref.current) return;
+      setError(`${err}`);
+    } finally {
+      if (is_mounted_ref.current) {
+        setSaving(false);
+      }
+    }
   }
-  const instructions = focused ? (
-    <>
-      Enter custom environment variables as a JSON map from string to string,
-      e.g., <code>{'{"foo":"bar","x":"y"}'}</code>. Unlike environment variables
-      in .bashrc, these will be available to anything that runs in your{" "}
-      {projectLabelLower} (e.g., Jupyter kernels). Delete a variable by setting
-      it to the empty string. Restart your {projectLabelLower} for these changes
-      to take effect.
-      <br />
-      Note: special care is taken for the <code>PATH</code> variable: your
-      values are prepended to the existing <code>PATH</code>, unless your value
-      contains <code>$PATH</code>, in which case the existing value of{" "}
-      <code>PATH</code> is inserted, where <code>$PATH</code> is found.
-    </>
-  ) : (
-    ""
+
+  const help = (
+    <Alert
+      banner
+      showIcon={false}
+      type="info"
+      message={
+        <>
+          These variables are available to terminals, Jupyter kernels, and other
+          processes in your {projectLabelLower}. Restart the {projectLabelLower}{" "}
+          for changes to take effect.
+          <br />
+          Empty values are treated as deleted variables. For <code>PATH</code>,
+          values are prepended to the existing <code>PATH</code> unless they
+          include <code>$PATH</code>, which is replaced by the current path.
+        </>
+      }
+    />
   );
 
   function renderBody() {
     return (
       <div style={{ padding: "10px" }}>
-        {error != "" ? <ErrorDisplay banner error={error} /> : undefined}
-        <textarea
-          spellCheck="false"
-          onFocus={() => set_focused(true)}
-          onBlur={() => set_focused(false)}
-          disabled={saving}
-          className="form-control"
-          rows={4}
-          style={{ width: "100%" }}
-          value={editing}
-          onChange={(event) => {
-            set_editing(event.target.value);
-            set_error("");
-          }}
-        />
-        <br />
-        <Button disabled={disabled} onClick={() => set_editing(envJson)}>
-          {intl.formatMessage(labels.cancel)}
-        </Button>
-        <Gap />
-        <Button disabled={disabled} onClick={save}>
-          {saving ? "Saving..." : disabled ? "Saved" : "Save..."}
-        </Button>
+        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+          {help}
+          {error ? <ErrorDisplay banner error={error} /> : undefined}
+          {current.error ? (
+            <ErrorDisplay banner error={current.error} />
+          ) : undefined}
+          <div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "minmax(140px, 1fr) minmax(180px, 2fr) auto",
+                gap: "8px",
+                marginBottom: "6px",
+              }}
+            >
+              <Typography.Text strong>Name</Typography.Text>
+              <Typography.Text strong>Value</Typography.Text>
+              <span />
+            </div>
+            {rows.length === 0 ? (
+              <Typography.Text type="secondary">
+                No custom environment variables are configured.
+              </Typography.Text>
+            ) : (
+              <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                {rows.map((row) => (
+                  <div
+                    key={row.id}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "minmax(140px, 1fr) minmax(180px, 2fr) auto",
+                      gap: "8px",
+                    }}
+                  >
+                    <Input
+                      disabled={saving}
+                      placeholder="NAME"
+                      value={row.key}
+                      onChange={(event) =>
+                        updateRow(row.id, { key: event.target.value })
+                      }
+                    />
+                    <Input
+                      disabled={saving}
+                      placeholder="value"
+                      value={row.value}
+                      onChange={(event) =>
+                        updateRow(row.id, { value: event.target.value })
+                      }
+                    />
+                    <Button disabled={saving} onClick={() => removeRow(row.id)}>
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+              </Space>
+            )}
+          </div>
+          <div>
+            <Button disabled={saving} onClick={addRow}>
+              Add Variable
+            </Button>
+            <Gap />
+            <Button
+              disabled={!dirty || saving}
+              onClick={() => setRows(envRows)}
+            >
+              {intl.formatMessage(labels.cancel)}
+            </Button>
+            <Gap />
+            <Button
+              type="primary"
+              disabled={!dirty || saving || current.error != null}
+              onClick={save}
+            >
+              {saving ? "Saving..." : dirty ? "Save" : "Saved"}
+            </Button>
+          </div>
+        </Space>
       </div>
     );
   }
 
   if (isFlyout) {
-    return (
-      <>
-        {renderBody()}
-        {instructions ? (
-          <Alert
-            style={{ marginTop: "10px" }}
-            banner
-            type="info"
-            showIcon={false}
-            title={instructions}
-          />
-        ) : undefined}
-      </>
-    );
-  } else {
-    return (
-      <SettingBox title="Custom Environment Variables" icon={ENV_VARS_ICON}>
-        {renderBody()}
-        <br />
-        {instructions}
-      </SettingBox>
-    );
+    return renderBody();
   }
+
+  return (
+    <SettingBox title="Custom Environment Variables" icon={ENV_VARS_ICON}>
+      {renderBody()}
+    </SettingBox>
+  );
 };

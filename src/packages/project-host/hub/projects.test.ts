@@ -302,6 +302,7 @@ describe("project host start ACP rehydrate ordering", () => {
       image: customImage,
       authorized_keys: "ssh-ed25519 AAAATEST user@test",
       run_quota: { memory_limit: 1234 },
+      env: { FOO: "bar" },
     });
 
     const { wireProjectsApi } = await import("./projects");
@@ -321,6 +322,7 @@ describe("project host start ACP rehydrate ordering", () => {
       config: expect.objectContaining({
         image: customImage,
         authorized_keys: "ssh-ed25519 AAAATEST user@test",
+        env: { FOO: "bar" },
       }),
     });
     expect(upsertProject).toHaveBeenCalledWith(

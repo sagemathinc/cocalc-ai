@@ -17,6 +17,7 @@ const L = getLogger("project:project-setup");
 export const DEFAULT_FREE_PROCS_NICENESS = 18;
 
 const PRESERVED_COCALC_ENV_VARS = new Set([
+  "COCALC_EXTRA_ENV",
   "COCALC_PROXY_HOST",
   "COCALC_PROXY_PORT",
 ]);
@@ -82,14 +83,15 @@ function set_sanitized_envvar(key: string, value: string): string {
 export function set_extra_env(): { [key: string]: string } | undefined {
   sage_aarch64_hack();
 
-  if (!process.env.COCALC_EXTRA_ENV) {
+  const env64 = process.env.COCALC_EXTRA_ENV;
+  if (!env64) {
     L.debug("set_extra_env: nothing provided");
     return;
   }
+  delete process.env.COCALC_EXTRA_ENV;
 
   const ret: { [key: string]: string } = {};
   try {
-    const env64 = process.env.COCALC_EXTRA_ENV;
     const raw = Buffer.from(env64, "base64").toString("utf8");
     L.debug(`set_extra_env: ${raw}`);
     const data = JSON.parse(raw);
@@ -108,9 +110,7 @@ export function set_extra_env(): { [key: string]: string } | undefined {
     }
   } catch (err) {
     // we report and ignore errors
-    L.debug(
-      `ERROR set_extra_env -- cannot process '${process.env.COCALC_EXTRA_ENV}' -- ${err}`,
-    );
+    L.debug(`ERROR set_extra_env -- cannot process '${env64}' -- ${err}`);
   }
   return ret;
 }

@@ -26,6 +26,7 @@ import type {
   ChatStoreSearchHit,
   ChatStoreSegment,
   ChatStoreStats,
+  ProjectEnv,
 } from "@cocalc/conat/hub/api/projects";
 import type { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import {
@@ -278,6 +279,7 @@ type StartMetadata = {
   image?: string;
   authorized_keys?: string;
   run_quota?: any;
+  env?: ProjectEnv;
 };
 
 type LocalProjectOptions = CreateProjectOptions & {
@@ -335,11 +337,13 @@ async function resolveStartMetadata({
     authorized_keys: authorized_keys ?? existing?.authorized_keys ?? undefined,
     run_quota: run_quota ?? (existing as any)?.run_quota,
     image: image ?? existing?.image ?? undefined,
+    env: (existing as any)?.env,
   };
   const needsMaster =
     !resolved.image ||
     resolved.authorized_keys == null ||
     resolved.run_quota == null ||
+    resolved.env == null ||
     !existing?.title;
   if (needsMaster) {
     try {
@@ -353,6 +357,7 @@ async function resolveStartMetadata({
           authorized_keys:
             resolved.authorized_keys ?? authoritative.authorized_keys,
           run_quota: resolved.run_quota ?? authoritative.run_quota,
+          env: resolved.env ?? authoritative.env,
         };
       }
     } catch (err) {
@@ -512,6 +517,7 @@ async function getRunnerConfig(
     authorized_keys: resolved.authorized_keys,
     ssh_proxy_public_key,
     run_quota,
+    env: resolved.env ?? undefined,
     restore: opts?.restore,
     lro_op_id: opts?.lro_op_id,
     ...limits,

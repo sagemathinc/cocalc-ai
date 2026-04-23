@@ -11,6 +11,7 @@ import type {
 import {
   type ProjectCopyRow,
   type ProjectCopyState,
+  type ProjectEnv,
 } from "@cocalc/conat/hub/api/projects";
 import type {
   RootfsReleaseArtifactAccess,
@@ -1034,6 +1035,7 @@ export interface Hosts {
     image?: string;
     authorized_keys?: string;
     run_quota?: any;
+    env?: ProjectEnv;
   }>;
   updateCopyStatus: (opts: {
     host_id?: string;
