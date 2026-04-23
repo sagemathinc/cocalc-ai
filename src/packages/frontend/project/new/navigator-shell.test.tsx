@@ -7,7 +7,13 @@ const mockMessageApi = {
   success: jest.fn(),
   error: jest.fn(),
 };
+let mockSharedChatReady = true;
 const mockSharedChatActions = {
+  syncdb: {
+    on: jest.fn(),
+    removeListener: jest.fn(),
+  },
+  isSyncdbReady: jest.fn(() => mockSharedChatReady),
   messageCache: {
     getThreadIndex: () => new Map(),
     on: jest.fn(),
@@ -72,6 +78,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 jest.mock("@cocalc/frontend/chat/register", () => ({
   getChatActions: () => mockSharedChatActions,
   initChat: () => mockSharedChatActions,
+  removeWithInstance: jest.fn(),
 }));
 
 jest.mock("@cocalc/frontend/project/page/agent-chat-font-size", () => ({
@@ -151,6 +158,10 @@ describe("NavigatorShell keyboard suppression", () => {
     mockEraseActiveKeyHandler.mockClear();
     mockMessageApi.success.mockClear();
     mockMessageApi.error.mockClear();
+    mockSharedChatReady = true;
+    mockSharedChatActions.syncdb.on.mockClear();
+    mockSharedChatActions.syncdb.removeListener.mockClear();
+    mockSharedChatActions.isSyncdbReady.mockClear();
     mockSharedChatActions.messageCache.on.mockClear();
     mockSharedChatActions.messageCache.removeListener.mockClear();
     mockSharedChatActions.getThreadMetadata.mockClear();
@@ -164,6 +175,15 @@ describe("NavigatorShell keyboard suppression", () => {
     fireEvent.focus(screen.getByTestId("navigator-composer"));
 
     expect(mockEraseActiveKeyHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the navigator chat loading until syncdb is ready", () => {
+    mockSharedChatReady = false;
+
+    render(<NavigatorShell project_id="project-1" />);
+
+    expect(screen.getByText("Loading...")).toBeTruthy();
+    expect(screen.queryByTestId("navigator-composer")).toBeNull();
   });
 
   it("prefers latest thread metadata acp_config over stale root-message config", () => {

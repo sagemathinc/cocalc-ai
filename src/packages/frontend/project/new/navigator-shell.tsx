@@ -10,7 +10,11 @@ import {
 } from "antd";
 import type { MenuProps } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useActions,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import {
   upsertAgentSessionRecord,
@@ -25,7 +29,11 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { useKeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { lite } from "@cocalc/frontend/lite";
-import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
+import {
+  getChatActions,
+  initChat,
+  removeWithInstance,
+} from "@cocalc/frontend/chat/register";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
@@ -59,6 +67,7 @@ const NAVIGATOR_DEFAULT_THREAD_ICON = "sitemap";
 const NAVIGATOR_DEFAULT_THREAD_COLOR = "#c8e6c9";
 const ACTIVE_THREAD_STATES = new Set(["queue", "sending", "sent", "running"]);
 const NAVIGATOR_CHAT_INIT_RETRY_MS = 2000;
+const NAVIGATOR_CHAT_READY_STALE_RETRY_MS = 15_000;
 
 type NavigatorCodexErrorPresentation = {
   kind: "missing-auth" | "expired-auth" | "other";
@@ -428,6 +437,14 @@ export function NavigatorShell({
       }) ?? null
     );
   });
+  const [syncdbReady, setSyncdbReady] = useState<boolean>(() => {
+    const initialActions = navigatorPath
+      ? getChatActions(project_id, navigatorPath, {
+          instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+        })
+      : undefined;
+    return initialActions?.isSyncdbReady?.() ?? false;
+  });
   const [error, setError] = useState<string>("");
   const [initRetrying, setInitRetrying] = useState<boolean>(false);
   const [initRetryTick, setInitRetryTick] = useState<number>(0);
@@ -532,6 +549,48 @@ export function NavigatorShell({
       mounted = false;
     };
   }, [projectActions, project_id, navigatorPath, projectState, initRetryTick]);
+
+  useEffect(() => {
+    if (!actions) {
+      setSyncdbReady(false);
+      return;
+    }
+    let mounted = true;
+    const syncdb = actions.syncdb;
+    const updateReady = () => {
+      if (mounted) {
+        setSyncdbReady(actions.isSyncdbReady?.() ?? false);
+      }
+    };
+    updateReady();
+    syncdb?.on?.("ready", updateReady);
+    syncdb?.on?.("close", updateReady);
+    const poll = setInterval(updateReady, 500);
+    const staleTimer =
+      projectState === "running" && !(actions.isSyncdbReady?.() ?? false)
+        ? setTimeout(() => {
+            if (!mounted || (actions.isSyncdbReady?.() ?? false)) {
+              return;
+            }
+            removeWithInstance(navigatorPath, redux, project_id, {
+              instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+            });
+            setActions(null);
+            setSyncdbReady(false);
+            setInitRetrying(true);
+            setInitRetryTick((tick) => tick + 1);
+          }, NAVIGATOR_CHAT_READY_STALE_RETRY_MS)
+        : undefined;
+    return () => {
+      mounted = false;
+      clearInterval(poll);
+      if (staleTimer != null) {
+        clearTimeout(staleTimer);
+      }
+      syncdb?.removeListener?.("ready", updateReady);
+      syncdb?.removeListener?.("close", updateReady);
+    };
+  }, [actions, navigatorPath, project_id, projectState]);
 
   useEffect(() => {
     if (!actions) return;
@@ -816,7 +875,7 @@ export function NavigatorShell({
 
   const submitIntent = useCallback(
     (intent: NavigatorSubmitPromptDetail): boolean => {
-      if (!actions) return false;
+      if (!actions || !syncdbReady) return false;
       const basePrompt = `${intent?.prompt ?? ""}`.trim();
       if (!basePrompt) {
         removeQueuedNavigatorPromptIntent(intent.id);
@@ -937,11 +996,17 @@ export function NavigatorShell({
       setTimeout(() => actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER), 100);
       return true;
     },
-    [actions, homeDirectory, selectedRootMessage, selectedThreadKey],
+    [
+      actions,
+      homeDirectory,
+      selectedRootMessage,
+      selectedThreadKey,
+      syncdbReady,
+    ],
   );
 
   useEffect(() => {
-    if (!actions) return;
+    if (!actions || !syncdbReady) return;
     let retryNeeded = false;
     const queued = takeQueuedNavigatorPromptIntents();
     for (const intent of queued) {
@@ -963,14 +1028,18 @@ export function NavigatorShell({
       setIntentRetryTick((v) => v + 1);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [actions, submitIntent, intentRetryTick]);
+  }, [actions, submitIntent, intentRetryTick, syncdbReady]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onPromptIntent = (evt: Event) => {
       const detail = (evt as CustomEvent<NavigatorSubmitPromptDetail>).detail;
       if (!detail?.id) return;
-      if (!actions) return;
+      if (!actions || !syncdbReady) {
+        queueNavigatorPromptIntent(detail);
+        setIntentRetryTick((v) => v + 1);
+        return;
+      }
       try {
         const consumed = submitIntent(detail);
         if (!consumed) {
@@ -991,7 +1060,7 @@ export function NavigatorShell({
         onPromptIntent as EventListener,
       );
     };
-  }, [actions, submitIntent]);
+  }, [actions, submitIntent, syncdbReady]);
 
   const desc = useMemo(() => {
     const data: Record<string, any> = {
@@ -1401,7 +1470,7 @@ export function NavigatorShell({
         }}
         {...keyboardBoundaryProps}
       >
-        {actions ? (
+        {actions && syncdbReady ? (
           <FileContext.Provider value={chatFileContext}>
             <SideChat
               actions={actions}
