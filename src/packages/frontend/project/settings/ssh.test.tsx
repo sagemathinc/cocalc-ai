@@ -164,6 +164,6 @@ describe("SSHPanel", () => {
         "COCALC_API_KEY='sk-test-secret' cocalc --api 'http://localhost' project ssh-config add -w 'project-1'",
       ),
     ).toBeTruthy();
-    expect(screen.getByText("ssh 'project-1'")).toBeTruthy();
+    expect(screen.getByText("ssh project-1")).toBeTruthy();
   });
 });

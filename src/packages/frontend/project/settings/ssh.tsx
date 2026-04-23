@@ -23,6 +23,12 @@ const COCALC_CLI_DOWNLOAD_URL =
 const COCALC_CLI_INSTALL_COMMAND =
   "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash";
 const SETUP_KEY_EXPIRE_MS = 60 * 60 * 1000;
+const COPYABLE_PROPS = {
+  inputWidth: "100%",
+  inputStyle: { minWidth: 0 },
+  outerStyle: { width: "100%" },
+  style: { marginTop: 6, width: "100%" },
+} as const;
 
 interface Props {
   project: Project;
@@ -85,7 +91,7 @@ export function SSHPanel({ project, mode = "project" }: Props) {
   const setupCommand = setupApiKey
     ? `COCALC_API_KEY=${shellQuote(setupApiKey)} cocalc --api ${shellQuote(apiUrl)} project ssh-config add -w ${shellQuote(projectId)}`
     : "";
-  const connectCommand = `ssh ${shellQuote(projectId)}`;
+  const connectCommand = `ssh ${projectId}`;
 
   useEffect(() => {
     setSshCopied(false);
@@ -139,6 +145,8 @@ export function SSHPanel({ project, mode = "project" }: Props) {
       ssh_keys={ssh_keys}
       project_id={project.get("project_id")}
       mode={mode}
+      allowAdd={!useCliSsh}
+      title={useCliSsh ? "SSH" : undefined}
     >
       <>
         {!useCliSsh && (
@@ -157,11 +165,11 @@ export function SSHPanel({ project, mode = "project" }: Props) {
           </p>
         )}
         <Paragraph>
-          SSH access is full OpenSSH access to this {projectLabelLower},
-          including remote commands, port forwarding, and X11 forwarding when
-          your local SSH setup supports them. If the {projectLabelLower} is not
-          running, SSH access will request that it starts; if your first attempt
-          only wakes it up, try the same command again after a moment.
+          SSH access is full access to this {projectLabelLower}, including
+          remote commands, port forwarding, and X11 forwarding when your local
+          SSH setup supports them. If the {projectLabelLower} is not running,
+          SSH access will request that it starts; if your first attempt only
+          wakes it up, try the same command again after a moment.
         </Paragraph>
         {useCliSsh ? (
           <>
@@ -176,8 +184,7 @@ export function SSHPanel({ project, mode = "project" }: Props) {
                 <Text strong>1. Install CoCalc CLI</Text>
                 <CopyToClipBoard
                   value={COCALC_CLI_INSTALL_COMMAND}
-                  inputWidth="100%"
-                  style={{ marginTop: 6 }}
+                  {...COPYABLE_PROPS}
                 />
               </div>
               <div>
@@ -238,16 +245,14 @@ export function SSHPanel({ project, mode = "project" }: Props) {
                       <Text strong>Configure SSH</Text>
                       <CopyToClipBoard
                         value={setupCommand}
-                        inputWidth="100%"
-                        style={{ marginTop: 6 }}
+                        {...COPYABLE_PROPS}
                       />
                     </div>
                     <div>
                       <Text strong>Connect</Text>
                       <CopyToClipBoard
                         value={connectCommand}
-                        inputWidth="100%"
-                        style={{ marginTop: 6 }}
+                        {...COPYABLE_PROPS}
                       />
                     </div>
                     <Paragraph type="secondary" style={{ marginBottom: 0 }}>

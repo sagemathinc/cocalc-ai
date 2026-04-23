@@ -27,6 +27,8 @@ interface SSHKeyListProps {
   help?: React.JSX.Element;
   children?: any;
   mode?: "project" | "flyout";
+  allowAdd?: boolean;
+  title?: React.ReactNode;
 }
 
 // Children are rendered above the list of SSH Keys
@@ -37,6 +39,8 @@ export default function SSHKeyList({
   help,
   children,
   mode = "project",
+  allowAdd = true,
+  title,
 }: SSHKeyListProps) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
@@ -76,11 +80,16 @@ export default function SSHKeyList({
   function render_header() {
     return (
       <Flex style={{ width: "100%" }}>
-        {project_id ? `${projectLabel} ` : ""}
-        {intl.formatMessage(labels.ssh_keys)} <Gap />
+        {title ?? (
+          <>
+            {project_id ? `${projectLabel} ` : ""}
+            {intl.formatMessage(labels.ssh_keys)}
+          </>
+        )}{" "}
+        <Gap />
         {help && <HelpIcon title="Using SSH Keys">{help}</HelpIcon>}
         <div style={{ flex: 1 }} />
-        {(ssh_keys?.size ?? 0) > 0 ? (
+        {allowAdd && (ssh_keys?.size ?? 0) > 0 ? (
           <div style={{ float: "right" }}>{renderAdder()}</div>
         ) : undefined}
       </Flex>
@@ -89,6 +98,7 @@ export default function SSHKeyList({
 
   function render_keys() {
     if (ssh_keys == null || ssh_keys.size == 0) {
+      if (!allowAdd) return null;
       return <div style={{ textAlign: "center" }}>{renderAdder("large")}</div>;
     }
     const v: { date?: Date; fp: string; component: React.JSX.Element }[] = [];
