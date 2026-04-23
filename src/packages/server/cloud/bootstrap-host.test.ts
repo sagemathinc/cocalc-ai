@@ -59,6 +59,41 @@ describe("resolveBootstrapRootReserveGb", () => {
   });
 });
 
+describe("resolveSoftwareBaseUrl", () => {
+  it("rewrites loopback forced software bases through the public launchpad origin for cloud hosts", async () => {
+    await expect(
+      bootstrapHost.resolveSoftwareBaseUrl({
+        configured: "http://localhost:13214/software",
+        useOnPremSettings: false,
+        host_id: "host-123",
+        launchpadBaseUrl: "https://bay-2-lite4b.cocalc.ai",
+      }),
+    ).resolves.toBe("https://bay-2-lite4b.cocalc.ai/software");
+  });
+
+  it("preserves loopback software bases for local self-host bootstrap", async () => {
+    await expect(
+      bootstrapHost.resolveSoftwareBaseUrl({
+        configured: "http://localhost:13214/software",
+        useOnPremSettings: true,
+        host_id: "host-123",
+        launchpadBaseUrl: "https://bay-2-lite4b.cocalc.ai",
+      }),
+    ).resolves.toBe("http://localhost:13214/software");
+  });
+
+  it("preserves explicitly public software bases", async () => {
+    await expect(
+      bootstrapHost.resolveSoftwareBaseUrl({
+        configured: "https://software.example.test/software",
+        useOnPremSettings: false,
+        host_id: "host-123",
+        launchpadBaseUrl: "https://bay-2-lite4b.cocalc.ai",
+      }),
+    ).resolves.toBe("https://software.example.test/software");
+  });
+});
+
 describe("bootstrap-host shell templates", () => {
   it("keeps carriage-return stripping as a literal backslash-r sequence", () => {
     const source = fs.readFileSync(

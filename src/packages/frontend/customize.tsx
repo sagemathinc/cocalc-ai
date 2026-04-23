@@ -137,7 +137,6 @@ export interface CustomizeState {
   verify_emails: false;
   launchpad_mode?: string;
   version_min_browser: number;
-  version_min_project: number;
   version_recommended_browser: number;
   versions: string;
   cocalc_product?: string;

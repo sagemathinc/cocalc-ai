@@ -99,11 +99,11 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
             actions={redux.getActions("projects")}
           />
           <LauncherDefaults project_id={id} />
-          {!lite && (
-            <HideDeleteBox
-              key="hide-delete"
+          {!lite && !student.disableSSH && (
+            <SSHPanel
+              key="ssh-keys"
               project={project}
-              actions={redux.getActions("projects")}
+              account_id={account_id}
             />
           )}
           {!lite && <Environment key="environment" project_id={project_id} />}
@@ -119,13 +119,11 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
         {!lite && (
           <Col sm={6}>
             <ProjectControl key="control" project={project} />
-            {!lite && !student.disableSSH && (
-              <SSHPanel
-                key="ssh-keys"
-                project={project}
-                account_id={account_id}
-              />
-            )}
+            <HideDeleteBox
+              key="hide-delete"
+              project={project}
+              actions={redux.getActions("projects")}
+            />
             <ApiKeys project_id={project_id} />
           </Col>
         )}

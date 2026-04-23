@@ -242,6 +242,37 @@ describe("bay-directory", () => {
     });
   });
 
+  it("prefers the cluster account directory over stale local account rows", async () => {
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: OTHER_ACCOUNT_ID,
+      email_address: "remote@example.com",
+      first_name: "Remote",
+      last_name: "Directory",
+      name: "Remote Directory",
+      home_bay_id: "bay-2",
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      throw new Error(`unexpected local account query: ${sql}`);
+    });
+    isAdminMock = jest.fn(async () => true);
+    const { resolveAccountHomeBay } = await import("./bay-directory");
+
+    await expect(
+      resolveAccountHomeBay({
+        account_id: ACCOUNT_ID,
+        user_account_id: OTHER_ACCOUNT_ID,
+      }),
+    ).resolves.toEqual({
+      account_id: OTHER_ACCOUNT_ID,
+      email_address: "remote@example.com",
+      first_name: "Remote",
+      last_name: "Directory",
+      name: "Remote Directory",
+      home_bay_id: "bay-2",
+      source: "cluster-directory",
+    });
+  });
+
   it("resolves the owning bay for a visible project", async () => {
     const { resolveProjectOwningBay } = await import("./bay-directory");
 

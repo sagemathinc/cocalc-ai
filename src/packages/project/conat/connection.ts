@@ -19,7 +19,6 @@ import { setConatClient } from "@cocalc/conat/client";
 import * as projectData from "@cocalc/project/data";
 import { getLogger } from "@cocalc/project/logger";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
-import { versionCheckLoop } from "./hub";
 
 const logger = getLogger("conat:connection");
 
@@ -89,7 +88,6 @@ export function connectToConat(
     };
   }
 
-  versionCheckLoop(conn);
   return conn;
 }
 

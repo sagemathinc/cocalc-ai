@@ -122,6 +122,45 @@ function isUsablePublicOrigin(origin: string | undefined): boolean {
   return isPublicHostname(normalizeHostname(origin));
 }
 
+function originFromRegistryEntry(entry: {
+  public_origin?: string | null;
+  dns_hostname?: string | null;
+}): string | undefined {
+  const registryOrigin = normalizeOrigin(entry?.public_origin);
+  if (isUsablePublicOrigin(registryOrigin)) {
+    return registryOrigin;
+  }
+  const hostname = normalizeHostname(entry?.dns_hostname);
+  if (!hostname || !isPublicHostname(hostname)) {
+    return;
+  }
+  return `${defaultSchemeForHostname(hostname)}://${hostname}`;
+}
+
+async function getBayPublicOriginFromRegistry(
+  bay_id: string,
+): Promise<string | undefined> {
+  try {
+    const mod = (await import("./bay-registry")) as {
+      listClusterBayRegistry?: () => Promise<
+        {
+          bay_id?: string | null;
+          public_origin?: string | null;
+          dns_hostname?: string | null;
+        }[]
+      >;
+    };
+    const entries = await mod.listClusterBayRegistry?.();
+    const entry = entries?.find(
+      (candidate) => trim(candidate?.bay_id) === bay_id,
+    );
+    if (!entry) return;
+    return originFromRegistryEntry(entry);
+  } catch {
+    return;
+  }
+}
+
 export async function getBayPublicOrigin(
   bay_id: string,
 ): Promise<string | undefined> {
@@ -147,6 +186,10 @@ export async function getBayPublicOrigin(
     if (siteOrigin) {
       return siteOrigin;
     }
+  }
+  const registryOrigin = await getBayPublicOriginFromRegistry(requested);
+  if (registryOrigin) {
+    return registryOrigin;
   }
   const site = await getConfiguredSiteDnsHostname();
   const hostname = deriveBayHostnameFromSiteDns({
@@ -189,16 +232,7 @@ export async function getClusterBayPublicOrigins(): Promise<
     const entries = await mod.listClusterBayRegistry?.();
     for (const entry of entries ?? []) {
       const bay_id = trim(entry?.bay_id);
-      const registryOrigin = normalizeOrigin(entry?.public_origin);
-      const origin =
-        (registryOrigin && isUsablePublicOrigin(registryOrigin)
-          ? registryOrigin
-          : undefined) ??
-        (() => {
-          const hostname = normalizeHostname(entry?.dns_hostname);
-          if (!hostname) return;
-          return `${defaultSchemeForHostname(hostname)}://${hostname}`;
-        })();
+      const origin = originFromRegistryEntry(entry);
       if (!bay_id || !origin || !isUsablePublicOrigin(origin)) continue;
       result[bay_id] = origin;
     }

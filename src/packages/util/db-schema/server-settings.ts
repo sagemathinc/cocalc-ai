@@ -134,7 +134,6 @@ export interface Customize {
     error?: string | null;
   };
   version?: {
-    min_project?: number;
     min_browser?: number;
     recommended_browser?: number;
   };

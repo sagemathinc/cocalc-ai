@@ -610,6 +610,7 @@ Initial read-only page:
   - `cocalc bay list`
   - `cocalc bay show ...`
   - `cocalc bay projection status-account-project-index ...`
+  - `cocalc account rehome-drain --source-bay ... --dest-bay ...`
   - `cocalc project rehome-drain --source-bay ... --dest-bay ...`
   - `cocalc project rehome-status --op-id ...`
   - `cocalc project rehome-reconcile --op-id ...`
@@ -617,8 +618,9 @@ Initial read-only page:
 Later mutating UI, only after the CLI/API paths are proven:
 
 - [ ] mark a bay as accepting or not accepting new ownership
+- [ ] dry-run and execute account ownership drains
 - [ ] dry-run and execute project ownership drains
-- [ ] dry-run and execute future account/host ownership drains
+- [ ] dry-run and execute future host ownership drains
 - [ ] trigger projection drains/rebuilds with bounded limits
 - [ ] restart/update bay software with explicit confirmation and status
       tracking
@@ -694,6 +696,9 @@ Initial account rehome target:
 - [x] forced browser reconnection validation
 - [x] failure-injection validation for destination-accepted/source-flip-failed
       and delayed projection/directory convergence
+- [x] batch/drain wrapper that groups many per-account rehomes into a bay drain
+      with dry-run-by-default execution, bounded limits, campaign/reason
+      metadata, and optional safety-tag filtering
 
 Live validation, 2026-04-22 PT:
 
@@ -796,6 +801,27 @@ Live validation, 2026-04-22 PT:
   same API key authenticated after rehome. The disposable account was deleted
   with `cocalc account delete --only-if-tag qa-safe-delete --yes`, and the
   disposable API-key row was removed.
+- Account drain operator validation used disposable accounts
+  `2f8dce65-390f-4b23-b1d2-5c69a6bcd856` and
+  `85cd5a76-861d-4661-84ee-8a51267dde6b` with safety tags
+  `qa-safe-delete` and `qa-account-drain`. A dry-run
+  `cocalc account rehome-drain --source-bay bay-0 --dest-bay bay-2 --limit 5 --only-if-tag qa-account-drain --campaign qa-account-drain-live`
+  returned exactly those two candidates. The same command with `--write`
+  completed operations `6eee5a29-f701-4450-804e-d45dd07a757c` and
+  `96aae9b8-5f19-4f1a-ba9a-3abbba8d9f0a`, both `bay-0 -> bay-2`, with no
+  per-account errors. The disposable accounts were deleted with
+  `cocalc account delete --only-if-tag qa-safe-delete --yes`.
+- Follow-up drain validation fixed the post-drain routing-read window by making
+  direct account/directory lookups use the primary pool instead of the
+  potentially stale `medium` read pool, and by requiring account rehome to wait
+  for the `getAccountBay` read path to observe the destination before marking
+  the operation complete. Disposable accounts
+  `5e891bf2-aefe-4218-ada6-de46547a9c81` and
+  `5bba2932-d1d7-4a47-9b1b-0f642434d05b` drained `bay-0 -> bay-2` with
+  operations `a0fd816e-1cd7-4d37-a205-652a39b71d0e` and
+  `da4b008b-f3c8-4801-9334-1310e4c33316`; immediate `account where` returned
+  `home_bay_id=bay-2` with `source=cluster-directory`, and immediate
+  safety-tagged deletes both routed to `bay-2` successfully.
 
 Non-goals for initial account rehome:
 
@@ -804,7 +830,6 @@ Non-goals for initial account rehome:
 - moving project-host assignments
 - moving billing/provider-side state outside the `accounts` row
 - rewriting historical notification target/outbox rows
-- batch account drains before the single-account operation is validated
 
 ### 10. Project Rehome
 
@@ -1005,9 +1030,18 @@ Implementation checkpoint, 2026-04-22 PT:
   - inter-bay host rehome RPCs for source-bay orchestration and
     destination-bay prepare/accept
   - durable `project_host_rehome_operations` state table
-- Destination preparation installs the destination bay's host-owner SSH public
-  key onto the host through the existing routed host-control API before
-  changing ownership.
+- Destination preparation installs/trusts the destination bay's host-owner SSH
+  public key before changing ownership. It uses the source host row on the
+  destination bay, so cloud-provider metadata repair can run even when the
+  existing routed host-control path is unavailable.
+- If the destination bay cannot repair cloud-provider SSH metadata, it returns
+  its owner public key to the source bay. The source bay then attempts the
+  cloud metadata repair before source flip, so missing destination cloud
+  credentials do not strand the host mid-rehome.
+- Destination prepare refuses cloud-host rehome when the destination bay cannot
+  resolve a public bootstrap origin. That prevents an attached/local bay
+  without a public bootstrap route from flipping ownership and then leaving SSH
+  bootstrap stuck downloading from `localhost` or another private address.
 - Destination accept copies the `project_hosts` row to the destination bay with
   `bay_id` set to the destination; source flip updates the source row's
   `bay_id` only, leaving assigned projects untouched.
@@ -1016,6 +1050,10 @@ Implementation checkpoint, 2026-04-22 PT:
 - Host-control key installation during destination prepare is now best-effort:
   host-control can itself be the broken path during rehome, and the reconnect
   stage has the cloud-provider/SSH bootstrap reconcile fallback.
+- Added `cocalc host ssh-trust <host>` as an operator preflight/backfill
+  command for existing hosts. It routes to the owning bay and attempts both
+  cloud-provider SSH metadata repair and host-control key installation for the
+  owning bay's SSH key.
 - Destination reconnect now explicitly runs SSH bootstrap reconcile from the
   destination bay before validating host-control status.
 - Host registry heartbeats now preserve existing `project_hosts.bay_id`
@@ -1072,6 +1110,51 @@ Live 3-bay validation evidence, 2026-04-22 PT:
   `op_id=56b8aa4d-b89b-425b-8ee8-8eeb3717102a`. Before large host drains,
   existing hosts need a hub-owner SSH trust audit/backfill so destination
   bootstrap reconcile is not blocked by missing SSH authorization.
+- Follow-up validation after adding `host ssh-trust` showed
+  `cocalc host ssh-trust fe625be4-c86f-4fc4-b324-fda2f895e448` succeeded on
+  `bay-0` through both host-control and GCP metadata. A retry to `bay-2`
+  proved source-bay cloud metadata repair works: `bay-0` installed the `bay-2`
+  public key before source flip, and direct SSH with the `bay-2` owner key then
+  worked. That exposed the next safe-blocker: local attached `bay-2` resolves
+  cloud bootstrap to `https://localhost`, which a cloud host cannot download.
+  The final guarded retry failed at `stage=requested` with
+  `op_id=cc9819e8-5344-434b-a90e-d65e0aa28444`, and `host where` confirmed
+  `host2` stayed on `bay-0`.
+- The bootstrap URL blocker was addressed in code by making launchpad bootstrap
+  URL resolution classify public vs local/private origins, adding a
+  `requirePublic` mode for cloud-host bootstrap/reconcile paths, and teaching
+  attached bays to recover their public origin from the bay registry DNS entry
+  when their local env only advertises a loopback URL.
+- Live retry after the bootstrap-origin fix advanced past the previous
+  `https://localhost` blocker: after hub restart, `bay-2` registered
+  `public_origin=https://bay-2-lite4b.cocalc.ai`. Rehome operation
+  `d94b8908-b921-41fe-9fc6-ea1b21c456ce` moved `host2` to `bay-2`, SSH
+  bootstrap reconcile completed, and `host bootstrap-status` via `bay-2`
+  showed `bootstrap.status='done'`. The operation still failed at final
+  `getHostAgentStatus` validation with a project-host RPC timeout, which is the
+  next host-rehome blocker. Restore operation
+  `4d377c6b-f88c-4c50-bcb5-ce61f9071c11` returned `host2` to `bay-0`, and
+  `host where` plus `host bootstrap-status` confirmed the restored state.
+- The host-control timeout split into two bootstrap configuration bugs:
+  destination-bay reconcile was first falling back from a loopback forced
+  software base to `software.cocalc.ai`, which started the old `0.7.20`
+  project-host bundle; after that fix, `bay-2` still treated the host as direct
+  HTTPS because the destination bay could not manage Cloudflare and discarded
+  existing tunnel metadata, so the host repeatedly tried to start the local
+  router on privileged ports `443/543/444`.
+- Both blockers are now fixed in code. Cloud-host bootstrap rewrites loopback
+  software bases through the public launchpad origin supplied to the bootstrap
+  script, and existing Cloudflare tunnel metadata is reused even when the
+  current bay cannot manage Cloudflare itself.
+- Live validation after hub restart succeeded: operation
+  `9de7e615-ce40-4b18-b672-0f1d4bc3f1e8` rehomed `host2` from `bay-0` to
+  `bay-2` and completed. The host env during `bay-2` ownership showed
+  `MASTER_CONAT_SERVER=https://bay-2-lite4b.cocalc.ai`,
+  `COCALC_PROJECT_HOST_SOFTWARE_BASE_URL=https://bay-2-lite4b.cocalc.ai/software`,
+  `COCALC_PROJECT_HOST_HTTPS=0`, and `PORT=9002`; supervision events showed
+  conat-router starting on `9102` with public ingress `9002` and upstream
+  `9003`. Restore operation `aaeee9eb-f854-4325-9924-ed115487c0a8` returned
+  `host2` to `bay-0`, and `host where` confirmed the restored state.
 
 Known follow-up:
 

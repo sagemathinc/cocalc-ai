@@ -94,6 +94,13 @@ export interface CodexConfigButtonProps {
   refreshPaymentSource?: () => void;
 }
 
+export interface CodexPaymentCredentialsModalProps {
+  open: boolean;
+  projectId?: string;
+  refreshPaymentSource?: () => void;
+  onClose: () => void;
+}
+
 type ModelOption = {
   value: string;
   label: string;
@@ -123,6 +130,127 @@ const gridTwoColStyle = {
   width: "100%",
 } as const;
 
+export function CodexPaymentCredentialsModal({
+  open,
+  projectId,
+  refreshPaymentSource,
+  onClose,
+}: CodexPaymentCredentialsModalProps): React.ReactElement {
+  const [liteCodexStatus, setLiteCodexStatus] = useState<
+    LiteCodexLocalStatus | undefined
+  >(undefined);
+  const [liteCodexStatusLoading, setLiteCodexStatusLoading] = useState(false);
+
+  useEffect(() => {
+    if (!lite || !open) return;
+    let cancelled = false;
+    const loadStatus = async () => {
+      setLiteCodexStatusLoading(true);
+      try {
+        const systemApi: any = webapp_client.conat_client.hub.system as any;
+        if (typeof systemApi.getCodexLocalStatus !== "function") {
+          if (!cancelled) {
+            setLiteCodexStatus(undefined);
+          }
+          return;
+        }
+        const result = await systemApi.getCodexLocalStatus();
+        if (cancelled) return;
+        setLiteCodexStatus(result as LiteCodexLocalStatus);
+      } catch (err) {
+        if (cancelled) return;
+        setLiteCodexStatus({
+          installed: false,
+          error: `${err}`,
+        });
+      } finally {
+        if (!cancelled) {
+          setLiteCodexStatusLoading(false);
+        }
+      }
+    };
+    void loadStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  return (
+    <Modal
+      open={open}
+      title="Codex Payment & Credentials"
+      footer={null}
+      onCancel={onClose}
+      width={760}
+      styles={{ body: { maxHeight: "75vh", overflowY: "auto" } }}
+    >
+      {lite ? (
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+          <Text strong>Choose one: ChatGPT Plan or OpenAI API key</Text>
+          <Text type="secondary">
+            Configure Codex from this modal. If both are configured, ChatGPT
+            Plan is used.
+          </Text>
+          {liteCodexStatusLoading ? (
+            <Alert
+              type="info"
+              showIcon
+              title="Checking local Codex install..."
+            />
+          ) : liteCodexStatus?.installed === false ? (
+            <Alert
+              type="warning"
+              showIcon
+              title="Codex CLI not detected"
+              description={
+                liteCodexStatus.error
+                  ? `Install Codex CLI and restart CoCalc Lite. Details: ${liteCodexStatus.error}`
+                  : "Install Codex CLI and restart CoCalc Lite."
+              }
+            />
+          ) : liteCodexStatus?.installed ? (
+            <Alert
+              type="success"
+              showIcon
+              title="Codex CLI detected"
+              description={`${liteCodexStatus.binaryPath ?? "codex"}${
+                liteCodexStatus.version ? ` (${liteCodexStatus.version})` : ""
+              }`}
+            />
+          ) : null}
+          <CodexCredentialsPanel
+            embedded
+            hidePanelChrome
+            defaultProjectId={projectId}
+            onPaymentSourceChanged={refreshPaymentSource}
+          />
+          <Text type="secondary">
+            <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+              View Codex usage in ChatGPT
+            </a>
+          </Text>
+          <Divider style={{ margin: "8px 0" }} />
+          <LiteAISettings onSaved={refreshPaymentSource} showTitle />
+        </Space>
+      ) : (
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+          <CodexCredentialsPanel
+            embedded
+            hidePanelChrome
+            defaultProjectId={projectId}
+            onPaymentSourceChanged={refreshPaymentSource}
+          />
+          <Text type="secondary">
+            <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+              View Codex usage in ChatGPT
+            </a>
+          </Text>
+        </Space>
+      )}
+    </Modal>
+  );
+}
+
 export function CodexConfigButton({
   threadKey,
   chatPath,
@@ -137,10 +265,6 @@ export function CodexConfigButton({
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(chatPath);
   const [open, setOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
-  const [liteCodexStatus, setLiteCodexStatus] = useState<
-    LiteCodexLocalStatus | undefined
-  >(undefined);
-  const [liteCodexStatusLoading, setLiteCodexStatusLoading] = useState(false);
   const [form] = Form.useForm();
   const [models, setModels] = useState<ModelOption[]>([]);
   const [value, setValue] = useState<Partial<CodexThreadConfig> | null>(null);
@@ -282,40 +406,6 @@ export function CodexConfigButton({
     value: option.value,
     label: option.label,
   }));
-
-  useEffect(() => {
-    if (!lite || !paymentOpen) return;
-    let cancelled = false;
-    const loadStatus = async () => {
-      setLiteCodexStatusLoading(true);
-      try {
-        const systemApi: any = webapp_client.conat_client.hub.system as any;
-        if (typeof systemApi.getCodexLocalStatus !== "function") {
-          if (!cancelled) {
-            setLiteCodexStatus(undefined);
-          }
-          return;
-        }
-        const result = await systemApi.getCodexLocalStatus();
-        if (cancelled) return;
-        setLiteCodexStatus(result as LiteCodexLocalStatus);
-      } catch (err) {
-        if (cancelled) return;
-        setLiteCodexStatus({
-          installed: false,
-          error: `${err}`,
-        });
-      } finally {
-        if (!cancelled) {
-          setLiteCodexStatusLoading(false);
-        }
-      }
-    };
-    void loadStatus();
-    return () => {
-      cancelled = true;
-    };
-  }, [paymentOpen]);
 
   return (
     <>
@@ -506,78 +596,12 @@ export function CodexConfigButton({
           </Form>
         </Space>
       </Modal>
-      <Modal
+      <CodexPaymentCredentialsModal
         open={paymentOpen}
-        title="Codex Payment & Credentials"
-        footer={null}
-        onCancel={() => setPaymentOpen(false)}
-        width={760}
-        styles={{ body: { maxHeight: "75vh", overflowY: "auto" } }}
-      >
-        {lite ? (
-          <Space orientation="vertical" size={12} style={{ width: "100%" }}>
-            <Text strong>Choose one: ChatGPT Plan or OpenAI API key</Text>
-            <Text type="secondary">
-              Configure Codex from this modal. If both are configured, ChatGPT
-              Plan is used.
-            </Text>
-            {liteCodexStatusLoading ? (
-              <Alert
-                type="info"
-                showIcon
-                title="Checking local Codex install..."
-              />
-            ) : liteCodexStatus?.installed === false ? (
-              <Alert
-                type="warning"
-                showIcon
-                title="Codex CLI not detected"
-                description={
-                  liteCodexStatus.error
-                    ? `Install Codex CLI and restart CoCalc Lite. Details: ${liteCodexStatus.error}`
-                    : "Install Codex CLI and restart CoCalc Lite."
-                }
-              />
-            ) : liteCodexStatus?.installed ? (
-              <Alert
-                type="success"
-                showIcon
-                title="Codex CLI detected"
-                description={`${liteCodexStatus.binaryPath ?? "codex"}${
-                  liteCodexStatus.version ? ` (${liteCodexStatus.version})` : ""
-                }`}
-              />
-            ) : null}
-            <CodexCredentialsPanel
-              embedded
-              hidePanelChrome
-              defaultProjectId={projectId}
-              onPaymentSourceChanged={refreshPaymentSource}
-            />
-            <Text type="secondary">
-              <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-                View Codex usage in ChatGPT
-              </a>
-            </Text>
-            <Divider style={{ margin: "8px 0" }} />
-            <LiteAISettings onSaved={refreshPaymentSource} showTitle />
-          </Space>
-        ) : (
-          <Space orientation="vertical" size={12} style={{ width: "100%" }}>
-            <CodexCredentialsPanel
-              embedded
-              hidePanelChrome
-              defaultProjectId={projectId}
-              onPaymentSourceChanged={refreshPaymentSource}
-            />
-            <Text type="secondary">
-              <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-                View Codex usage in ChatGPT
-              </a>
-            </Text>
-          </Space>
-        )}
-      </Modal>
+        projectId={projectId}
+        refreshPaymentSource={refreshPaymentSource}
+        onClose={() => setPaymentOpen(false)}
+      />
     </>
   );
 }

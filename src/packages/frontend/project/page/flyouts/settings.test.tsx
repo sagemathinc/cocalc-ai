@@ -181,4 +181,18 @@ describe("SettingsFlyout", () => {
     expect(screen.getByRole("button", { name: "Create Backup" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Clone" })).toBeTruthy();
   });
+
+  it("shows SSH before Hide or Delete in flyout settings", () => {
+    const { container } = render(
+      <SettingsFlyout
+        project_id="project-1"
+        wrap={(content) => <>{content}</>}
+      />,
+    );
+
+    const text = container.textContent ?? "";
+    expect(text.indexOf("SSH")).toBeGreaterThan(-1);
+    expect(text.indexOf("Hide or Delete")).toBeGreaterThan(-1);
+    expect(text.indexOf("SSH")).toBeLessThan(text.indexOf("Hide or Delete"));
+  });
 });

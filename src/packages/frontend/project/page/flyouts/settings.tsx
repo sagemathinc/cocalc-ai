@@ -20,7 +20,7 @@ import {
   Tooltip,
 } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
-import { IntlMessage, isIntlMessage, labels } from "@cocalc/frontend/i18n";
+import { IntlMessage, isIntlMessage } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { AboutBox } from "@cocalc/frontend/project/settings/about-box";
 import { ApiKeys } from "@cocalc/frontend/project/settings/api-keys";
@@ -249,21 +249,26 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
         ),
       },
 
-      {
-        key: "hide-delete",
-        label: (
-          <>
-            <Icon name="warning" /> Hide or Delete
-          </>
-        ),
-        children: (
-          <HideDeleteBox
-            project={project}
-            actions={redux.getActions("projects")}
-            mode="flyout"
-          />
-        ),
-      },
+      ...(showSSH
+        ? [
+            {
+              key: "ssh",
+              label: (
+                <>
+                  <Icon name="list-ul" /> SSH
+                </>
+              ),
+              children: (
+                <SSHPanel
+                  mode="flyout"
+                  key="ssh-keys"
+                  project={project}
+                  account_id={account_id}
+                />
+              ),
+            },
+          ]
+        : []),
 
       {
         key: "api",
@@ -277,24 +282,21 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
       },
     ];
 
-    if (showSSH) {
-      items.push({
-        key: "ssh",
-        label: (
-          <>
-            <Icon name="list-ul" /> {intl.formatMessage(labels.ssh_keys)}
-          </>
-        ),
-        children: (
-          <SSHPanel
-            mode="flyout"
-            key="ssh-keys"
-            project={project}
-            account_id={account_id}
-          />
-        ),
-      });
-    }
+    items.push({
+      key: "hide-delete",
+      label: (
+        <>
+          <Icon name="warning" /> Hide or Delete
+        </>
+      ),
+      children: (
+        <HideDeleteBox
+          project={project}
+          actions={redux.getActions("projects")}
+          mode="flyout"
+        />
+      ),
+    });
 
     items.push({
       key: "env",

@@ -117,6 +117,16 @@ export interface HostRehomeResponse {
   status: "rehomed" | "already-home";
 }
 
+export interface HostOwnerSshTrustResult {
+  host_id: string;
+  bay_id: string;
+  public_key: string;
+  host_control_attempted: boolean;
+  host_control_succeeded: boolean;
+  cloud_provider_attempted: boolean;
+  cloud_provider_succeeded: boolean;
+}
+
 export interface HostMachine {
   cloud?: string; // e.g., gcp, hyperstack, lambda, nebius, self-host, local
   machine_type?: string; // e.g., n2-standard-4, custom specs
@@ -810,6 +820,7 @@ export const hosts = {
   restartHost: authFirstRequireAccount,
   drainHost: authFirstRequireAccount,
   forceDeprovisionHost: authFirstRequireAccount,
+  ensureHostOwnerSshTrust: authFirstRequireAccount,
   rehomeHost: authFirstRequireAccount,
   getHostRehomeOperation: authFirstRequireAccount,
   reconcileHostRehome: authFirstRequireAccount,
@@ -1165,6 +1176,10 @@ export interface Hosts {
     account_id?: string;
     id: string;
   }) => Promise<HostLroResponse>;
+  ensureHostOwnerSshTrust: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<HostOwnerSshTrustResult>;
   rehomeHost: (opts: {
     account_id?: string;
     id: string;

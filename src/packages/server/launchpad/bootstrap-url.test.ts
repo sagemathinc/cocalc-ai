@@ -33,7 +33,11 @@ describe("resolveLaunchpadBootstrapUrl", () => {
     const { resolveLaunchpadBootstrapUrl } = await import("./bootstrap-url");
     await expect(
       resolveLaunchpadBootstrapUrl({ preferCurrentBay: true }),
-    ).resolves.toEqual({ baseUrl: "https://bay-1-lite4b.cocalc.ai" });
+    ).resolves.toMatchObject({
+      baseUrl: "https://bay-1-lite4b.cocalc.ai",
+      isPublic: true,
+      source: "bay-public-origin",
+    });
     expect(getBayPublicOriginMock).toHaveBeenCalledWith("bay-1");
     expect(siteURLMock).not.toHaveBeenCalled();
   });
@@ -43,14 +47,50 @@ describe("resolveLaunchpadBootstrapUrl", () => {
     const { resolveLaunchpadBootstrapUrl } = await import("./bootstrap-url");
     await expect(
       resolveLaunchpadBootstrapUrl({ preferCurrentBay: true }),
-    ).resolves.toEqual({ baseUrl: "https://lite4b.cocalc.ai" });
+    ).resolves.toMatchObject({
+      baseUrl: "https://lite4b.cocalc.ai",
+      isPublic: true,
+      source: "site-url",
+    });
   });
 
   it("keeps the stable site URL as the default", async () => {
     const { resolveLaunchpadBootstrapUrl } = await import("./bootstrap-url");
-    await expect(resolveLaunchpadBootstrapUrl()).resolves.toEqual({
+    await expect(resolveLaunchpadBootstrapUrl()).resolves.toMatchObject({
       baseUrl: "https://lite4b.cocalc.ai",
+      isPublic: true,
+      source: "site-url",
     });
     expect(getBayPublicOriginMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects loopback site URLs when a public bootstrap URL is required", async () => {
+    getBayPublicOriginMock.mockResolvedValue(undefined);
+    siteURLMock.mockResolvedValue("https://localhost");
+    const { resolveLaunchpadBootstrapUrl } = await import("./bootstrap-url");
+    await expect(
+      resolveLaunchpadBootstrapUrl({
+        preferCurrentBay: true,
+        requirePublic: true,
+      }),
+    ).rejects.toThrow(
+      "no public launchpad bootstrap URL configured; site-url resolved https://localhost",
+    );
+  });
+
+  it("reports local fallback URLs as non-public", async () => {
+    getBayPublicOriginMock.mockResolvedValue(undefined);
+    siteURLMock.mockResolvedValue(undefined);
+    const { resolveLaunchpadBootstrapUrl } = await import("./bootstrap-url");
+    await expect(
+      resolveLaunchpadBootstrapUrl({
+        fallbackHost: "127.0.0.1",
+        fallbackProtocol: "http",
+      }),
+    ).resolves.toMatchObject({
+      baseUrl: "http://127.0.0.1:9001",
+      isPublic: false,
+      source: "local-fallback",
+    });
   });
 });

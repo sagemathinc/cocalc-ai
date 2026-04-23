@@ -100,7 +100,6 @@ export type SiteSettingsKeys =
   | "public_viewer_dns"
   | "datastore"
   | "versions"
-  | "version_min_project"
   | "version_min_browser"
   | "version_recommended_browser"
   | "iframe_comm_hosts"
@@ -639,16 +638,6 @@ export const site_settings_conf: SiteSettings = {
     desc: "",
     default: "",
     type: "header",
-    tags: ["Version"],
-    group: "System / Advanced",
-    subgroup: "Versions",
-  },
-  version_min_project: {
-    name: "Required project version",
-    desc: "Minimal version required by projects (if older, will terminate).",
-    default: "0",
-    valid: only_nonneg_int,
-    show: () => true,
     tags: ["Version"],
     group: "System / Advanced",
     subgroup: "Versions",
