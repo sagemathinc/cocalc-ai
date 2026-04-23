@@ -3,11 +3,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-UPSTREAM_DIR="${CODEX_UPSTREAM_DIR:-/home/wstein/upstream/codex}"
-CODEX_VERSION="${CODEX_VERSION:-0.118.0}"
+UPSTREAM_DIR="${CODEX_UPSTREAM_DIR:-/home/user/upstream/codex}"
+CODEX_VERSION="${CODEX_VERSION:-0.123.0}"
 CODEX_TAG="rust-v${CODEX_VERSION}"
-CODEX_BRANCH="cocalc-tcp-user-timeout-v${CODEX_VERSION}"
-PATCH_FILE="${REPO_ROOT}/src/scripts/patches/codex-rust-v0.118.0-tcp-user-timeout.patch"
+CODEX_BRANCH="cocalc-local-build-v${CODEX_VERSION}"
+PATCH_DIR="${REPO_ROOT}/src/scripts/patches"
+PATCH_FILES=(
+  "${PATCH_DIR}/codex-rust-v${CODEX_VERSION}-tcp-user-timeout.patch"
+  "${PATCH_DIR}/codex-rust-v${CODEX_VERSION}-force-local-compact.patch"
+)
 LOCAL_BIN_ROOT="${COCALC_CODEX_LOCAL_BIN_DIR:-${REPO_ROOT}/src/.cache/codex-binaries}"
 CARGO_MANIFEST="${UPSTREAM_DIR}/codex-rs/Cargo.toml"
 ARM_LINKER="${CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER:-aarch64-linux-gnu-gcc}"
@@ -22,10 +26,12 @@ if [[ ! -d "${UPSTREAM_DIR}/.git" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${PATCH_FILE}" ]]; then
-  echo "Missing patch file at ${PATCH_FILE}" >&2
-  exit 1
-fi
+for patch_file in "${PATCH_FILES[@]}"; do
+  if [[ ! -f "${patch_file}" ]]; then
+    echo "Missing patch file at ${patch_file}" >&2
+    exit 1
+  fi
+done
 
 require_arm64_cross_libs() {
   local missing=0
@@ -62,14 +68,16 @@ echo "Using output directory: ${LOCAL_BIN_ROOT}/${CODEX_VERSION}"
 git -C "${UPSTREAM_DIR}" fetch --tags
 git -C "${UPSTREAM_DIR}" checkout "${CODEX_TAG}"
 git -C "${UPSTREAM_DIR}" switch -C "${CODEX_BRANCH}"
+git -C "${UPSTREAM_DIR}" restore --source="${CODEX_TAG}" --staged --worktree .
 git -C "${UPSTREAM_DIR}" restore codex-rs/Cargo.lock
 
-if ! grep -q 'CODEX_TCP_USER_TIMEOUT_MS' "${UPSTREAM_DIR}/codex-rs/login/src/auth/default_client.rs"; then
-  git -C "${UPSTREAM_DIR}" apply "${PATCH_FILE}"
-fi
+for patch_file in "${PATCH_FILES[@]}"; do
+  git -C "${UPSTREAM_DIR}" apply "${patch_file}"
+done
 
 cargo fmt --manifest-path "${CARGO_MANIFEST}" --all >/dev/null
 git -C "${UPSTREAM_DIR}" restore codex-rs/Cargo.lock
+cargo metadata --format-version 1 --manifest-path "${CARGO_MANIFEST}" >/dev/null
 
 cargo build --release --locked -p codex-cli --manifest-path "${CARGO_MANIFEST}"
 case "${ARM64_BUILD_TOOL}" in
