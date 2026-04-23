@@ -300,9 +300,9 @@ export function useBlockSync({
   useEffect(() => {
     if (!ignoreRemoteWhileFocused) return;
     if (focusedIndex == null) {
-      flushPendingRemoteMerge(true);
+      flushPendingRemoteMerge();
     }
-  }, [focusedIndex, ignoreRemoteWhileFocused]);
+  }, [focusedIndex, ignoreRemoteWhileFocused, flushPendingRemoteMerge]);
 
   const saveBlocksNow = useCallback(() => {
     if (actions?.set_value == null) return;

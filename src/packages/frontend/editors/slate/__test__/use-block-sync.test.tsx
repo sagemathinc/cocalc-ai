@@ -72,6 +72,7 @@ class FakeSyncstring extends EventEmitter {
 type PendingRemoteHarnessRef = {
   blur: () => void;
   getValue: () => string;
+  markLocalEdit: () => void;
 };
 
 function PendingRemoteHarness({
@@ -85,7 +86,7 @@ function PendingRemoteHarness({
   const blocksRef = useRef(["local"]);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(0);
 
-  useBlockSync({
+  const sync = useBlockSync({
     actions,
     value: "local",
     initialValue: "local",
@@ -105,8 +106,9 @@ function PendingRemoteHarness({
     () => ({
       blur: () => setFocusedIndex(null),
       getValue: () => valueRef.current,
+      markLocalEdit: () => sync.markLocalEdit(),
     }),
-    [],
+    [sync],
   );
 
   return null;
@@ -143,4 +145,34 @@ test("does not apply pending remote content on blur while syncstring is offline"
     syncstring.emit("change");
   });
   expect(harnessRef.current?.getValue()).toBe("remote");
+});
+
+test("does not force pending remote content onto the editor immediately on blur", async () => {
+  jest.useFakeTimers();
+  let remote = "remote";
+  const syncstring = new FakeSyncstring(
+    () => remote,
+    () => true,
+  );
+  const harnessRef = React.createRef<PendingRemoteHarnessRef>();
+
+  render(
+    <PendingRemoteHarness
+      actions={{ _syncstring: syncstring }}
+      harnessRef={harnessRef}
+    />,
+  );
+
+  await act(async () => {
+    harnessRef.current?.markLocalEdit();
+    syncstring.emit("change");
+  });
+  expect(harnessRef.current?.getValue()).toBe("local");
+
+  await act(async () => {
+    harnessRef.current?.blur();
+  });
+  expect(harnessRef.current?.getValue()).toBe("local");
+
+  jest.useRealTimers();
 });
