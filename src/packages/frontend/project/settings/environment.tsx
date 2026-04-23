@@ -191,6 +191,14 @@ export const Environment: React.FC<Props> = ({
       <div style={{ padding: "10px" }}>
         <Space direction="vertical" style={{ width: "100%" }} size="middle">
           {help}
+          {dirty ? (
+            <Alert
+              banner
+              showIcon
+              type="warning"
+              message="You must restart this project for changes to take effect."
+            />
+          ) : undefined}
           {error ? <ErrorDisplay banner error={error} /> : undefined}
           {current.error ? (
             <ErrorDisplay banner error={current.error} />
