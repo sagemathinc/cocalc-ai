@@ -93,6 +93,10 @@ describe("CodexAppServerAgent", () => {
     process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES;
   const originalTimeoutRetryDelay =
     process.env.COCALC_CODEX_TIMEOUT_RETRY_DELAY_MS;
+  const originalStreamDisconnectRetryLimit =
+    process.env.COCALC_CODEX_STREAM_DISCONNECT_MAX_RETRIES;
+  const originalStreamDisconnectRetryDelay =
+    process.env.COCALC_CODEX_STREAM_DISCONNECT_RETRY_DELAY_MS;
 
   afterEach(async () => {
     setCodexProjectSpawner(null);
@@ -136,6 +140,18 @@ describe("CodexAppServerAgent", () => {
     } else {
       process.env.COCALC_CODEX_TIMEOUT_RETRY_DELAY_MS =
         originalTimeoutRetryDelay;
+    }
+    if (originalStreamDisconnectRetryLimit == null) {
+      delete process.env.COCALC_CODEX_STREAM_DISCONNECT_MAX_RETRIES;
+    } else {
+      process.env.COCALC_CODEX_STREAM_DISCONNECT_MAX_RETRIES =
+        originalStreamDisconnectRetryLimit;
+    }
+    if (originalStreamDisconnectRetryDelay == null) {
+      delete process.env.COCALC_CODEX_STREAM_DISCONNECT_RETRY_DELAY_MS;
+    } else {
+      process.env.COCALC_CODEX_STREAM_DISCONNECT_RETRY_DELAY_MS =
+        originalStreamDisconnectRetryDelay;
     }
   });
 
@@ -1264,6 +1280,205 @@ describe("CodexAppServerAgent", () => {
           threadId: "thr-timeout-1",
         },
       ]),
+    );
+  });
+
+  it("retries stream disconnect failures with a visible retry message", async () => {
+    process.env.COCALC_CODEX_STREAM_DISCONNECT_MAX_RETRIES = "1";
+    process.env.COCALC_CODEX_STREAM_DISCONNECT_RETRY_DELAY_MS = "1000";
+
+    let spawnCount = 0;
+    const streamDisconnect =
+      "stream disconnected before completion: An error occurred while processing your request. Please include the request ID fdc4007d-d11f-4707-bd1a-2a06d40c3479 in your message.";
+    const makeProc = (spawn: number) =>
+      new FakeCodexAppServerProc((fake, message) => {
+        switch (message.method) {
+          case "initialize":
+            fake.sendResponse(message.id, { ok: true });
+            break;
+          case "thread/start":
+            fake.sendResponse(message.id, {
+              thread: { id: "thr-stream-disconnect-1" },
+            });
+            break;
+          case "turn/start": {
+            const turnId = `turn-stream-disconnect-${spawn}`;
+            fake.sendResponse(message.id, { turn: { id: turnId } });
+            setImmediate(() => {
+              fake.sendNotification("turn/started", {
+                turn: { id: turnId, status: "inProgress" },
+              });
+              if (spawn === 1) {
+                fake.sendNotification("error", {
+                  turnId,
+                  error: { message: streamDisconnect },
+                });
+                fake.sendNotification("turn/completed", {
+                  turn: {
+                    id: turnId,
+                    status: "failed",
+                    error: { message: streamDisconnect },
+                  },
+                });
+              } else {
+                fake.sendNotification("item/agentMessage/delta", {
+                  threadId: "thr-stream-disconnect-1",
+                  turnId,
+                  itemId: "msg-stream-disconnect-1",
+                  delta: "Recovered",
+                });
+                fake.sendNotification("turn/completed", {
+                  turn: { id: turnId, status: "completed" },
+                });
+              }
+            });
+            break;
+          }
+          default:
+            if (typeof message.id === "number") {
+              fake.sendResponse(message.id, {});
+            }
+        }
+      });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: makeProc(++spawnCount) as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) streamPayloads.push(payload);
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    expect(spawnCount).toBe(2);
+    expect(streamPayloads).toEqual(
+      expect.arrayContaining([
+        {
+          type: "event",
+          event: {
+            type: "thinking",
+            text: "Codex stream disconnected before completion. Retrying in 1 second (1/1)...",
+          },
+        },
+        {
+          type: "summary",
+          finalResponse: "Recovered",
+          usage: undefined,
+          threadId: "thr-stream-disconnect-1",
+        },
+      ]),
+    );
+  });
+
+  it("keeps stderr tail out of user-facing stream disconnect errors", async () => {
+    process.env.COCALC_CODEX_STREAM_DISCONNECT_MAX_RETRIES = "0";
+
+    const streamDisconnect =
+      "stream disconnected before completion: include request ID fdc4007d-d11f-4707-bd1a-2a06d40c3479";
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-stream-disconnect-no-retry" },
+          });
+          break;
+        case "turn/start": {
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-stream-disconnect-no-retry" },
+          });
+          setImmediate(() => {
+            fake.stderr.write(
+              "apply_patch verification failed: Failed to find expected lines\n",
+            );
+            fake.sendNotification("turn/started", {
+              turn: {
+                id: "turn-stream-disconnect-no-retry",
+                status: "inProgress",
+              },
+            });
+            fake.sendNotification("error", {
+              turnId: "turn-stream-disconnect-no-retry",
+              error: { message: streamDisconnect },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: {
+                id: "turn-stream-disconnect-no-retry",
+                status: "failed",
+                error: { message: streamDisconnect },
+              },
+            });
+          });
+          break;
+        }
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) streamPayloads.push(payload);
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    const errorPayload = streamPayloads.find(
+      (payload) => payload.type === "error",
+    );
+    expect(errorPayload?.error).toContain(
+      "stream disconnected before completion",
+    );
+    expect(errorPayload?.error).not.toContain(
+      "apply_patch verification failed",
+    );
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      "codex app-server evaluate failed",
+      expect.objectContaining({
+        stderrTail: expect.arrayContaining([
+          "apply_patch verification failed: Failed to find expected lines",
+        ]),
+      }),
     );
   });
 

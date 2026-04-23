@@ -345,7 +345,8 @@ type RunningTurn = {
 type RetryableAppServerFailureKind =
   | "remote-compact-timeout"
   | "model-capacity"
-  | "timeout";
+  | "timeout"
+  | "stream-disconnect";
 
 type RetryableAppServerError = Error & {
   retryableAppServerError: true;
@@ -424,7 +425,7 @@ class AppServerClient {
       this.exited = true;
       this.exitDetail = signal ? `signal:${signal}` : `${code ?? "?"}`;
       const err = new Error(
-        `codex app-server exited unexpectedly: ${this.exitDetail}${this.stderrTail.length ? `\n${this.stderrTail.join("\n")}` : ""}`,
+        `codex app-server exited unexpectedly: ${this.exitDetail}`,
       );
       for (const [, pending] of this.pendingRequests) {
         if (pending.timer) clearTimeout(pending.timer);
@@ -665,6 +666,20 @@ function getTimeoutRetryDelayMs(): number {
   );
 }
 
+function getStreamDisconnectRetryLimit(): number {
+  return Math.max(
+    0,
+    Number(process.env.COCALC_CODEX_STREAM_DISCONNECT_MAX_RETRIES ?? 2),
+  );
+}
+
+function getStreamDisconnectRetryDelayMs(): number {
+  return Math.max(
+    1_000,
+    Number(process.env.COCALC_CODEX_STREAM_DISCONNECT_RETRY_DELAY_MS ?? 30_000),
+  );
+}
+
 function isRetryableRemoteCompactTimeoutText(text: string): boolean {
   const normalized = stripAnsi(`${text ?? ""}`).toLowerCase();
   if (!normalized.includes("error running remote compact task")) {
@@ -703,6 +718,11 @@ function isRetryableBareTimeoutText(text: string): boolean {
     .some((line) => line === "timeout");
 }
 
+function isRetryableStreamDisconnectText(text: string): boolean {
+  const normalized = stripAnsi(`${text ?? ""}`).toLowerCase();
+  return normalized.includes("stream disconnected before completion");
+}
+
 function hasObservableTurnSideEffects(opts: {
   startedTerminalMeta: Map<string, { command?: string; cwd?: string }>;
   terminalOutputs: Map<string, string>;
@@ -739,7 +759,7 @@ function hasRetryBlockingTurnSideEffects(
   if (!base) {
     return false;
   }
-  if (kind !== "timeout") {
+  if (kind !== "timeout" && kind !== "stream-disconnect") {
     return true;
   }
   return (
@@ -786,6 +806,9 @@ function getRetryableFailureKind(
   if (isRetryableBareTimeoutText(text)) {
     return "timeout";
   }
+  if (isRetryableStreamDisconnectText(text)) {
+    return "stream-disconnect";
+  }
   return undefined;
 }
 
@@ -807,6 +830,13 @@ function formatTimeoutRetryExhaustedError(error: string): string {
   const normalized = `${error ?? ""}`.trim();
   const guidance =
     "Codex kept returning a transient timeout after automatic retries. Check the project-host ACP logs for the failed turn payload and stderr tail if this repeats.";
+  return normalized ? `${normalized}\n\n${guidance}` : guidance;
+}
+
+function formatStreamDisconnectRetryExhaustedError(error: string): string {
+  const normalized = `${error ?? ""}`.trim();
+  const guidance =
+    "Codex disconnected before completing the response after automatic retries. This is usually a transient upstream streaming failure; retry the turn if needed.";
   return normalized ? `${normalized}\n\n${guidance}` : guidance;
 }
 
@@ -847,6 +877,16 @@ function getRetryPolicyForFailure(kind: RetryableAppServerFailureKind): {
         retryMessage: (attempt, maxRetries) =>
           `Codex returned a transient timeout. Retrying in ${formatRetryDelay(retryDelayMs * attempt)} (${attempt}/${maxRetries})... If this repeats, check the project-host ACP logs.`,
         exhaustedMessage: formatTimeoutRetryExhaustedError,
+      };
+    }
+    case "stream-disconnect": {
+      const retryDelayMs = getStreamDisconnectRetryDelayMs();
+      return {
+        maxRetries: getStreamDisconnectRetryLimit(),
+        retryDelayMs,
+        retryMessage: (attempt, maxRetries) =>
+          `Codex stream disconnected before completion. Retrying in ${formatRetryDelay(retryDelayMs * attempt)} (${attempt}/${maxRetries})...`,
+        exhaustedMessage: formatStreamDisconnectRetryExhaustedError,
       };
     }
     case "remote-compact-timeout":
@@ -2155,8 +2195,9 @@ export class CodexAppServerAgent implements AcpAgent {
         return "interrupted";
       }
       const stderrTail = client.getStderrTail();
-      const error = [
-        (err as Error)?.message ?? `${err}`,
+      const primaryError = (err as Error)?.message ?? `${err}`;
+      const diagnosticError = [
+        primaryError,
         ...stderrTail.filter((line) => !errors.includes(line)),
       ]
         .filter(Boolean)
@@ -2175,7 +2216,7 @@ export class CodexAppServerAgent implements AcpAgent {
         persistedTurnInfo,
         stderrTail,
       });
-      const retryKind = getRetryableFailureKind(error);
+      const retryKind = getRetryableFailureKind(diagnosticError);
       if (
         retryKind &&
         !hasRetryBlockingTurnSideEffects(retryKind, {
@@ -2190,7 +2231,7 @@ export class CodexAppServerAgent implements AcpAgent {
       ) {
         throw createRetryableAppServerError({
           kind: retryKind,
-          message: error,
+          message: primaryError,
           threadId: currentThreadId,
           turnId,
           stderrTail,
@@ -2215,7 +2256,7 @@ export class CodexAppServerAgent implements AcpAgent {
           },
         );
       }
-      throw new Error(error);
+      throw new Error(primaryError);
     } finally {
       this.running.delete(currentThreadId);
       if (spawned.proc.exitCode == null && !spawned.proc.killed) {
