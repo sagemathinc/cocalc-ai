@@ -1013,6 +1013,19 @@ Non-goals for initial account rehome:
 - moving billing/provider-side state outside the `accounts` row
 - rewriting historical notification target/outbox rows
 
+Deferred billing/purchases follow-up:
+
+- [ ] Codify and enforce seed-owned billing/purchases. Current multibay code
+  still treats the `purchases` table as bay-local state: billing/purchases APIs
+  query local Postgres directly, the frontend calls same-origin
+  `billing/*` / `purchases/*` endpoints, and periodic purchases maintenance
+  runs wherever a hub process is running. Account rehome intentionally does not
+  move `purchases` or other billing/provider-side state outside the `accounts`
+  row. Before relying on account rehome in production for billing-active
+  accounts, attached bays should delegate billing/purchases APIs to the seed
+  bay, purchases maintenance should be seed-only, and the seed bay must have
+  enough account billing identity for attached-bay-created accounts.
+
 ### 10. Project Rehome
 
 Project rehome is an invisible operator workflow for changing the bay that owns
