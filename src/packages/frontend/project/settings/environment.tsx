@@ -109,6 +109,7 @@ export const Environment: React.FC<Props> = ({
   const [rows, setRows] = useState<EnvRow[]>(envRows);
   const [error, setError] = useState<string>("");
   const [saving, setSaving] = useState<boolean>(false);
+  const [showRestartWarning, setShowRestartWarning] = useState<boolean>(false);
 
   const current = useMemo(() => rowsToEnv(rows), [rows]);
   const currentKey = useMemo(() => envFingerprint(current.env), [current.env]);
@@ -129,6 +130,7 @@ export const Environment: React.FC<Props> = ({
     setRows((rows) =>
       rows.map((row) => (row.id === id ? { ...row, ...patch } : row)),
     );
+    setShowRestartWarning(true);
     setError("");
   }
 
@@ -137,11 +139,13 @@ export const Environment: React.FC<Props> = ({
       ...rows,
       { id: `new:${nextRowIdRef.current++}`, key: "", value: "" },
     ]);
+    setShowRestartWarning(true);
     setError("");
   }
 
   function removeRow(id: string): void {
     setRows((rows) => rows.filter((row) => row.id !== id));
+    setShowRestartWarning(true);
     setError("");
   }
 
@@ -191,14 +195,6 @@ export const Environment: React.FC<Props> = ({
       <div style={{ padding: "10px" }}>
         <Space direction="vertical" style={{ width: "100%" }} size="middle">
           {help}
-          {dirty ? (
-            <Alert
-              banner
-              showIcon
-              type="warning"
-              message="You must restart this project for changes to take effect."
-            />
-          ) : undefined}
           {error ? <ErrorDisplay banner error={error} /> : undefined}
           {current.error ? (
             <ErrorDisplay banner error={current.error} />
@@ -277,6 +273,14 @@ export const Environment: React.FC<Props> = ({
               {saving ? "Saving..." : dirty ? "Save" : "Saved"}
             </Button>
           </div>
+          {showRestartWarning ? (
+            <Alert
+              banner
+              showIcon
+              type="warning"
+              message="You must restart this project for changes to take effect."
+            />
+          ) : undefined}
         </Space>
       </div>
     );
