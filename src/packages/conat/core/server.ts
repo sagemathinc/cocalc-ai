@@ -133,7 +133,12 @@ const AUTH_FAIL_BLOCK_MS = Math.max(
 );
 
 function isHubUser(user: any): boolean {
-  return user != null && typeof user === "object" && user.hub_id === "hub";
+  return (
+    user != null &&
+    typeof user === "object" &&
+    typeof user.hub_id === "string" &&
+    user.hub_id.length > 0
+  );
 }
 
 export interface InterestUpdate {
@@ -881,17 +886,23 @@ export class ConatServer extends EventEmitter {
   }: {
     targets: { [id: string]: Set<string> };
   }): { id: string; target: string } | undefined => {
-    const targets = new Set<string>();
+    let size = 0;
     for (const id in targets0) {
-      for (const target of targets0[id]) {
-        targets.add(JSON.stringify({ id, target }));
-      }
+      size += targets0[id].size;
     }
-    const x = this.loadBalance({ targets });
-    if (!x) {
+    if (size == 0) {
       return undefined;
     }
-    return JSON.parse(x);
+    let index = Math.floor(Math.random() * size);
+    for (const id in targets0) {
+      for (const target of targets0[id]) {
+        if (index == 0) {
+          return { id, target };
+        }
+        index--;
+      }
+    }
+    return undefined;
   };
 
   ///////////////////////////////////////
@@ -936,16 +947,23 @@ export class ConatServer extends EventEmitter {
           { code: 429 },
         );
       }
-      user = await this.getUser(socket);
+      try {
+        user = await this.getUser(socket);
+      } catch (err) {
+        // Only authentication failures count against the per-address
+        // abuse window. Resource-limit denials below are legitimate
+        // backpressure and must not poison auth state.
+        this.recordAuthFailure(address);
+        throw err;
+      }
+      this.clearAuthFailures(address);
       this.usage.add(user);
       added = true;
-      this.clearAuthFailures(address);
     } catch (err) {
       // getUser is supposed to throw an error if authentication fails
       // for any reason
       // Also, if the connection limit is hit they still connect, but as
       // the error user who can't do anything (hence not waste resources).
-      this.recordAuthFailure(address);
       user = { error: `${err}`, code: err.code };
     }
     this.stats[socket.id].user = user;
@@ -963,10 +981,9 @@ export class ConatServer extends EventEmitter {
       if (added) {
         this.usage.delete(user);
       }
-      const rooms = Array.from(socket.rooms) as string[];
-      for (const room of rooms) {
-        const subject = getSubjectFromRoom(room);
-        this.unsubscribe({ socket, subject });
+      const subjects = Array.from(this.subscriptions[id] ?? []);
+      for (const subject of subjects) {
+        await this.unsubscribe({ socket, subject });
       }
       delete this.subscriptions[id];
     });
@@ -1787,14 +1804,6 @@ export class ConatServer extends EventEmitter {
   };
 }
 
-function getSubjectFromRoom(room: string) {
-  if (room.startsWith("{")) {
-    return JSON.parse(room).subject;
-  } else {
-    return room;
-  }
-}
-
 function socketSubjectRoom({ socket, subject }) {
   return JSON.stringify({ id: socket.id, subject });
 }
@@ -1803,14 +1812,14 @@ export function randomChoice<T>(v: Set<T>): T {
   if (v.size == 0) {
     throw Error("v must have size at least 1");
   }
-  if (v.size == 1) {
-    for (const x of v) {
+  let index = Math.floor(Math.random() * v.size);
+  for (const x of v) {
+    if (index == 0) {
       return x;
     }
+    index--;
   }
-  const w = Array.from(v);
-  const i = Math.floor(Math.random() * w.length);
-  return w[i];
+  throw Error("bug: failed to select from nonempty set");
 }
 
 function normalizeIp(value?: string): string | undefined {
