@@ -21,6 +21,7 @@ Options:
   --env-dir <dir>           env dir inside the target rootfs
   --systemd-dir <dir>       systemd dir inside the target rootfs
   --overlay current-cocalc  install the current CoCalc overlay as bay-overlay.env
+  --overlay rocket-bundle   install the Rocket bay bundle overlay as bay-overlay.env
   --daemon-reload           run systemctl daemon-reload after install (only when --root=/)
   -h, --help                show this help
 EOF
@@ -64,7 +65,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$OVERLAY_MODE" != "none" && "$OVERLAY_MODE" != "current-cocalc" ]]; then
+if [[ "$OVERLAY_MODE" != "none" && "$OVERLAY_MODE" != "current-cocalc" && "$OVERLAY_MODE" != "rocket-bundle" ]]; then
   echo "unsupported overlay mode: $OVERLAY_MODE" >&2
   exit 2
 fi
@@ -118,6 +119,15 @@ if [[ "$OVERLAY_MODE" == "current-cocalc" ]]; then
   fi
 fi
 
+if [[ "$OVERLAY_MODE" == "rocket-bundle" ]]; then
+  install -m 0644 "${SCRIPT_DIR}/env/bay-rocket-bundle-overlay.env.example" \
+    "${TARGET_ENV_DIR}/bay-rocket-bundle-overlay.env.example"
+  if [[ ! -e "${TARGET_ENV_DIR}/bay-overlay.env" ]]; then
+    install -m 0644 "${SCRIPT_DIR}/env/bay-rocket-bundle-overlay.env.example" \
+      "${TARGET_ENV_DIR}/bay-overlay.env"
+  fi
+fi
+
 if [[ "$DAEMON_RELOAD" -eq 1 ]]; then
   if [[ "$ROOT_DIR" != "/" ]]; then
     echo "--daemon-reload only works with --root /" >&2
@@ -139,7 +149,7 @@ Next steps:
   3. Edit ${TARGET_ENV_DIR}/bay-secrets.env
 EOF
 
-if [[ "$OVERLAY_MODE" == "current-cocalc" ]]; then
+if [[ "$OVERLAY_MODE" != "none" ]]; then
   cat <<EOF
   4. Review ${TARGET_ENV_DIR}/bay-overlay.env
 EOF

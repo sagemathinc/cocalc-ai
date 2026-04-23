@@ -1,0 +1,22 @@
+{
+  "name": "@cocalc/rocket",
+  "version": "0.1.0",
+  "description": "CoCalc Rocket bay runtime packaging",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "build:bay-bundle": "bay/build-bundle.sh",
+    "build:bay": "pnpm run build:bay-bundle"
+  },
+  "files": [
+    "bay/**",
+    "bin/**",
+    "helm/**",
+    "README.md",
+    "package.json"
+  ],
+  "author": "SageMath, Inc.",
+  "license": "SEE LICENSE.md",
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.4"
+  }
+}
