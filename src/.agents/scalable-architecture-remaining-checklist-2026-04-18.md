@@ -626,6 +626,12 @@ answer must be based on an explicit model, not a single benchmark number:
   - records Conat/HTTP/WS trace events without decoded payloads by default
   - summarizes message and byte rates by target, protocol, direction, subject
     category, top subjects, and top addresses
+- [x] add same-host bay API worker scale helper:
+  - `src/scripts/dev/bay-worker-scale-benchmark.sh`
+  - starts extra `--conat-api --proxy-server` hub workers against the existing
+    seed bay router, runs `cocalc load three-bay --hot-path` through the normal
+    bay entrypoint, and stores JSONL results under
+    `src/.local/bay-worker-scale/results`
 - [ ] write the first real sizing guidance for:
   - bays
   - project-hosts
@@ -672,6 +678,18 @@ Initial local 3-bay evidence from 2026-04-23:
   sequential control-plane reads, that is roughly 265-275 measured component
   reads/sec, but this is only a local regression/sizing baseline. It is not yet
   evidence for production multi-VM bay capacity.
+- Same-host multi-process probe on the `t2d-standard-16` dogfood host showed
+  that adding `--conat-api` workers materially increases this hot path:
+  - 4 extra API workers peaked at about 137 scenarios/sec, or about 685
+    component reads/sec
+  - 8 extra API workers peaked at about 177 scenarios/sec, or about 883
+    component reads/sec
+  - 12 extra API workers did not improve this workload, peaking around
+    171 scenarios/sec
+  - the useful next measurement is not "add more workers"; it is collecting
+    per-process CPU, router CPU, Postgres active connections/query pressure,
+    and event-loop delay during the 8-worker run to identify the shared
+    bottleneck
 - A 10s live browser traffic summary against the active `host2` session showed
   the kind of evidence needed for a real "one active user" model:
   - hub/stable URL target: about 0.69 messages/sec and about 98 message
