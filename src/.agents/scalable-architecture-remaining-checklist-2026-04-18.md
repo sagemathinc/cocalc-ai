@@ -594,6 +594,9 @@ operations have enough validation to deserve direct buttons.
 
 Initial read-only page:
 
+- [x] add first admin Bay Operations panel with registry rows, heartbeat
+      freshness, ownership counts, recent rehome status, and copy/pasteable CLI
+      commands
 - [ ] add an admin bay list page showing bay id, role, public URL, tunnel/DNS
       state, software version, uptime/heartbeat, and whether the bay accepts new
       ownership
