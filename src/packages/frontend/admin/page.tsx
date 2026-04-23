@@ -16,6 +16,7 @@ import { TestLLMAdmin } from "./llm/admin-llm-test";
 import { SoftwareLicensesAdmin } from "./software-licenses";
 import { RootfsAdmin } from "./rootfs";
 import { NewsAdminPage } from "./news/page";
+import { BayOpsAdmin } from "./bay-ops";
 import {
   getAdminUrlPath,
   normalizeAdminRoute,
@@ -149,6 +150,15 @@ export function AdminPage({
         </div>
       ),
       children: <RootfsAdmin />,
+    },
+    {
+      key: "bay-ops",
+      label: (
+        <div style={headerStyle}>
+          <Icon name="server" style={{ marginRight: "8px" }} /> Bay Operations
+        </div>
+      ),
+      children: <BayOpsAdmin />,
     },
     {
       key: "software-licenses",

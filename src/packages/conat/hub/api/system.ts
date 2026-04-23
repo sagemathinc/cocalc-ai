@@ -33,6 +33,7 @@ export const system = {
   ping: noAuth,
   terminate: authFirst,
   listBays: authFirst,
+  getBayOpsOverview: authFirstRequireAccount,
   setBayProjectOwnershipAdmission: authFirstRequireAccount,
   getBayLoad: authFirst,
   getBayBackups: authFirst,
@@ -284,6 +285,45 @@ export interface BayInfo {
   is_default: boolean;
   accepts_project_ownership?: boolean;
   project_ownership_note?: string | null;
+}
+
+export interface BayOpsOwnershipCounts {
+  accounts: number;
+  projects: number;
+  project_hosts: number;
+}
+
+export interface BayOpsRehomeDirectionCounts {
+  running: number;
+  failed: number;
+  recent_success: number;
+}
+
+export interface BayOpsRehomeCounts {
+  outbound: BayOpsRehomeDirectionCounts;
+  inbound: BayOpsRehomeDirectionCounts;
+}
+
+export interface BayOpsRehomeStatus {
+  account: BayOpsRehomeCounts;
+  project: BayOpsRehomeCounts;
+  project_host: BayOpsRehomeCounts;
+}
+
+export interface BayOpsOverviewBay extends BayInfo {
+  public_origin: string | null;
+  public_target: string | null;
+  public_target_kind: string | null;
+  dns_hostname: string | null;
+  last_seen: string | null;
+  ownership: BayOpsOwnershipCounts;
+  rehome: BayOpsRehomeStatus;
+}
+
+export interface BayOpsOverview {
+  checked_at: string;
+  current_bay_id: string;
+  bays: BayOpsOverviewBay[];
 }
 
 export interface BayLoadBrowserControlStatus {
@@ -867,6 +907,10 @@ export interface System {
   terminate: (service: "database" | "api") => Promise<void>;
 
   listBays: (opts?: { account_id?: string }) => Promise<BayInfo[]>;
+
+  getBayOpsOverview: (opts?: {
+    account_id?: string;
+  }) => Promise<BayOpsOverview>;
 
   setBayProjectOwnershipAdmission: (opts: {
     account_id?: string;
