@@ -491,6 +491,34 @@ describe("getBayLoad", () => {
     }));
   });
 
+  it("requires admin auth for public bay load reads", async () => {
+    isAdminMock = jest.fn(async () => false);
+    const { getBayLoad } = await import("./system");
+
+    await expect(
+      getBayLoad({
+        account_id: "11111111-1111-4111-8111-111111111111",
+      }),
+    ).rejects.toThrow("must be an admin");
+  });
+
+  it("allows trusted inter-bay bay load reads without a local admin account", async () => {
+    isAdminMock = jest.fn(async () => false);
+    const { BAY_OPS_INTERNAL_AUTH, getBayLoad } = await import("./system");
+
+    await expect(
+      getBayLoad({
+        bay_id: "bay-0",
+        internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
+    ).resolves.toMatchObject({
+      bay_id: "bay-0",
+      hosts: {
+        total_hosts: 4,
+      },
+    });
+  });
+
   it("returns a current bay load snapshot", async () => {
     const { getBayLoad } = await import("./system");
 
@@ -606,6 +634,23 @@ describe("getBayLoad", () => {
     });
     expect(getBayBackupStatusMock).toHaveBeenCalledWith({
       bay_id: "bay-0",
+    });
+  });
+
+  it("allows trusted inter-bay bay backup reads without a local admin account", async () => {
+    isAdminMock = jest.fn(async () => false);
+    const { BAY_OPS_INTERNAL_AUTH, getBayBackups } = await import("./system");
+
+    await expect(
+      getBayBackups({
+        bay_id: "bay-0",
+        internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
+    ).resolves.toMatchObject({
+      bay_id: "bay-0",
+      bay_backup: {
+        latest_backup_set_id: "backup-1",
+      },
     });
   });
 

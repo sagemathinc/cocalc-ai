@@ -135,7 +135,11 @@ import {
   removeCollaborator,
   respondCollabInviteCanonical,
 } from "@cocalc/server/projects/collaborators";
-import { getBayBackups, getBayLoad } from "@cocalc/server/conat/api/system";
+import {
+  BAY_OPS_INTERNAL_AUTH,
+  getBayBackups,
+  getBayLoad,
+} from "@cocalc/server/conat/api/system";
 
 const logger = getLogger("server:inter-bay:service");
 
@@ -194,9 +198,18 @@ async function startBayOpsService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const bay_id = getConfiguredBayId();
   const impl: InterBayBayOpsApi = {
-    getLoad: async ({ account_id }) => await getBayLoad({ account_id, bay_id }),
+    getLoad: async ({ account_id }) =>
+      await getBayLoad({
+        account_id,
+        bay_id,
+        internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
     getBackups: async ({ account_id }) =>
-      await getBayBackups({ account_id, bay_id }),
+      await getBayBackups({
+        account_id,
+        bay_id,
+        internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
   };
   services.push(
     ...createInterBayBayOpsHandlers({
