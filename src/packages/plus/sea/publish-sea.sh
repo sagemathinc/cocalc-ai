@@ -40,6 +40,8 @@ fi
 LATEST_KEY="${COCALC_R2_LATEST_KEY:-software/cocalc-plus/latest-${OS}-${ARCH}.json}"
 PREFIX="${COCALC_R2_PREFIX:-software/cocalc-plus/$VERSION}"
 
+echo "Publishing ${FILE} to R2 bucket ${COCALC_R2_BUCKET:-<missing>} with prefix ${PREFIX}"
+
 node ../../cloud/scripts/publish-r2.js \
   --file "$FILE" \
   --bucket "${COCALC_R2_BUCKET:-}" \
