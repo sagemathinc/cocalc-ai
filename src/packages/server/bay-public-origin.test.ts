@@ -65,6 +65,26 @@ describe("bay-public-origin", () => {
     );
   });
 
+  it("uses registry DNS when the current attached bay only has local env URLs", async () => {
+    process.env.COCALC_BAY_ID = "bay-2";
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    process.env.COCALC_BAY_PUBLIC_URL = "http://localhost:13214";
+    getServerSettingsMock = jest.fn(async () => ({
+      dns: "localhost",
+    }));
+    listClusterBayRegistryMock = jest.fn(async () => [
+      {
+        bay_id: "bay-2",
+        public_origin: "http://localhost:13214",
+        dns_hostname: "bay-2-lite4b.cocalc.ai",
+      },
+    ]);
+    const { getBayPublicOrigin } = await import("./bay-public-origin");
+    await expect(getBayPublicOrigin("bay-2")).resolves.toBe(
+      "https://bay-2-lite4b.cocalc.ai",
+    );
+  });
+
   it("allows browser origins discovered through the bay registry when env bay ids are incomplete", async () => {
     process.env.COCALC_BAY_ID = "bay-2";
     process.env.COCALC_CLUSTER_ROLE = "attached";

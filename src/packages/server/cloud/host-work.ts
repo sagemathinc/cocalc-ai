@@ -442,6 +442,7 @@ async function handleProvision(row: any) {
     try {
       const { baseUrl } = await resolveLaunchpadBootstrapUrl({
         preferCurrentBay: true,
+        requirePublic: providerId !== "self-host" && providerId !== "local",
       });
       const token = await createProjectHostBootstrapToken(row.id);
       startupScript = await buildCloudInitStartupScript(
@@ -467,6 +468,9 @@ async function handleProvision(row: any) {
         provider: providerId,
         err,
       });
+      if (providerId !== "self-host" && providerId !== "local") {
+        throw err;
+      }
     }
   }
   const provisioned = await provisionIfNeeded(row, { startupScript });
@@ -675,6 +679,7 @@ async function handleStart(row: any) {
     try {
       const { baseUrl } = await resolveLaunchpadBootstrapUrl({
         preferCurrentBay: true,
+        requirePublic: providerId !== "self-host" && providerId !== "local",
       });
       const token = await createProjectHostBootstrapToken(row.id);
       const startupScript = await buildCloudInitStartupScript(
@@ -907,6 +912,7 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
   try {
     const { baseUrl } = await resolveLaunchpadBootstrapUrl({
       preferCurrentBay: true,
+      requirePublic: providerId !== "self-host" && providerId !== "local",
     });
     const token = await createProjectHostBootstrapToken(row.id);
     const startupScript = await buildCloudInitStartupScript(

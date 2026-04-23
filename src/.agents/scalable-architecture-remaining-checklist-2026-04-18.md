@@ -1038,10 +1038,10 @@ Implementation checkpoint, 2026-04-22 PT:
   its owner public key to the source bay. The source bay then attempts the
   cloud metadata repair before source flip, so missing destination cloud
   credentials do not strand the host mid-rehome.
-- Destination prepare refuses cloud-host rehome when the destination bay
-  resolves its bootstrap origin to loopback. That prevents an attached/local
-  bay without a public bootstrap route from flipping ownership and then leaving
-  SSH bootstrap stuck downloading from `localhost`.
+- Destination prepare refuses cloud-host rehome when the destination bay cannot
+  resolve a public bootstrap origin. That prevents an attached/local bay
+  without a public bootstrap route from flipping ownership and then leaving SSH
+  bootstrap stuck downloading from `localhost` or another private address.
 - Destination accept copies the `project_hosts` row to the destination bay with
   `bay_id` set to the destination; source flip updates the source row's
   `bay_id` only, leaving assigned projects untouched.
@@ -1120,6 +1120,21 @@ Live 3-bay validation evidence, 2026-04-22 PT:
   The final guarded retry failed at `stage=requested` with
   `op_id=cc9819e8-5344-434b-a90e-d65e0aa28444`, and `host where` confirmed
   `host2` stayed on `bay-0`.
+- The bootstrap URL blocker was addressed in code by making launchpad bootstrap
+  URL resolution classify public vs local/private origins, adding a
+  `requirePublic` mode for cloud-host bootstrap/reconcile paths, and teaching
+  attached bays to recover their public origin from the bay registry DNS entry
+  when their local env only advertises a loopback URL.
+- Live retry after the bootstrap-origin fix advanced past the previous
+  `https://localhost` blocker: after hub restart, `bay-2` registered
+  `public_origin=https://bay-2-lite4b.cocalc.ai`. Rehome operation
+  `d94b8908-b921-41fe-9fc6-ea1b21c456ce` moved `host2` to `bay-2`, SSH
+  bootstrap reconcile completed, and `host bootstrap-status` via `bay-2`
+  showed `bootstrap.status='done'`. The operation still failed at final
+  `getHostAgentStatus` validation with a project-host RPC timeout, which is the
+  next host-rehome blocker. Restore operation
+  `4d377c6b-f88c-4c50-bcb5-ce61f9071c11` returned `host2` to `bay-0`, and
+  `host where` plus `host bootstrap-status` confirmed the restored state.
 
 Known follow-up:
 

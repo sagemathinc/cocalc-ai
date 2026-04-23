@@ -75,19 +75,6 @@ function cloudHostRequiresProviderSshTrust(
   return !!cloud && cloud !== "self-host" && cloud !== "local";
 }
 
-function isLoopbackBootstrapOrigin(origin: string): boolean {
-  try {
-    const hostname = new URL(origin).hostname.toLowerCase();
-    return (
-      hostname === "localhost" ||
-      hostname === "::1" ||
-      hostname.startsWith("127.")
-    );
-  } catch {
-    return false;
-  }
-}
-
 async function assertDestinationBootstrapOriginForHost({
   host_id,
   host,
@@ -98,12 +85,16 @@ async function assertDestinationBootstrapOriginForHost({
   dest_bay_id: string;
 }): Promise<void> {
   if (!cloudHostRequiresProviderSshTrust(host)) return;
-  const { baseUrl } = await resolveLaunchpadBootstrapUrl({
-    preferCurrentBay: true,
-  });
-  if (isLoopbackBootstrapOrigin(baseUrl)) {
+  try {
+    await resolveLaunchpadBootstrapUrl({
+      preferCurrentBay: true,
+      requirePublic: true,
+    });
+  } catch (err) {
     throw new Error(
-      `host rehome destination bay ${dest_bay_id} has no public bootstrap origin for cloud host ${host_id}; resolved ${baseUrl}`,
+      `host rehome destination bay ${dest_bay_id} has no public bootstrap origin for cloud host ${host_id}: ${
+        err instanceof Error ? err.message : `${err}`
+      }`,
     );
   }
 }

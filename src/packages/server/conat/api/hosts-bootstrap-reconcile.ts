@@ -455,6 +455,7 @@ export async function reconcileCloudHostBootstrapOverSsh(opts: {
   }
   const { baseUrl: bootstrapBaseUrl } = await resolveLaunchpadBootstrapUrl({
     preferCurrentBay: true,
+    requirePublic: true,
   });
   const bootstrapToken = await createProjectHostBootstrapToken(opts.host_id);
   const sshIdentity = await getHostOwnerBaySshIdentity();
