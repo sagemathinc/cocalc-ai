@@ -250,6 +250,18 @@ function normalizeConatMessageMode(
   return mode;
 }
 
+function normalizeConatResponseMode(
+  raw: string | undefined,
+): "default" | "no-wait" | "sync" {
+  const mode = `${raw ?? "default"}`.trim();
+  if (mode !== "default" && mode !== "no-wait" && mode !== "sync") {
+    throw new Error(
+      "--response-mode must be one of 'default', 'no-wait', or 'sync'",
+    );
+  }
+  return mode;
+}
+
 async function runLoadScenario({
   scenario,
   iterations,
@@ -542,6 +554,11 @@ export function registerLoadCommand(
       "message pattern to measure: request or publish",
       "request",
     )
+    .option(
+      "--response-mode <mode>",
+      "request response behavior: default, no-wait, or sync",
+      "default",
+    )
     .action(
       async (
         opts: {
@@ -554,6 +571,7 @@ export function registerLoadCommand(
           concurrency?: string;
           payloadBytes?: string;
           mode?: string;
+          responseMode?: string;
         },
         command: Command,
       ) => {
@@ -587,6 +605,7 @@ export function registerLoadCommand(
             16,
           );
           const mode = normalizeConatMessageMode(opts.mode);
+          const responseMode = normalizeConatResponseMode(opts.responseMode);
           const payload = "x".repeat(payloadBytes);
           const subjectPrefix = conatLoadSubject();
           const services: Array<{ client: any; sub: any; subject: string }> =
@@ -602,16 +621,52 @@ export function registerLoadCommand(
               });
               await client.waitUntilReady();
               const subject = `${subjectPrefix}.${i}`;
-              const sub =
-                mode === "request"
-                  ? await client.service(subject, {
-                      echo: async (value: string) => ({
+              const sub = await client.subscribe(
+                subject,
+                mode === "request" ? { queue: "0" } : undefined,
+              );
+              if (mode === "request") {
+                void (async () => {
+                  for await (const message of sub) {
+                    const [name, args] = message.data ?? [];
+                    try {
+                      if (name !== "echo") {
+                        throw new Error(`${name} not defined`);
+                      }
+                      const value = args?.[0];
+                      const response = {
                         ok: true,
                         bytes: typeof value === "string" ? value.length : 0,
-                      }),
-                    })
-                  : await client.subscribe(subject);
-              if (mode === "publish") {
+                      };
+                      if (responseMode === "sync") {
+                        message.respondSync(response);
+                      } else {
+                        await message.respond(
+                          response,
+                          responseMode === "no-wait"
+                            ? { waitForInterest: false }
+                            : undefined,
+                        );
+                      }
+                    } catch (err) {
+                      const headers = {
+                        error: err instanceof Error ? err.message : `${err}`,
+                      };
+                      if (responseMode === "sync") {
+                        message.respondSync(null, { headers });
+                      } else {
+                        await message.respond(null, {
+                          noThrow: true,
+                          ...(responseMode === "no-wait"
+                            ? { waitForInterest: false }
+                            : {}),
+                          headers,
+                        });
+                      }
+                    }
+                  }
+                })();
+              } else {
                 void (async () => {
                   for await (const _message of sub) {
                     // Drain the subscription so the router performs real delivery.
@@ -654,6 +709,7 @@ export function registerLoadCommand(
                   mode,
                   subject: row.subject,
                   payload_bytes: payloadBytes,
+                  response_mode: mode === "request" ? responseMode : null,
                   response_bytes:
                     mode === "request" ? (result?.bytes ?? null) : null,
                   publish_count:

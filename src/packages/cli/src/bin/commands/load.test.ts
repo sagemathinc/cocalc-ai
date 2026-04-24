@@ -237,9 +237,10 @@ test("load conat-messages measures direct Conat request response calls", async (
     connectCalls.push(opts);
     return {
       waitUntilReady: async () => {},
-      service: async (subject: string) => ({
+      subscribe: async (subject: string) => ({
         subject,
         close: () => {},
+        async *[Symbol.asyncIterator]() {},
       }),
       call: (subject: string) => ({
         echo: async (payload: string) => {
@@ -269,6 +270,8 @@ test("load conat-messages measures direct Conat request response calls", async (
     "2",
     "--payload-bytes",
     "32",
+    "--response-mode",
+    "no-wait",
   ]);
 
   assert.equal(connectCalls.length, 4);
@@ -292,6 +295,7 @@ test("load conat-messages measures direct Conat request response calls", async (
   assert.equal(capture.data.successes, 4);
   assert.equal(capture.data.failures, 0);
   assert.equal(capture.data.last_result.payload_bytes, 32);
+  assert.equal(capture.data.last_result.response_mode, "no-wait");
   assert.equal(capture.data.last_result.response_bytes, 32);
 });
 
