@@ -226,6 +226,19 @@ export type BrowserCommandContext = {
         password?: string;
       }) => Promise<string>;
     };
+    hosts?: {
+      resolveHostConnection: (opts: { host_id: string }) => Promise<{
+        connect_url?: string | null;
+        local_proxy?: boolean | null;
+      }>;
+      issueProjectHostAuthToken: (opts: {
+        host_id: string;
+        project_id?: string;
+      }) => Promise<{
+        token: string;
+        expires_at?: number;
+      }>;
+    };
   };
 };
 

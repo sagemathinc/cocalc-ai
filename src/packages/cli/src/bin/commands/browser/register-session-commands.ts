@@ -4,10 +4,13 @@ Register `cocalc browser session ...` subcommands.
 
 import { Command } from "commander";
 import { URL } from "node:url";
+import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
+import { PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/project-host-browser-session";
 import type {
   BrowserCommandDeps,
   BrowserCommandContext,
   BrowserSessionRegisterUtils,
+  SpawnCookie,
   SpawnStateRecord,
 } from "./types";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
@@ -87,6 +90,84 @@ async function resolveSpawnRememberMeCookie({
     account_id: ctx.accountId,
     sign_in_url: url.toString(),
   };
+}
+
+function firstSetCookiePart(header: string): { name: string; value: string } {
+  const firstPart = `${header ?? ""}`.split(";", 1)[0]?.trim();
+  const eq = firstPart.indexOf("=");
+  if (eq <= 0) {
+    throw new Error(`invalid Set-Cookie header '${header}'`);
+  }
+  return {
+    name: firstPart.slice(0, eq).trim(),
+    value: firstPart.slice(eq + 1).trim(),
+  };
+}
+
+async function resolveProjectHostBrowserSessionCookies({
+  ctx,
+  deps,
+  project_id,
+}: {
+  ctx: BrowserCommandContext;
+  deps: BrowserCommandDeps;
+  project_id?: string;
+}): Promise<SpawnCookie[]> {
+  if (!project_id || !ctx.hub.hosts) {
+    return [];
+  }
+  const project = await deps.resolveProject(ctx, project_id);
+  const host_id = `${project.host_id ?? ""}`.trim();
+  if (!host_id) {
+    return [];
+  }
+  const connection = await ctx.hub.hosts.resolveHostConnection({ host_id });
+  const address = `${connection.connect_url ?? ""}`.trim();
+  if (!address) {
+    return [];
+  }
+  const issued = await ctx.hub.hosts.issueProjectHostAuthToken({
+    host_id,
+    project_id,
+  });
+  const token = `${issued.token ?? ""}`.trim();
+  if (!token) {
+    throw new Error("project-host auth token issuance returned no token");
+  }
+  const response = await fetch(
+    new URL(PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH, address).toString(),
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `project-host browser session bootstrap failed: status=${response.status} body=${await response.text().catch(() => "")}`,
+    );
+  }
+  const secure = new URL(address).protocol === "https:";
+  const cookies = getSetCookieHeaders(response)
+    .map((header) => firstSetCookiePart(header))
+    .filter(({ name, value }) => {
+      return name === PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME && !!value;
+    })
+    .map(({ name, value }) => ({
+      name,
+      value,
+      url: address,
+      httpOnly: true,
+      secure,
+      sameSite: secure ? ("None" as const) : ("Lax" as const),
+    }));
+  if (!cookies.length) {
+    throw new Error(
+      "project-host browser session bootstrap returned no cookie",
+    );
+  }
+  return cookies;
 }
 
 type RegisterSessionDeps = {
@@ -389,13 +470,30 @@ export function registerBrowserSessionCommands({
               ctx,
               apiUrl: parsedApiUrl,
             });
-            const cookies = buildSpawnCookies({
-              apiUrl: parsedApiUrl,
-              hubPassword,
-              apiKey,
-              rememberMe: signInCookie?.remember_me,
-              accountId: signInCookie?.account_id,
-            });
+            const cookieApiUrls = Array.from(
+              new Set(
+                [parsedApiUrl, new URL(markedTargetUrl).origin]
+                  .map((url) => `${url ?? ""}`.trim())
+                  .filter(Boolean),
+              ),
+            );
+            const cookies = cookieApiUrls
+              .flatMap((apiUrl) =>
+                buildSpawnCookies({
+                  apiUrl,
+                  hubPassword,
+                  apiKey,
+                  rememberMe: signInCookie?.remember_me,
+                  accountId: signInCookie?.account_id,
+                }),
+              )
+              .concat(
+                await resolveProjectHostBrowserSessionCookies({
+                  ctx,
+                  deps,
+                  project_id,
+                }),
+              );
             const sessionName =
               `${opts.sessionName ?? ""}`.trim() ||
               `CoCalc Agent Session (${spawnId})`;
@@ -436,7 +534,9 @@ export function registerBrowserSessionCommands({
               control_plane_storage_key:
                 buildControlPlaneOriginStorageKey(parsedApiUrl),
               remember_me_storage_keys: signInCookie?.remember_me
-                ? buildRememberMeStorageKeys(parsedApiUrl)
+                ? cookieApiUrls.flatMap((apiUrl) =>
+                    buildRememberMeStorageKeys(apiUrl),
+                  )
                 : undefined,
             });
             const child = spawnProcess(

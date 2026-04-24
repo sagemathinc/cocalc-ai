@@ -125,11 +125,11 @@ const AUTH_FAIL_WINDOW_MS = Math.max(
 );
 const AUTH_FAIL_LIMIT = Math.max(
   1,
-  envNumber("COCALC_CONAT_AUTH_FAIL_LIMIT", 20),
+  envNumber("COCALC_CONAT_AUTH_FAIL_LIMIT", 100),
 );
 const AUTH_FAIL_BLOCK_MS = Math.max(
   5_000,
-  envNumber("COCALC_CONAT_AUTH_FAIL_BLOCK_MS", 5 * 60_000),
+  envNumber("COCALC_CONAT_AUTH_FAIL_BLOCK_MS", 60_000),
 );
 
 function isHubUser(user: any): boolean {

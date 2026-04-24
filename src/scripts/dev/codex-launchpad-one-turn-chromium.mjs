@@ -34,6 +34,7 @@ function usageAndExit(message, code = 1) {
       "  --reasoning <level>        Codex reasoning for fallback frontend send (default: low)",
       "  --session-mode <mode>      Codex session mode for fallback send (default: full-access)",
       "  --browser <id>             Use an existing browser session instead of spawning Chromium",
+      "  --spawn                    Spawn Chromium even when COCALC_BROWSER_ID is set",
       "  --out-dir <path>           Artifact directory (default: ./.cocalc-codex-one-turn/<ts>)",
       "  --timeout <ms>             Overall turn timeout (default: 600000)",
       "  --chromium <path>          Chromium path for spawned sessions",
@@ -89,6 +90,7 @@ function parseArgs(argv) {
     sessionMode:
       process.env.COCALC_CODEX_ONE_TURN_SESSION_MODE ?? "full-access",
     browserId: process.env.COCALC_BROWSER_ID ?? "",
+    forceSpawn: envFlag("COCALC_CODEX_ONE_TURN_SPAWN"),
     outDir: process.env.COCALC_CODEX_ONE_TURN_OUT_DIR ?? "",
     timeoutMs: Number(
       process.env.COCALC_CODEX_ONE_TURN_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS,
@@ -145,6 +147,8 @@ function parseArgs(argv) {
     } else if (arg === "--browser") {
       options.browserId = takeValue(argv, i, arg);
       i += 1;
+    } else if (arg === "--spawn") {
+      options.forceSpawn = true;
     } else if (arg === "--out-dir") {
       options.outDir = takeValue(argv, i, arg);
       i += 1;
@@ -178,6 +182,9 @@ function parseArgs(argv) {
   options.reasoning = options.reasoning.trim() || "low";
   options.sessionMode = options.sessionMode.trim() || "full-access";
   options.browserId = options.browserId.trim();
+  if (options.forceSpawn && options.browserId) {
+    options.browserId = "";
+  }
   options.outDir =
     options.outDir.trim() ||
     path.join(
@@ -351,6 +358,23 @@ async function browserAction({ options, browserId, argv, timeoutMs }) {
         options.projectId,
         "--timeout",
         `${Math.ceil(timeoutMs / 1000)}s`,
+      ],
+    },
+    { timeoutMs },
+  );
+}
+
+async function browserOpenChat({ options, browserId, timeoutMs }) {
+  return await runCocalcJson(
+    {
+      apiUrl: options.baseUrl,
+      argv: [
+        "browser",
+        "open",
+        "--browser",
+        browserId,
+        options.projectId,
+        options.chatPath,
       ],
     },
     { timeoutMs },
@@ -881,15 +905,33 @@ async function main() {
       code: chatReadyScript(),
       timeoutMs: 45_000,
     });
-    await browserAction({
-      options,
-      browserId,
-      argv: [
-        "wait-for-selector",
-        '[data-testid="chat-composer"], [contenteditable="true"], textarea',
-      ],
-      timeoutMs: 90_000,
-    });
+    const composerSelector =
+      '[data-testid="chat-composer"], [contenteditable="true"], textarea';
+    try {
+      await browserAction({
+        options,
+        browserId,
+        argv: ["wait-for-selector", composerSelector],
+        timeoutMs: 45_000,
+      });
+    } catch (err) {
+      await browserOpenChat({ options, browserId, timeoutMs: 60_000 });
+      await browserExec({
+        options,
+        browserId,
+        code: chatReadyScript(),
+        timeoutMs: 45_000,
+      });
+      await browserAction({
+        options,
+        browserId,
+        argv: ["wait-for-selector", composerSelector],
+        timeoutMs: 90_000,
+      }).catch((retryErr) => {
+        retryErr.cause = err;
+        throw retryErr;
+      });
+    }
     const inputResult = await browserExec({
       options,
       browserId,

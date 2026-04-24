@@ -179,6 +179,7 @@ import { createTasksApi } from "../api/tasks";
 import { createLiveTextBinder } from "../api/text";
 import { createLiveTimeTravelBinder } from "../api/timetravel";
 import { createWorkspacesApi } from "../api/workspaces";
+import { openCurrentProjectConnection } from "../api/current-project";
 import {
   registerBrowserCommand,
   type BrowserCommandDeps,
@@ -1770,6 +1771,25 @@ async function resolveProjectConatClient(
 ): Promise<{ project: ProjectRow; client: ConatClient }> {
   const explicitIdentifier = `${projectIdentifier ?? ""}`.trim();
   const envProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  if (
+    isCliAgentModeEnabled() &&
+    isValidUUID(envProjectId) &&
+    (!explicitIdentifier || explicitIdentifier === envProjectId)
+  ) {
+    const current = await openCurrentProjectConnection({
+      apiBaseUrl: ctx.apiBaseUrl,
+      projectId: envProjectId,
+      timeoutMs: Math.min(ctx.timeoutMs, MAX_TRANSPORT_TIMEOUT_MS),
+    });
+    return {
+      project: {
+        project_id: current.project.project_id,
+        title: current.project.title,
+        host_id: current.project.host_id,
+      },
+      client: current.client,
+    };
+  }
   if (
     isValidUUID(envProjectId) &&
     (!explicitIdentifier || explicitIdentifier === envProjectId) &&
