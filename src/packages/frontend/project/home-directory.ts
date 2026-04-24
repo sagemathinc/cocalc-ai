@@ -7,7 +7,7 @@ import {
   DEFAULT_PROJECT_RUNTIME_USER,
 } from "@cocalc/util/project-runtime";
 
-const FALLBACK_HOME = "/";
+const FALLBACK_HOME = DEFAULT_PROJECT_RUNTIME_HOME;
 const HOME_CACHE = new Map<string, string>();
 const USER_CACHE = new Map<string, string>();
 
