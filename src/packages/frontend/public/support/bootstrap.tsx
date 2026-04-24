@@ -14,6 +14,7 @@ interface CustomizePayload {
     help_email?: string;
     is_authenticated?: boolean;
     on_cocalc_com?: boolean;
+    policy_pages?: string;
     show_policies?: boolean;
     site_name?: string;
     support?: string;

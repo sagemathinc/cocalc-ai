@@ -44,6 +44,7 @@ export default async function getCustomize(
       organizationName: settings.organization_name,
       organizationEmail: settings.organization_email,
       organizationURL: settings.organization_url,
+      policy_pages: settings.policy_pages,
       termsOfServiceURL: settings.terms_of_service_url,
 
       helpEmail: settings.help_email,

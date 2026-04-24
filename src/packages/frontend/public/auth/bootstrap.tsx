@@ -5,6 +5,7 @@
 
 import { createRoot } from "react-dom/client";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { getPolicyPagesMode } from "@cocalc/frontend/public/ui/policy-pages";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { SITE_NAME } from "@cocalc/util/theme";
 import PublicAuthApp, { getPublicAuthRouteFromPath } from "./app";
@@ -12,6 +13,7 @@ import PublicAuthApp, { getPublicAuthRouteFromPath } from "./app";
 interface CustomizePayload {
   configuration?: {
     is_authenticated?: boolean;
+    policy_pages?: string;
     show_policies?: boolean;
     site_name?: string;
   };
@@ -101,7 +103,7 @@ export async function init(): Promise<void> {
         initialRoute={getPublicAuthRouteFromPath(pathname, search)}
         isAuthenticated={!!payload?.configuration?.is_authenticated}
         redirectToPath={redirectToPath}
-        showPolicies={!!payload?.configuration?.show_policies}
+        showPolicies={getPolicyPagesMode(payload?.configuration) !== "none"}
         siteName={payload?.configuration?.site_name ?? SITE_NAME}
       />,
     );
