@@ -212,6 +212,14 @@ async function resolveCrossMachineAbsolutePathFallback(opts: {
   if (!home) return undefined;
   const candidates = new Set<string>();
 
+  const hostProjectRootMatch = raw.match(
+    /^\/mnt\/cocalc\/project-[^/]+(?:-scratch)?\/?(.*)$/,
+  );
+  if (hostProjectRootMatch) {
+    const relativeTail = hostProjectRootMatch[1]?.replace(/^\/+/, "");
+    candidates.add(relativeTail ? join(home, relativeTail) : home);
+  }
+
   const buildIdx = raw.indexOf("/build/");
   if (buildIdx >= 0) {
     const buildTail = raw.slice(buildIdx + 1);

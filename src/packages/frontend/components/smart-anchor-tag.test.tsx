@@ -194,6 +194,45 @@ describe("SmartAnchorTag", () => {
     });
   });
 
+  it("falls back from host project-root paths into the active sandbox home", async () => {
+    openFile
+      .mockRejectedValueOnce(
+        new Error(
+          "ENOENT: no such file or directory, stat '/mnt/cocalc/project-ade1c2c1-8ecd-4047-b3a7-3edc68c675ae/b.ipynb'",
+        ),
+      )
+      .mockResolvedValueOnce(undefined);
+    fsExists.mockImplementation(async (...args: any[]) => {
+      const candidate = `${args?.[0] ?? ""}`;
+      return candidate === "/home/user/b.ipynb";
+    });
+    render(
+      <SmartAnchorTag
+        project_id="00000000-1000-4000-8000-000000000000"
+        path="/home/user/a.chat"
+        href="/mnt/cocalc/project-ade1c2c1-8ecd-4047-b3a7-3edc68c675ae/b.ipynb"
+      >
+        b.ipynb
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "b.ipynb" }));
+    await waitFor(() => {
+      expect(openFile).toHaveBeenNthCalledWith(1, {
+        path: "/mnt/cocalc/project-ade1c2c1-8ecd-4047-b3a7-3edc68c675ae/b.ipynb",
+        line: undefined,
+        foreground: true,
+        explicit: true,
+      });
+      expect(openFile).toHaveBeenNthCalledWith(2, {
+        path: "/home/user/b.ipynb",
+        line: undefined,
+        foreground: true,
+        explicit: true,
+      });
+    });
+  });
+
   it("opens absolute file links with encoded :line suffix as file+line", async () => {
     render(
       <SmartAnchorTag
