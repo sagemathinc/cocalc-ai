@@ -89,6 +89,8 @@ Codex and the CoCalc CLI should choose the right path automatically.
   alias.
 - The active Codex runtime guidance now recommends `browser files` first for
   open-tab/file questions.
+- The one-turn Chromium harness has an `--smoke open-tabs` mode that verifies a
+  real Codex turn uses the typed open-tab command and reports returned paths.
 - `cocalc exec` exposes `api.text.open(...)` for live collaborative text
   documents, and text write/append/replace operations now save to disk by
   default.
@@ -248,6 +250,12 @@ The harness now also supports `--smoke live-text`, which asks a real Codex turn
 to use `api.text.open(...)` to edit a live text document and then verifies the
 marker via `project file cat`.
 
+The harness also supports `--smoke open-tabs`, which asks a real Codex turn
+"what browser tabs/files do I have open?", requires the final answer to report
+`OPEN_TABS_SMOKE_OK` and `COMMAND_USED=browser files` or
+`COMMAND_USED=browser tabs`, and verifies that every path from a direct
+`browser files --browser ... --project-id ...` check appears in the answer.
+
 This is the highest-value test harness for the integration because it exercises
 the same path as a user:
 
@@ -271,7 +279,7 @@ Tasks:
   - captures the final chat message,
   - exits without starting a second turn.
 - Support prompts that verify common integration paths:
-  - "what browser tabs do I have open?"
+  - "what browser tabs do I have open?" (Done: `--smoke open-tabs`.)
   - "what number is visible in this open editor?"
   - "append a marker line through the live text editor API and verify it saved
     to disk"

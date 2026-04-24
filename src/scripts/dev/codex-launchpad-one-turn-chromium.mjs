@@ -27,7 +27,7 @@ function usageAndExit(message, code = 1) {
       "  --target-url <url>         Exact chat URL; overrides --chat-path URL construction",
       "  --prompt <text>            Prompt to send as exactly one browser chat turn",
       "  --prompt-file <path>       Read prompt from a file instead of --prompt",
-      "  --smoke <name>             Built-in smoke prompt/check: live-text",
+      "  --smoke <name>             Built-in smoke prompt/check: live-text, open-tabs",
       "  --smoke-path <path>        Project file path for smoke checks",
       "  --smoke-marker <text>      Marker text for smoke checks",
       "  --model <id>               Codex model for fallback frontend send (default: gpt-5.5)",
@@ -195,7 +195,11 @@ function parseArgs(argv) {
 
   if (!options.baseUrl) usageAndExit("--base-url is required");
   if (!options.projectId) usageAndExit("--project is required");
-  if (options.smoke && options.smoke !== "live-text") {
+  if (
+    options.smoke &&
+    options.smoke !== "live-text" &&
+    options.smoke !== "open-tabs"
+  ) {
     usageAndExit(`unsupported --smoke value: ${options.smoke}`);
   }
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
@@ -208,6 +212,9 @@ function parseArgs(argv) {
 async function loadPrompt(options) {
   if (options.smoke === "live-text" && !options.prompt && !options.promptFile) {
     return liveTextSmokePrompt(options);
+  }
+  if (options.smoke === "open-tabs" && !options.prompt && !options.promptFile) {
+    return openTabsSmokePrompt(options);
   }
   if (options.promptFile) {
     return (await readFile(options.promptFile, "utf8")).trim();
@@ -225,6 +232,19 @@ function liveTextSmokePrompt(options) {
     "Use expectedHash or expectedLatestVersionId from a preceding read.",
     "Confirm the edit saved to disk by reading the file back with a project file command.",
     "In your final answer, include LIVE_TEXT_SMOKE_OK and the marker.",
+  ].join("\n");
+}
+
+function openTabsSmokePrompt(options) {
+  return [
+    "Run a CoCalc open-tabs smoke test.",
+    "",
+    "Use the exact CoCalc CLI command from your runtime instructions.",
+    'First command shape: <exact CoCalc CLI command> browser files --project-id "$COCALC_PROJECT_ID" --browser "$COCALC_BROWSER_ID"',
+    "Use `browser files` or `browser tabs` for this. Do not use `browser exec` or `browser exec-api` unless the typed tab command fails.",
+    "Report the open browser files/tabs with each path exactly as returned by the command.",
+    "In your final answer, include OPEN_TABS_SMOKE_OK.",
+    "In your final answer, include COMMAND_USED=browser files or COMMAND_USED=browser tabs.",
   ].join("\n");
 }
 
@@ -812,7 +832,66 @@ function extractProjectFileCatText(value) {
   return "";
 }
 
-async function verifySmoke({ options }) {
+async function verifyOpenTabsSmoke({ options, browserId, finalState }) {
+  const files = await runCocalcJson(
+    {
+      apiUrl: options.baseUrl,
+      argv: [
+        "browser",
+        "files",
+        "--browser",
+        browserId,
+        "--project-id",
+        options.projectId,
+      ],
+    },
+    { timeoutMs: 120_000 },
+  );
+  const rows = Array.isArray(files.data) ? files.data : [];
+  const paths = rows
+    .map((row) => `${row?.path ?? ""}`.trim())
+    .filter((path) => path.length > 0);
+  const finalAnswer = `${finalState?.finalAnswer ?? ""}`;
+  const missingPaths = paths.filter((path) => !finalAnswer.includes(path));
+  const commandMatch = /COMMAND_USED=browser (files|tabs)/.test(finalAnswer);
+  const ok =
+    finalAnswer.includes("OPEN_TABS_SMOKE_OK") &&
+    commandMatch &&
+    missingPaths.length === 0;
+  const result = {
+    ok,
+    name: options.smoke,
+    browser_id: browserId,
+    files,
+    expected_paths: paths,
+    missing_paths: missingPaths,
+    command_match: commandMatch,
+    final_answer: finalAnswer,
+  };
+  await writeFile(
+    path.join(options.outDir, "smoke-verification.json"),
+    JSON.stringify(result, null, 2),
+  );
+  if (!ok) {
+    throw new Error(
+      `open-tabs smoke failed: ${JSON.stringify(
+        {
+          marker: finalAnswer.includes("OPEN_TABS_SMOKE_OK"),
+          command_match: commandMatch,
+          missing_paths: missingPaths,
+        },
+        null,
+        2,
+      )}`,
+    );
+  }
+  return result;
+}
+
+async function verifySmoke({ options, browserId, finalState }) {
+  if (options.smoke === "open-tabs") {
+    return await verifyOpenTabsSmoke({ options, browserId, finalState });
+  }
   if (options.smoke !== "live-text") return undefined;
   const cat = await runCocalcJson(
     {
@@ -972,7 +1051,7 @@ async function main() {
       prompt,
       submittedAtMs,
     });
-    const smoke = await verifySmoke({ options });
+    const smoke = await verifySmoke({ options, browserId, finalState });
     await captureScreenshot({ options, browserId, label: "final" });
     summary = {
       ok: true,
