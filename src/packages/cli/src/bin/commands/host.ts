@@ -918,6 +918,7 @@ export function registerHostCommand(
             host_id: row.id,
             name: row.name,
             status: row.status ?? "",
+            bay_id: row.bay_id ?? null,
             region: row.region ?? "",
             pricing_model: row.pricing_model ?? "on_demand",
             interruption_restore_policy:
@@ -926,7 +927,9 @@ export function registerHostCommand(
             gpu: !!row.gpu,
             scope: row.scope ?? "",
             last_seen: row.last_seen ?? null,
+            provider_instance_id: row.provider_instance_id ?? null,
             public_ip: row.public_ip ?? null,
+            ssh_server: row.ssh_server ?? null,
             runtime_host_override_count:
               row.runtime_exception_summary?.host_override_count ?? 0,
             runtime_host_override_targets:
@@ -1004,6 +1007,7 @@ export function registerHostCommand(
           host_id: h.id,
           name: h.name,
           status: h.status ?? "",
+          bay_id: h.bay_id ?? null,
           region: h.region ?? "",
           pricing_model: h.pricing_model ?? "on_demand",
           interruption_restore_policy: h.interruption_restore_policy ?? null,
@@ -1011,7 +1015,11 @@ export function registerHostCommand(
           gpu: !!h.gpu,
           scope: h.scope ?? "",
           last_seen: h.last_seen ?? null,
+          provider_instance_id: h.provider_instance_id ?? null,
           public_ip: h.public_ip ?? null,
+          public_url: h.public_url ?? null,
+          internal_url: h.internal_url ?? null,
+          ssh_server: h.ssh_server ?? null,
           machine: h.machine ?? null,
           version: h.version ?? null,
           project_bundle_version: h.project_bundle_version ?? null,

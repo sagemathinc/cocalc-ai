@@ -455,12 +455,14 @@ export interface Host {
   id: string;
   name: string;
   owner: string; // account_id
+  bay_id?: string | null;
   region: string;
   size: string; // ui preset label/key
   host_cpu_count?: number;
   host_ram_gb?: number;
   gpu: boolean;
   status: HostStatus;
+  updated?: string;
   reprovision_required?: boolean;
   version?: string;
   project_host_build_id?: string;
@@ -471,7 +473,11 @@ export interface Host {
   host_session_started_at?: string;
   metrics?: HostMetrics;
   machine?: HostMachine;
+  provider_instance_id?: string;
   public_ip?: string;
+  public_url?: string | null;
+  internal_url?: string | null;
+  ssh_server?: string | null;
   last_error?: string;
   last_error_at?: string;
   projects?: number;

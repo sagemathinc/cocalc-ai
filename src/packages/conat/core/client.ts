@@ -1381,6 +1381,7 @@ export class Client extends EventEmitter {
   };
 
   private handleFastRpcRequest = async ({ pattern, payload }, respond) => {
+    const handlerStart = Date.now();
     if (respond == null) {
       return;
     }
@@ -1389,15 +1390,21 @@ export class Client extends EventEmitter {
       respond({
         error: `fast rpc service '${pattern}' is not registered`,
         code: 503,
+        serviceHandlerMs: Date.now() - handlerStart,
       });
       return;
     }
     try {
-      respond(await handler(payload));
+      const response = await handler(payload);
+      respond({
+        ...response,
+        serviceHandlerMs: Date.now() - handlerStart,
+      });
     } catch (err) {
       respond({
         error: err instanceof Error ? err.message : `${err}`,
         code: (err as any)?.code,
+        serviceHandlerMs: Date.now() - handlerStart,
       });
     }
   };
