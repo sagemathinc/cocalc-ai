@@ -72,4 +72,60 @@ describe("mergeTerminalEnv0", () => {
       reconnection: false,
     });
   });
+
+  it("supports terminal introspection and safe input requests", async () => {
+    const request = jest.fn(async (payload) => {
+      if (payload.cmd === "list") {
+        return { data: [{ id: "/home/user/a.term", state: "running" }] };
+      }
+      if (payload.cmd === "history") {
+        return { data: "history" };
+      }
+      if (payload.cmd === "state") {
+        return { data: "running" };
+      }
+      if (payload.cmd === "cwd") {
+        return { data: "/home/user" };
+      }
+      if (payload.cmd === "write") {
+        return { data: { written: true } };
+      }
+      throw new Error(`unexpected request ${payload.cmd}`);
+    });
+    const client = {
+      socket: {
+        connect: jest.fn(() => ({
+          on: jest.fn(),
+          request,
+          close: jest.fn(),
+        })),
+      },
+    } as any;
+
+    const terminal = terminalClient({
+      client,
+      project_id: "project-1",
+    });
+
+    await expect(terminal.list()).resolves.toEqual([
+      { id: "/home/user/a.term", state: "running" },
+    ]);
+    await expect(terminal.history("/home/user/a.term")).resolves.toBe(
+      "history",
+    );
+    await expect(terminal.state("/home/user/a.term")).resolves.toBe("running");
+    await expect(terminal.cwd("/home/user/a.term")).resolves.toBe("/home/user");
+    await expect(
+      terminal.write({
+        id: "/home/user/a.term",
+        input: "pwd\n",
+      }),
+    ).resolves.toEqual({ written: true });
+    expect(request).toHaveBeenLastCalledWith({
+      cmd: "write",
+      id: "/home/user/a.term",
+      input: "pwd\n",
+      kind: "auto",
+    });
+  });
 });

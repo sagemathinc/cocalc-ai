@@ -16,6 +16,7 @@ import { registerProjectAppCommands } from "./project/app";
 import { registerProjectChatCommands } from "./project/chat";
 import { registerProjectJupyterCommands } from "./project/jupyter";
 import { registerProjectStorageCommands } from "./project/storage";
+import { registerProjectTerminalCommands } from "./project/terminal";
 
 export type ProjectCommandDeps = {
   withContext: any;
@@ -135,6 +136,7 @@ export function registerProjectCommand(
   registerProjectStorageCommands(project, deps);
   registerProjectLifecycleCommands(project, deps);
   registerProjectAppCommands(project, deps);
+  registerProjectTerminalCommands(project, deps);
 
   return project;
 }
