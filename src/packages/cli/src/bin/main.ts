@@ -1265,6 +1265,15 @@ async function contextForGlobals(
     resolveAccountIdFromRemote(remote) ??
     process.env.COCALC_ACCOUNT_ID;
 
+  const projectScopedProjectId = `${remote.user?.project_id ?? ""}`.trim();
+  if (!accountId && isValidUUID(projectScopedProjectId)) {
+    // Project-scoped auth is enough for commands that operate entirely inside
+    // the current project, e.g. `cocalc project terminal list` from a project
+    // terminal. Account-only commands will still fail later when the hub rejects
+    // the project-scoped identity.
+    accountId = FALLBACK_ACCOUNT_UUID;
+  }
+
   if (!accountId && hasHubPassword(effectiveGlobals)) {
     accountId = await resolveDefaultAdminAccountId({ remote, timeoutMs });
   }
