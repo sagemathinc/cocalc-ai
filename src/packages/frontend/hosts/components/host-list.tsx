@@ -145,6 +145,14 @@ function getSelfHostDetail(host: Host): string | undefined {
   return kindLabel ?? modeLabel ?? undefined;
 }
 
+function getExpectedProviderInstanceName(host: Host): string | undefined {
+  if (host.provider_instance_id) return host.provider_instance_id;
+  if (host.machine?.cloud === "gcp" && host.id) {
+    return `lite4b-${host.id}`;
+  }
+  return undefined;
+}
+
 function compareText(a?: string, b?: string): number {
   return (a ?? "").localeCompare(b ?? "", undefined, { sensitivity: "base" });
 }
@@ -408,11 +416,22 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       const selfHostDetail = getSelfHostDetail(host);
       const size = getHostSizeDisplay(host);
       const haystack = [
+        host.id,
         host.name,
+        host.bay_id,
         getProviderLabel(host),
+        host.provider_instance_id,
+        getExpectedProviderInstanceName(host),
         host.pricing_model,
         selfHostDetail,
         host.region,
+        host.machine?.zone,
+        host.machine?.cloud,
+        host.public_ip,
+        host.public_url,
+        host.internal_url,
+        host.ssh_server,
+        host.host_session_id,
         host.size,
         size.primary,
         size.secondary,
@@ -1290,8 +1309,8 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             size="small"
             value={searchText}
             onChange={(event) => setSearchText(event.target.value)}
-            placeholder="Filter hosts..."
-            style={{ width: 220 }}
+            placeholder="Filter hosts, ids, IPs..."
+            style={{ width: 260 }}
           />
           <Space size="small" align="center" wrap>
             <Typography.Text style={{ whiteSpace: "nowrap" }}>

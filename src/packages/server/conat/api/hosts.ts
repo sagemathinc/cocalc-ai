@@ -1978,9 +1978,26 @@ export async function listHosts(opts: ListHostsOptions): Promise<Host[]> {
   );
   const deduped = new Map<string, Host>();
   for (const host of [...local, ...remoteHosts.flat()]) {
-    deduped.set(host.id, host);
+    deduped.set(host.id, preferredHostRow(deduped.get(host.id), host));
   }
   return Array.from(deduped.values());
+}
+
+function timestampMs(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function preferredHostRow(existing: Host | undefined, candidate: Host): Host {
+  if (existing == null) return candidate;
+  if (candidate.deleted && !existing.deleted) return candidate;
+  if (existing.deleted && !candidate.deleted) return existing;
+  const existingUpdated = timestampMs(existing.updated);
+  const candidateUpdated = timestampMs(candidate.updated);
+  if (candidateUpdated == null) return existing;
+  if (existingUpdated == null) return candidate;
+  return candidateUpdated > existingUpdated ? candidate : existing;
 }
 
 export async function resolveHostConnection({

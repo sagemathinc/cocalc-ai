@@ -48,11 +48,26 @@ sudo ./src/scripts/bay-systemd/bay-bootstrap-release.sh \
   --start
 ```
 
+For a packaged Rocket bay runtime bundle, build the artifact locally:
+
+```sh
+pnpm -C src/packages --filter @cocalc/rocket run build:bay-bundle
+```
+
+Then copy the generated tarball to the VM and stage it directly:
+
+```sh
+sudo ./bay-bootstrap-release.sh \
+  --bundle /tmp/cocalc-bay-runtime-linux-x64.tar.xz \
+  --worker-count 8 \
+  --start
+```
+
 The release bootstrap currently:
 
 - stages the built tree under `/opt/cocalc/bay/releases/<release-id>`
 - updates `/opt/cocalc/bay/current`
-- installs the scaffold and the current-CoCalc overlay
+- installs the scaffold and either the current-CoCalc or Rocket bundle overlay
 - provisions the bay database if missing
 - writes `/etc/cocalc/bay.env`, `bay-workers.env`, and `bay-secrets.env`
 - enables `cocalc-bay.target` plus the requested hub worker units
@@ -132,6 +147,11 @@ sudo ./src/scripts/bay-systemd/import-bay-state.sh \
   --input /tmp/alpha-state \
   --start
 ```
+
+By default, import writes a one-shot migration-skip marker because
+`postgres.dump` is a full database dump whose schema has already been restored.
+Pass `--run-migrations` only when intentionally importing data into a database
+that still needs the current release migration step.
 
 This imports:
 

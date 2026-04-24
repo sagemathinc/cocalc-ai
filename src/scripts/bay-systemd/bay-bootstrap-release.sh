@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SOURCE_ROOT=""
+BUNDLE_PATH=""
 BAY_ID="bay-0"
 BAY_USER="cocalc-bay"
 BAY_GROUP="cocalc-bay"
@@ -12,7 +13,7 @@ WORKER_COUNT=2
 ENABLE_WORKERS=1
 START_BAY=0
 FORCE_ENV=0
-OVERLAY_MODE="current-cocalc"
+OVERLAY_MODE=""
 ROUTER_PORT=9102
 PERSIST_PORT=9202
 HUB_BASE_PORT=9300
@@ -21,13 +22,14 @@ DAEMON_RELOAD=1
 
 usage() {
   cat <<'EOF'
-Usage: bay-bootstrap-release.sh --source <built-src-root> [options]
+Usage: bay-bootstrap-release.sh (--source <built-src-root> | --bundle <tarball>) [options]
 
 Stage a built CoCalc src tree as a bay release, install the scaffold, and
 write bay env/secrets files.
 
 Options:
   --source <dir>           built src root to stage (required)
+  --bundle <tarball>       packaged Rocket bay runtime tarball to stage
   --bay-id <id>            bay id (default: bay-0)
   --bay-user <user>        service user / db user (default: cocalc-bay)
   --bay-group <group>      service group (default: cocalc-bay)
@@ -42,7 +44,8 @@ Options:
   --force-env              overwrite generated env files
   --no-enable-workers      do not enable worker units
   --start                  start cocalc-bay.target after install
-  --overlay <mode>         overlay mode passed to install-scaffold (default: current-cocalc)
+  --overlay <mode>         overlay mode passed to install-scaffold
+                           (default: current-cocalc for --source, rocket-bundle for --bundle)
   --no-daemon-reload       skip daemon-reload during scaffold install
   -h, --help               show help
 EOF
@@ -168,8 +171,61 @@ ensure_bay_database() {
 
 derive_release_id() {
   local git_short
-  git_short="$(git -C "$SOURCE_ROOT" rev-parse --short HEAD 2>/dev/null || echo local)"
+  if [[ -n "$SOURCE_ROOT" ]]; then
+    git_short="$(git -C "$SOURCE_ROOT" rev-parse --short HEAD 2>/dev/null || echo local)"
+  else
+    git_short="bundle"
+  fi
   printf '%s-%s\n' "$(date +%Y%m%d%H%M%S)" "$git_short"
+}
+
+stage_source_release() {
+  if [[ ! -d "$SOURCE_ROOT/packages" ]]; then
+    echo "source root must look like a built src tree: missing packages/" >&2
+    exit 1
+  fi
+
+  run mkdir -p "$TARGET_RELEASE"
+  run rsync -a --delete \
+    --exclude '/.git' \
+    --exclude '/.local' \
+    --exclude '/data' \
+    --exclude '/.build-home' \
+    "${SOURCE_ROOT}/" "${TARGET_RELEASE}/"
+}
+
+stage_bundle_release() {
+  if [[ ! -f "$BUNDLE_PATH" ]]; then
+    echo "bundle does not exist: $BUNDLE_PATH" >&2
+    exit 1
+  fi
+
+  run rm -rf "$TARGET_RELEASE"
+  run mkdir -p "$TARGET_RELEASE"
+  run tar -xf "$BUNDLE_PATH" -C "$TARGET_RELEASE" --strip-components=1
+}
+
+validate_release() {
+  if [[ ! -x "${TARGET_RELEASE}/scripts/bay-systemd/install-scaffold.sh" ]]; then
+    echo "release is missing scripts/bay-systemd/install-scaffold.sh" >&2
+    exit 1
+  fi
+  if [[ "$OVERLAY_MODE" != "none" && ! -f "${TARGET_RELEASE}/scripts/bay-systemd/env/bay-${OVERLAY_MODE}-overlay.env.example" ]]; then
+    echo "release is missing overlay for mode ${OVERLAY_MODE}" >&2
+    exit 1
+  fi
+  if [[ "$OVERLAY_MODE" == "rocket-bundle" ]]; then
+    local required_file
+    for required_file in \
+      "${TARGET_RELEASE}/runtime/project-host/index.js" \
+      "${TARGET_RELEASE}/runtime/hub/index.js" \
+      "${TARGET_RELEASE}/runtime/migrate-schema/index.js"; do
+      if [[ ! -f "$required_file" ]]; then
+        echo "Rocket bay bundle is missing runtime file: $required_file" >&2
+        exit 1
+      fi
+    done
+  fi
 }
 
 main() {
@@ -177,6 +233,10 @@ main() {
     case "$1" in
       --source)
         SOURCE_ROOT="$2"
+        shift 2
+        ;;
+      --bundle)
+        BUNDLE_PATH="$2"
         shift 2
         ;;
       --bay-id)
@@ -257,15 +317,22 @@ main() {
 
   require_root
 
-  if [[ -z "$SOURCE_ROOT" ]]; then
-    echo "--source is required" >&2
+  if [[ -z "$SOURCE_ROOT" && -z "$BUNDLE_PATH" ]]; then
+    echo "exactly one of --source or --bundle is required" >&2
     usage >&2
     exit 2
   fi
-
-  if [[ ! -d "$SOURCE_ROOT/packages" ]]; then
-    echo "source root must look like a built src tree: missing packages/" >&2
-    exit 1
+  if [[ -n "$SOURCE_ROOT" && -n "$BUNDLE_PATH" ]]; then
+    echo "only one of --source or --bundle may be specified" >&2
+    usage >&2
+    exit 2
+  fi
+  if [[ -z "$OVERLAY_MODE" ]]; then
+    if [[ -n "$BUNDLE_PATH" ]]; then
+      OVERLAY_MODE="rocket-bundle"
+    else
+      OVERLAY_MODE="current-cocalc"
+    fi
   fi
 
   if [[ -z "$RELEASE_ID" ]]; then
@@ -280,7 +347,7 @@ main() {
   BAY_ENV_EXAMPLE="${ENV_DIR}/bay.env.example"
   BAY_WORKERS_ENV_EXAMPLE="${ENV_DIR}/bay-workers.env.example"
   BAY_SECRETS_ENV_EXAMPLE="${ENV_DIR}/bay-secrets.env.example"
-  BAY_OVERLAY_ENV_EXAMPLE="${ENV_DIR}/bay-current-cocalc-overlay.env.example"
+  BAY_OVERLAY_ENV_EXAMPLE="${ENV_DIR}/bay-${OVERLAY_MODE}-overlay.env.example"
   POSTGRES_BIN="$(find_postgres)"
   PG_CTL_BIN="$(find_pg_ctl)"
   PSQL_BIN="$(find_psql)"
@@ -294,13 +361,12 @@ main() {
     exit 1
   fi
 
-  run mkdir -p "$TARGET_RELEASE"
-  run rsync -a --delete \
-    --exclude '/.git' \
-    --exclude '/.local' \
-    --exclude '/data' \
-    --exclude '/.build-home' \
-    "${SOURCE_ROOT}/" "${TARGET_RELEASE}/"
+  if [[ -n "$BUNDLE_PATH" ]]; then
+    stage_bundle_release
+  else
+    stage_source_release
+  fi
+  validate_release
   run ln -sfn "$TARGET_RELEASE" "$CURRENT_LINK"
 
   INSTALL_CMD=("${TARGET_RELEASE}/scripts/bay-systemd/install-scaffold.sh" "--overlay" "$OVERLAY_MODE")
@@ -396,9 +462,9 @@ COCALC_CONAT_SHARED_SECRET=$(random_secret)
 EOF
   chmod 0600 "${ENV_DIR}/bay-secrets.env"
 
-  if [[ "$OVERLAY_MODE" == "current-cocalc" ]]; then
+  if [[ "$OVERLAY_MODE" != "none" ]]; then
     render_if_missing_or_forced "${ENV_DIR}/bay-overlay.env" "$BAY_OVERLAY_ENV_EXAMPLE" \
-      < "${TARGET_RELEASE}/scripts/bay-systemd/env/bay-current-cocalc-overlay.env.example"
+      < "${TARGET_RELEASE}/scripts/bay-systemd/env/bay-${OVERLAY_MODE}-overlay.env.example"
   fi
 
   run systemctl enable cocalc-bay.target
@@ -415,7 +481,8 @@ EOF
   cat <<EOF
 Release bootstrap complete.
 
-Source root:      ${SOURCE_ROOT}
+Source root:      ${SOURCE_ROOT:-}
+Bundle:           ${BUNDLE_PATH:-}
 Release id:       ${RELEASE_ID}
 Target release:   ${TARGET_RELEASE}
 Current link:     ${CURRENT_LINK}

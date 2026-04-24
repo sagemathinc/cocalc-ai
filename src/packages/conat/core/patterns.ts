@@ -177,8 +177,9 @@ function matchUsingIndex(
   index: Index,
   segments: string[],
   atMostOne = false,
+  position = 0,
 ): string[] {
-  if (segments.length == 0) {
+  if (position >= segments.length) {
     const p = index[""];
     if (p === undefined) {
       return [];
@@ -189,14 +190,14 @@ function matchUsingIndex(
     }
   }
   const matches: string[] = [];
-  const subject = segments[0];
+  const subject = segments[position];
   for (const pattern of ["*", ">", subject]) {
     if (index[pattern] !== undefined) {
       const p = index[pattern];
       if (typeof p == "string") {
         // end of this pattern -- matches if segments also
         // stops *or* this pattern is >
-        if (segments.length == 1) {
+        if (position == segments.length - 1) {
           matches.push(p);
           if (atMostOne) {
             return matches;
@@ -208,7 +209,7 @@ function matchUsingIndex(
           }
         }
       } else {
-        for (const s of matchUsingIndex(p, segments.slice(1), atMostOne)) {
+        for (const s of matchUsingIndex(p, segments, atMostOne, position + 1)) {
           matches.push(s);
           if (atMostOne) {
             return matches;

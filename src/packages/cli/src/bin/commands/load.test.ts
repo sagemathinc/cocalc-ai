@@ -191,6 +191,9 @@ function makeDeps(capture: Capture): LoadCommandDeps {
       };
       capture.data = await fn(ctx);
     },
+    runLocalCommand: async (_command, _label, fn) => {
+      capture.data = await fn({});
+    },
     queryProjects: async ({ limit }) => {
       capture.projectQueryCalls += 1;
       capture.lastLimit = limit;
@@ -212,6 +215,178 @@ function makeDeps(capture: Capture): LoadCommandDeps {
     }),
   };
 }
+
+test("load conat-messages measures direct Conat request response calls", async () => {
+  const capture: Capture = {
+    accountBayCalls: 0,
+    listBayCalls: 0,
+    projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
+    adminCreateCalls: [],
+    userSearchCalls: [],
+    createCollabCalls: [],
+    removeCollabCalls: [],
+  };
+  const connectCalls: any[] = [];
+  const echoCalls: string[] = [];
+  const program = new Command();
+  const deps = makeDeps(capture);
+  deps.connectConat = ((opts: any) => {
+    connectCalls.push(opts);
+    return {
+      waitUntilReady: async () => {},
+      subscribe: async (subject: string) => ({
+        subject,
+        close: () => {},
+        async *[Symbol.asyncIterator]() {},
+      }),
+      call: (subject: string) => ({
+        echo: async (payload: string) => {
+          echoCalls.push(subject);
+          return { ok: true, bytes: payload.length };
+        },
+      }),
+      close: () => {},
+    };
+  }) as any;
+  registerLoadCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "load",
+    "conat-messages",
+    "--addresses",
+    "http://router-1:9102,http://router-2:9102",
+    "--system-password",
+    "secret",
+    "--iterations",
+    "4",
+    "--warmup",
+    "1",
+    "--concurrency",
+    "2",
+    "--payload-bytes",
+    "32",
+    "--response-mode",
+    "no-wait",
+  ]);
+
+  assert.equal(connectCalls.length, 4);
+  assert.deepEqual(
+    connectCalls.map((opts) => opts.address),
+    [
+      "http://router-1:9102",
+      "http://router-2:9102",
+      "http://router-1:9102",
+      "http://router-2:9102",
+    ],
+  );
+  assert.ok(
+    connectCalls.every((opts) => opts.systemAccountPassword === "secret"),
+  );
+  assert.equal(echoCalls.length, 5);
+  assert.equal(capture.data.scenario, "conat-messages");
+  assert.equal(capture.data.iterations, 4);
+  assert.equal(capture.data.warmup, 1);
+  assert.equal(capture.data.concurrency, 2);
+  assert.equal(capture.data.successes, 4);
+  assert.equal(capture.data.failures, 0);
+  assert.equal(capture.data.last_result.payload_bytes, 32);
+  assert.equal(capture.data.last_result.request_transport, "pubsub");
+  assert.equal(capture.data.last_result.response_mode, "no-wait");
+  assert.equal(capture.data.last_result.response_bytes, 32);
+});
+
+test("load conat-messages measures direct Conat RPC calls", async () => {
+  const capture: Capture = {
+    accountBayCalls: 0,
+    listBayCalls: 0,
+    projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
+    adminCreateCalls: [],
+    userSearchCalls: [],
+    createCollabCalls: [],
+    removeCollabCalls: [],
+  };
+  const rpcServices: string[] = [];
+  const rpcCalls: string[] = [];
+  const subscribeCalls: string[] = [];
+  const program = new Command();
+  const deps = makeDeps(capture);
+  deps.connectConat = ((opts: any) => {
+    return {
+      waitUntilReady: async () => {},
+      subscribe: async (subject: string) => {
+        subscribeCalls.push(subject);
+        return {
+          subject,
+          close: () => {},
+          async *[Symbol.asyncIterator]() {},
+        };
+      },
+      rpcService: async (subject: string) => {
+        rpcServices.push(`${opts.address}:${subject}`);
+        return {
+          subject,
+          close: () => {},
+        };
+      },
+      rpcCall: (subject: string) => ({
+        echo: async (payload: string) => {
+          rpcCalls.push(`${opts.address}:${subject}`);
+          return { ok: true, bytes: payload.length };
+        },
+      }),
+      close: () => {},
+    };
+  }) as any;
+  registerLoadCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "load",
+    "conat-messages",
+    "--addresses",
+    "http://router-1:9102,http://router-2:9102",
+    "--system-password",
+    "secret",
+    "--iterations",
+    "4",
+    "--warmup",
+    "1",
+    "--concurrency",
+    "2",
+    "--payload-bytes",
+    "32",
+    "--request-transport",
+    "rpc",
+  ]);
+
+  assert.equal(rpcServices.length, 2);
+  assert.match(
+    rpcServices[0],
+    /^http:\/\/router-1:9102:load\.conat_messages\./,
+  );
+  assert.match(
+    rpcServices[1],
+    /^http:\/\/router-2:9102:load\.conat_messages\./,
+  );
+  assert.equal(rpcCalls.length, 5);
+  assert.equal(rpcCalls[0], rpcServices[0]);
+  assert.equal(rpcCalls[1], rpcServices[1]);
+  assert.deepEqual(subscribeCalls, []);
+  assert.equal(capture.data.successes, 4);
+  assert.equal(capture.data.failures, 0);
+  assert.equal(capture.data.last_result.payload_bytes, 32);
+  assert.equal(capture.data.last_result.request_transport, "rpc");
+  assert.equal(capture.data.last_result.response_bytes, 32);
+});
 
 test("load bootstrap summarizes repeated control-plane calls", async () => {
   const capture: Capture = {

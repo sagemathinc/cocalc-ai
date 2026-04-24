@@ -1,10 +1,38 @@
+import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { Command } from "commander";
+
+import { connect } from "@cocalc/conat/core/client";
+import { sysApiMany } from "@cocalc/conat/core/sys";
+import type { ConnectionStats } from "@cocalc/conat/core/types";
+import { inboxPrefix } from "@cocalc/conat/names";
 
 import { durationToMs } from "../../core/utils";
 
 type LoadScenarioResult = Record<string, unknown> | null | undefined;
 type SeedScenarioResult = Record<string, unknown>;
+type ConatStatsRow = {
+  server_id: string;
+  connection_id: string;
+  stats: ConnectionStats;
+};
+type ConatStatsDelta = {
+  server_id: string;
+  connection_id: string;
+  user: string;
+  user_kind: string;
+  user_id: string | null;
+  browser_id: string | null;
+  address: string | null;
+  subs_before: number;
+  subs_after: number;
+  recv_messages: number;
+  send_messages: number;
+  total_messages: number;
+  recv_bytes: number;
+  send_bytes: number;
+  total_bytes: number;
+};
 type LoadComponentTiming = {
   name: string;
   duration_ms: number;
@@ -39,12 +67,15 @@ type LoadSummary = {
   sample_errors: string[];
   last_result: LoadScenarioResult;
   component_latency_ms?: Record<string, LoadComponentSummary>;
+  result_timing_ms?: Record<string, LoadComponentSummary>;
 };
 
 export type LoadCommandDeps = {
   withContext: any;
+  runLocalCommand?: any;
   queryProjects: any;
   resolveProjectFromArgOrContext: any;
+  connectConat?: typeof connect;
 };
 
 function parsePositiveInteger(
@@ -71,6 +102,10 @@ function parseOptionalDurationMs(raw: string | undefined): number | undefined {
 
 function roundMs(value: number): number {
   return Number(value.toFixed(3));
+}
+
+function roundRate(value: number): number {
+  return Number(value.toFixed(6));
 }
 
 function percentile(sorted: number[], fraction: number): number | null {
@@ -142,6 +177,41 @@ function summarizeComponentTimings(
   );
 }
 
+function recordResultTimings(
+  timings: LoadComponentTiming[],
+  result: LoadScenarioResult,
+) {
+  if (result == null || typeof result !== "object") {
+    return;
+  }
+  for (const [name, value] of Object.entries(result)) {
+    if (
+      name.endsWith("Ms") &&
+      typeof value === "number" &&
+      Number.isFinite(value)
+    ) {
+      timings.push({ name, duration_ms: value });
+    }
+  }
+}
+
+function resultTimingFields(result: unknown): Record<string, number> {
+  if (result == null || typeof result !== "object") {
+    return {};
+  }
+  const fields: Record<string, number> = {};
+  for (const [name, value] of Object.entries(result)) {
+    if (
+      name.endsWith("Ms") &&
+      typeof value === "number" &&
+      Number.isFinite(value)
+    ) {
+      fields[name] = value;
+    }
+  }
+  return fields;
+}
+
 function normalizeNonEmpty(raw: string | undefined, flag: string): string {
   const value = `${raw ?? ""}`.trim();
   if (!value) {
@@ -197,6 +267,266 @@ function splitCommaList(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function normalizeAddresses(raw: string | undefined): string[] {
+  const addresses = splitCommaList(raw);
+  if (!addresses.length) {
+    throw new Error("--addresses must include at least one URL");
+  }
+  for (const address of addresses) {
+    try {
+      new URL(address);
+    } catch {
+      throw new Error(`invalid Conat address: ${address}`);
+    }
+  }
+  return addresses;
+}
+
+function readOptionalSecret({
+  value,
+  file,
+  valueFlag,
+  fileFlag,
+}: {
+  value?: string;
+  file?: string;
+  valueFlag: string;
+  fileFlag: string;
+}): string | undefined {
+  if (value && file) {
+    throw new Error(`${valueFlag} and ${fileFlag} are mutually exclusive`);
+  }
+  const secret =
+    value ?? (file == null ? undefined : readFileSync(file, "utf8").trim());
+  return secret?.trim() || undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function conatStatsKey(row: ConatStatsRow): string {
+  return `${row.server_id}:${row.connection_id}`;
+}
+
+function conatUserIdentity(user: ConnectionStats["user"]): {
+  label: string;
+  kind: string;
+  id: string | null;
+} {
+  if (user?.error) {
+    return { label: `error:${user.error}`, kind: "error", id: user.error };
+  }
+  if (user?.account_id) {
+    return {
+      label: `account:${user.account_id}`,
+      kind: "account",
+      id: user.account_id,
+    };
+  }
+  if (user?.project_id) {
+    return {
+      label: `project:${user.project_id}`,
+      kind: "project",
+      id: user.project_id,
+    };
+  }
+  if (user?.hub_id) {
+    return { label: `hub:${user.hub_id}`, kind: "hub", id: user.hub_id };
+  }
+  if (user?.host_id) {
+    return { label: `host:${user.host_id}`, kind: "host", id: user.host_id };
+  }
+  return { label: "unknown", kind: "unknown", id: null };
+}
+
+function aggregateConatStatsDeltas(deltas: ConatStatsDelta[]) {
+  const total = {
+    connections: deltas.length,
+    recv_messages: 0,
+    send_messages: 0,
+    total_messages: 0,
+    recv_bytes: 0,
+    send_bytes: 0,
+    total_bytes: 0,
+  };
+  for (const delta of deltas) {
+    total.recv_messages += delta.recv_messages;
+    total.send_messages += delta.send_messages;
+    total.total_messages += delta.total_messages;
+    total.recv_bytes += delta.recv_bytes;
+    total.send_bytes += delta.send_bytes;
+    total.total_bytes += delta.total_bytes;
+  }
+  return total;
+}
+
+function addConatDeltaToGroup(
+  map: Map<
+    string,
+    ReturnType<typeof aggregateConatStatsDeltas> & { key: string }
+  >,
+  key: string,
+  delta: ConatStatsDelta,
+) {
+  const row =
+    map.get(key) ??
+    ({
+      key,
+      connections: 0,
+      recv_messages: 0,
+      send_messages: 0,
+      total_messages: 0,
+      recv_bytes: 0,
+      send_bytes: 0,
+      total_bytes: 0,
+    } as ReturnType<typeof aggregateConatStatsDeltas> & { key: string });
+  row.connections += 1;
+  row.recv_messages += delta.recv_messages;
+  row.send_messages += delta.send_messages;
+  row.total_messages += delta.total_messages;
+  row.recv_bytes += delta.recv_bytes;
+  row.send_bytes += delta.send_bytes;
+  row.total_bytes += delta.total_bytes;
+  map.set(key, row);
+}
+
+function withConatRates<
+  T extends { total_messages: number; total_bytes: number },
+>(
+  row: T,
+  durationSeconds: number,
+): T & { messages_per_sec: number; bytes_per_sec: number } {
+  return {
+    ...row,
+    messages_per_sec: roundRate(row.total_messages / durationSeconds),
+    bytes_per_sec: roundRate(row.total_bytes / durationSeconds),
+  };
+}
+
+async function readConatStatsSnapshot({
+  addresses,
+  systemAccountPassword,
+  hubPassword,
+  hubCookieName,
+  bearer,
+  projectId,
+  connectConat,
+  maxWait,
+}: {
+  addresses: string[];
+  systemAccountPassword?: string;
+  hubPassword?: string;
+  hubCookieName: string;
+  bearer?: string;
+  projectId?: string;
+  connectConat: typeof connect;
+  maxWait: number;
+}): Promise<Map<string, ConatStatsRow>> {
+  const rows = new Map<string, ConatStatsRow>();
+  const clients: any[] = [];
+  try {
+    for (const address of addresses) {
+      const client = connectConat({
+        address,
+        systemAccountPassword,
+        ...(hubPassword
+          ? {
+              extraHeaders: {
+                Cookie: `${hubCookieName}=${hubPassword}`,
+              },
+            }
+          : undefined),
+        ...(bearer
+          ? {
+              auth: async (cb) =>
+                cb({
+                  bearer,
+                  ...(projectId ? { project_id: projectId } : {}),
+                }),
+            }
+          : undefined),
+        noCache: true,
+      });
+      client.inboxPrefixHook = (info) => {
+        const user = info?.user;
+        if (!user) return undefined;
+        return inboxPrefix({
+          account_id: user.account_id,
+          project_id: user.project_id,
+          hub_id: user.hub_id,
+          host_id: user.host_id,
+        });
+      };
+      clients.push(client);
+      if (bearer) {
+        await client.waitUntilSignedIn({ timeout: maxWait });
+      } else {
+        await client.waitUntilReady();
+      }
+      const responses = await sysApiMany(client, { maxWait }).stats();
+      for await (const response of responses) {
+        for (const [server_id, serverStats] of Object.entries(response)) {
+          for (const [connection_id, stats] of Object.entries(serverStats)) {
+            const row = { server_id, connection_id, stats };
+            rows.set(conatStatsKey(row), row);
+          }
+        }
+      }
+    }
+  } finally {
+    for (const client of clients) {
+      try {
+        client.close();
+      } catch {}
+    }
+  }
+  return rows;
+}
+
+function conatLoadSubject(): string {
+  return `load.conat_messages.${process.pid}.${Date.now()}`;
+}
+
+function normalizeConatMessageMode(
+  raw: string | undefined,
+): "request" | "publish" {
+  const mode = `${raw ?? "request"}`.trim();
+  if (mode !== "request" && mode !== "publish") {
+    throw new Error("--mode must be either 'request' or 'publish'");
+  }
+  return mode;
+}
+
+function normalizeConatResponseMode(
+  raw: string | undefined,
+): "default" | "no-wait" | "sync" {
+  const mode = `${raw ?? "default"}`.trim();
+  if (mode !== "default" && mode !== "no-wait" && mode !== "sync") {
+    throw new Error(
+      "--response-mode must be one of 'default', 'no-wait', or 'sync'",
+    );
+  }
+  return mode;
+}
+
+function normalizeConatRequestTransport(
+  raw: string | undefined,
+): "pubsub" | "rpc" | "raw-rpc" | "fast-rpc" {
+  const transport = `${raw ?? "pubsub"}`.trim();
+  if (
+    transport !== "pubsub" &&
+    transport !== "rpc" &&
+    transport !== "raw-rpc" &&
+    transport !== "fast-rpc"
+  ) {
+    throw new Error(
+      "--request-transport must be either 'pubsub', 'rpc', 'raw-rpc', or 'fast-rpc'",
+    );
+  }
+  return transport;
+}
+
 async function runLoadScenario({
   scenario,
   iterations,
@@ -220,6 +550,7 @@ async function runLoadScenario({
   const startedAt = new Date();
   const started = performance.now();
   const latencies: number[] = [];
+  const resultTimings: LoadComponentTiming[] = [];
   const sampleErrors: string[] = [];
   let lastResult: LoadScenarioResult = null;
   let successes = 0;
@@ -253,6 +584,7 @@ async function runLoadScenario({
           if (measured) {
             successes += 1;
             lastResult = result ?? null;
+            recordResultTimings(resultTimings, result);
           }
         } catch (err) {
           if (measured) {
@@ -292,6 +624,7 @@ async function runLoadScenario({
     latency_ms: summarizeLatencies(latencies),
     sample_errors: sampleErrors,
     last_result: lastResult ?? null,
+    result_timing_ms: summarizeComponentTimings(resultTimings),
   };
 }
 
@@ -452,11 +785,533 @@ export function registerLoadCommand(
   program: Command,
   deps: LoadCommandDeps,
 ): Command {
-  const { withContext, queryProjects, resolveProjectFromArgOrContext } = deps;
+  const {
+    withContext,
+    runLocalCommand,
+    queryProjects,
+    resolveProjectFromArgOrContext,
+    connectConat = connect,
+  } = deps;
 
   const load = program
     .command("load")
     .description("load-test harness commands");
+
+  load
+    .command("conat-messages")
+    .description("measure raw Conat request/response message throughput")
+    .requiredOption(
+      "--addresses <urls>",
+      "comma-separated Conat router URLs, e.g. http://127.0.0.1:9102",
+    )
+    .option("--system-password <secret>", "Conat system account password")
+    .option(
+      "--system-password-file <path>",
+      "file containing the Conat system account password",
+    )
+    .option("--iterations <n>", "measured iterations", "100")
+    .option(
+      "--duration <duration>",
+      "measured wall-clock duration, e.g. 30s; overrides --iterations",
+    )
+    .option("--warmup <n>", "warmup iterations", "10")
+    .option("--concurrency <n>", "parallel request workers", "1")
+    .option("--payload-bytes <n>", "string payload size for each request", "16")
+    .option(
+      "--mode <mode>",
+      "message pattern to measure: request or publish",
+      "request",
+    )
+    .option(
+      "--response-mode <mode>",
+      "request response behavior: default, no-wait, or sync",
+      "default",
+    )
+    .option(
+      "--request-transport <transport>",
+      "request transport to measure: pubsub, rpc, raw-rpc, or fast-rpc",
+      "pubsub",
+    )
+    .action(
+      async (
+        opts: {
+          addresses?: string;
+          systemPassword?: string;
+          systemPasswordFile?: string;
+          iterations?: string;
+          duration?: string;
+          warmup?: string;
+          concurrency?: string;
+          payloadBytes?: string;
+          mode?: string;
+          responseMode?: string;
+          requestTransport?: string;
+        },
+        command: Command,
+      ) => {
+        const run =
+          runLocalCommand ??
+          (async (_command: Command, _label: string, fn: () => Promise<any>) =>
+            await fn());
+        await run(command, "load conat-messages", async () => {
+          const addresses = normalizeAddresses(opts.addresses);
+          const systemAccountPassword = readOptionalSecret({
+            value: opts.systemPassword,
+            file: opts.systemPasswordFile,
+            valueFlag: "--system-password",
+            fileFlag: "--system-password-file",
+          });
+          const iterations = parsePositiveInteger(
+            opts.iterations,
+            "--iterations",
+            100,
+          );
+          const durationMs = parseOptionalDurationMs(opts.duration);
+          const warmup = parsePositiveInteger(opts.warmup, "--warmup", 10);
+          const concurrency = parsePositiveInteger(
+            opts.concurrency,
+            "--concurrency",
+            1,
+          );
+          const payloadBytes = parsePositiveInteger(
+            opts.payloadBytes,
+            "--payload-bytes",
+            16,
+          );
+          const mode = normalizeConatMessageMode(opts.mode);
+          const responseMode = normalizeConatResponseMode(opts.responseMode);
+          const requestTransport = normalizeConatRequestTransport(
+            opts.requestTransport,
+          );
+          if (mode !== "request" && requestTransport !== "pubsub") {
+            throw new Error("--request-transport only applies to request mode");
+          }
+          const payload = "x".repeat(payloadBytes);
+          const subjectPrefix = conatLoadSubject();
+          const services: Array<{ client: any; sub: any; subject: string }> =
+            [];
+          const clients: any[] = [];
+
+          try {
+            for (let i = 0; i < addresses.length; i++) {
+              const client = connectConat({
+                address: addresses[i],
+                systemAccountPassword,
+                noCache: true,
+              });
+              await client.waitUntilReady();
+              const subject = `${subjectPrefix}.${i}`;
+              if (mode === "request" && requestTransport === "fast-rpc") {
+                const sub = await client.fastRpcService(
+                  subject,
+                  (value: string) => ({
+                    ok: true,
+                    bytes: typeof value === "string" ? value.length : 0,
+                  }),
+                );
+                services.push({ client, sub, subject });
+                continue;
+              }
+              if (
+                mode === "request" &&
+                (requestTransport === "rpc" || requestTransport === "raw-rpc")
+              ) {
+                const sub = await client.rpcService(subject, {
+                  echo: async (value: string) => ({
+                    ok: true,
+                    bytes: typeof value === "string" ? value.length : 0,
+                  }),
+                });
+                services.push({ client, sub, subject });
+                continue;
+              }
+              const sub = await client.subscribe(
+                subject,
+                mode === "request" ? { queue: "0" } : undefined,
+              );
+              if (mode === "request") {
+                void (async () => {
+                  for await (const message of sub) {
+                    const [name, args] = message.data ?? [];
+                    try {
+                      if (name !== "echo") {
+                        throw new Error(`${name} not defined`);
+                      }
+                      const value = args?.[0];
+                      const response = {
+                        ok: true,
+                        bytes: typeof value === "string" ? value.length : 0,
+                      };
+                      if (responseMode === "sync") {
+                        message.respondSync(response);
+                      } else {
+                        await message.respond(
+                          response,
+                          responseMode === "no-wait"
+                            ? { waitForInterest: false }
+                            : undefined,
+                        );
+                      }
+                    } catch (err) {
+                      const headers = {
+                        error: err instanceof Error ? err.message : `${err}`,
+                      };
+                      if (responseMode === "sync") {
+                        message.respondSync(null, { headers });
+                      } else {
+                        await message.respond(null, {
+                          noThrow: true,
+                          ...(responseMode === "no-wait"
+                            ? { waitForInterest: false }
+                            : {}),
+                          headers,
+                        });
+                      }
+                    }
+                  }
+                })();
+              } else {
+                void (async () => {
+                  for await (const _message of sub) {
+                    // Drain the subscription so the router performs real delivery.
+                  }
+                })();
+              }
+              services.push({ client, sub, subject });
+            }
+
+            for (let i = 0; i < concurrency; i++) {
+              const service = services[i % services.length];
+              const client = connectConat({
+                address: addresses[i % addresses.length],
+                systemAccountPassword,
+                noCache: true,
+              });
+              await client.waitUntilReady();
+              clients.push({
+                client,
+                call:
+                  mode === "request"
+                    ? requestTransport === "rpc"
+                      ? client.rpcCall(service.subject)
+                      : requestTransport === "raw-rpc"
+                        ? client.rawRpcCall(service.subject)
+                        : requestTransport === "fast-rpc"
+                          ? {
+                              echo: async (payload: string) =>
+                                await client.fastRpcRequest(
+                                  service.subject,
+                                  payload,
+                                ),
+                            }
+                          : client.call(service.subject)
+                    : null,
+                address: addresses[i % addresses.length],
+                subject: service.subject,
+              });
+            }
+
+            return await runLoadScenario({
+              scenario: "conat-messages",
+              iterations,
+              warmup,
+              durationMs,
+              concurrency,
+              execute: async (_index, workerIndex) => {
+                const row = clients[workerIndex % clients.length];
+                const result =
+                  mode === "request"
+                    ? await row.call.echo(payload)
+                    : await row.client.publish(row.subject, payload);
+                return {
+                  address: row.address,
+                  mode,
+                  request_transport:
+                    mode === "request" ? requestTransport : null,
+                  subject: row.subject,
+                  payload_bytes: payloadBytes,
+                  response_mode: mode === "request" ? responseMode : null,
+                  response_bytes:
+                    mode === "request" ? (result?.bytes ?? null) : null,
+                  ...resultTimingFields(result),
+                  serverAuthMs:
+                    mode === "request" ? (result?.serverAuthMs ?? null) : null,
+                  serverRouteMs:
+                    mode === "request" ? (result?.serverRouteMs ?? null) : null,
+                  serverHandlerMs:
+                    mode === "request"
+                      ? (result?.serverHandlerMs ?? null)
+                      : null,
+                  publish_count:
+                    mode === "publish" ? (result?.count ?? null) : null,
+                };
+              },
+            });
+          } finally {
+            for (const { sub, client } of services) {
+              try {
+                sub.close();
+              } catch {}
+              try {
+                client.close();
+              } catch {}
+            }
+            for (const { client } of clients) {
+              try {
+                client.close();
+              } catch {}
+            }
+          }
+        });
+      },
+    );
+
+  load
+    .command("conat-stats-window")
+    .description(
+      "sample Conat server connection counters over a time window and report real traffic rates",
+    )
+    .requiredOption(
+      "--addresses <urls>",
+      "comma-separated Conat router URLs, e.g. http://127.0.0.1:9102",
+    )
+    .option("--system-password <secret>", "Conat system account password")
+    .option(
+      "--system-password-file <path>",
+      "file containing the Conat system account password",
+    )
+    .option(
+      "--hub-password <secret>",
+      "hub Conat password for local/dev hub auth",
+    )
+    .option(
+      "--hub-password-file <path>",
+      "file containing the hub Conat password for local/dev hub auth",
+    )
+    .option(
+      "--hub-cookie-name <name>",
+      "hub password cookie name",
+      "hub_password",
+    )
+    .option(
+      "--bearer <token>",
+      "Conat bearer token; defaults to COCALC_BEARER_TOKEN or COCALC_AGENT_TOKEN",
+    )
+    .option(
+      "--project-id <project-id>",
+      "project id to include with bearer auth; defaults to COCALC_PROJECT_ID",
+    )
+    .option("--duration <duration>", "measurement duration", "60s")
+    .option("--max-wait <duration>", "sys stats RPC max wait", "3s")
+    .option("--top <n>", "top changed connections/groups to include", "20")
+    .option(
+      "--include-new",
+      "include connections that appear during the measurement window",
+    )
+    .action(
+      async (
+        opts: {
+          addresses?: string;
+          systemPassword?: string;
+          systemPasswordFile?: string;
+          hubPassword?: string;
+          hubPasswordFile?: string;
+          hubCookieName?: string;
+          bearer?: string;
+          projectId?: string;
+          duration?: string;
+          maxWait?: string;
+          top?: string;
+          includeNew?: boolean;
+        },
+        command: Command,
+      ) => {
+        const run =
+          runLocalCommand ??
+          (async (_command: Command, _label: string, fn: () => Promise<any>) =>
+            await fn());
+        await run(command, "load conat-stats-window", async () => {
+          const addresses = normalizeAddresses(opts.addresses);
+          const systemAccountPassword = readOptionalSecret({
+            value: opts.systemPassword,
+            file: opts.systemPasswordFile,
+            valueFlag: "--system-password",
+            fileFlag: "--system-password-file",
+          });
+          const hubPassword = readOptionalSecret({
+            value: opts.hubPassword,
+            file: opts.hubPasswordFile,
+            valueFlag: "--hub-password",
+            fileFlag: "--hub-password-file",
+          });
+          if (systemAccountPassword && hubPassword) {
+            throw new Error(
+              "--system-password and --hub-password are mutually exclusive",
+            );
+          }
+          const hubCookieName =
+            `${opts.hubCookieName ?? "hub_password"}`.trim() || "hub_password";
+          const useCookieAuth = !!(systemAccountPassword || hubPassword);
+          const bearer =
+            `${
+              opts.bearer ??
+              (useCookieAuth
+                ? ""
+                : (process.env.COCALC_BEARER_TOKEN ??
+                  process.env.COCALC_AGENT_TOKEN ??
+                  ""))
+            }`.trim() || undefined;
+          const projectId =
+            `${opts.projectId ?? (bearer && !useCookieAuth ? process.env.COCALC_PROJECT_ID : "") ?? ""}`.trim() ||
+            undefined;
+          const durationMs = parseOptionalDurationMs(opts.duration) ?? 60000;
+          const maxWait = parseOptionalDurationMs(opts.maxWait) ?? 3000;
+          const top = parsePositiveInteger(opts.top, "--top", 20);
+          const startedAt = new Date();
+          const started = performance.now();
+          const before = await readConatStatsSnapshot({
+            addresses,
+            systemAccountPassword,
+            hubPassword,
+            hubCookieName,
+            bearer,
+            projectId,
+            connectConat,
+            maxWait,
+          });
+          await sleep(durationMs);
+          const after = await readConatStatsSnapshot({
+            addresses,
+            systemAccountPassword,
+            hubPassword,
+            hubCookieName,
+            bearer,
+            projectId,
+            connectConat,
+            maxWait,
+          });
+          const measuredMs = performance.now() - started;
+          const durationSeconds = Math.max(0.001, measuredMs / 1000);
+          const deltas: ConatStatsDelta[] = [];
+          let newConnections = 0;
+          let closedConnections = 0;
+
+          for (const [key, afterRow] of after.entries()) {
+            const beforeRow = before.get(key);
+            if (!beforeRow) {
+              newConnections += 1;
+              if (!opts.includeNew) {
+                continue;
+              }
+            }
+            const user = conatUserIdentity(afterRow.stats.user);
+            const beforeStats = beforeRow?.stats;
+            const recvMessages = Math.max(
+              0,
+              afterRow.stats.recv.messages - (beforeStats?.recv.messages ?? 0),
+            );
+            const sendMessages = Math.max(
+              0,
+              afterRow.stats.send.messages - (beforeStats?.send.messages ?? 0),
+            );
+            const recvBytes = Math.max(
+              0,
+              afterRow.stats.recv.bytes - (beforeStats?.recv.bytes ?? 0),
+            );
+            const sendBytes = Math.max(
+              0,
+              afterRow.stats.send.bytes - (beforeStats?.send.bytes ?? 0),
+            );
+            deltas.push({
+              server_id: afterRow.server_id,
+              connection_id: afterRow.connection_id,
+              user: user.label,
+              user_kind: user.kind,
+              user_id: user.id,
+              browser_id: afterRow.stats.browser_id ?? null,
+              address: afterRow.stats.address ?? null,
+              subs_before: beforeStats?.subs ?? 0,
+              subs_after: afterRow.stats.subs,
+              recv_messages: recvMessages,
+              send_messages: sendMessages,
+              total_messages: recvMessages + sendMessages,
+              recv_bytes: recvBytes,
+              send_bytes: sendBytes,
+              total_bytes: recvBytes + sendBytes,
+            });
+          }
+          for (const key of before.keys()) {
+            if (!after.has(key)) {
+              closedConnections += 1;
+            }
+          }
+
+          const byUser = new Map<
+            string,
+            ReturnType<typeof aggregateConatStatsDeltas> & { key: string }
+          >();
+          const byBrowser = new Map<
+            string,
+            ReturnType<typeof aggregateConatStatsDeltas> & { key: string }
+          >();
+          const byUserKind = new Map<
+            string,
+            ReturnType<typeof aggregateConatStatsDeltas> & { key: string }
+          >();
+          const byServer = new Map<
+            string,
+            ReturnType<typeof aggregateConatStatsDeltas> & { key: string }
+          >();
+          for (const delta of deltas) {
+            addConatDeltaToGroup(byUser, delta.user, delta);
+            addConatDeltaToGroup(byBrowser, delta.browser_id ?? "none", delta);
+            addConatDeltaToGroup(byUserKind, delta.user_kind, delta);
+            addConatDeltaToGroup(byServer, delta.server_id, delta);
+          }
+          const topByMessages = <T extends { total_messages: number }>(
+            rows: T[],
+          ) =>
+            rows
+              .sort((a, b) => b.total_messages - a.total_messages)
+              .slice(0, top);
+          const summarizeGroups = (
+            map: Map<
+              string,
+              ReturnType<typeof aggregateConatStatsDeltas> & { key: string }
+            >,
+          ) =>
+            topByMessages([...map.values()]).map((row) =>
+              withConatRates(row, durationSeconds),
+            );
+
+          return {
+            scenario: "conat-stats-window",
+            started_at: startedAt.toISOString(),
+            finished_at: new Date().toISOString(),
+            addresses,
+            duration_ms: roundMs(durationMs),
+            measured_ms: roundMs(measuredMs),
+            connections_before: before.size,
+            connections_after: after.size,
+            stable_connections_measured: deltas.length,
+            new_connections: newConnections,
+            closed_connections: closedConnections,
+            include_new: !!opts.includeNew,
+            totals: withConatRates(
+              aggregateConatStatsDeltas(deltas),
+              durationSeconds,
+            ),
+            by_user_kind: summarizeGroups(byUserKind),
+            by_server: summarizeGroups(byServer),
+            by_browser: summarizeGroups(byBrowser),
+            by_user: summarizeGroups(byUser),
+            top_connections: topByMessages(deltas).map((row) =>
+              withConatRates(row, durationSeconds),
+            ),
+          };
+        });
+      },
+    );
 
   load
     .command("bootstrap")
