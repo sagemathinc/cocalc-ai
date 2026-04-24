@@ -722,13 +722,14 @@ test("load three-bay hot-path skips Bay Ops probes", async () => {
   ]);
 
   assert.equal(capture.accountBayCalls, 3);
-  assert.equal(capture.projectQueryCalls, 3);
+  assert.equal(capture.projectQueryCalls, 0);
   assert.deepEqual(capture.projectBayCalls, [
     "project-demo",
     "project-demo",
     "project-demo",
   ]);
   assert.deepEqual(capture.hostBayCalls, ["host-2", "host-2", "host-2"]);
+  assert.deepEqual(capture.projectCollaboratorListCalls, []);
   assert.equal(capture.bayOpsOverviewCalls, 0);
   assert.deepEqual(capture.bayOpsDetailCalls, []);
   assert.equal(capture.data.last_result.hot_path, true);

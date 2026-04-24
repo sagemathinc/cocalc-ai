@@ -250,6 +250,24 @@ const attempts = rows.reduce((sum, row) => sum + row.data.successes + row.data.f
 const successes = rows.reduce((sum, row) => sum + row.data.successes, 0);
 const failures = rows.reduce((sum, row) => sum + row.data.failures, 0);
 const childScenariosPerSec = rows.reduce((sum, row) => sum + row.data.ops_per_sec, 0);
+const componentSamples = rows.reduce((sum, row) => {
+  const components = row.data.component_latency_ms ?? {};
+  return sum + Object.values(components).reduce(
+    (componentSum, component) => componentSum + (component.samples ?? 0),
+    0,
+  );
+}, 0);
+const childComponentReadsPerSec = rows.reduce((sum, row) => {
+  const components = row.data.component_latency_ms ?? {};
+  const samples = Object.values(components).reduce(
+    (componentSum, component) => componentSum + (component.samples ?? 0),
+    0,
+  );
+  if (!row.data.iterations) {
+    return sum;
+  }
+  return sum + row.data.ops_per_sec * (samples / row.data.iterations);
+}, 0);
 const wall = Number(wallMs);
 console.log(JSON.stringify({
   total_concurrency: Number(totalConcurrency),
@@ -258,9 +276,15 @@ console.log(JSON.stringify({
   failures,
   parent_wall_ms: wall,
   aggregate_scenarios_per_sec: Number((attempts * 1000 / wall).toFixed(3)),
-  aggregate_component_reads_per_sec: Number((attempts * 5 * 1000 / wall).toFixed(3)),
+  aggregate_component_reads_per_sec: Number((componentSamples * 1000 / wall).toFixed(3)),
   sum_child_scenarios_per_sec: Number(childScenariosPerSec.toFixed(3)),
-  sum_child_component_reads_per_sec: Number((childScenariosPerSec * 5).toFixed(3)),
+  sum_child_component_reads_per_sec: Number(childComponentReadsPerSec.toFixed(3)),
+  component_samples: componentSamples,
+  component_names: [
+    ...new Set(
+      rows.flatMap((row) => Object.keys(row.data.component_latency_ms ?? {})),
+    ),
+  ].sort(),
   child_ops_per_sec: rows.map((row) => row.data.ops_per_sec),
   child_iterations: rows.map((row) => row.data.iterations),
   child_p50_ms: rows.map((row) => row.data.latency_ms.p50),

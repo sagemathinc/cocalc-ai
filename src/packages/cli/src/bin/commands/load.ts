@@ -1690,12 +1690,17 @@ export function registerLoadCommand(
                   user_account_id: ctx.accountId,
                 }),
               );
-              const projectRows = (await measure("project-list", async () =>
-                queryProjects({
-                  ctx,
-                  limit: projectLimit,
-                }),
-              )) as Array<{ project_id?: string; host_id?: string | null }>;
+              const projectRows = opts.hotPath
+                ? []
+                : ((await measure("project-list", async () =>
+                    queryProjects({
+                      ctx,
+                      limit: projectLimit,
+                    }),
+                  )) as Array<{
+                    project_id?: string;
+                    host_id?: string | null;
+                  }>);
               const projectBay = await measure("project-owning-bay", async () =>
                 ctx.hub.system.getProjectBay({
                   project_id: project.project_id,
@@ -1714,13 +1719,13 @@ export function registerLoadCommand(
                     }),
                   )
                 : null;
-              const collaborators = (await measure(
-                "project-collaborators",
-                async () =>
-                  ctx.hub.projects.listCollaborators({
-                    project_id: project.project_id,
-                  }),
-              )) as Array<{ account_id?: string; group?: string }>;
+              const collaborators = opts.hotPath
+                ? []
+                : ((await measure("project-collaborators", async () =>
+                    ctx.hub.projects.listCollaborators({
+                      project_id: project.project_id,
+                    }),
+                  )) as Array<{ account_id?: string; group?: string }>);
               const overview = opts.hotPath
                 ? null
                 : ((await measure("bay-ops-overview", async () =>
