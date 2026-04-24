@@ -27,6 +27,7 @@ export type TextDocumentBindingOptions = {
 export type TextWriteOptions = {
   expectedLatestVersionId?: string | null;
   expectedHash?: number | null;
+  saveToDisk?: boolean;
 };
 
 export type TextReplaceOptions = TextWriteOptions & {
@@ -49,6 +50,7 @@ type SyncStringLike = {
   to_str(): string;
   from_str(text: string): void;
   save(): Promise<void>;
+  save_to_disk?: () => Promise<void>;
   historyLastVersion(): string | undefined;
   hash_of_live_version(): number | undefined;
 };
@@ -168,6 +170,20 @@ function assertTextWriteExpectation(
   }
 }
 
+async function saveTextSession(
+  session: SyncStringLike,
+  options?: TextWriteOptions,
+): Promise<void> {
+  await session.save();
+  if (options?.saveToDisk === false) {
+    return;
+  }
+  if (typeof session.save_to_disk !== "function") {
+    throw new Error("live text session does not support saving to disk");
+  }
+  await session.save_to_disk();
+}
+
 function replaceString(
   text: string,
   search: string,
@@ -256,7 +272,7 @@ export function createTextApi<Ctx, Project extends TextProjectIdentity>({
             assertTextWriteExpectation(before, writeOptions);
             if (session.to_str() !== text) {
               session.from_str(text);
-              await session.save();
+              await saveTextSession(session, writeOptions);
             }
             return currentTextInfo(project, path, session, association);
           },
@@ -269,7 +285,7 @@ export function createTextApi<Ctx, Project extends TextProjectIdentity>({
             assertTextWriteExpectation(before, writeOptions);
             if (text) {
               session.from_str(session.to_str() + text);
-              await session.save();
+              await saveTextSession(session, writeOptions);
             }
             return currentTextInfo(project, path, session, association);
           },
@@ -292,7 +308,7 @@ export function createTextApi<Ctx, Project extends TextProjectIdentity>({
             );
             if (next.replaceCount > 0) {
               session.from_str(next.text);
-              await session.save();
+              await saveTextSession(session, replaceOptions);
             }
             return {
               ...currentTextInfo(project, path, session, association),
