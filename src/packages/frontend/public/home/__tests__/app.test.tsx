@@ -40,6 +40,9 @@ describe("PublicHomeApp", () => {
 
     expect(screen.getByRole("link", { name: "Home" })).not.toBeNull();
     expect(
+      screen.getByRole("heading", { level: 1, name: "Launchpad" }),
+    ).not.toBeNull();
+    expect(
       screen.getByRole("heading", {
         name: "CoCalc AI is becoming agent-first",
       }),
@@ -74,7 +77,7 @@ describe("PublicHomeApp", () => {
     );
 
     expect(screen.getAllByRole("link", { name: "Open projects" })).toHaveLength(
-      2,
+      1,
     );
     expect(
       screen.getAllByRole("link", { name: "Settings" }).length,

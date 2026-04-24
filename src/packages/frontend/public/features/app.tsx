@@ -11,6 +11,7 @@ import {
   PublicHero,
   PublicPageRoot,
   PublicSectionCard,
+  PublicTitle,
 } from "@cocalc/frontend/public/ui/shell";
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { SITE_NAME } from "@cocalc/util/theme";
@@ -80,7 +81,7 @@ function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
   if (route.view === "detail" && route.slug) {
     return `${getFeaturePage(route.slug)?.title ?? "Features"} – ${siteName}`;
   }
-  return `${siteName} features`;
+  return `${siteName} Features`;
 }
 
 function FeaturesIndex({ siteName }: { siteName: string }) {
@@ -316,27 +317,29 @@ export default function PublicFeaturesApp({
         showPolicies={!!config?.show_policies}
         siteName={siteName}
       />
-      <PublicHero
-        eyebrow="FEATURES"
-        title={
-          initialRoute.view === "detail" && initialRoute.slug
-            ? (getFeaturePage(initialRoute.slug)?.title ?? "Features")
-            : `${siteName} features`
-        }
-        subtitle={
-          initialRoute.view === "detail" && initialRoute.slug
-            ? getFeaturePage(initialRoute.slug)?.tagline
-            : "Standalone feature landing pages for the main CoCalc workflows."
-        }
-        actions={
-          initialRoute.view === "detail" ? (
+      {initialRoute.view === "index" ? (
+        <PublicTitle>{`${siteName} Features`}</PublicTitle>
+      ) : (
+        <PublicHero
+          eyebrow="FEATURES"
+          title={
+            initialRoute.slug
+              ? (getFeaturePage(initialRoute.slug)?.title ?? "Features")
+              : "Features"
+          }
+          subtitle={
+            initialRoute.slug
+              ? getFeaturePage(initialRoute.slug)?.tagline
+              : undefined
+          }
+          actions={
             <Flex wrap gap={8}>
               <Tag color="blue">AntD public UI</Tag>
               <Tag>Next-free routing</Tag>
             </Flex>
-          ) : null
-        }
-      />
+          }
+        />
+      )}
       <div style={{ marginTop: 24 }}>
         {initialRoute.view === "detail" && initialRoute.slug ? (
           <FeatureDetail

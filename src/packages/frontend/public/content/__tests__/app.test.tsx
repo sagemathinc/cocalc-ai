@@ -148,7 +148,7 @@ describe("PublicContentApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Launchpad pricing" }),
+      screen.getByRole("heading", { name: "Launchpad Pricing" }),
     ).not.toBeNull();
     expect(screen.getByText("Membership-first pricing")).not.toBeNull();
     expect(screen.getByText("Member")).not.toBeNull();
@@ -183,7 +183,7 @@ describe("PublicContentApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Hub policies" }),
+      screen.getByRole("heading", { name: "Hub Policies" }),
     ).not.toBeNull();
     expect(screen.getByText("Imprint")).not.toBeNull();
     expect(
@@ -213,7 +213,7 @@ describe("PublicContentApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Launchpad team" }),
+      screen.getByRole("heading", { name: "Launchpad Team" }),
     ).not.toBeNull();
     expect(screen.getByText("William Stein")).not.toBeNull();
     expect(screen.getByText("Harald Schilly")).not.toBeNull();
@@ -347,7 +347,7 @@ describe("PublicContentApp", () => {
     );
 
     expect(
-      await screen.findByRole("heading", { name: "Launchpad news" }),
+      await screen.findByRole("heading", { name: "Launchpad News" }),
     ).not.toBeNull();
     expect(await screen.findByText("Launchpad update")).not.toBeNull();
     expect(screen.getByText("#launchpad")).not.toBeNull();
@@ -482,7 +482,7 @@ describe("PublicContentApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Launchpad software" }),
+      screen.getByRole("heading", { name: "Launchpad Software" }),
     ).not.toBeNull();
     expect(screen.getByText("CoCalc Launchpad")).not.toBeNull();
     expect(screen.getByText("Hosted CoCalc")).not.toBeNull();

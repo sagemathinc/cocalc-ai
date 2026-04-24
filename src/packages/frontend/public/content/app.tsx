@@ -32,6 +32,7 @@ import {
   PublicHero,
   PublicPageRoot,
   PublicSectionCard,
+  PublicTitle,
 } from "@cocalc/frontend/public/ui/shell";
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { ExactPolicyPage, getExactPolicyPage } from "./legal-pages";
@@ -125,30 +126,30 @@ function newsHistoryPath(permalink: string, timestamp: number): string {
 function titleForRoute(route: PublicContentRoute, siteName: string): string {
   switch (route.view) {
     case "about-events":
-      return `${siteName} events`;
+      return `${siteName} Events`;
     case "about-status":
-      return `${siteName} status`;
+      return `${siteName} Status`;
     case "about-team":
-      return `${siteName} team`;
+      return `${siteName} Team`;
     case "about-team-member":
       return `${getTeamMember(route.teamSlug)?.name ?? "Team"} - ${siteName}`;
     case "pricing":
-      return `${siteName} pricing`;
+      return `${siteName} Pricing`;
     case "policies":
-      return `${siteName} policies`;
+      return `${siteName} Policies`;
     case "policies-imprint":
-      return `${siteName} imprint`;
+      return `${siteName} Imprint`;
     case "policies-custom":
-      return `${siteName} policies`;
+      return `${siteName} Policies`;
     case "policies-detail":
       return `${getExactPolicyPage(route.policySlug)?.title ?? getPolicyPage(route.policySlug)?.title ?? "Policies"} - ${siteName}`;
     case "news":
-      return `${siteName} news`;
+      return `${siteName} News`;
     case "news-detail":
     case "news-history":
-      return `${siteName} news`;
+      return `${siteName} News`;
     case "software":
-      return `${siteName} software`;
+      return `${siteName} Software`;
     case "software-cocalc-launchpad":
       return "CoCalc Launchpad";
     case "software-cocalc-plus":
@@ -318,6 +319,11 @@ function PageShell({
   title: string;
 }) {
   const currentTop = topLevelView(route);
+  const isTopLevelNavPage =
+    route.view === "about" ||
+    route.view === "pricing" ||
+    route.view === "policies" ||
+    route.view === "news";
   const navActive =
     currentTop === "about" ||
     currentTop === "pricing" ||
@@ -333,32 +339,36 @@ function PageShell({
         showPolicies={arePoliciesVisible(config)}
         siteName={config?.site_name ?? SITE_NAME}
       />
-      <PublicHero
-        eyebrow="PUBLIC CONTENT"
-        title={title}
-        subtitle={subtitle}
-        actions={
-          <Flex wrap gap={8}>
-            {[
-              { href: "about", key: "about", label: "About" },
-              { href: "pricing", key: "pricing", label: "Pricing" },
-              ...(arePoliciesVisible(config)
-                ? [{ href: "policies", key: "policies", label: "Policies" }]
-                : []),
-              { href: "news", key: "news", label: "News" },
-              { href: "software", key: "software", label: "Software" },
-            ].map((item) => (
-              <Button
-                key={item.href}
-                type={currentTop === item.key ? "primary" : "default"}
-                href={contentPath(item.href)}
-              >
-                {item.label}
-              </Button>
-            ))}
-          </Flex>
-        }
-      />
+      {isTopLevelNavPage ? (
+        <PublicTitle>{title}</PublicTitle>
+      ) : (
+        <PublicHero
+          eyebrow="PUBLIC CONTENT"
+          title={title}
+          subtitle={subtitle}
+          actions={
+            <Flex wrap gap={8}>
+              {[
+                { href: "about", key: "about", label: "About" },
+                { href: "pricing", key: "pricing", label: "Pricing" },
+                ...(arePoliciesVisible(config)
+                  ? [{ href: "policies", key: "policies", label: "Policies" }]
+                  : []),
+                { href: "news", key: "news", label: "News" },
+                { href: "software", key: "software", label: "Software" },
+              ].map((item) => (
+                <Button
+                  key={item.href}
+                  type={currentTop === item.key ? "primary" : "default"}
+                  href={contentPath(item.href)}
+                >
+                  {item.label}
+                </Button>
+              ))}
+            </Flex>
+          }
+        />
+      )}
       <div style={{ marginTop: "24px" }}>{children}</div>
     </PublicPageRoot>
   );

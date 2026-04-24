@@ -64,6 +64,20 @@ interface PublicHeroProps {
   title: ReactNode;
 }
 
+export function PublicTitle({ children }: { children: ReactNode }) {
+  return (
+    <Title
+      level={1}
+      style={{
+        margin: 0,
+        textAlign: "center",
+      }}
+    >
+      {children}
+    </Title>
+  );
+}
+
 export function PublicHero({
   actions,
   eyebrow,

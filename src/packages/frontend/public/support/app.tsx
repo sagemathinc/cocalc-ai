@@ -13,6 +13,7 @@ import {
   PublicHero,
   PublicPageRoot,
   PublicSectionCard,
+  PublicTitle,
 } from "@cocalc/frontend/public/ui/shell";
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { COLORS, HELP_EMAIL, SITE_NAME } from "@cocalc/util/theme";
@@ -71,13 +72,13 @@ export function getSupportViewFromPath(pathname: string): SupportView {
 function titleForView(view: SupportView, siteName: string): string {
   switch (view) {
     case "new":
-      return `Create a ${siteName} support ticket`;
+      return `Create a ${siteName} Support Ticket`;
     case "tickets":
-      return `${siteName} support tickets`;
+      return `${siteName} Support Tickets`;
     case "community":
-      return `${siteName} community support`;
+      return `${siteName} Community Support`;
     default:
-      return `${siteName} support`;
+      return `${siteName} Support`;
   }
 }
 
@@ -235,43 +236,42 @@ export default function PublicSupportApp({
         showPolicies={!!config?.show_policies}
         siteName={config?.site_name}
       />
-      <PublicHero
-        eyebrow="SUPPORT"
-        title={title}
-        subtitle="Direct support, Zendesk-backed tickets, and public help resources."
-        actions={
-          <Flex wrap gap={8}>
-            <Button
-              type={view === "index" ? "primary" : "default"}
-              onClick={() => navigate("index")}
-            >
-              Support
-            </Button>
-            {config.zendesk ? (
+      {view === "index" ? (
+        <PublicTitle>{title}</PublicTitle>
+      ) : (
+        <PublicHero
+          eyebrow="SUPPORT"
+          title={title}
+          subtitle="Direct support, Zendesk-backed tickets, and public help resources."
+          actions={
+            <Flex wrap gap={8}>
+              <Button onClick={() => navigate("index")}>Support</Button>
+              {config.zendesk ? (
+                <Button
+                  type={view === "new" ? "primary" : "default"}
+                  onClick={() => navigate("new")}
+                >
+                  New ticket
+                </Button>
+              ) : null}
+              {config.zendesk ? (
+                <Button
+                  type={view === "tickets" ? "primary" : "default"}
+                  onClick={() => navigate("tickets")}
+                >
+                  My tickets
+                </Button>
+              ) : null}
               <Button
-                type={view === "new" ? "primary" : "default"}
-                onClick={() => navigate("new")}
+                type={view === "community" ? "primary" : "default"}
+                onClick={() => navigate("community")}
               >
-                New ticket
+                Community
               </Button>
-            ) : null}
-            {config.zendesk ? (
-              <Button
-                type={view === "tickets" ? "primary" : "default"}
-                onClick={() => navigate("tickets")}
-              >
-                My tickets
-              </Button>
-            ) : null}
-            <Button
-              type={view === "community" ? "primary" : "default"}
-              onClick={() => navigate("community")}
-            >
-              Community
-            </Button>
-          </Flex>
-        }
-      />
+            </Flex>
+          }
+        />
+      )}
       <div style={{ marginTop: 24 }}>
         {view === "index" ? (
           <SupportIndex config={config} onNavigate={navigate} />
