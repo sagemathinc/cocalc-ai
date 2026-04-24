@@ -170,8 +170,10 @@ export function server({
           socket.emit("stream-initialized");
         } catch (err) {
           error = `${err}`;
-          errorCode = err.code;
+          errorCode =
+            err.code ?? (error.includes("permission denied") ? 403 : undefined);
           socket.write(null, { headers: { error, code: errorCode } });
+          socket.emit("stream-initialized");
         }
       }
     });
@@ -195,6 +197,9 @@ export function server({
         }
         if (stream == null) {
           await once(socket, "stream-initialized", request.timeout ?? 30000);
+        }
+        if (error) {
+          throw new ConatError(error, { code: errorCode });
         }
         if (stream == null) {
           throw Error("bug");

@@ -1154,7 +1154,7 @@ export class ConatServer extends EventEmitter {
       },
     );
 
-    socket.on("publish", async ([subject, ...data], respond) => {
+    const handlePublish = async ([subject, ...data], respond) => {
       const handlerStart = Date.now();
       if (data?.[2]) {
         // done
@@ -1187,6 +1187,16 @@ export class ConatServer extends EventEmitter {
         }
         respond?.({ error: `${err}`, code: err.code });
       }
+    };
+
+    let publishQueue = Promise.resolve();
+    socket.on("publish", (payload, respond) => {
+      // Publish order is part of Conat's delivery contract.  Socket.IO delivers
+      // events in order, but this handler does async auth/routing work; without
+      // a per-connection queue, later publishes can overtake earlier ones.
+      publishQueue = publishQueue
+        .catch(() => undefined)
+        .then(() => handlePublish(payload, respond));
     });
 
     const registerRpcService = async ({ subject, queue }) => {

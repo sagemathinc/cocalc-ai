@@ -1020,6 +1020,7 @@ export class CoreStream<T = any> extends EventEmitter {
       this.messages.push(mesg);
       this.raw.push(raw);
     } else {
+      let alreadyProcessed = false;
       // Insert in the correct place.  This should only
       // happen when calling load of old data, which happens, e.g., during
       // automatic failover.  The algorithm below is
@@ -1040,7 +1041,12 @@ export class CoreStream<T = any> extends EventEmitter {
       } else if (this.raw[i].seq > seq) {
         this.raw.splice(i, 0, raw);
         this.messages.splice(i, 0, mesg);
-      } // other case -- we already have it.
+      } else {
+        alreadyProcessed = true;
+      }
+      if (alreadyProcessed) {
+        return;
+      }
     }
     let prev: T | undefined = undefined;
     // Issue #8702: Capture the previous raw message for this key BEFORE updating this.kv.
@@ -1161,6 +1167,21 @@ export class CoreStream<T = any> extends EventEmitter {
       ttl: options?.ttl,
       timeout: options?.timeout,
     });
+    await until(
+      () => {
+        if (this.raw == null) {
+          return true;
+        }
+        if (options?.key != null) {
+          if (options.headers?.[COCALC_TOMBSTONE_HEADER]) {
+            return this.lastSeq >= x.seq && this.kv[options.key] == null;
+          }
+          return this.kv[options.key]?.raw.seq === x.seq;
+        }
+        return this.lastSeq >= x.seq;
+      },
+      { start: 1, min: 1, max: 25, timeout: options?.timeout ?? 5000 },
+    );
     if (options?.msgID) {
       this.msgIDs?.add(options.msgID);
     }

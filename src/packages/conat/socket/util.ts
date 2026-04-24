@@ -70,6 +70,7 @@ export interface SocketConfiguration {
       | "get_server_id_start"
       | "get_server_id_done"
       | "get_server_id_error"
+      | "get_server_id_retry"
       | "subscribe_start"
       | "subscribe_done"
       | "connect_command_start"

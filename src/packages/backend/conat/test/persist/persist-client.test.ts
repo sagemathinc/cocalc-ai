@@ -80,7 +80,7 @@ describe("restarting persist server", () => {
   it("first attempt to read the data written above fails because persist server hasn't started yet", async () => {
     await expect(async () => {
       await s1.get({ key: "test", timeout: 500 });
-    }).rejects.toThrow("no subscribers");
+    }).rejects.toThrow(/no subscribers|timeout/);
   });
 
   jest.setTimeout(10000);

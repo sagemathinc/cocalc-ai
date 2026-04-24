@@ -37,6 +37,8 @@ export class ServerSocket extends EventEmitter {
 
   public tcp?: TCP;
   private alive?: KeepAlive;
+  private dataQueue: { data: any; headers?: Headers }[] = [];
+  private dataQueueScheduled = false;
 
   constructor({ conatSocket, id, subject }) {
     super();
@@ -99,13 +101,44 @@ export class ServerSocket extends EventEmitter {
     );
 
     this.tcp.recv.on("message", (mesg) => {
-      // console.log("tcp recv emitted message", mesg.data);
-      this.emit("data", mesg.data, mesg.headers);
+      this.enqueueData(mesg.data, mesg.headers);
     });
     this.tcp.send.on("drain", () => {
       this.emit("drain");
     });
   }
+
+  private enqueueData = (data: any, headers?: Headers) => {
+    this.dataQueue.push({ data, headers });
+    this.scheduleDataDelivery();
+  };
+
+  private scheduleDataDelivery = () => {
+    if (this.dataQueueScheduled) {
+      return;
+    }
+    this.dataQueueScheduled = true;
+    setImmediate(() => {
+      this.dataQueueScheduled = false;
+      const mesg = this.dataQueue.shift();
+      if (mesg == null || this.state == "closed") {
+        return;
+      }
+      this.emit("data", mesg.data, mesg.headers);
+      if (this.dataQueue.length > 0) {
+        this.scheduleDataDelivery();
+      }
+    });
+  };
+
+  flushDataQueue = () => {
+    while (this.dataQueue.length > 0 && this.state != "closed") {
+      const mesg = this.dataQueue.shift();
+      if (mesg != null) {
+        this.emit("data", mesg.data, mesg.headers);
+      }
+    }
+  };
 
   disconnect = () => {
     this.setState("disconnected");
