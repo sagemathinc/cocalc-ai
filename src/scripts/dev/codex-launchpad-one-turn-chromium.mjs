@@ -27,6 +27,9 @@ function usageAndExit(message, code = 1) {
       "  --target-url <url>         Exact chat URL; overrides --chat-path URL construction",
       "  --prompt <text>            Prompt to send as exactly one browser chat turn",
       "  --prompt-file <path>       Read prompt from a file instead of --prompt",
+      "  --smoke <name>             Built-in smoke prompt/check: live-text",
+      "  --smoke-path <path>        Project file path for smoke checks",
+      "  --smoke-marker <text>      Marker text for smoke checks",
       "  --model <id>               Codex model for fallback frontend send (default: gpt-5.5)",
       "  --reasoning <level>        Codex reasoning for fallback frontend send (default: low)",
       "  --session-mode <mode>      Codex session mode for fallback send (default: full-access)",
@@ -76,6 +79,11 @@ function parseArgs(argv) {
     targetUrl: process.env.COCALC_CODEX_ONE_TURN_TARGET_URL ?? "",
     prompt: process.env.COCALC_CODEX_ONE_TURN_PROMPT ?? "",
     promptFile: "",
+    smoke: process.env.COCALC_CODEX_ONE_TURN_SMOKE ?? "",
+    smokePath:
+      process.env.COCALC_CODEX_ONE_TURN_SMOKE_PATH ??
+      "/home/user/codex-live-text-smoke.md",
+    smokeMarker: process.env.COCALC_CODEX_ONE_TURN_SMOKE_MARKER ?? "",
     model: process.env.COCALC_CODEX_ONE_TURN_MODEL ?? "gpt-5.5",
     reasoning: process.env.COCALC_CODEX_ONE_TURN_REASONING ?? "low",
     sessionMode:
@@ -116,6 +124,15 @@ function parseArgs(argv) {
     } else if (arg === "--prompt-file") {
       options.promptFile = takeValue(argv, i, arg);
       i += 1;
+    } else if (arg === "--smoke") {
+      options.smoke = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--smoke-path") {
+      options.smokePath = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--smoke-marker") {
+      options.smokeMarker = takeValue(argv, i, arg);
+      i += 1;
     } else if (arg === "--model") {
       options.model = takeValue(argv, i, arg);
       i += 1;
@@ -152,6 +169,11 @@ function parseArgs(argv) {
   options.projectId = options.projectId.trim();
   options.chatPath = normalizeChatPath(options.chatPath);
   options.targetUrl = options.targetUrl.trim();
+  options.smoke = options.smoke.trim();
+  options.smokePath = normalizeChatPath(options.smokePath);
+  options.smokeMarker =
+    options.smokeMarker.trim() ||
+    `cocalc-live-text-smoke-${new Date().toISOString()}`;
   options.model = options.model.trim() || "gpt-5.5";
   options.reasoning = options.reasoning.trim() || "low";
   options.sessionMode = options.sessionMode.trim() || "full-access";
@@ -166,6 +188,9 @@ function parseArgs(argv) {
 
   if (!options.baseUrl) usageAndExit("--base-url is required");
   if (!options.projectId) usageAndExit("--project is required");
+  if (options.smoke && options.smoke !== "live-text") {
+    usageAndExit(`unsupported --smoke value: ${options.smoke}`);
+  }
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
     usageAndExit("--timeout must be a positive number of milliseconds");
   }
@@ -174,10 +199,26 @@ function parseArgs(argv) {
 }
 
 async function loadPrompt(options) {
+  if (options.smoke === "live-text" && !options.prompt && !options.promptFile) {
+    return liveTextSmokePrompt(options);
+  }
   if (options.promptFile) {
     return (await readFile(options.promptFile, "utf8")).trim();
   }
   return `${options.prompt ?? ""}`.trim();
+}
+
+function liveTextSmokePrompt(options) {
+  return [
+    "Run a CoCalc live text editor smoke test.",
+    "",
+    `Use the exact CoCalc CLI command from your runtime instructions. Do not use browser exec for the edit.`,
+    `Use cocalc exec and api.text.open({ path: ${JSON.stringify(options.smokePath)}, projectIdentifier: process.env.COCALC_PROJECT_ID }).`,
+    `Append this exact marker line to the file: ${JSON.stringify(options.smokeMarker)}`,
+    "Use expectedHash or expectedLatestVersionId from a preceding read.",
+    "Confirm the edit saved to disk by reading the file back with a project file command.",
+    "In your final answer, include LIVE_TEXT_SMOKE_OK and the marker.",
+  ].join("\n");
 }
 
 function encodePathPreservingSlashes(value) {
@@ -736,6 +777,56 @@ async function captureScreenshot({ options, browserId, label }) {
   return result;
 }
 
+function extractProjectFileCatText(value) {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  if (typeof value !== "object") return `${value}`;
+  for (const key of ["content", "text", "stdout", "data"]) {
+    const text = extractProjectFileCatText(value[key]);
+    if (text) return text;
+  }
+  return "";
+}
+
+async function verifySmoke({ options }) {
+  if (options.smoke !== "live-text") return undefined;
+  const cat = await runCocalcJson(
+    {
+      apiUrl: options.baseUrl,
+      argv: [
+        "project",
+        "file",
+        "cat",
+        options.smokePath,
+        "-w",
+        options.projectId,
+      ],
+    },
+    { timeoutMs: 120_000 },
+  );
+  const content = extractProjectFileCatText(cat.data);
+  const ok =
+    content.includes(options.smokeMarker) ||
+    JSON.stringify(cat).includes(options.smokeMarker);
+  const result = {
+    ok,
+    name: options.smoke,
+    path: options.smokePath,
+    marker: options.smokeMarker,
+    project_file_cat: cat,
+  };
+  await writeFile(
+    path.join(options.outDir, "smoke-verification.json"),
+    JSON.stringify(result, null, 2),
+  );
+  if (!ok) {
+    throw new Error(
+      `live-text smoke marker was not found in ${options.smokePath}`,
+    );
+  }
+  return result;
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const prompt = await loadPrompt(options);
@@ -839,6 +930,7 @@ async function main() {
       prompt,
       submittedAtMs,
     });
+    const smoke = await verifySmoke({ options });
     await captureScreenshot({ options, browserId, label: "final" });
     summary = {
       ok: true,
@@ -850,6 +942,7 @@ async function main() {
       session_mode: options.sessionMode,
       browser_id: browserId,
       spawn_id: spawnId || undefined,
+      smoke,
       prompt,
       final_answer: finalState.finalAnswer,
       final_state: finalState,

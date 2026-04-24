@@ -89,6 +89,9 @@ Codex and the CoCalc CLI should choose the right path automatically.
   alias.
 - The active Codex runtime guidance now recommends `browser files` first for
   open-tab/file questions.
+- `cocalc exec` exposes `api.text.open(...)` for live collaborative text
+  documents, and text write/append/replace operations now save to disk by
+  default.
 
 ### Still Fragile
 
@@ -190,6 +193,8 @@ Tasks:
 - Use screenshots when the question is about visible unsaved UI state.
 - Use notebook CLI APIs for notebook content/execution instead of reading
   `.ipynb` JSON directly.
+- Use `cocalc exec` with `api.text.open({ path, projectIdentifier })` for live
+  text editor content and edits when unsaved browser state may matter.
 - Prefer typed browser actions over raw `browser exec` when available.
 - Add explicit fallback order for common user questions:
   - open tabs,
@@ -239,6 +244,10 @@ Make it easy to start exactly one Codex turn through the real Launchpad UI.
 Initial implementation: `src/scripts/dev/codex-launchpad-one-turn-chromium.mjs`
 and `pnpm smoke:codex-launchpad-ui`.
 
+The harness now also supports `--smoke live-text`, which asks a real Codex turn
+to use `api.text.open(...)` to edit a live text document and then verifies the
+marker via `project file cat`.
+
 This is the highest-value test harness for the integration because it exercises
 the same path as a user:
 
@@ -264,6 +273,8 @@ Tasks:
 - Support prompts that verify common integration paths:
   - "what browser tabs do I have open?"
   - "what number is visible in this open editor?"
+  - "append a marker line through the live text editor API and verify it saved
+    to disk"
   - "list cells in the open notebook"
   - "generate a small image and return the blob markdown"
 - Make the harness deterministic:
