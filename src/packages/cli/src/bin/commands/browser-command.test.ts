@@ -66,39 +66,62 @@ function makeProgram({
   return { program, results };
 }
 
+async function withoutAgentMode(fn: () => Promise<void>): Promise<void> {
+  const prevCliAgentMode = process.env.COCALC_CLI_AGENT_MODE;
+  const prevAgentMode = process.env.COCALC_AGENT_MODE;
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  try {
+    await fn();
+  } finally {
+    if (prevCliAgentMode == null) {
+      delete process.env.COCALC_CLI_AGENT_MODE;
+    } else {
+      process.env.COCALC_CLI_AGENT_MODE = prevCliAgentMode;
+    }
+    if (prevAgentMode == null) {
+      delete process.env.COCALC_AGENT_MODE;
+    } else {
+      process.env.COCALC_AGENT_MODE = prevAgentMode;
+    }
+  }
+}
+
 test("browser files filters open files by --project-id", async () => {
-  const { program, results } = makeProgram({
-    openFiles: [
-      { project_id: PROJECT_A, title: "A", path: "/home/user/a.md" },
-      { project_id: PROJECT_B, title: "B", path: "/home/user/b.md" },
-    ],
+  await withoutAgentMode(async () => {
+    const { program, results } = makeProgram({
+      openFiles: [
+        { project_id: PROJECT_A, title: "A", path: "/home/user/a.md" },
+        { project_id: PROJECT_B, title: "B", path: "/home/user/b.md" },
+      ],
+    });
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "browser",
+      "files",
+      "--browser",
+      "browser-1",
+      "--project-id",
+      PROJECT_A,
+    ]);
+
+    assert.deepEqual(results, [
+      [
+        {
+          browser_id: "browser-1",
+          project_id: PROJECT_A,
+          title: "A",
+          path: "/home/user/a.md",
+          target_api_url: "http://localhost:7003",
+          target_browser_id: "browser-1",
+          target_session_url: `http://localhost:7003/projects/${PROJECT_A}/files`,
+          target_project_id: PROJECT_A,
+        },
+      ],
+    ]);
   });
-
-  await program.parseAsync([
-    "node",
-    "test",
-    "browser",
-    "files",
-    "--browser",
-    "browser-1",
-    "--project-id",
-    PROJECT_A,
-  ]);
-
-  assert.deepEqual(results, [
-    [
-      {
-        browser_id: "browser-1",
-        project_id: PROJECT_A,
-        title: "A",
-        path: "/home/user/a.md",
-        target_api_url: "http://localhost:7003",
-        target_browser_id: "browser-1",
-        target_session_url: "",
-        target_project_id: PROJECT_A,
-      },
-    ],
-  ]);
 });
 
 test("browser tabs is an alias for browser files", async () => {
