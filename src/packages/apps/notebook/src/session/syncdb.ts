@@ -35,6 +35,14 @@ interface NotebookSyncDBLike {
   save_to_disk?(): Promise<void>;
 }
 
+export interface NotebookSettingsRecord {
+  type: "settings";
+  kernel?: string;
+  trust?: boolean;
+  metadata?: unknown;
+  max_output_length?: number;
+}
+
 export interface SyncDBNotebookSessionOptions {
   readOnly?: boolean;
 }
@@ -75,6 +83,29 @@ export class SyncDBNotebookSession {
     this.assertOpen();
     const row = this.syncdb.get_one({ type: "cell", id: cellId });
     return normalizeNotebookCellRows(row == null ? [] : [row])[0];
+  }
+
+  async getSettings(): Promise<NotebookSettingsRecord | undefined> {
+    this.assertOpen();
+    const row = this.syncdb.get_one({ type: "settings" });
+    if (row == null) return;
+    const rowValue = row as any;
+    const plain = rowValue?.toJS instanceof Function ? rowValue.toJS() : row;
+    if (plain == null || plain.type !== "settings") return;
+    return plain;
+  }
+
+  async getKernel(): Promise<string | undefined> {
+    const settings = await this.getSettings();
+    return typeof settings?.kernel === "string" ? settings.kernel : undefined;
+  }
+
+  async setKernel(kernel: string): Promise<void> {
+    this.assertWritable();
+    this.syncdb.set({ type: "settings", kernel });
+    this.syncdb.commit();
+    await this.syncdb.save();
+    await this.syncdb.save_to_disk?.();
   }
 
   async setCellInput(

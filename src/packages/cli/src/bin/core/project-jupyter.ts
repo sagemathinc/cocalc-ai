@@ -21,7 +21,8 @@ import { projectApiClient } from "@cocalc/conat/project/api";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import { sleep } from "@cocalc/util/async-utils";
-import type { ExpectedJupyterCell } from "@cocalc/conat/project/api/jupyter";
+import type { JupyterSaveOptions } from "@cocalc/conat/project/api/jupyter";
+import type { KernelSpec } from "@cocalc/util/jupyter/types";
 
 type ProjectIdentity = {
   project_id: string;
@@ -68,6 +69,14 @@ export type ProjectJupyterMutationResult = {
   path: string;
   cell?: NotebookCellInfo;
   deleted?: string[];
+};
+
+export type ProjectJupyterKernelResult = {
+  project_id: string;
+  path: string;
+  kernel: string | null;
+  kernel_spec: KernelSpec | null;
+  kernels: KernelSpec[];
 };
 
 export type ProjectJupyterRunSession = {
@@ -570,28 +579,16 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
   async function saveNotebookCellsToDisk({
     project,
     client,
-    path,
-    expectedCellCount,
-    expectedCells,
-    expectedCellIdsInOrder,
+    ...saveOpts
   }: {
     project: Project;
     client: any;
-    path: string;
-    expectedCellCount: number;
-    expectedCells: ExpectedJupyterCell[];
-    expectedCellIdsInOrder: string[];
-  }): Promise<void> {
+  } & JupyterSaveOptions): Promise<void> {
     try {
       await projectApiClient({
         project_id: project.project_id,
         client,
-      }).jupyter.save({
-        path,
-        expectedCellCount,
-        expectedCells,
-        expectedCellIdsInOrder,
-      });
+      }).jupyter.save(saveOpts);
     } catch (err) {
       throw new Error(
         `notebook mutation became live but could not be saved to disk; update/restart the project host if this persists: ${err}`,
@@ -628,6 +625,101 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     };
   }
 
+  async function projectJupyterKernelData({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+    noCache,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+    noCache?: boolean;
+  }): Promise<ProjectJupyterKernelResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, kernel, kernelSpec, kernels } =
+      await resolveNotebookKernelState({
+        ctx,
+        projectIdentifier,
+        path: normalizedPath,
+        cwd,
+        noCache,
+      });
+    return {
+      project_id: project.project_id,
+      path: normalizedPath,
+      kernel,
+      kernel_spec: kernelSpec,
+      kernels,
+    };
+  }
+
+  async function projectJupyterSetKernelData({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+    kernel,
+    noCache,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+    kernel: string | null;
+    noCache?: boolean;
+  }): Promise<ProjectJupyterKernelResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const requestedKernel =
+      typeof kernel === "string" && kernel.trim().length > 0
+        ? kernel.trim()
+        : "";
+    const { project, client, kernels } = await resolveNotebookKernelState({
+      ctx,
+      projectIdentifier,
+      path: normalizedPath,
+      cwd,
+      noCache,
+    });
+    if (
+      requestedKernel !== "" &&
+      !kernels.some((candidate) => candidate.name === requestedKernel)
+    ) {
+      throw new Error(
+        `unknown kernel '${requestedKernel}'; inspect available kernels with 'cocalc project jupyter kernel --path ${normalizedPath}'`,
+      );
+    }
+    await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path: normalizedPath,
+      cwd,
+      fn: async ({ session }) => {
+        await session.setKernel(requestedKernel);
+      },
+    });
+    await saveNotebookCellsToDisk({
+      project,
+      client,
+      path: normalizedPath,
+      expectedKernel: requestedKernel,
+    });
+    const kernelSpec =
+      requestedKernel === ""
+        ? null
+        : (kernels.find((candidate) => candidate.name === requestedKernel) ??
+          null);
+    return {
+      project_id: project.project_id,
+      path: normalizedPath,
+      kernel: requestedKernel || null,
+      kernel_spec: kernelSpec,
+      kernels,
+    };
+  }
+
   async function withNotebookSession<T>({
     ctx,
     projectIdentifier,
@@ -661,6 +753,50 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     } finally {
       await release();
     }
+  }
+
+  async function resolveNotebookKernelState({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+    noCache,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+    noCache?: boolean;
+  }): Promise<{
+    project: Project;
+    client: any;
+    kernel: string | null;
+    kernelSpec: KernelSpec | null;
+    kernels: KernelSpec[];
+  }> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client } = await deps.resolveProjectConatClient(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
+    const kernelValue = await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path: normalizedPath,
+      cwd,
+      fn: async ({ session }) => await session.getKernel(),
+    });
+    const kernel = kernelValue && kernelValue.length > 0 ? kernelValue : null;
+    const kernels = await projectApiClient({
+      project_id: project.project_id,
+      client,
+    }).jupyter.kernels({ noCache });
+    const kernelSpec =
+      kernel == null
+        ? null
+        : (kernels.find((candidate) => candidate.name === kernel) ?? null);
+    return { project, client, kernel, kernelSpec, kernels };
   }
 
   async function projectJupyterSetCellData({
@@ -1238,6 +1374,8 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
   return {
     close,
     projectJupyterCellsData,
+    projectJupyterKernelData,
+    projectJupyterSetKernelData,
     projectJupyterSetCellData,
     projectJupyterInsertCellData,
     projectJupyterDeleteCellsData,

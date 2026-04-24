@@ -1075,9 +1075,10 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     );
   });
 
-  it("can reveal the workspace agent before detached Codex dispatch finishes", async () => {
+  it("can reveal the preferred workspace agent before detached Codex dispatch finishes", async () => {
     const workspaceChatPath =
       "/home/wstein/.local/share/cocalc/workspaces/acct/ws-fast.chat";
+    const preferredThreadKey = "thread-existing-fast";
     mockEnsureWorkspaceChatForPath.mockResolvedValue({
       chat_path: workspaceChatPath,
       assigned: false,
@@ -1093,6 +1094,12 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         },
       },
     });
+    window.localStorage.setItem(
+      `cocalc:navigator:selected-thread:chat:${encodeURIComponent(
+        workspaceChatPath,
+      )}`,
+      preferredThreadKey,
+    );
     mockListSessions.mockResolvedValue([]);
     const save = jest.fn().mockResolvedValue(undefined);
     let resolveProcess!: () => void;
@@ -1146,24 +1153,12 @@ describe("submitNavigatorPromptToCurrentThread", () => {
 
     expect(ok).toBe(true);
     expect(mockProcessLLM).toHaveBeenCalledTimes(1);
-    expect(mockOpenFloating).toHaveBeenCalledTimes(3);
+    expect(mockOpenFloating).toHaveBeenCalledTimes(2);
     expect(mockOpenFloating.mock.calls[0]).toEqual([
       "00000000-1000-4000-8000-000000000000",
       expect.objectContaining({
-        session_id: "navigator-00000000-1000-4000-8000-000000000000",
-        title: "Agent",
-        model: "gpt-5.4-mini",
-        working_directory: "/home/wstein/project/fast",
-      }),
-      {
-        workspaceId: null,
-        workspaceOnly: false,
-      },
-    ]);
-    expect(mockOpenFloating.mock.calls[1]).toEqual([
-      "00000000-1000-4000-8000-000000000000",
-      expect.objectContaining({
-        session_id: "workspace-ws-fast",
+        session_id: "thread-existing-fast",
+        thread_key: "thread-existing-fast",
         title: "Agent",
         model: "gpt-5.4-mini",
         working_directory: "/home/wstein/project/fast",
@@ -1173,11 +1168,11 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         workspaceOnly: true,
       },
     ]);
-    expect(mockOpenFloating.mock.calls[2]).toEqual([
+    expect(mockOpenFloating.mock.calls[1]).toEqual([
       "00000000-1000-4000-8000-000000000000",
       expect.objectContaining({
-        session_id: "thread-fast",
-        thread_key: "thread-fast",
+        session_id: "thread-existing-fast",
+        thread_key: "thread-existing-fast",
         title: "Codex",
         model: "gpt-5.4-mini",
         working_directory: "/home/wstein/project/fast",

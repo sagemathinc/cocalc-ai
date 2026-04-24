@@ -1876,6 +1876,8 @@ const {
 
 const {
   projectJupyterCellsData,
+  projectJupyterKernelData,
+  projectJupyterSetKernelData,
   projectJupyterSetCellData,
   projectJupyterInsertCellData,
   projectJupyterDeleteCellsData,
@@ -2411,6 +2413,8 @@ const projectCommandDeps = {
   projectChatAutomationData,
   projectChatActivityData,
   projectJupyterCellsData,
+  projectJupyterKernelData,
+  projectJupyterSetKernelData,
   projectJupyterSetCellData,
   projectJupyterInsertCellData,
   projectJupyterDeleteCellsData,

@@ -312,9 +312,11 @@ function listSize(list: any): number | undefined {
 export function notebookCellsMatchExpected(opts: {
   cells: any;
   cellList: any;
+  kernel?: string;
   expectedCellCount?: number;
   expectedCells?: ExpectedJupyterCell[];
   expectedCellIdsInOrder?: string[];
+  expectedKernel?: string;
 }): boolean {
   const expectedCells = opts.expectedCells ?? [];
   const expectedCellIdsInOrder = opts.expectedCellIdsInOrder ?? [];
@@ -331,7 +333,9 @@ export function notebookCellsMatchExpected(opts: {
       expectedCellIdsInOrder.every(
         (id, index) => listValueAt(opts.cellList, index) === id,
       ));
-  return countMatches && cellsMatch && orderMatches;
+  const kernelMatches =
+    opts.expectedKernel == null || (opts.kernel ?? "") === opts.expectedKernel;
+  return countMatches && cellsMatch && orderMatches && kernelMatches;
 }
 
 export function isRunning(path): boolean {
@@ -438,7 +442,10 @@ async function waitForExpectedCells(
   actions: JupyterActions,
   opts: Pick<
     JupyterSaveOptions,
-    "expectedCellCount" | "expectedCells" | "expectedCellIdsInOrder"
+    | "expectedCellCount"
+    | "expectedCells"
+    | "expectedCellIdsInOrder"
+    | "expectedKernel"
   >,
 ) {
   const expectedCells = opts.expectedCells ?? [];
@@ -446,7 +453,8 @@ async function waitForExpectedCells(
   if (
     opts.expectedCellCount == null &&
     expectedCells.length === 0 &&
-    expectedCellIdsInOrder.length === 0
+    expectedCellIdsInOrder.length === 0 &&
+    opts.expectedKernel == null
   ) {
     return;
   }
@@ -458,9 +466,11 @@ async function waitForExpectedCells(
       notebookCellsMatchExpected({
         cells,
         cellList,
+        kernel: actions.store.get("kernel"),
         expectedCellCount: opts.expectedCellCount,
         expectedCells,
         expectedCellIdsInOrder,
+        expectedKernel: opts.expectedKernel,
       })
     ) {
       return;

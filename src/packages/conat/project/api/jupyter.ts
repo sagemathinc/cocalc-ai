@@ -94,4 +94,5 @@ export type JupyterSaveOptions = {
   expectedCellCount?: number;
   expectedCells?: ExpectedJupyterCell[];
   expectedCellIdsInOrder?: string[];
+  expectedKernel?: string;
 };
