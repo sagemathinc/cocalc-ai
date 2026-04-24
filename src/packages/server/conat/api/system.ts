@@ -8,6 +8,7 @@ import {
   resolveAccountHomeBay,
   resolveHostBay,
   resolveProjectOwningBay,
+  resolveRoutingContext,
 } from "@cocalc/server/bay-directory";
 import {
   listClusterBayRegistry,
@@ -819,14 +820,12 @@ export async function getRoutingContext({
   project_id: string;
   host_id?: string | null;
 }) {
-  const [account, project, host] = await Promise.all([
-    resolveAccountHomeBay({ account_id, user_account_id }),
-    resolveProjectOwningBay({ account_id, project_id }),
-    host_id == null
-      ? Promise.resolve(null)
-      : resolveHostBay({ account_id, host_id }),
-  ]);
-  return { account, project, host };
+  return await resolveRoutingContext({
+    account_id,
+    user_account_id,
+    project_id,
+    host_id,
+  });
 }
 
 export async function backfillBayOwnership({
