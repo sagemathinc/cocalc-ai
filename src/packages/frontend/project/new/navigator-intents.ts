@@ -279,6 +279,28 @@ function resolveWorkspaceTargetPaths(
   return result;
 }
 
+function resolveNavigatorWorkingDirectory(
+  project_id: string,
+  preferredPath?: string,
+): string {
+  const homeDirectory = getProjectHomeDirectory(project_id);
+  const projectStore = redux.getProjectStore(project_id);
+  const explicitPath = `${preferredPath ?? ""}`.trim();
+  if (explicitPath) {
+    return path_split(normalizeAbsolutePath(explicitPath, homeDirectory)).head;
+  }
+  const currentPath = `${projectStore?.get?.("current_path_abs") ?? ""}`.trim();
+  if (currentPath) {
+    return normalizeAbsolutePath(currentPath, homeDirectory);
+  }
+  const activePath =
+    `${tab_to_path(`${projectStore?.get?.("active_project_tab") ?? ""}`) ?? ""}`.trim();
+  if (activePath) {
+    return path_split(normalizeAbsolutePath(activePath, homeDirectory)).head;
+  }
+  return homeDirectory;
+}
+
 function isMacLikeClient(): boolean {
   if (typeof navigator === "undefined") return false;
   const platform = `${navigator.platform ?? ""}`.toLowerCase();
@@ -435,9 +457,8 @@ async function writeNavigatorPromptInWorkspaceChat(
       account_id,
       path: opts.path,
     });
-    if (!workspaceTarget?.chat_path) return false;
-
-    const targetChatPath = workspaceTarget.chat_path;
+    const targetChatPath =
+      workspaceTarget?.chat_path ?? resolveNavigatorChatPath(project_id);
     const preferredThreadKey = loadNavigatorSelectedThreadKey(
       project_id,
       targetChatPath,
@@ -448,25 +469,38 @@ async function writeNavigatorPromptInWorkspaceChat(
       preferredThreadKey,
       chatPath: targetChatPath,
     });
-    const session: AgentSessionRecord = indexedSession ?? {
-      session_id: `workspace-${workspaceTarget.workspace.workspace_id}`,
+    const fallbackWorkingDirectory =
+      workspaceTarget?.workspace.root_path ??
+      resolveNavigatorWorkingDirectory(project_id, opts.path);
+    const fallbackSession: AgentSessionRecord = {
+      session_id:
+        workspaceTarget?.workspace.workspace_id != null
+          ? `workspace-${workspaceTarget.workspace.workspace_id}`
+          : `navigator-${project_id}`,
       project_id,
       account_id,
       chat_path: targetChatPath,
       thread_key: `${preferredThreadKey ?? ""}`.trim(),
-      title: workspaceTarget.workspace.theme.title?.trim() || "Navigator",
+      title: workspaceTarget?.workspace.theme.title?.trim() || "Navigator",
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       status: "active",
-      entrypoint: "file",
+      entrypoint: workspaceTarget ? "file" : "global",
       model: requestedModel,
-      working_directory: workspaceTarget.workspace.root_path,
-      thread_color: workspaceTarget.workspace.theme.color ?? undefined,
+      working_directory: fallbackWorkingDirectory,
+      thread_color: workspaceTarget?.workspace.theme.color ?? undefined,
       thread_accent_color:
-        workspaceTarget.workspace.theme.accent_color ?? undefined,
-      thread_icon: workspaceTarget.workspace.theme.icon ?? undefined,
-      thread_image: workspaceTarget.workspace.theme.image_blob ?? undefined,
+        workspaceTarget?.workspace.theme.accent_color ?? undefined,
+      thread_icon: workspaceTarget?.workspace.theme.icon ?? undefined,
+      thread_image: workspaceTarget?.workspace.theme.image_blob ?? undefined,
     };
+    const session: AgentSessionRecord = indexedSession
+      ? {
+          ...indexedSession,
+          working_directory:
+            indexedSession.working_directory ?? fallbackWorkingDirectory,
+        }
+      : fallbackSession;
 
     await ensureNavigatorChatDirectory(project_id, targetChatPath);
     const instanceKey = "navigator-intent-stage";
@@ -605,7 +639,7 @@ async function writeNavigatorPromptInWorkspaceChat(
         createdThreadTitle ??
         existingThreadTitle ??
         session.title ??
-        workspaceTarget.workspace.theme.title?.trim() ??
+        workspaceTarget?.workspace.theme.title?.trim() ??
         "Navigator";
       revealAgentSession(
         project_id,
@@ -620,8 +654,8 @@ async function writeNavigatorPromptInWorkspaceChat(
           working_directory: session.working_directory,
         },
         {
-          workspaceId: workspaceTarget.workspace.workspace_id,
-          workspaceOnly: true,
+          workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+          workspaceOnly: workspaceTarget != null,
         },
       );
     }
