@@ -67,13 +67,14 @@ export async function callConatService(opts: ServiceCall): Promise<any> {
   const data = opts.mesg ?? null;
 
   const doRequest = async () => {
-    if (!opts.noRetry) {
+    const canPrewait = !opts.noRetry && typeof cn.waitForInterest == "function";
+    if (canPrewait) {
       await cn.waitForInterest(subject, { timeout });
     }
     const remaining = Math.max(1, timeout - (Date.now() - start));
     resp = await cn.request(subject, data, {
-      timeout: remaining,
-      waitForInterest: false,
+      timeout: canPrewait ? remaining : timeout,
+      waitForInterest: !opts.noRetry && !canPrewait,
     });
     const result = resp.data;
     if (result?.error) {

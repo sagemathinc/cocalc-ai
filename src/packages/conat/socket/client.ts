@@ -23,6 +23,14 @@ const logger = getLogger("socket:client");
 // DO NOT directly instantiate here -- instead, call the
 // socket.connect method on ConatClient.
 
+const nextTurn = (f: () => void) => {
+  if (typeof globalThis.setImmediate == "function") {
+    globalThis.setImmediate(f);
+  } else {
+    setTimeout(f, 0);
+  }
+};
+
 export class ConatSocketClient extends ConatSocketBase {
   queuedWrites: { data: any; headers?: Headers }[] = [];
   private tcp?: TCP;
@@ -141,7 +149,7 @@ export class ConatSocketClient extends ConatSocketBase {
       return;
     }
     this.dataQueueScheduled = true;
-    setImmediate(() => {
+    nextTurn(() => {
       this.dataQueueScheduled = false;
       const mesg = this.dataQueue.shift();
       if (mesg == null || this.state == "closed") {
