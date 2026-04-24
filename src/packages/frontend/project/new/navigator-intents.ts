@@ -28,6 +28,7 @@ export const NAVIGATOR_SUBMIT_PROMPT_EVENT = "cocalc:navigator:submit-prompt";
 const NAVIGATOR_SYNC_READY_TIMEOUT_MS = 12_000;
 const NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS = 15_000;
 const NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS = 5_000;
+const NAVIGATOR_FAST_WORKSPACE_RESOLVE_TIMEOUT_MS = 300;
 const NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS = 150;
 const DEFAULT_WORKSPACE_CODEX_THREAD_TITLE = "Codex";
 let navigatorIntentQueueMemory: NavigatorSubmitPromptDetail[] = [];
@@ -202,10 +203,12 @@ async function resolveWorkspaceTarget(opts: {
   project_id: string;
   account_id: string;
   path?: string;
+  timeoutMs?: number;
 }): Promise<Awaited<ReturnType<typeof ensureWorkspaceChatForPath>>> {
   const absolutePaths = resolveWorkspaceTargetPaths(opts.project_id, opts.path);
   if (absolutePaths.length === 0) return null;
-  const deadline = Date.now() + NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS;
+  const deadline =
+    Date.now() + (opts.timeoutMs ?? NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS);
   while (true) {
     const selection = loadSessionSelection(opts.project_id);
     const selectedWorkspace = loadSessionWorkspaceRecord(opts.project_id);
@@ -277,6 +280,28 @@ function resolveWorkspaceTargetPaths(
     result.push(absolutePath);
   }
   return result;
+}
+
+function resolveNavigatorWorkingDirectory(
+  project_id: string,
+  preferredPath?: string,
+): string {
+  const homeDirectory = getProjectHomeDirectory(project_id);
+  const projectStore = redux.getProjectStore(project_id);
+  const explicitPath = `${preferredPath ?? ""}`.trim();
+  if (explicitPath) {
+    return path_split(normalizeAbsolutePath(explicitPath, homeDirectory)).head;
+  }
+  const currentPath = `${projectStore?.get?.("current_path_abs") ?? ""}`.trim();
+  if (currentPath) {
+    return normalizeAbsolutePath(currentPath, homeDirectory);
+  }
+  const activePath =
+    `${tab_to_path(`${projectStore?.get?.("active_project_tab") ?? ""}`) ?? ""}`.trim();
+  if (activePath) {
+    return path_split(normalizeAbsolutePath(activePath, homeDirectory)).head;
+  }
+  return homeDirectory;
 }
 
 function isMacLikeClient(): boolean {
@@ -413,6 +438,7 @@ async function writeNavigatorPromptInWorkspaceChat(
     codexConfig?: Partial<CodexThreadConfig>;
     path?: string;
     openFloating?: boolean;
+    waitForAgent?: boolean;
   },
   submitToAgent: boolean,
 ): Promise<boolean> {
@@ -430,14 +456,45 @@ async function writeNavigatorPromptInWorkspaceChat(
 
     const account_id =
       `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
+    if (opts.openFloating === true && opts.waitForAgent === false) {
+      const chatPath = resolveNavigatorChatPath(project_id);
+      revealAgentSession(
+        project_id,
+        {
+          session_id: `navigator-${project_id}`,
+          project_id,
+          account_id,
+          chat_path: chatPath,
+          thread_key:
+            loadNavigatorSelectedThreadKey(project_id, chatPath) ?? "",
+          title: requestedTitle ?? "Navigator",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          status: "active",
+          entrypoint: "global",
+          model: requestedModel,
+          working_directory: resolveNavigatorWorkingDirectory(
+            project_id,
+            opts.path,
+          ),
+        },
+        {
+          workspaceId: null,
+          workspaceOnly: false,
+        },
+      );
+    }
     const workspaceTarget = await resolveWorkspaceTarget({
       project_id,
       account_id,
       path: opts.path,
+      timeoutMs:
+        opts.waitForAgent === false
+          ? NAVIGATOR_FAST_WORKSPACE_RESOLVE_TIMEOUT_MS
+          : undefined,
     });
-    if (!workspaceTarget?.chat_path) return false;
-
-    const targetChatPath = workspaceTarget.chat_path;
+    const targetChatPath =
+      workspaceTarget?.chat_path ?? resolveNavigatorChatPath(project_id);
     const preferredThreadKey = loadNavigatorSelectedThreadKey(
       project_id,
       targetChatPath,
@@ -448,25 +505,61 @@ async function writeNavigatorPromptInWorkspaceChat(
       preferredThreadKey,
       chatPath: targetChatPath,
     });
-    const session: AgentSessionRecord = indexedSession ?? {
-      session_id: `workspace-${workspaceTarget.workspace.workspace_id}`,
+    const fallbackWorkingDirectory =
+      workspaceTarget?.workspace.root_path ??
+      resolveNavigatorWorkingDirectory(project_id, opts.path);
+    const fallbackSession: AgentSessionRecord = {
+      session_id:
+        workspaceTarget?.workspace.workspace_id != null
+          ? `workspace-${workspaceTarget.workspace.workspace_id}`
+          : `navigator-${project_id}`,
       project_id,
       account_id,
       chat_path: targetChatPath,
       thread_key: `${preferredThreadKey ?? ""}`.trim(),
-      title: workspaceTarget.workspace.theme.title?.trim() || "Navigator",
+      title: workspaceTarget?.workspace.theme.title?.trim() || "Navigator",
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       status: "active",
-      entrypoint: "file",
+      entrypoint: workspaceTarget ? "file" : "global",
       model: requestedModel,
-      working_directory: workspaceTarget.workspace.root_path,
-      thread_color: workspaceTarget.workspace.theme.color ?? undefined,
+      working_directory: fallbackWorkingDirectory,
+      thread_color: workspaceTarget?.workspace.theme.color ?? undefined,
       thread_accent_color:
-        workspaceTarget.workspace.theme.accent_color ?? undefined,
-      thread_icon: workspaceTarget.workspace.theme.icon ?? undefined,
-      thread_image: workspaceTarget.workspace.theme.image_blob ?? undefined,
+        workspaceTarget?.workspace.theme.accent_color ?? undefined,
+      thread_icon: workspaceTarget?.workspace.theme.icon ?? undefined,
+      thread_image: workspaceTarget?.workspace.theme.image_blob ?? undefined,
     };
+    const session: AgentSessionRecord = indexedSession
+      ? {
+          ...indexedSession,
+          working_directory:
+            indexedSession.working_directory ?? fallbackWorkingDirectory,
+        }
+      : fallbackSession;
+    const optimisticSessionModel =
+      requestedModel ??
+      (typeof session.model === "string" && session.model.trim().length > 0
+        ? session.model.trim()
+        : undefined);
+
+    if (opts.openFloating === true && opts.waitForAgent === false) {
+      revealAgentSession(
+        project_id,
+        {
+          ...session,
+          title: requestedTitle ?? session.title ?? "Navigator",
+          updated_at: new Date().toISOString(),
+          status: "active",
+          model: optimisticSessionModel,
+          working_directory: session.working_directory,
+        },
+        {
+          workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+          workspaceOnly: workspaceTarget != null,
+        },
+      );
+    }
 
     await ensureNavigatorChatDirectory(project_id, targetChatPath);
     const instanceKey = "navigator-intent-stage";
@@ -605,7 +698,7 @@ async function writeNavigatorPromptInWorkspaceChat(
         createdThreadTitle ??
         existingThreadTitle ??
         session.title ??
-        workspaceTarget.workspace.theme.title?.trim() ??
+        workspaceTarget?.workspace.theme.title?.trim() ??
         "Navigator";
       revealAgentSession(
         project_id,
@@ -620,8 +713,8 @@ async function writeNavigatorPromptInWorkspaceChat(
           working_directory: session.working_directory,
         },
         {
-          workspaceId: workspaceTarget.workspace.workspace_id,
-          workspaceOnly: true,
+          workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+          workspaceOnly: workspaceTarget != null,
         },
       );
     }
@@ -634,13 +727,20 @@ async function writeNavigatorPromptInWorkspaceChat(
           sender_id: account_id,
         });
       if (!message) return false;
-      await processChatLLM({
+      const process = processChatLLM({
         actions,
         message,
         tag: opts.tag ?? "intent:navigator",
         threadModel: model ?? null,
         acpConfigOverride: threadAgentCodexConfig,
       });
+      if (opts.waitForAgent === false) {
+        // processLLM writes its own visible error messages; this path only
+        // prevents launch latency from blocking UI handoff to the agent panel.
+        void process.catch(() => undefined);
+      } else {
+        await process;
+      }
     }
     setTimeout(() => {
       actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
@@ -675,6 +775,7 @@ export async function submitNavigatorPromptInWorkspaceChat(opts: {
   codexConfig?: Partial<CodexThreadConfig>;
   path?: string;
   openFloating?: boolean;
+  waitForAgent?: boolean;
 }): Promise<boolean> {
   return await writeNavigatorPromptInWorkspaceChat(opts, true);
 }

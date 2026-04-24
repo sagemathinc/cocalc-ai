@@ -351,6 +351,7 @@ export class NotebookFrameActions {
   }
 
   run_cell(id: string) {
+    this.save_input_editor(id);
     this.runCells([id]);
   }
 
@@ -359,6 +360,7 @@ export class NotebookFrameActions {
   public runCells(ids: string[]): void {
     const v: string[] = [];
     for (const id of ids) {
+      this.save_input_editor(id);
       const type = this.jupyter_actions.store.get_cell_type(id);
       if (type === "markdown") {
         if (this.store.get("md_edit_ids", Set()).contains(id)) {

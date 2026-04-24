@@ -6,6 +6,7 @@ import { type ProjectJupyterApiOptions } from "@cocalc/util/jupyter/api-types";
 export const jupyter = {
   start: true,
   stop: true,
+  save: true,
   stripNotebook: true,
   nbconvert: true,
   runNotebook: true,
@@ -31,6 +32,7 @@ export interface Jupyter {
   // path = the syncdb path (not *.ipynb)
   start: (path: string) => Promise<void>;
   stop: (path: string) => Promise<void>;
+  save: (opts: JupyterSaveOptions) => Promise<void>;
 
   nbconvert: (opts: NbconvertParams) => Promise<void>;
 
@@ -80,3 +82,15 @@ export interface Jupyter {
     buffer_path: string | string[];
   }) => Promise<{ buffer64: string }>;
 }
+
+export type ExpectedJupyterCell = {
+  id: string;
+  cell_type?: string;
+  input?: string;
+};
+
+export type JupyterSaveOptions = {
+  path: string;
+  expectedCellCount?: number;
+  expectedCells?: ExpectedJupyterCell[];
+};
