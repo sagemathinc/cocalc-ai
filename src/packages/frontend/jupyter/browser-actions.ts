@@ -2791,6 +2791,64 @@ export class JupyterActions extends JupyterActions0 {
     return Object.keys(output).length;
   };
 
+  private inferKernelNameForRun = (): string | undefined => {
+    const metadataKernel = this.store.getIn(["metadata", "kernelspec", "name"]);
+    if (metadataKernel) {
+      return `${metadataKernel}`;
+    }
+
+    const defaultKernel = this.store.get_default_kernel();
+    if (defaultKernel) {
+      return `${defaultKernel}`;
+    }
+
+    const kernelSelection = this.store.get("kernel_selection");
+    const selectedPythonKernel =
+      kernelSelection?.get?.("python") ?? kernelSelection?.get?.("python3");
+    if (selectedPythonKernel) {
+      return `${selectedPythonKernel}`;
+    }
+
+    const kernels = this.store.get("kernels");
+    const pythonKernel =
+      kernels?.find?.((kernel) => kernel?.get?.("name") === "python3") ??
+      kernels?.find?.((kernel) => kernel?.get?.("language") === "python") ??
+      kernels?.first?.();
+    const kernelName = pythonKernel?.get?.("name");
+    if (kernelName) {
+      return `${kernelName}`;
+    }
+  };
+
+  private ensureKernelForRun = async (
+    runId: string,
+  ): Promise<string | undefined> => {
+    const kernel = this.store.get("kernel");
+    if (kernel) {
+      return `${kernel}`;
+    }
+
+    if (kernel === "") {
+      this.runDebug("runCells.abort.no_kernel.explicit", { runId });
+      await this.show_select_kernel("bad kernel");
+      return;
+    }
+
+    await this.set_jupyter_kernels();
+    const inferredKernel = this.inferKernelNameForRun();
+    if (inferredKernel) {
+      this.runDebug("runCells.kernel.inferred", {
+        runId,
+        kernel: inferredKernel,
+      });
+      await this.set_kernel(inferredKernel);
+      return `${this.store.get("kernel") ?? inferredKernel}`;
+    }
+
+    this.runDebug("runCells.abort.no_kernel", { runId });
+    await this.show_select_kernel("bad kernel");
+  };
+
   runCells = async (
     ids: string[],
     opts: { noHalt?: boolean; limit?: number } = {},
@@ -2826,7 +2884,14 @@ export class JupyterActions extends JupyterActions0 {
       this.runningNow = true;
       this.runDebug("runCells.start", { runId });
       const cells: InputCell[] = [];
-      const kernel = this.store.get("kernel");
+      const kernel = await this.ensureKernelForRun(runId);
+      if (!kernel) {
+        this.runDebug("runCells.abort.no_kernel_ready", {
+          runId,
+          ids,
+        });
+        return;
+      }
 
       this.clearMoreOutput(ids);
       for (const id of ids) {
@@ -2875,6 +2940,14 @@ export class JupyterActions extends JupyterActions0 {
         runId,
         ids: cells.map((x) => x.id),
       });
+      if (cells.length === 0) {
+        this.runDebug("runCells.abort.no_runnable_cells", {
+          runId,
+          requestedIds: ids,
+        });
+        this.syncdb.save();
+        return;
+      }
 
       // ensures cells run in order:
       cells.sort(field_cmp("pos"));
