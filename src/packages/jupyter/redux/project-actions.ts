@@ -76,14 +76,17 @@ export class JupyterActions extends JupyterActions0 {
   };
 
   ensureKernelIsReady = () => {
+    const kernel = this.store.get("kernel");
     if (this.jupyter_kernel != null) {
       if (this.jupyter_kernel.isClosed()) {
+        delete this.jupyter_kernel;
+      } else if (this.jupyter_kernel.name !== kernel) {
+        this.jupyter_kernel.close();
         delete this.jupyter_kernel;
       } else {
         return;
       }
     }
-    const kernel = this.store.get("kernel");
     logger.debug("initKernel", { kernel, path: this.path });
     // No kernel wrapper object setup at all. Make one.
     this.jupyter_kernel = createJupyterKernel({
