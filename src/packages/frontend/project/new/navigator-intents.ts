@@ -28,6 +28,7 @@ export const NAVIGATOR_SUBMIT_PROMPT_EVENT = "cocalc:navigator:submit-prompt";
 const NAVIGATOR_SYNC_READY_TIMEOUT_MS = 12_000;
 const NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS = 15_000;
 const NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS = 5_000;
+const NAVIGATOR_FAST_WORKSPACE_RESOLVE_TIMEOUT_MS = 300;
 const NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS = 150;
 const DEFAULT_WORKSPACE_CODEX_THREAD_TITLE = "Codex";
 let navigatorIntentQueueMemory: NavigatorSubmitPromptDetail[] = [];
@@ -202,10 +203,12 @@ async function resolveWorkspaceTarget(opts: {
   project_id: string;
   account_id: string;
   path?: string;
+  timeoutMs?: number;
 }): Promise<Awaited<ReturnType<typeof ensureWorkspaceChatForPath>>> {
   const absolutePaths = resolveWorkspaceTargetPaths(opts.project_id, opts.path);
   if (absolutePaths.length === 0) return null;
-  const deadline = Date.now() + NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS;
+  const deadline =
+    Date.now() + (opts.timeoutMs ?? NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS);
   while (true) {
     const selection = loadSessionSelection(opts.project_id);
     const selectedWorkspace = loadSessionWorkspaceRecord(opts.project_id);
@@ -435,6 +438,7 @@ async function writeNavigatorPromptInWorkspaceChat(
     codexConfig?: Partial<CodexThreadConfig>;
     path?: string;
     openFloating?: boolean;
+    waitForAgent?: boolean;
   },
   submitToAgent: boolean,
 ): Promise<boolean> {
@@ -456,6 +460,10 @@ async function writeNavigatorPromptInWorkspaceChat(
       project_id,
       account_id,
       path: opts.path,
+      timeoutMs:
+        opts.waitForAgent === false
+          ? NAVIGATOR_FAST_WORKSPACE_RESOLVE_TIMEOUT_MS
+          : undefined,
     });
     const targetChatPath =
       workspaceTarget?.chat_path ?? resolveNavigatorChatPath(project_id);
@@ -501,6 +509,29 @@ async function writeNavigatorPromptInWorkspaceChat(
             indexedSession.working_directory ?? fallbackWorkingDirectory,
         }
       : fallbackSession;
+    const optimisticSessionModel =
+      requestedModel ??
+      (typeof session.model === "string" && session.model.trim().length > 0
+        ? session.model.trim()
+        : undefined);
+
+    if (opts.openFloating === true && opts.waitForAgent === false) {
+      revealAgentSession(
+        project_id,
+        {
+          ...session,
+          title: requestedTitle ?? session.title ?? "Navigator",
+          updated_at: new Date().toISOString(),
+          status: "active",
+          model: optimisticSessionModel,
+          working_directory: session.working_directory,
+        },
+        {
+          workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+          workspaceOnly: workspaceTarget != null,
+        },
+      );
+    }
 
     await ensureNavigatorChatDirectory(project_id, targetChatPath);
     const instanceKey = "navigator-intent-stage";
@@ -668,13 +699,20 @@ async function writeNavigatorPromptInWorkspaceChat(
           sender_id: account_id,
         });
       if (!message) return false;
-      await processChatLLM({
+      const process = processChatLLM({
         actions,
         message,
         tag: opts.tag ?? "intent:navigator",
         threadModel: model ?? null,
         acpConfigOverride: threadAgentCodexConfig,
       });
+      if (opts.waitForAgent === false) {
+        // processLLM writes its own visible error messages; this path only
+        // prevents launch latency from blocking UI handoff to the agent panel.
+        void process.catch(() => undefined);
+      } else {
+        await process;
+      }
     }
     setTimeout(() => {
       actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
@@ -709,6 +747,7 @@ export async function submitNavigatorPromptInWorkspaceChat(opts: {
   codexConfig?: Partial<CodexThreadConfig>;
   path?: string;
   openFloating?: boolean;
+  waitForAgent?: boolean;
 }): Promise<boolean> {
   return await writeNavigatorPromptInWorkspaceChat(opts, true);
 }
