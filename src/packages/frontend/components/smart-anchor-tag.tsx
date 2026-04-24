@@ -59,6 +59,12 @@ export default function SmartAnchorTag({
         {children}
       </InternalFileLink>
     );
+  } else if (isSandboxFileHref(href)) {
+    body = (
+      <SandboxFileLink project_id={project_id} href={href} title={title}>
+        {children}
+      </SandboxFileLink>
+    );
   } else if (isCoCalcURL(href)) {
     body = (
       <CoCalcURL project_id={project_id} href={href} title={title}>
@@ -104,9 +110,14 @@ export default function SmartAnchorTag({
 }
 
 const INTERNAL_FILE_LINK_PREFIX = "cocalc-file://";
+const SANDBOX_FILE_LINK_PREFIX = "sandbox:/";
 
 function isInternalFileHref(href?: string): boolean {
   return typeof href === "string" && href.startsWith(INTERNAL_FILE_LINK_PREFIX);
+}
+
+function isSandboxFileHref(href?: string): boolean {
+  return typeof href === "string" && href.startsWith(SANDBOX_FILE_LINK_PREFIX);
 }
 
 function parseInternalFileHref(href: string): {
@@ -130,6 +141,17 @@ function parseInternalFileHref(href: string): {
   } catch {
     return {};
   }
+}
+
+function parseSandboxFileHref(href: string): {
+  path?: string;
+  line?: number;
+} {
+  const raw = `${href ?? ""}`.trim();
+  if (!raw.startsWith(SANDBOX_FILE_LINK_PREFIX)) return {};
+  const stripped = raw.slice("sandbox:".length);
+  const parsed = parseAbsoluteFileHrefTarget(stripped || "/");
+  return { path: parsed.path, line: parsed.line };
 }
 
 function parseLineFromHashFragment(hash?: string): number | undefined {
@@ -534,6 +556,51 @@ function InternalFileLink({ project_id, href, title, children }) {
         e.stopPropagation();
         if (!project_id) return;
         const target = parseInternalFileHref(href);
+        if (!target.path) return;
+        const actions = redux.getProjectActions(project_id);
+        void (async () => {
+          try {
+            let isDir = actions.isDirViaCache?.(target.path!);
+            if (
+              typeof isDir !== "boolean" &&
+              typeof actions.isDir === "function"
+            ) {
+              isDir = await actions.isDir(target.path!);
+            }
+            if (isDir === true) {
+              actions.open_directory?.(target.path!);
+              return;
+            }
+            await actions.open_file({
+              path: target.path!,
+              line: target.line,
+              foreground: true,
+              explicit: true,
+            });
+          } catch (err) {
+            alert_message({
+              type: "error",
+              message: `Cannot open linked file: ${target.path} (${err})`,
+            });
+          }
+        })();
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+function SandboxFileLink({ project_id, href, title, children }) {
+  return (
+    <a
+      href={href}
+      title={title}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!project_id) return;
+        const target = parseSandboxFileHref(href);
         if (!target.path) return;
         const actions = redux.getProjectActions(project_id);
         void (async () => {

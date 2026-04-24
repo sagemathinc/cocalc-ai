@@ -102,6 +102,28 @@ describe("SmartAnchorTag", () => {
     });
   });
 
+  it("opens sandbox file links via project open_file", async () => {
+    render(
+      <SmartAnchorTag
+        project_id="00000000-1000-4000-8000-000000000000"
+        path="/home/user/a.chat"
+        href="sandbox:/home/user/b.ipynb"
+      >
+        b.ipynb
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "b.ipynb" }));
+    await waitFor(() => {
+      expect(openFile).toHaveBeenCalledWith({
+        path: "/home/user/b.ipynb",
+        line: undefined,
+        foreground: true,
+        explicit: true,
+      });
+    });
+  });
+
   it("opens absolute file links with :line suffix as file+line", async () => {
     render(
       <SmartAnchorTag
