@@ -501,20 +501,8 @@ export function registerBrowserCommand(
               browser_id: sessionInfo.browser_id,
               client: ctx.remote.client,
             });
-            const { posture, policy } = await resolveBrowserPolicyAndPosture({
-              posture: opts.posture,
-              policyFile: opts.policyFile,
-              allowRawExec: opts.allowRawExec,
-              apiBaseUrl: ctx.apiBaseUrl,
-            });
-            const selectionResponse = await browserClient.exec({
-              project_id,
-              code: "return api.workspaces.getSelection();",
-              posture,
-              policy,
-            });
             const selection = coerceWorkspaceSelection(
-              selectionResponse?.result as any,
+              await browserClient.getWorkspaceSelection({ project_id }),
             );
             const files = (await browserClient.listOpenFiles()).filter(
               (row) => row.project_id === project_id,
