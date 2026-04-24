@@ -108,6 +108,7 @@ Codex and the CoCalc CLI should choose the right path automatically.
 The CLI should behave like the browser:
 
 - Account and browser-session questions start at the hub.
+  - But we need to be aware of `/home/user/cocalc-ai/src/.agents/scalable-architecture.md` , which is now mostly implemented.  
 - Project file, terminal, notebook, sync, and filesystem questions route to the
   project-host that owns the project.
 - Runtime-local commands execute inside the project container only when that is
@@ -318,6 +319,8 @@ Acceptance criteria:
 ### 7. Native CoCalc Artifacts From Codex
 
 Make generated outputs first-class CoCalc objects.
+
+(USER: I think this is done already)
 
 Tasks:
 

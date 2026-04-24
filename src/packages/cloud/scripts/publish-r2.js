@@ -31,9 +31,16 @@
  */
 
 const crypto = require("node:crypto");
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const https = require("node:https");
 const path = require("node:path");
+const util = require("node:util");
+const REQUEST_MAX_ATTEMPTS = 4;
+const REQUEST_RETRY_BASE_DELAY_MS = 1000;
+const UPLOAD_MAX_ATTEMPTS = 3;
+const UPLOAD_RETRY_BASE_DELAY_MS = 5000;
+const execFile = util.promisify(childProcess.execFile);
 
 function usage() {
   console.error(
@@ -59,9 +66,120 @@ function parseArgs(argv) {
   return args;
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function retryOperation({
+  label,
+  maxAttempts,
+  baseDelayMs,
+  isRetryable,
+  fn,
+}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fn(attempt);
+    } catch (err) {
+      if (attempt === maxAttempts || !isRetryable(err)) {
+        throw err;
+      }
+      const waitMs = baseDelayMs * attempt;
+      process.stderr.write(
+        `warning: ${label} failed on attempt ${attempt}/${maxAttempts}: ${err.message || err}; retrying in ${waitMs}ms\n`,
+      );
+      await delay(waitMs);
+    }
+  }
+  throw new Error(`unreachable retry state for ${label}`);
+}
+
+function isRetryableRequestError(err) {
+  const code = err?.code;
+  if (
+    code === "ECONNRESET" ||
+    code === "EPIPE" ||
+    code === "ETIMEDOUT" ||
+    code === "ENETUNREACH" ||
+    code === "EHOSTUNREACH" ||
+    code === "UND_ERR_SOCKET"
+  ) {
+    return true;
+  }
+  const message = `${err?.message || err || ""}`;
+  return (
+    /bad record mac/i.test(message) ||
+    /socket hang up/i.test(message) ||
+    /Client network socket disconnected/i.test(message)
+  );
+}
+
+async function sendRequest({
+  method,
+  host,
+  path,
+  headers,
+  body,
+  createBodyStream,
+  label,
+}) {
+  for (let attempt = 1; attempt <= REQUEST_MAX_ATTEMPTS; attempt += 1) {
+    const family = attempt >= 2 ? 4 : undefined;
+    try {
+      return await new Promise((resolve, reject) => {
+        let bodyStream;
+        const req = https.request(
+          {
+            method,
+            host,
+            path,
+            headers,
+            family,
+          },
+          (res) => {
+            const chunks = [];
+            res.on("data", (chunk) => chunks.push(chunk));
+            res.on("end", () => {
+              resolve({
+                statusCode: res.statusCode ?? 0,
+                body: Buffer.concat(chunks),
+              });
+            });
+          },
+        );
+        req.on("error", reject);
+        if (body != null) {
+          req.write(body);
+          req.end();
+          return;
+        }
+        if (createBodyStream) {
+          bodyStream = createBodyStream();
+          bodyStream.on("error", (err) => req.destroy(err));
+          req.on("close", () => bodyStream.destroy());
+          bodyStream.pipe(req);
+          return;
+        }
+        req.end();
+      });
+    } catch (err) {
+      if (attempt === REQUEST_MAX_ATTEMPTS || !isRetryableRequestError(err)) {
+        throw err;
+      }
+      const waitMs = REQUEST_RETRY_BASE_DELAY_MS * attempt;
+      process.stderr.write(
+        `warning: ${label} failed on attempt ${attempt}/${REQUEST_MAX_ATTEMPTS}: ${err.message || err}; retrying in ${waitMs}ms${attempt === 1 ? " with IPv4" : ""}\n`,
+      );
+      await delay(waitMs);
+    }
+  }
+  throw new Error(`unreachable request state for ${label}`);
+}
+
 function encodeRfc3986(str) {
-  return encodeURIComponent(str).replace(/[!'()*]/g, (c) =>
-    `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  return encodeURIComponent(str).replace(
+    /[!'()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
   );
 }
 
@@ -122,8 +240,7 @@ function normalizeVersionsLimit(raw) {
 function normalizeVersionEntry(value) {
   if (!value || typeof value !== "object") return undefined;
   const url = typeof value.url === "string" ? value.url.trim() : "";
-  const version =
-    typeof value.version === "string" ? value.version.trim() : "";
+  const version = typeof value.version === "string" ? value.version.trim() : "";
   if (!url && !version) return undefined;
   const out = {};
   if (version) out.version = version;
@@ -155,10 +272,16 @@ function versionEntryKey(entry) {
 
 function extractVersion(raw) {
   if (!raw) return null;
-  const match = raw.match(
-    /(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/,
-  );
+  const match = raw.match(/(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/);
   return match ? match[1] : null;
+}
+
+function shouldUseCurlForUpload(filePath) {
+  return (
+    !!filePath &&
+    process.platform === "darwin" &&
+    process.env.COCALC_R2_DISABLE_CURL_UPLOAD !== "1"
+  );
 }
 
 async function hashFile(filePath) {
@@ -179,20 +302,22 @@ async function putObject({
   bucket,
   key,
   body,
+  filePath,
+  contentLength,
   contentType,
   cacheControl,
+  payloadHash,
+  createBodyStream,
 }) {
   const method = "PUT";
   const service = "s3";
   const now = new Date();
-  const amzDate = now
-    .toISOString()
-    .replace(/[:-]|\.\d{3}/g, "");
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
   const dateStamp = amzDate.slice(0, 8);
-  const payloadHash = hashHex(body);
+  const effectivePayloadHash = payloadHash ?? hashHex(body == null ? "" : body);
   const headers = {
     host,
-    "x-amz-content-sha256": payloadHash,
+    "x-amz-content-sha256": effectivePayloadHash,
     "x-amz-date": amzDate,
   };
   if (contentType) {
@@ -214,7 +339,7 @@ async function putObject({
     "",
     canonicalHeaders,
     signedHeaders,
-    payloadHash,
+    effectivePayloadHash,
   ].join("\n");
   const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
   const stringToSign = [
@@ -230,37 +355,57 @@ async function putObject({
   const requestHeaders = {
     ...headers,
     authorization,
-    "content-length": Buffer.byteLength(body),
+    "content-length": contentLength ?? Buffer.byteLength(body),
   };
 
-  await new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        method,
-        host,
-        path: canonicalUri,
-        headers: requestHeaders,
-      },
-      (res) => {
-        const chunks = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-            resolve();
-            return;
-          }
-          reject(
-            new Error(
-              `R2 PUT failed (${res.statusCode}): ${Buffer.concat(chunks).toString("utf8")}`,
-            ),
-          );
-        });
-      },
-    );
-    req.on("error", reject);
-    req.write(body);
-    req.end();
+  if (shouldUseCurlForUpload(filePath)) {
+    const args = [
+      "--fail-with-body",
+      "--silent",
+      "--show-error",
+      "--http1.1",
+      "--ipv4",
+      "--retry",
+      "4",
+      "--retry-all-errors",
+      "--retry-delay",
+      "1",
+      "--request",
+      method,
+      "--upload-file",
+      filePath,
+    ];
+    for (const [name, value] of Object.entries(requestHeaders)) {
+      args.push("-H", `${name}: ${value}`);
+    }
+    args.push(`https://${host}${canonicalUri}`);
+    try {
+      await execFile("curl", args, {
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      return;
+    } catch (err) {
+      const detail =
+        `${err?.stderr || err?.stdout || err?.message || err}`.trim();
+      throw new Error(detail || `curl upload failed for ${key}`);
+    }
+  }
+
+  const response = await sendRequest({
+    method,
+    host,
+    path: canonicalUri,
+    headers: requestHeaders,
+    body,
+    createBodyStream,
+    label: `R2 PUT ${key}`,
   });
+  if (response.statusCode >= 200 && response.statusCode < 300) {
+    return;
+  }
+  throw new Error(
+    `R2 PUT failed (${response.statusCode}): ${response.body.toString("utf8")}`,
+  );
 }
 
 async function copyObject({
@@ -275,9 +420,7 @@ async function copyObject({
   const method = "PUT";
   const service = "s3";
   const now = new Date();
-  const amzDate = now
-    .toISOString()
-    .replace(/[:-]|\.\d{3}/g, "");
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
   const dateStamp = amzDate.slice(0, 8);
   const payloadHash = hashHex("");
   const copySource = canonicalizePath(bucket, sourceKey);
@@ -319,49 +462,26 @@ async function copyObject({
     "content-length": 0,
   };
 
-  await new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        method,
-        host,
-        path: canonicalUri,
-        headers: requestHeaders,
-      },
-      (res) => {
-        const chunks = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-            resolve();
-            return;
-          }
-          reject(
-            new Error(
-              `R2 COPY failed (${res.statusCode}): ${Buffer.concat(chunks).toString("utf8")}`,
-            ),
-          );
-        });
-      },
-    );
-    req.on("error", reject);
-    req.end();
+  const response = await sendRequest({
+    method,
+    host,
+    path: canonicalUri,
+    headers: requestHeaders,
+    label: `R2 COPY ${sourceKey} -> ${destKey}`,
   });
+  if (response.statusCode >= 200 && response.statusCode < 300) {
+    return;
+  }
+  throw new Error(
+    `R2 COPY failed (${response.statusCode}): ${response.body.toString("utf8")}`,
+  );
 }
 
-async function getObject({
-  host,
-  region,
-  accessKey,
-  secretKey,
-  bucket,
-  key,
-}) {
+async function getObject({ host, region, accessKey, secretKey, bucket, key }) {
   const method = "GET";
   const service = "s3";
   const now = new Date();
-  const amzDate = now
-    .toISOString()
-    .replace(/[:-]|\.\d{3}/g, "");
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
   const dateStamp = amzDate.slice(0, 8);
   const payloadHash = hashHex("");
   const headers = {
@@ -400,37 +520,22 @@ async function getObject({
     authorization,
   };
 
-  return await new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        method,
-        host,
-        path: canonicalUri,
-        headers: requestHeaders,
-      },
-      (res) => {
-        const chunks = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          if (res.statusCode === 404) {
-            resolve(undefined);
-            return;
-          }
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(Buffer.concat(chunks));
-            return;
-          }
-          reject(
-            new Error(
-              `R2 GET failed (${res.statusCode}): ${Buffer.concat(chunks).toString("utf8")}`,
-            ),
-          );
-        });
-      },
-    );
-    req.on("error", reject);
-    req.end();
+  const response = await sendRequest({
+    method,
+    host,
+    path: canonicalUri,
+    headers: requestHeaders,
+    label: `R2 GET ${key}`,
   });
+  if (response.statusCode === 404) {
+    return undefined;
+  }
+  if (response.statusCode >= 200 && response.statusCode < 300) {
+    return response.body;
+  }
+  throw new Error(
+    `R2 GET failed (${response.statusCode}): ${response.body.toString("utf8")}`,
+  );
 }
 
 async function main() {
@@ -438,8 +543,7 @@ async function main() {
   const copyFrom = args["copy-from"] || process.env.COCALC_R2_COPY_FROM;
   const copyTo = args["copy-to"] || process.env.COCALC_R2_COPY_TO;
   const accountId = args["account-id"] || process.env.COCALC_R2_ACCOUNT_ID;
-  const accessKey =
-    args["access-key"] || process.env.COCALC_R2_ACCESS_KEY_ID;
+  const accessKey = args["access-key"] || process.env.COCALC_R2_ACCESS_KEY_ID;
   const secretKey =
     args["secret-key"] || process.env.COCALC_R2_SECRET_ACCESS_KEY;
   const bucket = args.bucket || process.env.COCALC_R2_BUCKET;
@@ -475,9 +579,7 @@ async function main() {
 
   const prefix = args.prefix || process.env.COCALC_R2_PREFIX || "";
   const publicBaseUrl =
-    args["public-base-url"] ||
-    process.env.COCALC_R2_PUBLIC_BASE_URL ||
-    "";
+    args["public-base-url"] || process.env.COCALC_R2_PUBLIC_BASE_URL || "";
   const cacheControl =
     args["cache-control"] ||
     process.env.COCALC_R2_CACHE_CONTROL ||
@@ -516,18 +618,27 @@ async function main() {
 
   const fileStat = fs.statSync(filePath);
   const fileHash = await hashFile(filePath);
-  const fileBody = fs.readFileSync(filePath);
 
-  await putObject({
-    host,
-    region,
-    accessKey,
-    secretKey,
-    bucket,
-    key,
-    body: fileBody,
-    contentType,
-    cacheControl,
+  await retryOperation({
+    label: `artifact upload ${key}`,
+    maxAttempts: UPLOAD_MAX_ATTEMPTS,
+    baseDelayMs: UPLOAD_RETRY_BASE_DELAY_MS,
+    isRetryable: isRetryableRequestError,
+    fn: async () =>
+      await putObject({
+        host,
+        region,
+        accessKey,
+        secretKey,
+        bucket,
+        key,
+        filePath,
+        contentLength: fileStat.size,
+        contentType,
+        cacheControl,
+        payloadHash: fileHash,
+        createBodyStream: () => fs.createReadStream(filePath),
+      }),
   });
 
   const shaBody = Buffer.from(`${fileHash}  ${filename}\n`, "utf8");
@@ -599,9 +710,7 @@ async function main() {
               : Array.isArray(parsed)
                 ? parsed
                 : [];
-            previous = versions
-              .map(normalizeVersionEntry)
-              .filter((v) => !!v);
+            previous = versions.map(normalizeVersionEntry).filter((v) => !!v);
           }
         } catch (err) {
           process.stderr.write(

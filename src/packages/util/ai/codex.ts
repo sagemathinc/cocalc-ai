@@ -57,209 +57,112 @@ export function resolveCodexSessionMode(
 
 export const DEFAULT_CODEX_MODEL_NAME = "gpt-5.4";
 
+const DEFAULT_REASONING_LEVELS: CodexReasoningLevel[] = [
+  {
+    id: "low",
+    label: "Low",
+    description: "Fast responses with lighter reasoning.",
+  },
+  {
+    id: "medium",
+    label: "Medium",
+    description: "Balances speed and reasoning depth for everyday tasks.",
+    default: true,
+  },
+  {
+    id: "high",
+    label: "High",
+    description: "Greater reasoning depth for complex problems.",
+  },
+  {
+    id: "extra_high",
+    label: "Extra high",
+    description: "Extra high reasoning depth for complex problems.",
+  },
+];
+
+const SPARK_REASONING_LEVELS: CodexReasoningLevel[] = [
+  {
+    id: "low",
+    label: "Low",
+    description: "Fast responses with lighter reasoning.",
+  },
+  {
+    id: "medium",
+    label: "Medium",
+    description: "Balances speed and reasoning depth for everyday tasks.",
+  },
+  {
+    id: "high",
+    label: "High",
+    description: "Greater reasoning depth for complex problems.",
+    default: true,
+  },
+  {
+    id: "extra_high",
+    label: "Extra high",
+    description: "Extra high reasoning depth for complex problems.",
+  },
+];
+
+const GPT_5_2_REASONING_LEVELS: CodexReasoningLevel[] = [
+  {
+    id: "low",
+    label: "Low",
+    description:
+      "Balances speed with some reasoning; useful for straightforward queries and short explanations.",
+  },
+  {
+    id: "medium",
+    label: "Medium",
+    description:
+      "Provides a solid balance of reasoning depth and latency for general-purpose tasks.",
+    default: true,
+  },
+  {
+    id: "high",
+    label: "High",
+    description: "Maximizes reasoning depth for complex or ambiguous problems.",
+  },
+  {
+    id: "extra_high",
+    label: "Extra high",
+    description: "Extra high reasoning depth for complex problems.",
+  },
+];
+
 export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
   {
     name: DEFAULT_CODEX_MODEL_NAME,
-    description: "Latest frontier agentic coding model.",
-    reasoning: [
-      {
-        id: "low",
-        label: "Low",
-        description: "Fast responses with lighter reasoning.",
-      },
-      {
-        id: "medium",
-        label: "Medium",
-        description: "Balances speed and reasoning depth for everyday tasks.",
-        default: true,
-      },
-      {
-        id: "high",
-        label: "High",
-        description: "Greater reasoning depth for complex problems.",
-      },
-      {
-        id: "extra_high",
-        label: "Extra high",
-        description: "Extra high reasoning depth for complex problems.",
-      },
-    ],
+    description: "Strong model for everyday coding.",
+    reasoning: DEFAULT_REASONING_LEVELS,
+  },
+  {
+    name: "gpt-5.5",
+    description:
+      "Frontier model for complex coding, research, and real-world work.",
+    reasoning: DEFAULT_REASONING_LEVELS,
   },
   {
     name: "gpt-5.4-mini",
-    description: "Smaller frontier agentic coding model.",
-    reasoning: [
-      {
-        id: "low",
-        label: "Low",
-        description: "Fast responses with lighter reasoning.",
-      },
-      {
-        id: "medium",
-        label: "Medium",
-        description: "Balances speed and reasoning depth for everyday tasks.",
-        default: true,
-      },
-      {
-        id: "high",
-        label: "High",
-        description: "Greater reasoning depth for complex problems.",
-      },
-      {
-        id: "extra_high",
-        label: "Extra high",
-        description: "Extra high reasoning depth for complex problems.",
-      },
-    ],
+    description:
+      "Small, fast, and cost-efficient model for simpler coding tasks.",
+    reasoning: DEFAULT_REASONING_LEVELS,
   },
   {
     name: "gpt-5.3-codex",
-    description: "Latest frontier agentic coding model.",
-    reasoning: [
-      {
-        id: "low",
-        label: "Low",
-        description: "Fast responses with lighter reasoning.",
-      },
-      {
-        id: "medium",
-        label: "Medium",
-        description: "Balances speed and reasoning depth for everyday tasks.",
-        default: true,
-      },
-      {
-        id: "high",
-        label: "High",
-        description: "Greater reasoning depth for complex problems.",
-      },
-      {
-        id: "extra_high",
-        label: "Extra high",
-        description: "Extra high reasoning depth for complex problems.",
-      },
-    ],
+    description: "Coding-optimized model.",
+    reasoning: DEFAULT_REASONING_LEVELS,
   },
   {
     name: "gpt-5.3-codex-spark",
     description: "Ultra-fast coding model.",
-    reasoning: [
-      {
-        id: "low",
-        label: "Low",
-        description: "Fast responses with lighter reasoning.",
-      },
-      {
-        id: "medium",
-        label: "Medium",
-        description: "Balances speed and reasoning depth for everyday tasks.",
-      },
-      {
-        id: "high",
-        label: "High",
-        description: "Greater reasoning depth for complex problems.",
-        default: true,
-      },
-      {
-        id: "extra_high",
-        label: "Extra high",
-        description: "Extra high reasoning depth for complex problems.",
-      },
-    ],
-  },
-  {
-    name: "gpt-5.2-codex",
-    description: "Frontier agentic coding model.",
-    reasoning: [
-      {
-        id: "low",
-        label: "Low",
-        description: "Fastest responses with limited reasoning.",
-      },
-      {
-        id: "medium",
-        label: "Medium",
-        description:
-          "Balanced speed and depth; dynamically adjusts to the task.",
-        default: true,
-      },
-      {
-        id: "high",
-        label: "High",
-        description:
-          "Maximizes reasoning depth for complex or ambiguous problems.",
-      },
-      {
-        id: "extra_high",
-        label: "Extra high",
-        description: "Highest depth for especially challenging tasks.",
-      },
-    ],
-  },
-  {
-    name: "gpt-5.1-codex-max",
-    description: "Codex-optimized flagship for deep and fast reasoning.",
-    reasoning: [
-      {
-        id: "low",
-        label: "Low",
-        description: "Fastest responses with limited reasoning.",
-      },
-      {
-        id: "medium",
-        label: "Medium",
-        description: "Dynamically adjusts reasoning based on the task.",
-        default: true,
-      },
-      {
-        id: "high",
-        label: "High",
-        description: "Maximizes reasoning depth for complex problems.",
-      },
-    ],
+    reasoning: SPARK_REASONING_LEVELS,
   },
   {
     name: "gpt-5.2",
-    description:
-      "Latest frontier model with improvements across knowledge, reasoning and coding",
-    reasoning: [
-      {
-        id: "low",
-        label: "Low",
-        description:
-          "Balances speed with some reasoning; useful for straightforward queries and short explanations.",
-      },
-      {
-        id: "medium",
-        label: "Medium",
-        description:
-          "Provides a solid balance of reasoning depth and latency for general-purpose tasks.",
-        default: true,
-      },
-      {
-        id: "high",
-        label: "High",
-        description:
-          "Maximizes reasoning depth for complex or ambiguous problems.",
-      },
-    ],
-  },
-  {
-    name: "gpt-5.1-codex-mini",
-    description: "Optimized for codex. Cheaper, faster, but less capable.",
-    reasoning: [
-      {
-        id: "medium",
-        label: "Medium",
-        description: "Dynamically adjusts reasoning based on the task.",
-        default: true,
-      },
-      {
-        id: "high",
-        label: "High",
-        description:
-          "Maximizes reasoning depth for complex or ambiguous problems.",
-      },
-    ],
+    description: "Optimized for professional work and long-running agents.",
+    reasoning: GPT_5_2_REASONING_LEVELS,
   },
 ];
 

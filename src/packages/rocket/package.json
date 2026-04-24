@@ -5,15 +5,10 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "build:bay-bundle": "bay/build-bundle.sh",
-    "build:bay": "pnpm run build:bay-bundle"
+    "build:bay": "pnpm run build:bay-bundle",
+    "build": "exit 0"
   },
-  "files": [
-    "bay/**",
-    "bin/**",
-    "helm/**",
-    "README.md",
-    "package.json"
-  ],
+  "files": ["bay/**", "bin/**", "helm/**", "README.md", "package.json"],
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE.md",
   "devDependencies": {

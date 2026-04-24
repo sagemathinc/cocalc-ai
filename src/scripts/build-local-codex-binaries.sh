@@ -4,7 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 UPSTREAM_DIR="${CODEX_UPSTREAM_DIR:-/home/user/upstream/codex}"
-CODEX_VERSION="${CODEX_VERSION:-0.123.0}"
+CODEX_UPSTREAM_REPO="${CODEX_UPSTREAM_REPO:-https://github.com/openai/codex.git}"
+CODEX_VERSION="${CODEX_VERSION:-0.124.0}"
 CODEX_TAG="rust-v${CODEX_VERSION}"
 CODEX_BRANCH="cocalc-local-build-v${CODEX_VERSION}"
 PATCH_DIR="${REPO_ROOT}/src/scripts/patches"
@@ -64,9 +65,11 @@ EOF
 }
 
 echo "Using upstream checkout: ${UPSTREAM_DIR}"
+echo "Using upstream source: ${CODEX_UPSTREAM_REPO}"
 echo "Using output directory: ${LOCAL_BIN_ROOT}/${CODEX_VERSION}"
 
-git -C "${UPSTREAM_DIR}" fetch --tags
+git -C "${UPSTREAM_DIR}" fetch "${CODEX_UPSTREAM_REPO}" "refs/tags/${CODEX_TAG}:refs/tags/${CODEX_TAG}"
+git -C "${UPSTREAM_DIR}" restore --source=HEAD --staged --worktree .
 git -C "${UPSTREAM_DIR}" checkout "${CODEX_TAG}"
 git -C "${UPSTREAM_DIR}" switch -C "${CODEX_BRANCH}"
 git -C "${UPSTREAM_DIR}" restore --source="${CODEX_TAG}" --staged --worktree .
