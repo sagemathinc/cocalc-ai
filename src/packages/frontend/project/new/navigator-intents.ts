@@ -456,34 +456,6 @@ async function writeNavigatorPromptInWorkspaceChat(
 
     const account_id =
       `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
-    if (opts.openFloating === true && opts.waitForAgent === false) {
-      const chatPath = resolveNavigatorChatPath(project_id);
-      revealAgentSession(
-        project_id,
-        {
-          session_id: `navigator-${project_id}`,
-          project_id,
-          account_id,
-          chat_path: chatPath,
-          thread_key:
-            loadNavigatorSelectedThreadKey(project_id, chatPath) ?? "",
-          title: requestedTitle ?? "Navigator",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          status: "active",
-          entrypoint: "global",
-          model: requestedModel,
-          working_directory: resolveNavigatorWorkingDirectory(
-            project_id,
-            opts.path,
-          ),
-        },
-        {
-          workspaceId: null,
-          workspaceOnly: false,
-        },
-      );
-    }
     const workspaceTarget = await resolveWorkspaceTarget({
       project_id,
       account_id,
@@ -499,12 +471,6 @@ async function writeNavigatorPromptInWorkspaceChat(
       project_id,
       targetChatPath,
     );
-    const sessions = await listAgentSessionsForProject({ project_id });
-    const indexedSession = pickNavigatorSession({
-      records: sessions,
-      preferredThreadKey,
-      chatPath: targetChatPath,
-    });
     const fallbackWorkingDirectory =
       workspaceTarget?.workspace.root_path ??
       resolveNavigatorWorkingDirectory(project_id, opts.path);
@@ -530,6 +496,50 @@ async function writeNavigatorPromptInWorkspaceChat(
       thread_icon: workspaceTarget?.workspace.theme.icon ?? undefined,
       thread_image: workspaceTarget?.workspace.theme.image_blob ?? undefined,
     };
+    if (
+      opts.openFloating === true &&
+      opts.waitForAgent === false &&
+      preferredThreadKey
+    ) {
+      revealAgentSession(
+        project_id,
+        {
+          ...fallbackSession,
+          session_id: preferredThreadKey,
+          thread_key: preferredThreadKey,
+          title: requestedTitle ?? fallbackSession.title ?? "Navigator",
+          updated_at: new Date().toISOString(),
+          status: "active",
+          model: requestedModel ?? fallbackSession.model,
+          working_directory: fallbackSession.working_directory,
+        },
+        {
+          workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+          workspaceOnly: workspaceTarget != null,
+        },
+      );
+    }
+    const ensureNavigatorChatDirectoryPromise = ensureNavigatorChatDirectory(
+      project_id,
+      targetChatPath,
+    );
+    const sessionsPromise = listAgentSessionsForProject({ project_id });
+    await ensureNavigatorChatDirectoryPromise;
+    const instanceKey = "navigator-intent-stage";
+    const actions =
+      getChatActions(project_id, targetChatPath, { instanceKey }) ??
+      initChat(project_id, targetChatPath, { instanceKey });
+    if (!actions) return false;
+    const readyPromise = waitForThreadReady({
+      actions,
+      timeoutMs: NAVIGATOR_SYNC_READY_TIMEOUT_MS,
+    });
+    const sessions = await sessionsPromise;
+    const indexedSession = pickNavigatorSession({
+      records: sessions,
+      preferredThreadKey,
+      chatPath: targetChatPath,
+    });
     const session: AgentSessionRecord = indexedSession
       ? {
           ...indexedSession,
@@ -543,7 +553,11 @@ async function writeNavigatorPromptInWorkspaceChat(
         ? session.model.trim()
         : undefined);
 
-    if (opts.openFloating === true && opts.waitForAgent === false) {
+    if (
+      opts.openFloating === true &&
+      opts.waitForAgent === false &&
+      indexedSession?.thread_key
+    ) {
       revealAgentSession(
         project_id,
         {
@@ -560,18 +574,7 @@ async function writeNavigatorPromptInWorkspaceChat(
         },
       );
     }
-
-    await ensureNavigatorChatDirectory(project_id, targetChatPath);
-    const instanceKey = "navigator-intent-stage";
-    const actions =
-      getChatActions(project_id, targetChatPath, { instanceKey }) ??
-      initChat(project_id, targetChatPath, { instanceKey });
-    if (!actions) return false;
-
-    const ready = await waitForThreadReady({
-      actions,
-      timeoutMs: NAVIGATOR_SYNC_READY_TIMEOUT_MS,
-    });
+    const ready = await readyPromise;
     if (!ready) return false;
 
     let resolvedThreadKey = chooseThreadKeyFromIndex({

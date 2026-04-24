@@ -52,8 +52,6 @@ import { WidgetManager } from "./widgets/manager";
 import type { Kernels, Kernel } from "@cocalc/jupyter/util/misc";
 import { get_kernels_by_name_or_language } from "@cocalc/jupyter/util/misc";
 import { show_kernel_selector_reasons } from "@cocalc/jupyter/redux/store";
-import { cloneDeep } from "lodash";
-import { export_to_ipynb } from "@cocalc/jupyter/ipynb/export-to-ipynb";
 import exportToHTML from "./nbviewer/export";
 import { JUPYTER_MIMETYPES } from "@cocalc/jupyter/util/misc";
 import { parse } from "path";
@@ -2368,78 +2366,6 @@ export class JupyterActions extends JupyterActions0 {
     this.setState({ check_select_kernel_init: true });
   };
 
-  // convert this Jupyter notebook to an ipynb file, including
-  // mime types like images in base64. This makes a first pass
-  // to find the sha1-indexed blobs, gets the blobs, then does
-  // a second pass to fill them in.  There is a similar function
-  // in store that is sync, but doesn't fill in the blobs
-  // like this does.
-  toIpynb = async () => {
-    const store = this.store;
-    if (store?.get("cells") == null || store?.get("cell_list") == null) {
-      throw Error("not loaded");
-    }
-
-    const cell_list = store.get("cell_list");
-    const blobsBase64 = new Set<string>();
-    const blobsString = new Set<string>();
-    const blob_store = {
-      getBase64: (hash) => {
-        blobsBase64.add(hash);
-      },
-      getString: (hash) => {
-        blobsString.add(hash);
-      },
-    };
-
-    const options = {
-      cells: store.get("cells").toJS(),
-      cell_list: cell_list.toJS(),
-      metadata: store.get("metadata")?.toJS(), // custom metadata
-      kernelspec: store.get_kernel_info(store.get("kernel")),
-      language_info: store.get_language_info(),
-      blob_store,
-    };
-
-    // clone deep because export_to_ipynb mutates its input!
-    const pass1 = export_to_ipynb(cloneDeep(options));
-
-    let n = 0;
-    const blobs: { [sha1: string]: string | null } = {};
-    for (const hash of blobsBase64) {
-      try {
-        const ar = await this.asyncBlobStore.get(hash);
-        if (ar) {
-          blobs[hash] = uint8ArrayToBase64(ar);
-          n += 1;
-        }
-      } catch (err) {
-        console.log("WARNING: missing image ", hash, err);
-      }
-    }
-    const t = new TextDecoder();
-    for (const hash of blobsString) {
-      try {
-        const ar = await this.asyncBlobStore.get(hash);
-        if (ar) {
-          blobs[hash] = t.decode(ar);
-          n += 1;
-        }
-      } catch (err) {
-        console.log("WARNING: missing image ", hash, err);
-      }
-    }
-    if (n == 0) {
-      return pass1;
-    }
-    const blob_store2 = {
-      getBase64: (hash) => blobs[hash],
-      getString: (hash) => blobs[hash],
-    };
-
-    return export_to_ipynb({ ...options, blob_store: blob_store2 });
-  };
-
   save = async () => {
     await this.saveIpynb();
   };
@@ -2791,6 +2717,49 @@ export class JupyterActions extends JupyterActions0 {
     return Object.keys(output).length;
   };
 
+  private inferKernelNameForRun = (): string | undefined => {
+    const metadataKernel = this.store.getIn(["metadata", "kernelspec", "name"]);
+    if (
+      metadataKernel &&
+      (this.store.get("kernels") === undefined ||
+        this.store.get_kernel_info(`${metadataKernel}`))
+    ) {
+      return `${metadataKernel}`;
+    }
+  };
+
+  private ensureKernelForRun = async (
+    runId: string,
+  ): Promise<string | undefined> => {
+    const kernel = this.store.get("kernel");
+    if (kernel) {
+      return `${kernel}`;
+    }
+
+    if (kernel === "") {
+      this.runDebug("runCells.abort.no_kernel.explicit", { runId });
+      await this.show_select_kernel("bad kernel");
+      return;
+    }
+
+    await this.set_jupyter_kernels();
+    const inferredKernel = this.inferKernelNameForRun();
+    if (inferredKernel) {
+      this.runDebug("runCells.kernel.inferred", {
+        runId,
+        kernel: inferredKernel,
+      });
+      await this.set_kernel(inferredKernel);
+      return `${this.store.get("kernel") ?? inferredKernel}`;
+    }
+
+    this.runDebug("runCells.abort.no_kernel", {
+      runId,
+      metadataKernel: this.store.getIn(["metadata", "kernelspec", "name"]),
+    });
+    await this.show_select_kernel("bad kernel");
+  };
+
   runCells = async (
     ids: string[],
     opts: { noHalt?: boolean; limit?: number } = {},
@@ -2826,7 +2795,14 @@ export class JupyterActions extends JupyterActions0 {
       this.runningNow = true;
       this.runDebug("runCells.start", { runId });
       const cells: InputCell[] = [];
-      const kernel = this.store.get("kernel");
+      const kernel = await this.ensureKernelForRun(runId);
+      if (!kernel) {
+        this.runDebug("runCells.abort.no_kernel_ready", {
+          runId,
+          ids,
+        });
+        return;
+      }
 
       this.clearMoreOutput(ids);
       for (const id of ids) {
@@ -2875,6 +2851,14 @@ export class JupyterActions extends JupyterActions0 {
         runId,
         ids: cells.map((x) => x.id),
       });
+      if (cells.length === 0) {
+        this.runDebug("runCells.abort.no_runnable_cells", {
+          runId,
+          requestedIds: ids,
+        });
+        this.syncdb.save();
+        return;
+      }
 
       // ensures cells run in order:
       cells.sort(field_cmp("pos"));

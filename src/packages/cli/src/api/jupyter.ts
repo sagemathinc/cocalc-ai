@@ -5,6 +5,7 @@ import {
 import {
   createProjectJupyterOps,
   type NotebookCellInfo,
+  type ProjectJupyterKernelResult,
   type ProjectJupyterRunSession,
 } from "../bin/core/project-jupyter";
 
@@ -42,6 +43,22 @@ export interface BoundJupyterDocument<Project extends ProjectIdentity> {
     project: Project;
     path: string;
     cells: NotebookCellInfo[];
+  }>;
+
+  getKernel(options?: { noCache?: boolean }): Promise<{
+    project: Project;
+    path: string;
+    kernel: string | null;
+    kernelSpec: ProjectJupyterKernelResult["kernel_spec"];
+    kernels: ProjectJupyterKernelResult["kernels"];
+  }>;
+
+  setKernel(options: { kernel: string | null; noCache?: boolean }): Promise<{
+    project: Project;
+    path: string;
+    kernel: string | null;
+    kernelSpec: ProjectJupyterKernelResult["kernel_spec"];
+    kernels: ProjectJupyterKernelResult["kernels"];
   }>;
 
   setCell(options: {
@@ -154,6 +171,51 @@ export function createJupyterApi<Ctx, Project extends ProjectIdentity>({
             ).project,
             path: result.path,
             cells: result.cells,
+          };
+        },
+        async getKernel(options) {
+          const result = await ops.projectJupyterKernelData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+            noCache: options?.noCache,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            kernel: result.kernel,
+            kernelSpec: result.kernel_spec,
+            kernels: result.kernels,
+          };
+        },
+        async setKernel(options) {
+          const result = await ops.projectJupyterSetKernelData({
+            ctx,
+            projectIdentifier: binding.projectIdentifier,
+            path: binding.path,
+            cwd: binding.cwd,
+            kernel: options.kernel,
+            noCache: options.noCache,
+          });
+          return {
+            project: (
+              await resolveProjectConatClient(
+                ctx,
+                binding.projectIdentifier,
+                binding.cwd,
+              )
+            ).project,
+            path: result.path,
+            kernel: result.kernel,
+            kernelSpec: result.kernel_spec,
+            kernels: result.kernels,
           };
         },
         async setCell(options) {

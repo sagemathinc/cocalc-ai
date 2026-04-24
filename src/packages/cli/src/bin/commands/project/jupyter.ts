@@ -18,6 +18,59 @@ const PROJECT_JUPYTER_EXEC_API_DECLARATION = `declare const api: {
   };
   notebook: {
     path: string;
+    getKernel(options?: { noCache?: boolean }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      kernel: string | null;
+      kernelSpec: {
+        name: string;
+        display_name: string;
+        language: string;
+        interrupt_mode: string;
+        env: Record<string, string>;
+        metadata?: Record<string, unknown>;
+        resource_dir: string;
+        argv: string[];
+      } | null;
+      kernels: Array<{
+        name: string;
+        display_name: string;
+        language: string;
+        interrupt_mode: string;
+        env: Record<string, string>;
+        metadata?: Record<string, unknown>;
+        resource_dir: string;
+        argv: string[];
+      }>;
+    }>;
+    setKernel(options: {
+      kernel: string | null;
+      noCache?: boolean;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      kernel: string | null;
+      kernelSpec: {
+        name: string;
+        display_name: string;
+        language: string;
+        interrupt_mode: string;
+        env: Record<string, string>;
+        metadata?: Record<string, unknown>;
+        resource_dir: string;
+        argv: string[];
+      } | null;
+      kernels: Array<{
+        name: string;
+        display_name: string;
+        language: string;
+        interrupt_mode: string;
+        env: Record<string, string>;
+        metadata?: Record<string, unknown>;
+        resource_dir: string;
+        argv: string[];
+      }>;
+    }>;
     listCells(options?: { codeOnly?: boolean }): Promise<{
       project: { project_id: string; title: string; host_id: string | null };
       path: string;
@@ -292,6 +345,8 @@ export function registerProjectJupyterCommands(
   const {
     withContext,
     projectJupyterCellsData,
+    projectJupyterKernelData,
+    projectJupyterSetKernelData,
     projectJupyterSetCellData,
     projectJupyterInsertCellData,
     projectJupyterDeleteCellsData,
@@ -316,6 +371,58 @@ export function registerProjectJupyterCommands(
         process.stdout.write("\n");
       }
     });
+
+  jupyter
+    .command("kernel")
+    .description("show or change the notebook kernel")
+    .requiredOption("--path <path>", "notebook path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .option("--set <kernel>", "set the notebook kernel by kernelspec name")
+    .option("--none", "detach the notebook from any kernel")
+    .option("--no-cache", "refresh installed kernels before validating")
+    .action(
+      async (
+        opts: {
+          path: string;
+          project?: string;
+          set?: string;
+          none?: boolean;
+          noCache?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project jupyter kernel", async (ctx) => {
+          const requestedKernel = `${opts.set ?? ""}`.trim();
+          if (requestedKernel && opts.none) {
+            throw new Error("choose exactly one of --set <kernel> or --none");
+          }
+          if (requestedKernel) {
+            return await projectJupyterSetKernelData({
+              ctx,
+              projectIdentifier: opts.project,
+              path: normalizePath(opts.path),
+              kernel: requestedKernel,
+              noCache: opts.noCache,
+            });
+          }
+          if (opts.none) {
+            return await projectJupyterSetKernelData({
+              ctx,
+              projectIdentifier: opts.project,
+              path: normalizePath(opts.path),
+              kernel: null,
+              noCache: opts.noCache,
+            });
+          }
+          return await projectJupyterKernelData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            noCache: opts.noCache,
+          });
+        });
+      },
+    );
 
   jupyter
     .command("cells")
@@ -586,6 +693,8 @@ Saved script example:
               },
               notebook: {
                 path: bindingPath,
+                getKernel: notebook.getKernel.bind(notebook),
+                setKernel: notebook.setKernel.bind(notebook),
                 listCells: notebook.listCells.bind(notebook),
                 setCell: notebook.setCell.bind(notebook),
                 insertCell: notebook.insertCell.bind(notebook),
