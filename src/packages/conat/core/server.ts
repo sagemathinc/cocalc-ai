@@ -108,6 +108,13 @@ function emitWithAckTimeoutValue(
   });
 }
 import { type ConatSocketServer } from "@cocalc/conat/socket";
+
+function socketIoCompressionEnabled(): boolean {
+  const value = `${process.env.COCALC_CONAT_SOCKET_IO_COMPRESSION ?? ""}`
+    .trim()
+    .toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
 import { throttle } from "lodash";
 import { getLogger } from "@cocalc/conat/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -361,6 +368,7 @@ export class ConatServer extends EventEmitter {
     // when restarting the server.
     let adapter: any = undefined;
 
+    const socketIoCompression = socketIoCompressionEnabled();
     const socketioOptions = {
       maxHttpBufferSize: MAX_PAYLOAD,
       path,
@@ -373,8 +381,8 @@ export class ConatServer extends EventEmitter {
       // Conat clients force websocket transport, and most control-plane
       // messages are tiny. Avoid compression negotiation and zlib overhead on
       // the router hot path.
-      httpCompression: false,
-      perMessageDeflate: false,
+      httpCompression: socketIoCompression,
+      perMessageDeflate: socketIoCompression,
     };
     this.log(socketioOptions);
     if (httpServer) {
