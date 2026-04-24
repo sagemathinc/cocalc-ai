@@ -1,4 +1,5 @@
 import {
+  isActiveJupyterRuntimeCellState,
   normalizeJupyterRuntimeCellState,
   type JupyterRuntimeCellState,
 } from "./runtime-state";
@@ -25,5 +26,19 @@ describe("normalizeJupyterRuntimeCellState", () => {
       start: 10,
       end: 20,
     });
+  });
+
+  it("identifies only live running states as active", () => {
+    expect(isActiveJupyterRuntimeCellState({ state: "run" })).toBe(true);
+    expect(isActiveJupyterRuntimeCellState({ state: "busy" })).toBe(true);
+    expect(
+      isActiveJupyterRuntimeCellState({
+        state: "busy",
+        start: 10,
+        end: 20,
+      }),
+    ).toBe(false);
+    expect(isActiveJupyterRuntimeCellState({ state: "done" })).toBe(false);
+    expect(isActiveJupyterRuntimeCellState(undefined)).toBe(false);
   });
 });

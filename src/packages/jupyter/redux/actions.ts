@@ -52,6 +52,7 @@ import { isSha1, sha1 } from "@cocalc/util/misc";
 import { shouldUseIframe } from "@cocalc/jupyter/util/iframe";
 import { join } from "path";
 import {
+  isActiveJupyterRuntimeCellState,
   isJupyterRuntimeCellKey,
   jupyterRuntimeCellIdFromKey,
   jupyterRuntimeCellKey,
@@ -358,6 +359,30 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       if (!key.startsWith(JUPYTER_RUNTIME_CELL_KEY_PREFIX)) {
         continue;
       }
+      this.applyRuntimeCellToStore(jupyterRuntimeCellIdFromKey(key));
+    }
+  };
+
+  protected clearStaleActiveRuntimeCellState = (): void => {
+    const keys = new Set<string>();
+    if (this.runtimeState != null) {
+      for (const key of Object.keys(this.runtimeState.getAll())) {
+        if (key.startsWith(JUPYTER_RUNTIME_CELL_KEY_PREFIX)) {
+          keys.add(key);
+        }
+      }
+    }
+    for (const key of this.pendingRuntimeRecords.keys()) {
+      if (key.startsWith(JUPYTER_RUNTIME_CELL_KEY_PREFIX)) {
+        keys.add(key);
+      }
+    }
+    for (const key of keys) {
+      const runtimeCell = this.getRuntimeRecord<JupyterRuntimeCellState>(key);
+      if (!isActiveJupyterRuntimeCellState(runtimeCell)) {
+        continue;
+      }
+      this.deleteRuntimeRecord(key);
       this.applyRuntimeCellToStore(jupyterRuntimeCellIdFromKey(key));
     }
   };

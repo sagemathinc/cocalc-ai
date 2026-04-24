@@ -57,6 +57,13 @@ export function normalizeJupyterRuntimeCellState(
   return { ...runtimeCell, state: "done" };
 }
 
+export function isActiveJupyterRuntimeCellState(
+  runtimeCell: JupyterRuntimeCellState | undefined,
+): boolean {
+  const state = normalizeJupyterRuntimeCellState(runtimeCell)?.state;
+  return state === "run" || state === "busy";
+}
+
 export interface JupyterRuntimeShape {
   settings?: JupyterRuntimeSettings;
   nbconvert?: JupyterRuntimeNbconvert;

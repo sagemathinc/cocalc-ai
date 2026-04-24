@@ -920,6 +920,9 @@ export class JupyterActions extends JupyterActions0 {
         this.processSharedLiveRunBatch(batch, "replay");
       }
     }
+    if (!snapshots.some((snapshot) => snapshot.done !== true)) {
+      this.clearStaleActiveRuntimeCellState();
+    }
   };
 
   private ensureLiveRunSubscription = async (): Promise<void> => {
