@@ -261,6 +261,11 @@ The harness also supports `--smoke open-tabs`, which asks a real Codex turn
 `browser files --browser ... --session-project-id ...` check appears in the
 answer.
 
+The harness also supports `--smoke root-route`, which opens the project
+`/files/` route without sending a Codex prompt and verifies that the frontend
+resolves to the safe project home path instead of leaving project state at `/`.
+This directly guards the accidental root directory listing regression.
+
 For remote development where `COCALC_API_URL` is local to the hub host or
 container, the harness separates the CLI/control-plane URL from the
 browser-visible URL:

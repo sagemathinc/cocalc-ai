@@ -28,7 +28,7 @@ function usageAndExit(message, code = 1) {
       "  --target-url <url>         Exact chat URL; overrides --chat-path URL construction",
       "  --prompt <text>            Prompt to send as exactly one browser chat turn",
       "  --prompt-file <path>       Read prompt from a file instead of --prompt",
-      "  --smoke <name>             Built-in smoke prompt/check: live-text, open-tabs",
+      "  --smoke <name>             Built-in smoke/check: live-text, open-tabs, root-route",
       "  --smoke-path <path>        Project file path for smoke checks",
       "  --smoke-marker <text>      Marker text for smoke checks",
       "  --model <id>               Codex model for fallback frontend send (default: gpt-5.5)",
@@ -204,7 +204,8 @@ function parseArgs(argv) {
   if (
     options.smoke &&
     options.smoke !== "live-text" &&
-    options.smoke !== "open-tabs"
+    options.smoke !== "open-tabs" &&
+    options.smoke !== "root-route"
   ) {
     usageAndExit(`unsupported --smoke value: ${options.smoke}`);
   }
@@ -216,6 +217,13 @@ function parseArgs(argv) {
 }
 
 async function loadPrompt(options) {
+  if (
+    options.smoke === "root-route" &&
+    !options.prompt &&
+    !options.promptFile
+  ) {
+    return "";
+  }
   if (options.smoke === "live-text" && !options.prompt && !options.promptFile) {
     return liveTextSmokePrompt(options);
   }
@@ -267,6 +275,11 @@ function chatUrl(options) {
   return `${baseUrl}/projects/${encodeURIComponent(
     options.projectId,
   )}/files${encodePathPreservingSlashes(options.chatPath)}`;
+}
+
+function rootRouteUrl(options) {
+  const baseUrl = options.browserBaseUrl || options.baseUrl;
+  return `${baseUrl}/projects/${encodeURIComponent(options.projectId)}/files/`;
 }
 
 function shellQuote(value) {
@@ -508,6 +521,84 @@ function runtimeBootstrapScript() {
     }
     return undefined;
   }
+`;
+}
+
+function projectRootRouteStateScript({ projectId }) {
+  return `
+return (() => {
+  const projectId = ${JSON.stringify(projectId)};
+  ${runtimeBootstrapScript()}
+
+  function toPlain(value) {
+    if (value == null) return value;
+    if (typeof value.toJS === "function") return value.toJS();
+    if (Array.isArray(value)) return value.map(toPlain);
+    if (typeof value === "object") {
+      const out = {};
+      for (const [key, entry] of Object.entries(value)) out[key] = toPlain(entry);
+      return out;
+    }
+    return value;
+  }
+
+  function getProjectStore(redux) {
+    if (!redux) return undefined;
+    const candidates = [
+      redux.getProjectStore?.(projectId),
+      redux.getStore?.("project-" + projectId),
+      redux.getStore?.("project:" + projectId),
+      redux.getStore?.(projectId),
+    ].filter(Boolean);
+    if (candidates.length > 0) return candidates[0];
+    const stores = redux._stores ?? redux.stores ?? redux.store;
+    if (stores && typeof stores === "object") {
+      for (const [name, store] of Object.entries(stores)) {
+        if (String(name).includes(projectId)) return store;
+      }
+    }
+    return undefined;
+  }
+
+  function read(store, key) {
+    try {
+      return toPlain(store?.get?.(key));
+    } catch {
+      return undefined;
+    }
+  }
+
+  const redux = getRedux();
+  const store = getProjectStore(redux);
+  const bodyText = document.body?.innerText ?? "";
+  const currentPath =
+    read(store, "current_path_abs") ??
+    read(store, "current_path") ??
+    read(store, "directory") ??
+    "";
+  const historyPath =
+    read(store, "history_path_abs") ??
+    read(store, "history_path") ??
+    "";
+  const activeTab = read(store, "active_project_tab") ?? "";
+  const pathFromUrl =
+    decodeURIComponent(location.pathname)
+      .replace(new RegExp("^/projects/" + projectId + "/files"), "") || "/";
+
+  return {
+    ok: Boolean(store),
+    url: location.href,
+    pathname: location.pathname,
+    pathFromUrl,
+    hasRedux: Boolean(redux),
+    hasProjectStore: Boolean(store),
+    currentPath: String(currentPath ?? ""),
+    historyPath: String(historyPath ?? ""),
+    activeTab: String(activeTab ?? ""),
+    staleFrontendBuild: bodyText.includes("Stale Frontend Build Detected"),
+    bodyTextTail: bodyText.slice(Math.max(0, bodyText.length - 3000)),
+  };
+})()
 `;
 }
 
@@ -896,6 +987,70 @@ async function verifyOpenTabsSmoke({ options, browserId, finalState }) {
   return result;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function rootRouteStateIsSafe(state) {
+  if (!state?.hasProjectStore) return false;
+  const paths = [state.currentPath, state.historyPath]
+    .map((value) => `${value ?? ""}`.trim())
+    .filter(Boolean);
+  if (paths.some((value) => value === "/")) return false;
+  return paths.some(
+    (value) => value === "/home/user" || value.startsWith("/home/user/"),
+  );
+}
+
+async function verifyRootRouteSmoke({ options, browserId }) {
+  const started = Date.now();
+  const timeoutMs = Math.min(options.timeoutMs, 90_000);
+  let lastState;
+  while (Date.now() - started < timeoutMs) {
+    lastState = await browserExec({
+      options,
+      browserId,
+      code: projectRootRouteStateScript({ projectId: options.projectId }),
+      timeoutMs: 45_000,
+    });
+    await writeFile(
+      path.join(options.outDir, "latest-root-route-state.json"),
+      JSON.stringify(lastState, null, 2),
+    );
+    if (rootRouteStateIsSafe(lastState)) {
+      const result = {
+        ok: true,
+        name: options.smoke,
+        browser_id: browserId,
+        state: lastState,
+      };
+      await writeFile(
+        path.join(options.outDir, "smoke-verification.json"),
+        JSON.stringify(result, null, 2),
+      );
+      return result;
+    }
+    await sleep(1000);
+  }
+
+  const result = {
+    ok: false,
+    name: options.smoke,
+    browser_id: browserId,
+    state: lastState,
+    reason: lastState?.staleFrontendBuild
+      ? "page reports a stale frontend build"
+      : "project /files/ route did not resolve to /home/user",
+  };
+  await writeFile(
+    path.join(options.outDir, "smoke-verification.json"),
+    JSON.stringify(result, null, 2),
+  );
+  throw new Error(
+    `root-route smoke failed:\n${JSON.stringify(result, null, 2)}`,
+  );
+}
+
 async function verifySmoke({ options, browserId, finalState }) {
   if (options.smoke === "open-tabs") {
     return await verifyOpenTabsSmoke({ options, browserId, finalState });
@@ -941,10 +1096,13 @@ async function verifySmoke({ options, browserId, finalState }) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const prompt = await loadPrompt(options);
-  if (!prompt) usageAndExit("--prompt or --prompt-file is required");
+  if (!prompt && options.smoke !== "root-route") {
+    usageAndExit("--prompt or --prompt-file is required");
+  }
   await mkdir(options.outDir, { recursive: true });
 
-  const targetUrl = chatUrl(options);
+  const targetUrl =
+    options.smoke === "root-route" ? rootRouteUrl(options) : chatUrl(options);
   let spawnId = "";
   let browserId = options.browserId;
   const artifacts = {
@@ -952,6 +1110,10 @@ async function main() {
     target_url: targetUrl,
     run_json: path.join(options.outDir, "run.json"),
     latest_chat_state_json: path.join(options.outDir, "latest-chat-state.json"),
+    latest_root_route_state_json: path.join(
+      options.outDir,
+      "latest-root-route-state.json",
+    ),
   };
 
   if (!browserId) {
@@ -986,6 +1148,23 @@ async function main() {
       argv: ["wait-for-selector", "body"],
       timeoutMs: 60_000,
     });
+    if (options.smoke === "root-route") {
+      const smoke = await verifyRootRouteSmoke({ options, browserId });
+      await captureScreenshot({ options, browserId, label: "final" });
+      summary = {
+        ok: true,
+        base_url: options.baseUrl,
+        browser_base_url: options.browserBaseUrl || undefined,
+        project_id: options.projectId,
+        browser_id: browserId,
+        spawn_id: spawnId || undefined,
+        smoke,
+        artifacts,
+      };
+      await writeFile(artifacts.run_json, JSON.stringify(summary, null, 2));
+      process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+      return;
+    }
     await browserExec({
       options,
       browserId,
