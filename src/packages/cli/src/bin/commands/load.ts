@@ -264,10 +264,16 @@ function normalizeConatResponseMode(
 
 function normalizeConatRequestTransport(
   raw: string | undefined,
-): "pubsub" | "rpc" {
+): "pubsub" | "rpc" | "raw-rpc" {
   const transport = `${raw ?? "pubsub"}`.trim();
-  if (transport !== "pubsub" && transport !== "rpc") {
-    throw new Error("--request-transport must be either 'pubsub' or 'rpc'");
+  if (
+    transport !== "pubsub" &&
+    transport !== "rpc" &&
+    transport !== "raw-rpc"
+  ) {
+    throw new Error(
+      "--request-transport must be either 'pubsub', 'rpc', or 'raw-rpc'",
+    );
   }
   return transport;
 }
@@ -571,7 +577,7 @@ export function registerLoadCommand(
     )
     .option(
       "--request-transport <transport>",
-      "request transport to measure: pubsub or rpc",
+      "request transport to measure: pubsub, rpc, or raw-rpc",
       "pubsub",
     )
     .action(
@@ -643,7 +649,10 @@ export function registerLoadCommand(
               });
               await client.waitUntilReady();
               const subject = `${subjectPrefix}.${i}`;
-              if (mode === "request" && requestTransport === "rpc") {
+              if (
+                mode === "request" &&
+                (requestTransport === "rpc" || requestTransport === "raw-rpc")
+              ) {
                 const sub = await client.rpcService(subject, {
                   echo: async (value: string) => ({
                     ok: true,
@@ -722,7 +731,9 @@ export function registerLoadCommand(
                   mode === "request"
                     ? requestTransport === "rpc"
                       ? client.rpcCall(service.subject)
-                      : client.call(service.subject)
+                      : requestTransport === "raw-rpc"
+                        ? client.rawRpcCall(service.subject)
+                        : client.call(service.subject)
                     : null,
                 address: addresses[i % addresses.length],
                 subject: service.subject,

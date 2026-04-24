@@ -488,6 +488,15 @@ type RpcServiceHandle = {
   stop: () => void;
 };
 
+type RawRpcPending = {
+  subject: string;
+  ignoreErrorHeader?: boolean;
+  resolve: (message: Message) => void;
+  reject: (err: any) => void;
+  timer: ReturnType<typeof setTimeout>;
+  start: number;
+};
+
 // WARNING!  This is the default and you can't just change it!
 // Yes, for specific messages you can, but in general DO NOT.  The reason is because, e.g.,
 // JSON will turn Dates into strings, and we no longer fix that.  So unless you modify the
@@ -590,6 +599,7 @@ export class Client extends EventEmitter {
   private subs: { [subject: string]: SubscriptionEmitter } = {};
   private rpcServiceQueues: { [subject: string]: string } = {};
   private rpcServiceImpls: { [subject: string]: any } = {};
+  private rawRpcPending: Map<string, RawRpcPending> = new Map();
   private sockets: {
     // all socket servers created using this Client
     servers: { [subject: string]: ConatSocketServer };
@@ -720,6 +730,8 @@ export class Client extends EventEmitter {
       this.permissionError[type]?.set(subject, message);
     });
     this.conn.on("rpc-request", this.handleRpcRequest);
+    this.conn.on("rpc-raw-request", this.handleRawRpcRequest);
+    this.conn.on("rpc-raw-response", this.handleRawRpcResponse);
     this.conn.on("connect", async () => {
       logger.debug(`Conat: Connected to ${this.getAddressForLog()}`);
       if (this.conn.connected) {
@@ -1041,6 +1053,11 @@ export class Client extends EventEmitter {
       delete this.rpcServiceQueues[subject];
       delete this.rpcServiceImpls[subject];
     }
+    for (const pending of this.rawRpcPending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new ConatError("closed", { code: 499 }));
+    }
+    this.rawRpcPending.clear();
     for (const sub of Object.values(this.subs)) {
       sub.refCount = 0;
       sub.close();
@@ -1053,6 +1070,8 @@ export class Client extends EventEmitter {
     delete this.rpcServiceQueues;
     // @ts-ignore
     delete this.rpcServiceImpls;
+    // @ts-ignore
+    delete this.rawRpcPending;
     // @ts-ignore
     delete this.inboxSubject;
     delete this.inbox;
@@ -1256,6 +1275,102 @@ export class Client extends EventEmitter {
         headers: response.headers,
       });
     }
+  };
+
+  private handleRawRpcRequest = async ({
+    requestId,
+    subject,
+    pattern,
+    encoding,
+    raw,
+    headers,
+  }) => {
+    const respond = (response) => {
+      if (!this.isClosed()) {
+        this.conn.emit("rpc-raw-response", { requestId, ...response });
+      }
+    };
+    const impl = this.rpcServiceImpls[pattern];
+    if (impl == null) {
+      respond({
+        error: `rpc service '${pattern}' is not registered`,
+        code: 503,
+      });
+      return;
+    }
+    const request = new Message({
+      encoding,
+      raw,
+      headers,
+      client: this,
+      subject,
+    });
+    this.recvStats(raw?.byteLength ?? raw?.length ?? 0);
+    try {
+      const [name, args] = request.data;
+      const f = impl[name];
+      if (f == null) {
+        throw Error(`${name} not defined`);
+      }
+      const response = messageData(await f.apply(request, args));
+      this.stats.send.messages += 1;
+      this.stats.send.bytes += response.raw.length;
+      respond({
+        encoding: response.encoding,
+        raw: response.raw,
+        headers: response.headers,
+      });
+    } catch (err) {
+      const response = messageData(null, {
+        headers: {
+          error: err instanceof Error ? err.message : `${err}`,
+          error_attrs: {
+            code: (err as any)?.code,
+            errno: (err as any)?.errno,
+            path: (err as any)?.path,
+            syscall: (err as any)?.syscall,
+            subject: (err as any)?.subject,
+          },
+        },
+      });
+      respond({
+        encoding: response.encoding,
+        raw: response.raw,
+        headers: response.headers,
+      });
+    }
+  };
+
+  private handleRawRpcResponse = (response) => {
+    const requestId = response?.requestId;
+    const pending = this.rawRpcPending.get(requestId);
+    if (pending == null) {
+      return;
+    }
+    clearTimeout(pending.timer);
+    this.rawRpcPending.delete(requestId);
+    if (response?.error) {
+      pending.reject(
+        new ConatError(response.error, {
+          code: response.code,
+          subject: pending.subject,
+        }),
+      );
+      return;
+    }
+    const resp = new Message({
+      encoding: response.encoding,
+      raw: response.raw,
+      headers: response.headers,
+      client: this,
+      subject: pending.subject,
+    });
+    this.recvStats(response.raw?.byteLength ?? response.raw?.length ?? 0);
+    if (!pending.ignoreErrorHeader && resp.headers?.error) {
+      pending.reject(headerToError(resp.headers));
+      return;
+    }
+    pending.resolve(resp);
   };
 
   numSubscriptions = () => Object.keys(this.queueGroups).length;
@@ -1653,6 +1768,87 @@ export class Client extends EventEmitter {
   rpcCall<T = any>(subject: string, opts?: PublishOptions): T {
     const call = async (name: string, args: any[]) => {
       const resp = await this.rpcRequest(subject, [name, args], opts);
+      return resp.data;
+    };
+
+    return new Proxy(
+      { subject },
+      {
+        get: (target, name) => {
+          const s = target[String(name)];
+          if (s !== undefined) {
+            return s;
+          }
+          if (typeof name !== "string" || name == "then") {
+            return undefined;
+          }
+          return async (...args) => await call(name, args);
+        },
+      },
+    ) as T;
+  }
+
+  rawRpcRequest = async (
+    subject: string,
+    mesg: any,
+    {
+      timeout = DEFAULT_REQUEST_TIMEOUT,
+      ignoreErrorHeader,
+      ...options
+    }: PublishOptions & { ignoreErrorHeader?: boolean } = {},
+  ): Promise<Message> => {
+    const client = this.resolveClient(subject);
+    if (client !== this) {
+      return await client.rawRpcRequest(subject, mesg, {
+        timeout,
+        ignoreErrorHeader,
+        ...options,
+      });
+    }
+    if (timeout <= 0) {
+      throw Error("timeout must be positive");
+    }
+    await this.waitUntilSignedIn();
+    const requestId = randomId();
+    const request = messageData(mesg, options);
+    this.stats.send.messages += 1;
+    this.stats.send.bytes += request.raw.length;
+    return await new Promise<Message>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.rawRpcPending.delete(requestId);
+        reject(
+          new ConatError(
+            `timeout waiting for raw RPC response to '${subject}'`,
+            {
+              code: 408,
+              subject,
+            },
+          ),
+        );
+      }, timeout);
+      timer.unref?.();
+      this.rawRpcPending.set(requestId, {
+        subject,
+        ignoreErrorHeader,
+        resolve,
+        reject,
+        timer,
+        start: Date.now(),
+      });
+      this.conn.emit("rpc-raw", {
+        requestId,
+        subject,
+        encoding: request.encoding,
+        raw: request.raw,
+        headers: request.headers,
+        timeout,
+      });
+    });
+  };
+
+  rawRpcCall<T = any>(subject: string, opts?: PublishOptions): T {
+    const call = async (name: string, args: any[]) => {
+      const resp = await this.rawRpcRequest(subject, [name, args], opts);
       return resp.data;
     };
 
