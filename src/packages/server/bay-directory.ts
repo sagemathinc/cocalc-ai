@@ -4,13 +4,16 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import LRU from "lru-cache";
 import type {
   AccountBayLocation,
   BayInfo,
   HostBayLocation,
   ProjectBayLocation,
+  RoutingContextLocation,
 } from "@cocalc/conat/hub/api/system";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { ensureClusterAccountDirectorySchema } from "@cocalc/server/accounts/cluster-directory";
 import {
   getConfiguredBayId,
   getConfiguredBayLabel,
@@ -33,6 +36,46 @@ import { isValidUUID } from "@cocalc/util/misc";
 function resolveStoredBayId(value: unknown): string | undefined {
   const bay_id = `${value ?? ""}`.trim();
   return bay_id || undefined;
+}
+
+let clusterAccountDirectorySchemaReady: Promise<void> | undefined;
+
+function routingContextCacheTtlMs(): number {
+  const value = Number(process.env.COCALC_ROUTING_CONTEXT_CACHE_TTL_MS ?? 5000);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function routingContextCacheMax(): number {
+  const value = Number(process.env.COCALC_ROUTING_CONTEXT_CACHE_MAX ?? 100_000);
+  return Number.isFinite(value) && value > 0 ? value : 100_000;
+}
+
+const routingContextCache = new LRU<string, RoutingContextLocation>({
+  max: routingContextCacheMax(),
+  ttl: routingContextCacheTtlMs(),
+});
+
+async function ensureClusterAccountDirectorySchemaOnce(): Promise<void> {
+  clusterAccountDirectorySchemaReady ??= ensureClusterAccountDirectorySchema();
+  await clusterAccountDirectorySchemaReady;
+}
+
+function routingContextCacheKey({
+  account_id,
+  user_account_id,
+  project_id,
+  host_id,
+}: {
+  account_id: string;
+  user_account_id: string;
+  project_id: string;
+  host_id?: string | null;
+}): string {
+  return [account_id, user_account_id, project_id, host_id ?? ""].join(":");
+}
+
+export function clearRoutingContextCache(): void {
+  routingContextCache.clear();
 }
 
 export function getSingleBayInfo(): BayInfo {
@@ -288,4 +331,214 @@ export async function resolveHostBay({
     name: localName,
     source: bay_id ? "host-row" : "single-bay-default",
   };
+}
+
+async function resolveRoutingContextLocal({
+  account_id,
+  user_account_id,
+  project_id,
+  host_id,
+}: {
+  account_id: string;
+  user_account_id: string;
+  project_id: string;
+  host_id?: string | null;
+}): Promise<RoutingContextLocation | null> {
+  await ensureClusterAccountDirectorySchemaOnce();
+  const { rows } = await getPool().query<{
+    account_id: string;
+    account_email_address: string | null;
+    account_first_name: string | null;
+    account_last_name: string | null;
+    account_name: string | null;
+    account_home_bay_id: string | null;
+    account_source: "account-row" | "cluster-directory";
+    project_id: string;
+    project_title: string | null;
+    project_host_id: string | null;
+    project_owning_bay_id: string | null;
+    host_id: string | null;
+    host_name: string | null;
+    host_bay_id: string | null;
+  }>(
+    `WITH input AS (
+        SELECT $1::UUID AS acting_account_id,
+               $2::UUID AS target_account_id,
+               $3::UUID AS project_id,
+               $4::UUID AS host_id
+      ),
+      account_routing AS (
+        SELECT COALESCE(cad.account_id, a.account_id) AS account_id,
+               COALESCE(a.email_address, cad.email_address) AS email_address,
+               COALESCE(cad.first_name, a.first_name) AS first_name,
+               COALESCE(cad.last_name, a.last_name) AS last_name,
+               COALESCE(cad.name, a.name) AS name,
+               CASE
+                 WHEN cad.account_id IS NOT NULL THEN cad.home_bay_id
+                 ELSE a.home_bay_id
+               END AS home_bay_id,
+               CASE
+                 WHEN cad.account_id IS NOT NULL THEN 'cluster-directory'
+                 ELSE 'account-row'
+               END AS source
+          FROM input i
+          LEFT JOIN accounts a
+            ON a.account_id = i.target_account_id
+           AND (a.deleted IS NULL OR a.deleted = FALSE)
+          LEFT JOIN cluster_account_directory cad
+            ON cad.account_id = i.target_account_id
+           AND cad.provisioned = TRUE
+         WHERE a.account_id IS NOT NULL OR cad.account_id IS NOT NULL
+         LIMIT 1
+      ),
+      project_routing AS (
+        SELECT p.project_id, p.title, p.host_id, p.owning_bay_id
+          FROM input i
+          JOIN projects p
+            ON p.project_id = i.project_id
+         WHERE p.deleted IS NOT TRUE
+           AND p.users ? i.acting_account_id::TEXT
+           AND (p.users #>> ARRAY[i.acting_account_id::TEXT, 'hide'])::BOOLEAN IS NOT TRUE
+         LIMIT 1
+      ),
+      host_routing AS (
+        SELECT ph.id AS host_id, ph.name, ph.bay_id
+          FROM input i
+          JOIN project_hosts ph
+            ON ph.id = i.host_id
+         WHERE i.host_id IS NOT NULL
+           AND ph.deleted IS NULL
+         LIMIT 1
+      )
+      SELECT ar.account_id,
+             ar.email_address AS account_email_address,
+             ar.first_name AS account_first_name,
+             ar.last_name AS account_last_name,
+             ar.name AS account_name,
+             ar.home_bay_id AS account_home_bay_id,
+             ar.source AS account_source,
+             pr.project_id,
+             pr.title AS project_title,
+             pr.host_id AS project_host_id,
+             pr.owning_bay_id AS project_owning_bay_id,
+             hr.host_id,
+             hr.name AS host_name,
+             hr.bay_id AS host_bay_id
+        FROM account_routing ar
+        CROSS JOIN project_routing pr
+        LEFT JOIN host_routing hr ON TRUE
+       LIMIT 1`,
+    [account_id, user_account_id, project_id, host_id ?? null],
+  );
+  const row = rows[0];
+  if (row == null) {
+    return null;
+  }
+  const accountHomeBayId = resolveStoredBayId(row.account_home_bay_id);
+  const projectOwningBayId = resolveStoredBayId(row.project_owning_bay_id);
+  const hostBayId = resolveStoredBayId(row.host_bay_id);
+  return {
+    account: {
+      account_id: row.account_id,
+      email_address: row.account_email_address ?? undefined,
+      first_name: row.account_first_name ?? undefined,
+      last_name: row.account_last_name ?? undefined,
+      name: row.account_name ?? undefined,
+      home_bay_id: accountHomeBayId ?? getConfiguredBayId(),
+      source: accountHomeBayId ? row.account_source : "single-bay-default",
+    },
+    project: {
+      project_id: row.project_id,
+      owning_bay_id: projectOwningBayId ?? getConfiguredBayId(),
+      host_id: row.project_host_id ?? null,
+      title: row.project_title ?? "",
+      source: projectOwningBayId ? "project-row" : "single-bay-default",
+    },
+    host:
+      row.host_id == null
+        ? null
+        : {
+            host_id: row.host_id,
+            bay_id: hostBayId ?? getConfiguredBayId(),
+            name: row.host_name ?? "",
+            source: hostBayId ? "host-row" : "single-bay-default",
+          },
+  };
+}
+
+export async function resolveRoutingContext({
+  account_id,
+  user_account_id,
+  project_id,
+  host_id,
+}: {
+  account_id?: string;
+  user_account_id?: string;
+  project_id: string;
+  host_id?: string | null;
+}): Promise<RoutingContextLocation> {
+  const acting_account_id = `${account_id ?? ""}`.trim();
+  const target_account_id = `${user_account_id ?? acting_account_id}`.trim();
+  if (!acting_account_id) {
+    throw new Error("must be signed in");
+  }
+  if (!target_account_id) {
+    throw new Error("account_id is required");
+  }
+  if (!isValidUUID(project_id)) {
+    throw new Error(`invalid project id '${project_id}'`);
+  }
+  if (host_id != null && !isValidUUID(host_id)) {
+    throw new Error(`invalid host id '${host_id}'`);
+  }
+  if (
+    target_account_id !== acting_account_id &&
+    !(await isAdmin(acting_account_id))
+  ) {
+    throw new Error("not authorized");
+  }
+
+  const cacheKey = routingContextCacheKey({
+    account_id: acting_account_id,
+    user_account_id: target_account_id,
+    project_id,
+    host_id,
+  });
+  const cached = routingContextCache.get(cacheKey);
+  if (cached != null) {
+    return cached;
+  }
+
+  const local = await resolveRoutingContextLocal({
+    account_id: acting_account_id,
+    user_account_id: target_account_id,
+    project_id,
+    host_id,
+  });
+  if (local != null) {
+    if (host_id != null && local.host == null) {
+      const resolved = {
+        ...local,
+        host: await resolveHostBay({ account_id: acting_account_id, host_id }),
+      };
+      routingContextCache.set(cacheKey, resolved);
+      return resolved;
+    }
+    routingContextCache.set(cacheKey, local);
+    return local;
+  }
+
+  const [account, project, host] = await Promise.all([
+    resolveAccountHomeBay({
+      account_id: acting_account_id,
+      user_account_id: target_account_id,
+    }),
+    resolveProjectOwningBay({ account_id: acting_account_id, project_id }),
+    host_id == null
+      ? Promise.resolve(null)
+      : resolveHostBay({ account_id: acting_account_id, host_id }),
+  ]);
+  const resolved = { account, project, host };
+  routingContextCache.set(cacheKey, resolved);
+  return resolved;
 }

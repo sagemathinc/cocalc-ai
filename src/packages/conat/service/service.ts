@@ -62,13 +62,18 @@ export async function callConatService(opts: ServiceCall): Promise<any> {
   const subject = serviceSubject(opts);
   let resp;
   const timeout = opts.timeout ?? DEFAULT_TIMEOUT;
+  const start = Date.now();
   // ensure not undefined, since undefined can't be published.
   const data = opts.mesg ?? null;
 
   const doRequest = async () => {
+    if (!opts.noRetry) {
+      await cn.waitForInterest(subject, { timeout });
+    }
+    const remaining = Math.max(1, timeout - (Date.now() - start));
     resp = await cn.request(subject, data, {
-      timeout,
-      waitForInterest: !opts.noRetry,
+      timeout: remaining,
+      waitForInterest: false,
     });
     const result = resp.data;
     if (result?.error) {

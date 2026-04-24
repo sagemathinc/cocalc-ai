@@ -80,15 +80,13 @@ export class ConatSocketServer extends ConatSocketBase {
       if (this.state == ("closed" as any)) {
         return;
       }
-      (async () => {
-        try {
-          await this.handleMesg(mesg);
-        } catch (err) {
-          logger.debug(
-            `WARNING -- unexpected issue handling connection -- ${err}`,
-          );
-        }
-      })();
+      try {
+        await this.handleMesg(mesg);
+      } catch (err) {
+        logger.debug(
+          `WARNING -- unexpected issue handling connection -- ${err}`,
+        );
+      }
     }
   }
 
@@ -143,6 +141,7 @@ export class ConatSocketServer extends ConatSocketBase {
       this.handleCommandFromClient({ socket, cmd: cmd as Command, mesg });
     } else if (mesg.isRequest()) {
       // a request to support the socket.on('request', (mesg) => ...) protocol:
+      socket.flushDataQueue();
       socket.emit("request", mesg);
     } else {
       socket.receiveDataFromClient(mesg);

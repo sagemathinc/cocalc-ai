@@ -8,6 +8,7 @@ let resolveHostBayMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
 let getClusterAccountByIdMock: jest.Mock;
+let ensureClusterAccountDirectorySchemaMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -45,6 +46,12 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   __esModule: true,
   getClusterAccountById: (...args: any[]) => getClusterAccountByIdMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
+  __esModule: true,
+  ensureClusterAccountDirectorySchema: (...args: any[]) =>
+    ensureClusterAccountDirectorySchemaMock(...args),
 }));
 
 describe("bay-directory", () => {
@@ -115,6 +122,7 @@ describe("bay-directory", () => {
     projectReferenceGetMock = jest.fn(async () => null);
     hostConnectionGetMock = jest.fn(async () => null);
     getClusterAccountByIdMock = jest.fn(async () => null);
+    ensureClusterAccountDirectorySchemaMock = jest.fn(async () => undefined);
   });
 
   afterEach(() => {
@@ -421,5 +429,110 @@ describe("bay-directory", () => {
       name: "remote-host",
       source: "host-row",
     });
+  });
+
+  it("resolves routing context with one lean local query", async () => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("account_routing")) {
+        expect(params).toEqual([ACCOUNT_ID, ACCOUNT_ID, PROJECT_ID, HOST_ID]);
+        return {
+          rows: [
+            {
+              account_id: ACCOUNT_ID,
+              account_email_address: "user@example.com",
+              account_first_name: "Alice",
+              account_last_name: "Example",
+              account_name: "Alice Example",
+              account_home_bay_id: "bay-0",
+              account_source: "cluster-directory",
+              project_id: PROJECT_ID,
+              project_title: "Project",
+              project_host_id: HOST_ID,
+              project_owning_bay_id: "bay-1",
+              host_id: HOST_ID,
+              host_name: "host-1",
+              host_bay_id: "bay-2",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { resolveRoutingContext } = await import("./bay-directory");
+
+    await expect(
+      resolveRoutingContext({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        host_id: HOST_ID,
+      }),
+    ).resolves.toEqual({
+      account: {
+        account_id: ACCOUNT_ID,
+        email_address: "user@example.com",
+        first_name: "Alice",
+        last_name: "Example",
+        name: "Alice Example",
+        home_bay_id: "bay-0",
+        source: "cluster-directory",
+      },
+      project: {
+        project_id: PROJECT_ID,
+        owning_bay_id: "bay-1",
+        host_id: HOST_ID,
+        title: "Project",
+        source: "project-row",
+      },
+      host: {
+        host_id: HOST_ID,
+        bay_id: "bay-2",
+        name: "host-1",
+        source: "host-row",
+      },
+    });
+    expect(listHostsMock).not.toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("caches routing context briefly per worker", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("account_routing")) {
+        return {
+          rows: [
+            {
+              account_id: ACCOUNT_ID,
+              account_email_address: "user@example.com",
+              account_first_name: "Alice",
+              account_last_name: "Example",
+              account_name: "Alice Example",
+              account_home_bay_id: "bay-0",
+              account_source: "cluster-directory",
+              project_id: PROJECT_ID,
+              project_title: "Project",
+              project_host_id: HOST_ID,
+              project_owning_bay_id: "bay-1",
+              host_id: HOST_ID,
+              host_name: "host-1",
+              host_bay_id: "bay-2",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { resolveRoutingContext } = await import("./bay-directory");
+
+    await resolveRoutingContext({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      host_id: HOST_ID,
+    });
+    await resolveRoutingContext({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      host_id: HOST_ID,
+    });
+
+    expect(queryMock).toHaveBeenCalledTimes(1);
   });
 });

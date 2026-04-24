@@ -108,6 +108,13 @@ function emitWithAckTimeoutValue(
   });
 }
 import { type ConatSocketServer } from "@cocalc/conat/socket";
+
+function socketIoCompressionEnabled(): boolean {
+  const value = `${process.env.COCALC_CONAT_SOCKET_IO_COMPRESSION ?? ""}`
+    .trim()
+    .toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
 import { throttle } from "lodash";
 import { getLogger } from "@cocalc/conat/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -361,6 +368,7 @@ export class ConatServer extends EventEmitter {
     // when restarting the server.
     let adapter: any = undefined;
 
+    const socketIoCompression = socketIoCompressionEnabled();
     const socketioOptions = {
       maxHttpBufferSize: MAX_PAYLOAD,
       path,
@@ -373,8 +381,8 @@ export class ConatServer extends EventEmitter {
       // Conat clients force websocket transport, and most control-plane
       // messages are tiny. Avoid compression negotiation and zlib overhead on
       // the router hot path.
-      httpCompression: false,
-      perMessageDeflate: false,
+      httpCompression: socketIoCompression,
+      perMessageDeflate: socketIoCompression,
     };
     this.log(socketioOptions);
     if (httpServer) {
@@ -1146,7 +1154,7 @@ export class ConatServer extends EventEmitter {
       },
     );
 
-    socket.on("publish", async ([subject, ...data], respond) => {
+    const handlePublish = async ([subject, ...data], respond) => {
       const handlerStart = Date.now();
       if (data?.[2]) {
         // done
@@ -1179,6 +1187,16 @@ export class ConatServer extends EventEmitter {
         }
         respond?.({ error: `${err}`, code: err.code });
       }
+    };
+
+    let publishQueue = Promise.resolve();
+    socket.on("publish", (payload, respond) => {
+      // Publish order is part of Conat's delivery contract.  Socket.IO delivers
+      // events in order, but this handler does async auth/routing work; without
+      // a per-connection queue, later publishes can overtake earlier ones.
+      publishQueue = publishQueue
+        .catch(() => undefined)
+        .then(() => handlePublish(payload, respond));
     });
 
     const registerRpcService = async ({ subject, queue }) => {
@@ -2221,8 +2239,10 @@ export class ConatServer extends EventEmitter {
         throw Error("timeout");
       }
       try {
-        // if signal is set, only wait for the change for up to 1 second.
-        await this.interest.waitForChange(signal != null ? 1000 : undefined);
+        // Recheck periodically so a change that lands between hasMatch() and
+        // waitForChange() cannot make this waiter sleep until an unrelated
+        // future interest update.
+        await this.interest.waitForChange(1000);
       } catch {
         continue;
       }

@@ -104,6 +104,10 @@ function getPersistServerIdCache(client: Client) {
   return newCache;
 }
 
+export function clearPersistServerIdCache(client: Client) {
+  persistServerIdCache.get(client)?.clear();
+}
+
 export async function getPersistServerId({
   client,
   subject,

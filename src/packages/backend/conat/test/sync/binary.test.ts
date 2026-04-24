@@ -24,13 +24,13 @@ describe("test binary data with a dstream", () => {
   // binary values come back as Uint8Array with streams
   const data10 = Uint8Array.from(Buffer.from("x".repeat(10)));
   it("creates a binary dstream and writes/then reads binary data to/from it", async () => {
-    s = await dstream<Buffer>({ name });
+    s = await dstream<Buffer>({ name, noCache: true });
     expect(s.name).toBe(name);
     s.publish(data10);
     expect(s.get(0).length).toEqual(data10.length);
     await s.save();
     s.close();
-    s = await dstream({ name });
+    s = await dstream({ name, noCache: true });
     expect(s.get(0).length).toEqual(data10.length);
   });
 
@@ -42,13 +42,13 @@ describe("test binary data with a dstream", () => {
   });
 
   it("writes large binary data to the dstream to test chunking", async () => {
-    s = await dstream({ name });
+    s = await dstream({ name, noCache: true });
     const data = Uint8Array.from(Buffer.from("x".repeat(maxPayload * 1.5)));
     s.publish(data);
     expect(s.get(s.length - 1).length).toEqual(data.length);
     await s.save();
     s.close();
-    s = await dstream({ name });
+    s = await dstream({ name, noCache: true });
     expect(s.get(s.length - 1).length).toEqual(data.length);
   });
 

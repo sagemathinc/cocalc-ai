@@ -2663,6 +2663,12 @@ async function main() {
   } finally {
     // Conat/socket transports can keep handles open in short-lived CLI use.
     // Force termination so commands behave like normal Unix CLIs.
+    await new Promise<void>((resolve) =>
+      process.stdout.write("", () => resolve()),
+    );
+    await new Promise<void>((resolve) =>
+      process.stderr.write("", () => resolve()),
+    );
     process.exit(process.exitCode ?? 0);
   }
 }

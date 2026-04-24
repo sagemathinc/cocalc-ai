@@ -166,6 +166,28 @@ After split-router experiments, stop the extra workers and restart the dev hub
 without `CONAT_SOCKETIO_COUNT=2` unless the next test explicitly needs the
 split-router shape.
 
+### Fast-RPC Viability Gate
+
+Typed Conat services should use fast-rpc for the common small-call path, but the
+architecture must still handle rare large results without making fast-rpc
+unsafe or forcing expensive duplicate work.
+
+Required follow-up before treating fast-rpc as fully production-safe for typed
+services:
+
+- keep the default small request/response typed-service path on fast-rpc
+- preserve a bounded path for oversized responses, e.g. a short-lived Conat DKV
+  result reference containing the already encoded response
+- make the client transparently resolve that reference so typed service callers
+  still receive the expected return value
+- scope large-result refs to the authenticated caller/service, apply a short
+  TTL, enforce memory/storage byte budgets, and clean up expired entries
+- avoid automatic "retry the whole service call over legacy request/reply" for
+  generic mutating methods; a large-response reference avoids repeating the
+  operation and is safer for expensive reads such as very large project lists
+- keep this path rare; ordinary high-volume calls should remain inline fast-rpc
+  or be redesigned as paginated/streaming APIs
+
 ### Initial Same-Host Evidence
 
 Host shape:
