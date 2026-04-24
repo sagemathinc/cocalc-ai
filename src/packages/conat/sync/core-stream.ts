@@ -1015,12 +1015,12 @@ export class CoreStream<T = any> extends EventEmitter {
       raw: data,
       key,
     } as RawMsg;
+    let alreadyProcessed = false;
     if (seq > (this.raw.slice(-1)[0]?.seq ?? 0)) {
       // easy fast initial load to the end of the list (common special case)
       this.messages.push(mesg);
       this.raw.push(raw);
     } else {
-      let alreadyProcessed = false;
       // Insert in the correct place.  This should only
       // happen when calling load of old data, which happens, e.g., during
       // automatic failover.  The algorithm below is
@@ -1044,11 +1044,19 @@ export class CoreStream<T = any> extends EventEmitter {
       } else {
         alreadyProcessed = true;
       }
-      if (alreadyProcessed) {
-        return;
-      }
     }
     let prev: T | undefined = undefined;
+    if (alreadyProcessed) {
+      if (typeof key == "string") {
+        prev = this.kv[key]?.mesg ?? this.lastValueByKey.get(key);
+      }
+      this.lastSeq = Math.max(this.lastSeq, seq);
+      if (!noEmit) {
+        this.emitChange({ mesg, raw, key, prev, msgID });
+      }
+      return;
+    }
+
     // Issue #8702: Capture the previous raw message for this key BEFORE updating this.kv.
     // This is needed for the client-side cleanup below (see the processPersistentDelete call).
     // https://github.com/sagemathinc/cocalc/issues/8702
@@ -1167,6 +1175,16 @@ export class CoreStream<T = any> extends EventEmitter {
       ttl: options?.ttl,
       timeout: options?.timeout,
     });
+    if (options?.msgID) {
+      this.msgIDs?.add(options.msgID);
+    }
+    return x;
+  };
+
+  private waitForLocalPublish = async (
+    x: { seq: number },
+    options?: PublishOptions,
+  ) => {
     await until(
       () => {
         if (this.raw == null) {
@@ -1182,10 +1200,6 @@ export class CoreStream<T = any> extends EventEmitter {
       },
       { start: 1, min: 1, max: 25, timeout: options?.timeout ?? 5000 },
     );
-    if (options?.msgID) {
-      this.msgIDs?.add(options.msgID);
-    }
-    return x;
   };
 
   publishMany = async (
@@ -1273,7 +1287,12 @@ export class CoreStream<T = any> extends EventEmitter {
       previousSeq?: number;
     },
   ): Promise<{ seq: number; time: number } | undefined> => {
-    return await this.publish(mesg, { ...options, key });
+    const publishOptions = { ...options, key };
+    const x = await this.publish(mesg, publishOptions);
+    if (x != null) {
+      await this.waitForLocalPublish(x, publishOptions);
+    }
+    return x;
   };
 
   setKvMany = async (
@@ -1300,18 +1319,25 @@ export class CoreStream<T = any> extends EventEmitter {
     options?: {
       msgID?: string;
       previousSeq?: number;
+      force?: boolean;
+      waitForLocal?: boolean;
     },
   ) => {
-    if (this.kv[key] === undefined) {
+    if (!options?.force && this.kv[key] === undefined) {
       // nothing to do
       return;
     }
-    return await this.publish(null as any, {
+    const publishOptions = {
       ...options,
       headers: { [COCALC_TOMBSTONE_HEADER]: true },
       key,
       ttl: DEFAULT_TOMBSTONE_TTL,
-    });
+    };
+    const x = await this.publish(null as any, publishOptions);
+    if (x != null && options?.waitForLocal !== false) {
+      await this.waitForLocalPublish(x, publishOptions);
+    }
+    return x;
   };
 
   getKv = (key: string): T | undefined => {

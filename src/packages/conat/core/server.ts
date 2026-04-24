@@ -2239,8 +2239,10 @@ export class ConatServer extends EventEmitter {
         throw Error("timeout");
       }
       try {
-        // if signal is set, only wait for the change for up to 1 second.
-        await this.interest.waitForChange(signal != null ? 1000 : undefined);
+        // Recheck periodically so a change that lands between hasMatch() and
+        // waitForChange() cannot make this waiter sleep until an unrelated
+        // future interest update.
+        await this.interest.waitForChange(1000);
       } catch {
         continue;
       }

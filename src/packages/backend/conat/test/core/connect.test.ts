@@ -141,16 +141,18 @@ describe("create server after sync creating a subscription and publishing a mess
     const { bytes, count } = await cn.publish("xyz", "more");
     expect(count).toBe(1);
     expect(bytes).toBe(5);
-    const { value: mesg1 } = await sub.next();
-    // The pre-connect sync publish semantics are intentionally weak. On some
-    // platforms/runs those messages are dropped; on others one may slip
-    // through. Ensure the post-connect publish is observed either way.
-    if (mesg1.data === "more") {
-      return;
+    const seen: string[] = [];
+    while (!seen.includes("more") && seen.length < 3) {
+      const { value } = await sub.next();
+      seen.push(value.data);
     }
-    expect(mesg1.data).toBe("conat");
-    const { value: mesg2 } = await sub.next();
-    expect(mesg2.data).toBe("more");
+    // The pre-connect sync publish semantics are intentionally weak. Depending
+    // on timing, zero or more pre-connect sync publishes may slip through; the
+    // post-connect publish must always arrive.
+    expect(seen).toContain("more");
+    expect(seen.every((x) => ["hello", "conat", "more"].includes(x))).toBe(
+      true,
+    );
   });
 
   it("clean up", async () => {
