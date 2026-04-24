@@ -34,21 +34,25 @@ In practice, these bugs often come from runtime differences:
 3. Use the returned `browser_id` explicitly in every command.
    - `COCALC_API_URL=http://localhost:7003 COCALC_BROWSER_ID=<id> COCALC_BEARER_TOKEN='' cocalc browser exec-api`
 
-4. Open a clean repro file from browser-exec itself.
+4. For open tabs/files, prefer the typed command before raw browser exec.
+   - `cocalc browser files --browser <id> --project-id <uuid>`
+   - `cocalc browser tabs --browser <id> --project-id <uuid>` is an alias.
+
+5. Open a clean repro file from browser-exec itself.
    - Write file with `api.fs.writeFile(...)`
    - Open file with `api.openFiles([...])`
 
-5. Probe the runtime editor instance and verify you have the right one.
+6. Probe the runtime editor instance and verify you have the right one.
    - Enumerate `[data-slate-editor="true"]`
    - Resolve React fiber editor refs
    - Pick the editor with expected text/content
 
-6. Reproduce by mutating the real editor object.
+7. Reproduce by mutating the real editor object.
    - Set selection
    - Call `editor.insertText(...)`
    - Return `before/after` children snapshots
 
-7. Capture a screenshot when visual state matters.
+8. Capture a screenshot when visual state matters.
    - `cocalc browser screenshot --selector body --out /tmp/repro.png`
    - If page churn is high, wait for quiescence before capture:
      - `cocalc browser screenshot --wait-for-idle 750ms --selector body --out /tmp/repro.png`
@@ -58,7 +62,7 @@ In practice, these bugs often come from runtime differences:
      - `--renderer dom`: force DOM renderer (`html2canvas`)
      - `--renderer media`: use browser Screen Capture API (explicit user share approval)
 
-8. Patch code, run focused tests, rebuild frontend, restart lite daemon, and retest in browser.
+9. Patch code, run focused tests, rebuild frontend, restart lite daemon, and retest in browser.
 
 ## Session modes
 
@@ -93,6 +97,7 @@ You now have two explicit ways to target browser automation:
 - In lite mode, `COCALC_BEARER_TOKEN=''` is often correct.
 - Use session-targeting flags to avoid ambiguous browser selection:
   - `--active-only`
+  - `--project-id <uuid>` for open tab/file listing and explicit project targets
   - `--session-project-id <uuid>` on non-list commands
 - When driving a spawned browser session with `--browser <id>`, the focused
   project tab in that session is the default target. Pass `--project-id <uuid>`

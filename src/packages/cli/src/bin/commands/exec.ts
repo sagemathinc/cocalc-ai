@@ -141,6 +141,7 @@ export interface TextDocument {
     options?: {
       expectedLatestVersionId?: string | null;
       expectedHash?: number | null;
+      saveToDisk?: boolean;
     },
   ): Promise<TextDocumentInfo>;
   append(
@@ -148,6 +149,7 @@ export interface TextDocument {
     options?: {
       expectedLatestVersionId?: string | null;
       expectedHash?: number | null;
+      saveToDisk?: boolean;
     },
   ): Promise<TextDocumentInfo>;
   replace(
@@ -157,6 +159,7 @@ export interface TextDocument {
       all?: boolean;
       expectedLatestVersionId?: string | null;
       expectedHash?: number | null;
+      saveToDisk?: boolean;
     },
   ): Promise<TextDocumentInfo & { replaceCount: number }>;
 }
@@ -250,7 +253,9 @@ export interface BackendExecApi {
     /**
      * Open a live collaborative string document.
      *
-     * This uses the sync/service path, not a direct filesystem read.
+     * This uses the sync/service path, not a direct filesystem read. Write
+     * operations save to disk by default; pass { saveToDisk: false } for a
+     * live-only collaborative edit.
      */
     open(options: {
       path: string;

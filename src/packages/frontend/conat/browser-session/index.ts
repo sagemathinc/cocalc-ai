@@ -48,6 +48,7 @@ import {
   type BrowserTerminalHistoryOptions,
   type BrowserTerminalSpawnOptions,
 } from "./exec-utils";
+import { formatQuickJSErrorDump } from "./quickjs-error";
 import {
   closeFileInProject,
   getEditorActionsForPath,
@@ -1995,7 +1996,7 @@ export function createBrowserSessionAutomation({
 })();`;
       const preludeResult = vm.evalCode(prelude);
       if (preludeResult.error) {
-        const message = vm.dump(preludeResult.error);
+        const message = formatQuickJSErrorDump(vm.dump(preludeResult.error));
         if (preludeResult.error.alive) {
           preludeResult.error.dispose();
         }
@@ -2008,7 +2009,7 @@ export function createBrowserSessionAutomation({
       const scriptResult = await vm.evalCodeAsync(`(() => { ${script}\n})()`);
       let sandboxValue: unknown;
       if (scriptResult.error) {
-        const message = vm.dump(scriptResult.error);
+        const message = formatQuickJSErrorDump(vm.dump(scriptResult.error));
         if (scriptResult.error.alive) {
           scriptResult.error.dispose();
         }
@@ -2078,6 +2079,8 @@ export function createBrowserSessionAutomation({
       const snapshot = buildSessionSnapshot(client);
       return flattenOpenFiles(snapshot.open_projects);
     },
+    getWorkspaceSelection: async ({ project_id }) =>
+      loadSessionSelection(project_id),
     openFile: async ({
       project_id,
       path,
