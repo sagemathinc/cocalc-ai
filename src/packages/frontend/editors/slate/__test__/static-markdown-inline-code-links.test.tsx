@@ -71,4 +71,26 @@ describe("StaticMarkdown inline code links", () => {
       "cocalc-file://open?path=%2Fusr%2Fbin%2Fpython3.13",
     );
   });
+
+  it("does not wrap inline code that is already inside an explicit markdown link", () => {
+    const { container } = render(
+      <StaticMarkdown
+        value={"Changed [`/home/user/b.ipynb`](sandbox:/home/user/b.ipynb)."}
+        inlineCodeLinks={[
+          {
+            code: "/home/user/b.ipynb",
+            abs_path:
+              "/mnt/cocalc/project-ade1c2c1-8ecd-4047-b3a7-3edc68c675ae/b.ipynb",
+            display_path_at_turn: "/home/user/b.ipynb",
+            workspace_root_at_turn:
+              "/mnt/cocalc/project-ade1c2c1-8ecd-4047-b3a7-3edc68c675ae",
+          },
+        ]}
+      />,
+    );
+
+    const links = Array.from(container.querySelectorAll("a"));
+    expect(links).toHaveLength(1);
+    expect(links[0].getAttribute("href")).toBe("sandbox:/home/user/b.ipynb");
+  });
 });

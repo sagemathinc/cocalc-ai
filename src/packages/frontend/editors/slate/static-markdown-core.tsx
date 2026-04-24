@@ -170,16 +170,19 @@ function applyInlineCodeLinks(
 function transformInlineCodeNodes(
   nodes: any[],
   lookup: Map<string, { href: string; display: string; title: string }>,
+  inLink = false,
 ): any[] {
   return (nodes ?? []).map((node) => {
     if (!node || typeof node !== "object") return node;
     if (typeof node.type === "string") {
+      const nextInLink = inLink || node.type === "link";
       const nextChildren = Array.isArray(node.children)
-        ? transformInlineCodeNodes(node.children, lookup)
+        ? transformInlineCodeNodes(node.children, lookup, nextInLink)
         : node.children;
       return { ...node, children: nextChildren };
     }
-    if (node.code !== true || typeof node.text !== "string") return node;
+    if (inLink || node.code !== true || typeof node.text !== "string")
+      return node;
     const key = normalizeInlineCodeKey(node.text);
     const linked = lookup.get(key);
     if (!linked) return node;

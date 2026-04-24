@@ -7,6 +7,8 @@ import { redux } from "@cocalc/frontend/app-framework";
 import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
 
 export const AGENT_PANEL_REVEAL_EVENT = "cocalc:agent-panel:reveal";
+export const AGENT_PANEL_INLINE_CHAT_INSTANCE_KEY = "agents-panel-inline";
+export const AGENT_PANEL_PIN_CHAT_INSTANCE_KEY = "agents-panel-pin";
 
 export interface AgentPanelRevealDetail {
   projectId: string;
