@@ -262,6 +262,16 @@ function normalizeConatResponseMode(
   return mode;
 }
 
+function normalizeConatRequestTransport(
+  raw: string | undefined,
+): "pubsub" | "rpc" {
+  const transport = `${raw ?? "pubsub"}`.trim();
+  if (transport !== "pubsub" && transport !== "rpc") {
+    throw new Error("--request-transport must be either 'pubsub' or 'rpc'");
+  }
+  return transport;
+}
+
 async function runLoadScenario({
   scenario,
   iterations,
@@ -559,6 +569,11 @@ export function registerLoadCommand(
       "request response behavior: default, no-wait, or sync",
       "default",
     )
+    .option(
+      "--request-transport <transport>",
+      "request transport to measure: pubsub or rpc",
+      "pubsub",
+    )
     .action(
       async (
         opts: {
@@ -572,6 +587,7 @@ export function registerLoadCommand(
           payloadBytes?: string;
           mode?: string;
           responseMode?: string;
+          requestTransport?: string;
         },
         command: Command,
       ) => {
@@ -606,6 +622,12 @@ export function registerLoadCommand(
           );
           const mode = normalizeConatMessageMode(opts.mode);
           const responseMode = normalizeConatResponseMode(opts.responseMode);
+          const requestTransport = normalizeConatRequestTransport(
+            opts.requestTransport,
+          );
+          if (mode !== "request" && requestTransport !== "pubsub") {
+            throw new Error("--request-transport only applies to request mode");
+          }
           const payload = "x".repeat(payloadBytes);
           const subjectPrefix = conatLoadSubject();
           const services: Array<{ client: any; sub: any; subject: string }> =
@@ -621,6 +643,16 @@ export function registerLoadCommand(
               });
               await client.waitUntilReady();
               const subject = `${subjectPrefix}.${i}`;
+              if (mode === "request" && requestTransport === "rpc") {
+                const sub = await client.rpcService(subject, {
+                  echo: async (value: string) => ({
+                    ok: true,
+                    bytes: typeof value === "string" ? value.length : 0,
+                  }),
+                });
+                services.push({ client, sub, subject });
+                continue;
+              }
               const sub = await client.subscribe(
                 subject,
                 mode === "request" ? { queue: "0" } : undefined,
@@ -686,7 +718,12 @@ export function registerLoadCommand(
               await client.waitUntilReady();
               clients.push({
                 client,
-                call: mode === "request" ? client.call(service.subject) : null,
+                call:
+                  mode === "request"
+                    ? requestTransport === "rpc"
+                      ? client.rpcCall(service.subject)
+                      : client.call(service.subject)
+                    : null,
                 address: addresses[i % addresses.length],
                 subject: service.subject,
               });
@@ -707,6 +744,8 @@ export function registerLoadCommand(
                 return {
                   address: row.address,
                   mode,
+                  request_transport:
+                    mode === "request" ? requestTransport : null,
                   subject: row.subject,
                   payload_bytes: payloadBytes,
                   response_mode: mode === "request" ? responseMode : null,

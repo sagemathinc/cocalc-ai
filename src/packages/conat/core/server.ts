@@ -89,6 +89,24 @@ function emitWithAckTimeoutUnref(
     });
   });
 }
+
+function emitWithAckTimeoutValue(
+  socket: any,
+  event: string,
+  payload: any,
+  timeoutMs: number,
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`timeout waiting for ${event} ack`));
+    }, timeoutMs);
+    timer.unref?.();
+    socket.emit(event, payload, (response) => {
+      clearTimeout(timer);
+      resolve(response);
+    });
+  });
+}
 import { type ConatSocketServer } from "@cocalc/conat/socket";
 import { throttle } from "lodash";
 import { getLogger } from "@cocalc/conat/logger";
@@ -241,6 +259,8 @@ export class ConatServer extends EventEmitter {
 
   private subscriptions: { [socketId: string]: Set<string> } = {};
   public interest: Interest = new Patterns();
+  public rpcServices: Interest = new Patterns();
+  private rpcServiceSubjects: { [socketId: string]: Set<string> } = {};
 
   private clusterStreams?: ClusterStreams;
   private clusterLinks: {
@@ -447,7 +467,14 @@ export class ConatServer extends EventEmitter {
     await new Promise<void>((resolve) => {
       this.io.close(() => resolve());
     });
-    for (const prop of ["interest", "subscriptions", "sockets", "services"]) {
+    for (const prop of [
+      "interest",
+      "rpcServices",
+      "rpcServiceSubjects",
+      "subscriptions",
+      "sockets",
+      "services",
+    ]) {
       delete this[prop];
     }
     this.usage?.close();
@@ -535,6 +562,14 @@ export class ConatServer extends EventEmitter {
     const room = socketSubjectRoom({ socket, subject });
     socket.leave(room);
     await this.updateInterest({ op: "delete", subject, room });
+  };
+
+  private unregisterRpcService = async ({ socket, subject }) => {
+    updateInterest(
+      { op: "delete", subject, room: socket.id },
+      this.rpcServices,
+    );
+    this.rpcServiceSubjects[socket.id]?.delete(subject);
   };
 
   ////////////////////////////////////
@@ -651,6 +686,40 @@ export class ConatServer extends EventEmitter {
         queue,
         room,
       });
+    }
+  };
+
+  private registerRpcService = async ({ socket, subject, queue, user }) => {
+    if (typeof queue != "string") {
+      throw Error("queue must be defined");
+    }
+    if (!isValidSubject(subject)) {
+      throw Error("invalid subject");
+    }
+    if (!(await this.isAllowed({ user, subject, type: "sub" }))) {
+      const message = `permission denied registering RPC service '${subject}' from ${JSON.stringify(
+        user,
+      )}`;
+      this.log(message);
+      throw new ConatError(message, { code: 403 });
+    }
+    updateInterest(
+      { op: "add", subject, queue, room: socket.id },
+      this.rpcServices,
+    );
+    this.rpcServiceSubjects[socket.id] ??= new Set<string>();
+    this.rpcServiceSubjects[socket.id].add(subject);
+  };
+
+  private resolveRpcService = (subject: string) => {
+    for (const pattern of this.rpcServices.matches(subject)) {
+      const g = this.rpcServices.get(pattern)!;
+      for (const queue in g) {
+        const target = this.loadBalance({ targets: g[queue] });
+        if (target !== undefined) {
+          return { pattern, target };
+        }
+      }
     }
   };
 
@@ -986,6 +1055,11 @@ export class ConatServer extends EventEmitter {
         await this.unsubscribe({ socket, subject });
       }
       delete this.subscriptions[id];
+      const rpcSubjects = Array.from(this.rpcServiceSubjects[id] ?? []);
+      for (const subject of rpcSubjects) {
+        await this.unregisterRpcService({ socket, subject });
+      }
+      delete this.rpcServiceSubjects[id];
     });
 
     if (user?.error) {
@@ -1082,6 +1156,146 @@ export class ConatServer extends EventEmitter {
         respond?.({ error: `${err}`, code: err.code });
       }
     });
+
+    const registerRpcService = async ({ subject, queue }) => {
+      try {
+        await this.registerRpcService({ socket, subject, queue, user });
+        this.stats[socket.id].active = Date.now();
+        return { status: "added" };
+      } catch (err) {
+        if (err.code == 403) {
+          socket.emit("permission", {
+            message: err.message,
+            subject,
+            type: "sub",
+          });
+        }
+        return { error: `${err}`, code: err.code };
+      }
+    };
+
+    socket.on(
+      "rpc-service",
+      async (x: { subject; queue } | { subject; queue }[], respond) => {
+        let r;
+        if (is_array(x)) {
+          const v: any[] = [];
+          for (const y of x) {
+            v.push(await registerRpcService(y));
+          }
+          r = v;
+        } else {
+          r = await registerRpcService(x);
+        }
+        respond?.(r);
+      },
+    );
+
+    const unregisterRpcService = ({ subject }: { subject: string }) => {
+      if (!this.rpcServiceSubjects[id]?.has(subject)) {
+        return;
+      }
+      this.unregisterRpcService({ socket, subject });
+      this.stats[socket.id].active = Date.now();
+    };
+
+    socket.on(
+      "rpc-service-close",
+      (x: { subject: string } | { subject: string }[], respond) => {
+        let r;
+        if (is_array(x)) {
+          r = x.map(unregisterRpcService);
+        } else {
+          r = unregisterRpcService(x);
+        }
+        respond?.(r);
+      },
+    );
+
+    socket.on(
+      "rpc",
+      async (
+        { subject, encoding, raw, headers, timeout = MAX_INTEREST_TIMEOUT },
+        respond,
+      ) => {
+        const handlerStart = Date.now();
+        if (respond == null) {
+          return;
+        }
+        if (!isValidSubjectWithoutWildcards(subject)) {
+          respond({ error: "invalid subject" });
+          return;
+        }
+        const authStart = Date.now();
+        if (!(await this.isAllowed({ user, subject, type: "pub" }))) {
+          const message = `permission denied RPC to '${subject}' from ${JSON.stringify(
+            user,
+          )}`;
+          this.log(message);
+          socket.emit("permission", {
+            message,
+            subject,
+            type: "pub",
+          });
+          respond({ error: message, code: 403 });
+          return;
+        }
+        const authMs = Date.now() - authStart;
+        const routeStart = Date.now();
+        const target = this.resolveRpcService(subject);
+        const routeMs = Date.now() - routeStart;
+        if (target == null) {
+          respond({
+            error: `rpc -- no services matching '${subject}'`,
+            code: 503,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+          return;
+        }
+        const targetSocket = this.sockets[target.target];
+        if (targetSocket == null) {
+          respond({
+            error: `rpc -- target service disconnected for '${subject}'`,
+            code: 503,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+          return;
+        }
+        try {
+          const response = await emitWithAckTimeoutValue(
+            targetSocket,
+            "rpc-request",
+            {
+              subject,
+              pattern: target.pattern,
+              encoding,
+              raw,
+              headers,
+            },
+            Math.min(timeout, MAX_INTEREST_TIMEOUT),
+          );
+          respond({
+            ...response,
+            count: 1,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+        } catch (err) {
+          respond({
+            error: `${err}`,
+            code: 408,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+        }
+      },
+    );
 
     const subscribe = async ({ subject, queue }) => {
       try {
