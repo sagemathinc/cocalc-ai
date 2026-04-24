@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { Command } from "commander";
+
+import { connect } from "@cocalc/conat/core/client";
 
 import { durationToMs } from "../../core/utils";
 
@@ -43,8 +46,10 @@ type LoadSummary = {
 
 export type LoadCommandDeps = {
   withContext: any;
+  runLocalCommand?: any;
   queryProjects: any;
   resolveProjectFromArgOrContext: any;
+  connectConat?: typeof connect;
 };
 
 function parsePositiveInteger(
@@ -195,6 +200,54 @@ function splitCommaList(raw: string | undefined): string[] {
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+function normalizeAddresses(raw: string | undefined): string[] {
+  const addresses = splitCommaList(raw);
+  if (!addresses.length) {
+    throw new Error("--addresses must include at least one URL");
+  }
+  for (const address of addresses) {
+    try {
+      new URL(address);
+    } catch {
+      throw new Error(`invalid Conat address: ${address}`);
+    }
+  }
+  return addresses;
+}
+
+function readOptionalSecret({
+  value,
+  file,
+  valueFlag,
+  fileFlag,
+}: {
+  value?: string;
+  file?: string;
+  valueFlag: string;
+  fileFlag: string;
+}): string | undefined {
+  if (value && file) {
+    throw new Error(`${valueFlag} and ${fileFlag} are mutually exclusive`);
+  }
+  const secret =
+    value ?? (file == null ? undefined : readFileSync(file, "utf8").trim());
+  return secret?.trim() || undefined;
+}
+
+function conatLoadSubject(): string {
+  return `load.conat_messages.${process.pid}.${Date.now()}`;
+}
+
+function normalizeConatMessageMode(
+  raw: string | undefined,
+): "request" | "publish" {
+  const mode = `${raw ?? "request"}`.trim();
+  if (mode !== "request" && mode !== "publish") {
+    throw new Error("--mode must be either 'request' or 'publish'");
+  }
+  return mode;
 }
 
 async function runLoadScenario({
@@ -452,11 +505,180 @@ export function registerLoadCommand(
   program: Command,
   deps: LoadCommandDeps,
 ): Command {
-  const { withContext, queryProjects, resolveProjectFromArgOrContext } = deps;
+  const {
+    withContext,
+    runLocalCommand,
+    queryProjects,
+    resolveProjectFromArgOrContext,
+    connectConat = connect,
+  } = deps;
 
   const load = program
     .command("load")
     .description("load-test harness commands");
+
+  load
+    .command("conat-messages")
+    .description("measure raw Conat request/response message throughput")
+    .requiredOption(
+      "--addresses <urls>",
+      "comma-separated Conat router URLs, e.g. http://127.0.0.1:9102",
+    )
+    .option("--system-password <secret>", "Conat system account password")
+    .option(
+      "--system-password-file <path>",
+      "file containing the Conat system account password",
+    )
+    .option("--iterations <n>", "measured iterations", "100")
+    .option(
+      "--duration <duration>",
+      "measured wall-clock duration, e.g. 30s; overrides --iterations",
+    )
+    .option("--warmup <n>", "warmup iterations", "10")
+    .option("--concurrency <n>", "parallel request workers", "1")
+    .option("--payload-bytes <n>", "string payload size for each request", "16")
+    .option(
+      "--mode <mode>",
+      "message pattern to measure: request or publish",
+      "request",
+    )
+    .action(
+      async (
+        opts: {
+          addresses?: string;
+          systemPassword?: string;
+          systemPasswordFile?: string;
+          iterations?: string;
+          duration?: string;
+          warmup?: string;
+          concurrency?: string;
+          payloadBytes?: string;
+          mode?: string;
+        },
+        command: Command,
+      ) => {
+        const run =
+          runLocalCommand ??
+          (async (_command: Command, _label: string, fn: () => Promise<any>) =>
+            await fn());
+        await run(command, "load conat-messages", async () => {
+          const addresses = normalizeAddresses(opts.addresses);
+          const systemAccountPassword = readOptionalSecret({
+            value: opts.systemPassword,
+            file: opts.systemPasswordFile,
+            valueFlag: "--system-password",
+            fileFlag: "--system-password-file",
+          });
+          const iterations = parsePositiveInteger(
+            opts.iterations,
+            "--iterations",
+            100,
+          );
+          const durationMs = parseOptionalDurationMs(opts.duration);
+          const warmup = parsePositiveInteger(opts.warmup, "--warmup", 10);
+          const concurrency = parsePositiveInteger(
+            opts.concurrency,
+            "--concurrency",
+            1,
+          );
+          const payloadBytes = parsePositiveInteger(
+            opts.payloadBytes,
+            "--payload-bytes",
+            16,
+          );
+          const mode = normalizeConatMessageMode(opts.mode);
+          const payload = "x".repeat(payloadBytes);
+          const subjectPrefix = conatLoadSubject();
+          const services: Array<{ client: any; sub: any; subject: string }> =
+            [];
+          const clients: any[] = [];
+
+          try {
+            for (let i = 0; i < addresses.length; i++) {
+              const client = connectConat({
+                address: addresses[i],
+                systemAccountPassword,
+                noCache: true,
+              });
+              await client.waitUntilReady();
+              const subject = `${subjectPrefix}.${i}`;
+              const sub =
+                mode === "request"
+                  ? await client.service(subject, {
+                      echo: async (value: string) => ({
+                        ok: true,
+                        bytes: typeof value === "string" ? value.length : 0,
+                      }),
+                    })
+                  : await client.subscribe(subject);
+              if (mode === "publish") {
+                void (async () => {
+                  for await (const _message of sub) {
+                    // Drain the subscription so the router performs real delivery.
+                  }
+                })();
+              }
+              services.push({ client, sub, subject });
+            }
+
+            for (let i = 0; i < concurrency; i++) {
+              const service = services[i % services.length];
+              const client = connectConat({
+                address: addresses[i % addresses.length],
+                systemAccountPassword,
+                noCache: true,
+              });
+              await client.waitUntilReady();
+              clients.push({
+                client,
+                call: mode === "request" ? client.call(service.subject) : null,
+                address: addresses[i % addresses.length],
+                subject: service.subject,
+              });
+            }
+
+            return await runLoadScenario({
+              scenario: "conat-messages",
+              iterations,
+              warmup,
+              durationMs,
+              concurrency,
+              execute: async (_index, workerIndex) => {
+                const row = clients[workerIndex % clients.length];
+                const result =
+                  mode === "request"
+                    ? await row.call.echo(payload)
+                    : await row.client.publish(row.subject, payload);
+                return {
+                  address: row.address,
+                  mode,
+                  subject: row.subject,
+                  payload_bytes: payloadBytes,
+                  response_bytes:
+                    mode === "request" ? (result?.bytes ?? null) : null,
+                  publish_count:
+                    mode === "publish" ? (result?.count ?? null) : null,
+                };
+              },
+            });
+          } finally {
+            for (const { sub, client } of services) {
+              try {
+                sub.close();
+              } catch {}
+              try {
+                client.close();
+              } catch {}
+            }
+            for (const { client } of clients) {
+              try {
+                client.close();
+              } catch {}
+            }
+          }
+        });
+      },
+    );
 
   load
     .command("bootstrap")
