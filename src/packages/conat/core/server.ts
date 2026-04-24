@@ -365,14 +365,16 @@ export class ConatServer extends EventEmitter {
       maxHttpBufferSize: MAX_PAYLOAD,
       path,
       adapter,
+      transports: ["websocket" as const],
       cors: {
         origin: true,
         credentials: true,
       },
-      // perMessageDeflate is disabled by default in socket.io, but it
-      // seems unclear exactly *why*:
-      //   https://github.com/socketio/socket.io/issues/3477#issuecomment-930503313
-      perMessageDeflate: { threshold: 1024 },
+      // Conat clients force websocket transport, and most control-plane
+      // messages are tiny. Avoid compression negotiation and zlib overhead on
+      // the router hot path.
+      httpCompression: false,
+      perMessageDeflate: false,
     };
     this.log(socketioOptions);
     if (httpServer) {
