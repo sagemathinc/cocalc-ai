@@ -39,6 +39,9 @@ async function callTypedConatService({
   if (serviceTransport({ transport }) == "request") {
     return await callConatService(options);
   }
+  if (typeof options.client.fastRpcRequest != "function") {
+    return await callConatService(options);
+  }
   const raw = encode({ encoding: TYPED_SERVICE_ENCODING, mesg: options.mesg });
   if (raw.length > MAX_FAST_RPC_TYPED_SERVICE_BYTES) {
     return await callConatService(options);
@@ -51,7 +54,12 @@ async function callTypedConatService({
       { timeout: options.timeout },
     );
   } catch (err) {
-    if ((err as any)?.code == 413 || `${err}`.includes("disconnected")) {
+    const message = `${err}`;
+    if (
+      (err as any)?.code == 413 ||
+      message.includes("disconnected") ||
+      message.includes("no services matching")
+    ) {
       return await callConatService(options);
     }
     throw err;

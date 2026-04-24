@@ -17,6 +17,15 @@ import { keepAlive, KeepAlive } from "./keepalive";
 //const logger = getLogger("socket:server-socket");
 
 // One specific socket from the point of view of a server.
+
+const nextTurn = (f: () => void) => {
+  if (typeof globalThis.setImmediate == "function") {
+    globalThis.setImmediate(f);
+  } else {
+    setTimeout(f, 0);
+  }
+};
+
 export class ServerSocket extends EventEmitter {
   private conatSocket: ConatSocketServer;
   public readonly id: string;
@@ -118,7 +127,7 @@ export class ServerSocket extends EventEmitter {
       return;
     }
     this.dataQueueScheduled = true;
-    setImmediate(() => {
+    nextTurn(() => {
       this.dataQueueScheduled = false;
       const mesg = this.dataQueue.shift();
       if (mesg == null || this.state == "closed") {
