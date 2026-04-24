@@ -464,9 +464,8 @@ async function readConatStatsSnapshot({
       } else {
         await client.waitUntilReady();
       }
-      const data = await sysApiMany(client, { maxWait }).stats();
-      const responses = Array.isArray(data) ? data : [data];
-      for (const response of responses) {
+      const responses = await sysApiMany(client, { maxWait }).stats();
+      for await (const response of responses) {
         for (const [server_id, serverStats] of Object.entries(response)) {
           for (const [connection_id, stats] of Object.entries(serverStats)) {
             const row = { server_id, connection_id, stats };
