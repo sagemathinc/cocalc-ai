@@ -3,11 +3,36 @@ import { performance } from "node:perf_hooks";
 import { Command } from "commander";
 
 import { connect } from "@cocalc/conat/core/client";
+import { sysApiMany } from "@cocalc/conat/core/sys";
+import type { ConnectionStats } from "@cocalc/conat/core/types";
+import { inboxPrefix } from "@cocalc/conat/names";
 
 import { durationToMs } from "../../core/utils";
 
 type LoadScenarioResult = Record<string, unknown> | null | undefined;
 type SeedScenarioResult = Record<string, unknown>;
+type ConatStatsRow = {
+  server_id: string;
+  connection_id: string;
+  stats: ConnectionStats;
+};
+type ConatStatsDelta = {
+  server_id: string;
+  connection_id: string;
+  user: string;
+  user_kind: string;
+  user_id: string | null;
+  browser_id: string | null;
+  address: string | null;
+  subs_before: number;
+  subs_after: number;
+  recv_messages: number;
+  send_messages: number;
+  total_messages: number;
+  recv_bytes: number;
+  send_bytes: number;
+  total_bytes: number;
+};
 type LoadComponentTiming = {
   name: string;
   duration_ms: number;
@@ -77,6 +102,10 @@ function parseOptionalDurationMs(raw: string | undefined): number | undefined {
 
 function roundMs(value: number): number {
   return Number(value.toFixed(3));
+}
+
+function roundRate(value: number): number {
+  return Number(value.toFixed(6));
 }
 
 function percentile(sorted: number[], fraction: number): number | null {
@@ -270,6 +299,179 @@ function readOptionalSecret({
   const secret =
     value ?? (file == null ? undefined : readFileSync(file, "utf8").trim());
   return secret?.trim() || undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function conatStatsKey(row: ConatStatsRow): string {
+  return `${row.server_id}:${row.connection_id}`;
+}
+
+function conatUserIdentity(user: ConnectionStats["user"]): {
+  label: string;
+  kind: string;
+  id: string | null;
+} {
+  if (user?.error) {
+    return { label: `error:${user.error}`, kind: "error", id: user.error };
+  }
+  if (user?.account_id) {
+    return {
+      label: `account:${user.account_id}`,
+      kind: "account",
+      id: user.account_id,
+    };
+  }
+  if (user?.project_id) {
+    return {
+      label: `project:${user.project_id}`,
+      kind: "project",
+      id: user.project_id,
+    };
+  }
+  if (user?.hub_id) {
+    return { label: `hub:${user.hub_id}`, kind: "hub", id: user.hub_id };
+  }
+  if (user?.host_id) {
+    return { label: `host:${user.host_id}`, kind: "host", id: user.host_id };
+  }
+  return { label: "unknown", kind: "unknown", id: null };
+}
+
+function aggregateConatStatsDeltas(deltas: ConatStatsDelta[]) {
+  const total = {
+    connections: deltas.length,
+    recv_messages: 0,
+    send_messages: 0,
+    total_messages: 0,
+    recv_bytes: 0,
+    send_bytes: 0,
+    total_bytes: 0,
+  };
+  for (const delta of deltas) {
+    total.recv_messages += delta.recv_messages;
+    total.send_messages += delta.send_messages;
+    total.total_messages += delta.total_messages;
+    total.recv_bytes += delta.recv_bytes;
+    total.send_bytes += delta.send_bytes;
+    total.total_bytes += delta.total_bytes;
+  }
+  return total;
+}
+
+function addConatDeltaToGroup(
+  map: Map<
+    string,
+    ReturnType<typeof aggregateConatStatsDeltas> & { key: string }
+  >,
+  key: string,
+  delta: ConatStatsDelta,
+) {
+  const row =
+    map.get(key) ??
+    ({
+      key,
+      connections: 0,
+      recv_messages: 0,
+      send_messages: 0,
+      total_messages: 0,
+      recv_bytes: 0,
+      send_bytes: 0,
+      total_bytes: 0,
+    } as ReturnType<typeof aggregateConatStatsDeltas> & { key: string });
+  row.connections += 1;
+  row.recv_messages += delta.recv_messages;
+  row.send_messages += delta.send_messages;
+  row.total_messages += delta.total_messages;
+  row.recv_bytes += delta.recv_bytes;
+  row.send_bytes += delta.send_bytes;
+  row.total_bytes += delta.total_bytes;
+  map.set(key, row);
+}
+
+function withConatRates<
+  T extends { total_messages: number; total_bytes: number },
+>(
+  row: T,
+  durationSeconds: number,
+): T & { messages_per_sec: number; bytes_per_sec: number } {
+  return {
+    ...row,
+    messages_per_sec: roundRate(row.total_messages / durationSeconds),
+    bytes_per_sec: roundRate(row.total_bytes / durationSeconds),
+  };
+}
+
+async function readConatStatsSnapshot({
+  addresses,
+  systemAccountPassword,
+  bearer,
+  projectId,
+  connectConat,
+  maxWait,
+}: {
+  addresses: string[];
+  systemAccountPassword?: string;
+  bearer?: string;
+  projectId?: string;
+  connectConat: typeof connect;
+  maxWait: number;
+}): Promise<Map<string, ConatStatsRow>> {
+  const rows = new Map<string, ConatStatsRow>();
+  const clients: any[] = [];
+  try {
+    for (const address of addresses) {
+      const client = connectConat({
+        address,
+        systemAccountPassword,
+        ...(bearer
+          ? {
+              auth: async (cb) =>
+                cb({
+                  bearer,
+                  ...(projectId ? { project_id: projectId } : {}),
+                }),
+            }
+          : undefined),
+        noCache: true,
+      });
+      client.inboxPrefixHook = (info) => {
+        const user = info?.user;
+        if (!user) return undefined;
+        return inboxPrefix({
+          account_id: user.account_id,
+          project_id: user.project_id,
+          hub_id: user.hub_id,
+          host_id: user.host_id,
+        });
+      };
+      clients.push(client);
+      if (bearer) {
+        await client.waitUntilSignedIn({ timeout: maxWait });
+      } else {
+        await client.waitUntilReady();
+      }
+      const data = await sysApiMany(client, { maxWait }).stats();
+      const responses = Array.isArray(data) ? data : [data];
+      for (const response of responses) {
+        for (const [server_id, serverStats] of Object.entries(response)) {
+          for (const [connection_id, stats] of Object.entries(serverStats)) {
+            const row = { server_id, connection_id, stats };
+            rows.set(conatStatsKey(row), row);
+          }
+        }
+      }
+    }
+  } finally {
+    for (const client of clients) {
+      try {
+        client.close();
+      } catch {}
+    }
+  }
+  return rows;
 }
 
 function conatLoadSubject(): string {
@@ -850,6 +1052,213 @@ export function registerLoadCommand(
               } catch {}
             }
           }
+        });
+      },
+    );
+
+  load
+    .command("conat-stats-window")
+    .description(
+      "sample Conat server connection counters over a time window and report real traffic rates",
+    )
+    .requiredOption(
+      "--addresses <urls>",
+      "comma-separated Conat router URLs, e.g. http://127.0.0.1:9102",
+    )
+    .option("--system-password <secret>", "Conat system account password")
+    .option(
+      "--system-password-file <path>",
+      "file containing the Conat system account password",
+    )
+    .option(
+      "--bearer <token>",
+      "Conat bearer token; defaults to COCALC_BEARER_TOKEN or COCALC_AGENT_TOKEN",
+    )
+    .option(
+      "--project-id <project-id>",
+      "project id to include with bearer auth; defaults to COCALC_PROJECT_ID",
+    )
+    .option("--duration <duration>", "measurement duration", "60s")
+    .option("--max-wait <duration>", "sys stats RPC max wait", "3s")
+    .option("--top <n>", "top changed connections/groups to include", "20")
+    .option(
+      "--include-new",
+      "include connections that appear during the measurement window",
+    )
+    .action(
+      async (
+        opts: {
+          addresses?: string;
+          systemPassword?: string;
+          systemPasswordFile?: string;
+          bearer?: string;
+          projectId?: string;
+          duration?: string;
+          maxWait?: string;
+          top?: string;
+          includeNew?: boolean;
+        },
+        command: Command,
+      ) => {
+        const run =
+          runLocalCommand ??
+          (async (_command: Command, _label: string, fn: () => Promise<any>) =>
+            await fn());
+        await run(command, "load conat-stats-window", async () => {
+          const addresses = normalizeAddresses(opts.addresses);
+          const systemAccountPassword = readOptionalSecret({
+            value: opts.systemPassword,
+            file: opts.systemPasswordFile,
+            valueFlag: "--system-password",
+            fileFlag: "--system-password-file",
+          });
+          const bearer =
+            `${opts.bearer ?? process.env.COCALC_BEARER_TOKEN ?? process.env.COCALC_AGENT_TOKEN ?? ""}`.trim() ||
+            undefined;
+          const projectId =
+            `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
+            undefined;
+          const durationMs = parseOptionalDurationMs(opts.duration) ?? 60000;
+          const maxWait = parseOptionalDurationMs(opts.maxWait) ?? 3000;
+          const top = parsePositiveInteger(opts.top, "--top", 20);
+          const startedAt = new Date();
+          const started = performance.now();
+          const before = await readConatStatsSnapshot({
+            addresses,
+            systemAccountPassword,
+            bearer,
+            projectId,
+            connectConat,
+            maxWait,
+          });
+          await sleep(durationMs);
+          const after = await readConatStatsSnapshot({
+            addresses,
+            systemAccountPassword,
+            bearer,
+            projectId,
+            connectConat,
+            maxWait,
+          });
+          const measuredMs = performance.now() - started;
+          const durationSeconds = Math.max(0.001, measuredMs / 1000);
+          const deltas: ConatStatsDelta[] = [];
+          let newConnections = 0;
+          let closedConnections = 0;
+
+          for (const [key, afterRow] of after.entries()) {
+            const beforeRow = before.get(key);
+            if (!beforeRow) {
+              newConnections += 1;
+              if (!opts.includeNew) {
+                continue;
+              }
+            }
+            const user = conatUserIdentity(afterRow.stats.user);
+            const beforeStats = beforeRow?.stats;
+            const recvMessages = Math.max(
+              0,
+              afterRow.stats.recv.messages - (beforeStats?.recv.messages ?? 0),
+            );
+            const sendMessages = Math.max(
+              0,
+              afterRow.stats.send.messages - (beforeStats?.send.messages ?? 0),
+            );
+            const recvBytes = Math.max(
+              0,
+              afterRow.stats.recv.bytes - (beforeStats?.recv.bytes ?? 0),
+            );
+            const sendBytes = Math.max(
+              0,
+              afterRow.stats.send.bytes - (beforeStats?.send.bytes ?? 0),
+            );
+            deltas.push({
+              server_id: afterRow.server_id,
+              connection_id: afterRow.connection_id,
+              user: user.label,
+              user_kind: user.kind,
+              user_id: user.id,
+              browser_id: afterRow.stats.browser_id ?? null,
+              address: afterRow.stats.address ?? null,
+              subs_before: beforeStats?.subs ?? 0,
+              subs_after: afterRow.stats.subs,
+              recv_messages: recvMessages,
+              send_messages: sendMessages,
+              total_messages: recvMessages + sendMessages,
+              recv_bytes: recvBytes,
+              send_bytes: sendBytes,
+              total_bytes: recvBytes + sendBytes,
+            });
+          }
+          for (const key of before.keys()) {
+            if (!after.has(key)) {
+              closedConnections += 1;
+            }
+          }
+
+          const byUser = new Map<
+            string,
+            ReturnType<typeof aggregateConatStatsDeltas> & { key: string }
+          >();
+          const byBrowser = new Map<
+            string,
+            ReturnType<typeof aggregateConatStatsDeltas> & { key: string }
+          >();
+          const byUserKind = new Map<
+            string,
+            ReturnType<typeof aggregateConatStatsDeltas> & { key: string }
+          >();
+          const byServer = new Map<
+            string,
+            ReturnType<typeof aggregateConatStatsDeltas> & { key: string }
+          >();
+          for (const delta of deltas) {
+            addConatDeltaToGroup(byUser, delta.user, delta);
+            addConatDeltaToGroup(byBrowser, delta.browser_id ?? "none", delta);
+            addConatDeltaToGroup(byUserKind, delta.user_kind, delta);
+            addConatDeltaToGroup(byServer, delta.server_id, delta);
+          }
+          const topByMessages = <T extends { total_messages: number }>(
+            rows: T[],
+          ) =>
+            rows
+              .sort((a, b) => b.total_messages - a.total_messages)
+              .slice(0, top);
+          const summarizeGroups = (
+            map: Map<
+              string,
+              ReturnType<typeof aggregateConatStatsDeltas> & { key: string }
+            >,
+          ) =>
+            topByMessages([...map.values()]).map((row) =>
+              withConatRates(row, durationSeconds),
+            );
+
+          return {
+            scenario: "conat-stats-window",
+            started_at: startedAt.toISOString(),
+            finished_at: new Date().toISOString(),
+            addresses,
+            duration_ms: roundMs(durationMs),
+            measured_ms: roundMs(measuredMs),
+            connections_before: before.size,
+            connections_after: after.size,
+            stable_connections_measured: deltas.length,
+            new_connections: newConnections,
+            closed_connections: closedConnections,
+            include_new: !!opts.includeNew,
+            totals: withConatRates(
+              aggregateConatStatsDeltas(deltas),
+              durationSeconds,
+            ),
+            by_user_kind: summarizeGroups(byUserKind),
+            by_server: summarizeGroups(byServer),
+            by_browser: summarizeGroups(byBrowser),
+            by_user: summarizeGroups(byUser),
+            top_connections: topByMessages(deltas).map((row) =>
+              withConatRates(row, durationSeconds),
+            ),
+          };
         });
       },
     );
