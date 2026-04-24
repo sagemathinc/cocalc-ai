@@ -39,6 +39,7 @@ function usageAndExit(message, code = 1) {
       "  --out-dir <path>           Artifact directory (default: ./.cocalc-codex-one-turn/<ts>)",
       "  --timeout <ms>             Overall turn timeout (default: 600000)",
       "  --chromium <path>          Chromium path for spawned sessions",
+      "  --fail-on-stale-build      Fail smoke checks when the page reports a stale frontend build",
       "  --headed                   Spawn a visible browser instead of headless",
       "  --keep-browser             Do not destroy the spawned browser session",
       "  --json                     Print only the final JSON summary",
@@ -101,6 +102,7 @@ function parseArgs(argv) {
       process.env.COCALC_CODEX_ONE_TURN_CHROMIUM ??
       process.env.COCALC_CHROMIUM_BIN ??
       "",
+    failOnStaleBuild: envFlag("COCALC_CODEX_ONE_TURN_FAIL_ON_STALE_BUILD"),
     headed: envFlag("COCALC_CODEX_ONE_TURN_HEADED"),
     keepBrowser: envFlag("COCALC_CODEX_ONE_TURN_KEEP_BROWSER"),
     json: envFlag("COCALC_CODEX_ONE_TURN_JSON"),
@@ -163,6 +165,8 @@ function parseArgs(argv) {
     } else if (arg === "--chromium") {
       options.chromiumPath = takeValue(argv, i, arg);
       i += 1;
+    } else if (arg === "--fail-on-stale-build") {
+      options.failOnStaleBuild = true;
     } else if (arg === "--headed") {
       options.headed = true;
     } else if (arg === "--keep-browser") {
@@ -1017,11 +1021,16 @@ async function verifyRootRouteSmoke({ options, browserId }) {
       path.join(options.outDir, "latest-root-route-state.json"),
       JSON.stringify(lastState, null, 2),
     );
-    if (rootRouteStateIsSafe(lastState)) {
+    const safe = rootRouteStateIsSafe(lastState);
+    if (safe && options.failOnStaleBuild && lastState?.staleFrontendBuild) {
+      break;
+    }
+    if (safe) {
       const result = {
         ok: true,
         name: options.smoke,
         browser_id: browserId,
+        stale_frontend_build: Boolean(lastState.staleFrontendBuild),
         state: lastState,
       };
       await writeFile(
@@ -1038,9 +1047,10 @@ async function verifyRootRouteSmoke({ options, browserId }) {
     name: options.smoke,
     browser_id: browserId,
     state: lastState,
-    reason: lastState?.staleFrontendBuild
-      ? "page reports a stale frontend build"
-      : "project /files/ route did not resolve to /home/user",
+    reason:
+      options.failOnStaleBuild && lastState?.staleFrontendBuild
+        ? "page reports a stale frontend build"
+        : "project /files/ route did not resolve to /home/user",
   };
   await writeFile(
     path.join(options.outDir, "smoke-verification.json"),

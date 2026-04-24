@@ -265,6 +265,27 @@ The harness also supports `--smoke root-route`, which opens the project
 `/files/` route without sending a Codex prompt and verifies that the frontend
 resolves to the safe project home path instead of leaving project state at `/`.
 This directly guards the accidental root directory listing regression.
+Pass `--fail-on-stale-build` when the smoke is being used as a build/release
+gate and stale frontend bundles should fail the run instead of being recorded as
+diagnostic state.
+
+Minimal Launchpad smoke matrix:
+
+```sh
+cd src
+eval "$(pnpm -s dev:env:hub)"
+
+node scripts/dev/codex-launchpad-one-turn-chromium.mjs --smoke root-route --spawn --json
+node scripts/dev/codex-launchpad-one-turn-chromium.mjs --smoke open-tabs --spawn --json
+node scripts/dev/codex-launchpad-one-turn-chromium.mjs --smoke live-text --spawn --json
+```
+
+Use `--fail-on-stale-build` on `root-route` when validating that the browser
+bundle itself is current:
+
+```sh
+node scripts/dev/codex-launchpad-one-turn-chromium.mjs --smoke root-route --spawn --fail-on-stale-build --json
+```
 
 For remote development where `COCALC_API_URL` is local to the hub host or
 container, the harness separates the CLI/control-plane URL from the
