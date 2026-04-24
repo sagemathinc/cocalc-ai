@@ -958,7 +958,11 @@ export class JupyterActions extends JupyterActions0 {
         this.processSharedLiveRunBatch(batch, "replay");
       }
     }
-    if (!snapshots.some((snapshot) => snapshot.done !== true)) {
+    if (
+      staleSnapshotKeys.size > 0 &&
+      !this.hasLocalRunInProgress() &&
+      !snapshots.some((snapshot) => snapshot.done !== true)
+    ) {
       this.clearStaleActiveRuntimeCellState();
     }
   };
@@ -2698,6 +2702,14 @@ export class JupyterActions extends JupyterActions0 {
       }
       this.set_runtime_cell_state(id, { state: "done", end: Date.now() });
     }
+  };
+
+  private hasLocalRunInProgress = (): boolean => {
+    if (this.runningNow) {
+      return true;
+    }
+    const pending = this.store?.get("pendingCells");
+    return pending != null && pending.size > 0;
   };
 
   // uses inheritence so NOT arrow function
