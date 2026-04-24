@@ -1146,8 +1146,21 @@ describe("submitNavigatorPromptToCurrentThread", () => {
 
     expect(ok).toBe(true);
     expect(mockProcessLLM).toHaveBeenCalledTimes(1);
-    expect(mockOpenFloating).toHaveBeenCalledTimes(2);
+    expect(mockOpenFloating).toHaveBeenCalledTimes(3);
     expect(mockOpenFloating.mock.calls[0]).toEqual([
+      "00000000-1000-4000-8000-000000000000",
+      expect.objectContaining({
+        session_id: "navigator-00000000-1000-4000-8000-000000000000",
+        title: "Agent",
+        model: "gpt-5.4-mini",
+        working_directory: "/home/wstein/project/fast",
+      }),
+      {
+        workspaceId: null,
+        workspaceOnly: false,
+      },
+    ]);
+    expect(mockOpenFloating.mock.calls[1]).toEqual([
       "00000000-1000-4000-8000-000000000000",
       expect.objectContaining({
         session_id: "workspace-ws-fast",
@@ -1160,7 +1173,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         workspaceOnly: true,
       },
     ]);
-    expect(mockOpenFloating.mock.calls[1]).toEqual([
+    expect(mockOpenFloating.mock.calls[2]).toEqual([
       "00000000-1000-4000-8000-000000000000",
       expect.objectContaining({
         session_id: "thread-fast",

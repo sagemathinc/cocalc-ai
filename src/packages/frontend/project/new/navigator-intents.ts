@@ -456,6 +456,34 @@ async function writeNavigatorPromptInWorkspaceChat(
 
     const account_id =
       `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
+    if (opts.openFloating === true && opts.waitForAgent === false) {
+      const chatPath = resolveNavigatorChatPath(project_id);
+      revealAgentSession(
+        project_id,
+        {
+          session_id: `navigator-${project_id}`,
+          project_id,
+          account_id,
+          chat_path: chatPath,
+          thread_key:
+            loadNavigatorSelectedThreadKey(project_id, chatPath) ?? "",
+          title: requestedTitle ?? "Navigator",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          status: "active",
+          entrypoint: "global",
+          model: requestedModel,
+          working_directory: resolveNavigatorWorkingDirectory(
+            project_id,
+            opts.path,
+          ),
+        },
+        {
+          workspaceId: null,
+          workspaceOnly: false,
+        },
+      );
+    }
     const workspaceTarget = await resolveWorkspaceTarget({
       project_id,
       account_id,
