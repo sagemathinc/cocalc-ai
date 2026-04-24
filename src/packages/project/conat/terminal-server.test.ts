@@ -1,7 +1,8 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyTerminalInitFile } from "./terminal-server";
+import { is_valid_uuid_string } from "@cocalc/util/misc";
+import { applyTerminalInitFile, projectScopedCliEnv } from "./terminal-server";
 
 describe("terminal-server init file support", () => {
   it("adds --init-file for bash terminals with a matching init file", async () => {
@@ -40,5 +41,12 @@ describe("terminal-server init file support", () => {
       args: [],
       hasTerminalInitFile: false,
     });
+  });
+
+  it("provides project-scoped cocalc cli env for spawned terminals", () => {
+    const env = projectScopedCliEnv();
+    expect(is_valid_uuid_string(env.COCALC_PROJECT_ID)).toBe(true);
+    expect(env.COCALC_API_URL).toMatch(/^https?:\/\//);
+    expect(env.COCALC_SECRET_TOKEN).toMatch(/secret-token$/);
   });
 });

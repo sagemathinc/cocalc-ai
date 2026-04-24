@@ -118,6 +118,7 @@ const dmpFileWatcher = new DiffMatchPatch({
 
 const OUTPUT_FPS = 29;
 const DEFAULT_OUTPUT_MESSAGE_LIMIT = 500;
+const STALE_LIVE_RUN_IDLE_CHECK_MS = 10_000;
 const WATCH_RECREATE_WAIT = 3000;
 
 type LiveRunRenderContext = {
@@ -165,6 +166,7 @@ export class JupyterActions extends JupyterActions0 {
   private liveRunStore?: {
     get: (key: string) => JupyterLiveRunSnapshot | undefined;
     getAll: () => Record<string, JupyterLiveRunSnapshot>;
+    delete: (key: string) => void;
     close?: () => void;
   };
   private liveRunContexts = new globalThis.Map<string, LiveRunRenderContext>();
@@ -889,8 +891,9 @@ export class JupyterActions extends JupyterActions0 {
     if (this.isClosed()) {
       return;
     }
-    const snapshots = Object.values(this.liveRunStore.getAll())
-      .filter((snapshot) => {
+    const staleSnapshotKeys = new Set<string>();
+    const snapshots0 = Object.values(this.liveRunStore.getAll()).filter(
+      (snapshot) => {
         const runId = `${snapshot?.run_id ?? ""}`.trim();
         const needsCompletionReplay =
           runId !== "" &&
@@ -903,7 +906,42 @@ export class JupyterActions extends JupyterActions0 {
           Array.isArray(snapshot?.batches) &&
           (snapshot?.done !== true || needsCompletionReplay)
         );
-      })
+      },
+    );
+    const oldActiveSnapshots = snapshots0.filter(
+      (snapshot) =>
+        snapshot.done !== true &&
+        Date.now() - (snapshot.updated_at_ms ?? 0) >=
+          STALE_LIVE_RUN_IDLE_CHECK_MS,
+    );
+    if (oldActiveSnapshots.length > 0) {
+      await this.refreshKernelStatus().catch(() => {});
+      const backendState = this.get_runtime_setting("backend_state");
+      const kernelState = this.get_runtime_setting("kernel_state");
+      if (backendState !== "running" || kernelState === "idle") {
+        for (const snapshot of oldActiveSnapshots) {
+          staleSnapshotKeys.add(
+            jupyterLiveRunKey({
+              path: this.liveRunPath,
+              run_id: snapshot.run_id,
+            }),
+          );
+        }
+      }
+    }
+    for (const key of staleSnapshotKeys) {
+      this.liveRunStore.delete(key);
+    }
+    const snapshots = snapshots0
+      .filter(
+        (snapshot) =>
+          !staleSnapshotKeys.has(
+            jupyterLiveRunKey({
+              path: this.liveRunPath,
+              run_id: snapshot.run_id,
+            }),
+          ),
+      )
       .sort((a, b) => a.updated_at_ms - b.updated_at_ms);
     for (const snapshot of snapshots) {
       const batches = [...snapshot.batches].sort(
@@ -919,6 +957,13 @@ export class JupyterActions extends JupyterActions0 {
       for (const batch of batches) {
         this.processSharedLiveRunBatch(batch, "replay");
       }
+    }
+    if (
+      staleSnapshotKeys.size > 0 &&
+      !this.hasLocalRunInProgress() &&
+      !snapshots.some((snapshot) => snapshot.done !== true)
+    ) {
+      this.clearStaleActiveRuntimeCellState();
     }
   };
 
@@ -2657,6 +2702,14 @@ export class JupyterActions extends JupyterActions0 {
       }
       this.set_runtime_cell_state(id, { state: "done", end: Date.now() });
     }
+  };
+
+  private hasLocalRunInProgress = (): boolean => {
+    if (this.runningNow) {
+      return true;
+    }
+    const pending = this.store?.get("pendingCells");
+    return pending != null && pending.size > 0;
   };
 
   // uses inheritence so NOT arrow function

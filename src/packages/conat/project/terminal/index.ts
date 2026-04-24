@@ -22,6 +22,16 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
 type State = "running" | "off";
 
+export type TerminalSessionInfo = {
+  id: string;
+  path?: string;
+  pid?: number;
+  state: State;
+  history_chars: number;
+  leader_socket_id?: string;
+  leader_idle_ms?: number;
+};
+
 const MAX_MSGS_PER_SECOND = parseInt(
   process.env.COCALC_TERMINAL_MAX_MSGS_PER_SECOND ?? "24",
 );
@@ -225,6 +235,33 @@ function recordLeaderActivity(subject: string, sessionId: string | null) {
   if (!sessionId) return;
   const key = sessionKey(subject, sessionId);
   sessionLeaderActivity[key] = Date.now();
+}
+
+function listSessions(subject: string): TerminalSessionInfo[] {
+  const ids = Array.from(
+    new Set([
+      ...Object.keys(sessions),
+      ...Object.keys(history),
+      ...Object.keys(sessionPaths),
+    ]),
+  ).sort((a, b) => a.localeCompare(b));
+  return ids.map((id) => {
+    const pty = sessions[id];
+    const key = sessionKey(subject, id);
+    const lastActivity = sessionLeaderActivity[key];
+    return {
+      id,
+      path: sessionPaths[id],
+      pid: pty?.pid,
+      state: pty?.pid ? "running" : "off",
+      history_chars: history[id]?.length ?? 0,
+      leader_socket_id: sessionLeaders[key],
+      leader_idle_ms:
+        lastActivity == null
+          ? undefined
+          : Math.max(0, Date.now() - lastActivity),
+    };
+  });
 }
 
 function maybePromoteLeader(
@@ -455,15 +492,58 @@ export function terminalServer({
           setPty(null);
           return;
 
+        case "list":
+          return listSessions(subject);
+
         case "env":
           return process.env;
 
         case "cwd":
-          const pid = pty?.pid;
+          const cwdPty = data.id ? sessions[String(data.id)] : pty;
+          const pid = cwdPty?.pid;
           return pid ? cwd?.(pid) : undefined;
 
         case "state":
-          return (pty?.pid ? "running" : "off") as State;
+          const statePty = data.id ? sessions[String(data.id)] : pty;
+          return (statePty?.pid ? "running" : "off") as State;
+
+        case "write":
+          if (!data.id) {
+            throw Error("terminal write requires id");
+          }
+          const targetId = String(data.id);
+          const targetPty = sessions[targetId];
+          if (targetPty == null) {
+            return {
+              written: false,
+              reason: "terminal is not running",
+            };
+          }
+          const kind: TerminalMessageKind =
+            data.kind === "user" ? "user" : "auto";
+          const key = sessionKey(subject, targetId);
+          const leader = sessionLeaders[key];
+          const lastActivity = sessionLeaderActivity[key] ?? 0;
+          if (
+            kind === "auto" &&
+            leader &&
+            Date.now() - lastActivity < LEADER_INACTIVITY_MS
+          ) {
+            return {
+              written: false,
+              reason: "terminal has an active browser leader",
+              leader_idle_ms: Math.max(0, Date.now() - lastActivity),
+            };
+          }
+          await writeToWritablePty(
+            createPtyWritable(targetPty),
+            String(data.input ?? ""),
+          );
+          return {
+            written: true,
+            bytes: Buffer.byteLength(String(data.input ?? ""), "utf8"),
+            kind,
+          };
 
         case "broadcast":
           pty.emit("broadcast", data.event, data.payload);
@@ -518,7 +598,7 @@ export function terminalServer({
           return;
 
         case "history":
-          return history[sessionId ?? ""];
+          return history[data.id ? String(data.id) : (sessionId ?? "")];
 
         case "spawn":
           removeListeners();
@@ -697,20 +777,49 @@ export class TerminalClient extends EventEmitter {
     await this.socket.request({ cmd: "destroy" });
   };
 
-  history = async () => {
-    return (await this.socket.request({ cmd: "history" })).data;
+  list = async (): Promise<TerminalSessionInfo[]> => {
+    const { data } = await this.socket.request({ cmd: "list" });
+    if (!Array.isArray(data)) {
+      throw new Error(
+        "terminal list RPC did not return an array; update or restart the project host",
+      );
+    }
+    return data;
+  };
+
+  write = async ({
+    id,
+    input,
+    kind = "auto",
+  }: {
+    id: string;
+    input: string;
+    kind?: TerminalMessageKind;
+  }) => {
+    return (
+      await this.socket.request({
+        cmd: "write",
+        id,
+        input,
+        kind,
+      })
+    ).data;
+  };
+
+  history = async (id?: string) => {
+    return (await this.socket.request({ cmd: "history", id })).data;
   };
 
   env = async () => {
     return (await this.socket.request({ cmd: "env" })).data;
   };
 
-  cwd = async () => {
-    return (await this.socket.request({ cmd: "cwd" })).data;
+  cwd = async (id?: string) => {
+    return (await this.socket.request({ cmd: "cwd", id })).data;
   };
 
-  state = async (): Promise<State> => {
-    return (await this.socket.request({ cmd: "state" })).data;
+  state = async (id?: string): Promise<State> => {
+    return (await this.socket.request({ cmd: "state", id })).data;
   };
 
   resize = async ({ rows, cols }: { rows: number; cols: number }) => {
