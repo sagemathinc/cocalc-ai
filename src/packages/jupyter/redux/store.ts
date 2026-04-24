@@ -48,21 +48,6 @@ export function canonical_language(
   return lang;
 }
 
-export function fallbackKernelSpec(
-  kernel?: string | null,
-  languageInfo?: any,
-): KernelSpec | undefined {
-  if (kernel == null || kernel === "") {
-    return;
-  }
-  const language = canonical_language(kernel, languageInfo?.get?.("name"));
-  return {
-    name: kernel,
-    display_name: kernel === "python3" ? "Python 3" : kernel,
-    ...(language != null ? { language } : {}),
-  };
-}
-
 export interface JupyterStoreState {
   about: boolean;
   backend_kernel_info: KernelInfo;
@@ -211,10 +196,7 @@ export class JupyterStore extends Store<JupyterStoreState> {
     let info: any = undefined;
     const kernels = this.get("kernels");
     if (kernels === undefined) {
-      return fallbackKernelSpec(
-        kernel,
-        this.get("metadata")?.get?.("language_info"),
-      );
+      return;
     }
     if (kernels === null) {
       return {

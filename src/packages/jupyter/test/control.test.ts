@@ -6,13 +6,23 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Map } from "immutable";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import {
   createJupyterSyncFilesystem,
   hydrateNotebookFromIpynbIfNeeded,
+  loadKernelSpecsIntoStore,
   MulticellOutputHandler,
   restoreKernelFromIpynb,
 } from "../control";
+
+jest.mock("@cocalc/jupyter/kernel/kernel-data", () => ({
+  get_kernel_data: jest.fn(),
+}));
+
+const { get_kernel_data } = jest.requireMock(
+  "@cocalc/jupyter/kernel/kernel-data",
+);
 
 describe("restoreKernelFromIpynb", () => {
   function createActions(kernel: string | null = null) {
@@ -188,6 +198,86 @@ describe("hydrateNotebookFromIpynbIfNeeded", () => {
 
     expect(hydrated).toBe(false);
     expect(actions.setToIpynb).not.toHaveBeenCalled();
+  });
+});
+
+describe("loadKernelSpecsIntoStore", () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  it("loads real discovered kernels into the project-side store", async () => {
+    get_kernel_data.mockResolvedValue([
+      {
+        name: "python3",
+        display_name: "Python 3",
+        language: "python",
+        argv: ["python3"],
+        metadata: {},
+      },
+      {
+        name: "hidden",
+        display_name: "Hidden",
+        language: "python",
+        argv: ["hidden"],
+        metadata: { cocalc: { disabled: true } },
+      },
+    ]);
+    const setState = jest.fn();
+    const loaded = await loadKernelSpecsIntoStore({
+      actions: {
+        store: {
+          get: (key: string) => {
+            if (key === "kernels") {
+              return undefined;
+            }
+            if (key === "kernel") {
+              return "python3";
+            }
+            return undefined;
+          },
+          get_kernel_selection: () => Map({ python: "python3" }),
+          get_default_kernel: () => undefined,
+        } as any,
+        setState,
+      },
+    });
+
+    expect(loaded).toBe(true);
+    expect(get_kernel_data).toHaveBeenCalledTimes(1);
+    expect(setState).toHaveBeenCalledTimes(1);
+    const state = setState.mock.calls[0][0];
+    expect(state.kernel_info).toEqual(
+      expect.objectContaining({
+        name: "python3",
+        display_name: "Python 3",
+        language: "python",
+      }),
+    );
+    expect(state.kernels.toJS()).toEqual([
+      expect.objectContaining({
+        name: "python3",
+        display_name: "Python 3",
+        language: "python",
+      }),
+    ]);
+    expect(state.kernels_by_name.keySeq().toJS()).toEqual(["python3"]);
+    expect(state.kernels_by_language.keySeq().toJS()).toEqual(["python"]);
+  });
+
+  it("does nothing when kernels are already loaded", async () => {
+    const loaded = await loadKernelSpecsIntoStore({
+      actions: {
+        store: {
+          get: (key: string) =>
+            key === "kernels" ? Map({ already: "loaded" }) : undefined,
+        } as any,
+        setState: jest.fn(),
+      },
+    });
+
+    expect(loaded).toBe(false);
+    expect(get_kernel_data).not.toHaveBeenCalled();
   });
 });
 
