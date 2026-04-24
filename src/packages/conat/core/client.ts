@@ -221,7 +221,8 @@ import {
 } from "socket.io-client";
 import { EventIterator } from "@cocalc/util/event-iterator";
 import type { ConnectionStats, ServerInfo } from "./types";
-import * as msgpack from "@msgpack/msgpack";
+import { DataEncoding, decode, encode } from "./codec";
+export { DataEncoding, decode, encode } from "./codec";
 import { randomId } from "@cocalc/conat/names";
 import type { JSONValue } from "@cocalc/util/types";
 import { EventEmitter } from "events";
@@ -283,13 +284,6 @@ import mutagen from "@cocalc/conat/project/mutagen";
 export const MAX_INTEREST_TIMEOUT = 90_000;
 
 const DEFAULT_WAIT_FOR_INTEREST_TIMEOUT = 30_000;
-
-// WARNING: do NOT change MSGPACK_ENCODER_OPTIONS unless you know what you're doing!
-const MSGPACK_ENCODER_OPTIONS = {
-  // ignoreUndefined is critical so database queries work properly, and
-  // also we have a lot of api calls with tons of wasted undefined values.
-  ignoreUndefined: true,
-};
 
 export const DEFAULT_SOCKETIO_CLIENT_OPTIONS = {
   // A major problem if we allow long polling is that we must always use at most
@@ -365,11 +359,6 @@ export function setDefaultTimeouts({
 }) {
   DEFAULT_REQUEST_TIMEOUT = request;
   DEFAULT_PUBLISH_TIMEOUT = publish;
-}
-
-export enum DataEncoding {
-  MsgPack = 0,
-  JsonCodec = 1,
 }
 
 export type ConatTraceDirection = "send" | "recv";
@@ -2596,55 +2585,6 @@ interface PublishOptions {
 interface RequestManyOptions extends PublishOptions {
   maxWait?: number;
   maxMessages?: number;
-}
-
-export function encode({
-  encoding,
-  mesg,
-}: {
-  encoding: DataEncoding;
-  mesg: any;
-}) {
-  if (encoding == DataEncoding.MsgPack) {
-    return msgpack.encode(mesg, MSGPACK_ENCODER_OPTIONS);
-  } else if (encoding == DataEncoding.JsonCodec) {
-    return jsonEncoder(mesg);
-  } else {
-    throw Error(`unknown encoding ${encoding}`);
-  }
-}
-
-export function decode({
-  encoding,
-  data,
-}: {
-  encoding: DataEncoding;
-  data;
-}): any {
-  if (encoding == DataEncoding.MsgPack) {
-    return msgpack.decode(data);
-  } else if (encoding == DataEncoding.JsonCodec) {
-    return jsonDecoder(data);
-  } else {
-    throw Error(`unknown encoding ${encoding}`);
-  }
-}
-
-let textEncoder: any = undefined;
-let textDecoder: any = undefined;
-
-function jsonEncoder(obj: any) {
-  if (textEncoder === undefined) {
-    textEncoder = new TextEncoder();
-  }
-  return textEncoder.encode(JSON.stringify(obj));
-}
-
-function jsonDecoder(data: Buffer): any {
-  if (textDecoder === undefined) {
-    textDecoder = new TextDecoder();
-  }
-  return JSON.parse(textDecoder.decode(data));
 }
 
 interface Chunk {
