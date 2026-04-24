@@ -471,6 +471,29 @@ function resolveHubDataDir(statusInfo, opts = {}) {
   return undefined;
 }
 
+function resolveHubBrowserBaseUrl(hubDataDir) {
+  const explicit =
+    `${process.env.COCALC_CODEX_ONE_TURN_BROWSER_BASE_URL ?? ""}`.trim() ||
+    `${process.env.COCALC_BROWSER_BASE_URL ?? ""}`.trim() ||
+    `${process.env.COCALC_PUBLIC_URL ?? ""}`.trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
+
+  const dataDir = `${hubDataDir ?? ""}`.trim();
+  if (!dataDir) return undefined;
+  const configPath = path.join(
+    dataDir,
+    "secrets",
+    "launchpad-cloudflare",
+    "config.yml",
+  );
+  if (!fs.existsSync(configPath)) return undefined;
+  const config = fs.readFileSync(configPath, "utf8");
+  const match = /^\s*-\s*hostname:\s*["']?([^"'\s]+)["']?/m.exec(config);
+  const hostname = `${match?.[1] ?? ""}`.trim();
+  if (!hostname) return undefined;
+  return `https://${hostname}`;
+}
+
 function runPsqlQuery(connection, sql) {
   if (!connection?.pgHost) return undefined;
   const env = {
@@ -753,6 +776,8 @@ function main() {
           explicitData: "",
         })
       : undefined;
+  const hubBrowserBaseUrl =
+    mode === "hub" ? resolveHubBrowserBaseUrl(hubDataDir) : undefined;
   const auth = getAuthConfig();
   const profile = chooseProfileForApi(
     auth.profiles,
@@ -838,6 +863,9 @@ function main() {
       exportsMap.DATA = hubDataDir;
     }
     exportsMap.COCALC_PRODUCT = "launchpad";
+    if (hubBrowserBaseUrl) {
+      exportsMap.COCALC_CODEX_ONE_TURN_BROWSER_BASE_URL = hubBrowserBaseUrl;
+    }
     exportsMap.COCALC_LITE_CONNECTION_INFO = "";
     // Clear stale Lite/agent env so hub CLI commands do not silently
     // connect to the wrong local service.
@@ -879,6 +907,7 @@ function main() {
     api_url: apiUrl,
     has_bearer: !!`${bearer}`.trim(),
     has_hub_password: !!`${hubPassword}`.trim(),
+    browser_base_url: hubBrowserBaseUrl,
     has_account_id: !!accountId,
     project_id: projectId,
     browser_id: browserId || undefined,
@@ -919,6 +948,7 @@ if (require.main === module) {
 module.exports = {
   parseHubStatusInfo,
   resolveHubPostgresConnection,
+  resolveHubBrowserBaseUrl,
   hubPasswordCandidates,
   resolveHubPassword,
   resolveHubTarget,

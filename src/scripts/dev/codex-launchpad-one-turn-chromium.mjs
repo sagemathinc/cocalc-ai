@@ -22,6 +22,7 @@ function usageAndExit(message, code = 1) {
       "",
       "Options:",
       "  --base-url <url>           CoCalc hub URL (default: COCALC_API_URL)",
+      "  --browser-base-url <url>   Browser-visible CoCalc URL for spawned Chromium target URLs",
       "  --project <id>             Project id containing the chat",
       "  --chat-path <path>         Chat file path (default: /home/user/a.chat)",
       "  --target-url <url>         Exact chat URL; overrides --chat-path URL construction",
@@ -74,6 +75,7 @@ function parseArgs(argv) {
       process.env.COCALC_CODEX_ONE_TURN_BASE_URL ??
       process.env.COCALC_API_URL ??
       "",
+    browserBaseUrl: process.env.COCALC_CODEX_ONE_TURN_BROWSER_BASE_URL ?? "",
     projectId: process.env.COCALC_PROJECT_ID ?? "",
     chatPath:
       process.env.COCALC_CODEX_ONE_TURN_CHAT_PATH ?? "/home/user/a.chat",
@@ -110,6 +112,9 @@ function parseArgs(argv) {
       usageAndExit("", 0);
     } else if (arg === "--base-url") {
       options.baseUrl = takeValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--browser-base-url") {
+      options.browserBaseUrl = takeValue(argv, i, arg);
       i += 1;
     } else if (arg === "--project") {
       options.projectId = takeValue(argv, i, arg);
@@ -170,6 +175,7 @@ function parseArgs(argv) {
   }
 
   options.baseUrl = options.baseUrl.replace(/\/+$/, "");
+  options.browserBaseUrl = options.browserBaseUrl.trim().replace(/\/+$/, "");
   options.projectId = options.projectId.trim();
   options.chatPath = normalizeChatPath(options.chatPath);
   options.targetUrl = options.targetUrl.trim();
@@ -240,7 +246,7 @@ function openTabsSmokePrompt(options) {
     "Run a CoCalc open-tabs smoke test.",
     "",
     "Use the exact CoCalc CLI command from your runtime instructions.",
-    'First command shape: <exact CoCalc CLI command> browser files --project-id "$COCALC_PROJECT_ID" --browser "$COCALC_BROWSER_ID"',
+    'First command shape: <exact CoCalc CLI command> browser files --session-project-id "$COCALC_PROJECT_ID" --browser "$COCALC_BROWSER_ID"',
     "Use `browser files` or `browser tabs` for this. Do not use `browser exec` or `browser exec-api` unless the typed tab command fails.",
     "Report the open browser files/tabs with each path exactly as returned by the command.",
     "In your final answer, include OPEN_TABS_SMOKE_OK.",
@@ -257,7 +263,8 @@ function encodePathPreservingSlashes(value) {
 
 function chatUrl(options) {
   if (options.targetUrl) return options.targetUrl;
-  return `${options.baseUrl}/projects/${encodeURIComponent(
+  const baseUrl = options.browserBaseUrl || options.baseUrl;
+  return `${baseUrl}/projects/${encodeURIComponent(
     options.projectId,
   )}/files${encodePathPreservingSlashes(options.chatPath)}`;
 }
@@ -841,7 +848,7 @@ async function verifyOpenTabsSmoke({ options, browserId, finalState }) {
         "files",
         "--browser",
         browserId,
-        "--project-id",
+        "--session-project-id",
         options.projectId,
       ],
     },
@@ -849,6 +856,7 @@ async function verifyOpenTabsSmoke({ options, browserId, finalState }) {
   );
   const rows = Array.isArray(files.data) ? files.data : [];
   const paths = rows
+    .filter((row) => `${row?.project_id ?? ""}` === options.projectId)
     .map((row) => `${row?.path ?? ""}`.trim())
     .filter((path) => path.length > 0);
   const finalAnswer = `${finalState?.finalAnswer ?? ""}`;
@@ -1056,6 +1064,7 @@ async function main() {
     summary = {
       ok: true,
       base_url: options.baseUrl,
+      browser_base_url: options.browserBaseUrl || undefined,
       project_id: options.projectId,
       chat_path: options.chatPath,
       model: options.model,
@@ -1075,6 +1084,7 @@ async function main() {
     summary = {
       ok: false,
       base_url: options.baseUrl,
+      browser_base_url: options.browserBaseUrl || undefined,
       project_id: options.projectId,
       chat_path: options.chatPath,
       model: options.model,

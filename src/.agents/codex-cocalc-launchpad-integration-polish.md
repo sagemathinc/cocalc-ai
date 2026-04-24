@@ -77,6 +77,10 @@ Codex and the CoCalc CLI should choose the right path automatically.
   checking live editor content.
 - Codex can answer browser-tab and live-editing questions after falling back to
   working commands.
+- `dev:env:hub` exports `COCALC_CODEX_ONE_TURN_BROWSER_BASE_URL` when a
+  Launchpad Cloudflare tunnel config is present, so spawned Chromium can use
+  the browser-visible public URL while CLI control-plane calls still use the
+  local hub URL.
 
 ### Recently Fixed
 
@@ -254,7 +258,16 @@ The harness also supports `--smoke open-tabs`, which asks a real Codex turn
 "what browser tabs/files do I have open?", requires the final answer to report
 `OPEN_TABS_SMOKE_OK` and `COMMAND_USED=browser files` or
 `COMMAND_USED=browser tabs`, and verifies that every path from a direct
-`browser files --browser ... --project-id ...` check appears in the answer.
+`browser files --browser ... --session-project-id ...` check appears in the
+answer.
+
+For remote development where `COCALC_API_URL` is local to the hub host or
+container, the harness separates the CLI/control-plane URL from the
+browser-visible URL:
+
+- `--base-url` / `COCALC_API_URL`: where the CLI talks to the hub.
+- `--browser-base-url` / `COCALC_CODEX_ONE_TURN_BROWSER_BASE_URL`: where the
+  spawned Chromium opens the Launchpad UI.
 
 This is the highest-value test harness for the integration because it exercises
 the same path as a user:
@@ -408,4 +421,3 @@ Codex-in-CoCalc should feel native when it can:
 
 The near-term bar is not "perfect autonomous IDE." The near-term bar is: common
 CoCalc questions should work on the first path Codex chooses.
-
