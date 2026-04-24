@@ -6,13 +6,14 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Map } from "immutable";
+import { List, Map } from "immutable";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import {
   createJupyterSyncFilesystem,
   hydrateNotebookFromIpynbIfNeeded,
   loadKernelSpecsIntoStore,
   MulticellOutputHandler,
+  notebookCellsMatchExpected,
   restoreKernelFromIpynb,
 } from "../control";
 
@@ -278,6 +279,60 @@ describe("loadKernelSpecsIntoStore", () => {
 
     expect(loaded).toBe(false);
     expect(get_kernel_data).not.toHaveBeenCalled();
+  });
+});
+
+describe("notebookCellsMatchExpected", () => {
+  function createCells() {
+    return Map({
+      a: Map({ id: "a", cell_type: "code", input: "2+3" }),
+      b: Map({ id: "b", cell_type: "markdown", input: "hello" }),
+      c: Map({ id: "c", cell_type: "code", input: "print(5)" }),
+    });
+  }
+
+  it("requires the exact expected cell order when provided", () => {
+    const cells = createCells();
+    const cellList = List(["a", "b", "c"]);
+
+    expect(
+      notebookCellsMatchExpected({
+        cells,
+        cellList,
+        expectedCellCount: 3,
+        expectedCellIdsInOrder: ["a", "b", "c"],
+      }),
+    ).toBe(true);
+    expect(
+      notebookCellsMatchExpected({
+        cells,
+        cellList,
+        expectedCellCount: 3,
+        expectedCellIdsInOrder: ["b", "a", "c"],
+      }),
+    ).toBe(false);
+  });
+
+  it("still validates cell content alongside order", () => {
+    const cells = createCells();
+    const cellList = List(["a", "b", "c"]);
+
+    expect(
+      notebookCellsMatchExpected({
+        cells,
+        cellList,
+        expectedCellIdsInOrder: ["a", "b", "c"],
+        expectedCells: [{ id: "b", cell_type: "markdown", input: "hello" }],
+      }),
+    ).toBe(true);
+    expect(
+      notebookCellsMatchExpected({
+        cells,
+        cellList,
+        expectedCellIdsInOrder: ["a", "b", "c"],
+        expectedCells: [{ id: "b", cell_type: "code" }],
+      }),
+    ).toBe(false);
   });
 });
 

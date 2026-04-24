@@ -573,12 +573,14 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     path,
     expectedCellCount,
     expectedCells,
+    expectedCellIdsInOrder,
   }: {
     project: Project;
     client: any;
     path: string;
     expectedCellCount: number;
     expectedCells: ExpectedJupyterCell[];
+    expectedCellIdsInOrder: string[];
   }): Promise<void> {
     try {
       await projectApiClient({
@@ -588,6 +590,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         path,
         expectedCellCount,
         expectedCells,
+        expectedCellIdsInOrder,
       });
     } catch (err) {
       throw new Error(
@@ -731,6 +734,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
           client,
           path,
           expectedCellCount: beforeCells.length,
+          expectedCellIdsInOrder: cells.map((candidate) => candidate.id),
           expectedCells: [
             {
               id: cell.id,
@@ -823,7 +827,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
           projectIdentifier,
           cwd,
         );
-        const { value: freshCell } = await waitForFreshNotebookCells({
+        const { cells, value: freshCell } = await waitForFreshNotebookCells({
           ctx,
           projectIdentifier,
           path,
@@ -872,9 +876,9 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
           project,
           client,
           path,
-          expectedCellCount: beforeCells.length + 1,
+          expectedCellCount: cells.length,
+          expectedCellIdsInOrder: cells.map((candidate) => candidate.id),
           expectedCells: [
-            ...beforeCells.map((beforeCell) => ({ id: beforeCell.id })),
             {
               id: freshCell.id,
               cell_type: freshCell.cell_type,
@@ -954,7 +958,8 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
           client,
           path,
           expectedCellCount: expectedRemaining.length,
-          expectedCells: expectedRemaining.map((cell) => ({ id: cell.id })),
+          expectedCellIdsInOrder: expectedRemaining.map((cell) => cell.id),
+          expectedCells: [],
         });
         return {
           project_id: project.project_id,
@@ -1047,8 +1052,9 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
           project,
           client,
           path,
-          expectedCellCount: beforeCells.length,
-          expectedCells: beforeCells.map((cell) => ({ id: cell.id })),
+          expectedCellCount: cells.length,
+          expectedCellIdsInOrder: cells.map((candidate) => candidate.id),
+          expectedCells: [],
         });
         return {
           project_id: project.project_id,

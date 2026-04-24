@@ -293,6 +293,47 @@ export async function loadKernelSpecsIntoStore({
   return true;
 }
 
+function listValueAt(list: any, index: number): any {
+  if (Array.isArray(list)) {
+    return list[index];
+  }
+  return list?.get?.(index);
+}
+
+function listSize(list: any): number | undefined {
+  if (typeof list?.size === "number") {
+    return list.size;
+  }
+  if (Array.isArray(list)) {
+    return list.length;
+  }
+}
+
+export function notebookCellsMatchExpected(opts: {
+  cells: any;
+  cellList: any;
+  expectedCellCount?: number;
+  expectedCells?: ExpectedJupyterCell[];
+  expectedCellIdsInOrder?: string[];
+}): boolean {
+  const expectedCells = opts.expectedCells ?? [];
+  const expectedCellIdsInOrder = opts.expectedCellIdsInOrder ?? [];
+  const count = listSize(opts.cells);
+  const countMatches =
+    opts.expectedCellCount == null || count === opts.expectedCellCount;
+  const cellsMatch = expectedCells.every((expected) =>
+    cellSatisfiesExpected(opts.cells?.get?.(expected.id), expected),
+  );
+  const orderCount = listSize(opts.cellList);
+  const orderMatches =
+    expectedCellIdsInOrder.length === 0 ||
+    (orderCount === expectedCellIdsInOrder.length &&
+      expectedCellIdsInOrder.every(
+        (id, index) => listValueAt(opts.cellList, index) === id,
+      ));
+  return countMatches && cellsMatch && orderMatches;
+}
+
 export function isRunning(path): boolean {
   return jupyterActions[ipynbPath(path)] != null;
 }
@@ -395,22 +436,33 @@ function cellSatisfiesExpected(cell: any, expected: ExpectedJupyterCell) {
 
 async function waitForExpectedCells(
   actions: JupyterActions,
-  opts: Pick<JupyterSaveOptions, "expectedCellCount" | "expectedCells">,
+  opts: Pick<
+    JupyterSaveOptions,
+    "expectedCellCount" | "expectedCells" | "expectedCellIdsInOrder"
+  >,
 ) {
   const expectedCells = opts.expectedCells ?? [];
-  if (opts.expectedCellCount == null && expectedCells.length === 0) {
+  const expectedCellIdsInOrder = opts.expectedCellIdsInOrder ?? [];
+  if (
+    opts.expectedCellCount == null &&
+    expectedCells.length === 0 &&
+    expectedCellIdsInOrder.length === 0
+  ) {
     return;
   }
   const started = Date.now();
   while (true) {
     const cells = actions.store.get("cells");
-    const count = cells?.size;
-    const countMatches =
-      opts.expectedCellCount == null || count === opts.expectedCellCount;
-    const cellsMatch = expectedCells.every((expected) =>
-      cellSatisfiesExpected(cells?.get?.(expected.id), expected),
-    );
-    if (countMatches && cellsMatch) {
+    const cellList = actions.store.get("cell_list");
+    if (
+      notebookCellsMatchExpected({
+        cells,
+        cellList,
+        expectedCellCount: opts.expectedCellCount,
+        expectedCells,
+        expectedCellIdsInOrder,
+      })
+    ) {
       return;
     }
     if (Date.now() - started > 2_000) {

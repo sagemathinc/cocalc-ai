@@ -17,7 +17,7 @@ NOTE: this is also used by project-host processes.
 import { JupyterActions as JupyterActions0 } from "@cocalc/jupyter/redux/actions";
 import { kernel as createJupyterKernel } from "@cocalc/jupyter/kernel";
 import { getLogger } from "@cocalc/backend/logger";
-import { uint8ArrayToBase64, uuid } from "@cocalc/util/misc";
+import { uuid } from "@cocalc/util/misc";
 import handleNbconvertChange from "./handle-nbconvert-change";
 
 const logger = getLogger("jupyter:project-actions");
@@ -26,45 +26,6 @@ export class JupyterActions extends JupyterActions0 {
   protected init2(): void {
     this.initIpywidgetsSupport();
   }
-
-  private toIpynb = async () => {
-    const blobsBase64 = new Set<string>();
-    const blobsString = new Set<string>();
-    const collectBlobRefs = {
-      getBase64: (hash) => {
-        blobsBase64.add(hash);
-      },
-      getString: (hash) => {
-        blobsString.add(hash);
-      },
-    };
-
-    const ipynb = this.store.get_ipynb(collectBlobRefs);
-    if (ipynb == null) {
-      throw Error("notebook is not loaded");
-    }
-
-    if (blobsBase64.size === 0 && blobsString.size === 0) {
-      return ipynb;
-    }
-
-    const blobs: { [sha1: string]: string | null } = {};
-    for (const hash of blobsBase64) {
-      const ar = await this.asyncBlobStore.get(hash);
-      blobs[hash] = ar == null ? null : uint8ArrayToBase64(ar);
-    }
-    const decoder = new TextDecoder();
-    for (const hash of blobsString) {
-      const ar = await this.asyncBlobStore.get(hash);
-      blobs[hash] = ar == null ? null : decoder.decode(ar);
-    }
-
-    const resolveBlobRefs = {
-      getBase64: (hash) => blobs[hash],
-      getString: (hash) => blobs[hash],
-    };
-    return this.store.get_ipynb(resolveBlobRefs);
-  };
 
   save_ipynb_file = async (_opts?) => {
     const ipynb = await this.toIpynb();
