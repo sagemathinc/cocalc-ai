@@ -869,6 +869,7 @@ export function parseRow(
     host_ram_gb: parsePositiveInt(metadata.host_ram_gb),
     gpu: !!metadata.gpu,
     status: normalizedStatus as HostStatus,
+    updated: row.updated ? new Date(row.updated).toISOString() : undefined,
     reprovision_required: !!metadata.reprovision_required,
     version: row.version ?? software.project_host,
     project_host_build_id: software.project_host_build_id,

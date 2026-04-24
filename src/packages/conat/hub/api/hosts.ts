@@ -462,6 +462,7 @@ export interface Host {
   host_ram_gb?: number;
   gpu: boolean;
   status: HostStatus;
+  updated?: string;
   reprovision_required?: boolean;
   version?: string;
   project_host_build_id?: string;

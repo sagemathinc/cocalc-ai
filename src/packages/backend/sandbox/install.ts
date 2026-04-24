@@ -53,7 +53,11 @@ function resolveBinPath(): string {
   if (envPath) {
     return envPath;
   }
-  if (hasBinary(SYSTEM_BIN_PATH, "rg") && hasBinary(SYSTEM_BIN_PATH, "fd")) {
+  if (
+    hasBinary(SYSTEM_BIN_PATH, "rg") &&
+    hasBinary(SYSTEM_BIN_PATH, "fd") &&
+    hasBinary(SYSTEM_BIN_PATH, "jq")
+  ) {
     return SYSTEM_BIN_PATH;
   }
   return join(
@@ -158,6 +162,22 @@ export const SPEC = {
     BASE: "https://github.com/sharkdp/fd/releases/download",
     binary: "fd",
     path: join(binPath, "fd"),
+  },
+  jq: {
+    // See https://github.com/jqlang/jq/releases
+    VERSION: "jq-1.8.1",
+    getVersion: "jq --version",
+    BASE: "https://github.com/jqlang/jq/releases/download",
+    binary: "jq",
+    path: join(binPath, "jq"),
+    platforms: ["linux", "darwin"],
+    script: () => {
+      const platformName =
+        effectivePlatform() === "darwin" ? "macos" : effectivePlatform();
+      const archName = effectiveArch() === "x64" ? "amd64" : effectiveArch();
+      const url = `${SPEC.jq.BASE}/${SPEC.jq.VERSION}/jq-${platformName}-${archName}`;
+      return `curl -fL "${url}" -o "${SPEC.jq.path}" && chmod a+x "${SPEC.jq.path}"`;
+    },
   },
   dust: {
     // See https://github.com/bootandy/dust/releases
@@ -313,6 +333,7 @@ export const SPEC = {
 
 export const rg = SPEC.rg.path;
 export const fd = SPEC.fd.path;
+export const jq = SPEC.jq.path;
 export const dust = SPEC.dust.path;
 export const rustic = SPEC.rustic.path;
 export const restServer = SPEC.restServer.path;
