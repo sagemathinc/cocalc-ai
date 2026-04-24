@@ -40,7 +40,7 @@ import initRobots from "./robots";
 import getServerSettings from "./server-settings";
 import basePath from "@cocalc/backend/base-path";
 import { initConatServer } from "@cocalc/server/conat/socketio";
-import { conatSocketioCount, root } from "@cocalc/backend/data";
+import { conatPassword, conatSocketioCount, root } from "@cocalc/backend/data";
 import { createApiV2Router, createConatRouter } from "@cocalc/http-api";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
 import {
@@ -321,6 +321,7 @@ export default async function init(opts: Options): Promise<{
     initConatServer({
       ssl: !!opts.cert,
       strictCloudflareProxy: () => strictCloudflareProxy,
+      systemAccountPassword: conatPassword,
     });
   }
 
