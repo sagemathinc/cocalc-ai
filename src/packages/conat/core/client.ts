@@ -599,6 +599,8 @@ export class Client extends EventEmitter {
   private subs: { [subject: string]: SubscriptionEmitter } = {};
   private rpcServiceQueues: { [subject: string]: string } = {};
   private rpcServiceImpls: { [subject: string]: any } = {};
+  private fastRpcServiceHandlers: { [subject: string]: (payload: any) => any } =
+    {};
   private rawRpcPending: Map<string, RawRpcPending> = new Map();
   private sockets: {
     // all socket servers created using this Client
@@ -731,6 +733,7 @@ export class Client extends EventEmitter {
     });
     this.conn.on("rpc-request", this.handleRpcRequest);
     this.conn.on("rpc-raw-request", this.handleRawRpcRequest);
+    this.conn.on("fast-rpc-request", this.handleFastRpcRequest);
     this.conn.on("rpc-raw-response", this.handleRawRpcResponse);
     this.conn.on("connect", async () => {
       logger.debug(`Conat: Connected to ${this.getAddressForLog()}`);
@@ -1052,6 +1055,7 @@ export class Client extends EventEmitter {
       this.conn.emit("rpc-service-close", { subject });
       delete this.rpcServiceQueues[subject];
       delete this.rpcServiceImpls[subject];
+      delete this.fastRpcServiceHandlers[subject];
     }
     for (const pending of this.rawRpcPending.values()) {
       clearTimeout(pending.timer);
@@ -1070,6 +1074,8 @@ export class Client extends EventEmitter {
     delete this.rpcServiceQueues;
     // @ts-ignore
     delete this.rpcServiceImpls;
+    // @ts-ignore
+    delete this.fastRpcServiceHandlers;
     // @ts-ignore
     delete this.rawRpcPending;
     // @ts-ignore
@@ -1215,6 +1221,7 @@ export class Client extends EventEmitter {
       if (resp?.[i]?.error) {
         delete this.rpcServiceQueues[services[i].subject];
         delete this.rpcServiceImpls[services[i].subject];
+        delete this.fastRpcServiceHandlers[services[i].subject];
       }
     }
   });
@@ -1371,6 +1378,28 @@ export class Client extends EventEmitter {
       return;
     }
     pending.resolve(resp);
+  };
+
+  private handleFastRpcRequest = async ({ pattern, payload }, respond) => {
+    if (respond == null) {
+      return;
+    }
+    const handler = this.fastRpcServiceHandlers[pattern];
+    if (handler == null) {
+      respond({
+        error: `fast rpc service '${pattern}' is not registered`,
+        code: 503,
+      });
+      return;
+    }
+    try {
+      respond(await handler(payload));
+    } catch (err) {
+      respond({
+        error: err instanceof Error ? err.message : `${err}`,
+        code: (err as any)?.code,
+      });
+    }
   };
 
   numSubscriptions = () => Object.keys(this.queueGroups).length;
@@ -1685,6 +1714,7 @@ export class Client extends EventEmitter {
     } catch (err) {
       delete this.rpcServiceQueues[subject];
       delete this.rpcServiceImpls[subject];
+      delete this.fastRpcServiceHandlers[subject];
       throw err;
     }
     const close = () => {
@@ -1693,11 +1723,82 @@ export class Client extends EventEmitter {
       }
       delete this.rpcServiceQueues[subject];
       delete this.rpcServiceImpls[subject];
+      delete this.fastRpcServiceHandlers[subject];
       if (!this.isClosed()) {
         this.conn.emit("rpc-service-close", { subject });
       }
     };
     return { subject, close, stop: close };
+  };
+
+  fastRpcService = async (
+    subject: string,
+    handler: (payload: any) => any,
+    opts: RpcServiceOptions = {},
+  ): Promise<RpcServiceHandle> => {
+    const client = this.resolveClient(subject);
+    if (client !== this) {
+      return await client.fastRpcService(subject, handler, opts);
+    }
+    if (!isValidSubject(subject)) {
+      throw Error(`invalid fast rpc service subject '${subject}'`);
+    }
+    await this.waitUntilSignedIn();
+    const queue = opts.queue ?? "0";
+    this.rpcServiceQueues[subject] = queue;
+    this.fastRpcServiceHandlers[subject] = handler;
+    try {
+      const response = await this.conn
+        .timeout(opts.timeout ?? DEFAULT_SUBSCRIPTION_TIMEOUT)
+        .emitWithAck("rpc-service", { subject, queue });
+      if (response?.error) {
+        throw new ConatError(response.error, { code: response.code });
+      }
+    } catch (err) {
+      delete this.rpcServiceQueues[subject];
+      delete this.fastRpcServiceHandlers[subject];
+      throw err;
+    }
+    const close = () => {
+      if (this.rpcServiceQueues?.[subject] == null) {
+        return;
+      }
+      delete this.rpcServiceQueues[subject];
+      delete this.fastRpcServiceHandlers[subject];
+      if (!this.isClosed()) {
+        this.conn.emit("rpc-service-close", { subject });
+      }
+    };
+    return { subject, close, stop: close };
+  };
+
+  fastRpcRequest = async (
+    subject: string,
+    payload: any,
+    { timeout = DEFAULT_REQUEST_TIMEOUT }: { timeout?: number } = {},
+  ): Promise<any> => {
+    const client = this.resolveClient(subject);
+    if (client !== this) {
+      return await client.fastRpcRequest(subject, payload, { timeout });
+    }
+    if (timeout <= 0) {
+      throw Error("timeout must be positive");
+    }
+    await this.waitUntilSignedIn();
+    let response;
+    try {
+      response = await this.conn.timeout(timeout).emitWithAck("fast-rpc", {
+        subject,
+        payload,
+        timeout,
+      });
+    } catch (err) {
+      throw toConatError(err, { subject });
+    }
+    if (response?.error) {
+      throw new ConatError(response.error, { code: response.code, subject });
+    }
+    return response;
   };
 
   rpcRequest = async (

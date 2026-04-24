@@ -264,15 +264,16 @@ function normalizeConatResponseMode(
 
 function normalizeConatRequestTransport(
   raw: string | undefined,
-): "pubsub" | "rpc" | "raw-rpc" {
+): "pubsub" | "rpc" | "raw-rpc" | "fast-rpc" {
   const transport = `${raw ?? "pubsub"}`.trim();
   if (
     transport !== "pubsub" &&
     transport !== "rpc" &&
-    transport !== "raw-rpc"
+    transport !== "raw-rpc" &&
+    transport !== "fast-rpc"
   ) {
     throw new Error(
-      "--request-transport must be either 'pubsub', 'rpc', or 'raw-rpc'",
+      "--request-transport must be either 'pubsub', 'rpc', 'raw-rpc', or 'fast-rpc'",
     );
   }
   return transport;
@@ -577,7 +578,7 @@ export function registerLoadCommand(
     )
     .option(
       "--request-transport <transport>",
-      "request transport to measure: pubsub, rpc, or raw-rpc",
+      "request transport to measure: pubsub, rpc, raw-rpc, or fast-rpc",
       "pubsub",
     )
     .action(
@@ -649,6 +650,17 @@ export function registerLoadCommand(
               });
               await client.waitUntilReady();
               const subject = `${subjectPrefix}.${i}`;
+              if (mode === "request" && requestTransport === "fast-rpc") {
+                const sub = await client.fastRpcService(
+                  subject,
+                  (value: string) => ({
+                    ok: true,
+                    bytes: typeof value === "string" ? value.length : 0,
+                  }),
+                );
+                services.push({ client, sub, subject });
+                continue;
+              }
               if (
                 mode === "request" &&
                 (requestTransport === "rpc" || requestTransport === "raw-rpc")
@@ -733,7 +745,15 @@ export function registerLoadCommand(
                       ? client.rpcCall(service.subject)
                       : requestTransport === "raw-rpc"
                         ? client.rawRpcCall(service.subject)
-                        : client.call(service.subject)
+                        : requestTransport === "fast-rpc"
+                          ? {
+                              echo: async (payload: string) =>
+                                await client.fastRpcRequest(
+                                  service.subject,
+                                  payload,
+                                ),
+                            }
+                          : client.call(service.subject)
                     : null,
                 address: addresses[i % addresses.length],
                 subject: service.subject,
