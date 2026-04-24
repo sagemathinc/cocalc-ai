@@ -15,6 +15,7 @@ ITERATIONS="${COCALC_BAY_WORKER_SCALE_ITERATIONS:-400}"
 DURATION="${COCALC_BAY_WORKER_SCALE_DURATION:-}"
 WARMUP="${COCALC_BAY_WORKER_SCALE_WARMUP:-40}"
 PROJECT_ID="${COCALC_BAY_WORKER_SCALE_PROJECT_ID:-}"
+BATCHED_ROUTING="${COCALC_BAY_WORKER_SCALE_BATCHED_ROUTING:-}"
 
 log() {
   printf '[bay-worker-scale] %s\n' "$*" >&2
@@ -213,6 +214,9 @@ run_load_once() {
   else
     args+=(--iterations "$ITERATIONS")
   fi
+  if [[ "$BATCHED_ROUTING" == "1" || "$BATCHED_ROUTING" == "true" ]]; then
+    args+=(--batched-routing)
+  fi
   node "${args[@]}" > "$output"
 }
 
@@ -324,6 +328,7 @@ Environment:
   COCALC_BAY_WORKER_SCALE_DURATION=${DURATION:-}
   COCALC_BAY_WORKER_SCALE_WARMUP=$WARMUP
   COCALC_BAY_WORKER_SCALE_PROJECT_ID=${PROJECT_ID:-}
+  COCALC_BAY_WORKER_SCALE_BATCHED_ROUTING=${BATCHED_ROUTING:-}
 EOF
 }
 

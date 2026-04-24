@@ -44,6 +44,7 @@ export const system = {
   getAccountBay: authFirstRequireAccount,
   getProjectBay: authFirstRequireAccount,
   getHostBay: authFirstRequireAccount,
+  getRoutingContext: authFirstRequireAccount,
   backfillBayOwnership: authFirst,
   rebuildAccountProjectIndex: authFirst,
   drainAccountProjectIndexProjection: authFirst,
@@ -663,6 +664,12 @@ export interface HostBayLocation {
   source: "host-row" | "single-bay-default";
 }
 
+export interface RoutingContextLocation {
+  account: AccountBayLocation;
+  project: ProjectBayLocation;
+  host: HostBayLocation | null;
+}
+
 export interface AccountRehomeDrainResult {
   source_bay_id: string;
   dest_bay_id: string;
@@ -983,6 +990,13 @@ export interface System {
     account_id?: string;
     host_id: string;
   }) => Promise<HostBayLocation>;
+
+  getRoutingContext: (opts: {
+    account_id?: string;
+    user_account_id?: string;
+    project_id: string;
+    host_id?: string | null;
+  }) => Promise<RoutingContextLocation>;
 
   getParallelOpsStatus: (opts?: {
     account_id?: string;

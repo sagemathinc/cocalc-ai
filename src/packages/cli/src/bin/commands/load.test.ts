@@ -10,6 +10,11 @@ type Capture = {
   listBayCalls: number;
   projectBayCalls?: string[];
   hostBayCalls?: string[];
+  routingContextCalls?: Array<{
+    project_id: string;
+    host_id?: string | null;
+    user_account_id?: string;
+  }>;
   bayOpsOverviewCalls?: number;
   bayOpsDetailCalls?: string[];
   projectQueryCalls: number;
@@ -26,6 +31,7 @@ type Capture = {
 function makeDeps(capture: Capture): LoadCommandDeps {
   capture.projectBayCalls ??= [];
   capture.hostBayCalls ??= [];
+  capture.routingContextCalls ??= [];
   capture.bayOpsOverviewCalls ??= 0;
   capture.bayOpsDetailCalls ??= [];
   return {
@@ -70,6 +76,22 @@ function makeDeps(capture: Capture): LoadCommandDeps {
             getHostBay: async ({ host_id }) => {
               capture.hostBayCalls!.push(host_id);
               return { host_id, bay_id: "bay-2" };
+            },
+            getRoutingContext: async ({
+              project_id,
+              host_id,
+              user_account_id,
+            }) => {
+              capture.routingContextCalls!.push({
+                project_id,
+                host_id,
+                user_account_id,
+              });
+              return {
+                account: { home_bay_id: "bay-0" },
+                project: { project_id, owning_bay_id: "bay-1" },
+                host: host_id == null ? null : { host_id, bay_id: "bay-2" },
+              };
             },
             getBayOpsOverview: async () => {
               capture.bayOpsOverviewCalls! += 1;
@@ -741,6 +763,76 @@ test("load three-bay hot-path skips Bay Ops probes", async () => {
     undefined,
   );
   assert.equal(capture.data.component_latency_ms["bay-ops-detail"], undefined);
+});
+
+test("load three-bay batched hot-path uses one routing RPC per sample", async () => {
+  const capture: Capture = {
+    accountBayCalls: 0,
+    listBayCalls: 0,
+    projectBayCalls: [],
+    hostBayCalls: [],
+    routingContextCalls: [],
+    bayOpsOverviewCalls: 0,
+    bayOpsDetailCalls: [],
+    projectQueryCalls: 0,
+    projectCollaboratorListCalls: [],
+    myCollaboratorListCalls: [],
+    mentionQueryCalls: [],
+    adminCreateCalls: [],
+    userSearchCalls: [],
+    createCollabCalls: [],
+    removeCollabCalls: [],
+  };
+  const program = new Command();
+  registerLoadCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "load",
+    "three-bay",
+    "--project",
+    "demo",
+    "--iterations",
+    "2",
+    "--warmup",
+    "1",
+    "--concurrency",
+    "2",
+    "--hot-path",
+    "--batched-routing",
+  ]);
+
+  assert.equal(capture.accountBayCalls, 0);
+  assert.equal(capture.projectQueryCalls, 0);
+  assert.deepEqual(capture.projectBayCalls, []);
+  assert.deepEqual(capture.hostBayCalls, []);
+  assert.deepEqual(capture.routingContextCalls, [
+    {
+      project_id: "project-demo",
+      host_id: "host-2",
+      user_account_id: "11111111-1111-4111-8111-111111111111",
+    },
+    {
+      project_id: "project-demo",
+      host_id: "host-2",
+      user_account_id: "11111111-1111-4111-8111-111111111111",
+    },
+    {
+      project_id: "project-demo",
+      host_id: "host-2",
+      user_account_id: "11111111-1111-4111-8111-111111111111",
+    },
+  ]);
+  assert.equal(capture.data.last_result.hot_path, true);
+  assert.equal(capture.data.last_result.account_home_bay_id, "bay-0");
+  assert.equal(capture.data.last_result.project_owning_bay_id, "bay-1");
+  assert.equal(capture.data.last_result.host_bay_id, "bay-2");
+  assert.ok(capture.data.component_latency_ms["routing-context"].samples > 0);
+  assert.equal(
+    capture.data.component_latency_ms["account-home-bay"],
+    undefined,
+  );
 });
 
 test("load three-bay duration mode reports sustained measured attempts", async () => {

@@ -808,6 +808,27 @@ export async function getHostBay({
   return await resolveHostBay({ account_id, host_id });
 }
 
+export async function getRoutingContext({
+  account_id,
+  user_account_id,
+  project_id,
+  host_id,
+}: {
+  account_id?: string;
+  user_account_id?: string;
+  project_id: string;
+  host_id?: string | null;
+}) {
+  const [account, project, host] = await Promise.all([
+    resolveAccountHomeBay({ account_id, user_account_id }),
+    resolveProjectOwningBay({ account_id, project_id }),
+    host_id == null
+      ? Promise.resolve(null)
+      : resolveHostBay({ account_id, host_id }),
+  ]);
+  return { account, project, host };
+}
+
 export async function backfillBayOwnership({
   account_id,
   bay_id,
