@@ -21,9 +21,13 @@ CLI_PKG_DIR="$ROOT/packages/cli"
 CLI_BUNDLE_JS="$CLI_PKG_DIR/build/bundle/index.js"
 CLI_BUNDLE_LICENSES="$CLI_PKG_DIR/build/bundle/licenses.txt"
 
+source "$(dirname "$0")/tools-cache.sh"
+CACHE_ROOT="$(cocalc_tools_cache_root)"
+
 echo "Building CoCalc tools bundle..."
 echo "  root: $ROOT"
 echo "  out : $OUT_DIR"
+echo "  cache: $CACHE_ROOT"
 
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR"
@@ -61,10 +65,18 @@ for ARCH in "${ARCHES[@]}"; do
   echo "- Building tools for ${OS}/${ARCH}"
   rm -rf "$WORK_DIR/bin" "$WORK_DIR/share"
   mkdir -p "$WORK_DIR/bin" "$WORK_DIR/share"
-  COCALC_BIN_PATH="$WORK_DIR/bin" \
-  COCALC_TOOL_PLATFORM="$OS" \
-  COCALC_TOOL_ARCH="$ARCH" \
-    node -e 'require("@cocalc/backend/sandbox/install").install()'
+  CACHE_KEY="$(cocalc_tools_cache_key "$ROOT" "tools" "$OS" "$ARCH" "all")"
+  CACHE_DIR="$CACHE_ROOT/$CACHE_KEY"
+  if cocalc_tools_restore_cache "$CACHE_DIR" "$WORK_DIR"; then
+    echo "  - Restored downloaded tools from cache: $CACHE_DIR"
+  else
+    COCALC_BIN_PATH="$WORK_DIR/bin" \
+    COCALC_TOOL_PLATFORM="$OS" \
+    COCALC_TOOL_ARCH="$ARCH" \
+      node -e 'require("@cocalc/backend/sandbox/install").install()'
+    cocalc_tools_save_cache "$CACHE_DIR" "$WORK_DIR"
+    echo "  - Saved downloaded tools cache: $CACHE_DIR"
+  fi
   install_cocalc_cli_runtime "$WORK_DIR"
   TARGET="$OUT_DIR/tools-${OS}-${ARCH}.tar.xz"
   rm -f "$TARGET"

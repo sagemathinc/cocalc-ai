@@ -16,6 +16,9 @@ CLI_PKG_DIR="$ROOT/packages/cli"
 CLI_BUNDLE_JS="$CLI_PKG_DIR/build/bundle/index.js"
 CLI_BUNDLE_LICENSES="$CLI_PKG_DIR/build/bundle/licenses.txt"
 
+source "$(dirname "$0")/tools-cache.sh"
+CACHE_ROOT="$(cocalc_tools_cache_root)"
+
 TARGETS=(
   "linux:amd64"
   "linux:arm64"
@@ -23,10 +26,13 @@ TARGETS=(
 )
 
 TOOLS=(rg fd ouch)
+TOOLS_CACHE_KEY="${TOOLS[*]}"
+TOOLS_CACHE_KEY="${TOOLS_CACHE_KEY// /-}"
 
 echo "Building CoCalc minimal tools bundle..."
 echo "  root: $ROOT"
 echo "  out : $OUT_DIR"
+echo "  cache: $CACHE_ROOT"
 
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR"
@@ -66,10 +72,18 @@ for TARGET in "${TARGETS[@]}"; do
   echo "- Building tools-minimal for ${OS}/${ARCH}"
   rm -rf "$WORK_DIR/bin" "$WORK_DIR/share"
   mkdir -p "$WORK_DIR/bin" "$WORK_DIR/share"
-  COCALC_BIN_PATH="$WORK_DIR/bin" \
-  COCALC_TOOL_PLATFORM="$OS" \
-  COCALC_TOOL_ARCH="$ARCH" \
-    node -e 'const { install } = require("@cocalc/backend/sandbox/install");(async () => {for (const app of ["rg","fd","ouch"]) {await install(app);}})().catch((err)=>{console.error(err);process.exit(1);});'
+  CACHE_KEY="$(cocalc_tools_cache_key "$ROOT" "tools-minimal" "$OS" "$ARCH" "$TOOLS_CACHE_KEY")"
+  CACHE_DIR="$CACHE_ROOT/$CACHE_KEY"
+  if cocalc_tools_restore_cache "$CACHE_DIR" "$WORK_DIR"; then
+    echo "  - Restored downloaded tools-minimal from cache: $CACHE_DIR"
+  else
+    COCALC_BIN_PATH="$WORK_DIR/bin" \
+    COCALC_TOOL_PLATFORM="$OS" \
+    COCALC_TOOL_ARCH="$ARCH" \
+      node -e 'const { install } = require("@cocalc/backend/sandbox/install");(async () => {for (const app of ["rg","fd","ouch"]) {await install(app);}})().catch((err)=>{console.error(err);process.exit(1);});'
+    cocalc_tools_save_cache "$CACHE_DIR" "$WORK_DIR"
+    echo "  - Saved downloaded tools-minimal cache: $CACHE_DIR"
+  fi
   install_cocalc_cli_runtime "$WORK_DIR"
   TARGET_FILE="$OUT_DIR/tools-minimal-${OS}-${ARCH}.tar.xz"
   rm -f "$TARGET_FILE"
