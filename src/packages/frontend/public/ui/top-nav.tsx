@@ -60,11 +60,14 @@ export default function PublicTopNav({
   return (
     <Layout.Header
       style={{
-        background: "transparent",
+        background: token.colorBgLayout,
         height: "auto",
         lineHeight: "normal",
-        marginBottom: token.marginLG,
-        padding: 0,
+        marginBottom: token.marginMD,
+        padding: `${token.paddingXS}px 0`,
+        position: "sticky",
+        top: 0,
+        zIndex: token.zIndexPopupBase,
       }}
     >
       <Flex align="center" gap="middle" justify="space-between" wrap>
