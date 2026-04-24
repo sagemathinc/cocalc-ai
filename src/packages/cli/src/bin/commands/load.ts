@@ -407,6 +407,8 @@ function withConatRates<
 async function readConatStatsSnapshot({
   addresses,
   systemAccountPassword,
+  hubPassword,
+  hubCookieName,
   bearer,
   projectId,
   connectConat,
@@ -414,6 +416,8 @@ async function readConatStatsSnapshot({
 }: {
   addresses: string[];
   systemAccountPassword?: string;
+  hubPassword?: string;
+  hubCookieName: string;
   bearer?: string;
   projectId?: string;
   connectConat: typeof connect;
@@ -426,6 +430,13 @@ async function readConatStatsSnapshot({
       const client = connectConat({
         address,
         systemAccountPassword,
+        ...(hubPassword
+          ? {
+              extraHeaders: {
+                Cookie: `${hubCookieName}=${hubPassword}`,
+              },
+            }
+          : undefined),
         ...(bearer
           ? {
               auth: async (cb) =>
@@ -1071,6 +1082,19 @@ export function registerLoadCommand(
       "file containing the Conat system account password",
     )
     .option(
+      "--hub-password <secret>",
+      "hub Conat password for local/dev hub auth",
+    )
+    .option(
+      "--hub-password-file <path>",
+      "file containing the hub Conat password for local/dev hub auth",
+    )
+    .option(
+      "--hub-cookie-name <name>",
+      "hub password cookie name",
+      "hub_password",
+    )
+    .option(
       "--bearer <token>",
       "Conat bearer token; defaults to COCALC_BEARER_TOKEN or COCALC_AGENT_TOKEN",
     )
@@ -1091,6 +1115,9 @@ export function registerLoadCommand(
           addresses?: string;
           systemPassword?: string;
           systemPasswordFile?: string;
+          hubPassword?: string;
+          hubPasswordFile?: string;
+          hubCookieName?: string;
           bearer?: string;
           projectId?: string;
           duration?: string;
@@ -1112,11 +1139,31 @@ export function registerLoadCommand(
             valueFlag: "--system-password",
             fileFlag: "--system-password-file",
           });
+          const hubPassword = readOptionalSecret({
+            value: opts.hubPassword,
+            file: opts.hubPasswordFile,
+            valueFlag: "--hub-password",
+            fileFlag: "--hub-password-file",
+          });
+          if (systemAccountPassword && hubPassword) {
+            throw new Error(
+              "--system-password and --hub-password are mutually exclusive",
+            );
+          }
+          const hubCookieName =
+            `${opts.hubCookieName ?? "hub_password"}`.trim() || "hub_password";
+          const useCookieAuth = !!(systemAccountPassword || hubPassword);
           const bearer =
-            `${opts.bearer ?? process.env.COCALC_BEARER_TOKEN ?? process.env.COCALC_AGENT_TOKEN ?? ""}`.trim() ||
-            undefined;
+            `${
+              opts.bearer ??
+              (useCookieAuth
+                ? ""
+                : (process.env.COCALC_BEARER_TOKEN ??
+                  process.env.COCALC_AGENT_TOKEN ??
+                  ""))
+            }`.trim() || undefined;
           const projectId =
-            `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
+            `${opts.projectId ?? (bearer && !useCookieAuth ? process.env.COCALC_PROJECT_ID : "") ?? ""}`.trim() ||
             undefined;
           const durationMs = parseOptionalDurationMs(opts.duration) ?? 60000;
           const maxWait = parseOptionalDurationMs(opts.maxWait) ?? 3000;
@@ -1126,6 +1173,8 @@ export function registerLoadCommand(
           const before = await readConatStatsSnapshot({
             addresses,
             systemAccountPassword,
+            hubPassword,
+            hubCookieName,
             bearer,
             projectId,
             connectConat,
@@ -1135,6 +1184,8 @@ export function registerLoadCommand(
           const after = await readConatStatsSnapshot({
             addresses,
             systemAccountPassword,
+            hubPassword,
+            hubCookieName,
             bearer,
             projectId,
             connectConat,

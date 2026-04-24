@@ -17,6 +17,7 @@ import {
   pgConcurrentWarn as DEFAULT_DB_CONCURRENT_WARN,
   hubHostname as DEFAULT_HUB_HOSTNAME,
   agentPort as DEFAULT_AGENT_PORT,
+  conatPassword,
   conatServer,
 } from "@cocalc/backend/data";
 import { trimLogFileSize } from "@cocalc/backend/logger";
@@ -265,7 +266,10 @@ async function startServer(): Promise<void> {
 
   if (program.conatRouter) {
     // launch standalone socketio websocket server (no http server)
-    await initConatServer({ kucalc: program.mode == "kucalc" });
+    await initConatServer({
+      kucalc: program.mode == "kucalc",
+      systemAccountPassword: conatPassword,
+    });
   }
 
   // for now - we may bring this back for proxying remote project-host's.
