@@ -89,6 +89,24 @@ function emitWithAckTimeoutUnref(
     });
   });
 }
+
+function emitWithAckTimeoutValue(
+  socket: any,
+  event: string,
+  payload: any,
+  timeoutMs: number,
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`timeout waiting for ${event} ack`));
+    }, timeoutMs);
+    timer.unref?.();
+    socket.emit(event, payload, (response) => {
+      clearTimeout(timer);
+      resolve(response);
+    });
+  });
+}
 import { type ConatSocketServer } from "@cocalc/conat/socket";
 import { throttle } from "lodash";
 import { getLogger } from "@cocalc/conat/logger";
@@ -133,7 +151,12 @@ const AUTH_FAIL_BLOCK_MS = Math.max(
 );
 
 function isHubUser(user: any): boolean {
-  return user != null && typeof user === "object" && user.hub_id === "hub";
+  return (
+    user != null &&
+    typeof user === "object" &&
+    typeof user.hub_id === "string" &&
+    user.hub_id.length > 0
+  );
 }
 
 export interface InterestUpdate {
@@ -214,6 +237,16 @@ export interface Options {
 
 type State = "init" | "ready" | "closed";
 
+type RawRpcPending = {
+  callerSocketId: string;
+  targetSocketId: string;
+  clientRequestId: string;
+  timer: ReturnType<typeof setTimeout>;
+  handlerStart: number;
+  authMs: number;
+  routeMs: number;
+};
+
 export class ConatServer extends EventEmitter {
   private static readonly testInstances = new Set<ConatServer>();
   public readonly io;
@@ -236,6 +269,9 @@ export class ConatServer extends EventEmitter {
 
   private subscriptions: { [socketId: string]: Set<string> } = {};
   public interest: Interest = new Patterns();
+  public rpcServices: Interest = new Patterns();
+  private rpcServiceSubjects: { [socketId: string]: Set<string> } = {};
+  private rawRpcPending: Map<string, RawRpcPending> = new Map();
 
   private clusterStreams?: ClusterStreams;
   private clusterLinks: {
@@ -442,7 +478,19 @@ export class ConatServer extends EventEmitter {
     await new Promise<void>((resolve) => {
       this.io.close(() => resolve());
     });
-    for (const prop of ["interest", "subscriptions", "sockets", "services"]) {
+    for (const pending of this.rawRpcPending.values()) {
+      clearTimeout(pending.timer);
+    }
+    this.rawRpcPending.clear();
+    for (const prop of [
+      "interest",
+      "rpcServices",
+      "rpcServiceSubjects",
+      "rawRpcPending",
+      "subscriptions",
+      "sockets",
+      "services",
+    ]) {
       delete this[prop];
     }
     this.usage?.close();
@@ -530,6 +578,14 @@ export class ConatServer extends EventEmitter {
     const room = socketSubjectRoom({ socket, subject });
     socket.leave(room);
     await this.updateInterest({ op: "delete", subject, room });
+  };
+
+  private unregisterRpcService = async ({ socket, subject }) => {
+    updateInterest(
+      { op: "delete", subject, room: socket.id },
+      this.rpcServices,
+    );
+    this.rpcServiceSubjects[socket.id]?.delete(subject);
   };
 
   ////////////////////////////////////
@@ -646,6 +702,40 @@ export class ConatServer extends EventEmitter {
         queue,
         room,
       });
+    }
+  };
+
+  private registerRpcService = async ({ socket, subject, queue, user }) => {
+    if (typeof queue != "string") {
+      throw Error("queue must be defined");
+    }
+    if (!isValidSubject(subject)) {
+      throw Error("invalid subject");
+    }
+    if (!(await this.isAllowed({ user, subject, type: "sub" }))) {
+      const message = `permission denied registering RPC service '${subject}' from ${JSON.stringify(
+        user,
+      )}`;
+      this.log(message);
+      throw new ConatError(message, { code: 403 });
+    }
+    updateInterest(
+      { op: "add", subject, queue, room: socket.id },
+      this.rpcServices,
+    );
+    this.rpcServiceSubjects[socket.id] ??= new Set<string>();
+    this.rpcServiceSubjects[socket.id].add(subject);
+  };
+
+  private resolveRpcService = (subject: string) => {
+    for (const pattern of this.rpcServices.matches(subject)) {
+      const g = this.rpcServices.get(pattern)!;
+      for (const queue in g) {
+        const target = this.loadBalance({ targets: g[queue] });
+        if (target !== undefined) {
+          return { pattern, target };
+        }
+      }
     }
   };
 
@@ -881,17 +971,23 @@ export class ConatServer extends EventEmitter {
   }: {
     targets: { [id: string]: Set<string> };
   }): { id: string; target: string } | undefined => {
-    const targets = new Set<string>();
+    let size = 0;
     for (const id in targets0) {
-      for (const target of targets0[id]) {
-        targets.add(JSON.stringify({ id, target }));
-      }
+      size += targets0[id].size;
     }
-    const x = this.loadBalance({ targets });
-    if (!x) {
+    if (size == 0) {
       return undefined;
     }
-    return JSON.parse(x);
+    let index = Math.floor(Math.random() * size);
+    for (const id in targets0) {
+      for (const target of targets0[id]) {
+        if (index == 0) {
+          return { id, target };
+        }
+        index--;
+      }
+    }
+    return undefined;
   };
 
   ///////////////////////////////////////
@@ -936,16 +1032,23 @@ export class ConatServer extends EventEmitter {
           { code: 429 },
         );
       }
-      user = await this.getUser(socket);
+      try {
+        user = await this.getUser(socket);
+      } catch (err) {
+        // Only authentication failures count against the per-address
+        // abuse window. Resource-limit denials below are legitimate
+        // backpressure and must not poison auth state.
+        this.recordAuthFailure(address);
+        throw err;
+      }
+      this.clearAuthFailures(address);
       this.usage.add(user);
       added = true;
-      this.clearAuthFailures(address);
     } catch (err) {
       // getUser is supposed to throw an error if authentication fails
       // for any reason
       // Also, if the connection limit is hit they still connect, but as
       // the error user who can't do anything (hence not waste resources).
-      this.recordAuthFailure(address);
       user = { error: `${err}`, code: err.code };
     }
     this.stats[socket.id].user = user;
@@ -963,12 +1066,22 @@ export class ConatServer extends EventEmitter {
       if (added) {
         this.usage.delete(user);
       }
-      const rooms = Array.from(socket.rooms) as string[];
-      for (const room of rooms) {
-        const subject = getSubjectFromRoom(room);
-        this.unsubscribe({ socket, subject });
+      const subjects = Array.from(this.subscriptions[id] ?? []);
+      for (const subject of subjects) {
+        await this.unsubscribe({ socket, subject });
       }
       delete this.subscriptions[id];
+      const rpcSubjects = Array.from(this.rpcServiceSubjects[id] ?? []);
+      for (const subject of rpcSubjects) {
+        await this.unregisterRpcService({ socket, subject });
+      }
+      delete this.rpcServiceSubjects[id];
+      for (const [requestId, pending] of this.rawRpcPending.entries()) {
+        if (pending.callerSocketId === id || pending.targetSocketId === id) {
+          clearTimeout(pending.timer);
+          this.rawRpcPending.delete(requestId);
+        }
+      }
     });
 
     if (user?.error) {
@@ -1064,6 +1177,345 @@ export class ConatServer extends EventEmitter {
         }
         respond?.({ error: `${err}`, code: err.code });
       }
+    });
+
+    const registerRpcService = async ({ subject, queue }) => {
+      try {
+        await this.registerRpcService({ socket, subject, queue, user });
+        this.stats[socket.id].active = Date.now();
+        return { status: "added" };
+      } catch (err) {
+        if (err.code == 403) {
+          socket.emit("permission", {
+            message: err.message,
+            subject,
+            type: "sub",
+          });
+        }
+        return { error: `${err}`, code: err.code };
+      }
+    };
+
+    socket.on(
+      "rpc-service",
+      async (x: { subject; queue } | { subject; queue }[], respond) => {
+        let r;
+        if (is_array(x)) {
+          const v: any[] = [];
+          for (const y of x) {
+            v.push(await registerRpcService(y));
+          }
+          r = v;
+        } else {
+          r = await registerRpcService(x);
+        }
+        respond?.(r);
+      },
+    );
+
+    const unregisterRpcService = ({ subject }: { subject: string }) => {
+      if (!this.rpcServiceSubjects[id]?.has(subject)) {
+        return;
+      }
+      this.unregisterRpcService({ socket, subject });
+      this.stats[socket.id].active = Date.now();
+    };
+
+    socket.on(
+      "rpc-service-close",
+      (x: { subject: string } | { subject: string }[], respond) => {
+        let r;
+        if (is_array(x)) {
+          r = x.map(unregisterRpcService);
+        } else {
+          r = unregisterRpcService(x);
+        }
+        respond?.(r);
+      },
+    );
+
+    socket.on(
+      "rpc",
+      async (
+        { subject, encoding, raw, headers, timeout = MAX_INTEREST_TIMEOUT },
+        respond,
+      ) => {
+        const handlerStart = Date.now();
+        if (respond == null) {
+          return;
+        }
+        if (!isValidSubjectWithoutWildcards(subject)) {
+          respond({ error: "invalid subject" });
+          return;
+        }
+        const authStart = Date.now();
+        if (!(await this.isAllowed({ user, subject, type: "pub" }))) {
+          const message = `permission denied RPC to '${subject}' from ${JSON.stringify(
+            user,
+          )}`;
+          this.log(message);
+          socket.emit("permission", {
+            message,
+            subject,
+            type: "pub",
+          });
+          respond({ error: message, code: 403 });
+          return;
+        }
+        const authMs = Date.now() - authStart;
+        const routeStart = Date.now();
+        const target = this.resolveRpcService(subject);
+        const routeMs = Date.now() - routeStart;
+        if (target == null) {
+          respond({
+            error: `rpc -- no services matching '${subject}'`,
+            code: 503,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+          return;
+        }
+        const targetSocket = this.sockets[target.target];
+        if (targetSocket == null) {
+          respond({
+            error: `rpc -- target service disconnected for '${subject}'`,
+            code: 503,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+          return;
+        }
+        try {
+          const response = await emitWithAckTimeoutValue(
+            targetSocket,
+            "rpc-request",
+            {
+              subject,
+              pattern: target.pattern,
+              encoding,
+              raw,
+              headers,
+            },
+            Math.min(timeout, MAX_INTEREST_TIMEOUT),
+          );
+          respond({
+            ...response,
+            count: 1,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+        } catch (err) {
+          respond({
+            error: `${err}`,
+            code: 408,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+        }
+      },
+    );
+
+    socket.on(
+      "fast-rpc",
+      async ({ subject, payload, timeout = MAX_INTEREST_TIMEOUT }, respond) => {
+        const handlerStart = Date.now();
+        if (respond == null) {
+          return;
+        }
+        if (!isValidSubjectWithoutWildcards(subject)) {
+          respond({ error: "invalid subject", code: 400 });
+          return;
+        }
+        const authStart = Date.now();
+        if (!(await this.isAllowed({ user, subject, type: "pub" }))) {
+          const message = `permission denied fast RPC to '${subject}' from ${JSON.stringify(
+            user,
+          )}`;
+          this.log(message);
+          socket.emit("permission", {
+            message,
+            subject,
+            type: "pub",
+          });
+          respond({ error: message, code: 403 });
+          return;
+        }
+        const authMs = Date.now() - authStart;
+        const routeStart = Date.now();
+        const target = this.resolveRpcService(subject);
+        const routeMs = Date.now() - routeStart;
+        if (target == null) {
+          respond({
+            error: `fast-rpc -- no services matching '${subject}'`,
+            code: 503,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+          return;
+        }
+        const targetSocket = this.sockets[target.target];
+        if (targetSocket == null) {
+          respond({
+            error: `fast-rpc -- target service disconnected for '${subject}'`,
+            code: 503,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+          return;
+        }
+        try {
+          const response = await emitWithAckTimeoutValue(
+            targetSocket,
+            "fast-rpc-request",
+            {
+              subject,
+              pattern: target.pattern,
+              payload,
+            },
+            Math.min(timeout, MAX_INTEREST_TIMEOUT),
+          );
+          respond({
+            ...response,
+            count: 1,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+        } catch (err) {
+          respond({
+            error: `${err}`,
+            code: 408,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+        }
+      },
+    );
+
+    socket.on(
+      "rpc-raw",
+      async ({
+        requestId,
+        subject,
+        encoding,
+        raw,
+        headers,
+        timeout = MAX_INTEREST_TIMEOUT,
+      }) => {
+        const handlerStart = Date.now();
+        const respond = (response) => {
+          socket.emit("rpc-raw-response", { requestId, ...response });
+        };
+        if (!requestId) {
+          respond({ error: "missing requestId", code: 400 });
+          return;
+        }
+        if (!isValidSubjectWithoutWildcards(subject)) {
+          respond({ error: "invalid subject", code: 400 });
+          return;
+        }
+        const authStart = Date.now();
+        if (!(await this.isAllowed({ user, subject, type: "pub" }))) {
+          const message = `permission denied raw RPC to '${subject}' from ${JSON.stringify(
+            user,
+          )}`;
+          this.log(message);
+          socket.emit("permission", {
+            message,
+            subject,
+            type: "pub",
+          });
+          respond({ error: message, code: 403 });
+          return;
+        }
+        const authMs = Date.now() - authStart;
+        const routeStart = Date.now();
+        const target = this.resolveRpcService(subject);
+        const routeMs = Date.now() - routeStart;
+        if (target == null) {
+          respond({
+            error: `rpc-raw -- no services matching '${subject}'`,
+            code: 503,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+          return;
+        }
+        const targetSocket = this.sockets[target.target];
+        if (targetSocket == null) {
+          respond({
+            error: `rpc-raw -- target service disconnected for '${subject}'`,
+            code: 503,
+            serverAuthMs: authMs,
+            serverRouteMs: routeMs,
+            serverHandlerMs: Date.now() - handlerStart,
+          });
+          return;
+        }
+        const serverRequestId = `${socket.id}:${requestId}`;
+        const timer = setTimeout(
+          () => {
+            const pending = this.rawRpcPending.get(serverRequestId);
+            if (pending == null) {
+              return;
+            }
+            this.rawRpcPending.delete(serverRequestId);
+            this.sockets[pending.callerSocketId]?.emit("rpc-raw-response", {
+              requestId: pending.clientRequestId,
+              error: `timeout waiting for raw RPC service response to '${subject}'`,
+              code: 408,
+              serverAuthMs: pending.authMs,
+              serverRouteMs: pending.routeMs,
+              serverHandlerMs: Date.now() - pending.handlerStart,
+            });
+          },
+          Math.min(timeout, MAX_INTEREST_TIMEOUT),
+        );
+        timer.unref?.();
+        this.rawRpcPending.set(serverRequestId, {
+          callerSocketId: socket.id,
+          targetSocketId: target.target,
+          clientRequestId: requestId,
+          timer,
+          handlerStart,
+          authMs,
+          routeMs,
+        });
+        targetSocket.emit("rpc-raw-request", {
+          requestId: serverRequestId,
+          subject,
+          pattern: target.pattern,
+          encoding,
+          raw,
+          headers,
+        });
+      },
+    );
+
+    socket.on("rpc-raw-response", (response) => {
+      const serverRequestId = response?.requestId;
+      const pending = this.rawRpcPending.get(serverRequestId);
+      if (pending == null || pending.targetSocketId !== socket.id) {
+        return;
+      }
+      clearTimeout(pending.timer);
+      this.rawRpcPending.delete(serverRequestId);
+      this.sockets[pending.callerSocketId]?.emit("rpc-raw-response", {
+        ...response,
+        requestId: pending.clientRequestId,
+        count: 1,
+        serverAuthMs: pending.authMs,
+        serverRouteMs: pending.routeMs,
+        serverHandlerMs: Date.now() - pending.handlerStart,
+      });
     });
 
     const subscribe = async ({ subject, queue }) => {
@@ -1787,14 +2239,6 @@ export class ConatServer extends EventEmitter {
   };
 }
 
-function getSubjectFromRoom(room: string) {
-  if (room.startsWith("{")) {
-    return JSON.parse(room).subject;
-  } else {
-    return room;
-  }
-}
-
 function socketSubjectRoom({ socket, subject }) {
   return JSON.stringify({ id: socket.id, subject });
 }
@@ -1803,14 +2247,14 @@ export function randomChoice<T>(v: Set<T>): T {
   if (v.size == 0) {
     throw Error("v must have size at least 1");
   }
-  if (v.size == 1) {
-    for (const x of v) {
+  let index = Math.floor(Math.random() * v.size);
+  for (const x of v) {
+    if (index == 0) {
       return x;
     }
+    index--;
   }
-  const w = Array.from(v);
-  const i = Math.floor(Math.random() * w.length);
-  return w[i];
+  throw Error("bug: failed to select from nonempty set");
 }
 
 function normalizeIp(value?: string): string | undefined {

@@ -17,6 +17,7 @@ import type { ApiV2ManifestEntry } from "./api-v2-manifest";
 
 export interface ApiV2RouterOptions {
   includeDocs?: boolean;
+  manifest?: ApiV2ManifestEntry[];
   rootDir?: string;
 }
 
@@ -40,36 +41,43 @@ export default function createApiV2Router(
 
   const apiRoot = resolveApiRoot(opts.rootDir);
   ensureApiLibAlias(apiRoot, logger);
+  const manifest =
+    opts.manifest ?? (shouldUseManifest() ? loadManifest(logger) : []);
   const registered = new Set<string>();
-  if (shouldUseManifest()) {
-    const manifest = loadManifest(logger);
-    if (manifest.length > 0) {
-      for (const entry of manifest) {
-        if (!opts.includeDocs && entry.path === "/") {
-          continue;
-        }
-        registered.add(entry.path);
-        router.all(entry.path, wrapHandler(entry.handler, logger, entry.path));
+  if (manifest.length > 0) {
+    for (const entry of manifest) {
+      if (!opts.includeDocs && entry.path === "/") {
+        continue;
       }
+      registered.add(entry.path);
+      router.all(entry.path, wrapHandler(entry.handler, logger, entry.path));
     }
   }
 
-  const ext = pickExtension(apiRoot);
-  const files = collectApiFiles(apiRoot, ext);
-  for (const file of files) {
-    const relative = toRelative(apiRoot, file);
-    if (!opts.includeDocs && relative === `index${ext}`) {
-      continue;
+  if (existsSync(apiRoot)) {
+    const ext = pickExtension(apiRoot);
+    const files = collectApiFiles(apiRoot, ext);
+    for (const file of files) {
+      const relative = toRelative(apiRoot, file);
+      if (!opts.includeDocs && relative === `index${ext}`) {
+        continue;
+      }
+      const routePath = toRoutePath(relative, ext);
+      if (registered.has(routePath)) {
+        continue;
+      }
+      const handler = loadHandler(file, logger);
+      if (handler != null) {
+        registered.add(routePath);
+        router.all(routePath, wrapHandler(handler, logger, routePath));
+      }
     }
-    const routePath = toRoutePath(relative, ext);
-    if (registered.has(routePath)) {
-      continue;
-    }
-    const handler = loadHandler(file, logger);
-    if (handler != null) {
-      registered.add(routePath);
-      router.all(routePath, wrapHandler(handler, logger, routePath));
-    }
+  } else if (registered.size === 0) {
+    throw new Error(`api v2 root not found: ${apiRoot}`);
+  } else {
+    logger.info("api v2 file root not found; using bundled manifest only", {
+      apiRoot,
+    });
   }
 
   return router;
@@ -160,9 +168,6 @@ function pickExtension(apiRoot: string): ".js" | ".ts" {
 }
 
 function collectApiFiles(root: string, ext: ".js" | ".ts"): string[] {
-  if (!existsSync(root)) {
-    throw new Error(`api v2 root not found: ${root}`);
-  }
   const out: string[] = [];
   const stack = [root];
   while (stack.length > 0) {

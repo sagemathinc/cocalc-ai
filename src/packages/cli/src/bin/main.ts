@@ -2498,6 +2498,7 @@ registerNotificationsCommand(program, notificationsCommandDeps);
 
 const loadCommandDeps = {
   withContext,
+  runLocalCommand,
   queryProjects,
   resolveProjectFromArgOrContext,
 } satisfies LoadCommandDeps;
