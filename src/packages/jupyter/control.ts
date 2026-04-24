@@ -14,6 +14,10 @@ import {
 import { relative, resolve } from "node:path";
 import { throttle } from "lodash";
 import { type RunOptions } from "@cocalc/conat/project/jupyter/run-code";
+import type {
+  ExpectedJupyterCell,
+  JupyterSaveOptions,
+} from "@cocalc/conat/project/api/jupyter";
 import { type JupyterActions } from "@cocalc/jupyter/redux/project-actions";
 import { bufferToBase64 } from "@cocalc/util/base64";
 import { getLogger } from "@cocalc/backend/logger";
@@ -329,6 +333,62 @@ export async function getKernelStatus({ path }) {
     return { backend_state: "off" as "off", kernel_state: "idle" as "idle" };
   }
   return kernel.getStatus();
+}
+
+function cellSatisfiesExpected(cell: any, expected: ExpectedJupyterCell) {
+  if (cell == null) {
+    return false;
+  }
+  const plain = cell?.toJS instanceof Function ? cell.toJS() : cell;
+  if (plain?.id !== expected.id) {
+    return false;
+  }
+  if (
+    expected.cell_type != null &&
+    (plain?.cell_type ?? "code") !== expected.cell_type
+  ) {
+    return false;
+  }
+  if (expected.input != null && (plain?.input ?? "") !== expected.input) {
+    return false;
+  }
+  return true;
+}
+
+async function waitForExpectedCells(
+  actions: JupyterActions,
+  opts: Pick<JupyterSaveOptions, "expectedCellCount" | "expectedCells">,
+) {
+  const expectedCells = opts.expectedCells ?? [];
+  if (opts.expectedCellCount == null && expectedCells.length === 0) {
+    return;
+  }
+  const started = Date.now();
+  while (true) {
+    const cells = actions.store.get("cells");
+    const count = cells?.size;
+    const countMatches =
+      opts.expectedCellCount == null || count === opts.expectedCellCount;
+    const cellsMatch = expectedCells.every((expected) =>
+      cellSatisfiesExpected(cells?.get?.(expected.id), expected),
+    );
+    if (countMatches && cellsMatch) {
+      return;
+    }
+    if (Date.now() - started > 2_000) {
+      throw Error("timed out waiting for expected notebook cells before save");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+export async function save(opts: JupyterSaveOptions) {
+  const actions = jupyterActions[ipynbPath(opts.path)];
+  if (actions == null) {
+    throw Error(`${ipynbPath(opts.path)} not running`);
+  }
+  await waitForExpectedCells(actions, opts);
+  await actions.save_ipynb_file();
 }
 
 // Returns async iterator over outputs
