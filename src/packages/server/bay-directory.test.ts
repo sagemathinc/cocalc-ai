@@ -493,4 +493,46 @@ describe("bay-directory", () => {
     expect(listHostsMock).not.toHaveBeenCalled();
     expect(queryMock).toHaveBeenCalledTimes(1);
   });
+
+  it("caches routing context briefly per worker", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("account_routing")) {
+        return {
+          rows: [
+            {
+              account_id: ACCOUNT_ID,
+              account_email_address: "user@example.com",
+              account_first_name: "Alice",
+              account_last_name: "Example",
+              account_name: "Alice Example",
+              account_home_bay_id: "bay-0",
+              account_source: "cluster-directory",
+              project_id: PROJECT_ID,
+              project_title: "Project",
+              project_host_id: HOST_ID,
+              project_owning_bay_id: "bay-1",
+              host_id: HOST_ID,
+              host_name: "host-1",
+              host_bay_id: "bay-2",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { resolveRoutingContext } = await import("./bay-directory");
+
+    await resolveRoutingContext({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      host_id: HOST_ID,
+    });
+    await resolveRoutingContext({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      host_id: HOST_ID,
+    });
+
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
 });

@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import LRU from "lru-cache";
 import type {
   AccountBayLocation,
   BayInfo,
@@ -39,9 +40,42 @@ function resolveStoredBayId(value: unknown): string | undefined {
 
 let clusterAccountDirectorySchemaReady: Promise<void> | undefined;
 
+function routingContextCacheTtlMs(): number {
+  const value = Number(process.env.COCALC_ROUTING_CONTEXT_CACHE_TTL_MS ?? 5000);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function routingContextCacheMax(): number {
+  const value = Number(process.env.COCALC_ROUTING_CONTEXT_CACHE_MAX ?? 100_000);
+  return Number.isFinite(value) && value > 0 ? value : 100_000;
+}
+
+const routingContextCache = new LRU<string, RoutingContextLocation>({
+  max: routingContextCacheMax(),
+  ttl: routingContextCacheTtlMs(),
+});
+
 async function ensureClusterAccountDirectorySchemaOnce(): Promise<void> {
   clusterAccountDirectorySchemaReady ??= ensureClusterAccountDirectorySchema();
   await clusterAccountDirectorySchemaReady;
+}
+
+function routingContextCacheKey({
+  account_id,
+  user_account_id,
+  project_id,
+  host_id,
+}: {
+  account_id: string;
+  user_account_id: string;
+  project_id: string;
+  host_id?: string | null;
+}): string {
+  return [account_id, user_account_id, project_id, host_id ?? ""].join(":");
+}
+
+export function clearRoutingContextCache(): void {
+  routingContextCache.clear();
 }
 
 export function getSingleBayInfo(): BayInfo {
@@ -464,6 +498,17 @@ export async function resolveRoutingContext({
     throw new Error("not authorized");
   }
 
+  const cacheKey = routingContextCacheKey({
+    account_id: acting_account_id,
+    user_account_id: target_account_id,
+    project_id,
+    host_id,
+  });
+  const cached = routingContextCache.get(cacheKey);
+  if (cached != null) {
+    return cached;
+  }
+
   const local = await resolveRoutingContextLocal({
     account_id: acting_account_id,
     user_account_id: target_account_id,
@@ -472,11 +517,14 @@ export async function resolveRoutingContext({
   });
   if (local != null) {
     if (host_id != null && local.host == null) {
-      return {
+      const resolved = {
         ...local,
         host: await resolveHostBay({ account_id: acting_account_id, host_id }),
       };
+      routingContextCache.set(cacheKey, resolved);
+      return resolved;
     }
+    routingContextCache.set(cacheKey, local);
     return local;
   }
 
@@ -490,5 +538,7 @@ export async function resolveRoutingContext({
       ? Promise.resolve(null)
       : resolveHostBay({ account_id: acting_account_id, host_id }),
   ]);
-  return { account, project, host };
+  const resolved = { account, project, host };
+  routingContextCache.set(cacheKey, resolved);
+  return resolved;
 }
