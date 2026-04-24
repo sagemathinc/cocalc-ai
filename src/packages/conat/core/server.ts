@@ -1370,6 +1370,7 @@ export class ConatServer extends EventEmitter {
           return;
         }
         try {
+          const targetAckStart = Date.now();
           const response = await emitWithAckTimeoutValue(
             targetSocket,
             "fast-rpc-request",
@@ -1380,11 +1381,13 @@ export class ConatServer extends EventEmitter {
             },
             Math.min(timeout, MAX_INTEREST_TIMEOUT),
           );
+          const targetAckMs = Date.now() - targetAckStart;
           respond({
             ...response,
             count: 1,
             serverAuthMs: authMs,
             serverRouteMs: routeMs,
+            serverTargetAckMs: targetAckMs,
             serverHandlerMs: Date.now() - handlerStart,
           });
         } catch (err) {

@@ -42,6 +42,7 @@ type LoadSummary = {
   sample_errors: string[];
   last_result: LoadScenarioResult;
   component_latency_ms?: Record<string, LoadComponentSummary>;
+  result_timing_ms?: Record<string, LoadComponentSummary>;
 };
 
 export type LoadCommandDeps = {
@@ -145,6 +146,41 @@ function summarizeComponentTimings(
       },
     ]),
   );
+}
+
+function recordResultTimings(
+  timings: LoadComponentTiming[],
+  result: LoadScenarioResult,
+) {
+  if (result == null || typeof result !== "object") {
+    return;
+  }
+  for (const [name, value] of Object.entries(result)) {
+    if (
+      name.endsWith("Ms") &&
+      typeof value === "number" &&
+      Number.isFinite(value)
+    ) {
+      timings.push({ name, duration_ms: value });
+    }
+  }
+}
+
+function resultTimingFields(result: unknown): Record<string, number> {
+  if (result == null || typeof result !== "object") {
+    return {};
+  }
+  const fields: Record<string, number> = {};
+  for (const [name, value] of Object.entries(result)) {
+    if (
+      name.endsWith("Ms") &&
+      typeof value === "number" &&
+      Number.isFinite(value)
+    ) {
+      fields[name] = value;
+    }
+  }
+  return fields;
 }
 
 function normalizeNonEmpty(raw: string | undefined, flag: string): string {
@@ -302,6 +338,7 @@ async function runLoadScenario({
   const startedAt = new Date();
   const started = performance.now();
   const latencies: number[] = [];
+  const resultTimings: LoadComponentTiming[] = [];
   const sampleErrors: string[] = [];
   let lastResult: LoadScenarioResult = null;
   let successes = 0;
@@ -335,6 +372,7 @@ async function runLoadScenario({
           if (measured) {
             successes += 1;
             lastResult = result ?? null;
+            recordResultTimings(resultTimings, result);
           }
         } catch (err) {
           if (measured) {
@@ -374,6 +412,7 @@ async function runLoadScenario({
     latency_ms: summarizeLatencies(latencies),
     sample_errors: sampleErrors,
     last_result: lastResult ?? null,
+    result_timing_ms: summarizeComponentTimings(resultTimings),
   };
 }
 
@@ -782,6 +821,15 @@ export function registerLoadCommand(
                   response_mode: mode === "request" ? responseMode : null,
                   response_bytes:
                     mode === "request" ? (result?.bytes ?? null) : null,
+                  ...resultTimingFields(result),
+                  serverAuthMs:
+                    mode === "request" ? (result?.serverAuthMs ?? null) : null,
+                  serverRouteMs:
+                    mode === "request" ? (result?.serverRouteMs ?? null) : null,
+                  serverHandlerMs:
+                    mode === "request"
+                      ? (result?.serverHandlerMs ?? null)
+                      : null,
                   publish_count:
                     mode === "publish" ? (result?.count ?? null) : null,
                 };
