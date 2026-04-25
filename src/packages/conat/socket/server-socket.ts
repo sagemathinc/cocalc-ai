@@ -66,6 +66,10 @@ export class ServerSocket extends EventEmitter {
   private firstPing = true;
   private initKeepAlive = () => {
     this.alive?.close();
+    if (this.conatSocket.keepAlive <= 0) {
+      delete this.alive;
+      return;
+    }
     this.alive = keepAlive({
       role: "server",
       ping: async () => {

@@ -330,6 +330,7 @@ class PersistStreamClient extends EventEmitter {
     this.socket = this.client.socket.connect(subject, {
       desc: `persist: ${this.storage.path}`,
       reconnection: false,
+      keepAlive: 0,
       loadBalancerTimeout: PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS,
       loadBalancer: async (subject: string) =>
         await getPersistServerId({ client: this.client, subject }),

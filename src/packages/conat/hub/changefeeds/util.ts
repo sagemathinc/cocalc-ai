@@ -3,9 +3,9 @@ export const SUBJECT = "changefeeds.*";
 
 // This is the max *per account* connected to a single server, just
 // because everything should have limits.
-// If the user refreshes their browser, it is still about a minute
-// before all the changefeeds they had open are free (due to the
-// SERVER_KEEPALIVE time below).
+// Changefeeds now use transport-scoped liveness instead of per-socket
+// ping/pong, so orphaned sockets are reclaimed by server-side interest
+// sweeps controlled by KEEPALIVE_TIMEOUT below.
 export const MAX_PER_ACCOUNT = 1_000;
 export const MAX_GLOBAL = 50_000;
 
