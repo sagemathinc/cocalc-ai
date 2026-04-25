@@ -381,7 +381,7 @@ export async function waitForSpawnedSession({
     if (match) return match;
     if (Date.now() - started > timeoutMs) {
       throw new Error(
-        "timed out waiting for spawned browser session heartbeat",
+        "timed out waiting for spawned browser session registration",
       );
     }
     await sleep(1_000);

@@ -81,6 +81,7 @@ import {
   purgeHistory as syncPurgeHistory,
 } from "@cocalc/conat/hub/api/sync-impl";
 import {
+  type BrowserSessionLiveInfo,
   listBrowserSessionsForAccount,
   removeBrowserSessionRecord,
   upsertBrowserSessionRecord,
@@ -101,6 +102,8 @@ import {
   stopChatOffloadBackgroundMaintenance,
 } from "./chat-offload-maintenance";
 import { getLiteConatClient } from "./runtime-client";
+import { sysApiMany } from "@cocalc/conat/core/sys";
+import type { ConnectionStats } from "@cocalc/conat/core/types";
 import {
   cancelLiteCodexDeviceAuth,
   getLiteCodexDeviceAuthStatus,
@@ -1197,11 +1200,51 @@ async function listBrowserSessions(opts?: {
   include_stale?: boolean;
 }) {
   const account_id = `${opts?.account_id ?? ACCOUNT_ID}`;
+  const live_by_browser_id = await getLiveBrowserSessionInfo(account_id);
   return listBrowserSessionsForAccount({
     account_id,
     max_age_ms: opts?.max_age_ms,
     include_stale: opts?.include_stale,
+    live_by_browser_id,
   });
+}
+
+async function getLiveBrowserSessionInfo(
+  account_id: string,
+): Promise<Map<string, BrowserSessionLiveInfo> | undefined> {
+  const out = new Map<string, BrowserSessionLiveInfo>();
+  try {
+    const client = getLiteConatClient();
+    await client.waitUntilSignedIn({ timeout: 3_000 });
+    const statsByNode = await sysApiMany(client, { maxWait: 2_000 }).stats();
+    for await (const node of statsByNode ?? []) {
+      for (const sockets of Object.values(node ?? {})) {
+        for (const stat of Object.values(sockets ?? {})) {
+          const s = stat as ConnectionStats | undefined;
+          if (!s?.user || s.user.account_id !== account_id) continue;
+          const browser_id = `${s.browser_id ?? ""}`.trim();
+          if (!browser_id) continue;
+          const prev = out.get(browser_id);
+          const nextCount = (prev?.connection_count ?? 0) + 1;
+          const nextActive = Math.max(
+            prev?.updated_at_ms ?? 0,
+            s.active ?? s.connected ?? 0,
+          );
+          out.set(browser_id, {
+            connected: true,
+            connection_count: nextCount,
+            ...(nextActive > 0 ? { updated_at_ms: nextActive } : {}),
+          });
+        }
+      }
+    }
+    return out;
+  } catch (err) {
+    logger.debug("listBrowserSessions: failed to read live conat stats", {
+      err: `${err}`,
+    });
+    return undefined;
+  }
 }
 
 async function removeBrowserSession(opts?: {

@@ -6,10 +6,17 @@
 import getLogger from "@cocalc/backend/logger";
 import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
 import { listRecentBrowserSessionAccountIds } from "@cocalc/server/conat/api/browser-sessions";
+import { listLiveBrowserSessionAccountIds } from "@cocalc/server/conat/api/browser-sessions-live";
 
 const logger = getLogger("server:news:feed");
 
-function listActiveAccountIds(): string[] {
+async function listActiveAccountIds(): Promise<string[]> {
+  const live = await listLiveBrowserSessionAccountIds({
+    max_age_ms: 3 * 60_000,
+  });
+  if (live != null) {
+    return [...new Set<string>(live)];
+  }
   return [
     ...new Set<string>(
       listRecentBrowserSessionAccountIds({
@@ -22,7 +29,7 @@ function listActiveAccountIds(): string[] {
 export async function publishNewsRefreshBestEffort(): Promise<void> {
   try {
     const ts = Date.now();
-    const account_ids = listActiveAccountIds();
+    const account_ids = await listActiveAccountIds();
     await Promise.all(
       account_ids.map((account_id) =>
         publishAccountFeedEventBestEffort({

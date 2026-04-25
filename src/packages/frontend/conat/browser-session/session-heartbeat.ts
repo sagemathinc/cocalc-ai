@@ -3,7 +3,6 @@ import type { HubApi } from "@cocalc/conat/hub/api";
 export function createBrowserSessionHeartbeat({
   hub,
   getSnapshot,
-  intervalMs,
   retryMs,
   maxRetryMs,
   retryBackoff = 2,
@@ -13,7 +12,6 @@ export function createBrowserSessionHeartbeat({
 }: {
   hub: HubApi;
   getSnapshot: () => Parameters<HubApi["system"]["upsertBrowserSession"]>[0];
-  intervalMs: number;
   retryMs: number;
   maxRetryMs?: number;
   retryBackoff?: number;
@@ -28,15 +26,20 @@ export function createBrowserSessionHeartbeat({
   resume: () => void;
   heartbeat: () => Promise<void>;
   schedule: (delayMs?: number) => void;
+  markDirty: (delayMs?: number) => void;
 } {
   let accountId: string | undefined;
   let timer: NodeJS.Timeout | undefined;
-  let closed = false;
+  let active = false;
   let suspended = false;
   let inFlight: Promise<void> | undefined;
   let consecutiveFailures = 0;
+  let changeSerial = 0;
+  let dirty = true;
+  let lastPublishedSignature: string | undefined;
+  let forceNextSync = false;
 
-  const canRun = () => !closed && !suspended && !!accountId;
+  const canRun = () => active && !suspended && !!accountId;
 
   const clearTimer = () => {
     if (timer) {
@@ -45,24 +48,9 @@ export function createBrowserSessionHeartbeat({
     }
   };
 
-  const heartbeat = async () => {
-    if (!canRun()) return;
-    if (inFlight) {
-      await inFlight;
-      return;
-    }
-    inFlight = (async () => {
-      await hub.system.upsertBrowserSession(getSnapshot());
-      consecutiveFailures = 0;
-    })().finally(() => {
-      inFlight = undefined;
-    });
-    await inFlight;
-  };
-
   const nextRetryDelay = () => {
     const base = Math.max(1, retryMs);
-    const max = Math.max(base, maxRetryMs ?? intervalMs);
+    const max = Math.max(base, maxRetryMs ?? base);
     const decay = Math.max(1, retryBackoff);
     const jitter = Math.max(0, retryJitter);
     const raw = Math.min(
@@ -73,47 +61,91 @@ export function createBrowserSessionHeartbeat({
     return Math.max(base, Math.round(raw * factor));
   };
 
-  const schedule = (delayMs = intervalMs) => {
+  const syncNow = async (opts: { force?: boolean } = {}) => {
     if (!canRun()) return;
-    clearTimer();
-    timer = setTimeout(async () => {
-      if (!canRun()) {
-        return;
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+    const syncSeq = changeSerial;
+    const force = opts.force === true || forceNextSync;
+    forceNextSync = false;
+    const snapshot = getSnapshot();
+    const signature = JSON.stringify(snapshot);
+    if (!force && signature === lastPublishedSignature) {
+      if (changeSerial === syncSeq) {
+        dirty = false;
       }
-      try {
-        await heartbeat();
-        schedule(intervalMs);
-      } catch (err) {
-        if (!canRun()) {
-          return;
-        }
+      return;
+    }
+    inFlight = (async () => {
+      await hub.system.upsertBrowserSession(snapshot);
+      consecutiveFailures = 0;
+      lastPublishedSignature = signature;
+      if (changeSerial === syncSeq) {
+        dirty = false;
+      }
+    })()
+      .catch((err) => {
         consecutiveFailures += 1;
-        onWarn?.(`browser-session heartbeat failed: ${err}`);
+        dirty = true;
+        onWarn?.(`browser-session sync failed: ${err}`);
         onFailure?.(err, consecutiveFailures);
         schedule(nextRetryDelay());
-      }
-    }, delayMs);
+      })
+      .finally(() => {
+        inFlight = undefined;
+        if (canRun() && dirty) {
+          schedule(0);
+        }
+      });
+    await inFlight;
+  };
+
+  const schedule = (delayMs = 0) => {
+    if (!canRun()) return;
+    clearTimer();
+    timer = setTimeout(
+      () => {
+        void syncNow();
+      },
+      Math.max(0, delayMs),
+    );
+  };
+
+  const markDirty = (delayMs = 0) => {
+    changeSerial += 1;
+    dirty = true;
+    schedule(delayMs);
   };
 
   const activate = (nextAccountId: string) => {
-    closed = false;
+    active = true;
     suspended = false;
     accountId = nextAccountId;
     consecutiveFailures = 0;
+    changeSerial = 0;
+    dirty = true;
+    forceNextSync = true;
+    lastPublishedSignature = undefined;
   };
 
   const deactivate = (): string | undefined => {
-    closed = true;
+    active = false;
     suspended = false;
     clearTimer();
     const currentAccountId = accountId;
     accountId = undefined;
     consecutiveFailures = 0;
+    changeSerial = 0;
+    dirty = true;
+    forceNextSync = false;
+    lastPublishedSignature = undefined;
     return currentAccountId;
   };
 
   const suspend = () => {
-    if (closed || !accountId) {
+    if (!active || !accountId) {
       return;
     }
     suspended = true;
@@ -121,11 +153,10 @@ export function createBrowserSessionHeartbeat({
   };
 
   const resume = () => {
-    if (closed || !accountId) {
+    if (!active || !accountId) {
       return;
     }
     suspended = false;
-    consecutiveFailures = 0;
     schedule(0);
   };
 
@@ -135,7 +166,10 @@ export function createBrowserSessionHeartbeat({
     deactivate,
     suspend,
     resume,
-    heartbeat,
+    heartbeat: async () => {
+      await syncNow({ force: true });
+    },
     schedule,
+    markDirty,
   };
 }
