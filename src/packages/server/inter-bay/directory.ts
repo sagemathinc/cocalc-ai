@@ -80,16 +80,26 @@ export async function resolveProjectBayAcrossCluster(
 
 export async function resolveHostBay(
   host_id: string,
+  opts: {
+    include_deleted?: boolean;
+  } = {},
 ): Promise<BayOwnership | null> {
   return await createInterBayDirectoryClient({
     client: getInterBayFabricClient(),
-  }).resolveHostBay({ host_id });
+  }).resolveHostBay({
+    host_id,
+    include_deleted: !!opts.include_deleted,
+  });
 }
 
 export async function resolveHostBayDirect(
   host_id: string,
+  opts: {
+    include_deleted?: boolean;
+  } = {},
 ): Promise<BayOwnership | null> {
   const defaultBayId = getConfiguredBayId();
+  const deletedFilter = opts.include_deleted ? "" : "AND deleted IS NULL";
   const { rows } = await getPool().query<{
     bay_id: string | null;
   }>(
@@ -97,7 +107,7 @@ export async function resolveHostBayDirect(
       SELECT COALESCE(bay_id, $2) AS bay_id
       FROM project_hosts
       WHERE id = $1
-        AND deleted IS NULL
+        ${deletedFilter}
     `,
     [host_id, defaultBayId],
   );
@@ -110,8 +120,11 @@ export async function resolveHostBayDirect(
 
 export async function resolveHostBayAcrossCluster(
   host_id: string,
+  opts: {
+    include_deleted?: boolean;
+  } = {},
 ): Promise<BayOwnership | null> {
-  const local = await resolveHostBayDirect(host_id);
+  const local = await resolveHostBayDirect(host_id, opts);
   if (local != null) {
     return local;
   }
@@ -127,7 +140,10 @@ export async function resolveHostBayAcrossCluster(
         .directory(bay_id, {
           timeout_ms: DIRECTORY_FALLBACK_TIMEOUT_MS,
         })
-        .resolveHostBay({ host_id });
+        .resolveHostBay({
+          host_id,
+          include_deleted: !!opts.include_deleted,
+        });
       if (remote != null) {
         return remote;
       }

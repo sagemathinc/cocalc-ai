@@ -224,6 +224,17 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
   const { listHosts, resolveHost, parseSshServer, cliDebug } = deps;
   const hostSshResolveTimeoutMs = deps.hostSshResolveTimeoutMs ?? 5_000;
 
+  function resolveHostSshUser(host: Host): string {
+    const machine = (host.machine ?? {}) as Record<string, any>;
+    const metadata = (machine?.metadata ?? {}) as Record<string, any>;
+    const runtime = (metadata?.runtime ?? (host as any)?.runtime ?? {}) as
+      | Record<string, any>
+      | undefined;
+    return (
+      `${runtime?.ssh_user ?? metadata?.ssh_user ?? ""}`.trim() || "ubuntu"
+    );
+  }
+
   async function waitForHostCreateReady(
     ctx: Ctx,
     hostId: string,
@@ -302,8 +313,10 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
     ssh_host: string;
     ssh_port: number | null;
     ssh_server: string | null;
+    ssh_user: string;
   }> {
     const host = await resolveHost(ctx, hostIdentifier);
+    const ssh_user = resolveHostSshUser(host);
     const machine = (host.machine ?? {}) as Record<string, any>;
     const directHost =
       `${host.public_ip ?? machine?.metadata?.public_ip ?? ""}`.trim();
@@ -320,6 +333,7 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
         ssh_host: directHost,
         ssh_port: directPort,
         ssh_server: `${directHost}:${directPort}`,
+        ssh_user,
       };
     }
     let connection: HostConnectionInfo | null = null;
@@ -354,6 +368,7 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
         ssh_host: parsed.host,
         ssh_port: parsed.port ?? null,
         ssh_server: connection.ssh_server,
+        ssh_user,
       };
     }
     throw new Error("host has no direct public ip and no routed ssh endpoint");

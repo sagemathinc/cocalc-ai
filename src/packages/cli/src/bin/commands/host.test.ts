@@ -69,6 +69,11 @@ type Capture = {
   sshTrustRequests?: Array<{
     id: string;
   }>;
+  hostSshKeyInstallRequests?: Array<{
+    id: string;
+    public_key: string;
+    user?: string;
+  }>;
 };
 
 function withConsoleCapture(fn: () => Promise<void> | void): Promise<string> {
@@ -122,6 +127,7 @@ function makeDeps(
   capture.lroListRequests ??= [];
   capture.rehomeRequests ??= [];
   capture.sshTrustRequests ??= [];
+  capture.hostSshKeyInstallRequests ??= [];
   return {
     withContext: async (_command, _label, fn) => {
       const ctx = {
@@ -265,6 +271,17 @@ function makeDeps(
                 host_control_succeeded: false,
                 cloud_provider_attempted: true,
                 cloud_provider_succeeded: true,
+              };
+            },
+            addHostSshAuthorizedKey: async ({ id, public_key, user }) => {
+              capture.hostSshKeyInstallRequests!.push({ id, public_key, user });
+              return {
+                host_id: id,
+                user: user ?? "ubuntu",
+                home: `/home/${user ?? "ubuntu"}`,
+                path: `/home/${user ?? "ubuntu"}/.ssh/authorized_keys`,
+                keys: [public_key],
+                added: true,
               };
             },
             getHostRehomeOperation: async ({ op_id }) => ({
@@ -896,6 +913,12 @@ test("host where returns the bay for the resolved host", async () => {
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
+  let hostBayRequest:
+    | {
+        host_id: string;
+        include_deleted?: boolean;
+      }
+    | undefined;
   const deps = makeDeps(capture, {
     resolveHost: async () => ({
       id: "44444444-4444-4444-4444-444444444444",
@@ -911,12 +934,15 @@ test("host where returns the bay for the resolved host", async () => {
         globals: { json: true, output: "json" },
         hub: {
           system: {
-            getHostBay: async ({ host_id }) => ({
-              host_id,
-              bay_id: "bay-0",
-              name: "host-1",
-              source: "single-bay-default",
-            }),
+            getHostBay: async ({ host_id, include_deleted }) => {
+              hostBayRequest = { host_id, include_deleted };
+              return {
+                host_id,
+                bay_id: "bay-0",
+                name: "host-1",
+                source: "single-bay-default",
+              };
+            },
           },
           hosts: {
             upgradeHostSoftware: async ({ id }) => {
@@ -956,6 +982,54 @@ test("host where returns the bay for the resolved host", async () => {
 
   assert.equal(capture.data.host_id, "44444444-4444-4444-4444-444444444444");
   assert.equal(capture.data.bay_id, "bay-0");
+  assert.deepEqual(hostBayRequest, {
+    host_id: "44444444-4444-4444-4444-444444444444",
+    include_deleted: true,
+  });
+});
+
+test("host get can return a deleted host via the admin list surface", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture, {
+    listHosts: async (_ctx, opts) => {
+      assert.equal(opts?.include_deleted, true);
+      assert.equal(opts?.admin_view, true);
+      return [
+        {
+          id: "55555555-5555-4555-8555-555555555555",
+          name: "deleted-host",
+          status: "deprovisioned",
+          bay_id: "bay-0",
+          region: "us-west3",
+        },
+      ];
+    },
+    resolveHost: async () => {
+      throw new Error("resolveHost should not be called");
+    },
+  });
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "get",
+    "55555555-5555-4555-8555-555555555555",
+  ]);
+
+  assert.equal(capture.data.host_id, "55555555-5555-4555-8555-555555555555");
+  assert.equal(capture.data.name, "deleted-host");
+  assert.equal(capture.data.status, "deprovisioned");
+  assert.equal(capture.data.bay_id, "bay-0");
 });
 
 test("host ssh-trust forwards the resolved host", async () => {
@@ -977,6 +1051,52 @@ test("host ssh-trust forwards the resolved host", async () => {
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.bay_id, "bay-0");
   assert.equal(capture.data.cloud_provider_succeeded, true);
+});
+
+test("host ssh --install-key uses the resolved ssh user", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture, {
+    ensureSyncKeyPair: async () => ({
+      public_key: "ssh-ed25519 AAAATEST local@test",
+      public_key_path: "/home/test/.ssh/id_ed25519.pub",
+    }),
+    resolveHostSshEndpoint: async () => ({
+      host: { id: "host-1", name: "host-1" },
+      ssh_host: "34.1.2.3",
+      ssh_port: 22,
+      ssh_server: "34.1.2.3:22",
+      ssh_user: "cocalc-admin",
+    }),
+  });
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "ssh",
+    "--install-key",
+    "--print",
+    "host-1",
+  ]);
+
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.ssh_target, "cocalc-admin@34.1.2.3");
+  assert.equal(capture.data.command, 'ssh "-p" "22" "cocalc-admin@34.1.2.3"');
+  assert.equal(capture.data.key_installed, true);
+  assert.equal(
+    capture.hostSshKeyInstallRequests?.[0]?.public_key,
+    "ssh-ed25519 AAAATEST local@test",
+  );
+  assert.equal(capture.hostSshKeyInstallRequests?.[0]?.user, "cocalc-admin");
 });
 
 test("host rehome refuses to run without --yes", async () => {

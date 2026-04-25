@@ -150,13 +150,30 @@ export class ConatSocketServer extends ConatSocketBase {
 
   private async deleteDeadSockets() {
     while (this.state != "closed") {
-      for (const id in this.sockets) {
-        const socket = this.sockets[id];
-        if (Date.now() - socket.lastPing > PING_PONG_INTERVAL * 2.5) {
-          socket.destroy();
+      if (this.keepAlive > 0) {
+        for (const id in this.sockets) {
+          const socket = this.sockets[id];
+          if (Date.now() - socket.lastPing > PING_PONG_INTERVAL * 2.5) {
+            socket.destroy();
+          }
+        }
+      } else {
+        for (const id in this.sockets) {
+          const socket = this.sockets[id];
+          let hasInterest = false;
+          try {
+            hasInterest = await this.client.interest(socket.clientSubject);
+          } catch {}
+          if (!hasInterest) {
+            socket.destroy();
+          }
         }
       }
-      await unrefDelay(PING_PONG_INTERVAL);
+      const interval =
+        this.keepAlive > 0
+          ? PING_PONG_INTERVAL
+          : Math.max(1000, this.keepAliveTimeout || PING_PONG_INTERVAL);
+      await unrefDelay(interval);
     }
   }
 

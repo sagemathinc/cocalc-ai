@@ -7,6 +7,8 @@ import { registerBrowserCommand } from "./browser";
 
 const PROJECT_A = "00000000-1000-4000-8000-0000000000aa";
 const PROJECT_B = "00000000-1000-4000-8000-0000000000bb";
+const ORIGINAL_COCALC_CLI_AGENT_MODE = process.env.COCALC_CLI_AGENT_MODE;
+const ORIGINAL_COCALC_AGENT_MODE = process.env.COCALC_AGENT_MODE;
 
 function makeProgram({
   openFiles,
@@ -66,65 +68,46 @@ function makeProgram({
   return { program, results };
 }
 
-async function withoutAgentMode(fn: () => Promise<void>): Promise<void> {
-  const prevCliAgentMode = process.env.COCALC_CLI_AGENT_MODE;
-  const prevAgentMode = process.env.COCALC_AGENT_MODE;
+test("browser files filters open files by --project-id", async () => {
   delete process.env.COCALC_CLI_AGENT_MODE;
   delete process.env.COCALC_AGENT_MODE;
-  try {
-    await fn();
-  } finally {
-    if (prevCliAgentMode == null) {
-      delete process.env.COCALC_CLI_AGENT_MODE;
-    } else {
-      process.env.COCALC_CLI_AGENT_MODE = prevCliAgentMode;
-    }
-    if (prevAgentMode == null) {
-      delete process.env.COCALC_AGENT_MODE;
-    } else {
-      process.env.COCALC_AGENT_MODE = prevAgentMode;
-    }
-  }
-}
-
-test("browser files filters open files by --project-id", async () => {
-  await withoutAgentMode(async () => {
-    const { program, results } = makeProgram({
-      openFiles: [
-        { project_id: PROJECT_A, title: "A", path: "/home/user/a.md" },
-        { project_id: PROJECT_B, title: "B", path: "/home/user/b.md" },
-      ],
-    });
-
-    await program.parseAsync([
-      "node",
-      "test",
-      "browser",
-      "files",
-      "--browser",
-      "browser-1",
-      "--project-id",
-      PROJECT_A,
-    ]);
-
-    assert.deepEqual(results, [
-      [
-        {
-          browser_id: "browser-1",
-          project_id: PROJECT_A,
-          title: "A",
-          path: "/home/user/a.md",
-          target_api_url: "http://localhost:7003",
-          target_browser_id: "browser-1",
-          target_session_url: `http://localhost:7003/projects/${PROJECT_A}/files`,
-          target_project_id: PROJECT_A,
-        },
-      ],
-    ]);
+  const { program, results } = makeProgram({
+    openFiles: [
+      { project_id: PROJECT_A, title: "A", path: "/home/user/a.md" },
+      { project_id: PROJECT_B, title: "B", path: "/home/user/b.md" },
+    ],
   });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "files",
+    "--browser",
+    "browser-1",
+    "--project-id",
+    PROJECT_A,
+  ]);
+
+  assert.deepEqual(results, [
+    [
+      {
+        browser_id: "browser-1",
+        project_id: PROJECT_A,
+        title: "A",
+        path: "/home/user/a.md",
+        target_api_url: "http://localhost:7003",
+        target_browser_id: "browser-1",
+        target_session_url: `http://localhost:7003/projects/${PROJECT_A}/files`,
+        target_project_id: PROJECT_A,
+      },
+    ],
+  ]);
 });
 
 test("browser tabs is an alias for browser files", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
   const { program, results } = makeProgram({
     openFiles: [{ project_id: PROJECT_A, title: "A", path: "/home/user/a.md" }],
   });
@@ -142,4 +125,17 @@ test("browser tabs is an alias for browser files", async () => {
 
   assert.equal((results[0] as unknown[]).length, 1);
   assert.equal((results[0] as { path: string }[])[0]?.path, "/home/user/a.md");
+});
+
+test.after(() => {
+  if (ORIGINAL_COCALC_CLI_AGENT_MODE == null) {
+    delete process.env.COCALC_CLI_AGENT_MODE;
+  } else {
+    process.env.COCALC_CLI_AGENT_MODE = ORIGINAL_COCALC_CLI_AGENT_MODE;
+  }
+  if (ORIGINAL_COCALC_AGENT_MODE == null) {
+    delete process.env.COCALC_AGENT_MODE;
+  } else {
+    process.env.COCALC_AGENT_MODE = ORIGINAL_COCALC_AGENT_MODE;
+  }
 });

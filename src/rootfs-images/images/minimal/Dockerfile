@@ -6,6 +6,7 @@ RUN apt-get update -y \
     curl \
     git \
     openssh-client \
+    openssh-sftp-server \
     python3 \
   && rm -rf /var/lib/apt/lists/*
 

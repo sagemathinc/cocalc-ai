@@ -280,9 +280,11 @@ export async function resolveProjectOwningBay({
 export async function resolveHostBay({
   account_id,
   host_id,
+  include_deleted = false,
 }: {
   account_id?: string;
   host_id: string;
+  include_deleted?: boolean;
 }): Promise<HostBayLocation> {
   const acting_account_id = `${account_id ?? ""}`.trim();
   if (!acting_account_id) {
@@ -293,14 +295,16 @@ export async function resolveHostBay({
   }
   const hosts = await listHosts({
     account_id: acting_account_id,
-    include_deleted: false,
-    catalog: true,
+    include_deleted,
+    catalog: false,
     show_all: true,
   });
   const host = hosts.find((x) => x.id === host_id);
   const localName = host?.name ?? "";
   if (!host) {
-    const ownership = await resolveHostBayAcrossCluster(host_id);
+    const ownership = await resolveHostBayAcrossCluster(host_id, {
+      include_deleted,
+    });
     if (!ownership || ownership.bay_id === getConfiguredBayId()) {
       throw new Error(`host '${host_id}' not found`);
     }
@@ -320,7 +324,7 @@ export async function resolveHostBay({
   const { rows } = await getPool().query(
     `SELECT bay_id FROM project_hosts
       WHERE id=$1
-        AND deleted IS NULL
+        ${include_deleted ? "" : "AND deleted IS NULL"}
       LIMIT 1`,
     [host_id],
   );

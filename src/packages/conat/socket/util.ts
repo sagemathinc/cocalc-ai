@@ -55,6 +55,8 @@ export interface SocketConfiguration {
   // ping other end of the socket if no data is received for keepAlive ms;
   // if other side doesn't respond within keepAliveTimeout, then the
   // connection switches to the 'disconnected' state.
+  // Set keepAlive <= 0 to disable per-socket ping/pong and rely on the
+  // underlying Conat connection plus server-side interest sweeps instead.
   keepAlive?: number; // default: DEFAULT_KEEP_ALIVE
   keepAliveTimeout?: number; // default: DEFAULT_KEEP_ALIVE_TIMEOUT}
   // desc = optional, purely for admin/user

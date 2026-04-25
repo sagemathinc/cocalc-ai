@@ -339,7 +339,8 @@ const INBOX_PREFIX = "_INBOX";
 const REPLY_HEADER = "CN-Reply";
 const MAX_HEADER_SIZE = 100000;
 
-const STATS_LOOP = 5000;
+const STATS_LOOP = 45 * 1000;
+const IDLE_STATS_LOOP = 5 * 60 * 1000;
 
 // fairly long since this is to avoid leaks, not for responsiveness in the UI.
 export const DEFAULT_SUBSCRIPTION_TIMEOUT = 60_000;
@@ -625,6 +626,8 @@ export class Client extends EventEmitter {
   private scheduledSyncSubscriptionsTimer?: ReturnType<typeof setTimeout>;
   private statsLoopTimer?: ReturnType<typeof setTimeout>;
   private statsLoopResolve?: () => void;
+  private lastSentRecvStats = { messages: 0, bytes: 0 };
+  private lastSentRecvStatsAt = 0;
   public readonly recoveryScheduler: RecoveryScheduler;
   public readonly heartbeatScheduler: HeartbeatScheduler;
 
@@ -740,6 +743,8 @@ export class Client extends EventEmitter {
         return;
       }
       this.stats.recv0 = { messages: 0, bytes: 0 }; // reset on disconnect
+      this.lastSentRecvStats = { messages: 0, bytes: 0 };
+      this.lastSentRecvStatsAt = 0;
       this.setState("disconnected");
       this.disconnectAllSockets();
     });
@@ -852,7 +857,22 @@ export class Client extends EventEmitter {
         if (this.isClosed()) {
           return;
         }
-        this.conn.emit("stats", { recv0: this.stats.recv0 });
+        const recv0 = this.stats.recv0;
+        const recvChanged =
+          recv0.messages !== this.lastSentRecvStats.messages ||
+          recv0.bytes !== this.lastSentRecvStats.bytes;
+        const now = Date.now();
+        const idleRefreshDue =
+          this.lastSentRecvStatsAt === 0 ||
+          now - this.lastSentRecvStatsAt >= IDLE_STATS_LOOP;
+        if (recvChanged || idleRefreshDue) {
+          this.conn.emit("stats", { recv0 });
+          this.lastSentRecvStats = {
+            messages: recv0.messages,
+            bytes: recv0.bytes,
+          };
+          this.lastSentRecvStatsAt = now;
+        }
       } catch {}
       if (this.isClosed()) {
         return;

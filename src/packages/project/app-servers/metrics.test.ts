@@ -41,6 +41,29 @@ process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 `;
 
+const SERVICE_REDIRECT_SCRIPT = `
+const http = require("http");
+const host = process.env.HOST || "127.0.0.1";
+const port = Number(process.env.PORT || 0);
+const server = http.createServer((req, res) => {
+  if ((req.url || "/") === "/") {
+    res.statusCode = 302;
+    res.setHeader("location", "/auth/login?next=%2F");
+    res.end();
+    return;
+  }
+  const body = String(req.url || "/");
+  res.statusCode = 200;
+  res.setHeader("content-type", "text/plain; charset=utf-8");
+  res.setHeader("content-length", Buffer.byteLength(body));
+  res.end(body);
+});
+server.listen(port, host);
+const shutdown = () => server.close(() => process.exit(0));
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+`;
+
 function appId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
@@ -81,6 +104,7 @@ async function httpGet(
 ): Promise<{
   statusCode?: number;
   body: string;
+  headers: http.IncomingHttpHeaders;
 }> {
   return await new Promise((resolve, reject) => {
     const req = http.get(url, { headers }, (res) => {
@@ -90,6 +114,7 @@ async function httpGet(
         resolve({
           statusCode: res.statusCode,
           body: Buffer.concat(chunks).toString("utf8"),
+          headers: res.headers,
         }),
       );
     });
@@ -432,6 +457,65 @@ describe("managed app metrics", () => {
       );
       expect(directAppRoute.statusCode).toBe(200);
       expect(directAppRoute.body).toContain("metrics-ok");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await deleteApp(id);
+      await killIfRunning(appPid);
+      await killDirectChildrenForTests();
+    }
+  });
+
+  test("rewrites absolute-root service redirects onto the mounted app path", async () => {
+    jest.resetModules();
+    const { project_id } = await import("@cocalc/project/data");
+    const { startProxyServer } =
+      await import("@cocalc/project/servers/proxy/proxy");
+    const { deleteApp, ensureRunning, upsertAppSpec } =
+      await import("./control");
+
+    const id = appId("metrics-redirect");
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "service",
+      command: {
+        exec: process.execPath,
+        args: ["-e", SERVICE_REDIRECT_SCRIPT],
+      },
+      network: { listen_host: "127.0.0.1", protocol: "http" },
+      proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
+      wake: { enabled: true, keep_warm_s: 300, startup_timeout_s: 15 },
+    });
+
+    const server = await startProxyServer({ port: 0, host: "127.0.0.1" });
+    const address = server.address();
+    const proxyPort =
+      address && typeof address === "object" ? address.port : undefined;
+    expect(proxyPort).toBeGreaterThan(0);
+    let appPid: number | undefined;
+
+    try {
+      const running = await ensureRunning(id, {
+        timeout: 10_000,
+        interval: 100,
+      });
+      appPid = running.pid;
+
+      const redirected = await httpGet(
+        `http://127.0.0.1:${proxyPort}/${project_id}/apps/${id}/`,
+        {},
+      );
+      expect(redirected.statusCode).toBe(302);
+      expect(redirected.headers.location).toBe(
+        `/${project_id}/apps/${id}/auth/login?next=%2F`,
+      );
+
+      const followed = await httpGet(
+        `http://127.0.0.1:${proxyPort}${redirected.headers.location}`,
+        {},
+      );
+      expect(followed.statusCode).toBe(200);
+      expect(followed.body).toBe("/auth/login?next=%2F");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await deleteApp(id);

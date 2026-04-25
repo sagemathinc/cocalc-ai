@@ -192,11 +192,66 @@ function normalizeSshPublicKey(public_key: string): string {
   return key;
 }
 
-function hostSshContext(): { user: string; home: string; path: string } {
-  const user = process.env.USER?.trim() || userInfo().username || "unknown";
-  const home = process.env.HOME?.trim() || homedir();
+function normalizeHostSshUser(user?: string): string | undefined {
+  const value = `${user ?? ""}`.trim();
+  if (!value) return;
+  if (/[\s:/\0]/.test(value)) {
+    throw new Error("invalid ssh user");
+  }
+  return value;
+}
+
+function parsePasswdHome(raw: string, user: string): string | undefined {
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split(":");
+    if (parts[0] !== user) continue;
+    const home = `${parts[5] ?? ""}`.trim();
+    if (home) return home;
+  }
+  return;
+}
+
+async function resolveHostSshHome(user: string): Promise<string> {
+  const currentUser = process.env.USER?.trim() || userInfo().username || "";
+  if (user === currentUser) {
+    return process.env.HOME?.trim() || homedir();
+  }
+  try {
+    const { stdout, exit_code } = await executeCode({
+      command: "getent",
+      args: ["passwd", user],
+      timeout: 30,
+    });
+    if (!exit_code) {
+      const home = parsePasswdHome(String(stdout ?? ""), user);
+      if (home) return home;
+    }
+  } catch {
+    // Fall through to /etc/passwd lookup.
+  }
+  try {
+    const raw = await fsPromises.readFile("/etc/passwd", "utf8");
+    const home = parsePasswdHome(raw, user);
+    if (home) return home;
+  } catch {
+    // Fall through to the final error.
+  }
+  throw new Error(`unable to resolve home directory for ssh user '${user}'`);
+}
+
+async function hostSshContext(
+  user?: string,
+): Promise<{ user: string; home: string; path: string }> {
+  const resolvedUser =
+    normalizeHostSshUser(user) ||
+    process.env.USER?.trim() ||
+    userInfo().username ||
+    "unknown";
+  const home = await resolveHostSshHome(resolvedUser);
   return {
-    user,
+    user: resolvedUser,
     home,
     path: join(home, ".ssh", "authorized_keys"),
   };
@@ -224,6 +279,18 @@ function listPublicKeys(lines: string[]): string[] {
   return keys;
 }
 
+function buildHostSshAuthorizedKeysResponse(
+  ctx: { user: string; home: string; path: string },
+  lines: string[],
+) {
+  return {
+    user: ctx.user,
+    home: ctx.home,
+    path: ctx.path,
+    keys: listPublicKeys(lines),
+  };
+}
+
 async function writeAuthorizedKeysFile(
   path: string,
   lines: string[],
@@ -241,20 +308,15 @@ async function writeAuthorizedKeysFile(
 }
 
 async function listHostSshAuthorizedKeys() {
-  const ctx = hostSshContext();
+  const ctx = await hostSshContext();
   const lines = await readAuthorizedKeysFile(ctx.path);
-  return {
-    user: ctx.user,
-    home: ctx.home,
-    path: ctx.path,
-    keys: listPublicKeys(lines),
-  };
+  return buildHostSshAuthorizedKeysResponse(ctx, lines);
 }
 
-async function addHostSshAuthorizedKey(public_key: string) {
+async function addHostSshAuthorizedKey(public_key: string, user?: string) {
   const key = normalizeSshPublicKey(public_key);
   const identity = keyIdentity(key);
-  const ctx = hostSshContext();
+  const ctx = await hostSshContext(user);
   const lines = await readAuthorizedKeysFile(ctx.path);
   const hasKey = lines.some((line) => keyIdentity(line) === identity);
   if (!hasKey) {
@@ -262,7 +324,7 @@ async function addHostSshAuthorizedKey(public_key: string) {
     await writeAuthorizedKeysFile(ctx.path, lines);
   }
   return {
-    ...(await listHostSshAuthorizedKeys()),
+    ...buildHostSshAuthorizedKeysResponse(ctx, lines),
     added: !hasKey,
   };
 }
@@ -270,7 +332,7 @@ async function addHostSshAuthorizedKey(public_key: string) {
 async function removeHostSshAuthorizedKey(public_key: string) {
   const key = normalizeSshPublicKey(public_key);
   const identity = keyIdentity(key);
-  const ctx = hostSshContext();
+  const ctx = await hostSshContext();
   const lines = await readAuthorizedKeysFile(ctx.path);
   const kept = lines.filter((line) => keyIdentity(line) !== identity);
   const removed = kept.length !== lines.length;
@@ -780,8 +842,8 @@ export async function startMasterRegistration({
       async listHostSshAuthorizedKeys() {
         return await listHostSshAuthorizedKeys();
       },
-      async addHostSshAuthorizedKey({ public_key }) {
-        return await addHostSshAuthorizedKey(public_key);
+      async addHostSshAuthorizedKey({ public_key, user }) {
+        return await addHostSshAuthorizedKey(public_key, user);
       },
       async removeHostSshAuthorizedKey({ public_key }) {
         return await removeHostSshAuthorizedKey(public_key);

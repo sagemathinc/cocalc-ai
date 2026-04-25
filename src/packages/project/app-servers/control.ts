@@ -175,6 +175,7 @@ export type AppProxyTarget =
       kind: "service";
       host: string;
       port: number;
+      mountPath?: string;
       rewritePath?: string;
     }
   | {
@@ -1321,6 +1322,7 @@ export async function resolveAppProxyTarget({
       kind: "service",
       host: serviceSpec.network.listen_host || "127.0.0.1",
       port: status.port,
+      mountPath: fullPrefix,
       rewritePath: finalPath,
     };
   }

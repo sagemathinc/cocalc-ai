@@ -82,6 +82,10 @@ export class ConatSocketClient extends ConatSocketBase {
 
   private initKeepAlive = () => {
     this.alive?.close();
+    if (this.keepAlive <= 0) {
+      delete this.alive;
+      return;
+    }
     this.alive = keepAlive({
       role: "client",
       ping: async () =>

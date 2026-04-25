@@ -1,5 +1,13 @@
 # Scalable Architecture Remaining Checklist
 
+Superseded as the primary working checklist by:
+
+- [scalable-architecture-release-checklist-2026-04-24.md](/home/user/cocalc-ai/src/.agents/scalable-architecture-release-checklist-2026-04-24.md)
+
+This older document remains useful as background detail and historical context,
+but the 2026-04-24 checklist is now the concrete execution list for release and
+near-term scalability work.
+
 Status: active checklist as of 2026-04-21.
 
 This is the current execution checklist for finishing the scalable control-plane

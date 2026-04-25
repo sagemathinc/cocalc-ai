@@ -113,7 +113,10 @@ export function server({
     throw Error("client must be specified");
   }
   const subject = `${service}.*`;
-  const server: ConatSocketServer = client.socket.listen(subject, { id });
+  const server: ConatSocketServer = client.socket.listen(subject, {
+    id,
+    keepAlive: 0,
+  });
   log("server listening", { subject, id });
   if (!clusterMode) {
     log("persist server not in cluster mode, so starting own load balancer");

@@ -27,6 +27,7 @@ type UseHostDrawerViewModelArgs = {
   onUpgrade?: (host: Host) => void;
   onUpgradeAll?: (host: Host) => void;
   onReconcile?: (host: Host) => void;
+  onRefreshCloudStatus?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
   onUpgradeAllFromHub?: (host: Host) => void;
   onUpgradeArtifact?: (opts: {
@@ -144,6 +145,7 @@ export const useHostDrawerViewModel = ({
   onUpgrade,
   onUpgradeAll,
   onReconcile,
+  onRefreshCloudStatus,
   onUpgradeFromHub,
   onUpgradeAllFromHub,
   onUpgradeArtifact,
@@ -177,6 +179,7 @@ export const useHostDrawerViewModel = ({
     onUpgrade,
     onUpgradeAll,
     onReconcile,
+    onRefreshCloudStatus,
     onUpgradeFromHub,
     onUpgradeAllFromHub,
     onUpgradeArtifact,
