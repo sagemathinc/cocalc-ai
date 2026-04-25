@@ -60,6 +60,10 @@ export default function LanguageModelTitleBarButton({
     () => command.trim().length > 0 && !querying,
     [command, querying],
   );
+  const helperText =
+    type === "terminal"
+      ? "The agent will continue in the workspace agent thread, and it can inspect and write to this live terminal session."
+      : "The agent will continue the work in the workspace agent thread.";
 
   function closeDialog() {
     setShowDialog(false);
@@ -180,7 +184,7 @@ export default function LanguageModelTitleBarButton({
             autoFocus
           />
           <div style={{ color: COLORS.GRAY_D }}>
-            The agent will continue the work in the workspace agent thread.
+            {helperText}
           </div>
           {error ? <Alert type="error" title={error} /> : undefined}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
