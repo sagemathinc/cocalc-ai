@@ -33,6 +33,7 @@ import type {
   HostManagedComponentRolloutRequest,
   HostRehomeOperationSummary,
   HostRehomeResponse,
+  HostCloudRefreshResult,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   HostManagedComponentRolloutResponse,
@@ -61,6 +62,8 @@ import {
   refreshCloudCatalogNow,
   deleteHostDns,
   hasDns,
+  runReconcileOnce,
+  bumpReconcile,
 } from "@cocalc/server/cloud";
 import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 import isAdmin from "@cocalc/server/accounts/is-admin";
@@ -3260,6 +3263,48 @@ export async function reconcileHostRehome({
     account_id,
     op_id,
   });
+}
+
+export async function refreshHostCloudState({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<HostCloudRefreshResult> {
+  const owner = requireAccount(account_id);
+  if (!(await isAdmin(owner))) {
+    throw new Error("not authorized");
+  }
+  const { rows } = await pool().query<{
+    id: string;
+    deleted: Date | null;
+    metadata?: Record<string, any> | null;
+  }>(
+    `SELECT id, deleted, metadata
+     FROM project_hosts
+     WHERE id=$1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row || row.deleted) {
+    throw new Error("host not found");
+  }
+  const provider = normalizeProviderId(row.metadata?.machine?.cloud);
+  if (!provider || provider === "local" || provider === "self-host") {
+    throw new Error("cloud refresh is only supported for cloud hosts");
+  }
+  await bumpReconcile(provider, 0);
+  const result = await runReconcileOnce(provider);
+  return {
+    host_id: id,
+    provider,
+    scope: "provider",
+    refreshed_at: new Date().toISOString(),
+    ran: !!result?.ran,
+    skipped: result?.skipped ?? (result == null ? "locked" : undefined),
+    next_at: result?.next_at?.toISOString(),
+  };
 }
 
 export async function forceDeprovisionHostInternal({

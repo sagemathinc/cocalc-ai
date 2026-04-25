@@ -472,6 +472,29 @@ export const useHostsPageViewModel = () => {
     },
     [hub, refresh, trackHostOp],
   );
+  const refreshHostCloudState = React.useCallback(
+    async (host: Host) => {
+      if (!hub.hosts.refreshHostCloudState) {
+        return;
+      }
+      try {
+        await hub.hosts.refreshHostCloudState({
+          id: host.id,
+        });
+        await Promise.all([refresh(), refreshHostOps({ force: true })]);
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `Failed to refresh cloud status for ${host.name}: ${
+            err instanceof Error ? err.message : `${err}`
+          }`,
+          timeout: 20,
+        });
+        console.error(err);
+      }
+    },
+    [hub, refresh, refreshHostOps],
+  );
   const cancelHostOp = React.useCallback(
     async (op_id: string) => {
       try {
@@ -1546,6 +1569,7 @@ export const useHostsPageViewModel = () => {
     onDelete: (id: string, opts) => removeHost(id, opts),
     onRefresh: refreshHostsNow,
     onCancelOp: cancelHostOp,
+    onRefreshCloudStatus: isAdmin ? refreshHostCloudState : undefined,
     onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
     onUpgradeFromHub: isAdmin ? upgradeHostSoftwareFromHub : undefined,
     onDetails: openDetails,
@@ -1597,6 +1621,7 @@ export const useHostsPageViewModel = () => {
     onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
     onUpgradeAll: isAdmin ? upgradeAllHostSoftware : undefined,
     onReconcile: isAdmin ? reconcileHostSoftware : undefined,
+    onRefreshCloudStatus: isAdmin ? refreshHostCloudState : undefined,
     onUpgradeFromHub: isAdmin ? upgradeHostSoftwareFromHub : undefined,
     onUpgradeAllFromHub: isAdmin ? upgradeAllHostSoftwareFromHub : undefined,
     onUpgradeArtifact: isAdmin ? upgradeHostArtifact : undefined,

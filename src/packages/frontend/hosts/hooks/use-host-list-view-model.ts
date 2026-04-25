@@ -28,6 +28,7 @@ type UseHostListViewModelArgs = {
   onDelete: (id: string, opts?: HostDeleteOptions) => void;
   onRefresh: () => void;
   onCancelOp?: (op_id: string) => void;
+  onRefreshCloudStatus?: (host: Host) => void;
   onUpgrade?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
   onDetails: (host: Host) => void;
@@ -114,6 +115,7 @@ export const useHostListViewModel = ({
   onDelete,
   onRefresh,
   onCancelOp,
+  onRefreshCloudStatus,
   onUpgrade,
   onUpgradeFromHub,
   onDetails,
@@ -154,6 +156,7 @@ export const useHostListViewModel = ({
     onDelete,
     onRefresh,
     onCancelOp,
+    onRefreshCloudStatus,
     onUpgrade,
     onUpgradeFromHub,
     onDetails,

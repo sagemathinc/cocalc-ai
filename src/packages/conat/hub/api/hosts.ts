@@ -128,6 +128,16 @@ export interface HostOwnerSshTrustResult {
   cloud_provider_succeeded: boolean;
 }
 
+export interface HostCloudRefreshResult {
+  host_id: string;
+  provider: string;
+  scope: "provider";
+  refreshed_at: string;
+  ran: boolean;
+  skipped?: "locked" | "not_due";
+  next_at?: string;
+}
+
 export interface HostMachine {
   cloud?: string; // e.g., gcp, hyperstack, lambda, nebius, self-host, local
   machine_type?: string; // e.g., n2-standard-4, custom specs
@@ -831,6 +841,7 @@ export const hosts = {
   rehomeHost: authFirstRequireAccount,
   getHostRehomeOperation: authFirstRequireAccount,
   reconcileHostRehome: authFirstRequireAccount,
+  refreshHostCloudState: authFirstRequireAccount,
   removeSelfHostConnector: authFirstRequireAccount,
   renameHost: authFirstRequireAccount,
   updateHostMachine: authFirstRequireAccount,
@@ -1203,6 +1214,10 @@ export interface Hosts {
     account_id?: string;
     op_id: string;
   }) => Promise<HostRehomeResponse>;
+  refreshHostCloudState: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<HostCloudRefreshResult>;
   removeSelfHostConnector: (opts: {
     account_id?: string;
     id: string;

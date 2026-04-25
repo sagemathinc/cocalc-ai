@@ -40,6 +40,9 @@ let getServerSettingsMock: jest.Mock;
 let fetchMock: jest.Mock;
 let getBackupConfigLocalInternalMock: jest.Mock;
 let recordProjectBackupLocalInternalMock: jest.Mock;
+let refreshCloudCatalogNowMock: jest.Mock;
+let bumpReconcileMock: jest.Mock;
+let runReconcileOnceMock: jest.Mock;
 const originalFetch = global.fetch;
 
 jest.mock("node:child_process", () => {
@@ -82,6 +85,18 @@ jest.mock("@cocalc/backend/logger", () => {
     __esModule: true,
     default: factory,
     getLogger: factory,
+  };
+});
+
+jest.mock("@cocalc/server/cloud", () => {
+  const actual = jest.requireActual("@cocalc/server/cloud");
+  return {
+    __esModule: true,
+    ...actual,
+    refreshCloudCatalogNow: (...args: any[]) =>
+      refreshCloudCatalogNowMock(...args),
+    bumpReconcile: (...args: any[]) => bumpReconcileMock(...args),
+    runReconcileOnce: (...args: any[]) => runReconcileOnceMock(...args),
   };
 });
 
@@ -319,6 +334,12 @@ beforeEach(() => {
   }));
   getBackupConfigLocalInternalMock = jest.fn();
   recordProjectBackupLocalInternalMock = jest.fn(async () => undefined);
+  refreshCloudCatalogNowMock = jest.fn(async () => undefined);
+  bumpReconcileMock = jest.fn(async () => undefined);
+  runReconcileOnceMock = jest.fn(async () => ({
+    ran: true,
+    next_at: new Date("2026-01-01T00:00:00Z"),
+  }));
 });
 
 afterAll(() => {
@@ -3129,6 +3150,79 @@ describe("hosts.listHosts bootstrap normalization", () => {
     });
     expect(hosts).toHaveLength(1);
     expect(hosts[0].scope).toBe("collab");
+  });
+});
+
+describe("hosts.refreshHostCloudState", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    isAdminMock = jest.fn(async () => true);
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("SELECT id, deleted, metadata")) {
+        return {
+          rows: [
+            {
+              id: params?.[0],
+              deleted: null,
+              metadata: {
+                machine: {
+                  cloud: "gcp",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+  });
+
+  it("forces an immediate provider reconcile for a cloud host", async () => {
+    const { refreshHostCloudState } = await import("./hosts");
+    await expect(
+      refreshHostCloudState({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+      }),
+    ).resolves.toMatchObject({
+      host_id: HOST_ID,
+      provider: "gcp",
+      scope: "provider",
+      ran: true,
+      next_at: "2026-01-01T00:00:00.000Z",
+    });
+    expect(bumpReconcileMock).toHaveBeenCalledWith("gcp", 0);
+    expect(runReconcileOnceMock).toHaveBeenCalledWith("gcp");
+  });
+
+  it("rejects non-cloud hosts", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("SELECT id, deleted, metadata")) {
+        return {
+          rows: [
+            {
+              id: params?.[0],
+              deleted: null,
+              metadata: {
+                machine: {
+                  cloud: "self-host",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { refreshHostCloudState } = await import("./hosts");
+    await expect(
+      refreshHostCloudState({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+      }),
+    ).rejects.toThrow("cloud refresh is only supported for cloud hosts");
+    expect(bumpReconcileMock).not.toHaveBeenCalled();
+    expect(runReconcileOnceMock).not.toHaveBeenCalled();
   });
 });
 
