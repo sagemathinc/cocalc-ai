@@ -33,14 +33,14 @@ function bytesToStr(bytes: number): string {
 
 function formatCountRate(value?: number): string {
   if (!(value != null) || !Number.isFinite(value)) return "n/a";
-  if (Math.abs(value) >= 100) return `${Math.round(value)}/s`;
-  if (Math.abs(value) >= 10) return `${value.toFixed(1)}/s`;
-  return `${value.toFixed(2)}/s`;
+  const rounded = value <= 0 ? 0 : Math.ceil(value);
+  return `${rounded}/s`;
 }
 
 function formatByteRate(value?: number): string {
   if (!(value != null) || !Number.isFinite(value)) return "n/a";
-  return `${bytesToStr(value)}/s`;
+  const rounded = value <= 0 ? 0 : Math.ceil(value);
+  return `${bytesToStr(rounded)}/s`;
 }
 
 export function ConnectionStatsDisplay({

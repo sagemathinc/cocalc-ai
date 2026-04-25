@@ -32,10 +32,7 @@ type ConnectionSample = {
   stats: ConnectionStatsSnapshot;
 };
 
-type ConnectionSampleWindow = {
-  prev?: ConnectionSample;
-  current: ConnectionSample;
-};
+type ConnectionSampleHistory = ConnectionSample[];
 
 function cloneConnectionStats(
   stats: ConnectionStatsSnapshot,
@@ -54,31 +51,27 @@ function cloneConnectionStats(
 }
 
 function computeRates(
-  window?: ConnectionSampleWindow,
+  history?: ConnectionSampleHistory,
 ): ConnectionRateSnapshot | undefined {
-  if (!window?.prev) return undefined;
-  const deltaMs = window.current.at - window.prev.at;
+  if (!history || history.length < 2) return undefined;
+  const first = history[0];
+  const last = history[history.length - 1];
+  const deltaMs = last.at - first.at;
   if (!(deltaMs > 0)) return undefined;
   const deltaSec = deltaMs / 1000;
   const delta = (current: number, prev: number) =>
     Math.max(0, current - prev) / deltaSec;
   return {
     sendMessagesPerSec: delta(
-      window.current.stats.send.messages,
-      window.prev.stats.send.messages,
+      last.stats.send.messages,
+      first.stats.send.messages,
     ),
-    sendBytesPerSec: delta(
-      window.current.stats.send.bytes,
-      window.prev.stats.send.bytes,
-    ),
+    sendBytesPerSec: delta(last.stats.send.bytes, first.stats.send.bytes),
     recvMessagesPerSec: delta(
-      window.current.stats.recv.messages,
-      window.prev.stats.recv.messages,
+      last.stats.recv.messages,
+      first.stats.recv.messages,
     ),
-    recvBytesPerSec: delta(
-      window.current.stats.recv.bytes,
-      window.prev.stats.recv.bytes,
-    ),
+    recvBytesPerSec: delta(last.stats.recv.bytes, first.stats.recv.bytes),
     sampleWindowSec: deltaSec,
   };
 }
@@ -97,7 +90,7 @@ export const ConnectionInfo: React.FC = React.memo(() => {
     number | undefined
   >();
   const [samples, setSamples] = React.useState<
-    Record<string, ConnectionSampleWindow>
+    Record<string, ConnectionSampleHistory>
   >({});
 
   React.useEffect(() => {
@@ -119,16 +112,14 @@ export const ConnectionInfo: React.FC = React.memo(() => {
   React.useEffect(() => {
     const at = Date.now();
     setSamples((prev) => {
-      const next: Record<string, ConnectionSampleWindow> = {};
+      const next: Record<string, ConnectionSampleHistory> = {};
       for (const target of targets) {
         const current: ConnectionSample = {
           at,
           stats: cloneConnectionStats(target.status.stats),
         };
-        const previous = prev[target.id];
-        next[target.id] = previous
-          ? { prev: previous.current, current }
-          : { current };
+        const history = [...(prev[target.id] ?? []), current];
+        next[target.id] = history.slice(-8);
       }
       return next;
     });
