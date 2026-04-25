@@ -14,6 +14,7 @@ import {
   PROJECT_HAS_NO_ASSIGNED_HOST_ERROR,
 } from "@cocalc/server/conat/project-host-assignment";
 import { getCurrentProjectRootfsBinding } from "@cocalc/server/projects/rootfs-state";
+import { assertCanRestoreProvisionedProjectStorage } from "@cocalc/server/membership/project-limits";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { getRoutedHostControlClient } from "./client";
 import { resolveHostBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
@@ -479,7 +480,13 @@ export async function startProjectOnHost(
     );
     const { rows } = await pool().query<{
       backup_repo_id: string | null;
-    }>("SELECT backup_repo_id FROM projects WHERE project_id=$1", [project_id]);
+      provisioned: boolean | null;
+    }>("SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1", [
+      project_id,
+    ]);
+    if (rows[0]?.backup_repo_id && rows[0]?.provisioned === false) {
+      await assertCanRestoreProvisionedProjectStorage({ project_id });
+    }
     const restore = rows[0]?.backup_repo_id ? "auto" : "none";
     const client = await getRoutedHostControlClient({
       host_id: placement.host_id,
