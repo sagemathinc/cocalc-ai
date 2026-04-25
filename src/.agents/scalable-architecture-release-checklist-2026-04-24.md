@@ -24,6 +24,7 @@ Related background documents:
 - [bay-hub-load-testing-plan.md](/home/user/cocalc-ai/src/.agents/bay-hub-load-testing-plan.md)
 - [scalable-architecture-implementation-plan.md](/home/user/cocalc-ai/src/.agents/scalable-architecture-implementation-plan.md)
 - [scalable-architecture.md](/home/user/cocalc-ai/src/.agents/scalable-architecture.md)
+- [membership-usage-limits-release-spec-2026-04-25.md](/home/user/cocalc-ai/src/.agents/membership-usage-limits-release-spec-2026-04-25.md)
 
 ## Current Read
 
