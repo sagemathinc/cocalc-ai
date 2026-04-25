@@ -7,6 +7,10 @@ import type {
   MembershipResolution,
 } from "@cocalc/conat/hub/api/purchases";
 import { getMembershipTierMap, MembershipTierRecord } from "./tiers";
+import getLogger from "@cocalc/backend/logger";
+import { getMembershipUsageStatusForAccount } from "./usage-status";
+
+const log = getLogger("server:membership:resolve");
 
 function tierToEntitlements(
   tier?: MembershipTierRecord,
@@ -117,9 +121,23 @@ export async function resolveMembershipDetailsForAccount(
 ): Promise<MembershipDetails> {
   const tiers = await getMembershipTierMap({ includeDisabled: true });
   const candidates = await buildMembershipCandidates(account_id, tiers);
+  const selected = pickBestMembership(candidates, tiers);
+  let usage_status: MembershipDetails["usage_status"] = undefined;
+  try {
+    usage_status = await getMembershipUsageStatusForAccount({
+      account_id,
+      resolution: selected,
+    });
+  } catch (err) {
+    log.warn("unable to compute membership usage status", {
+      account_id,
+      err: `${err}`,
+    });
+  }
   return {
-    selected: pickBestMembership(candidates, tiers),
+    selected,
     candidates,
+    usage_status,
   };
 }
 

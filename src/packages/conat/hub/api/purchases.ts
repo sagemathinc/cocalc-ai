@@ -50,6 +50,25 @@ export interface MembershipCandidate {
 export interface MembershipDetails {
   selected: MembershipResolution;
   candidates: MembershipCandidate[];
+  usage_status?: MembershipUsageStatus;
+}
+
+export interface MembershipUsageStatus {
+  collected_at: string;
+  owned_project_count: number;
+  sampled_project_count: number;
+  unsampled_project_count: number;
+  measurement_error_count?: number;
+  total_storage_bytes: number;
+  total_storage_soft_bytes?: number;
+  total_storage_hard_bytes?: number;
+  total_storage_soft_remaining_bytes?: number;
+  total_storage_hard_remaining_bytes?: number;
+  over_total_storage_soft?: boolean;
+  over_total_storage_hard?: boolean;
+  max_projects?: number;
+  remaining_project_slots?: number;
+  over_max_projects?: boolean;
 }
 
 export interface LLMUsageWindowStatus {

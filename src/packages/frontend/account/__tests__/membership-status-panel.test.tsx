@@ -143,6 +143,13 @@ describe("MembershipStatusPanel", () => {
       firstDetails.resolve({
         candidates: [],
         selected: { class: "pro", source: "subscription" },
+        usage_status: {
+          collected_at: new Date().toISOString(),
+          owned_project_count: 1,
+          sampled_project_count: 1,
+          unsampled_project_count: 0,
+          total_storage_bytes: 100,
+        },
       });
       await Promise.all([
         firstMembership.promise,
@@ -169,6 +176,13 @@ describe("MembershipStatusPanel", () => {
       secondDetails.resolve({
         candidates: [],
         selected: { class: "free", source: "free" },
+        usage_status: {
+          collected_at: new Date().toISOString(),
+          owned_project_count: 0,
+          sampled_project_count: 0,
+          unsampled_project_count: 0,
+          total_storage_bytes: 0,
+        },
       });
       await Promise.all([
         secondMembership.promise,

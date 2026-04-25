@@ -29,6 +29,7 @@ import { capitalize, round2 } from "@cocalc/util/misc";
 import type {
   MembershipDetails,
   MembershipResolution,
+  MembershipUsageStatus,
 } from "@cocalc/conat/hub/api/purchases";
 import MembershipPurchaseModal from "./membership-purchase-modal";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -172,6 +173,13 @@ export interface UsageLimitItem {
   value: string;
 }
 
+export interface UsageStatusItem {
+  key: string;
+  label: string;
+  value: string;
+  danger?: boolean;
+}
+
 function getUsageLimitsItems(
   usageLimits: Record<string, unknown>,
 ): UsageLimitItem[] {
@@ -241,6 +249,86 @@ function getUsageLimitsItems(
       key: "dedicated_host_egress_policy",
       label: "Dedicated host egress policy",
       value: dedicatedHostEgressPolicy,
+    });
+  }
+  return items;
+}
+
+function getUsageStatusItems(
+  usageStatus?: MembershipUsageStatus | null,
+): UsageStatusItem[] {
+  if (!usageStatus) return [];
+  const items: UsageStatusItem[] = [
+    {
+      key: "owned_project_count",
+      label: "Owned projects",
+      value: `${usageStatus.owned_project_count}`,
+      danger: usageStatus.over_max_projects === true,
+    },
+    {
+      key: "total_storage_bytes",
+      label: "Current total account storage",
+      value: formatBytes(usageStatus.total_storage_bytes),
+      danger:
+        usageStatus.over_total_storage_hard === true ||
+        usageStatus.over_total_storage_soft === true,
+    },
+  ];
+  if (
+    typeof usageStatus.remaining_project_slots === "number" &&
+    Number.isFinite(usageStatus.remaining_project_slots)
+  ) {
+    items.push({
+      key: "remaining_project_slots",
+      label: "Remaining project slots",
+      value: `${usageStatus.remaining_project_slots}`,
+      danger: usageStatus.remaining_project_slots < 0,
+    });
+  }
+  if (
+    typeof usageStatus.total_storage_soft_remaining_bytes === "number" &&
+    Number.isFinite(usageStatus.total_storage_soft_remaining_bytes)
+  ) {
+    items.push({
+      key: "total_storage_soft_remaining_bytes",
+      label: "Storage remaining before soft cap",
+      value: formatBytes(
+        Math.abs(usageStatus.total_storage_soft_remaining_bytes),
+      ),
+      danger: usageStatus.total_storage_soft_remaining_bytes < 0,
+    });
+  }
+  if (
+    typeof usageStatus.total_storage_hard_remaining_bytes === "number" &&
+    Number.isFinite(usageStatus.total_storage_hard_remaining_bytes)
+  ) {
+    items.push({
+      key: "total_storage_hard_remaining_bytes",
+      label: "Storage remaining before hard cap",
+      value: formatBytes(
+        Math.abs(usageStatus.total_storage_hard_remaining_bytes),
+      ),
+      danger: usageStatus.total_storage_hard_remaining_bytes < 0,
+    });
+  }
+  items.push({
+    key: "sampled_project_count",
+    label: "Storage sampled from projects",
+    value:
+      usageStatus.unsampled_project_count > 0
+        ? `${usageStatus.sampled_project_count} of ${usageStatus.owned_project_count}`
+        : `${usageStatus.sampled_project_count}`,
+    danger: usageStatus.unsampled_project_count > 0,
+  });
+  if (
+    typeof usageStatus.measurement_error_count === "number" &&
+    usageStatus.measurement_error_count > 0
+  ) {
+    items.push({
+      key: "measurement_error_count",
+      label: "Sampling errors",
+      value: `${usageStatus.measurement_error_count}`,
+      danger: true,
     });
   }
   return items;
@@ -375,6 +463,7 @@ export function MembershipStatusPanel({
 
   const projectDefaultsItems = getProjectDefaultsItems(projectDefaults);
   const usageLimitItems = getUsageLimitsItems(usageLimits);
+  const usageStatusItems = getUsageStatusItems(details?.usage_status);
 
   return (
     <Panel
@@ -498,6 +587,33 @@ export function MembershipStatusPanel({
                 {usageLimitItems.map((item) => (
                   <Descriptions.Item key={item.key} label={item.label}>
                     {item.value}
+                  </Descriptions.Item>
+                ))}
+              </Descriptions>
+            )}
+          </div>
+
+          <div>
+            <Text strong>Current shared-host usage</Text>
+            {usageStatusItems.length === 0 ? (
+              <div>
+                <Text type="secondary">
+                  Current shared-host usage is unavailable.
+                </Text>
+              </div>
+            ) : (
+              <Descriptions
+                size="small"
+                column={1}
+                style={{ marginTop: "6px" }}
+              >
+                {usageStatusItems.map((item) => (
+                  <Descriptions.Item key={item.key} label={item.label}>
+                    {item.danger ? (
+                      <Text type="danger">{item.value}</Text>
+                    ) : (
+                      item.value
+                    )}
                   </Descriptions.Item>
                 ))}
               </Descriptions>
