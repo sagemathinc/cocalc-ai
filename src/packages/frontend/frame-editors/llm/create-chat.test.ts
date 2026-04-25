@@ -50,6 +50,7 @@ describe("createChat", () => {
         tag: "intent:editor-assistant",
         forceCodex: true,
         openFloating: true,
+        waitForAgent: false,
         codexConfig: { model: "gpt-5.4-mini" },
       }),
     );

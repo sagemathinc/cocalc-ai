@@ -84,6 +84,7 @@ export default async function createChat({
     forceCodex: true,
     codexConfig: { model: codexModel },
     openFloating: true,
+    waitForAgent: false,
   });
   if (!sent) {
     dispatchNavigatorPromptIntent({
