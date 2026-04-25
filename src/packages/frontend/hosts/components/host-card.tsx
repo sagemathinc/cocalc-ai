@@ -52,6 +52,7 @@ type HostCardProps = {
   onDrain: (id: string, opts?: HostDrainOptions) => void;
   onDelete: (id: string, opts?: HostDeleteOptions) => void;
   onCancelOp?: (op_id: string) => void;
+  onRefreshCloudStatus?: (host: Host) => void;
   onDetails: (host: Host) => void;
   onEdit: (host: Host) => void;
   onToggleStar?: (host: Host) => void;
@@ -71,6 +72,7 @@ export const HostCard: React.FC<HostCardProps> = ({
   onDrain,
   onDelete,
   onCancelOp,
+  onRefreshCloudStatus,
   onDetails,
   onEdit,
   onToggleStar,
@@ -150,6 +152,13 @@ export const HostCard: React.FC<HostCardProps> = ({
   const deleteOkText =
     host.status === "deprovisioned" ? "Delete" : "Deprovision";
   const isDeprovisioned = host.status === "deprovisioned";
+  const canRefreshCloudStatus =
+    !isDeleted &&
+    !!onRefreshCloudStatus &&
+    !!host.machine?.cloud &&
+    host.machine.cloud !== "self-host" &&
+    host.machine.cloud !== "local" &&
+    !hostOpActive;
   const opPhase = getHostOpPhase(displayHostOp);
   const canCancelBackups =
     !!displayHostOp?.op_id &&
@@ -238,6 +247,18 @@ export const HostCard: React.FC<HostCardProps> = ({
     >
       Edit
     </Button>,
+    canRefreshCloudStatus ? (
+      <Popconfirm
+        key="refresh-cloud"
+        title="Refresh cloud/provider status for this host?"
+        description="This forces an immediate cloud reconcile for this host's provider and updates the host row if reality drifted."
+        okText="Refresh"
+        cancelText="Cancel"
+        onConfirm={() => onRefreshCloudStatus?.(host)}
+      >
+        <Button type="link">Refresh cloud status</Button>
+      </Popconfirm>
+    ) : null,
     <Button key="details" type="link" onClick={() => onDetails(host)}>
       Details
     </Button>,

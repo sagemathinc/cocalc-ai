@@ -171,4 +171,49 @@ describe("keepalive only pings when a socket is actually idle", () => {
   });
 });
 
+describe("transport-scoped liveness mode disables per-socket keepalive chatter", () => {
+  let client,
+    server,
+    cn1,
+    cn2,
+    sockets: any[] = [];
+
+  const sweepInterval = 50;
+
+  it("creates a socket with keepAlive disabled on both sides", async () => {
+    cn1 = connect();
+    server = cn1.socket.listen("keepalive-transport-scoped.com", {
+      keepAlive: 0,
+      keepAliveTimeout: sweepInterval,
+    });
+    server.on("connection", (socket) => {
+      sockets.push(socket);
+    });
+
+    cn2 = connect({ reconnection: false });
+    client = cn2.socket.connect("keepalive-transport-scoped.com", {
+      keepAlive: 0,
+      keepAliveTimeout: sweepInterval,
+      reconnection: false,
+    });
+
+    await wait({
+      until: () => client.state == "ready" && sockets[0]?.state == "ready",
+    });
+    expect(client.alive).toBeUndefined();
+    expect(sockets[0].alive).toBeUndefined();
+  });
+
+  it("marks the virtual socket disconnected when the real client disconnects", async () => {
+    cn2.conn.io.engine.close();
+    await wait({ until: () => client.state == "disconnected" });
+    expect(client.state).toBe("disconnected");
+  });
+
+  it("reclaims the server socket via interest sweep without per-socket ping/pong", async () => {
+    await wait({ until: () => sockets[0]?.state == "closed" });
+    expect(sockets[0].state).toBe("closed");
+  });
+});
+
 afterAll(after);

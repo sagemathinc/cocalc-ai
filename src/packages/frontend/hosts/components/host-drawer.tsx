@@ -89,6 +89,7 @@ type HostDrawerViewModel = {
   onUpgrade?: (host: Host) => void;
   onUpgradeAll?: (host: Host) => void;
   onReconcile?: (host: Host) => void;
+  onRefreshCloudStatus?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
   onUpgradeAllFromHub?: (host: Host) => void;
   onUpgradeArtifact?: (opts: {
@@ -1041,6 +1042,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     onDelete,
     onUpgradeAll,
     onReconcile,
+    onRefreshCloudStatus,
     onUpgradeAllFromHub,
     canUpgrade,
     onCancelOp,
@@ -1209,6 +1211,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     !!onReconcile &&
     !!host.machine?.cloud &&
     host.machine.cloud !== "self-host";
+  const canRefreshCloudStatus =
+    !!host &&
+    !host.deleted &&
+    !!onRefreshCloudStatus &&
+    !!host.machine?.cloud &&
+    host.machine.cloud !== "self-host" &&
+    host.machine.cloud !== "local";
   const softwareSummary = React.useMemo(() => {
     if (!host) {
       return { upToDate: 0, updatesAvailable: 0, unknown: 0 };
@@ -2899,6 +2908,20 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 >
                   <Button size="small" disabled={hostOpActive}>
                     Reconcile
+                  </Button>
+                </Popconfirm>
+              )}
+              {canRefreshCloudStatus && host && onRefreshCloudStatus && (
+                <Popconfirm
+                  title="Refresh cloud/provider status for this host?"
+                  description="This forces an immediate cloud reconcile for this host's provider and updates the host row if reality drifted."
+                  okText="Refresh"
+                  cancelText="Cancel"
+                  onConfirm={() => onRefreshCloudStatus(host)}
+                  disabled={hostOpActive}
+                >
+                  <Button size="small" disabled={hostOpActive}>
+                    Refresh Cloud Status
                   </Button>
                 </Popconfirm>
               )}

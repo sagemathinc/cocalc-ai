@@ -33,6 +33,7 @@ import type {
   HostManagedComponentRolloutRequest,
   HostRehomeOperationSummary,
   HostRehomeResponse,
+  HostCloudRefreshResult,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   HostManagedComponentRolloutResponse,
@@ -61,6 +62,8 @@ import {
   refreshCloudCatalogNow,
   deleteHostDns,
   hasDns,
+  runReconcileOnce,
+  bumpReconcile,
 } from "@cocalc/server/cloud";
 import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 import isAdmin from "@cocalc/server/accounts/is-admin";
@@ -1976,11 +1979,32 @@ export async function listHosts(opts: ListHostsOptions): Promise<Host[]> {
         }
       }),
   );
-  const deduped = new Map<string, Host>();
-  for (const host of [...local, ...remoteHosts.flat()]) {
-    deduped.set(host.id, preferredHostRow(deduped.get(host.id), host));
+  const deduped = new Map<
+    string,
+    {
+      host: Host;
+      source: "local" | "remote";
+    }
+  >();
+  for (const host of local) {
+    deduped.set(
+      host.id,
+      preferredHostRow(deduped.get(host.id), {
+        host,
+        source: "local",
+      }),
+    );
   }
-  return Array.from(deduped.values());
+  for (const host of remoteHosts.flat()) {
+    deduped.set(
+      host.id,
+      preferredHostRow(deduped.get(host.id), {
+        host,
+        source: "remote",
+      }),
+    );
+  }
+  return Array.from(deduped.values(), ({ host }) => host);
 }
 
 function timestampMs(value: string | undefined): number | undefined {
@@ -1989,12 +2013,36 @@ function timestampMs(value: string | undefined): number | undefined {
   return Number.isFinite(ms) ? ms : undefined;
 }
 
-function preferredHostRow(existing: Host | undefined, candidate: Host): Host {
+function isTerminalHostRow(host: Host): boolean {
+  return !!host.deleted || host.status === "deprovisioned";
+}
+
+function preferredHostRow(
+  existing:
+    | {
+        host: Host;
+        source: "local" | "remote";
+      }
+    | undefined,
+  candidate: {
+    host: Host;
+    source: "local" | "remote";
+  },
+): {
+  host: Host;
+  source: "local" | "remote";
+} {
   if (existing == null) return candidate;
-  if (candidate.deleted && !existing.deleted) return candidate;
-  if (existing.deleted && !candidate.deleted) return existing;
-  const existingUpdated = timestampMs(existing.updated);
-  const candidateUpdated = timestampMs(candidate.updated);
+  const existingLocalTerminal =
+    existing.source === "local" && isTerminalHostRow(existing.host);
+  const candidateLocalTerminal =
+    candidate.source === "local" && isTerminalHostRow(candidate.host);
+  if (existingLocalTerminal && !candidateLocalTerminal) return existing;
+  if (candidateLocalTerminal && !existingLocalTerminal) return candidate;
+  if (candidate.host.deleted && !existing.host.deleted) return candidate;
+  if (existing.host.deleted && !candidate.host.deleted) return existing;
+  const existingUpdated = timestampMs(existing.host.updated);
+  const candidateUpdated = timestampMs(candidate.host.updated);
   if (candidateUpdated == null) return existing;
   if (existingUpdated == null) return candidate;
   return candidateUpdated > existingUpdated ? candidate : existing;
@@ -3218,6 +3266,48 @@ export async function reconcileHostRehome({
     account_id,
     op_id,
   });
+}
+
+export async function refreshHostCloudState({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<HostCloudRefreshResult> {
+  const owner = requireAccount(account_id);
+  if (!(await isAdmin(owner))) {
+    throw new Error("not authorized");
+  }
+  const { rows } = await pool().query<{
+    id: string;
+    deleted: Date | null;
+    metadata?: Record<string, any> | null;
+  }>(
+    `SELECT id, deleted, metadata
+     FROM project_hosts
+     WHERE id=$1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row || row.deleted) {
+    throw new Error("host not found");
+  }
+  const provider = normalizeProviderId(row.metadata?.machine?.cloud);
+  if (!provider || provider === "local" || provider === "self-host") {
+    throw new Error("cloud refresh is only supported for cloud hosts");
+  }
+  await bumpReconcile(provider, 0);
+  const result = await runReconcileOnce(provider);
+  return {
+    host_id: id,
+    provider,
+    scope: "provider",
+    refreshed_at: new Date().toISOString(),
+    ran: !!result?.ran,
+    skipped: result?.skipped ?? (result == null ? "locked" : undefined),
+    next_at: result?.next_at?.toISOString(),
+  };
 }
 
 export async function forceDeprovisionHostInternal({

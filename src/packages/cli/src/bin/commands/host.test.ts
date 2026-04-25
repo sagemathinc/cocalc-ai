@@ -913,6 +913,12 @@ test("host where returns the bay for the resolved host", async () => {
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
+  let hostBayRequest:
+    | {
+        host_id: string;
+        include_deleted?: boolean;
+      }
+    | undefined;
   const deps = makeDeps(capture, {
     resolveHost: async () => ({
       id: "44444444-4444-4444-4444-444444444444",
@@ -928,12 +934,15 @@ test("host where returns the bay for the resolved host", async () => {
         globals: { json: true, output: "json" },
         hub: {
           system: {
-            getHostBay: async ({ host_id }) => ({
-              host_id,
-              bay_id: "bay-0",
-              name: "host-1",
-              source: "single-bay-default",
-            }),
+            getHostBay: async ({ host_id, include_deleted }) => {
+              hostBayRequest = { host_id, include_deleted };
+              return {
+                host_id,
+                bay_id: "bay-0",
+                name: "host-1",
+                source: "single-bay-default",
+              };
+            },
           },
           hosts: {
             upgradeHostSoftware: async ({ id }) => {
@@ -972,6 +981,54 @@ test("host where returns the bay for the resolved host", async () => {
   await program.parseAsync(["node", "test", "host", "where", "host-1"]);
 
   assert.equal(capture.data.host_id, "44444444-4444-4444-4444-444444444444");
+  assert.equal(capture.data.bay_id, "bay-0");
+  assert.deepEqual(hostBayRequest, {
+    host_id: "44444444-4444-4444-4444-444444444444",
+    include_deleted: true,
+  });
+});
+
+test("host get can return a deleted host via the admin list surface", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture, {
+    listHosts: async (_ctx, opts) => {
+      assert.equal(opts?.include_deleted, true);
+      assert.equal(opts?.admin_view, true);
+      return [
+        {
+          id: "55555555-5555-4555-8555-555555555555",
+          name: "deleted-host",
+          status: "deprovisioned",
+          bay_id: "bay-0",
+          region: "us-west3",
+        },
+      ];
+    },
+    resolveHost: async () => {
+      throw new Error("resolveHost should not be called");
+    },
+  });
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "get",
+    "55555555-5555-4555-8555-555555555555",
+  ]);
+
+  assert.equal(capture.data.host_id, "55555555-5555-4555-8555-555555555555");
+  assert.equal(capture.data.name, "deleted-host");
+  assert.equal(capture.data.status, "deprovisioned");
   assert.equal(capture.data.bay_id, "bay-0");
 });
 

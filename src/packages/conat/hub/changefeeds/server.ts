@@ -7,7 +7,6 @@ import {
   SUBJECT,
   MAX_PER_ACCOUNT,
   MAX_GLOBAL,
-  SERVER_KEEPALIVE,
   KEEPALIVE_TIMEOUT,
   RESOURCE,
 } from "./util";
@@ -105,7 +104,7 @@ export function changefeedServer({
   });
 
   const server = client.socket.listen(SUBJECT, {
-    keepAlive: SERVER_KEEPALIVE,
+    keepAlive: 0,
     keepAliveTimeout: KEEPALIVE_TIMEOUT,
   });
   stats.serversCreated += 1;

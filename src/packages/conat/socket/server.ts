@@ -80,15 +80,13 @@ export class ConatSocketServer extends ConatSocketBase {
       if (this.state == ("closed" as any)) {
         return;
       }
-      (async () => {
-        try {
-          await this.handleMesg(mesg);
-        } catch (err) {
-          logger.debug(
-            `WARNING -- unexpected issue handling connection -- ${err}`,
-          );
-        }
-      })();
+      try {
+        await this.handleMesg(mesg);
+      } catch (err) {
+        logger.debug(
+          `WARNING -- unexpected issue handling connection -- ${err}`,
+        );
+      }
     }
   }
 
@@ -143,6 +141,7 @@ export class ConatSocketServer extends ConatSocketBase {
       this.handleCommandFromClient({ socket, cmd: cmd as Command, mesg });
     } else if (mesg.isRequest()) {
       // a request to support the socket.on('request', (mesg) => ...) protocol:
+      socket.flushDataQueue();
       socket.emit("request", mesg);
     } else {
       socket.receiveDataFromClient(mesg);
@@ -151,13 +150,30 @@ export class ConatSocketServer extends ConatSocketBase {
 
   private async deleteDeadSockets() {
     while (this.state != "closed") {
-      for (const id in this.sockets) {
-        const socket = this.sockets[id];
-        if (Date.now() - socket.lastPing > PING_PONG_INTERVAL * 2.5) {
-          socket.destroy();
+      if (this.keepAlive > 0) {
+        for (const id in this.sockets) {
+          const socket = this.sockets[id];
+          if (Date.now() - socket.lastPing > PING_PONG_INTERVAL * 2.5) {
+            socket.destroy();
+          }
+        }
+      } else {
+        for (const id in this.sockets) {
+          const socket = this.sockets[id];
+          let hasInterest = false;
+          try {
+            hasInterest = await this.client.interest(socket.clientSubject);
+          } catch {}
+          if (!hasInterest) {
+            socket.destroy();
+          }
         }
       }
-      await unrefDelay(PING_PONG_INTERVAL);
+      const interval =
+        this.keepAlive > 0
+          ? PING_PONG_INTERVAL
+          : Math.max(1000, this.keepAliveTimeout || PING_PONG_INTERVAL);
+      await unrefDelay(interval);
     }
   }
 

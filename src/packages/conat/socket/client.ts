@@ -23,6 +23,14 @@ const logger = getLogger("socket:client");
 // DO NOT directly instantiate here -- instead, call the
 // socket.connect method on ConatClient.
 
+const nextTurn = (f: () => void) => {
+  if (typeof globalThis.setImmediate == "function") {
+    globalThis.setImmediate(f);
+  } else {
+    setTimeout(f, 0);
+  }
+};
+
 export class ConatSocketClient extends ConatSocketBase {
   queuedWrites: { data: any; headers?: Headers }[] = [];
   private tcp?: TCP;
@@ -37,6 +45,8 @@ export class ConatSocketClient extends ConatSocketBase {
     { started_at: number; publish_ms?: number }
   >();
   private requestRetryInFlight = false;
+  private dataQueue: { data: any; headers?: Headers }[] = [];
+  private dataQueueScheduled = false;
 
   constructor(opts: ConatSocketOptions) {
     super(opts);
@@ -72,6 +82,10 @@ export class ConatSocketClient extends ConatSocketBase {
 
   private initKeepAlive = () => {
     this.alive?.close();
+    if (this.keepAlive <= 0) {
+      delete this.alive;
+      return;
+    }
     this.alive = keepAlive({
       role: "client",
       ping: async () =>
@@ -122,12 +136,35 @@ export class ConatSocketClient extends ConatSocketBase {
     this.client.on("disconnected", this.tcp.send.resendLastUntilAcked);
 
     this.tcp.recv.on("message", (mesg) => {
-      this.emit("data", mesg.data, mesg.headers);
+      this.enqueueData(mesg.data, mesg.headers);
     });
     this.tcp.send.on("drain", () => {
       this.emit("drain");
     });
   }
+
+  private enqueueData = (data: any, headers?: Headers) => {
+    this.dataQueue.push({ data, headers });
+    this.scheduleDataDelivery();
+  };
+
+  private scheduleDataDelivery = () => {
+    if (this.dataQueueScheduled) {
+      return;
+    }
+    this.dataQueueScheduled = true;
+    nextTurn(() => {
+      this.dataQueueScheduled = false;
+      const mesg = this.dataQueue.shift();
+      if (mesg == null || this.state == "closed") {
+        return;
+      }
+      this.emit("data", mesg.data, mesg.headers);
+      if (this.dataQueue.length > 0) {
+        this.scheduleDataDelivery();
+      }
+    });
+  };
 
   drain = async () => {
     await this.tcp?.send.drain();
@@ -301,6 +338,31 @@ export class ConatSocketClient extends ConatSocketBase {
     }
   };
 
+  private waitForServerId = async () => {
+    if (this.loadBalancer != null) {
+      await this.getServerId();
+      return;
+    }
+    let delayMs = 50;
+    const statusSubject = serverStatusSubject(this.subject);
+    while (this.state == "connecting") {
+      try {
+        await this.client.waitForInterest(statusSubject, {
+          timeout: delayMs,
+        });
+        await this.getServerId();
+        return;
+      } catch (err) {
+        this.lifecycleReporter?.("get_server_id_retry", { error: `${err}` });
+      }
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, delayMs);
+        timer.unref?.();
+      });
+      delayMs = Math.min(500, Math.round(delayMs * 1.3));
+    }
+  };
+
   protected async run() {
     if (this.state == "closed") {
       return;
@@ -310,7 +372,10 @@ export class ConatSocketClient extends ConatSocketBase {
     //       `${this.subject}.client.${this.id}`,
     //     );
     try {
-      await this.getServerId();
+      await this.waitForServerId();
+      if (this.serverId == null) {
+        return;
+      }
 
       //  logger.silly("run: getting subscription");
       this.lifecycleReporter?.("subscribe_start");

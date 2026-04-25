@@ -49,6 +49,9 @@ export abstract class ConatSocketBase extends EventEmitter {
   private recoveryPaused = false;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private recoveryRegistration?: RegisteredRecoverableResource;
+  private readonly onClientDisconnected = () => {
+    this.disconnect();
+  };
 
   // the following is all for compat with primus's api and has no meaning here.
   address = { ip: "" };
@@ -90,6 +93,7 @@ export abstract class ConatSocketBase extends EventEmitter {
           },
         });
     }
+    this.client.on("disconnected", this.onClientDisconnected);
     this.connect();
     this.setMaxListeners(100);
   }
@@ -229,6 +233,7 @@ export abstract class ConatSocketBase extends EventEmitter {
     }
     this.recoveryRegistration?.close();
     this.recoveryRegistration = undefined;
+    this.client?.removeListener?.("disconnected", this.onClientDisconnected);
     this.setState("closed");
     this.removeAllListeners();
 

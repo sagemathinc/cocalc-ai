@@ -24,6 +24,7 @@ import { EventEmitter } from "events";
 import { getLogger } from "@cocalc/conat/logger";
 import { until } from "@cocalc/util/async-utils";
 import {
+  clearPersistServerIdCache,
   getPersistServerId,
   PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS,
 } from "./load-balancer";
@@ -329,6 +330,7 @@ class PersistStreamClient extends EventEmitter {
     this.socket = this.client.socket.connect(subject, {
       desc: `persist: ${this.storage.path}`,
       reconnection: false,
+      keepAlive: 0,
       loadBalancerTimeout: PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS,
       loadBalancer: async (subject: string) =>
         await getPersistServerId({ client: this.client, subject }),
@@ -345,6 +347,7 @@ class PersistStreamClient extends EventEmitter {
     this.socket.once("ready", this.onSocketReady);
 
     this.socket.once("disconnected", () => {
+      clearPersistServerIdCache(this.client);
       stats.socketDisconnected += 1;
       this.reconnecting = true;
       this.cancelStableReconnectReset();
@@ -353,6 +356,7 @@ class PersistStreamClient extends EventEmitter {
       this.scheduleReconnect();
     });
     this.socket.once("closed", () => {
+      clearPersistServerIdCache(this.client);
       stats.socketClosed += 1;
       this.reconnecting = true;
       this.cancelStableReconnectReset();

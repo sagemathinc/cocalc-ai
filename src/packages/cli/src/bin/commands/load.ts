@@ -1628,6 +1628,10 @@ export function registerLoadCommand(
       "--hot-path",
       "measure only user hot-path routing reads; skip Bay Ops overview and detail",
     )
+    .option(
+      "--batched-routing",
+      "with --hot-path, resolve account/project/host routing in one system RPC",
+    )
     .action(
       async (
         opts: {
@@ -1640,6 +1644,7 @@ export function registerLoadCommand(
           detailBays?: string;
           bayDetail?: boolean;
           hotPath?: boolean;
+          batchedRouting?: boolean;
         },
         command: Command,
       ) => {
@@ -1685,42 +1690,64 @@ export function registerLoadCommand(
             durationMs,
             concurrency,
             execute: async (_sampleIndex, _workerIndex, measure) => {
-              const accountBay = await measure("account-home-bay", async () =>
-                ctx.hub.system.getAccountBay({
-                  user_account_id: ctx.accountId,
-                }),
-              );
-              const projectRows = (await measure("project-list", async () =>
-                queryProjects({
-                  ctx,
-                  limit: projectLimit,
-                }),
-              )) as Array<{ project_id?: string; host_id?: string | null }>;
-              const projectBay = await measure("project-owning-bay", async () =>
-                ctx.hub.system.getProjectBay({
-                  project_id: project.project_id,
-                }),
-              );
+              const projectRows = opts.hotPath
+                ? []
+                : ((await measure("project-list", async () =>
+                    queryProjects({
+                      ctx,
+                      limit: projectLimit,
+                    }),
+                  )) as Array<{
+                    project_id?: string;
+                    host_id?: string | null;
+                  }>);
               const hostId =
                 (project as { host_id?: string | null }).host_id ??
                 projectRows.find((row) => row.project_id === project.project_id)
                   ?.host_id ??
                 projectRows[0]?.host_id ??
                 null;
-              const hostBay = hostId
-                ? await measure("host-bay", async () =>
-                    ctx.hub.system.getHostBay({
-                      host_id: hostId,
-                    }),
-                  )
-                : null;
-              const collaborators = (await measure(
-                "project-collaborators",
-                async () =>
-                  ctx.hub.projects.listCollaborators({
+              const routingContext =
+                opts.hotPath && opts.batchedRouting
+                  ? await measure("routing-context", async () =>
+                      ctx.hub.system.getRoutingContext({
+                        user_account_id: ctx.accountId,
+                        project_id: project.project_id,
+                        host_id: hostId,
+                      }),
+                    )
+                  : null;
+              const hasRoutingContext = routingContext != null;
+              const accountBay =
+                routingContext?.account ??
+                (await measure("account-home-bay", async () =>
+                  ctx.hub.system.getAccountBay({
+                    user_account_id: ctx.accountId,
+                  }),
+                ));
+              const projectBay =
+                routingContext?.project ??
+                (await measure("project-owning-bay", async () =>
+                  ctx.hub.system.getProjectBay({
                     project_id: project.project_id,
                   }),
-              )) as Array<{ account_id?: string; group?: string }>;
+                ));
+              const hostBay = hasRoutingContext
+                ? routingContext.host
+                : hostId
+                  ? await measure("host-bay", async () =>
+                      ctx.hub.system.getHostBay({
+                        host_id: hostId,
+                      }),
+                    )
+                  : null;
+              const collaborators = opts.hotPath
+                ? []
+                : ((await measure("project-collaborators", async () =>
+                    ctx.hub.projects.listCollaborators({
+                      project_id: project.project_id,
+                    }),
+                  )) as Array<{ account_id?: string; group?: string }>);
               const overview = opts.hotPath
                 ? null
                 : ((await measure("bay-ops-overview", async () =>

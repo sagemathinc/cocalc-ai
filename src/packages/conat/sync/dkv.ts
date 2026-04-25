@@ -520,8 +520,21 @@ export class DKV<T = any> extends EventEmitter {
 
   delete = (key) => {
     this._delete(key);
-    if (!this.noAutosave) {
-      this.save();
+    if (!this.noAutosave && this.kv != null) {
+      // Start the tombstone write immediately. Some callers inspect the
+      // underlying stream inventory right after delete, so going through the
+      // coalesced save loop can let that read overtake this write.
+      this.kv
+        .deleteKv(key, { force: true, waitForLocal: false })
+        .then(() => {
+          if (this.local?.[key] === TOMBSTONE) {
+            this.changed.delete(key);
+            this.discardLocalState(key);
+          }
+        })
+        .catch(() => {
+          this.save();
+        });
     }
   };
 
@@ -638,11 +651,14 @@ export class DKV<T = any> extends EventEmitter {
     if (this.noAutosave) {
       return await this.attemptToSave();
     }
-    const status = await this.flush();
+    let status;
     await until(
       async () => {
         if (this.kv == null) {
           return true;
+        }
+        if (this.hasUnsavedChanges()) {
+          status = await this.flush();
         }
         return this.isStable();
       },
@@ -679,7 +695,7 @@ export class DKV<T = any> extends EventEmitter {
         }
         try {
           status.unsaved += 1;
-          await this.kv.deleteKv(key);
+          await this.kv.deleteKv(key, { force: true, waitForLocal: false });
           if (this.kv == null) return;
           status.delete += 1;
           status.unsaved -= 1;

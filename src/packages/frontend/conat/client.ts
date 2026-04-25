@@ -507,9 +507,6 @@ export class ConatClient extends EventEmitter {
       },
     ];
     for (const [host_id, state] of Object.entries(this.routedHubClients)) {
-      if (!state.client?.conn?.connected) {
-        continue;
-      }
       targets.push({
         id: `project-host:${host_id}`,
         kind: "project-host",

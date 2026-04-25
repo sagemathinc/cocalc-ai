@@ -17,6 +17,65 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ConnectionTargetSnapshot } from "@cocalc/frontend/conat/client";
 import { ConnectionStatsDisplay } from "./connection-status";
 
+type ConnectionStatsSnapshot = ConnectionTargetSnapshot["status"]["stats"];
+
+type ConnectionRateSnapshot = {
+  sendMessagesPerSec: number;
+  sendBytesPerSec: number;
+  recvMessagesPerSec: number;
+  recvBytesPerSec: number;
+  sampleWindowSec?: number;
+};
+
+type ConnectionSample = {
+  at: number;
+  stats: ConnectionStatsSnapshot;
+};
+
+type ConnectionSampleHistory = ConnectionSample[];
+
+function cloneConnectionStats(
+  stats: ConnectionStatsSnapshot,
+): ConnectionStatsSnapshot {
+  return {
+    send: {
+      messages: stats?.send?.messages ?? 0,
+      bytes: stats?.send?.bytes ?? 0,
+    },
+    recv: {
+      messages: stats?.recv?.messages ?? 0,
+      bytes: stats?.recv?.bytes ?? 0,
+    },
+    subs: stats?.subs ?? 0,
+  };
+}
+
+function computeRates(
+  history?: ConnectionSampleHistory,
+): ConnectionRateSnapshot | undefined {
+  if (!history || history.length < 2) return undefined;
+  const first = history[0];
+  const last = history[history.length - 1];
+  const deltaMs = last.at - first.at;
+  if (!(deltaMs > 0)) return undefined;
+  const deltaSec = deltaMs / 1000;
+  const delta = (current: number, prev: number) =>
+    Math.max(0, current - prev) / deltaSec;
+  return {
+    sendMessagesPerSec: delta(
+      last.stats.send.messages,
+      first.stats.send.messages,
+    ),
+    sendBytesPerSec: delta(last.stats.send.bytes, first.stats.send.bytes),
+    recvMessagesPerSec: delta(
+      last.stats.recv.messages,
+      first.stats.recv.messages,
+    ),
+    recvBytesPerSec: delta(last.stats.recv.bytes, first.stats.recv.bytes),
+    sampleWindowSec: deltaSec,
+  };
+}
+
 export const ConnectionInfo: React.FC = React.memo(() => {
   const intl = useIntl();
 
@@ -30,6 +89,9 @@ export const ConnectionInfo: React.FC = React.memo(() => {
   const [selectedTargetPing, setSelectedTargetPing] = React.useState<
     number | undefined
   >();
+  const [samples, setSamples] = React.useState<
+    Record<string, ConnectionSampleHistory>
+  >({});
 
   React.useEffect(() => {
     const refresh = () => {
@@ -47,6 +109,22 @@ export const ConnectionInfo: React.FC = React.memo(() => {
     setSelectedTargetId("hub");
   }, [selectedTargetId, targets]);
 
+  React.useEffect(() => {
+    const at = Date.now();
+    setSamples((prev) => {
+      const next: Record<string, ConnectionSampleHistory> = {};
+      for (const target of targets) {
+        const current: ConnectionSample = {
+          at,
+          stats: cloneConnectionStats(target.status.stats),
+        };
+        const history = [...(prev[target.id] ?? []), current];
+        next[target.id] = history.slice(-8);
+      }
+      return next;
+    });
+  }, [targets]);
+
   const selectedTarget = React.useMemo(() => {
     return (
       targets.find((target) => target.id === selectedTargetId) ??
@@ -60,6 +138,11 @@ export const ConnectionInfo: React.FC = React.memo(() => {
     }
     return selectedTarget?.status;
   }, [conat, selectedTarget]);
+
+  const selectedRates = React.useMemo(
+    () => computeRates(samples[selectedTargetId]),
+    [samples, selectedTargetId],
+  );
 
   React.useEffect(() => {
     const targetId = selectedTarget?.id;
@@ -114,6 +197,66 @@ export const ConnectionInfo: React.FC = React.memo(() => {
     );
   }, [selectedTarget, selectedTargetId, targets]);
 
+  const exportSelectedConnectionStats = React.useCallback(() => {
+    if (typeof window === "undefined" || !selectedTarget || !selectedStatus) {
+      return;
+    }
+    const payload = {
+      export_version: 1,
+      exported_at: new Date().toISOString(),
+      selected_target: {
+        id: selectedTarget.id,
+        kind: selectedTarget.kind,
+        label: selectedTarget.label,
+        address: selectedTarget.address,
+      },
+      ping:
+        selectedTarget.id === "hub"
+          ? { latest_ms: ping, average_ms: avgping }
+          : { latest_ms: selectedTargetPing },
+      status: {
+        state: selectedStatus.state,
+        reason: selectedStatus.reason,
+        details: selectedStatus.details,
+      },
+      stats: cloneConnectionStats(selectedStatus.stats),
+      rates_per_sec: selectedRates ?? null,
+      all_targets: targets.map((target) => ({
+        id: target.id,
+        kind: target.kind,
+        label: target.label,
+        address: target.address,
+        state: target.status.state,
+        reason: target.status.reason,
+        details: target.status.details,
+        stats: cloneConnectionStats(target.status.stats),
+        rates_per_sec: computeRates(samples[target.id]) ?? null,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const target = selectedTarget.id.replace(/[^a-zA-Z0-9_-]+/g, "_");
+    const url = window.URL.createObjectURL(blob);
+    const link = window.document.createElement("a");
+    link.href = url;
+    link.download = `connection-stats-${target}-${timestamp}.json`;
+    window.document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  }, [
+    avgping,
+    ping,
+    samples,
+    selectedRates,
+    selectedStatus,
+    selectedTarget,
+    selectedTargetPing,
+    targets,
+  ]);
+
   function close() {
     page_actions.show_connection(false);
   }
@@ -131,6 +274,13 @@ export const ConnectionInfo: React.FC = React.memo(() => {
           <Icon name="wifi" style={{ marginRight: "1em" }} />{" "}
           {intl.formatMessage(labels.connection)}
           <div style={{ flex: 1 }} />
+          <Button
+            onClick={exportSelectedConnectionStats}
+            disabled={selectedTarget == null || selectedStatus == null}
+            style={{ marginRight: "8px" }}
+          >
+            <Icon name="download" /> Export stats
+          </Button>
           <Button
             onClick={() => {
               webapp_client.conat_client.reconnect();
@@ -150,6 +300,7 @@ export const ConnectionInfo: React.FC = React.memo(() => {
                 status={selectedStatus}
                 targetLabel={targetSelector}
                 address={selectedTarget.address}
+                rates={selectedRates}
               />
             </Col>
           </Row>

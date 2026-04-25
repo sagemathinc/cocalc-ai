@@ -221,7 +221,8 @@ import {
 } from "socket.io-client";
 import { EventIterator } from "@cocalc/util/event-iterator";
 import type { ConnectionStats, ServerInfo } from "./types";
-import * as msgpack from "@msgpack/msgpack";
+import { DataEncoding, decode, encode } from "./codec";
+export { DataEncoding, decode, encode } from "./codec";
 import { randomId } from "@cocalc/conat/names";
 import type { JSONValue } from "@cocalc/util/types";
 import { EventEmitter } from "events";
@@ -284,13 +285,6 @@ export const MAX_INTEREST_TIMEOUT = 90_000;
 
 const DEFAULT_WAIT_FOR_INTEREST_TIMEOUT = 30_000;
 
-// WARNING: do NOT change MSGPACK_ENCODER_OPTIONS unless you know what you're doing!
-const MSGPACK_ENCODER_OPTIONS = {
-  // ignoreUndefined is critical so database queries work properly, and
-  // also we have a lot of api calls with tons of wasted undefined values.
-  ignoreUndefined: true,
-};
-
 export const DEFAULT_SOCKETIO_CLIENT_OPTIONS = {
   // A major problem if we allow long polling is that we must always use at most
   // half the chunk size... because there is no way to know if recipients will be
@@ -345,7 +339,8 @@ const INBOX_PREFIX = "_INBOX";
 const REPLY_HEADER = "CN-Reply";
 const MAX_HEADER_SIZE = 100000;
 
-const STATS_LOOP = 5000;
+const STATS_LOOP = 45 * 1000;
+const IDLE_STATS_LOOP = 5 * 60 * 1000;
 
 // fairly long since this is to avoid leaks, not for responsiveness in the UI.
 export const DEFAULT_SUBSCRIPTION_TIMEOUT = 60_000;
@@ -365,11 +360,6 @@ export function setDefaultTimeouts({
 }) {
   DEFAULT_REQUEST_TIMEOUT = request;
   DEFAULT_PUBLISH_TIMEOUT = publish;
-}
-
-export enum DataEncoding {
-  MsgPack = 0,
-  JsonCodec = 1,
 }
 
 export type ConatTraceDirection = "send" | "recv";
@@ -636,6 +626,8 @@ export class Client extends EventEmitter {
   private scheduledSyncSubscriptionsTimer?: ReturnType<typeof setTimeout>;
   private statsLoopTimer?: ReturnType<typeof setTimeout>;
   private statsLoopResolve?: () => void;
+  private lastSentRecvStats = { messages: 0, bytes: 0 };
+  private lastSentRecvStatsAt = 0;
   public readonly recoveryScheduler: RecoveryScheduler;
   public readonly heartbeatScheduler: HeartbeatScheduler;
 
@@ -751,6 +743,8 @@ export class Client extends EventEmitter {
         return;
       }
       this.stats.recv0 = { messages: 0, bytes: 0 }; // reset on disconnect
+      this.lastSentRecvStats = { messages: 0, bytes: 0 };
+      this.lastSentRecvStatsAt = 0;
       this.setState("disconnected");
       this.disconnectAllSockets();
     });
@@ -863,7 +857,22 @@ export class Client extends EventEmitter {
         if (this.isClosed()) {
           return;
         }
-        this.conn.emit("stats", { recv0: this.stats.recv0 });
+        const recv0 = this.stats.recv0;
+        const recvChanged =
+          recv0.messages !== this.lastSentRecvStats.messages ||
+          recv0.bytes !== this.lastSentRecvStats.bytes;
+        const now = Date.now();
+        const idleRefreshDue =
+          this.lastSentRecvStatsAt === 0 ||
+          now - this.lastSentRecvStatsAt >= IDLE_STATS_LOOP;
+        if (recvChanged || idleRefreshDue) {
+          this.conn.emit("stats", { recv0 });
+          this.lastSentRecvStats = {
+            messages: recv0.messages,
+            bytes: recv0.bytes,
+          };
+          this.lastSentRecvStatsAt = now;
+        }
       } catch {}
       if (this.isClosed()) {
         return;
@@ -2598,55 +2607,6 @@ interface RequestManyOptions extends PublishOptions {
   maxMessages?: number;
 }
 
-export function encode({
-  encoding,
-  mesg,
-}: {
-  encoding: DataEncoding;
-  mesg: any;
-}) {
-  if (encoding == DataEncoding.MsgPack) {
-    return msgpack.encode(mesg, MSGPACK_ENCODER_OPTIONS);
-  } else if (encoding == DataEncoding.JsonCodec) {
-    return jsonEncoder(mesg);
-  } else {
-    throw Error(`unknown encoding ${encoding}`);
-  }
-}
-
-export function decode({
-  encoding,
-  data,
-}: {
-  encoding: DataEncoding;
-  data;
-}): any {
-  if (encoding == DataEncoding.MsgPack) {
-    return msgpack.decode(data);
-  } else if (encoding == DataEncoding.JsonCodec) {
-    return jsonDecoder(data);
-  } else {
-    throw Error(`unknown encoding ${encoding}`);
-  }
-}
-
-let textEncoder: any = undefined;
-let textDecoder: any = undefined;
-
-function jsonEncoder(obj: any) {
-  if (textEncoder === undefined) {
-    textEncoder = new TextEncoder();
-  }
-  return textEncoder.encode(JSON.stringify(obj));
-}
-
-function jsonDecoder(data: Buffer): any {
-  if (textDecoder === undefined) {
-    textDecoder = new TextDecoder();
-  }
-  return JSON.parse(textDecoder.decode(data));
-}
-
 interface Chunk {
   id: string;
   seq: number;
@@ -2976,21 +2936,27 @@ export class Message<T = any> extends MessageData<T> {
     return this.client.publishSync(subject, mesg, opts);
   };
 
-  respond = async (
+  respond = (
     mesg,
     opts: PublishOptions = {},
   ): Promise<{ bytes: number; count: number }> => {
     const subject = this.respondSubject();
     if (!subject) {
-      return { bytes: 0, count: 0 };
+      return Promise.resolve({ bytes: 0, count: 0 });
     }
-    return await this.client.publish(subject, mesg, {
+    const promise = this.client.publish(subject, mesg, {
       // we *always* wait for interest for async respond, since
       // it is by far the most likely situation where it wil be needed, due
       // to inboxes when users first sign in.
       waitForInterest: true,
       ...opts,
     });
+    // Many request handlers use mesg.respond(...) fire-and-forget.  Keep
+    // awaited callers seeing failures, but prevent cleanup races from becoming
+    // process-level unhandled rejections when the caller intentionally ignores
+    // the returned promise.
+    promise.catch(() => undefined);
+    return promise;
   };
 }
 

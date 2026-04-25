@@ -240,6 +240,7 @@ type HostListViewModel = {
   onToggleCreatePanel?: () => void;
   onRefresh: () => void;
   onCancelOp?: (op_id: string) => void;
+  onRefreshCloudStatus?: (host: Host) => void;
   onUpgrade?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
   onDetails: (host: Host) => void;
@@ -329,6 +330,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     onToggleCreatePanel,
     onRefresh,
     onCancelOp,
+    onRefreshCloudStatus,
     onUpgrade,
     onUpgradeFromHub,
     onDetails,
@@ -1557,6 +1559,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                 onDrain={onDrain}
                 onDelete={onDelete}
                 onCancelOp={onCancelOp}
+                onRefreshCloudStatus={onRefreshCloudStatus}
                 onDetails={onDetails}
                 onEdit={onEdit}
                 onToggleStar={onToggleStar}

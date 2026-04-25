@@ -1,5 +1,13 @@
 # Scalable Architecture Remaining Checklist
 
+Superseded as the primary working checklist by:
+
+- [scalable-architecture-release-checklist-2026-04-24.md](/home/user/cocalc-ai/src/.agents/scalable-architecture-release-checklist-2026-04-24.md)
+
+This older document remains useful as background detail and historical context,
+but the 2026-04-24 checklist is now the concrete execution list for release and
+near-term scalability work.
+
 Status: active checklist as of 2026-04-21.
 
 This is the current execution checklist for finishing the scalable control-plane
@@ -621,6 +629,20 @@ answer must be based on an explicit model, not a single benchmark number:
   - project-host daemon pressure
 - [ ] specifically measure the impact of project-host cookie-based reconnect
       auth on bay traffic reduction
+- [ ] make fast-rpc typed services viable for rare large responses:
+  - keep the common typed-service path on fast-rpc for small request/response
+    payloads
+  - when the encoded response is too large for fast-rpc, store the encoded
+    result once in a short-lived Conat DKV entry and return a large-result
+    reference
+  - have the typed-service client transparently fetch, decode, and optionally
+    delete/expire that referenced result so callers still see the normal return
+    value
+  - bound this by TTL, byte budget, authenticated caller/service scope, and
+    cleanup; this is for rare oversized read results, not ordinary high-volume
+    traffic
+  - this avoids recomputing expensive reads such as "list all projects" with a
+    huge response and avoids unsafe automatic retries for mutating calls
 - [x] add opt-in browser traffic summary tooling:
   - `cocalc browser network summary --duration ...`
   - records Conat/HTTP/WS trace events without decoded payloads by default
