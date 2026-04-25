@@ -408,7 +408,6 @@ const LOCAL_HOST_PROJECT_ROWS = [
 
 describe("hosts.listHostProjects", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     process.env.COCALC_BAY_ID = "bay-0";
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
@@ -662,7 +661,6 @@ describe("hosts.listHostProjects", () => {
 
 describe("hosts.createHost", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     process.env.COCALC_BAY_ID = "bay-0";
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
@@ -824,7 +822,6 @@ describe("hosts.createHost", () => {
 
 describe("hosts.getHostRuntimeDeploymentStatus", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     process.env.COCALC_BAY_ID = "bay-0";
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
@@ -1234,7 +1231,6 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
 
 describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
@@ -1409,7 +1405,6 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
 
 describe("hosts.setHostRuntimeDeployments automatic artifact reconcile", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
@@ -1550,7 +1545,6 @@ describe("hosts.setHostRuntimeDeployments automatic artifact reconcile", () => {
 
 describe("hosts.upgradeHostSoftware", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
@@ -1639,7 +1633,6 @@ describe("hosts.upgradeHostSoftware", () => {
 
 describe("hosts.stopHostProjects / restartHostProjects", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     process.env.COCALC_BAY_ID = "bay-0";
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
@@ -1895,7 +1888,6 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
 
 describe("hosts.rollbackProjectHostOverSshInternal", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
@@ -2232,7 +2224,6 @@ describe("hosts.resolveHostConnection", () => {
   const REMOTE_PROJECT_ID = "project-remote";
 
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
@@ -2406,7 +2397,6 @@ describe("hosts.issueProjectHostAuthToken", () => {
   const PROJECT_UUID = "00000000-0000-4000-8000-000000000203";
 
   beforeEach(() => {
-    jest.resetModules();
     queryMock = jest.fn();
     isAdminMock = jest.fn(async () => false);
     isBannedMock = jest.fn(async () => false);
@@ -2595,7 +2585,6 @@ describe("hosts.issueProjectHostAuthToken", () => {
 
 describe("hosts.listHosts bootstrap normalization", () => {
   beforeEach(() => {
-    jest.resetModules();
     delete process.env.COCALC_CLUSTER_BAY_IDS;
     delete process.env.COCALC_BAY_ID;
     isAdminMock = jest.fn(async () => true);
@@ -2968,7 +2957,6 @@ describe("hosts.listHosts bootstrap normalization", () => {
 
 describe("hosts.refreshHostCloudState", () => {
   beforeEach(() => {
-    jest.resetModules();
     isAdminMock = jest.fn(async () => true);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.includes("SELECT id, deleted, metadata")) {
@@ -3041,7 +3029,6 @@ describe("hosts.refreshHostCloudState", () => {
 
 describe("hosts.drainHostInternal", () => {
   beforeEach(() => {
-    jest.resetModules();
     isAdminMock = jest.fn(async () => true);
     moveProjectToHostMock = jest.fn();
     queryMock = jest.fn(async (sql: string, params: any[]) => {
