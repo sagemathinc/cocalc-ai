@@ -144,7 +144,10 @@ export function registerProjectTerminalCommands(
     .description("write input to a terminal session")
     .option("-w, --project <project>", "project id or name")
     .option("--stdin", "read input from stdin")
-    .option("--enter", "append a newline to the input")
+    .option(
+      "--enter",
+      "append a newline to the input; usually needed to execute a shell command",
+    )
     .option(
       "--force",
       "write as user input even when a browser is actively leading the terminal",

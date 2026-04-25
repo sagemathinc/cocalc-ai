@@ -98,5 +98,12 @@ describe("createChat", () => {
         prompt: expect.stringContaining("cocalc project terminal history <id>"),
       }),
     );
+    expect(dispatchNavigatorPromptIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining(
+          "cocalc project terminal write <id> --enter -- ...",
+        ),
+      }),
+    );
   });
 });

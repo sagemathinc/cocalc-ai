@@ -147,7 +147,7 @@ export async function createChatMessage(
       ? "Use the current CoCalc terminal context as the live source of truth."
       : "Inspect the current document through CoCalc live document APIs before editing.",
     frameType === "terminal" && terminalContext?.terminal_session_id
-      ? `This terminal tab is attached to live terminal session \`${terminalContext.terminal_session_id}\`. Use \`cocalc project terminal history <id>\`, \`state <id>\`, \`cwd <id>\`, and \`write <id> ...\` when you need to inspect or interact with this exact session.`
+      ? `This terminal tab is attached to live terminal session \`${terminalContext.terminal_session_id}\`. Use \`cocalc project terminal history <id>\`, \`state <id>\`, \`cwd <id>\`, and \`write <id> ...\` when you need to inspect or interact with this exact session. When sending a shell command, prefer \`cocalc project terminal write <id> --enter -- ...\` so the command actually runs. Use plain \`write\` without \`--enter\` only when you intentionally want to leave input pending at the prompt or inside an interactive program.`
       : undefined,
     frameType === "terminal"
       ? "A `.term` file path alone does not uniquely identify the live terminal session; prefer the session id when operating on the terminal."
@@ -228,7 +228,7 @@ function createNavigatorAssistantPrompt({
     "Handle this CoCalc assistant request as a Codex agent.",
     `Visible user request: ${createAssistantVisiblePrompt(options.command)}`,
     frameType === "terminal" && terminalContext?.terminal_session_id
-      ? `The current terminal frame is attached to live session \`${terminalContext.terminal_session_id}\`. Prefer \`cocalc project terminal history <id>\`, \`cwd <id>\`, \`state <id>\`, and \`write <id> ...\` when you need to inspect or act on this terminal.`
+      ? `The current terminal frame is attached to live session \`${terminalContext.terminal_session_id}\`. Prefer \`cocalc project terminal history <id>\`, \`cwd <id>\`, \`state <id>\`, and \`write <id> ...\` when you need to inspect or act on this terminal. When sending a shell command, use \`cocalc project terminal write <id> --enter -- ...\` unless you intentionally want to leave input pending.`
       : undefined,
     "Treat the live in-memory sync version of the current document as the source of truth whenever a live document API exists.",
     "Do not assume the filesystem copy is current.",
