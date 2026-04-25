@@ -2540,6 +2540,7 @@ export async function updateCloudCatalog({
   }
   await refreshCloudCatalogNow({
     provider: provider as ProviderId | undefined,
+    wait: true,
   });
 }
 
