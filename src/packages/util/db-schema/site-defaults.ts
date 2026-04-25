@@ -480,7 +480,7 @@ export const site_settings_conf: SiteSettings = {
   },
   policy_pages: {
     name: "Policy pages",
-    desc: "Select which public policy pages to expose. Use custom pages for your own deployment-specific policy text, or SageMath, Inc. policies only for official CoCalc deployments.",
+    desc: "Select which public policy pages to expose. Use configured policy pages for deployment-specific legal text hosted on this site. Use SageMath, Inc. policies only for official CoCalc deployments.",
     default: "none",
     valid: ["none", "custom", "sagemathinc"],
     valid_labels: {
@@ -496,7 +496,7 @@ export const site_settings_conf: SiteSettings = {
   },
   terms_of_service_url: {
     name: "Terms of Service / Policies URL",
-    desc: "External URL for Terms of Service or policy information. When custom policy pages are enabled, /policies will use this URL instead of local configured policy pages.",
+    desc: "External URL for Terms of Service or policy information hosted outside this site. When custom policy pages are enabled, /policies will use this external URL instead of local configured policy pages; for same-site policy text, use the Policies page setting below.",
     default: "",
     clearable: true,
     show: show_theming_vars,
@@ -619,7 +619,7 @@ export const site_settings_conf: SiteSettings = {
   },
   policies: {
     name: "Policies page",
-    desc: "Policies information on optional dedicated page – HTML/Markdown.",
+    desc: "Deployment-specific policy information hosted on this site at /policies/policies – HTML/Markdown. If your policies are hosted externally instead, set the Terms of Service / Policies URL above.",
     default: "",
     clearable: true,
     show: show_theming_vars,
