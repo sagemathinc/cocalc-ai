@@ -124,6 +124,48 @@ function progressPercent(
   return Math.round((index / Math.max(1, START_PHASES.length - 1)) * 100);
 }
 
+export function getStartProgressMessage({
+  phase,
+  rawMessage,
+  lifecycleState,
+  startLroActive,
+  activeOpStartLike,
+}: {
+  phase: StartPhaseKey;
+  rawMessage: string;
+  lifecycleState?: string;
+  startLroActive: boolean;
+  activeOpStartLike: boolean;
+}): string {
+  if (rawMessage && rawMessage.toLowerCase() !== phase) {
+    return rawMessage;
+  }
+  const normalizedLifecycleState = `${lifecycleState ?? ""}`
+    .trim()
+    .toLowerCase();
+  if (phase === "queued") {
+    if (normalizedLifecycleState === "archived") {
+      return "Project restore is being prepared. Archived projects can wait here while backup restore and RootFS preparation are getting ready.";
+    }
+    return "Project start is queued. This can take a while while backup restore and RootFS preparation are getting ready.";
+  }
+  if (phase === "cache_rootfs") {
+    return "Making the RootFS image available on this host.";
+  }
+  if (
+    !startLroActive &&
+    !activeOpStartLike &&
+    (normalizedLifecycleState === "starting" ||
+      normalizedLifecycleState === "opening")
+  ) {
+    return "Project is starting. Detailed startup progress has not arrived yet.";
+  }
+  return (
+    START_PHASES.find((entry) => entry.key === phase)?.description ??
+    "Starting project"
+  );
+}
+
 export default function StartInProgress({
   project_id,
 }: {
@@ -215,14 +257,13 @@ export default function StartInProgress({
   const phaseLabel = START_PHASES[current]?.label ?? "Starting";
   const actionLabel =
     activeOp?.action === "restart" ? "Restarting" : "Starting";
-  const message =
-    rawMessage && rawMessage.toLowerCase() !== phase
-      ? rawMessage
-      : !startLroActive &&
-          !activeOpStartLike &&
-          (lifecycleState === "starting" || lifecycleState === "opening")
-        ? "Project is starting. Detailed startup progress has not arrived yet."
-        : (START_PHASES[current]?.description ?? "Starting project");
+  const message = getStartProgressMessage({
+    phase,
+    rawMessage,
+    lifecycleState,
+    startLroActive,
+    activeOpStartLike,
+  });
 
   return (
     <div

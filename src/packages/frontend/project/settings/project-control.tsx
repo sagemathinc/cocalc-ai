@@ -206,6 +206,19 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     );
   }
 
+  function render_archived_note() {
+    if (displayStateValue !== "archived") {
+      return;
+    }
+    return (
+      <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: "12px" }}>
+        Archived projects do not count toward active storage. Starting this
+        project restores it from backup and may take a while while the RootFS
+        image is made available on the host.
+      </Paragraph>
+    );
+  }
+
   function render_uptime() {
     // start_ts is a timestamp, e.g. 1508576664416
     const start_ts = projectStatus?.get("start_ts");
@@ -280,6 +293,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       <>
         <div>
           {render_action_buttons()}
+          {render_archived_note()}
           <ProjectControlStatus style={{ margin: "10px 0px" }} />
           <ProjectControlError
             style={{ margin: "10px 0px" }}
