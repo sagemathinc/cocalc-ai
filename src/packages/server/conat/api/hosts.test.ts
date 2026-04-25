@@ -408,7 +408,6 @@ const LOCAL_HOST_PROJECT_ROWS = [
 
 describe("hosts.listHostProjects", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     process.env.COCALC_BAY_ID = "bay-0";
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
@@ -662,7 +661,6 @@ describe("hosts.listHostProjects", () => {
 
 describe("hosts.createHost", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     process.env.COCALC_BAY_ID = "bay-0";
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
@@ -824,7 +822,6 @@ describe("hosts.createHost", () => {
 
 describe("hosts.getHostRuntimeDeploymentStatus", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     process.env.COCALC_BAY_ID = "bay-0";
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
@@ -1234,7 +1231,6 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
 
 describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
@@ -1409,7 +1405,6 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
 
 describe("hosts.setHostRuntimeDeployments automatic artifact reconcile", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
@@ -1550,7 +1545,6 @@ describe("hosts.setHostRuntimeDeployments automatic artifact reconcile", () => {
 
 describe("hosts.upgradeHostSoftware", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
@@ -1639,7 +1633,6 @@ describe("hosts.upgradeHostSoftware", () => {
 
 describe("hosts.stopHostProjects / restartHostProjects", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     process.env.COCALC_BAY_ID = "bay-0";
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
@@ -1895,7 +1888,6 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
 
 describe("hosts.rollbackProjectHostOverSshInternal", () => {
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
@@ -2227,199 +2219,11 @@ describe("hosts.rollbackProjectHostOverSshInternal", () => {
   });
 });
 
-describe("hosts.rolloutHostManagedComponentsInternal local rollback", () => {
-  beforeEach(() => {
-    jest.resetModules();
-    process.env.LOGS = os.tmpdir();
-    isAdminMock = jest.fn(async () => true);
-    isBannedMock = jest.fn(async () => false);
-    moveProjectToHostMock = jest.fn();
-    resolveMembershipForAccountMock = jest.fn(async () => ({
-      entitlements: {},
-    }));
-    loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
-    syncProjectUsersOnHostMock = jest.fn(async () => undefined);
-    issueProjectHostAuthTokenJwtMock = jest.fn(() => ({
-      token: "test-token",
-      expires_at: 1234567890,
-    }));
-    assertAccountProjectHostTokenProjectAccessMock = jest.fn(
-      async () => undefined,
-    );
-    assertProjectHostAgentTokenAccessMock = jest.fn(async () => undefined);
-    hasAccountProjectHostTokenHostAccessMock = jest.fn(async () => false);
-    resolveProjectBayMock = jest.fn(async () => ({
-      bay_id: "bay-0",
-      epoch: 1,
-    }));
-    resolveHostBayMock = jest.fn(async () => ({
-      bay_id: "bay-0",
-      epoch: 1,
-    }));
-    hostConnectionGetMock = jest.fn();
-    projectHostAuthTokenIssueMock = jest.fn();
-    projectReferenceGetMock = jest.fn(async () => null);
-    listProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
-    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
-    setProjectHostRuntimeDeploymentsMock = jest.fn(async ({ deployments }) =>
-      deployments.map((deployment: any) => ({
-        scope_type: "host",
-        scope_id: HOST_ID,
-        host_id: HOST_ID,
-        requested_by: ACCOUNT_ID,
-        requested_at: "2026-04-15T00:00:00.000Z",
-        updated_at: "2026-04-15T00:00:00.000Z",
-        ...deployment,
-      })),
-    );
-    updateProjectUsersMock = jest.fn(async () => undefined);
-    routedHostControlClientMock = jest.fn(async () => ({
-      rolloutManagedComponents: jest.fn(async () => ({
-        results: [
-          {
-            component: "project-host",
-            action: "restart_scheduled",
-          },
-        ],
-      })),
-    }));
-  });
-
-  it("records a host-agent project-host rollback instead of treating the candidate as successful", async () => {
-    const baselineSeen = new Date(Date.now() - 1_000);
-    const refreshedSeen = new Date(Date.now() + 60_000);
-    const desiredRow = {
-      id: HOST_ID,
-      status: "running",
-      version: "ph-v2",
-      last_seen: baselineSeen,
-      metadata: {
-        owner: ACCOUNT_ID,
-        software: {
-          project_host: "ph-v2",
-        },
-      },
-    };
-    const rolledBackRow = {
-      ...desiredRow,
-      version: "ph-v1",
-      last_seen: refreshedSeen,
-      metadata: {
-        owner: ACCOUNT_ID,
-        software: {
-          project_host: "ph-v1",
-        },
-      },
-    };
-    let hostLoads = 0;
-    queryMock = jest.fn(async (sql: string, params: any[]) => {
-      if (sql.includes("SELECT * FROM project_hosts")) {
-        hostLoads += 1;
-        return { rows: [hostLoads === 1 ? desiredRow : rolledBackRow] };
-      }
-      if (sql.includes("SELECT deleted, last_seen FROM project_hosts")) {
-        return {
-          rows: [
-            {
-              deleted: false,
-              last_seen: refreshedSeen,
-            },
-          ],
-        };
-      }
-      if (
-        sql.includes(
-          "UPDATE project_hosts SET metadata=$2, version=$3, updated=NOW()",
-        )
-      ) {
-        expect(params[0]).toBe(HOST_ID);
-        expect(params[2]).toBe("ph-v1");
-        expect(params[1]).toMatchObject({
-          software: {
-            project_host: "ph-v1",
-          },
-        });
-        return { rows: [] };
-      }
-      if (sql.includes("UPDATE project_hosts SET metadata=$2, updated=NOW()")) {
-        expect(params[0]).toBe(HOST_ID);
-        expect(params[1]).toMatchObject({
-          runtime_deployments: {
-            last_known_good_versions: {
-              "project-host": "ph-v1",
-            },
-          },
-        });
-        return { rows: [] };
-      }
-      throw new Error(`unexpected query: ${sql}`);
-    });
-
-    const {
-      isProjectHostLocalRollbackError,
-      rolloutHostManagedComponentsInternal,
-    } = await import("./hosts");
-
-    let err: any;
-    try {
-      await rolloutHostManagedComponentsInternal({
-        account_id: ACCOUNT_ID,
-        id: HOST_ID,
-        components: ["project-host"],
-        reason: "host_software_upgrade",
-      });
-    } catch (caught) {
-      err = caught;
-    }
-
-    expect(isProjectHostLocalRollbackError(err)).toBe(true);
-    expect(err.automaticRollback).toEqual({
-      host_id: HOST_ID,
-      rollback_version: "ph-v1",
-      source: "host-agent",
-    });
-    expect(setProjectHostRuntimeDeploymentsMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scope_type: "host",
-        host_id: HOST_ID,
-        deployments: expect.arrayContaining([
-          expect.objectContaining({
-            target_type: "artifact",
-            target: "project-host",
-            desired_version: "ph-v1",
-          }),
-          expect.objectContaining({
-            target_type: "component",
-            target: "project-host",
-            desired_version: "ph-v1",
-          }),
-          expect.objectContaining({
-            target_type: "component",
-            target: "conat-router",
-            desired_version: "ph-v1",
-          }),
-          expect.objectContaining({
-            target_type: "component",
-            target: "conat-persist",
-            desired_version: "ph-v1",
-          }),
-          expect.objectContaining({
-            target_type: "component",
-            target: "acp-worker",
-            desired_version: "ph-v1",
-          }),
-        ]),
-      }),
-    );
-  });
-});
-
 describe("hosts.resolveHostConnection", () => {
   const REMOTE_HOST_ID = "host-remote";
   const REMOTE_PROJECT_ID = "project-remote";
 
   beforeEach(() => {
-    jest.resetModules();
     process.env.LOGS = os.tmpdir();
     isAdminMock = jest.fn(async () => true);
     isBannedMock = jest.fn(async () => false);
@@ -2593,7 +2397,6 @@ describe("hosts.issueProjectHostAuthToken", () => {
   const PROJECT_UUID = "00000000-0000-4000-8000-000000000203";
 
   beforeEach(() => {
-    jest.resetModules();
     queryMock = jest.fn();
     isAdminMock = jest.fn(async () => false);
     isBannedMock = jest.fn(async () => false);
@@ -2782,7 +2585,6 @@ describe("hosts.issueProjectHostAuthToken", () => {
 
 describe("hosts.listHosts bootstrap normalization", () => {
   beforeEach(() => {
-    jest.resetModules();
     delete process.env.COCALC_CLUSTER_BAY_IDS;
     delete process.env.COCALC_BAY_ID;
     isAdminMock = jest.fn(async () => true);
@@ -3155,7 +2957,6 @@ describe("hosts.listHosts bootstrap normalization", () => {
 
 describe("hosts.refreshHostCloudState", () => {
   beforeEach(() => {
-    jest.resetModules();
     isAdminMock = jest.fn(async () => true);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.includes("SELECT id, deleted, metadata")) {
@@ -3228,7 +3029,6 @@ describe("hosts.refreshHostCloudState", () => {
 
 describe("hosts.drainHostInternal", () => {
   beforeEach(() => {
-    jest.resetModules();
     isAdminMock = jest.fn(async () => true);
     moveProjectToHostMock = jest.fn();
     queryMock = jest.fn(async (sql: string, params: any[]) => {

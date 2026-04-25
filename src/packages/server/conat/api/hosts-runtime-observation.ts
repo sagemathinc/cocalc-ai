@@ -697,7 +697,8 @@ export function isProjectHostLocalRollbackError(err: any): err is Error & {
   };
 } {
   return (
-    err instanceof Error &&
+    err != null &&
+    typeof err === "object" &&
     `${(err as any)?.code ?? ""}` === PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE &&
     `${(err as any)?.automaticRollback?.rollback_version ?? ""}`.trim().length >
       0
