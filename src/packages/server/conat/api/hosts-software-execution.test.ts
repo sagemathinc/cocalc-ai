@@ -179,6 +179,91 @@ describe("upgradeHostSoftwareInternalHelper", () => {
 });
 
 describe("rolloutHostManagedComponentsInternalHelper", () => {
+  it("throws a local rollback error when project-host converges to the previous version", async () => {
+    const initialRow = {
+      id: "host-1",
+      status: "running",
+      version: "ph-v2",
+      last_seen: new Date("2026-04-25T18:00:00.000Z"),
+      metadata: {
+        owner: "account-1",
+        software: {
+          project_host: "ph-v2",
+        },
+      },
+    };
+    const rolledBackRow = {
+      ...initialRow,
+      version: "ph-v1",
+      last_seen: new Date("2026-04-25T18:01:00.000Z"),
+      metadata: {
+        owner: "account-1",
+        software: {
+          project_host: "ph-v1",
+        },
+      },
+    };
+    const loadHostForStartStop = jest
+      .fn()
+      .mockResolvedValueOnce(initialRow)
+      .mockResolvedValueOnce(rolledBackRow);
+    const automaticRollback = {
+      host_id: "host-1",
+      rollback_version: "ph-v1",
+      source: "host-agent" as const,
+    };
+    const recordProjectHostLocalRollbackInternal = jest.fn(
+      async () => automaticRollback,
+    );
+
+    await expect(
+      rolloutHostManagedComponentsInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        components: ["project-host"],
+        reason: "host_software_upgrade",
+        loadHostForStartStop,
+        assertHostRunningForUpgrade: () => undefined,
+        hostControlClient: async () => ({
+          getRuntimeLog: async ({ source }) => ({
+            source: source ?? "project-host",
+            lines: 25,
+            text: "",
+          }),
+          rolloutManagedComponents: async () => ({
+            results: [
+              {
+                component: "project-host",
+                action: "restart_scheduled",
+              },
+            ],
+          }),
+        }),
+        waitForHostHeartbeatAfter: async () => undefined,
+        installedProjectHostArtifactVersion: (row) =>
+          `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
+          undefined,
+        recordProjectHostLocalRollbackInternal,
+        project_host_local_rollback_error_code: "PROJECT_HOST_LOCAL_ROLLBACK",
+        setLastKnownGoodArtifactVersionInternal: async () => undefined,
+        runtimeDeploymentsForComponentRollout: () => [],
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => undefined,
+      }),
+    ).rejects.toMatchObject({
+      code: "PROJECT_HOST_LOCAL_ROLLBACK",
+      automaticRollback,
+    });
+
+    expect(loadHostForStartStop).toHaveBeenCalledTimes(2);
+    expect(recordProjectHostLocalRollbackInternal).toHaveBeenCalledWith({
+      account_id: "account-1",
+      id: "host-1",
+      version: "ph-v1",
+      reason: "automatic_project_host_local_rollback",
+    });
+  });
+
   it("appends recent host diagnostics when managed component rollout fails", async () => {
     await expect(
       rolloutHostManagedComponentsInternalHelper({
