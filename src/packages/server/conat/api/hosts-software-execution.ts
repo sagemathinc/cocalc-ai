@@ -32,6 +32,7 @@ import type {
 import type {
   HostManagedComponentRolloutRequest,
   HostManagedComponentRolloutResponse,
+  HostManagedComponentStatus,
   HostRuntimeLogSource,
   HostRuntimeRetentionPolicy,
 } from "@cocalc/conat/project-host/api";
@@ -66,6 +67,92 @@ function uniqueRuntimeLogSourcesForComponents(
 function trimRuntimeLogText(text?: string): string | undefined {
   const normalized = `${text ?? ""}`.trim();
   return normalized || undefined;
+}
+
+function normalizeObservedVersion(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return `${value}`;
+  }
+  return undefined;
+}
+
+function observedInstalledProjectHostVersionFromRow(
+  row: any,
+): string | undefined {
+  const inventoryVersion = Array.isArray(row?.metadata?.software_inventory)
+    ? row.metadata.software_inventory.find(
+        (entry: any) => `${entry?.artifact ?? ""}`.trim() === "project-host",
+      )?.current_version
+    : undefined;
+  const lifecycleInstalled = Array.isArray(
+    row?.metadata?.bootstrap_lifecycle?.items,
+  )
+    ? row.metadata.bootstrap_lifecycle.items.find(
+        (item: any) => `${item?.key ?? ""}`.trim() === "project_host_bundle",
+      )?.installed
+    : undefined;
+  return (
+    normalizeObservedVersion(inventoryVersion) ??
+    normalizeObservedVersion(lifecycleInstalled)
+  );
+}
+
+function observedInstalledProjectHostBuildIdFromRow(
+  row: any,
+): string | undefined {
+  const inventoryBuildId = Array.isArray(row?.metadata?.software_inventory)
+    ? row.metadata.software_inventory.find(
+        (entry: any) => `${entry?.artifact ?? ""}`.trim() === "project-host",
+      )?.current_build_id
+    : undefined;
+  return (
+    normalizeObservedVersion(inventoryBuildId) ??
+    normalizeObservedVersion(row?.metadata?.software?.project_host_build_id)
+  );
+}
+
+function normalizeObservedProjectHostRolloutVersion({
+  row,
+  desiredVersion,
+  observedVersion,
+}: {
+  row: any;
+  desiredVersion?: string;
+  observedVersion?: string;
+}): string | undefined {
+  const normalized = normalizeObservedVersion(observedVersion);
+  if (!normalized) return undefined;
+  const currentVersion = observedInstalledProjectHostVersionFromRow(row);
+  const currentBuildId = observedInstalledProjectHostBuildIdFromRow(row);
+  if (
+    desiredVersion &&
+    currentVersion === desiredVersion &&
+    currentBuildId &&
+    normalized === currentBuildId
+  ) {
+    return desiredVersion;
+  }
+  return normalized;
+}
+
+function observedRunningProjectHostVersion(
+  statuses?: HostManagedComponentStatus[],
+): string | undefined {
+  const projectHost = (statuses ?? []).find(
+    (status) => status.component === "project-host",
+  );
+  const versions = [
+    ...new Set(
+      (projectHost?.running_versions ?? [])
+        .map((version) => normalizeObservedVersion(version))
+        .filter((version): version is string => version != null),
+    ),
+  ];
+  return versions.length === 1 ? versions[0] : undefined;
 }
 
 async function enrichManagedComponentRolloutError({
@@ -318,6 +405,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
       components: HostManagedComponentRolloutRequest["components"];
       reason?: string;
     }) => Promise<HostManagedComponentRolloutResponse>;
+    getManagedComponentStatus?: () => Promise<HostManagedComponentStatus[]>;
   }>;
   waitForHostHeartbeatAfter: (opts: {
     host_id: string;
@@ -388,8 +476,34 @@ export async function rolloutHostManagedComponentsInternalHelper({
   const desiredVersion =
     `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
     undefined;
-  const observedProjectHostVersion =
-    installedProjectHostArtifactVersion(refreshedRow);
+  let observedProjectHostVersion =
+    observedInstalledProjectHostVersionFromRow(refreshedRow);
+  if (requestedProjectHostRollout) {
+    try {
+      const statusClient = await hostControlClient(id, 30_000);
+      if (typeof statusClient.getManagedComponentStatus === "function") {
+        observedProjectHostVersion =
+          observedRunningProjectHostVersion(
+            await statusClient.getManagedComponentStatus(),
+          ) ?? observedProjectHostVersion;
+      }
+    } catch {
+      // The host control RPC can still be coming back after project-host
+      // restart; fall back to bootstrap/runtime observations in that case.
+    }
+  }
+  observedProjectHostVersion = normalizeObservedProjectHostRolloutVersion({
+    row: refreshedRow,
+    desiredVersion,
+    observedVersion: observedProjectHostVersion,
+  });
+  const fallbackProjectHostVersion = normalizeObservedProjectHostRolloutVersion(
+    {
+      row: refreshedRow,
+      desiredVersion,
+      observedVersion: installedProjectHostArtifactVersion(refreshedRow),
+    },
+  );
   if (requestedProjectHostRollout && desiredVersion) {
     if (
       observedProjectHostVersion &&
@@ -416,7 +530,10 @@ export async function rolloutHostManagedComponentsInternalHelper({
       host_id: refreshedRow.id,
       row: refreshedRow,
       artifact: "project-host",
-      version: observedProjectHostVersion ?? desiredVersion,
+      version:
+        observedProjectHostVersion ??
+        fallbackProjectHostVersion ??
+        desiredVersion,
     });
   }
   const runtimeDeployments = runtimeDeploymentsForComponentRollout({
