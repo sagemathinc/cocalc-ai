@@ -932,6 +932,7 @@ export interface Projects {
   archiveProject: (opts: {
     account_id?: string;
     project_id: string;
+    timeout?: number;
   }) => Promise<void>;
   getProjectState: (opts: {
     account_id?: string;

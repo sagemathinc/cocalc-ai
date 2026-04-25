@@ -43,6 +43,7 @@ import {
   publishProjectDetailInvalidation,
 } from "@cocalc/frontend/project/use-project-field";
 import { ensureProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
+import { getBackups as getProjectBackups } from "@cocalc/frontend/project/archive-info";
 import {
   buildOfflineMoveConfirmationDialog,
   parseOfflineMoveConfirmationError,
@@ -113,6 +114,7 @@ type ProjectIndexBootstrapRow = {
 // Define projects actions
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
+  private static ARCHIVE_RPC_TIMEOUT_MS = 30_000;
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
@@ -1528,14 +1530,104 @@ export class ProjectsActions extends Actions<ProjectsState> {
     },
   );
 
+  private createBackupAndWaitForArchive = async (
+    project_id: string,
+  ): Promise<void> => {
+    const projectActions = redux.getProjectActions(project_id) as
+      | {
+          trackBackupOp?: (op: {
+            op_id?: string;
+            scope_type?: LroSummary["scope_type"];
+            scope_id?: string;
+          }) => void;
+        }
+      | undefined;
+    const op = await webapp_client.conat_client.hub.projects.createBackup({
+      project_id,
+    });
+    projectActions?.trackBackupOp?.(op);
+    const summary = await webapp_client.conat_client.lroWait({
+      op_id: op.op_id,
+      scope_type: op.scope_type,
+      scope_id: op.scope_id,
+    });
+    if (summary.status !== "succeeded") {
+      throw Error(summary.error ?? `backup ${summary.status}`);
+    }
+  };
+
+  private ensureArchiveBackupFresh = async (
+    project_id: string,
+  ): Promise<void> => {
+    const lifecycleState = store.getIn([
+      "project_map",
+      project_id,
+      "state",
+      "state",
+    ]) as string | undefined;
+    const lastEdited = store.getIn([
+      "project_map",
+      project_id,
+      "last_edited",
+    ]) as Date | undefined;
+
+    let latestBackupTime: Date | undefined;
+    try {
+      const backups = await getProjectBackups({
+        project_id,
+        indexed_only: true,
+      });
+      for (const backup of backups) {
+        const time =
+          backup.time instanceof Date
+            ? backup.time
+            : new Date(`${backup.time}`);
+        if (
+          Number.isFinite(time.getTime()) &&
+          (latestBackupTime == null || time > latestBackupTime)
+        ) {
+          latestBackupTime = time;
+        }
+      }
+    } catch {
+      latestBackupTime = undefined;
+    }
+
+    const backupCoversLatestEdits =
+      latestBackupTime != null &&
+      (!(lastEdited instanceof Date) || latestBackupTime >= lastEdited);
+    if (backupCoversLatestEdits) {
+      const backupTime = latestBackupTime;
+      await this.project_log(project_id, {
+        event: "project_archive_backup_reused",
+        backup_time: backupTime?.toISOString(),
+      });
+      return;
+    }
+
+    if (lifecycleState === "running" || lifecycleState === "starting") {
+      await this.stop_project(project_id);
+    }
+
+    await this.project_log(project_id, {
+      event: "project_archive_backup_requested",
+      last_edited:
+        lastEdited instanceof Date ? lastEdited.toISOString() : undefined,
+      backup_time: latestBackupTime?.toISOString(),
+    });
+    await this.createBackupAndWaitForArchive(project_id);
+  };
+
   archive_project = reuseInFlight(async (project_id: string): Promise<void> => {
     this.project_log(project_id, {
       event: "project_archive_requested",
     });
     const actions = redux.getProjectActions(project_id);
     try {
+      await this.ensureArchiveBackupFresh(project_id);
       await webapp_client.conat_client.hub.projects.archiveProject({
         project_id,
+        timeout: ProjectsActions.ARCHIVE_RPC_TIMEOUT_MS,
       });
     } catch (err) {
       actions?.setState({ control_error: `Error archiving project -- ${err}` });

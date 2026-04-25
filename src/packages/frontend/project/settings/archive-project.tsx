@@ -26,7 +26,7 @@ export function ArchiveProject({ project_id, disabled, size }: Props) {
     <div style={{ maxWidth: "320px" }}>
       <FormattedMessage
         id="project.settings.archive-project.explanation"
-        defaultMessage="Archiving removes the active copy of this {projectLabelLower} from the project host after confirming a backup exists. Starting it again later will restore it from backup, which takes longer, but archived {projectLabelLower}s do not count toward active storage usage."
+        defaultMessage="Archiving removes the active copy of this {projectLabelLower} from the project host. If the latest backup is older than the latest edits, CoCalc will stop the {projectLabelLower}, create a final backup, then archive it. Starting it again later will restore it from backup, which takes longer, but archived {projectLabelLower}s do not count toward active storage usage."
         values={{ projectLabelLower }}
       />
     </div>
