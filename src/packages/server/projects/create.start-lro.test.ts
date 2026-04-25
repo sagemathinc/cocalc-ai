@@ -15,6 +15,7 @@ let supersedeOlderProjectStartLrosMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let assertBayAcceptsProjectOwnershipMock: jest.Mock;
+let getMembershipUsageStatusForAccountMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
 
@@ -86,6 +87,12 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
   resolveMembershipForAccount: jest.fn(async () => ({ entitlements: {} })),
 }));
 
+jest.mock("@cocalc/server/membership/usage-status", () => ({
+  __esModule: true,
+  getMembershipUsageStatusForAccount: (...args: any[]) =>
+    getMembershipUsageStatusForAccountMock(...args),
+}));
+
 jest.mock("@cocalc/server/projects/rootfs-state", () => ({
   __esModule: true,
   initializeProjectRootfsStates: (...args: any[]) =>
@@ -139,6 +146,9 @@ describe("projects.createProject start LRO", () => {
       async () => undefined,
     );
     assertBayAcceptsProjectOwnershipMock = jest.fn(async () => undefined);
+    getMembershipUsageStatusForAccountMock = jest.fn(async () => ({
+      total_storage_bytes: 0,
+    }));
     releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {

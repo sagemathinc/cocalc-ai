@@ -5,6 +5,7 @@
 
 const queryMock = jest.fn();
 const resolveMembershipForAccountMock = jest.fn();
+const getMembershipUsageStatusForAccountMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -19,9 +20,18 @@ jest.mock("./resolve", () => ({
     resolveMembershipForAccountMock(...args),
 }));
 
+jest.mock("./usage-status", () => ({
+  __esModule: true,
+  getMembershipUsageStatusForAccount: (...args: any[]) =>
+    getMembershipUsageStatusForAccountMock(...args),
+}));
+
 describe("project membership limits", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    getMembershipUsageStatusForAccountMock.mockResolvedValue({
+      total_storage_bytes: 0,
+    });
   });
 
   it("returns the owned project count", async () => {
@@ -65,5 +75,41 @@ describe("project membership limits", () => {
       }),
     ).resolves.toBeUndefined();
     expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("allows storage-increasing operations below the hard total storage cap", async () => {
+    getMembershipUsageStatusForAccountMock.mockResolvedValue({
+      total_storage_bytes: 50,
+    });
+    const { assertCanIncreaseAccountStorage } =
+      await import("./project-limits");
+    await expect(
+      assertCanIncreaseAccountStorage({
+        account_id: "account-1",
+        resolution: {
+          class: "pro",
+          source: "subscription",
+          entitlements: { usage_limits: { total_storage_hard_bytes: 100 } },
+        },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("blocks storage-increasing operations at the hard total storage cap", async () => {
+    getMembershipUsageStatusForAccountMock.mockResolvedValue({
+      total_storage_bytes: 100,
+    });
+    const { assertCanIncreaseAccountStorage } =
+      await import("./project-limits");
+    await expect(
+      assertCanIncreaseAccountStorage({
+        account_id: "account-1",
+        resolution: {
+          class: "pro",
+          source: "subscription",
+          entitlements: { usage_limits: { total_storage_hard_bytes: 100 } },
+        },
+      }),
+    ).rejects.toThrow("total account storage hard cap reached");
   });
 });
