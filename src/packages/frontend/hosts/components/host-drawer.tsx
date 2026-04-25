@@ -1963,6 +1963,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   observedTarget?.current_version ??
                   observedArtifact?.current_version ??
                   running;
+                const currentBuildId =
+                  observedArtifact?.current_build_id ?? buildId;
                 const installedVersions =
                   observedTarget?.installed_versions ??
                   observedArtifact?.installed_versions ??
@@ -2012,10 +2014,18 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                         }}
                       >
                         <Typography.Text type="secondary">
-                          desired{" "}
+                          desired artifact{" "}
                           <code>{effectiveDesiredVersion ?? "n/a"}</code> |
-                          current <code>{currentVersion ?? "n/a"}</code> |
-                          latest <code>{configured?.version ?? "unknown"}</code>
+                          current artifact{" "}
+                          <code>{currentVersion ?? "n/a"}</code>
+                          {currentBuildId ? (
+                            <>
+                              {" "}
+                              | build ID <code>{currentBuildId}</code>
+                            </>
+                          ) : null}{" "}
+                          | latest artifact{" "}
+                          <code>{configured?.version ?? "unknown"}</code>
                         </Typography.Text>
                         <Space wrap>
                           {canUpgrade &&
