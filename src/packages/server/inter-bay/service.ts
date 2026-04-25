@@ -254,8 +254,10 @@ async function startDirectoryService(): Promise<void> {
   const impl: InterBayDirectoryApi = {
     resolveProjectBay: async ({ project_id }) =>
       await resolveProjectBayDirect(`${project_id ?? ""}`),
-    resolveHostBay: async ({ host_id }) =>
-      await resolveHostBayDirect(`${host_id ?? ""}`),
+    resolveHostBay: async ({ host_id, include_deleted }) =>
+      await resolveHostBayDirect(`${host_id ?? ""}`, {
+        include_deleted: !!include_deleted,
+      }),
   };
   services.push(
     ...createInterBayBayDirectoryHandlers({
@@ -276,8 +278,10 @@ async function startDirectoryService(): Promise<void> {
       impl: {
         resolveProjectBay: async ({ project_id }) =>
           await resolveProjectBayAcrossCluster(`${project_id ?? ""}`),
-        resolveHostBay: async ({ host_id }) =>
-          await resolveHostBayAcrossCluster(`${host_id ?? ""}`),
+        resolveHostBay: async ({ host_id, include_deleted }) =>
+          await resolveHostBayAcrossCluster(`${host_id ?? ""}`, {
+            include_deleted: !!include_deleted,
+          }),
       },
     }),
   );

@@ -440,12 +440,33 @@ export async function resolveAccountByIdentifier(
 export async function resolveHost<H extends HostLike = HostLike>(
   ctx: ProjectCacheContext,
   identifier: string,
+  opts: {
+    include_deleted?: boolean;
+    admin_view?: boolean;
+  } = {},
 ): Promise<H> {
+  const loadHosts = async (): Promise<H[]> => {
+    const base = {
+      include_deleted: !!opts.include_deleted,
+      catalog: !opts.include_deleted,
+    };
+    if (opts.admin_view) {
+      try {
+        return (await ctx.hub.hosts.listHosts({
+          ...base,
+          admin_view: true,
+        })) as unknown as H[];
+      } catch (err) {
+        if (!/not authorized/i.test(`${err}`)) {
+          throw err;
+        }
+      }
+    }
+    return (await ctx.hub.hosts.listHosts(base)) as unknown as H[];
+  };
+
   if (isValidUUID(identifier)) {
-    const hosts = (await ctx.hub.hosts.listHosts({
-      include_deleted: false,
-      catalog: true,
-    })) as unknown as H[];
+    const hosts = await loadHosts();
     if (Array.isArray(hosts)) {
       const match = hosts.find((x) => x.id === identifier);
       if (match) {
@@ -458,10 +479,7 @@ export async function resolveHost<H extends HostLike = HostLike>(
     } as H;
   }
 
-  const hosts = (await ctx.hub.hosts.listHosts({
-    include_deleted: false,
-    catalog: true,
-  })) as unknown as H[];
+  const hosts = await loadHosts();
   if (!Array.isArray(hosts) || !hosts.length) {
     throw new Error("no hosts are visible to this account");
   }

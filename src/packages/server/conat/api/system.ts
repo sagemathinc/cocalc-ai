@@ -802,11 +802,13 @@ export async function getProjectBay({
 export async function getHostBay({
   account_id,
   host_id,
+  include_deleted,
 }: {
   account_id?: string;
   host_id: string;
+  include_deleted?: boolean;
 }) {
-  return await resolveHostBay({ account_id, host_id });
+  return await resolveHostBay({ account_id, host_id, include_deleted });
 }
 
 export async function getRoutingContext({

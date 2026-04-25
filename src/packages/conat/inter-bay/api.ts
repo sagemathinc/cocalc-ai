@@ -94,6 +94,7 @@ export interface ResolveProjectBayRequest {
 
 export interface ResolveHostBayRequest {
   host_id: string;
+  include_deleted?: boolean;
 }
 
 export interface ProjectControlStartRequest {

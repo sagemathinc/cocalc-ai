@@ -343,3 +343,38 @@ test("resolveHost still requires visible hosts for name lookup", async () => {
     /no hosts are visible to this account/,
   );
 });
+
+test("resolveHost can include deleted hosts when requested", async () => {
+  const listHosts = async (opts?: { include_deleted?: boolean }) => {
+    if (opts?.include_deleted) {
+      return [
+        {
+          id: "99999999-9999-4999-8999-999999999999",
+          name: "deleted-host",
+          status: "deprovisioned",
+        },
+      ];
+    }
+    return [];
+  };
+  const host = await resolveHost(
+    {
+      projectCache: new Map(),
+      hub: {
+        db: {},
+        system: {},
+        hosts: {
+          listHosts,
+        },
+      },
+    } as any,
+    "deleted-host",
+    { include_deleted: true },
+  );
+
+  assert.deepEqual(host, {
+    id: "99999999-9999-4999-8999-999999999999",
+    name: "deleted-host",
+    status: "deprovisioned",
+  });
+});

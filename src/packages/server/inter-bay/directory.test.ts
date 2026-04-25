@@ -106,6 +106,22 @@ describe("inter-bay directory", () => {
     });
   });
 
+  it("can resolve deleted hosts directly when requested", async () => {
+    queryMock.mockResolvedValue({ rows: [{ bay_id: "bay-9" }] });
+    const { resolveHostBayDirect } = await import("./directory");
+    await expect(
+      resolveHostBayDirect("host-1", { include_deleted: true }),
+    ).resolves.toEqual({
+      bay_id: "bay-9",
+      epoch: 0,
+    });
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("WHERE id = $1"),
+      ["host-1", "bay-0"],
+    );
+    expect(queryMock.mock.calls[0][0]).not.toContain("AND deleted IS NULL");
+  });
+
   it("surfaces service-side directory errors", async () => {
     requestMock.mockResolvedValue({ data: { error: "boom" } });
     const { resolveHostBay } = await import("./directory");

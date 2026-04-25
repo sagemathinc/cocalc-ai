@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 
+import { isValidUUID } from "@cocalc/util/misc";
+
 import { printArrayTable } from "../core/cli-output";
 
 type HostRuntimeLogRow = any;
@@ -885,6 +887,31 @@ export function registerHostCommand(
     waitForHostCreateReady,
     resolveProject,
   } = deps;
+  async function resolveHostForInformationalLookup(
+    ctx: any,
+    hostIdentifier: string,
+  ) {
+    try {
+      const hosts = await listHosts(ctx, {
+        include_deleted: true,
+        admin_view: true,
+      });
+      const match = isValidUUID(hostIdentifier)
+        ? hosts.find((host: any) => host.id === hostIdentifier)
+        : hosts.find((host: any) => host.name === hostIdentifier);
+      if (match) {
+        return match;
+      }
+    } catch (err) {
+      if (!/not authorized/i.test(`${err}`)) {
+        throw err;
+      }
+    }
+    return await resolveHost(ctx, hostIdentifier, {
+      include_deleted: true,
+      admin_view: true,
+    });
+  }
   const host = program.command("host").description("host operations");
 
   host
@@ -1002,7 +1029,7 @@ export function registerHostCommand(
     .description("get one host by id or name")
     .action(async (hostIdentifier: string, command: Command) => {
       await withContext(command, "host get", async (ctx) => {
-        const h = await resolveHost(ctx, hostIdentifier);
+        const h = await resolveHostForInformationalLookup(ctx, hostIdentifier);
         return {
           host_id: h.id,
           name: h.name,
@@ -1037,8 +1064,11 @@ export function registerHostCommand(
     .description("show the bay for one host by id or name")
     .action(async (hostIdentifier: string, command: Command) => {
       await withContext(command, "host where", async (ctx) => {
-        const h = await resolveHost(ctx, hostIdentifier);
-        return await ctx.hub.system.getHostBay({ host_id: h.id });
+        const h = await resolveHostForInformationalLookup(ctx, hostIdentifier);
+        return await ctx.hub.system.getHostBay({
+          host_id: h.id,
+          include_deleted: true,
+        });
       });
     });
 

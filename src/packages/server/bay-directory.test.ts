@@ -405,6 +405,44 @@ describe("bay-directory", () => {
     });
   });
 
+  it("can resolve deleted hosts for admin lookups when requested", async () => {
+    listHostsMock = jest.fn(async () => [
+      {
+        id: HOST_ID,
+        name: "deleted-host",
+        status: "deprovisioned",
+        deleted: "2026-04-24T14:51:21.210Z",
+      },
+    ]);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [{ bay_id: "bay-0" }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { resolveHostBay } = await import("./bay-directory");
+
+    await expect(
+      resolveHostBay({
+        account_id: ACCOUNT_ID,
+        host_id: HOST_ID,
+        include_deleted: true,
+      }),
+    ).resolves.toEqual({
+      host_id: HOST_ID,
+      bay_id: "bay-0",
+      name: "deleted-host",
+      source: "host-row",
+    });
+    expect(listHostsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include_deleted: true,
+      }),
+    );
+  });
+
   it("falls back to the remote host bay when the host is not local", async () => {
     listHostsMock = jest.fn(async () => []);
     resolveHostBayMock = jest.fn(async () => ({
