@@ -964,6 +964,7 @@ export interface Hosts {
     account_id?: string;
     id: string;
     public_key: string;
+    user?: string;
   }) => Promise<HostSshAuthorizedKeys & { added: boolean }>;
   removeHostSshAuthorizedKey: (opts: {
     account_id?: string;

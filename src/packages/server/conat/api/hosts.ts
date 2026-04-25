@@ -2797,10 +2797,12 @@ export async function addHostSshAuthorizedKey({
   account_id,
   id,
   public_key,
+  user,
 }: {
   account_id?: string;
   id: string;
   public_key: string;
+  user?: string;
 }): Promise<{
   host_id: string;
   user: string;
@@ -2811,7 +2813,7 @@ export async function addHostSshAuthorizedKey({
 }> {
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);
-  const response = await client.addHostSshAuthorizedKey({ public_key });
+  const response = await client.addHostSshAuthorizedKey({ public_key, user });
   return {
     host_id: id,
     user: response.user,
