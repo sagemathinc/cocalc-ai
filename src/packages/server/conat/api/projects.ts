@@ -49,6 +49,7 @@ import { createLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
+import { getBackups } from "@cocalc/conat/project/archive-info";
 import {
   makeOfflineMoveConfirmationPayload,
   offlineMoveConfirmationError,
@@ -57,6 +58,7 @@ import {
   assertCanIncreaseAccountStorage,
   getProjectOwnerAccountId,
 } from "@cocalc/server/membership/project-limits";
+import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
 import {
   drainProjectRehome as drainProjectRehomeControl,
   getProjectRehomeOperation as getProjectRehomeOperationControl,
@@ -116,6 +118,7 @@ import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/accou
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import { fromWire as collabInviteFromWire } from "@cocalc/server/projects/collab-invite-inbox";
+import { deleteProjectDataOnHost } from "@cocalc/server/project-host/control";
 
 // Start/restart can legitimately take a long time because the owning bay may
 // need to provision storage, restore data, pull rootfs layers, or seal a
@@ -129,6 +132,32 @@ async function projectFs(project_id: string) {
   return (await getExplicitProjectRoutedClient({ project_id })).fs({
     project_id,
   });
+}
+
+async function assertOwnerOrAdminForProjectAction({
+  account_id,
+  project_id,
+  action,
+}: {
+  account_id?: string;
+  project_id: string;
+  action: string;
+}): Promise<void> {
+  if (!account_id) {
+    throw new Error("must be signed in");
+  }
+  const admin = await isAdmin(account_id);
+  let owner = false;
+  if (!admin) {
+    const { rows } = await getPool().query<{ group: string | null }>(
+      "SELECT users #>> ARRAY[$2::text, 'group'] AS \"group\" FROM projects WHERE project_id=$1 AND deleted IS NULL",
+      [project_id, account_id],
+    );
+    owner = rows[0]?.group === "owner";
+  }
+  if (!admin && !owner) {
+    throw new Error(`must be an owner (or admin) to ${action}`);
+  }
 }
 
 export async function copyPathBetweenProjects({
@@ -1261,6 +1290,141 @@ export async function stop({
   await getInterBayBridge().projectControl(ownership.bay_id).stop({
     project_id,
     epoch: ownership.epoch,
+  });
+}
+
+export async function archiveProject({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<void> {
+  await assertOwnerOrAdminForProjectAction({
+    account_id,
+    project_id,
+    action: "archive a project",
+  });
+
+  const { rows } = await getPool().query<{
+    host_id: string | null;
+    backup_repo_id: string | null;
+    provisioned: boolean | null;
+    state: { state?: string } | null;
+  }>(
+    `
+      SELECT host_id, backup_repo_id, provisioned, state
+      FROM projects
+      WHERE project_id = $1
+        AND deleted IS NULL
+      LIMIT 1
+    `,
+    [project_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("project not found");
+  }
+
+  const currentState = `${row.state?.state ?? ""}`.trim();
+  if (currentState === "archived" && row.provisioned === false) {
+    return;
+  }
+  if (!row.backup_repo_id) {
+    throw new Error(
+      "project must have a configured backup repository before it can be archived",
+    );
+  }
+
+  const routedClient = conatWithProjectRoutingForAccount({
+    account_id: account_id!,
+  });
+  try {
+    const backups = await getBackups({
+      client: routedClient,
+      project_id,
+      indexed_only: true,
+    });
+    if (!backups.length) {
+      throw new Error(
+        "project must have at least one backup before it can be archived",
+      );
+    }
+  } finally {
+    try {
+      routedClient.close();
+    } catch {
+      // ignore close errors
+    }
+  }
+
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+
+  if (["running", "starting", "pending", "stopping"].includes(currentState)) {
+    await getInterBayBridge().projectControl(ownership.bay_id).stop({
+      project_id,
+      epoch: ownership.epoch,
+    });
+  }
+
+  if (row.provisioned !== false) {
+    const host_id = `${row.host_id ?? ""}`.trim();
+    if (!host_id) {
+      throw new Error("project has no assigned host to archive from");
+    }
+    await deleteProjectDataOnHost({
+      project_id,
+      host_id,
+    });
+  }
+
+  const checkedAt = new Date();
+  const nextState = {
+    state: "archived",
+    time: checkedAt.toISOString(),
+  };
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await assertProjectNotRehoming({
+      db: client,
+      project_id,
+      action: "archive project",
+    });
+    const result = await client.query(
+      `
+        UPDATE projects
+        SET state = $2::jsonb,
+            provisioned = FALSE,
+            provisioned_checked_at = $3
+        WHERE project_id = $1
+          AND deleted IS NULL
+      `,
+      [project_id, nextState, checkedAt],
+    );
+    if ((result.rowCount ?? 0) === 0) {
+      throw new Error("project not found");
+    }
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.state_changed",
+      project_id,
+      default_bay_id: getConfiguredBayId(),
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id,
+    default_bay_id: getConfiguredBayId(),
   });
 }
 

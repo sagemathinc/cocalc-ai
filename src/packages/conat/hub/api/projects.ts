@@ -444,6 +444,7 @@ export const projects = {
   start: authFirstRequireAccount,
   stop: authFirstRequireAccount,
   restart: authFirstRequireAccount,
+  archiveProject: authFirstRequireAccount,
   getProjectState: authFirstRequireAccount,
   getProjectAddress: authFirstRequireAccount,
   getProjectActiveOperation: authFirstRequireAccount,
@@ -928,6 +929,10 @@ export interface Projects {
     service: string;
     stream_name: string;
   }>;
+  archiveProject: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<void>;
   getProjectState: (opts: {
     account_id?: string;
     project_id: string;

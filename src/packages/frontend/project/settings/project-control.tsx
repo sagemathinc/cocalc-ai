@@ -25,6 +25,7 @@ import { useProjectContext } from "../context";
 import { useProjectRunQuota } from "../use-project-run-quota";
 import { RestartProject } from "./restart-project";
 import { StopProject } from "./stop-project";
+import { ArchiveProject } from "./archive-project";
 import MoveProject from "./move-project";
 import { Project } from "./types";
 import RootFilesystemImage from "./root-filesystem-image";
@@ -138,6 +139,11 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     const commands = (state &&
       COMPUTE_STATES[state] &&
       COMPUTE_STATES[state].commands) || ["save", "stop", "start"];
+    const archiveDisabled =
+      state == null ||
+      ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
+        state,
+      );
     return (
       <Space.Compact
         style={{ marginTop: "10px", marginBottom: "10px" }}
@@ -145,6 +151,11 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       >
         {render_restart_button(commands)}
         {render_stop_button(commands)}
+        <ArchiveProject
+          project_id={project_id}
+          size={isFlyout ? "small" : "large"}
+          disabled={archiveDisabled}
+        />
         <CloneProject project_id={project_id} />
         <MoveProject
           project_id={project_id}

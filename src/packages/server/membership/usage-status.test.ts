@@ -34,9 +34,9 @@ describe("getMembershipUsageStatusForAccount", () => {
   it("aggregates owned project storage and compares against configured limits", async () => {
     queryMock.mockResolvedValue({
       rows: [
-        { project_id: "project-1", host_id: "host-1" },
-        { project_id: "project-2", host_id: "host-2" },
-        { project_id: "project-3", host_id: null },
+        { project_id: "project-1", host_id: "host-1", provisioned: true },
+        { project_id: "project-2", host_id: "host-2", provisioned: true },
+        { project_id: "project-3", host_id: null, provisioned: false },
       ],
     });
     getStorageOverviewMock
@@ -67,7 +67,7 @@ describe("getMembershipUsageStatusForAccount", () => {
     expect(result.total_storage_bytes).toBe(350);
     expect(result.owned_project_count).toBe(3);
     expect(result.sampled_project_count).toBe(2);
-    expect(result.unsampled_project_count).toBe(1);
+    expect(result.unsampled_project_count).toBe(0);
     expect(result.measurement_error_count).toBe(0);
     expect(result.total_storage_soft_remaining_bytes).toBe(-50);
     expect(result.total_storage_hard_remaining_bytes).toBe(150);
@@ -84,8 +84,8 @@ describe("getMembershipUsageStatusForAccount", () => {
   it("tracks sampling failures without failing the whole status call", async () => {
     queryMock.mockResolvedValue({
       rows: [
-        { project_id: "project-1", host_id: "host-1" },
-        { project_id: "project-2", host_id: "host-2" },
+        { project_id: "project-1", host_id: "host-1", provisioned: true },
+        { project_id: "project-2", host_id: "host-2", provisioned: true },
       ],
     });
     getStorageOverviewMock
@@ -111,5 +111,35 @@ describe("getMembershipUsageStatusForAccount", () => {
     expect(result.measurement_error_count).toBe(1);
     expect(result.total_storage_soft_bytes).toBeUndefined();
     expect(result.max_projects).toBeUndefined();
+  });
+
+  it("ignores unprovisioned projects for active storage sampling", async () => {
+    queryMock.mockResolvedValue({
+      rows: [
+        { project_id: "project-1", host_id: "host-1", provisioned: true },
+        { project_id: "project-2", host_id: "host-2", provisioned: false },
+        { project_id: "project-3", host_id: null, provisioned: false },
+      ],
+    });
+    getStorageOverviewMock.mockResolvedValueOnce({
+      quotas: [{ key: "project", used: 64, size: 1000 }],
+    });
+
+    const { getMembershipUsageStatusForAccount } =
+      await import("./usage-status");
+    const result = await getMembershipUsageStatusForAccount({
+      account_id: "account-1",
+      resolution: {
+        class: "free",
+        source: "free",
+        entitlements: {},
+      },
+    });
+
+    expect(result.owned_project_count).toBe(3);
+    expect(result.sampled_project_count).toBe(1);
+    expect(result.unsampled_project_count).toBe(0);
+    expect(result.total_storage_bytes).toBe(64);
+    expect(getStorageOverviewMock).toHaveBeenCalledTimes(1);
   });
 });

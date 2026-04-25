@@ -23,6 +23,7 @@ const STORAGE_SAMPLE_TIMEOUT_MS = 5_000;
 type OwnedProjectRow = {
   project_id: string;
   host_id: string | null;
+  provisioned: boolean | null;
 };
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -56,7 +57,7 @@ async function listOwnedProjects(
 ): Promise<OwnedProjectRow[]> {
   const { rows } = await getPool("medium").query<OwnedProjectRow>(
     `
-      SELECT project_id, host_id
+      SELECT project_id, host_id, provisioned
       FROM projects
       WHERE deleted IS NULL
         AND COALESCE(users -> $1::text ->> 'group', '') = 'owner'
@@ -93,7 +94,9 @@ export async function getMembershipUsageStatusForAccount({
 }): Promise<MembershipUsageStatus> {
   const usageLimits = resolution.entitlements?.usage_limits ?? {};
   const ownedProjects = await listOwnedProjects(account_id);
-  const rowsWithHosts = ownedProjects.filter((row) => !!row.host_id);
+  const provisionedRows = ownedProjects.filter(
+    (row) => !!row.host_id && row.provisioned !== false,
+  );
   const client = conatWithProjectRoutingForAccount({ account_id });
   let total_storage_bytes = 0;
   let sampled_project_count = 0;
@@ -101,10 +104,10 @@ export async function getMembershipUsageStatusForAccount({
   try {
     for (
       let start = 0;
-      start < rowsWithHosts.length;
+      start < provisionedRows.length;
       start += STORAGE_SAMPLE_CONCURRENCY
     ) {
-      const chunk = rowsWithHosts.slice(
+      const chunk = provisionedRows.slice(
         start,
         start + STORAGE_SAMPLE_CONCURRENCY,
       );
@@ -139,7 +142,10 @@ export async function getMembershipUsageStatusForAccount({
   }
 
   const owned_project_count = ownedProjects.length;
-  const unsampled_project_count = owned_project_count - sampled_project_count;
+  const unsampled_project_count = Math.max(
+    provisionedRows.length - sampled_project_count,
+    0,
+  );
   const total_storage_soft_bytes =
     typeof usageLimits.total_storage_soft_bytes === "number" &&
     Number.isFinite(usageLimits.total_storage_soft_bytes)

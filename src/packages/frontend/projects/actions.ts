@@ -1528,6 +1528,28 @@ export class ProjectsActions extends Actions<ProjectsState> {
     },
   );
 
+  archive_project = reuseInFlight(async (project_id: string): Promise<void> => {
+    this.project_log(project_id, {
+      event: "project_archive_requested",
+    });
+    const actions = redux.getProjectActions(project_id);
+    try {
+      await webapp_client.conat_client.hub.projects.archiveProject({
+        project_id,
+      });
+    } catch (err) {
+      actions?.setState({ control_error: `Error archiving project -- ${err}` });
+      throw err;
+    }
+    actions?.setState({ control_error: "" });
+    this.optimisticProjectStateUpdate(project_id, "archived");
+    redux.getProjectActions(project_id)?.clearFilesystemClient?.();
+    this.project_log(project_id, {
+      event: "project_archived",
+      ...store.classify_project(project_id),
+    });
+  });
+
   move_project = reuseInFlight(async (project_id: string): Promise<boolean> => {
     const actions = redux.getProjectActions(project_id);
     try {
