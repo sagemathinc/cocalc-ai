@@ -201,6 +201,12 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         software: {
           project_host: "ph-v1",
         },
+        software_inventory: [
+          {
+            artifact: "project-host",
+            current_version: "ph-v1",
+          },
+        ],
       },
     };
     const loadHostForStartStop = jest
@@ -238,6 +244,20 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
               },
             ],
           }),
+          getManagedComponentStatus: async () => [
+            {
+              component: "project-host",
+              artifact: "project-host",
+              upgrade_policy: "restart_now",
+              enabled: true,
+              managed: true,
+              desired_version: "ph-v2",
+              runtime_state: "running",
+              version_state: "drifted",
+              running_versions: ["ph-v1"],
+              running_pids: [123],
+            },
+          ],
         }),
         waitForHostHeartbeatAfter: async () => undefined,
         installedProjectHostArtifactVersion: (row) =>
