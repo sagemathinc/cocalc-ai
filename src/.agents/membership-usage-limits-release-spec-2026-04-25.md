@@ -255,6 +255,173 @@ Initial non-goals:
 - charging users per GB
 - shutting down compute just because download/export egress is blocked
 
+## Shared-Host Project Stopping Policy
+
+The first-release shared-host stopping policy should **not** be based on one
+global fixed idle timeout.
+
+Historically, simple fixed idle timeouts were easy to implement, but they are a
+poor fit for a burstable shared system:
+
+- they create pointless churn when the host is quiet
+- they are easy for users to misinterpret as the real product contract
+- they do not reflect membership priority
+- they do not distinguish between recent interactive use and forgotten
+  background projects
+
+The release policy should instead be:
+
+- no routine stopping when a shared host is quiet
+- pressure-based stopping when a shared host is busy
+- eviction order based on membership priority and recent interactive use
+- a long backstop scavenger for ancient idle projects
+
+### User-Facing Product Contract
+
+The user-facing description should be simple:
+
+- projects stay running while you are actively using them
+- when shared hosts are busy, inactive lower-priority projects are paused first
+- higher memberships keep projects running longer under contention
+- dedicated hosts are not subject to shared-host pausing policy
+
+This is a better product contract than:
+
+- `projects stop after 30 minutes`
+- `projects always stop after 2 hours`
+
+Those statements are easy to understand but operationally wrong for a system
+that should opportunistically use idle capacity.
+
+### Main Triggers
+
+Project stopping should be triggered primarily by host pressure, especially:
+
+- memory pressure
+- need to start another project and make room
+- too many running projects on one host
+
+CPU pressure alone should usually not be the main reason to stop projects.
+
+Shared-host CPU contention should mostly be handled by scheduler priority.
+Project stopping should mainly reclaim:
+
+- memory
+- process slots
+- operational headroom
+
+### Eviction Order
+
+Each project host should compute an eviction score for stoppable projects.
+
+The most important inputs should be:
+
+- membership priority
+- recent interactive usage
+- whether a browser is currently attached
+- number of active collaborators
+- how recently the project was foregrounded
+
+Secondary inputs may include:
+
+- current memory footprint
+- whether kernels/terminals/processes are running
+- whether the project exposes a public app/service
+- whether the project is on a dedicated host
+
+Critical design rule:
+
+- recent human interaction should outrank background compute activity
+
+Otherwise, a runaway background job can keep a project alive indefinitely while
+more valuable interactive work gets displaced.
+
+### Minimum Protection Window
+
+After meaningful interactive use, a project should receive a minimum temporary
+protection window before it becomes evictable under normal host pressure.
+
+The exact number can be tuned later, but the release design should assume a
+short protection window such as:
+
+- `15-30 minutes` after recent interactive use
+
+This prevents the user experience from feeling random or hostile when a person
+has just used a project and briefly steps away.
+
+### Long Idle Scavenger
+
+Separate from pressure-based eviction, there should be a very long backstop
+scavenger for truly stale projects.
+
+This is not the main policy. It is just operational cleanup.
+
+Release guidance:
+
+- if a project has been totally inactive for multiple days, it can be stopped
+  even without immediate host pressure
+
+This protects against silent shared-host accumulation without making the main
+product promise depend on a short fixed timeout.
+
+### Dedicated Hosts
+
+Projects on dedicated hosts should not be governed by the shared-host stopping
+policy.
+
+Dedicated hosts may still have explicit local admin policies, but they should
+not be treated as part of the shared-host eviction pool.
+
+### Multibay Architecture For Stopping
+
+The stop decision should be host-local, not global.
+
+Central state should provide:
+
+- account membership priority
+- dedicated-host-related entitlements or exemptions
+- any account-level policy knobs that materially affect eviction
+
+But the actual stop decision should happen on the project host using local
+pressure and recent project activity signals.
+
+This keeps the system:
+
+- responsive
+- scalable
+- consistent with the multibay architecture
+
+### Membership Policy Direction
+
+The first release should keep the membership-side knobs small.
+
+Recommended internal policy shape:
+
+- `shared_compute_priority`
+- `idle_protection_window`
+- optional dedicated-host exemption
+
+Do not expose all of these internal knobs directly to users.
+
+The user-facing story should remain:
+
+- better memberships get better shared-host priority
+- recently active projects are favored over forgotten inactive ones
+
+### Recommended Immediate Product Rule
+
+For first release, the stopping rule should be summarized internally as:
+
+1. do not stop projects just because a short fixed idle timer expired
+2. stop projects when host pressure requires it
+3. evict lower-priority, less-recently-interactive projects first
+4. keep a short post-interaction protection window
+5. keep a long stale-project scavenger
+6. exempt dedicated hosts from this shared-host policy
+
+This is the correct release posture for a burstable, priority-based shared
+compute system.
+
 ## Multibay Architecture
 
 The architecture should separate:
