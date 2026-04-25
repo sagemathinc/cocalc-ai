@@ -193,6 +193,9 @@ export interface ProjectStoreState {
 
   // error controlling the state of a project, e.g., starting or stopping it.
   control_error?: string;
+
+  // transient status shown while a control action is in progress.
+  control_status?: string;
 }
 
 export class ProjectStore extends Store<ProjectStoreState> {

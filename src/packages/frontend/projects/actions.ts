@@ -1558,6 +1558,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   private ensureArchiveBackupFresh = async (
     project_id: string,
+    actions?: { setState?: (next: any) => void },
   ): Promise<void> => {
     const lifecycleState = store.getIn([
       "project_map",
@@ -1598,6 +1599,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       (!(lastEdited instanceof Date) || latestBackupTime >= lastEdited);
     if (backupCoversLatestEdits) {
       const backupTime = latestBackupTime;
+      actions?.setState?.({ control_status: "Archiving project..." });
       await this.project_log(project_id, {
         event: "project_archive_backup_reused",
         backup_time: backupTime?.toISOString(),
@@ -1606,9 +1608,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
 
     if (lifecycleState === "running" || lifecycleState === "starting") {
+      actions?.setState?.({
+        control_status: "Stopping project before final backup...",
+      });
       await this.stop_project(project_id);
     }
 
+    actions?.setState?.({
+      control_status: "Creating final backup before archive...",
+    });
     await this.project_log(project_id, {
       event: "project_archive_backup_requested",
       last_edited:
@@ -1624,16 +1632,24 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
     const actions = redux.getProjectActions(project_id);
     try {
-      await this.ensureArchiveBackupFresh(project_id);
+      actions?.setState?.({
+        control_error: "",
+        control_status: "Checking backups before archive...",
+      });
+      await this.ensureArchiveBackupFresh(project_id, actions);
+      actions?.setState?.({ control_status: "Archiving project..." });
       await webapp_client.conat_client.hub.projects.archiveProject({
         project_id,
         timeout: ProjectsActions.ARCHIVE_RPC_TIMEOUT_MS,
       });
     } catch (err) {
-      actions?.setState({ control_error: `Error archiving project -- ${err}` });
+      actions?.setState({
+        control_status: "",
+        control_error: `Error archiving project -- ${err}`,
+      });
       throw err;
     }
-    actions?.setState({ control_error: "" });
+    actions?.setState({ control_error: "", control_status: "" });
     this.optimisticProjectStateUpdate(project_id, "archived");
     redux.getProjectActions(project_id)?.clearFilesystemClient?.();
     this.project_log(project_id, {

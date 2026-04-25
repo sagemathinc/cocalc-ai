@@ -30,6 +30,7 @@ import MoveProject from "./move-project";
 import { Project } from "./types";
 import RootFilesystemImage from "./root-filesystem-image";
 import ProjectControlError from "./project-control-error";
+import ProjectControlStatus from "./project-control-status";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
@@ -279,6 +280,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       <>
         <div>
           {render_action_buttons()}
+          <ProjectControlStatus style={{ margin: "10px 0px" }} />
           <ProjectControlError
             style={{ margin: "10px 0px" }}
             showStopButton={project.getIn(["state", "state"]) == "running"}

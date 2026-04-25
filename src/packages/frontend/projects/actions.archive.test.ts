@@ -162,7 +162,19 @@ describe("ProjectsActions archive flow", () => {
       project_id,
       timeout: 30000,
     });
-    expect(setState).toHaveBeenCalledWith({ control_error: "" });
+    expect(setState).toHaveBeenCalledWith({
+      control_status: "Stopping project before final backup...",
+    });
+    expect(setState).toHaveBeenCalledWith({
+      control_status: "Creating final backup before archive...",
+    });
+    expect(setState).toHaveBeenCalledWith({
+      control_status: "Archiving project...",
+    });
+    expect(setState).toHaveBeenLastCalledWith({
+      control_error: "",
+      control_status: "",
+    });
     expect(clearFilesystemClient).toHaveBeenCalled();
   });
 
@@ -178,7 +190,7 @@ describe("ProjectsActions archive flow", () => {
         summary: {},
       },
     ] as any);
-    const { actions, trackBackupOp } = makeActions();
+    const { actions, setState, trackBackupOp } = makeActions();
 
     await actions.archive_project(project_id);
 
@@ -195,6 +207,9 @@ describe("ProjectsActions archive flow", () => {
     ).toHaveBeenCalledWith({
       project_id,
       timeout: 30000,
+    });
+    expect(setState).toHaveBeenCalledWith({
+      control_status: "Archiving project...",
     });
   });
 
@@ -218,6 +233,7 @@ describe("ProjectsActions archive flow", () => {
       mockedWebappClient.conat_client.hub.projects.archiveProject,
     ).not.toHaveBeenCalled();
     expect(setState).toHaveBeenCalledWith({
+      control_status: "",
       control_error: "Error archiving project -- Error: backup failed",
     });
   });
