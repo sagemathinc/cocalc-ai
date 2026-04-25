@@ -4,6 +4,7 @@
  */
 
 import {
+  isProjectHostLocalRollbackError,
   summarizeObservedRuntimeDeployments,
   summarizeRollbackTargets,
 } from "./hosts-runtime-observation";
@@ -162,5 +163,33 @@ describe("summarizeRollbackTargets", () => {
       prune_candidate_bytes_total: 400,
       retention_policy: { keep_count: 3 },
     });
+  });
+});
+
+describe("isProjectHostLocalRollbackError", () => {
+  it("accepts structural rollback errors even when they are not Error instances", () => {
+    expect(
+      isProjectHostLocalRollbackError({
+        code: "PROJECT_HOST_LOCAL_ROLLBACK",
+        automaticRollback: {
+          host_id: "host-1",
+          rollback_version: "ph-v1",
+          source: "host-agent",
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects rollback-shaped objects without a rollback version", () => {
+    expect(
+      isProjectHostLocalRollbackError({
+        code: "PROJECT_HOST_LOCAL_ROLLBACK",
+        automaticRollback: {
+          host_id: "host-1",
+          rollback_version: "",
+          source: "host-agent",
+        },
+      }),
+    ).toBe(false);
   });
 });
