@@ -334,6 +334,56 @@ function getUsageStatusItems(
   return items;
 }
 
+function getUsageStatusAlerts(
+  usageStatus?: MembershipUsageStatus | null,
+): Array<{
+  key: string;
+  type: "warning" | "error";
+  title: string;
+}> {
+  if (!usageStatus) return [];
+  const alerts: Array<{
+    key: string;
+    type: "warning" | "error";
+    title: string;
+  }> = [];
+  if (usageStatus.over_total_storage_hard) {
+    alerts.push({
+      key: "over-hard-storage",
+      type: "error",
+      title:
+        "Your account is over the hard total storage cap. Cloning and other storage-increasing operations may be blocked until you delete data or upgrade membership.",
+    });
+  } else if (usageStatus.over_total_storage_soft) {
+    alerts.push({
+      key: "over-soft-storage",
+      type: "warning",
+      title:
+        "Your account is over the soft total storage cap. Storage-increasing operations may be degraded or blocked until you delete data or upgrade membership.",
+    });
+  }
+  if (usageStatus.over_max_projects) {
+    alerts.push({
+      key: "over-max-projects",
+      type: "warning",
+      title:
+        "Your account is over the owned project limit. Creating new projects is blocked until you delete a project or upgrade membership.",
+    });
+  }
+  if (
+    usageStatus.unsampled_project_count > 0 ||
+    (usageStatus.measurement_error_count ?? 0) > 0
+  ) {
+    alerts.push({
+      key: "partial-usage-measurement",
+      type: "warning",
+      title:
+        "Current storage usage is only partially sampled from your projects, so totals may temporarily be incomplete.",
+    });
+  }
+  return alerts;
+}
+
 export function MembershipStatusPanel({
   showHeader = true,
 }: {
@@ -464,6 +514,7 @@ export function MembershipStatusPanel({
   const projectDefaultsItems = getProjectDefaultsItems(projectDefaults);
   const usageLimitItems = getUsageLimitsItems(usageLimits);
   const usageStatusItems = getUsageStatusItems(details?.usage_status);
+  const usageStatusAlerts = getUsageStatusAlerts(details?.usage_status);
 
   return (
     <Panel
@@ -516,6 +567,10 @@ export function MembershipStatusPanel({
           </Space>
 
           <Divider style={{ margin: "8px 0" }} />
+
+          {usageStatusAlerts.map((alert) => (
+            <Alert key={alert.key} type={alert.type} title={alert.title} />
+          ))}
 
           <div>
             <Text strong>{projectLabel} defaults</Text>

@@ -54,6 +54,10 @@ import {
   offlineMoveConfirmationError,
 } from "@cocalc/server/projects/offline-move-confirmation";
 import {
+  assertCanIncreaseAccountStorage,
+  getProjectOwnerAccountId,
+} from "@cocalc/server/membership/project-limits";
+import {
   drainProjectRehome as drainProjectRehomeControl,
   getProjectRehomeOperation as getProjectRehomeOperationControl,
   reconcileProjectRehome as reconcileProjectRehomeControl,
@@ -152,6 +156,12 @@ export async function copyPathBetweenProjects({
   await assertCollab({ account_id, project_id: src.project_id });
   if (dest.project_id !== src.project_id) {
     await assertCollab({ account_id, project_id: dest.project_id });
+  }
+  const destOwnerAccountId = await getProjectOwnerAccountId(dest.project_id);
+  if (destOwnerAccountId) {
+    await assertCanIncreaseAccountStorage({
+      account_id: destOwnerAccountId,
+    });
   }
   const op = await createLro({
     kind: "copy-path-between-projects",

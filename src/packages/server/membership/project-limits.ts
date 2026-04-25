@@ -24,6 +24,24 @@ export async function getOwnedProjectCountForAccount(
   return Number.isFinite(count) && count >= 0 ? count : 0;
 }
 
+export async function getProjectOwnerAccountId(
+  project_id: string,
+): Promise<string | undefined> {
+  const { rows } = await getPool("medium").query<{ account_id: string }>(
+    `
+      SELECT account_id_text::text AS account_id
+      FROM projects
+      CROSS JOIN LATERAL jsonb_each(COALESCE(users, '{}'::jsonb)) AS u(account_id_text, user_data)
+      WHERE project_id = $1
+        AND deleted IS NULL
+        AND COALESCE(u.user_data ->> 'group', '') = 'owner'
+      LIMIT 1
+    `,
+    [project_id],
+  );
+  return `${rows[0]?.account_id ?? ""}`.trim() || undefined;
+}
+
 function extractMaxProjects(
   resolution: MembershipResolution,
 ): number | undefined {

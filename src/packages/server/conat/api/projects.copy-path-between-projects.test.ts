@@ -5,6 +5,8 @@ let createLroMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
 let publishLroEventMock: jest.Mock;
 let triggerCopyLroWorkerMock: jest.Mock;
+let getProjectOwnerAccountIdMock: jest.Mock;
+let assertCanIncreaseAccountStorageMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -72,6 +74,14 @@ jest.mock("@cocalc/server/projects/copy-worker", () => ({
   triggerCopyLroWorker: (...args: any[]) => triggerCopyLroWorkerMock(...args),
 }));
 
+jest.mock("@cocalc/server/membership/project-limits", () => ({
+  __esModule: true,
+  getProjectOwnerAccountId: (...args: any[]) =>
+    getProjectOwnerAccountIdMock(...args),
+  assertCanIncreaseAccountStorage: (...args: any[]) =>
+    assertCanIncreaseAccountStorageMock(...args),
+}));
+
 jest.mock("@cocalc/server/lro/lro-db", () => ({
   __esModule: true,
   createLro: (...args: any[]) => createLroMock(...args),
@@ -111,6 +121,8 @@ describe("projects.copyPathBetweenProjects", () => {
     publishLroSummaryMock = jest.fn(async () => undefined);
     publishLroEventMock = jest.fn(async () => undefined);
     triggerCopyLroWorkerMock = jest.fn();
+    getProjectOwnerAccountIdMock = jest.fn(async () => "owner-1");
+    assertCanIncreaseAccountStorageMock = jest.fn(async () => undefined);
   });
 
   it("requires a signed-in user", async () => {
@@ -183,6 +195,10 @@ describe("projects.copyPathBetweenProjects", () => {
     expect(publishLroSummaryMock).toHaveBeenCalledTimes(1);
     expect(publishLroEventMock).toHaveBeenCalledTimes(1);
     expect(triggerCopyLroWorkerMock).toHaveBeenCalledTimes(1);
+    expect(getProjectOwnerAccountIdMock).toHaveBeenCalledWith("dest-project");
+    expect(assertCanIncreaseAccountStorageMock).toHaveBeenCalledWith({
+      account_id: "owner-1",
+    });
     expect(result).toEqual({
       op_id: "op-1",
       scope_type: "project",
@@ -190,5 +206,21 @@ describe("projects.copyPathBetweenProjects", () => {
       service: "persist-service",
       stream_name: "stream:op-1",
     });
+  });
+
+  it("blocks copy when the destination owner is already at the hard storage cap", async () => {
+    assertCanIncreaseAccountStorageMock = jest.fn(async () => {
+      throw new Error("total account storage hard cap reached");
+    });
+    const { copyPathBetweenProjects } = await import("./projects");
+    await expect(
+      copyPathBetweenProjects({
+        account_id: "acct-1",
+        src: { project_id: "src-project", path: "/root/a.txt" },
+        dest: { project_id: "dest-project", path: "/root/b.txt" },
+      }),
+    ).rejects.toThrow("total account storage hard cap reached");
+    expect(createLroMock).not.toHaveBeenCalled();
+    expect(triggerCopyLroWorkerMock).not.toHaveBeenCalled();
   });
 });
