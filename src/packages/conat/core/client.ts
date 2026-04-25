@@ -339,7 +339,7 @@ const INBOX_PREFIX = "_INBOX";
 const REPLY_HEADER = "CN-Reply";
 const MAX_HEADER_SIZE = 100000;
 
-const STATS_LOOP = 5000;
+const STATS_LOOP = 45 * 1000;
 const IDLE_STATS_LOOP = 5 * 60 * 1000;
 
 // fairly long since this is to avoid leaks, not for responsiveness in the UI.
