@@ -76,6 +76,7 @@ export default function LLMError({ traceback, input }: Props) {
         forceCodex: true,
         codexConfig: { model: DEFAULT_FIX_WITH_AGENT_MODEL },
         openFloating: true,
+        waitForAgent: false,
       });
       if (!sent) {
         throw new Error("Unable to submit the notebook repair request.");

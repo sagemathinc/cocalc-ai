@@ -276,6 +276,7 @@ export const SearchBar = memo(
         visiblePrompt: prompt,
         path: current_path,
         tag: "intent:miniterm-agent",
+        waitForAgent: false,
       });
       if (sent) {
         actions.set_file_search("");
