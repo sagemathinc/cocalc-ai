@@ -61,6 +61,8 @@ import {
 } from "@cocalc/frontend/misc";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import {
+  AGENT_PANEL_INLINE_CHAT_INSTANCE_KEY as AGENTS_INLINE_CHAT_INSTANCE_KEY,
+  AGENT_PANEL_PIN_CHAT_INSTANCE_KEY as AGENTS_PIN_CHAT_INSTANCE_KEY,
   AGENT_PANEL_REVEAL_EVENT,
   loadOpenedAgentSessionSelection,
   saveOpenedAgentSessionSelection,
@@ -104,8 +106,6 @@ function statusLabel(status: AgentSessionStatus): string {
       return "failed";
   }
 }
-const AGENTS_INLINE_CHAT_INSTANCE_KEY = "agents-panel-inline";
-const AGENTS_PIN_CHAT_INSTANCE_KEY = "agents-panel-pin";
 const CHAT_PATH_SCAN_INTERVAL_MS = 20000;
 const AGENTS_MODEL_MIN_PANEL_WIDTH_PX = 360;
 const AGENTS_WORKSPACE_ONLY_STORAGE_PREFIX = "agents-panel-workspace-only";

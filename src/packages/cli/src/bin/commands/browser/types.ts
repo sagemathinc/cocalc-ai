@@ -10,6 +10,7 @@ import type {
   BrowserExecPolicyV1,
   BrowserScreenshotMetadata,
 } from "@cocalc/conat/service/browser-session";
+import type { WorkspaceSelection } from "@cocalc/conat/workspaces";
 
 export type BrowserExecStatus =
   | "pending"
@@ -168,6 +169,9 @@ export type BrowserSessionClient = {
   listOpenFiles: () => Promise<
     { project_id: string; title?: string; path: string }[]
   >;
+  getWorkspaceSelection: (opts: {
+    project_id: string;
+  }) => Promise<WorkspaceSelection>;
   openFile: (opts: {
     project_id: string;
     path: string;
@@ -225,6 +229,19 @@ export type BrowserCommandContext = {
         user_account_id: string;
         password?: string;
       }) => Promise<string>;
+    };
+    hosts?: {
+      resolveHostConnection: (opts: { host_id: string }) => Promise<{
+        connect_url?: string | null;
+        local_proxy?: boolean | null;
+      }>;
+      issueProjectHostAuthToken: (opts: {
+        host_id: string;
+        project_id?: string;
+      }) => Promise<{
+        token: string;
+        expires_at?: number;
+      }>;
     };
   };
 };

@@ -6,10 +6,40 @@ const path = require("node:path");
 
 const {
   parseHubStatusInfo,
+  resolveHubBrowserBaseUrl,
   resolveHubPassword,
   resolveHubPostgresConnection,
   resolveHubTarget,
 } = require("./dev-env.js");
+
+test("resolveHubBrowserBaseUrl reads launchpad cloudflare hostname", async () => {
+  const root = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "cocalc-dev-env-test-"),
+  );
+  try {
+    const configPath = path.join(
+      root,
+      "secrets",
+      "launchpad-cloudflare",
+      "config.yml",
+    );
+    await fs.promises.mkdir(path.dirname(configPath), { recursive: true });
+    await fs.promises.writeFile(
+      configPath,
+      [
+        'tunnel: "abc"',
+        "ingress:",
+        '  - hostname: "lite1b.cocalc.ai"',
+        "    service: http://localhost:9100",
+        "",
+      ].join("\n"),
+    );
+
+    assert.equal(resolveHubBrowserBaseUrl(root), "https://lite1b.cocalc.ai");
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
 
 test("resolveHubPassword prefers the active postgres data-dir secret over legacy data secrets", async () => {
   const root = await fs.promises.mkdtemp(

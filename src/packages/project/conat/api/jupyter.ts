@@ -9,6 +9,7 @@ import { project_id } from "@cocalc/project/data";
 import * as control from "@cocalc/jupyter/control";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { type ServerSocket } from "@cocalc/conat/socket";
+import type { JupyterSaveOptions } from "@cocalc/conat/project/api/jupyter";
 
 let fs: SandboxedFilesystem | null = null;
 export async function start(path: string) {
@@ -36,6 +37,11 @@ export async function run(opts: {
 
 export async function stop(path: string) {
   await control.stop({ path });
+}
+
+export async function save(opts: JupyterSaveOptions) {
+  await start(opts.path);
+  await control.save(opts);
 }
 
 export async function introspect(opts) {

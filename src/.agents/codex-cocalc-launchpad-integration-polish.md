@@ -71,12 +71,16 @@ Codex and the CoCalc CLI should choose the right path automatically.
 - CLI agent mode now prefers the hub URL for its initial account context when a
   bearer token and `COCALC_API_URL` are present.
 - The CLI can then use routed project-host clients for project-scoped services.
-- `browser files --browser ... --session-project-id ...` can list live open
+- `browser files --browser ... --project-id ...` can list live open
   files/tabs in the user's browser session.
 - `browser screenshot` can capture live browser state and has been useful for
   checking live editor content.
 - Codex can answer browser-tab and live-editing questions after falling back to
   working commands.
+- `dev:env:hub` exports `COCALC_CODEX_ONE_TURN_BROWSER_BASE_URL` when a
+  Launchpad Cloudflare tunnel config is present, so spawned Chromium can use
+  the browser-visible public URL while CLI control-plane calls still use the
+  local hub URL.
 
 ### Recently Fixed
 
@@ -85,17 +89,21 @@ Codex and the CoCalc CLI should choose the right path automatically.
   hub `COCALC_API_URL`.
 - Project-host Conat auth now defensively accepts bearer auth before
   project-secret auth.
+- `browser files` accepts `--project-id`, and `browser tabs` is a user-facing
+  alias.
+- The active Codex runtime guidance now recommends `browser files` first for
+  open-tab/file questions.
+- The one-turn Chromium harness has an `--smoke open-tabs` mode that verifies a
+  real Codex turn uses the typed open-tab command and reports returned paths.
+- `cocalc exec` exposes `api.text.open(...)` for live collaborative text
+  documents, and text write/append/replace operations now save to disk by
+  default.
 
 ### Still Fragile
 
 - `browser workspace-state` can fail with:
   - `quickjs sandbox execution failed: [object Object]`
 - `browser exec` can fail with the same opaque QuickJS error.
-- `browser files` does not accept `--project-id`, unlike nearby browser
-  commands.
-- The active Codex instructions currently recommend `workspace-state` first for
-  browser-workspace questions, even when `browser files` is the more robust
-  source for "what tabs are open?"
 - Agents often inspect `exec-api` or retry raw `browser exec` when a higher
   signal typed command exists.
 - Error messages often expose implementation details but not user-actionable
@@ -108,7 +116,7 @@ Codex and the CoCalc CLI should choose the right path automatically.
 The CLI should behave like the browser:
 
 - Account and browser-session questions start at the hub.
-  - But we need to be aware of `/home/user/cocalc-ai/src/.agents/scalable-architecture.md` , which is now mostly implemented.  
+  - But we need to be aware of `/home/user/cocalc-ai/src/.agents/scalable-architecture.md` , which is now mostly implemented.
 - Project file, terminal, notebook, sync, and filesystem questions route to the
   project-host that owns the project.
 - Runtime-local commands execute inside the project container only when that is
@@ -160,9 +168,9 @@ Make high-signal commands consistent and discoverable.
 Tasks:
 
 - Add `--project-id` to `browser files` as an alias/filter parallel to other
-  browser commands.
-- Make `browser files` the documented command for open tab/file listing.
-- Consider `browser tabs` as a user-facing alias for `browser files`.
+  browser commands. (Done.)
+- Make `browser files` the documented command for open tab/file listing. (Done.)
+- Consider `browser tabs` as a user-facing alias for `browser files`. (Done.)
 - Ensure `browser workspace-state` clearly documents that it is for workspace
   selection/records, not just open tabs.
 - Improve `browser --help` examples for agent-mode usage:
@@ -183,7 +191,7 @@ Update the skill and system guidance so Codex chooses robust paths first.
 Tasks:
 
 - For "what tabs/files are open?", use:
-  - `browser files --browser "$COCALC_BROWSER_ID" --session-project-id "$COCALC_PROJECT_ID"`
+  - `browser files --browser "$COCALC_BROWSER_ID" --project-id "$COCALC_PROJECT_ID"`
 - Use `workspace-state` only for questions involving:
   - selected workspace,
   - workspace records,
@@ -191,6 +199,8 @@ Tasks:
 - Use screenshots when the question is about visible unsaved UI state.
 - Use notebook CLI APIs for notebook content/execution instead of reading
   `.ipynb` JSON directly.
+- Use `cocalc exec` with `api.text.open({ path, projectIdentifier })` for live
+  text editor content and edits when unsaved browser state may matter.
 - Prefer typed browser actions over raw `browser exec` when available.
 - Add explicit fallback order for common user questions:
   - open tabs,
@@ -237,6 +247,54 @@ Acceptance criteria:
 
 Make it easy to start exactly one Codex turn through the real Launchpad UI.
 
+Initial implementation: `src/scripts/dev/codex-launchpad-one-turn-chromium.mjs`
+and `pnpm smoke:codex-launchpad-ui`.
+
+The harness now also supports `--smoke live-text`, which asks a real Codex turn
+to use `api.text.open(...)` to edit a live text document and then verifies the
+marker via `project file cat`.
+
+The harness also supports `--smoke open-tabs`, which asks a real Codex turn
+"what browser tabs/files do I have open?", requires the final answer to report
+`OPEN_TABS_SMOKE_OK` and `COMMAND_USED=browser files` or
+`COMMAND_USED=browser tabs`, and verifies that every path from a direct
+`browser files --browser ... --session-project-id ...` check appears in the
+answer.
+
+The harness also supports `--smoke root-route`, which opens the project
+`/files/` route without sending a Codex prompt and verifies that the frontend
+resolves to the safe project home path instead of leaving project state at `/`.
+This directly guards the accidental root directory listing regression.
+Pass `--fail-on-stale-build` when the smoke is being used as a build/release
+gate and stale frontend bundles should fail the run instead of being recorded as
+diagnostic state.
+
+Minimal Launchpad smoke matrix:
+
+```sh
+cd src
+eval "$(pnpm -s dev:env:hub)"
+
+node scripts/dev/codex-launchpad-one-turn-chromium.mjs --smoke root-route --spawn --json
+node scripts/dev/codex-launchpad-one-turn-chromium.mjs --smoke open-tabs --spawn --json
+node scripts/dev/codex-launchpad-one-turn-chromium.mjs --smoke live-text --spawn --json
+```
+
+Use `--fail-on-stale-build` on `root-route` when validating that the browser
+bundle itself is current:
+
+```sh
+node scripts/dev/codex-launchpad-one-turn-chromium.mjs --smoke root-route --spawn --fail-on-stale-build --json
+```
+
+For remote development where `COCALC_API_URL` is local to the hub host or
+container, the harness separates the CLI/control-plane URL from the
+browser-visible URL:
+
+- `--base-url` / `COCALC_API_URL`: where the CLI talks to the hub.
+- `--browser-base-url` / `COCALC_CODEX_ONE_TURN_BROWSER_BASE_URL`: where the
+  spawned Chromium opens the Launchpad UI.
+
 This is the highest-value test harness for the integration because it exercises
 the same path as a user:
 
@@ -260,8 +318,10 @@ Tasks:
   - captures the final chat message,
   - exits without starting a second turn.
 - Support prompts that verify common integration paths:
-  - "what browser tabs do I have open?"
+  - "what browser tabs do I have open?" (Done: `--smoke open-tabs`.)
   - "what number is visible in this open editor?"
+  - "append a marker line through the live text editor API and verify it saved
+    to disk"
   - "list cells in the open notebook"
   - "generate a small image and return the blob markdown"
 - Make the harness deterministic:
@@ -344,9 +404,10 @@ Acceptance criteria:
 
 1. Fix QuickJS error serialization.
 2. Fix or bypass the `workspace-state` QuickJS failure.
-3. Add `--project-id` support to `browser files`.
-4. Add the one-turn Chromium harness for Launchpad Codex chat.
+3. Add `--project-id` support to `browser files`. (Done.)
+4. Add the one-turn Chromium harness for Launchpad Codex chat. (Done.)
 5. Update the CoCalc skill/instructions for tab listing and live editor checks.
+   (Runtime guidance done; skill/checklist updates still need follow-up.)
 6. Add one Launchpad smoke script/checklist.
 
 This sequence targets the observed false starts directly and should make the

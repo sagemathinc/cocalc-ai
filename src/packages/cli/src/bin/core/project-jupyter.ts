@@ -21,6 +21,8 @@ import { projectApiClient } from "@cocalc/conat/project/api";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import { sleep } from "@cocalc/util/async-utils";
+import type { JupyterSaveOptions } from "@cocalc/conat/project/api/jupyter";
+import type { KernelSpec } from "@cocalc/util/jupyter/types";
 
 type ProjectIdentity = {
   project_id: string;
@@ -67,6 +69,14 @@ export type ProjectJupyterMutationResult = {
   path: string;
   cell?: NotebookCellInfo;
   deleted?: string[];
+};
+
+export type ProjectJupyterKernelResult = {
+  project_id: string;
+  path: string;
+  kernel: string | null;
+  kernel_spec: KernelSpec | null;
+  kernels: KernelSpec[];
 };
 
 export type ProjectJupyterRunSession = {
@@ -566,6 +576,26 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     );
   }
 
+  async function saveNotebookCellsToDisk({
+    project,
+    client,
+    ...saveOpts
+  }: {
+    project: Project;
+    client: any;
+  } & JupyterSaveOptions): Promise<void> {
+    try {
+      await projectApiClient({
+        project_id: project.project_id,
+        client,
+      }).jupyter.save(saveOpts);
+    } catch (err) {
+      throw new Error(
+        `notebook mutation became live but could not be saved to disk; update/restart the project host if this persists: ${err}`,
+      );
+    }
+  }
+
   async function projectJupyterCellsData({
     ctx,
     projectIdentifier,
@@ -592,6 +622,101 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       cells: codeOnly
         ? cells.filter((cell) => cell.cell_type === "code")
         : cells,
+    };
+  }
+
+  async function projectJupyterKernelData({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+    noCache,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+    noCache?: boolean;
+  }): Promise<ProjectJupyterKernelResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, kernel, kernelSpec, kernels } =
+      await resolveNotebookKernelState({
+        ctx,
+        projectIdentifier,
+        path: normalizedPath,
+        cwd,
+        noCache,
+      });
+    return {
+      project_id: project.project_id,
+      path: normalizedPath,
+      kernel,
+      kernel_spec: kernelSpec,
+      kernels,
+    };
+  }
+
+  async function projectJupyterSetKernelData({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+    kernel,
+    noCache,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+    kernel: string | null;
+    noCache?: boolean;
+  }): Promise<ProjectJupyterKernelResult> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const requestedKernel =
+      typeof kernel === "string" && kernel.trim().length > 0
+        ? kernel.trim()
+        : "";
+    const { project, client, kernels } = await resolveNotebookKernelState({
+      ctx,
+      projectIdentifier,
+      path: normalizedPath,
+      cwd,
+      noCache,
+    });
+    if (
+      requestedKernel !== "" &&
+      !kernels.some((candidate) => candidate.name === requestedKernel)
+    ) {
+      throw new Error(
+        `unknown kernel '${requestedKernel}'; inspect available kernels with 'cocalc project jupyter kernel --path ${normalizedPath}'`,
+      );
+    }
+    await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path: normalizedPath,
+      cwd,
+      fn: async ({ session }) => {
+        await session.setKernel(requestedKernel);
+      },
+    });
+    await saveNotebookCellsToDisk({
+      project,
+      client,
+      path: normalizedPath,
+      expectedKernel: requestedKernel,
+    });
+    const kernelSpec =
+      requestedKernel === ""
+        ? null
+        : (kernels.find((candidate) => candidate.name === requestedKernel) ??
+          null);
+    return {
+      project_id: project.project_id,
+      path: normalizedPath,
+      kernel: requestedKernel || null,
+      kernel_spec: kernelSpec,
+      kernels,
     };
   }
 
@@ -630,6 +755,50 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     }
   }
 
+  async function resolveNotebookKernelState({
+    ctx,
+    projectIdentifier,
+    path,
+    cwd,
+    noCache,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    cwd?: string;
+    noCache?: boolean;
+  }): Promise<{
+    project: Project;
+    client: any;
+    kernel: string | null;
+    kernelSpec: KernelSpec | null;
+    kernels: KernelSpec[];
+  }> {
+    const normalizedPath = normalizeNotebookPath(path);
+    const { project, client } = await deps.resolveProjectConatClient(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
+    const kernelValue = await withNotebookSession({
+      ctx,
+      projectIdentifier,
+      path: normalizedPath,
+      cwd,
+      fn: async ({ session }) => await session.getKernel(),
+    });
+    const kernel = kernelValue && kernelValue.length > 0 ? kernelValue : null;
+    const kernels = await projectApiClient({
+      project_id: project.project_id,
+      client,
+    }).jupyter.kernels({ noCache });
+    const kernelSpec =
+      kernel == null
+        ? null
+        : (kernels.find((candidate) => candidate.name === kernel) ?? null);
+    return { project, client, kernel, kernelSpec, kernels };
+  }
+
   async function projectJupyterSetCellData({
     ctx,
     projectIdentifier,
@@ -656,13 +825,19 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         if (input == null && cellType == null) {
           throw new Error("set requires --input, --stdin, and/or --type");
         }
+        const beforeCells = await session.listCells();
         if (input != null) {
           await session.setCellInput(cellId, input);
         }
         if (cellType != null) {
           await session.setCellType(cellId, cellType);
         }
-        const { value: cell } = await waitForFreshNotebookCells({
+        const { client } = await deps.resolveProjectConatClient(
+          ctx,
+          projectIdentifier,
+          cwd,
+        );
+        const { cells, value: cell } = await waitForFreshNotebookCells({
           ctx,
           projectIdentifier,
           path,
@@ -681,6 +856,28 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
             }
             return cell;
           },
+        });
+        if (
+          cells.length !== beforeCells.length ||
+          !beforeCells.every((beforeCell) =>
+            cells.some((candidate) => candidate.id === beforeCell.id),
+          )
+        ) {
+          throw new Error("notebook cell set changed unexpected cell ids");
+        }
+        await saveNotebookCellsToDisk({
+          project,
+          client,
+          path,
+          expectedCellCount: beforeCells.length,
+          expectedCellIdsInOrder: cells.map((candidate) => candidate.id),
+          expectedCells: [
+            {
+              id: cell.id,
+              ...(cellType != null ? { cell_type: cellType } : {}),
+              ...(input != null ? { input } : {}),
+            },
+          ],
         });
         return {
           project_id: project.project_id,
@@ -731,6 +928,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
             "insert requires exactly one of --after-id, --before-id, --at-start, or --at-end",
           );
         }
+        const beforeCells = await session.listCells();
         let cell: NotebookCellRecord;
         if (afterId) {
           cell = await session.insertCellAdjacent({
@@ -760,13 +958,69 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
             cell_type: cellType,
           });
         }
-        const { value: freshCell } = await waitForFreshNotebookCells({
+        const { client } = await deps.resolveProjectConatClient(
+          ctx,
+          projectIdentifier,
+          cwd,
+        );
+        const { cells, value: freshCell } = await waitForFreshNotebookCells({
           ctx,
           projectIdentifier,
           path,
           cwd,
           desc: `insert ${cell.id}`,
-          pick: (cells) => cells.find((candidate) => candidate.id === cell.id),
+          pick: (cells) => {
+            if (cells.length !== beforeCells.length + 1) {
+              return undefined;
+            }
+            if (
+              !beforeCells.every((beforeCell) =>
+                cells.some((candidate) => candidate.id === beforeCell.id),
+              )
+            ) {
+              return undefined;
+            }
+            const index = cells.findIndex(
+              (candidate) => candidate.id === cell.id,
+            );
+            if (index === -1) {
+              return undefined;
+            }
+            const freshCell = cells[index];
+            if (cellType != null && freshCell.cell_type !== cellType) {
+              return undefined;
+            }
+            if (input != null && freshCell.input !== input) {
+              return undefined;
+            }
+            if (beforeId != null && cells[index + 1]?.id !== beforeId) {
+              return undefined;
+            }
+            if (afterId != null && cells[index - 1]?.id !== afterId) {
+              return undefined;
+            }
+            if (atStart && index !== 0) {
+              return undefined;
+            }
+            if (atEnd && index !== cells.length - 1) {
+              return undefined;
+            }
+            return freshCell;
+          },
+        });
+        await saveNotebookCellsToDisk({
+          project,
+          client,
+          path,
+          expectedCellCount: cells.length,
+          expectedCellIdsInOrder: cells.map((candidate) => candidate.id),
+          expectedCells: [
+            {
+              id: freshCell.id,
+              cell_type: freshCell.cell_type,
+              input: freshCell.input,
+            },
+          ],
         });
         return {
           project_id: project.project_id,
@@ -796,19 +1050,52 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       path,
       cwd,
       fn: async ({ project, path, session }) => {
+        const beforeCells = await session.listCells();
         await session.deleteCells(cellIds);
+        const { client } = await deps.resolveProjectConatClient(
+          ctx,
+          projectIdentifier,
+          cwd,
+        );
         await waitForFreshNotebookCells({
           ctx,
           projectIdentifier,
           path,
           cwd,
           desc: `delete ${cellIds.join(",")}`,
-          pick: (cells) =>
-            cellIds.every(
+          pick: (cells) => {
+            const removed = new Set(cellIds);
+            const expectedRemaining = beforeCells.filter(
+              (cell) => !removed.has(cell.id),
+            );
+            if (cells.length !== expectedRemaining.length) {
+              return undefined;
+            }
+            if (
+              !expectedRemaining.every((beforeCell) =>
+                cells.some((candidate) => candidate.id === beforeCell.id),
+              )
+            ) {
+              return undefined;
+            }
+            return cellIds.every(
               (cellId) => !cells.some((candidate) => candidate.id === cellId),
             )
               ? true
-              : undefined,
+              : undefined;
+          },
+        });
+        const removed = new Set(cellIds);
+        const expectedRemaining = beforeCells.filter(
+          (cell) => !removed.has(cell.id),
+        );
+        await saveNotebookCellsToDisk({
+          project,
+          client,
+          path,
+          expectedCellCount: expectedRemaining.length,
+          expectedCellIdsInOrder: expectedRemaining.map((cell) => cell.id),
+          expectedCells: [],
         });
         return {
           project_id: project.project_id,
@@ -846,6 +1133,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       path,
       cwd,
       fn: async ({ project, path, session }) => {
+        const beforeCells = await session.listCells();
         const cell = await session.moveCell({
           cellId,
           beforeId,
@@ -853,6 +1141,11 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
           atStart,
           atEnd,
         });
+        const { client } = await deps.resolveProjectConatClient(
+          ctx,
+          projectIdentifier,
+          cwd,
+        );
         const { cells } = await waitForFreshNotebookCells({
           ctx,
           projectIdentifier,
@@ -860,6 +1153,16 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
           cwd,
           desc: `move ${cell.id}`,
           pick: (cells) => {
+            if (cells.length !== beforeCells.length) {
+              return undefined;
+            }
+            if (
+              !beforeCells.every((beforeCell) =>
+                cells.some((candidate) => candidate.id === beforeCell.id),
+              )
+            ) {
+              return undefined;
+            }
             const index = cells.findIndex(
               (candidate) => candidate.id === cell.id,
             );
@@ -880,6 +1183,14 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
             }
             return true;
           },
+        });
+        await saveNotebookCellsToDisk({
+          project,
+          client,
+          path,
+          expectedCellCount: cells.length,
+          expectedCellIdsInOrder: cells.map((candidate) => candidate.id),
+          expectedCells: [],
         });
         return {
           project_id: project.project_id,
@@ -1063,6 +1374,8 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
   return {
     close,
     projectJupyterCellsData,
+    projectJupyterKernelData,
+    projectJupyterSetKernelData,
     projectJupyterSetCellData,
     projectJupyterInsertCellData,
     projectJupyterDeleteCellsData,

@@ -48,6 +48,30 @@ export function canonical_language(
   return lang;
 }
 
+export function normalizeLanguageInfo(
+  languageInfo: any,
+  kernelspec?: KernelSpec,
+): { [key: string]: any } | undefined {
+  const plain =
+    languageInfo?.toJS instanceof Function ? languageInfo.toJS() : languageInfo;
+  const kernelLanguage = `${kernelspec?.language ?? ""}`.trim();
+  if (!kernelLanguage) {
+    return plain == null ? undefined : plain;
+  }
+  if (plain == null || typeof plain !== "object") {
+    return { name: kernelLanguage };
+  }
+  const name =
+    typeof plain.name === "string" ? plain.name.trim().toLowerCase() : "";
+  if (!name) {
+    return { ...plain, name: kernelLanguage };
+  }
+  if (name !== kernelLanguage.toLowerCase()) {
+    return { name: kernelLanguage };
+  }
+  return plain;
+}
+
 export interface JupyterStoreState {
   about: boolean;
   backend_kernel_info: KernelInfo;
@@ -195,7 +219,9 @@ export class JupyterStore extends Store<JupyterStoreState> {
     // slow/inefficient, but ok since this is rarely called
     let info: any = undefined;
     const kernels = this.get("kernels");
-    if (kernels === undefined) return;
+    if (kernels === undefined) {
+      return;
+    }
     if (kernels === null) {
       return {
         name: "No Kernel",
@@ -233,43 +259,50 @@ export class JupyterStore extends Store<JupyterStoreState> {
     });
   };
 
-  get_language_info(): object | undefined {
+  get_language_info(): { [key: string]: any } | undefined {
+    const kernelspec = this.get_kernel_info(this.get("kernel"));
     for (const key of ["backend_kernel_info", "metadata"]) {
-      const language_info = this.unsafe_getIn([key, "language_info"]);
+      const language_info = normalizeLanguageInfo(
+        this.unsafe_getIn([key, "language_info"]),
+        kernelspec,
+      );
       if (language_info != null) {
         return language_info;
       }
     }
+    return normalizeLanguageInfo(undefined, kernelspec);
   }
 
   get_cm_mode() {
-    let metadata_immutable = this.get("backend_kernel_info");
-    if (metadata_immutable == null) {
-      metadata_immutable = this.get("metadata");
-    }
-    let metadata: { language_info?: any; kernelspec?: any } | undefined;
-    if (metadata_immutable != null) {
-      metadata = metadata_immutable.toJS();
-    } else {
-      metadata = undefined;
-    }
     let mode: any;
-    if (metadata != null) {
-      if (
-        metadata.language_info != null &&
-        metadata.language_info.codemirror_mode != null
-      ) {
-        mode = metadata.language_info.codemirror_mode;
-      } else if (
-        metadata.language_info != null &&
-        metadata.language_info.name != null
-      ) {
-        mode = metadata.language_info.name;
-      } else if (
-        metadata.kernelspec != null &&
-        metadata.kernelspec.language != null
-      ) {
-        mode = metadata.kernelspec.language.toLowerCase();
+    const kernelspec = this.get_kernel_info(this.get("kernel"));
+    const language_info =
+      normalizeLanguageInfo(
+        this.unsafe_getIn(["backend_kernel_info", "language_info"]),
+        kernelspec,
+      ) ??
+      normalizeLanguageInfo(
+        this.unsafe_getIn(["metadata", "language_info"]),
+        kernelspec,
+      );
+    if (language_info != null) {
+      if (language_info.codemirror_mode != null) {
+        mode = language_info.codemirror_mode;
+      } else if (language_info.name != null) {
+        mode = language_info.name;
+      }
+    }
+    if (mode == null && kernelspec?.language != null) {
+      mode = kernelspec.language.toLowerCase();
+    }
+    if (mode == null) {
+      const metadataLanguage = this.unsafe_getIn([
+        "metadata",
+        "kernelspec",
+        "language",
+      ]);
+      if (metadataLanguage != null) {
+        mode = `${metadataLanguage}`.toLowerCase();
       }
     }
     if (mode == null) {

@@ -2451,7 +2451,10 @@ Examples:
   host
     .command("ssh <host>")
     .description("ssh into host (owner-only key install supported)")
-    .option("--user <user>", "ssh username", "ubuntu")
+    .option(
+      "--user <user>",
+      "ssh username (defaults to host ssh_user or ubuntu)",
+    )
     .option("--port <port>", "override ssh port")
     .option("--identity <path>", "ssh private key path")
     .option(
@@ -2489,10 +2492,14 @@ Examples:
             installResult = (await ctx.hub.hosts.addHostSshAuthorizedKey({
               id: endpoint.host.id,
               public_key: keyInfo.public_key,
+              user:
+                `${opts.user ?? endpoint.ssh_user ?? "ubuntu"}`.trim() ||
+                "ubuntu",
             })) as HostSshAuthorizedKeysRow & { added: boolean };
           }
 
-          const user = `${opts.user ?? "ubuntu"}`.trim() || "ubuntu";
+          const user =
+            `${opts.user ?? endpoint.ssh_user ?? "ubuntu"}`.trim() || "ubuntu";
           const parsedPort = opts.port == null ? undefined : Number(opts.port);
           if (
             parsedPort != null &&

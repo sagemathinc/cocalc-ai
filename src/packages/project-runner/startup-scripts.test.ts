@@ -28,4 +28,18 @@ describe("writeStartupScripts", () => {
       `mkdir -p "$RUNTIME_SSH_DIR" "$RUNTIME_MANAGED_SSH_DIR" "$RUNTIME_SSHD_DIR"`,
     );
   });
+
+  it("probes standard distro sftp-server paths for modern scp support", async () => {
+    const home = mkdtempSync(join(tmpdir(), "cocalc-startup-scripts-"));
+
+    await writeStartupScripts(home);
+
+    const script = readFileSync(join(home, START_PROJECT_SSH), "utf8");
+    expect(script).toContain('SFTP_SERVER="$(command -v sftp-server || true)"');
+    expect(script).toContain("/usr/lib/openssh/sftp-server");
+    expect(script).toContain("/usr/lib/ssh/sftp-server");
+    expect(script).toContain("/usr/libexec/openssh/sftp-server");
+    expect(script).toContain("mkdir -p /usr/libexec");
+    expect(script).toContain('ln -sf "$SFTP_SERVER" /usr/libexec/sftp-server');
+  });
 });

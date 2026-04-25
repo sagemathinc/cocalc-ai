@@ -142,23 +142,38 @@ async function shouldRefreshCatalog(entry: ProviderEntry): Promise<boolean> {
 async function withCatalogLock<T>(
   provider: string,
   fn: () => Promise<T>,
+  opts: {
+    wait?: boolean;
+  } = {},
 ): Promise<T | undefined> {
   const lockKey = `cloud_catalog_refresh:${provider}`;
-  const { rows } = await pool().query(
-    "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
-    [lockKey],
-  );
-  if (!rows[0]?.locked) return undefined;
+  const client = await pool().connect();
+  let locked = false;
   try {
+    if (opts.wait) {
+      await client.query("SELECT pg_advisory_lock(hashtext($1))", [lockKey]);
+      locked = true;
+    } else {
+      const { rows } = await client.query<{ locked: boolean }>(
+        "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+        [lockKey],
+      );
+      locked = !!rows[0]?.locked;
+      if (!rows[0]?.locked) return undefined;
+    }
     return await fn();
   } finally {
-    await pool().query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]);
+    if (locked) {
+      await client.query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]);
+    }
+    client.release();
   }
 }
 
 export async function refreshCloudCatalogNow(
   opts: {
     provider?: ProviderId;
+    wait?: boolean;
   } = {},
 ) {
   const providers = opts.provider
@@ -169,9 +184,13 @@ export async function refreshCloudCatalogNow(
 
   for (const provider of providers) {
     if (!provider.entry.fetchCatalog || !provider.entry.catalog) continue;
-    await withCatalogLock(provider.id, async () => {
-      await refreshCatalogForProvider(provider);
-    });
+    await withCatalogLock(
+      provider.id,
+      async () => {
+        await refreshCatalogForProvider(provider);
+      },
+      { wait: opts.wait },
+    );
   }
 }
 

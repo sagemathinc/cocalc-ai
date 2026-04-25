@@ -52,6 +52,7 @@ import { isSha1, sha1 } from "@cocalc/util/misc";
 import { shouldUseIframe } from "@cocalc/jupyter/util/iframe";
 import { join } from "path";
 import {
+  isActiveJupyterRuntimeCellState,
   isJupyterRuntimeCellKey,
   jupyterRuntimeCellIdFromKey,
   jupyterRuntimeCellKey,
@@ -362,6 +363,30 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     }
   };
 
+  protected clearStaleActiveRuntimeCellState = (): void => {
+    const keys = new Set<string>();
+    if (this.runtimeState != null) {
+      for (const key of Object.keys(this.runtimeState.getAll())) {
+        if (key.startsWith(JUPYTER_RUNTIME_CELL_KEY_PREFIX)) {
+          keys.add(key);
+        }
+      }
+    }
+    for (const key of this.pendingRuntimeRecords.keys()) {
+      if (key.startsWith(JUPYTER_RUNTIME_CELL_KEY_PREFIX)) {
+        keys.add(key);
+      }
+    }
+    for (const key of keys) {
+      const runtimeCell = this.getRuntimeRecord<JupyterRuntimeCellState>(key);
+      if (!isActiveJupyterRuntimeCellState(runtimeCell)) {
+        continue;
+      }
+      this.deleteRuntimeRecord(key);
+      this.applyRuntimeCellToStore(jupyterRuntimeCellIdFromKey(key));
+    }
+  };
+
   private getRuntimeCell = (
     id: string,
   ): JupyterRuntimeCellState | undefined => {
@@ -645,6 +670,55 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   protected getFrameActions() {
     return this.redux.getEditorActions(this.project_id, this.path);
   }
+
+  toIpynb = async () => {
+    const blobsBase64 = new Set<string>();
+    const blobsString = new Set<string>();
+    const collectBlobRefs = {
+      getBase64: (hash) => {
+        blobsBase64.add(hash);
+      },
+      getString: (hash) => {
+        blobsString.add(hash);
+      },
+    };
+
+    const ipynb = this.store.get_ipynb(collectBlobRefs);
+    if (ipynb == null) {
+      throw Error("notebook is not loaded");
+    }
+    if (blobsBase64.size === 0 && blobsString.size === 0) {
+      return ipynb;
+    }
+
+    const dbg = this.dbg("toIpynb");
+    const blobs: { [sha1: string]: string | null } = {};
+    for (const hash of blobsBase64) {
+      try {
+        const ar = await this.asyncBlobStore.get(hash);
+        blobs[hash] = ar == null ? null : misc.uint8ArrayToBase64(ar);
+      } catch (err) {
+        dbg("missing base64 blob", { hash, err: `${err}` });
+        blobs[hash] = null;
+      }
+    }
+    const decoder = new TextDecoder();
+    for (const hash of blobsString) {
+      try {
+        const ar = await this.asyncBlobStore.get(hash);
+        blobs[hash] = ar == null ? null : decoder.decode(ar);
+      } catch (err) {
+        dbg("missing string blob", { hash, err: `${err}` });
+        blobs[hash] = null;
+      }
+    }
+
+    const resolveBlobRefs = {
+      getBase64: (hash) => blobs[hash],
+      getString: (hash) => blobs[hash],
+    };
+    return this.store.get_ipynb(resolveBlobRefs);
+  };
 
   sync_read_only = (): void => {
     if (this._state == "closed") return;

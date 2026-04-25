@@ -69,6 +69,11 @@ type Capture = {
   sshTrustRequests?: Array<{
     id: string;
   }>;
+  hostSshKeyInstallRequests?: Array<{
+    id: string;
+    public_key: string;
+    user?: string;
+  }>;
 };
 
 function withConsoleCapture(fn: () => Promise<void> | void): Promise<string> {
@@ -122,6 +127,7 @@ function makeDeps(
   capture.lroListRequests ??= [];
   capture.rehomeRequests ??= [];
   capture.sshTrustRequests ??= [];
+  capture.hostSshKeyInstallRequests ??= [];
   return {
     withContext: async (_command, _label, fn) => {
       const ctx = {
@@ -265,6 +271,17 @@ function makeDeps(
                 host_control_succeeded: false,
                 cloud_provider_attempted: true,
                 cloud_provider_succeeded: true,
+              };
+            },
+            addHostSshAuthorizedKey: async ({ id, public_key, user }) => {
+              capture.hostSshKeyInstallRequests!.push({ id, public_key, user });
+              return {
+                host_id: id,
+                user: user ?? "ubuntu",
+                home: `/home/${user ?? "ubuntu"}`,
+                path: `/home/${user ?? "ubuntu"}/.ssh/authorized_keys`,
+                keys: [public_key],
+                added: true,
               };
             },
             getHostRehomeOperation: async ({ op_id }) => ({
@@ -1034,6 +1051,52 @@ test("host ssh-trust forwards the resolved host", async () => {
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.bay_id, "bay-0");
   assert.equal(capture.data.cloud_provider_succeeded, true);
+});
+
+test("host ssh --install-key uses the resolved ssh user", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture, {
+    ensureSyncKeyPair: async () => ({
+      public_key: "ssh-ed25519 AAAATEST local@test",
+      public_key_path: "/home/test/.ssh/id_ed25519.pub",
+    }),
+    resolveHostSshEndpoint: async () => ({
+      host: { id: "host-1", name: "host-1" },
+      ssh_host: "34.1.2.3",
+      ssh_port: 22,
+      ssh_server: "34.1.2.3:22",
+      ssh_user: "cocalc-admin",
+    }),
+  });
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "ssh",
+    "--install-key",
+    "--print",
+    "host-1",
+  ]);
+
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.ssh_target, "cocalc-admin@34.1.2.3");
+  assert.equal(capture.data.command, 'ssh "-p" "22" "cocalc-admin@34.1.2.3"');
+  assert.equal(capture.data.key_installed, true);
+  assert.equal(
+    capture.hostSshKeyInstallRequests?.[0]?.public_key,
+    "ssh-ed25519 AAAATEST local@test",
+  );
+  assert.equal(capture.hostSshKeyInstallRequests?.[0]?.user, "cocalc-admin");
 });
 
 test("host rehome refuses to run without --yes", async () => {

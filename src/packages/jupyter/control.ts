@@ -2,9 +2,12 @@ import { SyncDB } from "@cocalc/sync/editor/db/sync";
 import { SYNCDB_OPTIONS } from "@cocalc/jupyter/redux/sync";
 import { type Filesystem } from "@cocalc/conat/files/fs";
 import { initJupyterRedux, removeJupyterRedux } from "@cocalc/jupyter/kernel";
+import { get_kernel_data } from "@cocalc/jupyter/kernel/kernel-data";
+import type { Kernels } from "@cocalc/jupyter/util/misc";
 import { syncdbPath, ipynbPath } from "@cocalc/util/jupyter/names";
 import { once } from "@cocalc/util/async-utils";
 import { OutputHandler } from "@cocalc/jupyter/execute/output-handler";
+import { get_kernels_by_name_or_language } from "@cocalc/jupyter/util/misc";
 import {
   readFile as readFileAbsolute,
   realpath as realpathAbsolute,
@@ -13,7 +16,12 @@ import {
 } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { throttle } from "lodash";
+import { fromJS } from "immutable";
 import { type RunOptions } from "@cocalc/conat/project/jupyter/run-code";
+import type {
+  ExpectedJupyterCell,
+  JupyterSaveOptions,
+} from "@cocalc/conat/project/api/jupyter";
 import { type JupyterActions } from "@cocalc/jupyter/redux/project-actions";
 import { bufferToBase64 } from "@cocalc/util/base64";
 import { getLogger } from "@cocalc/backend/logger";
@@ -252,6 +260,84 @@ export async function hydrateNotebookFromIpynbIfNeeded({
   return true;
 }
 
+export async function loadKernelSpecsIntoStore({
+  actions,
+}: {
+  actions: Pick<JupyterActions, "store" | "setState">;
+}): Promise<boolean> {
+  if (actions.store.get("kernels") !== undefined) {
+    return false;
+  }
+  const kernels = fromJS(await get_kernel_data()).filter(
+    (kernel) => !kernel.getIn(["metadata", "cocalc", "disabled"], false),
+  ) as Kernels;
+  const [kernels_by_name, kernels_by_language] =
+    get_kernels_by_name_or_language(kernels);
+  const kernel_selection = actions.store.get_kernel_selection(kernels);
+  const kernelName = actions.store.get("kernel");
+  let kernel_info;
+  kernels.forEach((kernel) => {
+    if (kernel.get("name") === kernelName) {
+      kernel_info = kernel.toJS();
+      return false;
+    }
+  });
+  actions.setState({
+    kernels,
+    kernel_info,
+    kernel_selection,
+    kernels_by_name,
+    kernels_by_language,
+    default_kernel: actions.store.get_default_kernel(),
+  });
+  return true;
+}
+
+function listValueAt(list: any, index: number): any {
+  if (Array.isArray(list)) {
+    return list[index];
+  }
+  return list?.get?.(index);
+}
+
+function listSize(list: any): number | undefined {
+  if (typeof list?.size === "number") {
+    return list.size;
+  }
+  if (Array.isArray(list)) {
+    return list.length;
+  }
+}
+
+export function notebookCellsMatchExpected(opts: {
+  cells: any;
+  cellList: any;
+  kernel?: string;
+  expectedCellCount?: number;
+  expectedCells?: ExpectedJupyterCell[];
+  expectedCellIdsInOrder?: string[];
+  expectedKernel?: string;
+}): boolean {
+  const expectedCells = opts.expectedCells ?? [];
+  const expectedCellIdsInOrder = opts.expectedCellIdsInOrder ?? [];
+  const count = listSize(opts.cells);
+  const countMatches =
+    opts.expectedCellCount == null || count === opts.expectedCellCount;
+  const cellsMatch = expectedCells.every((expected) =>
+    cellSatisfiesExpected(opts.cells?.get?.(expected.id), expected),
+  );
+  const orderCount = listSize(opts.cellList);
+  const orderMatches =
+    expectedCellIdsInOrder.length === 0 ||
+    (orderCount === expectedCellIdsInOrder.length &&
+      expectedCellIdsInOrder.every(
+        (id, index) => listValueAt(opts.cellList, index) === id,
+      ));
+  const kernelMatches =
+    opts.expectedKernel == null || (opts.kernel ?? "") === opts.expectedKernel;
+  return countMatches && cellsMatch && orderMatches && kernelMatches;
+}
+
 export function isRunning(path): boolean {
   return jupyterActions[ipynbPath(path)] != null;
 }
@@ -301,6 +387,7 @@ export async function start({
   try {
     await hydrateNotebookFromIpynbIfNeeded({ actions, fs: syncFs, path });
     await restoreKernelFromIpynb({ actions, fs: syncFs, path });
+    await loadKernelSpecsIntoStore({ actions });
   } catch (err) {
     logger.debug("start: failed to initialize kernel from disk", {
       path,
@@ -329,6 +416,79 @@ export async function getKernelStatus({ path }) {
     return { backend_state: "off" as "off", kernel_state: "idle" as "idle" };
   }
   return kernel.getStatus();
+}
+
+function cellSatisfiesExpected(cell: any, expected: ExpectedJupyterCell) {
+  if (cell == null) {
+    return false;
+  }
+  const plain = cell?.toJS instanceof Function ? cell.toJS() : cell;
+  if (plain?.id !== expected.id) {
+    return false;
+  }
+  if (
+    expected.cell_type != null &&
+    (plain?.cell_type ?? "code") !== expected.cell_type
+  ) {
+    return false;
+  }
+  if (expected.input != null && (plain?.input ?? "") !== expected.input) {
+    return false;
+  }
+  return true;
+}
+
+async function waitForExpectedCells(
+  actions: JupyterActions,
+  opts: Pick<
+    JupyterSaveOptions,
+    | "expectedCellCount"
+    | "expectedCells"
+    | "expectedCellIdsInOrder"
+    | "expectedKernel"
+  >,
+) {
+  const expectedCells = opts.expectedCells ?? [];
+  const expectedCellIdsInOrder = opts.expectedCellIdsInOrder ?? [];
+  if (
+    opts.expectedCellCount == null &&
+    expectedCells.length === 0 &&
+    expectedCellIdsInOrder.length === 0 &&
+    opts.expectedKernel == null
+  ) {
+    return;
+  }
+  const started = Date.now();
+  while (true) {
+    const cells = actions.store.get("cells");
+    const cellList = actions.store.get("cell_list");
+    if (
+      notebookCellsMatchExpected({
+        cells,
+        cellList,
+        kernel: actions.store.get("kernel"),
+        expectedCellCount: opts.expectedCellCount,
+        expectedCells,
+        expectedCellIdsInOrder,
+        expectedKernel: opts.expectedKernel,
+      })
+    ) {
+      return;
+    }
+    if (Date.now() - started > 2_000) {
+      throw Error("timed out waiting for expected notebook cells before save");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+export async function save(opts: JupyterSaveOptions) {
+  const actions = jupyterActions[ipynbPath(opts.path)];
+  if (actions == null) {
+    throw Error(`${ipynbPath(opts.path)} not running`);
+  }
+  await waitForExpectedCells(actions, opts);
+  await actions.save_ipynb_file();
 }
 
 // Returns async iterator over outputs

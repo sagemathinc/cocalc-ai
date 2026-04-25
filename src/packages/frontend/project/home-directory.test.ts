@@ -76,8 +76,8 @@ describe("getProjectHomeDirectory", () => {
       });
 
     const { getProjectHomeDirectory } = require("./home-directory");
-    expect(getProjectHomeDirectory("project-1")).toBe("/");
-    expect(getProjectHomeDirectory("project-2")).toBe("/");
+    expect(getProjectHomeDirectory("project-1")).toBe("/home/user");
+    expect(getProjectHomeDirectory("project-2")).toBe("/home/user");
   });
 
   it("reads runtime home and user from capabilities", () => {
@@ -113,7 +113,7 @@ describe("getProjectHomeDirectory", () => {
       getProjectHomeDirectory,
       getProjectRuntimeUser,
     } = require("./home-directory");
-    expect(getProjectHomeDirectory("project-1")).toBe("/");
+    expect(getProjectHomeDirectory("project-1")).toBe("/home/user");
     expect(getProjectRuntimeUser("project-1")).toBe("user");
   });
 

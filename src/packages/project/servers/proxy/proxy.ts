@@ -371,6 +371,8 @@ function createProxyResolver({
   base_url: string;
   host: string;
 }) {
+  const REDIRECT_MOUNT_PATH = Symbol("app-proxy-redirect-mount-path");
+  const REDIRECT_TARGET_PORT = Symbol("app-proxy-redirect-target-port");
   type ProxyTarget =
     | { port: number; host: string; requireInternalSecret: boolean }
     | undefined;
@@ -515,6 +517,63 @@ function createProxyResolver({
 
   function appendViewerRawQuery(href: string): string {
     return href.includes("?") ? `${href}&raw=1` : `${href}?raw=1`;
+  }
+
+  function joinMountedRedirect(
+    mountPath: string,
+    locationPath: string,
+  ): string {
+    const trimmedMount = mountPath.endsWith("/")
+      ? mountPath.slice(0, -1)
+      : mountPath;
+    if (locationPath === "/") {
+      return `${trimmedMount}/`;
+    }
+    return `${trimmedMount}${locationPath.startsWith("/") ? locationPath : `/${locationPath}`}`;
+  }
+
+  function rewriteProxyRedirectLocation({
+    location,
+    mountPath,
+    targetPort,
+  }: {
+    location: string;
+    mountPath?: string;
+    targetPort?: number;
+  }): string {
+    if (!mountPath) return location;
+    const trimmed = `${location ?? ""}`.trim();
+    if (!trimmed) return location;
+    if (!/^([a-z][a-z0-9+.-]*:|\/)/i.test(trimmed)) {
+      return location;
+    }
+    if (trimmed.startsWith(`${mountPath}/`) || trimmed === mountPath) {
+      return trimmed;
+    }
+    if (
+      trimmed.startsWith(`/${base}/`) ||
+      trimmed === `/${base}` ||
+      trimmed.startsWith(`/projects/${base}/`) ||
+      trimmed === `/projects/${base}`
+    ) {
+      return trimmed;
+    }
+    if (trimmed.startsWith("/")) {
+      return joinMountedRedirect(mountPath, trimmed);
+    }
+    try {
+      const parsed = new URL(trimmed);
+      if (
+        !["127.0.0.1", "localhost"].includes(parsed.hostname) ||
+        (targetPort != null && `${parsed.port || ""}` !== `${targetPort}`)
+      ) {
+        return trimmed;
+      }
+      const path = `${parsed.pathname || "/"}${parsed.search || ""}${parsed.hash || ""}`;
+      return joinMountedRedirect(mountPath, path);
+    } catch {
+      return location;
+    }
   }
 
   function isViewerRawRequest(req: http.IncomingMessage): boolean {
@@ -1074,10 +1133,15 @@ ${entries}
       }
       return { port, host, requireInternalSecret: true };
     }
-    const mServer = serverPattern.exec(url) || proxyPattern.exec(url);
+    const serverMatch = serverPattern.exec(url);
+    const proxyMatch = proxyPattern.exec(url);
+    const mServer = serverMatch || proxyMatch;
     if (mServer) {
       const port = Number(mServer[1]);
       const rest = mServer[2] || "/";
+      const routeKind = serverMatch ? "server" : "proxy";
+      (req as any)[REDIRECT_MOUNT_PATH] = `/${base}/${routeKind}/${port}`;
+      (req as any)[REDIRECT_TARGET_PORT] = port;
       const managedApp = await managedServiceAppForPort(port);
       if (managedApp) {
         (req as any)[APP_METRICS_CONTEXT] = {
@@ -1133,6 +1197,8 @@ ${entries}
         return undefined;
       }
       (req as any)[APP_METRICS_CONTEXT] = metricsContext;
+      (req as any)[REDIRECT_MOUNT_PATH] = appTarget.mountPath;
+      (req as any)[REDIRECT_TARGET_PORT] = appTarget.port;
       req.url = appTarget.rewritePath;
       return {
         port: appTarget.port,
@@ -1173,6 +1239,24 @@ ${entries}
 
   proxy.on("proxyReqWs", (proxyReq) => {
     proxyReq.removeHeader(APP_PROXY_EXPOSURE_HEADER);
+  });
+
+  proxy.on("proxyRes", (proxyRes, req) => {
+    const locationHeader = proxyRes.headers.location;
+    const location =
+      typeof locationHeader === "string"
+        ? locationHeader
+        : Array.isArray(locationHeader)
+          ? locationHeader[0]
+          : undefined;
+    if (!location) return;
+    const rewritten = rewriteProxyRedirectLocation({
+      location,
+      mountPath: (req as any)[REDIRECT_MOUNT_PATH],
+      targetPort: (req as any)[REDIRECT_TARGET_PORT],
+    });
+    if (rewritten === location) return;
+    proxyRes.headers.location = rewritten;
   });
 
   return { proxy, getTarget };

@@ -234,6 +234,7 @@ function redactCookie(cookie: Record<string, any>): Record<string, unknown> {
   const value = `${cookie.value ?? ""}`;
   return {
     name: `${cookie.name ?? ""}`,
+    url: `${cookie.url ?? ""}`,
     domain: `${cookie.domain ?? ""}`,
     path: `${cookie.path ?? ""}`,
     expires: cookie.expires,
@@ -364,6 +365,7 @@ async function main(): Promise<void> {
       "--disable-background-timer-throttling",
       "--disable-renderer-backgrounding",
       "--disable-backgrounding-occluded-windows",
+      "--disable-features=BlockThirdPartyCookies,ThirdPartyStoragePartitioning,TrackingProtection3pcd",
     ],
   };
   if (config.executable_path) {
@@ -373,7 +375,16 @@ async function main(): Promise<void> {
   const browserProcessPid = Number(browser?.process?.()?.pid ?? 0);
   const context = await browser.newContext();
   if (config.cookies?.length) {
-    await context.addCookies(config.cookies);
+    try {
+      await context.addCookies(config.cookies);
+    } catch (err) {
+      writeState(config.state_file, state, {
+        status: "failed",
+        error: `failed to seed browser cookies: ${normalizeError(err)}; cookies=${JSON.stringify(config.cookies.map(redactCookie))}`,
+        stopped_at: nowIso(),
+      });
+      throw err;
+    }
   }
   const page = await context.newPage();
   const spawnMarker = spawnMarkerFromUrl(config.target_url);
@@ -458,7 +469,12 @@ async function main(): Promise<void> {
       if (action === "cookies") {
         const urls = Array.from(
           new Set(
-            [page.url(), config.target_url, config.sign_in_url]
+            [
+              page.url(),
+              config.target_url,
+              config.sign_in_url,
+              ...(config.cookies ?? []).map((cookie) => cookie.url),
+            ]
               .map((url) => `${url ?? ""}`.trim())
               .filter(Boolean),
           ),

@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 
 import { labels } from "@cocalc/frontend/i18n";
+import { alert_message } from "@cocalc/frontend/alerts";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
@@ -136,62 +137,68 @@ export function AIGenerateCodeCell({
     setError("");
   }, [open]);
 
-  async function submit(nextPrompt?: string): Promise<void> {
+  function submit(nextPrompt?: string): void {
     const effectivePrompt = `${nextPrompt ?? prompt}`.trim();
     if (showAICellGen == null || !effectivePrompt || querying) return;
     setQuerying(true);
     setError("");
-    try {
-      const visiblePrompt = buildGenerateCellVisiblePrompt({
-        prompt: effectivePrompt,
-        position: showAICellGen,
-        anchorCellType,
+    const visiblePrompt = buildGenerateCellVisiblePrompt({
+      prompt: effectivePrompt,
+      position: showAICellGen,
+      anchorCellType,
+    });
+    const hiddenPrompt = buildGenerateCellHiddenPrompt({
+      prompt: effectivePrompt,
+      path,
+      cellId: id,
+      anchorCellType,
+      position: showAICellGen,
+      kernelLanguage,
+      kernelDisplay,
+    });
+    const send = submitNavigatorPromptInWorkspaceChat({
+      project_id,
+      path,
+      prompt: hiddenPrompt,
+      visiblePrompt,
+      title: "Agent",
+      tag: `intent:jupyter-generate-cell:${showAICellGen}`,
+      forceCodex: true,
+      codexConfig: { model: DEFAULT_GENERATE_AGENT_MODEL },
+      openFloating: true,
+      waitForAgent: false,
+    });
+    const position = showAICellGen;
+    setShowAICellGen(null);
+    void send
+      .then((sent) => {
+        if (!sent) {
+          throw new Error(
+            "Unable to send this cell generation request to the Agent.",
+          );
+        }
+        projectActions?.log({
+          event: "llm",
+          usage: "jupyter-generate-cell",
+          model: DEFAULT_GENERATE_AGENT_MODEL,
+          path,
+        });
+        track("chatgpt", {
+          project_id,
+          path,
+          tag: "generate-jupyter-cell",
+          type: "generate",
+          model: DEFAULT_GENERATE_AGENT_MODEL,
+          position,
+        });
+      })
+      .catch((err) => {
+        alert_message({
+          type: "error",
+          message: `${err}`,
+          timeout: 10,
+        });
       });
-      const hiddenPrompt = buildGenerateCellHiddenPrompt({
-        prompt: effectivePrompt,
-        path,
-        cellId: id,
-        anchorCellType,
-        position: showAICellGen,
-        kernelLanguage,
-        kernelDisplay,
-      });
-      const sent = await submitNavigatorPromptInWorkspaceChat({
-        project_id,
-        path,
-        prompt: hiddenPrompt,
-        visiblePrompt,
-        title: "Agent",
-        tag: `intent:jupyter-generate-cell:${showAICellGen}`,
-        forceCodex: true,
-        codexConfig: { model: DEFAULT_GENERATE_AGENT_MODEL },
-        openFloating: true,
-      });
-      if (!sent) {
-        throw new Error(
-          "Unable to send this cell generation request to the Agent.",
-        );
-      }
-      projectActions?.log({
-        event: "llm",
-        usage: "jupyter-generate-cell",
-        model: DEFAULT_GENERATE_AGENT_MODEL,
-        path,
-      });
-      track("chatgpt", {
-        project_id,
-        path,
-        tag: "generate-jupyter-cell",
-        type: "generate",
-        model: DEFAULT_GENERATE_AGENT_MODEL,
-        position: showAICellGen,
-      });
-      setShowAICellGen(null);
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setQuerying(false);
-    }
   }
 
   return (

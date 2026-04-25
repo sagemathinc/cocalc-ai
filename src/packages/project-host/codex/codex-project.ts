@@ -226,6 +226,7 @@ function applyProjectRuntimeCliEnv(
 ): void {
   env.COCALC_CLI_BIN = getProjectRuntimeCliPath();
   env.COCALC_CLI_CMD = getProjectRuntimeCliCommand();
+  env.COCALC_CLI_AGENT_MODE = "1";
   if (accountId?.trim()) {
     env.COCALC_ACCOUNT_ID = accountId.trim();
   }
@@ -1208,6 +1209,8 @@ export async function spawnCodexInProjectContainer({
     execEnv.COCALC_BEARER_TOKEN = cliBearer;
     execEnv.COCALC_AGENT_TOKEN = cliBearer;
   }
+  applyProjectRuntimeCliEnv(execEnv, accountId);
+  execEnv.COCALC_API_URL = resolveProjectRuntimeApiUrl(execEnv.COCALC_API_URL);
   if (!execEnv.OPENAI_API_KEY?.trim()) {
     // Avoid overriding runtime key selection with an empty per-turn value.
     delete execEnv.OPENAI_API_KEY;

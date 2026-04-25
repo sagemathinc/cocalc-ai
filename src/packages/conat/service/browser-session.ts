@@ -9,6 +9,7 @@ import { createServiceClient, createServiceHandler } from "./typed";
 import type { ConatService } from "./typed";
 import type { Client } from "@cocalc/conat/core/client";
 import type { BrowserOpenProjectState } from "@cocalc/conat/hub/api/system";
+import type { WorkspaceSelection } from "@cocalc/conat/workspaces";
 
 export type BrowserOpenFileInfo = {
   project_id: string;
@@ -344,6 +345,9 @@ export interface BrowserSessionServiceApi {
     total_buffered: number;
   }>;
   listOpenFiles: () => Promise<BrowserOpenFileInfo[]>;
+  getWorkspaceSelection: (opts: {
+    project_id: string;
+  }) => Promise<WorkspaceSelection>;
   openFile: (opts: {
     project_id: string;
     path: string;

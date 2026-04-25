@@ -5,7 +5,11 @@ import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { lite } from "@cocalc/frontend/lite";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import { revealAgentSession } from "@cocalc/frontend/project/page/agent-panel-state";
+import {
+  AGENT_PANEL_INLINE_CHAT_INSTANCE_KEY,
+  loadOpenedAgentSessionSelection,
+  revealAgentSession,
+} from "@cocalc/frontend/project/page/agent-panel-state";
 import {
   ensureWorkspaceChatForPath,
   ensureWorkspaceChatPath,
@@ -28,6 +32,7 @@ export const NAVIGATOR_SUBMIT_PROMPT_EVENT = "cocalc:navigator:submit-prompt";
 const NAVIGATOR_SYNC_READY_TIMEOUT_MS = 12_000;
 const NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS = 15_000;
 const NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS = 5_000;
+const NAVIGATOR_FAST_WORKSPACE_RESOLVE_TIMEOUT_MS = 300;
 const NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS = 150;
 const DEFAULT_WORKSPACE_CODEX_THREAD_TITLE = "Codex";
 let navigatorIntentQueueMemory: NavigatorSubmitPromptDetail[] = [];
@@ -194,6 +199,34 @@ function pickNavigatorSession({
   );
 }
 
+function resolveWorkspaceTargetFromCachedSelection(opts: {
+  project_id: string;
+  absolutePaths: string[];
+}): {
+  workspace: NonNullable<ReturnType<typeof loadSessionWorkspaceRecord>>;
+  chat_path: string;
+  assigned: false;
+} | null {
+  const selection = loadSessionSelection(opts.project_id);
+  const selectedWorkspace = loadSessionWorkspaceRecord(opts.project_id);
+  if (
+    selection.kind !== "workspace" ||
+    selectedWorkspace?.workspace_id !== selection.workspace_id ||
+    !opts.absolutePaths.some((path) =>
+      pathMatchesWorkspaceRoot(path, selectedWorkspace.root_path),
+    )
+  ) {
+    return null;
+  }
+  const chat_path = `${selectedWorkspace.chat_path ?? ""}`.trim();
+  if (!chat_path) return null;
+  return {
+    workspace: selectedWorkspace,
+    chat_path,
+    assigned: false,
+  };
+}
+
 function sanitizeAccountId(accountId: string): string {
   return accountId.replace(/[^a-zA-Z0-9_.-]/g, "-");
 }
@@ -202,25 +235,22 @@ async function resolveWorkspaceTarget(opts: {
   project_id: string;
   account_id: string;
   path?: string;
+  timeoutMs?: number;
 }): Promise<Awaited<ReturnType<typeof ensureWorkspaceChatForPath>>> {
   const absolutePaths = resolveWorkspaceTargetPaths(opts.project_id, opts.path);
   if (absolutePaths.length === 0) return null;
-  const deadline = Date.now() + NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS;
+  const cachedTarget = resolveWorkspaceTargetFromCachedSelection({
+    project_id: opts.project_id,
+    absolutePaths,
+  });
+  if (cachedTarget) return cachedTarget;
+  const deadline =
+    Date.now() + (opts.timeoutMs ?? NAVIGATOR_WORKSPACE_RESOLVE_TIMEOUT_MS);
   while (true) {
-    const selection = loadSessionSelection(opts.project_id);
-    const selectedWorkspace = loadSessionWorkspaceRecord(opts.project_id);
     const account_id =
       `${opts.account_id || redux.getStore("account")?.get?.("account_id") || ""}`.trim();
-    if (account_id) {
-      for (const absolutePath of absolutePaths) {
-        const target = await ensureWorkspaceChatForPath({
-          project_id: opts.project_id,
-          account_id,
-          path: absolutePath,
-        });
-        if (target) return target;
-      }
-    }
+    const selection = loadSessionSelection(opts.project_id);
+    const selectedWorkspace = loadSessionWorkspaceRecord(opts.project_id);
     if (
       selection.kind === "workspace" &&
       selectedWorkspace?.workspace_id === selection.workspace_id &&
@@ -252,6 +282,16 @@ async function resolveWorkspaceTarget(opts: {
         assigned: resolved.assigned,
       };
     }
+    if (account_id) {
+      for (const absolutePath of absolutePaths) {
+        const target = await ensureWorkspaceChatForPath({
+          project_id: opts.project_id,
+          account_id,
+          path: absolutePath,
+        });
+        if (target) return target;
+      }
+    }
     if (Date.now() >= deadline) return null;
     await sleep(NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS);
   }
@@ -277,6 +317,28 @@ function resolveWorkspaceTargetPaths(
     result.push(absolutePath);
   }
   return result;
+}
+
+function resolveNavigatorWorkingDirectory(
+  project_id: string,
+  preferredPath?: string,
+): string {
+  const homeDirectory = getProjectHomeDirectory(project_id);
+  const projectStore = redux.getProjectStore(project_id);
+  const explicitPath = `${preferredPath ?? ""}`.trim();
+  if (explicitPath) {
+    return path_split(normalizeAbsolutePath(explicitPath, homeDirectory)).head;
+  }
+  const currentPath = `${projectStore?.get?.("current_path_abs") ?? ""}`.trim();
+  if (currentPath) {
+    return normalizeAbsolutePath(currentPath, homeDirectory);
+  }
+  const activePath =
+    `${tab_to_path(`${projectStore?.get?.("active_project_tab") ?? ""}`) ?? ""}`.trim();
+  if (activePath) {
+    return path_split(normalizeAbsolutePath(activePath, homeDirectory)).head;
+  }
+  return homeDirectory;
 }
 
 function isMacLikeClient(): boolean {
@@ -312,6 +374,27 @@ async function ensureNavigatorChatDirectory(
   } catch {
     // Best effort only; chat initialization may still succeed.
   }
+}
+
+function getReadyOpenedAgentChat(opts: {
+  project_id: string;
+  targetChatPath: string;
+}):
+  | {
+      opened: NonNullable<ReturnType<typeof loadOpenedAgentSessionSelection>>;
+      actions: any;
+    }
+  | undefined {
+  for (const layout of ["flyout", "page"] as const) {
+    const opened = loadOpenedAgentSessionSelection(opts.project_id, layout);
+    if (!opened || opened.chat_path !== opts.targetChatPath) continue;
+    const actions = getChatActions(opts.project_id, opts.targetChatPath, {
+      instanceKey: AGENT_PANEL_INLINE_CHAT_INSTANCE_KEY,
+    });
+    if (!actions?.isSyncdbReady?.()) continue;
+    return { opened, actions };
+  }
+  return undefined;
 }
 
 function readQueue(): NavigatorSubmitPromptDetail[] {
@@ -413,6 +496,7 @@ async function writeNavigatorPromptInWorkspaceChat(
     codexConfig?: Partial<CodexThreadConfig>;
     path?: string;
     openFloating?: boolean;
+    waitForAgent?: boolean;
   },
   submitToAgent: boolean,
 ): Promise<boolean> {
@@ -434,51 +518,251 @@ async function writeNavigatorPromptInWorkspaceChat(
       project_id,
       account_id,
       path: opts.path,
+      timeoutMs:
+        opts.waitForAgent === false
+          ? NAVIGATOR_FAST_WORKSPACE_RESOLVE_TIMEOUT_MS
+          : undefined,
     });
-    if (!workspaceTarget?.chat_path) return false;
-
-    const targetChatPath = workspaceTarget.chat_path;
+    const targetChatPath =
+      workspaceTarget?.chat_path ?? resolveNavigatorChatPath(project_id);
     const preferredThreadKey = loadNavigatorSelectedThreadKey(
       project_id,
       targetChatPath,
     );
-    const sessions = await listAgentSessionsForProject({ project_id });
-    const indexedSession = pickNavigatorSession({
-      records: sessions,
-      preferredThreadKey,
-      chatPath: targetChatPath,
-    });
-    const session: AgentSessionRecord = indexedSession ?? {
-      session_id: `workspace-${workspaceTarget.workspace.workspace_id}`,
+    const fallbackWorkingDirectory =
+      workspaceTarget?.workspace.root_path ??
+      resolveNavigatorWorkingDirectory(project_id, opts.path);
+    const fallbackSession: AgentSessionRecord = {
+      session_id:
+        workspaceTarget?.workspace.workspace_id != null
+          ? `workspace-${workspaceTarget.workspace.workspace_id}`
+          : `navigator-${project_id}`,
       project_id,
       account_id,
       chat_path: targetChatPath,
       thread_key: `${preferredThreadKey ?? ""}`.trim(),
-      title: workspaceTarget.workspace.theme.title?.trim() || "Navigator",
+      title: workspaceTarget?.workspace.theme.title?.trim() || "Navigator",
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       status: "active",
-      entrypoint: "file",
+      entrypoint: workspaceTarget ? "file" : "global",
       model: requestedModel,
-      working_directory: workspaceTarget.workspace.root_path,
-      thread_color: workspaceTarget.workspace.theme.color ?? undefined,
+      working_directory: fallbackWorkingDirectory,
+      thread_color: workspaceTarget?.workspace.theme.color ?? undefined,
       thread_accent_color:
-        workspaceTarget.workspace.theme.accent_color ?? undefined,
-      thread_icon: workspaceTarget.workspace.theme.icon ?? undefined,
-      thread_image: workspaceTarget.workspace.theme.image_blob ?? undefined,
+        workspaceTarget?.workspace.theme.accent_color ?? undefined,
+      thread_icon: workspaceTarget?.workspace.theme.icon ?? undefined,
+      thread_image: workspaceTarget?.workspace.theme.image_blob ?? undefined,
     };
-
-    await ensureNavigatorChatDirectory(project_id, targetChatPath);
+    if (
+      opts.openFloating === true &&
+      opts.waitForAgent === false &&
+      preferredThreadKey
+    ) {
+      revealAgentSession(
+        project_id,
+        {
+          ...fallbackSession,
+          session_id: preferredThreadKey,
+          thread_key: preferredThreadKey,
+          title: requestedTitle ?? fallbackSession.title ?? "Navigator",
+          updated_at: new Date().toISOString(),
+          status: "active",
+          model: requestedModel ?? fallbackSession.model,
+          working_directory: fallbackSession.working_directory,
+        },
+        {
+          workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+          workspaceOnly: workspaceTarget != null,
+        },
+      );
+    }
+    const openedReadyChat = getReadyOpenedAgentChat({
+      project_id,
+      targetChatPath,
+    });
+    if (openedReadyChat) {
+      const actions = openedReadyChat.actions;
+      const openedSession =
+        openedReadyChat.opened.session != null
+          ? {
+              ...openedReadyChat.opened.session,
+              working_directory:
+                openedReadyChat.opened.session.working_directory ??
+                fallbackWorkingDirectory,
+            }
+          : fallbackSession;
+      let replyThreadKey = chooseThreadKeyFromIndex({
+        actions,
+        preferredThreadKey: openedReadyChat.opened.thread_key,
+        fallbackThreadKey:
+          `${openedReadyChat.opened.thread_key ?? preferredThreadKey ?? ""}`.trim(),
+      });
+      let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
+      if (
+        !replyThreadId &&
+        replyThreadKey &&
+        isOpaqueThreadKey(replyThreadKey)
+      ) {
+        replyThreadId = replyThreadKey;
+      }
+      if (replyThreadKey && replyThreadId) {
+        actions.setSelectedThread?.(replyThreadKey);
+        const existingThreadTitle = normalizeOptionalTitle(
+          actions.getThreadMetadata?.(replyThreadKey, {
+            threadId: replyThreadId,
+          })?.name,
+        );
+        const messageThreadTitle =
+          requestedTitle && !existingThreadTitle ? requestedTitle : undefined;
+        const sessionModel =
+          typeof openedSession.model === "string" &&
+          openedSession.model.trim().length > 0
+            ? openedSession.model.trim()
+            : undefined;
+        const model = requestedModel ?? sessionModel;
+        const threadAgentCodexConfig = {
+          model,
+          reasoning: openedSession.reasoning as any,
+          sessionMode: openedSession.mode as any,
+          workingDirectory:
+            openedSession.working_directory ?? fallbackWorkingDirectory,
+          ...(opts.codexConfig ?? {}),
+        };
+        if (opts.forceCodex !== false) {
+          actions.setThreadAgentMode?.(
+            replyThreadKey,
+            "codex",
+            threadAgentCodexConfig,
+          );
+        }
+        if (messageThreadTitle) {
+          actions.renameThread?.(replyThreadKey, messageThreadTitle);
+        }
+        const timeStamp = actions.sendChat({
+          input: visiblePrompt ?? basePrompt,
+          acp_prompt: basePrompt,
+          name: messageThreadTitle,
+          reply_thread_id: replyThreadId,
+          tag: opts.tag ?? "intent:navigator",
+          noNotification: true,
+          skipModelDispatch: true,
+        });
+        if (timeStamp) {
+          saveNavigatorSelectedThreadKey(replyThreadKey, targetChatPath);
+          if (typeof actions.syncdb?.save === "function") {
+            await actions.syncdb.save();
+          }
+          if (opts.openFloating === true) {
+            revealAgentSession(
+              project_id,
+              {
+                ...openedSession,
+                session_id: replyThreadKey,
+                thread_key: replyThreadKey,
+                title:
+                  messageThreadTitle ??
+                  existingThreadTitle ??
+                  requestedTitle ??
+                  openedSession.title ??
+                  "Navigator",
+                updated_at: new Date().toISOString(),
+                status: "active",
+                model,
+                working_directory:
+                  openedSession.working_directory ?? fallbackWorkingDirectory,
+              },
+              {
+                workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+                workspaceOnly: workspaceTarget != null,
+              },
+            );
+          }
+          if (submitToAgent) {
+            const message =
+              actions.getMessageByDate?.(timeStamp) ??
+              actions.syncdb?.get_one?.({
+                event: "chat",
+                date: timeStamp,
+                sender_id: account_id,
+              });
+            if (!message) return false;
+            const process = processChatLLM({
+              actions,
+              message,
+              tag: opts.tag ?? "intent:navigator",
+              threadModel: model ?? null,
+              acpConfigOverride: threadAgentCodexConfig,
+            });
+            if (opts.waitForAgent === false) {
+              void process.catch(() => undefined);
+            } else {
+              await process;
+            }
+          }
+          setTimeout(() => {
+            actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
+          }, 50);
+          return true;
+        }
+      }
+    }
+    const ensureNavigatorChatDirectoryPromise = ensureNavigatorChatDirectory(
+      project_id,
+      targetChatPath,
+    );
+    const sessionsPromise = listAgentSessionsForProject({ project_id });
+    await ensureNavigatorChatDirectoryPromise;
     const instanceKey = "navigator-intent-stage";
     const actions =
       getChatActions(project_id, targetChatPath, { instanceKey }) ??
       initChat(project_id, targetChatPath, { instanceKey });
     if (!actions) return false;
-
-    const ready = await waitForThreadReady({
+    const readyPromise = waitForThreadReady({
       actions,
       timeoutMs: NAVIGATOR_SYNC_READY_TIMEOUT_MS,
     });
+    const sessions = await sessionsPromise;
+    const indexedSession = pickNavigatorSession({
+      records: sessions,
+      preferredThreadKey,
+      chatPath: targetChatPath,
+    });
+    const session: AgentSessionRecord = indexedSession
+      ? {
+          ...indexedSession,
+          working_directory:
+            indexedSession.working_directory ?? fallbackWorkingDirectory,
+        }
+      : fallbackSession;
+    const optimisticSessionModel =
+      requestedModel ??
+      (typeof session.model === "string" && session.model.trim().length > 0
+        ? session.model.trim()
+        : undefined);
+
+    if (
+      opts.openFloating === true &&
+      opts.waitForAgent === false &&
+      indexedSession?.thread_key
+    ) {
+      revealAgentSession(
+        project_id,
+        {
+          ...session,
+          title: requestedTitle ?? session.title ?? "Navigator",
+          updated_at: new Date().toISOString(),
+          status: "active",
+          model: optimisticSessionModel,
+          working_directory: session.working_directory,
+        },
+        {
+          workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+          workspaceOnly: workspaceTarget != null,
+        },
+      );
+    }
+    const ready = await readyPromise;
     if (!ready) return false;
 
     let resolvedThreadKey = chooseThreadKeyFromIndex({
@@ -605,7 +889,7 @@ async function writeNavigatorPromptInWorkspaceChat(
         createdThreadTitle ??
         existingThreadTitle ??
         session.title ??
-        workspaceTarget.workspace.theme.title?.trim() ??
+        workspaceTarget?.workspace.theme.title?.trim() ??
         "Navigator";
       revealAgentSession(
         project_id,
@@ -620,8 +904,8 @@ async function writeNavigatorPromptInWorkspaceChat(
           working_directory: session.working_directory,
         },
         {
-          workspaceId: workspaceTarget.workspace.workspace_id,
-          workspaceOnly: true,
+          workspaceId: workspaceTarget?.workspace.workspace_id ?? null,
+          workspaceOnly: workspaceTarget != null,
         },
       );
     }
@@ -634,13 +918,20 @@ async function writeNavigatorPromptInWorkspaceChat(
           sender_id: account_id,
         });
       if (!message) return false;
-      await processChatLLM({
+      const process = processChatLLM({
         actions,
         message,
         tag: opts.tag ?? "intent:navigator",
         threadModel: model ?? null,
         acpConfigOverride: threadAgentCodexConfig,
       });
+      if (opts.waitForAgent === false) {
+        // processLLM writes its own visible error messages; this path only
+        // prevents launch latency from blocking UI handoff to the agent panel.
+        void process.catch(() => undefined);
+      } else {
+        await process;
+      }
     }
     setTimeout(() => {
       actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
@@ -675,6 +966,7 @@ export async function submitNavigatorPromptInWorkspaceChat(opts: {
   codexConfig?: Partial<CodexThreadConfig>;
   path?: string;
   openFloating?: boolean;
+  waitForAgent?: boolean;
 }): Promise<boolean> {
   return await writeNavigatorPromptInWorkspaceChat(opts, true);
 }

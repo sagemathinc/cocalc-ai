@@ -6,6 +6,7 @@ RUN apt-get update -y \
     curl \
     git \
     openssh-client \
+    openssh-sftp-server \
   && rm -rf /var/lib/apt/lists/*
 
 CMD ["bash"]

@@ -179,6 +179,7 @@ import { createTasksApi } from "../api/tasks";
 import { createLiveTextBinder } from "../api/text";
 import { createLiveTimeTravelBinder } from "../api/timetravel";
 import { createWorkspacesApi } from "../api/workspaces";
+import { openCurrentProjectConnection } from "../api/current-project";
 import {
   registerBrowserCommand,
   type BrowserCommandDeps,
@@ -1264,6 +1265,15 @@ async function contextForGlobals(
     resolveAccountIdFromRemote(remote) ??
     process.env.COCALC_ACCOUNT_ID;
 
+  const projectScopedProjectId = `${remote.user?.project_id ?? ""}`.trim();
+  if (!accountId && isValidUUID(projectScopedProjectId)) {
+    // Project-scoped auth is enough for commands that operate entirely inside
+    // the current project, e.g. `cocalc project terminal list` from a project
+    // terminal. Account-only commands will still fail later when the hub rejects
+    // the project-scoped identity.
+    accountId = FALLBACK_ACCOUNT_UUID;
+  }
+
   if (!accountId && hasHubPassword(effectiveGlobals)) {
     accountId = await resolveDefaultAdminAccountId({ remote, timeoutMs });
   }
@@ -1771,6 +1781,25 @@ async function resolveProjectConatClient(
   const explicitIdentifier = `${projectIdentifier ?? ""}`.trim();
   const envProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
   if (
+    isCliAgentModeEnabled() &&
+    isValidUUID(envProjectId) &&
+    (!explicitIdentifier || explicitIdentifier === envProjectId)
+  ) {
+    const current = await openCurrentProjectConnection({
+      apiBaseUrl: ctx.apiBaseUrl,
+      projectId: envProjectId,
+      timeoutMs: Math.min(ctx.timeoutMs, MAX_TRANSPORT_TIMEOUT_MS),
+    });
+    return {
+      project: {
+        project_id: current.project.project_id,
+        title: current.project.title,
+        host_id: current.project.host_id,
+      },
+      client: current.client,
+    };
+  }
+  if (
     isValidUUID(envProjectId) &&
     (!explicitIdentifier || explicitIdentifier === envProjectId) &&
     isProjectScopedRemoteForProject(ctx.remote, envProjectId)
@@ -1847,6 +1876,8 @@ const {
 
 const {
   projectJupyterCellsData,
+  projectJupyterKernelData,
+  projectJupyterSetKernelData,
   projectJupyterSetCellData,
   projectJupyterInsertCellData,
   projectJupyterDeleteCellsData,
@@ -2382,6 +2413,8 @@ const projectCommandDeps = {
   projectChatAutomationData,
   projectChatActivityData,
   projectJupyterCellsData,
+  projectJupyterKernelData,
+  projectJupyterSetKernelData,
   projectJupyterSetCellData,
   projectJupyterInsertCellData,
   projectJupyterDeleteCellsData,

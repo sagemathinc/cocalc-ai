@@ -28,6 +28,51 @@ function normalizedDomain(val: string | undefined): string {
   return trimOrEmpty(val).toLowerCase().replace(/\.+$/, "");
 }
 
+function normalizedDraftValue(val: string | undefined): string {
+  return trimOrEmpty(val);
+}
+
+function hasPendingCloudflareRuntimeDraft(args: {
+  data: Record<string, string>;
+  mode: string;
+  externalDomain: string;
+  accountId: string;
+  apiToken: string;
+  tunnelPrefix: string;
+  hostSuffix: string;
+}): boolean {
+  const savedMode = trimOrEmpty(args.data.cloudflare_mode).toLowerCase();
+  if (savedMode !== trimOrEmpty(args.mode).toLowerCase()) return true;
+  if (
+    normalizedDomain(args.data.dns) !== normalizedDomain(args.externalDomain)
+  ) {
+    return true;
+  }
+  if (
+    normalizedDraftValue(
+      args.data.project_hosts_cloudflare_tunnel_account_id,
+    ) !== normalizedDraftValue(args.accountId)
+  ) {
+    return true;
+  }
+  if (normalizedDraftValue(args.apiToken)) {
+    return true;
+  }
+  const savedPrefix =
+    normalizedDraftValue(args.data.project_hosts_cloudflare_tunnel_prefix) ||
+    "cocalc";
+  const draftPrefix = normalizedDraftValue(args.tunnelPrefix) || "cocalc";
+  if (savedPrefix !== draftPrefix) return true;
+  if (
+    normalizedDraftValue(
+      args.data.project_hosts_cloudflare_tunnel_host_suffix,
+    ) !== normalizedDraftValue(args.hostSuffix)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function inferCloudflareZone(domain: string | undefined): string {
   const normalized = normalizedDomain(domain);
   if (!normalized) return "";
@@ -159,6 +204,15 @@ export default function CloudflareConfigWizard({
     accountIdTrimmed && zoneGuess
       ? `https://dash.cloudflare.com/${accountIdTrimmed}/${zoneGuess}/rules/settings/managed-transforms`
       : "https://dash.cloudflare.com/<account_id>/<zone>/rules/settings/managed-transforms";
+  const hasPendingRuntimeDraft = hasPendingCloudflareRuntimeDraft({
+    data,
+    mode,
+    externalDomain,
+    accountId,
+    apiToken,
+    tunnelPrefix,
+    hostSuffix,
+  });
 
   function renderSecretNote(settingName: string) {
     if (!isSet?.[settingName]) return null;
@@ -402,6 +456,17 @@ export default function CloudflareConfigWizard({
                 good default regions for users and sort host regions by
                 distance.
               </div>
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginTop: "10px" }}
+                title="Cloudflare tunnel settings are applied at server startup"
+                description={
+                  hasPendingRuntimeDraft
+                    ? "You have draft Cloudflare changes in this wizard. Save them and restart the server before expecting the visitor-header check to pass."
+                    : "This check only sees the currently running server configuration. After changing Cloudflare mode, domain, account ID, API token, or tunnel naming settings, save and restart the server before expecting the check to pass."
+                }
+              />
               <div style={{ marginTop: "8px" }}>
                 <StaticMarkdown
                   value={`Open this Cloudflare page:
@@ -434,12 +499,14 @@ If the link above does not work, search in Cloudflare for **Managed Transforms**
                     onClick={testVisitorLocationHeaders}
                     loading={locationHeadersTesting}
                     icon={<Icon name="check" />}
+                    disabled={hasPendingRuntimeDraft}
                   >
-                    Test Visitor Location Headers
+                    Test Current Visitor Location Headers
                   </Button>
                   <div style={{ color: "#666" }}>
-                    Checks <code>/customize</code> right now to confirm that
-                    Cloudflare location fields are reaching the hub.
+                    Checks <code>/customize</code> on the currently running
+                    server. It does not reflect draft or newly saved Cloudflare
+                    tunnel settings until after restart.
                   </div>
                   {locationHeadersTestError ? (
                     <Alert

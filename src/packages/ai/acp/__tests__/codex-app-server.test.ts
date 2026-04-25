@@ -2697,6 +2697,15 @@ describe("CodexAppServerAgent", () => {
     expect(turnStartParams?.input?.[0]?.text).toContain(
       'When you need the CoCalc CLI, use this exact command: `"/root/.local/bin/cocalc"`.',
     );
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "For live text editor content or edits, prefer backend exec with the live sync/session API",
+    );
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "api.text.open({ path:",
+    );
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "write/append/replace methods save to disk by default",
+    );
   });
 
   it("passes full-access sandbox policy to turn/start", async () => {

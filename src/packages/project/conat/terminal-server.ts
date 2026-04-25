@@ -3,7 +3,8 @@ import { spawn } from "node-pty";
 import { getIdentity } from "./connection";
 import { getLogger } from "@cocalc/project/logger";
 import { SpoolWatcher } from "@cocalc/backend/spool-watcher";
-import { data } from "@cocalc/backend/data";
+import { conatServer, data } from "@cocalc/backend/data";
+import { project_id } from "@cocalc/project/data";
 import { randomId } from "@cocalc/conat/names";
 import { join } from "path";
 import { debounce } from "lodash";
@@ -28,6 +29,14 @@ export function init(opts) {
 
 function supportsTerminalInitFile(command?: string): boolean {
   return typeof command === "string" && command.endsWith("bash");
+}
+
+export function projectScopedCliEnv(): Record<string, string> {
+  return {
+    COCALC_API_URL: conatServer,
+    COCALC_PROJECT_ID: project_id,
+    COCALC_SECRET_TOKEN: join(data, "secret-token"),
+  };
 }
 
 export async function applyTerminalInitFile({
@@ -74,6 +83,10 @@ async function preHook(hook: {
   options: Options;
 }) {
   const { command, args, options } = hook;
+  options.env0 = {
+    ...projectScopedCliEnv(),
+    ...(options.env0 ?? {}),
+  };
   if (options.env0) {
     for (const key in options.env0) {
       options.env0[key] = options.env0[key].replace(

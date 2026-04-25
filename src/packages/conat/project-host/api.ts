@@ -285,6 +285,7 @@ export interface HostControlApi {
   listHostSshAuthorizedKeys: () => Promise<HostSshAuthorizedKeysResponse>;
   addHostSshAuthorizedKey: (opts: {
     public_key: string;
+    user?: string;
   }) => Promise<HostSshAuthorizedKeysResponse & { added: boolean }>;
   removeHostSshAuthorizedKey: (opts: {
     public_key: string;
