@@ -2449,6 +2449,19 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 const currentVersion =
                   observedTarget?.current_version ??
                   observedComponent?.running_versions?.[0];
+                const currentArtifact = observedArtifactForArtifact(
+                  deploymentStatus,
+                  "project-host",
+                );
+                const currentArtifactVersion =
+                  component === "project-host"
+                    ? (currentArtifact?.current_version ?? host?.version)
+                    : currentVersion;
+                const currentBuildId =
+                  component === "project-host"
+                    ? (currentArtifact?.current_build_id ??
+                      host?.project_host_build_id)
+                    : undefined;
                 const versionState =
                   observedTarget?.observed_version_state ??
                   observedComponent?.version_state;
@@ -2514,13 +2527,32 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                         }}
                       >
                         <Typography.Text type="secondary">
-                          desired <code>{desiredVersion ?? "n/a"}</code> |
-                          current{" "}
-                          <code>
-                            {modeDetails.summary ?? currentVersion ?? "n/a"}
-                          </code>{" "}
-                          | latest{" "}
-                          <code>{configured?.version ?? "unknown"}</code>
+                          {component === "project-host" ? (
+                            <>
+                              desired artifact{" "}
+                              <code>{desiredVersion ?? "n/a"}</code> | current
+                              artifact{" "}
+                              <code>{currentArtifactVersion ?? "n/a"}</code>
+                              {currentBuildId ? (
+                                <>
+                                  {" "}
+                                  | build ID <code>{currentBuildId}</code>
+                                </>
+                              ) : null}{" "}
+                              | latest artifact{" "}
+                              <code>{configured?.version ?? "unknown"}</code>
+                            </>
+                          ) : (
+                            <>
+                              desired <code>{desiredVersion ?? "n/a"}</code> |
+                              current{" "}
+                              <code>
+                                {modeDetails.summary ?? currentVersion ?? "n/a"}
+                              </code>{" "}
+                              | latest{" "}
+                              <code>{configured?.version ?? "unknown"}</code>
+                            </>
+                          )}
                         </Typography.Text>
                         <Space wrap>
                           {canUpgrade &&
