@@ -149,6 +149,16 @@ describe("SSHPanel", () => {
     expect(screen.queryByText(/Docs/i)).toBeNull();
     expect(screen.queryByText(/must be running/i)).toBeNull();
     expect(screen.queryByText(/<account-api-key>/i)).toBeNull();
+    expect(screen.getByText(/Need scp or sftp help/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByText(/Need scp or sftp help/i));
+    expect(screen.getByText("scp ./local-file project-1:~/")).toBeTruthy();
+    expect(screen.getByText("scp project-1:~/remote-file ./")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "apt-get update; apt-get install -y openssh-sftp-server",
+      ),
+    ).toBeTruthy();
 
     fireEvent.click(screen.getByText("Generate setup command"));
 
@@ -165,5 +175,11 @@ describe("SSHPanel", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByText("ssh project-1")).toBeTruthy();
+    expect(
+      screen.getAllByText("scp ./local-file project-1:~/").length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("scp project-1:~/remote-file ./").length,
+    ).toBeGreaterThan(0);
   });
 });

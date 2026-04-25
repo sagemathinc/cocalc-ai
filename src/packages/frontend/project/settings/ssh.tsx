@@ -92,6 +92,8 @@ export function SSHPanel({ project, mode = "project" }: Props) {
     ? `COCALC_API_KEY=${shellQuote(setupApiKey)} cocalc --api ${shellQuote(apiUrl)} project ssh-config add -w ${shellQuote(projectId)}`
     : "";
   const connectCommand = `ssh ${projectId}`;
+  const scpUploadCommand = `scp ./local-file ${projectId}:~/`;
+  const scpDownloadCommand = `scp ${projectId}:~/remote-file ./`;
 
   useEffect(() => {
     setSshCopied(false);
@@ -164,33 +166,38 @@ export function SSHPanel({ project, mode = "project" }: Props) {
             </Button>
           </p>
         )}
-        <Paragraph>
-          SSH access is full access to this {projectLabelLower}, including
-          remote commands, port forwarding, and X11 forwarding when your local
-          SSH setup supports them. If the {projectLabelLower} is not running,
-          SSH access will request that it starts; if your first attempt only
-          wakes it up, try the same command again after a moment.
-        </Paragraph>
+        {!useCliSsh && (
+          <Paragraph>
+            SSH access is full access to this {projectLabelLower}, including
+            remote commands, port forwarding, and X11 forwarding when your local
+            SSH setup supports them. If the {projectLabelLower} is not running,
+            SSH access will request that it starts; if your first attempt only
+            wakes it up, try the same command again after a moment.
+          </Paragraph>
+        )}
         {useCliSsh ? (
           <>
             <Space direction="vertical" size={12} style={{ width: "100%" }}>
-              <Paragraph style={{ marginBottom: 0 }}>
-                Launchpad SSH is routed through Cloudflare. Use the{" "}
-                <A href={COCALC_CLI_DOWNLOAD_URL}>CoCalc CLI</A> to configure a
-                standard <Text code>~/.ssh/config</Text> entry for this{" "}
-                {projectLabelLower}.
-              </Paragraph>
+              <Alert
+                type="info"
+                showIcon
+                message={
+                  <>
+                    Launchpad SSH is routed through Cloudflare. Install the{" "}
+                    <A href={COCALC_CLI_DOWNLOAD_URL}>CoCalc CLI</A> once, then
+                    generate a setup command for this {projectLabelLower}.
+                  </>
+                }
+              />
               <div>
-                <Text strong>1. Install CoCalc CLI</Text>
+                <Text strong>Install CoCalc CLI</Text>
                 <CopyToClipBoard
                   value={COCALC_CLI_INSTALL_COMMAND}
                   {...COPYABLE_PROPS}
                 />
               </div>
               <div>
-                <Text strong>
-                  2. Configure SSH for this {projectLabelLower}
-                </Text>
+                <Text strong>Set up SSH for this {projectLabelLower}</Text>
                 <div style={{ marginTop: 6 }}>
                   <Button
                     type="primary"
@@ -201,13 +208,53 @@ export function SSHPanel({ project, mode = "project" }: Props) {
                   </Button>
                 </div>
               </div>
-              <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                The setup command creates a one-hour account API key, creates or
-                reuses your local SSH key, installs the public key in this{" "}
-                {projectLabelLower}, and writes the SSH route to{" "}
-                <Text code>~/.ssh/config</Text>. The API key is not stored in
-                your SSH config.
-              </Paragraph>
+              <details>
+                <summary style={{ cursor: "pointer" }}>
+                  <Text strong>Need scp or sftp help?</Text>
+                </summary>
+                <Space
+                  direction="vertical"
+                  size={12}
+                  style={{ marginTop: 12, width: "100%" }}
+                >
+                  <Paragraph style={{ marginBottom: 0 }}>
+                    After setup, <Text code>scp</Text> and{" "}
+                    <Text code>sftp</Text> use the same SSH config entry as{" "}
+                    <Text code>ssh</Text>.
+                  </Paragraph>
+                  <div>
+                    <Text strong>Upload a file</Text>
+                    <CopyToClipBoard
+                      value={scpUploadCommand}
+                      {...COPYABLE_PROPS}
+                    />
+                  </div>
+                  <div>
+                    <Text strong>Download a file</Text>
+                    <CopyToClipBoard
+                      value={scpDownloadCommand}
+                      {...COPYABLE_PROPS}
+                    />
+                  </div>
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="If scp or sftp fails because the project image lacks the SFTP server"
+                    description={
+                      <>
+                        Install <Text code>openssh-sftp-server</Text> in the
+                        image, for example{" "}
+                        <Text code>
+                          apt-get update; apt-get install -y openssh-sftp-server
+                        </Text>
+                        , then restart the {projectLabelLower}. The restart is
+                        required so the project startup symlink setup runs
+                        again.
+                      </>
+                    }
+                  />
+                </Space>
+              </details>
             </Space>
             <Modal
               open={setupModalOpen}
@@ -222,7 +269,8 @@ export function SSHPanel({ project, mode = "project" }: Props) {
                 <Paragraph style={{ marginBottom: 0 }}>
                   Run this once in your terminal. It uses a temporary one-hour
                   account API key to install SSH access for this{" "}
-                  {projectLabelLower}.
+                  {projectLabelLower}, install or reuse your local SSH key, and
+                  write the route to <Text code>~/.ssh/config</Text>.
                 </Paragraph>
                 {setupError && (
                   <Alert
@@ -255,10 +303,22 @@ export function SSHPanel({ project, mode = "project" }: Props) {
                         {...COPYABLE_PROPS}
                       />
                     </div>
+                    <div>
+                      <Text strong>Copy files with scp</Text>
+                      <CopyToClipBoard
+                        value={scpUploadCommand}
+                        {...COPYABLE_PROPS}
+                      />
+                      <CopyToClipBoard
+                        value={scpDownloadCommand}
+                        {...COPYABLE_PROPS}
+                      />
+                    </div>
                     <Paragraph type="secondary" style={{ marginBottom: 0 }}>
                       Existing SSH access keeps working after this API key
                       expires because SSH uses the installed public key and the
-                      generated <Text code>~/.ssh/config</Text> entry.
+                      generated <Text code>~/.ssh/config</Text> entry. The API
+                      key is not stored in your SSH config.
                     </Paragraph>
                   </>
                 )}
