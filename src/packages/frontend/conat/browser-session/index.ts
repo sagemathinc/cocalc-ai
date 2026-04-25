@@ -226,9 +226,12 @@ export function createBrowserSessionAutomation({
   const scheduleSessionSync = (delayMs = SESSION_SYNC_DEBOUNCE_MS) => {
     heartbeatController.markDirty(delayMs);
   };
-  redux.reduxStore.subscribe(() => {
-    scheduleSessionSync();
-  });
+  const reduxStore = (redux as any)?.reduxStore;
+  if (typeof reduxStore?.subscribe === "function") {
+    reduxStore.subscribe(() => {
+      scheduleSessionSync();
+    });
+  }
   const handleBrowserSessionMetadataChange = () => {
     scheduleSessionSync();
   };
