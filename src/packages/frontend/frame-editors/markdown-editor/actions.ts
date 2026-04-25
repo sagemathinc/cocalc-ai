@@ -176,9 +176,17 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
       return;
     }
     const blockControl = this.getBlockEditorControl(targetId);
-    const focusedIndex = blockControl?.getFocusedIndex?.();
+    const preferredIndex =
+      blockControl?.getFocusedIndex?.() ?? blockControl?.getLastFocusedIndex?.();
+    if (
+      preferredIndex != null &&
+      typeof blockControl?.restoreFocusBlock === "function" &&
+      blockControl.restoreFocusBlock(preferredIndex)
+    ) {
+      return;
+    }
     if (typeof blockControl?.focusBlock === "function") {
-      blockControl.focusBlock(focusedIndex ?? 0);
+      blockControl.focusBlock(preferredIndex ?? 0);
       return;
     }
     const editor = this.getSlateEditor(targetId);
