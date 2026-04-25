@@ -126,6 +126,22 @@ function withCodeBlockSpacers(value: Descendant[]): Descendant[] {
   return next;
 }
 
+export function shouldSkipBlockRowChange({
+  newValue,
+  previousValue,
+  operations,
+}: {
+  newValue: Descendant[];
+  previousValue: Descendant[];
+  operations: { type?: string }[];
+}): boolean {
+  if (newValue !== previousValue) return false;
+  return (
+    operations.length > 0 &&
+    operations.every((operation) => operation.type === "set_selection")
+  );
+}
+
 export type PendingSelection =
   | { index: number; offset: number; endOffset?: number; mode: "text" }
   | {
@@ -513,7 +529,15 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const handleChange = useCallback(
       (newValue: Descendant[]) => {
         if (read_only) return;
-        if (newValue === value) return;
+        if (
+          shouldSkipBlockRowChange({
+            newValue,
+            previousValue: value,
+            operations: editor.operations as { type?: string }[],
+          })
+        ) {
+          return;
+        }
         setValue(newValue);
         setChange((prev) => prev + 1);
         onEditorChange?.(index);
