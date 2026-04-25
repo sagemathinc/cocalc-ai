@@ -971,7 +971,10 @@ build_daemon() {
     stop_daemon 1
     start_daemon
     eval "$(pnpm -s dev:env:hub)"
-    cocalc host upgrade --hub-source --wait --all-online --align-runtime-stack
+    # In local dev, /software serves the freshly built tarballs, while runtime
+    # alignment is now an explicit reconcile phase.
+    cocalc host upgrade --hub-source --wait --all-online
+    cocalc host reconcile --wait --all-online
   )
 }
 
