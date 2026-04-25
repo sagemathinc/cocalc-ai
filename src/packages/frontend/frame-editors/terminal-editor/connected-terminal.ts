@@ -1169,6 +1169,10 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.terminal.focus();
   }
 
+  getSessionId(): string {
+    return this.termPath;
+  }
+
   refresh(): void {
     if (this.isClosed()) {
       return;
