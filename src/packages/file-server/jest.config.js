@@ -1,22 +1,13 @@
-const { readdirSync } = require("node:fs");
+const {
+  HOST_DEPENDENT_BTRFS_TESTS,
+  shouldRunHostDependentBtrfsTests,
+} = require("./jest.helpers.js");
 
 /** @type {import('ts-jest').JestConfigWithTsJest} */
 const isLinux = process.platform === "linux";
-const HOST_DEPENDENT_BTRFS_TESTS =
-  "/btrfs/test/(?!rustic-progress\\.test\\.ts$)";
-
-function hasLoopbackDevices() {
-  if (!isLinux) return false;
-  try {
-    return readdirSync("/dev").some((name) => /^loop\d+$/.test(name));
-  } catch {
-    return false;
-  }
-}
-
 const testPathIgnorePatterns = !isLinux
   ? ["/btrfs/test/"]
-  : hasLoopbackDevices()
+  : shouldRunHostDependentBtrfsTests()
     ? []
     : [HOST_DEPENDENT_BTRFS_TESTS];
 
