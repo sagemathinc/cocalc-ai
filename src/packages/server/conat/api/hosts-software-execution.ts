@@ -101,6 +101,44 @@ function observedInstalledProjectHostVersionFromRow(
   );
 }
 
+function observedInstalledProjectHostBuildIdFromRow(
+  row: any,
+): string | undefined {
+  const inventoryBuildId = Array.isArray(row?.metadata?.software_inventory)
+    ? row.metadata.software_inventory.find(
+        (entry: any) => `${entry?.artifact ?? ""}`.trim() === "project-host",
+      )?.current_build_id
+    : undefined;
+  return (
+    normalizeObservedVersion(inventoryBuildId) ??
+    normalizeObservedVersion(row?.metadata?.software?.project_host_build_id)
+  );
+}
+
+function normalizeObservedProjectHostRolloutVersion({
+  row,
+  desiredVersion,
+  observedVersion,
+}: {
+  row: any;
+  desiredVersion?: string;
+  observedVersion?: string;
+}): string | undefined {
+  const normalized = normalizeObservedVersion(observedVersion);
+  if (!normalized) return undefined;
+  const currentVersion = observedInstalledProjectHostVersionFromRow(row);
+  const currentBuildId = observedInstalledProjectHostBuildIdFromRow(row);
+  if (
+    desiredVersion &&
+    currentVersion === desiredVersion &&
+    currentBuildId &&
+    normalized === currentBuildId
+  ) {
+    return desiredVersion;
+  }
+  return normalized;
+}
+
 function observedRunningProjectHostVersion(
   statuses?: HostManagedComponentStatus[],
 ): string | undefined {
@@ -454,8 +492,18 @@ export async function rolloutHostManagedComponentsInternalHelper({
       // restart; fall back to bootstrap/runtime observations in that case.
     }
   }
-  const fallbackProjectHostVersion =
-    installedProjectHostArtifactVersion(refreshedRow);
+  observedProjectHostVersion = normalizeObservedProjectHostRolloutVersion({
+    row: refreshedRow,
+    desiredVersion,
+    observedVersion: observedProjectHostVersion,
+  });
+  const fallbackProjectHostVersion = normalizeObservedProjectHostRolloutVersion(
+    {
+      row: refreshedRow,
+      desiredVersion,
+      observedVersion: installedProjectHostArtifactVersion(refreshedRow),
+    },
+  );
   if (requestedProjectHostRollout && desiredVersion) {
     if (
       observedProjectHostVersion &&
