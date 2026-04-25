@@ -160,6 +160,12 @@ describe("projects.createProject clone routing", () => {
         return { rows: [] };
       }
       if (
+        sql.includes("SELECT COUNT(*)::BIGINT AS count") &&
+        sql.includes("COALESCE(users -> $1::text ->> 'group', '') = 'owner'")
+      ) {
+        return { rows: [{ count: "0" }] };
+      }
+      if (
         sql.includes(
           "SELECT host_id, region, rootfs_image, rootfs_image_id, owning_bay_id FROM projects WHERE project_id=$1",
         )
@@ -273,6 +279,47 @@ describe("projects.createProject clone routing", () => {
         }),
       }),
     );
+  });
+
+  it("blocks project creation when the owner already reached max_projects", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (
+        sql.includes("SELECT COUNT(*)::BIGINT AS count") &&
+        sql.includes("COALESCE(users -> $1::text ->> 'group', '') = 'owner'")
+      ) {
+        return { rows: [{ count: "2" }] };
+      }
+      if (
+        sql.includes(
+          "SELECT project_id FROM deleted_projects WHERE project_id=$1 LIMIT 1",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "SELECT project_id FROM projects WHERE project_id=$1 LIMIT 1",
+        )
+      ) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: { usage_limits: { max_projects: 2 } },
+    }));
+    const createProject = (await import("./create")).default;
+    await expect(
+      createProject({
+        title: "Blocked",
+        description: "",
+        account_id: ACCOUNT_ID,
+        start: false,
+      }),
+    ).rejects.toThrow("owned project limit reached (2/2)");
   });
 
   it("rejects clone creation when the source project belongs to another bay", async () => {

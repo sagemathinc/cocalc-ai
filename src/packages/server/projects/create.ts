@@ -17,6 +17,7 @@ import {
   getUserHostTier,
 } from "@cocalc/server/project-host/placement";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { assertCanOwnAdditionalProject } from "@cocalc/server/membership/project-limits";
 import {
   cloneProjectRootfsStates,
   initializeProjectRootfsStates,
@@ -139,6 +140,9 @@ export default async function createProject(opts: CreateProjectOptions) {
     host_id: requested_host_id,
     region: requested_region_raw_input,
   } = opts;
+  if (account_id) {
+    await assertCanOwnAdditionalProject({ account_id });
+  }
   let project_id;
   if (opts.project_id) {
     if (!account_id || !(await isAdmin(account_id))) {

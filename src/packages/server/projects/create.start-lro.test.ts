@@ -158,6 +158,12 @@ describe("projects.createProject start LRO", () => {
       ) {
         return { rows: [] };
       }
+      if (
+        sql.includes("SELECT COUNT(*)::BIGINT AS count") &&
+        sql.includes("COALESCE(users -> $1::text ->> 'group', '') = 'owner'")
+      ) {
+        return { rows: [{ count: "0" }] };
+      }
       if (sql.startsWith("INSERT INTO projects ")) {
         return { rowCount: 1 };
       }
