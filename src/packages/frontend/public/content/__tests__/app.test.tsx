@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 
 import type { NewsItem } from "@cocalc/util/types/news";
 import PublicContentApp from "../app";
@@ -249,6 +249,14 @@ describe("PublicContentApp", () => {
     expect(
       screen.getByText(/Protecting your privacy is really important to us/i),
     ).not.toBeNull();
+    expect(screen.queryByText("PUBLIC CONTENT")).toBeNull();
+    expect(screen.queryByText("Back to policies")).toBeNull();
+    const policyPages = screen.getByRole("menu", { name: "Policy pages" });
+    expect(
+      within(policyPages)
+        .getByRole("menuitem", { name: "Privacy" })
+        .closest("li"),
+    ).toHaveClass("ant-menu-item-selected");
   });
 
   it("renders the exact third-party policy page", async () => {
@@ -264,6 +272,21 @@ describe("PublicContentApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Cloudflare")).not.toBeNull();
     expect(screen.getByText("Salesloft")).not.toBeNull();
+    const policyPages = screen.getByRole("menu", { name: "Policy pages" });
+    expect(
+      within(policyPages)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      "Terms",
+      "Trust",
+      "Copyright",
+      "Privacy",
+      "Third parties",
+      "FERPA",
+      "Accessibility",
+      "Enterprise",
+    ]);
   });
 
   it("renders the exact terms page", async () => {
@@ -278,6 +301,37 @@ describe("PublicContentApp", () => {
     expect(
       screen.getByText(/Once you POST TO THE GENERAL PUBLIC/i),
     ).not.toBeNull();
+  });
+
+  it("renders custom policy markdown without extra policy chrome", async () => {
+    render(
+      <PublicContentApp
+        config={{
+          policies: "# Local Policies\n\nDeployment specific terms.",
+          show_policies: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ view: "policies-custom" }}
+      />,
+    );
+
+    expect(await screen.findByText("Local Policies")).not.toBeNull();
+    expect(screen.getByText("Deployment specific terms.")).not.toBeNull();
+    expect(screen.queryByText("PUBLIC CONTENT")).toBeNull();
+    expect(screen.queryByText("Back to policies")).toBeNull();
+    expect(screen.queryByRole("menu", { name: "Policy pages" })).toBeNull();
+  });
+
+  it("shows a generic title for unknown policy routes", () => {
+    render(
+      <PublicContentApp
+        config={{ show_policies: true, site_name: "Launchpad" }}
+        initialRoute={{ policySlug: "unknown-policy", view: "policies-detail" }}
+      />,
+    );
+
+    expect(document.title).toBe("Policies - Launchpad");
+    expect(screen.getByText("This policy page was not found.")).not.toBeNull();
   });
 
   it("hides policy pages when public policies are disabled", () => {

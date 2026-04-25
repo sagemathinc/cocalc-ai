@@ -11,6 +11,7 @@ import {
   Button,
   Empty,
   Flex,
+  Menu,
   Segmented,
   Spin,
   Tag,
@@ -36,7 +37,6 @@ import {
 } from "@cocalc/frontend/public/ui/shell";
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { ExactPolicyPage, getExactPolicyPage } from "./legal-pages";
-import { getPolicyPage } from "./policy-data";
 import PricingPage, { type PublicMembershipTier } from "./pricing-page";
 import { contentPath, type PublicContentRoute, topLevelView } from "./routes";
 import {
@@ -106,6 +106,33 @@ const MUTED_STYLE: CSSProperties = {
   color: COLORS.GRAY_M,
 } as const;
 
+const BUILTIN_POLICY_NAV_ITEMS = [
+  { href: contentPath("policies/terms"), key: "terms", label: "Terms" },
+  { href: contentPath("policies/trust"), key: "trust", label: "Trust" },
+  {
+    href: contentPath("policies/copyright"),
+    key: "copyright",
+    label: "Copyright",
+  },
+  { href: contentPath("policies/privacy"), key: "privacy", label: "Privacy" },
+  {
+    href: contentPath("policies/thirdparties"),
+    key: "thirdparties",
+    label: "Third parties",
+  },
+  { href: contentPath("policies/ferpa"), key: "ferpa", label: "FERPA" },
+  {
+    href: contentPath("policies/accessibility"),
+    key: "accessibility",
+    label: "Accessibility",
+  },
+  {
+    href: contentPath("policies/enterprise-terms"),
+    key: "enterprise-terms",
+    label: "Enterprise",
+  },
+] as const;
+
 async function fetchJson<T>(path: string): Promise<T> {
   const resp = await fetch(path);
   return await resp.json();
@@ -142,7 +169,7 @@ function titleForRoute(route: PublicContentRoute, siteName: string): string {
     case "policies-custom":
       return `${siteName} Policies`;
     case "policies-detail":
-      return `${getExactPolicyPage(route.policySlug)?.title ?? getPolicyPage(route.policySlug)?.title ?? "Policies"} - ${siteName}`;
+      return `${getExactPolicyPage(route.policySlug)?.title ?? "Policies"} - ${siteName}`;
     case "news":
       return `${siteName} News`;
     case "news-detail":
@@ -324,6 +351,10 @@ function PageShell({
     route.view === "pricing" ||
     route.view === "policies" ||
     route.view === "news";
+  const isPolicyDocumentRoute =
+    route.view === "policies-detail" ||
+    route.view === "policies-imprint" ||
+    route.view === "policies-custom";
   const navActive =
     currentTop === "about" ||
     currentTop === "pricing" ||
@@ -341,7 +372,7 @@ function PageShell({
       />
       {isTopLevelNavPage ? (
         <PublicTitle>{title}</PublicTitle>
-      ) : (
+      ) : isPolicyDocumentRoute ? null : (
         <PublicHero
           eyebrow="PUBLIC CONTENT"
           title={title}
@@ -1118,76 +1149,36 @@ function PoliciesDetailPage({
       <EmptyCard label={`No ${title.toLowerCase()} content configured.`} />
     );
   }
+  return <MarkdownCard value={markdown} />;
+}
+
+function PolicySubNav({ slug }: { slug?: string }) {
   return (
-    <div style={{ display: "grid", gap: "14px" }}>
-      <div>
-        <LinkButton href={contentPath("policies")}>Back to policies</LinkButton>
-      </div>
-      <MarkdownCard value={markdown} />
-    </div>
+    <Menu
+      aria-label="Policy pages"
+      items={BUILTIN_POLICY_NAV_ITEMS.map((item) => ({
+        key: item.key,
+        label: <a href={item.href}>{item.label}</a>,
+      }))}
+      mode="horizontal"
+      selectedKeys={slug == null ? [] : [slug]}
+      style={{
+        background: "transparent",
+        borderBottom: `1px solid ${COLORS.GRAY_LL}`,
+      }}
+    />
   );
 }
 
-function StructuredPolicyPage({ slug }: { slug?: string }) {
-  if (getExactPolicyPage(slug) != null) {
-    return <ExactPolicyPage slug={slug} />;
-  }
-
-  const page = getPolicyPage(slug);
-  if (page == null) {
+function ExactPolicyPageShell({ slug }: { slug?: string }) {
+  if (getExactPolicyPage(slug) == null) {
     return <EmptyCard label="This policy page was not found." />;
   }
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <div>
-        <LinkButton href={contentPath("policies")}>Back to policies</LinkButton>
-      </div>
-      <PublicSectionCard>
-        <Text strong type="secondary">
-          POLICY
-        </Text>
-        <Title level={2} style={{ margin: 0 }}>
-          {page.title}
-        </Title>
-        {page.updated ? (
-          <Text type="secondary">Last updated: {page.updated}</Text>
-        ) : null}
-        <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
-      </PublicSectionCard>
-      {page.sections.map((section) => (
-        <PublicSectionCard key={section.title}>
-          <Title level={3} style={{ margin: 0 }}>
-            {section.title}
-          </Title>
-          {section.paragraphs?.map((paragraph) => (
-            <Paragraph key={paragraph} style={{ margin: 0 }}>
-              {paragraph}
-            </Paragraph>
-          ))}
-          {section.bullets?.length ? (
-            <ul style={{ margin: 0, paddingLeft: 20 }}>
-              {section.bullets.map((bullet) => (
-                <li key={bullet} style={{ marginBottom: 8 }}>
-                  {bullet}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {section.links?.length ? (
-            <Flex wrap gap={12}>
-              {section.links.map((link) => (
-                <LinkButton
-                  key={`${section.title}-${link.href}`}
-                  href={link.href}
-                >
-                  {link.label}
-                </LinkButton>
-              ))}
-            </Flex>
-          ) : null}
-        </PublicSectionCard>
-      ))}
+    <div style={{ display: "grid", gap: 24 }}>
+      <PolicySubNav slug={slug} />
+      <ExactPolicyPage slug={slug} />
     </div>
   );
 }
@@ -1546,7 +1537,7 @@ export default function PublicContentApp({
         {!arePoliciesVisible(config) || getExternalPoliciesUrl(config) ? (
           <PolicyGateCard config={config} />
         ) : (
-          <StructuredPolicyPage slug={initialRoute.policySlug} />
+          <ExactPolicyPageShell slug={initialRoute.policySlug} />
         )}
       </PageShell>
     );
