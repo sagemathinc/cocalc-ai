@@ -254,7 +254,7 @@ async function requestWorkerDrain(
       host_id,
       worker_id,
       timeout: ACP_WORKER_CONTROL_TIMEOUT_MS,
-      waitForInterest: false,
+      waitForInterest: true,
     }).requestDrain({ reason: "rolling_restart" });
   } catch (err) {
     logger.warn("failed requesting ACP worker drain", {

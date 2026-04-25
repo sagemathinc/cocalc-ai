@@ -2012,10 +2012,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                         }}
                       >
                         <Typography.Text type="secondary">
-                          desired{" "}
+                          desired artifact{" "}
                           <code>{effectiveDesiredVersion ?? "n/a"}</code> |
-                          current <code>{currentVersion ?? "n/a"}</code> |
-                          latest <code>{configured?.version ?? "unknown"}</code>
+                          current artifact{" "}
+                          <code>{currentVersion ?? "n/a"}</code> | latest
+                          artifact{" "}
+                          <code>{configured?.version ?? "unknown"}</code>
                         </Typography.Text>
                         <Space wrap>
                           {canUpgrade &&
@@ -2436,9 +2438,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 const desiredVersion =
                   deployment?.desired_version ??
                   observedTarget?.desired_version;
-                const currentVersion =
-                  observedTarget?.current_version ??
-                  observedComponent?.running_versions?.[0];
+                const currentArtifact = observedArtifactForArtifact(
+                  deploymentStatus,
+                  "project-host",
+                );
+                const currentArtifactVersion =
+                  currentArtifact?.current_version ?? host?.version;
                 const versionState =
                   observedTarget?.observed_version_state ??
                   observedComponent?.version_state;
@@ -2504,13 +2509,24 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                         }}
                       >
                         <Typography.Text type="secondary">
-                          desired <code>{desiredVersion ?? "n/a"}</code> |
-                          current{" "}
-                          <code>
-                            {modeDetails.summary ?? currentVersion ?? "n/a"}
-                          </code>{" "}
-                          | latest{" "}
-                          <code>{configured?.version ?? "unknown"}</code>
+                          {!modeDetails.summary ? (
+                            <>
+                              desired artifact{" "}
+                              <code>{desiredVersion ?? "n/a"}</code> | current
+                              artifact{" "}
+                              <code>{currentArtifactVersion ?? "n/a"}</code> |
+                              latest artifact{" "}
+                              <code>{configured?.version ?? "unknown"}</code>
+                            </>
+                          ) : (
+                            <>
+                              desired artifact{" "}
+                              <code>{desiredVersion ?? "n/a"}</code> | current{" "}
+                              <code>{modeDetails.summary}</code> | latest
+                              artifact{" "}
+                              <code>{configured?.version ?? "unknown"}</code>
+                            </>
+                          )}
                         </Typography.Text>
                         <Space wrap>
                           {canUpgrade &&
