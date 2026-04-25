@@ -45,6 +45,7 @@ interface MembershipTier {
   project_defaults?: Record<string, unknown>;
   llm_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
+  usage_limits?: Record<string, unknown>;
   disabled?: boolean;
 }
 
@@ -101,6 +102,17 @@ function formatQuotaValue(key: string, value: unknown): string {
   return unit ? `${rounded} ${unit}` : `${rounded}`;
 }
 
+function formatBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+}
+
 export interface ProjectDefaultItem {
   key: string;
   label: string;
@@ -152,6 +164,86 @@ function formatFeatureTag(key: string, value: unknown): string | null {
   const label = capitalize(key.replace(/_/g, " "));
   if (value === true) return label;
   return `${label}: ${value}`;
+}
+
+export interface UsageLimitItem {
+  key: string;
+  label: string;
+  value: string;
+}
+
+function getUsageLimitsItems(
+  usageLimits: Record<string, unknown>,
+): UsageLimitItem[] {
+  const items: UsageLimitItem[] = [];
+  const computePriority = usageLimits.shared_compute_priority;
+  if (typeof computePriority === "number" && Number.isFinite(computePriority)) {
+    items.push({
+      key: "shared_compute_priority",
+      label: "Shared compute priority",
+      value: `${computePriority}`,
+    });
+  }
+  const totalSoft = usageLimits.total_storage_soft_bytes;
+  if (typeof totalSoft === "number" && Number.isFinite(totalSoft)) {
+    items.push({
+      key: "total_storage_soft_bytes",
+      label: "Total account storage soft cap",
+      value: formatBytes(totalSoft),
+    });
+  }
+  const totalHard = usageLimits.total_storage_hard_bytes;
+  if (typeof totalHard === "number" && Number.isFinite(totalHard)) {
+    items.push({
+      key: "total_storage_hard_bytes",
+      label: "Total account storage hard cap",
+      value: formatBytes(totalHard),
+    });
+  }
+  const maxProjects = usageLimits.max_projects;
+  if (typeof maxProjects === "number" && Number.isFinite(maxProjects)) {
+    items.push({
+      key: "max_projects",
+      label: "Max owned projects",
+      value: `${maxProjects}`,
+    });
+  }
+  const egress5h = usageLimits.egress_5h_bytes;
+  if (typeof egress5h === "number" && Number.isFinite(egress5h)) {
+    items.push({
+      key: "egress_5h_bytes",
+      label: "Data transfer 5-hour window",
+      value: formatBytes(egress5h),
+    });
+  }
+  const egress7d = usageLimits.egress_7d_bytes;
+  if (typeof egress7d === "number" && Number.isFinite(egress7d)) {
+    items.push({
+      key: "egress_7d_bytes",
+      label: "Data transfer 7-day window",
+      value: formatBytes(egress7d),
+    });
+  }
+  const egressPolicy = usageLimits.egress_policy;
+  if (typeof egressPolicy === "string" && egressPolicy.length > 0) {
+    items.push({
+      key: "egress_policy",
+      label: "Egress policy",
+      value: egressPolicy,
+    });
+  }
+  const dedicatedHostEgressPolicy = usageLimits.dedicated_host_egress_policy;
+  if (
+    typeof dedicatedHostEgressPolicy === "string" &&
+    dedicatedHostEgressPolicy.length > 0
+  ) {
+    items.push({
+      key: "dedicated_host_egress_policy",
+      label: "Dedicated host egress policy",
+      value: dedicatedHostEgressPolicy,
+    });
+  }
+  return items;
 }
 
 export function MembershipStatusPanel({
@@ -274,6 +366,7 @@ export function MembershipStatusPanel({
   const projectDefaults = normalizeRecord(entitlements.project_defaults);
   const llmLimits = normalizeRecord(entitlements.llm_limits);
   const features = normalizeRecord(entitlements.features);
+  const usageLimits = normalizeRecord(entitlements.usage_limits);
   const limit5h = extractLimit(llmLimits, ["units_5h", "limit_5h"]);
   const limit7d = extractLimit(llmLimits, ["units_7d", "limit_7d"]);
   const featureTags = Object.entries(features)
@@ -281,6 +374,7 @@ export function MembershipStatusPanel({
     .filter((value): value is string => !!value);
 
   const projectDefaultsItems = getProjectDefaultsItems(projectDefaults);
+  const usageLimitItems = getUsageLimitsItems(usageLimits);
 
   return (
     <Panel
@@ -385,6 +479,29 @@ export function MembershipStatusPanel({
                 </Space>
               )}
             </div>
+          </div>
+
+          <div>
+            <Text strong>Shared-host usage limits</Text>
+            {usageLimitItems.length === 0 ? (
+              <div>
+                <Text type="secondary">
+                  No shared-host usage limits configured.
+                </Text>
+              </div>
+            ) : (
+              <Descriptions
+                size="small"
+                column={1}
+                style={{ marginTop: "6px" }}
+              >
+                {usageLimitItems.map((item) => (
+                  <Descriptions.Item key={item.key} label={item.label}>
+                    {item.value}
+                  </Descriptions.Item>
+                ))}
+              </Descriptions>
+            )}
           </div>
 
           <Collapse

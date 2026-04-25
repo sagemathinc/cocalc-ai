@@ -13,6 +13,12 @@ function quotaTemplate(overrides: Record<string, number>) {
 
 const MIN_LLM_LIMIT = 50;
 
+function usageLimitsTemplate(shared_compute_priority: number) {
+  return {
+    shared_compute_priority,
+  };
+}
+
 function llmLimitsFromYearly(price_yearly: number, monthlyOverride?: number) {
   const monthlyCost = monthlyOverride ?? price_yearly / 12;
   const monthlyBudget = monthlyCost * 0.5;
@@ -50,6 +56,7 @@ export const TIER_TEMPLATES = {
       create_hosts: false,
       project_host_tier: 0,
     },
+    usage_limits: usageLimitsTemplate(1),
   },
   student: {
     id: "student",
@@ -70,6 +77,7 @@ export const TIER_TEMPLATES = {
       create_hosts: false,
       project_host_tier: 0,
     },
+    usage_limits: usageLimitsTemplate(2),
   },
   member: {
     id: "member",
@@ -91,6 +99,7 @@ export const TIER_TEMPLATES = {
       create_hosts: true,
       project_host_tier: 1,
     },
+    usage_limits: usageLimitsTemplate(3),
   },
   pro: {
     id: "pro",
@@ -112,6 +121,7 @@ export const TIER_TEMPLATES = {
       create_hosts: true,
       project_host_tier: 2,
     },
+    usage_limits: usageLimitsTemplate(4),
   },
 } as const;
 
@@ -124,6 +134,7 @@ type TierTemplateFields = {
   project_defaults?: Record<string, unknown>;
   llm_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
+  usage_limits?: unknown;
 };
 
 export function applyMembershipTierTemplateFallbacks<
@@ -136,5 +147,6 @@ export function applyMembershipTierTemplateFallbacks<
     project_defaults: tier.project_defaults ?? template.project_defaults,
     llm_limits: tier.llm_limits ?? template.llm_limits,
     features: tier.features ?? template.features,
+    usage_limits: tier.usage_limits ?? template.usage_limits,
   };
 }

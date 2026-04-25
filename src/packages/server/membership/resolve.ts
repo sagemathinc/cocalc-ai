@@ -16,6 +16,7 @@ function tierToEntitlements(
     project_defaults: tier.project_defaults,
     llm_limits: tier.llm_limits,
     features: tier.features,
+    usage_limits: tier.usage_limits,
   };
 }
 

@@ -2,10 +2,32 @@ import { authFirst } from "./util";
 import type { MoneyValue } from "@cocalc/util/money";
 export type MembershipClass = string;
 
+export type MembershipEgressPolicy =
+  | "metered-shared-hosts"
+  | "all-shared-hosts"
+  | "disabled";
+
+export type DedicatedHostEgressPolicy =
+  | "tier-capped"
+  | "meter-and-bill"
+  | "disabled";
+
+export interface MembershipUsageLimits {
+  shared_compute_priority?: number;
+  total_storage_soft_bytes?: number;
+  total_storage_hard_bytes?: number;
+  max_projects?: number;
+  egress_5h_bytes?: number;
+  egress_7d_bytes?: number;
+  egress_policy?: MembershipEgressPolicy;
+  dedicated_host_egress_policy?: DedicatedHostEgressPolicy;
+}
+
 export interface MembershipEntitlements {
   project_defaults?: Record<string, unknown>;
   llm_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
+  usage_limits?: MembershipUsageLimits;
 }
 
 export interface MembershipResolution {

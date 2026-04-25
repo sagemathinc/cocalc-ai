@@ -54,6 +54,7 @@ interface Tier {
   project_defaults?: any;
   llm_limits?: any;
   features?: any;
+  usage_limits?: any;
   disabled?: boolean;
   notes?: string;
   history?: any[];
@@ -111,6 +112,7 @@ function useMembershipTiers() {
             project_defaults: null,
             llm_limits: null,
             features: null,
+            usage_limits: null,
             disabled: null,
             notes: null,
             history: null,
@@ -147,6 +149,7 @@ function useMembershipTiers() {
         project_defaults: editing.project_defaults ?? {},
         llm_limits: editing.llm_limits ?? {},
         features: editing.features ?? {},
+        usage_limits: editing.usage_limits ?? {},
         active: !editing.disabled,
       });
     }
@@ -167,6 +170,7 @@ function useMembershipTiers() {
       );
       const llm_limits = parseJsonField(values.llm_limits, "llm_limits");
       const features = parseJsonField(values.features, "features");
+      const usage_limits = parseJsonField(values.usage_limits, "usage_limits");
 
       const payload = pick(
         {
@@ -174,6 +178,7 @@ function useMembershipTiers() {
           project_defaults,
           llm_limits,
           features,
+          usage_limits,
           disabled: !values.active,
         },
         [
@@ -186,6 +191,7 @@ function useMembershipTiers() {
           "project_defaults",
           "llm_limits",
           "features",
+          "usage_limits",
           "disabled",
           "notes",
         ],
@@ -266,6 +272,7 @@ function useMembershipTiers() {
         create_hosts: false,
         project_host_tier: 0,
       },
+      usage_limits: {},
     });
   }
 
@@ -339,6 +346,8 @@ export function MembershipTiers() {
         project_defaults: template.project_defaults ?? {},
         llm_limits: template.llm_limits ?? {},
         features: (template as { features?: unknown }).features ?? {},
+        usage_limits:
+          (template as { usage_limits?: unknown }).usage_limits ?? {},
         active: true,
       });
     };
@@ -408,6 +417,13 @@ export function MembershipTiers() {
             <JsonObjectEditor
               emptyHint="No feature flags yet."
               onErrorChange={(err) => updateJsonError("features", err)}
+            />
+          </Form.Item>
+          <Divider>Usage Limits</Divider>
+          <Form.Item name="usage_limits" label="Usage limits">
+            <JsonObjectEditor
+              emptyHint="No shared-host usage limits configured."
+              onErrorChange={(err) => updateJsonError("usage_limits", err)}
             />
           </Form.Item>
           <Divider>{workspaceDefaultsLabel}</Divider>
