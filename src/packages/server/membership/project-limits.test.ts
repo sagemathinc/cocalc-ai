@@ -40,6 +40,14 @@ describe("project membership limits", () => {
     await expect(getOwnedProjectCountForAccount("account-1")).resolves.toBe(7);
   });
 
+  it("returns the owner account id for a project", async () => {
+    queryMock.mockResolvedValue({ rows: [{ account_id: "owner-1" }] });
+    const { getProjectOwnerAccountId } = await import("./project-limits");
+    await expect(getProjectOwnerAccountId("project-1")).resolves.toBe(
+      "owner-1",
+    );
+  });
+
   it("allows creation below the configured max_projects limit", async () => {
     queryMock.mockResolvedValue({ rows: [{ count: "2" }] });
     resolveMembershipForAccountMock.mockResolvedValue({

@@ -5,8 +5,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   Button,
   DatePicker,
+  Descriptions,
   Divider,
   Input,
   Select,
@@ -21,7 +23,10 @@ import dayjs from "dayjs";
 import api from "@cocalc/frontend/client/api";
 import { ErrorDisplay, TimeAgo } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { MembershipDetails } from "@cocalc/conat/hub/api/purchases";
+import type {
+  MembershipDetails,
+  MembershipUsageStatus,
+} from "@cocalc/conat/hub/api/purchases";
 import { actions } from "./actions";
 
 const { Text } = Typography;
@@ -45,6 +50,68 @@ interface AdminAssignment {
   assigned_at: Date;
   expires_at?: Date | null;
   notes?: string | null;
+}
+
+function formatBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function formatRemaining(bytes?: number): string | undefined {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes)) {
+    return undefined;
+  }
+  return bytes < 0
+    ? `Over by ${formatBytes(Math.abs(bytes))}`
+    : formatBytes(bytes);
+}
+
+function getUsageAlerts(
+  usageStatus?: MembershipUsageStatus | null,
+): Array<{ key: string; type: "warning" | "error"; title: string }> {
+  if (!usageStatus) return [];
+  const alerts: Array<{
+    key: string;
+    type: "warning" | "error";
+    title: string;
+  }> = [];
+  if (usageStatus.over_total_storage_hard) {
+    alerts.push({
+      key: "hard-storage",
+      type: "error",
+      title: "This user is over the hard total storage cap.",
+    });
+  } else if (usageStatus.over_total_storage_soft) {
+    alerts.push({
+      key: "soft-storage",
+      type: "warning",
+      title: "This user is over the soft total storage cap.",
+    });
+  }
+  if (usageStatus.over_max_projects) {
+    alerts.push({
+      key: "max-projects",
+      type: "warning",
+      title: "This user is over the owned project limit.",
+    });
+  }
+  if (
+    usageStatus.unsampled_project_count > 0 ||
+    (usageStatus.measurement_error_count ?? 0) > 0
+  ) {
+    alerts.push({
+      key: "partial-sampling",
+      type: "warning",
+      title: "Usage totals are only partially sampled from owned projects.",
+    });
+  }
+  return alerts;
 }
 
 export function AdminMembership({ account_id }: { account_id: string }) {
@@ -102,6 +169,9 @@ export function AdminMembership({ account_id }: { account_id: string }) {
       };
     });
   }, [details, tierLabels]);
+
+  const usageStatus = details?.usage_status;
+  const usageAlerts = useMemo(() => getUsageAlerts(usageStatus), [usageStatus]);
 
   async function refresh() {
     setLoading(true);
@@ -309,6 +379,79 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                 ]}
               />
             )}
+          </div>
+          <Divider style={{ margin: "16px 0" }} />
+          <div>
+            <Text strong>Usage summary</Text>
+            <Space
+              direction="vertical"
+              size="middle"
+              style={{ marginTop: "8px", width: "100%" }}
+            >
+              {usageAlerts.map((alert) => (
+                <Alert key={alert.key} type={alert.type} title={alert.title} />
+              ))}
+              {usageStatus ? (
+                <Descriptions size="small" column={1}>
+                  <Descriptions.Item label="Owned projects">
+                    {usageStatus.owned_project_count}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Current total storage">
+                    {formatBytes(usageStatus.total_storage_bytes)}
+                  </Descriptions.Item>
+                  {typeof usageStatus.total_storage_soft_bytes === "number" && (
+                    <Descriptions.Item label="Soft storage cap">
+                      {formatBytes(usageStatus.total_storage_soft_bytes)}
+                    </Descriptions.Item>
+                  )}
+                  {typeof usageStatus.total_storage_soft_remaining_bytes ===
+                    "number" && (
+                    <Descriptions.Item label="Soft cap remaining">
+                      {formatRemaining(
+                        usageStatus.total_storage_soft_remaining_bytes,
+                      )}
+                    </Descriptions.Item>
+                  )}
+                  {typeof usageStatus.total_storage_hard_bytes === "number" && (
+                    <Descriptions.Item label="Hard storage cap">
+                      {formatBytes(usageStatus.total_storage_hard_bytes)}
+                    </Descriptions.Item>
+                  )}
+                  {typeof usageStatus.total_storage_hard_remaining_bytes ===
+                    "number" && (
+                    <Descriptions.Item label="Hard cap remaining">
+                      {formatRemaining(
+                        usageStatus.total_storage_hard_remaining_bytes,
+                      )}
+                    </Descriptions.Item>
+                  )}
+                  {typeof usageStatus.max_projects === "number" && (
+                    <Descriptions.Item label="Owned project limit">
+                      {usageStatus.max_projects}
+                    </Descriptions.Item>
+                  )}
+                  {typeof usageStatus.remaining_project_slots === "number" && (
+                    <Descriptions.Item label="Remaining project slots">
+                      {usageStatus.remaining_project_slots < 0
+                        ? `Over by ${Math.abs(usageStatus.remaining_project_slots)}`
+                        : usageStatus.remaining_project_slots}
+                    </Descriptions.Item>
+                  )}
+                  <Descriptions.Item label="Sampled projects">
+                    {usageStatus.unsampled_project_count > 0
+                      ? `${usageStatus.sampled_project_count} of ${usageStatus.owned_project_count}`
+                      : usageStatus.sampled_project_count}
+                  </Descriptions.Item>
+                  {(usageStatus.measurement_error_count ?? 0) > 0 && (
+                    <Descriptions.Item label="Sampling errors">
+                      {usageStatus.measurement_error_count}
+                    </Descriptions.Item>
+                  )}
+                </Descriptions>
+              ) : (
+                <Text type="secondary">No usage summary available.</Text>
+              )}
+            </Space>
           </div>
         </>
       )}
