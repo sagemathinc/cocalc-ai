@@ -12,6 +12,14 @@ import type { ConatConnectionStatus } from "@cocalc/frontend/conat/client";
 import { capitalize } from "@cocalc/util/misc";
 import { MAX_SUBSCRIPTIONS_PER_CLIENT } from "@cocalc/conat/core/constants";
 
+type ConnectionRateSnapshot = {
+  sendMessagesPerSec: number;
+  sendBytesPerSec: number;
+  recvMessagesPerSec: number;
+  recvBytesPerSec: number;
+  sampleWindowSec?: number;
+};
+
 let MAX_SEND_MESSAGES = 1000,
   MAX_SEND_BYTES = 1_000_000;
 let MAX_RECV_MESSAGES = 2000,
@@ -23,14 +31,28 @@ function bytesToStr(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(2) + " MB";
 }
 
+function formatCountRate(value?: number): string {
+  if (!(value != null) || !Number.isFinite(value)) return "n/a";
+  if (Math.abs(value) >= 100) return `${Math.round(value)}/s`;
+  if (Math.abs(value) >= 10) return `${value.toFixed(1)}/s`;
+  return `${value.toFixed(2)}/s`;
+}
+
+function formatByteRate(value?: number): string {
+  if (!(value != null) || !Number.isFinite(value)) return "n/a";
+  return `${bytesToStr(value)}/s`;
+}
+
 export function ConnectionStatsDisplay({
   status,
   targetLabel,
   address,
+  rates,
 }: {
   status: ConatConnectionStatus;
   targetLabel?: ReactNode;
   address?: string;
+  rates?: ConnectionRateSnapshot;
 }) {
   const connected = status.state === "connected";
   const statusText = targetLabel ? (
@@ -96,7 +118,11 @@ export function ConnectionStatsDisplay({
             size="small"
             status="active"
             strokeColor="#1890ff"
-            format={() => `${status.stats.send.messages}`}
+            format={() =>
+              `${status.stats.send.messages} total${
+                rates ? ` • ${formatCountRate(rates.sendMessagesPerSec)}` : ""
+              }`
+            }
           />
         </Descriptions.Item>
         <Descriptions.Item
@@ -114,7 +140,11 @@ export function ConnectionStatsDisplay({
             size="small"
             status="active"
             strokeColor="#40a9ff"
-            format={() => bytesToStr(status.stats.send.bytes)}
+            format={() =>
+              `${bytesToStr(status.stats.send.bytes)} total${
+                rates ? ` • ${formatByteRate(rates.sendBytesPerSec)}` : ""
+              }`
+            }
           />
         </Descriptions.Item>
         <Descriptions.Item
@@ -132,7 +162,11 @@ export function ConnectionStatsDisplay({
             size="small"
             strokeColor="#52c41a"
             status="active"
-            format={() => `${status.stats.recv.messages}`}
+            format={() =>
+              `${status.stats.recv.messages} total${
+                rates ? ` • ${formatCountRate(rates.recvMessagesPerSec)}` : ""
+              }`
+            }
           />
         </Descriptions.Item>
         <Descriptions.Item
@@ -150,7 +184,11 @@ export function ConnectionStatsDisplay({
             size="small"
             strokeColor="#73d13d"
             status="active"
-            format={() => bytesToStr(status.stats.recv.bytes)}
+            format={() =>
+              `${bytesToStr(status.stats.recv.bytes)} total${
+                rates ? ` • ${formatByteRate(rates.recvBytesPerSec)}` : ""
+              }`
+            }
           />
         </Descriptions.Item>
         <Descriptions.Item
@@ -171,6 +209,11 @@ export function ConnectionStatsDisplay({
             format={() => `${status.stats.subs}`}
           />
         </Descriptions.Item>
+        {rates?.sampleWindowSec != null && (
+          <Descriptions.Item label="Rate window">
+            {rates.sampleWindowSec.toFixed(1)}s
+          </Descriptions.Item>
+        )}
       </Descriptions>
 
       {/* Optionally, details debugging */}
