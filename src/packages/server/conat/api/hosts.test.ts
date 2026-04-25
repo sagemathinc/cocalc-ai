@@ -2961,6 +2961,67 @@ describe("hosts.listHosts bootstrap normalization", () => {
     );
   });
 
+  it("keeps a local deprovisioned host row over a newer remote live duplicate", async () => {
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
+    process.env.COCALC_BAY_ID = "bay-0";
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "local-owner-host",
+              status: "deprovisioned",
+              deleted: null,
+              updated: new Date("2026-04-01T20:00:00Z"),
+              metadata: { owner: ACCOUNT_ID },
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM project_host_runtime_deployments")) {
+        return { rows: [] };
+      }
+      if (sql.includes("COUNT(*) AS total")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    hostConnectionListMock = jest.fn(async () => [
+      {
+        id: HOST_ID,
+        name: "stale-remote-host",
+        owner: ACCOUNT_ID,
+        bay_id: "bay-0",
+        region: "",
+        size: "",
+        gpu: false,
+        status: "running",
+        scope: "owned",
+        can_place: false,
+        can_start: true,
+        pricing_model: "on_demand",
+        updated: "2026-04-01T21:00:00.000Z",
+      },
+    ]);
+
+    const { listHosts } = await import("./hosts");
+    const hosts = await listHosts({
+      account_id: ACCOUNT_ID,
+      admin_view: true,
+      include_deleted: true,
+    });
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0]).toEqual(
+      expect.objectContaining({
+        id: HOST_ID,
+        name: "local-owner-host",
+        status: "deprovisioned",
+        updated: "2026-04-01T20:00:00.000Z",
+      }),
+    );
+  });
+
   it("prefers the newest non-deleted duplicate host row", async () => {
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
     process.env.COCALC_BAY_ID = "bay-0";

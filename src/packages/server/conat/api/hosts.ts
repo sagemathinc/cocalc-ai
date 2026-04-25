@@ -1976,11 +1976,32 @@ export async function listHosts(opts: ListHostsOptions): Promise<Host[]> {
         }
       }),
   );
-  const deduped = new Map<string, Host>();
-  for (const host of [...local, ...remoteHosts.flat()]) {
-    deduped.set(host.id, preferredHostRow(deduped.get(host.id), host));
+  const deduped = new Map<
+    string,
+    {
+      host: Host;
+      source: "local" | "remote";
+    }
+  >();
+  for (const host of local) {
+    deduped.set(
+      host.id,
+      preferredHostRow(deduped.get(host.id), {
+        host,
+        source: "local",
+      }),
+    );
   }
-  return Array.from(deduped.values());
+  for (const host of remoteHosts.flat()) {
+    deduped.set(
+      host.id,
+      preferredHostRow(deduped.get(host.id), {
+        host,
+        source: "remote",
+      }),
+    );
+  }
+  return Array.from(deduped.values(), ({ host }) => host);
 }
 
 function timestampMs(value: string | undefined): number | undefined {
@@ -1989,12 +2010,36 @@ function timestampMs(value: string | undefined): number | undefined {
   return Number.isFinite(ms) ? ms : undefined;
 }
 
-function preferredHostRow(existing: Host | undefined, candidate: Host): Host {
+function isTerminalHostRow(host: Host): boolean {
+  return !!host.deleted || host.status === "deprovisioned";
+}
+
+function preferredHostRow(
+  existing:
+    | {
+        host: Host;
+        source: "local" | "remote";
+      }
+    | undefined,
+  candidate: {
+    host: Host;
+    source: "local" | "remote";
+  },
+): {
+  host: Host;
+  source: "local" | "remote";
+} {
   if (existing == null) return candidate;
-  if (candidate.deleted && !existing.deleted) return candidate;
-  if (existing.deleted && !candidate.deleted) return existing;
-  const existingUpdated = timestampMs(existing.updated);
-  const candidateUpdated = timestampMs(candidate.updated);
+  const existingLocalTerminal =
+    existing.source === "local" && isTerminalHostRow(existing.host);
+  const candidateLocalTerminal =
+    candidate.source === "local" && isTerminalHostRow(candidate.host);
+  if (existingLocalTerminal && !candidateLocalTerminal) return existing;
+  if (candidateLocalTerminal && !existingLocalTerminal) return candidate;
+  if (candidate.host.deleted && !existing.host.deleted) return candidate;
+  if (existing.host.deleted && !candidate.host.deleted) return existing;
+  const existingUpdated = timestampMs(existing.host.updated);
+  const candidateUpdated = timestampMs(candidate.host.updated);
   if (candidateUpdated == null) return existing;
   if (existingUpdated == null) return candidate;
   return candidateUpdated > existingUpdated ? candidate : existing;
