@@ -243,6 +243,23 @@ export async function assertCanIncreaseAccountStorage({
   }
 }
 
+export async function assertProjectOwnerCanIncreaseAccountStorage({
+  project_id,
+  resolution,
+}: {
+  project_id: string;
+  resolution?: MembershipResolution;
+}): Promise<void> {
+  const account_id = await getProjectOwnerAccountId(project_id);
+  if (!account_id) {
+    return;
+  }
+  await assertCanIncreaseAccountStorage({
+    account_id,
+    resolution,
+  });
+}
+
 export async function assertCanRestoreProvisionedProjectStorage({
   project_id,
   account_id,
