@@ -2355,10 +2355,7 @@ describe("hosts.rolloutHostManagedComponentsInternal local rollback", () => {
       throw new Error(`unexpected query: ${sql}`);
     });
 
-    const {
-      isProjectHostLocalRollbackError,
-      rolloutHostManagedComponentsInternal,
-    } = await import("./hosts");
+    const { rolloutHostManagedComponentsInternal } = await import("./hosts");
 
     let err: any;
     try {
@@ -2372,7 +2369,7 @@ describe("hosts.rolloutHostManagedComponentsInternal local rollback", () => {
       err = caught;
     }
 
-    expect(isProjectHostLocalRollbackError(err)).toBe(true);
+    expect(err?.code).toBe("PROJECT_HOST_LOCAL_ROLLBACK");
     expect(err.automaticRollback).toEqual({
       host_id: HOST_ID,
       rollback_version: "ph-v1",
