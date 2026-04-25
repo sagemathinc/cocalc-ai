@@ -8,6 +8,7 @@ import getPool from "@cocalc/database/pool";
 import type { AccountFeedEvent } from "@cocalc/conat/hub/api/account-feed";
 import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
 import { listRecentBrowserSessionAccountIds } from "@cocalc/server/conat/api/browser-sessions";
+import { listLiveBrowserSessionAccountIds } from "@cocalc/server/conat/api/browser-sessions-live";
 
 const logger = getLogger("server:account:project-detail-feed");
 const ACTIVE_BROWSER_MAX_AGE_MS = 3 * 60_000;
@@ -22,9 +23,12 @@ async function listActiveCollaboratorAccountIds(
   project_id: string,
 ): Promise<string[]> {
   const active = new Set(
-    listRecentBrowserSessionAccountIds({
+    (await listLiveBrowserSessionAccountIds({
       max_age_ms: ACTIVE_BROWSER_MAX_AGE_MS,
-    }),
+    })) ??
+      listRecentBrowserSessionAccountIds({
+        max_age_ms: ACTIVE_BROWSER_MAX_AGE_MS,
+      }),
   );
   if (active.size === 0) {
     return [];

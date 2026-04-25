@@ -1,4 +1,4 @@
-describe("browser session heartbeat backoff", () => {
+describe("browser session sync controller", () => {
   beforeEach(() => {
     jest.useFakeTimers();
   });
@@ -7,13 +7,9 @@ describe("browser session heartbeat backoff", () => {
     jest.useRealTimers();
   });
 
-  it("backs off after repeated failures and resets after success", async () => {
-    const upsertBrowserSession = jest
-      .fn()
-      .mockRejectedValueOnce(new Error("offline"))
-      .mockRejectedValueOnce(new Error("still offline"))
-      .mockResolvedValue(undefined);
-    const setTimeoutSpy = jest.spyOn(global, "setTimeout");
+  it("syncs only when marked dirty and does not poll periodically", async () => {
+    const upsertBrowserSession = jest.fn().mockResolvedValue(undefined);
+    let openProjects: string[] = [];
 
     const { createBrowserSessionHeartbeat } = require("./session-heartbeat");
     const heartbeat = createBrowserSessionHeartbeat({
@@ -22,8 +18,10 @@ describe("browser session heartbeat backoff", () => {
           upsertBrowserSession,
         },
       },
-      getSnapshot: () => ({ browser_id: "browser-1" }),
-      intervalMs: 10_000,
+      getSnapshot: () => ({
+        browser_id: "browser-1",
+        open_projects: openProjects,
+      }),
       retryMs: 4_000,
       maxRetryMs: 60_000,
       retryBackoff: 2,
@@ -31,22 +29,19 @@ describe("browser session heartbeat backoff", () => {
     });
 
     heartbeat.activate("acct-1");
-    heartbeat.schedule(0);
-
-    await jest.runOnlyPendingTimersAsync();
+    heartbeat.resume();
+    await heartbeat.heartbeat();
     expect(upsertBrowserSession).toHaveBeenCalledTimes(1);
-    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 4_000);
 
-    await jest.runOnlyPendingTimersAsync();
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(upsertBrowserSession).toHaveBeenCalledTimes(1);
+
+    openProjects = ["project-1"];
+    heartbeat.markDirty(250);
+    heartbeat.markDirty(250);
+    await jest.advanceTimersByTimeAsync(250);
+    await Promise.resolve();
     expect(upsertBrowserSession).toHaveBeenCalledTimes(2);
-    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 8_000);
-
-    await jest.runOnlyPendingTimersAsync();
-    expect(upsertBrowserSession).toHaveBeenCalledTimes(3);
-    expect(setTimeoutSpy).toHaveBeenLastCalledWith(
-      expect.any(Function),
-      10_000,
-    );
   });
 
   it("suspends retries while disconnected and resumes immediately on reconnect", async () => {
@@ -63,8 +58,7 @@ describe("browser session heartbeat backoff", () => {
           upsertBrowserSession,
         },
       },
-      getSnapshot: () => ({ browser_id: "browser-1" }),
-      intervalMs: 10_000,
+      getSnapshot: () => ({ browser_id: "browser-1", open_projects: [] }),
       retryMs: 4_000,
       maxRetryMs: 60_000,
       retryBackoff: 2,
@@ -72,11 +66,12 @@ describe("browser session heartbeat backoff", () => {
     });
 
     heartbeat.activate("acct-1");
-    heartbeat.schedule(0);
+    heartbeat.resume();
+    heartbeat.markDirty(0);
 
     await jest.runOnlyPendingTimersAsync();
     expect(upsertBrowserSession).toHaveBeenCalledTimes(1);
-    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 4_000);
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 4_000);
 
     heartbeat.suspend();
     await jest.advanceTimersByTimeAsync(4_000);
@@ -85,10 +80,6 @@ describe("browser session heartbeat backoff", () => {
     heartbeat.resume();
     await jest.runOnlyPendingTimersAsync();
     expect(upsertBrowserSession).toHaveBeenCalledTimes(2);
-    expect(setTimeoutSpy).toHaveBeenLastCalledWith(
-      expect.any(Function),
-      10_000,
-    );
   });
 
   it("reports consecutive failure counts to onFailure", async () => {
@@ -105,8 +96,7 @@ describe("browser session heartbeat backoff", () => {
           upsertBrowserSession,
         },
       },
-      getSnapshot: () => ({ browser_id: "browser-1" }),
-      intervalMs: 10_000,
+      getSnapshot: () => ({ browser_id: "browser-1", open_projects: [] }),
       retryMs: 4_000,
       maxRetryMs: 60_000,
       retryBackoff: 2,
@@ -115,7 +105,8 @@ describe("browser session heartbeat backoff", () => {
     });
 
     heartbeat.activate("acct-1");
-    heartbeat.schedule(0);
+    heartbeat.resume();
+    heartbeat.markDirty(0);
 
     await jest.runOnlyPendingTimersAsync();
     await jest.runOnlyPendingTimersAsync();

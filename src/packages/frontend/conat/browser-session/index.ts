@@ -1,9 +1,9 @@
 /*
 Browser session automation bridge for frontend clients.
 
-This module publishes a per-browser conat service and periodically heartbeats
-browser session metadata to hub.system so CLI tools can discover and target a
-specific live browser session.
+This module publishes a per-browser conat service and syncs browser session
+metadata to hub.system on meaningful local state changes so CLI tools can
+discover and target a specific live browser session.
 */
 
 import { redux } from "@cocalc/frontend/app-framework";
@@ -117,7 +117,7 @@ import {
 } from "@cocalc/frontend/project/workspaces/selection-runtime";
 import { getBrowserTimeTravelProviders } from "./timetravel-providers";
 
-const HEARTBEAT_INTERVAL_MS = 10_000;
+const SESSION_SYNC_DEBOUNCE_MS = 250;
 const HEARTBEAT_RETRY_MS = 4_000;
 const HEARTBEAT_RETRY_MAX_MS = 60_000;
 const HEARTBEAT_STALE_PROBE_TIMEOUT_MS = 2_000;
@@ -163,7 +163,6 @@ export function createBrowserSessionAutomation({
   const heartbeatController = createBrowserSessionHeartbeat({
     hub,
     getSnapshot: () => buildSessionSnapshot(client),
-    intervalMs: HEARTBEAT_INTERVAL_MS,
     retryMs: HEARTBEAT_RETRY_MS,
     maxRetryMs: HEARTBEAT_RETRY_MAX_MS,
     onWarn: (message) => console.warn(message),
@@ -188,14 +187,14 @@ export function createBrowserSessionAutomation({
               return;
             }
             console.warn(
-              `browser-session heartbeat probing hub after ${consecutiveFailures} consecutive failures`,
+              `browser-session sync probing hub after ${consecutiveFailures} consecutive failures`,
             );
             await callHub.call(conatClient, {
               name: "system.ping",
               args: [],
               timeout: HEARTBEAT_STALE_PROBE_TIMEOUT_MS,
             });
-            console.warn("browser-session heartbeat stale probe succeeded");
+            console.warn("browser-session sync stale probe succeeded");
           } catch (probeErr) {
             if (
               (typeof navigator !== "undefined" &&
@@ -207,7 +206,7 @@ export function createBrowserSessionAutomation({
               return;
             }
             console.warn(
-              `browser-session heartbeat stale probe failed after ${consecutiveFailures} consecutive failures; forcing reconnect`,
+              `browser-session sync stale probe failed after ${consecutiveFailures} consecutive failures; forcing reconnect`,
               probeErr,
             );
             conatClient?.reconnect?.();
@@ -220,11 +219,57 @@ export function createBrowserSessionAutomation({
         return;
       }
       console.warn(
-        `browser-session heartbeat forcing reconnect after ${consecutiveFailures} consecutive failures`,
+        `browser-session sync forcing reconnect after ${consecutiveFailures} consecutive failures`,
       );
       conatClient?.reconnect?.();
     },
   });
+  const scheduleSessionSync = (delayMs = SESSION_SYNC_DEBOUNCE_MS) => {
+    heartbeatController.markDirty(delayMs);
+  };
+  redux.reduxStore.subscribe(() => {
+    scheduleSessionSync();
+  });
+  const handleBrowserSessionMetadataChange = () => {
+    scheduleSessionSync();
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("hashchange", handleBrowserSessionMetadataChange);
+    window.addEventListener("popstate", handleBrowserSessionMetadataChange);
+    const historyRef = window.history;
+    if (historyRef?.pushState) {
+      const origPushState = historyRef.pushState.bind(historyRef);
+      historyRef.pushState = ((...args) => {
+        const result = origPushState(...args);
+        handleBrowserSessionMetadataChange();
+        return result;
+      }) as History["pushState"];
+    }
+    if (historyRef?.replaceState) {
+      const origReplaceState = historyRef.replaceState.bind(historyRef);
+      historyRef.replaceState = ((...args) => {
+        const result = origReplaceState(...args);
+        handleBrowserSessionMetadataChange();
+        return result;
+      }) as History["replaceState"];
+    }
+  }
+  if (
+    typeof document !== "undefined" &&
+    typeof MutationObserver !== "undefined"
+  ) {
+    const target = document.querySelector("title") ?? document.head;
+    if (target) {
+      const titleObserver = new MutationObserver(() => {
+        handleBrowserSessionMetadataChange();
+      });
+      titleObserver.observe(target, {
+        characterData: true,
+        childList: true,
+        subtree: true,
+      });
+    }
+  }
 
   const assertExecNotCanceled = (isCanceled?: () => boolean) => {
     if (isCanceled?.()) {
@@ -2155,7 +2200,7 @@ export function createBrowserSessionAutomation({
       const cleanAccountId = `${nextAccountId ?? ""}`.trim();
       if (!cleanAccountId) return;
       if (heartbeatController.getAccountId() === cleanAccountId && service) {
-        heartbeatController.schedule(0);
+        scheduleSessionSync(0);
         return;
       }
       await Promise.resolve().then(async () => {
@@ -2178,9 +2223,8 @@ export function createBrowserSessionAutomation({
       try {
         await heartbeatController.heartbeat();
       } catch (err) {
-        console.warn(`browser-session initial heartbeat failed: ${err}`);
+        console.warn(`browser-session initial sync failed: ${err}`);
       }
-      heartbeatController.schedule(HEARTBEAT_INTERVAL_MS);
     },
 
     stop: async () => {

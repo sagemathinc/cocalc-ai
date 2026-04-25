@@ -101,11 +101,11 @@ import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import {
-  type BrowserSessionLiveInfo,
   listBrowserSessionsForAccount,
   removeBrowserSessionRecord,
   upsertBrowserSessionRecord,
 } from "./browser-sessions";
+import { getLiveBrowserSessionInfo } from "./browser-sessions-live";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
 import {
   getProjectAppPublicPolicy as getProjectAppPublicPolicyRaw,
@@ -2208,44 +2208,6 @@ export async function listBrowserSessions({
     include_stale,
     live_by_browser_id,
   });
-}
-
-async function getLiveBrowserSessionInfo(
-  account_id: string,
-): Promise<Map<string, BrowserSessionLiveInfo>> {
-  const out = new Map<string, BrowserSessionLiveInfo>();
-  try {
-    const client = conat();
-    await client.waitUntilSignedIn({ timeout: 3_000 });
-    const statsByNode = await sysApiMany(client, { maxWait: 2_000 }).stats();
-    for await (const node of statsByNode ?? []) {
-      for (const sockets of Object.values(node ?? {})) {
-        for (const stat of Object.values(sockets ?? {})) {
-          const s = stat as ConnectionStats | undefined;
-          if (!s?.user || s.user.account_id !== account_id) continue;
-          const browser_id = `${s.browser_id ?? ""}`.trim();
-          if (!browser_id) continue;
-          const prev = out.get(browser_id);
-          const nextCount = (prev?.connection_count ?? 0) + 1;
-          const nextActive = Math.max(
-            prev?.updated_at_ms ?? 0,
-            s.active ?? s.connected ?? 0,
-          );
-          out.set(browser_id, {
-            connected: true,
-            connection_count: nextCount,
-            ...(nextActive > 0 ? { updated_at_ms: nextActive } : {}),
-          });
-        }
-      }
-    }
-  } catch (err) {
-    logger.debug(
-      "listBrowserSessions: failed to read live conat stats",
-      `${err}`,
-    );
-  }
-  return out;
 }
 
 export async function removeBrowserSession({

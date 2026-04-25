@@ -233,7 +233,7 @@ export function registerBrowserSessionCommands({
     )
     .option(
       "--max-age-ms <ms>",
-      "consider session stale if heartbeat is older than this",
+      "consider a disconnected session stale if its last browser-session update is older than this",
       "120000",
     )
     .action(
@@ -379,7 +379,7 @@ export function registerBrowserSessionCommands({
     )
     .option(
       "--timeout <duration>",
-      "timeout to discover browser heartbeat session (e.g. 30s, 2m)",
+      "timeout to discover the spawned browser session registration (e.g. 30s, 2m)",
       "45s",
     )
     .option(

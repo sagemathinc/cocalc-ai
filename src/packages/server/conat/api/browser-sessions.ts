@@ -1,8 +1,8 @@
 /*
 In-memory browser session registry used by hub system RPC endpoints.
 
-This powers early browser automation workflows by tracking active browser tabs
-for each account with a short heartbeat and lightweight UI state metadata.
+This stores lightweight browser-session metadata snapshots and merges them with
+live Conat connection state when available.
 */
 
 import type {
@@ -158,6 +158,7 @@ export function listBrowserSessionsForAccount({
   pruneStaleRecords(now);
   const maxAgeMs = normalizeMaxAgeMs(max_age_ms);
   const includeStale = include_stale === true;
+  const hasLiveInfo = live_by_browser_id != null;
   const live =
     live_by_browser_id instanceof Map
       ? live_by_browser_id
@@ -173,7 +174,7 @@ export function listBrowserSessionsForAccount({
     const age = now - record.updated_at_ms;
     const liveInfo = live.get(record.browser_id);
     const connected = !!liveInfo?.connected;
-    const stale = connected ? false : age > maxAgeMs;
+    const stale = hasLiveInfo ? !connected : age > maxAgeMs;
     if (!includeStale && stale) {
       continue;
     }

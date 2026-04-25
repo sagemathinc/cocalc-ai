@@ -26,6 +26,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
 import { listBrowserSessionsForAccount } from "@cocalc/server/conat/api/browser-sessions";
+import { getLiveBrowserSessionInfo } from "@cocalc/server/conat/api/browser-sessions-live";
 import {
   getClusterAccountById,
   updateClusterAccountApiKeysHomeBay,
@@ -687,6 +688,7 @@ async function forceAccountBrowserSessionsToHomeBay({
   const sessions = listBrowserSessionsForAccount({
     account_id,
     max_age_ms: 2 * 60_000,
+    live_by_browser_id: await getLiveBrowserSessionInfo(account_id),
   });
   if (sessions.length === 0) {
     return;
