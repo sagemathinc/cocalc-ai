@@ -143,9 +143,11 @@ async function get_spellcheck(): Promise<boolean> {
   return await have("aspell");
 }
 
-// without sshd we cannot copy to this project. that's vital for courses.
+// Without a project ssh server we cannot copy to this project. Launchpad uses
+// dropbear inside the project runtime, while some other environments may use
+// OpenSSH sshd directly.
 async function get_sshd(): Promise<boolean> {
-  return await have("/usr/sbin/sshd");
+  return (await have("/usr/sbin/sshd")) || (await have("dropbear"));
 }
 
 // we check if we can use headless chrome to do html to pdf conversion,

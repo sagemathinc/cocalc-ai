@@ -35,7 +35,20 @@ chmod og-rwx -R "$RUNTIME_SSH_DIR"
 dropbear -p \${COCALC_SSHD_PORT:=22} -e -s -a -R -D "$RUNTIME_SSHD_DIR"
 
 SFTP_SERVER="$(command -v sftp-server || true)"
+if [ -z "$SFTP_SERVER" ]; then
+  for candidate in \
+    /usr/lib/openssh/sftp-server \
+    /usr/lib/ssh/sftp-server \
+    /usr/libexec/openssh/sftp-server
+  do
+    if [ -x "$candidate" ]; then
+      SFTP_SERVER="$candidate"
+      break
+    fi
+  done
+fi
 if [ -n "$SFTP_SERVER" ]; then
+  mkdir -p /usr/libexec
   ln -sf "$SFTP_SERVER" /usr/libexec/sftp-server
 fi
 `;
