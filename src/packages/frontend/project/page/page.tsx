@@ -61,6 +61,7 @@ import { StartButton } from "@cocalc/frontend/project/start-button";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
+  getProjectLifecycleDisplayState,
   hostLabel,
 } from "@cocalc/frontend/projects/host-operational";
 import { projectThemeColor } from "@cocalc/frontend/projects/theme";
@@ -138,6 +139,16 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
       moveLro.summary.status === "queued" ||
       moveLro.summary.status === "running");
   const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
+  const lifecycleDisplayState = useMemo(
+    () =>
+      getProjectLifecycleDisplayState({
+        projectState: project?.getIn(["state", "state"]),
+        hostId: host_id,
+        hostInfo,
+        lastBackup: project?.get("last_backup"),
+      }),
+    [hostInfo, host_id, project],
+  );
   const workspaceBlocked = moveInProgress;
   const hostUnavailableReason =
     hostOperational.reason ?? "Assigned host is unavailable.";
@@ -254,6 +265,30 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   ]);
 
   useEffect(() => {
+    if (!is_active || !actions) {
+      return;
+    }
+    if (
+      lifecycleDisplayState !== "archived" &&
+      lifecycleDisplayState !== "new"
+    ) {
+      return;
+    }
+    if ((open_files_order?.size ?? 0) > 0) {
+      actions.close_all_files?.();
+    }
+    if ((active_project_tab ?? "").startsWith(EDITOR_PREFIX)) {
+      actions.set_active_tab("home", { change_history: false });
+    }
+  }, [
+    actions,
+    active_project_tab,
+    is_active,
+    lifecycleDisplayState,
+    open_files_order,
+  ]);
+
+  useEffect(() => {
     const name = getFlyoutExpanded(project_id);
     if (isFixedTab(name)) {
       // if there is one to show, restore its width
@@ -334,6 +369,12 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   }
 
   function renderEditorContent() {
+    if (
+      lifecycleDisplayState === "archived" ||
+      lifecycleDisplayState === "new"
+    ) {
+      return [];
+    }
     const v: React.JSX.Element[] = [];
 
     initialWorkspaceRender.renderPaths.map((path) => {

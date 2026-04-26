@@ -30,6 +30,7 @@ import {
 } from "@cocalc/frontend/project/workspaces/selection-runtime";
 import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 import type { WorkspaceSelection } from "@cocalc/frontend/project/workspaces/types";
+import { getProjectLifecycleDisplayState } from "@cocalc/frontend/projects/host-operational";
 import { normalize } from "./utils";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { canonicalSyncPath, toAbsoluteProjectPath } from "./sync-path";
@@ -116,6 +117,19 @@ export function isTransientSyncIdentityResolutionError(err: unknown): boolean {
 
 export function isCancelledSyncIdentityResolutionError(err: unknown): boolean {
   return `${err}`.includes("canonical sync identity open was cancelled");
+}
+
+function lifecycleDisplayStateForProject(
+  project_id: string,
+): ReturnType<typeof getProjectLifecycleDisplayState> {
+  const project = redux
+    .getStore("projects")
+    ?.get("project_map")
+    ?.get(project_id);
+  return getProjectLifecycleDisplayState({
+    projectState: project?.getIn(["state", "state"]),
+    lastBackup: project?.get("last_backup"),
+  });
 }
 
 export function applyWorkspaceSelectionForForegroundOpen(
@@ -335,6 +349,15 @@ export async function open_file(
     if (!alreadyOpened && actions.open_files?.has(displayPath)) {
       actions.open_files.delete(displayPath);
       redux.getActions("page").save_session();
+    }
+    const lifecycleDisplayState = lifecycleDisplayStateForProject(
+      actions.project_id,
+    );
+    if (
+      lifecycleDisplayState === "archived" ||
+      lifecycleDisplayState === "new"
+    ) {
+      return;
     }
     alert_message({
       type: "error",
