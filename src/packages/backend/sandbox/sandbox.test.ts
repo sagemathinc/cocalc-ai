@@ -4,6 +4,7 @@ import {
   mkdir,
   realpath,
   rm,
+  rename,
   readFile,
   stat,
   symlink,
@@ -528,6 +529,25 @@ describeIfLinux("safe mode sandbox", () => {
     await expect(
       fs.symlink("link-policy-src.txt", "sym-link.txt"),
     ).rejects.toThrow("operation not permitted in safe mode");
+  });
+});
+
+describeIfLinux("safe mode sandbox home replacement", () => {
+  it("continues writing after the sandbox home path is replaced", async () => {
+    const home = join(tempDir, "test-safe-replaced-home");
+    const replaced = `${home}-old`;
+    await rm(home, { recursive: true, force: true });
+    await rm(replaced, { recursive: true, force: true });
+    await mkdir(home);
+    const fs = new SandboxedFilesystem(home, {
+      unsafeMode: false,
+    });
+    await fs.writeFile("before.txt", "before");
+    await rename(home, replaced);
+    await mkdir(home);
+
+    await fs.writeFile("after.txt", "after");
+    expect(await readFile(join(home, "after.txt"), "utf8")).toBe("after");
   });
 });
 
