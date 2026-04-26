@@ -13,8 +13,12 @@ import { Icon, Loading, SettingBox } from "@cocalc/frontend/components";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 import { tool2display } from "@cocalc/util/code-formatter";
-import { R_IDE } from "@cocalc/util/consts/ui";
 import * as misc from "@cocalc/util/misc";
+import {
+  buildFormatterAgentPrompt,
+  buildProjectCapabilityAgentPrompt,
+  PROJECT_CAPABILITY_SPECS,
+} from "@cocalc/util/project-capabilities";
 import { COLORS } from "@cocalc/util/theme";
 import { Project } from "./types";
 
@@ -119,26 +123,12 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
     }
 
     function render_features(avail): [Rendered, boolean] {
-      const feature_map = [
-        ["spellcheck", "Spellchecking"],
-        ["rmd", "RMarkdown"],
-        ["qmd", "Quarto"],
-        ["sage", "SageMath"],
-        ["jupyter_notebook", "Classical Jupyter Notebook"],
-        ["jupyter_lab", "Jupyter Lab"],
-        ["x11", "Graphical Linux applications (X11 Desktop)"],
-        ["latex", "LaTeX editor"],
-        ["html2pdf", "HTML to PDF via Chrome/Chromium"],
-        ["pandoc", "File format conversions via pandoc"],
-        ["vscode", "VSCode editor"],
-        ["julia", "Julia programming language"],
-        ["rserver", R_IDE],
-      ];
       const features: React.JSX.Element[] = [];
       let any_nonavail = false;
-      for (const [key, display] of Array.from(
-        sortBy(feature_map, (f) => f[1]),
+      for (const spec of Array.from(
+        sortBy(PROJECT_CAPABILITY_SPECS, (feature) => feature.label),
       )) {
+        const { key, label: display } = spec;
         const available = avail[key];
         any_nonavail = !available;
         const color = available ? COLORS.BS_GREEN_D : COLORS.BS_RED;
@@ -174,7 +164,7 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
                   title: `Install ${display}`,
                   visiblePrompt: `Install ${display}`,
                   tag: `intent:project-capability:${key}`,
-                  prompt: `Install or enable ${display} for this project if possible.\n\nInspect the project's environment and install whatever is needed so ${display} becomes available. Work directly in the project, verify the result, and explain any limit if it cannot be enabled.`,
+                  prompt: buildProjectCapabilityAgentPrompt(spec),
                 })}
               </Space>
             </div>
@@ -232,7 +222,10 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
                   title: `Install formatter ${tool}`,
                   visiblePrompt: `Install formatter ${tool}`,
                   tag: `intent:project-formatter:${tool}`,
-                  prompt: `Install or enable the ${tool} formatter for this project if possible.\n\nThis formatter is used for ${misc.to_human_list(langs)}. Inspect the project's environment, install what is needed, verify whether ${tool} becomes available, and explain any remaining limitation if it cannot be enabled.`,
+                  prompt: buildFormatterAgentPrompt({
+                    tool,
+                    languages: langs,
+                  }),
                 })}
               </Space>
             </div>
