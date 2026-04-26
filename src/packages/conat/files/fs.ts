@@ -661,6 +661,14 @@ export async function fsServer({
   logger.debug("fsServer: created subscription to ", subject);
 
   return {
+    invalidateSubject: (subject?: string) => {
+      if (!subject) return;
+      cache.delete(subject);
+      if (watches[subject] != null) {
+        watches[subject].close();
+        delete watches[subject];
+      }
+    },
     close: () => {
       for (const subject in watches) {
         watches[subject].close();

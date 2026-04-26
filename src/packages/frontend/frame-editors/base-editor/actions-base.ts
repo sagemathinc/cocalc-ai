@@ -18,9 +18,7 @@ about string-only docs (e.g., SyncString.to_str) in subclasses.
 */
 
 const WIKI_HELP_URL = "https://github.com/sagemathinc/cocalc/wiki/";
-const SAVE_ERROR = "Error saving file to disk. ";
-const SAVE_WORKAROUND =
-  "Ensure your network connection is solid. If this problem persists, you might need to close and open this file, restart this project in project settings, or contact support (help@cocalc.com)";
+const SAVE_ERROR = "Error saving file to disk";
 const FAST_OPEN_SYNCSTRING_DISABLE_QUERY_PARAM =
   "cocalc_disable_fast_open_syncstring";
 const FAST_OPEN_SYNCSTRING_DISABLE_LOCAL_STORAGE_KEY =
@@ -1814,7 +1812,7 @@ export class BaseEditorActions<
     } catch (err) {
       console.warn("save_to_disk", this.path, "ERROR", err);
       if (this._state !== "closed") {
-        this.set_error(`${SAVE_ERROR} -- ${err} -- ${SAVE_WORKAROUND}`);
+        this.set_error(`${SAVE_ERROR} '${this.path}' -- ${err}`);
         log_error({
           string_id: this._syncstring?.get_string_id(),
           path: this.path,

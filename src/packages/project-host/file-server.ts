@@ -72,7 +72,11 @@ import {
   projectRuntimeHomeRelativePath,
 } from "@cocalc/util/project-runtime";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
-import { fsServer, DEFAULT_FILE_SERVICE } from "@cocalc/conat/files/fs";
+import {
+  fsServer,
+  DEFAULT_FILE_SERVICE,
+  fsSubject,
+} from "@cocalc/conat/files/fs";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import cpExec from "@cocalc/backend/sandbox/cp";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
@@ -830,6 +834,7 @@ export async function ensureVolume(project_id: string, scratch?: boolean) {
     throw Error("file server not initialized");
   }
   const vol = await fs.subvolumes.ensure(volumeName(project_id, scratch));
+  invalidateProjectFsServer(project_id);
   if (!scratch) {
     queueProjectProvisioned(project_id, true);
   }
@@ -871,6 +876,7 @@ export async function deleteVolume(
 
   await deleteIfExists({ name: volName(project_id), clearSnapshots: true });
   await deleteIfExists({ name: scratchVolName(project_id) });
+  invalidateProjectFsServer(project_id);
   if (opts.reportProvisioned !== false) {
     queueProjectProvisioned(project_id, false);
   }
@@ -3158,6 +3164,10 @@ export async function initFsServer({
       void touchProjectLastEdited(project_id, `fs:${op}`);
     },
   });
+}
+
+function invalidateProjectFsServer(project_id: string): void {
+  servers?.file?.invalidateSubject?.(fsSubject({ project_id }));
 }
 
 let servers: null | { ssh: any; file: any } = null;
