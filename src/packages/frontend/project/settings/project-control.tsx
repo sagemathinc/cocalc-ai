@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Space } from "antd";
+import { Space } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 import BootLog from "../bootlog";
 import { React, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -163,11 +163,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
           disabled={archiveDisabled}
         />
         <CloneProject project_id={project_id} disabled={archived} />
-        {archived ? (
-          <Button disabled size={isFlyout ? "small" : "large"}>
-            Archived
-          </Button>
-        ) : (
+        {!archived && (
           <MoveProject
             project_id={project_id}
             disabled={
