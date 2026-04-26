@@ -4,17 +4,21 @@
  */
 
 import { ReloadOutlined } from "@ant-design/icons";
-import { Button } from "antd";
-import { useIntl } from "react-intl";
+import { Button, Space } from "antd";
 import { keys, sortBy } from "lodash";
 import React from "react";
 
 import { Rendered, redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading, SettingBox } from "@cocalc/frontend/components";
-import { labels } from "@cocalc/frontend/i18n";
+import { alert_message } from "@cocalc/frontend/alerts";
+import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 import { tool2display } from "@cocalc/util/code-formatter";
-import { R_IDE } from "@cocalc/util/consts/ui";
 import * as misc from "@cocalc/util/misc";
+import {
+  buildFormatterAgentPrompt,
+  buildProjectCapabilityAgentPrompt,
+  PROJECT_CAPABILITY_SPECS,
+} from "@cocalc/util/project-capabilities";
 import { COLORS } from "@cocalc/util/theme";
 import { Project } from "./types";
 
@@ -26,11 +30,31 @@ interface ReactProps {
   mode?: "project" | "flyout";
 }
 
+const LIST_STYLE: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "20px minmax(0, 1fr)",
+  columnGap: "10px",
+  rowGap: "10px",
+  alignItems: "start",
+};
+
+const SECTION_TITLE_STYLE: React.CSSProperties = {
+  fontSize: "16px",
+  fontWeight: 600,
+  margin: "0 0 12px 0",
+};
+
+const SECTION_STYLE: React.CSSProperties = {
+  display: "grid",
+  gap: "18px",
+};
+
 export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
   (props: ReactProps) => {
     const { project, project_id, mode = "project" } = props;
-    const intl = useIntl();
-    const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
+    const [sendingAgentTarget, setSendingAgentTarget] = React.useState<
+      string | null
+    >(null);
 
     const available_features = useTypedRedux(
       { project_id },
@@ -42,27 +66,69 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
     );
     const configuration = useTypedRedux({ project_id }, "configuration");
 
+    async function sendInstallPrompt(opts: {
+      key: string;
+      title: string;
+      prompt: string;
+      visiblePrompt: string;
+      tag: string;
+    }): Promise<void> {
+      try {
+        setSendingAgentTarget(opts.key);
+        const sent = await submitNavigatorPromptInWorkspaceChat({
+          project_id,
+          prompt: opts.prompt,
+          visiblePrompt: opts.visiblePrompt,
+          title: opts.title,
+          tag: opts.tag,
+          forceCodex: true,
+          openFloating: true,
+          waitForAgent: false,
+        });
+        if (!sent) {
+          throw new Error("Unable to submit request to Agent.");
+        }
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `Unable to ask Agent for help: ${err}`,
+        });
+      } finally {
+        setSendingAgentTarget((current) =>
+          current === opts.key ? null : current,
+        );
+      }
+    }
+
+    function renderAgentButton(opts: {
+      available: boolean;
+      key: string;
+      title: string;
+      prompt: string;
+      visiblePrompt: string;
+      tag: string;
+    }): Rendered {
+      if (opts.available) {
+        return undefined;
+      }
+      return (
+        <Button
+          size="small"
+          loading={sendingAgentTarget === opts.key}
+          onClick={() => void sendInstallPrompt(opts)}
+        >
+          Agent
+        </Button>
+      );
+    }
+
     function render_features(avail): [Rendered, boolean] {
-      const feature_map = [
-        ["spellcheck", "Spellchecking"],
-        ["rmd", "RMarkdown"],
-        ["qmd", "Quarto"],
-        ["sage", "SageMath"],
-        ["jupyter_notebook", "Classical Jupyter Notebook"],
-        ["jupyter_lab", "Jupyter Lab"],
-        ["x11", "Graphical Linux applications (X11 Desktop)"],
-        ["latex", "LaTeX editor"],
-        ["html2pdf", "HTML to PDF via Chrome/Chromium"],
-        ["pandoc", "File format conversions via pandoc"],
-        ["vscode", "VSCode editor"],
-        ["julia", "Julia programming language"],
-        ["rserver", R_IDE],
-      ];
       const features: React.JSX.Element[] = [];
       let any_nonavail = false;
-      for (const [key, display] of Array.from(
-        sortBy(feature_map, (f) => f[1]),
+      for (const spec of Array.from(
+        sortBy(PROJECT_CAPABILITY_SPECS, (feature) => feature.label),
       )) {
+        const { key, label: display } = spec;
         const available = avail[key];
         any_nonavail = !available;
         const color = available ? COLORS.BS_GREEN_D : COLORS.BS_RED;
@@ -77,23 +143,36 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
         }
         features.push(
           <React.Fragment key={key}>
-            <dt>
+            <div>
               <Icon name={icon} style={{ color }} />
-            </dt>
-            <dd>
-              {display} {extra}
-            </dd>
+            </div>
+            <div>
+              <Space
+                size={8}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  width: "100%",
+                }}
+              >
+                <span>
+                  {display} {extra}
+                </span>
+                {renderAgentButton({
+                  available,
+                  key: `feature:${key}`,
+                  title: `Install ${display}`,
+                  visiblePrompt: `Install ${display}`,
+                  tag: `intent:project-capability:${key}`,
+                  prompt: buildProjectCapabilityAgentPrompt(spec),
+                })}
+              </Space>
+            </div>
           </React.Fragment>,
         );
       }
 
-      const component = (
-        <>
-          <dl className={"dl-horizontal cc-project-settings-features"}>
-            {features}
-          </dl>
-        </>
-      );
+      const component = <div style={LIST_STYLE}>{features}</div>;
       return [component, any_nonavail];
     }
 
@@ -122,12 +201,34 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
 
         r_formatters.push(
           <React.Fragment key={tool}>
-            <dt>
+            <div>
               <Icon name={icon} style={{ color }} />{" "}
-            </dt>
-            <dd>
-              <b>{tool}</b> for {misc.to_human_list(langs)}
-            </dd>
+            </div>
+            <div>
+              <Space
+                size={8}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  width: "100%",
+                }}
+              >
+                <span>
+                  <b>{tool}</b> for {misc.to_human_list(langs)}
+                </span>
+                {renderAgentButton({
+                  available,
+                  key: `formatter:${tool}`,
+                  title: `Install formatter ${tool}`,
+                  visiblePrompt: `Install formatter ${tool}`,
+                  tag: `intent:project-formatter:${tool}`,
+                  prompt: buildFormatterAgentPrompt({
+                    tool,
+                    languages: langs,
+                  }),
+                })}
+              </Space>
+            </div>
           </React.Fragment>,
         );
       }
@@ -135,26 +236,10 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
       const component = (
         <>
           {render_debug_info(formatter)}
-          <dl className={"dl-horizontal cc-project-settings-features"}>
-            {r_formatters}
-          </dl>
+          <div style={LIST_STYLE}>{r_formatters}</div>
         </>
       );
       return [component, any_nonavail];
-    }
-
-    function render_noavail_info(): Rendered {
-      return (
-        <>
-          <hr />
-          <div style={{ color: COLORS.GRAY }}>
-            Some features are not available, because this {projectLabelLower} is
-            using a limited root filesystem image. To enable all features,
-            create a new {projectLabelLower} with a fuller root filesystem
-            image.
-          </div>
-        </>
-      );
     }
 
     function render_available(): Rendered {
@@ -169,17 +254,27 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
         );
       }
 
-      const [features, non_avail_1] = render_features(avail);
-      const [formatter, non_avail_2] = render_formatter(avail.formatting);
+      const [features] = render_features(avail);
+      const [formatter] = render_formatter(avail.formatting);
 
       return (
-        <>
-          <h3>Available Features</h3>
-          {features}
-          <h3>Available Formatters</h3>
-          {formatter}
-          {non_avail_1 || non_avail_2 ? render_noavail_info() : undefined}
-        </>
+        <div
+          style={{
+            ...SECTION_STYLE,
+            gridTemplateColumns:
+              mode === "project" ? "repeat(2, minmax(0, 1fr))" : undefined,
+            alignItems: "start",
+          }}
+        >
+          <section>
+            <h3 style={SECTION_TITLE_STYLE}>Available Features</h3>
+            {features}
+          </section>
+          <section>
+            <h3 style={SECTION_TITLE_STYLE}>Available Formatters</h3>
+            {formatter}
+          </section>
+        </div>
       );
     }
 
@@ -205,7 +300,6 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
           onClick={() => reload()}
           icon={<ReloadOutlined />}
           disabled={configuration_loading}
-          style={{ float: "right", marginTop: "-7.5px" }} // that compensates for bootstrap's 15px's all over the place...
         >
           Refresh
         </Button>
@@ -213,7 +307,20 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
     }
 
     function render_title(): Rendered {
-      return <span>{render_reload()}Features and Configuration</span>;
+      return (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            width: "100%",
+          }}
+        >
+          <span>Features and Configuration</span>
+          {render_reload()}
+        </div>
+      );
     }
 
     const conf = configuration;

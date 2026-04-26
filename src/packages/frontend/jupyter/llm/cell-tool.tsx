@@ -530,6 +530,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
         forceCodex: true,
         codexConfig: { model: DEFAULT_CELL_TOOL_CODEX_MODEL },
         openFloating: true,
+        waitForAgent: false,
       });
       if (!sent) {
         throw new Error("Unable to send this cell request to the Agent.");

@@ -150,6 +150,46 @@ async function get_sshd(): Promise<boolean> {
   return (await have("/usr/sbin/sshd")) || (await have("dropbear"));
 }
 
+async function get_nodejs(): Promise<boolean> {
+  return (await Promise.all([have("node"), have("npm"), have("pnpm")])).every(
+    Boolean,
+  );
+}
+
+async function get_gitlfs(): Promise<boolean> {
+  return await have("git-lfs");
+}
+
+async function get_imagemagick(): Promise<boolean> {
+  return (await have("magick")) || (await have("convert"));
+}
+
+async function get_ffmpeg(): Promise<boolean> {
+  return await have("ffmpeg");
+}
+
+async function get_typst(): Promise<boolean> {
+  return await have("typst");
+}
+
+async function get_python(): Promise<boolean> {
+  return (await have("python3")) || (await have("python"));
+}
+
+async function get_pip(): Promise<boolean> {
+  return (await have("pip3")) || (await have("pip"));
+}
+
+async function get_conda(): Promise<boolean> {
+  return (
+    (await have("conda")) || (await have("mamba")) || (await have("micromamba"))
+  );
+}
+
+async function get_uv(): Promise<boolean> {
+  return await have("uv");
+}
+
 // we check if we can use headless chrome to do html to pdf conversion,
 // which uses either google-chrome or chromium-browser.  Note that there
 // is no good headless pdf support using firefox.
@@ -311,6 +351,15 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       html2pdf,
       pandoc,
       sshd,
+      nodejs,
+      gitlfs,
+      imagemagick,
+      ffmpeg,
+      typst,
+      python,
+      pip,
+      conda,
+      uv,
       x11,
       rmd,
       qmd,
@@ -326,6 +375,15 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       get_html2pdf(),
       get_pandoc(),
       get_sshd(),
+      get_nodejs(),
+      get_gitlfs(),
+      get_imagemagick(),
+      get_ffmpeg(),
+      get_typst(),
+      get_python(),
+      get_pip(),
+      get_conda(),
+      get_uv(),
       get_x11(),
       get_rmd(),
       get_quarto(),
@@ -348,6 +406,15 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       jq: await get_jq(), // don't know why, but it doesn't compile when inside the Promise.all
       spellcheck,
       sshd,
+      nodejs,
+      gitlfs,
+      imagemagick,
+      ffmpeg,
+      typst,
+      python,
+      pip,
+      conda,
+      uv,
       html2pdf,
       pandoc,
       vscode,

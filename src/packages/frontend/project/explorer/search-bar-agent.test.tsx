@@ -141,6 +141,7 @@ describe("SearchBar agent miniterm prefix", () => {
         visiblePrompt: "fix this directory",
         path: "/work",
         tag: "intent:miniterm-agent",
+        waitForAgent: false,
       }),
     );
     expect(mockExec).not.toHaveBeenCalled();

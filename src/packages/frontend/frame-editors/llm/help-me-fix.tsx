@@ -154,6 +154,7 @@ export default function HelpMeFix({
         tag: `intent:error-fix:${tagSuffix}`,
         forceCodex: true,
         openFloating: true,
+        waitForAgent: false,
         codexConfig: { model: DEFAULT_HELP_ME_FIX_AGENT_MODEL },
       });
       if (!sent) {

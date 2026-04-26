@@ -89,6 +89,7 @@ export async function getHelp({
       tag: `intent:error-fix:${tagSuffix}`,
       forceCodex: true,
       openFloating: true,
+      waitForAgent: false,
     });
     if (!sent) {
       dispatchNavigatorPromptIntent({

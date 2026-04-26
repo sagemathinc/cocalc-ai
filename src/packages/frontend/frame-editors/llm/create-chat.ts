@@ -23,6 +23,11 @@ export interface Options {
   model: string;
 }
 
+interface TerminalAssistantContext {
+  terminal_session_id?: string;
+  terminal_file_path?: string;
+}
+
 export const DEFAULT_ASSISTANT_CODEX_MODEL =
   DEFAULT_CODEX_MODELS.find((model) => model.name === "gpt-5.4-mini")?.name ??
   DEFAULT_CODEX_MODEL_NAME;
@@ -79,6 +84,7 @@ export default async function createChat({
     forceCodex: true,
     codexConfig: { model: codexModel },
     openFloating: true,
+    waitForAgent: false,
   });
   if (!sent) {
     dispatchNavigatorPromptIntent({
@@ -117,6 +123,10 @@ export async function createChatMessage(
   const { command, model } = options;
 
   const frameType = actions._get_frame_type(frameId);
+  const terminalContext =
+    frameType === "terminal"
+      ? getTerminalAssistantContext(actions, frameId)
+      : undefined;
   if (frameType == "terminal") {
     context = "";
     codegen = false;
@@ -136,6 +146,12 @@ export async function createChatMessage(
     frameType === "terminal"
       ? "Use the current CoCalc terminal context as the live source of truth."
       : "Inspect the current document through CoCalc live document APIs before editing.",
+    frameType === "terminal" && terminalContext?.terminal_session_id
+      ? `This terminal tab is attached to live terminal session \`${terminalContext.terminal_session_id}\`. Use \`cocalc project terminal history <id>\`, \`state <id>\`, \`cwd <id>\`, and \`write <id> ...\` when you need to inspect or interact with this exact session. When sending a shell command, prefer \`cocalc project terminal write <id> --enter -- ...\` so the command actually runs. Use plain \`write\` without \`--enter\` only when you intentionally want to leave input pending at the prompt or inside an interactive program.`
+      : undefined,
+    frameType === "terminal"
+      ? "A `.term` file path alone does not uniquely identify the live terminal session; prefer the session id when operating on the terminal."
+      : undefined,
     "Treat the live in-memory sync state as authoritative whenever it is available.",
     "Do not assume the filesystem copy is current.",
     "Use the metadata below only to locate the target, not as a substitute for reading live content.",
@@ -146,6 +162,8 @@ export async function createChatMessage(
           frameType === "terminal" ? "terminal-assistant" : "editor-assistant",
         frame_type: frameType,
         path: actions.path,
+        terminal_file_path: terminalContext?.terminal_file_path,
+        terminal_session_id: terminalContext?.terminal_session_id,
         language: actions.languageModelGetLanguage(),
         extra_file_info: actions.languageModelExtraFileInfo(codegen),
         context_chars: inputOriginalLen,
@@ -155,7 +173,9 @@ export async function createChatMessage(
       2,
     ),
     "```",
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   return { message, inputOriginalLen, inputTruncatedLen };
 }
 
@@ -173,6 +193,10 @@ function createNavigatorAssistantPrompt({
   codexModel: string;
 }): string {
   const frameType = actions._get_frame_type(frameId);
+  const terminalContext =
+    frameType === "terminal"
+      ? getTerminalAssistantContext(actions, frameId)
+      : undefined;
   const source =
     frameType === "terminal" ? "terminal-assistant" : "editor-assistant";
   const intent =
@@ -190,6 +214,8 @@ function createNavigatorAssistantPrompt({
       project_id: actions.project_id,
       path: actions.path,
       frame_type: frameType,
+      terminal_file_path: terminalContext?.terminal_file_path,
+      terminal_session_id: terminalContext?.terminal_session_id,
       language: actions.languageModelGetLanguage(),
       requested_model: options.model,
       codex_model: codexModel,
@@ -201,6 +227,9 @@ function createNavigatorAssistantPrompt({
   return [
     "Handle this CoCalc assistant request as a Codex agent.",
     `Visible user request: ${createAssistantVisiblePrompt(options.command)}`,
+    frameType === "terminal" && terminalContext?.terminal_session_id
+      ? `The current terminal frame is attached to live session \`${terminalContext.terminal_session_id}\`. Prefer \`cocalc project terminal history <id>\`, \`cwd <id>\`, \`state <id>\`, and \`write <id> ...\` when you need to inspect or act on this terminal. When sending a shell command, use \`cocalc project terminal write <id> --enter -- ...\` unless you intentionally want to leave input pending.`
+      : undefined,
     "Treat the live in-memory sync version of the current document as the source of truth whenever a live document API exists.",
     "Do not assume the filesystem copy is current.",
     "Apply edits directly when safe, run checks as needed, and summarize exactly what changed.",
@@ -208,7 +237,27 @@ function createNavigatorAssistantPrompt({
     JSON.stringify(metadata, null, 2),
     "```",
     message,
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function getTerminalAssistantContext(
+  actions: Actions<CodeEditorState>,
+  frameId: string,
+): TerminalAssistantContext {
+  const terminal =
+    typeof (actions as any)?.get_terminal === "function"
+      ? (actions as any).get_terminal(frameId)
+      : undefined;
+  const terminal_session_id =
+    typeof terminal?.getSessionId === "function"
+      ? terminal.getSessionId()
+      : undefined;
+  return {
+    terminal_file_path: actions.path,
+    terminal_session_id,
+  };
 }
 
 function sanitizeInput(
