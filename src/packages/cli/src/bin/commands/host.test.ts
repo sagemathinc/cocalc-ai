@@ -7,6 +7,7 @@ import { registerHostCommand, type HostCommandDeps } from "./host";
 type Capture = {
   data?: any;
   upgrades: string[];
+  hostRootfsImageRequests?: string[];
   hostProjectsRequests?: Array<{
     id: string;
     limit?: number;
@@ -121,6 +122,7 @@ function makeDeps(
 ): HostCommandDeps {
   capture.runtimeDeploymentRollbacks ??= [];
   capture.upgradeRequests ??= [];
+  capture.hostRootfsImageRequests ??= [];
   capture.hostProjectsRequests ??= [];
   capture.hostProjectStops ??= [];
   capture.hostProjectRestarts ??= [];
@@ -137,6 +139,38 @@ function makeDeps(
         globals: ctxGlobals,
         hub: {
           hosts: {
+            listHostRootfsImages: async ({ id }) => {
+              capture.hostRootfsImageRequests!.push(id);
+              return [
+                {
+                  image: "cocalc.local/rootfs/example",
+                  cache_path: "/mnt/cocalc/data/cache/images/example",
+                  size_bytes: 3 * 1024 * 1024 * 1024,
+                  cached_at: "2026-04-15T03:00:00.000Z",
+                  project_count: 2,
+                  running_project_count: 1,
+                  project_ids: ["proj-1", "proj-2"],
+                  running_project_ids: ["proj-1"],
+                  managed: true,
+                  release_gc_status: "active",
+                  centrally_deleted: false,
+                  host_gc_eligible: false,
+                },
+                {
+                  image: "docker.io/ubuntu:26.04",
+                  cache_path: "/mnt/cocalc/data/cache/images/ubuntu",
+                  size_bytes: 512 * 1024 * 1024,
+                  cached_at: "2026-04-14T01:00:00.000Z",
+                  project_count: 0,
+                  running_project_count: 0,
+                  project_ids: [],
+                  running_project_ids: [],
+                  managed: false,
+                  centrally_deleted: false,
+                  host_gc_eligible: true,
+                },
+              ];
+            },
             listHostProjects: async ({
               id,
               limit,
@@ -1215,6 +1249,30 @@ test("host bootstrap-status returns lifecycle drift data", async () => {
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.bootstrap_lifecycle.summary_status, "drifted");
   assert.equal(capture.data.bootstrap_lifecycle.drift_count, 2);
+});
+
+test("host rootfs returns cached rootfs image data", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync(["node", "test", "host", "rootfs", "host-1"]);
+
+  assert.deepEqual(capture.hostRootfsImageRequests, ["host-1"]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.summary.total, 2);
+  assert.equal(capture.data.summary.total_size_bytes, 3.5 * 1024 * 1024 * 1024);
+  assert.equal(capture.data.summary.total_project_references, 2);
+  assert.equal(capture.data.summary.total_running_references, 1);
+  assert.equal(capture.data.summary.gc_eligible, 1);
+  assert.equal(capture.data.rows[0].image, "cocalc.local/rootfs/example");
 });
 
 test("host projects lists assigned projects", async () => {
