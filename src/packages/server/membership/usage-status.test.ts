@@ -7,6 +7,7 @@ const queryMock = jest.fn();
 const getStorageOverviewMock = jest.fn();
 const clientCloseMock = jest.fn();
 const getManagedEgressUsageForAccountMock = jest.fn();
+const getRecentManagedEgressEventsForAccountMock = jest.fn();
 const conatWithProjectRoutingForAccountMock = jest.fn(() => ({
   close: clientCloseMock,
 }));
@@ -30,6 +31,8 @@ jest.mock("@cocalc/server/conat/route-client", () => ({
 jest.mock("./managed-egress", () => ({
   getManagedEgressUsageForAccount: (...args: any[]) =>
     getManagedEgressUsageForAccountMock(...args),
+  getRecentManagedEgressEventsForAccount: (...args: any[]) =>
+    getRecentManagedEgressEventsForAccountMock(...args),
 }));
 
 describe("getMembershipUsageStatusForAccount", () => {
@@ -41,6 +44,7 @@ describe("getMembershipUsageStatusForAccount", () => {
       managed_egress_categories_5h_bytes: {},
       managed_egress_categories_7d_bytes: {},
     });
+    getRecentManagedEgressEventsForAccountMock.mockResolvedValue([]);
   });
 
   it("aggregates owned project storage and compares against configured limits", async () => {
@@ -95,6 +99,10 @@ describe("getMembershipUsageStatusForAccount", () => {
       account_id: "account-1",
       limit5h: undefined,
       limit7d: undefined,
+    });
+    expect(getRecentManagedEgressEventsForAccountMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      limit: 20,
     });
     expect(clientCloseMock).toHaveBeenCalled();
   });
@@ -175,6 +183,16 @@ describe("getMembershipUsageStatusForAccount", () => {
       managed_egress_categories_5h_bytes: { "file-download": 123 },
       managed_egress_categories_7d_bytes: { "file-download": 456 },
     });
+    getRecentManagedEgressEventsForAccountMock.mockResolvedValue([
+      {
+        project_id: "project-1",
+        project_title: "Data Lab",
+        category: "file-download",
+        bytes: 77,
+        occurred_at: "2026-04-25T12:00:00.000Z",
+        metadata: { request_path: "/files/export.csv?download" },
+      },
+    ]);
 
     const { getMembershipUsageStatusForAccount } =
       await import("./usage-status");
@@ -200,6 +218,16 @@ describe("getMembershipUsageStatusForAccount", () => {
     expect(result.managed_egress_categories_7d_bytes).toEqual({
       "file-download": 456,
     });
+    expect(result.managed_egress_recent_events).toEqual([
+      {
+        project_id: "project-1",
+        project_title: "Data Lab",
+        category: "file-download",
+        bytes: 77,
+        occurred_at: "2026-04-25T12:00:00.000Z",
+        metadata: { request_path: "/files/export.csv?download" },
+      },
+    ]);
     expect(getManagedEgressUsageForAccountMock).toHaveBeenCalledWith({
       account_id: "account-1",
       limit5h: 1000,

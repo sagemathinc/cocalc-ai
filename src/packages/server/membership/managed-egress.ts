@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import type { ManagedEgressEventSummary } from "@cocalc/conat/hub/api/purchases";
 
 const TABLE = "account_managed_egress_events";
 
@@ -179,4 +180,50 @@ export async function getManagedEgressUsageForAccount(opts: {
     managed_egress_categories_5h_bytes,
     managed_egress_categories_7d_bytes,
   };
+}
+
+export async function getRecentManagedEgressEventsForAccount(opts: {
+  account_id: string;
+  limit?: number;
+}): Promise<ManagedEgressEventSummary[]> {
+  await ensureSchema();
+  const limit =
+    typeof opts.limit === "number" && Number.isFinite(opts.limit)
+      ? Math.max(1, Math.min(50, Math.floor(opts.limit)))
+      : 20;
+  const { rows } = await getPool("medium").query<{
+    account_id: string;
+    project_id: string;
+    project_title?: string;
+    category: string;
+    bytes: string | number;
+    occurred_at: Date | string;
+    metadata: Record<string, unknown> | null;
+  }>(
+    `
+      SELECT
+        events.account_id,
+        events.project_id,
+        projects.title AS project_title,
+        events.category,
+        events.bytes,
+        events.occurred_at,
+        events.metadata
+      FROM ${TABLE} AS events
+      LEFT JOIN projects ON projects.project_id = events.project_id
+      WHERE events.account_id = $1
+      ORDER BY events.occurred_at DESC, events.id DESC
+      LIMIT $2
+    `,
+    [opts.account_id, limit],
+  );
+  return rows.map((row) => ({
+    account_id: row.account_id,
+    project_id: row.project_id,
+    project_title: row.project_title,
+    category: row.category,
+    bytes: Math.max(0, Number(row.bytes) || 0),
+    occurred_at: new Date(row.occurred_at).toISOString(),
+    metadata: row.metadata ?? null,
+  }));
 }

@@ -14,7 +14,10 @@ import type {
   MembershipUsageStatus,
 } from "@cocalc/conat/hub/api/purchases";
 import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
-import { getManagedEgressUsageForAccount } from "./managed-egress";
+import {
+  getManagedEgressUsageForAccount,
+  getRecentManagedEgressEventsForAccount,
+} from "./managed-egress";
 
 const log = getLogger("server:membership:usage-status");
 
@@ -177,6 +180,11 @@ export async function getMembershipUsageStatusForAccount({
     limit5h: egress5hLimit,
     limit7d: egress7dLimit,
   });
+  const managedEgressRecentEvents =
+    await getRecentManagedEgressEventsForAccount({
+      account_id,
+      limit: 20,
+    });
 
   return {
     collected_at: new Date().toISOString(),
@@ -209,5 +217,6 @@ export async function getMembershipUsageStatusForAccount({
     over_max_projects:
       max_projects != null ? owned_project_count > max_projects : undefined,
     ...managedEgress,
+    managed_egress_recent_events: managedEgressRecentEvents,
   };
 }

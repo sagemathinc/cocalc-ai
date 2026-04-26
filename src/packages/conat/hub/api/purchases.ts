@@ -77,6 +77,17 @@ export interface MembershipUsageStatus {
   over_managed_egress_7d?: boolean;
   managed_egress_categories_5h_bytes?: Record<string, number>;
   managed_egress_categories_7d_bytes?: Record<string, number>;
+  managed_egress_recent_events?: ManagedEgressEventSummary[];
+}
+
+export interface ManagedEgressEventSummary {
+  account_id?: string;
+  project_id: string;
+  project_title?: string;
+  category: string;
+  bytes: number;
+  occurred_at: string;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface LLMUsageWindowStatus {

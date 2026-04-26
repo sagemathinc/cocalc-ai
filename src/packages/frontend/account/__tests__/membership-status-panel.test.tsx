@@ -230,4 +230,39 @@ describe("MembershipStatusPanel", () => {
       ).toBeTruthy();
     });
   });
+
+  it("shows recent managed egress event details", async () => {
+    api
+      .mockResolvedValueOnce({ class: "pro", source: "subscription" })
+      .mockResolvedValueOnce([{ id: "pro", label: "Pro" }]);
+    getMembershipDetails.mockResolvedValueOnce({
+      candidates: [],
+      selected: { class: "pro", source: "subscription" },
+      usage_status: {
+        collected_at: new Date().toISOString(),
+        owned_project_count: 1,
+        sampled_project_count: 1,
+        unsampled_project_count: 0,
+        total_storage_bytes: 10,
+        managed_egress_recent_events: [
+          {
+            project_id: "project-1",
+            project_title: "Data Lab",
+            category: "file-download",
+            bytes: 4096,
+            occurred_at: "2026-04-25T12:00:00.000Z",
+            metadata: { request_path: "/files/export.csv?download" },
+          },
+        ],
+      },
+    });
+
+    render(<MembershipStatusPanel showHeader={false} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("File downloads")).toBeTruthy();
+      expect(screen.getByText("Data Lab")).toBeTruthy();
+      expect(screen.getByText("/files/export.csv?download")).toBeTruthy();
+    });
+  });
 });

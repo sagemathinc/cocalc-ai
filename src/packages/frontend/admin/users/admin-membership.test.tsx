@@ -112,6 +112,16 @@ describe("AdminMembership", () => {
         max_projects: 4,
         remaining_project_slots: -1,
         over_max_projects: true,
+        managed_egress_recent_events: [
+          {
+            project_id: "project-1",
+            project_title: "Data Lab",
+            category: "file-download",
+            bytes: 4096,
+            occurred_at: "2026-04-25T12:00:00.000Z",
+            metadata: { request_path: "/files/export.csv?download" },
+          },
+        ],
       },
     });
 
@@ -124,6 +134,8 @@ describe("AdminMembership", () => {
       expect(
         screen.getByText(/only partially sampled from owned projects/i),
       ).toBeTruthy();
+      expect(screen.getByText("Data Lab")).toBeTruthy();
+      expect(screen.getByText("/files/export.csv?download")).toBeTruthy();
     });
   });
 });
