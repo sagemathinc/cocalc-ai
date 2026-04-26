@@ -37,6 +37,24 @@ function normalizeStatus(value: unknown): string | undefined {
 }
 
 type ComputeStateName = keyof typeof COMPUTE_STATES;
+export type ProjectLifecycleDisplayState = ComputeStateName | "new";
+export type IndexedBackupState = "present" | "missing" | "unknown";
+export type ProjectLifecycleKind = ComputeStateName | "new" | "unknown";
+export type ProjectLifecycleView = {
+  rawState?: ComputeStateName;
+  displayState?: ProjectLifecycleDisplayState;
+  backupState: IndexedBackupState;
+  kind: ProjectLifecycleKind;
+  isRawArchived: boolean;
+  isRunning: boolean;
+  isNew: boolean;
+  isArchived: boolean;
+  isArchivedLike: boolean;
+  showLifecycleBanner: boolean;
+  canShowFilesystem: boolean;
+  shouldRestoreTabs: boolean;
+  shouldForceHomeTab: boolean;
+};
 
 function asComputeState(value: unknown): ComputeStateName | undefined {
   const state = `${value ?? ""}`.trim();
@@ -111,4 +129,87 @@ export function normalizeProjectStateForDisplay({
     return "opened";
   }
   return state;
+}
+
+export function indexedBackupState(lastBackup: unknown): IndexedBackupState {
+  if (typeof lastBackup === "undefined") {
+    return "unknown";
+  }
+  if (lastBackup instanceof Date) {
+    return Number.isFinite(lastBackup.valueOf()) ? "present" : "missing";
+  }
+  if (typeof lastBackup === "string") {
+    return lastBackup.trim().length > 0 &&
+      Number.isFinite(Date.parse(lastBackup))
+      ? "present"
+      : "missing";
+  }
+  if (lastBackup == null) {
+    return "missing";
+  }
+  return "unknown";
+}
+
+export function getProjectLifecycleView({
+  projectState,
+  hostId,
+  hostInfo,
+  lastBackup,
+}: {
+  projectState?: unknown;
+  hostId?: string | null;
+  hostInfo?: HostInfoLike;
+  lastBackup?: unknown;
+}): ProjectLifecycleView {
+  const rawState = normalizeProjectStateForDisplay({
+    projectState,
+    hostId,
+    hostInfo,
+  });
+  const backupState = indexedBackupState(lastBackup);
+  let displayState: ProjectLifecycleDisplayState | undefined = rawState;
+  if (rawState === "archived") {
+    if (backupState === "present") {
+      displayState = "archived";
+    } else if (backupState === "missing") {
+      displayState = "new";
+    } else {
+      displayState = undefined;
+    }
+  }
+  const isRawArchived = rawState === "archived";
+  const kind =
+    displayState ??
+    (isRawArchived && backupState === "unknown"
+      ? "unknown"
+      : (rawState ?? "unknown"));
+  const isNew = displayState === "new";
+  const isArchived = displayState === "archived";
+  const isArchivedLike = isRawArchived || isNew;
+  const isRunning = kind === "running";
+  const canShowFilesystem = !isArchivedLike;
+  return {
+    rawState,
+    displayState,
+    backupState,
+    kind,
+    isRawArchived,
+    isRunning,
+    isNew,
+    isArchived,
+    isArchivedLike,
+    showLifecycleBanner: !isRunning,
+    canShowFilesystem,
+    shouldRestoreTabs: canShowFilesystem,
+    shouldForceHomeTab: !canShowFilesystem,
+  };
+}
+
+export function getProjectLifecycleDisplayState(args: {
+  projectState?: unknown;
+  hostId?: string | null;
+  hostInfo?: HostInfoLike;
+  lastBackup?: unknown;
+}): ProjectLifecycleDisplayState | undefined {
+  return getProjectLifecycleView(args).displayState;
 }

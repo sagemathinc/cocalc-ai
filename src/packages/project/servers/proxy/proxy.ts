@@ -932,7 +932,10 @@ ${entries}
     const { absolutePath, stat: info } = resolved;
     const ext = path.extname(absolutePath).toLowerCase();
     const contentType = MIME_BY_EXT[ext] ?? "application/octet-stream";
-    const cacheControl = cache_control || STATIC_CACHE_CONTROL_DEFAULT;
+    const explicitDownload = isExplicitDownloadRequest(req);
+    const cacheControl = explicitDownload
+      ? "private, no-store"
+      : cache_control || STATIC_CACHE_CONTROL_DEFAULT;
     const rangeHeader = req.headers.range;
     let start = 0;
     let end = info.size - 1;
@@ -973,7 +976,7 @@ ${entries}
     if (partial) {
       headers["Content-Range"] = `bytes ${start}-${end}/${info.size}`;
     }
-    if (req.method === "GET" && isExplicitDownloadRequest(req)) {
+    if (req.method === "GET" && explicitDownload) {
       const policy = await checkManagedFileDownloadAllowedBestEffort();
       if (!policy.allowed) {
         res.writeHead(429, { "Content-Type": "text/plain; charset=utf-8" });

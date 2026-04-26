@@ -34,6 +34,7 @@ import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
+  getProjectLifecycleView,
   hostLabel,
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
@@ -51,6 +52,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const projectStatus = useTypedRedux({ project_id }, "status");
+  const projectMap = useTypedRedux("projects", "project_map");
   const { runQuota } = useProjectRunQuota(project_id);
   const hostId = project.get("host_id") as string | undefined;
   const hostInfo = useHostInfo(hostId);
@@ -66,6 +68,16 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     projectState: project.getIn(["state", "state"]),
     hostId,
     hostInfo,
+  });
+  const lifecycle = getProjectLifecycleView({
+    projectState:
+      projectMap?.getIn([project_id, "state", "state"]) ??
+      project.getIn(["state", "state"]),
+    hostId,
+    hostInfo,
+    lastBackup:
+      projectMap?.getIn([project_id, "last_backup"]) ??
+      project.get("last_backup"),
   });
   const displayProjectState = React.useMemo(() => {
     const rawState = project.get("state");
@@ -88,6 +100,13 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }, [project, runQuota]);
 
   function render_state() {
+    if (lifecycle.isNew) {
+      return (
+        <span style={{ fontSize: "12pt", color: COLORS.GRAY_M }}>
+          <Icon name="plus-circle" /> New
+        </span>
+      );
+    }
     return (
       <span style={{ fontSize: "12pt", color: COLORS.GRAY_M }}>
         <ProjectState show_desc={true} state={displayProjectState} />
@@ -125,7 +144,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }
 
   function render_restart_button(commands): Rendered {
-    const allowStart = displayStateValue === "archived";
+    const allowStart = lifecycle.isRawArchived;
     return (
       <RestartProject
         size={isFlyout ? "small" : "large"}
@@ -149,7 +168,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
         state,
       );
-    const archived = state === "archived";
+    const archived = lifecycle.isRawArchived;
     return (
       <Space.Compact
         style={{ marginTop: "10px", marginBottom: "10px" }}
@@ -219,14 +238,14 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }
 
   function render_archived_note() {
-    if (displayStateValue !== "archived") {
+    if (lifecycle.kind !== "archived" && lifecycle.kind !== "new") {
       return;
     }
     return (
       <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: "12px" }}>
-        Archived projects do not count toward active storage. Starting this
-        project restores it from backup and may take a while while the RootFS
-        image is made available on the host.
+        {lifecycle.kind === "archived"
+          ? "Archived projects do not count toward active storage. Starting this project restores it from backup and may take a while while the RootFS image is made available on the host."
+          : "This project has not been provisioned yet. Starting it will create the filesystem and make it available on the host."}
       </Paragraph>
     );
   }
