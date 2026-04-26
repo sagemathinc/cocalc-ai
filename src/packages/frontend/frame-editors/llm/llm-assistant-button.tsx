@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Modal, Space } from "antd";
+import { Alert, Button, Modal, Progress, Space } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -52,6 +52,7 @@ export default function LanguageModelTitleBarButton({
   const submittingRef = useRef(false);
   const [error, setError] = useState<string>("");
   const [querying, setQuerying] = useState<boolean>(false);
+  const [submitProgress, setSubmitProgress] = useState<number>(0);
   const [command, setCommand] = useState<string>("");
 
   const promptLsKey = `AI-CODEX-ASSISTANT-PROMPT:v1:${project_id}:${path}:${type}`;
@@ -60,6 +61,10 @@ export default function LanguageModelTitleBarButton({
     () => command.trim().length > 0 && !querying,
     [command, querying],
   );
+  const helperText =
+    type === "terminal"
+      ? "The agent will continue in the workspace agent thread, and it can inspect and write to this live terminal session."
+      : "The agent will continue the work in the workspace agent thread.";
 
   function closeDialog() {
     setShowDialog(false);
@@ -72,6 +77,21 @@ export default function LanguageModelTitleBarButton({
     setError("");
     setCommand(LS.get(promptLsKey) ?? "");
   }, [showDialog, promptLsKey]);
+
+  useEffect(() => {
+    if (!querying) {
+      setSubmitProgress(0);
+      return;
+    }
+    const start = Date.now();
+    const durationMs = 5000;
+    const timer = window.setInterval(() => {
+      const elapsed = Date.now() - start;
+      const next = Math.min(95, Math.round((elapsed / durationMs) * 100));
+      setSubmitProgress(next);
+    }, 80);
+    return () => window.clearInterval(timer);
+  }, [querying]);
 
   useEffect(() => {
     if (!command.trim()) {
@@ -117,7 +137,6 @@ export default function LanguageModelTitleBarButton({
     }
     submittingRef.current = true;
     try {
-      closeDialog();
       await queryLLM({
         command: resolvedCommand,
         codegen: false,
@@ -125,6 +144,7 @@ export default function LanguageModelTitleBarButton({
         model: DEFAULT_ASSISTANT_CODEX_MODEL,
         tag: "custom",
       });
+      closeDialog();
     } finally {
       submittingRef.current = false;
     }
@@ -171,17 +191,42 @@ export default function LanguageModelTitleBarButton({
         mask={{ closable: !querying }}
       >
         <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-          <PopupAgentComposer
-            value={command}
-            onChange={setCommand}
-            onSubmit={(value) => void doIt(value)}
-            placeholder="What should the agent do..."
-            cacheId={`popup-agent:${project_id}:${path}:${type}`}
-            autoFocus
-          />
-          <div style={{ color: COLORS.GRAY_D }}>
-            The agent will continue the work in the workspace agent thread.
-          </div>
+          {querying ? (
+            <div
+              style={{
+                minHeight: 220,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 16,
+                textAlign: "center",
+              }}
+            >
+              <Progress
+                type="circle"
+                percent={submitProgress}
+                format={() => "…"}
+              />
+              <div style={{ fontWeight: 500 }}>Submitting to Agent…</div>
+              <div style={{ color: COLORS.GRAY_D, maxWidth: 360 }}>
+                The agent panel will open as soon as the request is attached to
+                the workspace thread.
+              </div>
+            </div>
+          ) : (
+            <>
+              <PopupAgentComposer
+                value={command}
+                onChange={setCommand}
+                onSubmit={(value) => void doIt(value)}
+                placeholder="What should the agent do..."
+                cacheId={`popup-agent:${project_id}:${path}:${type}`}
+                autoFocus
+              />
+              <div style={{ color: COLORS.GRAY_D }}>{helperText}</div>
+            </>
+          )}
           {error ? <Alert type="error" title={error} /> : undefined}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <Button onClick={closeDialog} disabled={querying}>

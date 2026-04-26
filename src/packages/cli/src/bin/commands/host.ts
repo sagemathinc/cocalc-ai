@@ -581,6 +581,21 @@ function formatHostDeployHistoryKind(kind: string): string {
   }
 }
 
+function formatHostRootfsRows(
+  rows: Array<Record<string, any>> | undefined,
+): Record<string, unknown>[] {
+  return (rows ?? []).map((row) => ({
+    image: row.image ?? "",
+    size: formatBytesValue(row.size_bytes),
+    projects: row.project_count ?? 0,
+    running: row.running_project_count ?? 0,
+    managed: row.managed ? "yes" : "",
+    release_state: row.release_gc_status ?? "",
+    gc_eligible: row.host_gc_eligible ? "yes" : "",
+    cached_at: row.cached_at ?? "",
+  }));
+}
+
 function summarizeHostDeployHistory(
   rows: Array<Record<string, any>>,
 ): Array<Record<string, unknown>> {
@@ -1157,6 +1172,58 @@ export function registerHostCommand(
           status: h.status ?? "",
           bootstrap: h.bootstrap ?? null,
           bootstrap_lifecycle: h.bootstrap_lifecycle ?? null,
+        };
+      });
+    });
+
+  host
+    .command("rootfs <host>")
+    .description("show cached RootFS images on a host")
+    .action(async (hostIdentifier: string, command: Command) => {
+      await withContext(command, "host rootfs", async (ctx) => {
+        const h = await resolveHost(ctx, hostIdentifier);
+        const rows = await ctx.hub.hosts.listHostRootfsImages({
+          id: h.id,
+        });
+        const summary = {
+          total: rows.length,
+          total_size_bytes: rows.reduce(
+            (sum, row) => sum + (Number(row?.size_bytes ?? 0) || 0),
+            0,
+          ),
+          total_project_references: rows.reduce(
+            (sum, row) => sum + (Number(row?.project_count ?? 0) || 0),
+            0,
+          ),
+          total_running_references: rows.reduce(
+            (sum, row) => sum + (Number(row?.running_project_count ?? 0) || 0),
+            0,
+          ),
+          gc_eligible: rows.filter((row) => row?.host_gc_eligible).length,
+        };
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          console.log(`Host ID: ${h.id}`);
+          if (`${h.name ?? ""}`.trim()) {
+            console.log(`Name: ${h.name}`);
+          }
+          console.log("");
+          printNamedSection("Summary", [
+            {
+              cached_images: summary.total,
+              total_size: formatBytesValue(summary.total_size_bytes),
+              project_references: summary.total_project_references,
+              running_references: summary.total_running_references,
+              gc_eligible: summary.gc_eligible,
+            },
+          ]);
+          printNamedSection("RootFS Cache", formatHostRootfsRows(rows));
+          return;
+        }
+        return {
+          host_id: h.id,
+          name: h.name,
+          rows,
+          summary,
         };
       });
     });

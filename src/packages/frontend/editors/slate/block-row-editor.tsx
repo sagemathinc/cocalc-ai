@@ -126,6 +126,27 @@ function withCodeBlockSpacers(value: Descendant[]): Descendant[] {
   return next;
 }
 
+export function shouldSkipBlockRowChange({
+  newValue,
+  previousValue,
+  operations,
+  nextMarkdown,
+  previousMarkdown,
+}: {
+  newValue: Descendant[];
+  previousValue: Descendant[];
+  operations: { type?: string }[];
+  nextMarkdown: string;
+  previousMarkdown: string;
+}): boolean {
+  if (newValue !== previousValue) return false;
+  if (nextMarkdown !== previousMarkdown) return false;
+  return (
+    operations.length > 0 &&
+    operations.every((operation) => operation.type === "set_selection")
+  );
+}
+
 export type PendingSelection =
   | { index: number; offset: number; endOffset?: number; mode: "text" }
   | {
@@ -513,17 +534,27 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const handleChange = useCallback(
       (newValue: Descendant[]) => {
         if (read_only) return;
-        if (newValue === value) return;
-        setValue(newValue);
-        setChange((prev) => prev + 1);
-        onEditorChange?.(index);
-        clearBlockSelection?.();
         const nextMarkdown = normalizeBlockMarkdown(
           slate_to_markdown(newValue, {
             cache: syncCacheRef.current,
             preserveBlankLines,
           }),
         );
+        if (
+          shouldSkipBlockRowChange({
+            newValue,
+            previousValue: value,
+            operations: editor.operations as { type?: string }[],
+            nextMarkdown,
+            previousMarkdown: lastMarkdownRef.current,
+          })
+        ) {
+          return;
+        }
+        setValue(newValue);
+        setChange((prev) => prev + 1);
+        onEditorChange?.(index);
+        clearBlockSelection?.();
         lastMarkdownRef.current = nextMarkdown;
         onChangeMarkdown(index, nextMarkdown);
       },

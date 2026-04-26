@@ -43,6 +43,15 @@ export interface MainCapabilities {
   jq: boolean;
   spellcheck: boolean;
   sshd: boolean;
+  nodejs: boolean;
+  gitlfs: boolean;
+  imagemagick: boolean;
+  ffmpeg: boolean;
+  typst: boolean;
+  python: boolean;
+  pip: boolean;
+  conda: boolean;
+  uv: boolean;
   html2pdf: boolean; // via chrome/chromium
   pandoc: boolean; // e.g. for docx2md conversion
   vscode: boolean; // "code-server"
@@ -66,6 +75,16 @@ export interface Available {
   qmd: boolean; // also depends on pandoc
   jq: boolean;
   spellcheck: boolean;
+  sshd: boolean;
+  nodejs: boolean;
+  gitlfs: boolean;
+  imagemagick: boolean;
+  ffmpeg: boolean;
+  typst: boolean;
+  python: boolean;
+  pip: boolean;
+  conda: boolean;
+  uv: boolean;
   html2pdf: boolean;
   pandoc: boolean;
   vscode: boolean;
@@ -90,6 +109,16 @@ export const NO_AVAIL: Readonly<Available> = {
   jq: false,
   x11: false,
   spellcheck: false,
+  sshd: false,
+  nodejs: false,
+  gitlfs: false,
+  imagemagick: false,
+  ffmpeg: false,
+  typst: false,
+  python: false,
+  pip: false,
+  conda: false,
+  uv: false,
   formatting: false,
   html2pdf: false,
   pandoc: false,
@@ -114,6 +143,16 @@ export const ALL_AVAIL: Readonly<Available> = {
   jq: true,
   x11: true,
   spellcheck: true,
+  sshd: true,
+  nodejs: true,
+  gitlfs: true,
+  imagemagick: true,
+  ffmpeg: true,
+  typst: true,
+  python: true,
+  pip: true,
+  conda: true,
+  uv: true,
   formatting: true,
   html2pdf: true,
   pandoc: true,

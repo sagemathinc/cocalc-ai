@@ -254,6 +254,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     setFocusedIndex,
     setBlocksFromValue,
     focusedIndex,
+    lastFocusedIndex,
     setSelectionFromMarkdownPosition,
     getMarkdownPositionForSelection,
   });

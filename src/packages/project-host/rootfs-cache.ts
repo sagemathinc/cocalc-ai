@@ -171,13 +171,25 @@ function rootfsUsageByImage(): Map<string, RootfsUsage> {
 
 async function directorySizeBytes(path: string): Promise<number | undefined> {
   try {
-    const { stdout } = await executeCode({
-      command: "du",
-      args: ["-sb", path],
+    const result = await sudo({
+      verbose: false,
+      err_on_exit: false,
       timeout: 60,
+      command: "du-bytes",
+      args: [path],
     });
-    const size = Number.parseInt(`${stdout}`.trim().split(/\s+/)[0], 10);
-    return Number.isFinite(size) ? size : undefined;
+    const size = Number.parseInt(`${result.stdout}`.trim().split(/\s+/)[0], 10);
+    if (!Number.isFinite(size)) {
+      throw new Error(`du-bytes returned an invalid size for ${path}`);
+    }
+    if (result.exit_code !== 0) {
+      logger.debug("du-bytes exited nonzero but returned a usable size", {
+        path,
+        exit_code: result.exit_code,
+        stderr: result.stderr,
+      });
+    }
+    return size;
   } catch (err) {
     logger.debug("unable to compute cached rootfs size", {
       path,
@@ -185,6 +197,21 @@ async function directorySizeBytes(path: string): Promise<number | undefined> {
     });
     return undefined;
   }
+}
+
+async function readCachedSizeBytes(
+  image: string,
+): Promise<{ size_bytes?: number; metadataPath: string }> {
+  const metadataPath = preflightMetadataFilePath(image);
+  const metadata = await loadRootfsPreflightMetadata(metadataPath);
+  const size_bytes_raw = Number(metadata?.size_bytes);
+  return {
+    metadataPath,
+    size_bytes:
+      Number.isFinite(size_bytes_raw) && size_bytes_raw >= 0
+        ? Math.floor(size_bytes_raw)
+        : undefined,
+  };
 }
 
 async function readDigest(image: string): Promise<string | undefined> {
@@ -221,12 +248,30 @@ async function buildEntry(
   const cache_path = imageCachePath(image);
   if (!(await exists(cache_path))) return undefined;
   const inspect_path = inspectFilePath(image);
+  const { size_bytes: cachedSizeBytes, metadataPath } =
+    await readCachedSizeBytes(image);
+  let size_bytes = cachedSizeBytes;
+  if (size_bytes == null) {
+    size_bytes = await directorySizeBytes(cache_path);
+    if (size_bytes != null) {
+      const metadata = await loadRootfsPreflightMetadata(metadataPath);
+      if (metadata != null && metadata.size_bytes !== size_bytes) {
+        await writeRootfsPreflightMetadata({
+          metadataPath,
+          metadata: {
+            ...metadata,
+            size_bytes,
+          },
+        });
+      }
+    }
+  }
   return {
     image,
     cache_path,
     inspect_path: (await exists(inspect_path)) ? inspect_path : undefined,
     digest: await readDigest(image),
-    size_bytes: await directorySizeBytes(cache_path),
+    size_bytes,
     cached_at:
       (await statTimestamp(inspect_path)) ?? (await statTimestamp(cache_path)),
     project_count: usage.project_ids.length,
@@ -821,6 +866,12 @@ async function downloadManagedRootfsArtifact({
             metadata: {
               ...preflight,
               rootfs_path: finalPath,
+              size_bytes:
+                typeof access.size_bytes === "number" &&
+                Number.isFinite(access.size_bytes) &&
+                access.size_bytes >= 0
+                  ? Math.floor(access.size_bytes)
+                  : undefined,
             },
           });
         } catch (err) {

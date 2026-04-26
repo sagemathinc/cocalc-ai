@@ -50,6 +50,7 @@ describe("createChat", () => {
         tag: "intent:editor-assistant",
         forceCodex: true,
         openFloating: true,
+        waitForAgent: false,
         codexConfig: { model: "gpt-5.4-mini" },
       }),
     );
@@ -60,6 +61,9 @@ describe("createChat", () => {
     submitNavigatorPromptInWorkspaceChat.mockResolvedValue(false);
     const actions: any = {
       _get_frame_type: () => "terminal",
+      get_terminal: () => ({
+        getSessionId: () => "/home/user/.2026-04-22-202112.term-0.term",
+      }),
       project_id: "project-1",
       path: "/tmp/session.term",
       languageModelExtraFileInfo: () => "shell session",
@@ -79,11 +83,26 @@ describe("createChat", () => {
 
     expect(dispatchNavigatorPromptIntent).toHaveBeenCalledWith(
       expect.objectContaining({
+        prompt: expect.stringContaining(
+          "/home/user/.2026-04-22-202112.term-0.term",
+        ),
         visiblePrompt: "List large files",
         title: "List large files",
         tag: "intent:terminal-assistant",
         forceCodex: true,
         codexConfig: { model: "gpt-5.4-mini" },
+      }),
+    );
+    expect(dispatchNavigatorPromptIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining("cocalc project terminal history <id>"),
+      }),
+    );
+    expect(dispatchNavigatorPromptIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining(
+          "cocalc project terminal write <id> --enter -- ...",
+        ),
       }),
     );
   });

@@ -23,7 +23,7 @@ export const SHARE_FLAGS = {
 // documentation pages
 export const DOC_AI = "https://doc.cocalc.com/ai.html";
 
-export const R_IDE = "R Studio";
+export const R_IDE = "RStudio";
 
 // Default font size for account settings and UI elements
 export const DEFAULT_FONT_SIZE = 14;

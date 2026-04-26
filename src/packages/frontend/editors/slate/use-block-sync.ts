@@ -54,6 +54,7 @@ export function useBlockSync({
   getFullMarkdown,
 }: UseBlockSyncArgs): UseBlockSyncResult {
   const lastSetValueRef = useRef<string | null>(null);
+  const lastObservedValueRef = useRef<string | null>(null);
   const pendingRemoteRef = useRef<string | null>(null);
   const pendingRemoteTimerRef = useRef<number | null>(null);
   const mergeHelperRef = useRef<SimpleInputMerge>(
@@ -152,14 +153,20 @@ export function useBlockSync({
 
   useEffect(() => {
     const nextValue = value ?? "";
+    const valueChanged = lastObservedValueRef.current !== nextValue;
+    lastObservedValueRef.current = nextValue;
     debugSyncLog("value-prop", {
       focusedIndex,
+      valueChanged,
       sameAsLastSet: nextValue === lastSetValueRef.current,
       sameAsValueRef: nextValue === valueRef.current,
       pendingRemote: pendingRemoteRef.current != null,
     });
     if (nextValue === lastSetValueRef.current) {
       lastSetValueRef.current = null;
+      return;
+    }
+    if (!valueChanged) {
       return;
     }
     if (nextValue === valueRef.current) return;

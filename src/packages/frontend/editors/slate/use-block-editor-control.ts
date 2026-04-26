@@ -28,6 +28,7 @@ export function useBlockEditorControl({
   setFocusedIndex,
   setBlocksFromValue,
   focusedIndex,
+  lastFocusedIndex,
   setSelectionFromMarkdownPosition,
   getMarkdownPositionForSelection,
 }: {
@@ -46,6 +47,7 @@ export function useBlockEditorControl({
   setFocusedIndex: React.Dispatch<React.SetStateAction<number | null>>;
   setBlocksFromValue: (markdown: string) => void;
   focusedIndex: number | null;
+  lastFocusedIndex: number | null;
   setSelectionFromMarkdownPosition: (
     pos: { line: number; ch: number } | undefined,
   ) => boolean;
@@ -60,6 +62,28 @@ export function useBlockEditorControl({
       },
       focusBlock: (index: number, position: "start" | "end" = "start") => {
         focusBlock(index, position);
+      },
+      restoreFocusBlock: (index: number) => {
+        if (index < 0 || index >= blocksRef.current.length) return false;
+        const editor = editorMapRef.current.get(index);
+        if (!editor) {
+          pendingFocusRef.current = { index, position: "start" };
+          virtuosoRef.current?.scrollToIndex({
+            index,
+            align: "center",
+          });
+          return false;
+        }
+        if (editor.selection) {
+          ReactEditor.focus(editor);
+          setFocusedIndex(index);
+          return true;
+        }
+        const point = blockSelectionPoint(editor, "start");
+        ReactEditor.focus(editor);
+        Transforms.setSelection(editor, { anchor: point, focus: point });
+        setFocusedIndex(index);
+        return true;
       },
       setSelectionInBlock: (
         index: number,
@@ -107,6 +131,7 @@ export function useBlockEditorControl({
         setBlocksFromValue(markdown);
       },
       getFocusedIndex: () => focusedIndex,
+      getLastFocusedIndex: () => lastFocusedIndex,
       setSelectionFromMarkdownPosition,
       getMarkdownPositionForSelection,
     };
@@ -124,6 +149,7 @@ export function useBlockEditorControl({
     editorMapRef,
     focusBlock,
     focusedIndex,
+    lastFocusedIndex,
     getMarkdownPositionForSelection,
     id,
     pendingFocusRef,
