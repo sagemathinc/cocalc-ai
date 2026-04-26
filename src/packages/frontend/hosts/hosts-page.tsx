@@ -109,6 +109,16 @@ export const HostsPage: React.FC = () => {
     }),
     [createVm.permissions.canCreateHosts, hostDrawerVm, openCreateSimilar],
   );
+  const createVmWithCloseOnCreate = React.useMemo(
+    () => ({
+      ...createVm,
+      form: {
+        ...createVm.form,
+        onCreated: IS_MOBILE ? undefined : () => setCreatePanelOpen(false),
+      },
+    }),
+    [createVm],
+  );
 
   const toggleCreatePanel = React.useCallback(() => {
     setCreatePanelOpen((prev) => !prev);
@@ -118,7 +128,7 @@ export const HostsPage: React.FC = () => {
   if (IS_MOBILE) {
     return (
       <div className="smc-vfill" style={WRAP_STYLE}>
-        <HostCreateCard vm={createVm} />
+        <HostCreateCard vm={createVmWithCloseOnCreate} />
         <div style={{ marginTop: 16 }}>
           <HostList
             vm={{
@@ -154,7 +164,7 @@ export const HostsPage: React.FC = () => {
             setWidth={setCreatePanelWidth}
             onHide={toggleCreatePanel}
           >
-            <HostCreateCard vm={createVm} />
+            <HostCreateCard vm={createVmWithCloseOnCreate} />
           </HostCreatePanel>
         )}
         <Layout.Content

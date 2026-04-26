@@ -24,7 +24,7 @@ type HostCreateCardProps = {
 export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const { permissions, form, provider, catalogRefresh } = vm;
   const { isAdmin, canCreateHosts } = permissions;
-  const { form: formInstance, creating, onCreate } = form;
+  const { form: formInstance, creating, onCreate, onCreated } = form;
   const {
     refreshProviders,
     refreshProvider,
@@ -51,8 +51,10 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const confirmCreateHost = async () => {
     try {
       const vals = await formInstance.validateFields();
-      await onCreate(vals);
+      const created = await onCreate(vals);
+      if (!created) return;
       formInstance.resetFields();
+      onCreated?.();
     } catch (err) {
       // validation errors are surfaced by the form; no extra handling needed here
     }
