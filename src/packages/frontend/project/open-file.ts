@@ -119,17 +119,22 @@ export function isCancelledSyncIdentityResolutionError(err: unknown): boolean {
   return `${err}`.includes("canonical sync identity open was cancelled");
 }
 
-function lifecycleDisplayStateForProject(
-  project_id: string,
-): ReturnType<typeof getProjectLifecycleDisplayState> {
+function shouldSuppressArchivedOpenError(project_id: string): boolean {
   const project = redux
     .getStore("projects")
     ?.get("project_map")
     ?.get(project_id);
-  return getProjectLifecycleDisplayState({
-    projectState: project?.getIn(["state", "state"]),
+  const rawState = `${project?.getIn(["state", "state"]) ?? ""}`.trim();
+  if (rawState === "archived") {
+    return true;
+  }
+  const lifecycleDisplayState = getProjectLifecycleDisplayState({
+    projectState: rawState,
     lastBackup: project?.get("last_backup"),
   });
+  return (
+    lifecycleDisplayState === "archived" || lifecycleDisplayState === "new"
+  );
 }
 
 export function applyWorkspaceSelectionForForegroundOpen(
@@ -350,13 +355,7 @@ export async function open_file(
       actions.open_files.delete(displayPath);
       redux.getActions("page").save_session();
     }
-    const lifecycleDisplayState = lifecycleDisplayStateForProject(
-      actions.project_id,
-    );
-    if (
-      lifecycleDisplayState === "archived" ||
-      lifecycleDisplayState === "new"
-    ) {
+    if (shouldSuppressArchivedOpenError(actions.project_id)) {
       return;
     }
     alert_message({

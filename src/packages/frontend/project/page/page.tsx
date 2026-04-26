@@ -139,16 +139,19 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
       moveLro.summary.status === "queued" ||
       moveLro.summary.status === "running");
   const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
+  const rawProjectState = `${project?.getIn(["state", "state"]) ?? ""}`.trim();
   const lifecycleDisplayState = useMemo(
     () =>
       getProjectLifecycleDisplayState({
-        projectState: project?.getIn(["state", "state"]),
+        projectState: rawProjectState,
         hostId: host_id,
         hostInfo,
         lastBackup: project?.get("last_backup"),
       }),
-    [hostInfo, host_id, project],
+    [hostInfo, host_id, project, rawProjectState],
   );
+  const archivedLike =
+    rawProjectState === "archived" || lifecycleDisplayState === "new";
   const workspaceBlocked = moveInProgress;
   const hostUnavailableReason =
     hostOperational.reason ?? "Assigned host is unavailable.";
@@ -268,25 +271,19 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     if (!is_active || !actions) {
       return;
     }
-    if (
-      lifecycleDisplayState !== "archived" &&
-      lifecycleDisplayState !== "new"
-    ) {
+    if (!archivedLike) {
       return;
     }
     if ((open_files_order?.size ?? 0) > 0) {
       actions.close_all_files?.();
     }
-    if ((active_project_tab ?? "").startsWith(EDITOR_PREFIX)) {
+    if (
+      (active_project_tab ?? "").startsWith(EDITOR_PREFIX) ||
+      active_project_tab === "files"
+    ) {
       actions.set_active_tab("home", { change_history: false });
     }
-  }, [
-    actions,
-    active_project_tab,
-    is_active,
-    lifecycleDisplayState,
-    open_files_order,
-  ]);
+  }, [archivedLike, actions, active_project_tab, is_active, open_files_order]);
 
   useEffect(() => {
     const name = getFlyoutExpanded(project_id);
@@ -369,10 +366,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   }
 
   function renderEditorContent() {
-    if (
-      lifecycleDisplayState === "archived" ||
-      lifecycleDisplayState === "new"
-    ) {
+    if (archivedLike) {
       return [];
     }
     const v: React.JSX.Element[] = [];
@@ -424,17 +418,17 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
       // and they are visible.
       return;
     }
+    let displayTab = initialWorkspaceRender.displayActiveTab;
+    if (archivedLike && displayTab === "files") {
+      displayTab = "home";
+    }
     if (
       !initialWorkspaceRender.pending &&
-      initialWorkspaceRender.displayActiveTab &&
-      initialWorkspaceRender.displayActiveTab.slice(0, 7) !== EDITOR_PREFIX
+      displayTab &&
+      displayTab.slice(0, 7) !== EDITOR_PREFIX
     ) {
       return (
-        <Content
-          key={initialWorkspaceRender.displayActiveTab}
-          is_visible={true}
-          tab_name={initialWorkspaceRender.displayActiveTab}
-        />
+        <Content key={displayTab} is_visible={true} tab_name={displayTab} />
       );
     }
   }
