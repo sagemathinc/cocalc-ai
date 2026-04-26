@@ -84,6 +84,7 @@ type HostDrawerViewModel = {
   host?: Host;
   hostOps?: Record<string, HostLroState>;
   onClose: () => void;
+  onCreateSimilar?: (host: Host) => void;
   onEdit: (host: Host) => void;
   onDelete?: (id: string, opts?: HostDeleteOptions) => void | Promise<void>;
   onUpgrade?: (host: Host) => void;
@@ -1038,6 +1039,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     host,
     hostOps,
     onClose,
+    onCreateSimilar,
     onEdit,
     onDelete,
     onUpgradeAll,
@@ -1370,6 +1372,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             Last seen:{" "}
             {host.last_seen ? new Date(host.last_seen).toLocaleString() : "n/a"}
           </Typography.Text>
+          {onCreateSimilar && (
+            <>
+              <Divider style={{ margin: "4px 0" }} />
+              <Button block onClick={() => onCreateSimilar(host)}>
+                Create similar
+              </Button>
+            </>
+          )}
         </Space>
       </Card>
       <Card size="small" title="Daemon health">
