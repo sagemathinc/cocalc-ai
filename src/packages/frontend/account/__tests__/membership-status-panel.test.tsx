@@ -1,4 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MembershipStatusPanel } from "../membership-status";
 
 const api = jest.fn();
@@ -24,6 +30,13 @@ jest.mock("antd", () => {
     Collapse: Div,
     Descriptions: Object.assign(Div, { Item: Div }),
     Divider: Div,
+    Modal: ({ open, title, children }: any) =>
+      open ? (
+        <div>
+          {title}
+          {children}
+        </div>
+      ) : null,
     Space: Div,
     Tag: Div,
     Table: Div,
@@ -260,9 +273,14 @@ describe("MembershipStatusPanel", () => {
     render(<MembershipStatusPanel showHeader={false} />);
 
     await waitFor(() => {
-      expect(screen.getByText("File downloads")).toBeTruthy();
-      expect(screen.getByText("Data Lab")).toBeTruthy();
-      expect(screen.getByText("/files/export.csv?download")).toBeTruthy();
+      expect(screen.getByText("View recent events (1)")).toBeTruthy();
     });
+
+    fireEvent.click(screen.getByText("View recent events (1)"));
+
+    expect(screen.getByText("Recent managed egress events")).toBeTruthy();
+    expect(screen.getByText("File downloads")).toBeTruthy();
+    expect(screen.getByText("Data Lab")).toBeTruthy();
+    expect(screen.getByText("/files/export.csv?download")).toBeTruthy();
   });
 });

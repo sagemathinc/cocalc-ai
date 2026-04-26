@@ -20,14 +20,17 @@ import { useIntl } from "react-intl";
 import api from "@cocalc/frontend/client/api";
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import { Icon, Loading } from "@cocalc/frontend/components";
-import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { LLMUsageStatus } from "@cocalc/frontend/misc/llm-cost-estimation";
 import { labels } from "@cocalc/frontend/i18n";
+import {
+  ManagedEgressRecentEventsButton,
+  formatManagedEgressCategory,
+} from "@cocalc/frontend/purchases/managed-egress-recent-events";
 import { upgrades } from "@cocalc/util/upgrade-spec";
 import { capitalize, round2 } from "@cocalc/util/misc";
 import type {
-  ManagedEgressEventSummary,
   MembershipDetails,
   MembershipResolution,
   MembershipUsageStatus,
@@ -113,11 +116,6 @@ function formatBytes(bytes: number): string {
     unit += 1;
   }
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
-}
-
-function formatManagedEgressCategory(category: string): string {
-  if (category === "file-download") return "File downloads";
-  return capitalize(category.replace(/[-_]/g, " "));
 }
 
 export interface ProjectDefaultItem {
@@ -455,49 +453,6 @@ function renderManagedEgressBreakdown(
   );
 }
 
-function getManagedEgressRequestPath(
-  event: ManagedEgressEventSummary,
-): string | undefined {
-  const value = event.metadata?.request_path;
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
-}
-
-function renderManagedEgressRecentEvents(
-  events?: ManagedEgressEventSummary[],
-): ReactElement | null {
-  if (!events || events.length === 0) {
-    return null;
-  }
-  return (
-    <Descriptions size="small" column={1} style={{ marginTop: "6px" }}>
-      <Descriptions.Item label="Recent managed egress events">
-        <Space direction="vertical" size={8} style={{ width: "100%" }}>
-          {events.map((event, i) => {
-            const requestPath = getManagedEgressRequestPath(event);
-            return (
-              <div key={`${event.occurred_at}-${event.project_id}-${i}`}>
-                <Space wrap>
-                  <Tag>{formatManagedEgressCategory(event.category)}</Tag>
-                  <Tag>{formatBytes(event.bytes)}</Tag>
-                  <Text>{event.project_title ?? event.project_id}</Text>
-                  <Text type="secondary">
-                    <TimeAgo date={event.occurred_at} />
-                  </Text>
-                </Space>
-                {requestPath ? (
-                  <div style={{ marginTop: "4px" }}>
-                    <Text code>{requestPath}</Text>
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </Space>
-      </Descriptions.Item>
-    </Descriptions>
-  );
-}
-
 export function MembershipStatusPanel({
   showHeader = true,
 }: {
@@ -795,9 +750,19 @@ export function MembershipStatusPanel({
               "Managed egress by category (7 days)",
               details?.usage_status?.managed_egress_categories_7d_bytes,
             )}
-            {renderManagedEgressRecentEvents(
-              details?.usage_status?.managed_egress_recent_events,
-            )}
+            {details?.usage_status?.managed_egress_recent_events?.length ? (
+              <Descriptions
+                size="small"
+                column={1}
+                style={{ marginTop: "6px" }}
+              >
+                <Descriptions.Item label="Recent managed egress events">
+                  <ManagedEgressRecentEventsButton
+                    events={details?.usage_status?.managed_egress_recent_events}
+                  />
+                </Descriptions.Item>
+              </Descriptions>
+            ) : null}
           </div>
 
           <Collapse
