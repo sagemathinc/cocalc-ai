@@ -336,7 +336,7 @@ const USE_WINDOWING = true;
 
 const STYLE: CSS = {
   width: "100%",
-  overflow: "auto",
+  overflow: "hidden",
 } as const;
 
 const JUPYTER_CELL_CLIPBOARD_MIME = "application/x-cocalc-jupyter-cells+json";
@@ -2723,7 +2723,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         ref={divRef}
         className={noVfill || height === "auto" ? undefined : "smc-vfill"}
         style={{
-          overflow: noVfill || height === "auto" ? undefined : "auto",
+          overflow: noVfill || height === "auto" ? undefined : "hidden",
           backgroundColor: "white",
           ...style,
           height,
