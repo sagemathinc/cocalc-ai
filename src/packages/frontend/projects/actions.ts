@@ -414,6 +414,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   private applyProjectFeedUpsert(row: AccountFeedProjectRow): void {
     const project_map = store.get("project_map") ?? Map<string, any>();
+    const previous = project_map.get(row.project_id);
+    const previous_host_id =
+      (previous?.get("host_id") as string | undefined) ?? undefined;
+    const next_host_id =
+      typeof row.host_id === "string" && row.host_id ? row.host_id : undefined;
     this.setState({
       project_map: project_map.set(
         row.project_id,
@@ -422,6 +427,38 @@ export class ProjectsActions extends Actions<ProjectsState> {
         ),
       ),
     } as ProjectsState);
+    this.handleOpenProjectHostChange({
+      project_id: row.project_id,
+      source_host_id: previous_host_id,
+      dest_host_id: next_host_id,
+    });
+  }
+
+  private handleOpenProjectHostChange({
+    project_id,
+    source_host_id,
+    dest_host_id,
+  }: {
+    project_id: string;
+    source_host_id?: string;
+    dest_host_id?: string;
+  }): void {
+    if (
+      !this.isProjectOpen(project_id) ||
+      !source_host_id ||
+      !dest_host_id ||
+      source_host_id === dest_host_id ||
+      (!source_host_id && !dest_host_id)
+    ) {
+      return;
+    }
+    webapp_client.conat_client.releaseProjectHostRouting({ project_id });
+    webapp_client.conat_client.refreshProjectHostRouting({
+      source_host_id,
+      dest_host_id,
+    });
+    redux.getProjectActions(project_id)?.resetProjectHostRuntime?.();
+    webapp_client.conat_client.reconnect();
   }
 
   private applyProjectFeedRemove(project_id: string): void {
@@ -1407,7 +1444,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
           dest_host_id: logInfo.dest_host_id,
         });
         actions.setState({ control_error: "" });
-        redux.getProjectActions(logInfo.project_id)?.clearFilesystemClient?.();
+        const previous_host_id =
+          logInfo.source_host_id ||
+          (store.getIn(["project_map", logInfo.project_id, "host_id"]) as
+            | string
+            | undefined);
         if (logInfo.dest_host_id) {
           const project_map = store.get("project_map");
           const project = project_map?.get(logInfo.project_id);
@@ -1425,8 +1466,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
           }
           void this.ensure_host_info(logInfo.dest_host_id, true);
         }
-        webapp_client.conat_client.refreshProjectHostRouting({
-          source_host_id: logInfo.source_host_id,
+        this.handleOpenProjectHostChange({
+          project_id: logInfo.project_id,
+          source_host_id: previous_host_id,
           dest_host_id: logInfo.dest_host_id,
         });
       })

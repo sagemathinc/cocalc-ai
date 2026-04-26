@@ -72,6 +72,7 @@ import {
   url_href,
 } from "@cocalc/frontend/project/utils";
 import { API } from "@cocalc/frontend/project/websocket/api";
+import { disconnect_from_project } from "@cocalc/frontend/project/websocket/connect";
 import {
   Configuration,
   ConfigurationAspect,
@@ -2703,6 +2704,17 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.filesystem = undefined;
     this.filesystemPromise = undefined;
   };
+
+  resetProjectHostRuntime = () => {
+    this.clearFilesystemClient();
+    disconnect_from_project(this.project_id);
+    this.projectStatusSub?.close();
+    delete this.projectStatusSub;
+    if (this.initialized) {
+      this.initProjectStatus();
+    }
+  };
+
   fs = (): FilesystemClient => {
     this.filesystem ??= new Proxy(
       {},
