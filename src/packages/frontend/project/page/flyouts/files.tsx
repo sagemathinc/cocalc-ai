@@ -72,6 +72,7 @@ import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
   hostLabel,
+  normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import {
@@ -259,8 +260,18 @@ export function FilesFlyout({
   }, [backupOps, refreshBackups]);
   const effectiveListing = inBackupsPath ? backupsListing : directoryListing;
   const effectiveError = inBackupsPath ? backupsError : listingError;
+  const projectIsArchived =
+    normalizeProjectStateForDisplay({
+      projectState: project_map?.getIn([project_id, "state", "state"]),
+      hostId: host_id,
+      hostInfo,
+    }) === "archived";
+  const shouldShowArchivedProjectWarning =
+    projectIsArchived && effectiveError != null;
   const shouldShowStartProjectWarning =
-    !projectIsRunning && isMissingProjectVolumeError(effectiveError);
+    !projectIsRunning &&
+    !projectIsArchived &&
+    isMissingProjectVolumeError(effectiveError);
   const suppressRoutingError =
     (hostUnavailable && isHostRoutingUnavailableError(effectiveError)) ||
     shouldSuppressTransientRoutingError({ error: effectiveError, moveLro });
@@ -788,6 +799,35 @@ export function FilesFlyout({
   function renderLoadingOrStartProject(): React.JSX.Element {
     if (projectIsRunning) {
       return <Loading theme="medium" transparent />;
+    } else if (shouldShowArchivedProjectWarning) {
+      return (
+        <Alert
+          type="info"
+          banner
+          showIcon={false}
+          style={{ padding: FLYOUT_PADDING, margin: 0 }}
+          description={
+            <FormattedMessage
+              id="project.flyout.archived_project.warning"
+              defaultMessage={
+                "This project is archived. <a>Start this project</a> to restore it from backup and make the filesystem available again. Once restored, it will count toward your global storage quota."
+              }
+              values={{
+                a: (chunks) => (
+                  <a
+                    onClick={(e) => {
+                      e.preventDefault();
+                      redux.getActions("projects").start_project(project_id);
+                    }}
+                  >
+                    {chunks}
+                  </a>
+                ),
+              }}
+            />
+          }
+        />
+      );
     } else if (shouldShowStartProjectWarning) {
       return (
         <Alert
@@ -920,9 +960,11 @@ export function FilesFlyout({
         <Snapshots onCreated={refreshSnapshotsAfterUserAction} />
       )}
       {inBackupsPath && <Backups onCreated={refreshBackupsAfterUserAction} />}
-      {!suppressRoutingError && !shouldShowStartProjectWarning && (
-        <ShowError error={effectiveError} setError={effectiveRefresh} />
-      )}
+      {!suppressRoutingError &&
+        !shouldShowArchivedProjectWarning &&
+        !shouldShowStartProjectWarning && (
+          <ShowError error={effectiveError} setError={effectiveRefresh} />
+        )}
       <FilesHeader
         activeFile={activeFile}
         getFile={getFile}
