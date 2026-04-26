@@ -1,4 +1,12 @@
-import { Button, Card, Popconfirm, Space, Tag, Typography } from "antd";
+import {
+  Button,
+  Card,
+  Divider,
+  Popconfirm,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
@@ -293,12 +301,19 @@ export const HostCard: React.FC<HostCardProps> = ({
       </Button>
     ),
   ];
+  const visibleActions = actions.filter(Boolean) as React.ReactNode[];
 
   return (
     <Card
       title={
         <Space size="small" wrap>
-          <span>{host.name}</span>
+          <Button
+            type="link"
+            onClick={() => onDetails(host)}
+            style={{ padding: 0, height: "auto" }}
+          >
+            {host.name}
+          </Button>
           {host.pricing_model === "spot" && <Tag color="orange">spot</Tag>}
         </Space>
       }
@@ -359,9 +374,8 @@ export const HostCard: React.FC<HostCardProps> = ({
           )}
         </Space>
       }
-      actions={actions.filter(Boolean) as React.ReactNode[]}
     >
-      <Space orientation="vertical" size="small">
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
         {host.reprovision_required && (
           <Tooltip title="Host config changed while stopped; will reprovision on next start.">
             <Tag color="orange">Reprovision on next start</Tag>
@@ -430,6 +444,15 @@ export const HostCard: React.FC<HostCardProps> = ({
             {host.last_error}
           </div>
         )}
+        <Divider style={{ margin: "4px 0" }} />
+        <Space
+          size={[0, 4]}
+          wrap
+          style={{ width: "100%" }}
+          styles={{ item: { marginInlineEnd: 0 } }}
+        >
+          {visibleActions}
+        </Space>
       </Space>
     </Card>
   );
