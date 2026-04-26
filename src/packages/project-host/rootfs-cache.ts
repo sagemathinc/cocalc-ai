@@ -171,13 +171,25 @@ function rootfsUsageByImage(): Map<string, RootfsUsage> {
 
 async function directorySizeBytes(path: string): Promise<number | undefined> {
   try {
-    const { stdout } = await executeCode({
-      command: "du",
-      args: ["-sb", path],
+    const result = await sudo({
+      verbose: false,
+      err_on_exit: false,
       timeout: 60,
+      command: "du-bytes",
+      args: [path],
     });
-    const size = Number.parseInt(`${stdout}`.trim().split(/\s+/)[0], 10);
-    return Number.isFinite(size) ? size : undefined;
+    const size = Number.parseInt(`${result.stdout}`.trim().split(/\s+/)[0], 10);
+    if (!Number.isFinite(size)) {
+      throw new Error(`du-bytes returned an invalid size for ${path}`);
+    }
+    if (result.exit_code !== 0) {
+      logger.debug("du-bytes exited nonzero but returned a usable size", {
+        path,
+        exit_code: result.exit_code,
+        stderr: result.stderr,
+      });
+    }
+    return size;
   } catch (err) {
     logger.debug("unable to compute cached rootfs size", {
       path,
