@@ -11,35 +11,49 @@ import {
   REMEMBER_ME_COOKIE_NAME,
   API_COOKIE_NAME,
 } from "@cocalc/backend/auth/cookie-names";
+import { SSO_API_KEY_COOKIE_NAME } from "@cocalc/server/auth/sso/consts";
+import Cookies from "cookies";
 
-export default function stripRememberMeCookie(cookie): {
-  cookie: string;
+export default function stripRememberMeCookie(
+  cookie: string | string[] | undefined,
+  req?,
+): {
+  cookie: string | undefined;
   remember_me: string | undefined; // the value of the cookie we just stripped out.
   api_key: string | undefined;
 } {
-  if (cookie == null) {
+  const raw = Array.isArray(cookie) ? cookie.join("; ") : cookie;
+  if (raw == null) {
     return {
-      cookie,
+      cookie: raw,
       remember_me: undefined,
       api_key: undefined,
     };
   } else {
+    const cookies = req ? new Cookies(req) : undefined;
     const v: string[] = [];
-    let remember_me: string | undefined = undefined;
-    let api_key: string | undefined = undefined;
-    for (const c of cookie.split(";")) {
-      const z = c.split("=");
-      if (z[0].trim() == REMEMBER_ME_COOKIE_NAME) {
+    let remember_me: string | undefined = cookies?.get(REMEMBER_ME_COOKIE_NAME);
+    let api_key: string | undefined =
+      cookies?.get(API_COOKIE_NAME) ?? cookies?.get(SSO_API_KEY_COOKIE_NAME);
+    for (const c of raw.split(";")) {
+      const i = c.indexOf("=");
+      const name = (i === -1 ? c : c.slice(0, i)).trim();
+      const value = i === -1 ? "" : c.slice(i + 1).trim();
+      if (name == REMEMBER_ME_COOKIE_NAME) {
         // save it but do not include it in v, which will
         // be the new cookies values after going through
         // the proxy.
-        remember_me = z[1].trim();
-      } else if (z[0].trim() == API_COOKIE_NAME) {
-        api_key = z[1].trim();
+        remember_me ??= value;
+      } else if (name == API_COOKIE_NAME || name == SSO_API_KEY_COOKIE_NAME) {
+        api_key ??= value;
       } else {
-        v.push(c);
+        v.push(c.trim());
       }
     }
-    return { cookie: v.join(";"), remember_me, api_key };
+    return {
+      cookie: v.length > 0 ? v.join("; ") : undefined,
+      remember_me,
+      api_key,
+    };
   }
 }

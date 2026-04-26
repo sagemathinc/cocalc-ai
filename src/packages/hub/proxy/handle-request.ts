@@ -188,6 +188,7 @@ export default function init({
       let cookie;
       ({ cookie, remember_me, api_key } = stripRememberMeCookie(
         req.headers["cookie"],
+        req,
       ));
       req.headers["cookie"] = cookie;
     }
