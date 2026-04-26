@@ -1,5 +1,6 @@
 import { Map as ImmutableMap } from "immutable";
 import { redux as appRedux } from "@cocalc/frontend/app-framework";
+import { allow_project_to_run } from "@cocalc/frontend/project/client-side-throttle";
 
 import { ProjectsActions } from "./actions";
 import { store } from "./store";
@@ -19,14 +20,27 @@ jest.mock("@cocalc/frontend/project/archive-info", () => ({
   getBackups: jest.fn(),
 }));
 
+jest.mock("@cocalc/frontend/project/client-side-throttle", () => ({
+  allow_project_to_run: jest.fn(async () => true),
+}));
+
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     account_id: "acct-1",
     server_time: jest.fn(() => new Date("2026-04-25T16:00:00.000Z")),
+    project_client: {
+      touch_project: jest.fn(async () => undefined),
+    },
     conat_client: {
+      releaseProjectHostRouting: jest.fn(),
       hub: {
         projects: {
           stop: jest.fn(async () => undefined),
+          start: jest.fn(async () => ({
+            op_id: "start-op-1",
+            scope_type: "project",
+            scope_id: "project-1",
+          })),
           createBackup: jest.fn(async () => ({
             op_id: "backup-op-1",
             scope_type: "project",
@@ -53,6 +67,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 const mockedStore = store as jest.Mocked<typeof store>;
 const mockedWebappClient = webapp_client as jest.Mocked<typeof webapp_client>;
 const getBackupsMock = getBackups as jest.MockedFunction<typeof getBackups>;
+const allowProjectToRunMock = allow_project_to_run as jest.MockedFunction<
+  typeof allow_project_to_run
+>;
 
 describe("ProjectsActions archive flow", () => {
   const project_id = "11111111-1111-4111-8111-111111111111";
@@ -92,11 +109,13 @@ describe("ProjectsActions archive flow", () => {
     const setState = jest.fn();
     const clearFilesystemClient = jest.fn();
     const trackBackupOp = jest.fn();
+    const trackStartOp = jest.fn();
     const projectActions = {
       log,
       setState,
       clearFilesystemClient,
       trackBackupOp,
+      trackStartOp,
     };
     const redux = {
       getStore: jest.fn(() => ({})),
@@ -114,11 +133,13 @@ describe("ProjectsActions archive flow", () => {
       setState,
       clearFilesystemClient,
       trackBackupOp,
+      trackStartOp,
     };
   }
 
   beforeEach(() => {
     jest.clearAllMocks();
+    allowProjectToRunMock.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -139,6 +160,10 @@ describe("ProjectsActions archive flow", () => {
     ] as any);
     const { actions, setState, clearFilesystemClient, trackBackupOp } =
       makeActions();
+    const removeProjectReferences = jest.spyOn(
+      appRedux,
+      "removeProjectReferences",
+    );
 
     await actions.archive_project(project_id);
 
@@ -176,6 +201,10 @@ describe("ProjectsActions archive flow", () => {
       control_status: "",
     });
     expect(clearFilesystemClient).toHaveBeenCalled();
+    expect(
+      mockedWebappClient.conat_client.releaseProjectHostRouting,
+    ).toHaveBeenCalledWith({ project_id });
+    expect(removeProjectReferences).toHaveBeenCalledWith(project_id);
   });
 
   it("reuses a fresh backup and skips the extra backup LRO", async () => {
@@ -236,5 +265,38 @@ describe("ProjectsActions archive flow", () => {
       control_status: "",
       control_error: "Error archiving project -- Error: backup failed",
     });
+  });
+
+  it("resets project runtime state before starting an archived project", async () => {
+    configureProject({
+      state: "archived",
+      lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+    });
+    const { actions, trackStartOp, setState } = makeActions();
+    const removeProjectReferences = jest.spyOn(
+      appRedux,
+      "removeProjectReferences",
+    );
+    jest
+      .spyOn(actions as any, "project_log")
+      .mockImplementation(async () => {});
+
+    const started = await actions.start_project(project_id);
+
+    expect(started).toBe(true);
+    expect(
+      mockedWebappClient.conat_client.releaseProjectHostRouting,
+    ).toHaveBeenCalledWith({ project_id });
+    expect(removeProjectReferences).toHaveBeenCalledWith(project_id);
+    expect(
+      mockedWebappClient.conat_client.hub.projects.start,
+    ).toHaveBeenCalledWith({
+      project_id,
+      wait: false,
+    });
+    expect(trackStartOp).toHaveBeenCalledWith(
+      expect.objectContaining({ op_id: "start-op-1" }),
+    );
+    expect(setState).toHaveBeenCalledWith({ control_error: "" });
   });
 });

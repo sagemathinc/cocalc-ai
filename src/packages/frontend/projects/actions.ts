@@ -1222,6 +1222,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
         }
       }
 
+      if (lifecycleState === "archived") {
+        this.resetProjectRuntimeAfterArchiveCycle(project_id);
+      }
+
       const t0 = webapp_client.server_time().getTime();
       // make an action request:
       this.project_log(project_id, {
@@ -1251,6 +1255,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return true;
     },
   );
+
+  private resetProjectRuntimeAfterArchiveCycle = (project_id: string) => {
+    webapp_client.conat_client.releaseProjectHostRouting({ project_id });
+    redux.removeProjectReferences(project_id);
+  };
 
   // allow UI elements to open the move modal via project actions
   open_move_modal?: (project_id: string) => void;
@@ -1652,6 +1661,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     actions?.setState({ control_error: "", control_status: "" });
     this.optimisticProjectStateUpdate(project_id, "archived");
     redux.getProjectActions(project_id)?.clearFilesystemClient?.();
+    this.resetProjectRuntimeAfterArchiveCycle(project_id);
     this.project_log(project_id, {
       event: "project_archived",
       ...store.classify_project(project_id),
