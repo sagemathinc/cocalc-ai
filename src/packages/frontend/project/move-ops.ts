@@ -40,7 +40,7 @@ export class MoveOpsManager {
       scope_id: opts.project_id,
       include_completed: true,
       retainTerminal: true,
-      refreshMs: 30_000,
+      refreshMs: 5_000,
       listLro: opts.listLro,
       getLroStream: opts.getLroStream,
       dismissLro: opts.dismissLro,
