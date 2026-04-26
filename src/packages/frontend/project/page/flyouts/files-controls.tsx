@@ -486,7 +486,7 @@ export function FilesSelectedControls({
       {singleFile
         ? singleFile.isDir
           ? renderButtons(ACTION_BUTTONS_DIR)
-          : renderButtons(ACTION_BUTTONS_FILE.filter((n) => n !== "download"))
+          : renderButtons(ACTION_BUTTONS_FILE)
         : checked_files.size > 1
           ? renderButtons(ACTION_BUTTONS_MULTI)
           : undefined}
