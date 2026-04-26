@@ -60,6 +60,7 @@ import {
 } from "./upgrade-confirmation";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
+import { HostErrorDetails } from "./host-error-details";
 import { HostParallelOpsPanel } from "./host-parallel-ops-panel";
 import { HostDaemonHealthSummary } from "./host-daemon-health-summary";
 import { HostProjectStatus } from "./host-project-status";
@@ -1449,7 +1450,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               type="error"
               showIcon
               message="Provisioning error"
-              description={host.last_error}
+              description={
+                <HostErrorDetails message={host.last_error} maxHeight={240} />
+              }
             />
           )}
         </Space>

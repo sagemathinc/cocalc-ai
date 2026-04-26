@@ -6,6 +6,7 @@ import type {
   HostBootstrapLifecycleItem,
   HostBootstrapLifecycleSummaryStatus,
 } from "@cocalc/conat/hub/api/hosts";
+import { HostErrorDetails } from "./host-error-details";
 
 type HostBootstrapLifecycleProps = {
   host: Host;
@@ -133,9 +134,10 @@ export const HostBootstrapLifecycle: React.FC<HostBootstrapLifecycleProps> = ({
         </Typography.Text>
       ) : null}
       {lifecycle.last_error ? (
-        <Typography.Text type="danger">
-          Last error: {lifecycle.last_error}
-        </Typography.Text>
+        <Space orientation="vertical" size={4} style={{ width: "100%" }}>
+          <Typography.Text type="danger">Last error</Typography.Text>
+          <HostErrorDetails message={lifecycle.last_error} maxHeight={220} />
+        </Space>
       ) : null}
       <Space orientation="vertical" size={4} style={{ width: "100%" }}>
         {infoItems.map((item) => (
