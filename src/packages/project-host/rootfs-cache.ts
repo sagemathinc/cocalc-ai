@@ -199,6 +199,21 @@ async function directorySizeBytes(path: string): Promise<number | undefined> {
   }
 }
 
+async function readCachedSizeBytes(
+  image: string,
+): Promise<{ size_bytes?: number; metadataPath: string }> {
+  const metadataPath = preflightMetadataFilePath(image);
+  const metadata = await loadRootfsPreflightMetadata(metadataPath);
+  const size_bytes_raw = Number(metadata?.size_bytes);
+  return {
+    metadataPath,
+    size_bytes:
+      Number.isFinite(size_bytes_raw) && size_bytes_raw >= 0
+        ? Math.floor(size_bytes_raw)
+        : undefined,
+  };
+}
+
 async function readDigest(image: string): Promise<string | undefined> {
   const path = inspectFilePath(image);
   if (!(await exists(path))) return undefined;
@@ -233,12 +248,30 @@ async function buildEntry(
   const cache_path = imageCachePath(image);
   if (!(await exists(cache_path))) return undefined;
   const inspect_path = inspectFilePath(image);
+  const { size_bytes: cachedSizeBytes, metadataPath } =
+    await readCachedSizeBytes(image);
+  let size_bytes = cachedSizeBytes;
+  if (size_bytes == null) {
+    size_bytes = await directorySizeBytes(cache_path);
+    if (size_bytes != null) {
+      const metadata = await loadRootfsPreflightMetadata(metadataPath);
+      if (metadata != null && metadata.size_bytes !== size_bytes) {
+        await writeRootfsPreflightMetadata({
+          metadataPath,
+          metadata: {
+            ...metadata,
+            size_bytes,
+          },
+        });
+      }
+    }
+  }
   return {
     image,
     cache_path,
     inspect_path: (await exists(inspect_path)) ? inspect_path : undefined,
     digest: await readDigest(image),
-    size_bytes: await directorySizeBytes(cache_path),
+    size_bytes,
     cached_at:
       (await statTimestamp(inspect_path)) ?? (await statTimestamp(cache_path)),
     project_count: usage.project_ids.length,
@@ -833,6 +866,12 @@ async function downloadManagedRootfsArtifact({
             metadata: {
               ...preflight,
               rootfs_path: finalPath,
+              size_bytes:
+                typeof access.size_bytes === "number" &&
+                Number.isFinite(access.size_bytes) &&
+                access.size_bytes >= 0
+                  ? Math.floor(access.size_bytes)
+                  : undefined,
             },
           });
         } catch (err) {

@@ -27,6 +27,7 @@ export type RootfsPreflightMetadata = {
   glibc: true;
   sudo_present: boolean;
   ca_certificates_present: boolean;
+  size_bytes?: number;
 };
 
 export type RootfsNormalizationMetadata = RootfsPreflightMetadata;
