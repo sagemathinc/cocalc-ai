@@ -5,13 +5,11 @@
 
 import { ReloadOutlined } from "@ant-design/icons";
 import { Button } from "antd";
-import { useIntl } from "react-intl";
 import { keys, sortBy } from "lodash";
 import React from "react";
 
 import { Rendered, redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading, SettingBox } from "@cocalc/frontend/components";
-import { labels } from "@cocalc/frontend/i18n";
 import { tool2display } from "@cocalc/util/code-formatter";
 import { R_IDE } from "@cocalc/util/consts/ui";
 import * as misc from "@cocalc/util/misc";
@@ -26,11 +24,28 @@ interface ReactProps {
   mode?: "project" | "flyout";
 }
 
+const LIST_STYLE: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "20px minmax(0, 1fr)",
+  columnGap: "10px",
+  rowGap: "10px",
+  alignItems: "start",
+};
+
+const SECTION_TITLE_STYLE: React.CSSProperties = {
+  fontSize: "16px",
+  fontWeight: 600,
+  margin: "0 0 12px 0",
+};
+
+const SECTION_STYLE: React.CSSProperties = {
+  display: "grid",
+  gap: "18px",
+};
+
 export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
   (props: ReactProps) => {
     const { project, project_id, mode = "project" } = props;
-    const intl = useIntl();
-    const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
 
     const available_features = useTypedRedux(
       { project_id },
@@ -77,23 +92,17 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
         }
         features.push(
           <React.Fragment key={key}>
-            <dt>
+            <div>
               <Icon name={icon} style={{ color }} />
-            </dt>
-            <dd>
+            </div>
+            <div>
               {display} {extra}
-            </dd>
+            </div>
           </React.Fragment>,
         );
       }
 
-      const component = (
-        <>
-          <dl className={"dl-horizontal cc-project-settings-features"}>
-            {features}
-          </dl>
-        </>
-      );
+      const component = <div style={LIST_STYLE}>{features}</div>;
       return [component, any_nonavail];
     }
 
@@ -122,12 +131,12 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
 
         r_formatters.push(
           <React.Fragment key={tool}>
-            <dt>
+            <div>
               <Icon name={icon} style={{ color }} />{" "}
-            </dt>
-            <dd>
+            </div>
+            <div>
               <b>{tool}</b> for {misc.to_human_list(langs)}
-            </dd>
+            </div>
           </React.Fragment>,
         );
       }
@@ -135,26 +144,10 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
       const component = (
         <>
           {render_debug_info(formatter)}
-          <dl className={"dl-horizontal cc-project-settings-features"}>
-            {r_formatters}
-          </dl>
+          <div style={LIST_STYLE}>{r_formatters}</div>
         </>
       );
       return [component, any_nonavail];
-    }
-
-    function render_noavail_info(): Rendered {
-      return (
-        <>
-          <hr />
-          <div style={{ color: COLORS.GRAY }}>
-            Some features are not available, because this {projectLabelLower} is
-            using a limited root filesystem image. To enable all features,
-            create a new {projectLabelLower} with a fuller root filesystem
-            image.
-          </div>
-        </>
-      );
     }
 
     function render_available(): Rendered {
@@ -169,17 +162,20 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
         );
       }
 
-      const [features, non_avail_1] = render_features(avail);
-      const [formatter, non_avail_2] = render_formatter(avail.formatting);
+      const [features] = render_features(avail);
+      const [formatter] = render_formatter(avail.formatting);
 
       return (
-        <>
-          <h3>Available Features</h3>
-          {features}
-          <h3>Available Formatters</h3>
-          {formatter}
-          {non_avail_1 || non_avail_2 ? render_noavail_info() : undefined}
-        </>
+        <div style={SECTION_STYLE}>
+          <section>
+            <h3 style={SECTION_TITLE_STYLE}>Available Features</h3>
+            {features}
+          </section>
+          <section>
+            <h3 style={SECTION_TITLE_STYLE}>Available Formatters</h3>
+            {formatter}
+          </section>
+        </div>
       );
     }
 
@@ -205,7 +201,6 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
           onClick={() => reload()}
           icon={<ReloadOutlined />}
           disabled={configuration_loading}
-          style={{ float: "right", marginTop: "-7.5px" }} // that compensates for bootstrap's 15px's all over the place...
         >
           Refresh
         </Button>
@@ -213,7 +208,20 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
     }
 
     function render_title(): Rendered {
-      return <span>{render_reload()}Features and Configuration</span>;
+      return (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            width: "100%",
+          }}
+        >
+          <span>Features and Configuration</span>
+          {render_reload()}
+        </div>
+      );
     }
 
     const conf = configuration;
