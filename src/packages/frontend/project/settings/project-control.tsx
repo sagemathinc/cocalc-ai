@@ -52,6 +52,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const projectStatus = useTypedRedux({ project_id }, "status");
+  const projectMap = useTypedRedux("projects", "project_map");
   const { runQuota } = useProjectRunQuota(project_id);
   const hostId = project.get("host_id") as string | undefined;
   const hostInfo = useHostInfo(hostId);
@@ -69,10 +70,14 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     hostInfo,
   });
   const lifecycleDisplayState = getProjectLifecycleDisplayState({
-    projectState: project.getIn(["state", "state"]),
+    projectState:
+      projectMap?.getIn([project_id, "state", "state"]) ??
+      project.getIn(["state", "state"]),
     hostId,
     hostInfo,
-    lastBackup: project.get("last_backup"),
+    lastBackup:
+      projectMap?.getIn([project_id, "last_backup"]) ??
+      project.get("last_backup"),
   });
   const displayProjectState = React.useMemo(() => {
     const rawState = project.get("state");
