@@ -1830,6 +1830,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
     } catch (err) {
       this.setProjectLocalUserHide(project_id, account_id, before);
+      const message = `Error ${hide ? "hiding" : "unhiding"} project ${project_id} -- ${err}`;
+      alert_message({ type: "error", message });
       throw err;
     }
   }
