@@ -358,7 +358,7 @@ export function ChatRoomComposer({
   const composerStyle: CSSProperties = {
     display: "flex",
     marginBottom: isZenMode && isFullscreen ? 0 : "5px",
-    overflow: isZenMode && isFullscreen ? "hidden" : "auto",
+    overflow: "hidden",
     width: "100%",
     height: isZenMode && isFullscreen ? "100%" : undefined,
     padding: isZenMode && isFullscreen ? "12px" : undefined,
