@@ -37,4 +37,25 @@ describe("SlateRichTextAdapter", () => {
 
     expect(editableMarkdownProps[0]?.enableUpload).toBe(false);
   });
+
+  it("does not add a second scroll container around the rich text editor", () => {
+    const { container } = render(
+      <SlateRichTextAdapter
+        autoFocus={false}
+        controlRef={createRef()}
+        editBar2={createRef()}
+        externalMultilinePasteAsCodeBlock={false}
+        height="120px"
+        noVfill={false}
+        onAltEnter={() => undefined}
+        onChange={() => undefined}
+        preserveBlankLines={true}
+        saveDebounceMs={0}
+        selectionRef={createRef()}
+      />,
+    );
+
+    expect(container.firstChild).toHaveStyle({ overflow: "hidden" });
+    expect(container.firstChild).not.toHaveStyle({ overflowY: "auto" });
+  });
 });

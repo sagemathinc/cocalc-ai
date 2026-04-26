@@ -260,7 +260,7 @@ export function SlateRichTextAdapter({
         height: hasFixedHeight ? height : undefined,
         minHeight: `${MIN_INPUT_HEIGHT}px`,
         maxHeight: maxHeight,
-        overflowY: "auto",
+        overflow: "hidden",
         width: "100%",
         fontSize: "14px",
         ...style,
