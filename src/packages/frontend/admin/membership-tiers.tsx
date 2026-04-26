@@ -42,6 +42,7 @@ import {
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text } = Typography;
+const BYTES_PER_GB = 1000 * 1000 * 1000;
 
 interface Tier {
   key?: string;
@@ -88,6 +89,16 @@ function normalizedOptionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
+}
+
+function bytesToGigabytes(value: unknown): number | undefined {
+  const bytes = normalizedOptionalNumber(value);
+  return bytes == null ? undefined : bytes / BYTES_PER_GB;
+}
+
+function gigabytesToBytes(value: unknown): number | undefined {
+  const gigabytes = normalizedOptionalNumber(value);
+  return gigabytes == null ? undefined : Math.round(gigabytes * BYTES_PER_GB);
 }
 
 function setOrDeleteUsageLimit(
@@ -171,19 +182,19 @@ function useMembershipTiers() {
         usage_limit_shared_compute_priority: normalizedOptionalNumber(
           editing.usage_limits?.shared_compute_priority,
         ),
-        usage_limit_total_storage_soft_bytes: normalizedOptionalNumber(
+        usage_limit_total_storage_soft_gb: bytesToGigabytes(
           editing.usage_limits?.total_storage_soft_bytes,
         ),
-        usage_limit_total_storage_hard_bytes: normalizedOptionalNumber(
+        usage_limit_total_storage_hard_gb: bytesToGigabytes(
           editing.usage_limits?.total_storage_hard_bytes,
         ),
         usage_limit_max_projects: normalizedOptionalNumber(
           editing.usage_limits?.max_projects,
         ),
-        usage_limit_egress_5h_bytes: normalizedOptionalNumber(
+        usage_limit_egress_5h_gb: bytesToGigabytes(
           editing.usage_limits?.egress_5h_bytes,
         ),
-        usage_limit_egress_7d_bytes: normalizedOptionalNumber(
+        usage_limit_egress_7d_gb: bytesToGigabytes(
           editing.usage_limits?.egress_7d_bytes,
         ),
         active: !editing.disabled,
@@ -218,12 +229,12 @@ function useMembershipTiers() {
       setOrDeleteUsageLimit(
         usage_limits,
         "total_storage_soft_bytes",
-        values.usage_limit_total_storage_soft_bytes,
+        gigabytesToBytes(values.usage_limit_total_storage_soft_gb),
       );
       setOrDeleteUsageLimit(
         usage_limits,
         "total_storage_hard_bytes",
-        values.usage_limit_total_storage_hard_bytes,
+        gigabytesToBytes(values.usage_limit_total_storage_hard_gb),
       );
       setOrDeleteUsageLimit(
         usage_limits,
@@ -233,12 +244,12 @@ function useMembershipTiers() {
       setOrDeleteUsageLimit(
         usage_limits,
         "egress_5h_bytes",
-        values.usage_limit_egress_5h_bytes,
+        gigabytesToBytes(values.usage_limit_egress_5h_gb),
       );
       setOrDeleteUsageLimit(
         usage_limits,
         "egress_7d_bytes",
-        values.usage_limit_egress_7d_bytes,
+        gigabytesToBytes(values.usage_limit_egress_7d_gb),
       );
 
       const payload = pick(
@@ -496,31 +507,31 @@ export function MembershipTiers() {
             <InputNumber min={0} step={1} />
           </Form.Item>
           <Form.Item
-            name="usage_limit_total_storage_soft_bytes"
-            label="Total storage soft cap (bytes)"
+            name="usage_limit_total_storage_soft_gb"
+            label="Storage soft cap (GB)"
           >
-            <InputNumber min={0} step={1} style={{ width: "100%" }} />
+            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item
-            name="usage_limit_total_storage_hard_bytes"
-            label="Total storage hard cap (bytes)"
+            name="usage_limit_total_storage_hard_gb"
+            label="Storage hard cap (GB)"
           >
-            <InputNumber min={0} step={1} style={{ width: "100%" }} />
+            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item name="usage_limit_max_projects" label="Max owned projects">
             <InputNumber min={0} step={1} />
           </Form.Item>
           <Form.Item
-            name="usage_limit_egress_5h_bytes"
-            label="Managed egress 5-hour window (bytes)"
+            name="usage_limit_egress_5h_gb"
+            label="Egress 5h window (GB)"
           >
-            <InputNumber min={0} step={1} style={{ width: "100%" }} />
+            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item
-            name="usage_limit_egress_7d_bytes"
-            label="Managed egress 7-day window (bytes)"
+            name="usage_limit_egress_7d_gb"
+            label="Egress 7d window (GB)"
           >
-            <InputNumber min={0} step={1} style={{ width: "100%" }} />
+            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
           </Form.Item>
           <Paragraph style={{ color: COLORS.GRAY }}>
             These fields populate the standard shared-host usage limit keys. Use
