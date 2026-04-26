@@ -10,6 +10,7 @@ let startProjectLroMock: jest.Mock;
 let waitForLroCompletionMock: jest.Mock;
 let assertPortableProjectRootfsMock: jest.Mock;
 let resolveHostConnectionMock: jest.Mock;
+let getProjectFileServerClientMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -63,7 +64,8 @@ jest.mock("./offline-move-confirmation", () => ({
 }));
 
 jest.mock("@cocalc/server/conat/file-server-client", () => ({
-  getProjectFileServerClient: jest.fn(),
+  getProjectFileServerClient: (...args: any[]) =>
+    getProjectFileServerClientMock(...args),
 }));
 
 jest.mock("./rootfs-state", () => ({
@@ -138,6 +140,12 @@ describe("moveProjectToHost", () => {
       op_id: "44444444-4444-4444-8444-444444444444",
       scope_type: "project",
       scope_id: PROJECT_ID,
+    }));
+    getProjectFileServerClientMock = jest.fn(async () => ({
+      createBackup: jest.fn(async () => ({
+        id: "backup-1",
+        time: new Date("2026-04-26T16:00:00.000Z"),
+      })),
     }));
     waitForLroCompletionMock = jest.fn(async () => {
       throw new Error("timeout waiting for lro completion");
@@ -303,5 +311,109 @@ describe("moveProjectToHost", () => {
     expect(savePlacementMock).not.toHaveBeenCalled();
     expect(stopProjectOnHostMock).not.toHaveBeenCalled();
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("retries stopping the source project once after a transient parse failure", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: false,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
+      ) {
+        return {
+          rows: [{ status: "running", deleted: null, last_seen: new Date() }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    stopProjectOnHostMock = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("Unexpected end of JSON input"))
+      .mockResolvedValue(undefined);
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+        start_dest: false,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(stopProjectOnHostMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries the final backup once after a transient parse failure", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
+      ) {
+        return {
+          rows: [{ status: "running", deleted: null, last_seen: new Date() }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const createBackupMock = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("Unexpected end of JSON input"))
+      .mockResolvedValue({
+        id: "backup-2",
+        time: new Date("2026-04-26T16:00:00.000Z"),
+      });
+    getProjectFileServerClientMock = jest.fn(async () => ({
+      createBackup: createBackupMock,
+    }));
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+        start_dest: false,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(createBackupMock).toHaveBeenCalledTimes(2);
   });
 });

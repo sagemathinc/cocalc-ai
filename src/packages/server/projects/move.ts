@@ -29,6 +29,7 @@ const MAX_BACKUPS_PER_PROJECT = 30;
 const BACKUP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const MOVE_STOP_PROJECT_TIMEOUT_MS = 3 * 60 * 1000;
 const MOVE_START_DEST_TIMEOUT_MS = 5 * 60 * 1000;
+const TRANSIENT_MOVE_RPC_RETRY_DELAY_MS = 1000;
 
 export const MOVE_CANCELED_CODE = "move-canceled";
 
@@ -265,6 +266,56 @@ function isMissingProjectVolumeError(err: unknown): boolean {
   return text.includes("project volume does not exist");
 }
 
+function isRetryableTransientMoveError(err: unknown): boolean {
+  const text = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    text.includes("unexpected end of json input") ||
+    text.includes("unexpected end of data") ||
+    text.includes("missing raw payload") ||
+    text.includes("disconnected") ||
+    (err as any)?.code === 408
+  );
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function retryOnceOnTransientMoveError<T>({
+  operation,
+  detail,
+  progress,
+  run,
+}: {
+  operation: "stop-source" | "backup";
+  detail?: Record<string, any>;
+  progress: (update: MoveProjectProgressUpdate) => void;
+  run: () => Promise<T>;
+}): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!isRetryableTransientMoveError(err)) {
+      throw err;
+    }
+    log.warn("moveProjectToHost transient operation failure; retrying once", {
+      operation,
+      err,
+      detail,
+    });
+    progress({
+      step: operation,
+      message: "transient error; retrying once",
+      detail: {
+        ...(detail ?? {}),
+        error: `${err}`,
+      },
+    });
+    await delay(TRANSIENT_MOVE_RPC_RETRY_DELAY_MS);
+    return await run();
+  }
+}
+
 async function createFinalBackup({
   project_id,
 }: {
@@ -443,8 +494,14 @@ export async function moveProjectToHost(
         project_state: context.project_state,
       });
       try {
-        await stopProjectOnHost(context.project_id, {
-          timeout_ms: MOVE_STOP_PROJECT_TIMEOUT_MS,
+        await retryOnceOnTransientMoveError({
+          operation: "stop-source",
+          detail: { project_id: context.project_id },
+          progress,
+          run: async () =>
+            await stopProjectOnHost(context.project_id, {
+              timeout_ms: MOVE_STOP_PROJECT_TIMEOUT_MS,
+            }),
         });
       } catch (err) {
         log.error("moveProjectToHost failed to stop project", {
@@ -478,8 +535,14 @@ export async function moveProjectToHost(
         });
         try {
           const backupStart = Date.now();
-          const result = await createFinalBackup({
-            project_id: context.project_id,
+          const result = await retryOnceOnTransientMoveError({
+            operation: "backup",
+            detail: { project_id: context.project_id },
+            progress,
+            run: async () =>
+              await createFinalBackup({
+                project_id: context.project_id,
+              }),
           });
           const backup_id = result.id;
           const backup_time = result.time;
