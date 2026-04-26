@@ -71,7 +71,7 @@ import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspac
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
-  getProjectLifecycleDisplayState,
+  getProjectLifecycleView,
   hostLabel,
 } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
@@ -260,14 +260,14 @@ export function FilesFlyout({
   }, [backupOps, refreshBackups]);
   const effectiveListing = inBackupsPath ? backupsListing : directoryListing;
   const effectiveError = inBackupsPath ? backupsError : listingError;
-  const lifecycleDisplayState = getProjectLifecycleDisplayState({
+  const lifecycle = getProjectLifecycleView({
     projectState: project_map?.getIn([project_id, "state", "state"]),
     hostId: host_id,
     hostInfo,
     lastBackup: project_map?.getIn([project_id, "last_backup"]),
   });
-  const projectIsArchived = lifecycleDisplayState === "archived";
-  const projectIsNew = lifecycleDisplayState === "new";
+  const projectIsArchived = lifecycle.isArchived;
+  const projectIsNew = lifecycle.isNew;
   const shouldShowArchivedProjectWarning =
     projectIsArchived && effectiveError != null;
   const shouldShowNewProjectWarning = projectIsNew && effectiveError != null;

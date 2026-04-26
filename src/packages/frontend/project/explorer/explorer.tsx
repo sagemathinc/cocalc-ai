@@ -61,7 +61,7 @@ import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
-  getProjectLifecycleDisplayState,
+  getProjectLifecycleView,
   hostLabel,
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
@@ -580,7 +580,7 @@ export function Explorer() {
     // next, we check if this is a common user (not public)
   } else if (my_group !== "public") {
     project_state = project_map?.getIn([project_id, "state"]) as any;
-    const lifecycleDisplayState = getProjectLifecycleDisplayState({
+    const lifecycle = getProjectLifecycleView({
       projectState: project_state?.get("state"),
       hostId: host_id,
       hostInfo,
@@ -591,9 +591,9 @@ export function Explorer() {
       hostId: host_id,
       hostInfo,
     });
-    project_is_archived = lifecycleDisplayState === "archived";
-    project_is_new = lifecycleDisplayState === "new";
-    project_is_running = displayState === "running";
+    project_is_archived = lifecycle.isArchived;
+    project_is_new = lifecycle.isNew;
+    project_is_running = lifecycle.isRunning || displayState === "running";
   } else {
     project_is_running = false;
   }

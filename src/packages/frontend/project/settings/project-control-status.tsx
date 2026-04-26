@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Alert } from "antd";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { getProjectLifecycleView } from "@cocalc/frontend/projects/host-operational";
 
 const STALE_ARCHIVE_CONTROL_STATUS = new Set([
   "Checking backups before archive...",
@@ -19,14 +20,14 @@ export default function ProjectControlStatus({
 }) {
   const { project_id } = useProjectContext();
   const control_status = useTypedRedux({ project_id }, "control_status");
-  const rawProjectState = useTypedRedux("projects", "project_map")?.getIn([
-    project_id,
-    "state",
-    "state",
-  ]);
+  const projectMap = useTypedRedux("projects", "project_map");
+  const lifecycle = getProjectLifecycleView({
+    projectState: projectMap?.getIn([project_id, "state", "state"]),
+    lastBackup: projectMap?.getIn([project_id, "last_backup"]),
+  });
   const hideStaleArchiveStatus =
     STALE_ARCHIVE_CONTROL_STATUS.has(`${control_status ?? ""}`) &&
-    rawProjectState === "archived";
+    lifecycle.isRawArchived;
 
   useEffect(() => {
     if (!hideStaleArchiveStatus) {

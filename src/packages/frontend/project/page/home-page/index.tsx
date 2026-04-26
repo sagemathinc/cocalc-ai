@@ -11,7 +11,7 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Title } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { StartButton } from "@cocalc/frontend/project/start-button";
-import { getProjectLifecycleDisplayState } from "@cocalc/frontend/projects/host-operational";
+import { getProjectLifecycleView } from "@cocalc/frontend/projects/host-operational";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { COLORS } from "@cocalc/util/theme";
 import { FIXED_PROJECT_TABS } from "../file-tab";
@@ -32,7 +32,7 @@ export default function HomePage() {
   const { project_id, actions } = useProjectContext();
   const other_settings = useTypedRedux("account", "other_settings");
   const project_map = useTypedRedux("projects", "project_map");
-  const lifecycleState = getProjectLifecycleDisplayState({
+  const lifecycle = getProjectLifecycleView({
     projectState: project_map?.getIn([project_id, "state", "state"]),
     lastBackup: project_map?.getIn([project_id, "last_backup"]),
   });
@@ -40,7 +40,7 @@ export default function HomePage() {
     "navigator_target_project_id",
   );
   const projectLabelLower = "project";
-  const showLifecycleBanner = lifecycleState !== "running";
+  const showLifecycleBanner = lifecycle.showLifecycleBanner;
 
   return (
     <Row
@@ -78,15 +78,15 @@ export default function HomePage() {
             type="info"
             showIcon
             message={
-              lifecycleState === "archived"
+              lifecycle.kind === "archived"
                 ? `This ${projectLabelLower} is archived.`
-                : lifecycleState === "new"
+                : lifecycle.kind === "new"
                   ? `This ${projectLabelLower} is new.`
                   : `This ${projectLabelLower} is not running.`
             }
             description={
               <div>
-                {lifecycleState === "archived" ? (
+                {lifecycle.kind === "archived" ? (
                   <FormattedMessage
                     id="project.home.archived_project.warning"
                     defaultMessage={
@@ -107,7 +107,7 @@ export default function HomePage() {
                       ),
                     }}
                   />
-                ) : lifecycleState === "new" ? (
+                ) : lifecycle.kind === "new" ? (
                   <FormattedMessage
                     id="project.home.new_project.warning"
                     defaultMessage={

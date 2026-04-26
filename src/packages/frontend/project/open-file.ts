@@ -30,7 +30,7 @@ import {
 } from "@cocalc/frontend/project/workspaces/selection-runtime";
 import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 import type { WorkspaceSelection } from "@cocalc/frontend/project/workspaces/types";
-import { getProjectLifecycleDisplayState } from "@cocalc/frontend/projects/host-operational";
+import { getProjectLifecycleView } from "@cocalc/frontend/projects/host-operational";
 import { normalize } from "./utils";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { canonicalSyncPath, toAbsoluteProjectPath } from "./sync-path";
@@ -124,17 +124,10 @@ function shouldSuppressArchivedOpenError(project_id: string): boolean {
     .getStore("projects")
     ?.get("project_map")
     ?.get(project_id);
-  const rawState = `${project?.getIn(["state", "state"]) ?? ""}`.trim();
-  if (rawState === "archived") {
-    return true;
-  }
-  const lifecycleDisplayState = getProjectLifecycleDisplayState({
-    projectState: rawState,
+  return getProjectLifecycleView({
+    projectState: project?.getIn(["state", "state"]),
     lastBackup: project?.get("last_backup"),
-  });
-  return (
-    lifecycleDisplayState === "archived" || lifecycleDisplayState === "new"
-  );
+  }).isArchivedLike;
 }
 
 export function applyWorkspaceSelectionForForegroundOpen(

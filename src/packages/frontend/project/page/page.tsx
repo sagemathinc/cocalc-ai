@@ -61,7 +61,7 @@ import { StartButton } from "@cocalc/frontend/project/start-button";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
-  getProjectLifecycleDisplayState,
+  getProjectLifecycleView,
   hostLabel,
 } from "@cocalc/frontend/projects/host-operational";
 import { projectThemeColor } from "@cocalc/frontend/projects/theme";
@@ -139,19 +139,17 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
       moveLro.summary.status === "queued" ||
       moveLro.summary.status === "running");
   const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
-  const rawProjectState = `${project?.getIn(["state", "state"]) ?? ""}`.trim();
-  const lifecycleDisplayState = useMemo(
+  const lifecycle = useMemo(
     () =>
-      getProjectLifecycleDisplayState({
-        projectState: rawProjectState,
+      getProjectLifecycleView({
+        projectState: project?.getIn(["state", "state"]),
         hostId: host_id,
         hostInfo,
         lastBackup: project?.get("last_backup"),
       }),
-    [hostInfo, host_id, project, rawProjectState],
+    [hostInfo, host_id, project],
   );
-  const archivedLike =
-    rawProjectState === "archived" || lifecycleDisplayState === "new";
+  const archivedLike = lifecycle.isArchivedLike;
   const workspaceBlocked = moveInProgress;
   const hostUnavailableReason =
     hostOperational.reason ?? "Assigned host is unavailable.";
@@ -419,7 +417,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
       return;
     }
     let displayTab = initialWorkspaceRender.displayActiveTab;
-    if (archivedLike && displayTab === "files") {
+    if (lifecycle.shouldForceHomeTab && displayTab === "files") {
       displayTab = "home";
     }
     if (

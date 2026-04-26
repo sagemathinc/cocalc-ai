@@ -34,7 +34,7 @@ import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
-  getProjectLifecycleDisplayState,
+  getProjectLifecycleView,
   hostLabel,
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
@@ -69,7 +69,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     hostId,
     hostInfo,
   });
-  const lifecycleDisplayState = getProjectLifecycleDisplayState({
+  const lifecycle = getProjectLifecycleView({
     projectState:
       projectMap?.getIn([project_id, "state", "state"]) ??
       project.getIn(["state", "state"]),
@@ -100,7 +100,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }, [project, runQuota]);
 
   function render_state() {
-    if (lifecycleDisplayState === "new") {
+    if (lifecycle.isNew) {
       return (
         <span style={{ fontSize: "12pt", color: COLORS.GRAY_M }}>
           <Icon name="plus-circle" /> New
@@ -144,7 +144,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }
 
   function render_restart_button(commands): Rendered {
-    const allowStart = displayStateValue === "archived";
+    const allowStart = lifecycle.isRawArchived;
     return (
       <RestartProject
         size={isFlyout ? "small" : "large"}
@@ -168,9 +168,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
         state,
       );
-    const archived =
-      lifecycleDisplayState === "archived" ||
-      (state === "archived" && lifecycleDisplayState !== "new");
+    const archived = lifecycle.isRawArchived;
     return (
       <Space.Compact
         style={{ marginTop: "10px", marginBottom: "10px" }}
@@ -240,15 +238,12 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }
 
   function render_archived_note() {
-    if (
-      lifecycleDisplayState !== "archived" &&
-      lifecycleDisplayState !== "new"
-    ) {
+    if (lifecycle.kind !== "archived" && lifecycle.kind !== "new") {
       return;
     }
     return (
       <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: "12px" }}>
-        {lifecycleDisplayState === "archived"
+        {lifecycle.kind === "archived"
           ? "Archived projects do not count toward active storage. Starting this project restores it from backup and may take a while while the RootFS image is made available on the host."
           : "This project has not been provisioned yet. Starting it will create the filesystem and make it available on the host."}
       </Paragraph>
