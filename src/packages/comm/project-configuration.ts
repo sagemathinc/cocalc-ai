@@ -44,6 +44,10 @@ export interface MainCapabilities {
   spellcheck: boolean;
   sshd: boolean;
   nodejs: boolean;
+  gitlfs: boolean;
+  imagemagick: boolean;
+  ffmpeg: boolean;
+  typst: boolean;
   html2pdf: boolean; // via chrome/chromium
   pandoc: boolean; // e.g. for docx2md conversion
   vscode: boolean; // "code-server"
@@ -69,6 +73,10 @@ export interface Available {
   spellcheck: boolean;
   sshd: boolean;
   nodejs: boolean;
+  gitlfs: boolean;
+  imagemagick: boolean;
+  ffmpeg: boolean;
+  typst: boolean;
   html2pdf: boolean;
   pandoc: boolean;
   vscode: boolean;
@@ -95,6 +103,10 @@ export const NO_AVAIL: Readonly<Available> = {
   spellcheck: false,
   sshd: false,
   nodejs: false,
+  gitlfs: false,
+  imagemagick: false,
+  ffmpeg: false,
+  typst: false,
   formatting: false,
   html2pdf: false,
   pandoc: false,
@@ -121,6 +133,10 @@ export const ALL_AVAIL: Readonly<Available> = {
   spellcheck: true,
   sshd: true,
   nodejs: true,
+  gitlfs: true,
+  imagemagick: true,
+  ffmpeg: true,
+  typst: true,
   formatting: true,
   html2pdf: true,
   pandoc: true,

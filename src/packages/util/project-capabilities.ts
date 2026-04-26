@@ -20,6 +20,26 @@ export const PROJECT_CAPABILITY_SPECS: readonly ProjectCapabilitySpec[] = [
     probeSummary: "command -v aspell",
   },
   {
+    key: "gitlfs",
+    label: "Git LFS",
+    probeSummary: "command -v git-lfs",
+  },
+  {
+    key: "imagemagick",
+    label: "ImageMagick",
+    probeSummary: "command -v magick || command -v convert",
+  },
+  {
+    key: "ffmpeg",
+    label: "ffmpeg",
+    probeSummary: "command -v ffmpeg",
+  },
+  {
+    key: "typst",
+    label: "Typst",
+    probeSummary: "command -v typst",
+  },
+  {
     key: "sshd",
     label: "SSH / SCP access",
     probeSummary: "[ -x /usr/sbin/sshd ] || command -v dropbear",

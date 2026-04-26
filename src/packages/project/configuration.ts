@@ -156,6 +156,22 @@ async function get_nodejs(): Promise<boolean> {
   );
 }
 
+async function get_gitlfs(): Promise<boolean> {
+  return await have("git-lfs");
+}
+
+async function get_imagemagick(): Promise<boolean> {
+  return (await have("magick")) || (await have("convert"));
+}
+
+async function get_ffmpeg(): Promise<boolean> {
+  return await have("ffmpeg");
+}
+
+async function get_typst(): Promise<boolean> {
+  return await have("typst");
+}
+
 // we check if we can use headless chrome to do html to pdf conversion,
 // which uses either google-chrome or chromium-browser.  Note that there
 // is no good headless pdf support using firefox.
@@ -318,6 +334,10 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       pandoc,
       sshd,
       nodejs,
+      gitlfs,
+      imagemagick,
+      ffmpeg,
+      typst,
       x11,
       rmd,
       qmd,
@@ -334,6 +354,10 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       get_pandoc(),
       get_sshd(),
       get_nodejs(),
+      get_gitlfs(),
+      get_imagemagick(),
+      get_ffmpeg(),
+      get_typst(),
       get_x11(),
       get_rmd(),
       get_quarto(),
@@ -357,6 +381,10 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       spellcheck,
       sshd,
       nodejs,
+      gitlfs,
+      imagemagick,
+      ffmpeg,
+      typst,
       html2pdf,
       pandoc,
       vscode,
