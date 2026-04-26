@@ -34,6 +34,7 @@ import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
+  getProjectLifecycleDisplayState,
   hostLabel,
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
@@ -67,6 +68,12 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     hostId,
     hostInfo,
   });
+  const lifecycleDisplayState = getProjectLifecycleDisplayState({
+    projectState: project.getIn(["state", "state"]),
+    hostId,
+    hostInfo,
+    lastBackup: project.get("last_backup"),
+  });
   const displayProjectState = React.useMemo(() => {
     const rawState = project.get("state");
     if (!rawState) return rawState;
@@ -88,6 +95,13 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }, [project, runQuota]);
 
   function render_state() {
+    if (lifecycleDisplayState === "new") {
+      return (
+        <span style={{ fontSize: "12pt", color: COLORS.GRAY_M }}>
+          <Icon name="plus-circle" /> New
+        </span>
+      );
+    }
     return (
       <span style={{ fontSize: "12pt", color: COLORS.GRAY_M }}>
         <ProjectState show_desc={true} state={displayProjectState} />
@@ -149,7 +163,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
         state,
       );
-    const archived = state === "archived";
+    const archived = lifecycleDisplayState === "archived";
     return (
       <Space.Compact
         style={{ marginTop: "10px", marginBottom: "10px" }}
@@ -219,14 +233,17 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }
 
   function render_archived_note() {
-    if (displayStateValue !== "archived") {
+    if (
+      lifecycleDisplayState !== "archived" &&
+      lifecycleDisplayState !== "new"
+    ) {
       return;
     }
     return (
       <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: "12px" }}>
-        Archived projects do not count toward active storage. Starting this
-        project restores it from backup and may take a while while the RootFS
-        image is made available on the host.
+        {lifecycleDisplayState === "archived"
+          ? "Archived projects do not count toward active storage. Starting this project restores it from backup and may take a while while the RootFS image is made available on the host."
+          : "This project has not been provisioned yet. Starting it will create the filesystem and make it available on the host."}
       </Paragraph>
     );
   }

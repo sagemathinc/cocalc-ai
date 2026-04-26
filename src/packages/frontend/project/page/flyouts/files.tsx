@@ -71,8 +71,8 @@ import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspac
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
+  getProjectLifecycleDisplayState,
   hostLabel,
-  normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import {
@@ -260,17 +260,21 @@ export function FilesFlyout({
   }, [backupOps, refreshBackups]);
   const effectiveListing = inBackupsPath ? backupsListing : directoryListing;
   const effectiveError = inBackupsPath ? backupsError : listingError;
-  const projectIsArchived =
-    normalizeProjectStateForDisplay({
-      projectState: project_map?.getIn([project_id, "state", "state"]),
-      hostId: host_id,
-      hostInfo,
-    }) === "archived";
+  const lifecycleDisplayState = getProjectLifecycleDisplayState({
+    projectState: project_map?.getIn([project_id, "state", "state"]),
+    hostId: host_id,
+    hostInfo,
+    lastBackup: project_map?.getIn([project_id, "last_backup"]),
+  });
+  const projectIsArchived = lifecycleDisplayState === "archived";
+  const projectIsNew = lifecycleDisplayState === "new";
   const shouldShowArchivedProjectWarning =
     projectIsArchived && effectiveError != null;
+  const shouldShowNewProjectWarning = projectIsNew && effectiveError != null;
   const shouldShowStartProjectWarning =
     !projectIsRunning &&
     !projectIsArchived &&
+    !projectIsNew &&
     isMissingProjectVolumeError(effectiveError);
   const suppressRoutingError =
     (hostUnavailable && isHostRoutingUnavailableError(effectiveError)) ||
@@ -828,6 +832,35 @@ export function FilesFlyout({
           }
         />
       );
+    } else if (shouldShowNewProjectWarning) {
+      return (
+        <Alert
+          type="info"
+          banner
+          showIcon={false}
+          style={{ padding: FLYOUT_PADDING, margin: 0 }}
+          description={
+            <FormattedMessage
+              id="project.flyout.new_project.warning"
+              defaultMessage={
+                "This project is new. <a>Start this project</a> to create the filesystem and make files available."
+              }
+              values={{
+                a: (chunks) => (
+                  <a
+                    onClick={(e) => {
+                      e.preventDefault();
+                      redux.getActions("projects").start_project(project_id);
+                    }}
+                  >
+                    {chunks}
+                  </a>
+                ),
+              }}
+            />
+          }
+        />
+      );
     } else if (shouldShowStartProjectWarning) {
       return (
         <Alert
@@ -962,6 +995,7 @@ export function FilesFlyout({
       {inBackupsPath && <Backups onCreated={refreshBackupsAfterUserAction} />}
       {!suppressRoutingError &&
         !shouldShowArchivedProjectWarning &&
+        !shouldShowNewProjectWarning &&
         !shouldShowStartProjectWarning && (
           <ShowError error={effectiveError} setError={effectiveRefresh} />
         )}

@@ -295,7 +295,7 @@ export function url_href(project_id: string, path: string): string {
 // returns the download URL for a file at a given path
 export function download_href(project_id: string, path: string): string {
   const u = url_href(project_id, path);
-  return `${u}?download`;
+  return `${u}?download&ts=${Date.now()}`;
 }
 
 export function in_snapshot_path(path: string): boolean {

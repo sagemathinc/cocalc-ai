@@ -37,6 +37,7 @@ function normalizeStatus(value: unknown): string | undefined {
 }
 
 type ComputeStateName = keyof typeof COMPUTE_STATES;
+export type ProjectLifecycleDisplayState = ComputeStateName | "new";
 
 function asComputeState(value: unknown): ComputeStateName | undefined {
   const state = `${value ?? ""}`.trim();
@@ -111,4 +112,38 @@ export function normalizeProjectStateForDisplay({
     return "opened";
   }
   return state;
+}
+
+function hasIndexedBackup(lastBackup: unknown): boolean {
+  if (lastBackup instanceof Date) {
+    return Number.isFinite(lastBackup.valueOf());
+  }
+  if (typeof lastBackup === "string") {
+    return (
+      lastBackup.trim().length > 0 && Number.isFinite(Date.parse(lastBackup))
+    );
+  }
+  return false;
+}
+
+export function getProjectLifecycleDisplayState({
+  projectState,
+  hostId,
+  hostInfo,
+  lastBackup,
+}: {
+  projectState?: unknown;
+  hostId?: string | null;
+  hostInfo?: HostInfoLike;
+  lastBackup?: unknown;
+}): ProjectLifecycleDisplayState | undefined {
+  const state = normalizeProjectStateForDisplay({
+    projectState,
+    hostId,
+    hostInfo,
+  });
+  if (state !== "archived") {
+    return state;
+  }
+  return hasIndexedBackup(lastBackup) ? "archived" : "new";
 }

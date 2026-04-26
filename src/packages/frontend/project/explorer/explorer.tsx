@@ -61,6 +61,7 @@ import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
+  getProjectLifecycleDisplayState,
   hostLabel,
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
@@ -561,6 +562,7 @@ export function Explorer() {
 
   let project_is_running: boolean,
     project_is_archived = false,
+    project_is_new = false,
     project_state: ProjectStatus | undefined;
 
   if (checked_files == undefined) {
@@ -578,12 +580,19 @@ export function Explorer() {
     // next, we check if this is a common user (not public)
   } else if (my_group !== "public") {
     project_state = project_map?.getIn([project_id, "state"]) as any;
+    const lifecycleDisplayState = getProjectLifecycleDisplayState({
+      projectState: project_state?.get("state"),
+      hostId: host_id,
+      hostInfo,
+      lastBackup: project_map?.getIn([project_id, "last_backup"]),
+    });
     const displayState = normalizeProjectStateForDisplay({
       projectState: project_state?.get("state"),
       hostId: host_id,
       hostInfo,
     });
-    project_is_archived = displayState === "archived";
+    project_is_archived = lifecycleDisplayState === "archived";
+    project_is_new = lifecycleDisplayState === "new";
     project_is_running = displayState === "running";
   } else {
     project_is_running = false;
@@ -623,9 +632,11 @@ export function Explorer() {
     shouldSuppressTransientRoutingError({ error, moveLro });
   const shouldShowArchivedProjectWarning =
     project_is_archived && listingError != null;
+  const shouldShowNewProjectWarning = project_is_new && listingError != null;
   const shouldShowStartProjectWarning =
     !project_is_running &&
     !project_is_archived &&
+    !project_is_new &&
     isMissingProjectVolumeError(listingError);
 
   if (hostUnavailable && !project_is_running) {
@@ -1006,9 +1017,41 @@ You can either wait for this host to become available again, or move this ${proj
               />
             )}
 
+            {shouldShowNewProjectWarning && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ margin: "16px auto", maxWidth: "760px" }}
+                message={`This ${projectLabelLower} is new.`}
+                description={
+                  <FormattedMessage
+                    id="project.explorer.new_project.warning"
+                    defaultMessage={
+                      "This project has not been provisioned yet. <a>Start this project</a> to create the filesystem and make files available."
+                    }
+                    values={{
+                      a: (chunks) => (
+                        <a
+                          onClick={(e) => {
+                            e.preventDefault();
+                            redux
+                              .getActions("projects")
+                              .start_project(project_id);
+                          }}
+                        >
+                          {chunks}
+                        </a>
+                      ),
+                    }}
+                  />
+                }
+              />
+            )}
+
             {listingError &&
               !suppressRoutingError &&
               !shouldShowArchivedProjectWarning &&
+              !shouldShowNewProjectWarning &&
               !shouldShowStartProjectWarning && (
                 <div style={{ margin: "30px auto", textAlign: "center" }}>
                   <ShowError
