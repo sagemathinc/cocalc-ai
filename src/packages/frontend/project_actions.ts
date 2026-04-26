@@ -2698,13 +2698,31 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // note: there is no need to explicitly close or await what is returned by
   // fs(...) since it's just a lightweight wrapper object to format appropriate RPC calls.
   private filesystem?: FilesystemClient;
+  private filesystemPromise?: Promise<FilesystemClient>;
   clearFilesystemClient = () => {
     this.filesystem = undefined;
+    this.filesystemPromise = undefined;
   };
   fs = (): FilesystemClient => {
-    this.filesystem ??= webapp_client.conat_client
-      .conat()
-      .fs({ project_id: this.project_id });
+    this.filesystem ??= new Proxy(
+      {},
+      {
+        get: (_target, prop) => {
+          return async (...args) => {
+            this.filesystemPromise ??= webapp_client.conat_client.projectFs({
+              project_id: this.project_id,
+              caller: "ProjectActions.fs",
+            });
+            const fs = await this.filesystemPromise;
+            const value = (fs as any)[prop];
+            if (typeof value !== "function") {
+              return value;
+            }
+            return await value.apply(fs, args);
+          };
+        },
+      },
+    ) as FilesystemClient;
     return this.filesystem;
   };
 

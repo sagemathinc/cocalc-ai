@@ -1223,7 +1223,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
 
       if (lifecycleState === "archived") {
-        this.resetProjectRuntimeAfterArchiveCycle(project_id);
+        await this.resetProjectRuntimeAfterArchiveCycle(project_id, {
+          closeOpenFiles: false,
+        });
       }
 
       const t0 = webapp_client.server_time().getTime();
@@ -1240,6 +1242,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
           wait: false,
         });
         actions.trackStartOp(resp);
+        const host_id = store.getIn(["project_map", project_id, "host_id"]) as
+          | string
+          | undefined;
+        if (host_id) {
+          void this.ensure_host_info(host_id, true);
+        }
       } catch (err) {
         actions.setState({ control_error: `Error starting project -- ${err}` });
         throw err;
@@ -1256,9 +1264,40 @@ export class ProjectsActions extends Actions<ProjectsState> {
     },
   );
 
-  private resetProjectRuntimeAfterArchiveCycle = (project_id: string) => {
+  private resetProjectRuntimeAfterArchiveCycle = async (
+    project_id: string,
+    opts: {
+      closeOpenFiles?: boolean;
+    } = {},
+  ) => {
+    const host_id = store.getIn(["project_map", project_id, "host_id"]) as
+      | string
+      | undefined;
     webapp_client.conat_client.releaseProjectHostRouting({ project_id });
-    redux.removeProjectReferences(project_id);
+    if (host_id) {
+      webapp_client.conat_client.refreshProjectHostRouting({
+        source_host_id: host_id,
+        dest_host_id: host_id,
+      });
+      await this.ensure_host_info(host_id, true);
+    }
+    const projectActions = redux.getProjectActions(project_id) as
+      | {
+          clearFilesystemClient?: () => void;
+          close_all_files?: () => void;
+          set_active_tab?: (
+            tab: string,
+            opts?: { change_history?: boolean },
+          ) => void;
+        }
+      | undefined;
+    projectActions?.clearFilesystemClient?.();
+    if (opts.closeOpenFiles !== false) {
+      projectActions?.close_all_files?.();
+      projectActions?.set_active_tab?.("settings", {
+        change_history: false,
+      });
+    }
   };
 
   // allow UI elements to open the move modal via project actions
@@ -1660,8 +1699,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     actions?.setState({ control_error: "", control_status: "" });
     this.optimisticProjectStateUpdate(project_id, "archived");
-    redux.getProjectActions(project_id)?.clearFilesystemClient?.();
-    this.resetProjectRuntimeAfterArchiveCycle(project_id);
+    await this.resetProjectRuntimeAfterArchiveCycle(project_id, {
+      closeOpenFiles: true,
+    });
     this.project_log(project_id, {
       event: "project_archived",
       ...store.classify_project(project_id),

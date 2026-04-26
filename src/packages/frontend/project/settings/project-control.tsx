@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Space } from "antd";
+import { Button, Space } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 import BootLog from "../bootlog";
 import { React, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -30,7 +30,6 @@ import MoveProject from "./move-project";
 import { Project } from "./types";
 import RootFilesystemImage from "./root-filesystem-image";
 import ProjectControlError from "./project-control-error";
-import ProjectControlStatus from "./project-control-status";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
@@ -126,11 +125,16 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }
 
   function render_restart_button(commands): Rendered {
+    const allowStart = displayStateValue === "archived";
     return (
       <RestartProject
         size={isFlyout ? "small" : "large"}
         project_id={project_id}
-        disabled={!commands.includes("start") && !commands.includes("stop")}
+        disabled={
+          !allowStart &&
+          !commands.includes("start") &&
+          !commands.includes("stop")
+        }
       />
     );
   }
@@ -145,6 +149,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
         state,
       );
+    const archived = state === "archived";
     return (
       <Space.Compact
         style={{ marginTop: "10px", marginBottom: "10px" }}
@@ -157,11 +162,22 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
           size={isFlyout ? "small" : "large"}
           disabled={archiveDisabled}
         />
-        <CloneProject project_id={project_id} />
-        <MoveProject
-          project_id={project_id}
-          disabled={state == "starting" || state == "stopping"}
-        />
+        <CloneProject project_id={project_id} disabled={archived} />
+        {archived ? (
+          <Button disabled size={isFlyout ? "small" : "large"}>
+            Archived
+          </Button>
+        ) : (
+          <MoveProject
+            project_id={project_id}
+            disabled={
+              state == "starting" ||
+              state == "stopping" ||
+              state == "archiving" ||
+              state == "unarchiving"
+            }
+          />
+        )}
       </Space.Compact>
     );
   }
@@ -294,7 +310,6 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
         <div>
           {render_action_buttons()}
           {render_archived_note()}
-          <ProjectControlStatus style={{ margin: "10px 0px" }} />
           <ProjectControlError
             style={{ margin: "10px 0px" }}
             showStopButton={project.getIn(["state", "state"]) == "running"}

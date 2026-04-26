@@ -65,6 +65,7 @@ import {
 } from "@cocalc/frontend/projects/host-operational";
 import { projectThemeColor } from "@cocalc/frontend/projects/theme";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
+import ProjectControlStatus from "@cocalc/frontend/project/settings/project-control-status";
 import { workspaceStrongThemeChrome } from "../workspaces/strong-theme";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import MoveInProgress from "./move-in-progress";
@@ -593,6 +594,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
           overflowX: "auto",
         }}
       >
+        <ProjectControlStatus banner />
         <StartInProgress project_id={project_id} />
         {START_BANNER && <StartButton />}
         <div

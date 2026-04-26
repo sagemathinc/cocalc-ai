@@ -33,6 +33,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
     },
     conat_client: {
       releaseProjectHostRouting: jest.fn(),
+      refreshProjectHostRouting: jest.fn(),
       hub: {
         projects: {
           stop: jest.fn(async () => undefined),
@@ -77,14 +78,17 @@ describe("ProjectsActions archive flow", () => {
   function configureProject({
     state,
     lastEdited,
+    hostId,
   }: {
     state: string;
     lastEdited?: Date;
+    hostId?: string;
   }) {
     const projectMap = ImmutableMap([
       [
         project_id,
         ImmutableMap({
+          host_id: hostId,
           state: ImmutableMap({ state }),
           last_edited: lastEdited,
         }),
@@ -108,12 +112,16 @@ describe("ProjectsActions archive flow", () => {
     const log = jest.fn(async () => undefined);
     const setState = jest.fn();
     const clearFilesystemClient = jest.fn();
+    const close_all_files = jest.fn();
+    const set_active_tab = jest.fn();
     const trackBackupOp = jest.fn();
     const trackStartOp = jest.fn();
     const projectActions = {
       log,
       setState,
       clearFilesystemClient,
+      close_all_files,
+      set_active_tab,
       trackBackupOp,
       trackStartOp,
     };
@@ -132,6 +140,8 @@ describe("ProjectsActions archive flow", () => {
       log,
       setState,
       clearFilesystemClient,
+      close_all_files,
+      set_active_tab,
       trackBackupOp,
       trackStartOp,
     };
@@ -150,6 +160,7 @@ describe("ProjectsActions archive flow", () => {
     configureProject({
       state: "running",
       lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+      hostId: "host-1",
     });
     getBackupsMock.mockResolvedValue([
       {
@@ -158,12 +169,17 @@ describe("ProjectsActions archive flow", () => {
         summary: {},
       },
     ] as any);
-    const { actions, setState, clearFilesystemClient, trackBackupOp } =
-      makeActions();
-    const removeProjectReferences = jest.spyOn(
-      appRedux,
-      "removeProjectReferences",
-    );
+    const {
+      actions,
+      setState,
+      clearFilesystemClient,
+      close_all_files,
+      set_active_tab,
+      trackBackupOp,
+    } = makeActions();
+    const ensureHostInfo = jest
+      .spyOn(actions, "ensure_host_info" as any)
+      .mockResolvedValue(undefined as any);
 
     await actions.archive_project(project_id);
 
@@ -201,10 +217,20 @@ describe("ProjectsActions archive flow", () => {
       control_status: "",
     });
     expect(clearFilesystemClient).toHaveBeenCalled();
+    expect(close_all_files).toHaveBeenCalled();
+    expect(set_active_tab).toHaveBeenCalledWith("settings", {
+      change_history: false,
+    });
     expect(
       mockedWebappClient.conat_client.releaseProjectHostRouting,
     ).toHaveBeenCalledWith({ project_id });
-    expect(removeProjectReferences).toHaveBeenCalledWith(project_id);
+    expect(
+      mockedWebappClient.conat_client.refreshProjectHostRouting,
+    ).toHaveBeenCalledWith({
+      source_host_id: "host-1",
+      dest_host_id: "host-1",
+    });
+    expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
   });
 
   it("reuses a fresh backup and skips the extra backup LRO", async () => {
@@ -271,12 +297,12 @@ describe("ProjectsActions archive flow", () => {
     configureProject({
       state: "archived",
       lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+      hostId: "host-1",
     });
     const { actions, trackStartOp, setState } = makeActions();
-    const removeProjectReferences = jest.spyOn(
-      appRedux,
-      "removeProjectReferences",
-    );
+    const ensureHostInfo = jest
+      .spyOn(actions, "ensure_host_info" as any)
+      .mockResolvedValue(undefined as any);
     jest
       .spyOn(actions as any, "project_log")
       .mockImplementation(async () => {});
@@ -287,7 +313,7 @@ describe("ProjectsActions archive flow", () => {
     expect(
       mockedWebappClient.conat_client.releaseProjectHostRouting,
     ).toHaveBeenCalledWith({ project_id });
-    expect(removeProjectReferences).toHaveBeenCalledWith(project_id);
+    expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
     expect(
       mockedWebappClient.conat_client.hub.projects.start,
     ).toHaveBeenCalledWith({

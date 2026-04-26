@@ -1565,6 +1565,7 @@ async function restoreSnapshot({
         }).catch(() => {});
         throw err;
       }
+      invalidateProjectFsServer(project_id);
       void touchProjectLastEdited(project_id, "restore-snapshot");
       return;
     }
@@ -1632,6 +1633,7 @@ async function restoreSnapshot({
   if (oldHomePath) {
     await deleteSubvolumeTree(oldHomePath);
   }
+  invalidateProjectFsServer(project_id);
   void touchProjectLastEdited(project_id, "restore-snapshot");
 }
 
@@ -2790,6 +2792,7 @@ async function restoreBackup({
       },
     );
   }
+  invalidateProjectFsServer(project_id);
   void touchProjectLastEdited(project_id, "restore-backup");
 }
 
@@ -2824,6 +2827,7 @@ async function finalizeRestoreStaging({
   handle: RestoreStagingHandle;
 }): Promise<void> {
   await finalizeRestoreStagingBtrfs(handle);
+  invalidateProjectFsServer(handle.project_id);
   void touchProjectLastEdited(handle.project_id, "restore-staging");
 }
 
