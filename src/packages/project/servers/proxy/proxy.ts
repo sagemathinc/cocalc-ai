@@ -121,6 +121,86 @@ function isExplicitDownloadRequest(req: http.IncomingMessage): boolean {
   }
 }
 
+function formatManagedEgressCategory(category: string): string {
+  if (category === "file-download") return "File downloads";
+  return category.replace(/[-_]/g, " ");
+}
+
+function formatByteCount(bytes?: number): string {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
+    return "unknown";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = value >= 10 || unit === 0 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unit]}`;
+}
+
+async function checkManagedFileDownloadAllowedBestEffort(): Promise<
+  | {
+      allowed: true;
+    }
+  | {
+      allowed: false;
+      message: string;
+    }
+> {
+  try {
+    const policy =
+      await getProjectHubApi().system.getManagedProjectEgressPolicy({
+        project_id,
+        category: "file-download",
+      });
+    if (policy.allowed) {
+      return { allowed: true };
+    }
+    const breakdown = Object.entries(
+      policy.managed_egress_categories_5h_bytes ?? {},
+    )
+      .filter(
+        ([, bytes]) =>
+          typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0,
+      )
+      .map(
+        ([category, bytes]) =>
+          `${formatManagedEgressCategory(category)}: ${formatByteCount(bytes)}`,
+      );
+    const lines = [
+      "Managed download limit reached for this account.",
+      "New file downloads are temporarily blocked until the egress usage window resets.",
+    ];
+    if (policy.egress_5h_bytes != null) {
+      lines.push(
+        `5-hour usage: ${formatByteCount(policy.managed_egress_5h_bytes)} / ${formatByteCount(policy.egress_5h_bytes)}.`,
+      );
+    }
+    if (policy.egress_7d_bytes != null) {
+      lines.push(
+        `7-day usage: ${formatByteCount(policy.managed_egress_7d_bytes)} / ${formatByteCount(policy.egress_7d_bytes)}.`,
+      );
+    }
+    if (breakdown.length > 0) {
+      lines.push(
+        `Current managed egress categories (5 hours): ${breakdown.join(", ")}.`,
+      );
+    }
+    return {
+      allowed: false,
+      message: lines.join("\n"),
+    };
+  } catch (err) {
+    logger.warn("unable to evaluate managed file download policy", {
+      err: `${err}`,
+    });
+    return { allowed: true };
+  }
+}
+
 async function recordManagedFileDownloadBestEffort(opts: {
   bytes: number;
   request_path: string;
@@ -894,6 +974,12 @@ ${entries}
       headers["Content-Range"] = `bytes ${start}-${end}/${info.size}`;
     }
     if (req.method === "GET" && isExplicitDownloadRequest(req)) {
+      const policy = await checkManagedFileDownloadAllowedBestEffort();
+      if (!policy.allowed) {
+        res.writeHead(429, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end(policy.message);
+        return;
+      }
       await recordManagedFileDownloadBestEffort({
         bytes: contentLength,
         request_path: req.url ?? "",

@@ -50,7 +50,7 @@ async function ensureSchema(): Promise<void> {
   await ensuredSchema;
 }
 
-async function getProjectOwnerAccountId(
+export async function getProjectOwnerAccountId(
   project_id: string,
 ): Promise<string | undefined> {
   const { rows } = await getPool("medium").query<{ account_id: string }>(

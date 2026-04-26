@@ -129,6 +129,7 @@ import { getProjectHostDefaultParallelLimit } from "@cocalc/server/lro/project-h
 import { getAccountProjectIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-project-index-maintenance";
 import { getAccountCollaboratorIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-collaborator-index-maintenance";
 import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-notification-index-maintenance";
+import { getManagedProjectEgressPolicy as getManagedProjectEgressPolicyRaw } from "@cocalc/server/membership/managed-egress-policy";
 import { recordManagedProjectEgress as recordManagedProjectEgressRaw } from "@cocalc/server/membership/managed-egress";
 import { getAppFeedData as listAppNews0 } from "@cocalc/database/postgres/news";
 import type { NewsItemWebapp } from "@cocalc/util/types/news";
@@ -2430,6 +2431,28 @@ export async function recordManagedProjectEgress({
     category,
     bytes,
     metadata,
+  });
+}
+
+export async function getManagedProjectEgressPolicy({
+  account_id,
+  host_id,
+  project_id,
+  category,
+}: {
+  account_id?: string;
+  host_id?: string;
+  project_id?: string;
+  category: "file-download";
+}) {
+  const resolvedProjectId = await resolveProjectContext({
+    account_id,
+    host_id,
+    project_id,
+  });
+  return await getManagedProjectEgressPolicyRaw({
+    project_id: resolvedProjectId,
+    category,
   });
 }
 
