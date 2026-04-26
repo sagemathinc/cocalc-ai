@@ -38,7 +38,8 @@ async function assertDownloadAllowed(src: string): Promise<void> {
   throw Error(`Unable to start download (HTTP ${response.status})`);
 }
 
-// Cause a file at a given url to get downloaded... using an iframe.  Don't await this.
+// Cause a file at a given url to get downloaded using an iframe.
+// Awaiting this only waits for the preflight and iframe creation, not the full browser download.
 export async function download_file(src: string): Promise<void> {
   await assertDownloadAllowed(src);
   // NOTE: the file has to be served with
@@ -50,11 +51,13 @@ export async function download_file(src: string): Promise<void> {
     .attr("src", src)
     .appendTo($("body"));
 
-  // Wait a minute...
-  await delay(60000);
+  void (async () => {
+    // Wait a minute...
+    await delay(60000);
 
-  // Then get rid of that iframe
-  iframe.remove();
+    // Then get rid of that iframe
+    iframe.remove();
+  })();
 }
 
 // These are used to disable pointer events for iframes when
