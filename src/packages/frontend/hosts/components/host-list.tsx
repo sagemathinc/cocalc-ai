@@ -45,6 +45,7 @@ import { HostBackupStatus } from "./host-backup-status";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
 import { HostDaemonHealthSummary } from "./host-daemon-health-summary";
+import { HostErrorDetails } from "./host-error-details";
 import { HostProjectStatus } from "./host-project-status";
 import {
   confirmBulkHostDeprovision,
@@ -695,9 +696,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             <Popover
               title="Error"
               content={
-                <div style={{ maxWidth: 360, whiteSpace: "pre-wrap" }}>
-                  {host.last_error}
-                </div>
+                <HostErrorDetails message={host.last_error} maxHeight={240} />
               }
             >
               <Button

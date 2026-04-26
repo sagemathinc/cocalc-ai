@@ -1,6 +1,7 @@
 import { Layout } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
+import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { HostCreateCard } from "./components/host-create-card";
 import { HostCreatePanel } from "./components/host-create-panel";
 import { HostDrawer } from "./components/host-drawer";
@@ -10,6 +11,7 @@ import { SelfHostRemoveModal } from "./components/self-host-remove-modal";
 import { SelfHostSetupModal } from "./components/self-host-setup-modal";
 import { WRAP_STYLE } from "./constants";
 import { useHostsPageViewModel } from "./hooks/use-hosts-page-view-model";
+import { buildCreateSimilarHostFormValues } from "./utils/create-similar";
 
 const CREATE_PANEL_WIDTH_STORAGE_KEY = "cocalc:hosts:createPanelWidth";
 const CREATE_PANEL_OPEN_STORAGE_KEY = "cocalc:hosts:createPanelOpen";
@@ -80,6 +82,43 @@ export const HostsPage: React.FC = () => {
   React.useEffect(() => {
     persistCreatePanelOpen(createPanelOpen);
   }, [createPanelOpen]);
+  const closeHostDrawer = hostDrawerVm.onClose;
+  const openCreateSimilar = React.useCallback(
+    (host: Host) => {
+      const form = createVm.form.form;
+      const providerOptions = createVm.provider.providerOptions.map(
+        (option) => option.value,
+      );
+      const nextValues = buildCreateSimilarHostFormValues(
+        host,
+        providerOptions,
+      );
+      closeHostDrawer();
+      setCreatePanelOpen(true);
+      form.resetFields();
+      form.setFieldsValue(nextValues);
+    },
+    [closeHostDrawer, createVm.form.form, createVm.provider.providerOptions],
+  );
+  const hostDrawerVmWithCreateSimilar = React.useMemo(
+    () => ({
+      ...hostDrawerVm,
+      onCreateSimilar: createVm.permissions.canCreateHosts
+        ? openCreateSimilar
+        : undefined,
+    }),
+    [createVm.permissions.canCreateHosts, hostDrawerVm, openCreateSimilar],
+  );
+  const createVmWithCloseOnCreate = React.useMemo(
+    () => ({
+      ...createVm,
+      form: {
+        ...createVm.form,
+        onCreated: IS_MOBILE ? undefined : () => setCreatePanelOpen(false),
+      },
+    }),
+    [createVm],
+  );
 
   const toggleCreatePanel = React.useCallback(() => {
     setCreatePanelOpen((prev) => !prev);
@@ -89,7 +128,7 @@ export const HostsPage: React.FC = () => {
   if (IS_MOBILE) {
     return (
       <div className="smc-vfill" style={WRAP_STYLE}>
-        <HostCreateCard vm={createVm} />
+        <HostCreateCard vm={createVmWithCloseOnCreate} />
         <div style={{ marginTop: 16 }}>
           <HostList
             vm={{
@@ -99,7 +138,7 @@ export const HostsPage: React.FC = () => {
             }}
           />
         </div>
-        <HostDrawer vm={hostDrawerVm} />
+        <HostDrawer vm={hostDrawerVmWithCreateSimilar} />
         <HostEditModal {...editVm} />
         <SelfHostSetupModal {...setupVm} />
         <SelfHostRemoveModal {...removeVm} />
@@ -125,7 +164,7 @@ export const HostsPage: React.FC = () => {
             setWidth={setCreatePanelWidth}
             onHide={toggleCreatePanel}
           >
-            <HostCreateCard vm={createVm} />
+            <HostCreateCard vm={createVmWithCloseOnCreate} />
           </HostCreatePanel>
         )}
         <Layout.Content
@@ -147,7 +186,7 @@ export const HostsPage: React.FC = () => {
           />
         </Layout.Content>
       </Layout>
-      <HostDrawer vm={hostDrawerVm} />
+      <HostDrawer vm={hostDrawerVmWithCreateSimilar} />
       <HostEditModal {...editVm} />
       <SelfHostSetupModal {...setupVm} />
       <SelfHostRemoveModal {...removeVm} />

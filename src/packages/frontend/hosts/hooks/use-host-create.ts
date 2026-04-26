@@ -34,7 +34,7 @@ export const useHostCreate = ({
   const [creating, setCreating] = useState(false);
 
   const onCreate = async (vals: any) => {
-    if (creating) return;
+    if (creating) return false;
     setCreating(true);
     try {
       const payload = buildCreateHostPayload(vals, { fieldOptions, catalog });
@@ -48,8 +48,10 @@ export const useHostCreate = ({
         onHostOp?.(created.id, op);
       }
       await refresh();
+      return true;
     } catch (err) {
       console.error(err);
+      return false;
     } finally {
       setCreating(false);
     }

@@ -32,10 +32,18 @@ import { Icon, Paragraph, Text, Tooltip } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
-import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
+import {
+  submitNavigatorPromptInWorkspaceChat,
+  submitNavigatorPromptToCurrentThread,
+} from "@cocalc/frontend/project/new/navigator-intents";
 import track from "@cocalc/frontend/user-tracking";
 import { Kernel as KernelType } from "@cocalc/jupyter/util/misc";
 import * as misc from "@cocalc/util/misc";
+import {
+  buildJupyterKernelAgentPrompt,
+  POPULAR_JUPYTER_KERNEL_SPECS,
+  type JupyterKernelInstallSpec,
+} from "@cocalc/util/jupyter-kernel-installs";
 import { COLORS } from "@cocalc/util/theme";
 import { KernelStar } from "../components/run-button/kernel-star";
 import { JupyterActions } from "./browser-actions";
@@ -106,50 +114,93 @@ export function KernelSelector({
   const kernels_by_language: undefined | OrderedMap<string, List<string>> =
     useRedux([actions.name, "kernels_by_language"]);
   const project_id = redux_project_id ?? actions.project_id;
-  const [sendingAgent, setSendingAgent] = useState<boolean>(false);
+  const [sendingAgentTarget, setSendingAgentTarget] = useState<string | null>(
+    null,
+  );
 
-  function buildKernelInstallPrompt(requestedKernel?: string): string {
-    const requested = `${requestedKernel ?? ""}`.trim();
-    const parts = [
-      requested
-        ? `Install or enable the Jupyter kernel "${requested}" for this notebook if possible.`
-        : "Install or enable a suitable Jupyter kernel for this notebook if possible.",
-      `Notebook path: ${actions.path}`,
-      `CoCalc checks kernels using the standard Jupyter kernelspec search paths, roughly equivalent to:\n\njupyter kernelspec list\njupyter --paths --json`,
-    ];
-    if (requested) {
-      parts.push(
-        `After making changes, verify that the kernel "${requested}" appears in the Jupyter kernelspec list or explain clearly why it still cannot be provided.`,
-      );
-    } else {
-      parts.push(
-        "After making changes, verify that at least one usable kernel appears in the Jupyter kernelspec list or explain clearly why no kernel can be provided.",
-      );
-    }
-    return parts.join("\n\n");
+  function kernelInstallTagSuffix(opts: {
+    requestedKernel?: string;
+    spec?: JupyterKernelInstallSpec;
+  }): string {
+    const raw = `${opts.spec?.key ?? opts.requestedKernel ?? "generic"}`
+      .trim()
+      .toLowerCase();
+    return raw.replace(/[^a-z0-9_.-]+/g, "-") || "generic";
   }
 
-  async function askAgentToInstallKernel(requestedKernel?: string) {
+  function kernelInstallVisiblePrompt(opts: {
+    requestedKernel?: string;
+    spec?: JupyterKernelInstallSpec;
+  }): string {
+    if (opts.spec != null) {
+      return `Install ${opts.spec.label}`;
+    }
+    const requested = `${opts.requestedKernel ?? ""}`.trim();
+    return requested
+      ? `Install Jupyter kernel ${requested}`
+      : "Install a Jupyter kernel";
+  }
+
+  function kernelInstallTitle(opts: {
+    requestedKernel?: string;
+    spec?: JupyterKernelInstallSpec;
+  }): string {
+    if (opts.spec != null) {
+      return `Install ${opts.spec.label}`;
+    }
+    const requested = `${opts.requestedKernel ?? ""}`.trim();
+    return requested
+      ? `Install Jupyter kernel ${requested}`
+      : "Install Jupyter kernel";
+  }
+
+  async function askAgentToInstallKernel(opts?: {
+    requestedKernel?: string;
+    spec?: JupyterKernelInstallSpec;
+  }) {
     if (!project_id) return;
     try {
-      setSendingAgent(true);
-      const requested = `${requestedKernel ?? ""}`.trim();
-      const visiblePrompt = requested
-        ? `Install kernel ${requested}`
-        : "Install a Jupyter kernel";
-      const sent = await submitNavigatorPromptInWorkspaceChat({
+      const requested =
+        `${opts?.spec?.requestedKernel ?? opts?.requestedKernel ?? ""}`.trim();
+      const targetKey =
+        opts?.spec != null
+          ? `popular:${opts.spec.key}`
+          : requested || "generic";
+      setSendingAgentTarget(targetKey);
+      const prompt = buildJupyterKernelAgentPrompt({
+        notebookPath: actions.path,
+        requestedKernel: requested,
+        spec: opts?.spec,
+      });
+      const visiblePrompt = kernelInstallVisiblePrompt(opts ?? {});
+      const title = kernelInstallTitle(opts ?? {});
+      const tag = requested
+        ? `intent:jupyter-install-kernel:${kernelInstallTagSuffix(opts ?? {})}`
+        : "intent:jupyter-install-kernel";
+      let sent = await submitNavigatorPromptInWorkspaceChat({
         project_id,
         path: actions.path,
-        prompt: buildKernelInstallPrompt(requested),
+        prompt,
         visiblePrompt,
-        title: "Install Jupyter kernel",
-        tag: requested
-          ? `intent:jupyter-install-kernel:${requested}`
-          : "intent:jupyter-install-kernel",
+        title,
+        tag,
         forceCodex: true,
         openFloating: true,
         waitForAgent: false,
       });
+      if (!sent) {
+        sent = await submitNavigatorPromptToCurrentThread({
+          project_id,
+          path: actions.path,
+          prompt,
+          visiblePrompt,
+          title,
+          tag,
+          forceCodex: true,
+          openFloating: true,
+          createNewThread: true,
+        });
+      }
       if (!sent) {
         throw new Error("Unable to submit request to Agent.");
       }
@@ -159,21 +210,67 @@ export function KernelSelector({
         message: `Unable to ask Agent for help: ${err}`,
       });
     } finally {
-      setSendingAgent(false);
+      setSendingAgentTarget((current) =>
+        current ===
+        (opts?.spec != null
+          ? `popular:${opts.spec.key}`
+          : `${opts?.requestedKernel ?? ""}`.trim() || "generic")
+          ? null
+          : current,
+      );
     }
   }
 
   function renderAskAgentButton(requestedKernel?: string): Rendered {
     if (!project_id) return;
+    const targetKey = `${requestedKernel ?? ""}`.trim() || "generic";
     return (
       <Button
         size="small"
-        loading={sendingAgent}
-        onClick={() => void askAgentToInstallKernel(requestedKernel)}
+        loading={sendingAgentTarget === targetKey}
+        onClick={() => void askAgentToInstallKernel({ requestedKernel })}
       >
         Agent
       </Button>
     );
+  }
+
+  function renderPopularKernelAgentButton(
+    spec: JupyterKernelInstallSpec,
+  ): Rendered {
+    if (!project_id) return;
+    return (
+      <Button
+        size="small"
+        loading={sendingAgentTarget === `popular:${spec.key}`}
+        onClick={() => void askAgentToInstallKernel({ spec })}
+      >
+        Agent
+      </Button>
+    );
+  }
+
+  function render_popular_kernel_install_items(): Rendered[] {
+    return POPULAR_JUPYTER_KERNEL_SPECS.map((spec) => (
+      <Descriptions.Item key={`popular-kernel-${spec.key}`} label={spec.label}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: "12px",
+            alignItems: "flex-start",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div>{spec.description}</div>
+            <Text type="secondary" style={{ fontSize: "12px" }}>
+              {spec.probeSummary}
+            </Text>
+          </div>
+          {renderPopularKernelAgentButton(spec)}
+        </div>
+      </Descriptions.Item>
+    ));
   }
 
   function kernel_name(name: string): string | undefined {
@@ -315,11 +412,12 @@ export function KernelSelector({
                 name="question-circle"
               />
             </Popover>{" "}
-            for kernels. Need a new kernel? Ask Agent to install it.
+            for kernels. Install one of these common kernels with Agent, or ask
+            Agent for a specific kernel.
           </Paragraph>
-          {renderAskAgentButton()}
         </Space>
       </Descriptions.Item>,
+      ...render_popular_kernel_install_items(),
     ];
   }
 
@@ -496,7 +594,7 @@ export function KernelSelector({
                   Continue without kernel
                 </Button>
               )}
-              {renderAskAgentButton(kernel ?? undefined)}
+              {kernel != null ? renderAskAgentButton(kernel) : undefined}
             </div>
           </div>
         );
@@ -548,9 +646,11 @@ export function KernelSelector({
               ),
             }}
           />
-          <div style={{ marginTop: "10px" }}>
-            {renderAskAgentButton(kernel ?? undefined)}
-          </div>
+          {kernel != null ? (
+            <div style={{ marginTop: "10px" }}>
+              {renderAskAgentButton(kernel)}
+            </div>
+          ) : undefined}
         </Paragraph>
       );
     } else {

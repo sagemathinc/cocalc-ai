@@ -16,7 +16,8 @@ export type HostCreateViewModel = {
   form: {
     form: FormInstance;
     creating: boolean;
-    onCreate: (vals: any) => Promise<void>;
+    onCreate: (vals: any) => Promise<boolean>;
+    onCreated?: () => void;
   };
   provider: {
     providerOptions: Array<{ value: HostProvider; label: string }>;
