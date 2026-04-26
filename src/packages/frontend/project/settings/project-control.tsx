@@ -168,7 +168,9 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
         state,
       );
-    const archived = lifecycleDisplayState === "archived";
+    const archived =
+      lifecycleDisplayState === "archived" ||
+      (state === "archived" && lifecycleDisplayState !== "new");
     return (
       <Space.Compact
         style={{ marginTop: "10px", marginBottom: "10px" }}

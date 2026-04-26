@@ -114,16 +114,25 @@ export function normalizeProjectStateForDisplay({
   return state;
 }
 
-function hasIndexedBackup(lastBackup: unknown): boolean {
+function indexedBackupState(
+  lastBackup: unknown,
+): "present" | "missing" | "unknown" {
+  if (typeof lastBackup === "undefined") {
+    return "unknown";
+  }
   if (lastBackup instanceof Date) {
-    return Number.isFinite(lastBackup.valueOf());
+    return Number.isFinite(lastBackup.valueOf()) ? "present" : "missing";
   }
   if (typeof lastBackup === "string") {
-    return (
-      lastBackup.trim().length > 0 && Number.isFinite(Date.parse(lastBackup))
-    );
+    return lastBackup.trim().length > 0 &&
+      Number.isFinite(Date.parse(lastBackup))
+      ? "present"
+      : "missing";
   }
-  return false;
+  if (lastBackup == null) {
+    return "missing";
+  }
+  return "unknown";
 }
 
 export function getProjectLifecycleDisplayState({
@@ -145,5 +154,12 @@ export function getProjectLifecycleDisplayState({
   if (state !== "archived") {
     return state;
   }
-  return hasIndexedBackup(lastBackup) ? "archived" : "new";
+  const backupState = indexedBackupState(lastBackup);
+  if (backupState === "present") {
+    return "archived";
+  }
+  if (backupState === "missing") {
+    return "new";
+  }
+  return undefined;
 }

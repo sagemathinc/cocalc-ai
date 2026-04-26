@@ -10,6 +10,11 @@ jest.mock("antd", () => ({
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
+  redux: {
+    getProjectActions: () => ({
+      setState: jest.fn(),
+    }),
+  },
   useTypedRedux: (...args: any[]) => useTypedReduxMock(...args),
 }));
 
@@ -31,12 +36,25 @@ describe("ProjectControlStatus", () => {
   });
 
   it("renders the current control status", () => {
-    useTypedReduxMock.mockReturnValue(
-      "Creating final backup before archive...",
-    );
+    useTypedReduxMock
+      .mockReturnValueOnce("Creating final backup before archive...")
+      .mockReturnValueOnce(undefined);
     render(<ProjectControlStatus />);
     expect(
       screen.getByText("Creating final backup before archive..."),
     ).toBeInTheDocument();
+  });
+
+  it("hides stale archive status once the project is archived", () => {
+    useTypedReduxMock
+      .mockReturnValueOnce("Creating final backup before archive...")
+      .mockReturnValueOnce({
+        getIn: (path: string[]) =>
+          path.join(".") === "11111111-1111-4111-8111-111111111111.state.state"
+            ? "archived"
+            : undefined,
+      });
+    const { container } = render(<ProjectControlStatus />);
+    expect(container).toBeEmptyDOMElement();
   });
 });

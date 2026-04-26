@@ -25,12 +25,23 @@ function extractDownloadPath(url: string): string {
   return decodedPath.startsWith("/") ? decodedPath : `/${decodedPath}`;
 }
 
+function hasExplicitDownloadQuery(url: string): boolean {
+  try {
+    const parsed = new URL(url, "http://127.0.0.1");
+    return parsed.searchParams.has("download");
+  } catch {
+    return false;
+  }
+}
+
 export async function handleFileDownload({
   req,
   res,
   url,
   allowUnsafe,
   client,
+  beforeExplicitDownload,
+  onExplicitDownloadComplete,
   // allow a long download time (1 hour), since files can be large and
   // networks can be slow.
   maxWait = 1000 * 60 * 60,
@@ -40,6 +51,18 @@ export async function handleFileDownload({
   url?: string;
   allowUnsafe?: boolean;
   client?: ConatClient;
+  beforeExplicitDownload?: (opts: {
+    project_id: string;
+    path: string;
+    request_path: string;
+  }) => Promise<{ allowed: true } | { allowed: false; message: string }>;
+  onExplicitDownloadComplete?: (opts: {
+    project_id: string;
+    path: string;
+    request_path: string;
+    bytes: number;
+    partial: boolean;
+  }) => Promise<void>;
   maxWait?: number;
 }) {
   url ??= req.url;
@@ -54,8 +77,9 @@ export async function handleFileDownload({
   logger.debug("conat: get file", { project_id, path, url });
   const fileName = path_split(path).tail;
   const contentType = mime.lookup(fileName);
+  const explicitDownload = hasExplicitDownloadQuery(url);
   if (
-    req.query.download != null ||
+    explicitDownload ||
     (!allowUnsafe && DANGEROUS_CONTENT_TYPE.has(contentType))
   ) {
     const fileNameEncoded = encodeURIComponent(fileName)
@@ -67,8 +91,27 @@ export async function handleFileDownload({
     );
   }
   res.setHeader("Content-type", contentType);
+  if (explicitDownload) {
+    res.setHeader("Cache-Control", "private, no-store");
+  }
+
+  if (explicitDownload && beforeExplicitDownload) {
+    const allowed = await beforeExplicitDownload({
+      project_id,
+      path,
+      request_path: url,
+    });
+    if (!allowed.allowed) {
+      res.statusCode = 429;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end(allowed.message);
+      return;
+    }
+  }
 
   let headersSent = false;
+  let bytesWritten = 0;
+  let partial = false;
   res.on("finish", () => {
     headersSent = true;
   });
@@ -80,13 +123,28 @@ export async function handleFileDownload({
       maxWait,
     })) {
       if (res.writableEnded || res.destroyed) {
+        partial = true;
         break;
+      }
+      if (Buffer.isBuffer(chunk)) {
+        bytesWritten += chunk.length;
+      } else {
+        bytesWritten += Buffer.byteLength(chunk);
       }
       if (!res.write(chunk)) {
         await once(res, "drain");
       }
     }
     res.end();
+    if (explicitDownload && onExplicitDownloadComplete && bytesWritten > 0) {
+      await onExplicitDownloadComplete({
+        project_id,
+        path,
+        request_path: url,
+        bytes: bytesWritten,
+        partial,
+      });
+    }
   } catch (err) {
     logger.debug("ERROR streaming file", { project_id, path }, err);
     if (!headersSent) {
