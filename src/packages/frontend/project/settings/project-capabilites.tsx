@@ -4,12 +4,14 @@
  */
 
 import { ReloadOutlined } from "@ant-design/icons";
-import { Button } from "antd";
+import { Button, Space } from "antd";
 import { keys, sortBy } from "lodash";
 import React from "react";
 
 import { Rendered, redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading, SettingBox } from "@cocalc/frontend/components";
+import { alert_message } from "@cocalc/frontend/alerts";
+import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 import { tool2display } from "@cocalc/util/code-formatter";
 import { R_IDE } from "@cocalc/util/consts/ui";
 import * as misc from "@cocalc/util/misc";
@@ -46,6 +48,9 @@ const SECTION_STYLE: React.CSSProperties = {
 export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
   (props: ReactProps) => {
     const { project, project_id, mode = "project" } = props;
+    const [sendingAgentTarget, setSendingAgentTarget] = React.useState<
+      string | null
+    >(null);
 
     const available_features = useTypedRedux(
       { project_id },
@@ -56,6 +61,62 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
       "configuration_loading",
     );
     const configuration = useTypedRedux({ project_id }, "configuration");
+
+    async function sendInstallPrompt(opts: {
+      key: string;
+      title: string;
+      prompt: string;
+      visiblePrompt: string;
+      tag: string;
+    }): Promise<void> {
+      try {
+        setSendingAgentTarget(opts.key);
+        const sent = await submitNavigatorPromptInWorkspaceChat({
+          project_id,
+          prompt: opts.prompt,
+          visiblePrompt: opts.visiblePrompt,
+          title: opts.title,
+          tag: opts.tag,
+          forceCodex: true,
+          openFloating: true,
+          waitForAgent: false,
+        });
+        if (!sent) {
+          throw new Error("Unable to submit request to Agent.");
+        }
+      } catch (err) {
+        alert_message({
+          type: "error",
+          message: `Unable to ask Agent for help: ${err}`,
+        });
+      } finally {
+        setSendingAgentTarget((current) =>
+          current === opts.key ? null : current,
+        );
+      }
+    }
+
+    function renderAgentButton(opts: {
+      available: boolean;
+      key: string;
+      title: string;
+      prompt: string;
+      visiblePrompt: string;
+      tag: string;
+    }): Rendered {
+      if (opts.available) {
+        return undefined;
+      }
+      return (
+        <Button
+          size="small"
+          loading={sendingAgentTarget === opts.key}
+          onClick={() => void sendInstallPrompt(opts)}
+        >
+          Agent
+        </Button>
+      );
+    }
 
     function render_features(avail): [Rendered, boolean] {
       const feature_map = [
@@ -96,7 +157,26 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
               <Icon name={icon} style={{ color }} />
             </div>
             <div>
-              {display} {extra}
+              <Space
+                size={8}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  width: "100%",
+                }}
+              >
+                <span>
+                  {display} {extra}
+                </span>
+                {renderAgentButton({
+                  available,
+                  key: `feature:${key}`,
+                  title: `Install ${display}`,
+                  visiblePrompt: `Install ${display}`,
+                  tag: `intent:project-capability:${key}`,
+                  prompt: `Install or enable ${display} for this project if possible.\n\nInspect the project's environment and install whatever is needed so ${display} becomes available. Work directly in the project, verify the result, and explain any limit if it cannot be enabled.`,
+                })}
+              </Space>
             </div>
           </React.Fragment>,
         );
@@ -135,7 +215,26 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
               <Icon name={icon} style={{ color }} />{" "}
             </div>
             <div>
-              <b>{tool}</b> for {misc.to_human_list(langs)}
+              <Space
+                size={8}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  width: "100%",
+                }}
+              >
+                <span>
+                  <b>{tool}</b> for {misc.to_human_list(langs)}
+                </span>
+                {renderAgentButton({
+                  available,
+                  key: `formatter:${tool}`,
+                  title: `Install formatter ${tool}`,
+                  visiblePrompt: `Install formatter ${tool}`,
+                  tag: `intent:project-formatter:${tool}`,
+                  prompt: `Install or enable the ${tool} formatter for this project if possible.\n\nThis formatter is used for ${misc.to_human_list(langs)}. Inspect the project's environment, install what is needed, verify whether ${tool} becomes available, and explain any remaining limitation if it cannot be enabled.`,
+                })}
+              </Space>
             </div>
           </React.Fragment>,
         );
@@ -166,7 +265,14 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
       const [formatter] = render_formatter(avail.formatting);
 
       return (
-        <div style={SECTION_STYLE}>
+        <div
+          style={{
+            ...SECTION_STYLE,
+            gridTemplateColumns:
+              mode === "project" ? "repeat(2, minmax(0, 1fr))" : undefined,
+            alignItems: "start",
+          }}
+        >
           <section>
             <h3 style={SECTION_TITLE_STYLE}>Available Features</h3>
             {features}
