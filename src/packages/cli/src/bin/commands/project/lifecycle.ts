@@ -265,7 +265,7 @@ export function registerProjectLifecycleCommands(
             backups = [];
           }
 
-          const latestBackup = latestBackupTime(backups);
+          let latestBackup = latestBackupTime(backups);
           const lastEdited = normalizeDate(ws.last_edited);
           const backupFresh =
             latestBackup != null &&
@@ -335,6 +335,16 @@ export function registerProjectLifecycleCommands(
               throw new Error(
                 `backup failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
               );
+            }
+            try {
+              backups = (await archiveInfo.getBackups({
+                client,
+                project_id: ws.project_id,
+                indexed_only: true,
+              })) as Array<{ id: string; time: string | Date }>;
+              latestBackup = latestBackupTime(backups);
+            } catch {
+              // Keep the pre-backup observation if the refresh fails.
             }
           } else {
             progress?.({

@@ -14,12 +14,18 @@ test("project archive stops, creates a final backup, waits, and archives when th
     stderrWrites.push(String(chunk));
     return true;
   }) as any);
-  const backupsMock = mock.method(
-    archiveInfo,
-    "getBackups",
-    async () =>
-      [{ id: "backup-1", time: new Date("2026-04-25T15:00:00.000Z") }] as any,
-  );
+  let backupReads = 0;
+  const backupsMock = mock.method(archiveInfo, "getBackups", async () => {
+    backupReads += 1;
+    if (backupReads === 1) {
+      return [
+        { id: "backup-1", time: new Date("2026-04-25T15:00:00.000Z") },
+      ] as any;
+    }
+    return [
+      { id: "backup-2", time: new Date("2026-04-25T15:31:00.000Z") },
+    ] as any;
+  });
 
   const deps = {
     withContext: async (_command, _label, fn) => {
@@ -105,6 +111,7 @@ test("project archive stops, creates a final backup, waits, and archives when th
   assert.equal(returned.backup_created, true);
   assert.equal(returned.backup_reused, false);
   assert.equal(returned.stopped_first, true);
+  assert.equal(returned.latest_backup_time, "2026-04-25T15:31:00.000Z");
   assert.match(stderrWrites.join(""), /step=backup/);
   assert.match(stderrWrites.join(""), /step=archiving/);
 });
@@ -190,4 +197,5 @@ test("project archive reuses a fresh backup without creating another one", async
   assert.equal(returned.backup_reused, true);
   assert.equal(returned.backup_created, false);
   assert.equal(returned.stopped_first, false);
+  assert.equal(returned.latest_backup_time, "2026-04-25T15:45:00.000Z");
 });
