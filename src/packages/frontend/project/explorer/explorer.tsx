@@ -622,7 +622,7 @@ export function Explorer() {
     (hostUnavailable && isHostRoutingUnavailableError(error)) ||
     shouldSuppressTransientRoutingError({ error, moveLro });
   const shouldShowArchivedProjectWarning =
-    project_is_archived && isMissingProjectVolumeError(listingError);
+    project_is_archived && listingError != null;
   const shouldShowStartProjectWarning =
     !project_is_running &&
     !project_is_archived &&
