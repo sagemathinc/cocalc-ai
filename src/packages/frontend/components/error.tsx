@@ -19,7 +19,9 @@ export default function ShowError({
   noMarkdown,
 }: Props) {
   if (!error) return null;
-  const err = `${error}`.replace(/Error:/g, "").trim();
+  const err = normalizeUserFacingError(
+    `${error}`.replace(/Error:/g, "").trim(),
+  );
   return (
     <Alert
       banner={banner}
@@ -36,4 +38,15 @@ export default function ShowError({
       closable={setError != null}
     />
   );
+}
+
+function normalizeUserFacingError(error: string): string {
+  const normalized = error.trim();
+  if (
+    normalized.includes("openat2 is required in safe mode") &&
+    normalized.includes("native addon initialization failed")
+  ) {
+    return "Project filesystem is not available right now. If this project is archived, start it to restore it from backup. If it is stopped, start it to make the filesystem available again.";
+  }
+  return normalized;
 }
