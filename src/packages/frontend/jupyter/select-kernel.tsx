@@ -27,10 +27,12 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { useState } from "react";
+import { alert_message } from "@cocalc/frontend/alerts";
 import { Icon, Paragraph, Text, Tooltip } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
+import { submitNavigatorPromptInWorkspaceChat } from "@cocalc/frontend/project/new/navigator-intents";
 import track from "@cocalc/frontend/user-tracking";
 import { Kernel as KernelType } from "@cocalc/jupyter/util/misc";
 import * as misc from "@cocalc/util/misc";
@@ -91,6 +93,10 @@ export function KernelSelector({
     actions.name,
     "kernel_selection",
   ]);
+  const redux_project_id: undefined | string = useRedux([
+    actions.name,
+    "project_id",
+  ]);
   const kernels_by_name:
     | undefined
     | OrderedMap<string, ImmutableMap<string, string>> = useRedux([
@@ -99,6 +105,76 @@ export function KernelSelector({
   ]);
   const kernels_by_language: undefined | OrderedMap<string, List<string>> =
     useRedux([actions.name, "kernels_by_language"]);
+  const project_id = redux_project_id ?? actions.project_id;
+  const [sendingAgent, setSendingAgent] = useState<boolean>(false);
+
+  function buildKernelInstallPrompt(requestedKernel?: string): string {
+    const requested = `${requestedKernel ?? ""}`.trim();
+    const parts = [
+      requested
+        ? `Install or enable the Jupyter kernel "${requested}" for this notebook if possible.`
+        : "Install or enable a suitable Jupyter kernel for this notebook if possible.",
+      `Notebook path: ${actions.path}`,
+      `CoCalc checks kernels using the standard Jupyter kernelspec search paths, roughly equivalent to:\n\njupyter kernelspec list\njupyter --paths --json`,
+    ];
+    if (requested) {
+      parts.push(
+        `After making changes, verify that the kernel "${requested}" appears in the Jupyter kernelspec list or explain clearly why it still cannot be provided.`,
+      );
+    } else {
+      parts.push(
+        "After making changes, verify that at least one usable kernel appears in the Jupyter kernelspec list or explain clearly why no kernel can be provided.",
+      );
+    }
+    return parts.join("\n\n");
+  }
+
+  async function askAgentToInstallKernel(requestedKernel?: string) {
+    if (!project_id) return;
+    try {
+      setSendingAgent(true);
+      const requested = `${requestedKernel ?? ""}`.trim();
+      const visiblePrompt = requested
+        ? `Install kernel ${requested}`
+        : "Install a Jupyter kernel";
+      const sent = await submitNavigatorPromptInWorkspaceChat({
+        project_id,
+        path: actions.path,
+        prompt: buildKernelInstallPrompt(requested),
+        visiblePrompt,
+        title: "Install Jupyter kernel",
+        tag: requested
+          ? `intent:jupyter-install-kernel:${requested}`
+          : "intent:jupyter-install-kernel",
+        forceCodex: true,
+        openFloating: true,
+        waitForAgent: false,
+      });
+      if (!sent) {
+        throw new Error("Unable to submit request to Agent.");
+      }
+    } catch (err) {
+      alert_message({
+        type: "error",
+        message: `Unable to ask Agent for help: ${err}`,
+      });
+    } finally {
+      setSendingAgent(false);
+    }
+  }
+
+  function renderAskAgentButton(requestedKernel?: string): Rendered {
+    if (!project_id) return;
+    return (
+      <Button
+        size="small"
+        loading={sendingAgent}
+        onClick={() => void askAgentToInstallKernel(requestedKernel)}
+      >
+        Agent
+      </Button>
+    );
+  }
 
   function kernel_name(name: string): string | undefined {
     return kernel_attr(name, "display_name");
@@ -220,8 +296,8 @@ export function KernelSelector({
   function render_no_kernels(): Rendered[] {
     return [
       <Descriptions.Item key="no_kernels" label={<Icon name="ban" />}>
-        <Space.Compact>
-          <Paragraph>
+        <Space direction="vertical" size={8}>
+          <Paragraph style={{ marginBottom: 0 }}>
             There are no kernels available. <SiteName /> searches the standard
             paths of Jupyter{" "}
             <Popover
@@ -241,7 +317,8 @@ export function KernelSelector({
             </Popover>{" "}
             for kernels. Need a new kernel? Ask Agent to install it.
           </Paragraph>
-        </Space.Compact>
+          {renderAskAgentButton()}
+        </Space>
       </Descriptions.Item>,
     ];
   }
@@ -409,18 +486,18 @@ export function KernelSelector({
                 ? "No kernel selected."
                 : `Notebook kernel "${kernel}" is unavailable on this project.`}
             </Typography.Text>
-            {kernel == null && (
-              <div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              {kernel == null && (
                 <Button
                   size="small"
-                  style={{ marginTop: "6px" }}
                   type={no_kernel ? "primary" : "default"}
                   onClick={() => actions.select_kernel("")}
                 >
                   Continue without kernel
                 </Button>
-              </div>
-            )}
+              )}
+              {renderAskAgentButton(kernel ?? undefined)}
+            </div>
           </div>
         );
       }
@@ -471,6 +548,9 @@ export function KernelSelector({
               ),
             }}
           />
+          <div style={{ marginTop: "10px" }}>
+            {renderAskAgentButton(kernel ?? undefined)}
+          </div>
         </Paragraph>
       );
     } else {
@@ -517,7 +597,13 @@ export function KernelSelector({
         }}
       >
         <Descriptions.Item label={"Unknown Kernel"}>
-          A similar kernel might be {render_kernel_button(closestKernelName)}.
+          <div style={{ display: "grid", gap: "10px" }}>
+            <div>
+              A similar kernel might be{" "}
+              {render_kernel_button(closestKernelName)}.
+            </div>
+            {renderAskAgentButton(kernel ?? closestKernelName)}
+          </div>
         </Descriptions.Item>
       </Descriptions>
     );
