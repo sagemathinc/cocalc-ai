@@ -25,6 +25,27 @@ export const PROJECT_CAPABILITY_SPECS: readonly ProjectCapabilitySpec[] = [
     probeSummary: "command -v git-lfs",
   },
   {
+    key: "python",
+    label: "Python",
+    probeSummary: "command -v python3 || command -v python",
+  },
+  {
+    key: "pip",
+    label: "pip",
+    probeSummary: "command -v pip3 || command -v pip",
+  },
+  {
+    key: "conda",
+    label: "Conda",
+    probeSummary:
+      "command -v conda || command -v mamba || command -v micromamba",
+  },
+  {
+    key: "uv",
+    label: "uv",
+    probeSummary: "command -v uv",
+  },
+  {
     key: "imagemagick",
     label: "ImageMagick",
     probeSummary: "command -v magick || command -v convert",

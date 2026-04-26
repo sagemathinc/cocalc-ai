@@ -172,6 +172,24 @@ async function get_typst(): Promise<boolean> {
   return await have("typst");
 }
 
+async function get_python(): Promise<boolean> {
+  return (await have("python3")) || (await have("python"));
+}
+
+async function get_pip(): Promise<boolean> {
+  return (await have("pip3")) || (await have("pip"));
+}
+
+async function get_conda(): Promise<boolean> {
+  return (
+    (await have("conda")) || (await have("mamba")) || (await have("micromamba"))
+  );
+}
+
+async function get_uv(): Promise<boolean> {
+  return await have("uv");
+}
+
 // we check if we can use headless chrome to do html to pdf conversion,
 // which uses either google-chrome or chromium-browser.  Note that there
 // is no good headless pdf support using firefox.
@@ -338,6 +356,10 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       imagemagick,
       ffmpeg,
       typst,
+      python,
+      pip,
+      conda,
+      uv,
       x11,
       rmd,
       qmd,
@@ -358,6 +380,10 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       get_imagemagick(),
       get_ffmpeg(),
       get_typst(),
+      get_python(),
+      get_pip(),
+      get_conda(),
+      get_uv(),
       get_x11(),
       get_rmd(),
       get_quarto(),
@@ -385,6 +411,10 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       imagemagick,
       ffmpeg,
       typst,
+      python,
+      pip,
+      conda,
+      uv,
       html2pdf,
       pandoc,
       vscode,
