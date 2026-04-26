@@ -545,6 +545,26 @@ export class ProjectsActions extends Actions<ProjectsState> {
     } as ProjectsState);
   };
 
+  private setProjectLocalUserHide = (
+    project_id: string,
+    account_id: string | undefined,
+    hide: boolean | undefined,
+  ): void => {
+    if (!account_id) return;
+    const project_map = store.get("project_map");
+    if (project_map == null || !project_map.has(project_id)) {
+      return;
+    }
+    const keyPath = [project_id, "users", account_id, "hide"];
+    const nextProjectMap =
+      hide == null
+        ? project_map.deleteIn(keyPath)
+        : project_map.setIn(keyPath, hide);
+    this.setState({
+      project_map: nextProjectMap,
+    } as ProjectsState);
+  };
+
   private updateProjectScalarField = async (
     project_id: string,
     field: "title" | "description" | "name",
@@ -1788,17 +1808,32 @@ export class ProjectsActions extends Actions<ProjectsState> {
   // Explcitly set whether or not project is hidden for the given account
   // (hide=true means hidden)
   public async set_project_hide(
-    _account_id: string,
+    account_id: string,
     project_id: string,
     hide: boolean,
   ): Promise<void> {
-    await webapp_client.conat_client.hub.projects.setProjectHidden({
+    const before = store.getIn([
+      "project_map",
       project_id,
-      hide,
-    });
-    await this.project_log(project_id, {
-      event: hide ? "hide_project" : "unhide_project",
-    });
+      "users",
+      account_id,
+      "hide",
+    ]);
+    this.setProjectLocalUserHide(project_id, account_id, hide);
+    try {
+      await webapp_client.conat_client.hub.projects.setProjectHidden({
+        project_id,
+        hide,
+      });
+      await this.project_log(project_id, {
+        event: hide ? "hide_project" : "unhide_project",
+      });
+    } catch (err) {
+      this.setProjectLocalUserHide(project_id, account_id, before);
+      const message = `Error ${hide ? "hiding" : "unhiding"} project ${project_id} -- ${err}`;
+      alert_message({ type: "error", message });
+      throw err;
+    }
   }
 
   // Toggle whether or not project is hidden project
