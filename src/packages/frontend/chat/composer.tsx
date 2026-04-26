@@ -470,7 +470,7 @@ export function ChatRoomComposer({
             syncdb={actions.syncdb}
             date={composerDraftKey}
             sessionToken={composerSession}
-            editBarStyle={{ overflow: "auto" }}
+            editBarStyle={{ overflow: "hidden" }}
             placeholder={composerPlaceholder}
             externalMultilinePasteAsCodeBlock
           />

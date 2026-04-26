@@ -304,7 +304,6 @@ export function ProjectActionsMenu({ record }: Props) {
           okText="Delete"
           okButtonProps={{ danger: true }}
           open={confirmDeleteOpen}
-          onOpenChange={(nextOpen) => setConfirmDeleteOpen(nextOpen)}
           onConfirm={async (event) => {
             event?.stopPropagation?.();
             setConfirmDeleteOpen(false);
