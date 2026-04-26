@@ -84,6 +84,7 @@ export default function Download({
     if (store == null) {
       return;
     }
+    let success = false;
     try {
       setLoading(true);
       const files = checked_files.toArray();
@@ -96,6 +97,7 @@ export default function Download({
         dest = files[0];
       }
       await actions.download_file({ path: dest, log: files });
+      success = true;
     } catch (err) {
       console.log(err);
       setLoading(false);
@@ -104,7 +106,9 @@ export default function Download({
       setLoading(false);
     }
 
-    clear();
+    if (success) {
+      clear();
+    }
   };
 
   if (actions == null) {

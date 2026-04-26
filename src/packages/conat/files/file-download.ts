@@ -6,6 +6,7 @@ import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import mime from "mime-types";
 
 const DANGEROUS_CONTENT_TYPE = new Set(["image/svg+xml" /*, "text/html"*/]);
+export const DOWNLOAD_ERROR_HEADER = "X-CoCalc-Download-Error";
 
 const logger = getLogger("conat:file-download");
 
@@ -32,6 +33,10 @@ function hasExplicitDownloadQuery(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+function encodeDownloadErrorHeader(message: string): string {
+  return encodeURIComponent(message);
 }
 
 export async function handleFileDownload({
@@ -104,6 +109,10 @@ export async function handleFileDownload({
     if (!allowed.allowed) {
       res.statusCode = 429;
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader(
+        DOWNLOAD_ERROR_HEADER,
+        encodeDownloadErrorHeader(allowed.message),
+      );
       res.end(allowed.message);
       return;
     }
