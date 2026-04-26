@@ -27,6 +27,7 @@ export const EmailAddressSetting = ({
 }: Props) => {
   const intl = useIntl();
   const [state, setState] = useState<"view" | "edit" | "saving">("view");
+  const [showEmailAddress, setShowEmailAddress] = useState<boolean>(false);
   const [password, setPassword] = useState<string>("");
   const [email_address, set_email_address] = useState<string>(
     email_address0 ?? "",
@@ -173,6 +174,15 @@ export const EmailAddressSetting = ({
   }
 
   const label = intl.formatMessage(labels.email_address);
+  const emailDisplayValue =
+    email_address === ""
+      ? ""
+      : showEmailAddress
+        ? email_address
+        : intl.formatMessage({
+            id: "account.settings.email_address.hidden_value",
+            defaultMessage: "Hidden",
+          });
 
   return (
     <LabeledRow
@@ -187,11 +197,31 @@ export const EmailAddressSetting = ({
           gap: "10px",
         }}
       >
-        {email_address}
+        <span>{emailDisplayValue}</span>
         {state === "view" ? (
-          <Button disabled={disabled} onClick={start_editing}>
-            {button_label()}...
-          </Button>
+          <Space>
+            {email_address ? (
+              <Button
+                disabled={disabled}
+                onClick={() => setShowEmailAddress(!showEmailAddress)}
+              >
+                {intl.formatMessage(
+                  showEmailAddress
+                    ? {
+                        id: "account.settings.email_address.hide_button",
+                        defaultMessage: "Hide",
+                      }
+                    : {
+                        id: "account.settings.email_address.show_button",
+                        defaultMessage: "Show",
+                      },
+                )}
+              </Button>
+            ) : undefined}
+            <Button disabled={disabled} onClick={start_editing}>
+              {button_label()}...
+            </Button>
+          </Space>
         ) : undefined}
       </div>
       {state !== "view" ? render_edit() : undefined}
