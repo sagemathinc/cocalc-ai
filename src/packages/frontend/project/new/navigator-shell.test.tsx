@@ -274,6 +274,19 @@ describe("NavigatorShell keyboard suppression", () => {
     });
   });
 
+  it("classifies internal openat2 initialization failures as filesystem unavailable", () => {
+    expect(
+      classifyNavigatorCodexError(
+        "Error: openat2 is required in safe mode (native addon initialization failed). To explicitly disable openat2 and accept fallback behavior, set COCALC_SANDBOX_OPENAT2=off.",
+      ),
+    ).toMatchObject({
+      kind: "other",
+      title: "Project filesystem is not available right now.",
+      description:
+        "If this project is archived, start it to restore it from backup. If it is stopped, start it to make the filesystem available again.",
+    });
+  });
+
   it("retries Navigator chat initialization while the project is starting", () => {
     expect(
       isNavigatorChatInitRetryable({

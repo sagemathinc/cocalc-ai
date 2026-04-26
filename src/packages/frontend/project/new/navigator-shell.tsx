@@ -280,6 +280,17 @@ export function classifyNavigatorCodexError(
   const raw = `${error ?? ""}`;
   const normalized = raw.toLowerCase();
   if (
+    normalized.includes("openat2 is required in safe mode") &&
+    normalized.includes("native addon initialization failed")
+  ) {
+    return {
+      kind: "other",
+      title: "Project filesystem is not available right now.",
+      description:
+        "If this project is archived, start it to restore it from backup. If it is stopped, start it to make the filesystem available again.",
+    };
+  }
+  if (
     normalized.includes("token_expired") ||
     normalized.includes("provided authentication token is expired") ||
     normalized.includes("please try signing in again")

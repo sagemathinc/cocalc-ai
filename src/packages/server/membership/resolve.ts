@@ -6,7 +6,11 @@ import type {
   MembershipEntitlements,
   MembershipResolution,
 } from "@cocalc/conat/hub/api/purchases";
-import { getMembershipTierMap, MembershipTierRecord } from "./tiers";
+import {
+  getMembershipTierById,
+  getMembershipTierMap,
+  MembershipTierRecord,
+} from "./tiers";
 import getLogger from "@cocalc/backend/logger";
 import { getMembershipUsageStatusForAccount } from "./usage-status";
 
@@ -56,7 +60,9 @@ async function buildMembershipCandidates(
   const sub = subResult.rows[0];
   if (sub) {
     const membershipClass = (sub.metadata?.class ?? "free") as MembershipClass;
-    const tier = tiers[membershipClass];
+    const tier =
+      tiers[membershipClass] ??
+      (await getMembershipTierById({ id: membershipClass }));
     candidates.push({
       class: membershipClass,
       source: "subscription",
@@ -70,7 +76,9 @@ async function buildMembershipCandidates(
   const admin = adminResult.rows[0];
   if (admin?.membership_class) {
     const membershipClass = admin.membership_class as MembershipClass;
-    const tier = tiers[membershipClass];
+    const tier =
+      tiers[membershipClass] ??
+      (await getMembershipTierById({ id: membershipClass }));
     candidates.push({
       class: membershipClass,
       source: "admin",
