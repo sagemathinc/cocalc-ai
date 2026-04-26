@@ -62,6 +62,7 @@ import {
   type PublicViewerManifestEntry,
 } from "../../app-servers/public-viewer";
 import { renderPublicViewerFile } from "../../app-servers/public-viewer-render";
+import { getProjectHubApi } from "../../conat/hub";
 
 const logger = getLogger("project:servers:proxy");
 const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=300";
@@ -110,6 +111,41 @@ type AppMetricsContext = {
 };
 
 const APP_METRICS_CONTEXT = Symbol("cocalc-app-metrics-context");
+
+function isExplicitDownloadRequest(req: http.IncomingMessage): boolean {
+  try {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    return url.searchParams.has("download");
+  } catch {
+    return false;
+  }
+}
+
+async function recordManagedFileDownloadBestEffort(opts: {
+  bytes: number;
+  request_path: string;
+  partial: boolean;
+}) {
+  if (!(opts.bytes > 0)) return;
+  try {
+    await getProjectHubApi().system.recordManagedProjectEgress({
+      project_id,
+      category: "file-download",
+      bytes: opts.bytes,
+      metadata: {
+        request_path: opts.request_path,
+        partial: opts.partial,
+      },
+    });
+  } catch (err) {
+    logger.warn("unable to record managed file download egress", {
+      err: `${err}`,
+      request_path: opts.request_path,
+      bytes: opts.bytes,
+      partial: opts.partial,
+    });
+  }
+}
 
 interface StartOptions {
   base_url?: string;
@@ -856,6 +892,13 @@ ${entries}
     };
     if (partial) {
       headers["Content-Range"] = `bytes ${start}-${end}/${info.size}`;
+    }
+    if (req.method === "GET" && isExplicitDownloadRequest(req)) {
+      await recordManagedFileDownloadBestEffort({
+        bytes: contentLength,
+        request_path: req.url ?? "",
+        partial,
+      });
     }
     res.writeHead(partial ? 206 : 200, headers);
     if (req.method === "HEAD") {

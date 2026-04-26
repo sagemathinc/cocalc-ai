@@ -114,6 +114,11 @@ function formatBytes(bytes: number): string {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
+function formatManagedEgressCategory(category: string): string {
+  if (category === "file-download") return "File downloads";
+  return capitalize(category.replace(/[-_]/g, " "));
+}
+
 export interface ProjectDefaultItem {
   key: string;
   label: string;
@@ -331,6 +336,28 @@ function getUsageStatusItems(
       danger: true,
     });
   }
+  if (
+    typeof usageStatus.managed_egress_5h_bytes === "number" &&
+    Number.isFinite(usageStatus.managed_egress_5h_bytes)
+  ) {
+    items.push({
+      key: "managed_egress_5h_bytes",
+      label: "Managed egress used in 5 hours",
+      value: formatBytes(usageStatus.managed_egress_5h_bytes),
+      danger: usageStatus.over_managed_egress_5h === true,
+    });
+  }
+  if (
+    typeof usageStatus.managed_egress_7d_bytes === "number" &&
+    Number.isFinite(usageStatus.managed_egress_7d_bytes)
+  ) {
+    items.push({
+      key: "managed_egress_7d_bytes",
+      label: "Managed egress used in 7 days",
+      value: formatBytes(usageStatus.managed_egress_7d_bytes),
+      danger: usageStatus.over_managed_egress_7d === true,
+    });
+  }
   return items;
 }
 
@@ -381,7 +408,50 @@ function getUsageStatusAlerts(
         "Current storage usage is only partially sampled from your projects, so totals may temporarily be incomplete.",
     });
   }
+  if (usageStatus.over_managed_egress_5h) {
+    alerts.push({
+      key: "over-managed-egress-5h",
+      type: "error",
+      title:
+        "Your account is over the managed-egress 5-hour window. Metered downloads may be blocked until this window resets.",
+    });
+  }
+  if (usageStatus.over_managed_egress_7d) {
+    alerts.push({
+      key: "over-managed-egress-7d",
+      type: "error",
+      title:
+        "Your account is over the managed-egress 7-day window. Metered downloads may be blocked until this window resets.",
+    });
+  }
   return alerts;
+}
+
+function renderManagedEgressBreakdown(
+  label: string,
+  breakdown?: Record<string, number>,
+): ReactElement | null {
+  if (!breakdown || Object.keys(breakdown).length === 0) {
+    return null;
+  }
+  const entries = Object.entries(breakdown).filter(
+    ([, value]) =>
+      typeof value === "number" && Number.isFinite(value) && value > 0,
+  );
+  if (entries.length === 0) return null;
+  return (
+    <Descriptions size="small" column={1} style={{ marginTop: "6px" }}>
+      <Descriptions.Item label={label}>
+        <Space wrap>
+          {entries.map(([category, bytes]) => (
+            <Tag key={category}>
+              {formatManagedEgressCategory(category)}: {formatBytes(bytes)}
+            </Tag>
+          ))}
+        </Space>
+      </Descriptions.Item>
+    </Descriptions>
+  );
 }
 
 export function MembershipStatusPanel({
@@ -672,6 +742,14 @@ export function MembershipStatusPanel({
                   </Descriptions.Item>
                 ))}
               </Descriptions>
+            )}
+            {renderManagedEgressBreakdown(
+              "Managed egress by category (5 hours)",
+              details?.usage_status?.managed_egress_categories_5h_bytes,
+            )}
+            {renderManagedEgressBreakdown(
+              "Managed egress by category (7 days)",
+              details?.usage_status?.managed_egress_categories_7d_bytes,
             )}
           </div>
 
