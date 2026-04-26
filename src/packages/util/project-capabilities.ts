@@ -98,13 +98,13 @@ export const PROJECT_CAPABILITY_SPECS: readonly ProjectCapabilitySpec[] = [
   },
   {
     key: "html2pdf",
-    label: "HTML to PDF via Chrome/Chromium",
+    label: "Chromium or Chrome Browser",
     probeSummary: "command -v chromium-browser || command -v google-chrome",
     installHint: `On Ubuntu, one working path is:\n\nsudo apt-get update && sudo apt-get install -y software-properties-common\nsudo add-apt-repository -y ppa:xtradeb/apps\nsudo apt-get install -y chromium`,
   },
   {
     key: "pandoc",
-    label: "File format conversions via pandoc",
+    label: "Pandoc file conversion",
     probeSummary: "command -v pandoc",
   },
   {
