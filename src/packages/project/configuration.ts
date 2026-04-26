@@ -150,6 +150,12 @@ async function get_sshd(): Promise<boolean> {
   return (await have("/usr/sbin/sshd")) || (await have("dropbear"));
 }
 
+async function get_nodejs(): Promise<boolean> {
+  return (await Promise.all([have("node"), have("npm"), have("pnpm")])).every(
+    Boolean,
+  );
+}
+
 // we check if we can use headless chrome to do html to pdf conversion,
 // which uses either google-chrome or chromium-browser.  Note that there
 // is no good headless pdf support using firefox.
@@ -311,6 +317,7 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       html2pdf,
       pandoc,
       sshd,
+      nodejs,
       x11,
       rmd,
       qmd,
@@ -326,6 +333,7 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       get_html2pdf(),
       get_pandoc(),
       get_sshd(),
+      get_nodejs(),
       get_x11(),
       get_rmd(),
       get_quarto(),
@@ -348,6 +356,7 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       jq: await get_jq(), // don't know why, but it doesn't compile when inside the Promise.all
       spellcheck,
       sshd,
+      nodejs,
       html2pdf,
       pandoc,
       vscode,

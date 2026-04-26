@@ -130,6 +130,8 @@ export function is_available(configuration?: ProjectConfiguration): Available {
       jq: !!capabilities.jq,
       x11: !!capabilities.x11,
       spellcheck: !!capabilities.spellcheck,
+      sshd: !!capabilities.sshd,
+      nodejs: !!capabilities.nodejs,
       html2pdf: capabilities.html2pdf ?? true,
       pandoc: capabilities.pandoc ?? true,
       vscode: capabilities.vscode ?? true,

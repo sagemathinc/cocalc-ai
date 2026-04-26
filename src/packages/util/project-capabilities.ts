@@ -20,6 +20,11 @@ export const PROJECT_CAPABILITY_SPECS: readonly ProjectCapabilitySpec[] = [
     probeSummary: "command -v aspell",
   },
   {
+    key: "sshd",
+    label: "SSH / SCP access",
+    probeSummary: "[ -x /usr/sbin/sshd ] || command -v dropbear",
+  },
+  {
     key: "rmd",
     label: "RMarkdown",
     probeSummary: "command -v R",
@@ -65,6 +70,11 @@ export const PROJECT_CAPABILITY_SPECS: readonly ProjectCapabilitySpec[] = [
     key: "vscode",
     label: "VSCode",
     probeSummary: "command -v code-server",
+  },
+  {
+    key: "nodejs",
+    label: "Node.js toolchain",
+    probeSummary: "command -v node && command -v npm && command -v pnpm",
   },
   {
     key: "julia",
