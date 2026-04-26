@@ -15,7 +15,7 @@
 
 import type { ProjectTableRecord } from "./projects-table-columns";
 
-import { Dropdown, MenuProps, Modal } from "antd";
+import { Dropdown, MenuProps, Modal, Popconfirm } from "antd";
 import { useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -55,6 +55,7 @@ interface Props {
 export function ProjectActionsMenu({ record }: Props) {
   const [open, setOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const intl = useIntl();
   const actions = useActions("projects");
   const account_id = useTypedRedux("account", "account_id");
@@ -163,6 +164,10 @@ export function ProjectActionsMenu({ record }: Props) {
         await actions.toggle_hide_project(record.project_id);
         break;
       case "delete":
+        if (!record.deleted) {
+          setConfirmDeleteOpen(true);
+          return;
+        }
         await actions.toggle_delete_project(record.project_id);
         break;
       case "remove-self":
@@ -290,9 +295,35 @@ export function ProjectActionsMenu({ record }: Props) {
     },
     {
       key: "delete",
-      label: record.deleted
-        ? `Undelete ${projectLabel}`
-        : `Delete ${projectLabel}`,
+      label: record.deleted ? (
+        `Undelete ${projectLabel}`
+      ) : (
+        <Popconfirm
+          title={`Delete this ${projectLabelLower}?`}
+          description={`You can undo this for a few days before deletion becomes permanent.`}
+          okText="Delete"
+          okButtonProps={{ danger: true }}
+          open={confirmDeleteOpen}
+          onOpenChange={(nextOpen) => setConfirmDeleteOpen(nextOpen)}
+          onConfirm={async (event) => {
+            event?.stopPropagation?.();
+            setConfirmDeleteOpen(false);
+            setOpen(false);
+            await actions.toggle_delete_project(record.project_id);
+          }}
+          onCancel={() => setConfirmDeleteOpen(false)}
+        >
+          <span
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setConfirmDeleteOpen(true);
+            }}
+          >
+            {`Delete ${projectLabel}`}
+          </span>
+        </Popconfirm>
+      ),
       icon: <Icon name={record.deleted ? "undo" : "trash"} />,
       danger: !record.deleted,
     },
