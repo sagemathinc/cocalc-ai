@@ -47,6 +47,7 @@ import {
   PROJECT_PROXY_AUTH_HEADER,
   getSingleHeaderValue,
 } from "@cocalc/backend/auth/project-proxy-auth";
+import { DOWNLOAD_ERROR_HEADER } from "@cocalc/conat/files/file-download";
 import {
   APP_PROXY_EXPOSURE_HEADER,
   type AppProxyExposureMode,
@@ -139,6 +140,10 @@ function formatByteCount(bytes?: number): string {
   }
   const digits = value >= 10 || unit === 0 ? 0 : 1;
   return `${value.toFixed(digits)} ${units[unit]}`;
+}
+
+function encodeDownloadErrorHeader(message: string): string {
+  return encodeURIComponent(message);
 }
 
 async function checkManagedFileDownloadAllowedBestEffort(): Promise<
@@ -976,13 +981,22 @@ ${entries}
     if (partial) {
       headers["Content-Range"] = `bytes ${start}-${end}/${info.size}`;
     }
-    if (req.method === "GET" && explicitDownload) {
+    if (explicitDownload && (req.method === "GET" || req.method === "HEAD")) {
       const policy = await checkManagedFileDownloadAllowedBestEffort();
       if (!policy.allowed) {
-        res.writeHead(429, { "Content-Type": "text/plain; charset=utf-8" });
-        res.end(policy.message);
+        res.writeHead(429, {
+          "Content-Type": "text/plain; charset=utf-8",
+          [DOWNLOAD_ERROR_HEADER]: encodeDownloadErrorHeader(policy.message),
+        });
+        if (req.method === "HEAD") {
+          res.end();
+        } else {
+          res.end(policy.message);
+        }
         return;
       }
+    }
+    if (req.method === "GET" && explicitDownload) {
       await recordManagedFileDownloadBestEffort({
         bytes: contentLength,
         request_path: req.url ?? "",

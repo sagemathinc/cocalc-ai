@@ -76,6 +76,7 @@ export default function initUpgrade(
       let cookie;
       ({ cookie, remember_me, api_key } = stripRememberMeCookie(
         req.headers["cookie"],
+        req,
       ));
       req.headers["cookie"] = cookie;
     }

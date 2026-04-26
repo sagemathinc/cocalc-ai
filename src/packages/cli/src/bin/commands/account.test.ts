@@ -87,6 +87,145 @@ test("account where resolves an explicit account identifier", async () => {
   assert.equal(captured?.name, "Bob Other");
 });
 
+test("account membership defaults to the current account", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          purchases: {
+            getMembershipDetails: async () => ({
+              selected: {
+                class: "pro",
+                source: "subscription",
+                entitlements: {
+                  usage_limits: {
+                    total_storage_soft_bytes: 1024,
+                    total_storage_hard_bytes: 2048,
+                    max_projects: 5,
+                    egress_5h_bytes: 4096,
+                    egress_7d_bytes: 8192,
+                  },
+                },
+              },
+              candidates: [],
+              usage_status: {
+                collected_at: "2026-04-26T12:00:00.000Z",
+                owned_project_count: 2,
+                sampled_project_count: 2,
+                unsampled_project_count: 0,
+                total_storage_bytes: 512,
+                managed_egress_5h_bytes: 256,
+                managed_egress_7d_bytes: 1536,
+                managed_egress_categories_5h_bytes: {
+                  "file-download": 256,
+                },
+                managed_egress_categories_7d_bytes: {
+                  "file-download": 1536,
+                },
+                managed_egress_recent_events: [],
+              },
+            }),
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an explicit account");
+    },
+  } as any);
+
+  await program.parseAsync(["node", "test", "account", "membership"]);
+
+  assert.equal(captured?.account_id, "11111111-1111-1111-1111-111111111111");
+  assert.equal(captured?.membership_class, "pro");
+  assert.equal(captured?.total_storage_soft_bytes, 1024);
+  assert.equal(captured?.total_storage_soft, "1.0 KB");
+  assert.equal(captured?.managed_egress_5h_used_bytes, 256);
+  assert.equal(captured?.managed_egress_5h_used, "256 B");
+  assert.deepEqual(captured?.managed_egress_categories_5h_bytes, {
+    "file-download": 256,
+  });
+});
+
+test("account membership resolves an explicit account identifier", async () => {
+  let capturedArgs: any;
+  let resolvedIdentifier: string | undefined;
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          purchases: {
+            getMembershipDetails: async (opts) => {
+              capturedArgs = opts;
+              return {
+                selected: {
+                  class: "team",
+                  source: "admin",
+                  entitlements: { usage_limits: {} },
+                },
+                candidates: [
+                  {
+                    class: "team",
+                    source: "admin",
+                    priority: 5,
+                    entitlements: { usage_limits: { max_projects: 42 } },
+                  },
+                ],
+                usage_status: {
+                  collected_at: "2026-04-26T12:00:00.000Z",
+                  owned_project_count: 0,
+                  sampled_project_count: 0,
+                  unsampled_project_count: 0,
+                  total_storage_bytes: 0,
+                  managed_egress_categories_5h_bytes: {},
+                  managed_egress_categories_7d_bytes: {},
+                  managed_egress_recent_events: [
+                    {
+                      project_id: "33333333-3333-3333-3333-333333333333",
+                      category: "file-download",
+                      bytes: 1048576,
+                      occurred_at: "2026-04-26T12:34:56.000Z",
+                      metadata: { request_path: "/x?download" },
+                    },
+                  ],
+                },
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async (_ctx, identifier) => {
+      resolvedIdentifier = identifier;
+      return {
+        account_id: "22222222-2222-2222-2222-222222222222",
+      };
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "account",
+    "membership",
+    "qa@example.com",
+  ]);
+
+  assert.equal(resolvedIdentifier, "qa@example.com");
+  assert.deepEqual(capturedArgs, {
+    user_account_id: "22222222-2222-2222-2222-222222222222",
+  });
+});
+
 test("account delete refuses to run without --yes", async () => {
   const program = new Command();
   registerAccountCommand(program, {

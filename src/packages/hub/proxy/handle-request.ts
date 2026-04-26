@@ -10,6 +10,8 @@ import hasAccess, {
   resolveAuthenticatedAccountId,
 } from "./check-for-access-to-project";
 import { handleFileDownload } from "@cocalc/conat/files/file-download";
+import { initHubApi } from "@cocalc/conat/hub/api";
+import callHub from "@cocalc/conat/hub/call-hub";
 import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
 import { getProjectHostRedirectUrl } from "./project-host";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
@@ -49,6 +51,9 @@ export default function init({
   projectProxyHandlersPromise,
 }: Options) {
   const fileDownloadClient = conatWithProjectRouting();
+  const fileDownloadHub = initHubApi((opts) =>
+    callHub({ client: fileDownloadClient, ...opts }),
+  );
 
   async function checkManagedFileDownloadAllowed(project_id: string): Promise<
     | {
@@ -60,12 +65,12 @@ export default function init({
       }
   > {
     try {
-      const policy = await (
-        fileDownloadClient as any
-      ).hub.system.getManagedProjectEgressPolicy({
-        project_id,
-        category: "file-download",
-      });
+      const policy = await fileDownloadHub.system.getManagedProjectEgressPolicy(
+        {
+          project_id,
+          category: "file-download",
+        },
+      );
       if (policy.allowed) {
         return { allowed: true };
       }
@@ -122,7 +127,7 @@ export default function init({
       return;
     }
     try {
-      await (fileDownloadClient as any).hub.system.recordManagedProjectEgress({
+      await fileDownloadHub.system.recordManagedProjectEgress({
         project_id: opts.project_id,
         category: "file-download",
         bytes: opts.bytes,
@@ -183,6 +188,7 @@ export default function init({
       let cookie;
       ({ cookie, remember_me, api_key } = stripRememberMeCookie(
         req.headers["cookie"],
+        req,
       ));
       req.headers["cookie"] = cookie;
     }

@@ -21,10 +21,14 @@ import {
 } from "antd";
 import dayjs from "dayjs";
 import api from "@cocalc/frontend/client/api";
-import { ErrorDisplay, TimeAgo } from "@cocalc/frontend/components";
+import { ErrorDisplay } from "@cocalc/frontend/components";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
+import {
+  ManagedEgressRecentEventsButton,
+  formatManagedEgressCategory,
+} from "@cocalc/frontend/purchases/managed-egress-recent-events";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
-  ManagedEgressEventSummary,
   MembershipDetails,
   MembershipUsageStatus,
 } from "@cocalc/conat/hub/api/purchases";
@@ -71,13 +75,6 @@ function formatRemaining(bytes?: number): string | undefined {
   return bytes < 0
     ? `Over by ${formatBytes(Math.abs(bytes))}`
     : formatBytes(bytes);
-}
-
-function formatManagedEgressCategory(category: string): string {
-  if (category === "file-download") return "File downloads";
-  return category
-    .replace(/[-_]/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function getUsageAlerts(
@@ -154,43 +151,6 @@ function renderManagedEgressBreakdown(
             {formatManagedEgressCategory(category)}: {formatBytes(bytes)}
           </Tag>
         ))}
-      </Space>
-    </Descriptions.Item>
-  );
-}
-
-function getManagedEgressRequestPath(
-  event: ManagedEgressEventSummary,
-): string | undefined {
-  const value = event.metadata?.request_path;
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
-}
-
-function renderManagedEgressRecentEvents(events?: ManagedEgressEventSummary[]) {
-  if (!events || events.length === 0) return null;
-  return (
-    <Descriptions.Item label="Recent managed egress events">
-      <Space direction="vertical" size={8} style={{ width: "100%" }}>
-        {events.map((event, i) => {
-          const requestPath = getManagedEgressRequestPath(event);
-          return (
-            <div key={`${event.occurred_at}-${event.project_id}-${i}`}>
-              <Space wrap>
-                <Tag>{formatManagedEgressCategory(event.category)}</Tag>
-                <Tag>{formatBytes(event.bytes)}</Tag>
-                <Text>{event.project_title ?? event.project_id}</Text>
-                <Text type="secondary">
-                  <TimeAgo date={event.occurred_at} />
-                </Text>
-              </Space>
-              {requestPath ? (
-                <div style={{ marginTop: "4px" }}>
-                  <Text code>{requestPath}</Text>
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
       </Space>
     </Descriptions.Item>
   );
@@ -563,9 +523,13 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                     "Managed egress by category (7 days)",
                     usageStatus.managed_egress_categories_7d_bytes,
                   )}
-                  {renderManagedEgressRecentEvents(
-                    usageStatus.managed_egress_recent_events,
-                  )}
+                  {usageStatus.managed_egress_recent_events?.length ? (
+                    <Descriptions.Item label="Recent managed egress events">
+                      <ManagedEgressRecentEventsButton
+                        events={usageStatus.managed_egress_recent_events}
+                      />
+                    </Descriptions.Item>
+                  ) : null}
                 </Descriptions>
               ) : (
                 <Text type="secondary">No usage summary available.</Text>
