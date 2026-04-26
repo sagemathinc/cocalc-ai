@@ -54,6 +54,7 @@ export interface AccountFeedProjectRow {
   state: Record<string, any>;
   last_active: Record<string, any>;
   last_edited: string | null;
+  last_backup?: string | null;
   deleted: boolean;
 }
 

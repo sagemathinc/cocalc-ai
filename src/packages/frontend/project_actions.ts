@@ -2935,11 +2935,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     log = false,
     auto = true,
     print = false,
+    showError = true,
   }: {
     path: string;
     log?: boolean | string[];
     auto?: boolean;
     print?: boolean;
+    showError?: boolean;
   }): Promise<void> => {
     let url;
     if (
@@ -2963,7 +2965,20 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
     if (auto && !print) {
       url = download_href(this.project_id, path);
-      download_file(url);
+      try {
+        await download_file(url);
+      } catch (err) {
+        if (showError) {
+          alert_message({
+            type: "error",
+            title: "Download blocked",
+            message: err,
+            timeout: 15,
+          });
+          return;
+        }
+        throw err;
+      }
     } else {
       url = url_href(this.project_id, path);
       const tab = open_new_tab(url);

@@ -163,6 +163,27 @@ export function ProjectActionsMenu({ record }: Props) {
         await actions.toggle_hide_project(record.project_id);
         break;
       case "delete":
+        if (!record.deleted) {
+          setOpen(false);
+          Modal.confirm({
+            title: `Delete this ${projectLabelLower}?`,
+            content: (
+              <div>
+                <p>Are you sure you want to delete this {projectLabelLower}?</p>
+                <p>
+                  You can undo this for a few days before deletion becomes
+                  permanent.
+                </p>
+              </div>
+            ),
+            okText: "Delete",
+            okButtonProps: { danger: true },
+            onOk: async () => {
+              await actions.toggle_delete_project(record.project_id);
+            },
+          });
+          return;
+        }
         await actions.toggle_delete_project(record.project_id);
         break;
       case "remove-self":

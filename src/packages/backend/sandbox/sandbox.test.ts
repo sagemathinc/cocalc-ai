@@ -549,6 +549,27 @@ describeIfLinux("safe mode sandbox home replacement", () => {
     await fs.writeFile("after.txt", "after");
     expect(await readFile(join(home, "after.txt"), "utf8")).toBe("after");
   });
+
+  it("recovers after an openat2 init failure while the home path is missing", async () => {
+    const home = join(tempDir, "test-safe-replaced-home-init-failure");
+    const replaced = `${home}-old`;
+    await rm(home, { recursive: true, force: true });
+    await rm(replaced, { recursive: true, force: true });
+    await mkdir(home);
+    const fs = new SandboxedFilesystem(home, {
+      unsafeMode: false,
+    });
+    await fs.writeFile("before.txt", "before");
+    await rename(home, replaced);
+
+    await expect(fs.writeFile("during.txt", "during")).rejects.toThrow(
+      "openat2 is required in safe mode",
+    );
+
+    await mkdir(home);
+    await fs.writeFile("after.txt", "after");
+    expect(await readFile(join(home, "after.txt"), "utf8")).toBe("after");
+  });
 });
 
 describeIfLinux("safe mode link policy overrides", () => {
