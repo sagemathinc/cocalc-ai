@@ -83,4 +83,49 @@ describe("getManagedProjectEgressPolicy", () => {
       limit7d: 2000,
     });
   });
+
+  it("uses the explicitly attributed account when provided", async () => {
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "pro",
+      source: "subscription",
+      entitlements: {
+        usage_limits: {
+          egress_5h_bytes: 1000,
+          egress_7d_bytes: 2000,
+        },
+      },
+    });
+    getManagedEgressUsageForAccountMock.mockResolvedValue({
+      managed_egress_5h_bytes: 200,
+      managed_egress_7d_bytes: 300,
+      over_managed_egress_5h: false,
+      over_managed_egress_7d: false,
+      managed_egress_categories_5h_bytes: { "file-download": 200 },
+      managed_egress_categories_7d_bytes: { "file-download": 300 },
+    });
+    const { getManagedProjectEgressPolicy } =
+      await import("./managed-egress-policy");
+    await expect(
+      getManagedProjectEgressPolicy({
+        account_id: "collaborator-1",
+        project_id: "project-1",
+        category: "file-download",
+      }),
+    ).resolves.toMatchObject({
+      account_id: "collaborator-1",
+      category: "file-download",
+      allowed: true,
+      managed_egress_5h_bytes: 200,
+      managed_egress_7d_bytes: 300,
+    });
+    expect(getProjectOwnerAccountIdMock).not.toHaveBeenCalled();
+    expect(resolveMembershipForAccountMock).toHaveBeenCalledWith(
+      "collaborator-1",
+    );
+    expect(getManagedEgressUsageForAccountMock).toHaveBeenCalledWith({
+      account_id: "collaborator-1",
+      limit5h: 1000,
+      limit7d: 2000,
+    });
+  });
 });

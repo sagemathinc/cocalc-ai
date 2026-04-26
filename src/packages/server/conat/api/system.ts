@@ -2427,6 +2427,7 @@ export async function recordManagedProjectEgress({
     project_id,
   });
   return await recordManagedProjectEgressRaw({
+    account_id,
     project_id: resolvedProjectId,
     category,
     bytes,
@@ -2451,6 +2452,7 @@ export async function getManagedProjectEgressPolicy({
     project_id,
   });
   return await getManagedProjectEgressPolicyRaw({
+    account_id,
     project_id: resolvedProjectId,
     category,
   });

@@ -7,6 +7,7 @@ const mockVersionCheckFails = jest.fn();
 const mockStripRememberMeCookie = jest.fn();
 const mockParseReq = jest.fn();
 const mockHasAccess = jest.fn();
+const mockResolveAuthenticatedAccountId = jest.fn();
 const mockHandleFileDownload = jest.fn();
 const mockConatWithProjectRouting = jest.fn();
 const mockIsPublicAppSubdomainRequest = jest.fn();
@@ -29,7 +30,8 @@ jest.mock("./parse", () => ({
 jest.mock("./check-for-access-to-project", () => ({
   __esModule: true,
   default: (...args) => mockHasAccess(...args),
-  resolveAuthenticatedAccountId: jest.fn(),
+  resolveAuthenticatedAccountId: (...args) =>
+    mockResolveAuthenticatedAccountId(...args),
 }));
 
 jest.mock("@cocalc/conat/files/file-download", () => ({
@@ -70,6 +72,9 @@ describe("hub proxy file downloads", () => {
       route: { access: "read" },
     });
     mockHasAccess.mockReset().mockResolvedValue(true);
+    mockResolveAuthenticatedAccountId
+      .mockReset()
+      .mockResolvedValue("account-1");
     mockHandleFileDownload.mockReset().mockResolvedValue(undefined);
     mockIsPublicAppSubdomainRequest.mockReset().mockReturnValue(false);
     mockGetProjectHostRedirectUrl.mockReset();
@@ -119,6 +124,7 @@ describe("hub proxy file downloads", () => {
       if (name === "system.getManagedProjectEgressPolicy") {
         expect(args).toEqual([
           {
+            account_id: "account-1",
             project_id: "457f20dd-59d1-45c4-b5b1-a245d0e0a629",
             category: "file-download",
           },
@@ -128,6 +134,7 @@ describe("hub proxy file downloads", () => {
       if (name === "system.recordManagedProjectEgress") {
         expect(args).toEqual([
           {
+            account_id: "account-1",
             project_id: "457f20dd-59d1-45c4-b5b1-a245d0e0a629",
             category: "file-download",
             bytes: 123,
@@ -169,6 +176,74 @@ describe("hub proxy file downloads", () => {
           "/457f20dd-59d1-45c4-b5b1-a245d0e0a629/files/home/user/a.txt?download",
       }),
     ).toEqual({ allowed: true });
+    await call.onExplicitDownloadComplete({
+      project_id: "457f20dd-59d1-45c4-b5b1-a245d0e0a629",
+      path: "/home/user/a.txt",
+      request_path:
+        "/457f20dd-59d1-45c4-b5b1-a245d0e0a629/files/home/user/a.txt?download",
+      bytes: 123,
+      partial: false,
+    });
+    expect(mockCallHub).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to owner attribution when the downloader is unknown", async () => {
+    const routedClient = { id: "routed-client" };
+    mockConatWithProjectRouting.mockReturnValue(routedClient);
+    mockResolveAuthenticatedAccountId.mockResolvedValue(undefined);
+    mockCallHub.mockImplementation(async ({ name, args, client }) => {
+      expect(client).toBe(routedClient);
+      if (name === "system.getManagedProjectEgressPolicy") {
+        expect(args).toEqual([
+          {
+            project_id: "457f20dd-59d1-45c4-b5b1-a245d0e0a629",
+            category: "file-download",
+          },
+        ]);
+        return { allowed: true };
+      }
+      if (name === "system.recordManagedProjectEgress") {
+        expect(args).toEqual([
+          {
+            project_id: "457f20dd-59d1-45c4-b5b1-a245d0e0a629",
+            category: "file-download",
+            bytes: 123,
+            metadata: {
+              request_path:
+                "/457f20dd-59d1-45c4-b5b1-a245d0e0a629/files/home/user/a.txt?download",
+              partial: false,
+            },
+          },
+        ]);
+        return { recorded: true, account_id: "owner-1" };
+      }
+      throw new Error(`unexpected hub call: ${name}`);
+    });
+
+    const init = (await import("./handle-request")).default;
+    const handler = init({ isPersonal: false });
+
+    const req: any = {
+      url: "/457f20dd-59d1-45c4-b5b1-a245d0e0a629/files/home/user/a.txt?download",
+      method: "GET",
+      headers: {
+        cookie: "remember_me=secret",
+      },
+    };
+    const res: any = {
+      writeHead: jest.fn(),
+      end: jest.fn(),
+    };
+
+    await handler(req, res);
+
+    const call = mockHandleFileDownload.mock.calls[0]?.[0];
+    await call.beforeExplicitDownload({
+      project_id: "457f20dd-59d1-45c4-b5b1-a245d0e0a629",
+      path: "/home/user/a.txt",
+      request_path:
+        "/457f20dd-59d1-45c4-b5b1-a245d0e0a629/files/home/user/a.txt?download",
+    });
     await call.onExplicitDownloadComplete({
       project_id: "457f20dd-59d1-45c4-b5b1-a245d0e0a629",
       path: "/home/user/a.txt",

@@ -55,7 +55,10 @@ export default function init({
     callHub({ client: fileDownloadClient, ...opts }),
   );
 
-  async function checkManagedFileDownloadAllowed(project_id: string): Promise<
+  async function checkManagedFileDownloadAllowed(opts: {
+    account_id?: string;
+    project_id: string;
+  }): Promise<
     | {
         allowed: true;
       }
@@ -67,7 +70,8 @@ export default function init({
     try {
       const policy = await fileDownloadHub.system.getManagedProjectEgressPolicy(
         {
-          project_id,
+          account_id: opts.account_id,
+          project_id: opts.project_id,
           category: "file-download",
         },
       );
@@ -110,7 +114,8 @@ export default function init({
       };
     } catch (err) {
       logger.warn("unable to evaluate managed file download policy", {
-        project_id,
+        account_id: opts.account_id,
+        project_id: opts.project_id,
         err: `${err}`,
       });
       return { allowed: true };
@@ -118,6 +123,7 @@ export default function init({
   }
 
   async function recordManagedFileDownload(opts: {
+    account_id?: string;
     project_id: string;
     bytes: number;
     request_path: string;
@@ -128,6 +134,7 @@ export default function init({
     }
     try {
       await fileDownloadHub.system.recordManagedProjectEgress({
+        account_id: opts.account_id,
         project_id: opts.project_id,
         category: "file-download",
         bytes: opts.bytes,
@@ -211,9 +218,55 @@ export default function init({
     const parsed = parseReq(url, remember_me, api_key);
     // TODO: parseReq is called again in getTarget so need to refactor...
     const { type, project_id, route } = parsed;
+    const authenticatedAccountId =
+      allowAnonymousProxyBypass || type !== "files"
+        ? undefined
+        : await resolveAuthenticatedAccountId({
+            remember_me,
+            api_key,
+          });
     if (type == "files") {
+      const currentDownloadAccountId = authenticatedAccountId;
       // keep the explicit branch for file-download handling, while access mode
       // policy remains centralized in the route definition.
+      if (!allowAnonymousProxyBypass) {
+        if (
+          !(await hasAccess({
+            project_id,
+            remember_me,
+            api_key,
+            type: route.access,
+            isPersonal,
+          }))
+        ) {
+          throw Error(`user does not have ${route.access} access to project`);
+        }
+      }
+      await handleFileDownload({
+        req,
+        res,
+        url,
+        client: fileDownloadClient,
+        beforeExplicitDownload: async ({ project_id }) =>
+          await checkManagedFileDownloadAllowed({
+            account_id: currentDownloadAccountId,
+            project_id,
+          }),
+        onExplicitDownloadComplete: async ({
+          project_id,
+          request_path,
+          bytes,
+          partial,
+        }) =>
+          await recordManagedFileDownload({
+            account_id: currentDownloadAccountId,
+            project_id,
+            request_path,
+            bytes,
+            partial,
+          }),
+      });
+      return;
     }
 
     if (!allowAnonymousProxyBypass) {
@@ -230,39 +283,12 @@ export default function init({
       }
     }
 
-    if (type == "files") {
-      await handleFileDownload({
-        req,
-        res,
-        url,
-        client: fileDownloadClient,
-        beforeExplicitDownload: async ({ project_id }) =>
-          await checkManagedFileDownloadAllowed(project_id),
-        onExplicitDownloadComplete: async ({
-          project_id,
-          request_path,
-          bytes,
-          partial,
-        }) =>
-          await recordManagedFileDownload({
-            project_id,
-            request_path,
-            bytes,
-            partial,
-          }),
-      });
-      return;
-    }
-
     if (
       !allowAnonymousProxyBypass &&
       type !== "conat" &&
       /^(GET|HEAD)$/i.test(req.method ?? "GET")
     ) {
-      const account_id = await resolveAuthenticatedAccountId({
-        remember_me,
-        api_key,
-      });
+      const account_id = authenticatedAccountId;
       if (account_id) {
         const target = await getProjectHostRedirectUrl({
           project_id,
