@@ -18,7 +18,7 @@ function installWarningFilter() {
   const originalEmitWarning = process.emitWarning.bind(process);
   process.emitWarning = (warning, ...args) => {
     const message =
-      typeof warning === "string" ? warning : warning?.message ?? "";
+      typeof warning === "string" ? warning : (warning?.message ?? "");
     const objectCode =
       warning && typeof warning === "object" ? warning.code : undefined;
     const argCode = typeof args[1] === "string" ? args[1] : undefined;
@@ -38,7 +38,8 @@ function installWarningFilter() {
 
 function defaultLaunchpadDataDir() {
   const home = os.homedir();
-  const xdgDataHome = process.env.XDG_DATA_HOME || path.join(home, ".local", "share");
+  const xdgDataHome =
+    process.env.XDG_DATA_HOME || path.join(home, ".local", "share");
   const preferred =
     process.platform === "darwin" && !process.env.XDG_DATA_HOME
       ? path.join(home, "Library", "Application Support", "cocalc-launchpad")
@@ -140,7 +141,7 @@ if (path.basename(process.argv[1]) == "node") {
   process.env.DATA ??= process.env.COCALC_DATA_DIR;
 
   process.env.AUTH_TOKEN ??= "random";
-  process.env.COCALC_BUNDLE_DIR ??= path.dirname(script);
+  process.env.COCALC_BUNDLE_DIR ??= destDir;
 }
 
 Module.runMain();
