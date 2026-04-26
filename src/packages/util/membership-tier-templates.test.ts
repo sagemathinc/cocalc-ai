@@ -24,6 +24,9 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(features.create_hosts).toBe(true);
     expect(features.project_host_tier).toBe(2);
     expect(llmLimits.units_5h).toBeGreaterThan(0);
+    expect(
+      (tier.usage_limits as Record<string, unknown>)?.shared_compute_priority,
+    ).toBeGreaterThan(0);
   });
 
   it("preserves explicit entitlements instead of overwriting them", () => {
@@ -32,10 +35,12 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       project_defaults: { memory: 1234 },
       llm_limits: { units_5h: 7 },
       features: { create_hosts: false },
+      usage_limits: { shared_compute_priority: 99 },
     });
 
     expect(tier.project_defaults).toEqual({ memory: 1234 });
     expect(tier.llm_limits).toEqual({ units_5h: 7 });
     expect(tier.features).toEqual({ create_hosts: false });
+    expect(tier.usage_limits).toEqual({ shared_compute_priority: 99 });
   });
 });

@@ -11,6 +11,7 @@ let getProjectFileServerClientMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let getConfiguredBayIdMock: jest.Mock;
 let projectControlBackupMock: jest.Mock;
+let assertProjectOwnerCanIncreaseAccountStorageMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -92,6 +93,12 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   })),
 }));
 
+jest.mock("@cocalc/server/membership/project-limits", () => ({
+  __esModule: true,
+  assertProjectOwnerCanIncreaseAccountStorage: (...args: any[]) =>
+    assertProjectOwnerCanIncreaseAccountStorageMock(...args),
+}));
+
 describe("project-backups.createBackup", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -125,6 +132,9 @@ describe("project-backups.createBackup", () => {
       epoch: 0,
     }));
     getConfiguredBayIdMock = jest.fn(() => "bay-0");
+    assertProjectOwnerCanIncreaseAccountStorageMock = jest.fn(
+      async () => undefined,
+    );
     projectControlBackupMock = jest.fn(async () => ({
       op_id: "remote-op-1",
       kind: "project-backup",
@@ -226,6 +236,68 @@ describe("project-backups.createBackup", () => {
       scope_id: "proj-1",
       service: "persist-service",
       stream_name: "stream:op-backup-1",
+    });
+  });
+});
+
+describe("project-backups.restoreBackup", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    assertCollabMock = jest.fn(async () => undefined);
+    createLroMock = jest.fn(async () => ({
+      op_id: "op-restore-1",
+      kind: "project-restore",
+      scope_type: "project",
+      scope_id: "proj-1",
+      status: "queued",
+    }));
+    publishLroSummaryMock = jest.fn(async () => undefined);
+    publishLroEventMock = jest.fn(async () => undefined);
+    assertProjectOwnerCanIncreaseAccountStorageMock = jest.fn(
+      async () => undefined,
+    );
+  });
+
+  it("checks owner storage headroom before queuing a backup restore", async () => {
+    const { restoreBackup } = await import("./project-backups");
+
+    const result = await restoreBackup({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      id: "backup-1",
+      path: "data/results",
+      dest: "restored/results",
+    });
+
+    expect(assertCollabMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "proj-1",
+    });
+    expect(
+      assertProjectOwnerCanIncreaseAccountStorageMock,
+    ).toHaveBeenCalledWith({
+      project_id: "proj-1",
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "project-restore",
+        scope_type: "project",
+        scope_id: "proj-1",
+        created_by: "acct-1",
+        input: {
+          project_id: "proj-1",
+          id: "backup-1",
+          path: "data/results",
+          dest: "restored/results",
+        },
+      }),
+    );
+    expect(result).toEqual({
+      op_id: "op-restore-1",
+      scope_type: "project",
+      scope_id: "proj-1",
+      service: "persist-service",
+      stream_name: "stream:op-restore-1",
     });
   });
 });

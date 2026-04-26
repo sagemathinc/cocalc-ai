@@ -19,6 +19,7 @@ let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let getCurrentProjectRootfsBindingMock: jest.Mock;
+let assertCanRestoreProvisionedProjectStorageMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -98,6 +99,12 @@ jest.mock("@cocalc/server/projects/rootfs-state", () => ({
     getCurrentProjectRootfsBindingMock(...args),
 }));
 
+jest.mock("@cocalc/server/membership/project-limits", () => ({
+  __esModule: true,
+  assertCanRestoreProvisionedProjectStorage: (...args: any[]) =>
+    assertCanRestoreProvisionedProjectStorageMock(...args),
+}));
+
 describe("startProjectOnHost placement", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -117,6 +124,9 @@ describe("startProjectOnHost placement", () => {
       async () => undefined,
     );
     getCurrentProjectRootfsBindingMock = jest.fn(async () => undefined);
+    assertCanRestoreProvisionedProjectStorageMock = jest.fn(
+      async () => undefined,
+    );
     releaseMock = jest.fn();
     resolveHostBayMock = jest.fn(async (host_id: string) => ({
       bay_id: host_id === "host-2" ? "bay-7" : "bay-0",
@@ -208,8 +218,11 @@ describe("startProjectOnHost placement", () => {
           rows: [{ owning_bay_id: "bay-0" }],
         };
       }
-      if (sql === "SELECT backup_repo_id FROM projects WHERE project_id=$1") {
-        return { rows: [{ backup_repo_id: null }] };
+      if (
+        sql ===
+        "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -337,8 +350,11 @@ describe("startProjectOnHost placement", () => {
           rows: [{ owning_bay_id: "bay-0" }],
         };
       }
-      if (sql === "SELECT backup_repo_id FROM projects WHERE project_id=$1") {
-        return { rows: [{ backup_repo_id: null }] };
+      if (
+        sql ===
+        "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -474,8 +490,11 @@ describe("startProjectOnHost placement", () => {
           rows: [{ owning_bay_id: "bay-0" }],
         };
       }
-      if (sql === "SELECT backup_repo_id FROM projects WHERE project_id=$1") {
-        return { rows: [{ backup_repo_id: null }] };
+      if (
+        sql ===
+        "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -579,8 +598,11 @@ describe("startProjectOnHost placement", () => {
           rows: [{ owning_bay_id: "bay-0" }],
         };
       }
-      if (sql === "SELECT backup_repo_id FROM projects WHERE project_id=$1") {
-        return { rows: [{ backup_repo_id: null }] };
+      if (
+        sql ===
+        "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ backup_repo_id: null, provisioned: true }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -595,6 +617,114 @@ describe("startProjectOnHost placement", () => {
     expect(startProjectMock).toHaveBeenCalledWith(
       expect.objectContaining({
         image: DEFAULT_PROJECT_IMAGE,
+      }),
+    );
+  });
+
+  it("checks restore storage headroom before auto-restoring an unprovisioned project", async () => {
+    const createProjectMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "opened",
+    }));
+    const startProjectMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "running",
+    }));
+    createHostControlClientMock = jest.fn(() => ({
+      createProject: createProjectMock,
+      startProject: startProjectMock,
+    }));
+
+    let loadProjectCalls = 0;
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql === "SELECT state FROM projects WHERE project_id=$1") {
+        return {
+          rows: [{ state: { state: "opened", time: "2026-03-29T00:00:00Z" } }],
+        };
+      }
+      if (sql.includes("FROM long_running_operations")) {
+        return { rows: [{ exists: false }] };
+      }
+      if (
+        sql ===
+        "SELECT title, users, rootfs_image as image, host_id, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+      ) {
+        loadProjectCalls += 1;
+        return {
+          rows: [
+            {
+              title: "Archived test",
+              users: { owner: { group: "owner" } },
+              image: "sagemathinc/sagemath-x86_64:10.7",
+              host_id: loadProjectCalls === 1 ? null : "host-1",
+              owning_bay_id: "bay-0",
+              run_quota: null,
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("FROM project_hosts") &&
+        sql.includes("WHERE status='running'")
+      ) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              bay_id: "bay-0",
+              name: "Host 1",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: 0,
+              metadata: { machine: {} },
+            },
+          ],
+        };
+      }
+      if (
+        sql ===
+        "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        return {
+          rows: [{ metadata: { machine: {} } }],
+        };
+      }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("UPDATE projects AS projects")) {
+        expect(params).toEqual(["host-1", "proj-1", "bay-0"]);
+        return {
+          rows: [{ owning_bay_id: "bay-0" }],
+        };
+      }
+      if (
+        sql ===
+        "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ backup_repo_id: "repo-1", provisioned: false }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
+
+    const { startProjectOnHost } = await import("./control");
+    await startProjectOnHost("proj-1");
+
+    expect(assertCanRestoreProvisionedProjectStorageMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+    });
+    expect(startProjectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        restore: "auto",
       }),
     );
   });

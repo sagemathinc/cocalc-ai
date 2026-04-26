@@ -18,6 +18,10 @@ import {
 } from "@cocalc/server/project-host/placement";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
+  assertCanIncreaseAccountStorage,
+  assertCanOwnAdditionalProject,
+} from "@cocalc/server/membership/project-limits";
+import {
   cloneProjectRootfsStates,
   initializeProjectRootfsStates,
 } from "@cocalc/server/projects/rootfs-state";
@@ -139,6 +143,9 @@ export default async function createProject(opts: CreateProjectOptions) {
     host_id: requested_host_id,
     region: requested_region_raw_input,
   } = opts;
+  if (account_id) {
+    await assertCanOwnAdditionalProject({ account_id });
+  }
   let project_id;
   if (opts.project_id) {
     if (!account_id || !(await isAdmin(account_id))) {
@@ -292,6 +299,7 @@ export default async function createProject(opts: CreateProjectOptions) {
     if (!account_id) {
       throw Error("user must be a collaborator on src_project_id");
     }
+    await assertCanIncreaseAccountStorage({ account_id });
     await assertLocalProjectCollaborator({
       account_id,
       project_id: src_project_id,

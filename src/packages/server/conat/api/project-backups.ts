@@ -19,6 +19,7 @@ import { assertPortableProjectRootfs } from "@cocalc/server/projects/rootfs-stat
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { assertProjectOwnerCanIncreaseAccountStorage } from "@cocalc/server/membership/project-limits";
 
 // just *some* limit to avoid bugs/abuse
 
@@ -328,6 +329,7 @@ export async function restoreBackup({
   stream_name: string;
 }> {
   await assertCollab({ account_id, project_id });
+  await assertProjectOwnerCanIncreaseAccountStorage({ project_id });
   const op = await createLro({
     kind: "project-restore",
     scope_type: "project",

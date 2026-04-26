@@ -78,4 +78,25 @@ describe("resolveMembershipForAccount", () => {
     expect(result.class).toBe(highTier);
     expect(result.source).toBe("subscription");
   });
+
+  it("includes usage limits from the selected membership tier", async () => {
+    const account_id = uuid();
+    const usageTier = `test-usage-${uuid()}`;
+    await createTestAccount(account_id);
+    await createTestMembershipTier({
+      id: usageTier,
+      priority: 30,
+      usage_limits: {
+        shared_compute_priority: 7,
+        max_projects: 42,
+      },
+    });
+    await createTestMembershipSubscription(account_id, { class: usageTier });
+    const result = await resolveMembershipForAccount(account_id);
+    expect(result.class).toBe(usageTier);
+    expect(result.entitlements.usage_limits).toEqual({
+      shared_compute_priority: 7,
+      max_projects: 42,
+    });
+  });
 });

@@ -5,6 +5,7 @@ let createLroMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
 let publishLroEventMock: jest.Mock;
 let getProjectFileServerClientMock: jest.Mock;
+let assertProjectOwnerCanIncreaseAccountStorageMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -54,6 +55,12 @@ jest.mock("@cocalc/server/conat/file-server-client", () => ({
     getProjectFileServerClientMock(...args),
 }));
 
+jest.mock("@cocalc/server/membership/project-limits", () => ({
+  __esModule: true,
+  assertProjectOwnerCanIncreaseAccountStorage: (...args: any[]) =>
+    assertProjectOwnerCanIncreaseAccountStorageMock(...args),
+}));
+
 describe("project-snapshots.restoreSnapshot", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -67,6 +74,9 @@ describe("project-snapshots.restoreSnapshot", () => {
     }));
     publishLroSummaryMock = jest.fn(async () => undefined);
     publishLroEventMock = jest.fn(async () => undefined);
+    assertProjectOwnerCanIncreaseAccountStorageMock = jest.fn(
+      async () => undefined,
+    );
     getProjectFileServerClientMock = jest.fn(async () => ({
       createSnapshot: jest.fn(),
       deleteSnapshot: jest.fn(),
@@ -88,6 +98,11 @@ describe("project-snapshots.restoreSnapshot", () => {
 
     expect(assertCollabMock).toHaveBeenCalledWith({
       account_id: "acct-1",
+      project_id: "proj-1",
+    });
+    expect(
+      assertProjectOwnerCanIncreaseAccountStorageMock,
+    ).toHaveBeenCalledWith({
       project_id: "proj-1",
     });
     expect(createLroMock).toHaveBeenCalledWith(

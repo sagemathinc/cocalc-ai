@@ -6,9 +6,86 @@
  */
 import { URL } from "node:url";
 import { Command } from "commander";
-import { getBackupFiles, getBackups } from "@cocalc/conat/project/archive-info";
+import * as archiveInfo from "@cocalc/conat/project/archive-info";
 
 import type { ProjectCommandDeps } from "../project";
+
+function normalizeDate(value: unknown): Date | undefined {
+  if (value == null) return;
+  const date = value instanceof Date ? value : new Date(`${value}`);
+  return Number.isFinite(date.getTime()) ? date : undefined;
+}
+
+function latestBackupTime(
+  backups: Array<{ time: string | Date }>,
+): Date | undefined {
+  let latest: Date | undefined;
+  for (const backup of backups) {
+    const time = normalizeDate(backup.time);
+    if (time && (!latest || time > latest)) {
+      latest = time;
+    }
+  }
+  return latest;
+}
+
+function createProjectArchiveProgressReporter(
+  ctx: { globals: { json?: boolean; output?: string } },
+  entry: { project_id: string; title?: string | null; op_id?: string },
+) {
+  if (ctx.globals.json || ctx.globals.output === "json") {
+    return undefined;
+  }
+  let lastLine = "";
+  return (update: {
+    step: string;
+    status?: string;
+    error?: string | null;
+    message?: string | null;
+    backup_time?: string | null;
+    op_id?: string;
+    progress_summary?: any;
+  }) => {
+    const label = `${entry.title ?? ""}`.trim() || entry.project_id;
+    const parts = [`project ${label}`, `step=${update.step}`];
+    if (update.op_id ?? entry.op_id) {
+      parts.push(`op=${update.op_id ?? entry.op_id}`);
+    }
+    const status = `${update.status ?? ""}`.trim();
+    if (status) {
+      parts.push(`status=${status}`);
+    }
+    const backupTime = `${update.backup_time ?? ""}`.trim();
+    if (backupTime) {
+      parts.push(`backup_time=${backupTime}`);
+    }
+    const progressSummary =
+      update.progress_summary && typeof update.progress_summary === "object"
+        ? update.progress_summary
+        : undefined;
+    const phase = `${progressSummary?.phase ?? ""}`.trim();
+    if (phase) {
+      parts.push(`phase=${phase}`);
+    }
+    const progress = progressSummary?.progress;
+    if (Number.isFinite(progress)) {
+      parts.push(`progress=${Math.round(Number(progress))}%`);
+    }
+    const message =
+      `${update.message ?? progressSummary?.message ?? ""}`.trim() || "";
+    if (message) {
+      parts.push(`message=${JSON.stringify(message)}`);
+    }
+    const error = `${update.error ?? ""}`.trim();
+    if (error) {
+      parts.push(`error=${JSON.stringify(error)}`);
+    }
+    const line = parts.join(" ");
+    if (line === lastLine) return;
+    lastLine = line;
+    process.stderr.write(`${line}\n`);
+  };
+}
 
 export function registerProjectLifecycleCommands(
   project: Command,
@@ -19,6 +96,8 @@ export function registerProjectLifecycleCommands(
     resolveProjectFromArgOrContext,
     resolveProjectConatClient,
     waitForLro,
+    waitForProjectNotRunning,
+    projectState,
     toIso,
     resolveProxyUrl,
     buildCookieHeader,
@@ -88,7 +167,7 @@ export function registerProjectLifecycleCommands(
             ctx,
             opts.project,
           );
-          const backups = (await getBackups({
+          const backups = (await archiveInfo.getBackups({
             client,
             project_id: project.project_id,
             indexed_only: !!opts.indexedOnly,
@@ -127,7 +206,7 @@ export function registerProjectLifecycleCommands(
             ctx,
             opts.project,
           );
-          const files = (await getBackupFiles({
+          const files = (await archiveInfo.getBackupFiles({
             client,
             project_id: project.project_id,
             id: opts.backupId,
@@ -146,6 +225,157 @@ export function registerProjectLifecycleCommands(
             mtime: f.mtime,
             size: f.size,
           }));
+        });
+      },
+    );
+
+  project
+    .command("archive")
+    .description(
+      "archive a project, creating a final backup first when the latest backup is stale",
+    )
+    .option("-w, --project <project>", "project id or name")
+    .option("--wait", "show progress while archiving")
+    .action(
+      async (opts: { project?: string; wait?: boolean }, command: Command) => {
+        await withContext(command, "project archive", async (ctx) => {
+          const { project: ws, client } = await resolveProjectConatClient(
+            ctx,
+            opts.project,
+          );
+          const progress = opts.wait
+            ? createProjectArchiveProgressReporter(ctx, {
+                project_id: ws.project_id,
+                title: ws.title,
+              })
+            : undefined;
+
+          progress?.({
+            step: "checking-backups",
+            status: "running",
+          });
+          let backups: Array<{ id: string; time: string | Date }> = [];
+          try {
+            backups = (await archiveInfo.getBackups({
+              client,
+              project_id: ws.project_id,
+              indexed_only: true,
+            })) as Array<{ id: string; time: string | Date }>;
+          } catch {
+            backups = [];
+          }
+
+          let latestBackup = latestBackupTime(backups);
+          const lastEdited = normalizeDate(ws.last_edited);
+          const backupFresh =
+            latestBackup != null &&
+            (!(lastEdited instanceof Date) || latestBackup >= lastEdited);
+          let stoppedFirst = false;
+          let backupCreated = false;
+          let backupOpId: string | undefined;
+
+          if (!backupFresh) {
+            const state = projectState(ws.state);
+            if (state === "running" || state === "starting") {
+              progress?.({
+                step: "stopping",
+                status: "running",
+              });
+              await ctx.hub.projects.stop({
+                project_id: ws.project_id,
+              });
+              const wait = await waitForProjectNotRunning(ctx, ws.project_id, {
+                timeoutMs: ctx.timeoutMs,
+                pollMs: ctx.pollMs,
+              });
+              if (!wait.ok) {
+                throw new Error(
+                  `timeout waiting for project to stop before archive (project=${ws.project_id}, last_state=${wait.state || "running"})`,
+                );
+              }
+              stoppedFirst = true;
+            }
+
+            const backupOp = await ctx.hub.projects.createBackup({
+              project_id: ws.project_id,
+            });
+            backupCreated = true;
+            backupOpId = backupOp.op_id;
+            const backupProgress = opts.wait
+              ? createProjectArchiveProgressReporter(ctx, {
+                  project_id: ws.project_id,
+                  title: ws.title,
+                  op_id: backupOp.op_id,
+                })
+              : undefined;
+            backupProgress?.({
+              step: "backup",
+              status: "queued",
+            });
+            const summary = await waitForLro(ctx, backupOp.op_id, {
+              timeoutMs: ctx.timeoutMs,
+              pollMs: ctx.pollMs,
+              onUpdate: backupProgress
+                ? async (update) => {
+                    backupProgress({
+                      step: "backup",
+                      status: update.status,
+                      error: update.error,
+                      progress_summary: update.progress_summary,
+                    });
+                  }
+                : undefined,
+            });
+            if (summary.timedOut) {
+              throw new Error(
+                `backup timed out (op=${backupOp.op_id}, last_status=${summary.status})`,
+              );
+            }
+            if (summary.status !== "succeeded") {
+              throw new Error(
+                `backup failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+              );
+            }
+            try {
+              backups = (await archiveInfo.getBackups({
+                client,
+                project_id: ws.project_id,
+                indexed_only: true,
+              })) as Array<{ id: string; time: string | Date }>;
+              latestBackup = latestBackupTime(backups);
+            } catch {
+              // Keep the pre-backup observation if the refresh fails.
+            }
+          } else {
+            progress?.({
+              step: "reuse-backup",
+              status: "succeeded",
+              backup_time: latestBackup?.toISOString(),
+            });
+          }
+
+          progress?.({
+            step: "archiving",
+            status: "running",
+          });
+          await ctx.hub.projects.archiveProject({
+            project_id: ws.project_id,
+            timeout: Math.max(ctx.rpcTimeoutMs, 30_000),
+          });
+          progress?.({
+            step: "archived",
+            status: "succeeded",
+          });
+          return {
+            project_id: ws.project_id,
+            status: "archived",
+            backup_reused: backupFresh,
+            backup_created: backupCreated,
+            backup_op_id: backupOpId ?? null,
+            latest_backup_time: latestBackup?.toISOString() ?? null,
+            last_edited: lastEdited?.toISOString() ?? null,
+            stopped_first: stoppedFirst,
+          };
         });
       },
     );

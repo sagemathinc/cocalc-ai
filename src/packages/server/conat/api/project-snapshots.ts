@@ -6,6 +6,7 @@ import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { type SnapshotRestoreMode } from "@cocalc/conat/files/file-server";
 import { assertCollab } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
+import { assertProjectOwnerCanIncreaseAccountStorage } from "@cocalc/server/membership/project-limits";
 
 // NOTES about snapshots:
 
@@ -151,6 +152,7 @@ export async function restoreSnapshot({
   stream_name: string;
 }> {
   await assertCollab({ account_id, project_id });
+  await assertProjectOwnerCanIncreaseAccountStorage({ project_id });
   const restoreMode = mode ?? "both";
   if (!["both", "home", "rootfs"].includes(restoreMode)) {
     throw new Error(`invalid snapshot restore mode: ${mode}`);

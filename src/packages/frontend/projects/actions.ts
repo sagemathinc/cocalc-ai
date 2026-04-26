@@ -43,6 +43,7 @@ import {
   publishProjectDetailInvalidation,
 } from "@cocalc/frontend/project/use-project-field";
 import { ensureProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
+import { getBackups as getProjectBackups } from "@cocalc/frontend/project/archive-info";
 import {
   buildOfflineMoveConfirmationDialog,
   parseOfflineMoveConfirmationError,
@@ -113,6 +114,7 @@ type ProjectIndexBootstrapRow = {
 // Define projects actions
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
+  private static ARCHIVE_RPC_TIMEOUT_MS = 30_000;
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
@@ -1220,6 +1222,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
         }
       }
 
+      if (lifecycleState === "archived") {
+        await this.resetProjectRuntimeAfterArchiveCycle(project_id, {
+          closeOpenFiles: false,
+        });
+      }
+
       const t0 = webapp_client.server_time().getTime();
       // make an action request:
       this.project_log(project_id, {
@@ -1234,6 +1242,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
           wait: false,
         });
         actions.trackStartOp(resp);
+        const host_id = store.getIn(["project_map", project_id, "host_id"]) as
+          | string
+          | undefined;
+        if (host_id) {
+          void this.ensure_host_info(host_id, true);
+        }
       } catch (err) {
         actions.setState({ control_error: `Error starting project -- ${err}` });
         throw err;
@@ -1249,6 +1263,42 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return true;
     },
   );
+
+  private resetProjectRuntimeAfterArchiveCycle = async (
+    project_id: string,
+    opts: {
+      closeOpenFiles?: boolean;
+    } = {},
+  ) => {
+    const host_id = store.getIn(["project_map", project_id, "host_id"]) as
+      | string
+      | undefined;
+    webapp_client.conat_client.releaseProjectHostRouting({ project_id });
+    if (host_id) {
+      webapp_client.conat_client.refreshProjectHostRouting({
+        source_host_id: host_id,
+        dest_host_id: host_id,
+      });
+      await this.ensure_host_info(host_id, true);
+    }
+    const projectActions = redux.getProjectActions(project_id) as
+      | {
+          clearFilesystemClient?: () => void;
+          close_all_files?: () => void;
+          set_active_tab?: (
+            tab: string,
+            opts?: { change_history?: boolean },
+          ) => void;
+        }
+      | undefined;
+    projectActions?.clearFilesystemClient?.();
+    if (opts.closeOpenFiles !== false) {
+      projectActions?.close_all_files?.();
+      projectActions?.set_active_tab?.("settings", {
+        change_history: false,
+      });
+    }
+  };
 
   // allow UI elements to open the move modal via project actions
   open_move_modal?: (project_id: string) => void;
@@ -1527,6 +1577,136 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return true;
     },
   );
+
+  private createBackupAndWaitForArchive = async (
+    project_id: string,
+  ): Promise<void> => {
+    const projectActions = redux.getProjectActions(project_id) as
+      | {
+          trackBackupOp?: (op: {
+            op_id?: string;
+            scope_type?: LroSummary["scope_type"];
+            scope_id?: string;
+          }) => void;
+        }
+      | undefined;
+    const op = await webapp_client.conat_client.hub.projects.createBackup({
+      project_id,
+    });
+    projectActions?.trackBackupOp?.(op);
+    const summary = await webapp_client.conat_client.lroWait({
+      op_id: op.op_id,
+      scope_type: op.scope_type,
+      scope_id: op.scope_id,
+    });
+    if (summary.status !== "succeeded") {
+      throw Error(summary.error ?? `backup ${summary.status}`);
+    }
+  };
+
+  private ensureArchiveBackupFresh = async (
+    project_id: string,
+    actions?: { setState?: (next: any) => void },
+  ): Promise<void> => {
+    const lifecycleState = store.getIn([
+      "project_map",
+      project_id,
+      "state",
+      "state",
+    ]) as string | undefined;
+    const lastEdited = store.getIn([
+      "project_map",
+      project_id,
+      "last_edited",
+    ]) as Date | undefined;
+
+    let latestBackupTime: Date | undefined;
+    try {
+      const backups = await getProjectBackups({
+        project_id,
+        indexed_only: true,
+      });
+      for (const backup of backups) {
+        const time =
+          backup.time instanceof Date
+            ? backup.time
+            : new Date(`${backup.time}`);
+        if (
+          Number.isFinite(time.getTime()) &&
+          (latestBackupTime == null || time > latestBackupTime)
+        ) {
+          latestBackupTime = time;
+        }
+      }
+    } catch {
+      latestBackupTime = undefined;
+    }
+
+    const backupCoversLatestEdits =
+      latestBackupTime != null &&
+      (!(lastEdited instanceof Date) || latestBackupTime >= lastEdited);
+    if (backupCoversLatestEdits) {
+      const backupTime = latestBackupTime;
+      actions?.setState?.({ control_status: "Archiving project..." });
+      await this.project_log(project_id, {
+        event: "project_archive_backup_reused",
+        backup_time: backupTime?.toISOString(),
+      });
+      return;
+    }
+
+    if (lifecycleState === "running" || lifecycleState === "starting") {
+      actions?.setState?.({
+        control_status: "Stopping project before final backup...",
+      });
+      await this.stop_project(project_id);
+    }
+
+    actions?.setState?.({
+      control_status: "Creating final backup before archive...",
+    });
+    await this.project_log(project_id, {
+      event: "project_archive_backup_requested",
+      last_edited:
+        lastEdited instanceof Date ? lastEdited.toISOString() : undefined,
+      backup_time: latestBackupTime?.toISOString(),
+    });
+    await this.createBackupAndWaitForArchive(project_id);
+  };
+
+  archive_project = reuseInFlight(async (project_id: string): Promise<void> => {
+    this.project_log(project_id, {
+      event: "project_archive_requested",
+    });
+    const actions = redux.getProjectActions(project_id);
+    try {
+      actions?.setState?.({
+        control_error: "",
+        control_status: "Checking backups before archive...",
+      });
+      await this.ensureArchiveBackupFresh(project_id, actions);
+      actions?.setState?.({ control_status: "Archiving project..." });
+      await webapp_client.conat_client.hub.projects.archiveProject({
+        project_id,
+        timeout: ProjectsActions.ARCHIVE_RPC_TIMEOUT_MS,
+      });
+    } catch (err) {
+      actions?.setState({
+        control_status: "",
+        control_error: `Error archiving project -- ${err}`,
+      });
+      throw err;
+    }
+    actions?.setState({ control_error: "", control_status: "" });
+    this.optimisticProjectStateUpdate(project_id, "archived");
+    await this.resetProjectRuntimeAfterArchiveCycle(project_id, {
+      closeOpenFiles: true,
+    });
+    this.project_log(project_id, {
+      event: "project_archived",
+      ...store.classify_project(project_id),
+    });
+  });
 
   move_project = reuseInFlight(async (project_id: string): Promise<boolean> => {
     const actions = redux.getProjectActions(project_id);

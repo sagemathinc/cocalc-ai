@@ -11,9 +11,10 @@ import { labels } from "@cocalc/frontend/i18n";
 interface Props {
   project_id: string;
   flyout?: boolean;
+  disabled?: boolean;
 }
 
-export default function CloneProject({ project_id, flyout }: Props) {
+export default function CloneProject({ project_id, flyout, disabled }: Props) {
   const [saving, setSaving] = useState<boolean>(false);
   const [error, setError] = useState<any>(null);
   const titleRef = useRef<string>("");
@@ -63,7 +64,7 @@ export default function CloneProject({ project_id, flyout }: Props) {
           </>
         }
       >
-        <Button disabled={saving}>
+        <Button disabled={saving || disabled}>
           <Icon name="fork-outlined" />
           {!flyout && <> Clone</>}
           {saving && (

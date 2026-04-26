@@ -60,6 +60,7 @@ import {
   close as closeFdCallback,
   type ReadStream,
   readFile as readFileFdCallback,
+  statSync,
   writeFile as writeFileFdCallback,
 } from "node:fs";
 import { createHash } from "node:crypto";
@@ -319,6 +320,7 @@ const INTERNAL_METHODS = new Set([
   "openAt2Roots",
   "openAt2InitErrors",
   "openAt2ModeLogged",
+  "openAt2RootIdentities",
   "sandboxBasePathCache",
   "resolveSandboxBasePathForComparison",
   "ensureFdInSandbox",
@@ -347,6 +349,7 @@ export class SandboxedFilesystem {
   private openAt2Roots = new Map<string, OpenAt2SandboxRoot | null>();
   private openAt2InitErrors = new Map<string, Error>();
   private openAt2ModeLogged = new Set<string>();
+  private openAt2RootIdentities = new Map<string, string | null>();
   private sandboxBasePathCache = new Map<string, string>();
   private lastOnDisk = new LRU<string, string>({
     maxSize: MAX_LAST_ON_DISK,
@@ -531,6 +534,15 @@ export class SandboxedFilesystem {
       this.logOpenAt2Mode(basePath, "unsafe", "unsafe mode enabled");
       return null;
     }
+    const currentIdentity = this.getOpenAt2BaseIdentity(basePath);
+    const cachedIdentity = this.openAt2RootIdentities.get(basePath);
+    if (
+      this.openAt2Roots.has(basePath) &&
+      cachedIdentity !== undefined &&
+      cachedIdentity !== currentIdentity
+    ) {
+      this.invalidateOpenAt2Root(basePath);
+    }
     const initError = this.openAt2InitErrors.get(basePath);
     if (initError != null) {
       throw initError;
@@ -559,6 +571,7 @@ export class SandboxedFilesystem {
       };
       const root = new SandboxRoot(basePath);
       this.openAt2Roots.set(basePath, root);
+      this.openAt2RootIdentities.set(basePath, currentIdentity);
       this.logOpenAt2Mode(basePath, "openat2", "native addon initialized");
       return root;
     } catch (err) {
@@ -597,6 +610,80 @@ export class SandboxedFilesystem {
       }
     }
     return { message };
+  }
+
+  private invalidateOpenAt2Root(basePath: string): void {
+    this.openAt2Roots.delete(basePath);
+    this.openAt2InitErrors.delete(basePath);
+    this.openAt2RootIdentities.delete(basePath);
+  }
+
+  private getOpenAt2BaseIdentity(basePath: string): string | null {
+    try {
+      const st = statSync(basePath);
+      return `${st.dev}:${st.ino}`;
+    } catch {
+      return null;
+    }
+  }
+
+  private shouldRetryOpenAt2PathError(err: any): boolean {
+    const code = this.parseOpenAt2Error(err).code ?? err?.code;
+    return code === "ENOENT" || code === "ESTALE";
+  }
+
+  private async openAt2WriteWithRetry({
+    path,
+    create,
+    truncate,
+    append,
+    mode,
+    missingAsEtagMismatch = false,
+  }: {
+    path: string;
+    create: boolean;
+    truncate: boolean;
+    append: boolean;
+    mode: number;
+    missingAsEtagMismatch?: boolean;
+  }): Promise<number | null> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const openAt2Target = await this.getOpenAt2PathTarget(path);
+      if (
+        openAt2Target == null ||
+        typeof openAt2Target.root.openWrite !== "function"
+      ) {
+        return null;
+      }
+      try {
+        return openAt2Target.root.openWrite(
+          openAt2Target.rel,
+          create,
+          truncate,
+          append,
+          mode,
+        );
+      } catch (err) {
+        const { code } = this.parseOpenAt2Error(err);
+        if (this.shouldRetryOpenAt2PathError(err) && attempt === 0) {
+          this.invalidateOpenAt2Root(openAt2Target.sandboxBasePath);
+          continue;
+        }
+        if (code === "ENOSYS" || code === "EINVAL") {
+          return null;
+        }
+        if (code === "ENOENT" && missingAsEtagMismatch) {
+          const e: NodeJS.ErrnoException = new Error(
+            "Mismatched base version for patch write",
+          );
+          e.code = "ETAG_MISMATCH";
+          e.path = path;
+          throw e;
+        }
+        this.throwOpenAt2PathError(path, err);
+      }
+    }
+    return null;
   }
 
   private throwOpenAt2PathError(path: string, err: any): never {
@@ -638,9 +725,11 @@ export class SandboxedFilesystem {
     return rel;
   }
 
-  private async getOpenAt2PathTarget(
-    path: string,
-  ): Promise<{ root: OpenAt2SandboxRoot; rel: string } | null> {
+  private async getOpenAt2PathTarget(path: string): Promise<{
+    root: OpenAt2SandboxRoot;
+    rel: string;
+    sandboxBasePath: string;
+  } | null> {
     const { pathInSandbox, sandboxBasePath } =
       await this.resolvePathInSandbox(path);
     const root =
@@ -654,7 +743,7 @@ export class SandboxedFilesystem {
     if (rel == null) {
       return null;
     }
-    return { root, rel };
+    return { root, rel, sandboxBasePath };
   }
 
   private async getOpenAt2DualPathTarget(
@@ -1300,27 +1389,13 @@ export class SandboxedFilesystem {
 
   appendFile = async (path: string, data: string | Buffer, encoding?) => {
     this.assertWritable(path);
-    const openAt2Target = await this.getOpenAt2PathTarget(path);
-    let openWriteFd: number | null = null;
-    if (
-      openAt2Target != null &&
-      typeof openAt2Target.root.openWrite === "function"
-    ) {
-      try {
-        openWriteFd = openAt2Target.root.openWrite(
-          openAt2Target.rel,
-          true,
-          false,
-          true,
-          0o666,
-        );
-      } catch (err) {
-        const { code } = this.parseOpenAt2Error(err);
-        if (code !== "ENOSYS" && code !== "EINVAL") {
-          this.throwOpenAt2PathError(path, err);
-        }
-      }
-    }
+    const openWriteFd = await this.openAt2WriteWithRetry({
+      path,
+      create: true,
+      truncate: false,
+      append: true,
+      mode: 0o666,
+    });
     if (openWriteFd != null) {
       try {
         await writeFileByFd(openWriteFd, data, encoding);
@@ -2364,34 +2439,14 @@ export class SandboxedFilesystem {
         throw err;
       }
       const encoded = Buffer.from(patched, normalizedEncoding);
-      let openWriteFd: number | null = null;
-      if (
-        openAt2Target != null &&
-        typeof openAt2Target.root.openWrite === "function"
-      ) {
-        try {
-          openWriteFd = openAt2Target.root.openWrite(
-            openAt2Target.rel,
-            false,
-            true,
-            false,
-            0o666,
-          );
-        } catch (err) {
-          const { code } = this.parseOpenAt2Error(err);
-          if (code === "ENOENT") {
-            const e: NodeJS.ErrnoException = new Error(
-              "Mismatched base version for patch write",
-            );
-            e.code = "ETAG_MISMATCH";
-            e.path = p;
-            throw e;
-          }
-          if (code !== "ENOSYS" && code !== "EINVAL") {
-            this.throwOpenAt2PathError(path, err);
-          }
-        }
-      }
+      const openWriteFd = await this.openAt2WriteWithRetry({
+        path,
+        create: false,
+        truncate: true,
+        append: false,
+        mode: 0o666,
+        missingAsEtagMismatch: true,
+      });
       if (openWriteFd != null) {
         try {
           await writeFileByFd(openWriteFd, encoded);
@@ -2425,27 +2480,13 @@ export class SandboxedFilesystem {
       this.lastOnDisk.set(p, data);
       this.lastOnDiskHash.set(`${p}-${sha1(data)}`, true);
     }
-    const openAt2Target = await this.getOpenAt2PathTarget(path);
-    let openWriteFd: number | null = null;
-    if (
-      openAt2Target != null &&
-      typeof openAt2Target.root.openWrite === "function"
-    ) {
-      try {
-        openWriteFd = openAt2Target.root.openWrite(
-          openAt2Target.rel,
-          true,
-          true,
-          false,
-          0o666,
-        );
-      } catch (err) {
-        const { code } = this.parseOpenAt2Error(err);
-        if (code !== "ENOSYS" && code !== "EINVAL") {
-          this.throwOpenAt2PathError(path, err);
-        }
-      }
-    }
+    const openWriteFd = await this.openAt2WriteWithRetry({
+      path,
+      create: true,
+      truncate: true,
+      append: false,
+      mode: 0o666,
+    });
     if (openWriteFd != null) {
       try {
         await writeFileByFd(openWriteFd, data as any);

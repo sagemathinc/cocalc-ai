@@ -12,6 +12,7 @@ let getExplicitHostRoutedClientMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let assertBayAcceptsProjectOwnershipMock: jest.Mock;
+let getMembershipUsageStatusForAccountMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
@@ -94,6 +95,12 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
     resolveMembershipForAccountMock(...args),
 }));
 
+jest.mock("@cocalc/server/membership/usage-status", () => ({
+  __esModule: true,
+  getMembershipUsageStatusForAccount: (...args: any[]) =>
+    getMembershipUsageStatusForAccountMock(...args),
+}));
+
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   __esModule: true,
   resolveHostBay: (...args: any[]) => resolveHostBayMock(...args),
@@ -123,6 +130,9 @@ describe("projects.createProject clone routing", () => {
     assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
     resolveMembershipForAccountMock = jest.fn(async () => ({
       entitlements: {},
+    }));
+    getMembershipUsageStatusForAccountMock = jest.fn(async () => ({
+      total_storage_bytes: 0,
     }));
     computePlacementPermissionMock = jest.fn(() => ({ can_place: true }));
     getUserHostTierMock = jest.fn(() => 0);
@@ -158,6 +168,12 @@ describe("projects.createProject clone routing", () => {
         )
       ) {
         return { rows: [] };
+      }
+      if (
+        sql.includes("SELECT COUNT(*)::BIGINT AS count") &&
+        sql.includes("COALESCE(users -> $1::text ->> 'group', '') = 'owner'")
+      ) {
+        return { rows: [{ count: "0" }] };
       }
       if (
         sql.includes(
@@ -273,6 +289,66 @@ describe("projects.createProject clone routing", () => {
         }),
       }),
     );
+  });
+
+  it("blocks project creation when the owner already reached max_projects", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (
+        sql.includes("SELECT COUNT(*)::BIGINT AS count") &&
+        sql.includes("COALESCE(users -> $1::text ->> 'group', '') = 'owner'")
+      ) {
+        return { rows: [{ count: "2" }] };
+      }
+      if (
+        sql.includes(
+          "SELECT project_id FROM deleted_projects WHERE project_id=$1 LIMIT 1",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "SELECT project_id FROM projects WHERE project_id=$1 LIMIT 1",
+        )
+      ) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: { usage_limits: { max_projects: 2 } },
+    }));
+    const createProject = (await import("./create")).default;
+    await expect(
+      createProject({
+        title: "Blocked",
+        description: "",
+        account_id: ACCOUNT_ID,
+        start: false,
+      }),
+    ).rejects.toThrow("owned project limit reached (2/2)");
+  });
+
+  it("blocks clone creation when the owner already reached the hard total storage cap", async () => {
+    getMembershipUsageStatusForAccountMock = jest.fn(async () => ({
+      total_storage_bytes: 100,
+    }));
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: { usage_limits: { total_storage_hard_bytes: 100 } },
+    }));
+    const createProject = (await import("./create")).default;
+    await expect(
+      createProject({
+        title: "Blocked clone",
+        description: "",
+        account_id: ACCOUNT_ID,
+        src_project_id: SOURCE_PROJECT_ID,
+        start: false,
+      }),
+    ).rejects.toThrow("total account storage hard cap reached");
   });
 
   it("rejects clone creation when the source project belongs to another bay", async () => {

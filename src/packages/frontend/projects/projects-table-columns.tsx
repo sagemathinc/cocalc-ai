@@ -15,7 +15,7 @@ import type { SortOrder } from "antd/es/table/interface";
 
 import type { IntlShape } from "react-intl";
 
-import { Avatar, Typography } from "antd";
+import { Avatar, Tag, Typography } from "antd";
 
 import { Icon, IconName, TimeAgo } from "@cocalc/frontend/components";
 import { TimeElapsed } from "@cocalc/frontend/components/time-elapsed";
@@ -211,6 +211,7 @@ export function getProjectTableColumns(
       render: (_: any, record: ProjectTableRecord) => {
         const stateIcon = getStateIcon(record.state);
         const strong = record.state?.get("state") === "running";
+        const archived = record.state?.get("state") === "archived";
         return (
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             {/* Avatar or placeholder */}
@@ -238,6 +239,11 @@ export function getProjectTableColumns(
                   />
                 )}
                 <Text strong={strong}>{record.title || "Untitled"}</Text>
+                {archived && (
+                  <Tag color="purple" style={{ marginLeft: "8px" }}>
+                    Archived
+                  </Tag>
+                )}
               </div>
               {record.description && (
                 <Text

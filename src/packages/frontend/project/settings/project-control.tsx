@@ -25,6 +25,7 @@ import { useProjectContext } from "../context";
 import { useProjectRunQuota } from "../use-project-run-quota";
 import { RestartProject } from "./restart-project";
 import { StopProject } from "./stop-project";
+import { ArchiveProject } from "./archive-project";
 import MoveProject from "./move-project";
 import { Project } from "./types";
 import RootFilesystemImage from "./root-filesystem-image";
@@ -124,11 +125,16 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }
 
   function render_restart_button(commands): Rendered {
+    const allowStart = displayStateValue === "archived";
     return (
       <RestartProject
         size={isFlyout ? "small" : "large"}
         project_id={project_id}
-        disabled={!commands.includes("start") && !commands.includes("stop")}
+        disabled={
+          !allowStart &&
+          !commands.includes("start") &&
+          !commands.includes("stop")
+        }
       />
     );
   }
@@ -138,6 +144,12 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     const commands = (state &&
       COMPUTE_STATES[state] &&
       COMPUTE_STATES[state].commands) || ["save", "stop", "start"];
+    const archiveDisabled =
+      state == null ||
+      ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
+        state,
+      );
+    const archived = state === "archived";
     return (
       <Space.Compact
         style={{ marginTop: "10px", marginBottom: "10px" }}
@@ -145,11 +157,23 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       >
         {render_restart_button(commands)}
         {render_stop_button(commands)}
-        <CloneProject project_id={project_id} />
-        <MoveProject
+        <ArchiveProject
           project_id={project_id}
-          disabled={state == "starting" || state == "stopping"}
+          size={isFlyout ? "small" : "large"}
+          disabled={archiveDisabled}
         />
+        <CloneProject project_id={project_id} disabled={archived} />
+        {!archived && (
+          <MoveProject
+            project_id={project_id}
+            disabled={
+              state == "starting" ||
+              state == "stopping" ||
+              state == "archiving" ||
+              state == "unarchiving"
+            }
+          />
+        )}
       </Space.Compact>
     );
   }
@@ -191,6 +215,19 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       >
         {render_idle_timeout()}
       </LabeledRow>
+    );
+  }
+
+  function render_archived_note() {
+    if (displayStateValue !== "archived") {
+      return;
+    }
+    return (
+      <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: "12px" }}>
+        Archived projects do not count toward active storage. Starting this
+        project restores it from backup and may take a while while the RootFS
+        image is made available on the host.
+      </Paragraph>
     );
   }
 
@@ -268,6 +305,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       <>
         <div>
           {render_action_buttons()}
+          {render_archived_note()}
           <ProjectControlError
             style={{ margin: "10px 0px" }}
             showStopButton={project.getIn(["state", "state"]) == "running"}

@@ -37,6 +37,7 @@ Table({
           project_defaults: null,
           llm_limits: null,
           features: null,
+          usage_limits: null,
           disabled: null,
           notes: null,
         } as { [key in MembershipTierSetFields]: null },
@@ -55,6 +56,7 @@ Table({
           project_defaults: null,
           llm_limits: null,
           features: null,
+          usage_limits: null,
           disabled: null,
           notes: null,
           history: null,
@@ -102,6 +104,10 @@ Table({
     features: {
       type: "map",
       desc: "Feature flags for this tier.",
+    },
+    usage_limits: {
+      type: "map",
+      desc: "Shared-host usage-limit policy for this tier.",
     },
     disabled: {
       type: "boolean",

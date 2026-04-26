@@ -255,7 +255,7 @@ export async function signUp(req, res) {
     if (wantsAdmin && isBootstrap) {
       const pool = getPool();
       const { rows: proRows } = await pool.query(
-        `SELECT label, store_visible, priority, project_defaults, llm_limits, features
+        `SELECT label, store_visible, priority, project_defaults, llm_limits, features, usage_limits
          FROM membership_tiers
          WHERE id='pro'
          LIMIT 1`,
@@ -271,10 +271,10 @@ export async function signUp(req, res) {
       await pool.query(
         `INSERT INTO membership_tiers (
             id, label, store_visible, priority,
-            price_monthly, price_yearly, project_defaults, llm_limits, features,
+            price_monthly, price_yearly, project_defaults, llm_limits, features, usage_limits,
             disabled, notes, history, created, updated
           )
-          VALUES ($1,$2,$3,$4,$5,$6,$7::JSONB,$8::JSONB,$9::JSONB,$10,$11,$12::JSONB,NOW(),NOW())
+          VALUES ($1,$2,$3,$4,$5,$6,$7::JSONB,$8::JSONB,$9::JSONB,$10::JSONB,$11,$12,$13::JSONB,NOW(),NOW())
           ON CONFLICT (id)
           DO UPDATE SET
             label=EXCLUDED.label,
@@ -285,6 +285,7 @@ export async function signUp(req, res) {
             project_defaults=EXCLUDED.project_defaults,
             llm_limits=EXCLUDED.llm_limits,
             features=EXCLUDED.features,
+            usage_limits=EXCLUDED.usage_limits,
             disabled=EXCLUDED.disabled,
             notes=EXCLUDED.notes,
             updated=NOW()`,
@@ -298,6 +299,7 @@ export async function signUp(req, res) {
           proDefaults?.project_defaults ?? null,
           proDefaults?.llm_limits ?? null,
           proDefaults?.features ?? null,
+          proDefaults?.usage_limits ?? null,
           false,
           "bootstrap admin tier",
           [],

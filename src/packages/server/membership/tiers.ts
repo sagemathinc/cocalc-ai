@@ -1,5 +1,8 @@
 import getPool, { PoolClient } from "@cocalc/database/pool";
-import type { MembershipClass } from "@cocalc/conat/hub/api/purchases";
+import type {
+  MembershipClass,
+  MembershipUsageLimits,
+} from "@cocalc/conat/hub/api/purchases";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import { applyMembershipTierTemplateFallbacks } from "@cocalc/util/membership-tier-templates";
 
@@ -9,6 +12,7 @@ export interface MembershipTierPricing {
   features?: Record<string, unknown>;
   project_defaults?: Record<string, unknown>;
   llm_limits?: Record<string, unknown>;
+  usage_limits?: MembershipUsageLimits;
 }
 
 export interface MembershipTierRecord extends MembershipTierPricing {
@@ -47,11 +51,12 @@ export async function getMembershipTiers({
   const pool = client ?? getPool("medium");
   const { rows } = await pool.query(
     `SELECT id, label, store_visible, priority, price_monthly, price_yearly,
-            project_defaults, llm_limits, features, disabled
+            project_defaults, llm_limits, features, usage_limits, disabled
      FROM membership_tiers`,
   );
   let tiers = (rows as MembershipTierRecord[]).map(
-    applyMembershipTierTemplateFallbacks,
+    (tier) =>
+      applyMembershipTierTemplateFallbacks(tier) as MembershipTierRecord,
   );
   if (!includeDisabled) {
     tiers = tiers.filter((tier) => !tier.disabled);
@@ -77,6 +82,27 @@ export async function getMembershipTierMap({
     },
     {} as Record<string, MembershipTierRecord>,
   );
+}
+
+export async function getMembershipTierById({
+  id,
+  client,
+}: {
+  id: MembershipClass;
+  client?: PoolClient;
+}): Promise<MembershipTierRecord | undefined> {
+  const pool = client ?? getPool("medium");
+  const { rows } = await pool.query(
+    `SELECT id, label, store_visible, priority, price_monthly, price_yearly,
+            project_defaults, llm_limits, features, usage_limits, disabled
+     FROM membership_tiers
+     WHERE id=$1`,
+    [id],
+  );
+  const tier = rows[0] as MembershipTierRecord | undefined;
+  return tier == null
+    ? undefined
+    : (applyMembershipTierTemplateFallbacks(tier) as MembershipTierRecord);
 }
 
 export function getMembershipPrice(
@@ -147,15 +173,10 @@ export async function computeMembershipPricing({
   });
   let targetTier: MembershipTierRecord | undefined = tierMap[targetClass];
   if (!targetTier) {
-    const pool = client ?? getPool();
-    const { rows } = await pool.query(
-      `SELECT id, label, store_visible, priority, price_monthly, price_yearly,
-              project_defaults, llm_limits, features, disabled
-       FROM membership_tiers
-       WHERE id=$1`,
-      [targetClass],
-    );
-    targetTier = rows[0] as MembershipTierRecord | undefined;
+    targetTier = await getMembershipTierById({
+      id: targetClass,
+      client,
+    });
   }
   if (!targetTier || targetTier.disabled) {
     throw Error(`membership tier "${targetClass}" is not available`);

@@ -340,6 +340,7 @@ export type MembershipTierSetFields =
   | "project_defaults"
   | "llm_limits"
   | "features"
+  | "usage_limits"
   | "disabled"
   | "notes";
 

@@ -2,9 +2,7 @@ import dayjs from "dayjs";
 import createAccount from "@cocalc/server/accounts/create-account";
 import createSubscription from "./create-subscription";
 import { uuid } from "@cocalc/util/misc";
-import { db } from "@cocalc/database";
 import getPool from "@cocalc/database/pool";
-import membershipTiersQuery from "@cocalc/database/postgres/membership-tiers";
 import type { MembershipClass } from "@cocalc/util/db-schema/subscriptions";
 
 export async function createTestAccount(account_id: string) {
@@ -58,20 +56,44 @@ export async function createTestMembershipTier(opts: {
   priority?: number;
   price_monthly?: number;
   price_yearly?: number;
+  usage_limits?: Record<string, unknown>;
 }) {
-  await membershipTiersQuery(db(), [], {
-    id: opts.id,
-    label: opts.id,
-    store_visible: false,
-    priority: opts.priority ?? 0,
-    price_monthly: opts.price_monthly ?? 0,
-    price_yearly: opts.price_yearly ?? 0,
-    project_defaults: {},
-    llm_limits: {},
-    features: {},
-    disabled: false,
-    notes: undefined,
-  });
+  const pool = getPool("medium");
+  await pool.query(
+    `INSERT INTO membership_tiers
+      (id, label, store_visible, priority, price_monthly, price_yearly,
+       project_defaults, llm_limits, features, usage_limits,
+       disabled, notes, history, created, updated)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::JSONB,$8::JSONB,$9::JSONB,$10::JSONB,$11,$12,$13::JSONB,NOW(),NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       label=EXCLUDED.label,
+       store_visible=EXCLUDED.store_visible,
+       priority=EXCLUDED.priority,
+       price_monthly=EXCLUDED.price_monthly,
+       price_yearly=EXCLUDED.price_yearly,
+       project_defaults=EXCLUDED.project_defaults,
+       llm_limits=EXCLUDED.llm_limits,
+       features=EXCLUDED.features,
+       usage_limits=EXCLUDED.usage_limits,
+       disabled=EXCLUDED.disabled,
+       notes=EXCLUDED.notes,
+       updated=NOW()`,
+    [
+      opts.id,
+      opts.id,
+      false,
+      opts.priority ?? 0,
+      opts.price_monthly ?? 0,
+      opts.price_yearly ?? 0,
+      {},
+      {},
+      {},
+      opts.usage_limits ?? {},
+      false,
+      null,
+      [],
+    ],
+  );
 }
 
 export async function createTestAdminAssignedMembership(

@@ -559,7 +559,9 @@ export function Explorer() {
     actions.setState({ file_search: "" });
   };
 
-  let project_is_running: boolean, project_state: ProjectStatus | undefined;
+  let project_is_running: boolean,
+    project_is_archived = false,
+    project_state: ProjectStatus | undefined;
 
   if (checked_files == undefined) {
     // hasn't loaded/initialized at all
@@ -581,6 +583,7 @@ export function Explorer() {
       hostId: host_id,
       hostInfo,
     });
+    project_is_archived = displayState === "archived";
     project_is_running = displayState === "running";
   } else {
     project_is_running = false;
@@ -618,8 +621,12 @@ export function Explorer() {
   const suppressProjectError =
     (hostUnavailable && isHostRoutingUnavailableError(error)) ||
     shouldSuppressTransientRoutingError({ error, moveLro });
+  const shouldShowArchivedProjectWarning =
+    project_is_archived && listingError != null;
   const shouldShowStartProjectWarning =
-    !project_is_running && isMissingProjectVolumeError(listingError);
+    !project_is_running &&
+    !project_is_archived &&
+    isMissingProjectVolumeError(listingError);
 
   if (hostUnavailable && !project_is_running) {
     return (
@@ -968,8 +975,40 @@ You can either wait for this host to become available again, or move this ${proj
               />
             )}
 
+            {shouldShowArchivedProjectWarning && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ margin: "16px auto", maxWidth: "760px" }}
+                message={`This ${projectLabelLower} is archived.`}
+                description={
+                  <FormattedMessage
+                    id="project.explorer.archived_project.warning"
+                    defaultMessage={
+                      "Archived projects do not count toward active storage. <a>Start this project</a> to restore it from backup and make the filesystem available again. Once restored, it will count toward your global storage quota."
+                    }
+                    values={{
+                      a: (chunks) => (
+                        <a
+                          onClick={(e) => {
+                            e.preventDefault();
+                            redux
+                              .getActions("projects")
+                              .start_project(project_id);
+                          }}
+                        >
+                          {chunks}
+                        </a>
+                      ),
+                    }}
+                  />
+                }
+              />
+            )}
+
             {listingError &&
               !suppressRoutingError &&
+              !shouldShowArchivedProjectWarning &&
               !shouldShowStartProjectWarning && (
                 <div style={{ margin: "30px auto", textAlign: "center" }}>
                   <ShowError

@@ -143,6 +143,13 @@ describe("MembershipStatusPanel", () => {
       firstDetails.resolve({
         candidates: [],
         selected: { class: "pro", source: "subscription" },
+        usage_status: {
+          collected_at: new Date().toISOString(),
+          owned_project_count: 1,
+          sampled_project_count: 1,
+          unsampled_project_count: 0,
+          total_storage_bytes: 100,
+        },
       });
       await Promise.all([
         firstMembership.promise,
@@ -169,6 +176,13 @@ describe("MembershipStatusPanel", () => {
       secondDetails.resolve({
         candidates: [],
         selected: { class: "free", source: "free" },
+        usage_status: {
+          collected_at: new Date().toISOString(),
+          owned_project_count: 0,
+          sampled_project_count: 0,
+          unsampled_project_count: 0,
+          total_storage_bytes: 0,
+        },
       });
       await Promise.all([
         secondMembership.promise,
@@ -180,6 +194,40 @@ describe("MembershipStatusPanel", () => {
     await waitFor(() => {
       expect(screen.queryByText("Pro")).toBeNull();
       expect(screen.getAllByText("Free").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("shows explicit warnings when usage is over configured limits", async () => {
+    api
+      .mockResolvedValueOnce({ class: "pro", source: "subscription" })
+      .mockResolvedValueOnce([{ id: "pro", label: "Pro" }]);
+    getMembershipDetails.mockResolvedValueOnce({
+      candidates: [],
+      selected: { class: "pro", source: "subscription" },
+      usage_status: {
+        collected_at: new Date().toISOString(),
+        owned_project_count: 5,
+        sampled_project_count: 4,
+        unsampled_project_count: 1,
+        measurement_error_count: 1,
+        total_storage_bytes: 200,
+        total_storage_soft_bytes: 100,
+        total_storage_hard_bytes: 150,
+        over_total_storage_soft: true,
+        over_total_storage_hard: true,
+        max_projects: 4,
+        over_max_projects: true,
+      },
+    });
+
+    render(<MembershipStatusPanel showHeader={false} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/over the hard total storage cap/i)).toBeTruthy();
+      expect(screen.getByText(/over the owned project limit/i)).toBeTruthy();
+      expect(
+        screen.getByText(/only partially sampled from your projects/i),
+      ).toBeTruthy();
     });
   });
 });

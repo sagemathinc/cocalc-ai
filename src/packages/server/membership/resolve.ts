@@ -6,7 +6,15 @@ import type {
   MembershipEntitlements,
   MembershipResolution,
 } from "@cocalc/conat/hub/api/purchases";
-import { getMembershipTierMap, MembershipTierRecord } from "./tiers";
+import {
+  getMembershipTierById,
+  getMembershipTierMap,
+  MembershipTierRecord,
+} from "./tiers";
+import getLogger from "@cocalc/backend/logger";
+import { getMembershipUsageStatusForAccount } from "./usage-status";
+
+const log = getLogger("server:membership:resolve");
 
 function tierToEntitlements(
   tier?: MembershipTierRecord,
@@ -16,6 +24,7 @@ function tierToEntitlements(
     project_defaults: tier.project_defaults,
     llm_limits: tier.llm_limits,
     features: tier.features,
+    usage_limits: tier.usage_limits,
   };
 }
 
@@ -51,7 +60,9 @@ async function buildMembershipCandidates(
   const sub = subResult.rows[0];
   if (sub) {
     const membershipClass = (sub.metadata?.class ?? "free") as MembershipClass;
-    const tier = tiers[membershipClass];
+    const tier =
+      tiers[membershipClass] ??
+      (await getMembershipTierById({ id: membershipClass }));
     candidates.push({
       class: membershipClass,
       source: "subscription",
@@ -65,7 +76,9 @@ async function buildMembershipCandidates(
   const admin = adminResult.rows[0];
   if (admin?.membership_class) {
     const membershipClass = admin.membership_class as MembershipClass;
-    const tier = tiers[membershipClass];
+    const tier =
+      tiers[membershipClass] ??
+      (await getMembershipTierById({ id: membershipClass }));
     candidates.push({
       class: membershipClass,
       source: "admin",
@@ -116,9 +129,23 @@ export async function resolveMembershipDetailsForAccount(
 ): Promise<MembershipDetails> {
   const tiers = await getMembershipTierMap({ includeDisabled: true });
   const candidates = await buildMembershipCandidates(account_id, tiers);
+  const selected = pickBestMembership(candidates, tiers);
+  let usage_status: MembershipDetails["usage_status"] = undefined;
+  try {
+    usage_status = await getMembershipUsageStatusForAccount({
+      account_id,
+      resolution: selected,
+    });
+  } catch (err) {
+    log.warn("unable to compute membership usage status", {
+      account_id,
+      err: `${err}`,
+    });
+  }
   return {
-    selected: pickBestMembership(candidates, tiers),
+    selected,
     candidates,
+    usage_status,
   };
 }
 
