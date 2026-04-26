@@ -1,4 +1,5 @@
 import { readFile } from "./read";
+import { fsClient, fsSubject } from "./fs";
 import { once } from "events";
 import { path_split } from "@cocalc/util/misc";
 import { getLogger } from "@cocalc/conat/logger";
@@ -114,6 +115,35 @@ export async function handleFileDownload({
         encodeDownloadErrorHeader(allowed.message),
       );
       res.end(allowed.message);
+      return;
+    }
+  }
+
+  if (req.method === "HEAD" && client != null) {
+    try {
+      const stat = await fsClient({
+        client,
+        subject: fsSubject({ project_id }),
+      }).stat(path);
+      if (typeof stat.size === "number" && Number.isFinite(stat.size)) {
+        res.setHeader("Content-Length", stat.size);
+      }
+      if (stat.mtime instanceof Date && Number.isFinite(stat.mtime.valueOf())) {
+        res.setHeader("Last-Modified", stat.mtime.toUTCString());
+      }
+      res.statusCode = 200;
+      res.end();
+      return;
+    } catch (err: any) {
+      logger.debug("ERROR statting file for HEAD download", {
+        project_id,
+        path,
+        err: `${err}`,
+      });
+      res.statusCode = err?.code === "ENOENT" ? 404 : 500;
+      res.end(
+        err?.code === "ENOENT" ? "File not found." : "Error reading file.",
+      );
       return;
     }
   }
