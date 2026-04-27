@@ -425,13 +425,16 @@ export async function main(
   const httpProxyAuth = createProjectHostHttpProxyAuth({ host_id: hostId });
   const stopHttpProxyRevocationKickLoop =
     httpProxyAuth.startUpgradeRevocationKickLoop();
-  const isExplicitDownloadHeadRequest = (req: IncomingMessage): boolean => {
-    if ((req.method ?? "GET").toUpperCase() !== "HEAD") {
+  const isProjectFileRequest = (
+    req: IncomingMessage,
+    project_id: string,
+  ): boolean => {
+    if (!/^(GET|HEAD)$/i.test(req.method ?? "GET")) {
       return false;
     }
     try {
       const parsed = new URL(req.url ?? "/", "http://project-host.local");
-      return parsed.searchParams.has("download");
+      return parsed.pathname.includes(`/${project_id}/files/`);
     } catch {
       return false;
     }
@@ -453,7 +456,7 @@ export async function main(
       return false;
     }
   };
-  const setDownloadPreflightCorsHeaders = (
+  const setProjectFileCorsHeaders = (
     req: IncomingMessage,
     res: ServerResponse,
   ) => {
@@ -671,8 +674,8 @@ export async function main(
       const project_id = req.url?.split("/")[1];
       if (!project_id) return { handled: false };
       if (res) {
-        if (isExplicitDownloadHeadRequest(req)) {
-          setDownloadPreflightCorsHeaders(req, res);
+        if (isProjectFileRequest(req, project_id)) {
+          setProjectFileCorsHeaders(req, res);
         }
         await httpProxyAuth.authorizeHttpRequest(req, res, project_id);
         if (res.writableEnded) {

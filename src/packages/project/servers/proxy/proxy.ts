@@ -221,11 +221,11 @@ function getManagedDownloadAccountId(
   return `${account_id ?? ""}`.trim() || undefined;
 }
 
-function applyExplicitDownloadPreflightCorsHeaders(
+function applyProjectFileCorsHeaders(
   req: http.IncomingMessage,
   headers: Record<string, string | number>,
 ): void {
-  if ((req.method ?? "GET").toUpperCase() !== "HEAD") {
+  if (!/^(GET|HEAD)$/i.test(req.method ?? "GET")) {
     return;
   }
   const origin = `${req.headers.origin ?? ""}`.trim();
@@ -1010,7 +1010,7 @@ ${entries}
       "Content-Length": contentLength,
       ...(extraHeaders ?? {}),
     };
-    applyExplicitDownloadPreflightCorsHeaders(req, headers);
+    applyProjectFileCorsHeaders(req, headers);
     if (partial) {
       headers["Content-Range"] = `bytes ${start}-${end}/${info.size}`;
     }
