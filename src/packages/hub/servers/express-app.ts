@@ -679,7 +679,7 @@ function initLanding(router: express.Router) {
         }
       }
       const url = new URL("http://host");
-      url.searchParams.set("target", base === "/" ? "/" : base);
+      url.searchParams.set("target", base === "" || base === "/" ? "/" : base);
       res.redirect(join(base, "static/public.html") + url.search);
     })().catch((err) => {
       logger.warn("landing page failed", { err });
