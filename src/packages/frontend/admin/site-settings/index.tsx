@@ -42,9 +42,6 @@ const REMOVED_LEGACY_AI_SETTINGS = new Set<string>([
   "anthropic_enabled",
   "ollama_enabled",
   "custom_openai_enabled",
-  "selectable_llms",
-  "default_llm",
-  "user_defined_llm",
 ]);
 
 const REMOVED_LEGACY_AI_EXTRAS = new Set<string>([

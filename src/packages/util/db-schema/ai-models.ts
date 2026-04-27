@@ -285,7 +285,7 @@ export const USER_SELECTABLE_LLMS_BY_VENDOR: {
   user: [],
 } as const;
 
-// This hardcodes which models can be selected by users – refine this by setting site_settings.selectable_llms!
+// This hardcodes which models are available for user-facing selection in the product.
 // Make sure to update this when adding new models.
 // This is used in e.g. mentionable-users.tsx, model-switch.tsx and other-settings.tsx
 export const USER_SELECTABLE_LANGUAGE_MODELS = [
@@ -384,7 +384,7 @@ interface ValidLanguageModelNameProps {
   filter: AIServicesAvailable;
   ollama: string[]; // keys of ollama models
   custom_openai: string[]; // keys of custom openai models
-  selectable_llms: string[]; // either empty, or an array stored in the server settings
+  selectableModels: string[];
 }
 
 // NOTE: these values must be in sync with the "no" vals in db-schema/site-defaults.ts
@@ -406,13 +406,13 @@ export function getValidLanguageModelName({
   filter = DEFAULT_FILTER,
   ollama,
   custom_openai,
-  selectable_llms,
+  selectableModels,
 }: ValidLanguageModelNameProps): LanguageModel {
   if (typeof model === "string" && isValidModel(model)) {
     try {
       if (isCoreLanguageModel(model)) {
         const v = model2vendor(model).name;
-        if (filter[v] && selectable_llms.includes(model)) {
+        if (filter[v] && selectableModels.includes(model)) {
           return model;
         }
       }
@@ -436,7 +436,7 @@ export function getValidLanguageModelName({
 
   for (const free of [true, false]) {
     const defaultModel = getDefaultAIModel(
-      selectable_llms,
+      selectableModels,
       filter,
       ollama,
       custom_openai,
@@ -459,7 +459,7 @@ export const DEFAULT_AI_SERVICE_PRIORITY: Readonly<UserDefinedAIService[]> = [
 ] as const;
 
 export function getDefaultAIModel(
-  selectable_llms: string[],
+  selectableModels: string[],
   filter: AIServicesAvailable,
   ollama?: { [key: string]: any },
   custom_openai?: { [key: string]: any },
@@ -468,7 +468,7 @@ export function getDefaultAIModel(
   for (const v of DEFAULT_AI_SERVICE_PRIORITY) {
     if (!filter[v]) continue;
     for (const m of USER_SELECTABLE_LLMS_BY_VENDOR[v]) {
-      if (selectable_llms.includes(m)) {
+      if (selectableModels.includes(m)) {
         const isFree = LLM_COST[m].free ?? true;
         if ((only_free && isFree) || !only_free) {
           return m;
@@ -611,7 +611,8 @@ export function service2model_core(
   return null;
 }
 
-// NOTE: do not use this – instead use server_settings.default_llm
+// NOTE: do not use this for product defaults; planners and chat entry points
+// choose their own Codex-oriented defaults explicitly.
 export const DEFAULT_MODEL: LanguageModel = "gemini-2.5-flash-8k";
 
 interface LLMVendor {

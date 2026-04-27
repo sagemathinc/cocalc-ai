@@ -9,7 +9,6 @@ import type { AcpStreamPayload } from "@cocalc/conat/ai/acp/types";
 import { projectApiClient } from "@cocalc/conat/project/api";
 import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
 import { conat } from "@cocalc/backend/conat";
-import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import type {
   AgentExecuteRequest,
   AgentExecuteResponse,
@@ -387,8 +386,7 @@ export async function plan(opts: AgentPlanRequest): Promise<AgentPlanResponse> {
       : fallbackManifest;
   const manifest = manifest0.filter((entry) => !!entry?.actionType);
   let raw = "";
-  const settings = await getServerSettings();
-  const configuredPlannerModel = [opts.model, settings?.default_llm]
+  const configuredPlannerModel = [opts.model]
     .map((value) => `${value ?? ""}`.trim())
     .find((value) => isCodexModelName(value));
   try {

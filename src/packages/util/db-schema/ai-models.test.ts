@@ -91,8 +91,8 @@ describe("ai models", () => {
   });
 
   test("getting valid language model", () => {
-    const selectable_llms = [...USER_SELECTABLE_LANGUAGE_MODELS];
-    const notAvailable = selectable_llms.pop();
+    const selectableModels = [...USER_SELECTABLE_LANGUAGE_MODELS];
+    const notAvailable = selectableModels.pop();
 
     function getModel(model: LanguageService, disabled?: LanguageService) {
       const allEnabled = LANGUAGE_MODEL_SERVICES.reduce((acc, svc) => {
@@ -104,7 +104,7 @@ describe("ai models", () => {
         filter: allEnabled,
         ollama: ["phi3"],
         custom_openai: ["bar"],
-        selectable_llms,
+        selectableModels,
       });
     }
 

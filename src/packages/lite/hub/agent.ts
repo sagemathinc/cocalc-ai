@@ -27,7 +27,6 @@ import {
   hasRemote,
   project_id as REMOTE_PROJECT_ID,
 } from "../remote";
-import { getLiteServerSettings } from "./settings";
 import { getLiteConatClient } from "./runtime-client";
 
 function getProjectId(): string {
@@ -105,14 +104,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function getPlannerCodexModel(explicit?: string): string {
   if (typeof explicit === "string" && isCodexModelName(explicit.trim())) {
     return explicit.trim();
-  }
-  const settings = getLiteServerSettings();
-  const configured =
-    typeof settings?.default_llm === "string" && settings.default_llm.trim()
-      ? settings.default_llm.trim()
-      : "";
-  if (isCodexModelName(configured)) {
-    return configured;
   }
   return "gpt-5.4-mini";
 }

@@ -20,7 +20,7 @@ export interface ChatOptionsApi {
   path?: string;
   analytics_cookie?: string;
   history?: History;
-  model?: LanguageModel; // default is defined by server setting default_llm
+  model?: LanguageModel;
   tag?: string;
   maxTokens?: number;
   timeout?: number;

@@ -173,8 +173,6 @@ export interface CustomizeState {
 
   ollama?: TypedMap<{ [key: string]: TypedMap<CustomAIModelPublic> }>;
   custom_openai?: TypedMap<{ [key: string]: TypedMap<CustomAIModelPublic> }>;
-  selectable_llms: List<string>;
-  default_llm?: string;
 
   i18n?: List<Locale>;
 
