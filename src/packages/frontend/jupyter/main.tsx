@@ -22,7 +22,7 @@ import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-s
 import { ErrorDisplay, Icon, Text, Tooltip } from "@cocalc/frontend/components";
 import { A } from "@cocalc/frontend/components/A";
 import { Loading } from "@cocalc/frontend/components/loading";
-import { LLMTools, NotebookMode, Scroll } from "@cocalc/jupyter/types";
+import { AITools, NotebookMode, Scroll } from "@cocalc/jupyter/types";
 import { Kernels as KernelsType } from "@cocalc/jupyter/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { JupyterEditorActions } from "../frame-editors/jupyter-editor/actions";
@@ -199,21 +199,21 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
   const aiDisabled =
     !!redux.getStore("account").getIn(["customize", "disableAI"]) ||
     !!redux.getStore("account").getIn(["other_settings", "openai_disabled"]);
-  const llmEnabledLegacy = redux
+  const aiEnabledLegacy = redux
     .getStore("projects")
     .hasLanguageModelEnabled(project_id);
   const { paymentSource } = useCodexPaymentSource({
     projectId: project_id,
-    enabled: !llmEnabledLegacy && !aiDisabled,
+    enabled: !aiEnabledLegacy && !aiDisabled,
     pollMs: 90_000,
   });
   const codexAvailable =
     paymentSource?.source != null && paymentSource.source !== "none";
   // ATTN: if you add values here, make sure to check the memoize check functions in the components –
   // otherwise they will not re-render as expected.
-  const llmEnabled = llmEnabledLegacy || (!aiDisabled && codexAvailable);
-  // This only checks if we can use the LLM tools at all – detailed checks like "for this project in a course" are by component
-  const llmTools: LLMTools | undefined = llmEnabled
+  const aiEnabled = aiEnabledLegacy || (!aiDisabled && codexAvailable);
+  // This only checks if we can use the AI tools at all – detailed checks like "for this project in a course" are by component.
+  const aiTools: AITools | undefined = aiEnabled
     ? {
         toolComponents,
       }
@@ -403,7 +403,7 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
         scrollTop={scrollTop}
         sel_ids={sel_ids}
         trust={trust}
-        llmTools={llmTools}
+        aiTools={aiTools}
         pendingCells={pendingCells}
         runCellOverlays={runCellOverlays}
       />

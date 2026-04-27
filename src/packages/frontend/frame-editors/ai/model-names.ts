@@ -14,7 +14,7 @@ import {
   type LanguageModel,
 } from "@cocalc/util/db-schema/llm-utils";
 
-export function modelToName(model: LanguageModel): string {
+export function modelDisplayName(model: LanguageModel): string {
   if (isOllamaLLM(model)) {
     const ollama = redux.getStore("customize").get("ollama")?.toJS() ?? {};
     const config = ollama[fromOllamaModel(model)];
@@ -31,8 +31,8 @@ export function modelToName(model: LanguageModel): string {
   return LLM_USERNAMES[model] ?? model;
 }
 
-export function modelToMention(model: LanguageModel): string {
+export function modelMentionMarkup(model: LanguageModel): string {
   return `<span class="user-mention" account-id=${model2service(
     model,
-  )} >@${modelToName(model)}</span>`;
+  )} >@${modelDisplayName(model)}</span>`;
 }

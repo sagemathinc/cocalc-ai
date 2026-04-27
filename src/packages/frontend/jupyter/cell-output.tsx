@@ -9,7 +9,7 @@ React component that describes the output of a cell
 
 import type { Map as ImmutableMap } from "immutable";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { LLMTools } from "@cocalc/jupyter/types";
+import { AITools } from "@cocalc/jupyter/types";
 import type { JupyterActions } from "./browser-actions";
 import { CellHiddenPart } from "./cell-hidden-part";
 import { CollapsedOutput, OutputToggle } from "./cell-output-toggle";
@@ -35,7 +35,7 @@ interface CellOutputProps {
   hidePrompt?: boolean;
   style?: React.CSSProperties;
   divRef?;
-  llmTools?: LLMTools;
+  aiTools?: AITools;
   isDragging?: boolean;
   stdin?;
   runOverlay?: RunCellOverlay;
@@ -58,7 +58,7 @@ export function CellOutput({
   hidePrompt,
   divRef,
   style,
-  llmTools,
+  aiTools,
   isDragging,
   stdin,
   runOverlay,
@@ -168,7 +168,7 @@ export function CellOutput({
           directory={directory}
           name={name}
           trust={trust}
-          llmTools={llmTools}
+          aiTools={aiTools}
           isDragging={isDragging}
           runOverlay={runOverlay}
         />
@@ -193,7 +193,7 @@ interface OutputColumnProps {
   directory?: string;
   name?: string;
   trust?: boolean;
-  llmTools?;
+  aiTools?;
   isDragging?: boolean;
   runOverlay?: RunCellOverlay;
 }
@@ -207,7 +207,7 @@ function OutputColumn({
   directory,
   name,
   trust,
-  llmTools,
+  aiTools,
   isDragging,
   runOverlay,
 }: OutputColumnProps) {
@@ -250,7 +250,7 @@ function OutputColumn({
       name={name}
       trust={trust}
       id={id}
-      llmTools={llmTools}
+      aiTools={aiTools}
     />
   );
 }

@@ -16,7 +16,7 @@ import MostlyStaticMarkdown from "@cocalc/frontend/editors/slate/mostly-static-m
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
-import { LLMTools } from "@cocalc/jupyter/types";
+import { AITools } from "@cocalc/jupyter/types";
 import { CellType } from "@cocalc/util/jupyter/types";
 import { filename_extension, startswith } from "@cocalc/util/misc";
 import { JupyterActions } from "./browser-actions";
@@ -89,7 +89,7 @@ export interface CellInputProps {
   is_scrolling?: boolean;
   id: string;
   index: number;
-  llmTools?: LLMTools;
+  aiTools?: AITools;
   setShowAICellGen?: (show: Position) => void;
   dragHandle?: React.JSX.Element;
   isPending?: boolean;
@@ -149,10 +149,10 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
     // NOTE: These two flags are primarily used to enable/disable tools in course projects
     const projectsStore = redux.getStore("projects");
     const haveAIGenerateCell: boolean =
-      props.llmTools != null &&
+      props.aiTools != null &&
       projectsStore.hasLanguageModelEnabled(props.project_id, "generate-cell");
-    const haveLLMCellTools: boolean =
-      props.llmTools != null &&
+    const haveAICellTools: boolean =
+      props.aiTools != null &&
       projectsStore.hasLanguageModelEnabled(
         props.project_id,
         "jupyter-cell-llm",
@@ -454,8 +454,8 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
           is_current={props.is_current}
           is_readonly={props.is_readonly}
           input_is_readonly={props.input_is_readonly}
-          llmTools={props.llmTools}
-          haveLLMCellTools={haveLLMCellTools}
+          aiTools={props.aiTools}
+          haveAICellTools={haveAICellTools}
           showControls={showButtons}
         />
       );
@@ -526,7 +526,7 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
       next.input_is_readonly !== cur.input_is_readonly ||
       next.is_scrolling !== cur.is_scrolling ||
       next.cell_toolbar !== cur.cell_toolbar ||
-      (next.llmTools != null) !== (cur.llmTools != null) ||
+      (next.aiTools != null) !== (cur.aiTools != null) ||
       next.index !== cur.index ||
       next.dragHandle !== cur.dragHandle ||
       next.isPending !== cur.isPending ||

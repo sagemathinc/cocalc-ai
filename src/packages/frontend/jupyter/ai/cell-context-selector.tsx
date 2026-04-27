@@ -1,6 +1,6 @@
 /*
 Reusable component for selecting context cells around a target cell in Jupyter notebooks.
-Used by both the LLM cell tool and AI cell generator.
+Used by both the Agent cell tool and AI cell generator.
 */
 
 import { Flex, Slider, SliderSingleProps, Switch } from "antd";
@@ -10,7 +10,7 @@ import { Paragraph, Text } from "@cocalc/frontend/components";
 import { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
 import { plural } from "@cocalc/util/misc";
 
-export interface LLMCellContextSelectorProps {
+export interface AICellContextSelectorProps {
   // Context range as [above, below] where negative values mean "above" and positive mean "below"
   contextRange: [number, number];
   onContextRangeChange: (range: [number, number]) => void;
@@ -27,7 +27,7 @@ export interface LLMCellContextSelectorProps {
   mode: "insertion" | "analysis";
 }
 
-export function LLMCellContextSelector({
+export function AICellContextSelector({
   contextRange,
   onContextRangeChange,
   cellTypes,
@@ -35,7 +35,7 @@ export function LLMCellContextSelector({
   currentCellId,
   frameActions,
   mode,
-}: LLMCellContextSelectorProps) {
+}: AICellContextSelectorProps) {
   const { minValue, maxValue, marks } = useMemo(() => {
     const jupyterActionsStore = frameActions?.jupyter_actions.store;
     if (!jupyterActionsStore) {

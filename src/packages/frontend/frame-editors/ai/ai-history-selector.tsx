@@ -10,7 +10,7 @@ import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { COLORS } from "@cocalc/util/theme";
 
-interface LLMHistorySelectorProps {
+interface AIHistorySelectorProps {
   prompts: string[];
   onSelect: (value: string) => void;
   disabled?: boolean;
@@ -19,14 +19,14 @@ interface LLMHistorySelectorProps {
   alignSelf?: "stretch" | "flex-start" | "flex-end" | "center" | "baseline";
 }
 
-export function LLMHistorySelector({
+export function AIHistorySelector({
   prompts,
   onSelect,
   disabled = false,
   style,
   width = 350,
   alignSelf = "stretch",
-}: LLMHistorySelectorProps) {
+}: AIHistorySelectorProps) {
   const [searchText, setSearchText] = useState("");
   const [isOpen, setIsOpen] = useState(false);
 

@@ -7,7 +7,7 @@ import {
   dispatchNavigatorPromptIntent,
   submitNavigatorPromptInWorkspaceChat,
 } from "@cocalc/frontend/project/new/navigator-intents";
-import { getMaxTokens as getLLMMaxTokens } from "@cocalc/util/db-schema/llm-utils";
+import { getMaxTokens as getModelMaxTokens } from "@cocalc/util/db-schema/llm-utils";
 import { capitalize } from "@cocalc/util/misc";
 import type {
   BaseEditorActions as Actions,
@@ -42,7 +42,7 @@ export function resolveAssistantCodexModel(model?: string): string {
 export function getAssistantMaxTokens(model?: string): number {
   return isCodexModelName(model)
     ? 128_000
-    : getLLMMaxTokens(model as Parameters<typeof getLLMMaxTokens>[0]);
+    : getModelMaxTokens(model as Parameters<typeof getModelMaxTokens>[0]);
 }
 
 export default async function createChat({

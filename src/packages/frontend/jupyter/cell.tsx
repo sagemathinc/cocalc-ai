@@ -20,7 +20,7 @@ import { Icon, Tip } from "@cocalc/frontend/components";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
 import { clear_selection } from "@cocalc/frontend/misc/clear-selection";
-import { LLMTools } from "@cocalc/jupyter/types";
+import { AITools } from "@cocalc/jupyter/types";
 import { COLORS } from "@cocalc/util/theme";
 import { JupyterActions } from "./browser-actions";
 import { CellInput } from "./cell-input";
@@ -54,7 +54,7 @@ interface Props {
   is_scrolling?: boolean;
   height?: number; // optional fixed height
   delayRendering?: number;
-  llmTools?: LLMTools;
+  aiTools?: AITools;
   is_visible?: boolean;
   isFirst?: boolean;
   isLast?: boolean;
@@ -102,8 +102,8 @@ function getRenderChangeReasons(props: Props, nextProps: Props): string[] {
   if (nextProps.height !== props.height) reasons.push("height");
   if (nextProps.isFirst !== props.isFirst) reasons.push("isFirst");
   if (nextProps.isLast !== props.isLast) reasons.push("isLast");
-  if ((nextProps.llmTools != null) !== (props.llmTools != null)) {
-    reasons.push("llmTools.present");
+  if ((nextProps.aiTools != null) !== (props.aiTools != null)) {
+    reasons.push("aiTools.present");
   }
   if (
     nextProps.complete !== props.complete &&
@@ -143,7 +143,7 @@ function areEqual(props: Props, nextProps: Props): boolean {
     nextProps.height !== props.height ||
     nextProps.isFirst !== props.isFirst ||
     nextProps.isLast !== props.isLast ||
-    (nextProps.llmTools != null) !== (props.llmTools != null) ||
+    (nextProps.aiTools != null) !== (props.aiTools != null) ||
     (nextProps.complete !== props.complete && // only worry about complete when editing this cell
       (nextProps.is_current || props.is_current)) ||
     // dragHandle is re-created by CellList on each render.  We only care if
@@ -204,7 +204,7 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
         is_readonly={!!props.read_only}
         input_is_readonly={!props.cell.getIn(["metadata", "editable"], true)}
         is_scrolling={props.is_scrolling}
-        llmTools={props.llmTools}
+        aiTools={props.aiTools}
         setShowAICellGen={setShowAICellGen}
         dragHandle={props.dragHandle}
         isPending={props.isPending}
@@ -231,7 +231,7 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
         more_output={props.more_output}
         trust={props.trust}
         complete={props.is_current && props.complete != null}
-        llmTools={props.llmTools}
+        aiTools={props.aiTools}
         isDragging={props.isDragging}
         stdin={props.stdin}
         runOverlay={props.runOverlay}
@@ -449,7 +449,7 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
         id={id}
         project_id={props.project_id}
         hide={!props.is_visible}
-        llmTools={props.llmTools}
+        aiTools={props.aiTools}
         key={id + "insert" + position}
         position={position}
         actions={props.actions}

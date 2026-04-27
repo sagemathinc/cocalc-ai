@@ -22,7 +22,7 @@ import { Tooltip } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { Icon } from "@cocalc/frontend/components/icon";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
-import { LLMTools } from "@cocalc/jupyter/types";
+import { AITools } from "@cocalc/jupyter/types";
 import { unreachable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { JupyterActions } from "../browser-actions";
@@ -38,7 +38,7 @@ export interface InsertCellProps {
   actions: JupyterActions;
   project_id?: string;
   id: string;
-  llmTools?: LLMTools;
+  aiTools?: AITools;
   hide?: boolean;
   position: "above" | "below";
   showAICellGen: Position;
@@ -53,7 +53,7 @@ export interface InsertCellState {
 export function InsertCell({
   project_id,
   position,
-  llmTools,
+  aiTools,
   actions,
   id,
   hide,
@@ -139,7 +139,7 @@ export function InsertCell({
           >
             <Icon name="paste" /> Paste
           </TinyButton>
-          {showGenerateCell && llmTools && (
+          {showGenerateCell && aiTools && (
             <TinyButton
               type="aicell"
               title="Generate new notebook cells with Agent"

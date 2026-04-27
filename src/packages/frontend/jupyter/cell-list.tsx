@@ -33,7 +33,7 @@ import {
   isInsideKeyboardBoundary,
 } from "@cocalc/frontend/keyboard/boundary";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
-import { LLMTools, NotebookMode, Scroll } from "@cocalc/jupyter/types";
+import { AITools, NotebookMode, Scroll } from "@cocalc/jupyter/types";
 import { JupyterActions } from "./browser-actions";
 import { Cell } from "./cell";
 import HeadingTagComponent from "./heading-tag";
@@ -87,7 +87,7 @@ interface CellListProps {
   scrollTop?: any;
   sel_ids?: immutable.Set<string>; // set of selected cells
   trust?: boolean;
-  llmTools?: LLMTools;
+  aiTools?: AITools;
   read_only?: boolean;
   pendingCells?: immutable.Set<string>;
   runCellOverlays?: immutable.Map<string, immutable.Map<string, any>>;
@@ -146,7 +146,7 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
     scrollTop,
     sel_ids,
     trust,
-    llmTools,
+    aiTools,
     read_only,
     pendingCells,
     runCellOverlays,
@@ -440,7 +440,7 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
           trust={trust}
           is_scrolling={isScrolling}
           delayRendering={delayRendering}
-          llmTools={llmTools}
+          aiTools={aiTools}
           isFirst={isFirst}
           isLast={isLast}
           dragHandle={dragHandle}

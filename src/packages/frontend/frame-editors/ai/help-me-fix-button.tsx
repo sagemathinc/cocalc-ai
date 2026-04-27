@@ -8,20 +8,20 @@ import PopconfirmKeyboard from "@cocalc/frontend/components/popconfirm-keyboard"
 
 const messages = {
   buttonText: defineMessage({
-    id: "frame-editors.llm.help-me-fix-button.button-text",
+    id: "frame-editors.ai.help-me-fix-button.button-text",
     defaultMessage:
       "{isHint, select, true {Ask Agent for a Hint...} other {Fix with Agent...}}",
     description: "Button text for agent debugging actions - hint vs fix",
   }),
   okText: defineMessage({
-    id: "frame-editors.llm.help-me-fix-button.ok-text",
+    id: "frame-editors.ai.help-me-fix-button.ok-text",
     defaultMessage:
       "{isHint, select, true {Ask Agent [Return]} other {Send to Agent [Return]}}",
     description:
       "Confirmation button text in the agent debugging dialog - hint vs fix",
   }),
   title: defineMessage({
-    id: "frame-editors.llm.help-me-fix-button.title",
+    id: "frame-editors.ai.help-me-fix-button.title",
     defaultMessage:
       "{isHint, select, true {Ask Agent for a debugging hint} other {Ask Agent to fix this problem}}",
     description: "Title text in the agent debugging dialog - hint vs fix",

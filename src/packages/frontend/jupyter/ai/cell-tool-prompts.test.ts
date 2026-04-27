@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { buildHiddenPrompt, buildVisiblePrompt } from "./cell-tool";
+import { buildHiddenPrompt, buildVisiblePrompt } from "./agent-cell-tool";
 
 describe("Jupyter cell Agent prompts", () => {
   it("builds a minimal hidden prompt for bugfix mode", () => {

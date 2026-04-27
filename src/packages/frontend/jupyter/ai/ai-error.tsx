@@ -1,5 +1,5 @@
 /*
-Use ChatGPT to explain an error message and help the user fix it.
+Use the Agent to explain a notebook error and help fix it.
 */
 
 import { Alert, Button, Space } from "antd";
@@ -51,7 +51,7 @@ function buildNotebookErrorPrompt(opts: {
   return parts.join("\n\n");
 }
 
-export default function LLMError({ traceback, input }: Props) {
+export default function AIError({ traceback, input }: Props) {
   const { actions: frameActions, project_id, path } = useFrameContext();
   const [routing, setRouting] = useState(false);
   const [routingError, setRoutingError] = useState("");

@@ -1,7 +1,7 @@
 import { redux } from "@cocalc/frontend/app-framework";
 import { Text } from "@cocalc/frontend/components";
 
-export function getCustomLLMGroup() {
+export function getManagedAIGroup() {
   const customize = redux.getStore("customize");
   const site_name = customize.get("site_name");
   const organization_name = customize.get("organization_name") ?? "";
@@ -9,7 +9,7 @@ export function getCustomLLMGroup() {
     title: `Managed by ${organization_name || site_name}`,
     label: (
       <>
-        <Text strong>{site_name} language models</Text>
+        <Text strong>{site_name} AI services</Text>
       </>
     ),
   };

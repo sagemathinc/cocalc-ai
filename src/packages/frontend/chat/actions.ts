@@ -10,9 +10,9 @@ import { Actions, redux } from "@cocalc/frontend/app-framework";
 import { History as LanguageModelHistory } from "@cocalc/frontend/client/types";
 import type { BaseEditorActions as CodeEditorActions } from "@cocalc/frontend/frame-editors/base-editor/actions-base";
 import {
-  modelToMention,
-  modelToName,
-} from "@cocalc/frontend/frame-editors/ai/llm-selector";
+  modelDisplayName,
+  modelMentionMarkup,
+} from "@cocalc/frontend/frame-editors/ai/model-names";
 import { open_new_tab } from "@cocalc/frontend/misc";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import track from "@cocalc/frontend/user-tracking";
@@ -2726,7 +2726,9 @@ export class ChatActions extends Actions<ChatState> {
       await import("@cocalc/frontend/misc/llm");
     const maxTokens = getMaxTokens(model);
     const txt = truncateMessage(txtFull, maxTokens);
-    const m = returnInfo ? `@${modelToName(model)}` : modelToMention(model);
+    const m = returnInfo
+      ? `@${modelDisplayName(model)}`
+      : modelMentionMarkup(model);
     const instruction = short
       ? `Briefly summarize the provided chat conversation in one paragraph`
       : `Summarize the provided chat conversation. Make a list of all topics, the main conclusions, assigned tasks, and a sentiment score.`;

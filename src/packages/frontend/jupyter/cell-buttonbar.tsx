@@ -18,7 +18,7 @@ import { Icon, Tooltip, isIconName } from "@cocalc/frontend/components";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
 import { jupyter, labels } from "@cocalc/frontend/i18n";
 import track from "@cocalc/frontend/user-tracking";
-import { LLMTools } from "@cocalc/jupyter/types";
+import { AITools } from "@cocalc/jupyter/types";
 import { CellType } from "@cocalc/util/jupyter/types";
 import { JupyterActions } from "./browser-actions";
 import { CodeBarDropdownMenu } from "./cell-buttonbar-menu";
@@ -30,7 +30,7 @@ import {
   RUN_ALL_CELLS_ABOVE_ICON,
   RUN_ALL_CELLS_BELOW_ICON,
 } from "./consts";
-import { LLMCellTool } from "./ai/cell-tool";
+import { AgentCellTool } from "./ai/agent-cell-tool";
 
 export function PlaceholderButtonBar() {
   return <div style={CODE_BAR_BTN_STYLE} />;
@@ -42,8 +42,8 @@ interface Props {
   actions?: JupyterActions;
   cell: Map<string, any>;
   is_current: boolean;
-  llmTools?: LLMTools;
-  haveLLMCellTools: boolean; // decides if we show the LLM Tools, depends on student project in a course, etc.
+  aiTools?: AITools;
+  haveAICellTools: boolean; // decides if we show the AI cell tools, depends on student project in a course, etc.
   index: number;
   is_readonly: boolean;
   input_is_readonly?: boolean;
@@ -57,10 +57,10 @@ function areEqual(prev: Props, next: Props): boolean {
     next.index !== prev.index ||
     next.cell !== prev.cell ||
     next.is_current !== prev.is_current ||
-    (next.llmTools != null) !== (prev.llmTools != null) ||
+    (next.aiTools != null) !== (prev.aiTools != null) ||
     next.is_current !== prev.is_current ||
     next.is_readonly !== prev.is_readonly ||
-    next.haveLLMCellTools !== prev.haveLLMCellTools ||
+    next.haveAICellTools !== prev.haveAICellTools ||
     next.showControls !== prev.showControls
   );
 }
@@ -71,11 +71,11 @@ export const CellButtonBar: React.FC<Props> = React.memo(
     cell_type,
     actions,
     cell,
-    llmTools,
+    aiTools,
     index,
     is_readonly,
     input_is_readonly,
-    haveLLMCellTools,
+    haveAICellTools,
     showControls = true,
   }: Props) => {
     const intl = useIntl();
@@ -188,13 +188,13 @@ export const CellButtonBar: React.FC<Props> = React.memo(
       );
     }
 
-    function renderCodeBarLLMButtons() {
-      if (!llmTools || !haveLLMCellTools || is_readonly) return;
+    function renderCodeBarAIButtons() {
+      if (!aiTools || !haveAICellTools || is_readonly) return;
       return (
-        <LLMCellTool
+        <AgentCellTool
           id={id}
           actions={actions}
-          llmTools={llmTools}
+          aiTools={aiTools}
           cellType={isCodeCell ? "code" : "markdown"}
         />
       );
@@ -289,7 +289,7 @@ export const CellButtonBar: React.FC<Props> = React.memo(
       <div className="hidden-xs" style={MINI_BUTTONS_STYLE_INNER}>
         <div style={{ display: "flex", alignItems: "center", gap: "3px" }}>
           {showControls ? renderCodeBarRunStop() : null}
-          {showControls ? renderCodeBarLLMButtons() : null}
+          {showControls ? renderCodeBarAIButtons() : null}
           {showControls ? renderMarkdownEditButton() : null}
           {showControls ? renderCodeBarFormatButton() : null}
           {showControls ? renderDropdownMenu() : null}

@@ -46,7 +46,7 @@ import { copy, field_cmp, path_split, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
 import { is_safari } from "../generic/browser";
-import LanguageModelTitleBarButton from "../ai/llm-assistant-button";
+import AgentTitleBarButton from "../ai/agent-title-bar-button";
 import {
   APPLICATION_MENU,
   COMMANDS,
@@ -605,7 +605,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       return;
     }
     return (
-      <LanguageModelTitleBarButton
+      <AgentTitleBarButton
         path={props.path}
         type={props.type}
         showDialog={showAIDialogs[where]}

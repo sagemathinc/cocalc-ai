@@ -4,12 +4,12 @@
  */
 
 /**
-// To debug LLM history in the browser console:
+// To debug AI history in the browser console:
 c = cc.client.conat_client
-// Get the shared LLM history streams
+// Get the shared AI history streams
 stream = await c.dstream({account_id: cc.client.account_id, name: 'llm-history'})
 // View prompts
-console.log('LLM prompts:', stream.getAll())
+console.log('AI prompts:', stream.getAll())
 // Add a prompt to general
 stream.push("New prompt")
 // Listen to changes
@@ -32,10 +32,10 @@ const MAX_PROMPTS_NUM = 1000;
 const MAX_PROMPTS_BYTES = 1024 * 1024;
 const SHARED_STREAM_MAX_LISTENERS = 100;
 
-export type LLMHistoryType = "general" | "formula" | "generate";
+export type AIHistoryType = "general" | "formula" | "generate";
 
-interface LLMHistoryEntry {
-  type: LLMHistoryType;
+interface AIHistoryEntry {
+  type: AIHistoryType;
   prompt: string;
 }
 
@@ -47,7 +47,7 @@ function notifyStreamReset() {
   }
 }
 
-export function resetLLMHistoryForTests() {
+export function resetAIHistoryForTests() {
   streamResetListeners.clear();
   resetSharedAccountDStreamCacheForTests();
 }
@@ -63,7 +63,7 @@ const getDStream = reuseInFlight(async () => {
     });
 
     const account_id = store.get_account_id();
-    const stream = await getSharedAccountDStream<LLMHistoryEntry>({
+    const stream = await getSharedAccountDStream<AIHistoryEntry>({
       account_id,
       name: CONAT_LLM_HISTORY_KEY,
       config: {
@@ -75,23 +75,21 @@ const getDStream = reuseInFlight(async () => {
     });
     return stream;
   } catch (err) {
-    console.warn(`dstream LLM history initialization error -- ${err}`);
+    console.warn(`dstream AI history initialization error -- ${err}`);
     throw err;
   }
 });
 
-// Hook for managing LLM prompt history using dstream
-export function useLLMHistory(type: LLMHistoryType = "general") {
+// Hook for managing AI prompt history using dstream
+export function useAIHistory(type: AIHistoryType = "general") {
   const [prompts, setPrompts] = useState<string[]>([]);
   const [streamResetToken, setStreamResetToken] = useState(0);
 
   // Use ref to store stable listener function
-  const listenerRef = useRef<((newEntry: LLMHistoryEntry) => void) | null>(
-    null,
-  );
+  const listenerRef = useRef<((newEntry: AIHistoryEntry) => void) | null>(null);
 
   // Filter prompts by type and extract just the prompt strings (newest first)
-  function filterPromptsByType(entries: LLMHistoryEntry[]): string[] {
+  function filterPromptsByType(entries: AIHistoryEntry[]): string[] {
     return entries
       .filter((entry) => entry.type === type)
       .map((entry) => entry.prompt)
@@ -111,7 +109,7 @@ export function useLLMHistory(type: LLMHistoryType = "general") {
   // Initialize dstream and set up listeners
   useEffect(() => {
     let isMounted = true;
-    let stream: DStream<LLMHistoryEntry> | null = null;
+    let stream: DStream<AIHistoryEntry> | null = null;
 
     const initializeStream = async () => {
       try {
@@ -126,7 +124,7 @@ export function useLLMHistory(type: LLMHistoryType = "general") {
         setPrompts(filterPromptsByType(allEntries));
 
         // Create stable listener function
-        listenerRef.current = (newEntry: LLMHistoryEntry) => {
+        listenerRef.current = (newEntry: AIHistoryEntry) => {
           // Only update if the new entry matches our type
           if (newEntry.type !== type) return;
 
@@ -140,7 +138,7 @@ export function useLLMHistory(type: LLMHistoryType = "general") {
         // Add our listener to the stream
         stream.on("change", listenerRef.current);
       } catch (err) {
-        console.warn(`LLM history hook initialization error -- ${err}`);
+        console.warn(`AI history hook initialization error -- ${err}`);
       }
     };
 
@@ -160,7 +158,7 @@ export function useLLMHistory(type: LLMHistoryType = "general") {
     const trimmedPrompt = prompt.trim();
 
     if (!trimmedPrompt) {
-      console.warn("use-llm-history: ignoring empty prompt");
+      console.warn("use-ai-history: ignoring empty prompt");
       return;
     }
 
@@ -168,7 +166,7 @@ export function useLLMHistory(type: LLMHistoryType = "general") {
       const stream = await getDStream();
 
       // Create entry object with type and prompt
-      const entry: LLMHistoryEntry = {
+      const entry: AIHistoryEntry = {
         type,
         prompt: trimmedPrompt,
       };
@@ -176,7 +174,7 @@ export function useLLMHistory(type: LLMHistoryType = "general") {
       // Add entry to stream - this will trigger a change event
       stream.push(entry);
     } catch (err) {
-      console.warn(`Error adding prompt to LLM history -- ${err}`);
+      console.warn(`Error adding prompt to AI history -- ${err}`);
     }
   }
 
@@ -192,7 +190,7 @@ export function useLLMHistory(type: LLMHistoryType = "general") {
 
       notifyStreamReset();
     } catch (err) {
-      console.warn(`Error clearing LLM history -- ${err}`);
+      console.warn(`Error clearing AI history -- ${err}`);
       // Reload prompts on error
       try {
         const stream = await getDStream();

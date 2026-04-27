@@ -34,7 +34,7 @@ interface Props {
   noLabel?: boolean;
 }
 
-export default function LanguageModelTitleBarButton({
+export default function AgentTitleBarButton({
   id,
   path,
   type,

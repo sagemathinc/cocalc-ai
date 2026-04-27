@@ -6,7 +6,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { EventEmitter } from "events";
-import { resetLLMHistoryForTests, useLLMHistory } from "./use-llm-history";
+import { resetAIHistoryForTests, useAIHistory } from "./use-ai-history";
 import { redux } from "@cocalc/frontend/app-framework";
 import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
 
@@ -44,7 +44,7 @@ class FakeDStream extends EventEmitter {
 }
 
 function TestComponent() {
-  const { prompts, addPrompt, clearHistory } = useLLMHistory("general");
+  const { prompts, addPrompt, clearHistory } = useAIHistory("general");
   return (
     <div>
       <button onClick={() => void addPrompt("alpha")}>add-alpha</button>
@@ -55,13 +55,13 @@ function TestComponent() {
   );
 }
 
-describe("useLLMHistory", () => {
+describe("useAIHistory", () => {
   const getStoreMock = redux.getStore as jest.Mock;
   const dstreamMock = getSharedAccountDStream as jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    resetLLMHistoryForTests();
+    resetAIHistoryForTests();
     getStoreMock.mockReturnValue({
       async_wait: async () => {},
       get_account_id: () => "account-1",

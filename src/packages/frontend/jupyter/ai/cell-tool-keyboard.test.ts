@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { stopKeyboardPropagation } from "./cell-tool";
+import { stopKeyboardPropagation } from "./agent-cell-tool";
 
 describe("stopKeyboardPropagation", () => {
   it("stops keyboard event propagation for modal/composer inputs", () => {

@@ -16,7 +16,7 @@ import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame
 import { labels, type IntlMessage } from "@cocalc/frontend/i18n";
 import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/ai/popup-agent-composer";
 import track from "@cocalc/frontend/user-tracking";
-import type { LLMTools } from "@cocalc/jupyter/types";
+import type { AITools } from "@cocalc/jupyter/types";
 import type { JupyterActions } from "../browser-actions";
 import { CODE_BAR_BTN_STYLE } from "../consts";
 
@@ -24,11 +24,11 @@ interface Props {
   actions?: JupyterActions;
   id: string;
   style?: React.CSSProperties;
-  llmTools?: LLMTools;
+  aiTools?: AITools;
   cellType: "code" | "markdown";
 }
 
-const TRACKING_KEY = "jupyter_cell_llm";
+const TRACKING_KEY = "jupyter_cell_ai";
 const DEFAULT_CELL_TOOL_CODEX_MODEL = "gpt-5.4-mini";
 
 const MODES_CODE = [
@@ -63,33 +63,33 @@ const ACTIONS_CODE: { [mode in CodeMode]: CodexCellToolAction } = {
   ask: {
     icon: "question-circle",
     label: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.ask.label",
+      id: "jupyter.ai.cell-tool.actions.ask.label",
       defaultMessage: "Ask",
     }),
     descr: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.ask.descr",
+      id: "jupyter.ai.cell-tool.actions.ask.descr",
       defaultMessage: "Ask the Agent a question about this cell.",
     }),
   },
   explain: {
     icon: "sound-outlined",
     label: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.explain.label",
+      id: "jupyter.ai.cell-tool.actions.explain.label",
       defaultMessage: "Explain",
     }),
     descr: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.explain.descr",
+      id: "jupyter.ai.cell-tool.actions.explain.descr",
       defaultMessage: "Ask the Agent to explain what this cell is doing.",
     }),
   },
   bugfix: {
     icon: "clean-outlined",
     label: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.bugfix.label",
+      id: "jupyter.ai.cell-tool.actions.bugfix.label",
       defaultMessage: "Fix Bugs",
     }),
     descr: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.bugfix.descr",
+      id: "jupyter.ai.cell-tool.actions.bugfix.descr",
       defaultMessage:
         "Ask the Agent to diagnose and fix problems in this cell.",
     }),
@@ -97,44 +97,44 @@ const ACTIONS_CODE: { [mode in CodeMode]: CodexCellToolAction } = {
   modify: {
     icon: "edit",
     label: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.modify.label",
+      id: "jupyter.ai.cell-tool.actions.modify.label",
       defaultMessage: "Modify",
     }),
     descr: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.modify.descr",
+      id: "jupyter.ai.cell-tool.actions.modify.descr",
       defaultMessage: "Ask the Agent to make a specific change to this cell.",
     }),
   },
   improve: {
     icon: "rise-outlined",
     label: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.improve.label",
+      id: "jupyter.ai.cell-tool.actions.improve.label",
       defaultMessage: "Improve",
     }),
     descr: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.improve.descr",
+      id: "jupyter.ai.cell-tool.actions.improve.descr",
       defaultMessage: "Ask the Agent to improve this cell.",
     }),
   },
   document: {
     icon: "book",
     label: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.document.label",
+      id: "jupyter.ai.cell-tool.actions.document.label",
       defaultMessage: "Document",
     }),
     descr: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.document.descr",
+      id: "jupyter.ai.cell-tool.actions.document.descr",
       defaultMessage: "Ask the Agent to document this cell.",
     }),
   },
   translate: {
     icon: "translation-outlined",
     label: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.translate.label",
+      id: "jupyter.ai.cell-tool.actions.translate.label",
       defaultMessage: "Translate",
     }),
     descr: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.translate.descr",
+      id: "jupyter.ai.cell-tool.actions.translate.descr",
       defaultMessage:
         "Ask the Agent to translate this cell to another language.",
     }),
@@ -145,22 +145,22 @@ const ACTIONS_MD: { [mode in MarkdownMode]: CodexCellToolAction } = {
   ask: {
     icon: "question-circle",
     label: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.ask.label",
+      id: "jupyter.ai.cell-tool.actions.ask.label",
       defaultMessage: "Ask",
     }),
     descr: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.md.ask.descr",
+      id: "jupyter.ai.cell-tool.actions.md.ask.descr",
       defaultMessage: "Ask the Agent a question about this Markdown cell.",
     }),
   },
   document: {
     icon: "book",
     label: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.md.document.label",
+      id: "jupyter.ai.cell-tool.actions.md.document.label",
       defaultMessage: "Document",
     }),
     descr: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.md.document.descr",
+      id: "jupyter.ai.cell-tool.actions.md.document.descr",
       defaultMessage:
         "Ask the Agent to improve the documentation in this cell.",
     }),
@@ -168,22 +168,22 @@ const ACTIONS_MD: { [mode in MarkdownMode]: CodexCellToolAction } = {
   proofread: {
     icon: "check-circle",
     label: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.md.proofread.label",
+      id: "jupyter.ai.cell-tool.actions.md.proofread.label",
       defaultMessage: "Proofread",
     }),
     descr: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.md.proofread.descr",
+      id: "jupyter.ai.cell-tool.actions.md.proofread.descr",
       defaultMessage: "Ask the Agent to proofread this Markdown cell.",
     }),
   },
   formulize: {
     icon: "fx",
     label: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.md.formulize.label",
+      id: "jupyter.ai.cell-tool.actions.md.formulize.label",
       defaultMessage: "Add Formulas",
     }),
     descr: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.md.formulize.descr",
+      id: "jupyter.ai.cell-tool.actions.md.formulize.descr",
       defaultMessage:
         "Ask the Agent to add useful formulas to this Markdown cell.",
     }),
@@ -191,11 +191,11 @@ const ACTIONS_MD: { [mode in MarkdownMode]: CodexCellToolAction } = {
   translate_text: {
     icon: "global",
     label: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.md.translate-text.label",
+      id: "jupyter.ai.cell-tool.actions.md.translate-text.label",
       defaultMessage: "Translate",
     }),
     descr: defineMessage({
-      id: "jupyter.llm.cell-tool.actions.md.translate-text.descr",
+      id: "jupyter.ai.cell-tool.actions.md.translate-text.descr",
       defaultMessage: "Ask the Agent to translate this Markdown cell.",
     }),
   },
@@ -228,33 +228,33 @@ function optionalPromptLabel(
   switch (mode) {
     case "ask":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.prompt.ask",
+        id: "jupyter.ai.cell-tool.prompt.ask",
         defaultMessage: "Question",
       });
     case "bugfix":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.prompt.bugfix",
+        id: "jupyter.ai.cell-tool.prompt.bugfix",
         defaultMessage: "Problem details",
       });
     case "modify":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.prompt.modify",
+        id: "jupyter.ai.cell-tool.prompt.modify",
         defaultMessage: "Requested change",
       });
     case "improve":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.prompt.improve",
+        id: "jupyter.ai.cell-tool.prompt.improve",
         defaultMessage: "Improvement focus",
       });
     case "document":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.prompt.document",
+        id: "jupyter.ai.cell-tool.prompt.document",
         defaultMessage: "Documentation focus",
       });
     case "translate":
     case "translate_text":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.prompt.translate",
+        id: "jupyter.ai.cell-tool.prompt.translate",
         defaultMessage: "Target language",
       });
     case "explain":
@@ -272,39 +272,39 @@ function optionalPromptPlaceholder(
   switch (mode) {
     case "ask":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.ask.placeholder",
+        id: "jupyter.ai.cell-tool.ask.placeholder",
         defaultMessage: `What would you like to know about this ${cellType === "code" ? "cell" : "Markdown cell"}?`,
       });
     case "bugfix":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.bugfix.placeholder",
+        id: "jupyter.ai.cell-tool.bugfix.placeholder",
         defaultMessage:
           "Optional: describe the issue you want the Agent to focus on.",
       });
     case "modify":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.modify.placeholder",
+        id: "jupyter.ai.cell-tool.modify.placeholder",
         defaultMessage: "Describe the change you want the Agent to make.",
       });
     case "improve":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.improve.placeholder",
+        id: "jupyter.ai.cell-tool.improve.placeholder",
         defaultMessage:
           "Optional: performance, readability, structure, tests, …",
       });
     case "document":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.document.placeholder",
+        id: "jupyter.ai.cell-tool.document.placeholder",
         defaultMessage: "Optional: what should the documentation focus on?",
       });
     case "translate":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.translate.placeholder",
+        id: "jupyter.ai.cell-tool.translate.placeholder",
         defaultMessage: "R, Julia, JavaScript, LaTeX, …",
       });
     case "translate_text":
       return intl.formatMessage({
-        id: "jupyter.llm.cell-tool.translate-text.placeholder",
+        id: "jupyter.ai.cell-tool.translate-text.placeholder",
         defaultMessage: "Spanish, French, German, …",
       });
     case "explain":
@@ -439,7 +439,13 @@ export function stopKeyboardPropagation(
   e.stopPropagation();
 }
 
-export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
+export function AgentCellTool({
+  actions,
+  id,
+  style,
+  aiTools,
+  cellType,
+}: Props) {
   const intl = useIntl();
   const { actions: projectActions } = useProjectContext();
   const { project_id, path } = useFrameContext();
@@ -479,7 +485,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
     return true;
   }, [extraPrompt, mode, querying, targetLanguage]);
 
-  if (actions == null || llmTools == null) {
+  if (actions == null || aiTools == null) {
     return null;
   }
 
@@ -683,7 +689,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
       >
         <Tooltip
           title={intl.formatMessage({
-            id: "jupyter.llm.cell-tool.assistant.title",
+            id: "jupyter.ai.cell-tool.assistant.title",
             defaultMessage: "Use Agent on this cell",
           })}
         >

@@ -11,7 +11,7 @@ import Anser from "anser";
 import type { Map } from "immutable";
 import React from "react";
 import type { JupyterActions } from "@cocalc/jupyter/redux/actions";
-import { LLMTools } from "@cocalc/jupyter/types";
+import { AITools } from "@cocalc/jupyter/types";
 import { InputDone } from "./input-done";
 import { Data } from "./mime-types/data";
 import { MoreOutput } from "./more-output";
@@ -84,7 +84,7 @@ interface CellOutputMessagesProps {
   scrolled?: boolean;
   trust?: boolean;
   id?: string;
-  llmTools?: LLMTools;
+  aiTools?: AITools;
 }
 
 function shouldMemoize(prev, next) {
@@ -105,7 +105,7 @@ export const CellOutputMessages: React.FC<CellOutputMessagesProps> = React.memo(
     scrolled,
     trust,
     id,
-    llmTools,
+    aiTools,
   }: CellOutputMessagesProps) => {
     const obj: Map<string, any>[] = React.useMemo(
       () => messageList(output),
@@ -148,8 +148,8 @@ export const CellOutputMessages: React.FC<CellOutputMessagesProps> = React.memo(
       }
     }
     const help =
-      hasError && id && actions && llmTools ? (
-        <llmTools.toolComponents.LLMError
+      hasError && id && actions && aiTools ? (
+        <aiTools.toolComponents.AIError
           style={{ margin: "5px 0" }}
           input={actions.store.getIn(["cells", id, "input"]) ?? ""}
           traceback={Anser.ansiToText(traceback.trim())}

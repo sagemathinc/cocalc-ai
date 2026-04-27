@@ -1,5 +1,5 @@
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { modelToName } from "@cocalc/frontend/frame-editors/ai/llm-selector";
+import { modelDisplayName } from "@cocalc/frontend/frame-editors/ai/model-names";
 import {
   LanguageModel,
   fromCustomOpenAIModel,
@@ -34,7 +34,7 @@ export function LLMModelName(
     }
 
     if (isLanguageModel(model)) {
-      return modelToName(model);
+      return modelDisplayName(model);
     }
 
     return model;

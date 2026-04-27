@@ -59,9 +59,9 @@ export type BackendState =
 // When the backend_state is 'running', then the kernel_state is one of these:
 export type KernelState = "idle" | "busy" | "running";
 
-export interface LLMTools {
+export interface AITools {
   toolComponents: {
-    LLMCellTool;
-    LLMError;
+    AgentCellTool;
+    AIError;
   };
 }

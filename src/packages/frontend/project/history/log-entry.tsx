@@ -25,7 +25,7 @@ import {
 } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { file_associations } from "@cocalc/frontend/file-associations";
-import { modelToName } from "@cocalc/frontend/frame-editors/ai/llm-selector";
+import { modelDisplayName } from "@cocalc/frontend/frame-editors/ai/model-names";
 import { labels } from "@cocalc/frontend/i18n";
 import { FILE_ACTIONS } from "@cocalc/frontend/project_actions";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
@@ -678,7 +678,7 @@ export const LogEntry: React.FC<Props> = React.memo(
       const name = (
         <Space size="small">
           <AIAvatar size={14} style={{ top: "1px" }} />
-          {model ? `AI (${modelToName(model)})` : "AI"}
+          {model ? `AI (${modelDisplayName(model)})` : "AI"}
         </Space>
       );
 
