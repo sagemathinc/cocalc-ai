@@ -13,9 +13,7 @@ import { type AutoBalance } from "@cocalc/util/db-schema/accounts";
 import {
   NEW_FILENAMES,
   NewFilenameTypes,
-  OTHER_SETTINGS_USERDEFINED_LLM,
 } from "@cocalc/util/db-schema/defaults";
-import { LanguageModel } from "@cocalc/util/db-schema/llm-utils";
 import { OTHER_SETTINGS_REPLY_ENGLISH_KEY } from "@cocalc/util/i18n/const";
 import type { CodexReasoningId, CodexSessionMode } from "@cocalc/util/ai/codex";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
@@ -26,7 +24,6 @@ import {
   ACTIVITY_BAR_LABELS,
   ACTIVITY_BAR_TAB_ORDER,
 } from "../project/page/activity-bar-consts";
-import { SETTINGS_LANGUAGE_MODEL_KEY } from "./useLanguageModelSetting";
 
 // this is incomplete...
 
@@ -69,7 +66,6 @@ export interface AccountState {
     file_tab_accent_mode?: string;
     news_read_until: number; // JavaScript timestamp in milliseconds
     news_read_ids?: string[];
-    [OTHER_SETTINGS_USERDEFINED_LLM]: string; // string is JSON: CustomLLM[]
     [OTHER_SETTINGS_LOCALE_KEY]?: string;
     [OTHER_SETTINGS_REPLY_ENGLISH_KEY]?: string;
     no_email_new_messages?: boolean;
@@ -133,7 +129,6 @@ export interface AccountState {
   stripe_checkout_session?: TypedMap<{ id: string; url: string }>;
   purchase_closing_day?: number;
   email_daily_statements?: boolean;
-  [SETTINGS_LANGUAGE_MODEL_KEY]?: LanguageModel;
   i18n: Locale;
   balance?: number;
   min_balance?: number;

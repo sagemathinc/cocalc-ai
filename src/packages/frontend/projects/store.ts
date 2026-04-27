@@ -492,7 +492,7 @@ export class ProjectsStore extends Store<ProjectsState> {
     aiEnabledCache.clear();
   }
 
-  // ATTN: the useLanguageModelSetting hook computes this dynamically, with dependencies
+  // ATTN: frontend code relies on this being computed dynamically, with dependencies
   public whichLLMareEnabled(
     project_id: string = "global",
     tag?: string,

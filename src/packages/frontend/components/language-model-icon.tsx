@@ -2,13 +2,10 @@ import { CSS, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   LLMServiceName,
   LanguageModel,
-  SERVICES,
   fromCustomOpenAIModel,
   fromOllamaModel,
-  fromUserDefinedLLMModel,
   isGoogleModel,
   isLanguageModel,
-  isUserDefinedModel,
   model2vendor,
 } from "@cocalc/util/db-schema/llm-utils";
 import { unreachable } from "@cocalc/util/misc";
@@ -111,19 +108,7 @@ export function LanguageModelVendorAvatar(
     }
   }
 
-  if (isUserDefinedModel(model)) {
-    const udm = fromUserDefinedLLMModel(model);
-    if (!udm) {
-      return fallback();
-    } else {
-      // TODO: support a customizable icon for user defined LLMs
-      for (const vendor of SERVICES) {
-        if (udm.startsWith(`${vendor}-`)) {
-          return renderModel(udm, vendor);
-        }
-      }
-    }
-  } else if (isLanguageModel(model)) {
+  if (isLanguageModel(model)) {
     return renderModel(model);
   }
 

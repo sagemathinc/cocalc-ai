@@ -10,11 +10,9 @@ import {
   fromOllamaModel,
   isCustomOpenAI,
   isOllamaLLM,
-  isUserDefinedModel,
   model2service,
   type LanguageModel,
 } from "@cocalc/util/db-schema/llm-utils";
-import { getUserDefinedLLMByModel } from "./use-userdefined-llm";
 
 export function modelToName(model: LanguageModel): string {
   if (isOllamaLLM(model)) {
@@ -30,16 +28,11 @@ export function modelToName(model: LanguageModel): string {
     return config ? config.display : `OpenAI (custom) ${model}`;
   }
 
-  if (isUserDefinedModel(model)) {
-    return getUserDefinedLLMByModel(model)?.display ?? model;
-  }
-
   return LLM_USERNAMES[model] ?? model;
 }
 
 export function modelToMention(model: LanguageModel): string {
-  const id = isUserDefinedModel(model) ? model : model2service(model);
-  return `<span class="user-mention" account-id=${id} >@${modelToName(
+  return `<span class="user-mention" account-id=${model2service(
     model,
-  )}</span>`;
+  )} >@${modelToName(model)}</span>`;
 }

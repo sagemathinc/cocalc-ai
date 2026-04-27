@@ -8,7 +8,6 @@ When new models are added, e.g., Claude soon (!), they will go here.
 */
 
 import { redux } from "@cocalc/frontend/app-framework";
-import { getUserDefinedLLMByModel } from "@cocalc/frontend/frame-editors/llm/use-userdefined-llm";
 import {
   LANGUAGE_MODELS,
   LANGUAGE_MODEL_PREFIXES,
@@ -21,7 +20,6 @@ import {
   isCustomOpenAI,
   isMistralService,
   isOllamaLLM,
-  isUserDefinedModel,
 } from "@cocalc/util/db-schema/llm-utils";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 
@@ -39,8 +37,7 @@ export function isChatBot(account_id?: string): boolean {
     LANGUAGE_MODEL_PREFIXES.some((prefix) => account_id?.startsWith(prefix)) ||
     LANGUAGE_MODELS.some((model) => account_id === model) ||
     isOllamaLLM(account_id) ||
-    isCustomOpenAI(account_id) ||
-    isUserDefinedModel(account_id)
+    isCustomOpenAI(account_id)
   );
 }
 
@@ -78,10 +75,6 @@ export function chatBotName(account_id?: string): string {
       redux.getStore("customize").get("custom_openai")?.toJS() ?? {};
     const key = fromCustomOpenAIModel(account_id);
     return custom_openai[key]?.display ?? "OpenAI (custom)";
-  }
-  if (isUserDefinedModel(account_id)) {
-    const um = getUserDefinedLLMByModel(account_id);
-    return um?.display ?? "ChatBot";
   }
   return "ChatBot";
 }

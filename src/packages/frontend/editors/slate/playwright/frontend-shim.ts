@@ -28,8 +28,6 @@ export const avatar_fontcolor = (_name?: string) => "#666";
 
 export const useFileContext = () => ({});
 export const FileContext = React.createContext({});
-export const useLanguageModelSetting = () => null;
-export const useUserDefinedLLM = () => [];
 export const useProjectContext = () => ({
   project_id: "project-1",
   path: "chat-harness.chat",
