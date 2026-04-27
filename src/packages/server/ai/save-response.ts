@@ -2,12 +2,12 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { pii_retention_to_future } from "@cocalc/database/postgres/account/pii";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { LLMLogEntry } from "@cocalc/util/db-schema/llm";
+import { AIUsageLogEntry } from "@cocalc/util/db-schema/ai-log";
 
 const log = getLogger("ai:save-response");
 
 // time, id is set by the database, and expire in the saveAIResponse function
-type SaveAIResponseProps = Omit<LLMLogEntry, "time" | "id" | "expire">;
+type SaveAIResponseProps = Omit<AIUsageLogEntry, "time" | "id" | "expire">;
 
 // Save the response to the historical AI usage log table.
 export async function saveAIResponse({
@@ -26,7 +26,7 @@ export async function saveAIResponse({
   total_tokens,
   usage_units,
 }: SaveAIResponseProps) {
-  const expire: LLMLogEntry["expire"] = await getExpiration(account_id);
+  const expire: AIUsageLogEntry["expire"] = await getExpiration(account_id);
   const pool = getPool();
   try {
     await pool.query(

@@ -14,7 +14,7 @@ import {
   NEW_FILENAMES,
   NewFilenameTypes,
 } from "@cocalc/util/db-schema/defaults";
-import { OTHER_SETTINGS_REPLY_ENGLISH_KEY } from "@cocalc/util/i18n/const";
+import { OTHER_SETTINGS_AI_REPLY_ENGLISH_KEY } from "@cocalc/util/i18n/const";
 import type { CodexReasoningId, CodexSessionMode } from "@cocalc/util/ai/codex";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
 import { type PreferencesSubTabKey } from "@cocalc/util/types/settings";
@@ -67,7 +67,7 @@ export interface AccountState {
     news_read_until: number; // JavaScript timestamp in milliseconds
     news_read_ids?: string[];
     [OTHER_SETTINGS_LOCALE_KEY]?: string;
-    [OTHER_SETTINGS_REPLY_ENGLISH_KEY]?: string;
+    [OTHER_SETTINGS_AI_REPLY_ENGLISH_KEY]?: string;
     no_email_new_messages?: boolean;
     use_balance_toward_subscriptions?: boolean;
     hide_button_tooltips?: boolean;

@@ -8,7 +8,7 @@ import { SCHEMA as schema } from "./index";
 import { LanguageModel } from "./ai-models";
 import { Table } from "./types";
 
-export interface LLMLogEntry {
+export interface AIUsageLogEntry {
   id: number;
   account_id?: string;
   analytics_cookie?: string; // at least one of analytics_cookie or account_id will be set
@@ -50,7 +50,7 @@ Table({
     input: {
       title: "Input",
       type: "string",
-      desc: "Input text that was sent to chatgpt",
+      desc: "Input text that was sent to the AI service",
       render: {
         type: "markdown",
       },
@@ -58,7 +58,7 @@ Table({
     output: {
       title: "Output",
       type: "string",
-      desc: "Output text that was returned from chatgpt",
+      desc: "Output text that was returned from the AI service",
       render: {
         type: "markdown",
       },

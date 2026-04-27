@@ -48,7 +48,7 @@ export const KEEP_EN_LOCALE = "en-keep";
 
 export const OTHER_SETTINGS_LOCALE_KEY = "i18n";
 
-export const OTHER_SETTINGS_REPLY_ENGLISH_KEY = "llm_reply_english";
+export const OTHER_SETTINGS_AI_REPLY_ENGLISH_KEY = "ai_reply_english";
 
 // The ordering is a bit "opinionated". The top languages are European ones, and German has the best quality translations.
 // Then come other European languges, kind of alphabetical.

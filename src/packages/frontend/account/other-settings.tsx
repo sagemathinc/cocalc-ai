@@ -45,7 +45,7 @@ import {
   updateUserLauncherPrefs,
 } from "@cocalc/frontend/project/new/launcher-preferences";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
-import { OTHER_SETTINGS_REPLY_ENGLISH_KEY } from "@cocalc/util/i18n/const";
+import { OTHER_SETTINGS_AI_REPLY_ENGLISH_KEY } from "@cocalc/util/i18n/const";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 
 import Tours from "./tours";
@@ -280,7 +280,7 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
     );
   }
 
-  function render_disable_all_llm(): Rendered {
+  function render_disable_all_ai(): Rendered {
     return (
       <Switch
         checked={!!props.other_settings.get("openai_disabled")}
@@ -298,12 +298,14 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
     );
   }
 
-  function render_llm_reply_language(): Rendered {
+  function render_ai_reply_language(): Rendered {
     return (
       <Switch
-        checked={!!props.other_settings.get(OTHER_SETTINGS_REPLY_ENGLISH_KEY)}
+        checked={
+          !!props.other_settings.get(OTHER_SETTINGS_AI_REPLY_ENGLISH_KEY)
+        }
         onChange={(e) => {
-          on_change(OTHER_SETTINGS_REPLY_ENGLISH_KEY, e.target.checked);
+          on_change(OTHER_SETTINGS_AI_REPLY_ENGLISH_KEY, e.target.checked);
         }}
       >
         <FormattedMessage
@@ -316,7 +318,7 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
     );
   }
 
-  function render_llm_settings() {
+  function render_ai_settings() {
     // we hide this panel, if all servers and user defined LLms are disabled
     const customize = redux.getStore("customize");
     const enabledAIServices = customize.getEnabledAIServices();
@@ -334,8 +336,8 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
           </>
         }
       >
-        {anyAIEnabled && render_disable_all_llm()}
-        {anyAIEnabled && render_llm_reply_language()}
+        {anyAIEnabled && render_disable_all_ai()}
+        {anyAIEnabled && render_ai_reply_language()}
         {lite && <LiteAISettings />}
         {DEBUG ? (
           <div style={{ marginTop: 12 }}>
@@ -387,7 +389,7 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
   const mode = props.mode ?? "full";
 
   if (mode === "ai") {
-    return render_llm_settings();
+    return render_ai_settings();
   }
 
   if (mode === "appearance") {

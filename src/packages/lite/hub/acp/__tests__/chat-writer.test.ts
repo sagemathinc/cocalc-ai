@@ -1233,16 +1233,16 @@ describe("ChatStreamWriter", () => {
     await (writer as any).handle({
       type: "error",
       error:
-        'You have reached your 5-hour LLM usage limit. Please try again later or upgrade your membership. time="2026-03-15T19:28:14Z" level=warning msg="The cgroupv2 manager is set to systemd but there is no systemd user session available" time="2026-03-15T19:28:14Z" level=warning msg="For using systemd, you may need to log in using a user session" time="2026-03-15T19:28:14Z" level=warning msg="Alternatively, you can enable lingering with: loginctl enable-linger 1002 (possibly as root)" time="2026-03-15T19:28:14Z" level=warning msg="Falling back to --cgroup-manager=cgroupfs"',
+        'You have reached your 5-hour AI usage limit. Please try again later or upgrade your membership. time="2026-03-15T19:28:14Z" level=warning msg="The cgroupv2 manager is set to systemd but there is no systemd user session available" time="2026-03-15T19:28:14Z" level=warning msg="For using systemd, you may need to log in using a user session" time="2026-03-15T19:28:14Z" level=warning msg="Alternatively, you can enable lingering with: loginctl enable-linger 1002 (possibly as root)" time="2026-03-15T19:28:14Z" level=warning msg="Falling back to --cgroup-manager=cgroupfs"',
       seq: 0,
     } as AcpStreamMessage);
     await flush(writer);
 
     const final = findLastChatSet(sets) as any;
     expect(final.generating).toBe(false);
-    expect((writer as any).content).toContain("**LLM usage limit reached**");
+    expect((writer as any).content).toContain("**AI usage limit reached**");
     expect((writer as any).content).toContain(
-      "You have reached your 5-hour LLM usage limit.",
+      "You have reached your 5-hour AI usage limit.",
     );
     expect((writer as any).content).toContain("/settings/store");
     expect((writer as any).content).toContain("/settings/preferences/ai");

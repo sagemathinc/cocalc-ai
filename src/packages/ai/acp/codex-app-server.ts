@@ -1607,7 +1607,7 @@ export class CodexAppServerAgent implements AcpAgent {
         if (!verdict.allowed) {
           stopForQuota(
             verdict.reason ??
-              "Stopped: you reached your CoCalc LLM usage limit for site-provided OpenAI access.",
+              "Stopped: you reached your CoCalc AI usage limit for site-provided OpenAI access.",
           );
         }
       } catch (err) {

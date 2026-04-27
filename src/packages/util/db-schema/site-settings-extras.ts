@@ -98,7 +98,7 @@ const metrics_enabled = (conf: SiteSettings) =>
   );
 
 // Ollama and Custom OpenAI have the same schema
-function custom_llm_valid(value: string): boolean {
+function custom_ai_model_valid(value: string): boolean {
   if (isEmpty(value) || !parsableJson(value)) {
     return false;
   }
@@ -137,7 +137,7 @@ function custom_llm_valid(value: string): boolean {
 }
 
 // Ollama and Custom OpenAI have the same schema
-function custom_llm_display(value: string): string {
+function custom_ai_model_display(value: string): string {
   const structure =
     "Must be {[key : string] : {model: string, baseUrl: string, cocalc?: {display?: string, desc?: string, icon?: string, ...}, ...}";
   if (isEmpty(value)) {
@@ -404,8 +404,8 @@ export const EXTRAS: SettingsExtras = {
     multiline: 5,
     show: ollama_enabled,
     to_val: from_json,
-    valid: custom_llm_valid,
-    to_display: custom_llm_display,
+    valid: custom_ai_model_valid,
+    to_display: custom_ai_model_display,
     tags: ["AI"],
     group: "AI",
     subgroup: "Ollama",
@@ -418,8 +418,8 @@ export const EXTRAS: SettingsExtras = {
     multiline: 5,
     show: custom_openai_enabled,
     to_val: from_json,
-    valid: custom_llm_valid,
-    to_display: custom_llm_display,
+    valid: custom_ai_model_valid,
+    to_display: custom_ai_model_display,
     tags: ["AI"],
     group: "AI",
     subgroup: "Custom OpenAI",

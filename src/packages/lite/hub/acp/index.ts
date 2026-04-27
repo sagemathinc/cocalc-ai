@@ -3462,7 +3462,7 @@ function formatUserFacingAcpError(error: string): string {
     return `\n\n<span style='color:#b71c1c'>${cleaned}</span>\n\n`;
   }
   return [
-    "**LLM usage limit reached**",
+    "**AI usage limit reached**",
     "",
     cleaned,
     "",

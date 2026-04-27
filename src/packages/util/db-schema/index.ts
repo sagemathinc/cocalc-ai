@@ -43,7 +43,7 @@ import "./groups";
 import "./hub-servers";
 import "./instances"; // probably deprecated
 import "./listings";
-import "./llm";
+import "./ai-log";
 import "./lti";
 import "./mentions";
 import "./admin-assigned-memberships";
