@@ -629,6 +629,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     { createKey: () => "project-log" },
   );
 
+  private resetProjectLogStream = async (): Promise<void> => {
+    const release = this.releaseProjectLogStream;
+    delete this.projectLogStream;
+    delete this.releaseProjectLogStream;
+    await release?.({ immediate: true });
+  };
+
   trackStartOp = (op: {
     op_id?: string;
     scope_type?: "project" | "account" | "host" | "hub";
@@ -2710,6 +2717,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     disconnect_from_project(this.project_id);
     this.projectStatusSub?.close();
     delete this.projectStatusSub;
+    const hasProjectLogLoaded = this.get_store()?.get("project_log") != null;
+    void (async () => {
+      await this.resetProjectLogStream();
+      if (hasProjectLogLoaded) {
+        await this.load_project_log("newer");
+      }
+    })();
     if (this.initialized) {
       this.initProjectStatus();
     }

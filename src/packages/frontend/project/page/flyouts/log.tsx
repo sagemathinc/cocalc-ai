@@ -146,6 +146,11 @@ const PROJECT_EVENTS = [
   "project_start_requested",
   "project_stop_requested",
   "project_restart_requested",
+  "project_move_requested",
+  "project_moved",
+  "project_move_failed",
+  "project_move_canceled",
+  "project_rehomed",
   "project_stopped",
   "project_started",
   "start_project",
@@ -229,7 +234,7 @@ function deriveHistory(
     .filter((entry: EventRecordMap) => {
       if (!pathMatches) return true;
       const paths = getEntryPaths(entry);
-      if (paths.length === 0) return false;
+      if (paths.length === 0) return true;
       return paths.some((path) => pathMatches(path));
     })
     .filter((entry: EventRecordMap) => {
