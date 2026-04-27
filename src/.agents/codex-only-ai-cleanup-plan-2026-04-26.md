@@ -1,5 +1,31 @@
 # Codex-Only AI Cleanup Plan
 
+## Status
+
+Completed on 2026-04-27.
+
+This plan is now fully executed in live code.
+
+Completed outcomes:
+
+- Codex/ACP is the only production AI runtime path
+- admin AI settings were reduced to the OpenAI/Codex path
+- OpenAI can be enabled without a site API key
+- admins can still explicitly disable OpenAI
+- the generic model-evaluation runtime and endpoints were deleted
+- vendor/model-selection UI and legacy formula/document AI features were deleted
+- live planner code no longer depends on `default_llm`
+- surviving production code now defaults to `ai`, `agent`, and `codex`
+- legacy storage names were renamed to `ai_usage_log` and `ai_limits`
+- stale local translation catalog entries for removed model-selection UI were deleted
+
+Notes:
+
+- there is still a separate preexisting frontend translation-tooling issue with
+  duplicate message id `projects.operations.undoable`
+- that issue is unrelated to this cleanup and does not block the plan being
+  complete
+
 ## Goal
 
 Reduce CoCalc AI complexity until the product is clearly and narrowly centered
@@ -432,3 +458,4 @@ The cleanup is done when all of the following are true:
 - the formula/equation AI feature is gone
 - surviving code uses `ai`, `agent`, or `codex` terminology by default
 - the repository is materially easier for coding agents to understand and edit
+
