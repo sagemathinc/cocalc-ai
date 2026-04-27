@@ -111,7 +111,7 @@ describe("PublicContentApp", () => {
     ).not.toBeNull();
   });
 
-  it("shows app links in the shared nav when authenticated", () => {
+  it("shows Projects but not Settings in the shared nav when authenticated", () => {
     render(
       <PublicContentApp
         config={{ is_authenticated: true, site_name: "Launchpad" }}
@@ -120,7 +120,7 @@ describe("PublicContentApp", () => {
     );
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+    expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
   });
 
   it("renders the pricing page from live membership tier data", () => {
