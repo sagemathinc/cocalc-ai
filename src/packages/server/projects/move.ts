@@ -21,6 +21,7 @@ import {
 } from "../project-host/control";
 import { getConfiguredBayId } from "../bay-config";
 import { start as startProjectLro } from "../conat/api/projects";
+import { createBackup as createBackupLro } from "../conat/api/project-backups";
 import { resolveHostConnection } from "../conat/api/hosts";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
@@ -28,11 +29,9 @@ import {
   makeOfflineMoveConfirmationPayload,
   offlineMoveConfirmationError,
 } from "./offline-move-confirmation";
-import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { assertPortableProjectRootfs } from "./rootfs-state";
 
 const log = getLogger("server:projects:move");
-const MAX_BACKUPS_PER_PROJECT = 30;
 const BACKUP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const MOVE_STOP_PROJECT_TIMEOUT_MS = 3 * 60 * 1000;
 const MOVE_START_DEST_TIMEOUT_MS = 5 * 60 * 1000;
@@ -84,6 +83,17 @@ export type MoveProjectProgressUpdate = {
   message?: string;
   detail?: Record<string, any>;
   progress?: number;
+};
+
+type MoveChildProgressKind = "project-backup" | "project-start";
+
+type MoveChildProgressDetail = {
+  kind: MoveChildProgressKind;
+  op_id: string;
+  phase?: string;
+  message?: string;
+  progress?: number;
+  detail?: any;
 };
 
 type MoveProjectLogEvent =
@@ -437,24 +447,89 @@ async function retryOnceOnTransientMoveError<T>({
   }
 }
 
+function mergeMoveProgressDetail({
+  baseDetail,
+  child,
+}: {
+  baseDetail?: Record<string, any>;
+  child?: MoveChildProgressDetail;
+}): Record<string, any> | undefined {
+  const detail: Record<string, any> = baseDetail ? { ...baseDetail } : {};
+  if (child) {
+    detail.child = {
+      kind: child.kind,
+      op_id: child.op_id,
+      ...(child.phase != null ? { phase: child.phase } : {}),
+      ...(child.message != null ? { message: child.message } : {}),
+      ...(child.progress != null ? { progress: child.progress } : {}),
+      ...(child.detail !== undefined ? { detail: child.detail } : {}),
+    };
+  }
+  return Object.keys(detail).length ? detail : undefined;
+}
+
 async function createFinalBackup({
   project_id,
+  account_id,
+  progress,
 }: {
   project_id: string;
-}): Promise<{ id: string; time: string }> {
-  const fileServer = await getProjectFileServerClient({
-    project_id,
-    timeout: BACKUP_TIMEOUT_MS,
+  account_id: string;
+  progress: (update: MoveProjectProgressUpdate) => void;
+}): Promise<{ id: string; time: string; op_id: string }> {
+  const backupOp = await createBackupLro(
+    {
+      account_id,
+      project_id,
+    },
+    {
+      skip_collab_check: true,
+      skip_rootfs_portability_check: true,
+    },
+  );
+  progress({
+    step: "backup",
+    message: "creating final backup",
+    detail: mergeMoveProgressDetail({
+      child: {
+        kind: "project-backup",
+        op_id: backupOp.op_id,
+      },
+    }),
   });
-  const backup = await fileServer.createBackup({
-    project_id,
-    limit: MAX_BACKUPS_PER_PROJECT,
+  const summary = await waitForLroCompletion({
+    op_id: backupOp.op_id,
+    scope_type: backupOp.scope_type,
+    scope_id: backupOp.scope_id,
+    client: conat(),
+    timeout_ms: BACKUP_TIMEOUT_MS,
+    onProgress: (event) => {
+      progress({
+        step: "backup",
+        message: event.message ?? event.phase ?? "creating final backup",
+        detail: mergeMoveProgressDetail({
+          child: {
+            kind: "project-backup",
+            op_id: backupOp.op_id,
+            phase: event.phase,
+            message: event.message,
+            progress: event.progress,
+            detail: event.detail,
+          },
+        }),
+        progress: event.progress,
+      });
+    },
   });
+  if (summary.status !== "succeeded") {
+    throw new Error(summary.error ?? `backup failed: ${summary.status}`);
+  }
+  const backup = summary.result ?? {};
   const backupTime =
     backup.time instanceof Date
       ? backup.time.toISOString()
       : new Date(backup.time as any).toISOString();
-  return { id: backup.id, time: backupTime };
+  return { id: backup.id, time: backupTime, op_id: backupOp.op_id };
 }
 
 async function loadProjectPlacementState(project_id: string): Promise<{
@@ -704,7 +779,9 @@ export async function moveProjectToHost(
             progress,
             run: async () =>
               await createFinalBackup({
+                account_id: context.account_id,
                 project_id: context.project_id,
+                progress,
               }),
           });
           const backup_id = result.id;
@@ -713,11 +790,18 @@ export async function moveProjectToHost(
           progress({
             step: "backup",
             message: "final backup created",
-            detail: {
-              backup_id,
-              backup_time,
-              duration_ms,
-            },
+            detail: mergeMoveProgressDetail({
+              baseDetail: {
+                backup_id,
+                backup_time,
+                duration_ms,
+              },
+              child: {
+                kind: "project-backup",
+                op_id: result.op_id,
+                progress: 100,
+              },
+            }),
           });
           log.info("moveProjectToHost backup created", {
             project_id: context.project_id,
@@ -784,6 +868,20 @@ export async function moveProjectToHost(
           project_id: context.project_id,
           wait: false,
         });
+        progress({
+          step: "start-dest",
+          message: "starting workspace on destination host",
+          detail: mergeMoveProgressDetail({
+            baseDetail: {
+              dest_host_id: context.dest_host_id,
+              start_op_id: startOp.op_id,
+            },
+            child: {
+              kind: "project-start",
+              op_id: startOp.op_id,
+            },
+          }),
+        });
         let summary: LroSummary | undefined;
         try {
           summary = await waitForLroCompletion({
@@ -796,7 +894,20 @@ export async function moveProjectToHost(
               progress({
                 step: "start-dest",
                 message: event.message ?? event.phase ?? "starting destination",
-                detail: event.detail,
+                detail: mergeMoveProgressDetail({
+                  baseDetail: {
+                    dest_host_id: context.dest_host_id,
+                    start_op_id: startOp.op_id,
+                  },
+                  child: {
+                    kind: "project-start",
+                    op_id: startOp.op_id,
+                    phase: event.phase,
+                    message: event.message,
+                    progress: event.progress,
+                    detail: event.detail,
+                  },
+                }),
                 progress: event.progress,
               });
             },
@@ -841,7 +952,14 @@ export async function moveProjectToHost(
         progress({
           step: "start-dest",
           message: "destination workspace started",
-          detail: { dest_host_id: context.dest_host_id },
+          detail: mergeMoveProgressDetail({
+            baseDetail: { dest_host_id: context.dest_host_id },
+            child: {
+              kind: "project-start",
+              op_id: startOp.op_id,
+              progress: 100,
+            },
+          }),
         });
         log.info("moveProjectToHost started project on destination host", {
           project_id: context.project_id,

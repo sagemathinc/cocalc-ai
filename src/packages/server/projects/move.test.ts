@@ -8,10 +8,10 @@ let deleteProjectDataOnHostMock: jest.Mock;
 let savePlacementMock: jest.Mock;
 let stopProjectOnHostMock: jest.Mock;
 let startProjectLroMock: jest.Mock;
+let createBackupLroMock: jest.Mock;
 let waitForLroCompletionMock: jest.Mock;
 let assertPortableProjectRootfsMock: jest.Mock;
 let resolveHostConnectionMock: jest.Mock;
-let getProjectFileServerClientMock: jest.Mock;
 let projectLogRows: any[];
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -52,6 +52,10 @@ jest.mock("../conat/api/projects", () => ({
   start: (...args: any[]) => startProjectLroMock(...args),
 }));
 
+jest.mock("../conat/api/project-backups", () => ({
+  createBackup: (...args: any[]) => createBackupLroMock(...args),
+}));
+
 jest.mock("../conat/api/hosts", () => ({
   resolveHostConnection: (...args: any[]) => resolveHostConnectionMock(...args),
 }));
@@ -68,11 +72,6 @@ jest.mock("@cocalc/conat/lro/client", () => ({
 jest.mock("./offline-move-confirmation", () => ({
   makeOfflineMoveConfirmationPayload: jest.fn(),
   offlineMoveConfirmationError: jest.fn((payload) => payload),
-}));
-
-jest.mock("@cocalc/server/conat/file-server-client", () => ({
-  getProjectFileServerClient: (...args: any[]) =>
-    getProjectFileServerClientMock(...args),
 }));
 
 jest.mock("./rootfs-state", () => ({
@@ -156,13 +155,21 @@ describe("moveProjectToHost", () => {
       scope_type: "project",
       scope_id: PROJECT_ID,
     }));
-    getProjectFileServerClientMock = jest.fn(async () => ({
-      createBackup: jest.fn(async () => ({
-        id: "backup-1",
-        time: new Date("2026-04-26T16:00:00.000Z"),
-      })),
+    createBackupLroMock = jest.fn(async () => ({
+      op_id: "55555555-5555-4555-8555-555555555555",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
     }));
-    waitForLroCompletionMock = jest.fn(async () => {
+    waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
+      if (op_id === "55555555-5555-4555-8555-555555555555") {
+        return {
+          status: "succeeded",
+          result: {
+            id: "backup-1",
+            time: new Date("2026-04-26T16:00:00.000Z"),
+          },
+        };
+      }
       throw new Error("timeout waiting for lro completion");
     });
     assertPortableProjectRootfsMock = jest.fn(async () => undefined);
@@ -442,16 +449,33 @@ describe("moveProjectToHost", () => {
       }
       throw new Error(`unexpected query: ${sql}`);
     });
-    const createBackupMock = jest
+    createBackupLroMock = jest
       .fn()
-      .mockRejectedValueOnce(new Error("Unexpected end of JSON input"))
-      .mockResolvedValue({
-        id: "backup-2",
-        time: new Date("2026-04-26T16:00:00.000Z"),
+      .mockResolvedValueOnce({
+        op_id: "backup-op-1",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      })
+      .mockResolvedValueOnce({
+        op_id: "backup-op-2",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
       });
-    getProjectFileServerClientMock = jest.fn(async () => ({
-      createBackup: createBackupMock,
-    }));
+    waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
+      if (op_id === "backup-op-1") {
+        throw new Error("Unexpected end of JSON input");
+      }
+      if (op_id === "backup-op-2") {
+        return {
+          status: "succeeded",
+          result: {
+            id: "backup-2",
+            time: new Date("2026-04-26T16:00:00.000Z"),
+          },
+        };
+      }
+      throw new Error("timeout waiting for lro completion");
+    });
 
     const { moveProjectToHost } = await import("./move");
     await expect(
@@ -463,7 +487,150 @@ describe("moveProjectToHost", () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(createBackupMock).toHaveBeenCalledTimes(2);
+    expect(createBackupLroMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("bubbles child backup and destination-start progress into the parent move progress", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    createBackupLroMock = jest.fn(async () => ({
+      op_id: "backup-op-progress",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+    }));
+    startProjectLroMock = jest.fn(async () => ({
+      op_id: "start-op-progress",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+    }));
+    waitForLroCompletionMock = jest.fn(async ({ op_id, onProgress }: any) => {
+      if (op_id === "backup-op-progress") {
+        onProgress?.({
+          type: "progress",
+          ts: Date.now(),
+          phase: "backup",
+          message: "copying backup chunks",
+          progress: 37,
+          detail: { bytes_done: 37, bytes_total: 100, speed: 12 },
+        });
+        return {
+          status: "succeeded",
+          result: {
+            id: "backup-3",
+            time: new Date("2026-04-26T16:00:00.000Z"),
+          },
+        };
+      }
+      if (op_id === "start-op-progress") {
+        onProgress?.({
+          type: "progress",
+          ts: Date.now(),
+          phase: "cache_rootfs",
+          message: "restoring RootFS image from rustic",
+          progress: 42,
+          detail: { bytes_done: 42, bytes_total: 100, speed: 8 },
+        });
+        return { status: "succeeded" };
+      }
+      throw new Error(`unexpected op_id ${op_id}`);
+    });
+    const progressUpdates: any[] = [];
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost(
+        {
+          project_id: PROJECT_ID,
+          dest_host_id: DEST_HOST_ID,
+          account_id: "account-id",
+        },
+        {
+          progress: (update) => {
+            progressUpdates.push(update);
+          },
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(progressUpdates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          step: "backup",
+          progress: 37,
+          detail: expect.objectContaining({
+            child: expect.objectContaining({
+              kind: "project-backup",
+              op_id: "backup-op-progress",
+              phase: "backup",
+              message: "copying backup chunks",
+              progress: 37,
+              detail: expect.objectContaining({
+                bytes_done: 37,
+                bytes_total: 100,
+              }),
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          step: "start-dest",
+          progress: 42,
+          detail: expect.objectContaining({
+            dest_host_id: DEST_HOST_ID,
+            child: expect.objectContaining({
+              kind: "project-start",
+              op_id: "start-op-progress",
+              phase: "cache_rootfs",
+              message: "restoring RootFS image from rustic",
+              progress: 42,
+              detail: expect.objectContaining({
+                bytes_done: 42,
+                bytes_total: 100,
+              }),
+            }),
+          }),
+        }),
+      ]),
+    );
   });
 
   it("writes project log entries for move start and success", async () => {
@@ -509,9 +676,20 @@ describe("moveProjectToHost", () => {
       }
       throw new Error(`unexpected query: ${sql}`);
     });
-    waitForLroCompletionMock = jest.fn(async () => ({
-      status: "succeeded",
-    }));
+    waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
+      if (op_id === "55555555-5555-4555-8555-555555555555") {
+        return {
+          status: "succeeded",
+          result: {
+            id: "backup-1",
+            time: new Date("2026-04-26T16:00:00.000Z"),
+          },
+        };
+      }
+      return {
+        status: "succeeded",
+      };
+    });
 
     const { moveProjectToHost } = await import("./move");
     await expect(
