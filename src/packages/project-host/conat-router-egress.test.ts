@@ -6,7 +6,7 @@
 import { __test__ } from "./conat-router-egress";
 
 describe("project-host conat router managed egress", () => {
-  it("aggregates received-byte deltas by authenticated browser account", () => {
+  it("aggregates outbound-byte deltas by authenticated browser account", () => {
     expect(
       __test__.summarizeManagedConatEgressDeltas({
         previous: {
@@ -58,13 +58,13 @@ describe("project-host conat router managed egress", () => {
     ).toEqual([
       {
         account_id: "account-1",
-        bytes: 450,
+        bytes: 155,
         socket_ids: ["socketA", "socketB"],
         browser_ids: ["browser-a", "browser-b"],
       },
       {
         account_id: "account-2",
-        bytes: 80,
+        bytes: 7,
         socket_ids: ["socketC"],
         browser_ids: ["browser-c"],
       },
