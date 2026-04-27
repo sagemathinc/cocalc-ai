@@ -37,7 +37,7 @@ const tasks: EditorDescription = {
     "save",
     "help",
     "export_to_markdown",
-    "chatgpt",
+    "codex",
     "show_search",
   ]),
   buttons: set([

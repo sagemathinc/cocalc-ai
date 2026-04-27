@@ -26,7 +26,7 @@ const cm: EditorDescription = {
   commands: set([
     "format_action",
     "print",
-    "chatgpt",
+    "codex",
     "decrease_font_size",
     "increase_font_size",
     "save",

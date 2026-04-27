@@ -599,7 +599,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
 
   function renderAssistant(noLabel, where: "main" | "popover"): Rendered {
     if (
-      !manageCommands.isVisible("chatgpt") ||
+      !manageCommands.isVisible("codex") ||
       !redux.getStore("projects").hasLanguageModelEnabled(props.project_id)
     ) {
       return;
@@ -617,7 +617,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           );
         }}
         project_id={props.project_id}
-        buttonRef={getTourRef("chatgpt")}
+        buttonRef={getTourRef("codex")}
         key={`ai-button-${where}`}
         id={props.id}
         actions={props.actions}

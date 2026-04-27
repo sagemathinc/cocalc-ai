@@ -23,7 +23,7 @@ const grid: Omit<EditorDescription, "component"> & {
   name: "Grid",
   icon: "table",
   component: Grid,
-  commands: set(["decrease_font_size", "increase_font_size", "chatgpt"]),
+  commands: set(["decrease_font_size", "increase_font_size", "codex"]),
 } as const;
 
 const cm: EditorDescription = {
@@ -33,7 +33,7 @@ const cm: EditorDescription = {
   icon: "code",
   component: CodemirrorEditor,
   commands: set([
-    "chatgpt",
+    "codex",
     "print",
     "decrease_font_size",
     "increase_font_size",

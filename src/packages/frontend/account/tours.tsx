@@ -11,7 +11,7 @@ import { labels } from "@cocalc/frontend/i18n";
 
 const TOUR_KEYS = [
   "projects",
-  "chatgpt-title-bar-button",
+  "codex-title-bar-button",
   "explorer",
   "frame-terminal",
   "flyout-fullpage",
@@ -24,7 +24,7 @@ export default function Tours() {
   const tours = useRedux("account", "tours");
   const tourNames: Record<TourName, string> = {
     projects: intl.formatMessage(labels.projects),
-    "chatgpt-title-bar-button": "ChatGPT Button",
+    "codex-title-bar-button": "Codex Button",
     explorer: "File Explorer",
     "frame-terminal": "Linux Terminal",
     "flyout-fullpage": "Fullpage Flyout",

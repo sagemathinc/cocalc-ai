@@ -92,20 +92,18 @@ export default function getTour(refs) {
   });
 
   step({
-    target: "chatgpt",
+    target: "codex",
     title: (
       <>
-        <Icon name="robot" /> Ask Artificial Intelligence
+        <Icon name="robot" /> Ask Codex
       </>
     ),
     description: (
       <>
         <p>
-          Ask Artificial Intelligence (AI) anything in everyday language about
-          the terminal. AI is trained on a massive amount of data, and has
-          amazingly good knowledge of Linux terminal commands. It can help you
-          learn Linux, troubleshoot issues, find all files with some property,
-          and generally get your homework or projects done.
+          Ask Codex anything in everyday language about the terminal. It can
+          help you learn Linux, troubleshoot issues, find files with some
+          property, and move terminal work forward without leaving CoCalc.
         </p>
         <p>
           For instance, you might ask about how to manipulate a large data file

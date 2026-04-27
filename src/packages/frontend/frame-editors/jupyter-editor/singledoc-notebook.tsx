@@ -873,7 +873,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       if (!cellId) return;
       setSelectedCellId(cellId);
       const frameActions = props.actions.get_frame_actions(props.id) as any;
-      await frameActions?.command?.("chatgpt");
+      await frameActions?.command?.("codex");
     },
     [props.actions, props.id],
   );

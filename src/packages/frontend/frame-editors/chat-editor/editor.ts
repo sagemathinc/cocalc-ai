@@ -45,7 +45,7 @@ export const chatroom: EditorDescription = {
     "save",
     "help",
     "export_document",
-    "chatgpt",
+    "codex",
     "scrollToBottom",
     "scrollToTop",
     "show_search",

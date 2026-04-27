@@ -36,7 +36,7 @@ import { TableOfContents } from "./table-of-contents";
 
 const jupyterCommands = set([
   "about",
-  "chatgpt",
+  "codex",
   "print",
   "set_zoom",
   "decrease_font_size",

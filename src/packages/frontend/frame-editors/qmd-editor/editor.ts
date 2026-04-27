@@ -29,7 +29,7 @@ const cm: EditorDescription = {
   component: CodemirrorEditor,
   commands: set([
     "format_action",
-    "chatgpt",
+    "codex",
     "print",
     "decrease_font_size",
     "increase_font_size",

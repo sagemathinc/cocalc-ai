@@ -33,7 +33,7 @@ export const terminal: EditorDescription = {
     "clear",
     "help",
     "connection_status",
-    "chatgpt",
+    "codex",
     // "tour", -- temporarily disabled until I figure out how to to do editor tours again (fallout from pr 7180)
     "settings",
   ]),

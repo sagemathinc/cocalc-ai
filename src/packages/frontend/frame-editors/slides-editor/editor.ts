@@ -41,7 +41,7 @@ export const slidesCommands = set([
   "show_slideshow",
   "show_speaker_notes",
   "help",
-  "chatgpt",
+  "codex",
 ]);
 
 const slides: EditorDescription = {

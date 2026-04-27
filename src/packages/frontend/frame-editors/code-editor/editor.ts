@@ -45,7 +45,7 @@ export const cm: EditorDescription = {
     "increase_font_size",
     "save",
     "time_travel",
-    "chatgpt",
+    "codex",
     "replace",
     "find",
     "goto_line",

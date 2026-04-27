@@ -1122,7 +1122,7 @@ addCommands({
     label: labels.save,
     keyboard: `${IS_MACOS ? "⌘" : "control"} + S`,
   },
-  chatgpt: {
+  codex: {
     pos: 1,
     group: "show-frames",
     icon: <AIAvatar size={16} />,

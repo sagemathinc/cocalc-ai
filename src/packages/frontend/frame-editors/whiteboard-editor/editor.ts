@@ -39,7 +39,7 @@ export const whiteboardCommands = set([
   "show_search",
   "show_overview",
   "help",
-  "chatgpt",
+  "codex",
 ]);
 
 type WhiteboardEditorDescription = Omit<EditorDescription, "component"> & {

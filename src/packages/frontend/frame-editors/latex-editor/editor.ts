@@ -55,7 +55,7 @@ const cm: EditorDescription = {
     "replace",
     "find",
     "goto_line",
-    "chatgpt",
+    "codex",
     "cut",
     "paste",
     "copy",
