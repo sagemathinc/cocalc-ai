@@ -13,6 +13,7 @@ import {
   parseR2Region,
 } from "@cocalc/util/consts";
 import {
+  loadHostFromRegistry,
   selectActiveHost,
   deleteProjectDataOnHost,
   savePlacement,
@@ -62,11 +63,13 @@ export type MoveProjectToHostInput = {
 type MoveProjectContext = {
   project_id: string;
   dest_host_id: string;
+  dest_host_name?: string | null;
   account_id: string;
   project_owning_bay_id: string;
   project_region: string;
   dest_region: string;
   project_host_id?: string | null;
+  project_host_name?: string | null;
   project_state?: string | null;
   provisioned?: boolean | null;
   source_host_status?: string | null;
@@ -112,7 +115,9 @@ async function appendProjectMoveLogEntry({
   move_log_id,
   event,
   source_host_id,
+  source_host_name,
   dest_host_id,
+  dest_host_name,
   duration_ms,
   error,
   op_id,
@@ -124,7 +129,9 @@ async function appendProjectMoveLogEntry({
   move_log_id: string;
   event: MoveProjectLogEvent;
   source_host_id?: string | null;
+  source_host_name?: string | null;
   dest_host_id?: string | null;
+  dest_host_name?: string | null;
   duration_ms?: number;
   error?: string;
   op_id?: string;
@@ -140,7 +147,9 @@ async function appendProjectMoveLogEntry({
       event,
       ...(op_id ? { op_id } : {}),
       ...(source_host_id ? { source_host_id } : {}),
+      ...(source_host_name ? { source_host_name } : {}),
       ...(dest_host_id ? { dest_host_id } : {}),
+      ...(dest_host_name ? { dest_host_name } : {}),
       ...(duration_ms != null ? { duration_ms } : {}),
       ...(error ? { error } : {}),
       ...(stage ? { stage } : {}),
@@ -270,6 +279,7 @@ async function buildMoveProjectContext(
     typeof projectRow.host_id === "string" && projectRow.host_id.trim()
       ? projectRow.host_id
       : null;
+  let contextSourceHostName: string | null = null;
   let source_host_status: string | null = null;
   let source_host_deleted = false;
   let source_host_last_seen: Date | null = null;
@@ -278,15 +288,20 @@ async function buildMoveProjectContext(
       status: string | null;
       deleted: Date | null;
       last_seen: Date | null;
-    }>("SELECT status, deleted, last_seen FROM project_hosts WHERE id=$1", [
-      source_host_id,
-    ]);
+      name: string | null;
+    }>(
+      "SELECT status, deleted, last_seen, name FROM project_hosts WHERE id=$1",
+      [source_host_id],
+    );
     const hostRow = hostResult.rows[0];
+    let source_host_name: string | null = null;
     if (hostRow) {
       source_host_status = hostRow.status ?? null;
       source_host_deleted = !!hostRow.deleted;
       source_host_last_seen = hostRow.last_seen ?? null;
+      source_host_name = hostRow.name ?? null;
     }
+    contextSourceHostName = source_host_name;
   }
   let dest_host_id = input.dest_host_id;
   const destHost =
@@ -312,6 +327,12 @@ async function buildMoveProjectContext(
   if (!dest_host_id) {
     throw new Error("destination host id not available");
   }
+  const destHostRegistryRow =
+    !destHost?.name && dest_host_id
+      ? await loadHostFromRegistry(dest_host_id)
+      : undefined;
+  const dest_host_name =
+    destHost?.name ?? destHostRegistryRow?.name ?? dest_host_id;
   const project_region = parseR2Region(projectRow.region) ?? DEFAULT_R2_REGION;
   const dest_region = mapCloudRegionToR2Region(destHost.region);
   if (project_region !== dest_region) {
@@ -322,11 +343,13 @@ async function buildMoveProjectContext(
   return {
     project_id,
     dest_host_id,
+    dest_host_name,
     account_id,
     project_owning_bay_id: projectRow.project_owning_bay_id,
     project_region,
     dest_region,
     project_host_id: source_host_id,
+    project_host_name: contextSourceHostName,
     project_state: projectRow.project_state,
     provisioned: projectRow.provisioned,
     source_host_status,
@@ -541,7 +564,9 @@ export async function moveProjectToHost(
       move_log_id,
       event: "project_move_requested",
       source_host_id: context.project_host_id,
+      source_host_name: context.project_host_name,
       dest_host_id: context.dest_host_id,
+      dest_host_name: context.dest_host_name,
       op_id: opts?.op_id,
       fresh: true,
     });
@@ -551,7 +576,9 @@ export async function moveProjectToHost(
       move_log_id,
       event: "project_move_canceled",
       source_host_id: context.project_host_id,
+      source_host_name: context.project_host_name,
       dest_host_id: context.dest_host_id,
+      dest_host_name: context.dest_host_name,
       duration_ms: Date.now() - started_at_ms,
       op_id: opts?.op_id,
       stage,
@@ -577,7 +604,9 @@ export async function moveProjectToHost(
         move_log_id,
         event: "project_move_requested",
         source_host_id: context.project_host_id,
+        source_host_name: context.project_host_name,
         dest_host_id: context.dest_host_id,
+        dest_host_name: context.dest_host_name,
         op_id: opts?.op_id,
       });
     }
@@ -967,7 +996,9 @@ export async function moveProjectToHost(
       move_log_id,
       event: "project_move_requested",
       source_host_id: context.project_host_id,
+      source_host_name: context.project_host_name,
       dest_host_id: context.dest_host_id,
+      dest_host_name: context.dest_host_name,
       op_id: opts?.op_id,
       fresh: true,
     });
@@ -977,7 +1008,9 @@ export async function moveProjectToHost(
       move_log_id,
       event: "project_moved",
       source_host_id: context.project_host_id,
+      source_host_name: context.project_host_name,
       dest_host_id: context.dest_host_id,
+      dest_host_name: context.dest_host_name,
       duration_ms: Date.now() - started_at_ms,
       op_id: opts?.op_id,
       fresh: true,
@@ -993,7 +1026,9 @@ export async function moveProjectToHost(
       move_log_id,
       event: "project_move_requested",
       source_host_id: context.project_host_id,
+      source_host_name: context.project_host_name,
       dest_host_id: context.dest_host_id,
+      dest_host_name: context.dest_host_name,
       op_id: opts?.op_id,
       fresh: true,
     });
@@ -1003,7 +1038,9 @@ export async function moveProjectToHost(
       move_log_id,
       event: "project_move_failed",
       source_host_id: context.project_host_id,
+      source_host_name: context.project_host_name,
       dest_host_id: context.dest_host_id,
+      dest_host_name: context.dest_host_name,
       duration_ms: Date.now() - started_at_ms,
       error: err instanceof Error ? err.message : `${err}`,
       op_id: opts?.op_id,

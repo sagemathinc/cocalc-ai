@@ -344,17 +344,15 @@ export const LogEntry: React.FC<Props> = React.memo(
       return (
         <span>
           started moving this project
-          {event.source_host_id ? (
+          {renderMoveHost(event.source_host_name, event.source_host_id) ? (
             <>
               {" "}
-              from <code>{event.source_host_id}</code>
+              from{" "}
+              {renderMoveHost(event.source_host_name, event.source_host_id)}
             </>
           ) : null}
-          {event.dest_host_id ? (
-            <>
-              {" "}
-              to <code>{event.dest_host_id}</code>
-            </>
+          {renderMoveHost(event.dest_host_name, event.dest_host_id) ? (
+            <> to {renderMoveHost(event.dest_host_name, event.dest_host_id)}</>
           ) : null}
         </span>
       );
@@ -366,17 +364,15 @@ export const LogEntry: React.FC<Props> = React.memo(
       return (
         <span>
           moved this project
-          {event.source_host_id ? (
+          {renderMoveHost(event.source_host_name, event.source_host_id) ? (
             <>
               {" "}
-              from <code>{event.source_host_id}</code>
+              from{" "}
+              {renderMoveHost(event.source_host_name, event.source_host_id)}
             </>
           ) : null}
-          {event.dest_host_id ? (
-            <>
-              {" "}
-              to <code>{event.dest_host_id}</code>
-            </>
+          {renderMoveHost(event.dest_host_name, event.dest_host_id) ? (
+            <> to {renderMoveHost(event.dest_host_name, event.dest_host_id)}</>
           ) : null}
         </span>
       );
@@ -388,11 +384,8 @@ export const LogEntry: React.FC<Props> = React.memo(
       return (
         <span>
           failed to move this project
-          {event.dest_host_id ? (
-            <>
-              {" "}
-              to <code>{event.dest_host_id}</code>
-            </>
+          {renderMoveHost(event.dest_host_name, event.dest_host_id) ? (
+            <> to {renderMoveHost(event.dest_host_name, event.dest_host_id)}</>
           ) : null}
         </span>
       );
@@ -404,14 +397,24 @@ export const LogEntry: React.FC<Props> = React.memo(
       return (
         <span>
           canceled moving this project
-          {event.dest_host_id ? (
-            <>
-              {" "}
-              to <code>{event.dest_host_id}</code>
-            </>
+          {renderMoveHost(event.dest_host_name, event.dest_host_id) ? (
+            <> to {renderMoveHost(event.dest_host_name, event.dest_host_id)}</>
           ) : null}
         </span>
       );
+    }
+
+    function renderMoveHost(
+      host_name?: string,
+      host_id?: string,
+    ): React.JSX.Element | null {
+      if (host_name) {
+        return <span title={host_id}>{host_name}</span>;
+      }
+      if (host_id) {
+        return <code>{host_id}</code>;
+      }
+      return null;
     }
 
     function render_project_rehomed(

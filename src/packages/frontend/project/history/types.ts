@@ -188,6 +188,8 @@ export type ProjectControlEvent = {
   op_id?: string;
   source_host_id?: string;
   dest_host_id?: string;
+  source_host_name?: string;
+  dest_host_name?: string;
   error?: string;
   stage?: string;
   source_bay_id?: string;

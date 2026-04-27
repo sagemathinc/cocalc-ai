@@ -84,6 +84,8 @@ describe("moveProjectToHost", () => {
   const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
   const SOURCE_HOST_ID = "22222222-2222-4222-8222-222222222222";
   const DEST_HOST_ID = "33333333-3333-4333-8333-333333333333";
+  const SOURCE_HOST_NAME = "Source Host";
+  const DEST_HOST_NAME = "Destination Host";
 
   let postTimeoutState: {
     host_id: string | null;
@@ -119,25 +121,30 @@ describe("moveProjectToHost", () => {
         };
       }
       if (
-        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
       ) {
         return {
-          rows: [{ status: "off", deleted: null, last_seen: new Date() }],
+          rows: [
+            {
+              status: "off",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
         };
       }
       if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
         return { rows: [postTimeoutState] };
-      }
-      if (
-        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
-      ) {
-        return { rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
     loadHostFromRegistryMock = jest.fn(async (host_id: string) => ({
       id: host_id,
       bay_id: "bay-0",
+      name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
       region: "us-west1",
     }));
     selectActiveHostMock = jest.fn();
@@ -162,6 +169,7 @@ describe("moveProjectToHost", () => {
     resolveHostConnectionMock = jest.fn(async ({ host_id }: any) => ({
       host_id,
       bay_id: "bay-0",
+      name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
       region: "us-west1",
     }));
     getExplicitProjectRoutedClientMock = jest.fn(async () => ({
@@ -277,7 +285,9 @@ describe("moveProjectToHost", () => {
         };
       }
       if (
-        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
       ) {
         return { rows: [] };
       }
@@ -289,6 +299,7 @@ describe("moveProjectToHost", () => {
     selectActiveHostMock = jest.fn(async () => ({
       id: DEST_HOST_ID,
       bay_id: "bay-0",
+      name: DEST_HOST_NAME,
       region: "us-west1",
     }));
 
@@ -356,10 +367,19 @@ describe("moveProjectToHost", () => {
         };
       }
       if (
-        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
       ) {
         return {
-          rows: [{ status: "running", deleted: null, last_seen: new Date() }],
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
         };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -405,10 +425,19 @@ describe("moveProjectToHost", () => {
         };
       }
       if (
-        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
       ) {
         return {
-          rows: [{ status: "running", deleted: null, last_seen: new Date() }],
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
         };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -460,10 +489,19 @@ describe("moveProjectToHost", () => {
         };
       }
       if (
-        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
       ) {
         return {
-          rows: [{ status: "running", deleted: null, last_seen: new Date() }],
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
         };
       }
       if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
@@ -497,7 +535,9 @@ describe("moveProjectToHost", () => {
             event: "project_move_requested",
             op_id: "move-op-1",
             source_host_id: SOURCE_HOST_ID,
+            source_host_name: SOURCE_HOST_NAME,
             dest_host_id: DEST_HOST_ID,
+            dest_host_name: DEST_HOST_NAME,
           }),
         }),
         expect.objectContaining({
@@ -508,7 +548,9 @@ describe("moveProjectToHost", () => {
             event: "project_moved",
             op_id: "move-op-1",
             source_host_id: SOURCE_HOST_ID,
+            source_host_name: SOURCE_HOST_NAME,
             dest_host_id: DEST_HOST_ID,
+            dest_host_name: DEST_HOST_NAME,
           }),
         }),
       ]),
@@ -548,10 +590,19 @@ describe("moveProjectToHost", () => {
         };
       }
       if (
-        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
       ) {
         return {
-          rows: [{ status: "running", deleted: null, last_seen: new Date() }],
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
         };
       }
       if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
@@ -582,7 +633,9 @@ describe("moveProjectToHost", () => {
             event: "project_move_requested",
             op_id: "move-op-2",
             source_host_id: SOURCE_HOST_ID,
+            source_host_name: SOURCE_HOST_NAME,
             dest_host_id: DEST_HOST_ID,
+            dest_host_name: DEST_HOST_NAME,
           }),
         }),
         expect.objectContaining({
@@ -591,7 +644,9 @@ describe("moveProjectToHost", () => {
             event: "project_move_failed",
             op_id: "move-op-2",
             source_host_id: SOURCE_HOST_ID,
+            source_host_name: SOURCE_HOST_NAME,
             dest_host_id: DEST_HOST_ID,
+            dest_host_name: DEST_HOST_NAME,
             error: expect.stringContaining("destination start wait failed"),
           }),
         }),
