@@ -42,8 +42,6 @@ import {
 import { PathNavigator } from "../explorer/path-navigator";
 import { useAvailableFeatures } from "../use-available-features";
 import { NewFileButton } from "./new-file-button";
-import { AIGenerateDocumentModal } from "../page/home-page/ai-generate-document";
-import { Ext } from "../page/home-page/ai-generate-examples";
 import { QUICK_CREATE_MAP } from "./launcher-catalog";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import {
@@ -127,9 +125,6 @@ export default function NewFilePage(props: Props) {
     if (initialFilename === undefined) return;
     setFilename(initialFilename.trim() ? initialFilename : fallbackFilename);
   }, [initialFilename, fallbackFilename]);
-  const [aiPrompt, setAiPrompt] = useState<string>("");
-  const [aiExt, setAiExt] = useState<Ext>("ipynb");
-  const [showAiModal, setShowAiModal] = useState<boolean>(false);
   const [showCustomizeModal, setShowCustomizeModal] = useState<boolean>(false);
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
   const file_creation_error = useTypedRedux(
@@ -517,7 +512,7 @@ export default function NewFilePage(props: Props) {
         </Col>
       </Row>
       <Row gutter={[24, 16]} style={{ marginTop: "16px" }}>
-        <Col md={14} sm={24}>
+        <Col md={24} sm={24}>
           <div
             style={{
               display: "flex",
@@ -589,56 +584,6 @@ export default function NewFilePage(props: Props) {
             </div>
           </div>
         </Col>
-        <Col md={10} sm={24}>
-          <h3 style={{ marginTop: 0 }}>Create with AI</h3>
-          <Space.Compact style={{ width: "100%" }}>
-            <Input
-              size="large"
-              value={aiPrompt}
-              onChange={(e) => setAiPrompt(e.target.value)}
-              placeholder="Describe what you want to create..."
-              onPressEnter={() => {
-                if (aiPrompt.trim()) {
-                  setShowAiModal(true);
-                }
-              }}
-            />
-            <Select
-              size="large"
-              value={aiExt}
-              onChange={(value) => setAiExt(value)}
-              style={{ minWidth: "120px" }}
-              options={
-                [
-                  availableFeatures.jupyter_notebook
-                    ? { value: "ipynb", label: "Notebook" }
-                    : undefined,
-                  availableFeatures.sage
-                    ? { value: "ipynb-sagemath", label: "SageMath Notebook" }
-                    : undefined,
-                  { value: "md", label: "Markdown" },
-                  availableFeatures.latex
-                    ? { value: "tex", label: "LaTeX" }
-                    : undefined,
-                  availableFeatures.qmd
-                    ? { value: "qmd", label: "Quarto" }
-                    : undefined,
-                  availableFeatures.rmd
-                    ? { value: "rmd", label: "RMarkdown" }
-                    : undefined,
-                ].filter(Boolean) as { value: Ext; label: string }[]
-              }
-            />
-            <Button
-              size="large"
-              type="primary"
-              onClick={() => setShowAiModal(true)}
-              disabled={!aiPrompt.trim()}
-            >
-              Create
-            </Button>
-          </Space.Compact>
-        </Col>
       </Row>
       <LauncherCustomizeModal
         open={showCustomizeModal}
@@ -680,13 +625,6 @@ export default function NewFilePage(props: Props) {
             quickCreateRemove: userLauncherLayers.project.hiddenQuickCreate,
           },
         ]}
-      />
-      <AIGenerateDocumentModal
-        project_id={project_id}
-        show={showAiModal}
-        setShow={setShowAiModal}
-        ext={aiExt}
-        initialPrompt={aiPrompt}
       />
       <Modal
         open={showUploadModal}

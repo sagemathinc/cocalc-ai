@@ -30,12 +30,9 @@ import { labels, menu } from "@cocalc/frontend/i18n";
 import { editor } from "@cocalc/frontend/i18n/common";
 import { open_new_tab as openNewTab } from "@cocalc/frontend/misc/open-browser-tab";
 import { isChatPath } from "@cocalc/frontend/chat/paths";
-import { isSupportedExtension } from "@cocalc/frontend/project/page/home-page/ai-generate-examples";
-import { AI_GENERATE_DOC_TAG } from "@cocalc/frontend/project/page/home-page/ai-generate-utils";
 import openSupportTab from "@cocalc/frontend/support/open";
 import userTracking from "@cocalc/frontend/user-tracking";
 import { DARK_MODE_ICON } from "@cocalc/util/consts/ui";
-import { filename_extension } from "@cocalc/util/misc";
 import { addCommands } from "./commands";
 import {
   BUILD_ON_SAVE_ICON_DISABLED,
@@ -1083,22 +1080,6 @@ addCommands({
     }),
     label: menu.new_file,
     ...fileAction("new"),
-  },
-  new_ai: {
-    pos: 0.5,
-    group: "new-open",
-    icon: <AIAvatar size={16} />,
-    title: labels.ai_generate_title,
-    label: labels.ai_generate_label,
-    onClick: ({ setShowNewAI }) => setShowNewAI?.(true),
-    isVisible: ({ props }) => {
-      const { path, project_id } = props;
-      const ext = filename_extension(path);
-      if (!isSupportedExtension(ext)) return false;
-      return redux
-        .getStore("projects")
-        .hasLanguageModelEnabled(project_id, AI_GENERATE_DOC_TAG);
-    },
   },
   open: {
     pos: 1,

@@ -716,13 +716,6 @@ export const LogEntry: React.FC<Props> = React.memo(
             </span>
           );
 
-        case "generate-document":
-          return (
-            <span>
-              used an {name} to generate the Document {pathLink}
-            </span>
-          );
-
         default:
           misc.unreachable(usage);
           // This is only for forward compatibility reasons.
