@@ -73,6 +73,7 @@ export const getDocument = reuseInFlight(async function (url: string) {
     const resDir = `pdfjs-dist-${versions["pdfjs-dist"]}`;
     doc = (await pdfjs_getDocument({
       url,
+      withCredentials: true,
       cMapUrl: `${appBasePath}/cdn/${resDir}/cmaps/`,
       cMapPacked: true,
       disableStream: true,

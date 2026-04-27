@@ -688,42 +688,45 @@ export async function main(
       const isProjectFileRoute = `${req.url ?? ""}`.includes(
         `/${project_id}/files/`,
       );
-      if (res && isExplicitProjectFileDownloadRequest(req, project_id)) {
+      if (res && isProjectFileRoute) {
         const account_id =
           authContext?.actor === "account" ? authContext.account_id : undefined;
+        const explicitDownload = isExplicitProjectFileDownloadRequest(
+          req,
+          project_id,
+        );
         await handleFileDownload({
           req,
           res,
           client: conatClient,
-          beforeExplicitDownload: async ({
-            project_id,
-          }: {
-            project_id: string;
-            path: string;
-          }) =>
-            await checkManagedFileDownloadAllowedBestEffort({
-              project_id,
-              account_id,
-            }),
-          onExplicitDownloadComplete: async ({
-            project_id,
-            bytes,
-            request_path,
-            partial,
-          }: {
-            project_id: string;
-            path: string;
-            bytes: number;
-            request_path: string;
-            partial: boolean;
-          }) =>
-            await recordManagedFileDownloadBestEffort({
-              project_id,
-              account_id,
-              bytes,
-              request_path,
-              partial,
-            }),
+          beforeExplicitDownload: explicitDownload
+            ? async ({ project_id }: { project_id: string; path: string }) =>
+                await checkManagedFileDownloadAllowedBestEffort({
+                  project_id,
+                  account_id,
+                })
+            : undefined,
+          onExplicitDownloadComplete: explicitDownload
+            ? async ({
+                project_id,
+                bytes,
+                request_path,
+                partial,
+              }: {
+                project_id: string;
+                path: string;
+                bytes: number;
+                request_path: string;
+                partial: boolean;
+              }) =>
+                await recordManagedFileDownloadBestEffort({
+                  project_id,
+                  account_id,
+                  bytes,
+                  request_path,
+                  partial,
+                })
+            : undefined,
         });
         return { handled: true };
       }
