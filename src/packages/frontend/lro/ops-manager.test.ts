@@ -40,7 +40,7 @@ describe("lro ops manager account-feed integration", () => {
     jest.useRealTimers();
   });
 
-  it("single manager bootstraps once and updates from account feed without polling", async () => {
+  it("single manager bootstraps once and updates from account feed without polling terminal state", async () => {
     let summaries = [
       makeSummary({
         op_id: "op-1",
@@ -133,7 +133,96 @@ describe("lro ops manager account-feed integration", () => {
     expect(setState.mock.calls.at(-1)?.[0]?.summary?.status).toBe("failed");
   });
 
-  it("multi manager syncs summary removals from account feed without polling", async () => {
+  it("single manager periodically refreshes while tracking a nonterminal op", async () => {
+    let summaries = [
+      makeSummary({
+        op_id: "op-1",
+        status: "running",
+        updated_at: new Date("2026-04-17T12:00:00Z"),
+      }),
+    ];
+    let listener: ((reason: "change" | "reset") => void) | undefined;
+    const bootstrapAccountLroScope = jest.fn(
+      async ({
+        scope_type,
+        scope_id,
+        include_completed,
+        listLro,
+      }: {
+        scope_type: "project";
+        scope_id: string;
+        include_completed?: boolean;
+        listLro: (opts: {
+          scope_type: "project";
+          scope_id: string;
+          include_completed?: boolean;
+        }) => Promise<any[]>;
+      }) => {
+        summaries = await listLro({
+          scope_type,
+          scope_id,
+          include_completed,
+        });
+        listener?.("change");
+      },
+    );
+    jest.doMock("@cocalc/frontend/lite", () => ({ lite: false }));
+    jest.doMock("./account-summary-feed", () => ({
+      subscribeAccountLroSummaryFeed: (cb) => {
+        listener = cb;
+        return () => {
+          if (listener === cb) {
+            listener = undefined;
+          }
+        };
+      },
+      getAccountLroSummaries: () => summaries,
+      bootstrapAccountLroScope,
+    }));
+    const { SingleLroOpsManager } = require("./ops-manager");
+    const listLro = jest.fn(async () => summaries);
+    const getLroStream = jest.fn(() => new Promise<any>(() => {}));
+    const setState = jest.fn();
+    const manager = new SingleLroOpsManager({
+      kind: "project-start",
+      scope_type: "project",
+      scope_id: "project-1",
+      include_completed: true,
+      retainTerminal: true,
+      refreshMs: 10,
+      listLro,
+      getLroStream,
+      dismissLro: jest.fn(async () => {}),
+      isClosed: () => false,
+      setState,
+    });
+
+    manager.track({
+      op_id: "op-1",
+      scope_type: "project",
+      scope_id: "project-1",
+    });
+    await flush();
+    expect(listLro).toHaveBeenCalledTimes(1);
+    expect(setState.mock.calls.at(-1)?.[0]?.summary?.status).toBe("running");
+
+    summaries = [
+      makeSummary({
+        op_id: "op-1",
+        status: "succeeded",
+        updated_at: new Date("2026-04-17T12:01:00Z"),
+        finished_at: new Date("2026-04-17T12:01:00Z"),
+      }),
+    ];
+
+    jest.advanceTimersByTime(10);
+    await flush();
+
+    expect(listLro).toHaveBeenCalledTimes(2);
+    expect(setState.mock.calls.at(-1)?.[0]?.summary?.status).toBe("succeeded");
+  });
+
+  it("multi manager syncs summary removals from account feed without polling terminal state", async () => {
     let summaries = [
       makeSummary({
         op_id: "op-1",
@@ -191,6 +280,7 @@ describe("lro ops manager account-feed integration", () => {
     }));
     const { MultiLroOpsManager } = require("./ops-manager");
     const listLro = jest.fn(async () => summaries);
+    const getLroStream = jest.fn(() => new Promise<any>(() => {}));
     const setState = jest.fn();
     const manager = new MultiLroOpsManager({
       kind: "project-backup",
@@ -200,7 +290,7 @@ describe("lro ops manager account-feed integration", () => {
       retainTerminal: true,
       refreshMs: 10,
       listLro,
-      getLroStream: jest.fn(),
+      getLroStream,
       dismissLro: jest.fn(async () => {}),
       isClosed: () => false,
       setState,
@@ -227,5 +317,97 @@ describe("lro ops manager account-feed integration", () => {
     expect(Object.keys(setState.mock.calls.at(-1)?.[0] ?? {})).toEqual([
       "op-2",
     ]);
+  });
+
+  it("multi manager periodically refreshes while a nonterminal op is active", async () => {
+    let summaries = [
+      makeSummary({
+        op_id: "op-1",
+        kind: "project-backup",
+        status: "running",
+        updated_at: new Date("2026-04-17T12:00:00Z"),
+      }),
+    ];
+    let listener: ((reason: "change" | "reset") => void) | undefined;
+    const bootstrapAccountLroScope = jest.fn(
+      async ({
+        scope_type,
+        scope_id,
+        include_completed,
+        listLro,
+      }: {
+        scope_type: "project";
+        scope_id: string;
+        include_completed?: boolean;
+        listLro: (opts: {
+          scope_type: "project";
+          scope_id: string;
+          include_completed?: boolean;
+        }) => Promise<any[]>;
+      }) => {
+        summaries = await listLro({
+          scope_type,
+          scope_id,
+          include_completed,
+        });
+        listener?.("change");
+      },
+    );
+    jest.doMock("@cocalc/frontend/lite", () => ({ lite: false }));
+    jest.doMock("./account-summary-feed", () => ({
+      subscribeAccountLroSummaryFeed: (cb) => {
+        listener = cb;
+        return () => {
+          if (listener === cb) {
+            listener = undefined;
+          }
+        };
+      },
+      getAccountLroSummaries: () => summaries,
+      bootstrapAccountLroScope,
+    }));
+    const { MultiLroOpsManager } = require("./ops-manager");
+    const listLro = jest.fn(async () => summaries);
+    const getLroStream = jest.fn(() => new Promise<any>(() => {}));
+    const setState = jest.fn();
+    const manager = new MultiLroOpsManager({
+      kind: "project-backup",
+      scope_type: "project",
+      scope_id: "project-1",
+      include_completed: true,
+      retainTerminal: true,
+      refreshMs: 10,
+      listLro,
+      getLroStream,
+      dismissLro: jest.fn(async () => {}),
+      isClosed: () => false,
+      setState,
+    });
+
+    manager.track({
+      op_id: "op-1",
+      scope_type: "project",
+      scope_id: "project-1",
+    });
+    await flush();
+    expect(listLro).toHaveBeenCalledTimes(1);
+
+    summaries = [
+      makeSummary({
+        op_id: "op-1",
+        kind: "project-backup",
+        status: "succeeded",
+        updated_at: new Date("2026-04-17T12:01:00Z"),
+        finished_at: new Date("2026-04-17T12:01:00Z"),
+      }),
+    ];
+
+    jest.advanceTimersByTime(10);
+    await flush();
+
+    expect(listLro).toHaveBeenCalledTimes(2);
+    expect(setState.mock.calls.at(-1)?.[0]?.["op-1"]?.summary?.status).toBe(
+      "succeeded",
+    );
   });
 });

@@ -72,6 +72,7 @@ import {
   url_href,
 } from "@cocalc/frontend/project/utils";
 import { API } from "@cocalc/frontend/project/websocket/api";
+import { disconnect_from_project } from "@cocalc/frontend/project/websocket/connect";
 import {
   Configuration,
   ConfigurationAspect,
@@ -90,10 +91,6 @@ import {
   acquireSharedProjectDStream,
   type SharedProjectDStreamRelease,
 } from "@cocalc/frontend/conat/project-dstream";
-import {
-  deriveBayControlPlaneOrigin,
-  getControlPlaneOrigin,
-} from "@cocalc/frontend/control-plane-origin";
 import { once, retry_until_success } from "@cocalc/util/async-utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import * as misc from "@cocalc/util/misc";
@@ -601,20 +598,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       if (this.projectLogStream && !this.projectLogStream.isClosed()) {
         return this.projectLogStream;
       }
-      const owning_bay_id = redux
-        .getStore("projects")
-        ?.get_owning_bay_id?.(this.project_id);
-      const controlPlaneOrigin = deriveBayControlPlaneOrigin(
-        getControlPlaneOrigin() ??
-          (typeof window === "undefined" ? undefined : window.location.origin),
-        owning_bay_id,
-      );
       const lease = await acquireSharedProjectDStream<ProjectLogRow>({
         project_id: this.project_id,
         name: PROJECT_LOG_STREAM_NAME,
         noInventory: true,
         maxListeners: 50,
-        controlPlaneOrigin,
+        requireRouting: true,
       });
       const stream = lease.stream;
       if (this.isClosed()) {
@@ -627,6 +616,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     },
     { createKey: () => "project-log" },
   );
+
+  private resetProjectLogStream = async (): Promise<void> => {
+    const release = this.releaseProjectLogStream;
+    delete this.projectLogStream;
+    delete this.releaseProjectLogStream;
+    await release?.({ immediate: true });
+  };
 
   trackStartOp = (op: {
     op_id?: string;
@@ -2703,6 +2699,24 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.filesystem = undefined;
     this.filesystemPromise = undefined;
   };
+
+  resetProjectHostRuntime = () => {
+    this.clearFilesystemClient();
+    disconnect_from_project(this.project_id);
+    this.projectStatusSub?.close();
+    delete this.projectStatusSub;
+    const hasProjectLogLoaded = this.get_store()?.get("project_log") != null;
+    void (async () => {
+      await this.resetProjectLogStream();
+      if (hasProjectLogLoaded) {
+        await this.load_project_log("newer");
+      }
+    })();
+    if (this.initialized) {
+      this.initProjectStatus();
+    }
+  };
+
   fs = (): FilesystemClient => {
     this.filesystem ??= new Proxy(
       {},

@@ -1399,6 +1399,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             Refresh
           </Button>
           <Radio.Group
+            size="small"
             value={viewMode}
             onChange={(event) =>
               setViewMode(event.target.value as HostListViewMode)

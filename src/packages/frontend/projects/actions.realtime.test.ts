@@ -1,6 +1,7 @@
 import { EventEmitter } from "events";
 import { List, Map as ImmutableMap } from "immutable";
 
+import { redux as appRedux } from "@cocalc/frontend/app-framework";
 import { accountFeedStreamName } from "../../conat/hub/api/account-feed";
 import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
 
@@ -54,7 +55,11 @@ jest.mock("@cocalc/frontend/webapp-client", () => {
     async_query: jest.fn(async () => ({
       query: { account_project_index: [] },
     })),
-    conat_client: Object.assign(new EventEmitter(), {}),
+    conat_client: Object.assign(new EventEmitter(), {
+      releaseProjectHostRouting: jest.fn(),
+      refreshProjectHostRouting: jest.fn(),
+      reconnect: jest.fn(),
+    }),
   });
 
   return { webapp_client: webappClient };
@@ -109,6 +114,10 @@ describe("ProjectsActions realtime feed", () => {
           return undefined;
       }
     });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it("subscribes to the account feed and applies project upserts to project_map", async () => {
@@ -176,6 +185,91 @@ describe("ProjectsActions realtime feed", () => {
       "owner",
     );
     expect(projectMap.getIn(["project-1", "last_edited"])).toBeInstanceOf(Date);
+  });
+
+  it("resets routing for an open project when the feed reports a host change", async () => {
+    const projectId = "00000000-0000-4000-8000-000000000001";
+    projectMap = ImmutableMap<string, any>([
+      [
+        projectId,
+        ImmutableMap({
+          host_id: "host-old",
+          owning_bay_id: "bay-0",
+        }),
+      ],
+    ]);
+    mockedStore.get.mockImplementation((key: string) => {
+      switch (key) {
+        case "project_map":
+          return projectMap;
+        case "open_projects":
+          return List([projectId]);
+        default:
+          return undefined;
+      }
+    });
+    const resetProjectHostRuntime = jest.fn();
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+        resetProjectHostRuntime,
+      })),
+    } as any;
+    jest
+      .spyOn(appRedux, "getProjectActions")
+      .mockReturnValue({ resetProjectHostRuntime } as any);
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.now(),
+      account_id: "acct-1",
+      project: {
+        project_id: projectId,
+        title: "Realtime Project",
+        description: "from feed",
+        name: "realtime-project",
+        theme: null,
+        host_id: "host-new",
+        owning_bay_id: "bay-0",
+        users: {
+          "acct-1": { group: "owner" },
+        },
+        state: { state: "running" },
+        last_active: { "acct-1": "2026-04-05T03:00:00.000Z" },
+        last_edited: "2026-04-05T03:00:00.000Z",
+        deleted: false,
+      },
+    });
+    await flush();
+
+    expect(projectMap.getIn([projectId, "host_id"])).toBe("host-new");
+    expect(
+      mockedWebappClient.conat_client.releaseProjectHostRouting,
+    ).toHaveBeenCalledWith({ project_id: projectId });
+    expect(
+      mockedWebappClient.conat_client.refreshProjectHostRouting,
+    ).toHaveBeenCalledWith({
+      source_host_id: "host-old",
+      dest_host_id: "host-new",
+    });
+    expect(resetProjectHostRuntime).toHaveBeenCalled();
+    expect(mockedWebappClient.conat_client.reconnect).toHaveBeenCalled();
   });
 
   it("bootstraps remote shared projects from account_project_index on init", async () => {

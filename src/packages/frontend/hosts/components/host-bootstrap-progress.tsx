@@ -22,12 +22,12 @@ export const HostBootstrapProgress: React.FC<HostBootstrapProgressProps> = ({
     return null;
   }
   const fullText = `Bootstrap: ${message}`;
-  const text = compact && status === "error" ? "Bootstrap failed" : fullText;
+  const errorLabel = "Bootstrap failed";
   if (compact && status === "error") {
     return (
       <Space size={6} wrap>
         <Typography.Text type="danger" style={{ fontSize: 12 }}>
-          {text}
+          {errorLabel}
         </Typography.Text>
         <HostErrorDetails
           variant="popover"
@@ -41,7 +41,7 @@ export const HostBootstrapProgress: React.FC<HostBootstrapProgressProps> = ({
   if (status === "error") {
     return (
       <Space orientation="vertical" size={4} style={{ width: "100%" }}>
-        <Typography.Text type="danger">{text}</Typography.Text>
+        <Typography.Text type="danger">{errorLabel}</Typography.Text>
         <HostErrorDetails message={fullText} maxHeight={220} />
       </Space>
     );
@@ -51,7 +51,7 @@ export const HostBootstrapProgress: React.FC<HostBootstrapProgressProps> = ({
       type="secondary"
       style={compact ? { fontSize: 12 } : undefined}
     >
-      {text}
+      {fullText}
     </Typography.Text>
   );
 };

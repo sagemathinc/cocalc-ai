@@ -799,6 +799,18 @@ function requireClient(client: Client | undefined, context: string): Client {
   return client;
 }
 
+function isDuplicateWatchServerError(
+  err: unknown,
+  watchSubject: string,
+): boolean {
+  const text = `${err ?? ""}`;
+  return (
+    text.includes(
+      "there can be at most one socket server per client listening on a subject",
+    ) && text.includes(`subject='${watchSubject}'`)
+  );
+}
+
 export function fsClient({
   client,
   subject,
@@ -859,10 +871,17 @@ export function fsClient({
       err.code = "ENOENT";
       throw err;
     }
-    await ensureWatchServerExists(path, options);
+    const watchSubject = `watch-${subject}`;
+    try {
+      await ensureWatchServerExists(path, options);
+    } catch (err) {
+      if (!isDuplicateWatchServerError(err, watchSubject)) {
+        throw err;
+      }
+    }
     return await watchClient({
       client: resolvedClient,
-      subject: `watch-${subject}`,
+      subject: watchSubject,
       path,
       options,
       fs: call,

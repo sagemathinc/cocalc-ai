@@ -175,6 +175,9 @@ export type ProjectControlEvent = {
     | "start_project"
     | "project_stop_requested"
     | "project_start_requested"
+    | "project_move_requested"
+    | "project_move_failed"
+    | "project_move_canceled"
     | "project_restart_requested"
     | "project_stopped"
     | "project_moved"
@@ -183,6 +186,12 @@ export type ProjectControlEvent = {
   time?: number;
   duration_ms?: number;
   op_id?: string;
+  source_host_id?: string;
+  dest_host_id?: string;
+  source_host_name?: string;
+  dest_host_name?: string;
+  error?: string;
+  stage?: string;
   source_bay_id?: string;
   dest_bay_id?: string;
   reason?: string;

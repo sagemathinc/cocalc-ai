@@ -52,6 +52,7 @@ export class SingleLroOpsManager {
   private currentOpId?: string;
   private state?: LroOpState;
   private summaryFeedUnsubscribe?: () => void;
+  private refreshTimer?: ReturnType<typeof setInterval>;
 
   constructor(private opts: SingleOptions) {}
 
@@ -64,6 +65,7 @@ export class SingleLroOpsManager {
       return;
     }
     this.initialized = true;
+    this.startRefreshLoop();
     this.summaryFeedUnsubscribe = subscribeAccountLroSummaryFeed(
       this.handleSummaryFeedUpdate,
     );
@@ -78,6 +80,7 @@ export class SingleLroOpsManager {
       return;
     }
     this.initialized = false;
+    this.stopRefreshLoop();
     if (this.summaryFeedUnsubscribe != null) {
       this.summaryFeedUnsubscribe();
       this.summaryFeedUnsubscribe = undefined;
@@ -338,6 +341,36 @@ export class SingleLroOpsManager {
     this.opts.setState(next);
   }
 
+  private startRefreshLoop() {
+    const refreshMs = this.opts.refreshMs ?? 0;
+    if (refreshMs <= 0 || this.refreshTimer != null) {
+      return;
+    }
+    this.refreshTimer = setInterval(() => {
+      if (!this.shouldRefresh()) {
+        return;
+      }
+      this.bootstrap().catch((err) => {
+        this.log("unable to refresh lro operation", err);
+      });
+    }, refreshMs);
+  }
+
+  private stopRefreshLoop() {
+    if (this.refreshTimer != null) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
+  }
+
+  private shouldRefresh() {
+    if (!this.initialized || this.opts.isClosed() || !this.currentOpId) {
+      return false;
+    }
+    const status = this.state?.summary?.status;
+    return status == null || !isTerminal(status);
+  }
+
   private log(message: string, err?: unknown) {
     if (this.opts.log) {
       this.opts.log(message, err);
@@ -357,6 +390,7 @@ export class MultiLroOpsManager {
   private streamInit = new globalThis.Map<string, Promise<void>>();
   private state: Record<string, LroOpState> = {};
   private summaryFeedUnsubscribe?: () => void;
+  private refreshTimer?: ReturnType<typeof setInterval>;
 
   constructor(private opts: MultiOptions) {}
 
@@ -369,6 +403,7 @@ export class MultiLroOpsManager {
       return;
     }
     this.initialized = true;
+    this.startRefreshLoop();
     this.summaryFeedUnsubscribe = subscribeAccountLroSummaryFeed(
       this.handleSummaryFeedUpdate,
     );
@@ -383,6 +418,7 @@ export class MultiLroOpsManager {
       return;
     }
     this.initialized = false;
+    this.stopRefreshLoop();
     if (this.summaryFeedUnsubscribe != null) {
       this.summaryFeedUnsubscribe();
       this.summaryFeedUnsubscribe = undefined;
@@ -647,5 +683,37 @@ export class MultiLroOpsManager {
     } else {
       console.warn(message);
     }
+  }
+
+  private startRefreshLoop() {
+    const refreshMs = this.opts.refreshMs ?? 0;
+    if (refreshMs <= 0 || this.refreshTimer != null) {
+      return;
+    }
+    this.refreshTimer = setInterval(() => {
+      if (!this.shouldRefresh()) {
+        return;
+      }
+      this.bootstrap().catch((err) => {
+        this.log("unable to refresh lro operations", err);
+      });
+    }, refreshMs);
+  }
+
+  private stopRefreshLoop() {
+    if (this.refreshTimer != null) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
+  }
+
+  private shouldRefresh() {
+    if (!this.initialized || this.opts.isClosed()) {
+      return false;
+    }
+    return Object.values(this.state).some((op) => {
+      const status = op.summary?.status;
+      return status == null || !isTerminal(status);
+    });
   }
 }

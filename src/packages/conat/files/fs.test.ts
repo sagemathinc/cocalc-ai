@@ -67,4 +67,54 @@ describe("filesystem explicit routing", () => {
     );
     expect(fs0).toHaveBeenCalledTimes(2);
   });
+
+  it("reuses an existing watch server when the subject is already registered", async () => {
+    const { fsClient } = await import("./fs");
+    const { EventEmitter } = await import("events");
+    const subject = "fs.project-00000000-0000-4000-8000-000000000000";
+    const ensureWatchServerExists = jest.fn(async () => {
+      throw new Error(
+        "there can be at most one socket server per client listening on a subject (subject='watch-fs.project-00000000-0000-4000-8000-000000000000')",
+      );
+    });
+    const call = new Proxy(
+      {
+        exists: jest.fn(async () => true),
+        watch: ensureWatchServerExists,
+      },
+      {
+        get(target, prop) {
+          if (!(prop in target)) {
+            target[prop] = jest.fn();
+          }
+          return target[prop];
+        },
+      },
+    );
+    const socket = new EventEmitter() as EventEmitter & {
+      request: jest.Mock<Promise<void>, [any]>;
+      close: jest.Mock<void, []>;
+    };
+    socket.request = jest.fn(async () => {});
+    socket.close = jest.fn();
+    const client = {
+      call: jest.fn(() => call),
+      socket: {
+        connect: jest.fn(() => socket),
+      },
+    } as any;
+
+    const fs = fsClient({ client, subject });
+    const watcher = await fs.watch("/tmp/test.txt");
+    expect(ensureWatchServerExists).toHaveBeenCalledWith(
+      "/tmp/test.txt",
+      undefined,
+    );
+    expect(client.socket.connect).toHaveBeenCalledWith(`watch-${subject}`);
+    expect(socket.request).toHaveBeenCalledWith({
+      path: "/tmp/test.txt",
+      options: undefined,
+    });
+    expect(typeof watcher.ignore).toBe("function");
+  });
 });

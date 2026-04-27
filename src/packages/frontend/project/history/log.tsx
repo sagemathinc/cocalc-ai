@@ -118,7 +118,7 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
       const workspaceId = workspaces.current.workspace_id;
       log_seq = log_seq.filter((entry) => {
         const paths = getEntryPaths(entry);
-        if (paths.length === 0) return false;
+        if (paths.length === 0) return true;
         return paths.some(
           (path) =>
             workspaces.resolveWorkspaceForPath(path)?.workspace_id ===

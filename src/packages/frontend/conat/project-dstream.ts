@@ -31,6 +31,7 @@ type SharedProjectDStreamOptions = Omit<
   project_id: string;
   maxListeners?: number;
   controlPlaneOrigin?: string;
+  requireRouting?: boolean;
 };
 
 export type SharedProjectDStreamRelease = (opts?: {
@@ -111,6 +112,7 @@ function cacheKey(opts: SharedProjectDStreamOptions): string {
       noAutosave: !!opts.noAutosave,
       noCache: !!opts.noCache,
       noInventory: !!opts.noInventory,
+      requireRouting: !!opts.requireRouting,
       service: opts.service,
       sync: opts.sync,
       controlPlaneOrigin: normalizeControlPlaneOrigin(opts.controlPlaneOrigin),
@@ -209,6 +211,7 @@ async function ensureSharedProjectDStream<T>(
   const {
     maxListeners: _maxListeners,
     controlPlaneOrigin: _controlPlaneOrigin,
+    requireRouting,
     ...streamOpts
   } = opts;
   promise = (
@@ -222,6 +225,7 @@ async function ensureSharedProjectDStream<T>(
           .projectConat({
             project_id: opts.project_id,
             caller: "acquireSharedProjectDStream",
+            requireRouting,
           })
           .then((client) =>
             dstream<T>({
