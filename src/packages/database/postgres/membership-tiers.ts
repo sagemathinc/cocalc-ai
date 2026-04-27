@@ -13,11 +13,20 @@ interface Query {
   price_monthly?: number;
   price_yearly?: number;
   project_defaults?;
-  llm_limits?;
+  ai_limits?;
   features?;
   usage_limits?;
   disabled?: boolean;
   notes?: string;
+}
+
+function mapStorageRow(row) {
+  if (!row) return row;
+  const { llm_limits, ...rest } = row;
+  return {
+    ...rest,
+    ai_limits: llm_limits,
+  };
 }
 
 function buildHistoryEntry(row): Record<string, unknown> {
@@ -66,7 +75,7 @@ export default async function membershipTiersQuery(
       return acc;
     }, {});
     return rows.map((row) => ({
-      ...row,
+      ...mapStorageRow(row),
       ...(byTier[row.id] ?? { subscription_count: 0, account_count: 0 }),
     }));
   } else if (query.id) {
@@ -78,7 +87,7 @@ export default async function membershipTiersQuery(
       price_monthly,
       price_yearly,
       project_defaults,
-      llm_limits,
+      ai_limits,
       features,
       usage_limits,
       disabled,
@@ -136,7 +145,7 @@ export default async function membershipTiersQuery(
         price_monthly ?? null,
         price_yearly ?? null,
         toJsonParam(project_defaults),
-        toJsonParam(llm_limits),
+        toJsonParam(ai_limits),
         toJsonParam(features),
         toJsonParam(usage_limits),
         disabled ?? false,

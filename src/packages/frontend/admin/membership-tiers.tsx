@@ -139,7 +139,7 @@ function useMembershipTiers() {
             price_monthly: null,
             price_yearly: null,
             project_defaults: null,
-            llm_limits: null,
+            ai_limits: null,
             features: null,
             usage_limits: null,
             disabled: null,
@@ -152,10 +152,8 @@ function useMembershipTiers() {
       });
       const next = {};
       for (const row of result.query.membership_tiers ?? []) {
-        const { llm_limits: rawAiLimits, ...rest } = row;
         const tier = applyMembershipTierTemplateFallbacks({
-          ...rest,
-          ai_limits: row.ai_limits ?? rawAiLimits,
+          ...row,
         });
         if (tier.created) tier.created = dayjs(tier.created);
         if (tier.updated) tier.updated = dayjs(tier.updated);
@@ -260,7 +258,7 @@ function useMembershipTiers() {
         {
           ...values,
           project_defaults,
-          llm_limits: ai_limits,
+          ai_limits,
           features,
           usage_limits,
           disabled: !values.active,
@@ -273,7 +271,7 @@ function useMembershipTiers() {
           "price_monthly",
           "price_yearly",
           "project_defaults",
-          "llm_limits",
+          "ai_limits",
           "features",
           "usage_limits",
           "disabled",

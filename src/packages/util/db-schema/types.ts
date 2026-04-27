@@ -338,7 +338,7 @@ export type MembershipTierSetFields =
   | "price_monthly"
   | "price_yearly"
   | "project_defaults"
-  | "llm_limits"
+  | "ai_limits"
   | "features"
   | "usage_limits"
   | "disabled"

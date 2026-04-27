@@ -35,7 +35,7 @@ Table({
           price_monthly: null,
           price_yearly: null,
           project_defaults: null,
-          llm_limits: null,
+          ai_limits: null,
           features: null,
           usage_limits: null,
           disabled: null,
@@ -54,7 +54,7 @@ Table({
           price_monthly: null,
           price_yearly: null,
           project_defaults: null,
-          llm_limits: null,
+          ai_limits: null,
           features: null,
           usage_limits: null,
           disabled: null,
@@ -97,7 +97,7 @@ Table({
       type: "map",
       desc: "Default project quota settings applied by membership.",
     },
-    llm_limits: {
+    ai_limits: {
       type: "map",
       desc: "AI usage limits for this tier.",
     },

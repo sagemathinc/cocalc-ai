@@ -881,7 +881,7 @@ export interface PostgreSQLMethods extends EventEmitter {
       price_monthly?: number;
       price_yearly?: number;
       project_defaults?: unknown;
-      llm_limits?: unknown;
+      ai_limits?: unknown;
       features?: unknown;
       disabled?: boolean;
       notes?: string;
