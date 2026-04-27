@@ -58,8 +58,6 @@ function normalizeAccountId(stats: ConnectionStats): string | undefined {
   if (`${stats.user?.hub_id ?? ""}`.trim()) return;
   if (`${stats.user?.project_id ?? ""}`.trim()) return;
   if (`${stats.user?.error ?? ""}`.trim()) return;
-  const browser_id = `${stats.browser_id ?? ""}`.trim();
-  if (!browser_id) return;
   return account_id;
 }
 

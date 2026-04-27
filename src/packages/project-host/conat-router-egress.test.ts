@@ -68,6 +68,12 @@ describe("project-host conat router managed egress", () => {
         socket_ids: ["socketC"],
         browser_ids: ["browser-c"],
       },
+      {
+        account_id: "account-3",
+        bytes: 999,
+        socket_ids: ["socketE"],
+        browser_ids: [],
+      },
     ]);
   });
 

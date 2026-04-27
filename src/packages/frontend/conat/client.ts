@@ -1771,6 +1771,7 @@ export class ConatClient extends EventEmitter {
         withCredentials: true,
         reconnection: false,
         forceNew: true,
+        auth: (cb) => cb({ browser_id: this.client.browser_id }),
       }),
     };
     state.client.on("connected", () => {
