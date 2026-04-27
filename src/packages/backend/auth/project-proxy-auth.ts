@@ -1,4 +1,5 @@
 export const PROJECT_PROXY_AUTH_HEADER = "x-cocalc-project-secret";
+export const PROJECT_PROXY_ACCOUNT_ID_HEADER = "x-cocalc-project-account-id";
 
 export function getSingleHeaderValue(
   header: string | string[] | undefined,

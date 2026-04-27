@@ -17,11 +17,12 @@ function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB", "PB"];
   let value = bytes;
   let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
     unit += 1;
   }
-  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+  const digits = Number.isInteger(value) || value >= 10 || unit === 0 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unit]}`;
 }
 
 export function formatManagedEgressCategory(category: string): string {

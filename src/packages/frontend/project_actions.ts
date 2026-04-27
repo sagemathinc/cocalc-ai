@@ -2964,9 +2964,25 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
 
     if (auto && !print) {
-      url = download_href(this.project_id, path);
+      const hubUrl = download_href(this.project_id, path);
+      url = await webapp_client.conat_client.routeProjectHostHttpUrl({
+        project_id: this.project_id,
+        url: hubUrl,
+      });
       try {
-        await download_file(url);
+        await download_file(url, {
+          onAuthFailure: async () => {
+            await webapp_client.conat_client.ensureProjectHostBrowserSessionForProject(
+              {
+                project_id: this.project_id,
+              },
+            );
+            return await webapp_client.conat_client.routeProjectHostHttpUrl({
+              project_id: this.project_id,
+              url: hubUrl,
+            });
+          },
+        });
       } catch (err) {
         if (showError) {
           alert_message({

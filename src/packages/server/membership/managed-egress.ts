@@ -70,6 +70,7 @@ export async function getProjectOwnerAccountId(
 }
 
 export async function recordManagedProjectEgress(opts: {
+  account_id?: string;
   project_id: string;
   category: ManagedProjectEgressCategory;
   bytes: number;
@@ -81,7 +82,9 @@ export async function recordManagedProjectEgress(opts: {
     return { recorded: false };
   }
   await ensureSchema();
-  const account_id = await getProjectOwnerAccountId(opts.project_id);
+  const account_id =
+    `${opts.account_id ?? ""}`.trim() ||
+    (await getProjectOwnerAccountId(opts.project_id));
   if (!account_id) {
     return { recorded: false };
   }

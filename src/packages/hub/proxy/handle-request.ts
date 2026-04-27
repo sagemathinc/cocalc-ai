@@ -9,37 +9,13 @@ import { parseReq } from "./parse";
 import hasAccess, {
   resolveAuthenticatedAccountId,
 } from "./check-for-access-to-project";
-import { handleFileDownload } from "@cocalc/conat/files/file-download";
-import { initHubApi } from "@cocalc/conat/hub/api";
-import callHub from "@cocalc/conat/hub/call-hub";
 import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
 import { getProjectHostRedirectUrl } from "./project-host";
-import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 
 const logger = getLogger("proxy:handle-request");
 const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
 const PROJECT_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function formatManagedEgressCategory(category: string): string {
-  if (category === "file-download") return "File downloads";
-  return category.replace(/[-_]/g, " ");
-}
-
-function formatByteCount(bytes?: number): string {
-  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
-    return "unknown";
-  }
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const digits = value >= 10 || unit === 0 ? 0 : 1;
-  return `${value.toFixed(digits)} ${units[unit]}`;
-}
 
 interface Options {
   isPersonal: boolean;
@@ -50,103 +26,6 @@ export default function init({
   isPersonal,
   projectProxyHandlersPromise,
 }: Options) {
-  const fileDownloadClient = conatWithProjectRouting();
-  const fileDownloadHub = initHubApi((opts) =>
-    callHub({ client: fileDownloadClient, ...opts }),
-  );
-
-  async function checkManagedFileDownloadAllowed(project_id: string): Promise<
-    | {
-        allowed: true;
-      }
-    | {
-        allowed: false;
-        message: string;
-      }
-  > {
-    try {
-      const policy = await fileDownloadHub.system.getManagedProjectEgressPolicy(
-        {
-          project_id,
-          category: "file-download",
-        },
-      );
-      if (policy.allowed) {
-        return { allowed: true };
-      }
-      const breakdown = Object.entries(
-        policy.managed_egress_categories_5h_bytes ?? {},
-      )
-        .filter(
-          ([, bytes]) =>
-            typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0,
-        )
-        .map(
-          ([category, bytes]) =>
-            `${formatManagedEgressCategory(category)}: ${formatByteCount(Number(bytes))}`,
-        );
-      const lines = [
-        "Managed download limit reached for this account.",
-        "New file downloads are temporarily blocked until the egress usage window resets.",
-      ];
-      if (policy.egress_5h_bytes != null) {
-        lines.push(
-          `5-hour usage: ${formatByteCount(policy.managed_egress_5h_bytes)} / ${formatByteCount(policy.egress_5h_bytes)}.`,
-        );
-      }
-      if (policy.egress_7d_bytes != null) {
-        lines.push(
-          `7-day usage: ${formatByteCount(policy.managed_egress_7d_bytes)} / ${formatByteCount(policy.egress_7d_bytes)}.`,
-        );
-      }
-      if (breakdown.length > 0) {
-        lines.push(
-          `Current managed egress categories (5 hours): ${breakdown.join(", ")}.`,
-        );
-      }
-      return {
-        allowed: false,
-        message: lines.join("\n"),
-      };
-    } catch (err) {
-      logger.warn("unable to evaluate managed file download policy", {
-        project_id,
-        err: `${err}`,
-      });
-      return { allowed: true };
-    }
-  }
-
-  async function recordManagedFileDownload(opts: {
-    project_id: string;
-    bytes: number;
-    request_path: string;
-    partial: boolean;
-  }): Promise<void> {
-    if (!(opts.bytes > 0)) {
-      return;
-    }
-    try {
-      await fileDownloadHub.system.recordManagedProjectEgress({
-        project_id: opts.project_id,
-        category: "file-download",
-        bytes: opts.bytes,
-        metadata: {
-          request_path: opts.request_path,
-          partial: opts.partial,
-        },
-      });
-    } catch (err) {
-      logger.warn("unable to record managed file download egress", {
-        project_id: opts.project_id,
-        request_path: opts.request_path,
-        bytes: opts.bytes,
-        partial: opts.partial,
-        err: `${err}`,
-      });
-    }
-  }
-
   function isPublicAppTokenBypassRequest(req): boolean {
     try {
       const url = stripBasePath(`${req.url ?? "/"}`);
@@ -211,10 +90,13 @@ export default function init({
     const parsed = parseReq(url, remember_me, api_key);
     // TODO: parseReq is called again in getTarget so need to refactor...
     const { type, project_id, route } = parsed;
-    if (type == "files") {
-      // keep the explicit branch for file-download handling, while access mode
-      // policy remains centralized in the route definition.
-    }
+    const authenticatedAccountId =
+      allowAnonymousProxyBypass || type === "conat"
+        ? undefined
+        : await resolveAuthenticatedAccountId({
+            remember_me,
+            api_key,
+          });
 
     if (!allowAnonymousProxyBypass) {
       if (
@@ -230,39 +112,12 @@ export default function init({
       }
     }
 
-    if (type == "files") {
-      await handleFileDownload({
-        req,
-        res,
-        url,
-        client: fileDownloadClient,
-        beforeExplicitDownload: async ({ project_id }) =>
-          await checkManagedFileDownloadAllowed(project_id),
-        onExplicitDownloadComplete: async ({
-          project_id,
-          request_path,
-          bytes,
-          partial,
-        }) =>
-          await recordManagedFileDownload({
-            project_id,
-            request_path,
-            bytes,
-            partial,
-          }),
-      });
-      return;
-    }
-
     if (
       !allowAnonymousProxyBypass &&
       type !== "conat" &&
       /^(GET|HEAD)$/i.test(req.method ?? "GET")
     ) {
-      const account_id = await resolveAuthenticatedAccountId({
-        remember_me,
-        api_key,
-      });
+      const account_id = authenticatedAccountId;
       if (account_id) {
         const target = await getProjectHostRedirectUrl({
           project_id,
