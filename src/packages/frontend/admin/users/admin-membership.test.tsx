@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AdminMembership } from "./admin-membership";
 
 const api = jest.fn();
@@ -40,6 +40,13 @@ jest.mock("antd", () => {
     Descriptions: Object.assign(Div, { Item: Div }),
     Divider: Div,
     Input,
+    Modal: ({ open, title, children }: any) =>
+      open ? (
+        <div>
+          {title}
+          {children}
+        </div>
+      ) : null,
     Select,
     Space: Div,
     Spin: () => <div>loading</div>,
@@ -61,6 +68,9 @@ jest.mock("@cocalc/frontend/client/api", () => ({
 
 jest.mock("@cocalc/frontend/components", () => ({
   ErrorDisplay: ({ error }: any) => <div>{error}</div>,
+}));
+
+jest.mock("@cocalc/frontend/components/time-ago", () => ({
   TimeAgo: () => null,
 }));
 
@@ -112,6 +122,16 @@ describe("AdminMembership", () => {
         max_projects: 4,
         remaining_project_slots: -1,
         over_max_projects: true,
+        managed_egress_recent_events: [
+          {
+            project_id: "project-1",
+            project_title: "Data Lab",
+            category: "file-download",
+            bytes: 4096,
+            occurred_at: "2026-04-25T12:00:00.000Z",
+            metadata: { request_path: "/files/export.csv?download" },
+          },
+        ],
       },
     });
 
@@ -124,6 +144,13 @@ describe("AdminMembership", () => {
       expect(
         screen.getByText(/only partially sampled from owned projects/i),
       ).toBeTruthy();
+      expect(screen.getByText("View recent events (1)")).toBeTruthy();
     });
+
+    fireEvent.click(screen.getByText("View recent events (1)"));
+
+    expect(screen.getByText("Recent managed egress events")).toBeTruthy();
+    expect(screen.getByText("Data Lab")).toBeTruthy();
+    expect(screen.getByText("/files/export.csv?download")).toBeTruthy();
   });
 });

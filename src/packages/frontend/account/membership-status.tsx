@@ -20,10 +20,14 @@ import { useIntl } from "react-intl";
 import api from "@cocalc/frontend/client/api";
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import { Icon, Loading } from "@cocalc/frontend/components";
-import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { LLMUsageStatus } from "@cocalc/frontend/misc/llm-cost-estimation";
 import { labels } from "@cocalc/frontend/i18n";
+import {
+  ManagedEgressRecentEventsButton,
+  formatManagedEgressCategory,
+} from "@cocalc/frontend/purchases/managed-egress-recent-events";
 import { upgrades } from "@cocalc/util/upgrade-spec";
 import { capitalize, round2 } from "@cocalc/util/misc";
 import type {
@@ -331,6 +335,28 @@ function getUsageStatusItems(
       danger: true,
     });
   }
+  if (
+    typeof usageStatus.managed_egress_5h_bytes === "number" &&
+    Number.isFinite(usageStatus.managed_egress_5h_bytes)
+  ) {
+    items.push({
+      key: "managed_egress_5h_bytes",
+      label: "Managed egress used in 5 hours",
+      value: formatBytes(usageStatus.managed_egress_5h_bytes),
+      danger: usageStatus.over_managed_egress_5h === true,
+    });
+  }
+  if (
+    typeof usageStatus.managed_egress_7d_bytes === "number" &&
+    Number.isFinite(usageStatus.managed_egress_7d_bytes)
+  ) {
+    items.push({
+      key: "managed_egress_7d_bytes",
+      label: "Managed egress used in 7 days",
+      value: formatBytes(usageStatus.managed_egress_7d_bytes),
+      danger: usageStatus.over_managed_egress_7d === true,
+    });
+  }
   return items;
 }
 
@@ -381,7 +407,50 @@ function getUsageStatusAlerts(
         "Current storage usage is only partially sampled from your projects, so totals may temporarily be incomplete.",
     });
   }
+  if (usageStatus.over_managed_egress_5h) {
+    alerts.push({
+      key: "over-managed-egress-5h",
+      type: "error",
+      title:
+        "Your account is over the managed-egress 5-hour window. Metered downloads may be blocked until this window resets.",
+    });
+  }
+  if (usageStatus.over_managed_egress_7d) {
+    alerts.push({
+      key: "over-managed-egress-7d",
+      type: "error",
+      title:
+        "Your account is over the managed-egress 7-day window. Metered downloads may be blocked until this window resets.",
+    });
+  }
   return alerts;
+}
+
+function renderManagedEgressBreakdown(
+  label: string,
+  breakdown?: Record<string, number>,
+): ReactElement | null {
+  if (!breakdown || Object.keys(breakdown).length === 0) {
+    return null;
+  }
+  const entries = Object.entries(breakdown).filter(
+    ([, value]) =>
+      typeof value === "number" && Number.isFinite(value) && value > 0,
+  );
+  if (entries.length === 0) return null;
+  return (
+    <Descriptions size="small" column={1} style={{ marginTop: "6px" }}>
+      <Descriptions.Item label={label}>
+        <Space wrap>
+          {entries.map(([category, bytes]) => (
+            <Tag key={category}>
+              {formatManagedEgressCategory(category)}: {formatBytes(bytes)}
+            </Tag>
+          ))}
+        </Space>
+      </Descriptions.Item>
+    </Descriptions>
+  );
 }
 
 export function MembershipStatusPanel({
@@ -673,6 +742,27 @@ export function MembershipStatusPanel({
                 ))}
               </Descriptions>
             )}
+            {renderManagedEgressBreakdown(
+              "Managed egress by category (5 hours)",
+              details?.usage_status?.managed_egress_categories_5h_bytes,
+            )}
+            {renderManagedEgressBreakdown(
+              "Managed egress by category (7 days)",
+              details?.usage_status?.managed_egress_categories_7d_bytes,
+            )}
+            {details?.usage_status?.managed_egress_recent_events?.length ? (
+              <Descriptions
+                size="small"
+                column={1}
+                style={{ marginTop: "6px" }}
+              >
+                <Descriptions.Item label="Recent managed egress events">
+                  <ManagedEgressRecentEventsButton
+                    events={details?.usage_status?.managed_egress_recent_events}
+                  />
+                </Descriptions.Item>
+              </Descriptions>
+            ) : null}
           </div>
 
           <Collapse

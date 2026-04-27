@@ -78,7 +78,7 @@ function lastActiveMap(last_active?: Record<string, any>): Map<string, Date> {
 export function buildProjectRecordFromFeedRow(
   row: AccountFeedProjectRow,
 ): Map<string, any> {
-  const record = fromJS({
+  let record = fromJS({
     project_id: row.project_id,
     title: row.title,
     description: row.description,
@@ -90,9 +90,13 @@ export function buildProjectRecordFromFeedRow(
     state: row.state ?? {},
     deleted: !!row.deleted,
   }) as Map<string, any>;
-  return record
+  record = record
     .set("last_edited", dateOrNull(row.last_edited))
     .set("last_active", lastActiveMap(row.last_active));
+  if ("last_backup" in row) {
+    record = record.set("last_backup", dateOrNull(row.last_backup));
+  }
+  return record;
 }
 
 type ProjectIndexBootstrapRow = {
@@ -109,6 +113,11 @@ type ProjectIndexBootstrapRow = {
   sort_key?: string | Date | null;
   updated_at?: string | Date | null;
   is_hidden?: boolean | null;
+};
+
+type ProjectBackupBootstrapRow = {
+  project_id: string;
+  last_backup?: string | Date | null;
 };
 
 // Define projects actions
@@ -407,6 +416,33 @@ export class ProjectsActions extends Actions<ProjectsState> {
             }),
           ),
         );
+      }
+      try {
+        const backupResp = await webapp_client.async_query({
+          query: {
+            projects: [
+              {
+                project_id: null,
+                last_backup: null,
+              },
+            ],
+          },
+          options: [{ limit: 2000 }],
+        });
+        const backupRows = backupResp?.query?.projects;
+        if (Array.isArray(backupRows)) {
+          for (const row of backupRows as ProjectBackupBootstrapRow[]) {
+            if (!row?.project_id || !project_map.has(row.project_id)) {
+              continue;
+            }
+            project_map = project_map.setIn(
+              [row.project_id, "last_backup"],
+              dateOrNull(row.last_backup),
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("project backup bootstrap failed", err);
       }
       this.setState({ project_map } as ProjectsState);
     },
@@ -1732,6 +1768,30 @@ export class ProjectsActions extends Actions<ProjectsState> {
     await this.createBackupAndWaitForArchive(project_id);
   };
 
+  private async getLatestIndexedBackupTime(
+    project_id: string,
+  ): Promise<Date | undefined> {
+    try {
+      const backups = await getProjectBackups({ project_id });
+      let latestBackupTime: Date | undefined;
+      for (const backup of backups) {
+        const time =
+          backup.time instanceof Date
+            ? backup.time
+            : new Date(`${backup.time}`);
+        if (
+          Number.isFinite(time.getTime()) &&
+          (latestBackupTime == null || time > latestBackupTime)
+        ) {
+          latestBackupTime = time;
+        }
+      }
+      return latestBackupTime;
+    } catch {
+      return undefined;
+    }
+  }
+
   archive_project = reuseInFlight(async (project_id: string): Promise<void> => {
     this.project_log(project_id, {
       event: "project_archive_requested",
@@ -1756,7 +1816,19 @@ export class ProjectsActions extends Actions<ProjectsState> {
       throw err;
     }
     actions?.setState({ control_error: "", control_status: "" });
+    const latestBackupTime = await this.getLatestIndexedBackupTime(project_id);
     this.optimisticProjectStateUpdate(project_id, "archived");
+    if (latestBackupTime != null) {
+      const project_map = store.get("project_map");
+      if (project_map?.has(project_id)) {
+        this.setState({
+          project_map: project_map.setIn(
+            [project_id, "last_backup"],
+            latestBackupTime,
+          ),
+        } as ProjectsState);
+      }
+    }
     await this.resetProjectRuntimeAfterArchiveCycle(project_id, {
       closeOpenFiles: true,
     });

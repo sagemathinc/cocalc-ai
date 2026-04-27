@@ -1,10 +1,125 @@
 import { Command } from "commander";
 
+import type {
+  ManagedEgressEventSummary,
+  MembershipDetails,
+} from "@cocalc/conat/hub/api/purchases";
+
 export type AccountCommandDeps = {
   withContext: any;
   toIso: any;
   resolveAccountByIdentifier: any;
 };
+
+function formatByteCount(bytes: unknown): string | null {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value < 0) return null;
+  if (value === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let n = value;
+  let unit = 0;
+  while (n >= 1024 && unit < units.length - 1) {
+    n /= 1024;
+    unit += 1;
+  }
+  const digits = n >= 10 || unit === 0 ? 0 : 1;
+  return `${n.toFixed(digits)} ${units[unit]}`;
+}
+
+function serializeManagedEgressEvent(
+  event: ManagedEgressEventSummary,
+  toIso: AccountCommandDeps["toIso"],
+) {
+  return {
+    occurred_at: toIso(event.occurred_at),
+    project_id: event.project_id,
+    project_title: event.project_title ?? null,
+    category: event.category,
+    bytes: event.bytes,
+    bytes_human: formatByteCount(event.bytes),
+    metadata: event.metadata ?? null,
+  };
+}
+
+function serializeMembershipDetails(
+  details: MembershipDetails,
+  account_id: string,
+  toIso: AccountCommandDeps["toIso"],
+) {
+  const usageLimits = details.selected.entitlements.usage_limits ?? {};
+  const usage = details.usage_status;
+  return {
+    account_id,
+    membership_class: details.selected.class,
+    membership_source: details.selected.source,
+    membership_expires: toIso(details.selected.expires),
+    shared_compute_priority: usageLimits.shared_compute_priority ?? null,
+    total_storage_soft_bytes: usageLimits.total_storage_soft_bytes ?? null,
+    total_storage_soft: formatByteCount(usageLimits.total_storage_soft_bytes),
+    total_storage_hard_bytes: usageLimits.total_storage_hard_bytes ?? null,
+    total_storage_hard: formatByteCount(usageLimits.total_storage_hard_bytes),
+    max_owned_projects: usageLimits.max_projects ?? null,
+    managed_egress_5h_limit_bytes: usageLimits.egress_5h_bytes ?? null,
+    managed_egress_5h_limit: formatByteCount(usageLimits.egress_5h_bytes),
+    managed_egress_7d_limit_bytes: usageLimits.egress_7d_bytes ?? null,
+    managed_egress_7d_limit: formatByteCount(usageLimits.egress_7d_bytes),
+    managed_egress_policy: usageLimits.egress_policy ?? null,
+    dedicated_host_egress_policy:
+      usageLimits.dedicated_host_egress_policy ?? null,
+    collected_at: toIso(usage?.collected_at),
+    owned_project_count: usage?.owned_project_count ?? null,
+    sampled_project_count: usage?.sampled_project_count ?? null,
+    unsampled_project_count: usage?.unsampled_project_count ?? null,
+    measurement_error_count: usage?.measurement_error_count ?? 0,
+    total_storage_used_bytes: usage?.total_storage_bytes ?? null,
+    total_storage_used: formatByteCount(usage?.total_storage_bytes),
+    total_storage_soft_remaining_bytes:
+      usage?.total_storage_soft_remaining_bytes ?? null,
+    total_storage_soft_remaining: formatByteCount(
+      usage?.total_storage_soft_remaining_bytes,
+    ),
+    total_storage_hard_remaining_bytes:
+      usage?.total_storage_hard_remaining_bytes ?? null,
+    total_storage_hard_remaining: formatByteCount(
+      usage?.total_storage_hard_remaining_bytes,
+    ),
+    over_total_storage_soft: usage?.over_total_storage_soft ?? false,
+    over_total_storage_hard: usage?.over_total_storage_hard ?? false,
+    remaining_project_slots: usage?.remaining_project_slots ?? null,
+    over_max_projects: usage?.over_max_projects ?? false,
+    managed_egress_5h_used_bytes: usage?.managed_egress_5h_bytes ?? null,
+    managed_egress_5h_used: formatByteCount(usage?.managed_egress_5h_bytes),
+    managed_egress_7d_used_bytes: usage?.managed_egress_7d_bytes ?? null,
+    managed_egress_7d_used: formatByteCount(usage?.managed_egress_7d_bytes),
+    managed_egress_5h_remaining_bytes:
+      usage?.managed_egress_5h_remaining_bytes ?? null,
+    managed_egress_5h_remaining: formatByteCount(
+      usage?.managed_egress_5h_remaining_bytes,
+    ),
+    managed_egress_7d_remaining_bytes:
+      usage?.managed_egress_7d_remaining_bytes ?? null,
+    managed_egress_7d_remaining: formatByteCount(
+      usage?.managed_egress_7d_remaining_bytes,
+    ),
+    over_managed_egress_5h: usage?.over_managed_egress_5h ?? false,
+    over_managed_egress_7d: usage?.over_managed_egress_7d ?? false,
+    managed_egress_categories_5h_bytes:
+      usage?.managed_egress_categories_5h_bytes ?? {},
+    managed_egress_categories_7d_bytes:
+      usage?.managed_egress_categories_7d_bytes ?? {},
+    managed_egress_recent_events: (
+      usage?.managed_egress_recent_events ?? []
+    ).map((event) => serializeManagedEgressEvent(event, toIso)),
+    candidates: details.candidates.map((candidate) => ({
+      class: candidate.class,
+      source: candidate.source,
+      priority: candidate.priority,
+      subscription_id: candidate.subscription_id ?? null,
+      expires: toIso(candidate.expires),
+      usage_limits: candidate.entitlements.usage_limits ?? {},
+    })),
+  };
+}
 
 export function registerAccountCommand(
   program: Command,
@@ -25,6 +140,27 @@ export function registerAccountCommand(
         return await ctx.hub.system.getAccountBay({
           user_account_id: target.account_id,
         });
+      });
+    });
+
+  account
+    .command("membership [account]")
+    .description(
+      "show membership limits and current shared-host usage for an account",
+    )
+    .action(async (accountIdentifier: string | undefined, command: Command) => {
+      await withContext(command, "account membership", async (ctx) => {
+        const target = accountIdentifier?.trim()
+          ? await resolveAccountByIdentifier(ctx, accountIdentifier.trim())
+          : { account_id: ctx.accountId };
+        const account_id = `${target.account_id ?? ""}`.trim();
+        if (!account_id) {
+          throw new Error("unable to resolve target account");
+        }
+        const details = await ctx.hub.purchases.getMembershipDetails({
+          user_account_id: account_id,
+        });
+        return serializeMembershipDetails(details, account_id, toIso);
       });
     });
 

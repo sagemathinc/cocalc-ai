@@ -79,6 +79,7 @@ Table({
           state: null,
           last_edited: null,
           last_active: null,
+          last_backup: null,
           theme: null,
         },
       },

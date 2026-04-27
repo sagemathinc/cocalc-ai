@@ -21,7 +21,12 @@ import {
 } from "antd";
 import dayjs from "dayjs";
 import api from "@cocalc/frontend/client/api";
-import { ErrorDisplay, TimeAgo } from "@cocalc/frontend/components";
+import { ErrorDisplay } from "@cocalc/frontend/components";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
+import {
+  ManagedEgressRecentEventsButton,
+  formatManagedEgressCategory,
+} from "@cocalc/frontend/purchases/managed-egress-recent-events";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   MembershipDetails,
@@ -111,7 +116,44 @@ function getUsageAlerts(
       title: "Usage totals are only partially sampled from owned projects.",
     });
   }
+  if (usageStatus.over_managed_egress_5h) {
+    alerts.push({
+      key: "managed-egress-5h",
+      type: "error",
+      title: "This user is over the managed-egress 5-hour window.",
+    });
+  }
+  if (usageStatus.over_managed_egress_7d) {
+    alerts.push({
+      key: "managed-egress-7d",
+      type: "error",
+      title: "This user is over the managed-egress 7-day window.",
+    });
+  }
   return alerts;
+}
+
+function renderManagedEgressBreakdown(
+  label: string,
+  breakdown?: Record<string, number>,
+) {
+  if (!breakdown) return null;
+  const entries = Object.entries(breakdown).filter(
+    ([, value]) =>
+      typeof value === "number" && Number.isFinite(value) && value > 0,
+  );
+  if (entries.length === 0) return null;
+  return (
+    <Descriptions.Item label={label}>
+      <Space wrap>
+        {entries.map(([category, bytes]) => (
+          <Tag key={category}>
+            {formatManagedEgressCategory(category)}: {formatBytes(bytes)}
+          </Tag>
+        ))}
+      </Space>
+    </Descriptions.Item>
+  );
 }
 
 export function AdminMembership({ account_id }: { account_id: string }) {
@@ -437,6 +479,32 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                         : usageStatus.remaining_project_slots}
                     </Descriptions.Item>
                   )}
+                  {typeof usageStatus.managed_egress_5h_bytes === "number" && (
+                    <Descriptions.Item label="Managed egress used in 5 hours">
+                      {formatBytes(usageStatus.managed_egress_5h_bytes)}
+                    </Descriptions.Item>
+                  )}
+                  {typeof usageStatus.managed_egress_5h_remaining_bytes ===
+                    "number" && (
+                    <Descriptions.Item label="Managed egress remaining in 5 hours">
+                      {formatRemaining(
+                        usageStatus.managed_egress_5h_remaining_bytes,
+                      )}
+                    </Descriptions.Item>
+                  )}
+                  {typeof usageStatus.managed_egress_7d_bytes === "number" && (
+                    <Descriptions.Item label="Managed egress used in 7 days">
+                      {formatBytes(usageStatus.managed_egress_7d_bytes)}
+                    </Descriptions.Item>
+                  )}
+                  {typeof usageStatus.managed_egress_7d_remaining_bytes ===
+                    "number" && (
+                    <Descriptions.Item label="Managed egress remaining in 7 days">
+                      {formatRemaining(
+                        usageStatus.managed_egress_7d_remaining_bytes,
+                      )}
+                    </Descriptions.Item>
+                  )}
                   <Descriptions.Item label="Sampled projects">
                     {usageStatus.unsampled_project_count > 0
                       ? `${usageStatus.sampled_project_count} of ${usageStatus.owned_project_count}`
@@ -447,6 +515,21 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                       {usageStatus.measurement_error_count}
                     </Descriptions.Item>
                   )}
+                  {renderManagedEgressBreakdown(
+                    "Managed egress by category (5 hours)",
+                    usageStatus.managed_egress_categories_5h_bytes,
+                  )}
+                  {renderManagedEgressBreakdown(
+                    "Managed egress by category (7 days)",
+                    usageStatus.managed_egress_categories_7d_bytes,
+                  )}
+                  {usageStatus.managed_egress_recent_events?.length ? (
+                    <Descriptions.Item label="Recent managed egress events">
+                      <ManagedEgressRecentEventsButton
+                        events={usageStatus.managed_egress_recent_events}
+                      />
+                    </Descriptions.Item>
+                  ) : null}
                 </Descriptions>
               ) : (
                 <Text type="secondary">No usage summary available.</Text>

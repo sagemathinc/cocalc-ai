@@ -104,6 +104,8 @@ export const system = {
   tracePublicAppHostname: authFirst,
   reserveProjectAppPublicSubdomain: authFirst,
   releaseProjectAppPublicSubdomain: authFirst,
+  recordManagedProjectEgress: authFirst,
+  getManagedProjectEgressPolicy: authFirst,
 
   adminSalesloftSync: authFirst,
   userSalesloftSync: authFirst,
@@ -214,6 +216,8 @@ export interface ProjectAppPublicPolicy {
   metered_egress: boolean;
   warnings: string[];
 }
+
+export type ManagedProjectEgressCategory = "file-download";
 
 export interface ParallelOpsWorkerOwnerStatus {
   owner_id: string;
@@ -1399,4 +1403,29 @@ export interface System {
     project_id?: string;
     app_id: string;
   }) => Promise<{ released: boolean }>;
+
+  recordManagedProjectEgress: (opts: {
+    account_id?: string;
+    project_id?: string;
+    category: ManagedProjectEgressCategory;
+    bytes: number;
+    metadata?: Record<string, unknown>;
+  }) => Promise<{ recorded: boolean; account_id?: string }>;
+
+  getManagedProjectEgressPolicy: (opts: {
+    account_id?: string;
+    project_id?: string;
+    category: ManagedProjectEgressCategory;
+  }) => Promise<{
+    account_id?: string;
+    category: ManagedProjectEgressCategory;
+    allowed: boolean;
+    blocked_by?: "5h" | "7d";
+    managed_egress_5h_bytes?: number;
+    managed_egress_7d_bytes?: number;
+    egress_5h_bytes?: number;
+    egress_7d_bytes?: number;
+    managed_egress_categories_5h_bytes?: Record<string, number>;
+    managed_egress_categories_7d_bytes?: Record<string, number>;
+  }>;
 }

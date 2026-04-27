@@ -520,6 +520,10 @@ export class SandboxedFilesystem {
     if (cause !== undefined) {
       (err as any).cause = cause;
     }
+    this.openAt2RootIdentities.set(
+      basePath,
+      this.getOpenAt2BaseIdentity(basePath),
+    );
     this.openAt2InitErrors.set(basePath, err);
     this.logOpenAt2Mode(basePath, "hard-fail", reason, cause);
     return err;
@@ -537,7 +541,8 @@ export class SandboxedFilesystem {
     const currentIdentity = this.getOpenAt2BaseIdentity(basePath);
     const cachedIdentity = this.openAt2RootIdentities.get(basePath);
     if (
-      this.openAt2Roots.has(basePath) &&
+      (this.openAt2Roots.has(basePath) ||
+        this.openAt2InitErrors.has(basePath)) &&
       cachedIdentity !== undefined &&
       cachedIdentity !== currentIdentity
     ) {

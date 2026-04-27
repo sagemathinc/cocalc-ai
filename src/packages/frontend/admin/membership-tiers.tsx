@@ -42,6 +42,7 @@ import {
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text } = Typography;
+const BYTES_PER_GB = 1000 * 1000 * 1000;
 
 interface Tier {
   key?: string;
@@ -81,6 +82,34 @@ function parseJsonField(
     return parsed;
   } catch (err) {
     throw Error(`Invalid JSON for ${label}: ${err}`);
+  }
+}
+
+function normalizedOptionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function bytesToGigabytes(value: unknown): number | undefined {
+  const bytes = normalizedOptionalNumber(value);
+  return bytes == null ? undefined : bytes / BYTES_PER_GB;
+}
+
+function gigabytesToBytes(value: unknown): number | undefined {
+  const gigabytes = normalizedOptionalNumber(value);
+  return gigabytes == null ? undefined : Math.round(gigabytes * BYTES_PER_GB);
+}
+
+function setOrDeleteUsageLimit(
+  usage_limits: Record<string, unknown>,
+  key: string,
+  value: unknown,
+) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    usage_limits[key] = value;
+  } else {
+    delete usage_limits[key];
   }
 }
 
@@ -150,6 +179,24 @@ function useMembershipTiers() {
         llm_limits: editing.llm_limits ?? {},
         features: editing.features ?? {},
         usage_limits: editing.usage_limits ?? {},
+        usage_limit_shared_compute_priority: normalizedOptionalNumber(
+          editing.usage_limits?.shared_compute_priority,
+        ),
+        usage_limit_total_storage_soft_gb: bytesToGigabytes(
+          editing.usage_limits?.total_storage_soft_bytes,
+        ),
+        usage_limit_total_storage_hard_gb: bytesToGigabytes(
+          editing.usage_limits?.total_storage_hard_bytes,
+        ),
+        usage_limit_max_projects: normalizedOptionalNumber(
+          editing.usage_limits?.max_projects,
+        ),
+        usage_limit_egress_5h_gb: bytesToGigabytes(
+          editing.usage_limits?.egress_5h_bytes,
+        ),
+        usage_limit_egress_7d_gb: bytesToGigabytes(
+          editing.usage_limits?.egress_7d_bytes,
+        ),
         active: !editing.disabled,
       });
     }
@@ -170,7 +217,40 @@ function useMembershipTiers() {
       );
       const llm_limits = parseJsonField(values.llm_limits, "llm_limits");
       const features = parseJsonField(values.features, "features");
-      const usage_limits = parseJsonField(values.usage_limits, "usage_limits");
+      const usage_limits = (parseJsonField(
+        values.usage_limits,
+        "usage_limits",
+      ) ?? {}) as Record<string, unknown>;
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "shared_compute_priority",
+        values.usage_limit_shared_compute_priority,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "total_storage_soft_bytes",
+        gigabytesToBytes(values.usage_limit_total_storage_soft_gb),
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "total_storage_hard_bytes",
+        gigabytesToBytes(values.usage_limit_total_storage_hard_gb),
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "max_projects",
+        values.usage_limit_max_projects,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "egress_5h_bytes",
+        gigabytesToBytes(values.usage_limit_egress_5h_gb),
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "egress_7d_bytes",
+        gigabytesToBytes(values.usage_limit_egress_7d_gb),
+      );
 
       const payload = pick(
         {
@@ -420,7 +500,44 @@ export function MembershipTiers() {
             />
           </Form.Item>
           <Divider>Usage Limits</Divider>
-          <Form.Item name="usage_limits" label="Usage limits">
+          <Form.Item
+            name="usage_limit_shared_compute_priority"
+            label="Shared compute priority"
+          >
+            <InputNumber min={0} step={1} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_total_storage_soft_gb"
+            label="Storage soft cap (GB)"
+          >
+            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_total_storage_hard_gb"
+            label="Storage hard cap (GB)"
+          >
+            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="usage_limit_max_projects" label="Max owned projects">
+            <InputNumber min={0} step={1} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_egress_5h_gb"
+            label="Egress 5h window (GB)"
+          >
+            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_egress_7d_gb"
+            label="Egress 7d window (GB)"
+          >
+            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Paragraph style={{ color: COLORS.GRAY }}>
+            These fields populate the standard shared-host usage limit keys. Use
+            the JSON editor below only for advanced or not-yet-modeled limits.
+          </Paragraph>
+          <Form.Item name="usage_limits" label="Advanced usage limits JSON">
             <JsonObjectEditor
               emptyHint="No shared-host usage limits configured."
               onErrorChange={(err) => updateJsonError("usage_limits", err)}

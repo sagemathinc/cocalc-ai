@@ -6,8 +6,42 @@
 import { delay } from "awaiting";
 import $ from "jquery";
 
-// Cause a file at a given url to get downloaded... using an iframe.  Don't await this.
+const DOWNLOAD_ERROR_HEADER = "X-CoCalc-Download-Error";
+
+function decodeDownloadErrorHeader(value: string | null): string | undefined {
+  if (!value) return;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+async function assertDownloadAllowed(src: string): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(src, {
+      method: "HEAD",
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+  } catch (err) {
+    throw Error(`Unable to start download -- ${err}`);
+  }
+  if (response.ok) return;
+  const detailed =
+    decodeDownloadErrorHeader(response.headers.get(DOWNLOAD_ERROR_HEADER)) ??
+    response.statusText;
+  if (detailed) {
+    throw Error(detailed);
+  }
+  throw Error(`Unable to start download (HTTP ${response.status})`);
+}
+
+// Cause a file at a given url to get downloaded using an iframe.
+// Awaiting this only waits for the preflight and iframe creation, not the full browser download.
 export async function download_file(src: string): Promise<void> {
+  await assertDownloadAllowed(src);
   // NOTE: the file has to be served with
   //    res.setHeader('Content-disposition', 'attachment')
 
@@ -17,11 +51,13 @@ export async function download_file(src: string): Promise<void> {
     .attr("src", src)
     .appendTo($("body"));
 
-  // Wait a minute...
-  await delay(60000);
+  void (async () => {
+    // Wait a minute...
+    await delay(60000);
 
-  // Then get rid of that iframe
-  iframe.remove();
+    // Then get rid of that iframe
+    iframe.remove();
+  })();
 }
 
 // These are used to disable pointer events for iframes when

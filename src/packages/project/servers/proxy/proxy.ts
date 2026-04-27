@@ -47,6 +47,7 @@ import {
   PROJECT_PROXY_AUTH_HEADER,
   getSingleHeaderValue,
 } from "@cocalc/backend/auth/project-proxy-auth";
+import { DOWNLOAD_ERROR_HEADER } from "@cocalc/conat/files/file-download";
 import {
   APP_PROXY_EXPOSURE_HEADER,
   type AppProxyExposureMode,
@@ -62,6 +63,7 @@ import {
   type PublicViewerManifestEntry,
 } from "../../app-servers/public-viewer";
 import { renderPublicViewerFile } from "../../app-servers/public-viewer-render";
+import { getProjectHubApi } from "../../conat/hub";
 
 const logger = getLogger("project:servers:proxy");
 const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=300";
@@ -110,6 +112,125 @@ type AppMetricsContext = {
 };
 
 const APP_METRICS_CONTEXT = Symbol("cocalc-app-metrics-context");
+
+function isExplicitDownloadRequest(req: http.IncomingMessage): boolean {
+  try {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    return url.searchParams.has("download");
+  } catch {
+    return false;
+  }
+}
+
+function formatManagedEgressCategory(category: string): string {
+  if (category === "file-download") return "File downloads";
+  return category.replace(/[-_]/g, " ");
+}
+
+function formatByteCount(bytes?: number): string {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
+    return "unknown";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = value >= 10 || unit === 0 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unit]}`;
+}
+
+function encodeDownloadErrorHeader(message: string): string {
+  return encodeURIComponent(message);
+}
+
+async function checkManagedFileDownloadAllowedBestEffort(): Promise<
+  | {
+      allowed: true;
+    }
+  | {
+      allowed: false;
+      message: string;
+    }
+> {
+  try {
+    const policy =
+      await getProjectHubApi().system.getManagedProjectEgressPolicy({
+        project_id,
+        category: "file-download",
+      });
+    if (policy.allowed) {
+      return { allowed: true };
+    }
+    const breakdown = Object.entries(
+      policy.managed_egress_categories_5h_bytes ?? {},
+    )
+      .filter(
+        ([, bytes]) =>
+          typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0,
+      )
+      .map(
+        ([category, bytes]) =>
+          `${formatManagedEgressCategory(category)}: ${formatByteCount(bytes)}`,
+      );
+    const lines = [
+      "Managed download limit reached for this account.",
+      "New file downloads are temporarily blocked until the egress usage window resets.",
+    ];
+    if (policy.egress_5h_bytes != null) {
+      lines.push(
+        `5-hour usage: ${formatByteCount(policy.managed_egress_5h_bytes)} / ${formatByteCount(policy.egress_5h_bytes)}.`,
+      );
+    }
+    if (policy.egress_7d_bytes != null) {
+      lines.push(
+        `7-day usage: ${formatByteCount(policy.managed_egress_7d_bytes)} / ${formatByteCount(policy.egress_7d_bytes)}.`,
+      );
+    }
+    if (breakdown.length > 0) {
+      lines.push(
+        `Current managed egress categories (5 hours): ${breakdown.join(", ")}.`,
+      );
+    }
+    return {
+      allowed: false,
+      message: lines.join("\n"),
+    };
+  } catch (err) {
+    logger.warn("unable to evaluate managed file download policy", {
+      err: `${err}`,
+    });
+    return { allowed: true };
+  }
+}
+
+async function recordManagedFileDownloadBestEffort(opts: {
+  bytes: number;
+  request_path: string;
+  partial: boolean;
+}) {
+  if (!(opts.bytes > 0)) return;
+  try {
+    await getProjectHubApi().system.recordManagedProjectEgress({
+      project_id,
+      category: "file-download",
+      bytes: opts.bytes,
+      metadata: {
+        request_path: opts.request_path,
+        partial: opts.partial,
+      },
+    });
+  } catch (err) {
+    logger.warn("unable to record managed file download egress", {
+      err: `${err}`,
+      request_path: opts.request_path,
+      bytes: opts.bytes,
+      partial: opts.partial,
+    });
+  }
+}
 
 interface StartOptions {
   base_url?: string;
@@ -816,7 +937,10 @@ ${entries}
     const { absolutePath, stat: info } = resolved;
     const ext = path.extname(absolutePath).toLowerCase();
     const contentType = MIME_BY_EXT[ext] ?? "application/octet-stream";
-    const cacheControl = cache_control || STATIC_CACHE_CONTROL_DEFAULT;
+    const explicitDownload = isExplicitDownloadRequest(req);
+    const cacheControl = explicitDownload
+      ? "private, no-store"
+      : cache_control || STATIC_CACHE_CONTROL_DEFAULT;
     const rangeHeader = req.headers.range;
     let start = 0;
     let end = info.size - 1;
@@ -856,6 +980,28 @@ ${entries}
     };
     if (partial) {
       headers["Content-Range"] = `bytes ${start}-${end}/${info.size}`;
+    }
+    if (explicitDownload && (req.method === "GET" || req.method === "HEAD")) {
+      const policy = await checkManagedFileDownloadAllowedBestEffort();
+      if (!policy.allowed) {
+        res.writeHead(429, {
+          "Content-Type": "text/plain; charset=utf-8",
+          [DOWNLOAD_ERROR_HEADER]: encodeDownloadErrorHeader(policy.message),
+        });
+        if (req.method === "HEAD") {
+          res.end();
+        } else {
+          res.end(policy.message);
+        }
+        return;
+      }
+    }
+    if (req.method === "GET" && explicitDownload) {
+      await recordManagedFileDownloadBestEffort({
+        bytes: contentLength,
+        request_path: req.url ?? "",
+        partial,
+      });
     }
     res.writeHead(partial ? 206 : 200, headers);
     if (req.method === "HEAD") {

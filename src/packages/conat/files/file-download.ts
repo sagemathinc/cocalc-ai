@@ -1,4 +1,5 @@
 import { readFile } from "./read";
+import { fsClient, fsSubject } from "./fs";
 import { once } from "events";
 import { path_split } from "@cocalc/util/misc";
 import { getLogger } from "@cocalc/conat/logger";
@@ -6,6 +7,7 @@ import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import mime from "mime-types";
 
 const DANGEROUS_CONTENT_TYPE = new Set(["image/svg+xml" /*, "text/html"*/]);
+export const DOWNLOAD_ERROR_HEADER = "X-CoCalc-Download-Error";
 
 const logger = getLogger("conat:file-download");
 
@@ -25,12 +27,27 @@ function extractDownloadPath(url: string): string {
   return decodedPath.startsWith("/") ? decodedPath : `/${decodedPath}`;
 }
 
+function hasExplicitDownloadQuery(url: string): boolean {
+  try {
+    const parsed = new URL(url, "http://127.0.0.1");
+    return parsed.searchParams.has("download");
+  } catch {
+    return false;
+  }
+}
+
+function encodeDownloadErrorHeader(message: string): string {
+  return encodeURIComponent(message);
+}
+
 export async function handleFileDownload({
   req,
   res,
   url,
   allowUnsafe,
   client,
+  beforeExplicitDownload,
+  onExplicitDownloadComplete,
   // allow a long download time (1 hour), since files can be large and
   // networks can be slow.
   maxWait = 1000 * 60 * 60,
@@ -40,6 +57,18 @@ export async function handleFileDownload({
   url?: string;
   allowUnsafe?: boolean;
   client?: ConatClient;
+  beforeExplicitDownload?: (opts: {
+    project_id: string;
+    path: string;
+    request_path: string;
+  }) => Promise<{ allowed: true } | { allowed: false; message: string }>;
+  onExplicitDownloadComplete?: (opts: {
+    project_id: string;
+    path: string;
+    request_path: string;
+    bytes: number;
+    partial: boolean;
+  }) => Promise<void>;
   maxWait?: number;
 }) {
   url ??= req.url;
@@ -54,8 +83,9 @@ export async function handleFileDownload({
   logger.debug("conat: get file", { project_id, path, url });
   const fileName = path_split(path).tail;
   const contentType = mime.lookup(fileName);
+  const explicitDownload = hasExplicitDownloadQuery(url);
   if (
-    req.query.download != null ||
+    explicitDownload ||
     (!allowUnsafe && DANGEROUS_CONTENT_TYPE.has(contentType))
   ) {
     const fileNameEncoded = encodeURIComponent(fileName)
@@ -67,8 +97,60 @@ export async function handleFileDownload({
     );
   }
   res.setHeader("Content-type", contentType);
+  if (explicitDownload) {
+    res.setHeader("Cache-Control", "private, no-store");
+  }
+
+  if (explicitDownload && beforeExplicitDownload) {
+    const allowed = await beforeExplicitDownload({
+      project_id,
+      path,
+      request_path: url,
+    });
+    if (!allowed.allowed) {
+      res.statusCode = 429;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader(
+        DOWNLOAD_ERROR_HEADER,
+        encodeDownloadErrorHeader(allowed.message),
+      );
+      res.end(allowed.message);
+      return;
+    }
+  }
+
+  if (req.method === "HEAD" && client != null) {
+    try {
+      const stat = await fsClient({
+        client,
+        subject: fsSubject({ project_id }),
+      }).stat(path);
+      if (typeof stat.size === "number" && Number.isFinite(stat.size)) {
+        res.setHeader("Content-Length", stat.size);
+      }
+      if (stat.mtime instanceof Date && Number.isFinite(stat.mtime.valueOf())) {
+        res.setHeader("Last-Modified", stat.mtime.toUTCString());
+      }
+      res.statusCode = 200;
+      res.end();
+      return;
+    } catch (err: any) {
+      logger.debug("ERROR statting file for HEAD download", {
+        project_id,
+        path,
+        err: `${err}`,
+      });
+      res.statusCode = err?.code === "ENOENT" ? 404 : 500;
+      res.end(
+        err?.code === "ENOENT" ? "File not found." : "Error reading file.",
+      );
+      return;
+    }
+  }
 
   let headersSent = false;
+  let bytesWritten = 0;
+  let partial = false;
   res.on("finish", () => {
     headersSent = true;
   });
@@ -80,13 +162,28 @@ export async function handleFileDownload({
       maxWait,
     })) {
       if (res.writableEnded || res.destroyed) {
+        partial = true;
         break;
+      }
+      if (Buffer.isBuffer(chunk)) {
+        bytesWritten += chunk.length;
+      } else {
+        bytesWritten += Buffer.byteLength(chunk);
       }
       if (!res.write(chunk)) {
         await once(res, "drain");
       }
     }
     res.end();
+    if (explicitDownload && onExplicitDownloadComplete && bytesWritten > 0) {
+      await onExplicitDownloadComplete({
+        project_id,
+        path,
+        request_path: url,
+        bytes: bytesWritten,
+        partial,
+      });
+    }
   } catch (err) {
     logger.debug("ERROR streaming file", { project_id, path }, err);
     if (!headersSent) {

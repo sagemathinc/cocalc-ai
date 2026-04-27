@@ -8,6 +8,35 @@ const {
   logLaunchpadConfig,
 } = require("../lib/onprem-config");
 
+function hasBundleMarkers(dir) {
+  return (
+    !!dir &&
+    (existsSync(join(dir, "bundle")) ||
+      existsSync(join(dir, "http-api-dist")) ||
+      existsSync(join(dir, "public")))
+  );
+}
+
+function resolveBundleDir(initialDir, fallbackDir) {
+  const candidates = [];
+  if (initialDir) {
+    candidates.push(initialDir);
+    candidates.push(join(initialDir, ".."));
+  }
+  if (fallbackDir) {
+    candidates.push(fallbackDir);
+  }
+  candidates.push(process.cwd());
+
+  for (const candidate of candidates) {
+    if (hasBundleMarkers(candidate)) {
+      return candidate;
+    }
+  }
+
+  return initialDir ?? fallbackDir ?? process.cwd();
+}
+
 function prependPath(dir) {
   if (!dir || !existsSync(dir)) {
     return;
@@ -33,14 +62,11 @@ function prependPath(dir) {
     }
 
     const bundledRootCandidate = join(__dirname, "..", "..", "..");
-    const bundleDir =
-      process.env.COCALC_BUNDLE_DIR ??
-      (existsSync(join(bundledRootCandidate, "bundle")) ||
-      existsSync(join(bundledRootCandidate, "http-api-dist")) ||
-      existsSync(join(bundledRootCandidate, "public"))
-        ? bundledRootCandidate
-        : process.cwd());
-    process.env.COCALC_BUNDLE_DIR ??= bundleDir;
+    const bundleDir = resolveBundleDir(
+      process.env.COCALC_BUNDLE_DIR,
+      bundledRootCandidate,
+    );
+    process.env.COCALC_BUNDLE_DIR = bundleDir;
     const pgliteBundleCandidates = [
       join(bundleDir, "pglite"),
       join(

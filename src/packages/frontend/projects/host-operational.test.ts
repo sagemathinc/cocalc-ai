@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { normalizeProjectStateForDisplay } from "./host-operational";
+import {
+  getProjectLifecycleView,
+  normalizeProjectStateForDisplay,
+} from "./host-operational";
 
 describe("projects host operational display state", () => {
   it("keeps running projects running when host heartbeat is stale", () => {
@@ -46,5 +49,49 @@ describe("projects host operational display state", () => {
         hostInfo: undefined,
       }),
     ).toBe("running");
+  });
+
+  it("classifies archived projects from indexed backups", () => {
+    expect(
+      getProjectLifecycleView({
+        projectState: "archived",
+        lastBackup: new Date().toISOString(),
+      }),
+    ).toMatchObject({
+      kind: "archived",
+      isArchived: true,
+      isArchivedLike: true,
+      canShowFilesystem: false,
+    });
+  });
+
+  it("classifies new projects from missing indexed backups", () => {
+    expect(
+      getProjectLifecycleView({
+        projectState: "archived",
+        lastBackup: null,
+      }),
+    ).toMatchObject({
+      kind: "new",
+      isNew: true,
+      isArchived: false,
+      isArchivedLike: true,
+      canShowFilesystem: false,
+    });
+  });
+
+  it("keeps raw archived state authoritative while backup metadata loads", () => {
+    expect(
+      getProjectLifecycleView({
+        projectState: "archived",
+        lastBackup: undefined,
+      }),
+    ).toMatchObject({
+      kind: "unknown",
+      displayState: undefined,
+      isRawArchived: true,
+      isArchived: false,
+      isArchivedLike: true,
+    });
   });
 });

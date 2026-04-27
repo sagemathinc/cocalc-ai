@@ -1,4 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MembershipStatusPanel } from "../membership-status";
 
 const api = jest.fn();
@@ -24,6 +30,13 @@ jest.mock("antd", () => {
     Collapse: Div,
     Descriptions: Object.assign(Div, { Item: Div }),
     Divider: Div,
+    Modal: ({ open, title, children }: any) =>
+      open ? (
+        <div>
+          {title}
+          {children}
+        </div>
+      ) : null,
     Space: Div,
     Tag: Div,
     Table: Div,
@@ -229,5 +242,45 @@ describe("MembershipStatusPanel", () => {
         screen.getByText(/only partially sampled from your projects/i),
       ).toBeTruthy();
     });
+  });
+
+  it("shows recent managed egress event details", async () => {
+    api
+      .mockResolvedValueOnce({ class: "pro", source: "subscription" })
+      .mockResolvedValueOnce([{ id: "pro", label: "Pro" }]);
+    getMembershipDetails.mockResolvedValueOnce({
+      candidates: [],
+      selected: { class: "pro", source: "subscription" },
+      usage_status: {
+        collected_at: new Date().toISOString(),
+        owned_project_count: 1,
+        sampled_project_count: 1,
+        unsampled_project_count: 0,
+        total_storage_bytes: 10,
+        managed_egress_recent_events: [
+          {
+            project_id: "project-1",
+            project_title: "Data Lab",
+            category: "file-download",
+            bytes: 4096,
+            occurred_at: "2026-04-25T12:00:00.000Z",
+            metadata: { request_path: "/files/export.csv?download" },
+          },
+        ],
+      },
+    });
+
+    render(<MembershipStatusPanel showHeader={false} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("View recent events (1)")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("View recent events (1)"));
+
+    expect(screen.getByText("Recent managed egress events")).toBeTruthy();
+    expect(screen.getByText("File downloads")).toBeTruthy();
+    expect(screen.getByText("Data Lab")).toBeTruthy();
+    expect(screen.getByText("/files/export.csv?download")).toBeTruthy();
   });
 });
