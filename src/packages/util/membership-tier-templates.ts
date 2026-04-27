@@ -11,7 +11,7 @@ function quotaTemplate(overrides: Record<string, number>) {
   return { ...DEFAULT_QUOTAS, ...overrides };
 }
 
-const MIN_LLM_LIMIT = 50;
+const MIN_AI_LIMIT = 50;
 
 function usageLimitsTemplate(shared_compute_priority: number) {
   return {
@@ -19,17 +19,11 @@ function usageLimitsTemplate(shared_compute_priority: number) {
   };
 }
 
-function llmLimitsFromYearly(price_yearly: number, monthlyOverride?: number) {
+function aiLimitsFromYearly(price_yearly: number, monthlyOverride?: number) {
   const monthlyCost = monthlyOverride ?? price_yearly / 12;
   const monthlyBudget = monthlyCost * 0.5;
-  const units5h = Math.max(
-    MIN_LLM_LIMIT,
-    Math.round(monthlyBudget * 0.1 * 100),
-  );
-  const units7d = Math.max(
-    MIN_LLM_LIMIT,
-    Math.round((monthlyBudget / 2) * 100),
-  );
+  const units5h = Math.max(MIN_AI_LIMIT, Math.round(monthlyBudget * 0.1 * 100));
+  const units7d = Math.max(MIN_AI_LIMIT, Math.round((monthlyBudget / 2) * 100));
   return {
     units_5h: units5h,
     units_7d: units7d,
@@ -51,7 +45,7 @@ export const TIER_TEMPLATES = {
       memory: 2000,
       cores: 0.75,
     }),
-    llm_limits: llmLimitsFromYearly(0, 3),
+    ai_limits: aiLimitsFromYearly(0, 3),
     features: {
       create_hosts: false,
       project_host_tier: 0,
@@ -72,7 +66,7 @@ export const TIER_TEMPLATES = {
       memory: 4000,
       cores: 1,
     }),
-    llm_limits: llmLimitsFromYearly(9 * 8),
+    ai_limits: aiLimitsFromYearly(9 * 8),
     features: {
       create_hosts: false,
       project_host_tier: 0,
@@ -94,7 +88,7 @@ export const TIER_TEMPLATES = {
       cores: 2,
       mintime: 3600,
     }),
-    llm_limits: llmLimitsFromYearly(25 * 9),
+    ai_limits: aiLimitsFromYearly(25 * 9),
     features: {
       create_hosts: true,
       project_host_tier: 1,
@@ -116,7 +110,7 @@ export const TIER_TEMPLATES = {
       cores: 3,
       mintime: 8 * 3600,
     }),
-    llm_limits: llmLimitsFromYearly(150 * 9),
+    ai_limits: aiLimitsFromYearly(150 * 9),
     features: {
       create_hosts: true,
       project_host_tier: 2,
@@ -132,7 +126,7 @@ export function getTierTemplate(id: keyof typeof TIER_TEMPLATES) {
 type TierTemplateFields = {
   id?: string;
   project_defaults?: Record<string, unknown>;
-  llm_limits?: Record<string, unknown>;
+  ai_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
   usage_limits?: unknown;
 };
@@ -145,7 +139,7 @@ export function applyMembershipTierTemplateFallbacks<
   return {
     ...tier,
     project_defaults: tier.project_defaults ?? template.project_defaults,
-    llm_limits: tier.llm_limits ?? template.llm_limits,
+    ai_limits: tier.ai_limits ?? template.ai_limits,
     features: tier.features ?? template.features,
     usage_limits: tier.usage_limits ?? template.usage_limits,
   };

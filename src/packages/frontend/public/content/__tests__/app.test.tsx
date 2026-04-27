@@ -131,7 +131,7 @@ describe("PublicContentApp", () => {
           {
             id: "member",
             label: "Member",
-            llm_limits: { units_5h: 150, units_7d: 500 },
+            ai_limits: { units_5h: 150, units_7d: 500 },
             price_monthly: 25,
             price_yearly: 225,
             priority: 20,

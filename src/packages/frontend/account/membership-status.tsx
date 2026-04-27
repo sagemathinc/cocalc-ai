@@ -48,7 +48,7 @@ interface MembershipTier {
   price_monthly?: number;
   price_yearly?: number;
   project_defaults?: Record<string, unknown>;
-  llm_limits?: Record<string, unknown>;
+  ai_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
   usage_limits?: Record<string, unknown>;
   disabled?: boolean;
@@ -571,7 +571,7 @@ export function MembershipStatusPanel({
     membership?.source === "subscription" ? "Current period ends" : "Expires";
   const entitlements = normalizeRecord(membership?.entitlements);
   const projectDefaults = normalizeRecord(entitlements.project_defaults);
-  const aiLimits = normalizeRecord(entitlements.llm_limits);
+  const aiLimits = normalizeRecord(entitlements.ai_limits);
   const features = normalizeRecord(entitlements.features);
   const usageLimits = normalizeRecord(entitlements.usage_limits);
   const limit5h = extractLimit(aiLimits, ["units_5h", "limit_5h"]);

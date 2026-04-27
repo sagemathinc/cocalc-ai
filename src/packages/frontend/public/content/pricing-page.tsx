@@ -20,7 +20,7 @@ export interface PublicMembershipTier {
   features?: Record<string, unknown>;
   id: string;
   label?: string;
-  llm_limits?: Record<string, unknown>;
+  ai_limits?: Record<string, unknown>;
   price_monthly?: number;
   price_yearly?: number;
   priority?: number;
@@ -104,7 +104,7 @@ function formatQuotaValue(key: string, value: unknown): string {
 
 function membershipHighlights(tier: PublicMembershipTier): string[] {
   const projectDefaults = normalizeRecord(tier.project_defaults);
-  const llmLimits = normalizeRecord(tier.llm_limits);
+  const aiLimits = normalizeRecord(tier.ai_limits);
   const features = normalizeRecord(tier.features);
 
   const highlights = PROJECT_DEFAULT_KEYS.flatMap((key) => {
@@ -128,8 +128,8 @@ function membershipHighlights(tier: PublicMembershipTier): string[] {
     return [`${label}: ${formatQuotaValue(key, value)}`];
   });
 
-  const limit5h = Number(llmLimits.units_5h ?? llmLimits.limit_5h ?? 0);
-  const limit7d = Number(llmLimits.units_7d ?? llmLimits.limit_7d ?? 0);
+  const limit5h = Number(aiLimits.units_5h ?? aiLimits.limit_5h ?? 0);
+  const limit7d = Number(aiLimits.units_7d ?? aiLimits.limit_7d ?? 0);
   if (Number.isFinite(limit5h) && limit5h > 0) {
     highlights.push(
       `AI usage included with ${round2(limit5h)} units per 5 hours`,

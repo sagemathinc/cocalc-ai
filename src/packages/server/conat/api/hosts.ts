@@ -124,9 +124,9 @@ import {
   recordProjectBackup as recordProjectBackupLocalInternal,
 } from "@cocalc/server/project-backup";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
-import { getLLMUsageStatus } from "@cocalc/server/llm/usage-status";
-import { computeUsageUnits } from "@cocalc/server/llm/usage-units";
-import { saveResponse } from "@cocalc/server/llm/save-response";
+import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
+import { computeAIUsageUnits } from "@cocalc/server/ai/usage-units";
+import { saveAIResponse } from "@cocalc/server/ai/save-response";
 import {
   isCoreLanguageModel,
   type LanguageModelCore,
@@ -1672,7 +1672,7 @@ function formatUsageLimitMessage({
   reset_in?: string;
 }): string {
   const label = window === "5h" ? "5-hour" : "7-day";
-  return `You have reached your ${label} LLM usage limit.${reset_in ? ` Limit resets in ${reset_in}.` : ""} Please try again later or upgrade your membership.`;
+  return `You have reached your ${label} AI usage limit.${reset_in ? ` Limit resets in ${reset_in}.` : ""} Please try again later or upgrade your membership.`;
 }
 
 export async function checkCodexSiteUsageAllowance({
@@ -1706,7 +1706,7 @@ export async function checkCodexSiteUsageAllowance({
     owner_account_id: account_id,
   });
 
-  const status = await getLLMUsageStatus({ account_id });
+  const status = await getAIUsageStatus({ account_id });
   for (const window of status.windows) {
     const limit = window.limit;
     if (limit == null) {
@@ -1754,7 +1754,7 @@ async function computeCodexSiteUsageUnits({
   const normalized = `${model ?? ""}`.trim();
   if (isCoreLanguageModel(normalized)) {
     return {
-      usage_units: await computeUsageUnits({
+      usage_units: await computeAIUsageUnits({
         model: normalized,
         prompt_tokens,
         completion_tokens,
@@ -1764,7 +1764,7 @@ async function computeCodexSiteUsageUnits({
   }
   const fallback = getCodexFallbackBillingModel();
   return {
-    usage_units: await computeUsageUnits({
+    usage_units: await computeAIUsageUnits({
       model: fallback,
       prompt_tokens,
       completion_tokens,
@@ -1816,7 +1816,7 @@ export async function recordCodexSiteUsage({
     completion_tokens: completion,
   });
 
-  await saveResponse({
+  await saveAIResponse({
     account_id,
     analytics_cookie: undefined,
     history: [],

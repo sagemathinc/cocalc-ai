@@ -255,7 +255,7 @@ export async function signUp(req, res) {
     if (wantsAdmin && isBootstrap) {
       const pool = getPool();
       const { rows: proRows } = await pool.query(
-        `SELECT label, store_visible, priority, project_defaults, llm_limits, features, usage_limits
+        `SELECT label, store_visible, priority, project_defaults, llm_limits AS ai_limits, features, usage_limits
          FROM membership_tiers
          WHERE id='pro'
          LIMIT 1`,
@@ -297,7 +297,7 @@ export async function signUp(req, res) {
           0,
           0,
           proDefaults?.project_defaults ?? null,
-          proDefaults?.llm_limits ?? null,
+          proDefaults?.ai_limits ?? null,
           proDefaults?.features ?? null,
           proDefaults?.usage_limits ?? null,
           false,

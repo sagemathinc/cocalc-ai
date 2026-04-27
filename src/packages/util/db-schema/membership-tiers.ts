@@ -99,7 +99,7 @@ Table({
     },
     llm_limits: {
       type: "map",
-      desc: "LLM usage limits for this tier.",
+      desc: "AI usage limits for this tier.",
     },
     features: {
       type: "map",

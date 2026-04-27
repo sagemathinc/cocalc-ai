@@ -1,9 +1,9 @@
 /*
-Return LLM usage status for the current account.
+Return AI usage status for the current account.
 */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import { getLLMUsageStatus } from "@cocalc/server/llm/usage-status";
+import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 
 export default async function handle(req, res) {
   try {
@@ -19,5 +19,5 @@ async function get(req) {
   if (account_id == null) {
     throw Error("must be signed in");
   }
-  return await getLLMUsageStatus({ account_id });
+  return await getAIUsageStatus({ account_id });
 }

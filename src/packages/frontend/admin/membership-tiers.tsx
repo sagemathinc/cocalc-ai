@@ -53,7 +53,7 @@ interface Tier {
   price_monthly?: number;
   price_yearly?: number;
   project_defaults?: any;
-  llm_limits?: any;
+  ai_limits?: any;
   features?: any;
   usage_limits?: any;
   disabled?: boolean;
@@ -152,7 +152,11 @@ function useMembershipTiers() {
       });
       const next = {};
       for (const row of result.query.membership_tiers ?? []) {
-        const tier = applyMembershipTierTemplateFallbacks(row);
+        const { llm_limits: rawAiLimits, ...rest } = row;
+        const tier = applyMembershipTierTemplateFallbacks({
+          ...rest,
+          ai_limits: row.ai_limits ?? rawAiLimits,
+        });
         if (tier.created) tier.created = dayjs(tier.created);
         if (tier.updated) tier.updated = dayjs(tier.updated);
         next[tier.id] = tier;
@@ -176,7 +180,7 @@ function useMembershipTiers() {
       form.setFieldsValue({
         ...editing,
         project_defaults: editing.project_defaults ?? {},
-        llm_limits: editing.llm_limits ?? {},
+        ai_limits: editing.ai_limits ?? {},
         features: editing.features ?? {},
         usage_limits: editing.usage_limits ?? {},
         usage_limit_shared_compute_priority: normalizedOptionalNumber(
@@ -215,7 +219,7 @@ function useMembershipTiers() {
         values.project_defaults,
         "project_defaults",
       );
-      const llm_limits = parseJsonField(values.llm_limits, "llm_limits");
+      const ai_limits = parseJsonField(values.ai_limits, "ai_limits");
       const features = parseJsonField(values.features, "features");
       const usage_limits = (parseJsonField(
         values.usage_limits,
@@ -256,7 +260,7 @@ function useMembershipTiers() {
         {
           ...values,
           project_defaults,
-          llm_limits,
+          llm_limits: ai_limits,
           features,
           usage_limits,
           disabled: !values.active,
@@ -347,7 +351,7 @@ function useMembershipTiers() {
       disabled: false,
       notes: "",
       project_defaults: {},
-      llm_limits: {},
+      ai_limits: {},
       features: {
         create_hosts: false,
         project_host_tier: 0,
@@ -424,7 +428,7 @@ export function MembershipTiers() {
       form.setFieldsValue({
         ...template,
         project_defaults: template.project_defaults ?? {},
-        llm_limits: template.llm_limits ?? {},
+        ai_limits: template.ai_limits ?? {},
         features: (template as { features?: unknown }).features ?? {},
         usage_limits:
           (template as { usage_limits?: unknown }).usage_limits ?? {},
@@ -550,11 +554,11 @@ export function MembershipTiers() {
               onErrorChange={(err) => updateJsonError("project_defaults", err)}
             />
           </Form.Item>
-          <Divider>LLM Limits</Divider>
-          <Form.Item name="llm_limits" label="Limits">
+          <Divider>AI Limits</Divider>
+          <Form.Item name="ai_limits" label="Limits">
             <JsonObjectEditor
-              emptyHint="No limits defined."
-              onErrorChange={(err) => updateJsonError("llm_limits", err)}
+              emptyHint="No AI limits defined."
+              onErrorChange={(err) => updateJsonError("ai_limits", err)}
             />
           </Form.Item>
           <Form.Item {...tailLayout}>

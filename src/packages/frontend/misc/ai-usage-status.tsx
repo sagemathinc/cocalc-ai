@@ -4,8 +4,8 @@ import { BaseType } from "antd/es/typography/Base";
 import { CSS } from "@cocalc/frontend/app-framework";
 import { A, HelpIcon, Paragraph, Text } from "@cocalc/frontend/components";
 import type {
-  LLMUsageStatus as AIUsageStatusResponse,
-  LLMUsageWindowStatus,
+  AIUsageStatus as AIUsageStatusResponse,
+  AIUsageWindowStatus,
 } from "@cocalc/conat/hub/api/purchases";
 import type { LanguageModel } from "@cocalc/util/db-schema/llm-utils";
 import { round2down, round2up } from "@cocalc/util/misc";
@@ -123,7 +123,7 @@ export function AIUsageStatus({
     const load = async () => {
       try {
         const result =
-          await webapp_client.conat_client.hub.purchases.getLLMUsage();
+          await webapp_client.conat_client.hub.purchases.getAIUsage();
         if (!cancelled) {
           setStatus(result);
           setError(null);
@@ -206,7 +206,7 @@ function UsageBar({
   window,
 }: {
   label: string;
-  window?: LLMUsageWindowStatus;
+  window?: AIUsageWindowStatus;
 }) {
   if (!window || window.limit == null) {
     return (
@@ -244,7 +244,7 @@ function CompactUsageBar({
   window,
 }: {
   label: string;
-  window?: LLMUsageWindowStatus;
+  window?: AIUsageWindowStatus;
 }) {
   const limit = window?.limit ?? 0;
   const used = window?.used ?? 0;

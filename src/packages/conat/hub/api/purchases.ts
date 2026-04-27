@@ -25,7 +25,7 @@ export interface MembershipUsageLimits {
 
 export interface MembershipEntitlements {
   project_defaults?: Record<string, unknown>;
-  llm_limits?: Record<string, unknown>;
+  ai_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
   usage_limits?: MembershipUsageLimits;
 }
@@ -90,7 +90,7 @@ export interface ManagedEgressEventSummary {
   metadata?: Record<string, unknown> | null;
 }
 
-export interface LLMUsageWindowStatus {
+export interface AIUsageWindowStatus {
   window: "5h" | "7d";
   used: number;
   limit?: number;
@@ -99,9 +99,9 @@ export interface LLMUsageWindowStatus {
   reset_in?: string;
 }
 
-export interface LLMUsageStatus {
+export interface AIUsageStatus {
   units_per_dollar: number;
-  windows: LLMUsageWindowStatus[];
+  windows: AIUsageWindowStatus[];
 }
 
 export interface Purchases {
@@ -114,7 +114,7 @@ export interface Purchases {
     account_id?: string;
     user_account_id?: string;
   }) => Promise<MembershipDetails>;
-  getLLMUsage: (opts?: { account_id?: string }) => Promise<LLMUsageStatus>;
+  getAIUsage: (opts?: { account_id?: string }) => Promise<AIUsageStatus>;
 }
 
 export const purchases = {
@@ -122,5 +122,5 @@ export const purchases = {
   getMinBalance: authFirst,
   getMembership: authFirst,
   getMembershipDetails: authFirst,
-  getLLMUsage: authFirst,
+  getAIUsage: authFirst,
 };

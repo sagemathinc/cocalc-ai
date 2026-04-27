@@ -4,9 +4,9 @@ import {
   type LanguageModelCore,
 } from "@cocalc/util/db-schema/llm-utils";
 
-export const UNITS_PER_DOLLAR = 100;
+export const AI_USAGE_UNITS_PER_DOLLAR = 100;
 
-export async function computeUsageUnits({
+export async function computeAIUsageUnits({
   model,
   prompt_tokens,
   completion_tokens,
@@ -22,5 +22,8 @@ export async function computeUsageUnits({
   if (!Number.isFinite(dollars.toNumber()) || dollars.lte(0)) {
     return 0;
   }
-  return Math.max(1, moneyRound2Up(dollars.mul(UNITS_PER_DOLLAR)).toNumber());
+  return Math.max(
+    1,
+    moneyRound2Up(dollars.mul(AI_USAGE_UNITS_PER_DOLLAR)).toNumber(),
+  );
 }

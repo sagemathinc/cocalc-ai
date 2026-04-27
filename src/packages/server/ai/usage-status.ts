@@ -1,9 +1,9 @@
 import getPool, { CacheTime } from "@cocalc/database/pool";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
-import { UNITS_PER_DOLLAR } from "./usage-units";
+import { AI_USAGE_UNITS_PER_DOLLAR } from "./usage-units";
 import isValidAccount from "../accounts/is-valid-account";
 
-export interface LLMUsageWindowStatus {
+export interface AIUsageWindowStatus {
   window: "5h" | "7d";
   used: number;
   limit?: number;
@@ -12,23 +12,23 @@ export interface LLMUsageWindowStatus {
   reset_in?: string;
 }
 
-export interface LLMUsageStatus {
+export interface AIUsageStatus {
   units_per_dollar: number;
-  windows: LLMUsageWindowStatus[];
+  windows: AIUsageWindowStatus[];
 }
 
-export async function getLLMUsageStatus({
+export async function getAIUsageStatus({
   account_id,
   analytics_cookie,
 }: {
   account_id?: string;
   analytics_cookie?: string;
-}): Promise<LLMUsageStatus> {
+}): Promise<AIUsageStatus> {
   if (account_id && !(await isValidAccount(account_id))) {
     throw Error(`invalid account_id ${account_id}`);
   }
   const limits = await getMembershipLimits(account_id);
-  const windows: LLMUsageWindowStatus[] = [];
+  const windows: AIUsageWindowStatus[] = [];
 
   const window5h = await getUsageWindow({
     window: "5h",
@@ -51,7 +51,7 @@ export async function getLLMUsageStatus({
   windows.push(window7d);
 
   return {
-    units_per_dollar: UNITS_PER_DOLLAR,
+    units_per_dollar: AI_USAGE_UNITS_PER_DOLLAR,
     windows,
   };
 }
@@ -64,13 +64,13 @@ async function getUsageWindow({
   limit,
   cache,
 }: {
-  window: LLMUsageWindowStatus["window"];
+  window: AIUsageWindowStatus["window"];
   period: "5 hours" | "7 days";
   account_id?: string;
   analytics_cookie?: string;
   limit?: number;
   cache?: CacheTime;
-}): Promise<LLMUsageWindowStatus> {
+}): Promise<AIUsageWindowStatus> {
   const used = await recentUsageUnits({
     period,
     account_id,
@@ -183,7 +183,7 @@ async function getMembershipLimits(account_id?: string) {
     return { units_5h: 0, units_7d: 0 };
   }
   const resolution = await resolveMembershipForAccount(account_id);
-  const limits = resolution?.entitlements?.llm_limits ?? {};
+  const limits = resolution?.entitlements?.ai_limits ?? {};
   const units5h = extractLimit(limits, ["units_5h", "limit_5h"]);
   const units7d = extractLimit(limits, ["units_7d", "limit_7d"]);
   return {

@@ -13,8 +13,10 @@ const { Paragraph, Text } = Typography;
 export function isCodexUsageLimitMessage(text?: string): boolean {
   const normalized = `${text ?? ""}`.toLowerCase();
   return (
+    normalized.includes("ai usage limit reached") ||
     normalized.includes("llm usage limit reached") ||
-    (normalized.includes("llm usage limit") &&
+    ((normalized.includes("ai usage limit") ||
+      normalized.includes("llm usage limit")) &&
       normalized.includes("upgrade your membership"))
   );
 }

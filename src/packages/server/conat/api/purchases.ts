@@ -4,7 +4,7 @@ import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
-import { getLLMUsageStatus } from "@cocalc/server/llm/usage-status";
+import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import type { MoneyValue } from "@cocalc/util/money";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 
@@ -41,6 +41,6 @@ export async function getMembershipDetails({
   return await resolveMembershipDetailsForAccount(targetId);
 }
 
-export async function getLLMUsage({ account_id }) {
-  return await getLLMUsageStatus({ account_id });
+export async function getAIUsage({ account_id }) {
+  return await getAIUsageStatus({ account_id });
 }

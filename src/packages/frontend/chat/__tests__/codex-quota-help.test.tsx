@@ -44,7 +44,7 @@ describe("isCodexUsageLimitMessage", () => {
   it("detects the standardized usage limit text", () => {
     expect(
       isCodexUsageLimitMessage(
-        "**LLM usage limit reached**\n\nYou have reached your 5-hour LLM usage limit.",
+        "**AI usage limit reached**\n\nYou have reached your 5-hour AI usage limit.",
       ),
     ).toBe(true);
   });
@@ -84,7 +84,7 @@ describe("CodexQuotaHelp", () => {
     expect(screen.queryByText("Upgrade membership")).toBeNull();
 
     rerender(
-      <CodexQuotaHelp message="You have reached your 5-hour LLM usage limit. Please try again later or upgrade your membership." />,
+      <CodexQuotaHelp message="You have reached your 5-hour AI usage limit. Please try again later or upgrade your membership." />,
     );
     expect(screen.getByText("Upgrade membership")).toBeTruthy();
     expect(screen.getByText("Open AI settings")).toBeTruthy();
@@ -93,7 +93,7 @@ describe("CodexQuotaHelp", () => {
   it("opens the membership and settings modals", async () => {
     render(
       <CodexQuotaHelp
-        message="You have reached your 5-hour LLM usage limit. Please try again later or upgrade your membership."
+        message="You have reached your 5-hour AI usage limit. Please try again later or upgrade your membership."
         projectId="project-1"
       />,
     );
