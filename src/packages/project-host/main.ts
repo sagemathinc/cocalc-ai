@@ -119,7 +119,10 @@ import {
   isProjectHostExternalConatPersistEnabled,
   waitForProjectHostConatPersistReady,
 } from "./conat-persist";
-import { DOWNLOAD_ERROR_HEADER } from "@cocalc/conat/files/file-download";
+import {
+  DOWNLOAD_ERROR_HEADER,
+  handleFileDownload,
+} from "@cocalc/conat/files/file-download";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -145,6 +148,26 @@ const PUBLIC_APP_ROUTE_CACHE_MS = Math.max(
   1000,
   Number(process.env.COCALC_PROJECT_HOST_PUBLIC_APP_ROUTE_CACHE_MS ?? 30_000),
 );
+
+function formatManagedEgressCategory(category: string): string {
+  if (category === "file-download") return "File downloads";
+  return category.replace(/[-_]/g, " ");
+}
+
+function formatByteCount(bytes?: number): string {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
+    return "unknown";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = value >= 10 || unit === 0 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unit]}`;
+}
 
 export interface ProjectHostConfig {
   hostId?: string;
@@ -413,6 +436,23 @@ export async function main(
       return false;
     }
   };
+  const isExplicitProjectFileDownloadRequest = (
+    req: IncomingMessage,
+    project_id: string,
+  ): boolean => {
+    if (!/^(GET|HEAD)$/i.test(req.method ?? "GET")) {
+      return false;
+    }
+    try {
+      const parsed = new URL(req.url ?? "/", "http://project-host.local");
+      return (
+        parsed.searchParams.has("download") &&
+        parsed.pathname.includes(`/${project_id}/files/`)
+      );
+    } catch {
+      return false;
+    }
+  };
   const setDownloadPreflightCorsHeaders = (
     req: IncomingMessage,
     res: ServerResponse,
@@ -439,6 +479,109 @@ export async function main(
       "Authorization, Content-Type",
     );
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  };
+  const checkManagedFileDownloadAllowedBestEffort = async ({
+    project_id,
+    account_id,
+  }: {
+    project_id: string;
+    account_id?: string;
+  }): Promise<
+    | {
+        allowed: true;
+      }
+    | {
+        allowed: false;
+        message: string;
+      }
+  > => {
+    try {
+      const policy = await hubApi.system.getManagedProjectEgressPolicy({
+        account_id,
+        project_id,
+        category: "file-download",
+      });
+      if (policy.allowed) {
+        return { allowed: true };
+      }
+      const breakdown = Object.entries(
+        policy.managed_egress_categories_5h_bytes ?? {},
+      )
+        .filter(
+          ([, bytes]) =>
+            typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0,
+        )
+        .map(
+          ([category, bytes]) =>
+            `${formatManagedEgressCategory(category)}: ${formatByteCount(bytes)}`,
+        );
+      const lines = [
+        "Managed download limit reached for this account.",
+        "New file downloads are temporarily blocked until the egress usage window resets.",
+      ];
+      if (policy.egress_5h_bytes != null) {
+        lines.push(
+          `5-hour usage: ${formatByteCount(policy.managed_egress_5h_bytes)} / ${formatByteCount(policy.egress_5h_bytes)}.`,
+        );
+      }
+      if (policy.egress_7d_bytes != null) {
+        lines.push(
+          `7-day usage: ${formatByteCount(policy.managed_egress_7d_bytes)} / ${formatByteCount(policy.egress_7d_bytes)}.`,
+        );
+      }
+      if (breakdown.length > 0) {
+        lines.push(
+          `Current managed egress categories (5 hours): ${breakdown.join(", ")}.`,
+        );
+      }
+      return {
+        allowed: false,
+        message: lines.join("\n"),
+      };
+    } catch (err) {
+      logger.warn("unable to evaluate managed file download policy", {
+        project_id,
+        account_id: account_id ?? null,
+        err: `${err}`,
+      });
+      return { allowed: true };
+    }
+  };
+  const recordManagedFileDownloadBestEffort = async ({
+    project_id,
+    account_id,
+    bytes,
+    request_path,
+    partial,
+  }: {
+    project_id: string;
+    account_id?: string;
+    bytes: number;
+    request_path: string;
+    partial: boolean;
+  }): Promise<void> => {
+    if (!(bytes > 0)) return;
+    try {
+      await hubApi.system.recordManagedProjectEgress({
+        account_id,
+        project_id,
+        category: "file-download",
+        bytes,
+        metadata: {
+          request_path,
+          partial,
+        },
+      });
+    } catch (err) {
+      logger.warn("unable to record managed file download egress", {
+        project_id,
+        account_id: account_id ?? null,
+        request_path,
+        bytes,
+        partial,
+        err: `${err}`,
+      });
+    }
   };
   app.options(PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH, (req, res) => {
     setBrowserSessionCorsHeaders(req, res);
@@ -542,6 +685,45 @@ export async function main(
       const isProjectFileRoute = `${req.url ?? ""}`.includes(
         `/${project_id}/files/`,
       );
+      if (res && isExplicitProjectFileDownloadRequest(req, project_id)) {
+        const account_id =
+          authContext?.actor === "account" ? authContext.account_id : undefined;
+        await handleFileDownload({
+          req,
+          res,
+          client: conatClient,
+          beforeExplicitDownload: async ({
+            project_id,
+          }: {
+            project_id: string;
+            path: string;
+          }) =>
+            await checkManagedFileDownloadAllowedBestEffort({
+              project_id,
+              account_id,
+            }),
+          onExplicitDownloadComplete: async ({
+            project_id,
+            bytes,
+            request_path,
+            partial,
+          }: {
+            project_id: string;
+            path: string;
+            bytes: number;
+            request_path: string;
+            partial: boolean;
+          }) =>
+            await recordManagedFileDownloadBestEffort({
+              project_id,
+              account_id,
+              bytes,
+              request_path,
+              partial,
+            }),
+        });
+        return { handled: true };
+      }
       if (isProjectFileRoute && authContext?.actor === "account") {
         req.headers[PROJECT_PROXY_ACCOUNT_ID_HEADER] = authContext.account_id;
       } else {

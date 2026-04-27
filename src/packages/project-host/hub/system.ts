@@ -37,6 +37,24 @@ export function wireSystemApi(): void {
     return await forwardSystem("system.getProjectHostParallelOpsLimit", [opts]);
   };
 
+  hubApi.system.getManagedProjectEgressPolicy = async (opts?: {
+    account_id?: string;
+    project_id?: string;
+    category?: string;
+  }) => {
+    return await forwardSystem("system.getManagedProjectEgressPolicy", [opts]);
+  };
+
+  hubApi.system.recordManagedProjectEgress = async (opts: {
+    account_id?: string;
+    project_id?: string;
+    category: "file-download";
+    bytes: number;
+    metadata?: Record<string, unknown>;
+  }) => {
+    return await forwardSystem("system.recordManagedProjectEgress", [opts]);
+  };
+
   hubApi.system.getCustomize = async (fields?: string[]) => {
     return await forwardSystem("system.getCustomize", [fields]);
   };
