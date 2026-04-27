@@ -123,8 +123,8 @@ function summarizeRawSendDeltaSockets({
   const out: RawSendDeltaSocket[] = [];
   for (const [socket_id, stats] of Object.entries(current)) {
     const bytes = diffCounter(
-      stats.send?.bytes,
-      previous[socket_id]?.send?.bytes,
+      stats.egress?.bytes,
+      previous[socket_id]?.egress?.bytes,
     );
     if (!(bytes > 0)) continue;
     out.push({
@@ -152,8 +152,8 @@ export function summarizeManagedConatEgressDeltas({
     const account_id = normalizeAccountId(stats);
     if (!account_id) continue;
     const deltaBytes = diffCounter(
-      stats.send?.bytes,
-      previous[socket_id]?.send?.bytes,
+      stats.egress?.bytes,
+      previous[socket_id]?.egress?.bytes,
     );
     if (!(deltaBytes > 0)) continue;
     const browser_id = `${stats.browser_id ?? ""}`.trim();
