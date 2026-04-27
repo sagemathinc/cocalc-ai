@@ -77,7 +77,6 @@
   "account.other-settings.global_banner": "<strong>Ankündigungsbanner anzeigen</strong>: wird nur angezeigt, wenn eine Nachricht vorhanden ist",
   "account.other-settings.hide_navbar_balance": "<strong>Kontostand verbergen</strong> in der Navigationsleiste",
   "account.other-settings.katex": "<strong>KaTeX:</strong> Versuch, Formeln mit {katex} zu rendern (viel schneller, aber ohne Kontextmenüoptionen)",
-  "account.other-settings.llm.default_llm": "Standard-AI-Sprachmodell",
   "account.other-settings.llm.disable_all": "<strong>Alle KI-Integrationen deaktivieren</strong>, z.B. Code-Generierungs- oder Erklärungsbuttons in Jupyter, @chatgpt-Erwähnungen usw.",
   "account.other-settings.llm.reply_language": "<strong>Immer auf Englisch antworten:</strong> Wenn eingestellt, sind die Antworten immer auf Englisch. Andernfalls antwortet es in Ihrer Sprache ({lang}).",
   "account.other-settings.llm.title": "KI-Einstellungen",

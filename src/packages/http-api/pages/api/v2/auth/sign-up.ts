@@ -255,7 +255,7 @@ export async function signUp(req, res) {
     if (wantsAdmin && isBootstrap) {
       const pool = getPool();
       const { rows: proRows } = await pool.query(
-        `SELECT label, store_visible, priority, project_defaults, llm_limits AS ai_limits, features, usage_limits
+        `SELECT label, store_visible, priority, project_defaults, ai_limits, features, usage_limits
          FROM membership_tiers
          WHERE id='pro'
          LIMIT 1`,
@@ -271,7 +271,7 @@ export async function signUp(req, res) {
       await pool.query(
         `INSERT INTO membership_tiers (
             id, label, store_visible, priority,
-            price_monthly, price_yearly, project_defaults, llm_limits, features, usage_limits,
+            price_monthly, price_yearly, project_defaults, ai_limits, features, usage_limits,
             disabled, notes, history, created, updated
           )
           VALUES ($1,$2,$3,$4,$5,$6,$7::JSONB,$8::JSONB,$9::JSONB,$10::JSONB,$11,$12,$13::JSONB,NOW(),NOW())
@@ -283,7 +283,7 @@ export async function signUp(req, res) {
             price_monthly=EXCLUDED.price_monthly,
             price_yearly=EXCLUDED.price_yearly,
             project_defaults=EXCLUDED.project_defaults,
-            llm_limits=EXCLUDED.llm_limits,
+            ai_limits=EXCLUDED.ai_limits,
             features=EXCLUDED.features,
             usage_limits=EXCLUDED.usage_limits,
             disabled=EXCLUDED.disabled,

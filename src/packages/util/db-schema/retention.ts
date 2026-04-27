@@ -1,15 +1,14 @@
 import { Table } from "./types";
 
 export const retentionModels = {
-  openai_chatgpt_log: {
-    title: "ChatGPT - Retention",
-    description:
-      "Number of accounts in the cohort that used chatgpt during period.",
+  ai_usage_log: {
+    title: "AI Usage - Retention",
+    description: "Number of accounts in the cohort that used AI during period.",
   },
-  "openai_chatgpt_log:all": {
-    title: "ChatGPT - Active Users",
+  "ai_usage_log:all": {
+    title: "AI Usage - Active Users",
     description:
-      "Number of accounts with an entry in the openai_chatgpt_log during each period.",
+      "Number of accounts with an entry in the ai_usage_log during each period.",
   },
   user_tracking: {
     title: "User Tracking - Retention",

@@ -77,7 +77,6 @@
   "account.other-settings.global_banner": "<strong>عرض لافتة الإعلان</strong>: يظهر فقط إذا كان هناك رسالة",
   "account.other-settings.hide_navbar_balance": "<strong>إخفاء رصيد الحساب</strong> في شريط التنقل",
   "account.other-settings.katex": "<strong>KaTeX:</strong> محاولة عرض الصيغ باستخدام {katex} (أسرع بكثير، ولكن بدون خيارات قائمة السياق)",
-  "account.other-settings.llm.default_llm": "نموذج اللغة الافتراضي AI",
   "account.other-settings.llm.disable_all": "<strong>تعطيل جميع تكاملات الذكاء الاصطناعي</strong>، مثل أزرار توليد أو شرح الأكواد في Jupyter، وذكر @chatgpt، إلخ.",
   "account.other-settings.llm.reply_language": "<strong>الرد دائمًا باللغة الإنجليزية:</strong> إذا تم التعيين، تكون الردود دائمًا باللغة الإنجليزية. وإلا، فإنه يرد بلغتك ({lang}).",
   "account.other-settings.llm.title": "إعدادات AI",

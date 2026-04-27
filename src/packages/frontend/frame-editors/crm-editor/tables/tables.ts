@@ -27,7 +27,7 @@ import "./statements";
 import "./subscriptions";
 import "./syncstrings";
 import "./vouchers";
-import "./openai";
+import "./ai";
 import "./analytics";
 import "./retention";
 

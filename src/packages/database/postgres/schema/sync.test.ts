@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { schemaNeedsSync } from "./sync";
+import { schemaNeedsSync, syncSchema } from "./sync";
 import { createIndexesQueries } from "./indexes";
 import { SCHEMA } from "@cocalc/util/schema";
 import type { DBSchema, TableSchema } from "./types";
@@ -110,17 +110,66 @@ function createMockClient(options: {
   columnRows: ColumnRow[];
   indexRows: Array<{ name: string }>;
   primaryKeyRows: Array<{ name: string }>;
+  extraTables?: string[];
+  hasLegacyAiUsageLogTable?: boolean;
+  hasLegacyMembershipTierColumn?: boolean;
 }): MockClient {
-  const { tableName, columnRows, indexRows, primaryKeyRows } = options;
+  const {
+    tableName,
+    columnRows,
+    indexRows,
+    primaryKeyRows,
+    extraTables = [],
+    hasLegacyAiUsageLogTable = false,
+    hasLegacyMembershipTierColumn = false,
+  } = options;
 
-  const query = jest.fn(async (text: string) => {
+  const query = jest.fn(async (text: string, params?: any[]) => {
     if (text.includes("SELECT EXISTS") && text.includes("compute_servers")) {
       return { rows: [{ exists: false }] };
     }
+    if (
+      text.includes("SELECT EXISTS") &&
+      text.includes("FROM pg_tables") &&
+      text.includes("tablename = $1")
+    ) {
+      const table = params?.[0];
+      return {
+        rows: [
+          {
+            exists:
+              table === "openai_chatgpt_log"
+                ? hasLegacyAiUsageLogTable
+                : table === "membership_tiers"
+                  ? tableName === "membership_tiers" ||
+                    extraTables.includes("membership_tiers")
+                  : false,
+          },
+        ],
+      };
+    }
     if (text.includes("SELECT tablename FROM pg_tables")) {
-      return { rows: [{ tablename: tableName }] };
+      return {
+        rows: [
+          { tablename: tableName },
+          ...extraTables.map((t) => ({ tablename: t })),
+        ],
+      };
     }
     if (text.includes("FROM information_schema.columns")) {
+      if (text.includes("column_name = $2")) {
+        return {
+          rows: [
+            {
+              exists:
+                params?.[0] === "membership_tiers" &&
+                params?.[1] === "llm_limits"
+                  ? hasLegacyMembershipTierColumn
+                  : false,
+            },
+          ],
+        };
+      }
       return { rows: columnRows };
     }
     if (text.includes("FROM pg_class AS a JOIN pg_index AS b")) {
@@ -128,6 +177,9 @@ function createMockClient(options: {
     }
     if (text.includes("FROM   pg_index i")) {
       return { rows: primaryKeyRows };
+    }
+    if (text.startsWith("ALTER TABLE ")) {
+      return { rows: [] };
     }
     throw new Error(`Unexpected query: ${text}`);
   });
@@ -187,5 +239,58 @@ describe("schemaNeedsSync column actions", () => {
     const result = await schemaNeedsSync(registrationTokensSchema);
 
     expect(result).toBe(false);
+  });
+
+  it("returns true when a legacy ai usage log table rename is pending", async () => {
+    const client = createMockClient({
+      tableName: "embedding_cache",
+      columnRows: embeddingColumns,
+      indexRows: embeddingIndexRows,
+      primaryKeyRows: embeddingPrimaryKeyRows,
+      hasLegacyAiUsageLogTable: true,
+    });
+    (getClient as jest.Mock).mockReturnValue(client);
+
+    const result = await schemaNeedsSync(embeddingSchema);
+
+    expect(result).toBe(true);
+  });
+
+  it("returns true when a legacy membership tier ai_limits rename is pending", async () => {
+    const client = createMockClient({
+      tableName: "embedding_cache",
+      columnRows: embeddingColumns,
+      indexRows: embeddingIndexRows,
+      primaryKeyRows: embeddingPrimaryKeyRows,
+      extraTables: ["membership_tiers"],
+      hasLegacyMembershipTierColumn: true,
+    });
+    (getClient as jest.Mock).mockReturnValue(client);
+
+    const result = await schemaNeedsSync(embeddingSchema);
+
+    expect(result).toBe(true);
+  });
+
+  it("renames legacy storage identifiers before syncing", async () => {
+    const client = createMockClient({
+      tableName: "embedding_cache",
+      columnRows: embeddingColumns,
+      indexRows: embeddingIndexRows,
+      primaryKeyRows: embeddingPrimaryKeyRows,
+      extraTables: ["membership_tiers"],
+      hasLegacyAiUsageLogTable: true,
+      hasLegacyMembershipTierColumn: true,
+    });
+    (getClient as jest.Mock).mockReturnValue(client);
+
+    await syncSchema(embeddingSchema);
+
+    expect(client.query).toHaveBeenCalledWith(
+      "ALTER TABLE openai_chatgpt_log RENAME TO ai_usage_log",
+    );
+    expect(client.query).toHaveBeenCalledWith(
+      "ALTER TABLE membership_tiers RENAME COLUMN llm_limits TO ai_limits",
+    );
   });
 });

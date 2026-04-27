@@ -77,7 +77,6 @@
   "account.other-settings.global_banner": "<strong>공지 배너 표시</strong>: 메시지가 있을 때만 표시됩니다",
   "account.other-settings.hide_navbar_balance": "<strong>계정 잔액 숨기기</strong> 탐색 바에서",
   "account.other-settings.katex": "<strong>KaTeX:</strong> {katex}를 사용하여 수식을 렌더링 시도 (훨씬 빠르지만, 컨텍스트 메뉴 옵션이 없음)",
-  "account.other-settings.llm.default_llm": "기본 AI 언어 모델",
   "account.other-settings.llm.disable_all": "<strong>모든 AI 통합 비활성화</strong>, 예: Jupyter의 코드 생성 또는 설명 버튼, @chatgpt 언급 등.",
   "account.other-settings.llm.reply_language": "<strong>항상 영어로 답변:</strong> 설정하면 답변이 항상 영어로 제공됩니다. 그렇지 않으면 사용자의 언어({lang})로 답변합니다.",
   "account.other-settings.llm.title": "AI 설정",

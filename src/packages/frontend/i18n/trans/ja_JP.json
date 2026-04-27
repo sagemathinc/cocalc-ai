@@ -77,7 +77,6 @@
   "account.other-settings.global_banner": "<strong>お知らせバナーを表示</strong>: メッセージがある場合にのみ表示されます",
   "account.other-settings.hide_navbar_balance": "<strong>アカウント残高を非表示</strong> ナビゲーションバーで",
   "account.other-settings.katex": "<strong>KaTeX:</strong> 数式を {katex} を使ってレンダリングする試み（はるかに高速だが、コンテキストメニューオプションが欠けている）",
-  "account.other-settings.llm.default_llm": "デフォルトAI言語モデル",
   "account.other-settings.llm.disable_all": "<strong>すべてのAI統合を無効化</strong>、例：Jupyterのコード生成や説明ボタン、@chatgptのメンションなど。",
   "account.other-settings.llm.reply_language": "<strong>常に英語で返信する:</strong> 設定すると、返信は常に英語になります。そうでない場合は、あなたの言語 ({lang}) で返信します。",
   "account.other-settings.llm.title": "AI設定",

@@ -114,13 +114,13 @@ async function recentUsageUnits({
   let query;
   let args: string[] = [];
   if (account_id) {
-    query = `SELECT SUM(COALESCE(usage_units, 0)) AS usage FROM openai_chatgpt_log WHERE account_id=$1 AND time >= NOW() - INTERVAL '${period}'`;
+    query = `SELECT SUM(COALESCE(usage_units, 0)) AS usage FROM ai_usage_log WHERE account_id=$1 AND time >= NOW() - INTERVAL '${period}'`;
     args = [account_id];
   } else if (analytics_cookie) {
-    query = `SELECT SUM(COALESCE(usage_units, 0)) AS usage FROM openai_chatgpt_log WHERE analytics_cookie=$1 AND time >= NOW() - INTERVAL '${period}'`;
+    query = `SELECT SUM(COALESCE(usage_units, 0)) AS usage FROM ai_usage_log WHERE analytics_cookie=$1 AND time >= NOW() - INTERVAL '${period}'`;
     args = [analytics_cookie];
   } else {
-    query = `SELECT SUM(COALESCE(usage_units, 0)) AS usage FROM openai_chatgpt_log WHERE time >= NOW() - INTERVAL '${period}'`;
+    query = `SELECT SUM(COALESCE(usage_units, 0)) AS usage FROM ai_usage_log WHERE time >= NOW() - INTERVAL '${period}'`;
   }
   const { rows } = await pool.query(query, args);
   return parseInt(rows[0]?.["usage"] ?? 0);
@@ -139,12 +139,12 @@ async function getWindowResetAt({
   let query;
   let args: string[] = [];
   if (account_id) {
-    query = `SELECT time FROM openai_chatgpt_log
+    query = `SELECT time FROM ai_usage_log
              WHERE account_id=$1 AND time >= NOW() - INTERVAL '${period}'
              ORDER BY time ASC LIMIT 1`;
     args = [account_id];
   } else if (analytics_cookie) {
-    query = `SELECT time FROM openai_chatgpt_log
+    query = `SELECT time FROM ai_usage_log
              WHERE analytics_cookie=$1 AND time >= NOW() - INTERVAL '${period}'
              ORDER BY time ASC LIMIT 1`;
     args = [analytics_cookie];

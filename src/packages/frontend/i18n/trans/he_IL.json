@@ -77,7 +77,6 @@
   "account.other-settings.global_banner": "<strong>הצג באנר הודעה</strong>: מופיע רק אם יש הודעה",
   "account.other-settings.hide_navbar_balance": "<strong>הסתר יתרת חשבון</strong> בסרגל הניווט",
   "account.other-settings.katex": "<strong>KaTeX:</strong> ניסיון לעבד נוסחאות באמצעות {katex} (מהיר יותר, אך חסרות אפשרויות בתפריט ההקשר)",
-  "account.other-settings.llm.default_llm": "מודל שפה AI ברירת מחדל",
   "account.other-settings.llm.disable_all": "<strong>השבת את כל האינטגרציות של AI</strong>, לדוגמה, כפתורי יצירת קוד או הסבר ב-Jupyter, אזכורי @chatgpt וכו'.",
   "account.other-settings.llm.reply_language": "<strong>תמיד להגיב באנגלית:</strong> אם מוגדר, התשובות תמיד באנגלית. אחרת, זה עונה בשפה שלך ({lang}).",
   "account.other-settings.llm.title": "הגדרות AI",

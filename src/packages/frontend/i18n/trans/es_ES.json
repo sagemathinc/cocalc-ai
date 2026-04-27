@@ -77,7 +77,6 @@
   "account.other-settings.global_banner": "<strong>Mostrar banner de anuncio</strong>: solo aparece si hay un mensaje",
   "account.other-settings.hide_navbar_balance": "<strong>Ocultar saldo de cuenta</strong> en la barra de navegación",
   "account.other-settings.katex": "<strong>KaTeX:</strong> intento de renderizar fórmulas usando {katex} (mucho más rápido, pero sin opciones de menú contextual)",
-  "account.other-settings.llm.default_llm": "Modelo de Lenguaje AI Predeterminado",
   "account.other-settings.llm.disable_all": "<strong>Desactivar todas las integraciones de IA</strong>, por ejemplo, botones de generación de código o explicación en Jupyter, menciones de @chatgpt, etc.",
   "account.other-settings.llm.reply_language": "<strong>Siempre responder en inglés:</strong> Si está activado, las respuestas siempre estarán en inglés. De lo contrario, responde en tu idioma ({lang}).",
   "account.other-settings.llm.title": "Configuración de IA",

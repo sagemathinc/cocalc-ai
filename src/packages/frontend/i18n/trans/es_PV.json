@@ -77,7 +77,6 @@
   "account.other-settings.global_banner": "<strong>Berrien Bannerra Erakutsi</strong>: agertu mezu berriren bat badago bakarrik",
   "account.other-settings.hide_navbar_balance": "<strong>Ezkutatu Kontuaren Saldoa</strong> nabigazio barran",
   "account.other-settings.katex": "<strong>KaTeX:</strong> saiatu formulak errenderizatzen {katex} erabiliz (askoz azkarragoa, baina testuinguru menu aukerarik gabe)",
-  "account.other-settings.llm.default_llm": "Lehenetsitako AI Eredua",
   "account.other-settings.llm.disable_all": "<strong>Desgaitu AI integrazio guztiak</strong>, adibidez, kode-sorkuntza edo azalpen botoiak Jupyterren, @chatgpt aipamenak, etab.",
   "account.other-settings.llm.reply_language": "<strong>Beti erantzun ingelesez:</strong> Ezarrita badago, erantzunak beti dira ingelesez. Bestela, zure hizkuntzan erantzuten du ({lang}).",
   "account.other-settings.llm.title": "AI Ezarpenak",

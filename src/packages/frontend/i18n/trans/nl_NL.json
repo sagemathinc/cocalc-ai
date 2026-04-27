@@ -77,7 +77,6 @@
   "account.other-settings.global_banner": "<strong>Aankondigingsbanner tonen</strong>: verschijnt alleen als er een bericht is",
   "account.other-settings.hide_navbar_balance": "<strong>Accountbalans verbergen</strong> in navigatiebalk",
   "account.other-settings.katex": "<strong>KaTeX:</strong> poging om formules te renderen met {katex} (veel sneller, maar zonder contextmenu-opties)",
-  "account.other-settings.llm.default_llm": "Standaard AI-taalmodel",
   "account.other-settings.llm.disable_all": "<strong>Alle AI-integraties uitschakelen</strong>, bijvoorbeeld knoppen voor codegeneratie of uitleg in Jupyter, @chatgpt vermeldingen, enz.",
   "account.other-settings.llm.reply_language": "<strong>Altijd in het Engels antwoorden:</strong> Als ingesteld, zijn de antwoorden altijd in het Engels. Anders antwoordt het in je taal ({lang}).",
   "account.other-settings.llm.title": "AI-instellingen",

@@ -19,7 +19,7 @@ NOTE: To get a quick idea about the numbers of how many completion tokens are re
 ```sql
 WITH data AS (
   SELECT model, (total_tokens - prompt_tokens) AS val
-  FROM openai_chatgpt_log
+  FROM ai_usage_log
   WHERE  time >= NOW() - '1 week'::interval
     AND tag like 'app:%'
 )

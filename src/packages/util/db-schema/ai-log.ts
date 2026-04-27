@@ -1,7 +1,3 @@
-// NOTE: this is not just OpenAI, but also includes other models that we use
-// Mentally, just ignore "openai" and instead focus on "gpt-*" or "codey" or whatever they are called.
-// TODO: refactor this, the names of the tables, etc. to be more generic.
-
 import type { History } from "@cocalc/util/types/ai";
 import { CREATED_BY, ID } from "./crm";
 import { SCHEMA as schema } from "./index";
@@ -29,7 +25,7 @@ export interface AIUsageLogEntry {
 }
 
 Table({
-  name: "openai_chatgpt_log", // historically a wrong name, don't change it
+  name: "ai_usage_log",
   fields: {
     id: ID,
     time: { type: "timestamp", desc: "When this particular chat happened." },
@@ -108,7 +104,7 @@ Table({
     },
   },
   rules: {
-    desc: "Language Model Log",
+    desc: "AI Usage Log",
     primary_key: "id",
     pg_indexes: ["account_id", "analytics_cookie", "time"],
     user_query: {
@@ -147,9 +143,9 @@ Table({
 });
 
 Table({
-  name: "crm_openai_chatgpt_log",
+  name: "crm_ai_usage_log",
   rules: {
-    virtual: "openai_chatgpt_log",
+    virtual: "ai_usage_log",
     primary_key: "id",
     user_query: {
       get: {
@@ -176,5 +172,5 @@ Table({
       },
     },
   },
-  fields: schema.openai_chatgpt_log.fields,
+  fields: schema.ai_usage_log.fields,
 });

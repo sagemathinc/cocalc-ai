@@ -303,6 +303,65 @@ async function getAllTables(db: Client): Promise<Set<string>> {
   return v;
 }
 
+async function hasTable(db: Client, table: string): Promise<boolean> {
+  const { rows } = await db.query(
+    "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE tableowner = current_user AND tablename = $1) AS exists",
+    [table],
+  );
+  return Boolean(rows[0]?.exists);
+}
+
+async function hasColumn(
+  db: Client,
+  table: string,
+  column: string,
+): Promise<boolean> {
+  const { rows } = await db.query(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM information_schema.columns
+       WHERE table_name = $1 AND column_name = $2
+     ) AS exists`,
+    [table, column],
+  );
+  return Boolean(rows[0]?.exists);
+}
+
+async function hasLegacyRenames(db: Client): Promise<boolean> {
+  if (
+    (await hasTable(db, "openai_chatgpt_log")) &&
+    !(await hasTable(db, "ai_usage_log"))
+  ) {
+    return true;
+  }
+  if (
+    (await hasTable(db, "membership_tiers")) &&
+    (await hasColumn(db, "membership_tiers", "llm_limits")) &&
+    !(await hasColumn(db, "membership_tiers", "ai_limits"))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+async function applyLegacyRenames(db: Client): Promise<void> {
+  if (
+    (await hasTable(db, "openai_chatgpt_log")) &&
+    !(await hasTable(db, "ai_usage_log"))
+  ) {
+    await db.query(`ALTER TABLE openai_chatgpt_log RENAME TO ai_usage_log`);
+  }
+  if (
+    (await hasTable(db, "membership_tiers")) &&
+    (await hasColumn(db, "membership_tiers", "llm_limits")) &&
+    !(await hasColumn(db, "membership_tiers", "ai_limits"))
+  ) {
+    await db.query(
+      `ALTER TABLE membership_tiers RENAME COLUMN llm_limits TO ai_limits`,
+    );
+  }
+}
+
 // Determine names of all tables that are in our schema but not in the
 // actual database.
 function getMissingTables(
@@ -341,6 +400,8 @@ export async function syncSchema(
       // change to that user for the rest of this connection.
       await db.query(`SET ROLE ${role}`);
     }
+    dbg("applying any legacy schema renames");
+    await applyLegacyRenames(db);
     dbg("dropping any deprecated tables");
     await dropDeprecatedTables(db);
 
@@ -396,6 +457,10 @@ export async function schemaNeedsSync(
     await db.connect();
     if (role) {
       await db.query(`SET ROLE ${role}`);
+    }
+    if (await hasLegacyRenames(db)) {
+      dbg("detected legacy schema names");
+      return true;
     }
     if (await hasDeprecatedTables(db)) {
       dbg("detected deprecated tables");

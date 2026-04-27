@@ -77,7 +77,6 @@
   "account.other-settings.global_banner": "<strong>Bejelentési banner megjelenítése</strong>: csak akkor jelenik meg, ha van üzenet",
   "account.other-settings.hide_navbar_balance": "<strong>Fiókegyenleg elrejtése</strong> a navigációs sávban",
   "account.other-settings.katex": "<strong>KaTeX:</strong> kísérlet képletek renderelésére {katex} használatával (sokkal gyorsabb, de hiányoznak a helyi menü opciók)",
-  "account.other-settings.llm.default_llm": "Alapértelmezett AI nyelvi modell",
   "account.other-settings.llm.disable_all": "<strong>Az összes AI integráció letiltása</strong>, pl. kódgenerálás vagy magyarázó gombok a Jupyterben, @chatgpt említések stb.",
   "account.other-settings.llm.reply_language": "<strong>Mindig válaszoljon angolul:</strong> Ha be van állítva, a válaszok mindig angolul lesznek. Ellenkező esetben a saját nyelvén ({lang}) válaszol.",
   "account.other-settings.llm.title": "AI beállítások",

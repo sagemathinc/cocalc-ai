@@ -77,7 +77,6 @@
   "account.other-settings.global_banner": "<strong>घोषणा बैनर दिखाएं</strong>: केवल तब दिखाई देता है जब कोई संदेश होता है",
   "account.other-settings.hide_navbar_balance": "<strong>खाते का शेष छिपाएं</strong> नेविगेशन बार में",
   "account.other-settings.katex": "<strong>KaTeX:</strong> सूत्रों को {katex} का उपयोग करके प्रस्तुत करने का प्रयास करें (काफी तेज़, लेकिन संदर्भ मेनू विकल्प गायब हैं)",
-  "account.other-settings.llm.default_llm": "डिफ़ॉल्ट एआई भाषा मॉडल",
   "account.other-settings.llm.disable_all": "<strong>सभी AI एकीकरण अक्षम करें</strong>, जैसे कोड जनरेशन या Jupyter में व्याख्या बटन, @chatgpt उल्लेख, आदि।",
   "account.other-settings.llm.reply_language": "<strong>हमेशा अंग्रेजी में उत्तर दें:</strong> यदि सेट किया गया है, तो उत्तर हमेशा अंग्रेजी में होंगे। अन्यथा, यह आपकी भाषा ({lang}) में उत्तर देगा।",
   "account.other-settings.llm.title": "एआई सेटिंग्स",
