@@ -4,6 +4,8 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
+import type { Client } from "@cocalc/conat/core/client";
+import { sysApiMany } from "@cocalc/conat/core/sys";
 import type { ConatServer } from "@cocalc/conat/core/server";
 import type { ConnectionStats } from "@cocalc/conat/core/types";
 
@@ -14,6 +16,41 @@ const DEFAULT_ADDRESS_BURST_THRESHOLD = 12;
 const TOP_LIMIT = 5;
 
 type ConnectionStatsSnapshot = { [id: string]: ConnectionStats };
+
+async function loadClusterStatsSnapshot({
+  conatServer,
+  systemClient,
+}: {
+  conatServer: ConatServer;
+  systemClient?: Client;
+}): Promise<ConnectionStatsSnapshot> {
+  if (!systemClient) {
+    return conatServer.getStatsSnapshot();
+  }
+  try {
+    if (!systemClient.isSignedIn()) {
+      await systemClient.waitUntilSignedIn({ timeout: 5000 });
+    }
+    if (!systemClient.isSignedIn()) {
+      return conatServer.getStatsSnapshot();
+    }
+    const responses = await sysApiMany(systemClient, {
+      maxWait: 2000,
+      maxMessages: 64,
+    }).stats();
+    const snapshot: ConnectionStatsSnapshot = {};
+    for (const response of responses ?? []) {
+      for (const socketStatsById of Object.values(response ?? {})) {
+        Object.assign(snapshot, socketStatsById ?? {});
+      }
+    }
+    return Object.keys(snapshot).length > 0
+      ? snapshot
+      : conatServer.getStatsSnapshot();
+  } catch {
+    return conatServer.getStatsSnapshot();
+  }
+}
 
 function envPositiveInt(name: string, fallback: number): number {
   const raw = `${process.env[name] ?? ""}`.trim();
@@ -173,6 +210,7 @@ function hasTrafficActivity(
 
 export function startConatRouterTrafficMetricsLoop({
   conatServer,
+  systemClient,
   loggerName = "project-host:conat-router-daemon:traffic",
   intervalMs = envPositiveInt(
     "COCALC_PROJECT_HOST_CONAT_ROUTER_METRICS_INTERVAL_MS",
@@ -192,6 +230,7 @@ export function startConatRouterTrafficMetricsLoop({
   ),
 }: {
   conatServer: ConatServer;
+  systemClient?: Client;
   loggerName?: string;
   intervalMs?: number;
   idleLogIntervals?: number;
@@ -199,47 +238,63 @@ export function startConatRouterTrafficMetricsLoop({
   addressBurstThreshold?: number;
 }): () => void {
   const logger = getLogger(loggerName);
-  let previous = conatServer.getStatsSnapshot();
+  let previous: ConnectionStatsSnapshot = {};
   let idleIntervals = 0;
 
+  let running = false;
   const timer = setInterval(() => {
-    const current = conatServer.getStatsSnapshot();
-    const summary = summarizeConatRouterTraffic({
-      previous,
-      current,
-      intervalMs,
-    });
-    previous = current;
-
-    const browserBursts = summary.top_opened_browsers.filter(
-      (entry) => Number(entry.connections) >= browserBurstThreshold,
-    );
-    const addressBursts = summary.top_opened_addresses.filter(
-      (entry) => Number(entry.connections) >= addressBurstThreshold,
-    );
-    if (browserBursts.length || addressBursts.length) {
-      logger.warn("project-host conat router reconnect burst", {
-        interval_ms: intervalMs,
-        browser_burst_threshold: browserBurstThreshold,
-        address_burst_threshold: addressBurstThreshold,
-        browser_bursts: browserBursts,
-        address_bursts: addressBursts,
+    if (running) return;
+    running = true;
+    void (async () => {
+      const current = await loadClusterStatsSnapshot({
+        conatServer,
+        systemClient,
       });
-    }
+      const summary = summarizeConatRouterTraffic({
+        previous,
+        current,
+        intervalMs,
+      });
+      previous = current;
 
-    const active = hasTrafficActivity(summary);
-    if (!active) {
-      idleIntervals += 1;
-    } else {
-      idleIntervals = 0;
-    }
-    if (!active && idleIntervals < idleLogIntervals) {
-      return;
-    }
-    if (!active) {
-      idleIntervals = 0;
-    }
-    logger.info("project-host conat router traffic", summary);
+      const browserBursts = summary.top_opened_browsers.filter(
+        (entry) => Number(entry.connections) >= browserBurstThreshold,
+      );
+      const addressBursts = summary.top_opened_addresses.filter(
+        (entry) => Number(entry.connections) >= addressBurstThreshold,
+      );
+      if (browserBursts.length || addressBursts.length) {
+        logger.warn("project-host conat router reconnect burst", {
+          interval_ms: intervalMs,
+          browser_burst_threshold: browserBurstThreshold,
+          address_burst_threshold: addressBurstThreshold,
+          browser_bursts: browserBursts,
+          address_bursts: addressBursts,
+        });
+      }
+
+      const active = hasTrafficActivity(summary);
+      if (!active) {
+        idleIntervals += 1;
+      } else {
+        idleIntervals = 0;
+      }
+      if (!active && idleIntervals < idleLogIntervals) {
+        return;
+      }
+      if (!active) {
+        idleIntervals = 0;
+      }
+      logger.info("project-host conat router traffic", summary);
+    })()
+      .catch((err) => {
+        logger.debug("project-host conat router traffic sampling failed", {
+          err: `${err}`,
+        });
+      })
+      .finally(() => {
+        running = false;
+      });
   }, intervalMs);
   timer.unref?.();
   return () => clearInterval(timer);

@@ -24,10 +24,14 @@ export interface ManagedProjectEgressPolicy {
 }
 
 export async function getManagedProjectEgressPolicy(opts: {
-  project_id: string;
+  account_id?: string;
+  project_id?: string;
   category: ManagedProjectEgressCategory;
 }): Promise<ManagedProjectEgressPolicy> {
-  const account_id = await getProjectOwnerAccountId(opts.project_id);
+  const project_id = `${opts.project_id ?? ""}`.trim() || undefined;
+  const account_id =
+    `${opts.account_id ?? ""}`.trim() ||
+    (project_id ? await getProjectOwnerAccountId(project_id) : undefined);
   if (!account_id) {
     return {
       category: opts.category,

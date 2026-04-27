@@ -44,6 +44,7 @@ import {
   recordAppWebsocketOpened,
 } from "../../app-servers/metrics";
 import {
+  PROJECT_PROXY_ACCOUNT_ID_HEADER,
   PROJECT_PROXY_AUTH_HEADER,
   getSingleHeaderValue,
 } from "@cocalc/backend/auth/project-proxy-auth";
@@ -146,7 +147,11 @@ function encodeDownloadErrorHeader(message: string): string {
   return encodeURIComponent(message);
 }
 
-async function checkManagedFileDownloadAllowedBestEffort(): Promise<
+async function checkManagedFileDownloadAllowedBestEffort(
+  opts: {
+    account_id?: string;
+  } = {},
+): Promise<
   | {
       allowed: true;
     }
@@ -158,6 +163,7 @@ async function checkManagedFileDownloadAllowedBestEffort(): Promise<
   try {
     const policy =
       await getProjectHubApi().system.getManagedProjectEgressPolicy({
+        account_id: opts.account_id,
         project_id,
         category: "file-download",
       });
@@ -206,7 +212,32 @@ async function checkManagedFileDownloadAllowedBestEffort(): Promise<
   }
 }
 
+function getManagedDownloadAccountId(
+  req: http.IncomingMessage,
+): string | undefined {
+  const account_id = getSingleHeaderValue(
+    req.headers[PROJECT_PROXY_ACCOUNT_ID_HEADER],
+  );
+  return `${account_id ?? ""}`.trim() || undefined;
+}
+
+function applyProjectFileCorsHeaders(
+  req: http.IncomingMessage,
+  headers: Record<string, string | number>,
+): void {
+  if (!/^(GET|HEAD)$/i.test(req.method ?? "GET")) {
+    return;
+  }
+  const origin = `${req.headers.origin ?? ""}`.trim();
+  if (!origin) return;
+  headers["Access-Control-Allow-Origin"] = origin;
+  headers["Access-Control-Allow-Credentials"] = "true";
+  headers["Access-Control-Expose-Headers"] = DOWNLOAD_ERROR_HEADER;
+  headers["Vary"] = "Origin";
+}
+
 async function recordManagedFileDownloadBestEffort(opts: {
+  account_id?: string;
   bytes: number;
   request_path: string;
   partial: boolean;
@@ -214,6 +245,7 @@ async function recordManagedFileDownloadBestEffort(opts: {
   if (!(opts.bytes > 0)) return;
   try {
     await getProjectHubApi().system.recordManagedProjectEgress({
+      account_id: opts.account_id,
       project_id,
       category: "file-download",
       bytes: opts.bytes,
@@ -978,16 +1010,23 @@ ${entries}
       "Content-Length": contentLength,
       ...(extraHeaders ?? {}),
     };
+    applyProjectFileCorsHeaders(req, headers);
     if (partial) {
       headers["Content-Range"] = `bytes ${start}-${end}/${info.size}`;
     }
     if (explicitDownload && (req.method === "GET" || req.method === "HEAD")) {
-      const policy = await checkManagedFileDownloadAllowedBestEffort();
+      const policy = await checkManagedFileDownloadAllowedBestEffort({
+        account_id: getManagedDownloadAccountId(req),
+      });
       if (!policy.allowed) {
-        res.writeHead(429, {
+        const blockedHeaders: Record<string, string | number> = {
+          ...headers,
           "Content-Type": "text/plain; charset=utf-8",
           [DOWNLOAD_ERROR_HEADER]: encodeDownloadErrorHeader(policy.message),
-        });
+        };
+        delete blockedHeaders["Content-Length"];
+        delete blockedHeaders["Content-Range"];
+        res.writeHead(429, blockedHeaders);
         if (req.method === "HEAD") {
           res.end();
         } else {
@@ -998,6 +1037,7 @@ ${entries}
     }
     if (req.method === "GET" && explicitDownload) {
       await recordManagedFileDownloadBestEffort({
+        account_id: getManagedDownloadAccountId(req),
         bytes: contentLength,
         request_path: req.url ?? "",
         partial,

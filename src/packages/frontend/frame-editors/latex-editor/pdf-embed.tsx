@@ -9,6 +9,8 @@ This is a renderer using the embed tag, so works with browsers that have a PDF v
 
 import { React } from "@cocalc/frontend/app-framework";
 import { raw_url } from "@cocalc/frontend/frame-editors/frame-tree/util";
+import { Loading } from "@cocalc/frontend/components";
+import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
 import { pdf_path } from "./util";
 
 export interface Props {
@@ -24,9 +26,15 @@ export const PDFEmbed: React.FC<Props> = React.memo((props: Props) => {
   const { actions, id, project_id, is_current, path, reload } = props;
 
   const embedRef = React.useRef<any>(null);
+  const src = useProjectHostAuthedUrl({
+    project_id,
+    url: raw_url(project_id, pdf_path(path), `param=${reload}`),
+  });
 
   function render_embed(): React.JSX.Element {
-    let src = raw_url(project_id, pdf_path(path), `param=${reload}`);
+    if (!src) {
+      return <Loading theme="medium" />;
+    }
     return (
       <embed
         ref={embedRef}

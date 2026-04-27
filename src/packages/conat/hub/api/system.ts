@@ -217,7 +217,9 @@ export interface ProjectAppPublicPolicy {
   warnings: string[];
 }
 
-export type ManagedProjectEgressCategory = "file-download";
+export type ManagedProjectEgressCategory =
+  | "file-download"
+  | "interactive-conat";
 
 export interface ParallelOpsWorkerOwnerStatus {
   owner_id: string;

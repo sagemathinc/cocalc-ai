@@ -9,6 +9,7 @@ import {
   Collapse,
   Descriptions,
   Divider,
+  Progress,
   Space,
   Tag,
   Table,
@@ -107,15 +108,21 @@ function formatQuotaValue(key: string, value: unknown): string {
   return unit ? `${rounded} ${unit}` : `${rounded}`;
 }
 
-function formatBytes(bytes: number): string {
+function formatDecimalBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB", "PB"];
   let value = bytes;
   let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
     unit += 1;
   }
-  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+  const digits = Number.isInteger(value) || value >= 10 || unit === 0 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unit]}`;
+}
+
+function getProgressPercent(current: number, limit: number): number {
+  if (!(limit > 0) || !Number.isFinite(limit)) return 0;
+  return Math.max(0, Math.min(100, (current / limit) * 100));
 }
 
 export interface ProjectDefaultItem {
@@ -182,6 +189,11 @@ export interface UsageStatusItem {
   label: string;
   value: string;
   danger?: boolean;
+  progress?: {
+    current: number;
+    limit: number;
+    caption: string;
+  };
 }
 
 function getUsageLimitsItems(
@@ -201,7 +213,7 @@ function getUsageLimitsItems(
     items.push({
       key: "total_storage_soft_bytes",
       label: "Total account storage soft cap",
-      value: formatBytes(totalSoft),
+      value: formatDecimalBytes(totalSoft),
     });
   }
   const totalHard = usageLimits.total_storage_hard_bytes;
@@ -209,7 +221,7 @@ function getUsageLimitsItems(
     items.push({
       key: "total_storage_hard_bytes",
       label: "Total account storage hard cap",
-      value: formatBytes(totalHard),
+      value: formatDecimalBytes(totalHard),
     });
   }
   const maxProjects = usageLimits.max_projects;
@@ -225,7 +237,7 @@ function getUsageLimitsItems(
     items.push({
       key: "egress_5h_bytes",
       label: "Data transfer 5-hour window",
-      value: formatBytes(egress5h),
+      value: formatDecimalBytes(egress5h),
     });
   }
   const egress7d = usageLimits.egress_7d_bytes;
@@ -233,7 +245,7 @@ function getUsageLimitsItems(
     items.push({
       key: "egress_7d_bytes",
       label: "Data transfer 7-day window",
-      value: formatBytes(egress7d),
+      value: formatDecimalBytes(egress7d),
     });
   }
   const egressPolicy = usageLimits.egress_policy;
@@ -260,22 +272,66 @@ function getUsageLimitsItems(
 
 function getUsageStatusItems(
   usageStatus?: MembershipUsageStatus | null,
+  usageLimits?: Record<string, unknown>,
 ): UsageStatusItem[] {
   if (!usageStatus) return [];
+  const maxProjects =
+    typeof usageLimits?.max_projects === "number" &&
+    Number.isFinite(usageLimits.max_projects)
+      ? usageLimits.max_projects
+      : undefined;
+  const totalStorageProgressLimit =
+    typeof usageStatus.total_storage_hard_bytes === "number" &&
+    Number.isFinite(usageStatus.total_storage_hard_bytes) &&
+    usageStatus.total_storage_hard_bytes > 0
+      ? usageStatus.total_storage_hard_bytes
+      : typeof usageStatus.total_storage_soft_bytes === "number" &&
+          Number.isFinite(usageStatus.total_storage_soft_bytes) &&
+          usageStatus.total_storage_soft_bytes > 0
+        ? usageStatus.total_storage_soft_bytes
+        : undefined;
+  const egress5hLimit =
+    typeof usageLimits?.egress_5h_bytes === "number" &&
+    Number.isFinite(usageLimits.egress_5h_bytes) &&
+    usageLimits.egress_5h_bytes > 0
+      ? usageLimits.egress_5h_bytes
+      : undefined;
+  const egress7dLimit =
+    typeof usageLimits?.egress_7d_bytes === "number" &&
+    Number.isFinite(usageLimits.egress_7d_bytes) &&
+    usageLimits.egress_7d_bytes > 0
+      ? usageLimits.egress_7d_bytes
+      : undefined;
   const items: UsageStatusItem[] = [
     {
       key: "owned_project_count",
       label: "Owned projects",
       value: `${usageStatus.owned_project_count}`,
       danger: usageStatus.over_max_projects === true,
+      progress:
+        maxProjects != null
+          ? {
+              current: usageStatus.owned_project_count,
+              limit: maxProjects,
+              caption: `${usageStatus.owned_project_count} of ${maxProjects} project slots`,
+            }
+          : undefined,
     },
     {
       key: "total_storage_bytes",
       label: "Current total account storage",
-      value: formatBytes(usageStatus.total_storage_bytes),
+      value: formatDecimalBytes(usageStatus.total_storage_bytes),
       danger:
         usageStatus.over_total_storage_hard === true ||
         usageStatus.over_total_storage_soft === true,
+      progress:
+        totalStorageProgressLimit != null
+          ? {
+              current: usageStatus.total_storage_bytes,
+              limit: totalStorageProgressLimit,
+              caption: `${formatDecimalBytes(usageStatus.total_storage_bytes)} of ${formatDecimalBytes(totalStorageProgressLimit)}`,
+            }
+          : undefined,
     },
   ];
   if (
@@ -296,7 +352,7 @@ function getUsageStatusItems(
     items.push({
       key: "total_storage_soft_remaining_bytes",
       label: "Storage remaining before soft cap",
-      value: formatBytes(
+      value: formatDecimalBytes(
         Math.abs(usageStatus.total_storage_soft_remaining_bytes),
       ),
       danger: usageStatus.total_storage_soft_remaining_bytes < 0,
@@ -309,7 +365,7 @@ function getUsageStatusItems(
     items.push({
       key: "total_storage_hard_remaining_bytes",
       label: "Storage remaining before hard cap",
-      value: formatBytes(
+      value: formatDecimalBytes(
         Math.abs(usageStatus.total_storage_hard_remaining_bytes),
       ),
       danger: usageStatus.total_storage_hard_remaining_bytes < 0,
@@ -342,8 +398,16 @@ function getUsageStatusItems(
     items.push({
       key: "managed_egress_5h_bytes",
       label: "Managed egress used in 5 hours",
-      value: formatBytes(usageStatus.managed_egress_5h_bytes),
+      value: formatDecimalBytes(usageStatus.managed_egress_5h_bytes),
       danger: usageStatus.over_managed_egress_5h === true,
+      progress:
+        egress5hLimit != null
+          ? {
+              current: usageStatus.managed_egress_5h_bytes,
+              limit: egress5hLimit,
+              caption: `${formatDecimalBytes(usageStatus.managed_egress_5h_bytes)} of ${formatDecimalBytes(egress5hLimit)}`,
+            }
+          : undefined,
     });
   }
   if (
@@ -353,8 +417,16 @@ function getUsageStatusItems(
     items.push({
       key: "managed_egress_7d_bytes",
       label: "Managed egress used in 7 days",
-      value: formatBytes(usageStatus.managed_egress_7d_bytes),
+      value: formatDecimalBytes(usageStatus.managed_egress_7d_bytes),
       danger: usageStatus.over_managed_egress_7d === true,
+      progress:
+        egress7dLimit != null
+          ? {
+              current: usageStatus.managed_egress_7d_bytes,
+              limit: egress7dLimit,
+              caption: `${formatDecimalBytes(usageStatus.managed_egress_7d_bytes)} of ${formatDecimalBytes(egress7dLimit)}`,
+            }
+          : undefined,
     });
   }
   return items;
@@ -444,7 +516,8 @@ function renderManagedEgressBreakdown(
         <Space wrap>
           {entries.map(([category, bytes]) => (
             <Tag key={category}>
-              {formatManagedEgressCategory(category)}: {formatBytes(bytes)}
+              {formatManagedEgressCategory(category)}:{" "}
+              {formatDecimalBytes(bytes)}
             </Tag>
           ))}
         </Space>
@@ -582,7 +655,10 @@ export function MembershipStatusPanel({
 
   const projectDefaultsItems = getProjectDefaultsItems(projectDefaults);
   const usageLimitItems = getUsageLimitsItems(usageLimits);
-  const usageStatusItems = getUsageStatusItems(details?.usage_status);
+  const usageStatusItems = getUsageStatusItems(
+    details?.usage_status,
+    usageLimits,
+  );
   const usageStatusAlerts = getUsageStatusAlerts(details?.usage_status);
 
   return (
@@ -733,11 +809,27 @@ export function MembershipStatusPanel({
               >
                 {usageStatusItems.map((item) => (
                   <Descriptions.Item key={item.key} label={item.label}>
-                    {item.danger ? (
-                      <Text type="danger">{item.value}</Text>
-                    ) : (
-                      item.value
-                    )}
+                    <div>
+                      {item.danger ? (
+                        <Text type="danger">{item.value}</Text>
+                      ) : (
+                        item.value
+                      )}
+                      {item.progress ? (
+                        <div style={{ marginTop: "6px", maxWidth: 320 }}>
+                          <Progress
+                            percent={getProgressPercent(
+                              item.progress.current,
+                              item.progress.limit,
+                            )}
+                            showInfo={false}
+                            size="small"
+                            status={item.danger ? "exception" : "normal"}
+                          />
+                          <Text type="secondary">{item.progress.caption}</Text>
+                        </div>
+                      ) : null}
+                    </div>
                   </Descriptions.Item>
                 ))}
               </Descriptions>

@@ -35,6 +35,7 @@ import {
   get_local_storage,
   set_local_storage,
 } from "@cocalc/frontend/misc/local-storage";
+import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { use_font_size_scaling } from "../frame-tree/hooks";
 import { EditorState } from "../frame-tree/types";
@@ -108,6 +109,10 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
   const [init, setInit] = useState<boolean>(mode == "rmd");
   const [srcDoc, setSrcDoc] = useState<string | null>(null);
   const [trust, setTrust0] = useState<boolean>(isTrusted(props));
+  const trustedSrc = useProjectHostAuthedUrl({
+    project_id,
+    url: trust ? `${raw_url(project_id, path)}?param=${reload}` : undefined,
+  });
   const setTrust = (trust) => {
     setTrusted(props, trust);
     setTrust0(trust);
@@ -257,11 +262,17 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
 
   function render_iframe() {
     if (trust) {
-      const src = `${raw_url(project_id, path)}?param=${reload}`;
+      if (!trustedSrc) {
+        return (
+          <div style={{ margin: "15px auto" }}>
+            <Spin />
+          </div>
+        );
+      }
       return (
         <iframe
           ref={iframe}
-          src={src}
+          src={trustedSrc}
           width={"100%"}
           height={"100%"}
           style={{ border: 0, ...style }}

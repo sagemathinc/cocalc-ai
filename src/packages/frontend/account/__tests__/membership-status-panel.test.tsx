@@ -37,6 +37,7 @@ jest.mock("antd", () => {
           {children}
         </div>
       ) : null,
+    Progress: ({ percent }: any) => <div>{`progress:${percent}`}</div>,
     Space: Div,
     Tag: Div,
     Table: Div,
@@ -246,7 +247,18 @@ describe("MembershipStatusPanel", () => {
 
   it("shows recent managed egress event details", async () => {
     api
-      .mockResolvedValueOnce({ class: "pro", source: "subscription" })
+      .mockResolvedValueOnce({
+        class: "pro",
+        source: "subscription",
+        entitlements: {
+          usage_limits: {
+            total_storage_soft_bytes: 1000000000,
+            total_storage_hard_bytes: 3000000000,
+            egress_5h_bytes: 1000000000,
+            egress_7d_bytes: 3000000000,
+          },
+        },
+      })
       .mockResolvedValueOnce([{ id: "pro", label: "Pro" }]);
     getMembershipDetails.mockResolvedValueOnce({
       candidates: [],
@@ -256,7 +268,11 @@ describe("MembershipStatusPanel", () => {
         owned_project_count: 1,
         sampled_project_count: 1,
         unsampled_project_count: 0,
-        total_storage_bytes: 10,
+        total_storage_bytes: 500000000,
+        total_storage_soft_bytes: 1000000000,
+        total_storage_hard_bytes: 3000000000,
+        managed_egress_5h_bytes: 500000000,
+        managed_egress_7d_bytes: 1500000000,
         managed_egress_recent_events: [
           {
             project_id: "project-1",
@@ -273,7 +289,10 @@ describe("MembershipStatusPanel", () => {
     render(<MembershipStatusPanel showHeader={false} />);
 
     await waitFor(() => {
+      expect(screen.getAllByText("1 GB").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("3 GB").length).toBeGreaterThan(0);
       expect(screen.getByText("View recent events (1)")).toBeTruthy();
+      expect(screen.getAllByText("500 MB").length).toBeGreaterThan(0);
     });
 
     fireEvent.click(screen.getByText("View recent events (1)"));

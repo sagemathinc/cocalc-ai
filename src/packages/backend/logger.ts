@@ -22,6 +22,19 @@ const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
 const COCALC = debug("cocalc");
 
 let _trimLogFileSizePath = "";
+function isTestRuntime(): boolean {
+  const globals = globalThis as Record<string, unknown>;
+  return (
+    process.env.SMC_TEST != null ||
+    process.env.COCALC_TEST_MODE != null ||
+    process.env.NODE_ENV === "test" ||
+    process.env.JEST_WORKER_ID != null ||
+    process.argv.some((arg) => arg.includes("jest")) ||
+    globals.jest != null ||
+    (globals.expect != null && globals.describe != null)
+  );
+}
+
 export function trimLogFileSize() {
   // THIS JUST DOESN'T REALLY WORK!
   return;
@@ -69,7 +82,7 @@ function myFormat(...args): string {
 }
 
 function defaultTransports(): { console?: boolean; file?: string } {
-  if (process.env.SMC_TEST) {
+  if (isTestRuntime()) {
     return {};
   } else if (process.env.NODE_ENV == "production") {
     return { console: true };
@@ -84,12 +97,15 @@ function initTransports() {
     return;
   }
   const transports = defaultTransports();
-  if (process.env.DEBUG_CONSOLE) {
-    transports.console =
-      process.env.DEBUG_CONSOLE != "no" && process.env.DEBUG_CONSOLE != "false";
-  }
-  if (process.env.DEBUG_FILE != null) {
-    transports.file = process.env.DEBUG_FILE;
+  if (!isTestRuntime()) {
+    if (process.env.DEBUG_CONSOLE) {
+      transports.console =
+        process.env.DEBUG_CONSOLE != "no" &&
+        process.env.DEBUG_CONSOLE != "false";
+    }
+    if (process.env.DEBUG_FILE != null) {
+      transports.file = process.env.DEBUG_FILE;
+    }
   }
   let fileStream;
   if (transports.file) {
@@ -105,7 +121,7 @@ function initTransports() {
       flags: "a",
     });
     fileStream.on("error", (err) => {
-      if (transports.console) {
+      if (transports.console && !isTestRuntime()) {
         console.warn(`CoCalc debug file logging disabled for "${file}":`, err);
       }
       transports.file = undefined;
@@ -116,6 +132,7 @@ function initTransports() {
   }
   let firstLog: boolean = true;
   COCALC.log = (...args) => {
+    if (isTestRuntime()) return;
     if (!transports.file && !transports.console) return;
     if (firstLog && transports.file) {
       const announce = `***\n\nLogging to "${transports.file}"${
