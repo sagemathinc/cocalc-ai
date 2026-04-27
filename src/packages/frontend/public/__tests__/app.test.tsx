@@ -90,6 +90,7 @@ describe("getInfoRouteFromPath", () => {
   });
 
   it("recognizes software routes when booting from a static content entry", () => {
+    expect(isPublicTarget("/")).toBe(true);
     expect(isPublicTarget("/software/cocalc-plus")).toBe(true);
     expect(isPublicTarget("/base/software/cocalc-plus")).toBe(true);
     expect(isPublicTarget("/pricing")).toBe(true);

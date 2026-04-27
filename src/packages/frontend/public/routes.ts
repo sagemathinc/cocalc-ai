@@ -181,6 +181,9 @@ export function topLevelInfoView(
 
 export function isPublicTarget(target?: string | null): target is string {
   if (!target) return false;
+  if (target === "/" || target === appBasePath || target === `${appBasePath}/`) {
+    return true;
+  }
   return /\/(auth|sso|redeem|features|support|about|pricing|policies|news|software|lang|[a-z]{2}(-[A-Z]{2})?)(\/|$)/.test(
     target,
   );
