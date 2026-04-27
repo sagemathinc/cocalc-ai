@@ -10,6 +10,13 @@ describe("codex chatbot identity", () => {
     expect(isChatBot("gpt-5.5")).toBe(true);
     expect(isChatBot("gpt-5.4-mini")).toBe(true);
     expect(isChatBot("gpt-5.3-codex-spark")).toBe(true);
+    expect(isChatBot("openai-codex-agent")).toBe(true);
+  });
+
+  it("does not treat non-codex provider ids as chatbots anymore", () => {
+    expect(isChatBot("chatgpt")).toBe(false);
+    expect(isChatBot("openai-gpt-4o")).toBe(false);
+    expect(isChatBot("google-gemini-2.5-pro")).toBe(false);
   });
 
   it("renders codex model names with model id in chat", () => {

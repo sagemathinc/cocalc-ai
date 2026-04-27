@@ -34,7 +34,7 @@ const CIRCLE_INNER_STYLE: CSSProperties = {
 } as const;
 
 interface Props {
-  account_id?: string; // if not given useful as a placeholder in the UI (e.g., if we don't know account_id yet); uuid or "chatgpt" or "openai-[model]".
+  account_id?: string; // if not given useful as a placeholder in the UI (e.g., if we don't know account_id yet); uuid or Codex assistant/model id.
   size?: number; // in pixels
   max_age_s?: number; // if given fade the avatar out over time.
   project_id?: string; // if given, showing avatar info for a project (or specific file)

@@ -1,4 +1,4 @@
-// LLM handling for chat actions.
+// Codex handling for chat actions.
 // This frontend path is now Codex-only:
 // - resolves whether a message should go to Codex,
 // - normalizes regenerate input,
@@ -65,7 +65,7 @@ export async function processLLM({
 
   const acpPromptOverride = `${(message as any)?.acp_prompt ?? ""}`.trim();
 
-  track("chatgpt", {
+  track("codex", {
     project_id: store.get("project_id"),
     path: store.get("path"),
     type: "chat",

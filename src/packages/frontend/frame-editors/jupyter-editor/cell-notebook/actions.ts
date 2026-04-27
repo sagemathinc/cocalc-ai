@@ -738,7 +738,7 @@ export class NotebookFrameActions {
     this.call_input_editor_method(id, "save");
   }
 
-  // Used for implementing actions and chatgpt
+  // Used for implementing actions and Codex integration.
   get_cell_input(id: string): string {
     if (this.input_editors[id] != null) {
       this.call_input_editor_method(id, "save");
@@ -746,7 +746,7 @@ export class NotebookFrameActions {
     return this.jupyter_actions.store.getIn(["cells", id, "input"], "");
   }
 
-  // used for chatgpt
+  // used for Codex integration
   getCellSelection(id: string): string {
     return this.input_editors[id]?.["getSelection"]?.() ?? "";
   }

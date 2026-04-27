@@ -1,80 +1,22 @@
 /*
-We abuse the account_id field in some cases, especially chat, to also
-be a string (not a uuid) to refer to various chatbots.  Any code that
-displays or detects this *should* go through the functions below.
-
-When new models are added, e.g., Claude soon (!), they will go here.
-
+Some chat/UI surfaces still use `account_id`-shaped strings for assistant
+messages. The product is now Codex-only, so bot identity here is intentionally
+limited to Codex agent ids and Codex model ids.
 */
 
-import { redux } from "@cocalc/frontend/app-framework";
-import {
-  LANGUAGE_MODELS,
-  LANGUAGE_MODEL_PREFIXES,
-  LLM_USERNAMES,
-  fromAnthropicService,
-  fromCustomOpenAIModel,
-  fromMistralService,
-  fromOllamaModel,
-  isAnthropicService,
-  isCustomOpenAI,
-  isMistralService,
-  isOllamaLLM,
-} from "@cocalc/util/db-schema/llm-utils";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 
-function isCodexModelId(account_id: string): boolean {
-  return isCodexModelName(account_id);
-}
-
-// we either check if the prefix is one of the known ones (used in some circumstances)
-// or if the account id is exactly one of the language models (more precise)
 export function isChatBot(account_id?: string): boolean {
-  if (typeof account_id !== "string") return false;
-  return (
-    isCodexModelId(account_id) ||
-    LLM_USERNAMES[account_id] ||
-    LANGUAGE_MODEL_PREFIXES.some((prefix) => account_id?.startsWith(prefix)) ||
-    LANGUAGE_MODELS.some((model) => account_id === model) ||
-    isOllamaLLM(account_id) ||
-    isCustomOpenAI(account_id)
-  );
+  return typeof account_id === "string" && isCodexModelName(account_id);
 }
 
 export function chatBotName(account_id?: string): string {
-  if (typeof account_id !== "string") return "ChatBot";
-  if (isCodexModelId(account_id)) {
+  if (typeof account_id !== "string") return "Codex Agent";
+  if (isCodexModelName(account_id)) {
     if (account_id === "codex-agent" || account_id === "openai-codex-agent") {
       return "Codex Agent";
     }
     return `Codex Agent (${account_id})`;
   }
-  if (LLM_USERNAMES[account_id]) return LLM_USERNAMES[account_id];
-  if (account_id.startsWith("chatgpt")) {
-    return LLM_USERNAMES[account_id] ?? "ChatGPT";
-  }
-  if (account_id.startsWith("openai-")) {
-    return LLM_USERNAMES[account_id.slice("openai-".length)] ?? "ChatGPT";
-  }
-  if (account_id.startsWith("google-")) {
-    return LLM_USERNAMES[account_id.slice("google-".length)] ?? "Gemini";
-  }
-  if (isMistralService(account_id)) {
-    return LLM_USERNAMES[fromMistralService(account_id)] ?? "Mistral";
-  }
-  if (isAnthropicService(account_id)) {
-    return LLM_USERNAMES[fromAnthropicService(account_id)] ?? "Anthropic";
-  }
-  if (isOllamaLLM(account_id)) {
-    const ollama = redux.getStore("customize").get("ollama")?.toJS() ?? {};
-    const key = fromOllamaModel(account_id);
-    return ollama[key]?.display ?? "Ollama";
-  }
-  if (isCustomOpenAI(account_id)) {
-    const custom_openai =
-      redux.getStore("customize").get("custom_openai")?.toJS() ?? {};
-    const key = fromCustomOpenAIModel(account_id);
-    return custom_openai[key]?.display ?? "OpenAI (custom)";
-  }
-  return "ChatBot";
+  return "Codex Agent";
 }

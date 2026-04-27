@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { isChatBot } from "@cocalc/frontend/account/chatbot";
 import { lite } from "@cocalc/frontend/lite";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
@@ -98,7 +99,7 @@ export default function Composing({ actions, accountId, userMap }: Props) {
             {threadLabel ? ` in "${threadLabel}"` : ""}
             ...
           </span>
-          {senderId?.startsWith("chatgpt") && (
+          {isChatBot(senderId) && (
             <ProgressEstimate
               style={{ marginLeft: "15px", maxWidth: "600px" }}
               seconds={5}

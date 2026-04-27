@@ -3727,7 +3727,7 @@ export class BaseEditorActions<
   }
 
   // Overload this in a derived class to support editors other than cm.
-  // This is used by the chatgpt function.
+  // This is used by the Codex command path.
   protected languageModelGetText(
     frameId: string,
     scope: LanguageModelScope = "all",

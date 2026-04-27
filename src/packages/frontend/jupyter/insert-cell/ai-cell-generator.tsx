@@ -183,7 +183,7 @@ export function AIGenerateCodeCell({
           model: DEFAULT_GENERATE_AGENT_MODEL,
           path,
         });
-        track("chatgpt", {
+        track("codex", {
           project_id,
           path,
           tag: "generate-jupyter-cell",
