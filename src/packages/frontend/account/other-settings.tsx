@@ -292,7 +292,7 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
         <FormattedMessage
           id="account.other-settings.llm.disable_all"
           defaultMessage={`<strong>Disable all AI integrations</strong>:
-            code generation, explanation buttons in Jupyter, @chatgpt mentions, etc.`}
+            code generation, explanation buttons in Jupyter, and other AI-powered tools.`}
         />
       </Switch>
     );
