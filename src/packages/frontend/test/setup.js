@@ -9,6 +9,34 @@ global.TextDecoder = TextDecoder;
 // In production builds DEBUG is injected by the bundler. For tests, default to false.
 global.DEBUG = false;
 
+if (typeof window !== "undefined" && !window.matchMedia) {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query) => ({
+      addEventListener: jest.fn(),
+      addListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+      matches: false,
+      media: query,
+      onchange: null,
+      removeEventListener: jest.fn(),
+      removeListener: jest.fn(),
+    }),
+  });
+}
+
+if (typeof global.ResizeObserver === "undefined") {
+  const ResizeObserver = class ResizeObserver {
+    disconnect() {}
+    observe() {}
+    unobserve() {}
+  };
+  global.ResizeObserver = ResizeObserver;
+  if (typeof window !== "undefined") {
+    window.ResizeObserver = ResizeObserver;
+  }
+}
+
 // Minimal jQuery stub for bootstrap-fixes and related side effects in tests.
 global.$ = function () {
   return {
