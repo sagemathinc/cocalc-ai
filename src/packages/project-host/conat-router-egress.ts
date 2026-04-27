@@ -4,6 +4,8 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
+import type { Client } from "@cocalc/conat/core/client";
+import { sysApiMany } from "@cocalc/conat/core/sys";
 import type { ConnectionStats } from "@cocalc/conat/core/types";
 import type { ConatServer } from "@cocalc/conat/core/server";
 import { hubApi } from "@cocalc/lite/hub/api";
@@ -28,6 +30,41 @@ type AccountEgressDelta = {
   socket_ids: string[];
   browser_ids: string[];
 };
+
+async function loadClusterStatsSnapshot({
+  conatServer,
+  systemClient,
+}: {
+  conatServer: ConatServer;
+  systemClient?: Client;
+}): Promise<ConnectionStatsSnapshot> {
+  if (!systemClient) {
+    return conatServer.getStatsSnapshot();
+  }
+  try {
+    if (!systemClient.isSignedIn()) {
+      await systemClient.waitUntilSignedIn({ timeout: 5000 });
+    }
+    if (!systemClient.isSignedIn()) {
+      return conatServer.getStatsSnapshot();
+    }
+    const responses = await sysApiMany(systemClient, {
+      maxWait: 2000,
+      maxMessages: 64,
+    }).stats();
+    const snapshot: ConnectionStatsSnapshot = {};
+    for (const response of responses ?? []) {
+      for (const socketStatsById of Object.values(response ?? {})) {
+        Object.assign(snapshot, socketStatsById ?? {});
+      }
+    }
+    return Object.keys(snapshot).length > 0
+      ? snapshot
+      : conatServer.getStatsSnapshot();
+  } catch {
+    return conatServer.getStatsSnapshot();
+  }
+}
 
 function envPositiveInt(name: string, fallback: number): number {
   const raw = `${process.env[name] ?? ""}`.trim();
@@ -181,6 +218,7 @@ function buildBlockedMessage(policy: {
 
 export function startConatRouterManagedEgressLoop({
   conatServer,
+  systemClient,
   loggerName = "project-host:conat-router-daemon:managed-egress",
   intervalMs = envPositiveInt(
     "COCALC_PROJECT_HOST_CONAT_ROUTER_MANAGED_EGRESS_INTERVAL_MS",
@@ -188,11 +226,12 @@ export function startConatRouterManagedEgressLoop({
   ),
 }: {
   conatServer: ConatServer;
+  systemClient?: Client;
   loggerName?: string;
   intervalMs?: number;
 }): () => void {
   const logger = getLogger(loggerName);
-  let previous = conatServer.getStatsSnapshot();
+  let previous: ConnectionStatsSnapshot = {};
   let running = false;
 
   const runOnce = async () => {
@@ -200,7 +239,10 @@ export function startConatRouterManagedEgressLoop({
     running = true;
     try {
       const mode = getProjectHostManagedEgressMode();
-      const current = conatServer.getStatsSnapshot();
+      const current = await loadClusterStatsSnapshot({
+        conatServer,
+        systemClient,
+      });
       const deltas = summarizeManagedConatEgressDeltas({ previous, current });
       const activeSocketsByAccount = summarizeActiveSocketsByAccount(current);
       previous = current;

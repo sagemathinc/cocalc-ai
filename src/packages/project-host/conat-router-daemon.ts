@@ -65,11 +65,16 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
       hostId,
       systemAccountPassword,
     });
+  const localSystemClient = conatServer.client({
+    systemAccountPassword,
+  });
   const stopTrafficMetricsLoop = startConatRouterTrafficMetricsLoop({
     conatServer,
+    systemClient: localSystemClient,
   });
   const stopManagedEgressLoop = startConatRouterManagedEgressLoop({
     conatServer,
+    systemClient: localSystemClient,
   });
   logger.info("project-host conat router daemon ready", {
     hostId,
@@ -89,6 +94,11 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
       stopManagedEgressLoop();
       stopEventLoopStallMonitor();
       setMasterConatClient(undefined);
+      try {
+        localSystemClient?.close?.();
+      } catch {
+        // ignore close errors
+      }
       try {
         masterClient?.close();
       } catch {
