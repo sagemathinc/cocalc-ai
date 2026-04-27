@@ -5,16 +5,13 @@
 
 import * as CodeMirror from "codemirror";
 
-import { redux } from "@cocalc/frontend/app-framework";
 import {
   commands as EDIT_COMMANDS,
   FONT_FACES,
 } from "@cocalc/frontend/editors/editor-button-bar";
-import { getLocale } from "@cocalc/frontend/i18n";
 import { markdown_to_html } from "@cocalc/frontend/markdown";
 import { open_new_tab } from "@cocalc/frontend/misc";
 import { defaults, required, startswith } from "@cocalc/util/misc";
-import { ai_gen_formula } from "./ai-formula";
 
 /*
 Apply an edit to the selected text in an editor; works with one or more
@@ -58,7 +55,7 @@ CodeMirror.defineExtension(
     const default_mode = opts.mode ?? cm.get_edit_mode();
     const canonical_mode = (name) => name ?? default_mode;
 
-    const { args, cmd, project_id } = opts;
+    const { args, cmd } = opts;
 
     // FUTURE: will have to make this more sophisticated, so it can
     // deal with nesting, spans, etc.
@@ -367,21 +364,6 @@ CodeMirror.defineExtension(
             src = $("<div>").html(markdown_to_html(src)).text();
             done = true;
           }
-          break;
-
-        case "ai_formula":
-          if (project_id != null) {
-            const account_store = redux.getStore("account");
-            const locale = getLocale(account_store.get("other_settings"));
-
-            src = await ai_gen_formula({
-              mode,
-              text: src,
-              project_id,
-              locale,
-            });
-          }
-          done = true;
           break;
       }
 

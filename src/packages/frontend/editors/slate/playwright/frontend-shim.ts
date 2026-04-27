@@ -79,7 +79,6 @@ export const useFrameContext = () => ({ project_id: "", path: "" });
 export const i18n = (s: string) => s;
 export const getLocale = () => "en";
 export const alert_message = () => undefined;
-export const ai_gen_formula = async () => "";
 export const get_insert_image_opts_from_user = async () => null;
 export const get_insert_link_opts_from_user = async () => null;
 export const get_insert_special_char_from_user = async () => null;

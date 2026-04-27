@@ -55,7 +55,6 @@ const cm: EditorDescription = {
     "minimap_settings",
   ]),
   buttons: set([
-    "format-ai_formula",
     "decrease_font_size",
     "increase_font_size",
     "build",

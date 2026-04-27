@@ -6,9 +6,7 @@
 import { delay } from "awaiting";
 import { isEqual } from "lodash";
 
-import { redux } from "@cocalc/frontend/app-framework";
 import { commands } from "@cocalc/frontend/editors/editor-button-bar";
-import { getLocale } from "@cocalc/frontend/i18n";
 import { is_array, startswith } from "@cocalc/util/misc";
 import {
   BaseRange,
@@ -28,7 +26,6 @@ import { emptyParagraph } from "../padding";
 import { ReactEditor } from "../slate-react";
 import { ensurePoint, ensureRange } from "../slate-util";
 import { removeBlankLines } from "../util";
-import { insertAIFormula } from "./insert-ai-formula";
 import { insertImage } from "./insert-image";
 import { insertLink } from "./insert-link";
 import { insertSpecialChar } from "./insert-special-char";
@@ -304,12 +301,7 @@ export function restoreSelectionAndFocus(editor: SlateEditor): void {
   setSelectionAndFocus(editor, lastSelection);
 }
 
-export async function formatAction(
-  editor: SlateEditor,
-  cmd: string,
-  args,
-  project_id?: string,
-) {
+export async function formatAction(editor: SlateEditor, cmd: string, args) {
   const isFocused = ReactEditor.isFocused(editor);
   const { selection, lastSelection } = editor;
   try {
@@ -404,23 +396,6 @@ export async function formatAction(
         editor,
         "\n```\n" + selectionToText(editor).trim() + "\n```\n",
       );
-      return;
-    }
-
-    if (cmd === "ai_formula") {
-      if (project_id == null) throw new Error("ai_formula requires project_id");
-      const account_store = redux.getStore("account");
-      const locale = getLocale(account_store.get("other_settings"));
-      const formula = await insertAIFormula(project_id, locale);
-      const value = removeDollars(removeBlankLines(formula.trim()));
-      const node: Node = {
-        type: "math_inline",
-        value,
-        isInline: true,
-        isVoid: true,
-        children: [{ text: value }],
-      };
-      Transforms.insertFragment(editor, [node]);
       return;
     }
 
@@ -657,17 +632,4 @@ function formatQuote(editor): void {
       mode: "lowest",
     });
   }
-}
-
-// Get rid of starting and ending $..$ or $$..$$ dollar signs
-function removeDollars(formula: string): string {
-  if (formula.startsWith("$") && formula.endsWith("$")) {
-    return formula.substring(1, formula.length - 1);
-  }
-
-  if (formula.startsWith("$$") && formula.endsWith("$$")) {
-    return formula.substring(2, formula.length - 2);
-  }
-
-  return formula;
 }

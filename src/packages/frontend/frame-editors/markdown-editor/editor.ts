@@ -50,7 +50,6 @@ const slate: EditorDescription = {
     "help",
   ]),
   buttons: set([
-    "format-ai_formula",
     "readonly_view",
     "decrease_font_size",
     "increase_font_size",
@@ -102,7 +101,6 @@ const cm: EditorDescription = {
     "increase_font_size",
     "sync",
     "show_table_of_contents",
-    "format-ai_formula",
     "format-header",
     "format-text",
     "format-font",

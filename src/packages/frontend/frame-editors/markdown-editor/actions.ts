@@ -147,7 +147,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
       super.format_action(cmd, args, force_main);
       return;
     }
-    slateFormatAction(this.slateEditors[id], cmd, args, this.project_id);
+    slateFormatAction(this.slateEditors[id], cmd, args);
   }
 
   public getSlateEditor(id?: string): SlateEditor | undefined {
@@ -177,7 +177,8 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     }
     const blockControl = this.getBlockEditorControl(targetId);
     const preferredIndex =
-      blockControl?.getFocusedIndex?.() ?? blockControl?.getLastFocusedIndex?.();
+      blockControl?.getFocusedIndex?.() ??
+      blockControl?.getLastFocusedIndex?.();
     if (
       preferredIndex != null &&
       typeof blockControl?.restoreFocusBlock === "function" &&
