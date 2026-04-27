@@ -90,7 +90,6 @@ export interface CustomizeState {
   ssh_remote_url?: string;
 
   openai_enabled: boolean;
-  agent_openai_control_agent_enabled: boolean;
   agent_openai_codex_enabled: boolean;
   google_vertexai_enabled: boolean;
   mistral_enabled: boolean;
