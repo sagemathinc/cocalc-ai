@@ -136,7 +136,9 @@ function summarizeRawSendDeltaSockets({
       browser_id: `${stats.browser_id ?? ""}`.trim() || undefined,
     });
   }
-  out.sort((a, b) => b.bytes - a.bytes || a.socket_id.localeCompare(b.socket_id));
+  out.sort(
+    (a, b) => b.bytes - a.bytes || a.socket_id.localeCompare(b.socket_id),
+  );
   return out.slice(0, limit);
 }
 
@@ -210,6 +212,7 @@ function formatByteCount(bytes: number): string {
 
 function formatManagedEgressCategory(category: string): string {
   if (category === "file-download") return "File downloads";
+  if (category === "http-proxy") return "App server HTTP traffic";
   if (category === "interactive-conat") return "Interactive session traffic";
   return capitalize(category.replace(/[-_]/g, " "));
 }

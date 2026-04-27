@@ -219,6 +219,7 @@ export interface ProjectAppPublicPolicy {
 
 export type ManagedProjectEgressCategory =
   | "file-download"
+  | "http-proxy"
   | "interactive-conat";
 
 export interface ParallelOpsWorkerOwnerStatus {

@@ -10,6 +10,7 @@ const TABLE = "account_managed_egress_events";
 
 export type ManagedProjectEgressCategory =
   | "file-download"
+  | "http-proxy"
   | "interactive-conat";
 
 type ManagedEgressUsage = {

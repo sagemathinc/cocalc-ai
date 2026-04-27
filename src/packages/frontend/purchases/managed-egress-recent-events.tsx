@@ -27,6 +27,7 @@ function formatBytes(bytes: number): string {
 
 export function formatManagedEgressCategory(category: string): string {
   if (category === "file-download") return "File downloads";
+  if (category === "http-proxy") return "App server HTTP traffic";
   if (category === "interactive-conat") return "Interactive session traffic";
   return capitalize(category.replace(/[-_]/g, " "));
 }

@@ -127,6 +127,10 @@ import {
   isProjectHostManagedEgressEnforced,
   isProjectHostManagedEgressTrackingEnabled,
 } from "./managed-egress-runtime";
+import {
+  attachManagedHttpEgressRecorder,
+  MANAGED_HTTP_EGRESS_CATEGORY,
+} from "./http-egress";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -155,6 +159,10 @@ const PUBLIC_APP_ROUTE_CACHE_MS = Math.max(
 
 function formatManagedEgressCategory(category: string): string {
   if (category === "file-download") return "File downloads";
+  if (category === MANAGED_HTTP_EGRESS_CATEGORY) {
+    return "App server HTTP traffic";
+  }
+  if (category === "interactive-conat") return "Interactive session traffic";
   return category.replace(/[-_]/g, " ");
 }
 
@@ -460,6 +468,20 @@ export async function main(
       return false;
     }
   };
+  const isManagedProjectHttpEgressRequest = (
+    req: IncomingMessage,
+    project_id: string,
+  ): boolean => {
+    try {
+      const parsed = new URL(req.url ?? "/", "http://project-host.local");
+      return (
+        parsed.pathname.startsWith(`/${project_id}/`) &&
+        !parsed.pathname.includes(`/${project_id}/files/`)
+      );
+    } catch {
+      return false;
+    }
+  };
   const setProjectFileCorsHeaders = (
     req: IncomingMessage,
     res: ServerResponse,
@@ -589,6 +611,116 @@ export async function main(
         request_path,
         bytes,
         partial,
+        err: `${err}`,
+      });
+    }
+  };
+  const checkManagedHttpEgressAllowedBestEffort = async ({
+    project_id,
+  }: {
+    project_id: string;
+  }): Promise<
+    | {
+        allowed: true;
+      }
+    | {
+        allowed: false;
+        message: string;
+      }
+  > => {
+    if (!isProjectHostManagedEgressEnforced()) {
+      return { allowed: true };
+    }
+    try {
+      const policy = await hubApi.system.getManagedProjectEgressPolicy({
+        project_id,
+        category: MANAGED_HTTP_EGRESS_CATEGORY,
+      });
+      if (policy.allowed) {
+        return { allowed: true };
+      }
+      const breakdown = Object.entries(
+        policy.managed_egress_categories_5h_bytes ?? {},
+      )
+        .filter(
+          ([, bytes]) =>
+            typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0,
+        )
+        .map(
+          ([category, bytes]) =>
+            `${formatManagedEgressCategory(category)}: ${formatByteCount(bytes)}`,
+        );
+      const lines = [
+        "Managed app HTTP limit reached for this project.",
+        "New app HTTP responses are temporarily blocked until the egress usage window resets.",
+      ];
+      if (policy.egress_5h_bytes != null) {
+        lines.push(
+          `5-hour usage: ${formatByteCount(policy.managed_egress_5h_bytes)} / ${formatByteCount(policy.egress_5h_bytes)}.`,
+        );
+      }
+      if (policy.egress_7d_bytes != null) {
+        lines.push(
+          `7-day usage: ${formatByteCount(policy.managed_egress_7d_bytes)} / ${formatByteCount(policy.egress_7d_bytes)}.`,
+        );
+      }
+      if (breakdown.length > 0) {
+        lines.push(
+          `Current managed egress categories (5 hours): ${breakdown.join(", ")}.`,
+        );
+      }
+      return {
+        allowed: false,
+        message: lines.join("\n"),
+      };
+    } catch (err) {
+      logger.warn("unable to evaluate managed http egress policy", {
+        project_id,
+        err: `${err}`,
+      });
+      return { allowed: true };
+    }
+  };
+  const recordManagedHttpEgressBestEffort = async ({
+    project_id,
+    bytes,
+    request_path,
+    method,
+    status_code,
+    exposure_mode,
+    partial,
+  }: {
+    project_id: string;
+    bytes: number;
+    request_path: string;
+    method: string;
+    status_code: number;
+    exposure_mode: "private" | "public";
+    partial: boolean;
+  }): Promise<void> => {
+    if (!(bytes > 0) || !isProjectHostManagedEgressTrackingEnabled()) return;
+    try {
+      await hubApi.system.recordManagedProjectEgress({
+        project_id,
+        category: MANAGED_HTTP_EGRESS_CATEGORY,
+        bytes,
+        metadata: {
+          request_path,
+          method,
+          status_code,
+          exposure_mode,
+          partial,
+        },
+      });
+    } catch (err) {
+      logger.warn("unable to record managed http egress", {
+        project_id,
+        request_path,
+        method,
+        status_code,
+        exposure_mode,
+        partial,
+        bytes,
         err: `${err}`,
       });
     }
@@ -744,6 +876,41 @@ export async function main(
       }
       const publicAppHost =
         `${req.headers[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();
+      const isManagedHttpRoute =
+        !!res && isManagedProjectHttpEgressRequest(req, project_id);
+      if (isManagedHttpRoute) {
+        const allowed = await checkManagedHttpEgressAllowedBestEffort({
+          project_id,
+        });
+        if (!allowed.allowed) {
+          res.statusCode = 429;
+          res.setHeader("Content-Type", "text/plain");
+          res.end(`${allowed.message}\n`);
+          return { handled: true };
+        }
+        attachManagedHttpEgressRecorder({
+          req,
+          res,
+          exposure_mode: publicAppHost ? "public" : "private",
+          record: async ({
+            bytes,
+            request_path,
+            method,
+            status_code,
+            exposure_mode,
+            partial,
+          }) =>
+            await recordManagedHttpEgressBestEffort({
+              project_id,
+              bytes,
+              request_path,
+              method,
+              status_code,
+              exposure_mode,
+              partial,
+            }),
+        });
+      }
       if (publicAppHost) {
         req.headers.host = publicAppHost;
       }
