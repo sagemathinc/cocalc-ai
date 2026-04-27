@@ -17,8 +17,8 @@ import {
   isGoogleModel,
   isMistralModel,
   isOpenAIModel,
-} from "@cocalc/util/db-schema/llm-utils";
-import type { ChatOutput, History, Stream } from "@cocalc/util/types/llm";
+} from "@cocalc/util/db-schema/ai-models";
+import type { ChatOutput, History, Stream } from "@cocalc/util/types/ai";
 import type { AIMessageChunk } from "@langchain/core/messages";
 import type { ChatOpenAI } from "@langchain/openai";
 import { transformHistoryToMessages } from "./chat-history";

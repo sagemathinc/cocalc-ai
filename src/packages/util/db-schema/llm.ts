@@ -2,10 +2,10 @@
 // Mentally, just ignore "openai" and instead focus on "gpt-*" or "codey" or whatever they are called.
 // TODO: refactor this, the names of the tables, etc. to be more generic.
 
-import { History } from "@cocalc/util/types/llm";
+import type { History } from "@cocalc/util/types/ai";
 import { CREATED_BY, ID } from "./crm";
 import { SCHEMA as schema } from "./index";
-import { LanguageModel } from "./llm-utils";
+import { LanguageModel } from "./ai-models";
 import { Table } from "./types";
 
 export interface LLMLogEntry {

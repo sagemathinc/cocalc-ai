@@ -33,7 +33,7 @@ import {
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels, Locale } from "@cocalc/frontend/i18n";
 import { callback2, retry_until_success } from "@cocalc/util/async-utils";
-import { LLMServicesAvailable } from "@cocalc/util/db-schema/llm-utils";
+import type { AIServicesAvailable } from "@cocalc/util/db-schema/ai-models";
 import {
   Config,
   KUCALC_COCALC_COM,
@@ -43,7 +43,7 @@ import {
 } from "@cocalc/util/db-schema/site-defaults";
 import { deep_copy, dict, YEAR } from "@cocalc/util/misc";
 import * as theme from "@cocalc/util/theme";
-import { CustomLLMPublic } from "@cocalc/util/types/llm";
+import type { CustomAIModelPublic } from "@cocalc/util/types/ai";
 import { DefaultQuotaSetting, Upgrades } from "@cocalc/util/upgrades/quota";
 export { TermsOfService } from "@cocalc/frontend/customize/terms-of-service";
 import { delay } from "awaiting";
@@ -171,8 +171,8 @@ export interface CustomizeState {
   project_hosts_hyperstack_enabled?: boolean;
   project_hosts_lambda_enabled?: boolean;
 
-  ollama?: TypedMap<{ [key: string]: TypedMap<CustomLLMPublic> }>;
-  custom_openai?: TypedMap<{ [key: string]: TypedMap<CustomLLMPublic> }>;
+  ollama?: TypedMap<{ [key: string]: TypedMap<CustomAIModelPublic> }>;
+  custom_openai?: TypedMap<{ [key: string]: TypedMap<CustomAIModelPublic> }>;
   selectable_llms: List<string>;
   default_llm?: string;
 
@@ -198,7 +198,7 @@ export class CustomizeStore extends Store<CustomizeState> {
     return hosts.toJS();
   }
 
-  getEnabledLLMs(): LLMServicesAvailable {
+  getEnabledAIServices(): AIServicesAvailable {
     return {
       openai: this.get("openai_enabled"),
       google: this.get("google_vertexai_enabled"),

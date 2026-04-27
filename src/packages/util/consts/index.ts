@@ -9,7 +9,7 @@ RANDOM constants that we might use anywhere in cocalc go here.
 
 export { NOT_SIGNED_IN, versionCookieName } from "./auth";
 
-export { CONAT_LLM_HISTORY_KEY } from "./llm";
+export { CONAT_AI_HISTORY_KEY } from "./ai";
 
 export { DUMMY_SECRET } from "./project";
 export { PORT_MAX, PORT_MIN, validatePortNumber } from "./portnumber";

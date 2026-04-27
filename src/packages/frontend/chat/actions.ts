@@ -23,7 +23,7 @@ import {
   isLanguageModelService,
   model2service,
   type LanguageModel,
-} from "@cocalc/util/db-schema/llm-utils";
+} from "@cocalc/util/db-schema/ai-models";
 import { history_path, isValidUUID, uuid } from "@cocalc/util/misc";
 import { getSortedDates, getUserName } from "./chat-log";
 import { message_to_markdown } from "./message";

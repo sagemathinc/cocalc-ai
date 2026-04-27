@@ -1,22 +1,23 @@
 import {
-  DEFAULT_LLM_PRIORITY,
+  DEFAULT_AI_SERVICE_PRIORITY,
   DEFAULT_MODEL,
   getValidLanguageModelName,
+  getDefaultAIModel,
   isCoreLanguageModel,
   isFreeModel,
   LANGUAGE_MODEL_SERVICES,
   LANGUAGE_MODELS,
   LanguageService,
   LLM_COST,
-  LLMServicesAvailable,
+  AIServicesAvailable,
   model2vendor,
   OLLAMA_PREFIX,
   SERVICES,
   USER_SELECTABLE_LANGUAGE_MODELS,
   USER_SELECTABLE_LLMS_BY_VENDOR,
-} from "./llm-utils";
+} from "./ai-models";
 
-describe("llm", () => {
+describe("ai models", () => {
   const is_cocalc_com = true; // otherwise, the test makes no sense
 
   test("isFreeModel", () => {
@@ -80,7 +81,7 @@ describe("llm", () => {
 
   test("priority list is a shuffle of all llm vendors", () => {
     // except for "user"
-    const prio = DEFAULT_LLM_PRIORITY;
+    const prio = DEFAULT_AI_SERVICE_PRIORITY;
     const vend = SERVICES;
     // test, that those lists have the same elements
     expect(prio.length).toBe(vend.length);
@@ -97,7 +98,7 @@ describe("llm", () => {
       const allEnabled = LANGUAGE_MODEL_SERVICES.reduce((acc, svc) => {
         acc[svc] = disabled !== svc;
         return acc;
-      }, {}) as LLMServicesAvailable;
+      }, {}) as AIServicesAvailable;
       return getValidLanguageModelName({
         model,
         filter: allEnabled,
@@ -147,5 +148,24 @@ describe("llm", () => {
     );
     // meaningless user service
     expect(getModel("user-baz-delta99")).toEqual(DEFAULT_MODEL);
+  });
+
+  test("getDefaultAIModel remains defined for enabled services", () => {
+    expect(
+      getDefaultAIModel(
+        [...USER_SELECTABLE_LANGUAGE_MODELS],
+        {
+          openai: true,
+          google: false,
+          anthropic: false,
+          mistralai: false,
+          ollama: false,
+          custom_openai: false,
+          user: false,
+        },
+        {},
+        {},
+      ),
+    ).toBeTruthy();
   });
 });

@@ -130,7 +130,7 @@ import { saveAIResponse } from "@cocalc/server/ai/save-response";
 import {
   isCoreLanguageModel,
   type LanguageModelCore,
-} from "@cocalc/util/db-schema/llm-utils";
+} from "@cocalc/util/db-schema/ai-models";
 import { type RootfsUploadedArtifactResult } from "@cocalc/util/rootfs-images";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterBayIdsForStaticEnumerationOnly } from "@cocalc/server/cluster-config";

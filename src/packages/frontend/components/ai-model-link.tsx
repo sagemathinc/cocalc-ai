@@ -1,4 +1,4 @@
-import { LanguageModel, model2vendor } from "@cocalc/util/db-schema/llm-utils";
+import { LanguageModel, model2vendor } from "@cocalc/util/db-schema/ai-models";
 import { modelDisplayName } from "../frame-editors/ai/model-names";
 import { A } from "./A";
 

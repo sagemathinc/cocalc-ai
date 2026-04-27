@@ -2,7 +2,7 @@ import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import {
   getLLMCost,
   type LanguageModelCore,
-} from "@cocalc/util/db-schema/llm-utils";
+} from "@cocalc/util/db-schema/ai-models";
 
 export const AI_USAGE_UNITS_PER_DOLLAR = 100;
 

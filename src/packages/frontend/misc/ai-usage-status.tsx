@@ -7,7 +7,7 @@ import type {
   AIUsageStatus as AIUsageStatusResponse,
   AIUsageWindowStatus,
 } from "@cocalc/conat/hub/api/purchases";
-import type { LanguageModel } from "@cocalc/util/db-schema/llm-utils";
+import type { LanguageModel } from "@cocalc/util/db-schema/ai-models";
 import { round2down, round2up } from "@cocalc/util/misc";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useEffect, useState } from "react";

@@ -1,8 +1,8 @@
 import type { Ollama } from "@langchain/ollama";
 
 import getLogger from "@cocalc/backend/logger";
-import { fromOllamaModel, isOllamaLLM } from "@cocalc/util/db-schema/llm-utils";
-import type { ChatOutput, History, Stream } from "@cocalc/util/types/llm";
+import { fromOllamaModel, isOllamaLLM } from "@cocalc/util/db-schema/ai-models";
+import type { ChatOutput, History, Stream } from "@cocalc/util/types/ai";
 import { transformHistoryToMessages } from "./chat-history";
 import { numTokens } from "./chatgpt-numtokens";
 import { importLangchain } from "./langchain-import";

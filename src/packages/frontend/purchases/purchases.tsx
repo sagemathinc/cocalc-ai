@@ -35,7 +35,7 @@ import { load_target } from "@cocalc/frontend/history";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import getSupportURL from "@cocalc/frontend/support/url";
-import { isLanguageModelService } from "@cocalc/util/db-schema/llm-utils";
+import { isLanguageModelService } from "@cocalc/util/db-schema/ai-models";
 import { type Service } from "@cocalc/util/db-schema/purchase-quotas";
 import type { Purchase } from "@cocalc/util/db-schema/purchases";
 import { getAmountStyle } from "@cocalc/util/db-schema/purchases";

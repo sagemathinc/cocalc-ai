@@ -23,7 +23,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { UserGroup } from "@cocalc/frontend/projects/store";
 import { ProjectStatus } from "@cocalc/frontend/todo-types";
-import { LLMServicesAvailable } from "@cocalc/util/db-schema/llm-utils";
+import type { AIServicesAvailable } from "@cocalc/util/db-schema/ai-models";
 import {
   KUCALC_COCALC_COM,
   KUCALC_DISABLED,
@@ -148,7 +148,7 @@ export interface ProjectContextState {
   actions?: ProjectActions;
   active_project_tab?: string;
   contentSize: { width: number; height: number };
-  enabledLLMs: LLMServicesAvailable;
+  enabledAIServices: AIServicesAvailable;
   flipTabs: [number, React.Dispatch<React.SetStateAction<number>>];
   group?: UserGroup;
   hasInternet?: boolean | undefined;
@@ -176,7 +176,7 @@ export const emptyProjectContext = {
   actions: undefined,
   active_project_tab: undefined,
   contentSize: { width: 0, height: 0 },
-  enabledLLMs: {
+  enabledAIServices: {
     openai: false,
     google: false,
     ollama: false,
@@ -288,9 +288,9 @@ export function useProjectContextProvider({
   const haveMistral = useTypedRedux("customize", "mistral_enabled");
   const haveAnthropic = useTypedRedux("customize", "anthropic_enabled");
 
-  const enabledLLMs = useMemo(() => {
+  const enabledAIServices = useMemo(() => {
     const projectsStore = redux.getStore("projects");
-    return projectsStore.whichLLMareEnabled(project_id);
+    return projectsStore.whichAIServicesAreEnabled(project_id);
   }, [
     haveAnthropic,
     haveCustomOpenAI,
@@ -527,7 +527,7 @@ export function useProjectContextProvider({
     actions,
     active_project_tab,
     contentSize,
-    enabledLLMs,
+    enabledAIServices,
     flipTabs,
     group,
     hasInternet,

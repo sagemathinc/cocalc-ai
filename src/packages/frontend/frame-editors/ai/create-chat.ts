@@ -7,7 +7,7 @@ import {
   dispatchNavigatorPromptIntent,
   submitNavigatorPromptInWorkspaceChat,
 } from "@cocalc/frontend/project/new/navigator-intents";
-import { getMaxTokens as getModelMaxTokens } from "@cocalc/util/db-schema/llm-utils";
+import { getMaxTokens as getModelMaxTokens } from "@cocalc/util/db-schema/ai-models";
 import { capitalize } from "@cocalc/util/misc";
 import type {
   BaseEditorActions as Actions,

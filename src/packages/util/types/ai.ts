@@ -1,4 +1,4 @@
-import { LanguageModel } from "@cocalc/util/db-schema/llm-utils";
+import type { LanguageModel } from "@cocalc/util/db-schema/ai-models";
 
 export type History = {
   role: "assistant" | "user" | "system";
@@ -38,7 +38,7 @@ export interface ChatOptions extends ChatOptionsApi {
 }
 
 // This could be Ollama or CustomOpenAI
-export interface CustomLLMPublic {
+export interface CustomAIModelPublic {
   model: string;
   display: string; // name of the model
   desc?: string; // additional description

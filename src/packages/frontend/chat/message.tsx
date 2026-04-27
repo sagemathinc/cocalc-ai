@@ -46,7 +46,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { User } from "@cocalc/frontend/users";
-import { isLanguageModelService } from "@cocalc/util/db-schema/llm-utils";
+import { isLanguageModelService } from "@cocalc/util/db-schema/ai-models";
 import { unreachable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { isCodexModelName } from "@cocalc/util/ai/codex";

@@ -1,4 +1,4 @@
-import type { ChatOutput } from "@cocalc/util/types/llm";
+import type { ChatOutput } from "@cocalc/util/types/ai";
 import type { LLMContext } from "../evaluate-lc";
 
 // Mock LangChain building blocks with lightweight stubs.

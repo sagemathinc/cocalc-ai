@@ -1,4 +1,4 @@
-import { History } from "@cocalc/util/types/llm";
+import type { History } from "@cocalc/util/types/ai";
 
 export const PROMPTS: Readonly<
   {

@@ -11,11 +11,11 @@ import { LOCALE } from "@cocalc/util/consts/locale";
 import { is_valid_email_address } from "@cocalc/util/misc";
 import {
   DEFAULT_MODEL,
-  LLMServicesAvailable,
   USER_SELECTABLE_LANGUAGE_MODELS,
-  getDefaultLLM,
+  getDefaultAIModel,
   isValidModel,
-} from "./llm-utils";
+} from "./ai-models";
+import type { AIServicesAvailable } from "./ai-models";
 export const ALWAYS_ALLOWED_TIMETRAVEL = 10;
 
 export type ConfigValid = Readonly<string[]> | ((val: string) => boolean);
@@ -47,7 +47,7 @@ export const TAGS = [
   "Nebius",
   "Cloudflare",
   "Backups",
-  "AI LLM",
+  "AI",
   "Theme",
   "On-Prem",
   "I18N",
@@ -263,7 +263,7 @@ export const to_default_llm: ToValFunc<ToVal> = (val: string, conf) => {
 
   // FYI, conf are the raw values
   const selectable_llms = to_list_of_llms(conf.selectable_llms);
-  const filter: LLMServicesAvailable = {
+  const filter: AIServicesAvailable = {
     openai: to_bool(conf.openai_enabled),
     google: to_bool(conf.google_vertexai_enabled),
     ollama: to_bool(conf.ollama_enabled),
@@ -275,7 +275,7 @@ export const to_default_llm: ToValFunc<ToVal> = (val: string, conf) => {
   const ollama = from_json((conf as any)?.ollama);
   const custom_openai = from_json((conf as any)?.custom_openai);
 
-  return getDefaultLLM(selectable_llms, filter, ollama, custom_openai);
+  return getDefaultAIModel(selectable_llms, filter, ollama, custom_openai);
 };
 
 export const from_json = (conf): Mapping => {
@@ -837,7 +837,7 @@ export const site_settings_conf: SiteSettings = {
     default: "yes",
     valid: only_booleans,
     to_val: to_bool,
-    tags: ["OpenAI", "AI LLM"],
+    tags: ["OpenAI", "AI"],
     group: "AI & Agents",
     subgroup: "OpenAI",
   },
@@ -847,7 +847,7 @@ export const site_settings_conf: SiteSettings = {
     default: "yes",
     valid: only_booleans,
     to_val: to_bool,
-    tags: ["OpenAI", "AI LLM"],
+    tags: ["OpenAI", "AI"],
     group: "AI & Agents",
     subgroup: "OpenAI",
   },
@@ -857,8 +857,8 @@ export const site_settings_conf: SiteSettings = {
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
-    tags: ["AI LLM"],
-    group: "AI & LLM",
+    tags: ["AI"],
+    group: "AI",
     subgroup: "Providers",
   },
   mistral_enabled: {
@@ -867,8 +867,8 @@ export const site_settings_conf: SiteSettings = {
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
-    tags: ["AI LLM"],
-    group: "AI & LLM",
+    tags: ["AI"],
+    group: "AI",
     subgroup: "Providers",
   },
   anthropic_enabled: {
@@ -877,64 +877,64 @@ export const site_settings_conf: SiteSettings = {
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
-    tags: ["AI LLM"],
-    group: "AI & LLM",
+    tags: ["AI"],
+    group: "AI",
     subgroup: "Providers",
   },
   ollama_enabled: {
-    name: "Ollama LLM UI",
+    name: "Ollama UI",
     desc: "Controls visibility of UI elements related to Ollama integration.  To make this actually work, configure the list of API/model endpoints in the Ollama configuration.",
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
-    tags: ["AI LLM"],
-    group: "AI & LLM",
+    tags: ["AI"],
+    group: "AI",
     subgroup: "Providers",
   },
   custom_openai_enabled: {
-    name: "Custom OpenAI LLM UI",
+    name: "Custom OpenAI UI",
     desc: "Controls visibility of UI elements related to Custom OpenAI integration.  To make this actually work, configure the list of API/model endpoints in the Custom OpenAI configuration.",
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
-    tags: ["AI LLM"],
-    group: "AI & LLM",
+    tags: ["AI"],
+    group: "AI",
     subgroup: "Providers",
   },
   selectable_llms: {
-    name: "User Selectable LLMs",
-    desc: "If this is empty, all available LLMs by enabled services will be selectable by your users. If you select one or more, only those LLMs will be shown. This does not affect the availibiltiy of Ollama models.",
+    name: "User Selectable AI Models",
+    desc: "If this is empty, all available AI models by enabled services will be selectable by your users. If you select one or more, only those AI models will be shown. This does not affect the availability of Ollama models.",
     default: "",
     valid: is_list_of_llms,
     to_val: (v) => to_list_of_llms(v), // note: we store this as a comma separated list of model strings
     to_display: (val: string | string[]) => {
       const list = Array.isArray(val) ? val : to_list_of_llms(val);
       return isEqual(list, USER_SELECTABLE_LANGUAGE_MODELS)
-        ? "All LLMs of enabled services will be selectable"
+        ? "All AI models of enabled services will be selectable"
         : list.join(", ");
     },
-    tags: ["AI LLM"],
-    group: "AI & LLM",
+    tags: ["AI"],
+    group: "AI",
     subgroup: "User Experience",
   },
   default_llm: {
-    name: "Default LLM",
-    desc: "If user has never selected an LLM, this one will be the fallback choice. If it is not available or not in the list of selectable LLMs, a heuristic will pick a fallback.",
+    name: "Default AI Model",
+    desc: "If a user has never selected an AI model, this one will be the fallback choice. If it is not available or not in the list of selectable AI models, a heuristic will pick a fallback.",
     default: "",
     to_val: to_default_llm,
     valid: USER_SELECTABLE_LANGUAGE_MODELS, // ATTN: This is not true. It's actually the list selectable_llms (which has this list as a constant) + all ollama + custom_llm. This is a special case in the Admin UI.
-    tags: ["AI LLM"],
-    group: "AI & LLM",
+    tags: ["AI"],
+    group: "AI",
     subgroup: "User Experience",
   },
   user_defined_llm: {
-    name: "User Defined LLM",
-    desc: "If enabled, users are allowed to configure and run their own LLMs (their API keys, etc.)",
+    name: "User Defined AI Models",
+    desc: "If enabled, users are allowed to configure and run their own AI models and credentials.",
     default: "no",
     to_val: to_bool,
     valid: only_booleans,
-    tags: ["AI LLM"],
-    group: "AI & LLM",
+    tags: ["AI"],
+    group: "AI",
     subgroup: "User Experience",
   },
   project_hosts_nebius_enabled: {

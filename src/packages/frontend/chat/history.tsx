@@ -10,7 +10,7 @@ import { sanitize_html_safe } from "@cocalc/frontend/misc";
 import {
   isLanguageModelService,
   service2model,
-} from "@cocalc/util/db-schema/llm-utils";
+} from "@cocalc/util/db-schema/ai-models";
 import { isValidUUID, trunc_middle } from "@cocalc/util/misc";
 import { AIModelName } from "../components/ai-model-name";
 import { historyArray } from "./access";

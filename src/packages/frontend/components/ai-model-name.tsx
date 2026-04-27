@@ -7,7 +7,7 @@ import {
   isCustomOpenAI,
   isLanguageModel,
   isOllamaLLM,
-} from "@cocalc/util/db-schema/llm-utils";
+} from "@cocalc/util/db-schema/ai-models";
 import { LanguageModelVendorAvatar } from "./language-model-icon";
 
 export function AIModelName(

@@ -3,5 +3,5 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// the conat store name for LLM prompt history
-export const CONAT_LLM_HISTORY_KEY = "llm-history";
+// the conat store name for AI prompt history
+export const CONAT_AI_HISTORY_KEY = "ai-history";

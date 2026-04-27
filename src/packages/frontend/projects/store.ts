@@ -12,11 +12,11 @@ import { WebsocketState } from "@cocalc/frontend/project/websocket/websocket-sta
 import { getCachedProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ProjectRunQuota } from "@cocalc/conat/hub/api/projects";
-import {
-  LANGUAGE_MODEL_SERVICES,
-  LLMServiceName,
-  LLMServicesAvailable,
-} from "@cocalc/util/db-schema/llm-utils";
+import { LANGUAGE_MODEL_SERVICES } from "@cocalc/util/db-schema/ai-models";
+import type {
+  AIServiceName,
+  AIServicesAvailable,
+} from "@cocalc/util/db-schema/ai-models";
 import { cmp, is_valid_uuid_string, months_before } from "@cocalc/util/misc";
 import { DEFAULT_QUOTAS } from "@cocalc/util/schema";
 import { Upgrades } from "@cocalc/util/upgrades/types";
@@ -493,14 +493,14 @@ export class ProjectsStore extends Store<ProjectsState> {
   }
 
   // ATTN: frontend code relies on this being computed dynamically, with dependencies
-  public whichLLMareEnabled(
+  public whichAIServicesAreEnabled(
     project_id: string = "global",
     tag?: string,
-  ): LLMServicesAvailable {
+  ): AIServicesAvailable {
     return LANGUAGE_MODEL_SERVICES.reduce((cur, svc) => {
       cur[svc] = this.hasLanguageModelEnabled(project_id, tag, svc);
       return cur;
-    }, {}) as LLMServicesAvailable;
+    }, {}) as AIServicesAvailable;
   }
 
   /**
@@ -531,7 +531,7 @@ export class ProjectsStore extends Store<ProjectsState> {
   hasLanguageModelEnabled(
     project_id: string = "global",
     tag?: string,
-    vendor: LLMServiceName | "any" = "any",
+    vendor: AIServiceName | "any" = "any",
   ): boolean {
     if (redux.getStore("account").getIn(["customize", "disableAI"])) {
       // admin account-wide AI is disabled for this user.
@@ -556,19 +556,21 @@ export class ProjectsStore extends Store<ProjectsState> {
   private _hasLanguageModelEnabled(
     project_id: string | "global" = "global",
     courseLimited: boolean,
-    vendor: LLMServiceName | "any" = "any",
+    vendor: AIServiceName | "any" = "any",
   ): boolean {
     // First, check which ones are actually available
     const customize = redux.getStore("customize");
-    const enabledLLMs = customize.getEnabledLLMs();
+    const enabledAIServices = customize.getEnabledAIServices();
 
     // if none are available, we can't enable any – that's the "any" case
-    const anyEnabled = LANGUAGE_MODEL_SERVICES.some((svc) => enabledLLMs[svc]);
+    const anyEnabled = LANGUAGE_MODEL_SERVICES.some(
+      (svc) => enabledAIServices[svc],
+    );
     if (!anyEnabled) return false;
 
     // check by specific vendor
     for (const svc of LANGUAGE_MODEL_SERVICES) {
-      if (vendor === svc && !enabledLLMs[svc]) {
+      if (vendor === svc && !enabledAIServices[svc]) {
         return false;
       }
     }

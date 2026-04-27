@@ -7,7 +7,7 @@
 import track from "@cocalc/frontend/user-tracking";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
-import type { LanguageModel } from "@cocalc/util/db-schema/llm-utils";
+import type { LanguageModel } from "@cocalc/util/db-schema/ai-models";
 import type { History as LanguageModelHistory } from "@cocalc/frontend/client/types";
 import { processAcpLLM } from "../acp-api";
 import type { ChatActions } from "../actions";

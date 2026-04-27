@@ -18,7 +18,7 @@ import { get_passport_manager, PassportManager } from "@cocalc/server/hub/auth";
 import { callback2 as cb2 } from "@cocalc/util/async-utils";
 import { EXTRAS as SERVER_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { site_settings_conf as SITE_SETTINGS_CONF } from "@cocalc/util/schema";
-import { CustomLLMPublic } from "@cocalc/util/types/llm";
+import type { CustomAIModelPublic } from "@cocalc/util/types/ai";
 import { parseDomain, ParseResultType } from "parse-domain";
 import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 import getServerSettings, {
@@ -47,8 +47,8 @@ interface Config {
   configuration: any;
   registration: any;
   strategies: object;
-  ollama: { [key: string]: CustomLLMPublic };
-  custom_openai: { [key: string]: CustomLLMPublic };
+  ollama: { [key: string]: CustomAIModelPublic };
+  custom_openai: { [key: string]: CustomAIModelPublic };
 }
 
 async function get_passport_manager_async(): Promise<PassportManager> {
@@ -214,7 +214,7 @@ export class WebappConfiguration {
   }
 
   // derives the public ollama model configuration from the private one
-  private get_ollama_public(): { [key: string]: CustomLLMPublic } {
+  private get_ollama_public(): { [key: string]: CustomAIModelPublic } {
     if (this.data == null) {
       throw new Error("server settings not yet initialized");
     }
@@ -222,7 +222,7 @@ export class WebappConfiguration {
     return processCustomLLM(ollama, "Ollama");
   }
 
-  private get_custom_openai_public(): { [key: string]: CustomLLMPublic } {
+  private get_custom_openai_public(): { [key: string]: CustomAIModelPublic } {
     if (this.data == null) {
       throw new Error("server settings not yet initialized");
     }
@@ -322,10 +322,10 @@ export class WebappConfiguration {
 function processCustomLLM(
   data: any,
   displayFallback,
-): { [key: string]: CustomLLMPublic } {
+): { [key: string]: CustomAIModelPublic } {
   if (isEmpty(data)) return {};
 
-  const ret: { [key: string]: CustomLLMPublic } = {};
+  const ret: { [key: string]: CustomAIModelPublic } = {};
   for (const key in data) {
     const conf = data[key];
     const cocalc = conf.cocalc ?? {};

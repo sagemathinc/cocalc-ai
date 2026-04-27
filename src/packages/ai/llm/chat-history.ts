@@ -1,6 +1,6 @@
 import type { InMemoryChatMessageHistory } from "@langchain/core/chat_history";
 
-import { History } from "@cocalc/util/types/llm";
+import type { History } from "@cocalc/util/types/ai";
 import { numTokens } from "./chatgpt-numtokens";
 import { importLangchain } from "./langchain-import";
 

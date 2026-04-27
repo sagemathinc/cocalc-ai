@@ -2,8 +2,8 @@
 import GPT3Tokenizer from "gpt3-tokenizer";
 
 import type { History } from "@cocalc/frontend/client/types";
-import type { LanguageModel } from "@cocalc/util/db-schema/llm-utils";
-import { getMaxTokens } from "@cocalc/util/db-schema/llm-utils";
+import type { LanguageModel } from "@cocalc/util/db-schema/ai-models";
+import { getMaxTokens } from "@cocalc/util/db-schema/ai-models";
 
 export { getMaxTokens };
 

@@ -18,19 +18,19 @@ export const SERVICES = [
 // a "user-*" model is a wrapper for all the model services
 export const LANGUAGE_MODEL_SERVICES = [...SERVICES, "user"] as const;
 
-export type UserDefinedLLMService = (typeof SERVICES)[number];
+export type UserDefinedAIService = (typeof SERVICES)[number];
 
 export function isUserDefinedModelType(
   model: unknown,
-): model is UserDefinedLLMService {
+): model is UserDefinedAIService {
   return SERVICES.includes(model as any);
 }
 
 // "User LLMs" are defined in the user's account settings.
 // They query an external LLM service of given type, endpoint, and API key.
-export interface UserDefinedLLM {
+export interface UserDefinedAIModel {
   id: number; // a unique number
-  service: UserDefinedLLMService;
+  service: UserDefinedAIService;
   model: string; // non-empty string
   display: string; // short user-visible string
   endpoint: string; // URL to the LLM service
@@ -42,7 +42,7 @@ export const USER_LLM_PREFIX = "user-";
 
 // This basically prefixes the "model" defined by the user with the USER and service prefix.
 // We do not use the to*() functions, because the names of the models could be arbitrary – for each service
-export function toUserLLMModelName(llm: UserDefinedLLM) {
+export function toUserAIModelName(llm: UserDefinedAIModel) {
   const { service } = llm;
   const model: string = (() => {
     switch (service) {
@@ -61,14 +61,14 @@ export function toUserLLMModelName(llm: UserDefinedLLM) {
       default:
         unreachable(service);
         throw new Error(
-          `toUserLLMModelName of service ${service} not supported`,
+          `toUserAIModelName of service ${service} not supported`,
         );
     }
   })();
   return `${USER_LLM_PREFIX}${model}`;
 }
 
-export function fromUserDefinedLLMModel(m: string): string | null {
+export function fromUserDefinedAIModel(m: string): string | null {
   if (isUserDefinedModel(m)) {
     return m.slice(USER_LLM_PREFIX.length);
   }
@@ -84,11 +84,11 @@ export function isUserDefinedModel(model: unknown): boolean {
   return false;
 }
 
-export function unpackUserDefinedLLMModel(model: string): {
-  service: UserDefinedLLMService;
+export function unpackUserDefinedAIModel(model: string): {
+  service: UserDefinedAIService;
   model: string;
 } | null {
-  const um = fromUserDefinedLLMModel(model);
+  const um = fromUserDefinedAIModel(model);
   if (um === null) return null;
   for (const service of SERVICES) {
     if (um.startsWith(`${service}-`)) {
@@ -246,7 +246,7 @@ export const LANGUAGE_MODELS = [
 ] as const;
 
 export const USER_SELECTABLE_LLMS_BY_VENDOR: {
-  [vendor in LLMServiceName]: Readonly<LanguageModelCore[]>;
+  [vendor in AIServiceName]: Readonly<LanguageModelCore[]>;
 } = {
   openai: MODELS_OPENAI.filter(
     (m) =>
@@ -318,23 +318,23 @@ export function isLanguageModel(model?: unknown): model is LanguageModel {
   return LANGUAGE_MODELS.includes(model as any);
 }
 
-export type LLMServiceName = (typeof LANGUAGE_MODEL_SERVICES)[number];
+export type AIServiceName = (typeof LANGUAGE_MODEL_SERVICES)[number];
 
-export function isLLMServiceName(service: unknown): service is LLMServiceName {
+export function isAIServiceName(service: unknown): service is AIServiceName {
   if (typeof service !== "string") return false;
   return LANGUAGE_MODEL_SERVICES.includes(service as any);
 }
 
-export type LLMServicesAvailable = Record<LLMServiceName, boolean>;
+export type AIServicesAvailable = Record<AIServiceName, boolean>;
 
-interface LLMService {
+interface AIServiceInfo {
   name: string;
   short: string; // additional short text next to the company name
   desc: string; // more detailed description
   url: string;
 }
 
-export const LLM_PROVIDER: { [key in LLMServiceName]: LLMService } = {
+export const AI_SERVICES: { [key in AIServiceName]: AIServiceInfo } = {
   openai: {
     name: "OpenAI",
     short: "AI research and deployment company",
@@ -381,14 +381,14 @@ export const LLM_PROVIDER: { [key in LLMServiceName]: LLMService } = {
 
 interface ValidLanguageModelNameProps {
   model: string | undefined;
-  filter: LLMServicesAvailable;
+  filter: AIServicesAvailable;
   ollama: string[]; // keys of ollama models
   custom_openai: string[]; // keys of custom openai models
   selectable_llms: string[]; // either empty, or an array stored in the server settings
 }
 
 // NOTE: these values must be in sync with the "no" vals in db-schema/site-defaults.ts
-const DEFAULT_FILTER: Readonly<LLMServicesAvailable> = {
+const DEFAULT_FILTER: Readonly<AIServicesAvailable> = {
   openai: false,
   google: false,
   ollama: false,
@@ -435,7 +435,7 @@ export function getValidLanguageModelName({
   }
 
   for (const free of [true, false]) {
-    const defaultModel = getDefaultLLM(
+    const defaultModel = getDefaultAIModel(
       selectable_llms,
       filter,
       ollama,
@@ -449,7 +449,7 @@ export function getValidLanguageModelName({
   return DEFAULT_MODEL;
 }
 
-export const DEFAULT_LLM_PRIORITY: Readonly<UserDefinedLLMService[]> = [
+export const DEFAULT_AI_SERVICE_PRIORITY: Readonly<UserDefinedAIService[]> = [
   "google",
   "openai",
   "anthropic",
@@ -458,14 +458,14 @@ export const DEFAULT_LLM_PRIORITY: Readonly<UserDefinedLLMService[]> = [
   "custom_openai",
 ] as const;
 
-export function getDefaultLLM(
+export function getDefaultAIModel(
   selectable_llms: string[],
-  filter: LLMServicesAvailable,
+  filter: AIServicesAvailable,
   ollama?: { [key: string]: any },
   custom_openai?: { [key: string]: any },
   only_free = true,
 ): LanguageModel {
-  for (const v of DEFAULT_LLM_PRIORITY) {
+  for (const v of DEFAULT_AI_SERVICE_PRIORITY) {
     if (!filter[v]) continue;
     for (const m of USER_SELECTABLE_LLMS_BY_VENDOR[v]) {
       if (selectable_llms.includes(m)) {
@@ -615,7 +615,7 @@ export function service2model_core(
 export const DEFAULT_MODEL: LanguageModel = "gemini-2.5-flash-8k";
 
 interface LLMVendor {
-  name: LLMServiceName;
+  name: AIServiceName;
   url: string;
 }
 
@@ -623,20 +623,20 @@ export function model2vendor(model): LLMVendor {
   if (isUserDefinedModel(model)) {
     return { name: "user", url: "" };
   } else if (isOllamaLLM(model)) {
-    return { name: "ollama", url: LLM_PROVIDER.ollama.url };
+    return { name: "ollama", url: AI_SERVICES.ollama.url };
   } else if (isCustomOpenAI(model)) {
     return {
       name: "custom_openai",
-      url: LLM_PROVIDER.custom_openai.url,
+      url: AI_SERVICES.custom_openai.url,
     };
   } else if (isMistralModel(model)) {
-    return { name: "mistralai", url: LLM_PROVIDER.mistralai.url };
+    return { name: "mistralai", url: AI_SERVICES.mistralai.url };
   } else if (isOpenAIModel(model)) {
-    return { name: "openai", url: LLM_PROVIDER.openai.url };
+    return { name: "openai", url: AI_SERVICES.openai.url };
   } else if (isGoogleModel(model)) {
-    return { name: "google", url: LLM_PROVIDER.google.url };
+    return { name: "google", url: AI_SERVICES.google.url };
   } else if (isAnthropicModel(model)) {
-    return { name: "anthropic", url: LLM_PROVIDER.anthropic.url };
+    return { name: "anthropic", url: AI_SERVICES.anthropic.url };
   }
 
   throw new Error(`model2vendor: unknown model: "${model}"`);
@@ -914,7 +914,7 @@ export function isLanguageModelService(
   return false;
 }
 
-export function getLLMServiceStatusCheckMD(service: LLMServiceName): string {
+export function getAIServiceStatusCheckMD(service: AIServiceName): string {
   switch (service) {
     case "openai":
       return `OpenAI [status](https://status.openai.com) and [downdetector](https://downdetector.com/status/openai).`;

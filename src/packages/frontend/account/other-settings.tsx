@@ -319,9 +319,9 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
   function render_llm_settings() {
     // we hide this panel, if all servers and user defined LLms are disabled
     const customize = redux.getStore("customize");
-    const enabledLLMs = customize.getEnabledLLMs();
-    const anyLLMenabled = Object.values(enabledLLMs).some((v) => v);
-    if (!anyLLMenabled && !lite) return <></>;
+    const enabledAIServices = customize.getEnabledAIServices();
+    const anyAIEnabled = Object.values(enabledAIServices).some((v) => v);
+    if (!anyAIEnabled && !lite) return <></>;
     return (
       <Panel
         header={
@@ -334,8 +334,8 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
           </>
         }
       >
-        {anyLLMenabled && render_disable_all_llm()}
-        {anyLLMenabled && render_llm_reply_language()}
+        {anyAIEnabled && render_disable_all_llm()}
+        {anyAIEnabled && render_llm_reply_language()}
         {lite && <LiteAISettings />}
         {DEBUG ? (
           <div style={{ marginTop: 12 }}>

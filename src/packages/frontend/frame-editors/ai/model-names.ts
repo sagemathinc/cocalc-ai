@@ -12,7 +12,7 @@ import {
   isOllamaLLM,
   model2service,
   type LanguageModel,
-} from "@cocalc/util/db-schema/llm-utils";
+} from "@cocalc/util/db-schema/ai-models";
 
 export function modelDisplayName(model: LanguageModel): string {
   if (isOllamaLLM(model)) {

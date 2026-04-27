@@ -1,13 +1,15 @@
 import { CSS, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
-  LLMServiceName,
-  LanguageModel,
   fromCustomOpenAIModel,
   fromOllamaModel,
   isGoogleModel,
   isLanguageModel,
   model2vendor,
-} from "@cocalc/util/db-schema/llm-utils";
+} from "@cocalc/util/db-schema/ai-models";
+import type {
+  AIServiceName,
+  LanguageModel,
+} from "@cocalc/util/db-schema/ai-models";
 import { unreachable } from "@cocalc/util/misc";
 import AIAvatar from "./ai-avatar";
 import AnthropicAvatar from "./anthropic-avatar";
@@ -53,7 +55,7 @@ export function LanguageModelVendorAvatar(
     );
   }
 
-  function renderModel(model: string, vendor?: LLMServiceName) {
+  function renderModel(model: string, vendor?: AIServiceName) {
     const useIcon = vendor == null;
     const vendorName = vendor ?? model2vendor(model).name;
     switch (vendorName) {

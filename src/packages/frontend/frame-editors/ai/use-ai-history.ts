@@ -24,7 +24,7 @@ import {
   getSharedAccountDStream,
   resetSharedAccountDStreamCacheForTests,
 } from "@cocalc/frontend/conat/account-dstream";
-import { CONAT_LLM_HISTORY_KEY } from "@cocalc/util/consts";
+import { CONAT_AI_HISTORY_KEY } from "@cocalc/util/consts";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
 // limit max prompts to keep in history per type
@@ -65,7 +65,7 @@ const getDStream = reuseInFlight(async () => {
     const account_id = store.get_account_id();
     const stream = await getSharedAccountDStream<AIHistoryEntry>({
       account_id,
-      name: CONAT_LLM_HISTORY_KEY,
+      name: CONAT_AI_HISTORY_KEY,
       config: {
         discard_policy: "old",
         max_msgs: MAX_PROMPTS_NUM,
