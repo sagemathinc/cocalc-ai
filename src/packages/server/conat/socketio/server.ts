@@ -58,6 +58,7 @@ import { getUser, isAllowed } from "./auth";
 import { dnsScan, localAddress, SCAN_INTERVAL } from "./dns-scan";
 import { handleHealth } from "./health";
 import { handleMetrics, initMetrics } from "./metrics";
+import { startHubConatManagedEgressLoop } from "./managed-egress";
 
 const logger = getLogger("conat-server");
 
@@ -111,6 +112,25 @@ function publishStandalonePort(server: ConatServer): void {
   }
 }
 
+function attachManagedEgressLoop({
+  server,
+  systemAccountPassword,
+}: {
+  server: ConatServer;
+  systemAccountPassword?: string;
+}): void {
+  if (!systemAccountPassword) {
+    return;
+  }
+  const systemClient = server.client({
+    systemAccountPassword,
+  });
+  startHubConatManagedEgressLoop({
+    conatServer: server,
+    systemClient,
+  });
+}
+
 export async function init(
   options0: Partial<Options> & { kucalc?: boolean } = {},
 ) {
@@ -150,6 +170,10 @@ export async function init(
     // things would get fixed by k8s within SCAN_INTERVAL.
     opts.forgetClusterNodeInterval = 4 * SCAN_INTERVAL;
     const server = createConatServer(opts);
+    attachManagedEgressLoop({
+      server,
+      systemAccountPassword: opts.systemAccountPassword,
+    });
     // enable dns scanner
     dnsScan(server); // we don't await it, it runs forever
     await startVitalsServer(server);
@@ -164,10 +188,14 @@ export async function init(
       httpServer: undefined,
       port: standalonePort,
     });
+    attachManagedEgressLoop({
+      server,
+      systemAccountPassword: opts.systemAccountPassword,
+    });
     publishStandalonePort(server);
     return server;
   } else {
-    return createConatServer({
+    const server = createConatServer({
       ...opts,
       ssl: false,
       httpServer: undefined,
@@ -176,6 +204,11 @@ export async function init(
       clusterName: "default",
       id: "node",
     });
+    attachManagedEgressLoop({
+      server,
+      systemAccountPassword: opts.systemAccountPassword,
+    });
+    return server;
   }
 }
 
