@@ -169,4 +169,31 @@ describe("shared project dstream cache", () => {
       resetSharedProjectDStreamCacheForTests();
     }
   });
+
+  it("passes requireRouting through to projectConat", async () => {
+    const stream = new FakeDStream();
+    directDstreamMock.mockResolvedValue(stream);
+
+    const {
+      acquireSharedProjectDStream,
+      resetSharedProjectDStreamCacheForTests,
+    } = await import("./project-dstream");
+    try {
+      const lease = await acquireSharedProjectDStream({
+        project_id: "project-1",
+        name: "feed",
+        requireRouting: true,
+      });
+
+      expect(webappClient.conat_client.projectConat).toHaveBeenCalledWith({
+        project_id: "project-1",
+        caller: "acquireSharedProjectDStream",
+        requireRouting: true,
+      });
+
+      await lease.release();
+    } finally {
+      resetSharedProjectDStreamCacheForTests();
+    }
+  });
 });
