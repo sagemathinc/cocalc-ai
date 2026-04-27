@@ -86,6 +86,7 @@ export type SiteSettingsKeys =
   | "organization_name"
   | "organization_email"
   | "organization_url"
+  | "policy_pages"
   | "show_policies"
   | "terms_of_service"
   | "terms_of_service_url"
@@ -465,19 +466,36 @@ export const site_settings_conf: SiteSettings = {
     subgroup: "Contact",
   },
   show_policies: {
-    name: "Show policy pages",
-    desc: "Expose /policies publicly. If a Terms of Service URL is set, the policies page will link there instead of showing the built-in documents.",
+    name: "Legacy show policy pages",
+    desc: "Deprecated legacy boolean. Use Policy pages instead.",
     default: "no",
     valid: only_booleans,
+    hidden: true,
     show: show_theming_vars,
     tags: ["Theme"],
     to_val: to_bool,
     group: "Branding & UI",
     subgroup: "Legal",
   },
+  policy_pages: {
+    name: "Policy pages",
+    desc: "Select which public policy pages to expose. Use configured policy pages for deployment-specific legal text hosted on this site. Use SageMath, Inc. policies only for official CoCalc deployments.",
+    default: "none",
+    valid: ["none", "custom", "sagemathinc"],
+    valid_labels: {
+      none: "Disabled",
+      custom: "Use configured policy pages",
+      sagemathinc: "Use SageMath, Inc. / CoCalc policies",
+    },
+    show: show_theming_vars,
+    to_val: to_trimmed_str,
+    tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Legal",
+  },
   terms_of_service_url: {
     name: "Terms of Service / Policies URL",
-    desc: "External URL for Terms of Service or policy information. When public policy pages are enabled, /policies will link here instead of showing the built-in documents.",
+    desc: "External URL for Terms of Service or policy information hosted outside this site. When custom policy pages are enabled, /policies will use this external URL instead of local configured policy pages; for same-site policy text, use the Policies page setting below.",
     default: "",
     clearable: true,
     show: show_theming_vars,
@@ -600,7 +618,7 @@ export const site_settings_conf: SiteSettings = {
   },
   policies: {
     name: "Policies page",
-    desc: "Policies information on optional dedicated page – HTML/Markdown.",
+    desc: "Deployment-specific policy information hosted on this site at /policies/policies – HTML/Markdown. If your policies are hosted externally instead, set the Terms of Service / Policies URL above.",
     default: "",
     clearable: true,
     show: show_theming_vars,

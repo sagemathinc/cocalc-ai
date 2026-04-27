@@ -12,6 +12,7 @@ import {
   PublicPageRoot,
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
+import { getPolicyPagesMode } from "@cocalc/frontend/public/ui/policy-pages";
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { SITE_NAME } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
@@ -40,6 +41,7 @@ const { Paragraph, Text, Title } = Typography;
 interface FeaturesConfig {
   help_email?: string;
   is_authenticated?: boolean;
+  policy_pages?: string;
   show_policies?: boolean;
   site_name?: string;
 }
@@ -313,7 +315,7 @@ export default function PublicFeaturesApp({
       <PublicTopNav
         active="features"
         isAuthenticated={!!config?.is_authenticated}
-        showPolicies={!!config?.show_policies}
+        showPolicies={getPolicyPagesMode(config) !== "none"}
         siteName={siteName}
       />
       <PublicHero
