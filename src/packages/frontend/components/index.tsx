@@ -26,7 +26,7 @@ export * from "./hidden-visible";
 export { HTML } from "./html";
 export { Icon, IconName, isIconName } from "./icon";
 export { LabeledRow } from "./labeled-row";
-export { LLMNameLink } from "./llm-plain-link";
+export { AIModelLink } from "./ai-model-link";
 export { Loading, Estimate as LoadingEstimate } from "./loading";
 export { LoginLink } from "./login-link";
 export { MarkAll } from "./mark-all";

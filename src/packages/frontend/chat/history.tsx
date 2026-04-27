@@ -12,7 +12,7 @@ import {
   service2model,
 } from "@cocalc/util/db-schema/llm-utils";
 import { isValidUUID, trunc_middle } from "@cocalc/util/misc";
-import { LLMModelName } from "../components/llm-name";
+import { AIModelName } from "../components/ai-model-name";
 import { historyArray } from "./access";
 
 export function HistoryTitle() {
@@ -58,7 +58,7 @@ export function History({ history, user_map }: HistoryProps) {
       const last_name = user_map.getIn([author_id, "last_name"]);
       return <>{trunc_middle(`${first_name} ${last_name}`, 20)}</>;
     } else if (isLanguageModelService(author_id)) {
-      return <LLMModelName model={service2model(author_id)} size={14} />;
+      return <AIModelName model={service2model(author_id)} size={14} />;
     } else {
       return <>Unknown author</>;
     }

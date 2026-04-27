@@ -134,7 +134,8 @@ export async function createChatMessage(
   const input = sanitizeInput(actions, frameId, options, context);
 
   // Truncate input (also this MUST lazy import):
-  const { truncateMessage } = await import("@cocalc/frontend/misc/llm");
+  const { truncateMessage } =
+    await import("@cocalc/frontend/misc/ai-model-tokens");
   const maxTokens = Math.max(2048, getAssistantMaxTokens(model) - 1000); // reserve output and routing metadata
   const inputOriginalLen = input.length;
   const truncatedInput = truncateMessage(input, maxTokens);

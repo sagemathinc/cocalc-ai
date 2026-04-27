@@ -1,5 +1,4 @@
-// NOTE! This gpt-3-tokenizer is LARGE, e.g., 1.6MB, so be
-// sure to async load it by clients of this code.
+// NOTE: this tokenizer is large, so async load it in callers.
 import GPT3Tokenizer from "gpt3-tokenizer";
 
 import type { History } from "@cocalc/frontend/client/types";
@@ -8,22 +7,17 @@ import { getMaxTokens } from "@cocalc/util/db-schema/llm-utils";
 
 export { getMaxTokens };
 
-// "For an average English text, it's reasonable to assume that each word is
-//  about 5 characters long on average, and there is a space character between
-// each word. So, for every 6 characters, there is approximately one token."
-// Using this, our 250,000 character text gets truncated down to 6*4096 ~ 25,000
-// and then running the tokenizer is fast: it takes 62ms instead of nearly 6 seconds!
+// For average English text, roughly 6 characters is about 1 token.
+// Using an upper bound keeps tokenization fast for large editor content.
 
 // if 6 is about right, 8 should be a good upper bound.
 const APPROX_CHARACTERS_PER_TOKEN = 8;
 
 const tokenizer = new GPT3Tokenizer({ type: "gpt3" });
 
-// WARNING: --  tokenizer.encode is blocking and can be slow, e.g., if you give it
-// content of length 250,000 it'll take 6 seconds and make the browser freeze.
-// So don't do that.  Whereas if you give it 25,000 it takes 60ms. The following
-// function just returns an upper bound on the number of tokens, to see if any
-// truncation might be needed. We use the above heuristic of ~ 6 characters per token.
+// WARNING: tokenizer.encode is blocking and can be slow for large content.
+// These helpers use a conservative upper bound first so truncation decisions
+// do not freeze the browser.
 
 export function numTokensUpperBound(
   content: string,
@@ -36,11 +30,10 @@ export function numTokensUpperBound(
   );
 }
 
-/* We truncate the message.
-For performance considerations (see WARNING by numTokensEstimate above),
-we may sometimes truncate too much text, since we first compute an estimate on the number
-of tokens using a heuristic, then do a full tokenization and truncation after
-that.  We will never return too much text, only possible too little.
+/*
+We may truncate slightly more than necessary because we first estimate token
+count, then tokenize precisely. We never return too much text, only possibly a
+bit too little.
 */
 
 const dots = "\n ...";

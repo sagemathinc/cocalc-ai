@@ -22,7 +22,7 @@ import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
-import { LLMUsageStatus } from "@cocalc/frontend/misc/llm-cost-estimation";
+import { AIUsageStatus } from "@cocalc/frontend/misc/ai-usage-status";
 import { labels } from "@cocalc/frontend/i18n";
 import {
   ManagedEgressRecentEventsButton,
@@ -571,11 +571,11 @@ export function MembershipStatusPanel({
     membership?.source === "subscription" ? "Current period ends" : "Expires";
   const entitlements = normalizeRecord(membership?.entitlements);
   const projectDefaults = normalizeRecord(entitlements.project_defaults);
-  const llmLimits = normalizeRecord(entitlements.llm_limits);
+  const aiLimits = normalizeRecord(entitlements.llm_limits);
   const features = normalizeRecord(entitlements.features);
   const usageLimits = normalizeRecord(entitlements.usage_limits);
-  const limit5h = extractLimit(llmLimits, ["units_5h", "limit_5h"]);
-  const limit7d = extractLimit(llmLimits, ["units_7d", "limit_7d"]);
+  const limit5h = extractLimit(aiLimits, ["units_5h", "limit_5h"]);
+  const limit7d = extractLimit(aiLimits, ["units_7d", "limit_7d"]);
   const featureTags = Object.entries(features)
     .map(([key, value]) => formatFeatureTag(key, value))
     .filter((value): value is string => !!value);
@@ -665,7 +665,7 @@ export function MembershipStatusPanel({
           </div>
 
           <div>
-            <Text strong>LLM limits</Text>
+            <Text strong>AI limits</Text>
             <Descriptions size="small" column={1} style={{ marginTop: "6px" }}>
               <Descriptions.Item label="5-hour window">
                 {limit5h != null ? `${limit5h} units` : "No limit"}
@@ -675,7 +675,7 @@ export function MembershipStatusPanel({
               </Descriptions.Item>
             </Descriptions>
             <div style={{ marginTop: "8px" }}>
-              <LLMUsageStatus variant="full" showHelp={false} />
+              <AIUsageStatus variant="full" showHelp={false} />
             </div>
           </div>
 

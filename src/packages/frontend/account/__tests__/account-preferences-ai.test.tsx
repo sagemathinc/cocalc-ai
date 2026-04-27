@@ -36,8 +36,8 @@ jest.mock("../lite-ai-settings", () => ({
   default: () => <div>LiteAISettings</div>,
 }));
 
-jest.mock("@cocalc/frontend/misc/llm-cost-estimation", () => ({
-  LLMUsageStatus: () => <div>LLMUsageStatus</div>,
+jest.mock("@cocalc/frontend/misc/ai-usage-status", () => ({
+  AIUsageStatus: () => <div>AIUsageStatus</div>,
 }));
 
 describe("AccountPreferencesAI", () => {
@@ -57,15 +57,15 @@ describe("AccountPreferencesAI", () => {
     });
   });
 
-  it("shows LLM usage in non-lite AI preferences", () => {
+  it("shows AI usage in non-lite AI preferences", () => {
     render(<AccountPreferencesAI />);
 
-    expect(screen.getByText("LLM usage")).toBeTruthy();
+    expect(screen.getByText("AI usage")).toBeTruthy();
     expect(
       screen.getByText(
         /These limits apply even when you use CoCalc's shared API access/i,
       ),
     ).toBeTruthy();
-    expect(screen.getByText("LLMUsageStatus")).toBeTruthy();
+    expect(screen.getByText("AIUsageStatus")).toBeTruthy();
   });
 });

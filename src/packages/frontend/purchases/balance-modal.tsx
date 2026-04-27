@@ -6,9 +6,9 @@ import ShowError from "@cocalc/frontend/components/error";
 import Payments from "@cocalc/frontend/purchases/payments";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
-  LLMUsageHelpContent,
-  LLMUsageStatus,
-} from "@cocalc/frontend/misc/llm-cost-estimation";
+  AIUsageHelpContent,
+  AIUsageStatus,
+} from "@cocalc/frontend/misc/ai-usage-status";
 import { HelpIcon, Text } from "@cocalc/frontend/components";
 
 export default function BalanceModal({
@@ -78,9 +78,9 @@ export default function BalanceModal({
             gap: "6px",
           }}
         >
-          <Text style={{ fontSize: "11pt" }}>LLM Usage</Text>
-          <HelpIcon title="LLM Usage Limits" placement="topLeft">
-            <LLMUsageHelpContent />
+          <Text style={{ fontSize: "11pt" }}>AI Usage</Text>
+          <HelpIcon title="AI Usage Limits" placement="topLeft">
+            <AIUsageHelpContent />
           </HelpIcon>
         </div>
         <div
@@ -90,7 +90,7 @@ export default function BalanceModal({
             justifyContent: "center",
           }}
         >
-          <LLMUsageStatus variant="compact" showHelp={false} />
+          <AIUsageStatus variant="compact" showHelp={false} />
         </div>
       </div>
       <ShowError error={error} setError={setError} />

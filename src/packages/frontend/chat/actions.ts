@@ -2723,7 +2723,7 @@ export class ChatActions extends Actions<ChatState> {
 
     // do not import until needed -- it is HUGE!
     const { truncateMessage, getMaxTokens, numTokensUpperBound } =
-      await import("@cocalc/frontend/misc/llm");
+      await import("@cocalc/frontend/misc/ai-model-tokens");
     const maxTokens = getMaxTokens(model);
     const txt = truncateMessage(txtFull, maxTokens);
     const m = returnInfo

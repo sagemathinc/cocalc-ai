@@ -10,7 +10,7 @@ import {
 } from "@cocalc/util/db-schema/llm-utils";
 import { LanguageModelVendorAvatar } from "./language-model-icon";
 
-export function LLMModelName(
+export function AIModelName(
   props: Readonly<{ model: LanguageModel; size?: number }>,
 ) {
   const { model, size } = props;

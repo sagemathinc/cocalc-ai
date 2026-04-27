@@ -91,8 +91,8 @@ jest.mock("@cocalc/frontend/app-framework", () => {
   };
 });
 
-jest.mock("@cocalc/frontend/misc/llm-cost-estimation", () => ({
-  LLMUsageStatus: () => null,
+jest.mock("@cocalc/frontend/misc/ai-usage-status", () => ({
+  AIUsageStatus: () => null,
 }));
 
 jest.mock("@cocalc/frontend/i18n", () => ({

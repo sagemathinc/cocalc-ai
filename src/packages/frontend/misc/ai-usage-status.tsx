@@ -4,7 +4,7 @@ import { BaseType } from "antd/es/typography/Base";
 import { CSS } from "@cocalc/frontend/app-framework";
 import { A, HelpIcon, Paragraph, Text } from "@cocalc/frontend/components";
 import type {
-  LLMUsageStatus as LLMUsageStatusResponse,
+  LLMUsageStatus as AIUsageStatusResponse,
   LLMUsageWindowStatus,
 } from "@cocalc/conat/hub/api/purchases";
 import type { LanguageModel } from "@cocalc/util/db-schema/llm-utils";
@@ -35,7 +35,7 @@ The maximum (just use the "MAX" function, easier than the median) is at almost t
 That's the basis for the number 100 and 1000 below!
 */
 
-export function LLMCostEstimation({
+export function AIUsageSummary({
   model: _model,
   tokens: _tokens, // Note: use the "await imported" numTokensUpperBound function to get the number of tokens
   type,
@@ -52,7 +52,7 @@ export function LLMCostEstimation({
 }) {
   return (
     <Wrapper type={type} paragraph={paragraph} textAlign={textAlign}>
-      <LLMUsageStatus />
+      <AIUsageStatus />
     </Wrapper>
   );
 }
@@ -77,7 +77,7 @@ function Wrapper({
   );
 }
 
-export function calcMinMaxEstimation(
+export function calculateUsageEstimateRange(
   tokens: number,
   _model,
   _llm_markup,
@@ -88,11 +88,11 @@ export function calcMinMaxEstimation(
   return { min, max };
 }
 
-export function LLMUsageHelpContent() {
+export function AIUsageHelpContent() {
   return (
     <>
       <Paragraph>
-        LLM usage is limited by a short 5-hour window and a longer 7-day window.
+        AI usage is limited by a short 5-hour window and a longer 7-day window.
         When you hit a limit, usage resets automatically.
       </Paragraph>
       <Paragraph>
@@ -103,7 +103,7 @@ export function LLMUsageHelpContent() {
   );
 }
 
-export function LLMUsageStatus({
+export function AIUsageStatus({
   variant = "full",
   showHelp = true,
   compactWidth,
@@ -114,7 +114,7 @@ export function LLMUsageStatus({
   compactWidth?: number;
   compactSingle?: boolean;
 }) {
-  const [status, setStatus] = useState<LLMUsageStatusResponse | null>(null);
+  const [status, setStatus] = useState<AIUsageStatusResponse | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -147,7 +147,7 @@ export function LLMUsageStatus({
   if (lite) return null;
 
   if (error) {
-    return <Text type="secondary">LLM usage unavailable.</Text>;
+    return <Text type="secondary">AI usage unavailable.</Text>;
   }
   if (loading || !status) {
     return <Text type="secondary">Loading usage…</Text>;
@@ -163,8 +163,8 @@ export function LLMUsageStatus({
         <UsageBar label="7-day limit" window={window7d} />
       </div>
       {showHelp && (
-        <HelpIcon title="LLM Usage Limits" placement={"topLeft"}>
-          <LLMUsageHelpContent />
+        <HelpIcon title="AI Usage Limits" placement={"topLeft"}>
+          <AIUsageHelpContent />
         </HelpIcon>
       )}
     </>
@@ -173,7 +173,7 @@ export function LLMUsageStatus({
   if (variant === "compact") {
     const minWidth = compactWidth ?? 180;
     return (
-      <Popover content={content} title="LLM Usage" trigger="click">
+      <Popover content={content} title="AI Usage" trigger="click">
         <Button
           size="small"
           style={{

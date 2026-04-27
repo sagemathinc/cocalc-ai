@@ -21,7 +21,7 @@ export const Title = (props: any) =>
 export const Avatar = (_props: any) => null;
 export const LanguageModelVendorAvatar = (_props: any) => null;
 export const LLMModelPrice = (_props: any) => null;
-export const LLMUsageStatus = (_props: any) => null;
+export const AIUsageStatus = (_props: any) => null;
 export const Cursors = (_props: any) => null;
 export const CursorsType = {};
 export const avatar_fontcolor = (_name?: string) => "#666";
