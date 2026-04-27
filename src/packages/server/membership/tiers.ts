@@ -51,7 +51,7 @@ export async function getMembershipTiers({
   const pool = client ?? getPool("medium");
   const { rows } = await pool.query(
     `SELECT id, label, store_visible, priority, price_monthly, price_yearly,
-            project_defaults, llm_limits AS ai_limits, features, usage_limits, disabled
+            project_defaults, ai_limits, features, usage_limits, disabled
      FROM membership_tiers`,
   );
   let tiers = (rows as MembershipTierRecord[]).map(
@@ -94,7 +94,7 @@ export async function getMembershipTierById({
   const pool = client ?? getPool("medium");
   const { rows } = await pool.query(
     `SELECT id, label, store_visible, priority, price_monthly, price_yearly,
-            project_defaults, llm_limits AS ai_limits, features, usage_limits, disabled
+            project_defaults, ai_limits, features, usage_limits, disabled
      FROM membership_tiers
      WHERE id=$1`,
     [id],

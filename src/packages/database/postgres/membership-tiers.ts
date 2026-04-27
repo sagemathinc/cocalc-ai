@@ -22,11 +22,7 @@ interface Query {
 
 function mapStorageRow(row) {
   if (!row) return row;
-  const { llm_limits, ...rest } = row;
-  return {
-    ...rest,
-    ai_limits: llm_limits,
-  };
+  return row;
 }
 
 function buildHistoryEntry(row): Record<string, unknown> {
@@ -112,7 +108,7 @@ export default async function membershipTiersQuery(
                 "price_monthly",
                 "price_yearly",
                 "project_defaults",
-                "llm_limits",
+                "ai_limits",
                 "features",
                 "usage_limits",
                 "disabled",
@@ -130,7 +126,7 @@ export default async function membershipTiersQuery(
                 "price_monthly" = EXCLUDED.price_monthly,
                 "price_yearly" = EXCLUDED.price_yearly,
                 "project_defaults" = EXCLUDED.project_defaults,
-                "llm_limits" = EXCLUDED.llm_limits,
+                "ai_limits" = EXCLUDED.ai_limits,
                 "features" = EXCLUDED.features,
                 "usage_limits" = EXCLUDED.usage_limits,
                 "disabled" = EXCLUDED.disabled,
