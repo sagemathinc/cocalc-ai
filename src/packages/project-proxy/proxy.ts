@@ -219,7 +219,9 @@ export function createProxyHandlers({
           ? "Unauthorized"
           : statusCode === 403
             ? "Forbidden"
-            : "Not Found";
+            : statusCode === 429
+              ? "Too Many Requests"
+              : "Not Found";
       socket.write(
         `HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\n\r\n`,
       );
@@ -323,7 +325,9 @@ export function attachProjectProxy({
           ? "Unauthorized"
           : statusCode === 403
             ? "Forbidden"
-            : "Bad Gateway";
+            : statusCode === 429
+              ? "Too Many Requests"
+              : "Bad Gateway";
       socket.write(
         `HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\n\r\n`,
       );

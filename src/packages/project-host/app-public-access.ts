@@ -12,7 +12,11 @@ import type { AppStaticIntegrationSpec } from "./public-viewer";
 
 const logger = getLogger("project-host:app-public-access");
 export const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
-const SUPPORT_FILES = new Set(["runtime-state.json", "metrics-state.json"]);
+const SUPPORT_FILES = new Set([
+  "runtime-state.json",
+  "metrics-state.json",
+  "host-metrics-state.json",
+]);
 
 export interface AppSpec {
   id: string;

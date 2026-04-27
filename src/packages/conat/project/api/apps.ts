@@ -137,6 +137,7 @@ export interface AppMetricsBucket {
   requests: number;
   bytes_sent: number;
   bytes_received: number;
+  websocket_bytes_sent: number;
   public_requests: number;
   private_requests: number;
   websocket_upgrades: number;
@@ -159,6 +160,7 @@ export interface AppMetricsSummary {
     status_4xx: number;
     status_5xx: number;
     websocket_upgrades: number;
+    websocket_bytes_sent: number;
     wake_count: number;
     latency_count: number;
     latency_sum_ms: number;

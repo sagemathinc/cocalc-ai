@@ -131,6 +131,15 @@ import {
   attachManagedHttpEgressRecorder,
   MANAGED_HTTP_EGRESS_CATEGORY,
 } from "./http-egress";
+import {
+  getHostAppIdForRunningServicePort,
+  recordHostAppWebsocketTraffic,
+} from "./app-metrics";
+import {
+  attachManagedWsEgressRecorder,
+  MANAGED_WS_EGRESS_CATEGORY,
+  setManagedWsEgressContext,
+} from "./ws-egress";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -161,6 +170,9 @@ function formatManagedEgressCategory(category: string): string {
   if (category === "file-download") return "File downloads";
   if (category === MANAGED_HTTP_EGRESS_CATEGORY) {
     return "App server HTTP traffic";
+  }
+  if (category === MANAGED_WS_EGRESS_CATEGORY) {
+    return "App server WebSocket traffic";
   }
   if (category === "interactive-conat") return "Interactive session traffic";
   return category.replace(/[-_]/g, " ");
@@ -482,6 +494,40 @@ export async function main(
       return false;
     }
   };
+  const getManagedProxyServicePort = (
+    req: IncomingMessage,
+    project_id: string,
+  ): number | undefined => {
+    try {
+      const parsed = new URL(req.url ?? "/", "http://project-host.local");
+      const match = parsed.pathname.match(
+        new RegExp(`^/${project_id}/(?:port|proxy|server)/(\\d+)(?:/|$)`),
+      );
+      const port = Number(match?.[1]);
+      if (Number.isInteger(port) && port > 0) {
+        return port;
+      }
+    } catch {}
+  };
+  const resolveManagedWsAppId = async ({
+    project_id,
+    req,
+  }: {
+    project_id: string;
+    req: IncomingMessage;
+  }): Promise<string | undefined> => {
+    const match = await matchAppRequest({
+      project_id,
+      url: req.url,
+    });
+    if (match?.spec.kind === "service") {
+      return match.spec.id;
+    }
+    const port = getManagedProxyServicePort(req, project_id);
+    if (port != null) {
+      return await getHostAppIdForRunningServicePort({ project_id, port });
+    }
+  };
   const setProjectFileCorsHeaders = (
     req: IncomingMessage,
     res: ServerResponse,
@@ -725,6 +771,121 @@ export async function main(
       });
     }
   };
+  const checkManagedWsEgressAllowedBestEffort = async ({
+    project_id,
+  }: {
+    project_id: string;
+  }): Promise<
+    | {
+        allowed: true;
+      }
+    | {
+        allowed: false;
+        message: string;
+      }
+  > => {
+    if (!isProjectHostManagedEgressEnforced()) {
+      return { allowed: true };
+    }
+    try {
+      const policy = await hubApi.system.getManagedProjectEgressPolicy({
+        project_id,
+        category: MANAGED_WS_EGRESS_CATEGORY,
+      });
+      if (policy.allowed) {
+        return { allowed: true };
+      }
+      const breakdown = Object.entries(
+        policy.managed_egress_categories_5h_bytes ?? {},
+      )
+        .filter(
+          ([, bytes]) =>
+            typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0,
+        )
+        .map(
+          ([category, bytes]) =>
+            `${formatManagedEgressCategory(category)}: ${formatByteCount(bytes)}`,
+        );
+      const lines = [
+        "Managed app WebSocket limit reached for this project.",
+        "New app WebSocket traffic is temporarily blocked until the egress usage window resets.",
+      ];
+      if (policy.egress_5h_bytes != null) {
+        lines.push(
+          `5-hour usage: ${formatByteCount(policy.managed_egress_5h_bytes)} / ${formatByteCount(policy.egress_5h_bytes)}.`,
+        );
+      }
+      if (policy.egress_7d_bytes != null) {
+        lines.push(
+          `7-day usage: ${formatByteCount(policy.managed_egress_7d_bytes)} / ${formatByteCount(policy.egress_7d_bytes)}.`,
+        );
+      }
+      if (breakdown.length > 0) {
+        lines.push(
+          `Current managed egress categories (5 hours): ${breakdown.join(", ")}.`,
+        );
+      }
+      return {
+        allowed: false,
+        message: lines.join("\n"),
+      };
+    } catch (err) {
+      logger.warn("unable to evaluate managed websocket egress policy", {
+        project_id,
+        err: `${err}`,
+      });
+      return { allowed: true };
+    }
+  };
+  const recordManagedWsEgressBestEffort = async ({
+    project_id,
+    app_id,
+    bytes,
+    request_path,
+    exposure_mode,
+    partial,
+  }: {
+    project_id: string;
+    app_id?: string;
+    bytes: number;
+    request_path: string;
+    exposure_mode: "private" | "public";
+    partial: boolean;
+  }): Promise<void> => {
+    if (!(bytes > 0)) return;
+    if (app_id) {
+      await recordHostAppWebsocketTraffic({
+        project_id,
+        app_id,
+        bytes_sent: bytes,
+        exposure_mode,
+      });
+    }
+    if (!isProjectHostManagedEgressTrackingEnabled()) return;
+    try {
+      await hubApi.system.recordManagedProjectEgress({
+        project_id,
+        category: MANAGED_WS_EGRESS_CATEGORY,
+        bytes,
+        metadata: {
+          app_id,
+          request_path,
+          exposure_mode,
+          partial,
+        },
+      });
+    } catch (err) {
+      logger.warn("unable to record managed websocket egress", {
+        project_id,
+        app_id: app_id ?? null,
+        request_path,
+        exposure_mode,
+        partial,
+        bytes,
+        err: `${err}`,
+      });
+    }
+  };
   app.options(PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH, (req, res) => {
     setBrowserSessionCorsHeaders(req, res);
     res.status(204).end();
@@ -807,8 +968,36 @@ export async function main(
     httpServer,
     app,
     rewriteRequest: maybeRewritePublicHostnameRequest,
-    onUpgradeAuthorized: (req, socket) =>
-      httpProxyAuth.trackUpgradedSocket(req, socket),
+    onUpgradeAuthorized: (req, socket) => {
+      httpProxyAuth.trackUpgradedSocket(req, socket);
+      attachManagedWsEgressRecorder({
+        req,
+        socket,
+        checkAllowed: async () => {
+          const project_id = req.url?.split("/")[1];
+          if (!project_id) {
+            return { allowed: true };
+          }
+          return await checkManagedWsEgressAllowedBestEffort({ project_id });
+        },
+        record: async ({
+          project_id,
+          app_id,
+          bytes,
+          request_path,
+          exposure_mode,
+          partial,
+        }) =>
+          await recordManagedWsEgressBestEffort({
+            project_id,
+            app_id,
+            bytes,
+            request_path,
+            exposure_mode,
+            partial,
+          }),
+      });
+    },
     resolveTarget: async (req, res) => {
       const project_id = req.url?.split("/")[1];
       if (!project_id) return { handled: false };
@@ -878,6 +1067,8 @@ export async function main(
         `${req.headers[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();
       const isManagedHttpRoute =
         !!res && isManagedProjectHttpEgressRequest(req, project_id);
+      const isManagedWsRoute =
+        !res && isManagedProjectHttpEgressRequest(req, project_id);
       if (isManagedHttpRoute) {
         const allowed = await checkManagedHttpEgressAllowedBestEffort({
           project_id,
@@ -909,6 +1100,21 @@ export async function main(
               exposure_mode,
               partial,
             }),
+        });
+      }
+      if (isManagedWsRoute) {
+        const allowed = await checkManagedWsEgressAllowedBestEffort({
+          project_id,
+        });
+        if (!allowed.allowed) {
+          throw Object.assign(new Error(allowed.message), {
+            statusCode: 429,
+          });
+        }
+        setManagedWsEgressContext(req, {
+          project_id,
+          app_id: await resolveManagedWsAppId({ project_id, req }),
+          exposure_mode: publicAppHost ? "public" : "private",
         });
       }
       if (publicAppHost) {

@@ -17,6 +17,7 @@ interface PersistedAppMetrics {
     requests: number;
     bytes_sent: number;
     bytes_received: number;
+    websocket_bytes_sent: number;
     public_requests: number;
     private_requests: number;
     public_bytes_sent: number;
@@ -33,6 +34,23 @@ interface PersistedAppMetrics {
     latency_histogram: number[];
   };
   history: AppMetricsBucket[];
+}
+
+interface HostPersistedAppMetrics {
+  last_hit_ms?: number;
+  totals?: {
+    websocket_bytes_sent?: number;
+  };
+  history?: Array<{
+    minute_start_ms?: number;
+    websocket_bytes_sent?: number;
+  }>;
+}
+
+interface HostMetricsStateV1 {
+  version: 1;
+  updated_at_ms: number;
+  apps: Record<string, HostPersistedAppMetrics>;
 }
 
 interface MetricsStateV1 {
@@ -66,12 +84,17 @@ function metricsStatePath(): string {
   return join(appsDir(), "metrics-state.json");
 }
 
+function hostMetricsStatePath(): string {
+  return join(appsDir(), "host-metrics-state.json");
+}
+
 function defaultAppMetrics(): PersistedAppMetrics {
   return {
     totals: {
       requests: 0,
       bytes_sent: 0,
       bytes_received: 0,
+      websocket_bytes_sent: 0,
       public_requests: 0,
       private_requests: 0,
       public_bytes_sent: 0,
@@ -129,6 +152,7 @@ function ensureLoaded(): void {
                 requests: Number(row?.requests) || 0,
                 bytes_sent: Number(row?.bytes_sent) || 0,
                 bytes_received: Number(row?.bytes_received) || 0,
+                websocket_bytes_sent: Number(row?.websocket_bytes_sent) || 0,
                 public_requests: Number(row?.public_requests) || 0,
                 private_requests: Number(row?.private_requests) || 0,
                 websocket_upgrades: Number(row?.websocket_upgrades) || 0,
@@ -207,6 +231,7 @@ function historyBucket(
     requests: 0,
     bytes_sent: 0,
     bytes_received: 0,
+    websocket_bytes_sent: 0,
     public_requests: 0,
     private_requests: 0,
     websocket_upgrades: 0,
@@ -252,6 +277,67 @@ function filterHistory(
   const now = Date.now();
   const cutoff = now - Math.max(1, minutes) * HISTORY_BUCKET_MS;
   return history.filter((row) => row.minute_start_ms >= cutoff);
+}
+
+function readHostMetricsState(): HostMetricsStateV1 {
+  try {
+    const raw = readFileSync(hostMetricsStatePath(), "utf8");
+    const parsed = JSON.parse(raw) as HostMetricsStateV1;
+    if (
+      parsed?.version === 1 &&
+      parsed.apps &&
+      typeof parsed.apps === "object"
+    ) {
+      return parsed;
+    }
+  } catch {}
+  return {
+    version: 1,
+    updated_at_ms: 0,
+    apps: {},
+  };
+}
+
+function emptyBucket(minute_start_ms: number): AppMetricsBucket {
+  return {
+    minute_start_ms,
+    requests: 0,
+    bytes_sent: 0,
+    bytes_received: 0,
+    websocket_bytes_sent: 0,
+    public_requests: 0,
+    private_requests: 0,
+    websocket_upgrades: 0,
+  };
+}
+
+function mergeHistoryBuckets({
+  history,
+  hostHistory,
+  minutes,
+}: {
+  history: AppMetricsBucket[];
+  hostHistory?: HostPersistedAppMetrics["history"];
+  minutes: number;
+}): AppMetricsBucket[] {
+  const buckets = new Map<number, AppMetricsBucket>();
+  for (const row of history) {
+    buckets.set(row.minute_start_ms, { ...row });
+  }
+  for (const row of hostHistory ?? []) {
+    const minute_start_ms = Number(row?.minute_start_ms) || 0;
+    if (!(minute_start_ms > 0)) continue;
+    const bucket = buckets.get(minute_start_ms) ?? emptyBucket(minute_start_ms);
+    bucket.websocket_bytes_sent +=
+      Math.max(0, Number(row?.websocket_bytes_sent) || 0) || 0;
+    buckets.set(minute_start_ms, bucket);
+  }
+  return filterHistory(
+    Array.from(buckets.values()).sort(
+      (left, right) => left.minute_start_ms - right.minute_start_ms,
+    ),
+    minutes,
+  );
 }
 
 export function recordAppHttpMetric({
@@ -337,16 +423,32 @@ export function getAppMetrics(
   { minutes = 60 }: { minutes?: number } = {},
 ): AppMetricsSummary {
   const metrics = appMetrics(app_id);
+  const hostMetrics = readHostMetricsState().apps[app_id];
   return {
     app_id,
     active_websockets: activeWebsocketCounts.get(app_id) ?? 0,
-    last_hit_ms: metrics.last_hit_ms,
+    last_hit_ms: Math.max(
+      Number(metrics.last_hit_ms) || 0,
+      Number(hostMetrics?.last_hit_ms) || 0,
+    )
+      ? Math.max(
+          Number(metrics.last_hit_ms) || 0,
+          Number(hostMetrics?.last_hit_ms) || 0,
+        )
+      : undefined,
     totals: {
       ...metrics.totals,
+      websocket_bytes_sent:
+        Math.max(0, Number(metrics.totals.websocket_bytes_sent) || 0) +
+        Math.max(0, Number(hostMetrics?.totals?.websocket_bytes_sent) || 0),
       p50_ms: percentileFromHistogram(metrics.totals.latency_histogram, 0.5),
       p95_ms: percentileFromHistogram(metrics.totals.latency_histogram, 0.95),
     },
-    history: filterHistory(metrics.history, minutes),
+    history: mergeHistoryBuckets({
+      history: metrics.history,
+      hostHistory: hostMetrics?.history,
+      minutes,
+    }),
   };
 }
 
@@ -354,7 +456,8 @@ export function listAppMetrics({
   minutes = 60,
 }: { minutes?: number } = {}): AppMetricsSummary[] {
   ensureLoaded();
-  return Object.keys(state.apps)
+  const hostAppIds = Object.keys(readHostMetricsState().apps);
+  return Array.from(new Set([...Object.keys(state.apps), ...hostAppIds]))
     .sort()
     .map((app_id) => getAppMetrics(app_id, { minutes }));
 }
