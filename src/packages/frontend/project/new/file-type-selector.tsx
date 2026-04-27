@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Col, Flex, Row, Tag } from "antd";
+import { Col, Row, Tag } from "antd";
 import { Gutter } from "antd/es/grid/row";
 import { lazy, Suspense } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -13,10 +13,7 @@ import { A } from "@cocalc/frontend/components/A";
 import { Icon, isIconName } from "@cocalc/frontend/components/icon";
 import { Tip } from "@cocalc/frontend/components/tip";
 import { labels } from "@cocalc/frontend/i18n";
-import { useProjectContext } from "@cocalc/frontend/project/context";
-import { Ext } from "@cocalc/frontend/project/page/home-page/ai-generate-examples";
 import { ProjectActions } from "@cocalc/frontend/project_actions";
-import { AIGenerateDocumentButton } from "../page/home-page/ai-generate-document";
 import { DELAY_SHOW_MS, NEW_FILETYPE_ICONS } from "./consts";
 import { NewFileButton } from "./new-file-button";
 
@@ -62,7 +59,6 @@ export function FileTypeSelector({
   filenameChanged,
   showServers = true,
 }: Props) {
-  const { project_id } = useProjectContext();
   const intl = useIntl();
 
   if (!create_file) {
@@ -281,38 +277,6 @@ export function FileTypeSelector({
     );
   }
 
-  function addAiDocGenerate(btn: React.JSX.Element, ext: Ext) {
-    if (isFlyout) {
-      return (
-        <Col sm={sm} md={md} key={`with-ai-${ext}`}>
-          <Flex align="flex-start" vertical={false} gap={"5px"}>
-            <Flex flex={"1 1 auto"}>{btn}</Flex>
-            <Flex flex={"0 0 auto"}>
-              <AIGenerateDocumentButton
-                project_id={project_id}
-                mode="flyout"
-                ext={ext}
-                filename={filenameChanged ? filename : undefined}
-              />
-            </Flex>
-          </Flex>
-        </Col>
-      );
-    } else {
-      return (
-        <Col sm={sm} md={md} key={`with-ai-${ext}`}>
-          {btn}
-          <AIGenerateDocumentButton
-            project_id={project_id}
-            mode="full"
-            ext={ext}
-            filename={filenameChanged ? filename : undefined}
-          />
-        </Col>
-      );
-    }
-  }
-
   function renderQuarto() {
     if (mode !== "flyout") return null;
     if (!availableFeatures.qmd) return null;
@@ -336,7 +300,11 @@ export function FileTypeSelector({
       </Tip>
     );
 
-    return addAiDocGenerate(btn, "qmd");
+    return (
+      <Col sm={sm} md={md}>
+        {btn}
+      </Col>
+    );
   }
 
   function renderLaTeX() {
@@ -364,7 +332,11 @@ export function FileTypeSelector({
         />
       </Tip>
     );
-    return addAiDocGenerate(btn, "tex");
+    return (
+      <Col sm={sm} md={md}>
+        {btn}
+      </Col>
+    );
   }
 
   function renderMD() {
@@ -391,7 +363,11 @@ export function FileTypeSelector({
       </Tip>
     );
 
-    return addAiDocGenerate(btn, "md");
+    return (
+      <Col sm={sm} md={md}>
+        {btn}
+      </Col>
+    );
   }
 
   function renderMarkdown() {
@@ -410,8 +386,8 @@ export function FileTypeSelector({
         </Section>
         <Row gutter={gutter} style={newRowStyle}>
           {renderMD()}
-          {availableFeatures.rmd &&
-            addAiDocGenerate(
+          {availableFeatures.rmd && (
+            <Col sm={sm} md={md}>
               <Tip
                 delayShow={DELAY_SHOW_MS}
                 title="RMarkdown File"
@@ -426,9 +402,9 @@ export function FileTypeSelector({
                   size={btnSize}
                   active={btnActive("rmd")}
                 />
-              </Tip>,
-              "rmd",
-            )}
+              </Tip>
+            </Col>
+          )}
           <Col sm={sm} md={md}>
             <Tip
               icon={NEW_FILETYPE_ICONS.board}

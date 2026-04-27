@@ -102,8 +102,8 @@ function getRenderChangeReasons(props: Props, nextProps: Props): string[] {
   if (nextProps.height !== props.height) reasons.push("height");
   if (nextProps.isFirst !== props.isFirst) reasons.push("isFirst");
   if (nextProps.isLast !== props.isLast) reasons.push("isLast");
-  if ((nextProps.llmTools?.model ?? "") !== (props.llmTools?.model ?? "")) {
-    reasons.push("llmTools.model");
+  if ((nextProps.llmTools != null) !== (props.llmTools != null)) {
+    reasons.push("llmTools.present");
   }
   if (
     nextProps.complete !== props.complete &&
@@ -143,7 +143,7 @@ function areEqual(props: Props, nextProps: Props): boolean {
     nextProps.height !== props.height ||
     nextProps.isFirst !== props.isFirst ||
     nextProps.isLast !== props.isLast ||
-    (nextProps.llmTools?.model ?? "") !== (props.llmTools?.model ?? "") ||
+    (nextProps.llmTools != null) !== (props.llmTools != null) ||
     (nextProps.complete !== props.complete && // only worry about complete when editing this cell
       (nextProps.is_current || props.is_current)) ||
     // dragHandle is re-created by CellList on each render.  We only care if

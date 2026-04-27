@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Col, Flex } from "antd";
+import { Col } from "antd";
 import Immutable from "immutable";
 
 import { Available } from "@cocalc/comm/project-configuration";
@@ -14,7 +14,6 @@ import { useJupyterKernelsInfo } from "@cocalc/frontend/jupyter/use-kernels-info
 import { useProjectContext } from "@cocalc/frontend/project//context";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { capitalize, cmp, unreachable } from "@cocalc/util/misc";
-import { AIGenerateDocumentButton } from "../page/home-page/ai-generate-document";
 import { ensure_project_running } from "../project-start-warning";
 import { DELAY_SHOW_MS, NEW_FILETYPE_ICONS } from "./consts";
 import { NewFileButton } from "./new-file-button";
@@ -74,7 +73,6 @@ export function JupyterNotebookButtons({
   btnActive,
   grid,
   filename,
-  filenameChanged,
   mode,
   makeNewFilename,
   after,
@@ -286,35 +284,11 @@ export function JupyterNotebookButtons({
       });
     }
 
-    if (isFlyout) {
-      return btns.map(({ btn, lang }, i) => (
-        <Col key={i} sm={sm} md={md}>
-          <Flex align="flex-start" vertical={false} gap={"5px"}>
-            <Flex flex={"1 1 auto"}>{btn}</Flex>
-            <Flex flex={"0 0 auto"}>
-              <AIGenerateDocumentButton
-                project_id={project_id}
-                mode="flyout"
-                ext={langs.includes(lang as any) ? "ipynb-sagemath" : "ipynb"}
-                filename={filenameChanged ? filename : undefined}
-              />
-            </Flex>
-          </Flex>
-        </Col>
-      ));
-    } else {
-      return btns.map(({ btn, lang }, i) => (
-        <Col key={i} sm={sm} md={md}>
-          {btn}
-          <AIGenerateDocumentButton
-            project_id={project_id}
-            mode="full"
-            ext={langs.includes(lang as any) ? "ipynb-sagemath" : "ipynb"}
-            filename={filenameChanged ? filename : undefined}
-          />
-        </Col>
-      ));
-    }
+    return btns.map(({ btn }, i) => (
+      <Col key={i} sm={sm} md={md}>
+        {btn}
+      </Col>
+    ));
   }
 
   const btn = (
@@ -336,35 +310,11 @@ export function JupyterNotebookButtons({
   );
 
   function renderMainJupyterButton() {
-    if (isFlyout) {
-      return (
-        <Col sm={sm} md={md}>
-          <Flex align="flex-start" vertical={false} gap={"5px"}>
-            <Flex flex={"1 1 auto"}>{btn}</Flex>
-            <Flex flex={"0 0 auto"}>
-              <AIGenerateDocumentButton
-                project_id={project_id}
-                mode="flyout"
-                ext="ipynb"
-                filename={filenameChanged ? filename : undefined}
-              />
-            </Flex>
-          </Flex>
-        </Col>
-      );
-    } else {
-      return (
-        <Col sm={sm} md={md}>
-          {btn}
-          <AIGenerateDocumentButton
-            project_id={project_id}
-            mode="full"
-            ext="ipynb"
-            filename={filenameChanged ? filename : undefined}
-          />
-        </Col>
-      );
-    }
+    return (
+      <Col sm={sm} md={md}>
+        {btn}
+      </Col>
+    );
   }
 
   return (

@@ -9,14 +9,12 @@ const log = getLogger("account:lite-ai-settings");
 
 type ProviderKey = {
   keyField: string;
-  enableField: string;
   label: string;
   placeholder?: string;
 };
 
 const OPENAI_PROVIDER: ProviderKey = {
   keyField: "openai_api_key",
-  enableField: "openai_enabled",
   label: "OpenAI API Key",
   placeholder: "sk-...",
 };
@@ -58,7 +56,7 @@ export default function LiteAISettings({
       setError("");
       setState("ready");
     } catch (err) {
-      log.info("failed to load llm settings", err);
+      log.info("failed to load AI settings", err);
       setError(`${err}`);
       setState("error");
     }
@@ -81,18 +79,10 @@ export default function LiteAISettings({
     if (saving || !dirty) return;
     setState("save");
     try {
-      const { keyField, enableField } = OPENAI_PROVIDER;
+      const { keyField } = OPENAI_PROVIDER;
       const val = values[keyField] ?? "";
       await query({
         query: { site_settings: { name: keyField, value: val } },
-      });
-      await query({
-        query: {
-          site_settings: {
-            name: enableField,
-            value: val ? "yes" : "no",
-          },
-        },
       });
       redux.getStore("projects").clearOpenAICache();
       // @ts-ignore
@@ -101,7 +91,7 @@ export default function LiteAISettings({
       setState("ready");
       onSaved?.();
     } catch (err) {
-      log.info("failed to save llm settings", err);
+      log.info("failed to save AI settings", err);
       setError(`${err}`);
       setState("error");
     }
@@ -115,7 +105,8 @@ export default function LiteAISettings({
             Option B: OpenAI API Key
           </Typography.Title>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-            Choose this if you want Codex billed through your OpenAI API key.
+            This is optional. Use it if you want the site to fund Codex usage
+            through a shared OpenAI API key.
           </Typography.Paragraph>
         </>
       ) : null}

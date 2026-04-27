@@ -42,7 +42,6 @@ import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdo
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
-import { modelToName } from "@cocalc/frontend/frame-editors/llm/llm-selector";
 import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
@@ -1462,9 +1461,7 @@ export default function Message({
           placement="bottom"
           title={
             isLLMThread
-              ? `Reply to ${modelToName(
-                  isLLMThread,
-                )}, sending the thread as context.`
+              ? "Reply to this AI thread, sending the thread as context."
               : "Reply to this thread."
           }
         >
@@ -1478,14 +1475,7 @@ export default function Message({
             }}
           >
             <Icon name="reply" /> Reply
-            {isLLMThread ? ` to ${modelToName(isLLMThread)}` : ""}
-            {isLLMThread ? (
-              <Avatar
-                account_id={isLLMThread}
-                size={16}
-                style={{ top: "-2px", marginLeft: "4px" }}
-              />
-            ) : null}
+            {isLLMThread ? " to AI" : ""}
           </Button>
         </Tooltip>,
       );
@@ -1714,9 +1704,7 @@ export default function Message({
     if (allowReply && !replying && actions) {
       overflowItems.push({
         key: "reply",
-        label: isLLMThread
-          ? `Reply to ${modelToName(isLLMThread)}`
-          : "Reply to thread",
+        label: isLLMThread ? "Reply to AI thread" : "Reply to thread",
         onClick: () => {
           setReplying(true);
           setAutoFocusReply(true);

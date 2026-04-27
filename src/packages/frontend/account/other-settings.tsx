@@ -23,7 +23,6 @@ import {
 } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import LLMSelector from "@cocalc/frontend/frame-editors/llm/llm-selector";
 import { labels, LOCALIZATIONS } from "@cocalc/frontend/i18n";
 import {
   ACTIVITY_BAR_LABELS,
@@ -50,8 +49,6 @@ import { OTHER_SETTINGS_REPLY_ENGLISH_KEY } from "@cocalc/util/i18n/const";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 
 import Tours from "./tours";
-import { useLanguageModelSetting } from "./useLanguageModelSetting";
-import { UserDefinedLLMComponent } from "./user-defined-llm";
 import LiteAISettings from "./lite-ai-settings";
 import { lite } from "@cocalc/frontend/lite";
 import { AgentDebugPanel } from "./agent-debug-panel";
@@ -75,8 +72,6 @@ interface Props {
 export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
   const intl = useIntl();
   const { locale } = useLocalizationCtx();
-  const isCoCalcCom = useTypedRedux("customize", "is_cocalc_com");
-  const user_defined_llm = useTypedRedux("customize", "user_defined_llm");
   const site_launcher_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
@@ -87,8 +82,6 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
   );
   const [showLauncherCustomize, setShowLauncherCustomize] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-
-  const [model, setModel] = useLanguageModelSetting();
 
   function on_change(name: string, value: any): void {
     redux.getActions("account").set_other_settings(name, value);
@@ -299,22 +292,9 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
         <FormattedMessage
           id="account.other-settings.llm.disable_all"
           defaultMessage={`<strong>Disable all AI integrations</strong>:
-            code generation, explanation buttons in Jupyter, @chatgpt mentions, etc.`}
+            code generation, explanation buttons in Jupyter, and other AI-powered tools.`}
         />
       </Switch>
-    );
-  }
-
-  function render_language_model(): Rendered {
-    return (
-      <LabeledRow
-        label={intl.formatMessage({
-          id: "account.other-settings.llm.default_llm",
-          defaultMessage: "Default AI Model",
-        })}
-      >
-        <LLMSelector model={model} setModel={setModel} />
-      </LabeledRow>
     );
   }
 
@@ -329,22 +309,10 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
         <FormattedMessage
           id="account.other-settings.llm.reply_language"
           defaultMessage={`<strong>Always reply in English:</strong>
-          If set, the replies are always in English; otherwise, replies in your language ({lang}).`}
+          If set, AI replies are always in English; otherwise, replies are in your language ({lang}).`}
           values={{ lang: intl.formatMessage(LOCALIZATIONS[locale].trans) }}
         />
       </Switch>
-    );
-  }
-
-  function render_custom_llm(): Rendered {
-    if (lite) return;
-    // on cocalc.com, do not even show that they're disabled
-    if (isCoCalcCom && !user_defined_llm) return;
-    return (
-      <UserDefinedLLMComponent
-        on_change={on_change}
-        style={{ marginTop: "20px" }}
-      />
     );
   }
 
@@ -368,8 +336,6 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
       >
         {anyLLMenabled && render_disable_all_llm()}
         {anyLLMenabled && render_llm_reply_language()}
-        {anyLLMenabled && render_language_model()}
-        {!lite && render_custom_llm()}
         {lite && <LiteAISettings />}
         {DEBUG ? (
           <div style={{ marginTop: 12 }}>

@@ -8,7 +8,6 @@ import { Map } from "immutable";
 import { TypedMap } from "@cocalc/frontend/app-framework";
 
 import type { Mode as JupyterCellLLMMode } from "@cocalc/frontend/jupyter/llm/cell-tool";
-import { Ext } from "@cocalc/frontend/project/page/home-page/ai-generate-examples";
 
 export type EventRecord = {
   id: string;
@@ -124,16 +123,10 @@ interface LLMEventJupyterGenerateNotebook extends LLMEventBase {
   usage: "jupyter-generate-notebook";
 }
 
-interface LLMEvenGenerateDocument extends LLMEventBase {
-  usage: "generate-document";
-  ext: Ext;
-}
-
 export type LLMEvent =
   | LLMEventJupyterCellButton
   | LLMEventJupyterCellGenerate
-  | LLMEventJupyterGenerateNotebook
-  | LLMEvenGenerateDocument;
+  | LLMEventJupyterGenerateNotebook;
 
 export type MiniTermEvent = {
   event: "miniterm" | "termInSearch";

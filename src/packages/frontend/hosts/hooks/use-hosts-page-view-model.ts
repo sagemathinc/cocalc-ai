@@ -4,7 +4,6 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useHostActions } from "./use-host-actions";
-import { useHostAi } from "./use-host-ai";
 import { useHostCatalog } from "./use-host-catalog";
 import { useHostCreate } from "./use-host-create";
 import { useHostCreateViewModel } from "./use-host-create-view-model";
@@ -24,7 +23,6 @@ import { useHostSoftwareVersionCatalog } from "./use-host-software-version-catal
 import { useHostRuntimeDeploymentStatus } from "./use-host-runtime-deployment-status";
 import { useParallelOps } from "./use-parallel-ops";
 import { formatHostUpgradeFailureMessage } from "./host-upgrade-errors";
-import { buildRegionGroupOptions } from "../utils/normalize-catalog";
 import {
   buildCreateHostPayload,
   getProviderOptions,
@@ -1433,8 +1431,6 @@ export const useHostsPageViewModel = () => {
     persistentGrowable,
     storageModeOptions,
     showDiskFields,
-    catalogSummary,
-    applyRecommendation,
   } = useHostForm({
     form,
     catalog,
@@ -1449,24 +1445,6 @@ export const useHostsPageViewModel = () => {
     selectedSize,
     selectedStorageMode,
     enabledProviders,
-  });
-  const regionOptions = buildRegionGroupOptions(catalogSummary);
-
-  const {
-    aiPrompt,
-    setAiPrompt,
-    aiBudget,
-    setAiBudget,
-    aiRegionGroup,
-    setAiRegionGroup,
-    aiLoading,
-    aiError,
-    aiResults,
-    runAiRecommendation,
-  } = useHostAi({
-    catalogSummary,
-    availableProviders: enabledProviders,
-    regionOptions,
   });
 
   const { creating, onCreate } = useHostCreate({
@@ -1504,21 +1482,6 @@ export const useHostsPageViewModel = () => {
       setRefreshProvider,
       refreshCatalog,
       catalogRefreshing,
-    },
-    ai: {
-      aiQuestion: aiPrompt,
-      setAiQuestion: setAiPrompt,
-      aiBudget,
-      setAiBudget,
-      aiRegionGroup,
-      setAiRegionGroup,
-      aiLoading,
-      aiError,
-      aiResults,
-      canRecommend: !!catalogSummary,
-      runAiRecommendation,
-      applyRecommendation,
-      regionOptions,
     },
   });
   const refreshHostsNow = React.useCallback(async () => {

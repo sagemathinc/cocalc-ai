@@ -5,8 +5,6 @@
 
 import type * as immutable from "immutable";
 
-import { LanguageModel } from "@cocalc/util/db-schema/llm-utils";
-
 import type { KernelMetadata, KernelSpec } from "@cocalc/util/jupyter/types";
 export type { KernelMetadata, KernelSpec };
 
@@ -62,8 +60,6 @@ export type BackendState =
 export type KernelState = "idle" | "busy" | "running";
 
 export interface LLMTools {
-  model: LanguageModel;
-  setModel: (llm: LanguageModel) => void;
   toolComponents: {
     LLMCellTool;
     LLMError;

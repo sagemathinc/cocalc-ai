@@ -66,7 +66,6 @@ const pii_retention_display = (retention: string) => {
   }
 };
 
-const openai_enabled = (conf: SiteSettings) => to_bool(conf.openai_enabled);
 const vertexai_enabled = (conf: SiteSettings) =>
   to_bool(conf.google_vertexai_enabled);
 const mistral_enabled = (conf: SiteSettings) => to_bool(conf.mistral_enabled);
@@ -75,11 +74,6 @@ const anthropic_enabled = (conf: SiteSettings) =>
 const ollama_enabled = (conf: SiteSettings) => to_bool(conf.ollama_enabled);
 const custom_openai_enabled = (conf: SiteSettings) =>
   to_bool(conf.custom_openai_enabled);
-const any_llm_enabled = (conf: SiteSettings) =>
-  openai_enabled(conf) ||
-  vertexai_enabled(conf) ||
-  ollama_enabled(conf) ||
-  mistral_enabled(conf);
 
 const cloudflare_mode = (conf: SiteSettings): string =>
   `${conf.cloudflare_mode ?? "none"}`.trim().toLowerCase();
@@ -353,24 +347,21 @@ export const EXTRAS: SettingsExtras = {
     subgroup: "Licensing",
   },
   openai_section: {
-    name: "Language Model Configuration",
+    name: "OpenAI / Codex Configuration",
     desc: "",
     default: "",
-    show: any_llm_enabled,
     type: "header",
     tags: ["AI LLM", "OpenAI"],
-    group: "AI & LLM",
-    subgroup: "Overview",
+    group: "AI & Agents",
+    subgroup: "OpenAI",
   },
   openai_api_key: {
     name: "OpenAI API Key",
-    desc: "Your OpenAI API Key from https://platform.openai.com/account/api-keys.  This key is needed to support functionality that uses OpenAI's API.",
+    desc: "Optional site OpenAI API key from https://platform.openai.com/account/api-keys. Leave this blank if users will rely on their own subscriptions or API keys.",
     default: "",
     password: true,
-    show: openai_enabled,
     tags: ["AI LLM", "OpenAI"],
-    required_when: [{ key: "openai_enabled", equals: "yes" }],
-    group: "AI & LLM",
+    group: "AI & Agents",
     subgroup: "OpenAI",
   },
   google_vertexai_key: {

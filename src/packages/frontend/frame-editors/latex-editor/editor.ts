@@ -78,7 +78,6 @@ const cm: EditorDescription = {
     "minimap_settings",
   ]),
   buttons: set([
-    "format-ai_formula",
     "sync",
     "format-header",
     "format-text",

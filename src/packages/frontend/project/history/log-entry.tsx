@@ -678,7 +678,7 @@ export const LogEntry: React.FC<Props> = React.memo(
       const name = (
         <Space size="small">
           <AIAvatar size={14} style={{ top: "1px" }} />
-          {model ? `LLM (${modelToName(model)})` : "LLM"}
+          {model ? `AI (${modelToName(model)})` : "AI"}
         </Space>
       );
 
@@ -713,13 +713,6 @@ export const LogEntry: React.FC<Props> = React.memo(
           return (
             <span>
               used an {name} to generate the Jupyter Notebook {pathLink}
-            </span>
-          );
-
-        case "generate-document":
-          return (
-            <span>
-              used an {name} to generate the Document {pathLink}
             </span>
           );
 

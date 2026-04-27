@@ -1,6 +1,6 @@
 import { useMemo } from "@cocalc/frontend/app-framework";
 import type { FormInstance } from "antd/es/form";
-import type { HostProvider, HostRecommendation } from "../types";
+import type { HostProvider } from "../types";
 import type {
   FieldOptionsMap,
   HostFieldLabels,
@@ -43,21 +43,6 @@ export type HostCreateViewModel = {
     setRefreshProvider: (value: HostProvider) => void;
     refreshCatalog: (provider?: HostProvider) => Promise<boolean>;
     catalogRefreshing: boolean;
-  };
-  ai: {
-    aiQuestion: string;
-    setAiQuestion: (value: string) => void;
-    aiBudget?: number;
-    setAiBudget: (value?: number) => void;
-    aiRegionGroup: string;
-    setAiRegionGroup: (value: string) => void;
-    aiLoading: boolean;
-    aiError?: string;
-    aiResults: HostRecommendation[];
-    regionOptions: Array<{ value: string; label: string }>;
-    canRecommend: boolean;
-    runAiRecommendation: () => void;
-    applyRecommendation: (rec: HostRecommendation) => void;
   };
 };
 

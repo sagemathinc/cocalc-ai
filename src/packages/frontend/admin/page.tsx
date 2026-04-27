@@ -11,8 +11,6 @@ import { RegistrationToken } from "./registration-token";
 import { MembershipTiers } from "./membership-tiers";
 import SiteSettings from "./site-settings";
 import { UserSearch } from "./users/user-search";
-import AIAvatar from "@cocalc/frontend/components/ai-avatar";
-import { TestLLMAdmin } from "./llm/admin-llm-test";
 import { SoftwareLicensesAdmin } from "./software-licenses";
 import { RootfsAdmin } from "./rootfs";
 import { NewsAdminPage } from "./news/page";
@@ -198,16 +196,6 @@ export function AdminPage({
     //       ),
     //       children: <UsageStatistics />,
     //     },
-    {
-      key: "llm-testing",
-      label: (
-        <div style={headerStyle}>
-          <AIAvatar size={16} style={{ marginRight: "8px" }} /> Test LLM
-          Integration
-        </div>
-      ),
-      children: <TestLLMAdmin />,
-    },
   ];
 
   return (

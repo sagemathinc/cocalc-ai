@@ -33,7 +33,6 @@ export class ManageCommands {
   readonly props; // FrameTitleBarProps;
   readonly studentProjectFunctionality;
   readonly setShowAI: (val: boolean) => void;
-  readonly setShowNewAI: (val: boolean) => void;
   readonly helpSearch: string;
   readonly setHelpSearch;
   readonly readOnly: boolean;
@@ -47,7 +46,6 @@ export class ManageCommands {
     props,
     studentProjectFunctionality,
     setShowAI,
-    setShowNewAI,
     helpSearch,
     setHelpSearch,
     readOnly,
@@ -57,7 +55,6 @@ export class ManageCommands {
     this.props = props;
     this.studentProjectFunctionality = studentProjectFunctionality;
     this.setShowAI = setShowAI;
-    this.setShowNewAI = setShowNewAI;
     this.helpSearch = helpSearch;
     this.setHelpSearch = setHelpSearch;
     this.readOnly = readOnly;

@@ -6,17 +6,13 @@
 import { Input, Select, Switch } from "antd";
 import { CSSProperties } from "react";
 import { isEqual } from "lodash";
-import { LanguageModelVendorAvatar } from "@cocalc/frontend/components/language-model-icon";
 import Password, {
   PasswordTextArea,
 } from "@cocalc/frontend/components/password";
-import { modelToName } from "@cocalc/frontend/frame-editors/llm/llm-selector";
 import { LOCALIZATIONS } from "@cocalc/frontend/i18n";
 import { LOCALE } from "@cocalc/util/consts/locale";
-import { USER_SELECTABLE_LANGUAGE_MODELS } from "@cocalc/util/db-schema/llm-utils";
 import {
   ConfigValid,
-  to_list_of_llms,
   to_list_of_locale,
 } from "@cocalc/util/db-schema/site-defaults";
 import { RowEntryInnerProps } from "./row-entry";
@@ -53,30 +49,7 @@ export function RowEntryInner({
   const disabled = isReadonly[name] == true;
   const isStored = password && isSet && !value && !isClearing;
 
-  if (name === "selectable_llms") {
-    return (
-      <Select
-        mode="multiple"
-        style={{ width: "100%" }}
-        placeholder="Select user selectable LLMs"
-        optionLabelProp="label"
-        defaultValue={to_list_of_llms(value, false)}
-        onChange={(value: Array<string>) => {
-          onChangeEntry(name, value.join(","));
-          update();
-        }}
-        options={USER_SELECTABLE_LANGUAGE_MODELS.map((model) => {
-          return { label: modelToName(model), value: model };
-        })}
-        optionRender={(option) => (
-          <>
-            <LanguageModelVendorAvatar model={(option.value as string) ?? ""} />{" "}
-            {option.label}
-          </>
-        )}
-      />
-    );
-  } else if (name === "i18n") {
+  if (name === "i18n") {
     return (
       <Select
         mode="multiple"
@@ -127,10 +100,7 @@ export function RowEntryInner({
         }}
         style={{ width: "100%" }}
         options={valid.map((value) => {
-          const label =
-            valid_labels?.[value] ??
-            (name === "default_llm" ? modelToName(value) : value);
-          return { value, label };
+          return { value, label: valid_labels?.[value] ?? value };
         })}
       />
     );

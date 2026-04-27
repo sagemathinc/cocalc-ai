@@ -74,7 +74,6 @@ export type SiteSettingsKeys =
   | "support"
   | "support_video_call"
   | "openai_enabled"
-  | "agent_openai_control_agent_enabled"
   | "agent_openai_codex_enabled"
   | "google_vertexai_enabled"
   | "mistral_enabled"
@@ -833,34 +832,24 @@ export const site_settings_conf: SiteSettings = {
     subgroup: "Landing",
   },
   openai_enabled: {
-    name: "OpenAI ChatGPT UI",
-    desc: "Controls visibility of UI elements related to OpenAI ChatGPT integration.  You must **also set your OpenAI API key** below for this functionality to work.",
-    default: "no",
+    name: "Enable OpenAI Integration",
+    desc: "Allows OpenAI-backed AI features. This does not require a site OpenAI API key; users may use their own subscriptions, and the site key is optional.",
+    default: "yes",
     valid: only_booleans,
     to_val: to_bool,
     tags: ["OpenAI", "AI LLM"],
-    group: "AI & LLM",
-    subgroup: "Providers",
-  },
-  agent_openai_control_agent_enabled: {
-    name: "OpenAI Control Agent UI",
-    desc: "Controls visibility of UI elements related to the OpenAI control-plane agent.",
-    default: "no",
-    valid: only_booleans,
-    to_val: to_bool,
-    tags: ["OpenAI", "AI LLM"],
-    group: "AI & LLM",
-    subgroup: "Providers",
+    group: "AI & Agents",
+    subgroup: "OpenAI",
   },
   agent_openai_codex_enabled: {
-    name: "OpenAI Codex Agent UI",
-    desc: "Controls visibility of UI elements related to the OpenAI Codex coding agent. You must have the Codex CLI installed and configured for this to work.",
-    default: "no",
+    name: "Enable Codex Agent UI",
+    desc: "Controls visibility of the Codex coding agent UI. This does not require a site OpenAI API key.",
+    default: "yes",
     valid: only_booleans,
     to_val: to_bool,
     tags: ["OpenAI", "AI LLM"],
-    group: "AI & LLM",
-    subgroup: "Providers",
+    group: "AI & Agents",
+    subgroup: "OpenAI",
   },
   google_vertexai_enabled: {
     name: "Google Generative AI UI",

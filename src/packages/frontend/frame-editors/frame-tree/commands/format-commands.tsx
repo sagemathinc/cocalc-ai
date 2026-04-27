@@ -6,7 +6,6 @@
 import { range } from "lodash";
 import { defineMessage } from "react-intl";
 
-import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import ColorPicker from "@cocalc/frontend/components/color-picker";
 import { HeadingContent } from "@cocalc/frontend/components/heading-menu";
 import {
@@ -46,21 +45,6 @@ const FORMAT_SPEC = {
       defaultMessage: "Insert display LaTeX math equation",
     }),
     icon: <span>$$</span>,
-  },
-  ai_formula: {
-    button: defineMessage({
-      id: "command.format.ai_formula.button",
-      defaultMessage: "Formula",
-    }),
-    label: defineMessage({
-      id: "command.format.ai_formula.label",
-      defaultMessage: "AI Generated Formula",
-    }),
-    title: defineMessage({
-      id: "command.format.ai_formula.title",
-      defaultMessage: "Insert AI generated formula.",
-    }),
-    icon: <AIAvatar size={16} />,
   },
   bold: {
     icon: "bold",
@@ -359,7 +343,7 @@ const FORMAT_MENUS = {
     label: menu.insert,
     pos: 1.3,
     entries: {
-      math: ["equation", "display_equation", "ai_formula"],
+      math: ["equation", "display_equation"],
       lists: ["insertunorderedlist", "insertorderedlist"],
       objects: [
         "table",

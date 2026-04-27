@@ -113,8 +113,7 @@ export function ChatRoomComposer({
       return "Ask Codex...";
     }
     if (metadata?.agent_kind === "llm") {
-      const model = metadata?.agent_model?.trim();
-      return model ? `Ask ${model}...` : "Ask AI...";
+      return "Ask AI...";
     }
     const threadMs = parseInt(contextThread.key, 10);
     if (
@@ -124,8 +123,7 @@ export function ChatRoomComposer({
       return "Ask Codex...";
     }
     if (contextThread.isAI) {
-      const model = metadata?.agent_model?.trim();
-      return model ? `Ask ${model}...` : "Ask AI...";
+      return "Ask AI...";
     }
     return "Write a message...";
   }, [contextThread, actions]);

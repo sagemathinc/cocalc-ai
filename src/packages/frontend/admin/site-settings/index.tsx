@@ -32,13 +32,28 @@ import NebiusCliWizard from "./nebius-cli-wizard";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
 import LauncherDefaultsWizard from "./launcher-defaults-wizard";
 import RuntimeRetentionPolicyWizard from "./runtime-retention-policy-wizard";
-import {
-  toCustomOpenAIModel,
-  toOllamaModel,
-} from "@cocalc/util/db-schema/llm-utils";
 import ShowError from "@cocalc/frontend/components/error";
 
 const { CheckableTag } = AntdTag;
+
+const REMOVED_LEGACY_AI_SETTINGS = new Set<string>([
+  "google_vertexai_enabled",
+  "mistral_enabled",
+  "anthropic_enabled",
+  "ollama_enabled",
+  "custom_openai_enabled",
+  "selectable_llms",
+  "default_llm",
+  "user_defined_llm",
+]);
+
+const REMOVED_LEGACY_AI_EXTRAS = new Set<string>([
+  "google_vertexai_key",
+  "mistral_api_key",
+  "anthropic_api_key",
+  "ollama_configuration",
+  "custom_openai_configuration",
+]);
 
 export default function SiteSettings({ close }) {
   const { inc: change } = useCounter();
@@ -149,6 +164,12 @@ export default function SiteSettings({ close }) {
 
   function shouldShowSetting(name: string, conf): boolean {
     if (data == null) return false;
+    if (
+      REMOVED_LEGACY_AI_SETTINGS.has(name) ||
+      REMOVED_LEGACY_AI_EXTRAS.has(name)
+    ) {
+      return false;
+    }
     if (conf.hidden && !showHidden) return false;
     if (conf.cocalc_only) {
       if (!document.location.host.endsWith("cocalc.com")) {
@@ -517,6 +538,12 @@ export default function SiteSettings({ close }) {
     >();
     for (const configData of [site_settings_conf, EXTRAS]) {
       for (const name of keys(configData)) {
+        if (
+          REMOVED_LEGACY_AI_SETTINGS.has(name) ||
+          REMOVED_LEGACY_AI_EXTRAS.has(name)
+        ) {
+          continue;
+        }
         const conf = configData[name];
         if (!conf.required_when) continue;
         if (!isRequiredWhen(conf)) continue;
@@ -540,6 +567,12 @@ export default function SiteSettings({ close }) {
     const status = new Map<string, boolean>();
     for (const configData of [site_settings_conf, EXTRAS]) {
       for (const name of keys(configData)) {
+        if (
+          REMOVED_LEGACY_AI_SETTINGS.has(name) ||
+          REMOVED_LEGACY_AI_EXTRAS.has(name)
+        ) {
+          continue;
+        }
         const conf = configData[name];
         const group = conf.group ?? inferGroup(conf);
         if (!status.has(group)) status.set(group, true);
@@ -566,6 +599,12 @@ export default function SiteSettings({ close }) {
     const counts = new Map<string, Map<string, number>>();
     for (const configData of [site_settings_conf, EXTRAS]) {
       for (const name of keys(configData)) {
+        if (
+          REMOVED_LEGACY_AI_SETTINGS.has(name) ||
+          REMOVED_LEGACY_AI_EXTRAS.has(name)
+        ) {
+          continue;
+        }
         const conf = configData[name];
         if (!conf.required_when) continue;
         if (!isRequiredWhen(conf)) continue;
@@ -584,6 +623,12 @@ export default function SiteSettings({ close }) {
     const allItems: { name: string; conf: any }[] = [];
     for (const configData of [site_settings_conf, EXTRAS]) {
       for (const name of keys(configData)) {
+        if (
+          REMOVED_LEGACY_AI_SETTINGS.has(name) ||
+          REMOVED_LEGACY_AI_EXTRAS.has(name)
+        ) {
+          continue;
+        }
         const conf = configData[name];
         allItems.push({ name, conf });
       }
@@ -614,7 +659,7 @@ export default function SiteSettings({ close }) {
       "Compute / Project Hosts",
       "Access & Identity",
       "Messaging & Email",
-      "AI & LLM",
+      "AI & Agents",
       "Payments & Billing",
       "Support / Integrations",
       "System / Advanced",
@@ -716,27 +761,6 @@ export default function SiteSettings({ close }) {
                       return a.conf.name.localeCompare(b.conf.name);
                     })
                     .map(({ name, conf }) => {
-                      // This is a weird special case, where the valid value depends on other values
-                      if (name === "default_llm") {
-                        const c = site_settings_conf.selectable_llms;
-                        const llms =
-                          c.to_val?.(data?.selectable_llms ?? c.default) ?? [];
-                        const o = EXTRAS.ollama_configuration;
-                        const oll = Object.keys(
-                          o.to_val?.(data?.ollama_configuration) ?? {},
-                        ).map(toOllamaModel);
-                        const a = EXTRAS.ollama_configuration;
-                        const oaic = data?.custom_openai_configuration;
-                        const oai = (
-                          oaic != null
-                            ? Object.keys(a.to_val?.(oaic) ?? {})
-                            : []
-                        ).map(toCustomOpenAIModel);
-                        if (Array.isArray(llms)) {
-                          conf.valid = [...llms, ...oll, ...oai];
-                        }
-                      }
-
                       return (
                         <RenderRow
                           filterStr={filterStr}

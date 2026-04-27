@@ -15,7 +15,7 @@ import { ButtonGroup } from "@cocalc/frontend/antd-bootstrap";
 import { Button, Dropdown, Input, InputNumber, Popover } from "antd";
 import type { MenuProps } from "antd/lib";
 import { List } from "immutable";
-import { lazy, Suspense, useMemo, useRef } from "react";
+import { useMemo, useRef } from "react";
 import { useIntl } from "react-intl";
 import {
   CSS,
@@ -40,16 +40,9 @@ import type { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyte
 import { IntlMessage, isIntlMessage, labels } from "@cocalc/frontend/i18n";
 import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import { ACTIVITY_BAR_TOGGLE_LABELS } from "@cocalc/frontend/project/page/activity-bar-consts";
-import { isSupportedExtension } from "@cocalc/frontend/project/page/home-page/ai-generate-examples";
 import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
 import userTracking from "@cocalc/frontend/user-tracking";
-import {
-  copy,
-  field_cmp,
-  filename_extension,
-  path_split,
-  trunc_middle,
-} from "@cocalc/util/misc";
+import { copy, field_cmp, path_split, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
 import { is_safari } from "../generic/browser";
@@ -134,12 +127,6 @@ const CONNECTION_STATUS_STYLE: CSS = {
   fontSize: "10pt",
   float: "right",
 } as const;
-
-const LazyAIGenerateDocumentModal = lazy(async () => {
-  const { AIGenerateDocumentModal } =
-    await import("@cocalc/frontend/project/page/home-page/ai-generate-document");
-  return { default: AIGenerateDocumentModal };
-});
 
 function connection_status_color(status: ConnectionStatus): string {
   switch (status) {
@@ -232,7 +219,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     main: boolean;
     popover: boolean;
   }>({ main: false, popover: false });
-  const [showNewAI, setShowNewAI] = useState<boolean>(false);
 
   const [helpSearch, setHelpSearch] = useState<string>("");
 
@@ -267,7 +253,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         studentProjectFunctionality: student_project_functionality,
         setShowAI: (val: boolean) =>
           setShowAIDialogs((prev) => ({ ...prev, main: val })),
-        setShowNewAI,
         helpSearch,
         setHelpSearch,
         readOnly: read_only,
@@ -280,7 +265,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       helpSearch,
       setHelpSearch,
       setShowAIDialogs,
-      setShowNewAI,
       read_only,
       editorSettings,
       intl,
@@ -613,24 +597,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     );
   }
 
-  function renderNewAI() {
-    const { path, project_id } = props;
-    const ext = filename_extension(path);
-    if (!showNewAI || !isSupportedExtension(ext)) return;
-
-    return (
-      <Suspense fallback={null}>
-        <LazyAIGenerateDocumentModal
-          key={"new-ai"}
-          ext={ext}
-          show={showNewAI}
-          setShow={setShowNewAI}
-          project_id={project_id}
-        />
-      </Suspense>
-    );
-  }
-
   function renderAssistant(noLabel, where: "main" | "popover"): Rendered {
     if (
       !manageCommands.isVisible("chatgpt") ||
@@ -897,7 +863,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         v.push(renderTitle());
       }
       v.push(renderPage());
-      v.push(renderNewAI());
       v.push(renderSwitchToFile());
       v.push(renderMenus());
 
