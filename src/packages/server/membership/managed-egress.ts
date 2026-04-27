@@ -8,7 +8,9 @@ import type { ManagedEgressEventSummary } from "@cocalc/conat/hub/api/purchases"
 
 const TABLE = "account_managed_egress_events";
 
-export type ManagedProjectEgressCategory = "file-download";
+export type ManagedProjectEgressCategory =
+  | "file-download"
+  | "interactive-conat";
 
 type ManagedEgressUsage = {
   managed_egress_5h_bytes: number;
@@ -30,13 +32,18 @@ async function ensureSchema(): Promise<void> {
         CREATE TABLE IF NOT EXISTS ${TABLE} (
           id UUID PRIMARY KEY,
           account_id UUID NOT NULL,
-          project_id UUID NOT NULL,
+          project_id UUID,
           category TEXT NOT NULL,
           bytes BIGINT NOT NULL,
           metadata JSONB,
           occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `);
+      try {
+        await getPool().query(
+          `ALTER TABLE ${TABLE} ALTER COLUMN project_id DROP NOT NULL`,
+        );
+      } catch {}
       await getPool().query(
         `CREATE INDEX IF NOT EXISTS ${TABLE}_account_time_idx ON ${TABLE}(account_id, occurred_at DESC)`,
       );
@@ -71,7 +78,7 @@ export async function getProjectOwnerAccountId(
 
 export async function recordManagedProjectEgress(opts: {
   account_id?: string;
-  project_id: string;
+  project_id?: string;
   category: ManagedProjectEgressCategory;
   bytes: number;
   metadata?: Record<string, unknown>;
@@ -84,7 +91,9 @@ export async function recordManagedProjectEgress(opts: {
   await ensureSchema();
   const account_id =
     `${opts.account_id ?? ""}`.trim() ||
-    (await getProjectOwnerAccountId(opts.project_id));
+    (`${opts.project_id ?? ""}`.trim()
+      ? await getProjectOwnerAccountId(opts.project_id!)
+      : undefined);
   if (!account_id) {
     return { recorded: false };
   }
@@ -97,7 +106,7 @@ export async function recordManagedProjectEgress(opts: {
     `,
     [
       account_id,
-      opts.project_id,
+      `${opts.project_id ?? ""}`.trim() || null,
       opts.category,
       bytes,
       opts.metadata ?? null,
@@ -196,8 +205,8 @@ export async function getRecentManagedEgressEventsForAccount(opts: {
       : 20;
   const { rows } = await getPool("medium").query<{
     account_id: string;
-    project_id: string;
-    project_title?: string;
+    project_id?: string | null;
+    project_title?: string | null;
     category: string;
     bytes: string | number;
     occurred_at: Date | string;
@@ -222,8 +231,8 @@ export async function getRecentManagedEgressEventsForAccount(opts: {
   );
   return rows.map((row) => ({
     account_id: row.account_id,
-    project_id: row.project_id,
-    project_title: row.project_title,
+    project_id: row.project_id ?? null,
+    project_title: row.project_title ?? null,
     category: row.category,
     bytes: Math.max(0, Number(row.bytes) || 0),
     occurred_at: new Date(row.occurred_at).toISOString(),

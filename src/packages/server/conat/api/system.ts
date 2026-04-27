@@ -2417,15 +2417,20 @@ export async function recordManagedProjectEgress({
   account_id?: string;
   host_id?: string;
   project_id?: string;
-  category: "file-download";
+  category: "file-download" | "interactive-conat";
   bytes: number;
   metadata?: Record<string, unknown>;
 }) {
-  const resolvedProjectId = await resolveProjectContext({
-    account_id,
-    host_id,
-    project_id,
-  });
+  const resolvedProjectId = `${project_id ?? ""}`.trim()
+    ? await resolveProjectContext({
+        account_id,
+        host_id,
+        project_id,
+      })
+    : undefined;
+  if (!resolvedProjectId && !`${account_id ?? ""}`.trim()) {
+    throw Error("project_id or account_id is required");
+  }
   return await recordManagedProjectEgressRaw({
     account_id,
     project_id: resolvedProjectId,
@@ -2444,13 +2449,18 @@ export async function getManagedProjectEgressPolicy({
   account_id?: string;
   host_id?: string;
   project_id?: string;
-  category: "file-download";
+  category: "file-download" | "interactive-conat";
 }) {
-  const resolvedProjectId = await resolveProjectContext({
-    account_id,
-    host_id,
-    project_id,
-  });
+  const resolvedProjectId = `${project_id ?? ""}`.trim()
+    ? await resolveProjectContext({
+        account_id,
+        host_id,
+        project_id,
+      })
+    : undefined;
+  if (!resolvedProjectId && !`${account_id ?? ""}`.trim()) {
+    throw Error("project_id or account_id is required");
+  }
   return await getManagedProjectEgressPolicyRaw({
     account_id,
     project_id: resolvedProjectId,

@@ -793,6 +793,8 @@ export async function buildBootstrapScripts(
     `PROJECT_HOST_ID=${row.id}`,
     `PROJECT_HOST_NAME=${row.name ?? row.id}`,
     `PROJECT_HOST_REGION=${row.region ?? ""}`,
+    `PROJECT_HOST_CLOUD_PROVIDER=${providerId ?? ""}`,
+    `COCALC_PROJECT_HOST_CLOUD_PROVIDER=${providerId ?? ""}`,
     `PROJECT_HOST_PUBLIC_URL=${publicUrl}`,
     `PROJECT_HOST_INTERNAL_URL=${internalUrl}`,
     `PROJECT_HOST_SSH_SERVER=${sshServer}`,
@@ -836,6 +838,9 @@ export async function buildBootstrapScripts(
   if (tlsEnabled) {
     envLines.push(`COCALC_PROJECT_HOST_HTTPS_HOSTNAME=${tlsHostname}`);
   }
+  envLines.push(
+    `COCALC_PROJECT_HOST_MANAGED_EGRESS_MODE=${providerId === "gcp" ? "enforce" : "off"}`,
+  );
   const appPublicWildcard = buildAppPublicWildcardHostname({
     hostHostname: tunnel?.hostname,
   });

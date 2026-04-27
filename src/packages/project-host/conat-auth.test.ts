@@ -24,7 +24,15 @@ jest.mock("./sqlite/account-revocations", () => ({
     mockGetAccountRevokedBeforeMs(...args),
 }));
 
+const getProjectHostManagedEgressBlockedMessageMock = jest.fn();
+
+jest.mock("./managed-egress-runtime", () => ({
+  getProjectHostManagedEgressBlockedMessage: (...args: any[]) =>
+    getProjectHostManagedEgressBlockedMessageMock(...args),
+}));
+
 import { createProjectHostConatAuth } from "./conat-auth";
+import { createProjectHostBrowserSessionToken } from "./browser-session";
 
 describe("project-host Conat auth", () => {
   const host_id = "00000000-1000-4000-8000-000000000099";
@@ -36,6 +44,8 @@ describe("project-host Conat auth", () => {
     mockGetProject.mockReset();
     mockGetAccountRevokedBeforeMs.mockReset();
     mockGetAccountRevokedBeforeMs.mockReturnValue(undefined);
+    getProjectHostManagedEgressBlockedMessageMock.mockReset();
+    getProjectHostManagedEgressBlockedMessageMock.mockReturnValue(undefined);
   });
 
   it("uses bearer auth before interpreting project_id as project-secret auth", async () => {
@@ -90,5 +100,33 @@ describe("project-host Conat auth", () => {
     ).rejects.toThrow("missing project_secret for project auth");
 
     expect(mockVerifyProjectHostAuthToken).not.toHaveBeenCalled();
+  });
+
+  it("blocks browser-session auth when interactive managed egress is disabled for the account", async () => {
+    getProjectHostManagedEgressBlockedMessageMock.mockReturnValue(
+      "interactive blocked",
+    );
+    const { getUser } = createProjectHostConatAuth({ host_id });
+    const browserSession = createProjectHostBrowserSessionToken({
+      account_id,
+      now_ms: Date.now(),
+    });
+
+    await expect(
+      getUser(
+        {
+          handshake: {
+            headers: {
+              cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+            },
+          },
+        } as any,
+        undefined as any,
+      ),
+    ).rejects.toMatchObject({
+      message: "interactive blocked",
+      code: 429,
+      authFailure: false,
+    });
   });
 });

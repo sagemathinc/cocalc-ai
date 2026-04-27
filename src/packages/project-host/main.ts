@@ -123,6 +123,10 @@ import {
   DOWNLOAD_ERROR_HEADER,
   handleFileDownload,
 } from "@cocalc/conat/files/file-download";
+import {
+  isProjectHostManagedEgressEnforced,
+  isProjectHostManagedEgressTrackingEnabled,
+} from "./managed-egress-runtime";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -498,6 +502,9 @@ export async function main(
         message: string;
       }
   > => {
+    if (!isProjectHostManagedEgressEnforced()) {
+      return { allowed: true };
+    }
     try {
       const policy = await hubApi.system.getManagedProjectEgressPolicy({
         account_id,
@@ -563,7 +570,7 @@ export async function main(
     request_path: string;
     partial: boolean;
   }): Promise<void> => {
-    if (!(bytes > 0)) return;
+    if (!(bytes > 0) || !isProjectHostManagedEgressTrackingEnabled()) return;
     try {
       await hubApi.system.recordManagedProjectEgress({
         account_id,

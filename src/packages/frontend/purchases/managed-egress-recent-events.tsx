@@ -27,6 +27,7 @@ function formatBytes(bytes: number): string {
 
 export function formatManagedEgressCategory(category: string): string {
   if (category === "file-download") return "File downloads";
+  if (category === "interactive-conat") return "Interactive session traffic";
   return capitalize(category.replace(/[-_]/g, " "));
 }
 
@@ -35,6 +36,15 @@ function getManagedEgressRequestPath(
 ): string | undefined {
   const value = event.metadata?.request_path;
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function getManagedEgressEventProjectLabel(
+  event: ManagedEgressEventSummary,
+): string {
+  return (
+    `${event.project_title ?? event.project_id ?? ""}`.trim() ||
+    "Account-wide session traffic"
+  );
 }
 
 export function ManagedEgressRecentEventsButton({
@@ -63,11 +73,13 @@ export function ManagedEgressRecentEventsButton({
           {events.map((event, i) => {
             const requestPath = getManagedEgressRequestPath(event);
             return (
-              <div key={`${event.occurred_at}-${event.project_id}-${i}`}>
+              <div
+                key={`${event.occurred_at}-${event.project_id ?? "none"}-${i}`}
+              >
                 <Space wrap>
                   <Tag>{formatManagedEgressCategory(event.category)}</Tag>
                   <Tag>{formatBytes(event.bytes)}</Tag>
-                  <Text>{event.project_title ?? event.project_id}</Text>
+                  <Text>{getManagedEgressEventProjectLabel(event)}</Text>
                   <Text type="secondary">
                     <TimeAgo date={event.occurred_at} />
                   </Text>
