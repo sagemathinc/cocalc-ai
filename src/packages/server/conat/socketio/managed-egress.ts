@@ -5,18 +5,22 @@
 
 import getLogger from "@cocalc/backend/logger";
 import type { Client } from "@cocalc/conat/core/client";
+import type { ConatServer } from "@cocalc/conat/core/server";
 import { sysApiMany } from "@cocalc/conat/core/sys";
 import type { ConnectionStats } from "@cocalc/conat/core/types";
-import type { ConatServer } from "@cocalc/conat/core/server";
-import { hubApi } from "@cocalc/lite/hub/api";
 import type { ManagedProjectEgressCategory } from "@cocalc/conat/hub/api/system";
+import {
+  getManagedProjectEgressPolicy as getManagedProjectEgressPolicyRaw,
+  type ManagedProjectEgressPolicy,
+} from "@cocalc/server/membership/managed-egress-policy";
+import { recordManagedProjectEgress as recordManagedProjectEgressRaw } from "@cocalc/server/membership/managed-egress";
 import { capitalize } from "@cocalc/util/misc";
 import {
-  clearProjectHostManagedEgressBlockedAccount,
-  clearProjectHostManagedEgressBlockedAccounts,
-  getProjectHostManagedEgressMode,
-  listProjectHostManagedEgressBlockedAccounts,
-  setProjectHostManagedEgressBlockedAccount,
+  clearHubManagedEgressBlockedAccount,
+  clearHubManagedEgressBlockedAccounts,
+  getHubManagedEgressMode,
+  listHubManagedEgressBlockedAccounts,
+  setHubManagedEgressBlockedAccount,
 } from "./managed-egress-runtime";
 
 const DEFAULT_INTERVAL_MS = 5_000;
@@ -98,9 +102,15 @@ function diffCounter(
     : currentValue;
 }
 
+function getBrowserId(stats: ConnectionStats): string | undefined {
+  const browser_id = `${stats.browser_id ?? ""}`.trim();
+  return browser_id || undefined;
+}
+
 function normalizeAccountId(stats: ConnectionStats): string | undefined {
   const account_id = `${stats.user?.account_id ?? ""}`.trim();
   if (!account_id) return;
+  if (!getBrowserId(stats)) return;
   if (`${stats.user?.hub_id ?? ""}`.trim()) return;
   if (`${stats.user?.project_id ?? ""}`.trim()) return;
   if (`${stats.user?.error ?? ""}`.trim()) return;
@@ -133,7 +143,7 @@ function summarizeRawSendDeltaSockets({
       account_id: `${stats.user?.account_id ?? ""}`.trim() || undefined,
       project_id: `${stats.user?.project_id ?? ""}`.trim() || undefined,
       hub_id: `${stats.user?.hub_id ?? ""}`.trim() || undefined,
-      browser_id: `${stats.browser_id ?? ""}`.trim() || undefined,
+      browser_id: getBrowserId(stats),
     });
   }
   out.sort(
@@ -158,7 +168,7 @@ export function summarizeManagedConatEgressDeltas({
       previous[socket_id]?.egress?.bytes,
     );
     if (!(deltaBytes > 0)) continue;
-    const browser_id = `${stats.browser_id ?? ""}`.trim();
+    const browser_id = getBrowserId(stats)!;
     const entry = byAccount.get(account_id) ?? {
       account_id,
       bytes: 0,
@@ -167,9 +177,7 @@ export function summarizeManagedConatEgressDeltas({
     };
     entry.bytes += deltaBytes;
     entry.socket_ids.push(socket_id);
-    if (browser_id) {
-      entry.browser_ids.push(browser_id);
-    }
+    entry.browser_ids.push(browser_id);
     byAccount.set(account_id, entry);
   }
   return Array.from(byAccount.values())
@@ -218,13 +226,7 @@ function formatManagedEgressCategory(category: string): string {
   return capitalize(category.replace(/[-_]/g, " "));
 }
 
-function buildBlockedMessage(policy: {
-  managed_egress_5h_bytes?: number;
-  managed_egress_7d_bytes?: number;
-  egress_5h_bytes?: number;
-  egress_7d_bytes?: number;
-  managed_egress_categories_5h_bytes?: Record<string, number>;
-}): string {
+function buildBlockedMessage(policy: ManagedProjectEgressPolicy): string {
   const breakdown = Object.entries(
     policy.managed_egress_categories_5h_bytes ?? {},
   )
@@ -238,7 +240,7 @@ function buildBlockedMessage(policy: {
     );
   const lines = [
     "Interactive session traffic limit reached for this account.",
-    "New terminal, notebook, and editor session traffic is temporarily blocked until the egress usage window resets.",
+    "New browser session traffic is temporarily blocked until the egress usage window resets.",
   ];
   if (policy.egress_5h_bytes != null) {
     lines.push(
@@ -258,12 +260,12 @@ function buildBlockedMessage(policy: {
   return lines.join("\n");
 }
 
-export function startConatRouterManagedEgressLoop({
+export function startHubConatManagedEgressLoop({
   conatServer,
   systemClient,
-  loggerName = "project-host:conat-router-daemon:managed-egress",
+  loggerName = "server:conat:socketio:managed-egress",
   intervalMs = envPositiveInt(
-    "COCALC_PROJECT_HOST_CONAT_ROUTER_MANAGED_EGRESS_INTERVAL_MS",
+    "COCALC_HUB_CONAT_MANAGED_EGRESS_INTERVAL_MS",
     DEFAULT_INTERVAL_MS,
   ),
 }: {
@@ -280,7 +282,7 @@ export function startConatRouterManagedEgressLoop({
     if (running) return;
     running = true;
     try {
-      const mode = getProjectHostManagedEgressMode();
+      const mode = getHubManagedEgressMode();
       const current = await loadClusterStatsSnapshot({
         conatServer,
         systemClient,
@@ -294,21 +296,12 @@ export function startConatRouterManagedEgressLoop({
       previous = current;
 
       if (mode === "off") {
-        if (rawSendDeltaSockets.length > 0) {
-          logger.warn(
-            "managed conat egress is disabled while outbound bytes are active",
-            {
-              mode,
-              sockets: rawSendDeltaSockets,
-            },
-          );
-        }
-        clearProjectHostManagedEgressBlockedAccounts();
+        clearHubManagedEgressBlockedAccounts();
         return;
       }
 
-      if (deltas.length > 0 || rawSendDeltaSockets.length > 0) {
-        logger.info("managed conat egress sample", {
+      if (deltas.length > 0) {
+        logger.info("managed hub conat egress sample", {
           mode,
           accounts: deltas.map((delta) => ({
             account_id: delta.account_id,
@@ -320,36 +313,21 @@ export function startConatRouterManagedEgressLoop({
         });
       }
 
-      if (deltas.length === 0 && rawSendDeltaSockets.length > 0) {
-        logger.warn(
-          "managed conat egress saw outbound bytes but no account deltas",
-          {
-            sockets: rawSendDeltaSockets,
-          },
-        );
-      }
-
       const pending = new Map(deltas.map((entry) => [entry.account_id, entry]));
       const accountsToCheck = new Set<string>(pending.keys());
       if (mode === "enforce") {
-        for (const account_id of listProjectHostManagedEgressBlockedAccounts()) {
+        for (const account_id of listHubManagedEgressBlockedAccounts()) {
           accountsToCheck.add(account_id);
         }
       } else {
-        clearProjectHostManagedEgressBlockedAccounts();
+        clearHubManagedEgressBlockedAccounts();
       }
 
       for (const account_id of accountsToCheck) {
         const delta = pending.get(account_id);
         if (delta?.bytes) {
           try {
-            logger.info("recording managed conat egress", {
-              account_id,
-              bytes: delta.bytes,
-              socket_count: delta.socket_ids.length,
-              browser_ids: delta.browser_ids,
-            });
-            await hubApi.system.recordManagedProjectEgress({
+            await recordManagedProjectEgressRaw({
               account_id,
               category: CATEGORY,
               bytes: delta.bytes,
@@ -358,12 +336,8 @@ export function startConatRouterManagedEgressLoop({
                 socket_count: delta.socket_ids.length,
               },
             });
-            logger.info("recorded managed conat egress", {
-              account_id,
-              bytes: delta.bytes,
-            });
           } catch (err) {
-            logger.warn("unable to record managed conat egress", {
+            logger.warn("unable to record managed hub conat egress", {
               account_id,
               bytes: delta.bytes,
               err: `${err}`,
@@ -374,19 +348,19 @@ export function startConatRouterManagedEgressLoop({
           continue;
         }
         try {
-          const policy = await hubApi.system.getManagedProjectEgressPolicy({
+          const policy = await getManagedProjectEgressPolicyRaw({
             account_id,
             category: CATEGORY,
           });
           if (policy.allowed) {
-            clearProjectHostManagedEgressBlockedAccount(account_id);
+            clearHubManagedEgressBlockedAccount(account_id);
             continue;
           }
           const message = buildBlockedMessage(policy);
-          setProjectHostManagedEgressBlockedAccount({ account_id, message });
+          setHubManagedEgressBlockedAccount({ account_id, message });
           const socket_ids = activeSocketsByAccount.get(account_id) ?? [];
           if (socket_ids.length > 0) {
-            logger.info("disconnecting over-limit conat account", {
+            logger.info("disconnecting over-limit hub conat account", {
               account_id,
               sockets: socket_ids.length,
               blocked_by: policy.blocked_by,
@@ -394,7 +368,7 @@ export function startConatRouterManagedEgressLoop({
             conatServer.disconnectSockets(socket_ids);
           }
         } catch (err) {
-          logger.warn("unable to evaluate managed conat egress policy", {
+          logger.warn("unable to evaluate managed hub conat egress policy", {
             account_id,
             err: `${err}`,
           });
@@ -415,6 +389,5 @@ export function startConatRouterManagedEgressLoop({
 export const __test__ = {
   buildBlockedMessage,
   diffCounter,
-  summarizeActiveSocketsByAccount,
   summarizeManagedConatEgressDeltas,
 };

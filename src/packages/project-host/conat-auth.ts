@@ -1,4 +1,8 @@
-import type { AllowFunction, UserFunction } from "@cocalc/conat/core/server";
+import {
+  getAddress,
+  type AllowFunction,
+  type UserFunction,
+} from "@cocalc/conat/core/server";
 // Project-host auth adapter. Central hub has a sibling adapter at
 // src/packages/server/conat/socketio/auth.ts.
 // Both adapters share subject-level policy via
@@ -69,6 +73,22 @@ function readBearerToken(socket): string | undefined {
     }
   }
   return undefined;
+}
+
+function isTrustedLocalProjectScopedPeer(socket: any): boolean {
+  const address = getAddress(socket, {
+    strictCloudflareProxy: true,
+  });
+  return address === "127.0.0.1" || address === "::1";
+}
+
+function assertTrustedLocalProjectScopedPeer(socket: any): void {
+  if (isTrustedLocalProjectScopedPeer(socket)) {
+    return;
+  }
+  throw new Error(
+    "project-scoped auth is only allowed from trusted local addresses",
+  );
 }
 
 function userFromBearerToken({
@@ -228,6 +248,7 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     }
     const handshakeProjectAuth = readProjectScopedAuth(socket);
     if (handshakeProjectAuth) {
+      assertTrustedLocalProjectScopedPeer(socket);
       const row = getProject(handshakeProjectAuth.project_id);
       if (!row?.secret_token) {
         throw new Error("project secret token not configured");
@@ -238,6 +259,7 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       return { project_id: handshakeProjectAuth.project_id };
     }
     if (cookies?.[PROJECT_SECRET_COOKIE_NAME] != null) {
+      assertTrustedLocalProjectScopedPeer(socket);
       const project_id = cookies?.[PROJECT_ID_COOKIE_NAME];
       if (!project_id || !isValidUUID(project_id)) {
         throw new Error("invalid or missing project_id for project auth");
@@ -317,6 +339,10 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     clearCaches: clearAuthCaches,
   };
 }
+
+export const __test__ = {
+  isTrustedLocalProjectScopedPeer,
+};
 
 function readProjectScopedAuth(
   socket: any,

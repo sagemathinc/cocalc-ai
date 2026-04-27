@@ -12,6 +12,16 @@ jest.mock("@cocalc/server/conat/project-local-access", () => ({
   hasLocalProjectCollaboratorAccess: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/auth/get-account", () => ({
+  __esModule: true,
+  getAccountIdFromRememberMe: jest.fn(),
+}));
+
+jest.mock("@cocalc/server/auth/remember-me", () => ({
+  __esModule: true,
+  getRememberMeHashFromCookieValue: jest.fn(),
+}));
+
 jest.mock("@cocalc/server/conat/project-remote-access", () => ({
   __esModule: true,
   hasProjectCollaboratorAccessAllowRemote: jest.fn(),
@@ -24,6 +34,15 @@ jest.mock("@cocalc/server/projects/control/secret-token", () => ({
 
 import { hasProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
+import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
+import { getRememberMeHashFromCookieValue } from "@cocalc/server/auth/remember-me";
+
+const getHubManagedEgressBlockedMessageMock = jest.fn();
+
+jest.mock("./managed-egress-runtime", () => ({
+  getHubManagedEgressBlockedMessage: (...args: any[]) =>
+    getHubManagedEgressBlockedMessageMock(...args),
+}));
 
 const PUBSUB: ("pub" | "sub")[] = ["pub", "sub"];
 
@@ -405,5 +424,37 @@ describe("project-scoped handshake auth", () => {
     await expect(getUser(socket)).rejects.toThrow(
       "invalid secret token for project",
     );
+  });
+});
+
+describe("managed egress blocking for browser-facing hub sockets", () => {
+  beforeEach(() => {
+    (getAccountIdFromRememberMe as jest.Mock).mockReset();
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReset();
+    getHubManagedEgressBlockedMessageMock.mockReset();
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReturnValue("hash");
+    (getAccountIdFromRememberMe as jest.Mock).mockResolvedValue(account_id);
+    getHubManagedEgressBlockedMessageMock.mockReturnValue(
+      "interactive blocked",
+    );
+  });
+
+  it("rejects blocked browser-session sockets before they connect", async () => {
+    const socket = {
+      handshake: {
+        auth: {
+          browser_id: "browser123",
+        },
+        headers: {
+          cookie: "remember_me=token",
+        },
+      },
+    };
+
+    await expect(getUser(socket)).rejects.toMatchObject({
+      message: "interactive blocked",
+      code: 429,
+      authFailure: false,
+    });
   });
 });

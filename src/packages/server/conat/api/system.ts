@@ -2417,7 +2417,7 @@ export async function recordManagedProjectEgress({
   account_id?: string;
   host_id?: string;
   project_id?: string;
-  category: "file-download" | "interactive-conat";
+  category: "file-download" | "http-proxy" | "ws-proxy" | "interactive-conat";
   bytes: number;
   metadata?: Record<string, unknown>;
 }) {
@@ -2449,7 +2449,7 @@ export async function getManagedProjectEgressPolicy({
   account_id?: string;
   host_id?: string;
   project_id?: string;
-  category: "file-download" | "interactive-conat";
+  category: "file-download" | "http-proxy" | "ws-proxy" | "interactive-conat";
 }) {
   const resolvedProjectId = `${project_id ?? ""}`.trim()
     ? await resolveProjectContext({

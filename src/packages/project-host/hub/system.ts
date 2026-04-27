@@ -40,7 +40,11 @@ export function wireSystemApi(): void {
   hubApi.system.getManagedProjectEgressPolicy = async (opts?: {
     account_id?: string;
     project_id?: string;
-    category?: "file-download" | "interactive-conat";
+    category?:
+      | "file-download"
+      | "http-proxy"
+      | "ws-proxy"
+      | "interactive-conat";
   }) => {
     return await forwardSystem("system.getManagedProjectEgressPolicy", [opts]);
   };
@@ -48,7 +52,7 @@ export function wireSystemApi(): void {
   hubApi.system.recordManagedProjectEgress = async (opts: {
     account_id?: string;
     project_id?: string;
-    category: "file-download" | "interactive-conat";
+    category: "file-download" | "http-proxy" | "ws-proxy" | "interactive-conat";
     bytes: number;
     metadata?: Record<string, unknown>;
   }) => {

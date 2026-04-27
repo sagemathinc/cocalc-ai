@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -522,5 +522,47 @@ describe("managed app metrics", () => {
       await killIfRunning(appPid);
       await killDirectChildrenForTests();
     }
+  });
+
+  test("merges host-owned websocket byte metrics into app metrics", async () => {
+    jest.resetModules();
+    const { appMetrics, resetAppMetricsForTests } = await import("./control");
+
+    const id = appId("metrics-host-ws");
+    const appsPath = join(testHome, ".local", "share", "cocalc", "apps");
+    mkdirSync(appsPath, { recursive: true });
+    writeFileSync(
+      join(appsPath, "host-metrics-state.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          updated_at_ms: Date.now(),
+          apps: {
+            [id]: {
+              last_hit_ms: 1234567890,
+              totals: {
+                websocket_bytes_sent: 4321,
+              },
+              history: [
+                {
+                  minute_start_ms: Date.now(),
+                  websocket_bytes_sent: 4321,
+                },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    resetAppMetricsForTests();
+    const summary = await appMetrics(id, { minutes: 60 });
+    expect(summary.totals.websocket_bytes_sent).toBe(4321);
+    expect(summary.last_hit_ms).toBe(1234567890);
+    expect(summary.history.at(-1)?.websocket_bytes_sent).toBe(4321);
+    expect(summary.totals.requests).toBe(0);
   });
 });

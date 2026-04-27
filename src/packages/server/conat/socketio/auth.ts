@@ -23,6 +23,7 @@ import { hasProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/pr
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { isValidUUID } from "@cocalc/util/misc";
+import { getHubManagedEgressBlockedMessage } from "./managed-egress-runtime";
 import {
   type CoCalcUser,
   type CoCalcUserType,
@@ -38,6 +39,34 @@ import {
 
 const COOKIES = `'${HUB_PASSWORD_COOKIE_NAME}', '${REMEMBER_ME_COOKIE_NAME}', ${API_COOKIE_NAME}, '${PROJECT_SECRET_COOKIE_NAME}' or '${PROJECT_ID_COOKIE_NAME}'`;
 const DEFAULT_AGENT_SCOPES = ["browser_session", "project_session"] as const;
+
+function readBrowserId(socket): string | undefined {
+  const value = `${socket?.handshake?.auth?.browser_id ?? ""}`.trim();
+  if (!value) return;
+  if (!/^[A-Za-z0-9_-]{6,128}$/.test(value)) return;
+  return value;
+}
+
+function throwManagedEgressBlocked(account_id: string): never {
+  const message =
+    getHubManagedEgressBlockedMessage(account_id) ??
+    "interactive session traffic is temporarily blocked for this account";
+  throw Object.assign(new Error(message), {
+    code: 429,
+    authFailure: false,
+  });
+}
+
+function assertHubInteractiveEgressAllowed(
+  socket: any,
+  user: CoCalcUserWithAgent,
+): void {
+  if (!user.account_id) return;
+  if (!readBrowserId(socket)) return;
+  if (getHubManagedEgressBlockedMessage(user.account_id)) {
+    throwManagedEgressBlocked(user.account_id);
+  }
+}
 
 type CoCalcUserWithAgent = CoCalcUser & {
   auth_actor?: "account" | "agent";
@@ -117,6 +146,7 @@ export async function getUser(
     }
     const agentUser = verifyAgentScopedProjectHostBearer(bearerToken, socket);
     if (agentUser) {
+      assertHubInteractiveEgressAllowed(socket, agentUser);
       return agentUser;
     }
     throw Error("invalid master host auth token");
@@ -167,6 +197,7 @@ export async function getUser(
     if (!user) {
       throw Error("api key no longer valid");
     }
+    assertHubInteractiveEgressAllowed(socket, user);
     return user;
   }
   if (cookies[PROJECT_SECRET_COOKIE_NAME]) {
@@ -201,7 +232,9 @@ export async function getUser(
   if (!account_id) {
     throw Error("remember me cookie expired");
   }
-  return { account_id };
+  const user = { account_id };
+  assertHubInteractiveEgressAllowed(socket, user);
+  return user;
 }
 
 function getBearerToken(socket): string | undefined {

@@ -3592,7 +3592,11 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         </div>
                       </div>
                     </div>
-                    {metrics && metrics.totals.requests > 0 ? (
+                    {metrics &&
+                    (metrics.totals.requests > 0 ||
+                      metrics.totals.websocket_bytes_sent > 0 ||
+                      metrics.totals.websocket_upgrades > 0 ||
+                      metrics.active_websockets > 0) ? (
                       <div
                         style={{
                           display: "grid",
@@ -3622,6 +3626,12 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         <MetricStat
                           label="Bytes received"
                           value={formatBytes(metrics.totals.bytes_received)}
+                        />
+                        <MetricStat
+                          label="WebSocket bytes sent"
+                          value={formatBytes(
+                            metrics.totals.websocket_bytes_sent,
+                          )}
                         />
                         <MetricStat
                           label="Active websockets"

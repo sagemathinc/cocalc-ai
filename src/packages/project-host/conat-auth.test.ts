@@ -31,7 +31,7 @@ jest.mock("./managed-egress-runtime", () => ({
     getProjectHostManagedEgressBlockedMessageMock(...args),
 }));
 
-import { createProjectHostConatAuth } from "./conat-auth";
+import { __test__, createProjectHostConatAuth } from "./conat-auth";
 import { createProjectHostBrowserSessionToken } from "./browser-session";
 
 describe("project-host Conat auth", () => {
@@ -160,5 +160,44 @@ describe("project-host Conat auth", () => {
       account_id,
       auth_iat_s: expect.any(Number),
     });
+  });
+
+  it("only allows project-scoped auth from trusted local addresses", async () => {
+    mockGetProject.mockReturnValue({
+      project_id,
+      secret_token: "project-secret",
+    });
+    const { getUser } = createProjectHostConatAuth({ host_id });
+
+    await expect(
+      getUser(
+        {
+          handshake: {
+            address: "198.51.100.10",
+            auth: {
+              project_id,
+              project_secret: "project-secret",
+            },
+            headers: {},
+          },
+        } as any,
+        undefined as any,
+      ),
+    ).rejects.toThrow(
+      "project-scoped auth is only allowed from trusted local addresses",
+    );
+  });
+
+  it("rejects forwarded external project-scoped auth even when the immediate peer is loopback", () => {
+    expect(
+      __test__.isTrustedLocalProjectScopedPeer({
+        handshake: {
+          address: "::ffff:127.0.0.1",
+          headers: {
+            "x-forwarded-for": "203.0.113.44",
+          },
+        },
+      } as any),
+    ).toBe(false);
   });
 });
