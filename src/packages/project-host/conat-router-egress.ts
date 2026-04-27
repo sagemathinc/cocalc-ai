@@ -31,6 +31,15 @@ type AccountEgressDelta = {
   browser_ids: string[];
 };
 
+type RawRecvDeltaSocket = {
+  socket_id: string;
+  bytes: number;
+  account_id?: string;
+  project_id?: string;
+  hub_id?: string;
+  browser_id?: string;
+};
+
 async function loadClusterStatsSnapshot({
   conatServer,
   systemClient,
@@ -100,6 +109,35 @@ function normalizeAccountId(stats: ConnectionStats): string | undefined {
 
 function uniqueSorted(values: Iterable<string>): string[] {
   return Array.from(new Set(values)).sort();
+}
+
+function summarizeRawRecvDeltaSockets({
+  previous,
+  current,
+  limit = 5,
+}: {
+  previous: ConnectionStatsSnapshot;
+  current: ConnectionStatsSnapshot;
+  limit?: number;
+}): RawRecvDeltaSocket[] {
+  const out: RawRecvDeltaSocket[] = [];
+  for (const [socket_id, stats] of Object.entries(current)) {
+    const bytes = diffCounter(
+      stats.recv?.bytes,
+      previous[socket_id]?.recv?.bytes,
+    );
+    if (!(bytes > 0)) continue;
+    out.push({
+      socket_id,
+      bytes,
+      account_id: `${stats.user?.account_id ?? ""}`.trim() || undefined,
+      project_id: `${stats.user?.project_id ?? ""}`.trim() || undefined,
+      hub_id: `${stats.user?.hub_id ?? ""}`.trim() || undefined,
+      browser_id: `${stats.browser_id ?? ""}`.trim() || undefined,
+    });
+  }
+  out.sort((a, b) => b.bytes - a.bytes || a.socket_id.localeCompare(b.socket_id));
+  return out.slice(0, limit);
 }
 
 export function summarizeManagedConatEgressDeltas({
@@ -245,11 +283,21 @@ export function startConatRouterManagedEgressLoop({
       });
       const deltas = summarizeManagedConatEgressDeltas({ previous, current });
       const activeSocketsByAccount = summarizeActiveSocketsByAccount(current);
+      const rawRecvDeltaSockets = summarizeRawRecvDeltaSockets({
+        previous,
+        current,
+      });
       previous = current;
 
       if (mode === "off") {
         clearProjectHostManagedEgressBlockedAccounts();
         return;
+      }
+
+      if (deltas.length === 0 && rawRecvDeltaSockets.length > 0) {
+        logger.warn("managed conat egress saw receive bytes but no account deltas", {
+          sockets: rawRecvDeltaSockets,
+        });
       }
 
       const pending = new Map(deltas.map((entry) => [entry.account_id, entry]));
