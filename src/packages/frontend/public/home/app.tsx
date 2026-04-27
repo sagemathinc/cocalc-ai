@@ -18,6 +18,7 @@ import {
   PublicPageRoot,
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
+import { getPolicyPagesMode } from "@cocalc/frontend/public/ui/policy-pages";
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import { slugURL } from "@cocalc/util/news";
@@ -32,6 +33,7 @@ interface HomeConfig {
   is_authenticated?: boolean;
   organization_name?: string;
   organization_url?: string;
+  policy_pages?: string;
   show_policies?: boolean;
   site_description?: string;
   site_name?: string;
@@ -585,7 +587,7 @@ export default function PublicHomeApp({
       <PublicTopNav
         active="home"
         isAuthenticated={!!config?.is_authenticated}
-        showPolicies={!!config?.show_policies}
+        showPolicies={getPolicyPagesMode(config) !== "none"}
         siteName={siteName}
       />
       <NewsBanner items={initialNews ?? []} />

@@ -33,6 +33,7 @@ import {
   PublicPageRoot,
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
+import { getPolicyPagesMode } from "@cocalc/frontend/public/ui/policy-pages";
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { ExactPolicyPage, getExactPolicyPage } from "./legal-pages";
 import { getPolicyPage } from "./policy-data";
@@ -56,6 +57,7 @@ interface ContentConfig {
   imprint?: string;
   is_authenticated?: boolean;
   on_cocalc_com?: boolean;
+  policy_pages?: string;
   policies?: string;
   site_name?: string;
   show_policies?: boolean;
@@ -214,34 +216,28 @@ function LinkButton({ children, href }: { children: ReactNode; href: string }) {
   );
 }
 
-function arePoliciesVisible(config?: ContentConfig): boolean {
-  return !!config?.show_policies;
-}
-
 function getExternalPoliciesUrl(config?: ContentConfig): string | undefined {
   const url = config?.terms_of_service_url?.trim();
   return url ? url : undefined;
 }
 
-function PolicyGateCard({ config }: { config?: ContentConfig }) {
-  const externalUrl = getExternalPoliciesUrl(config);
+function PolicyGateCard() {
+  return (
+    <PublicSectionCard>
+      <Title level={3} style={{ margin: 0 }}>
+        Public policy pages are disabled
+      </Title>
+      <Paragraph style={{ margin: 0 }}>
+        This deployment is not exposing a public policy section.
+      </Paragraph>
+    </PublicSectionCard>
+  );
+}
 
-  if (!arePoliciesVisible(config)) {
-    return (
-      <PublicSectionCard>
-        <Title level={3} style={{ margin: 0 }}>
-          Public policy pages are disabled
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          This deployment is not exposing a public policy section.
-        </Paragraph>
-      </PublicSectionCard>
-    );
-  }
-
-  if (!externalUrl) {
-    return null;
-  }
+function PolicyExternalRedirect({ url }: { url: string }) {
+  useEffect(() => {
+    window.location.assign(url);
+  }, [url]);
 
   return (
     <PublicSectionCard>
@@ -253,12 +249,7 @@ function PolicyGateCard({ config }: { config?: ContentConfig }) {
         legal documents.
       </Paragraph>
       <div>
-        <Button
-          href={externalUrl}
-          rel="noreferrer"
-          target="_blank"
-          type="primary"
-        >
+        <Button href={url} rel="noreferrer" target="_blank" type="primary">
           Open policy page
         </Button>
       </div>
@@ -330,7 +321,7 @@ function PageShell({
       <PublicTopNav
         active={navActive}
         isAuthenticated={!!config?.is_authenticated}
-        showPolicies={arePoliciesVisible(config)}
+        showPolicies={getPolicyPagesMode(config) !== "none"}
         siteName={config?.site_name ?? SITE_NAME}
       />
       <PublicHero
@@ -342,7 +333,7 @@ function PageShell({
             {[
               { href: "about", key: "about", label: "About" },
               { href: "pricing", key: "pricing", label: "Pricing" },
-              ...(arePoliciesVisible(config)
+              ...(getPolicyPagesMode(config) !== "none"
                 ? [{ href: "policies", key: "policies", label: "Policies" }]
                 : []),
               { href: "news", key: "news", label: "News" },
@@ -1001,12 +992,14 @@ function AboutEventsPage() {
 }
 
 function PoliciesHome({ config }: { config: ContentConfig }) {
-  const externalUrl = getExternalPoliciesUrl(config);
-  if (!arePoliciesVisible(config) || externalUrl) {
-    return <PolicyGateCard config={config} />;
+  const mode = getPolicyPagesMode(config);
+  if (mode === "none") return <PolicyGateCard />;
+  if (mode === "custom") {
+    const externalUrl = getExternalPoliciesUrl(config);
+    if (externalUrl) return <PolicyExternalRedirect url={externalUrl} />;
   }
 
-  const items = [
+  const sageMathIncItems = [
     {
       description: "The Terms of Service govern use of CoCalc.",
       href: contentPath("policies/terms"),
@@ -1053,6 +1046,9 @@ function PoliciesHome({ config }: { config: ContentConfig }) {
       href: contentPath("policies/enterprise-terms"),
       title: "Enterprise terms",
     },
+  ];
+
+  const customItems = [
     ...(config.imprint
       ? [
           {
@@ -1073,6 +1069,11 @@ function PoliciesHome({ config }: { config: ContentConfig }) {
         ]
       : []),
   ];
+  const items = mode === "sagemathinc" ? sageMathIncItems : customItems;
+
+  if (items.length === 0) {
+    return <EmptyCard label="No public policy pages are configured." />;
+  }
 
   return (
     <div style={GRID_STYLE}>
@@ -1100,8 +1101,12 @@ function PoliciesDetailPage({
   markdown?: string;
   title: string;
 }) {
-  if (!arePoliciesVisible(config) || getExternalPoliciesUrl(config)) {
-    return <PolicyGateCard config={config} />;
+  if (getPolicyPagesMode(config) !== "custom") {
+    return <PolicyGateCard />;
+  }
+  const externalUrl = getExternalPoliciesUrl(config);
+  if (externalUrl) {
+    return <PolicyExternalRedirect url={externalUrl} />;
   }
   if (!markdown) {
     return (
@@ -1118,7 +1123,22 @@ function PoliciesDetailPage({
   );
 }
 
-function StructuredPolicyPage({ slug }: { slug?: string }) {
+function StructuredPolicyPage({
+  config,
+  slug,
+}: {
+  config?: ContentConfig;
+  slug?: string;
+}) {
+  const mode = getPolicyPagesMode(config);
+  if (mode === "custom") {
+    const externalUrl = getExternalPoliciesUrl(config);
+    if (externalUrl) return <PolicyExternalRedirect url={externalUrl} />;
+  }
+  if (mode !== "sagemathinc") {
+    return <PolicyGateCard />;
+  }
+
   if (getExactPolicyPage(slug) != null) {
     return <ExactPolicyPage slug={slug} />;
   }
@@ -1533,11 +1553,7 @@ export default function PublicContentApp({
         subtitle="Public legal and compliance information for this deployment."
         title={title}
       >
-        {!arePoliciesVisible(config) || getExternalPoliciesUrl(config) ? (
-          <PolicyGateCard config={config} />
-        ) : (
-          <StructuredPolicyPage slug={initialRoute.policySlug} />
-        )}
+        <StructuredPolicyPage config={config} slug={initialRoute.policySlug} />
       </PageShell>
     );
   }
