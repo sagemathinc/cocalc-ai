@@ -5,10 +5,7 @@
     "lib": ["ESNext"],
     "rootDir": "./",
     "outDir": "dist",
-    "baseUrl": ".",
-    "paths": {
-      "@langchain/core/*": ["../ai/node_modules/@langchain/core/dist/*"]
-    }
+    "baseUrl": "."
   },
   "exclude": [
     "node_modules",

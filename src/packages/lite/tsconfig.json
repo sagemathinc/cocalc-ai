@@ -9,7 +9,6 @@
     "isolatedModules": true,
     "types": ["node"],
     "paths": {
-      "@langchain/core/*": ["../ai/node_modules/@langchain/core/dist/*"],
       "@cocalc/chat": ["../chat/dist/index"],
       "@cocalc/chat/*": ["../chat/dist/*"]
     }

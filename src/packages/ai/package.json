@@ -1,7 +1,7 @@
 {
   "name": "@cocalc/ai",
   "version": "6.0.0",
-  "description": "AI helpers (LangChain, LLM) shared between server and lite",
+  "description": "AI helpers shared between server and lite",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -9,11 +9,6 @@
       "import": "./dist/index.js",
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
-    },
-    "./llm": {
-      "import": "./dist/llm/index.js",
-      "require": "./dist/llm/index.js",
-      "types": "./dist/llm/index.d.ts"
     },
     "./acp": {
       "import": "./dist/acp/index.js",
@@ -36,7 +31,7 @@
     "build": "pnpm exec tsc --build",
     "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
     "test": "pnpm exec jest",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/jest,@types/node,@langchain/anthropic,@langchain/google-genai,@langchain/mistralai"
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/jest,@types/node"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.5.1",
@@ -44,12 +39,6 @@
     "@cocalc/conat": "workspace:*",
     "@cocalc/sync": "workspace:*",
     "@cocalc/util": "workspace:*",
-    "@langchain/anthropic": "^1.1.0",
-    "@langchain/core": "^1.1.8",
-    "@langchain/google-genai": "^1.0.3",
-    "@langchain/mistralai": "^1.0.0",
-    "@langchain/ollama": "^1.0.1",
-    "@langchain/openai": "^1.1.2",
     "awaiting": "^3.0.0",
     "zod": "4.3.6"
   },

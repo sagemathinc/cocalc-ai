@@ -9,7 +9,6 @@
     "target": "es2020",
     "baseUrl": ".",
     "paths": {
-      "@langchain/core/*": ["node_modules/@langchain/core/dist/*"],
       "@cocalc/conat/*": ["../conat/dist/*"],
       "@cocalc/conat": ["../conat/dist/index"],
       "@cocalc/sync/*": ["../sync/dist/*"],

@@ -164,8 +164,8 @@ export const GOOGLE_MODELS = [
   "gemini-1.5-flash", // for user defined models
   "gemini-pro", // Discontinued Feb'25. Keep it to avoid breaking old references!
   "gemini-1.0-ultra", // hangs
-  "gemini-1.5-pro-8k", // works now with langchaing
-  "gemini-1.5-pro", // works now with langchaing
+  "gemini-1.5-pro-8k",
+  "gemini-1.5-pro",
   "gemini-2.5-flash-8k",
   "gemini-2.5-pro-8k",
   "gemini-2.0-flash-8k",
@@ -369,7 +369,7 @@ export const AI_SERVICES: { [key in AIServiceName]: AIServiceInfo } = {
     name: "OpenAI API",
     short: "Custom endpoint",
     desc: "Calls a custom OpenAI API endoint.",
-    url: "https://js.langchain.com/v0.1/docs/integrations/llms/openai/",
+    url: "https://platform.openai.com/docs/api-reference/introduction",
   },
   user: {
     name: "User Defined",
