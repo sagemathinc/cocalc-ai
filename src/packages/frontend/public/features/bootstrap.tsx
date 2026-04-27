@@ -14,6 +14,7 @@ interface CustomizePayload {
   configuration?: {
     help_email?: string;
     is_authenticated?: boolean;
+    policy_pages?: string;
     show_policies?: boolean;
     site_name?: string;
   };

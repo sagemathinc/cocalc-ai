@@ -174,8 +174,8 @@ describe("PublicContentApp", () => {
       <PublicContentApp
         config={{
           imprint: "enabled",
+          policy_pages: "custom",
           policies: "enabled",
-          show_policies: true,
           site_name: "Hub",
         }}
         initialRoute={{ view: "policies" }}
@@ -191,7 +191,53 @@ describe("PublicContentApp", () => {
     ).not.toBeNull();
   });
 
-  it("shows built-in policy pages even without custom policy settings", () => {
+  it("renders configured policy content in custom policy mode", async () => {
+    render(
+      <PublicContentApp
+        config={{
+          policies: "Custom deployment policy text.",
+          policy_pages: "custom",
+          site_name: "Hub",
+        }}
+        initialRoute={{ view: "policies-custom" }}
+      />,
+    );
+
+    expect(
+      await screen.findByText("Custom deployment policy text."),
+    ).not.toBeNull();
+  });
+
+  it("does not render built-in policy pages in custom policy mode", () => {
+    render(
+      <PublicContentApp
+        config={{
+          policies: "Custom deployment policy text.",
+          policy_pages: "custom",
+          site_name: "Hub",
+        }}
+        initialRoute={{ policySlug: "privacy", view: "policies-detail" }}
+      />,
+    );
+
+    expect(screen.getByText("Public policy pages are disabled")).not.toBeNull();
+    expect(screen.queryByText("CoCalc - Privacy Policy")).toBeNull();
+  });
+
+  it("shows an empty state when custom policy mode has no local pages", () => {
+    render(
+      <PublicContentApp
+        config={{ policy_pages: "custom", site_name: "Hub" }}
+        initialRoute={{ view: "policies" }}
+      />,
+    );
+
+    expect(
+      screen.getByText("No public policy pages are configured."),
+    ).not.toBeNull();
+  });
+
+  it("does not use the old show_policies switch for policy pages", () => {
     render(
       <PublicContentApp
         config={{ show_policies: true, site_name: "Launchpad" }}
@@ -199,9 +245,30 @@ describe("PublicContentApp", () => {
       />,
     );
 
+    expect(screen.getByText("Public policy pages are disabled")).not.toBeNull();
+    expect(screen.queryByText("Terms of service")).toBeNull();
+  });
+
+  it("shows built-in policy pages in SageMath Inc. policy mode", () => {
+    render(
+      <PublicContentApp
+        config={{
+          imprint: "enabled",
+          policies: "enabled",
+          policy_pages: "sagemathinc",
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ view: "policies" }}
+      />,
+    );
+
     expect(screen.getByText("Terms of service")).not.toBeNull();
     expect(screen.getByText("Privacy")).not.toBeNull();
     expect(screen.getByText("Trust")).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: "Imprint" })).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Policies", level: 3 }),
+    ).toBeNull();
   });
 
   it("renders the team page", () => {
@@ -240,7 +307,7 @@ describe("PublicContentApp", () => {
   it("renders the exact privacy policy page", async () => {
     render(
       <PublicContentApp
-        config={{ show_policies: true, site_name: "Launchpad" }}
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
         initialRoute={{ policySlug: "privacy", view: "policies-detail" }}
       />,
     );
@@ -254,7 +321,7 @@ describe("PublicContentApp", () => {
   it("renders the exact third-party policy page", async () => {
     render(
       <PublicContentApp
-        config={{ show_policies: true, site_name: "Launchpad" }}
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
         initialRoute={{ policySlug: "thirdparties", view: "policies-detail" }}
       />,
     );
@@ -269,7 +336,7 @@ describe("PublicContentApp", () => {
   it("renders the exact terms page", async () => {
     render(
       <PublicContentApp
-        config={{ show_policies: true, site_name: "Launchpad" }}
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
         initialRoute={{ policySlug: "terms", view: "policies-detail" }}
       />,
     );
@@ -283,7 +350,7 @@ describe("PublicContentApp", () => {
   it("hides policy pages when public policies are disabled", () => {
     render(
       <PublicContentApp
-        config={{ show_policies: false, site_name: "Launchpad" }}
+        config={{ policy_pages: "none", site_name: "Launchpad" }}
         initialRoute={{ view: "policies" }}
       />,
     );
@@ -292,11 +359,11 @@ describe("PublicContentApp", () => {
     expect(screen.queryByText("Terms of service")).toBeNull();
   });
 
-  it("shows an external policy link instead of built-in policy pages", () => {
+  it("shows an external policy link in custom policy mode", () => {
     render(
       <PublicContentApp
         config={{
-          show_policies: true,
+          policy_pages: "custom",
           site_name: "Launchpad",
           terms_of_service_url: "https://example.com/policies",
         }}
@@ -315,7 +382,7 @@ describe("PublicContentApp", () => {
     render(
       <PublicContentApp
         config={{
-          show_policies: true,
+          policy_pages: "custom",
           site_name: "Launchpad",
           terms_of_service_url: "https://example.com/policies",
         }}

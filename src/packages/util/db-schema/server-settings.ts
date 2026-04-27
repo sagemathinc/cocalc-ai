@@ -85,6 +85,7 @@ export interface Customize {
   organizationName?: string;
   organizationEmail?: string;
   organizationURL?: string;
+  policy_pages?: string;
   termsOfServiceURL?: string;
   helpEmail?: string;
   contactEmail?: string;
