@@ -3,7 +3,7 @@
 const mockListSessions = jest.fn();
 const mockGetChatActions = jest.fn();
 const mockInitChat = jest.fn();
-const mockProcessLLM = jest.fn();
+const mockProcessAI = jest.fn();
 const mockOpenFloating = jest.fn();
 const mockLoadOpenedAgentSessionSelection = jest.fn();
 const mockEnsureWorkspaceChatForPath = jest.fn();
@@ -21,8 +21,8 @@ jest.mock("@cocalc/frontend/chat/register", () => ({
   initChat: (...args: any[]) => mockInitChat(...args),
 }));
 
-jest.mock("@cocalc/frontend/chat/actions/llm", () => ({
-  processLLM: (...args: any[]) => mockProcessLLM(...args),
+jest.mock("@cocalc/frontend/chat/actions/ai", () => ({
+  processAI: (...args: any[]) => mockProcessAI(...args),
 }));
 
 jest.mock("@cocalc/frontend/project/page/agent-panel-state", () => ({
@@ -989,7 +989,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     });
     mockListSessions.mockResolvedValue([]);
     const save = jest.fn().mockResolvedValue(undefined);
-    mockProcessLLM.mockResolvedValue(undefined);
+    mockProcessAI.mockResolvedValue(undefined);
     const timeStamp = "2026-03-20T06:10:00.000Z";
     const message = {
       history: [
@@ -1046,7 +1046,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       date: timeStamp,
       sender_id: "00000000-1000-4000-8000-000000000001",
     });
-    expect(mockProcessLLM).toHaveBeenCalledWith({
+    expect(mockProcessAI).toHaveBeenCalledWith({
       actions,
       message,
       tag: "intent:notebook-error",
@@ -1057,7 +1057,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       }),
     });
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(
-      mockProcessLLM.mock.invocationCallOrder[0],
+      mockProcessAI.mock.invocationCallOrder[0],
     );
     expect(mockOpenFloating).toHaveBeenCalledWith(
       "00000000-1000-4000-8000-000000000000",
@@ -1077,7 +1077,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       mockOpenFloating.mock.invocationCallOrder[0],
     );
     expect(mockOpenFloating.mock.invocationCallOrder[0]).toBeLessThan(
-      mockProcessLLM.mock.invocationCallOrder[0],
+      mockProcessAI.mock.invocationCallOrder[0],
     );
   });
 
@@ -1112,7 +1112,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     const processPromise = new Promise<void>((resolve) => {
       resolveProcess = resolve;
     });
-    mockProcessLLM.mockReturnValue(processPromise);
+    mockProcessAI.mockReturnValue(processPromise);
     const timeStamp = "2026-03-20T06:10:30.000Z";
     const message = {
       history: [
@@ -1158,7 +1158,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     });
 
     expect(ok).toBe(true);
-    expect(mockProcessLLM).toHaveBeenCalledTimes(1);
+    expect(mockProcessAI).toHaveBeenCalledTimes(1);
     expect(mockOpenFloating).toHaveBeenCalledTimes(2);
     expect(mockOpenFloating.mock.calls[0]).toEqual([
       "00000000-1000-4000-8000-000000000000",
@@ -1191,7 +1191,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(mockOpenFloating.mock.invocationCallOrder[0]).toBeLessThan(
       save.mock.invocationCallOrder[0],
     );
-    expect(mockProcessLLM.mock.invocationCallOrder[0]).toBeGreaterThan(
+    expect(mockProcessAI.mock.invocationCallOrder[0]).toBeGreaterThan(
       save.mock.invocationCallOrder[0],
     );
     resolveProcess();
@@ -1253,7 +1253,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     mockEnsureWorkspaceChatForPath.mockResolvedValue(null);
     mockEnsureWorkspaceChatPath.mockResolvedValue(null);
     mockListSessions.mockResolvedValue([]);
-    mockProcessLLM.mockResolvedValue(undefined);
+    mockProcessAI.mockResolvedValue(undefined);
     const timeStamp = "2026-03-20T06:10:45.000Z";
     const message = {
       history: [
@@ -1334,7 +1334,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         skipModelDispatch: true,
       }),
     );
-    expect(mockProcessLLM).toHaveBeenCalledWith({
+    expect(mockProcessAI).toHaveBeenCalledWith({
       actions: openedActions,
       message,
       tag: "intent:jupyter-generate-cell:below",
@@ -1393,7 +1393,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       },
     ]);
     const save = jest.fn().mockResolvedValue(undefined);
-    mockProcessLLM.mockResolvedValue(undefined);
+    mockProcessAI.mockResolvedValue(undefined);
     const timeStamp = "2026-03-20T06:11:00.000Z";
     const message = {
       history: [
@@ -1466,7 +1466,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       mockEnsureWorkspaceChatForPath.mockResolvedValue(null);
       mockListSessions.mockResolvedValue([]);
       const save = jest.fn().mockResolvedValue(undefined);
-      mockProcessLLM.mockResolvedValue(undefined);
+      mockProcessAI.mockResolvedValue(undefined);
       const timeStamp = "2026-03-20T06:12:30.000Z";
       const message = {
         history: [
@@ -1548,7 +1548,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
           workspaceOnly: false,
         },
       );
-      expect(mockProcessLLM).toHaveBeenCalledWith({
+      expect(mockProcessAI).toHaveBeenCalledWith({
         actions,
         message,
         tag: "intent:jupyter-generate-cell:below",
@@ -1569,7 +1569,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       mockEnsureWorkspaceChatForPath.mockResolvedValue(null);
       mockListSessions.mockResolvedValue([]);
       const save = jest.fn().mockResolvedValue(undefined);
-      mockProcessLLM.mockResolvedValue(undefined);
+      mockProcessAI.mockResolvedValue(undefined);
       const timeStamp = "2026-03-20T06:13:00.000Z";
       const message = {
         history: [
@@ -1682,7 +1682,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       },
     ]);
     const save = jest.fn().mockResolvedValue(undefined);
-    mockProcessLLM.mockResolvedValue(undefined);
+    mockProcessAI.mockResolvedValue(undefined);
     const timeStamp = "2026-03-20T06:12:00.000Z";
     const message = {
       history: [

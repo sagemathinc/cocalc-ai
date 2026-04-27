@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import track from "@cocalc/frontend/user-tracking";
-import { processLLM } from "../actions/llm";
+import { processAI } from "../actions/ai";
 import { processAcpLLM } from "../acp-api";
 
 jest.mock("@cocalc/frontend/user-tracking", () => ({
@@ -52,7 +52,7 @@ function makeMessage(overrides: Record<string, any> = {}) {
   };
 }
 
-describe("processLLM Codex dispatch", () => {
+describe("processAI Codex dispatch", () => {
   afterEach(() => {
     jest.clearAllMocks();
   });
@@ -69,7 +69,7 @@ describe("processLLM Codex dispatch", () => {
       ],
     });
 
-    await processLLM({
+    await processAI({
       actions,
       message,
       threadModel: "gpt-5.4",
@@ -89,7 +89,7 @@ describe("processLLM Codex dispatch", () => {
       }),
     );
     expect(track).toHaveBeenCalledWith(
-      "chatgpt",
+      "codex",
       expect.objectContaining({
         project_id: "proj",
         path: "chat.chat",
@@ -110,7 +110,7 @@ describe("processLLM Codex dispatch", () => {
       ],
     });
 
-    await processLLM({
+    await processAI({
       actions,
       message,
       threadModel: false,
@@ -142,7 +142,7 @@ describe("processLLM Codex dispatch", () => {
       ],
     });
 
-    await processLLM({
+    await processAI({
       actions,
       message,
       threadModel: "codex-agent",
@@ -161,12 +161,12 @@ describe("processLLM Codex dispatch", () => {
     const actions = makeActions();
     const message = makeMessage();
 
-    await processLLM({
+    await processAI({
       actions,
       message,
       threadModel: "gpt-4" as any,
     });
-    await processLLM({
+    await processAI({
       actions,
       message,
       tag: "regenerate",

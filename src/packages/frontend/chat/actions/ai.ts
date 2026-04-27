@@ -13,7 +13,7 @@ import { processAcpLLM } from "../acp-api";
 import type { ChatActions } from "../actions";
 import type { ChatMessage } from "../types";
 
-export async function processLLM({
+export async function processAI({
   actions,
   message,
   tag,
@@ -43,7 +43,7 @@ export async function processLLM({
     (message as any)?.acp_send_mode === "immediate" ? "immediate" : undefined;
   const effectiveAcpSendMode = acpSendMode ?? messageAcpSendMode;
 
-  const model = resolveLLMModel({ message, tag, llm, threadModel });
+  const model = resolveAIModel({ message, tag, llm, threadModel });
   if (model === false || model == null) return;
 
   const threadIdForThread = (message as any)?.thread_id as string | undefined;
@@ -87,7 +87,7 @@ export async function processLLM({
   });
 }
 
-function resolveLLMModel({
+function resolveAIModel({
   message,
   tag,
   llm,
@@ -100,13 +100,13 @@ function resolveLLMModel({
 }): LanguageModel | false | null {
   if (typeof llm === "string") {
     if (tag !== "regenerate") {
-      console.warn(`chat/llm: llm=${llm} is only allowed for tag=regenerate`);
+      console.warn(`chat/ai: llm=${llm} is only allowed for tag=regenerate`);
       return null;
     }
     if (isCodexModelName(llm)) {
       return llm;
     }
-    console.warn(`chat/llm: ignoring non-Codex regenerate model ${llm}`);
+    console.warn(`chat/ai: ignoring non-Codex regenerate model ${llm}`);
     return null;
   }
 
@@ -137,7 +137,7 @@ function prepareRegenerateInput({
   if (tag !== "regenerate") return null;
   if (!history || history.length < 2) {
     console.warn(
-      `chat/llm: regenerate called without enough history for thread ${threadId ?? "unknown"}`,
+      `chat/ai: regenerate called without enough history for thread ${threadId ?? "unknown"}`,
     );
     return { error: true };
   }

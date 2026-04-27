@@ -70,7 +70,7 @@ import {
 import { History, HistoryFooter, HistoryTitle } from "./history";
 import { resolveAgentSessionIdForThread } from "./thread-session";
 import ChatInput from "./input";
-import { FeedbackLLM } from "./llm-msg-feedback";
+import { AIFeedback } from "./ai-msg-feedback";
 import { Name } from "./name";
 import { Time } from "./time";
 import { ChatMessageTyped, Mode, SubmitMentionsFn } from "./types";
@@ -1562,7 +1562,7 @@ export default function Message({
     if (isLLMThread && msgWrittenByLLM) {
       buttons.push(
         <span key="feedback-llm">
-          <FeedbackLLM actions={actions} message={message} />
+          <AIFeedback actions={actions} message={message} />
         </span>,
       );
     }

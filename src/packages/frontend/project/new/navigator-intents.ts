@@ -37,15 +37,15 @@ const NAVIGATOR_WORKSPACE_RESOLVE_POLL_MS = 150;
 const DEFAULT_WORKSPACE_CODEX_THREAD_TITLE = "Codex";
 let navigatorIntentQueueMemory: NavigatorSubmitPromptDetail[] = [];
 
-async function processChatLLM(args: {
+async function processChatAI(args: {
   actions: any;
   message: any;
   tag?: string;
   threadModel?: string | null;
   acpConfigOverride?: any;
 }): Promise<void> {
-  const mod = await import("@cocalc/frontend/chat/actions/llm");
-  await mod.processLLM(args);
+  const mod = await import("@cocalc/frontend/chat/actions/ai");
+  await mod.processAI(args);
 }
 
 export interface NavigatorSubmitPromptDetail {
@@ -687,7 +687,7 @@ async function writeNavigatorPromptInWorkspaceChat(
                 sender_id: account_id,
               });
             if (!message) return false;
-            const process = processChatLLM({
+            const process = processChatAI({
               actions,
               message,
               tag: opts.tag ?? "intent:navigator",
@@ -918,7 +918,7 @@ async function writeNavigatorPromptInWorkspaceChat(
           sender_id: account_id,
         });
       if (!message) return false;
-      const process = processChatLLM({
+      const process = processChatAI({
         actions,
         message,
         tag: opts.tag ?? "intent:navigator",
@@ -926,7 +926,7 @@ async function writeNavigatorPromptInWorkspaceChat(
         acpConfigOverride: threadAgentCodexConfig,
       });
       if (opts.waitForAgent === false) {
-        // processLLM writes its own visible error messages; this path only
+        // processAI writes its own visible error messages; this path only
         // prevents launch latency from blocking UI handoff to the agent panel.
         void process.catch(() => undefined);
       } else {

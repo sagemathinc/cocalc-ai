@@ -76,7 +76,7 @@ import {
   senderId,
 } from "./access";
 import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
-import { processLLM as processLLMExternal } from "./actions/llm";
+import { processAI as processAIExternal } from "./actions/ai";
 import { getDefaultCodexSessionMode } from "./codex-defaults";
 import { isAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type {
@@ -781,7 +781,7 @@ export class ChatActions extends Actions<ChatState> {
     this.syncdb.commit();
     const model = this.isLanguageModelThread(date);
     if (isLanguageModel(model)) {
-      track("llm_feedback", {
+      track("ai_feedback", {
         project_id: this.store?.get("project_id"),
         path: this.store?.get("path"),
         msg_date: date,
@@ -1011,7 +1011,7 @@ export class ChatActions extends Actions<ChatState> {
 
     if (!skipModelDispatch) {
       (async () => {
-        await this.processLLM({
+        await this.processAI({
           message,
           tag,
           acpSendMode: send_mode,
@@ -2235,7 +2235,7 @@ export class ChatActions extends Actions<ChatState> {
     return isCodexModelName(typeof model === "string" ? model : undefined);
   };
 
-  private processLLM = async ({
+  private processAI = async ({
     message,
     tag,
     llm,
@@ -2251,7 +2251,7 @@ export class ChatActions extends Actions<ChatState> {
     acpConfigOverride?: Partial<CodexThreadConfig>;
   }) => {
     if (this.syncdb == null || !this.store) {
-      console.warn("processLLM called before chat actions initialized");
+      console.warn("processAI called before chat actions initialized");
       return;
     }
     if (tag !== "regenerate" && !isValidUUID(message.history?.[0]?.author_id)) {
@@ -2263,7 +2263,7 @@ export class ChatActions extends Actions<ChatState> {
       ? this.isLanguageModelThread(undefined, threadId)
       : null;
 
-    await processLLMExternal({
+    await processAIExternal({
       actions: this,
       message,
       tag,
@@ -2760,7 +2760,7 @@ export class ChatActions extends Actions<ChatState> {
     if (message == null) {
       return;
     }
-    await this.processLLM({
+    await this.processAI({
       message,
       tag: "regenerate",
       llm,

@@ -86,7 +86,7 @@ function makeActions(messages: Map<string, any> = new Map()): any {
   actions.clearAllFilters = jest.fn();
   actions.setSelectedThread = jest.fn();
   actions.renameThread = jest.fn().mockReturnValue(true);
-  actions.processLLM = jest.fn().mockResolvedValue(undefined);
+  actions.processAI = jest.fn().mockResolvedValue(undefined);
   actions.isLanguageModelThread = jest.fn().mockReturnValue(false);
   return actions;
 }
@@ -153,7 +153,7 @@ describe("sendChat identity fields", () => {
     expect(chatSet.message_id).toBe("message-reserved");
     expect(chatSet.thread_id).toBe("thread-reserved");
     expect(chatSet.date).toBe("2026-02-21T18:02:00.000Z");
-    expect(actions.processLLM).not.toHaveBeenCalled();
+    expect(actions.processAI).not.toHaveBeenCalled();
   });
 
   it("marks recovered agent messages as not sent", () => {
@@ -407,7 +407,7 @@ describe("sendChat identity fields", () => {
     });
     await Promise.resolve();
 
-    expect(actions.processLLM).toHaveBeenCalledWith(
+    expect(actions.processAI).toHaveBeenCalledWith(
       expect.objectContaining({
         acpConfigOverride: expect.objectContaining({
           model: "gpt-5.3-codex-spark",
