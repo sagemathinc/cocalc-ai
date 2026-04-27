@@ -56,7 +56,7 @@ export default function LiteAISettings({
       setError("");
       setState("ready");
     } catch (err) {
-      log.info("failed to load ai settings", err);
+      log.info("failed to load AI settings", err);
       setError(`${err}`);
       setState("error");
     }
@@ -91,7 +91,7 @@ export default function LiteAISettings({
       setState("ready");
       onSaved?.();
     } catch (err) {
-      log.info("failed to save ai settings", err);
+      log.info("failed to save AI settings", err);
       setError(`${err}`);
       setState("error");
     }
