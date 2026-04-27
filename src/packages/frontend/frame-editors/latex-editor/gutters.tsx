@@ -11,7 +11,7 @@
 import { Popover } from "antd";
 import { Icon } from "@cocalc/frontend/components";
 import { Localize } from "@cocalc/frontend/app/localize";
-import HelpMeFix from "@cocalc/frontend/frame-editors/llm/help-me-fix";
+import HelpMeFix from "@cocalc/frontend/frame-editors/ai/help-me-fix";
 import { capitalize } from "@cocalc/util/misc";
 import type { Actions } from "./actions";
 import { SPEC, SpecItem } from "./errors-and-warnings";

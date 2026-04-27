@@ -1,5 +1,5 @@
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { modelToName } from "@cocalc/frontend/frame-editors/llm/llm-selector";
+import { modelToName } from "@cocalc/frontend/frame-editors/ai/llm-selector";
 import {
   LanguageModel,
   fromCustomOpenAIModel,

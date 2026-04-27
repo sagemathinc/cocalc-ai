@@ -14,7 +14,7 @@ import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { labels, type IntlMessage } from "@cocalc/frontend/i18n";
-import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/llm/popup-agent-composer";
+import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/ai/popup-agent-composer";
 import track from "@cocalc/frontend/user-tracking";
 import type { LLMTools } from "@cocalc/jupyter/types";
 import type { JupyterActions } from "../browser-actions";

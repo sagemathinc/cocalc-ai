@@ -15,7 +15,7 @@ import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useFrameContext } from "@cocalc/frontend/app-framework";
 import type { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
-import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/llm/popup-agent-composer";
+import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/ai/popup-agent-composer";
 import track from "@cocalc/frontend/user-tracking";
 import type { JupyterActions } from "../browser-actions";
 import type { Position } from "./types";

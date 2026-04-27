@@ -4,7 +4,7 @@
  */
 
 import { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
-import { CUTOFF } from "@cocalc/frontend/frame-editors/llm/consts";
+import { CUTOFF } from "@cocalc/frontend/frame-editors/ai/consts";
 import { backtickSequence } from "@cocalc/frontend/markdown/util";
 
 export interface CellContentOptions {

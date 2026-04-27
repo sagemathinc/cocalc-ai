@@ -30,7 +30,7 @@ import {
   RUN_ALL_CELLS_ABOVE_ICON,
   RUN_ALL_CELLS_BELOW_ICON,
 } from "./consts";
-import { LLMCellTool } from "./llm/cell-tool";
+import { LLMCellTool } from "./ai/cell-tool";
 
 export function PlaceholderButtonBar() {
   return <div style={CODE_BAR_BTN_STYLE} />;

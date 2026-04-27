@@ -10,7 +10,7 @@ import { Button } from "@cocalc/frontend/antd-bootstrap";
 import { Rendered, useRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import Ansi from "@cocalc/frontend/components/ansi-to-react";
-import HelpMeFix from "@cocalc/frontend/frame-editors/llm/help-me-fix";
+import HelpMeFix from "@cocalc/frontend/frame-editors/ai/help-me-fix";
 import {
   STYLE_ERR,
   STYLE_HEADER,

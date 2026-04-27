@@ -7,7 +7,7 @@ import { Map } from "immutable";
 
 import { TypedMap } from "@cocalc/frontend/app-framework";
 
-import type { Mode as JupyterCellLLMMode } from "@cocalc/frontend/jupyter/llm/cell-tool";
+import type { Mode as JupyterCellLLMMode } from "@cocalc/frontend/jupyter/ai/cell-tool";
 
 export type EventRecord = {
   id: string;

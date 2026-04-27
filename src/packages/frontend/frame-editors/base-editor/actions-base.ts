@@ -152,8 +152,8 @@ import {
 import { MergeCoordinator } from "../code-editor/sync";
 import { SyncAdapter } from "../code-editor/sync-adapter";
 import "../generic/codemirror-plugins";
-import languageModelCreateChat, { Options } from "../llm/create-chat";
-import type { Scope as LanguageModelScope } from "../llm/types";
+import languageModelCreateChat, { Options } from "../ai/create-chat";
+import type { Scope as LanguageModelScope } from "../ai/types";
 import { SettingsObject } from "../settings/types";
 import type { Terminal } from "../terminal-editor/connected-terminal";
 import { TerminalManager } from "../terminal-editor/terminal-manager";

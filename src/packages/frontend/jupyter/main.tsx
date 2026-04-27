@@ -39,7 +39,7 @@ import { JupyterContext } from "./jupyter-context";
 import useKernelUsage from "./kernel-usage";
 import KernelWarning from "./kernel-warning";
 import { KeyboardShortcuts } from "./keyboard-shortcuts";
-import * as toolComponents from "./llm";
+import * as toolComponents from "./ai";
 import { NBConvert } from "./nbconvert";
 import { Kernel } from "./status";
 

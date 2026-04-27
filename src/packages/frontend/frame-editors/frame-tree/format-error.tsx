@@ -6,7 +6,7 @@ import { useMemo } from "react";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import StaticCodeBlock from "@cocalc/frontend/components/static-code-block";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import HelpMeFix from "@cocalc/frontend/frame-editors/llm/help-me-fix";
+import HelpMeFix from "@cocalc/frontend/frame-editors/ai/help-me-fix";
 import { Ansi, is_ansi } from "@cocalc/frontend/jupyter/output-messages/ansi";
 
 interface Props {

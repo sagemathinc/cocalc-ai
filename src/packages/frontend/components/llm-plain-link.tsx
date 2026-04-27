@@ -1,5 +1,5 @@
 import { LanguageModel, model2vendor } from "@cocalc/util/db-schema/llm-utils";
-import { modelToName } from "../frame-editors/llm/llm-selector";
+import { modelToName } from "../frame-editors/ai/llm-selector";
 import { A } from "./A";
 
 export function LLMNameLink({ model }: { model: LanguageModel }) {

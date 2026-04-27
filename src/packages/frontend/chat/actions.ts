@@ -12,7 +12,7 @@ import type { BaseEditorActions as CodeEditorActions } from "@cocalc/frontend/fr
 import {
   modelToMention,
   modelToName,
-} from "@cocalc/frontend/frame-editors/llm/llm-selector";
+} from "@cocalc/frontend/frame-editors/ai/llm-selector";
 import { open_new_tab } from "@cocalc/frontend/misc";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import track from "@cocalc/frontend/user-tracking";
