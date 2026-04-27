@@ -300,9 +300,7 @@ export function useThreadSections({
         ? Math.max(thread.messageCount - readCount, 0)
         : 0;
       const metadataIsAI =
-        threadMeta?.agent_kind === "acp" ||
-        threadMeta?.agent_kind === "llm" ||
-        threadMeta?.acp_config != null;
+        threadMeta?.agent_kind === "acp" || threadMeta?.acp_config != null;
       let isAI = metadataIsAI;
       if (!isAI && actions?.isLanguageModelThread) {
         const fallbackDate =

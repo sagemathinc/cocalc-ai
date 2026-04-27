@@ -23,7 +23,6 @@ describe("Codex submit preflight", () => {
     expect(
       isCodexSubmitTarget({ existingThreadAgentModel: "gpt-5.4-codex" }),
     ).toBe(true);
-    expect(isCodexSubmitTarget({ existingThreadAgentKind: "llm" })).toBe(false);
   });
 
   it("starts and waits for a stopped project", async () => {

@@ -119,7 +119,7 @@ function logChatArchiveDiagnostic(
   console.log(`[chat-archive] ${message}`, details);
 }
 
-export type NewThreadAgentMode = "codex" | "human" | "model";
+export type NewThreadAgentMode = "codex" | "human";
 export interface NewThreadSetup {
   title: string;
   icon?: string;

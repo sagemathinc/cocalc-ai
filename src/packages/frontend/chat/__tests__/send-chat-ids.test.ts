@@ -832,7 +832,7 @@ describe("thread-config by thread_id", () => {
     expect(namePatch).toBeTruthy();
   });
 
-  it("updates non-codex agent model for UUID thread keys", () => {
+  it("updates Codex agent model for UUID thread keys", () => {
     const threadId = "35333333-3333-4333-8333-333333333333";
     const existing = {
       event: "chat-thread-config",
@@ -851,17 +851,17 @@ describe("thread-config by thread_id", () => {
       }
       return undefined;
     });
-    actions.setThreadModel(threadId, "gpt-4o" as any);
+    actions.recordThreadAgentModel(threadId, "gpt-5.4" as any);
     const row = actions.syncdb.set.mock.calls
       .map((x) => x[0])
       .find(
         (x: any) =>
           x?.event === "chat-thread-config" &&
           x?.thread_id === threadId &&
-          x?.agent_model === "gpt-4o",
+          x?.agent_model === "gpt-5.4",
       );
-    expect(row?.agent_kind).toBe("llm");
-    expect(row?.agent_mode).toBe("single_turn");
+    expect(row?.agent_kind).toBe("acp");
+    expect(row?.agent_mode).toBe("interactive");
   });
 
   it("creates a canonical thread-config row when updating by thread_id", () => {

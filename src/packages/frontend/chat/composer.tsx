@@ -112,9 +112,6 @@ export function ChatRoomComposer({
     if (metadata?.agent_kind === "acp") {
       return "Ask Codex...";
     }
-    if (metadata?.agent_kind === "llm") {
-      return "Ask AI...";
-    }
     const threadMs = parseInt(contextThread.key, 10);
     if (
       Number.isFinite(threadMs) &&

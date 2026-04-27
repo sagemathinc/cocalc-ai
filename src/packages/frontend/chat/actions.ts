@@ -6,7 +6,6 @@
 import { fromJS } from "immutable";
 import { debounce } from "lodash";
 import { alert_message } from "@cocalc/frontend/alerts";
-import { setDefaultLLM } from "@cocalc/frontend/account/useLanguageModelSetting";
 import { Actions, redux } from "@cocalc/frontend/app-framework";
 import { History as LanguageModelHistory } from "@cocalc/frontend/client/types";
 import type { BaseEditorActions as CodeEditorActions } from "@cocalc/frontend/frame-editors/base-editor/actions-base";
@@ -20,8 +19,6 @@ import track from "@cocalc/frontend/user-tracking";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import {
-  LANGUAGE_MODEL_PREFIXES,
-  USER_LLM_PREFIX,
   isLanguageModel,
   isLanguageModelService,
   model2service,
@@ -163,11 +160,11 @@ function nextChatMessageDate(actions: ChatActions): Date {
   return new Date(candidate);
 }
 
-export type ThreadAgentKind = "acp" | "llm" | "none";
+export type ThreadAgentKind = "acp" | "none";
 export type ThreadAgentMode = "interactive" | "single_turn";
 
 export interface NewThreadAgentOptions {
-  mode: "codex" | "human" | "model";
+  mode: "codex" | "human";
   model?: string;
   codexConfig?: Partial<CodexThreadConfig>;
 }
@@ -227,12 +224,6 @@ function deriveThreadAgentFromMetadata(args: {
       codexConfig: codexConfig ?? { model },
     };
   }
-  if (metadata?.agent_kind === "llm" && agentModel) {
-    return {
-      mode: "model",
-      model: agentModel,
-    };
-  }
   if (metadata?.agent_kind === "none") {
     return {
       mode: "human",
@@ -261,23 +252,13 @@ function deriveThreadAppearanceFromMetadata(
 }
 
 function normalizeAgentKind(value: unknown): ThreadAgentKind | undefined {
-  if (value === "acp" || value === "llm" || value === "none") return value;
+  if (value === "acp" || value === "none") return value;
   return undefined;
 }
 
 function normalizeAgentMode(value: unknown): ThreadAgentMode | undefined {
   if (value === "interactive" || value === "single_turn") return value;
   return undefined;
-}
-
-function identityFromModel(model: string): {
-  agent_kind: Exclude<ThreadAgentKind, "none">;
-  agent_mode: ThreadAgentMode;
-} {
-  if (isCodexModelName(model)) {
-    return { agent_kind: "acp", agent_mode: "interactive" };
-  }
-  return { agent_kind: "llm", agent_mode: "single_turn" };
 }
 
 function normalizeSessionMode(
@@ -351,11 +332,6 @@ function buildNewThreadConfig({
     threadConfigPatch.agent_kind = "acp";
     threadConfigPatch.agent_model = model;
     threadConfigPatch.agent_mode = "interactive";
-  } else if (agentMode === "model" && agentModel) {
-    threadConfigPatch.acp_config = null;
-    threadConfigPatch.agent_kind = "llm";
-    threadConfigPatch.agent_model = agentModel;
-    threadConfigPatch.agent_mode = "single_turn";
   }
   return { threadConfigPatch, acpConfigOverride };
 }
@@ -441,11 +417,12 @@ export function resolveThreadAgentModel({
   const metadata = getThreadMetadata(derivedThreadId, {
     threadId: derivedThreadId,
   });
-  if (
-    typeof metadata.agent_model === "string" &&
-    metadata.agent_model.trim().length > 0
-  ) {
-    return metadata.agent_model;
+  const model =
+    typeof metadata.agent_model === "string" && metadata.agent_model.trim()
+      ? metadata.agent_model.trim()
+      : undefined;
+  if (model && isCodexModelName(model)) {
+    return model;
   }
   return false;
 }
@@ -2388,14 +2365,16 @@ export class ChatActions extends Actions<ChatState> {
       });
       return;
     }
-    const { agent_kind, agent_mode } = identityFromModel(model);
+    if (!isCodexModelName(model)) {
+      return;
+    }
     if (
       !this.setThreadConfigRecord(
         normalizedThreadId,
         {
-          agent_kind,
+          agent_kind: "acp",
           agent_model: model,
-          agent_mode,
+          agent_mode: "interactive",
         },
         {
           threadId: normalizedThreadId,
@@ -2405,31 +2384,6 @@ export class ChatActions extends Actions<ChatState> {
       return;
     }
     this.syncdb.commit();
-  };
-
-  setThreadModel = (threadKey: string, model: LanguageModel): void => {
-    if (this.syncdb == null) return;
-    const threadId = this.normalizeThreadId(threadKey);
-    if (!threadId) {
-      throw Error(`setThreadModel: invalid threadKey ${threadKey}`);
-    }
-    const { agent_kind, agent_mode } = identityFromModel(model);
-    if (
-      !this.setThreadConfigRecord(
-        threadKey,
-        {
-          acp_config: null,
-          agent_kind,
-          agent_model: model,
-          agent_mode,
-        },
-        { threadId },
-      )
-    ) {
-      return;
-    }
-    this.syncdb.commit();
-    void this.saveSyncdb();
   };
 
   setCodexConfig = (threadKey: string, config: CodexThreadConfig): void => {
@@ -2810,10 +2764,6 @@ export class ChatActions extends Actions<ChatState> {
       llm,
       dateLimit: date0,
     });
-
-    if (llm != null) {
-      setDefaultLLM(llm);
-    }
   };
 
   showTimeTravelInNewTab = () => {
@@ -2883,9 +2833,9 @@ function asIsoDateString(value: unknown): string | undefined {
   return undefined;
 }
 
-// We strip out any cased version of the string @chatgpt and also all mentions.
+// We strip out any cased version of the string @codex and also all mentions.
 function stripMentions(value: string): string {
-  for (const name of ["@chatgpt4", "@chatgpt"]) {
+  for (const name of ["@codex"]) {
     while (true) {
       const i = value.toLowerCase().indexOf(name);
       if (i == -1) break;
@@ -2911,12 +2861,6 @@ function stripMentions(value: string): string {
 
 function mentionsLanguageModel(input?: string): boolean {
   const x = input?.toLowerCase() ?? "";
-
-  // if any of these prefixes are in the input as "account-id=[prefix]", then return true
-  const sys = LANGUAGE_MODEL_PREFIXES.some((prefix) =>
-    x.includes(`account-id=${prefix}`),
-  );
-  if (sys || x.includes(`account-id=${USER_LLM_PREFIX}`)) return true;
   if (x.includes("openai-codex-agent") || x.includes("@codex")) return true;
   return false;
 }

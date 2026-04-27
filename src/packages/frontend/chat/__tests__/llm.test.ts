@@ -1,64 +1,27 @@
 /** @jest-environment jsdom */
 
+import track from "@cocalc/frontend/user-tracking";
 import { processLLM } from "../actions/llm";
-
-const mockQueryStream = jest.fn();
-let emitter: any;
+import { processAcpLLM } from "../acp-api";
 
 jest.mock("@cocalc/frontend/user-tracking", () => ({
   __esModule: true,
   default: jest.fn(),
 }));
 
-jest.mock("@cocalc/frontend/webapp-client", () => ({
-  webapp_client: {
-    openai_client: {
-      queryStream: (...args: any[]) => {
-        emitter = createEmitter();
-        mockQueryStream(...args);
-        return emitter;
-      },
-    },
-    server_time: () => new Date(),
-    conat_client: {},
-  },
-}));
-
 jest.mock("../acp-api", () => ({
   processAcpLLM: jest.fn(),
 }));
 
-function createEmitter() {
-  const handlers: Record<string, (...args: any[]) => void> = {};
+function makeActions(): any {
   return {
-    on(event: string, cb: (...args: any[]) => void) {
-      handlers[event] = cb;
+    syncdb: {
+      set: jest.fn(),
+      commit: jest.fn(),
+      get_one: jest.fn(),
+      delete: jest.fn(),
+      save: jest.fn(),
     },
-    emit(event: string, ...args: any[]) {
-      handlers[event]?.(...args);
-    },
-  };
-}
-
-function makeActions(): {
-  actions: any;
-  syncdb: any;
-  sendReply: jest.Mock;
-  setSpy: jest.Mock;
-} {
-  const set = jest.fn();
-  const commit = jest.fn();
-  const get_one = jest.fn().mockReturnValue({ generating: true });
-  const syncdb = {
-    set,
-    commit,
-    get_one,
-    delete: jest.fn(),
-    save: jest.fn(),
-  };
-  const sendReply = jest.fn(() => "2025-01-01T00:00:00.000Z");
-  const actions = {
-    syncdb,
     store: {
       get: (key: string) =>
         key === "project_id"
@@ -67,27 +30,12 @@ function makeActions(): {
             ? "chat.chat"
             : undefined,
     },
-    chatStreams: new Set<string>(),
-    getAllMessages: () => new Map(),
-    getMessageById: jest.fn(() => undefined),
-    sendReply,
-    saveHistory: jest.fn((message) => ({
-      date: "2025-01-01T00:00:00.000Z",
-      prevHistory: message.history ?? [],
-    })),
-    getLLMHistory: jest.fn(() => []),
-    getCodexConfig: jest.fn(),
     recordThreadAgentModel: jest.fn(),
-    setCodexConfig: jest.fn(),
-    computeThreadKey: jest.fn(() => "1700000000000"),
-    project_id: "proj",
-    path: "chat.chat",
-  } as any;
-  return { actions, syncdb, sendReply, setSpy: set };
+    getLLMHistory: jest.fn(() => []),
+  };
 }
 
-function makeMessage() {
-  const now = new Date("2025-02-02T00:00:00.000Z");
+function makeMessage(overrides: Record<string, any> = {}) {
   return {
     event: "chat" as const,
     sender_id: "user-1",
@@ -96,250 +44,137 @@ function makeMessage() {
       {
         author_id: "00000000-1000-4000-8000-000000000001",
         content: "hello",
-        date: now.toISOString(),
+        date: "2025-02-02T00:00:00.000Z",
       },
     ],
-    date: now,
+    date: new Date("2025-02-02T00:00:00.000Z"),
+    ...overrides,
   };
 }
 
-describe("processLLM streaming updates", () => {
+describe("processLLM Codex dispatch", () => {
   afterEach(() => {
     jest.clearAllMocks();
-    emitter = undefined;
   });
 
-  it("streams tokens into the same thinking message using ISO date", async () => {
-    const { actions, syncdb, sendReply } = makeActions();
-    const message = makeMessage();
-
-    await processLLM({
-      actions,
-      message,
-      threadModel: "gpt-4",
-    });
-
-    expect(sendReply).toHaveBeenCalled();
-    expect(emitter).toBeDefined();
-
-    emitter.emit("token", "A");
-    const lastSet = syncdb.set.mock.calls.pop()?.[0];
-    expect(lastSet?.date).toBe("2025-01-01T00:00:00.000Z");
-    expect(lastSet?.generating).toBe(true);
-    expect(lastSet?.history?.[0]?.content).toBe("A");
-
-    emitter.emit("token", null);
-    expect(syncdb.commit).toHaveBeenCalled();
-  });
-
-  it("writes an error message and stops generating on stream error", async () => {
-    const { actions, syncdb } = makeActions();
-    const message = makeMessage();
-
-    await processLLM({
-      actions,
-      message,
-      threadModel: "gpt-4",
-    });
-
-    expect(emitter).toBeDefined();
-    emitter.emit("error", "boom");
-
-    const lastSet = syncdb.set.mock.calls.pop()?.[0];
-    expect(lastSet?.generating).toBe(false);
-    expect(String(lastSet?.history?.[0]?.content)).toContain("boom");
-  });
-});
-
-describe("processLLM guards", () => {
-  afterEach(() => {
-    jest.clearAllMocks();
-    emitter = undefined;
-  });
-
-  it("throttles when too many streams are active", async () => {
-    const { actions, syncdb } = makeActions();
-    for (let i = 0; i < 11; i++) actions.chatStreams.add(`id-${i}`);
-    const message = makeMessage();
-    await processLLM({
-      actions,
-      message,
-      threadModel: "gpt-4",
-    });
-    expect(mockQueryStream).not.toHaveBeenCalled();
-    const lastSet = syncdb.set.mock.calls.pop()?.[0];
-    expect(String(lastSet?.history?.[0]?.content)).toContain(
-      "language model responses",
-    );
-    expect(lastSet?.generating).toBeUndefined();
-  });
-
-  it("halts streaming when generating is set false mid-stream", async () => {
-    const { actions, syncdb } = makeActions();
-    syncdb.get_one.mockImplementation(() => ({ generating: false }));
-    const message = makeMessage();
-    await processLLM({
-      actions,
-      message,
-      threadModel: "gpt-4",
-    });
-    expect(emitter).toBeDefined();
-    emitter?.emit("token", "A");
-    expect(actions.chatStreams.size).toBe(0);
-  });
-
-  it("looks up active record by message_id before date/sender fallback", async () => {
-    const { actions, syncdb } = makeActions();
-    const message = {
-      ...makeMessage(),
-      message_id: "msg-stream-1",
-      thread_id: "thread-stream-1",
-    } as any;
-    syncdb.get_one.mockImplementation((where: any) => {
-      if (where?.event === "chat" && where?.message_id === "msg-stream-1") {
-        return {
-          event: "chat",
-          message_id: "msg-stream-1",
-          generating: true,
-        };
-      }
-      return undefined;
+  it("routes Codex thread models through ACP and records the model", async () => {
+    const actions = makeActions();
+    const message = makeMessage({
+      history: [
+        {
+          author_id: "00000000-1000-4000-8000-000000000001",
+          content: "please continue",
+          date: "2025-02-02T00:00:00.000Z",
+        },
+      ],
     });
 
     await processLLM({
       actions,
       message,
-      threadModel: "gpt-4",
+      threadModel: "gpt-5.4",
     });
 
-    emitter?.emit("token", "A");
-    expect(syncdb.get_one).toHaveBeenCalledWith({
-      event: "chat",
-      message_id: "msg-stream-1",
-    });
-    expect(syncdb.get_one.mock.calls[0]?.[0]).toEqual({
-      event: "chat",
-      message_id: "msg-stream-1",
-    });
-  });
-
-  it("uses sender-qualified delete when regenerating with a different model sender", async () => {
-    const { actions, syncdb } = makeActions();
-    const message = makeMessage();
-    message.sender_id = "legacy-assistant";
-    message.history[0].content = "regenerate this";
-
-    syncdb.get_one.mockImplementation((where: any) => ({
-      event: "chat",
-      date: where?.date,
-      sender_id: where?.sender_id ?? "legacy-assistant",
-      message_id: "legacy-msg-1",
-      thread_id: "thread-test-1",
-      history: [],
-      reply_to: new Date("2025-02-02T01:00:00.000Z").toISOString(),
-      generating: true,
-    }));
-    actions.getLLMHistory.mockReturnValue([
-      {
-        role: "user",
-        content: "previous prompt",
-        date: new Date("2025-02-02T00:59:00.000Z"),
-      },
-      {
-        role: "assistant",
-        content: "previous answer",
-        date: new Date("2025-02-02T00:59:30.000Z"),
-      },
-    ]);
-
-    await processLLM({
-      actions,
-      message,
-      tag: "regenerate",
-      llm: "gpt-4",
-    });
-
-    expect(syncdb.delete).toHaveBeenCalled();
-    const deleteArg = syncdb.delete.mock.calls[0]?.[0];
-    expect(deleteArg?.event).toBe("chat");
-    expect(deleteArg?.sender_id).toBe("legacy-assistant");
-    expect(deleteArg?.message_id).toBe("legacy-msg-1");
-    expect(deleteArg?.thread_id).toBe("thread-test-1");
-  });
-});
-
-describe("processLLM model resolution and Codex dispatch", () => {
-  afterEach(() => {
-    jest.clearAllMocks();
-    emitter = undefined;
-  });
-
-  it("falls back to thread model when no mention", async () => {
-    const { actions } = makeActions();
-    const message = makeMessage();
-    message.history[0].content = "please do something";
-    await processLLM({
-      actions,
-      message,
-      threadModel: "gpt-4",
-    });
-    expect(mockQueryStream).toHaveBeenCalled();
-    const args = mockQueryStream.mock.calls[0][0];
-    expect(args.model).toBe("gpt-4");
     expect(actions.recordThreadAgentModel).toHaveBeenCalledWith(
       "thread-test-1",
-      "gpt-4",
+      "gpt-5.4",
+    );
+    expect(processAcpLLM).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actions,
+        message,
+        model: "gpt-5.4",
+        input: "please continue",
+        sendMode: undefined,
+      }),
+    );
+    expect(track).toHaveBeenCalledWith(
+      "chatgpt",
+      expect.objectContaining({
+        project_id: "proj",
+        path: "chat.chat",
+        model: "gpt-5.4",
+      }),
     );
   });
 
-  it("routes codex models through processAcpLLM", async () => {
-    const { actions } = makeActions();
-    const message = makeMessage();
-    message.history[0].content = "@codex do something";
-    const { processAcpLLM } = require("../acp-api");
+  it("uses the Codex mention when there is no thread model", async () => {
+    const actions = makeActions();
+    const message = makeMessage({
+      history: [
+        {
+          author_id: "00000000-1000-4000-8000-000000000001",
+          content: "@codex fix this",
+          date: "2025-02-02T00:00:00.000Z",
+        },
+      ],
+    });
+
     await processLLM({
       actions,
       message,
-      threadModel: "codex-agent",
+      threadModel: false,
     });
-    expect(processAcpLLM).toHaveBeenCalled();
+
+    expect(processAcpLLM).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "codex-agent",
+        input: "fix this",
+      }),
+    );
     expect(actions.recordThreadAgentModel).toHaveBeenCalledWith(
       "thread-test-1",
       "codex-agent",
     );
   });
 
-  it("routes gpt-5.4 through processAcpLLM", async () => {
-    const { actions } = makeActions();
-    const message = makeMessage();
-    message.history[0].content = "please continue";
-    const { processAcpLLM } = require("../acp-api");
-    await processLLM({
-      actions,
-      message,
-      threadModel: "gpt-5.4",
+  it("prefers acp_prompt and preserves immediate send mode", async () => {
+    const actions = makeActions();
+    const message = makeMessage({
+      acp_prompt: "Use the project context instead",
+      acp_send_mode: "immediate",
+      history: [
+        {
+          author_id: "00000000-1000-4000-8000-000000000001",
+          content: "@codex thanks",
+          date: "2025-02-02T00:00:00.000Z",
+        },
+      ],
     });
-    expect(processAcpLLM).toHaveBeenCalled();
-    expect(actions.recordThreadAgentModel).toHaveBeenCalledWith(
-      "thread-test-1",
-      "gpt-5.4",
-    );
-  });
 
-  it("passes Send Now through to ACP without decorating the prompt", async () => {
-    const { actions } = makeActions();
-    const message = makeMessage();
-    message.history[0].content = "thanks";
-    const { processAcpLLM } = require("../acp-api");
     await processLLM({
       actions,
       message,
       threadModel: "codex-agent",
-      acpSendMode: "immediate",
     });
-    expect(processAcpLLM).toHaveBeenCalledTimes(1);
-    const args = processAcpLLM.mock.calls[0][0];
-    expect(args.sendMode).toBe("immediate");
-    expect(args.input).toBe("thanks");
+
+    expect(processAcpLLM).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "codex-agent",
+        input: "Use the project context instead",
+        sendMode: "immediate",
+      }),
+    );
+  });
+
+  it("ignores non-Codex thread and regenerate models", async () => {
+    const actions = makeActions();
+    const message = makeMessage();
+
+    await processLLM({
+      actions,
+      message,
+      threadModel: "gpt-4" as any,
+    });
+    await processLLM({
+      actions,
+      message,
+      tag: "regenerate",
+      llm: "gpt-4" as any,
+      threadModel: "codex-agent",
+    });
+
+    expect(processAcpLLM).not.toHaveBeenCalled();
+    expect(actions.recordThreadAgentModel).not.toHaveBeenCalled();
   });
 });
