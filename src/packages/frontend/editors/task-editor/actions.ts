@@ -846,7 +846,7 @@ export class TaskActions extends Actions<TaskState> {
 
   public async show(): Promise<void> {}
 
-  chatgptGetText(scope: "cell" | "all", current_id?): string {
+  codexGetText(scope: "cell" | "all", current_id?): string {
     if (scope == "all") {
       // TODO: it would be better to uniformly shorten long tasks, rather than just truncating at the end...
       return this.toMarkdown();

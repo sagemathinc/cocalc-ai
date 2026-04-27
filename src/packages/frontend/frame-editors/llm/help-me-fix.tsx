@@ -92,19 +92,17 @@ export default function HelpMeFix({
     "course",
     "student_project_functionality",
   ]);
-  const disableChatGPTInProject =
-    !!studentProjectSettings?.get("disableChatGPT");
-  const disableSomeChatGPTInProject =
-    !!studentProjectSettings?.get("disableSomeChatGPT");
+  const disableAIInProject = !!studentProjectSettings?.get("disableAI");
+  const disableSomeAIInProject = !!studentProjectSettings?.get("disableSomeAI");
 
   const canGetHint =
     !disableAIForAccount &&
-    !disableChatGPTInProject &&
+    !disableAIInProject &&
     (canGetHintLegacy || codexAvailable);
   const canGetSolution =
     !disableAIForAccount &&
-    !disableChatGPTInProject &&
-    !disableSomeChatGPTInProject &&
+    !disableAIInProject &&
+    !disableSomeAIInProject &&
     (canGetSolutionLegacy || codexAvailable);
 
   const shouldRender = redux != null && (canGetHint || canGetSolution);

@@ -2842,7 +2842,7 @@ function stripMentions(value: string): string {
       value = value.slice(0, i) + value.slice(i + name.length);
     }
   }
-  // The mentions looks like this: <span class="user-mention" account-id=openai-... >@ChatGPT</span> ...
+  // The mentions look like this: <span class="user-mention" account-id=...>@Codex</span> ...
   while (true) {
     const i = value.indexOf('<span class="user-mention"');
     if (i == -1) break;

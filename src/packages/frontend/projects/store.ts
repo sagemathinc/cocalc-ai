@@ -513,14 +513,14 @@ export class ProjectsStore extends Store<ProjectsState> {
     // better we base the key only on those possibilities.
     if (!tag) return false; // no tag, all good
 
-    // These tags are always allowed (non-limited), even with disableSomeChatGPT
+    // These tags are always allowed (non-limited), even with disableSomeAI
     const allowed_tags = ["explain", "help-me-fix-hint", "reply"];
     for (const allowed of allowed_tags) {
       // we match more, e.g. "help-me-fix-hint:[something else]" or "jupyter-explain"
       if (tag.includes(allowed)) return false;
     }
 
-    // help-me-fix-solution is limited - restricted by disableSomeChatGPT
+    // help-me-fix-solution is limited - restricted by disableSomeAI
     if (tag.includes("help-me-fix-solution")) {
       return true;
     }
@@ -587,10 +587,10 @@ export class ProjectsStore extends Store<ProjectsState> {
         "student_project_functionality",
       );
 
-      if (studentProjectSettings?.get("disableChatGPT")) {
+      if (studentProjectSettings?.get("disableAI")) {
         return false;
       }
-      if (studentProjectSettings?.get("disableSomeChatGPT")) {
+      if (studentProjectSettings?.get("disableSomeAI")) {
         return !courseLimited;
       }
     }

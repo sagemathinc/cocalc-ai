@@ -721,7 +721,7 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
     this.jupyter_actions.show_about();
   };
 
-  chatgptCodeDescription(): string {
+  codexCodeDescription(): string {
     const kernel =
       this.jupyter_actions.store.getIn(["kernel_info", "display_name"]) ?? "";
     return `Jupyter notebook using the ${kernel} kernel`;

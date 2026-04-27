@@ -144,11 +144,11 @@
   "command.generic.build_on_save.title": {
     "defaultMessage": "Toggle automatic build on file save."
   },
-  "command.generic.chatgpt.label": {
-    "defaultMessage": "AI Assistant"
+  "command.generic.codex.label": {
+    "defaultMessage": "Codex"
   },
-  "command.generic.chatgpt.title": {
-    "defaultMessage": "Ask an Artificial Intelligence Assistant (e.g., ChatGPT) for help on what you're doing."
+  "command.generic.codex.title": {
+    "defaultMessage": "Ask Codex for help with what you're doing."
   },
   "command.generic.close.button": {
     "defaultMessage": "Close"

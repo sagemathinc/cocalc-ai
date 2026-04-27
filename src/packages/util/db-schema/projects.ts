@@ -681,7 +681,8 @@ export interface StudentProjectFunctionality {
   disableNetwork?: boolean;
   disableSSH?: boolean;
   disableCollaborators?: boolean;
-  disableChatGPT?: boolean;
+  disableAI?: boolean;
+  disableSomeAI?: boolean;
   disableSharing?: boolean;
 }
 

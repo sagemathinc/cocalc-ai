@@ -228,7 +228,7 @@ export class Actions extends CodeEditorActions<TaskEditorState> {
     if (this._get_frame_type(frameId) == FRAME_TYPE) {
       const node = this._get_frame_node(frameId);
       return (
-        this.getTaskActions(frameId)?.chatgptGetText(
+        this.getTaskActions(frameId)?.codexGetText(
           scope,
           node?.get("data-current_task_id"),
         ) ?? ""

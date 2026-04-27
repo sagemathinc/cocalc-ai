@@ -1902,7 +1902,7 @@ export class Actions extends BaseActions<LatexEditorState> {
     return "LaTeX";
   }
 
-  chatgptCodeDescription(): string {
+  codexCodeDescription(): string {
     return "Put any LaTeX you generate in the answer in a fenced code block with info string 'tex'.";
   }
 

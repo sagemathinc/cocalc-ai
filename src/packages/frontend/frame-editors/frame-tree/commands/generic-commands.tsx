@@ -1127,11 +1127,11 @@ addCommands({
     group: "show-frames",
     icon: <AIAvatar size={16} />,
     title: defineMessage({
-      id: "command.generic.chatgpt.title",
+      id: "command.generic.codex.title",
       defaultMessage: "Ask Codex for help with what you're doing.",
     }),
     label: defineMessage({
-      id: "command.generic.chatgpt.label",
+      id: "command.generic.codex.label",
       defaultMessage: "Codex",
     }),
     onClick: ({ setShowAI }) => setShowAI?.(true),

@@ -196,27 +196,27 @@ const OPTIONS: Option[] = [
     isCoCalcCom: true,
   },
   {
-    name: "disableChatGPT",
+    name: "disableAI",
     title: defineMessage({
-      id: "course.customize-student-project-functionality.disableChatGPT.title",
-      defaultMessage: "Disable all AI integration (ChatGPT & co.)",
+      id: "course.customize-student-project-functionality.disableAI.title",
+      defaultMessage: "Disable all AI integration",
     }),
     description: defineMessage({
-      id: "course.customize-student-project-functionality.disableChatGPT.description",
+      id: "course.customize-student-project-functionality.disableAI.description",
       defaultMessage:
-        "Remove *all* AI integrations (ChatGPT & co.) from the student projects.  This is a hint for honest students, since of course students can still use copy/paste to accomplish the same thing.",
+        "Remove *all* AI integrations from the student projects. This is a hint for honest students, since of course students can still use copy/paste to accomplish the same thing.",
     }),
   },
   {
-    name: "disableSomeChatGPT",
+    name: "disableSomeAI",
     title: defineMessage({
-      id: "course.customize-student-project-functionality.disableSomeChatGPT.title",
-      defaultMessage: "Disable some AI integration (ChatGPT & co.)",
+      id: "course.customize-student-project-functionality.disableSomeAI.title",
+      defaultMessage: "Disable some AI integration",
     }),
     description: defineMessage({
-      id: "course.customize-student-project-functionality.disableSomeChatGPT.description",
+      id: "course.customize-student-project-functionality.disableSomeAI.description",
       defaultMessage:
-        "Disable AI integration (ChatGPT & co.) except for 'Hint', 'Explain' buttons, and chat replies. Students can get hints to help them get unstuck, but cannot get complete solutions from 'Help me fix'.",
+        "Disable AI integration except for 'Hint', 'Explain' buttons, and chat replies. Students can get hints to help them get unstuck, but cannot get complete solutions from 'Help me fix'.",
     }),
   },
   {
