@@ -290,8 +290,30 @@ export function startConatRouterManagedEgressLoop({
       previous = current;
 
       if (mode === "off") {
+        if (rawSendDeltaSockets.length > 0) {
+          logger.warn(
+            "managed conat egress is disabled while outbound bytes are active",
+            {
+              mode,
+              sockets: rawSendDeltaSockets,
+            },
+          );
+        }
         clearProjectHostManagedEgressBlockedAccounts();
         return;
+      }
+
+      if (deltas.length > 0 || rawSendDeltaSockets.length > 0) {
+        logger.info("managed conat egress sample", {
+          mode,
+          accounts: deltas.map((delta) => ({
+            account_id: delta.account_id,
+            bytes: delta.bytes,
+            socket_count: delta.socket_ids.length,
+            browser_ids: delta.browser_ids,
+          })),
+          sockets: rawSendDeltaSockets,
+        });
       }
 
       if (deltas.length === 0 && rawSendDeltaSockets.length > 0) {
@@ -317,6 +339,12 @@ export function startConatRouterManagedEgressLoop({
         const delta = pending.get(account_id);
         if (delta?.bytes) {
           try {
+            logger.info("recording managed conat egress", {
+              account_id,
+              bytes: delta.bytes,
+              socket_count: delta.socket_ids.length,
+              browser_ids: delta.browser_ids,
+            });
             await hubApi.system.recordManagedProjectEgress({
               account_id,
               category: CATEGORY,
@@ -325,6 +353,10 @@ export function startConatRouterManagedEgressLoop({
                 browser_ids: delta.browser_ids,
                 socket_count: delta.socket_ids.length,
               },
+            });
+            logger.info("recorded managed conat egress", {
+              account_id,
+              bytes: delta.bytes,
             });
           } catch (err) {
             logger.warn("unable to record managed conat egress", {
