@@ -157,6 +157,34 @@ const AUTH_FAIL_BLOCK_MS = Math.max(
   envNumber("COCALC_CONAT_AUTH_FAIL_BLOCK_MS", 60_000),
 );
 
+function encodedPacketSize(encoded: any): number {
+  if (typeof encoded === "string") {
+    return Buffer.byteLength(encoded);
+  }
+  const byteLength = encoded?.byteLength;
+  if (typeof byteLength === "number" && Number.isFinite(byteLength)) {
+    return byteLength;
+  }
+  const length = encoded?.length;
+  if (typeof length === "number" && Number.isFinite(length)) {
+    return length;
+  }
+  return 0;
+}
+
+function measureServerEgressPacketBytes(socket: any, packet: any): number {
+  const transport = socket?.conn?.transport;
+  const parser = transport?.parser;
+  if (typeof parser?.encodePacket !== "function") {
+    return 0;
+  }
+  let bytes = 0;
+  parser.encodePacket(packet, Boolean(transport?.supportsBinary), (encoded) => {
+    bytes = encodedPacketSize(encoded);
+  });
+  return bytes;
+}
+
 function isHubUser(user: any): boolean {
   return (
     user != null &&
@@ -441,6 +469,7 @@ export class ConatServer extends EventEmitter {
         user: stats.user == null ? undefined : { ...stats.user },
         send: { ...stats.send },
         recv: { ...stats.recv },
+        egress: stats.egress == null ? undefined : { ...stats.egress },
       };
     }
     return snapshot;
@@ -1021,6 +1050,7 @@ export class ConatServer extends EventEmitter {
     this.stats[socket.id] = {
       send: { messages: 0, bytes: 0 },
       recv: { messages: 0, bytes: 0 },
+      egress: { messages: 0, bytes: 0 },
       subs: 0,
       connected: Date.now(),
       address: getAddress(socket, {
@@ -1030,6 +1060,15 @@ export class ConatServer extends EventEmitter {
       }),
       browser_id: getBrowserId(socket),
     };
+    const onServerPacketCreate = (packet: any) => {
+      const stats = this.stats[socket.id];
+      if (stats == null) return;
+      stats.egress ??= { messages: 0, bytes: 0 };
+      stats.egress.messages += 1;
+      stats.egress.bytes += measureServerEgressPacketBytes(socket, packet);
+      stats.active = Date.now();
+    };
+    socket.conn?.on?.("packetCreate", onServerPacketCreate);
     const address = this.stats[socket.id].address
       ? `ip:${this.stats[socket.id].address}`
       : `socket:${socket.id}`;
@@ -1078,6 +1117,7 @@ export class ConatServer extends EventEmitter {
     }
     socket.on("disconnecting", async () => {
       this.log("disconnecting", { id, user });
+      socket.conn?.off?.("packetCreate", onServerPacketCreate);
       // Always remove from tracked sockets on teardown so auth-failed
       // connections do not linger in memory if "closed" is not emitted.
       delete this.sockets[socket.id];
@@ -2437,6 +2477,10 @@ this will have to do for now.
 function isSilentPattern(pattern: string): boolean {
   return pattern == ">";
 }
+
+export const __test__ = {
+  measureServerEgressPacketBytes,
+};
 
 /*
 const watching = new Set(["xyz"]);

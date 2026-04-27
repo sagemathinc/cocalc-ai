@@ -31,7 +31,7 @@ type AccountEgressDelta = {
   browser_ids: string[];
 };
 
-type RawRecvDeltaSocket = {
+type RawSendDeltaSocket = {
   socket_id: string;
   bytes: number;
   account_id?: string;
@@ -111,7 +111,7 @@ function uniqueSorted(values: Iterable<string>): string[] {
   return Array.from(new Set(values)).sort();
 }
 
-function summarizeRawRecvDeltaSockets({
+function summarizeRawSendDeltaSockets({
   previous,
   current,
   limit = 5,
@@ -119,12 +119,12 @@ function summarizeRawRecvDeltaSockets({
   previous: ConnectionStatsSnapshot;
   current: ConnectionStatsSnapshot;
   limit?: number;
-}): RawRecvDeltaSocket[] {
-  const out: RawRecvDeltaSocket[] = [];
+}): RawSendDeltaSocket[] {
+  const out: RawSendDeltaSocket[] = [];
   for (const [socket_id, stats] of Object.entries(current)) {
     const bytes = diffCounter(
-      stats.recv?.bytes,
-      previous[socket_id]?.recv?.bytes,
+      stats.egress?.bytes,
+      previous[socket_id]?.egress?.bytes,
     );
     if (!(bytes > 0)) continue;
     out.push({
@@ -152,8 +152,8 @@ export function summarizeManagedConatEgressDeltas({
     const account_id = normalizeAccountId(stats);
     if (!account_id) continue;
     const deltaBytes = diffCounter(
-      stats.recv?.bytes,
-      previous[socket_id]?.recv?.bytes,
+      stats.egress?.bytes,
+      previous[socket_id]?.egress?.bytes,
     );
     if (!(deltaBytes > 0)) continue;
     const browser_id = `${stats.browser_id ?? ""}`.trim();
@@ -283,21 +283,46 @@ export function startConatRouterManagedEgressLoop({
       });
       const deltas = summarizeManagedConatEgressDeltas({ previous, current });
       const activeSocketsByAccount = summarizeActiveSocketsByAccount(current);
-      const rawRecvDeltaSockets = summarizeRawRecvDeltaSockets({
+      const rawSendDeltaSockets = summarizeRawSendDeltaSockets({
         previous,
         current,
       });
       previous = current;
 
       if (mode === "off") {
+        if (rawSendDeltaSockets.length > 0) {
+          logger.warn(
+            "managed conat egress is disabled while outbound bytes are active",
+            {
+              mode,
+              sockets: rawSendDeltaSockets,
+            },
+          );
+        }
         clearProjectHostManagedEgressBlockedAccounts();
         return;
       }
 
-      if (deltas.length === 0 && rawRecvDeltaSockets.length > 0) {
-        logger.warn("managed conat egress saw receive bytes but no account deltas", {
-          sockets: rawRecvDeltaSockets,
+      if (deltas.length > 0 || rawSendDeltaSockets.length > 0) {
+        logger.info("managed conat egress sample", {
+          mode,
+          accounts: deltas.map((delta) => ({
+            account_id: delta.account_id,
+            bytes: delta.bytes,
+            socket_count: delta.socket_ids.length,
+            browser_ids: delta.browser_ids,
+          })),
+          sockets: rawSendDeltaSockets,
         });
+      }
+
+      if (deltas.length === 0 && rawSendDeltaSockets.length > 0) {
+        logger.warn(
+          "managed conat egress saw outbound bytes but no account deltas",
+          {
+            sockets: rawSendDeltaSockets,
+          },
+        );
       }
 
       const pending = new Map(deltas.map((entry) => [entry.account_id, entry]));
@@ -314,6 +339,12 @@ export function startConatRouterManagedEgressLoop({
         const delta = pending.get(account_id);
         if (delta?.bytes) {
           try {
+            logger.info("recording managed conat egress", {
+              account_id,
+              bytes: delta.bytes,
+              socket_count: delta.socket_ids.length,
+              browser_ids: delta.browser_ids,
+            });
             await hubApi.system.recordManagedProjectEgress({
               account_id,
               category: CATEGORY,
@@ -322,6 +353,10 @@ export function startConatRouterManagedEgressLoop({
                 browser_ids: delta.browser_ids,
                 socket_count: delta.socket_ids.length,
               },
+            });
+            logger.info("recorded managed conat egress", {
+              account_id,
+              bytes: delta.bytes,
             });
           } catch (err) {
             logger.warn("unable to record managed conat egress", {

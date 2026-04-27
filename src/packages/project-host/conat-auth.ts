@@ -204,6 +204,28 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       }
       return user;
     }
+    const browserSession = resolveProjectHostBrowserSessionFromCookieHeader(
+      socket?.handshake?.headers?.cookie,
+    );
+    if (browserSession) {
+      if (
+        getProjectHostManagedEgressBlockedMessage(browserSession.account_id)
+      ) {
+        throwManagedEgressBlocked(browserSession.account_id);
+      }
+      if (
+        isAccountSessionRevoked({
+          account_id: browserSession.account_id,
+          issued_at_s: browserSession.iat_s,
+        })
+      ) {
+        throw new Error("session revoked");
+      }
+      return {
+        account_id: browserSession.account_id,
+        auth_iat_s: browserSession.iat_s,
+      } satisfies CoCalcUser;
+    }
     const handshakeProjectAuth = readProjectScopedAuth(socket);
     if (handshakeProjectAuth) {
       const row = getProject(handshakeProjectAuth.project_id);
@@ -228,28 +250,6 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         throw new Error("invalid secret token for project");
       }
       return { project_id };
-    }
-    const browserSession = resolveProjectHostBrowserSessionFromCookieHeader(
-      socket?.handshake?.headers?.cookie,
-    );
-    if (browserSession) {
-      if (
-        getProjectHostManagedEgressBlockedMessage(browserSession.account_id)
-      ) {
-        throwManagedEgressBlocked(browserSession.account_id);
-      }
-      if (
-        isAccountSessionRevoked({
-          account_id: browserSession.account_id,
-          issued_at_s: browserSession.iat_s,
-        })
-      ) {
-        throw new Error("session revoked");
-      }
-      return {
-        account_id: browserSession.account_id,
-        auth_iat_s: browserSession.iat_s,
-      } satisfies CoCalcUser;
     }
     throw new Error("missing project-host bearer token");
   };

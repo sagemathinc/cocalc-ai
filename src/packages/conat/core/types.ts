@@ -19,6 +19,7 @@ export interface ConnectionStats {
   user?: User;
   send: { messages: number; bytes: number };
   recv: { messages: number; bytes: number };
+  egress?: { messages: number; bytes: number };
   subs: number;
   connected?: number; // time connected
   active?: number;

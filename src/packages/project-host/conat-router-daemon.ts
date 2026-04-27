@@ -16,6 +16,7 @@ import { getProjectHostMasterConatToken } from "./master-conat-token";
 import { setMasterConatClient } from "./master-status";
 import { wireSystemApi } from "./hub/system";
 import { startConatRouterManagedEgressLoop } from "./conat-router-egress";
+import { getProjectHostManagedEgressMode } from "./managed-egress-runtime";
 
 const logger = getLogger("project-host:conat-router-daemon");
 
@@ -57,6 +58,15 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
     label: "project-host conat router daemon",
   });
   const hostId = resolveProjectHostId();
+  logger.info("project-host conat router managed egress config", {
+    mode: getProjectHostManagedEgressMode(),
+    has_master_conat_server: Boolean(
+      `${process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER ?? ""}`.trim(),
+    ),
+    provider:
+      `${process.env.COCALC_PROJECT_HOST_CLOUD_PROVIDER ?? process.env.PROJECT_HOST_CLOUD_PROVIDER ?? ""}`.trim() ||
+      undefined,
+  });
   const systemAccountPassword = getOrCreateProjectHostConatPassword();
   setConatPassword(systemAccountPassword);
   const masterClient = connectMasterClient({ hostId });

@@ -129,4 +129,36 @@ describe("project-host Conat auth", () => {
       authFailure: false,
     });
   });
+
+  it("prefers browser-session account auth over project-secret cookies when both are present", async () => {
+    mockGetProject.mockReturnValue({
+      project_id,
+      secret_token: "project-secret",
+    });
+    const { getUser } = createProjectHostConatAuth({ host_id });
+    const browserSession = createProjectHostBrowserSessionToken({
+      account_id,
+      now_ms: Date.now(),
+    });
+
+    await expect(
+      getUser(
+        {
+          handshake: {
+            headers: {
+              cookie: [
+                `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+                `project_id=${encodeURIComponent(project_id)}`,
+                "project_secret=project-secret",
+              ].join("; "),
+            },
+          },
+        } as any,
+        undefined as any,
+      ),
+    ).resolves.toMatchObject({
+      account_id,
+      auth_iat_s: expect.any(Number),
+    });
+  });
 });

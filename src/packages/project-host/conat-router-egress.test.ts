@@ -6,7 +6,7 @@
 import { __test__ } from "./conat-router-egress";
 
 describe("project-host conat router managed egress", () => {
-  it("aggregates received-byte deltas by authenticated browser account", () => {
+  it("aggregates outbound-byte deltas by authenticated browser account", () => {
     expect(
       __test__.summarizeManagedConatEgressDeltas({
         previous: {
@@ -15,6 +15,7 @@ describe("project-host conat router managed egress", () => {
             browser_id: "browser-a",
             send: { messages: 1, bytes: 100 },
             recv: { messages: 1, bytes: 500 },
+            egress: { messages: 1, bytes: 1000 },
             subs: 1,
           },
         },
@@ -24,6 +25,7 @@ describe("project-host conat router managed egress", () => {
             browser_id: "browser-a",
             send: { messages: 2, bytes: 250 },
             recv: { messages: 2, bytes: 750 },
+            egress: { messages: 2, bytes: 1250 },
             subs: 1,
           },
           socketB: {
@@ -31,6 +33,7 @@ describe("project-host conat router managed egress", () => {
             browser_id: "browser-b",
             send: { messages: 1, bytes: 5 },
             recv: { messages: 1, bytes: 200 },
+            egress: { messages: 1, bytes: 55 },
             subs: 1,
           },
           socketC: {
@@ -38,6 +41,7 @@ describe("project-host conat router managed egress", () => {
             browser_id: "browser-c",
             send: { messages: 1, bytes: 7 },
             recv: { messages: 1, bytes: 80 },
+            egress: { messages: 1, bytes: 70 },
             subs: 1,
           },
           socketD: {
@@ -45,12 +49,14 @@ describe("project-host conat router managed egress", () => {
             browser_id: "browser-d",
             send: { messages: 1, bytes: 999 },
             recv: { messages: 1, bytes: 999 },
+            egress: { messages: 1, bytes: 999 },
             subs: 1,
           },
           socketE: {
             user: { account_id: "account-3" },
             send: { messages: 1, bytes: 999 },
             recv: { messages: 1, bytes: 999 },
+            egress: { messages: 1, bytes: 999 },
             subs: 1,
           },
         },
@@ -58,13 +64,13 @@ describe("project-host conat router managed egress", () => {
     ).toEqual([
       {
         account_id: "account-1",
-        bytes: 450,
+        bytes: 305,
         socket_ids: ["socketA", "socketB"],
         browser_ids: ["browser-a", "browser-b"],
       },
       {
         account_id: "account-2",
-        bytes: 80,
+        bytes: 70,
         socket_ids: ["socketC"],
         browser_ids: ["browser-c"],
       },
@@ -86,6 +92,7 @@ describe("project-host conat router managed egress", () => {
             browser_id: "browser-a",
             send: { messages: 5, bytes: 500 },
             recv: { messages: 5, bytes: 500 },
+            egress: { messages: 5, bytes: 5000 },
             subs: 1,
           },
         },
@@ -95,6 +102,7 @@ describe("project-host conat router managed egress", () => {
             browser_id: "browser-a",
             send: { messages: 1, bytes: 40 },
             recv: { messages: 1, bytes: 40 },
+            egress: { messages: 1, bytes: 40 },
             subs: 1,
           },
         },
