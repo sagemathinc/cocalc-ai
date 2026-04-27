@@ -1,7 +1,7 @@
 export {};
 
 let queryMock: jest.Mock;
-let dstreamMock: jest.Mock;
+let getExplicitProjectRoutedClientMock: jest.Mock;
 let loadHostFromRegistryMock: jest.Mock;
 let selectActiveHostMock: jest.Mock;
 let deleteProjectDataOnHostMock: jest.Mock;
@@ -33,10 +33,6 @@ jest.mock("@cocalc/backend/conat", () => ({
   conat: jest.fn(() => ({})),
 }));
 
-jest.mock("@cocalc/backend/conat/sync", () => ({
-  dstream: (...args: any[]) => dstreamMock(...args),
-}));
-
 jest.mock("@cocalc/util/consts", () => ({
   DEFAULT_R2_REGION: "wnam",
   mapCloudRegionToR2Region: jest.fn(() => "wnam"),
@@ -58,6 +54,11 @@ jest.mock("../conat/api/projects", () => ({
 
 jest.mock("../conat/api/hosts", () => ({
   resolveHostConnection: (...args: any[]) => resolveHostConnectionMock(...args),
+}));
+
+jest.mock("@cocalc/server/conat/route-client", () => ({
+  getExplicitProjectRoutedClient: (...args: any[]) =>
+    getExplicitProjectRoutedClientMock(...args),
 }));
 
 jest.mock("@cocalc/conat/lro/client", () => ({
@@ -163,13 +164,17 @@ describe("moveProjectToHost", () => {
       bay_id: "bay-0",
       region: "us-west1",
     }));
-    dstreamMock = jest.fn(async () => ({
-      getAll: () => [...projectLogRows],
-      publish: (row: any) => {
-        projectLogRows.push(row);
+    getExplicitProjectRoutedClientMock = jest.fn(async () => ({
+      sync: {
+        dstream: jest.fn(async () => ({
+          getAll: () => [...projectLogRows],
+          publish: (row: any) => {
+            projectLogRows.push(row);
+          },
+          save: jest.fn(async () => undefined),
+          close: jest.fn(),
+        })),
       },
-      save: jest.fn(async () => undefined),
-      close: jest.fn(),
     }));
   });
 
@@ -514,6 +519,10 @@ describe("moveProjectToHost", () => {
           id === "project-move:move-op-1:project_move_requested",
       ),
     ).toHaveLength(1);
+    expect(getExplicitProjectRoutedClientMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      fresh: true,
+    });
   });
 
   it("writes project log entries for move start and failure", async () => {

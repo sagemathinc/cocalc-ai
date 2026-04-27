@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
-import { dstream } from "@cocalc/backend/conat/sync";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import {
   PROJECT_LOG_STREAM_NAME,
@@ -22,6 +21,7 @@ import {
 import { getConfiguredBayId } from "../bay-config";
 import { start as startProjectLro } from "../conat/api/projects";
 import { resolveHostConnection } from "../conat/api/hosts";
+import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
 import {
   makeOfflineMoveConfirmationPayload,
@@ -89,8 +89,15 @@ type MoveProjectLogEvent =
   | "project_move_failed"
   | "project_move_canceled";
 
-async function openProjectLogStream(project_id: string) {
-  return await dstream<ProjectLogRow>({
+async function openProjectLogStream(
+  project_id: string,
+  opts?: { fresh?: boolean },
+) {
+  const client = await getExplicitProjectRoutedClient({
+    project_id,
+    fresh: opts?.fresh,
+  });
+  return await client.sync.dstream<ProjectLogRow>({
     project_id,
     name: PROJECT_LOG_STREAM_NAME,
     noAutosave: true,
@@ -110,6 +117,7 @@ async function appendProjectMoveLogEntry({
   error,
   op_id,
   stage,
+  fresh,
 }: {
   project_id: string;
   account_id: string;
@@ -121,6 +129,7 @@ async function appendProjectMoveLogEntry({
   error?: string;
   op_id?: string;
   stage?: string;
+  fresh?: boolean;
 }): Promise<boolean> {
   const row: ProjectLogRow = {
     id: `project-move:${move_log_id}:${event}`,
@@ -138,7 +147,7 @@ async function appendProjectMoveLogEntry({
     },
   };
   try {
-    const stream = await openProjectLogStream(project_id);
+    const stream = await openProjectLogStream(project_id, { fresh });
     try {
       const existing = new Set(
         ((stream.getAll?.() as ProjectLogRow[] | undefined) ?? []).map(
@@ -534,6 +543,7 @@ export async function moveProjectToHost(
       source_host_id: context.project_host_id,
       dest_host_id: context.dest_host_id,
       op_id: opts?.op_id,
+      fresh: true,
     });
     await appendProjectMoveLogEntry({
       project_id: context.project_id,
@@ -545,6 +555,7 @@ export async function moveProjectToHost(
       duration_ms: Date.now() - started_at_ms,
       op_id: opts?.op_id,
       stage,
+      fresh: true,
     });
   };
 
@@ -958,6 +969,7 @@ export async function moveProjectToHost(
       source_host_id: context.project_host_id,
       dest_host_id: context.dest_host_id,
       op_id: opts?.op_id,
+      fresh: true,
     });
     await appendProjectMoveLogEntry({
       project_id: context.project_id,
@@ -968,6 +980,7 @@ export async function moveProjectToHost(
       dest_host_id: context.dest_host_id,
       duration_ms: Date.now() - started_at_ms,
       op_id: opts?.op_id,
+      fresh: true,
     });
   } catch (err) {
     if ((err as any)?.code === MOVE_CANCELED_CODE) {
@@ -982,6 +995,7 @@ export async function moveProjectToHost(
       source_host_id: context.project_host_id,
       dest_host_id: context.dest_host_id,
       op_id: opts?.op_id,
+      fresh: true,
     });
     await appendProjectMoveLogEntry({
       project_id: context.project_id,
@@ -993,6 +1007,7 @@ export async function moveProjectToHost(
       duration_ms: Date.now() - started_at_ms,
       error: err instanceof Error ? err.message : `${err}`,
       op_id: opts?.op_id,
+      fresh: true,
     });
     throw err;
   }
