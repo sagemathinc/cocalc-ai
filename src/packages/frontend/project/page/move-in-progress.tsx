@@ -20,16 +20,30 @@ import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { hostLabel } from "@cocalc/frontend/projects/host-operational";
 import { User } from "@cocalc/frontend/users/user";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { human_readable_size } from "@cocalc/util/misc";
+import {
+  clampProgressPercent,
+  formatProgressDetail,
+} from "../explorer/lro-timeline-utils";
 
 const MOVE_PHASES = [
   { key: "validate", label: "Validate move request" },
   { key: "stop-source", label: "Stop source project" },
-  { key: "backup", label: "Prepare backup state" },
+  { key: "backup", label: "Create final backup" },
   { key: "placement", label: "Update project placement" },
-  { key: "start-dest", label: "Start destination project" },
+  { key: "start-dest", label: "Restore and start destination project" },
   { key: "cleanup", label: "Cleanup source host data" },
   { key: "done", label: "Move complete" },
 ] as const;
+
+type MoveChildProgress = {
+  kind?: string;
+  op_id?: string;
+  phase?: string;
+  message?: string;
+  progress?: number;
+  detail?: any;
+};
 
 const TERMINAL_COLOR: Record<string, string> = {
   succeeded: "green",
@@ -59,9 +73,7 @@ function readHostId(
 }
 
 function progressPercent(moveLro: MoveLroState): number | undefined {
-  const progress = moveLro.last_progress?.progress;
-  if (progress == null) return undefined;
-  return Math.max(0, Math.min(100, Math.round(progress)));
+  return clampProgressPercent(moveLro.last_progress?.progress);
 }
 
 function currentPhaseText(moveLro: MoveLroState): string {
@@ -100,6 +112,82 @@ function timelineColor({
   return "gray";
 }
 
+function readMoveChildProgress(
+  moveLro: MoveLroState | undefined,
+): MoveChildProgress | undefined {
+  const fromProgressDetail = moveLro?.last_progress?.detail?.child;
+  if (fromProgressDetail != null && typeof fromProgressDetail === "object") {
+    return fromProgressDetail;
+  }
+  const fromSummaryDetail = moveLro?.summary?.progress_summary?.child;
+  if (fromSummaryDetail != null && typeof fromSummaryDetail === "object") {
+    return fromSummaryDetail;
+  }
+  return;
+}
+
+function childOperationLabel(child?: MoveChildProgress): string {
+  if (!child) return "Current sub-operation";
+  if (child.kind === "project-backup") {
+    return "Final backup";
+  }
+  if (child.kind === "project-start") {
+    if (child.phase === "cache_rootfs") {
+      return "Prepare RootFS on destination";
+    }
+    if (child.phase === "restore") {
+      return "Restore backup on destination";
+    }
+    if (child.phase === "runner_start" || child.phase === "start") {
+      return "Start destination runtime";
+    }
+    return "Destination start";
+  }
+  return "Current sub-operation";
+}
+
+function formatChildTransfer(detail?: any): string | undefined {
+  if (!detail || typeof detail !== "object") return undefined;
+  const parts: string[] = [];
+  if (
+    typeof detail.bytes_done === "number" ||
+    typeof detail.bytes_total === "number"
+  ) {
+    const done =
+      typeof detail.bytes_done === "number"
+        ? human_readable_size(detail.bytes_done, true)
+        : "?";
+    const total =
+      typeof detail.bytes_total === "number"
+        ? human_readable_size(detail.bytes_total, true)
+        : "?";
+    parts.push(`${done} / ${total}`);
+  } else if (
+    typeof detail.count_done === "number" ||
+    typeof detail.count_total === "number"
+  ) {
+    const done =
+      typeof detail.count_done === "number" ? `${detail.count_done}` : "?";
+    const total =
+      typeof detail.count_total === "number" ? `${detail.count_total}` : "?";
+    parts.push(`${done} / ${total} items`);
+  }
+  const detailText = formatProgressDetail(detail);
+  if (detailText) {
+    parts.push(detailText);
+  }
+  return parts.length ? parts.join(", ") : undefined;
+}
+
+function stringifyDetail(detail?: any): string | undefined {
+  if (detail === undefined) return undefined;
+  try {
+    return JSON.stringify(detail, null, 2);
+  } catch {
+    return `${detail}`;
+  }
+}
+
 export default function MoveInProgress({
   project_id,
   moveLro,
@@ -118,6 +206,10 @@ export default function MoveInProgress({
   const phaseText = currentPhaseText(moveLro);
   const percent = progressPercent(moveLro);
   const phaseIdx = phaseIndex(moveLro);
+  const childProgress = readMoveChildProgress(moveLro);
+  const childPercent = clampProgressPercent(childProgress?.progress);
+  const childTransfer = formatChildTransfer(childProgress?.detail);
+  const childRawDetail = stringifyDetail(childProgress?.detail);
 
   const sourceHostId = readHostId(moveLro, "source_host_id");
   const destHostId = readHostId(moveLro, "dest_host_id");
@@ -279,6 +371,60 @@ export default function MoveInProgress({
       <div style={{ maxWidth: "980px", width: "100%", padding: "0 24px" }}>
         <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           {renderStatusAlert()}
+          {childProgress ? (
+            <div
+              style={{
+                border: "1px solid var(--antd-border-color, #d9d9d9)",
+                borderRadius: "8px",
+                padding: "12px",
+              }}
+            >
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <div style={{ fontWeight: 600 }}>Current sub-operation</div>
+                <Space size="small" wrap>
+                  <Tag color="processing">
+                    {childOperationLabel(childProgress)}
+                  </Tag>
+                  {childProgress.op_id ? (
+                    <Tag>
+                      Operation ID: <code>{childProgress.op_id}</code>
+                    </Tag>
+                  ) : null}
+                  {childTransfer ? <Tag>{childTransfer}</Tag> : null}
+                </Space>
+                <div>
+                  {childProgress.message ??
+                    childProgress.phase ??
+                    "Working on a child operation"}
+                </div>
+                {childPercent != null ? (
+                  <Progress
+                    percent={childPercent}
+                    size="small"
+                    status={progressBarStatus(status)}
+                    style={{ maxWidth: "460px" }}
+                  />
+                ) : null}
+                {childRawDetail ? (
+                  <details>
+                    <summary>Details</summary>
+                    <pre
+                      style={{
+                        marginTop: "8px",
+                        marginBottom: 0,
+                        maxHeight: "220px",
+                        overflow: "auto",
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {childRawDetail}
+                    </pre>
+                  </details>
+                ) : null}
+              </Space>
+            </div>
+          ) : null}
           {opError ? (
             <Alert
               showIcon

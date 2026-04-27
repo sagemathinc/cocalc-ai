@@ -58,6 +58,10 @@ const progressSteps: Record<string, number> = {
 };
 
 const progressRanges: Record<string, { start: number; end: number }> = {
+  backup: {
+    start: progressSteps["stop-source"],
+    end: progressSteps.backup,
+  },
   "start-dest": {
     start: progressSteps["start-dest"],
     end: progressSteps.cleanup,
