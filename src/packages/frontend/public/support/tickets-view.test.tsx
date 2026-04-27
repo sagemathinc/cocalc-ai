@@ -22,7 +22,7 @@ jest.mock("@cocalc/frontend/client/api", () => ({
   default: (...args: any[]) => mockApi(...args),
 }));
 
-jest.mock("@cocalc/frontend/public/ui/shell", () => ({
+jest.mock("@cocalc/frontend/public/layout/shell", () => ({
   PublicSectionCard: ({ children }: any) => <div>{children}</div>,
 }));
 

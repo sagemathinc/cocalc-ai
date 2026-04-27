@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type { AuthView } from "@cocalc/frontend/auth/types";
+import { PublicSiteShell } from "@cocalc/frontend/public/layout/shell";
 import { SITE_NAME } from "@cocalc/util/theme";
 
 import {
@@ -133,57 +134,61 @@ export default function PublicAuthApp({
   }
 
   return (
-    <PublicAuthPageShell
-      cardWidth={cardWidthForRoute(route)}
+    <PublicSiteShell
+      active="auth"
       isAuthenticated={isAuthenticated}
       siteName={siteName}
       showPolicies={showPolicies}
-      subtitle={subtitleForRoute(route, siteName)}
       title={title}
     >
-      {route.kind === "auth-form" && route.view === "sign-in" && (
-        <PublicSignInForm
-          onNavigate={onNavigate}
-          redirectToPath={redirectToPath}
-        />
-      )}
-      {route.kind === "auth-form" && route.view === "sign-up" && (
-        <PublicSignUpForm
-          initialRequiresToken={initialRequiresToken}
-          onNavigate={onNavigate}
-          redirectToPath={redirectToPath}
-        />
-      )}
-      {route.kind === "auth-form" && route.view === "password-reset" && (
-        <PublicPasswordResetForm onNavigate={onNavigate} />
-      )}
-      {route.kind === "auth-password-reset-redeem" && (
-        <PublicRedeemPasswordResetView
-          passwordResetId={route.passwordResetId}
-        />
-      )}
-      {route.kind === "auth-password-reset-done" && (
-        <PublicPasswordResetDoneView />
-      )}
-      {route.kind === "auth-verify-email" && (
-        <PublicVerifyEmailView email={route.email} token={route.token} />
-      )}
-      {route.kind === "redeem" && (
-        <PublicRedeemVoucherView
-          initialCode={route.code}
-          isAuthenticated={isAuthenticated}
-          onNavigate={onNavigate}
-        />
-      )}
-      {route.kind === "sso-index" && (
-        <PublicSSOIndexView initialStrategies={initialSSOStrategies} />
-      )}
-      {route.kind === "sso-detail" && (
-        <PublicSSODetailView
-          id={route.id}
-          initialStrategies={initialSSOStrategies}
-        />
-      )}
-    </PublicAuthPageShell>
+      <PublicAuthPageShell
+        cardWidth={cardWidthForRoute(route)}
+        subtitle={subtitleForRoute(route, siteName)}
+      >
+        {route.kind === "auth-form" && route.view === "sign-in" && (
+          <PublicSignInForm
+            onNavigate={onNavigate}
+            redirectToPath={redirectToPath}
+          />
+        )}
+        {route.kind === "auth-form" && route.view === "sign-up" && (
+          <PublicSignUpForm
+            initialRequiresToken={initialRequiresToken}
+            onNavigate={onNavigate}
+            redirectToPath={redirectToPath}
+          />
+        )}
+        {route.kind === "auth-form" && route.view === "password-reset" && (
+          <PublicPasswordResetForm onNavigate={onNavigate} />
+        )}
+        {route.kind === "auth-password-reset-redeem" && (
+          <PublicRedeemPasswordResetView
+            passwordResetId={route.passwordResetId}
+          />
+        )}
+        {route.kind === "auth-password-reset-done" && (
+          <PublicPasswordResetDoneView />
+        )}
+        {route.kind === "auth-verify-email" && (
+          <PublicVerifyEmailView email={route.email} token={route.token} />
+        )}
+        {route.kind === "redeem" && (
+          <PublicRedeemVoucherView
+            initialCode={route.code}
+            isAuthenticated={isAuthenticated}
+            onNavigate={onNavigate}
+          />
+        )}
+        {route.kind === "sso-index" && (
+          <PublicSSOIndexView initialStrategies={initialSSOStrategies} />
+        )}
+        {route.kind === "sso-detail" && (
+          <PublicSSODetailView
+            id={route.id}
+            initialStrategies={initialSSOStrategies}
+          />
+        )}
+      </PublicAuthPageShell>
+    </PublicSiteShell>
   );
 }

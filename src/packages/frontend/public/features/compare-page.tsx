@@ -5,7 +5,7 @@
 
 import { Alert, Button, Col, Flex, Row, Table, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicSectionCard } from "@cocalc/frontend/public/layout/shell";
 import { BulletList, LinkButton, featureAppPath } from "./page-components";
 
 const { Paragraph, Text, Title } = Typography;

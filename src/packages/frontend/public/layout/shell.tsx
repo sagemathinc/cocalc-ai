@@ -7,19 +7,20 @@ import type { CSSProperties, ReactNode } from "react";
 
 import { App as AntdApp, Card, ConfigProvider, Layout, Typography } from "antd";
 import { COLORS } from "@cocalc/util/theme";
+import PublicTopNav, { type PublicTopNavActiveKey } from "./top-nav";
 
 const { Content } = Layout;
 const { Paragraph, Text, Title } = Typography;
 
 const PAGE_STYLE: CSSProperties = {
-  minHeight: "100%",
   background: COLORS.GRAY_LLL,
+  minHeight: "100vh",
 } as const;
 
 const CONTENT_STYLE: CSSProperties = {
-  width: "min(1120px, 100%)",
   margin: "0 auto",
-  padding: "32px 16px 56px",
+  padding: "0 16px 56px",
+  width: "min(1120px, 100%)",
 } as const;
 
 interface PublicPageRootProps {
@@ -113,5 +114,46 @@ export function PublicSectionCard({ children }: PublicSectionCardProps) {
     >
       {children}
     </Card>
+  );
+}
+
+interface PublicSiteShellProps {
+  active?: PublicTopNavActiveKey;
+  beforeTitle?: ReactNode;
+  children: ReactNode;
+  isAuthenticated?: boolean;
+  showPolicies?: boolean;
+  siteName?: string;
+  title: ReactNode;
+}
+
+export function PublicSiteShell({
+  active,
+  beforeTitle,
+  children,
+  isAuthenticated,
+  showPolicies,
+  siteName,
+  title,
+}: PublicSiteShellProps) {
+  return (
+    <PublicPageRoot>
+      <PublicTopNav
+        active={active}
+        isAuthenticated={isAuthenticated}
+        showPolicies={showPolicies}
+        siteName={siteName}
+      />
+      {beforeTitle}
+      <Title
+        level={1}
+        style={{
+          textAlign: "center",
+        }}
+      >
+        {title}
+      </Title>
+      {children}
+    </PublicPageRoot>
   );
 }

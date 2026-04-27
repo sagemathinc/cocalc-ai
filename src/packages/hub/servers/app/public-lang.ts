@@ -22,7 +22,7 @@ function redirectToStatic(req: Request, res: Response): void {
   } else {
     url.searchParams.set("target", targetPath);
   }
-  res.redirect(joinUrlPath(basePath, "static/public-lang.html") + url.search);
+  res.redirect(joinUrlPath(basePath, "static/public.html") + url.search);
 }
 
 export default function initPublicLang(router: Router): void {

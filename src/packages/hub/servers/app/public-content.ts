@@ -34,7 +34,7 @@ function getTargetSearch(req: Request): string {
 
 function redirectToStatic(req: Request, res: Response): void {
   res.redirect(
-    joinUrlPath(basePath, "static/public-content.html") + getTargetSearch(req),
+    joinUrlPath(basePath, "static/public.html") + getTargetSearch(req),
   );
 }
 

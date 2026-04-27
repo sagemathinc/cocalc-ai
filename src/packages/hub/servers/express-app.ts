@@ -520,37 +520,9 @@ async function initStatic(router) {
       }),
     );
     router.use(
-      "/static/public-home.html",
+      "/static/public.html",
       staticCompression,
-      express.static(join(staticPath, "public-home.html"), {
-        setHeaders: cacheShortTerm,
-      }),
-    );
-    router.use(
-      "/static/public-auth.html",
-      staticCompression,
-      express.static(join(staticPath, "public-auth.html"), {
-        setHeaders: cacheShortTerm,
-      }),
-    );
-    router.use(
-      "/static/public-support.html",
-      staticCompression,
-      express.static(join(staticPath, "public-support.html"), {
-        setHeaders: cacheShortTerm,
-      }),
-    );
-    router.use(
-      "/static/public-content.html",
-      staticCompression,
-      express.static(join(staticPath, "public-content.html"), {
-        setHeaders: cacheShortTerm,
-      }),
-    );
-    router.use(
-      "/static/public-lang.html",
-      staticCompression,
-      express.static(join(staticPath, "public-lang.html"), {
+      express.static(join(staticPath, "public.html"), {
         setHeaders: cacheShortTerm,
       }),
     );
@@ -707,7 +679,9 @@ function initLanding(router: express.Router) {
           return;
         }
       }
-      res.redirect(join(base, "static/public-home.html"));
+      const url = new URL("http://host");
+      url.searchParams.set("target", base === "" || base === "/" ? "/" : base);
+      res.redirect(join(base, "static/public.html") + url.search);
     })().catch((err) => {
       logger.warn("landing page failed", { err });
       res.status(500).send("Landing page error.");

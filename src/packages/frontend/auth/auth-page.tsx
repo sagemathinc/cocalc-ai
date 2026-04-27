@@ -32,10 +32,8 @@ export default function AuthPage() {
   }
 
   return (
-    <PublicAuthPageShell
-      title={viewTitle(auth_view, site_name)}
-      subtitle={<SiteName />}
-    >
+    <PublicAuthPageShell subtitle={<SiteName />}>
+      <h1 style={{ margin: 0 }}>{viewTitle(auth_view, site_name)}</h1>
       {auth_view === "sign-up" && <SignUpForm onNavigate={onNavigate} />}
       {auth_view === "password-reset" && (
         <PasswordResetForm onNavigate={onNavigate} />

@@ -41,7 +41,7 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Launchpad features" }),
+      screen.getByRole("heading", { name: "Launchpad Features" }),
     ).not.toBeNull();
     expect(
       screen.getByText("The new direction is increasingly agent-first"),
@@ -50,7 +50,7 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Linux Terminal")).not.toBeNull();
   });
 
-  it("shows app links in the shared nav when authenticated", () => {
+  it("shows Projects but not Settings in the shared nav when authenticated", () => {
     render(
       <PublicFeaturesApp
         config={{ is_authenticated: true, site_name: "Launchpad" }}
@@ -59,7 +59,7 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+    expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
   });
 
   it("renders a detail page", () => {
@@ -72,7 +72,7 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Coding Agents and AI Assistance",
+        name: "Coding Agents and AI Assistance – Launchpad",
         level: 1,
       }),
     ).not.toBeNull();

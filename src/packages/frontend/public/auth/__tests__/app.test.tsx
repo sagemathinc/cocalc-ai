@@ -2,7 +2,7 @@
 
 import { render, screen } from "@testing-library/react";
 import PublicAuthApp, { getPublicAuthRouteFromPath } from "../app";
-import { getPublicAuthRedirectTargetFromSearch } from "../bootstrap";
+import { getPublicAuthRedirectTargetFromSearch } from "../routes";
 
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -112,7 +112,7 @@ describe("PublicAuthApp", () => {
     expect(screen.getByText("Registration token")).not.toBeNull();
   });
 
-  it("shows app links in the shared nav for authenticated users", () => {
+  it("shows Projects but not Settings in the shared nav for authenticated users", () => {
     render(
       <PublicAuthApp
         initialRoute={{ kind: "auth-form", view: "sign-in" }}
@@ -122,7 +122,7 @@ describe("PublicAuthApp", () => {
     );
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+    expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
   });
 
   it("renders the password reset done screen", () => {

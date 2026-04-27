@@ -5,7 +5,7 @@
 
 import { Button, Flex, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicSectionCard } from "@cocalc/frontend/public/layout/shell";
 
 const { Paragraph, Text, Title } = Typography;
 

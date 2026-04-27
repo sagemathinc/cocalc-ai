@@ -14,11 +14,9 @@ import {
   LinkButton,
 } from "@cocalc/frontend/public/features/page-components";
 import {
-  PublicHero,
-  PublicPageRoot,
+  PublicSiteShell,
   PublicSectionCard,
-} from "@cocalc/frontend/public/ui/shell";
-import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
+} from "@cocalc/frontend/public/layout/shell";
 import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import { slugURL } from "@cocalc/util/news";
 import type { NewsItem } from "@cocalc/util/types/news";
@@ -581,55 +579,14 @@ export default function PublicHomeApp({
   }, [siteName]);
 
   return (
-    <PublicPageRoot>
-      <PublicTopNav
-        active="home"
-        isAuthenticated={!!config?.is_authenticated}
-        showPolicies={!!config?.show_policies}
-        siteName={siteName}
-      />
-      <NewsBanner items={initialNews ?? []} />
-      <PublicHero
-        eyebrow="COLLABORATIVE TECHNICAL COMPUTING"
-        title={siteName}
-        subtitle={
-          config?.site_description ??
-          "Run Jupyter notebooks, Linux terminals, documents, and coding agents in one collaborative online workspace built for real technical projects."
-        }
-        actions={
-          <Flex wrap gap={12}>
-            {config?.is_authenticated ? (
-              <>
-                <Button href={appPath("projects")} size="large" type="primary">
-                  Open projects
-                </Button>
-                <Button href={appPath("settings")} size="large">
-                  Settings
-                </Button>
-                <Button href={appPath("features")} size="large">
-                  Explore features
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  href={appPath("auth/sign-up")}
-                  size="large"
-                  type="primary"
-                >
-                  Create account
-                </Button>
-                <Button href={appPath("features")} size="large">
-                  Explore features
-                </Button>
-                <Button href={appPath("support")} size="large">
-                  Contact support
-                </Button>
-              </>
-            )}
-          </Flex>
-        }
-      />
+    <PublicSiteShell
+      active="home"
+      beforeTitle={<NewsBanner items={initialNews ?? []} />}
+      isAuthenticated={!!config?.is_authenticated}
+      showPolicies={!!config?.show_policies}
+      siteName={siteName}
+      title={siteName}
+    >
       <HeroDetails config={config} siteName={siteName} />
       <AgentSection />
       <HighlightSection siteName={siteName} />
@@ -637,6 +594,6 @@ export default function PublicHomeApp({
       <ResourceSection />
       <NewsSection initialNews={initialNews} />
       <BottomCallout config={config} siteName={siteName} />
-    </PublicPageRoot>
+    </PublicSiteShell>
   );
 }

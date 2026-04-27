@@ -7,10 +7,10 @@ import type { CSSProperties, ReactNode } from "react";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 
 import {
-  App as AntdApp,
   Button,
   Empty,
   Flex,
+  Menu,
   Segmented,
   Spin,
   Tag,
@@ -18,7 +18,6 @@ import {
 } from "antd";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import type { HistoricCounts, Stats } from "@cocalc/util/db-schema/stats";
-import { slugURL } from "@cocalc/util/news";
 import {
   CHANNELS_DESCRIPTIONS,
   PUBLIC_NEWS_CHANNELS,
@@ -29,20 +28,34 @@ import {
 import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
-  PublicHero,
-  PublicPageRoot,
+  PublicSiteShell,
   PublicSectionCard,
-} from "@cocalc/frontend/public/ui/shell";
-import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
-import { ExactPolicyPage, getExactPolicyPage } from "./legal-pages";
-import { getPolicyPage } from "./policy-data";
-import PricingPage, { type PublicMembershipTier } from "./pricing-page";
-import { contentPath, type PublicContentRoute, topLevelView } from "./routes";
+} from "@cocalc/frontend/public/layout/shell";
+import PublicAuthApp from "./auth/app";
+import PublicFeaturesApp from "./features/app";
+import PublicHomeApp from "./home/app";
+import PublicLangApp from "./lang/app";
+import PublicSupportApp from "./support/app";
+import { ExactPolicyPage, getExactPolicyPage } from "./policies";
+import PricingPage, { type PublicMembershipTier } from "./pricing/page";
+import {
+  publicPath,
+  type PublicInfoRoute,
+  type PublicRoute,
+  topLevelInfoView,
+} from "./routes";
 import {
   getTeamMember,
   TEAM_MEMBERS,
   type TeamMemberProfile,
-} from "./team-data";
+} from "./about/team-data";
+import {
+  contentNewsPath,
+  formatDateTime,
+  formatNewsDate,
+  newsHistoryPath,
+} from "./news/utils";
+import { CodeCommand, CopyCommandButton } from "./software/components";
 
 const Markdown = lazy(() => import("@cocalc/frontend/markdown/component"));
 const StaticMarkdown = lazy(
@@ -50,7 +63,7 @@ const StaticMarkdown = lazy(
 );
 const { Paragraph, Text, Title } = Typography;
 
-interface ContentConfig {
+interface PublicConfig {
   help_email?: string;
   is_admin?: boolean;
   imprint?: string;
@@ -62,11 +75,13 @@ interface ContentConfig {
   terms_of_service_url?: string;
 }
 
-interface PublicContentAppProps {
-  config?: ContentConfig;
+interface PublicAppProps {
+  config?: PublicConfig;
+  initialRequiresToken?: boolean;
   initialMembershipTiers?: PublicMembershipTier[];
   initialNews?: NewsItem[];
-  initialRoute: PublicContentRoute;
+  initialRoute: PublicRoute;
+  redirectToPath?: string;
 }
 
 interface EventsPayload {
@@ -105,6 +120,33 @@ const MUTED_STYLE: CSSProperties = {
   color: COLORS.GRAY_M,
 } as const;
 
+const BUILTIN_POLICY_NAV_ITEMS = [
+  { href: publicPath("policies/terms"), key: "terms", label: "Terms" },
+  { href: publicPath("policies/trust"), key: "trust", label: "Trust" },
+  {
+    href: publicPath("policies/copyright"),
+    key: "copyright",
+    label: "Copyright",
+  },
+  { href: publicPath("policies/privacy"), key: "privacy", label: "Privacy" },
+  {
+    href: publicPath("policies/thirdparties"),
+    key: "thirdparties",
+    label: "Third parties",
+  },
+  { href: publicPath("policies/ferpa"), key: "ferpa", label: "FERPA" },
+  {
+    href: publicPath("policies/accessibility"),
+    key: "accessibility",
+    label: "Accessibility",
+  },
+  {
+    href: publicPath("policies/enterprise-terms"),
+    key: "enterprise-terms",
+    label: "Enterprise",
+  },
+] as const;
+
 async function fetchJson<T>(path: string): Promise<T> {
   const resp = await fetch(path);
   return await resp.json();
@@ -114,41 +156,33 @@ function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
 }
 
-function contentNewsPath(news?: Pick<NewsItem, "id" | "title">): string {
-  return appPath(slugURL(news));
-}
-
-function newsHistoryPath(permalink: string, timestamp: number): string {
-  return `${permalink.replace(/\/$/, "")}/${timestamp}`;
-}
-
-function titleForRoute(route: PublicContentRoute, siteName: string): string {
+function titleForRoute(route: PublicInfoRoute, siteName: string): string {
   switch (route.view) {
     case "about-events":
-      return `${siteName} events`;
+      return `${siteName} Events`;
     case "about-status":
-      return `${siteName} status`;
+      return `${siteName} Status`;
     case "about-team":
-      return `${siteName} team`;
+      return `${siteName} Team`;
     case "about-team-member":
       return `${getTeamMember(route.teamSlug)?.name ?? "Team"} - ${siteName}`;
     case "pricing":
-      return `${siteName} pricing`;
+      return `${siteName} Pricing`;
     case "policies":
-      return `${siteName} policies`;
+      return `${siteName} Policies`;
     case "policies-imprint":
-      return `${siteName} imprint`;
+      return `${siteName} Imprint`;
     case "policies-custom":
-      return `${siteName} policies`;
+      return `${siteName} Policies`;
     case "policies-detail":
-      return `${getExactPolicyPage(route.policySlug)?.title ?? getPolicyPage(route.policySlug)?.title ?? "Policies"} - ${siteName}`;
+      return `${getExactPolicyPage(route.policySlug)?.title ?? "Policies"} - ${siteName}`;
     case "news":
-      return `${siteName} news`;
+      return `${siteName} News`;
     case "news-detail":
     case "news-history":
-      return `${siteName} news`;
+      return `${siteName} News`;
     case "software":
-      return `${siteName} software`;
+      return `${siteName} Software`;
     case "software-cocalc-launchpad":
       return "CoCalc Launchpad";
     case "software-cocalc-plus":
@@ -157,24 +191,6 @@ function titleForRoute(route: PublicContentRoute, siteName: string): string {
     default:
       return `About ${siteName}`;
   }
-}
-
-function formatNewsDate(value?: number | Date): string {
-  if (value == null) return "";
-  const date = value instanceof Date ? value : new Date(Number(value) * 1000);
-  if (Number.isNaN(date.valueOf())) return "";
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function formatDateTime(value?: number | Date): string {
-  if (value == null) return "";
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.valueOf())) return "";
-  return date.toLocaleString();
 }
 
 function MarkdownCard({ value }: { value: string }) {
@@ -214,16 +230,16 @@ function LinkButton({ children, href }: { children: ReactNode; href: string }) {
   );
 }
 
-function arePoliciesVisible(config?: ContentConfig): boolean {
+function arePoliciesVisible(config?: PublicConfig): boolean {
   return !!config?.show_policies;
 }
 
-function getExternalPoliciesUrl(config?: ContentConfig): string | undefined {
+function getExternalPoliciesUrl(config?: PublicConfig): string | undefined {
   const url = config?.terms_of_service_url?.trim();
   return url ? url : undefined;
 }
 
-function PolicyGateCard({ config }: { config?: ContentConfig }) {
+function PolicyGateCard({ config }: { config?: PublicConfig }) {
   const externalUrl = getExternalPoliciesUrl(config);
 
   if (!arePoliciesVisible(config)) {
@@ -266,101 +282,27 @@ function PolicyGateCard({ config }: { config?: ContentConfig }) {
   );
 }
 
-function CodeCommand({ value }: { value: string }) {
-  return (
-    <div
-      style={{
-        background: "#f8fafc",
-        border: `1px solid ${COLORS.GRAY_LL}`,
-        borderRadius: 12,
-        padding: 16,
-      }}
-    >
-      <code style={{ fontSize: "0.95rem", wordBreak: "break-all" }}>
-        {value}
-      </code>
-    </div>
-  );
-}
-
-function CopyCommandButton({ value }: { value: string }) {
-  const { message } = AntdApp.useApp();
-
-  return (
-    <Button
-      onClick={() => {
-        if (typeof navigator === "undefined" || navigator.clipboard == null) {
-          void message.info("Copy the command manually from the box below.");
-          return;
-        }
-        void navigator.clipboard.writeText(value).then(
-          () => void message.success("Install command copied."),
-          () => void message.error("Unable to copy command."),
-        );
-      }}
-    >
-      Copy command
-    </Button>
-  );
-}
-
 function PageShell({
   children,
   config,
   route,
-  subtitle,
   title,
 }: {
   children: ReactNode;
-  config?: ContentConfig;
-  route: PublicContentRoute;
-  subtitle: string;
+  config?: PublicConfig;
+  route: PublicInfoRoute;
   title: string;
 }) {
-  const currentTop = topLevelView(route);
-  const navActive =
-    currentTop === "about" ||
-    currentTop === "pricing" ||
-    currentTop === "policies" ||
-    currentTop === "news"
-      ? currentTop
-      : undefined;
   return (
-    <PublicPageRoot>
-      <PublicTopNav
-        active={navActive}
-        isAuthenticated={!!config?.is_authenticated}
-        showPolicies={arePoliciesVisible(config)}
-        siteName={config?.site_name ?? SITE_NAME}
-      />
-      <PublicHero
-        eyebrow="PUBLIC CONTENT"
-        title={title}
-        subtitle={subtitle}
-        actions={
-          <Flex wrap gap={8}>
-            {[
-              { href: "about", key: "about", label: "About" },
-              { href: "pricing", key: "pricing", label: "Pricing" },
-              ...(arePoliciesVisible(config)
-                ? [{ href: "policies", key: "policies", label: "Policies" }]
-                : []),
-              { href: "news", key: "news", label: "News" },
-              { href: "software", key: "software", label: "Software" },
-            ].map((item) => (
-              <Button
-                key={item.href}
-                type={currentTop === item.key ? "primary" : "default"}
-                href={contentPath(item.href)}
-              >
-                {item.label}
-              </Button>
-            ))}
-          </Flex>
-        }
-      />
-      <div style={{ marginTop: "24px" }}>{children}</div>
-    </PublicPageRoot>
+    <PublicSiteShell
+      active={topLevelInfoView(route)}
+      isAuthenticated={!!config?.is_authenticated}
+      showPolicies={arePoliciesVisible(config)}
+      siteName={config?.site_name ?? SITE_NAME}
+      title={title}
+    >
+      {children}
+    </PublicSiteShell>
   );
 }
 
@@ -391,7 +333,7 @@ function SoftwareOverviewPage() {
           standing up a shared service.
         </Paragraph>
         <div>
-          <LinkButton href={contentPath("software/cocalc-plus")}>
+          <LinkButton href={publicPath("software/cocalc-plus")}>
             Open CoCalc Plus
           </LinkButton>
         </div>
@@ -406,7 +348,7 @@ function SoftwareOverviewPage() {
           stack.
         </Paragraph>
         <div>
-          <LinkButton href={contentPath("software/cocalc-launchpad")}>
+          <LinkButton href={publicPath("software/cocalc-launchpad")}>
             Open Launchpad
           </LinkButton>
         </div>
@@ -500,7 +442,7 @@ function CocalcLaunchpadPage() {
           instance with the same overall workspace model.
         </Paragraph>
         <Flex wrap gap={12}>
-          <LinkButton href={contentPath("software/cocalc-plus")}>
+          <LinkButton href={publicPath("software/cocalc-plus")}>
             Compare with CoCalc Plus
           </LinkButton>
           <LinkButton href={appPath("features/api")}>HTTP API</LinkButton>
@@ -599,7 +541,7 @@ function AboutHome({
             See conference appearances and other public events.
           </Paragraph>
           <div style={{ display: "grid", gap: "8px" }}>
-            <LinkButton href={contentPath("about/events")}>
+            <LinkButton href={publicPath("about/events")}>
               Open events
             </LinkButton>
           </div>
@@ -612,7 +554,7 @@ function AboutHome({
             Meet the people building and operating {siteName}.
           </Paragraph>
           <div>
-            <LinkButton href={contentPath("about/team")}>
+            <LinkButton href={publicPath("about/team")}>
               Meet the team
             </LinkButton>
           </div>
@@ -652,7 +594,7 @@ function AboutHome({
             See current activity and high-level usage metrics for {siteName}.
           </Paragraph>
           <div>
-            <LinkButton href={contentPath("about/status")}>
+            <LinkButton href={publicPath("about/status")}>
               Open status
             </LinkButton>
           </div>
@@ -665,9 +607,7 @@ function AboutHome({
             Compare hosted CoCalc, CoCalc Plus, and CoCalc Launchpad.
           </Paragraph>
           <div>
-            <LinkButton href={contentPath("software")}>
-              Open software
-            </LinkButton>
+            <LinkButton href={publicPath("software")}>Open software</LinkButton>
           </div>
         </PublicSectionCard>
       </div>
@@ -698,7 +638,7 @@ function AboutTeamPage() {
           </Title>
           <div>{member.summary}</div>
           <Flex wrap gap={12}>
-            <LinkButton href={contentPath(`about/team/${member.slug}`)}>
+            <LinkButton href={publicPath(`about/team/${member.slug}`)}>
               Read bio
             </LinkButton>
             <LinkButton href={`mailto:${member.email}`}>
@@ -742,7 +682,7 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <div>
-        <LinkButton href={contentPath("about/team")}>Back to team</LinkButton>
+        <LinkButton href={publicPath("about/team")}>Back to team</LinkButton>
       </div>
       <PublicSectionCard>
         <div
@@ -1000,7 +940,7 @@ function AboutEventsPage() {
   );
 }
 
-function PoliciesHome({ config }: { config: ContentConfig }) {
+function PoliciesHome({ config }: { config: PublicConfig }) {
   const externalUrl = getExternalPoliciesUrl(config);
   if (!arePoliciesVisible(config) || externalUrl) {
     return <PolicyGateCard config={config} />;
@@ -1009,55 +949,55 @@ function PoliciesHome({ config }: { config: ContentConfig }) {
   const items = [
     {
       description: "The Terms of Service govern use of CoCalc.",
-      href: contentPath("policies/terms"),
+      href: publicPath("policies/terms"),
       title: "Terms of service",
     },
     {
       description:
         "The Trust page highlights our compliance with laws and frameworks, such as GDPR and SOC 2. We adhere to rigorous standards to protect your data and maintain transparency and accountability in all our operations.",
-      href: contentPath("policies/trust"),
+      href: publicPath("policies/trust"),
       title: "Trust",
     },
     {
       description:
         "The Copyright Policy explains how SageMath, Inc. respects copyright policies, and provides a site that does not infringe on others' copyright.",
-      href: contentPath("policies/copyright"),
+      href: publicPath("policies/copyright"),
       title: "Copyright policies",
     },
     {
       description:
         "The Privacy Policy describes how SageMath, Inc. respects the privacy of its users.",
-      href: contentPath("policies/privacy"),
+      href: publicPath("policies/privacy"),
       title: "Privacy",
     },
     {
       description:
         "Our List of third parties enumerates what is used to provide CoCalc.",
-      href: contentPath("policies/thirdparties"),
+      href: publicPath("policies/thirdparties"),
       title: "Third parties",
     },
     {
       description:
         "CoCalc's FERPA Compliance statement explains how we address FERPA requirements at US educational instituations.",
-      href: contentPath("policies/ferpa"),
+      href: publicPath("policies/ferpa"),
       title: "FERPA compliance statement",
     },
     {
       description:
         "CoCalc's Voluntary Product Accessibility Template (VPAT) describes how we address accessibility issues.",
-      href: contentPath("policies/accessibility"),
+      href: publicPath("policies/accessibility"),
       title: "Accessibility",
     },
     {
       description: "Enterprise and institutional agreement overview.",
-      href: contentPath("policies/enterprise-terms"),
+      href: publicPath("policies/enterprise-terms"),
       title: "Enterprise terms",
     },
     ...(config.imprint
       ? [
           {
             description: "Site-specific legal imprint information.",
-            href: contentPath("policies/imprint"),
+            href: publicPath("policies/imprint"),
             title: "Imprint",
           },
         ]
@@ -1067,7 +1007,7 @@ function PoliciesHome({ config }: { config: ContentConfig }) {
           {
             description:
               "Site-specific policy information configured by admins.",
-            href: contentPath("policies/policies"),
+            href: publicPath("policies/policies"),
             title: "Policies",
           },
         ]
@@ -1096,7 +1036,7 @@ function PoliciesDetailPage({
   markdown,
   title,
 }: {
-  config?: ContentConfig;
+  config?: PublicConfig;
   markdown?: string;
   title: string;
 }) {
@@ -1108,76 +1048,42 @@ function PoliciesDetailPage({
       <EmptyCard label={`No ${title.toLowerCase()} content configured.`} />
     );
   }
+  return <MarkdownCard value={markdown} />;
+}
+
+function PolicySubNav({ slug }: { slug?: string }) {
+  const items = BUILTIN_POLICY_NAV_ITEMS.map((item) => ({
+    key: item.key,
+    label: <a href={item.href}>{item.label}</a>,
+  }));
   return (
-    <div style={{ display: "grid", gap: "14px" }}>
-      <div>
-        <LinkButton href={contentPath("policies")}>Back to policies</LinkButton>
-      </div>
-      <MarkdownCard value={markdown} />
-    </div>
+    <Flex justify="center" style={{ minWidth: 0 }}>
+      <Menu
+        aria-label="Policy pages"
+        disabledOverflow
+        items={items}
+        mode="horizontal"
+        selectedKeys={slug == null ? [] : [slug]}
+        style={{
+          background: "transparent",
+          borderBottom: 0,
+          flex: "0 1 auto",
+          lineHeight: "normal",
+        }}
+      />
+    </Flex>
   );
 }
 
-function StructuredPolicyPage({ slug }: { slug?: string }) {
-  if (getExactPolicyPage(slug) != null) {
-    return <ExactPolicyPage slug={slug} />;
-  }
-
-  const page = getPolicyPage(slug);
-  if (page == null) {
+function ExactPolicyPageShell({ slug }: { slug?: string }) {
+  if (getExactPolicyPage(slug) == null) {
     return <EmptyCard label="This policy page was not found." />;
   }
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <div>
-        <LinkButton href={contentPath("policies")}>Back to policies</LinkButton>
-      </div>
-      <PublicSectionCard>
-        <Text strong type="secondary">
-          POLICY
-        </Text>
-        <Title level={2} style={{ margin: 0 }}>
-          {page.title}
-        </Title>
-        {page.updated ? (
-          <Text type="secondary">Last updated: {page.updated}</Text>
-        ) : null}
-        <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
-      </PublicSectionCard>
-      {page.sections.map((section) => (
-        <PublicSectionCard key={section.title}>
-          <Title level={3} style={{ margin: 0 }}>
-            {section.title}
-          </Title>
-          {section.paragraphs?.map((paragraph) => (
-            <Paragraph key={paragraph} style={{ margin: 0 }}>
-              {paragraph}
-            </Paragraph>
-          ))}
-          {section.bullets?.length ? (
-            <ul style={{ margin: 0, paddingLeft: 20 }}>
-              {section.bullets.map((bullet) => (
-                <li key={bullet} style={{ marginBottom: 8 }}>
-                  {bullet}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {section.links?.length ? (
-            <Flex wrap gap={12}>
-              {section.links.map((link) => (
-                <LinkButton
-                  key={`${section.title}-${link.href}`}
-                  href={link.href}
-                >
-                  {link.label}
-                </LinkButton>
-              ))}
-            </Flex>
-          ) : null}
-        </PublicSectionCard>
-      ))}
+    <div style={{ display: "grid" }}>
+      <PolicySubNav slug={slug} />
+      <ExactPolicyPage slug={slug} />
     </div>
   );
 }
@@ -1267,8 +1173,8 @@ function NewsListPage({
     <>
       <Paragraph style={{ marginTop: 24, maxWidth: "70ch" }}>
         Recent announcements and feature updates. Subscribe via{" "}
-        <LinkButton href={contentPath("news/rss.xml")}>RSS</LinkButton> or{" "}
-        <LinkButton href={contentPath("news/feed.json")}>JSON Feed</LinkButton>.
+        <LinkButton href={publicPath("news/rss.xml")}>RSS</LinkButton> or{" "}
+        <LinkButton href={publicPath("news/feed.json")}>JSON Feed</LinkButton>.
       </Paragraph>
       {isAdmin ? (
         <div style={{ marginTop: 16 }}>
@@ -1318,7 +1224,7 @@ function NewsListPage({
   );
 }
 
-function NewsDetailPage({ route }: { route: PublicContentRoute }) {
+function NewsDetailPage({ route }: { route: PublicInfoRoute }) {
   const [loading, setLoading] = useState(true);
   const [payload, setPayload] = useState<NewsDetailPayload>({});
 
@@ -1349,7 +1255,7 @@ function NewsDetailPage({ route }: { route: PublicContentRoute }) {
   return (
     <div style={{ display: "grid", gap: "16px" }}>
       <Flex wrap gap={12}>
-        <LinkButton href={contentPath("news")}>Back to news</LinkButton>
+        <LinkButton href={publicPath("news")}>Back to news</LinkButton>
         {payload.history && payload.permalink ? (
           <LinkButton href={appPath(payload.permalink)}>
             Current version
@@ -1413,12 +1319,17 @@ function NewsDetailPage({ route }: { route: PublicContentRoute }) {
   );
 }
 
-export default function PublicContentApp({
+function PublicInfoApp({
   config,
   initialMembershipTiers,
   initialNews,
   initialRoute,
-}: PublicContentAppProps) {
+}: {
+  config?: PublicConfig;
+  initialMembershipTiers?: PublicMembershipTier[];
+  initialNews?: NewsItem[];
+  initialRoute: PublicInfoRoute;
+}) {
   const siteName = config?.site_name ?? SITE_NAME;
   const title = titleForRoute(initialRoute, siteName);
 
@@ -1428,12 +1339,7 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "about-events") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle={`Where to find ${siteName} in person.`}
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <AboutEventsPage />
       </PageShell>
     );
@@ -1441,12 +1347,7 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "about-team") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle={`Meet the people behind ${siteName}.`}
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <AboutTeamPage />
       </PageShell>
     );
@@ -1454,12 +1355,7 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "about-team-member") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle={`Meet the people behind ${siteName}.`}
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <AboutTeamMemberPage slug={initialRoute.teamSlug} />
       </PageShell>
     );
@@ -1467,12 +1363,7 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "about-status") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle={`Live activity and current usage metrics for ${siteName}.`}
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <AboutStatusPage siteName={siteName} />
       </PageShell>
     );
@@ -1480,12 +1371,7 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "policies-imprint") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle="Deployment-specific imprint information."
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <PoliciesDetailPage
           config={config}
           markdown={config?.imprint}
@@ -1497,12 +1383,7 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "policies-custom") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle="Deployment-specific policy information configured by admins."
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <PoliciesDetailPage
           config={config}
           markdown={config?.policies}
@@ -1514,12 +1395,7 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "policies") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle="Public legal and compliance information for this deployment."
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <PoliciesHome config={config ?? {}} />
       </PageShell>
     );
@@ -1527,16 +1403,11 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "policies-detail") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle="Public legal and compliance information for this deployment."
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         {!arePoliciesVisible(config) || getExternalPoliciesUrl(config) ? (
           <PolicyGateCard config={config} />
         ) : (
-          <StructuredPolicyPage slug={initialRoute.policySlug} />
+          <ExactPolicyPageShell slug={initialRoute.policySlug} />
         )}
       </PageShell>
     );
@@ -1547,12 +1418,7 @@ export default function PublicContentApp({
     initialRoute.view === "news-history"
   ) {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle={`News and release notes for ${siteName}.`}
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <NewsDetailPage route={initialRoute} />
       </PageShell>
     );
@@ -1560,12 +1426,7 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "news") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle={`News and release notes for ${siteName}.`}
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <NewsListPage initialNews={initialNews} isAdmin={!!config?.is_admin} />
       </PageShell>
     );
@@ -1573,12 +1434,7 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "software-cocalc-plus") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle="The local single-user CoCalc experience for your own machine."
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <CocalcPlusPage />
       </PageShell>
     );
@@ -1586,12 +1442,7 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "software-cocalc-launchpad") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle="The lightweight self-hosted control-plane bundle for small teams."
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <CocalcLaunchpadPage />
       </PageShell>
     );
@@ -1599,12 +1450,7 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "software") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle="Hosted, local, and self-hosted ways to run CoCalc."
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <SoftwareOverviewPage />
       </PageShell>
     );
@@ -1612,12 +1458,7 @@ export default function PublicContentApp({
 
   if (initialRoute.view === "pricing") {
     return (
-      <PageShell
-        config={config}
-        route={initialRoute}
-        subtitle={`Memberships, vouchers, course purchasing, and self-hosted deployment options for ${siteName}.`}
-        title={title}
-      >
+      <PageShell config={config} route={initialRoute} title={title}>
         <PricingPage
           isAuthenticated={!!config?.is_authenticated}
           siteName={siteName}
@@ -1628,13 +1469,57 @@ export default function PublicContentApp({
   }
 
   return (
-    <PageShell
-      config={config}
-      route={initialRoute}
-      subtitle={`Background information and public resources for ${siteName}.`}
-      title={title}
-    >
+    <PageShell config={config} route={initialRoute} title={title}>
       <AboutHome helpEmail={config?.help_email} siteName={siteName} />
     </PageShell>
+  );
+}
+
+export default function PublicApp({
+  config,
+  initialRequiresToken,
+  initialMembershipTiers,
+  initialNews,
+  initialRoute,
+  redirectToPath,
+}: PublicAppProps) {
+  if (initialRoute.section === "home") {
+    return <PublicHomeApp config={config} initialNews={initialNews} />;
+  }
+
+  if (initialRoute.section === "features") {
+    return (
+      <PublicFeaturesApp config={config} initialRoute={initialRoute.route} />
+    );
+  }
+
+  if (initialRoute.section === "support") {
+    return <PublicSupportApp config={config} initialView={initialRoute.view} />;
+  }
+
+  if (initialRoute.section === "auth") {
+    return (
+      <PublicAuthApp
+        initialRequiresToken={initialRequiresToken}
+        initialRoute={initialRoute.route}
+        isAuthenticated={!!config?.is_authenticated}
+        redirectToPath={redirectToPath}
+        showPolicies={!!config?.show_policies}
+        siteName={config?.site_name ?? SITE_NAME}
+      />
+    );
+  }
+
+  if (initialRoute.section === "lang") {
+    return <PublicLangApp config={config} initialRoute={initialRoute.route} />;
+  }
+
+  return (
+    <PublicInfoApp
+      config={config}
+      initialMembershipTiers={initialMembershipTiers}
+      initialNews={initialNews}
+      initialRoute={initialRoute.route}
+    />
   );
 }

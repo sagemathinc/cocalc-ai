@@ -12,10 +12,9 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { FeatureImage } from "@cocalc/frontend/public/features/page-components";
 import {
   PublicHero,
-  PublicPageRoot,
+  PublicSiteShell,
   PublicSectionCard,
-} from "@cocalc/frontend/public/ui/shell";
-import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
+} from "@cocalc/frontend/public/layout/shell";
 import { LOCALE, LOCALIZATIONS, type Locale } from "@cocalc/util/i18n";
 import { SITE_NAME } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -268,6 +267,10 @@ export default function PublicLangApp({
       : undefined,
   );
   const siteName = config?.site_name ?? SITE_NAME;
+  const title =
+    initialRoute.view === "locale"
+      ? `${siteName} – ${LOCALIZATIONS[initialRoute.locale].native}`
+      : `Translations – ${siteName}`;
 
   useEffect(() => {
     if (initialRoute.view !== "locale") {
@@ -294,13 +297,8 @@ export default function PublicLangApp({
 
   useEffect(() => {
     if (typeof document === "undefined") return;
-    if (initialRoute.view === "locale") {
-      const localization = LOCALIZATIONS[initialRoute.locale];
-      document.title = `${siteName} – ${localization.native}`;
-      return;
-    }
-    document.title = `Translations – ${siteName}`;
-  }, [initialRoute, siteName]);
+    document.title = title;
+  }, [title]);
 
   const content = useMemo(() => {
     if (initialRoute.view === "index") {
@@ -324,14 +322,13 @@ export default function PublicLangApp({
   }, [config, initialRoute, messages, siteName]);
 
   return (
-    <PublicPageRoot>
-      <PublicTopNav
-        active="home"
-        isAuthenticated={!!config?.is_authenticated}
-        showPolicies={!!config?.show_policies}
-        siteName={siteName}
-      />
+    <PublicSiteShell
+      isAuthenticated={!!config?.is_authenticated}
+      showPolicies={!!config?.show_policies}
+      siteName={siteName}
+      title={title}
+    >
       {content}
-    </PublicPageRoot>
+    </PublicSiteShell>
   );
 }

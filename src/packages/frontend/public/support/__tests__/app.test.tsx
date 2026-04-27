@@ -23,7 +23,7 @@ describe("PublicSupportApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Launchpad support" }),
+      screen.getByRole("heading", { name: "Launchpad Support" }),
     ).not.toBeNull();
     expect(screen.getByText("New support ticket")).not.toBeNull();
     expect(screen.getByText("Ticket status")).not.toBeNull();
@@ -50,7 +50,7 @@ describe("PublicSupportApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Launchpad community support" }),
+      screen.getByRole("heading", { name: "Launchpad Community Support" }),
     ).not.toBeNull();
     expect(await screen.findByText("GitHub discussions")).not.toBeNull();
   });
