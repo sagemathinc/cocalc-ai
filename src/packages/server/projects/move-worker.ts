@@ -264,7 +264,7 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
         account_id,
         allow_offline: input.allow_offline,
       },
-      { progress, shouldCancel: shouldAbort },
+      { progress, shouldCancel: shouldAbort, op_id },
     );
 
     const updated = await updateLro({

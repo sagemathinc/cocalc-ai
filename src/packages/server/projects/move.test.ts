@@ -1,6 +1,7 @@
 export {};
 
 let queryMock: jest.Mock;
+let dstreamMock: jest.Mock;
 let loadHostFromRegistryMock: jest.Mock;
 let selectActiveHostMock: jest.Mock;
 let deleteProjectDataOnHostMock: jest.Mock;
@@ -11,6 +12,7 @@ let waitForLroCompletionMock: jest.Mock;
 let assertPortableProjectRootfsMock: jest.Mock;
 let resolveHostConnectionMock: jest.Mock;
 let getProjectFileServerClientMock: jest.Mock;
+let projectLogRows: any[];
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -29,6 +31,10 @@ jest.mock("@cocalc/backend/logger", () => ({
 
 jest.mock("@cocalc/backend/conat", () => ({
   conat: jest.fn(() => ({})),
+}));
+
+jest.mock("@cocalc/backend/conat/sync", () => ({
+  dstream: (...args: any[]) => dstreamMock(...args),
 }));
 
 jest.mock("@cocalc/util/consts", () => ({
@@ -85,6 +91,7 @@ describe("moveProjectToHost", () => {
 
   beforeEach(() => {
     jest.resetModules();
+    projectLogRows = [];
     postTimeoutState = {
       host_id: DEST_HOST_ID,
       project_state: "running",
@@ -155,6 +162,14 @@ describe("moveProjectToHost", () => {
       host_id,
       bay_id: "bay-0",
       region: "us-west1",
+    }));
+    dstreamMock = jest.fn(async () => ({
+      getAll: () => [...projectLogRows],
+      publish: (row: any) => {
+        projectLogRows.push(row);
+      },
+      save: jest.fn(async () => undefined),
+      close: jest.fn(),
     }));
   });
 
@@ -415,5 +430,163 @@ describe("moveProjectToHost", () => {
     ).resolves.toBeUndefined();
 
     expect(createBackupMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("writes project log entries for move start and success", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
+      ) {
+        return {
+          rows: [{ status: "running", deleted: null, last_seen: new Date() }],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    waitForLroCompletionMock = jest.fn(async () => ({
+      status: "succeeded",
+    }));
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost(
+        {
+          project_id: PROJECT_ID,
+          dest_host_id: DEST_HOST_ID,
+          account_id: "account-id",
+        },
+        { op_id: "move-op-1" },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(projectLogRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "project-move:move-op-1:project_move_requested",
+          project_id: PROJECT_ID,
+          account_id: "account-id",
+          event: expect.objectContaining({
+            event: "project_move_requested",
+            op_id: "move-op-1",
+            source_host_id: SOURCE_HOST_ID,
+            dest_host_id: DEST_HOST_ID,
+          }),
+        }),
+        expect.objectContaining({
+          id: "project-move:move-op-1:project_moved",
+          project_id: PROJECT_ID,
+          account_id: "account-id",
+          event: expect.objectContaining({
+            event: "project_moved",
+            op_id: "move-op-1",
+            source_host_id: SOURCE_HOST_ID,
+            dest_host_id: DEST_HOST_ID,
+          }),
+        }),
+      ]),
+    );
+    expect(
+      projectLogRows.filter(
+        ({ id }: { id: string }) =>
+          id === "project-move:move-op-1:project_move_requested",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("writes project log entries for move start and failure", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("SELECT status, deleted, last_seen FROM project_hosts")
+      ) {
+        return {
+          rows: [{ status: "running", deleted: null, last_seen: new Date() }],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return {
+          rows: [{ host_id: DEST_HOST_ID, project_state: "starting" }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost(
+        {
+          project_id: PROJECT_ID,
+          dest_host_id: DEST_HOST_ID,
+          account_id: "account-id",
+        },
+        { op_id: "move-op-2" },
+      ),
+    ).rejects.toThrow(/destination start wait failed/);
+
+    expect(projectLogRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "project-move:move-op-2:project_move_requested",
+          event: expect.objectContaining({
+            event: "project_move_requested",
+            op_id: "move-op-2",
+            source_host_id: SOURCE_HOST_ID,
+            dest_host_id: DEST_HOST_ID,
+          }),
+        }),
+        expect.objectContaining({
+          id: "project-move:move-op-2:project_move_failed",
+          event: expect.objectContaining({
+            event: "project_move_failed",
+            op_id: "move-op-2",
+            source_host_id: SOURCE_HOST_ID,
+            dest_host_id: DEST_HOST_ID,
+            error: expect.stringContaining("destination start wait failed"),
+          }),
+        }),
+      ]),
+    );
   });
 });

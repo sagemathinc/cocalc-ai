@@ -1,7 +1,13 @@
+import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
+import { dstream } from "@cocalc/backend/conat/sync";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import {
+  PROJECT_LOG_STREAM_NAME,
+  type ProjectLogRow,
+} from "@cocalc/conat/hub/api/projects";
 import {
   DEFAULT_R2_REGION,
   mapCloudRegionToR2Region,
@@ -76,6 +82,89 @@ export type MoveProjectProgressUpdate = {
   detail?: Record<string, any>;
   progress?: number;
 };
+
+type MoveProjectLogEvent =
+  | "project_move_requested"
+  | "project_moved"
+  | "project_move_failed"
+  | "project_move_canceled";
+
+async function openProjectLogStream(project_id: string) {
+  return await dstream<ProjectLogRow>({
+    project_id,
+    name: PROJECT_LOG_STREAM_NAME,
+    noAutosave: true,
+    noCache: true,
+    noInventory: true,
+  });
+}
+
+async function appendProjectMoveLogEntry({
+  project_id,
+  account_id,
+  move_log_id,
+  event,
+  source_host_id,
+  dest_host_id,
+  duration_ms,
+  error,
+  op_id,
+  stage,
+}: {
+  project_id: string;
+  account_id: string;
+  move_log_id: string;
+  event: MoveProjectLogEvent;
+  source_host_id?: string | null;
+  dest_host_id?: string | null;
+  duration_ms?: number;
+  error?: string;
+  op_id?: string;
+  stage?: string;
+}): Promise<boolean> {
+  const row: ProjectLogRow = {
+    id: `project-move:${move_log_id}:${event}`,
+    project_id,
+    account_id,
+    time: new Date(),
+    event: {
+      event,
+      ...(op_id ? { op_id } : {}),
+      ...(source_host_id ? { source_host_id } : {}),
+      ...(dest_host_id ? { dest_host_id } : {}),
+      ...(duration_ms != null ? { duration_ms } : {}),
+      ...(error ? { error } : {}),
+      ...(stage ? { stage } : {}),
+    },
+  };
+  try {
+    const stream = await openProjectLogStream(project_id);
+    try {
+      const existing = new Set(
+        ((stream.getAll?.() as ProjectLogRow[] | undefined) ?? []).map(
+          ({ id }) => id,
+        ),
+      );
+      if (existing.has(row.id)) {
+        return false;
+      }
+      stream.publish(row);
+      await stream.save();
+      return true;
+    } finally {
+      stream.close();
+    }
+  } catch (err) {
+    log.warn("moveProjectToHost failed to write project-log entry", {
+      project_id,
+      event,
+      source_host_id,
+      dest_host_id,
+      err,
+    });
+    return false;
+  }
+}
 
 async function revertPlacementIfPossible(
   context: MoveProjectContext,
@@ -355,12 +444,15 @@ export async function moveProjectToHost(
   opts?: {
     progress?: (update: MoveProjectProgressUpdate) => void;
     shouldCancel?: () => Promise<boolean>;
+    op_id?: string;
   },
 ): Promise<void> {
   const progress = opts?.progress ?? (() => {});
   const shouldCancel = opts?.shouldCancel;
+  const move_log_id = opts?.op_id ?? randomUUID();
   const startDest = input.start_dest !== false;
   const stopDestAfterStart = !!input.stop_dest_after_start;
+  const started_at_ms = Date.now();
   const context = await buildMoveProjectContext(input);
   await assertPortableProjectRootfs({
     project_id: context.project_id,
@@ -434,6 +526,26 @@ export async function moveProjectToHost(
       message: "canceled",
       detail: { stage },
     });
+    await appendProjectMoveLogEntry({
+      project_id: context.project_id,
+      account_id: context.account_id,
+      move_log_id,
+      event: "project_move_requested",
+      source_host_id: context.project_host_id,
+      dest_host_id: context.dest_host_id,
+      op_id: opts?.op_id,
+    });
+    await appendProjectMoveLogEntry({
+      project_id: context.project_id,
+      account_id: context.account_id,
+      move_log_id,
+      event: "project_move_canceled",
+      source_host_id: context.project_host_id,
+      dest_host_id: context.dest_host_id,
+      duration_ms: Date.now() - started_at_ms,
+      op_id: opts?.op_id,
+      stage,
+    });
   };
 
   try {
@@ -447,6 +559,17 @@ export async function moveProjectToHost(
     });
     await checkCanceled("validate");
     const sourceAvailable = isSourceHostAvailable(context);
+    if (sourceAvailable) {
+      await appendProjectMoveLogEntry({
+        project_id: context.project_id,
+        account_id: context.account_id,
+        move_log_id,
+        event: "project_move_requested",
+        source_host_id: context.project_host_id,
+        dest_host_id: context.dest_host_id,
+        op_id: opts?.op_id,
+      });
+    }
     if (!sourceAvailable) {
       const status = context.source_host_status ?? "unknown";
       progress({
@@ -825,11 +948,52 @@ export async function moveProjectToHost(
       message: "move complete",
       detail: { dest_host_id: context.dest_host_id },
     });
+    // Re-append the requested row after the final placement so the request
+    // record survives moves that do not transfer the source project's log.
+    await appendProjectMoveLogEntry({
+      project_id: context.project_id,
+      account_id: context.account_id,
+      move_log_id,
+      event: "project_move_requested",
+      source_host_id: context.project_host_id,
+      dest_host_id: context.dest_host_id,
+      op_id: opts?.op_id,
+    });
+    await appendProjectMoveLogEntry({
+      project_id: context.project_id,
+      account_id: context.account_id,
+      move_log_id,
+      event: "project_moved",
+      source_host_id: context.project_host_id,
+      dest_host_id: context.dest_host_id,
+      duration_ms: Date.now() - started_at_ms,
+      op_id: opts?.op_id,
+    });
   } catch (err) {
     if ((err as any)?.code === MOVE_CANCELED_CODE) {
       await handleCancel((err as any).stage ?? "unknown");
       throw err;
     }
+    await appendProjectMoveLogEntry({
+      project_id: context.project_id,
+      account_id: context.account_id,
+      move_log_id,
+      event: "project_move_requested",
+      source_host_id: context.project_host_id,
+      dest_host_id: context.dest_host_id,
+      op_id: opts?.op_id,
+    });
+    await appendProjectMoveLogEntry({
+      project_id: context.project_id,
+      account_id: context.account_id,
+      move_log_id,
+      event: "project_move_failed",
+      source_host_id: context.project_host_id,
+      dest_host_id: context.dest_host_id,
+      duration_ms: Date.now() - started_at_ms,
+      error: err instanceof Error ? err.message : `${err}`,
+      op_id: opts?.op_id,
+    });
     throw err;
   }
 }

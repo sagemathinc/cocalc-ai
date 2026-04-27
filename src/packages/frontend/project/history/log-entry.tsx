@@ -338,13 +338,78 @@ export const LogEntry: React.FC<Props> = React.memo(
       );
     }
 
-    function render_project_moved(): React.JSX.Element {
+    function render_project_move_requested(
+      event: ProjectControlEvent,
+    ): React.JSX.Element {
       return (
         <span>
-          <FormattedMessage
-            id="project.history.log-entry.project_moved"
-            defaultMessage={`moved this project`}
-          />
+          started moving this project
+          {event.source_host_id ? (
+            <>
+              {" "}
+              from <code>{event.source_host_id}</code>
+            </>
+          ) : null}
+          {event.dest_host_id ? (
+            <>
+              {" "}
+              to <code>{event.dest_host_id}</code>
+            </>
+          ) : null}
+        </span>
+      );
+    }
+
+    function render_project_moved(
+      event: ProjectControlEvent,
+    ): React.JSX.Element {
+      return (
+        <span>
+          moved this project
+          {event.source_host_id ? (
+            <>
+              {" "}
+              from <code>{event.source_host_id}</code>
+            </>
+          ) : null}
+          {event.dest_host_id ? (
+            <>
+              {" "}
+              to <code>{event.dest_host_id}</code>
+            </>
+          ) : null}
+        </span>
+      );
+    }
+
+    function render_project_move_failed(
+      event: ProjectControlEvent,
+    ): React.JSX.Element {
+      return (
+        <span>
+          failed to move this project
+          {event.dest_host_id ? (
+            <>
+              {" "}
+              to <code>{event.dest_host_id}</code>
+            </>
+          ) : null}
+        </span>
+      );
+    }
+
+    function render_project_move_canceled(
+      event: ProjectControlEvent,
+    ): React.JSX.Element {
+      return (
+        <span>
+          canceled moving this project
+          {event.dest_host_id ? (
+            <>
+              {" "}
+              to <code>{event.dest_host_id}</code>
+            </>
+          ) : null}
         </span>
       );
     }
@@ -797,8 +862,14 @@ export const LogEntry: React.FC<Props> = React.memo(
           return render_project_stop_requested();
         case "project_stopped":
           return render_project_stopped();
+        case "project_move_requested":
+          return render_project_move_requested(event);
         case "project_moved":
-          return render_project_moved();
+          return render_project_moved(event);
+        case "project_move_failed":
+          return render_project_move_failed(event);
+        case "project_move_canceled":
+          return render_project_move_canceled(event);
         case "project_rehomed":
           return render_project_rehomed(event);
         case "project_start_requested":

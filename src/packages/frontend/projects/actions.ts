@@ -1439,10 +1439,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
           actions.setState({ control_error: error });
           return;
         }
-        this.project_log(logInfo.project_id, {
-          event: "project_moved",
-          dest_host_id: logInfo.dest_host_id,
-        });
         actions.setState({ control_error: "" });
         const previous_host_id =
           logInfo.source_host_id ||
