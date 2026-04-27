@@ -13,7 +13,6 @@ import { TimeClient } from "./time";
 import { AccountClient } from "./account";
 import { ProjectClient } from "./project";
 import { AdminClient } from "./admin";
-import { LLMClient } from "./llm";
 import { PurchasesClient } from "./purchases";
 import { SyncClient } from "@cocalc/sync/client/sync-client";
 import { UsersClient } from "./users";
@@ -68,7 +67,6 @@ export interface WebappClient extends EventEmitter {
   account_client: AccountClient;
   project_client: ProjectClient;
   admin_client: AdminClient;
-  openai_client: LLMClient;
   purchases_client: PurchasesClient;
   sync_client: SyncClient;
   users_client: UsersClient;
@@ -143,7 +141,6 @@ class Client extends EventEmitter implements WebappClient {
   account_client: AccountClient;
   project_client: ProjectClient;
   admin_client: AdminClient;
-  openai_client: LLMClient;
   purchases_client: PurchasesClient;
   sync_client: SyncClient;
   users_client: UsersClient;
@@ -207,7 +204,6 @@ class Client extends EventEmitter implements WebappClient {
     this.sync_db = this.sync_client.sync_db;
 
     this.admin_client = bind_methods(new AdminClient(this));
-    this.openai_client = bind_methods(new LLMClient(this));
     this.purchases_client = bind_methods(new PurchasesClient(this));
     this.users_client = bind_methods(new UsersClient(this));
     this.tracking_client = bind_methods(new TrackingClient(this));

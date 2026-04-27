@@ -22,7 +22,6 @@
     "./conat/project/*": "./dist/conat/project/*.js",
     "./bay-backup": "./dist/bay-backup/index.js",
     "./project-backup": "./dist/project-backup/index.js",
-    "./llm": "./dist/llm/index.js",
     "./purchases/*": "./dist/purchases/*.js",
     "./stripe/*": "./dist/stripe/*.js",
     "./projects/control": "./dist/projects/control/index.js",

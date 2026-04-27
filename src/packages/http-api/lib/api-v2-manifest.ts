@@ -44,8 +44,6 @@ import handler37 from "../pages/api/v2/exec";
 import handler38 from "../pages/api/v2/file-access";
 import handler39 from "../pages/api/v2/guesslang";
 import handler40 from "../pages/api/v2/index";
-import handler41 from "../pages/api/v2/llm/evaluate";
-import handler42 from "../pages/api/v2/llm/model-costs";
 import handler43 from "../pages/api/v2/messages/get";
 import handler44 from "../pages/api/v2/messages/send";
 import handler45 from "../pages/api/v2/news/admin-get";
@@ -54,7 +52,6 @@ import handler47 from "../pages/api/v2/news/edit";
 import handler48 from "../pages/api/v2/news/events";
 import handler49 from "../pages/api/v2/news/get";
 import handler50 from "../pages/api/v2/news/list";
-import handler51 from "../pages/api/v2/openai/chatgpt";
 import handler52 from "../pages/api/v2/projects/collaborators/add";
 import handler53 from "../pages/api/v2/projects/collaborators/list";
 import handler54 from "../pages/api/v2/projects/collaborators/remove";
@@ -194,8 +191,6 @@ export const apiV2Manifest: ApiV2ManifestEntry[] = [
   { path: "/file-access", handler: handler38 },
   { path: "/guesslang", handler: handler39 },
   { path: "/", handler: handler40 },
-  { path: "/llm/evaluate", handler: handler41 },
-  { path: "/llm/model-costs", handler: handler42 },
   { path: "/messages/get", handler: handler43 },
   { path: "/messages/send", handler: handler44 },
   { path: "/news/admin-get", handler: handler45 },
@@ -204,7 +199,6 @@ export const apiV2Manifest: ApiV2ManifestEntry[] = [
   { path: "/news/events", handler: handler48 },
   { path: "/news/get", handler: handler49 },
   { path: "/news/list", handler: handler50 },
-  { path: "/openai/chatgpt", handler: handler51 },
   { path: "/projects/collaborators/add", handler: handler52 },
   { path: "/projects/collaborators/list", handler: handler53 },
   { path: "/projects/collaborators/remove", handler: handler54 },
@@ -262,7 +256,10 @@ export const apiV2Manifest: ApiV2ManifestEntry[] = [
   { path: "/purchases/stripe/cancel-payment-intent", handler: handler106 },
   { path: "/purchases/stripe/create-payment-intent", handler: handler107 },
   { path: "/purchases/stripe/create-setup-intent", handler: handler108 },
-  { path: "/purchases/stripe/create-subscription-payment", handler: handler109 },
+  {
+    path: "/purchases/stripe/create-subscription-payment",
+    handler: handler109,
+  },
   { path: "/purchases/stripe/delete-payment-method", handler: handler110 },
   { path: "/purchases/stripe/get-checkout-session", handler: handler111 },
   { path: "/purchases/stripe/get-customer-session", handler: handler112 },

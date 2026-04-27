@@ -23,7 +23,6 @@ import { localPathFileserver } from "@cocalc/backend/conat/files/local-path";
 import { init as initBugCounter } from "@cocalc/project/bug-counter";
 import { init as initChangefeeds } from "./hub/changefeeds";
 import { init as initHubApi } from "./hub/api";
-import { init as initLLM } from "./hub/llm";
 import { init as initAcp } from "./hub/acp";
 import { initWatchdog, closeWatchdog } from "./watchdog";
 import {
@@ -226,9 +225,6 @@ export async function main(opts?: {
     project_id,
     unsafeMode: true,
   });
-
-  logger.debug("start llm conat server");
-  await initLLM();
 
   logger.debug("start acp conat server");
   await initAcp(conatClient);

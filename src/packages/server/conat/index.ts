@@ -1,7 +1,6 @@
 import getLogger from "@cocalc/backend/logger";
 import { initAPI } from "./api";
 import { init as initChangefeedServer } from "@cocalc/database/conat/changefeed-api";
-import { init as initLLM } from "./llm";
 import { loadConatConfiguration } from "./configuration";
 import { createTimeService } from "@cocalc/conat/service/time";
 import { listenForUpdates as listenForProjectHostUpdates } from "./route-project";
@@ -113,7 +112,6 @@ export async function initConatApi() {
   initInterBayServices().catch((err) => {
     logger.warn("failed to initialize inter-bay services", { err: `${err}` });
   });
-  initLLM();
   if (!isLaunchpadProduct()) {
     const { init: initProjectRunner } = lazyRequire("./project/run") as {
       init: () => Promise<void>;

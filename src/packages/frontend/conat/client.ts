@@ -15,7 +15,6 @@ import { initProjectApi, type ProjectApi } from "@cocalc/conat/project/api";
 import { isValidUUID } from "@cocalc/util/misc";
 import { handleErrorMessage } from "@cocalc/conat/util";
 import { PubSub } from "@cocalc/conat/sync/pubsub";
-import type { ChatOptions } from "@cocalc/util/types/llm";
 import { dkv } from "@cocalc/conat/sync/dkv";
 import { akv } from "@cocalc/conat/sync/akv";
 import { astream } from "@cocalc/conat/sync/astream";
@@ -28,7 +27,6 @@ import type {
 } from "@cocalc/conat/service";
 import { listingsClient } from "@cocalc/conat/service/listings";
 import getTime, { getSkew, init as initTime } from "@cocalc/conat/time";
-import { llm as requestLlm } from "@cocalc/conat/llm/client";
 import * as acp from "@cocalc/conat/ai/acp/client";
 import { inventory } from "@cocalc/conat/sync/inventory";
 import { EventEmitter } from "events";
@@ -2460,15 +2458,6 @@ export class ConatClient extends EventEmitter {
     name: string;
   }) => {
     return new PubSub({ client: this.conat(), project_id, path, name });
-  };
-
-  // Evaluate an llm.  This streams the result if stream is given an option,
-  // AND it also always returns the result.
-  llm = async (opts: ChatOptions): Promise<string> => {
-    return await requestLlm(
-      { account_id: this.client.account_id, ...opts },
-      this.conat(),
-    );
   };
 
   streamAcp = async (request, options?) => {

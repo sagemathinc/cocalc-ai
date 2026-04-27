@@ -5,7 +5,6 @@
   "exports": {
     "./auth/*": "./dist/auth/*.js",
     "./sync/*": "./dist/sync/*.js",
-    "./llm/*": "./dist/llm/*.js",
     "./files/*": "./dist/files/*.js",
     "./ai/acp/*": "./dist/ai/acp/*.js",
     "./ai/acp/types": "./dist/ai/acp/types.js",

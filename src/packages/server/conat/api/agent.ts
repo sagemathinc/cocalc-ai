@@ -1,12 +1,15 @@
 import {
   createLaunchpadAgentSdkBridge,
   type AgentActionEnvelope,
-  type AgentCapabilityManifestEntry,
   type AgentActionResult,
+  type AgentCapabilityManifestEntry,
 } from "@cocalc/ai/agent-sdk";
+import { CodexAppServerAgent, type AcpAgent } from "@cocalc/ai/acp";
+import type { AcpStreamPayload } from "@cocalc/conat/ai/acp/types";
 import { projectApiClient } from "@cocalc/conat/project/api";
 import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
 import { conat } from "@cocalc/backend/conat";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import type {
   AgentExecuteRequest,
   AgentExecuteResponse,
@@ -16,20 +19,13 @@ import type {
   AgentRunRequest,
   AgentRunResponse,
 } from "@cocalc/conat/hub/api/agent";
+import { isCodexModelName } from "@cocalc/util/ai/codex";
 import * as projects from "./projects";
 import * as system from "./system";
 import { assertCollab } from "./util";
-import { evaluate as evaluateLlm } from "@cocalc/server/llm";
-import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import {
-  DEFAULT_MODEL,
-  isAnthropicModel,
-  isCustomOpenAI,
-  isGoogleModel,
-  isMistralModel,
-  isOllamaLLM,
-  isOpenAIModel,
-} from "@cocalc/util/db-schema/llm-utils";
+
+const DEFAULT_PLANNER_MODEL = "gpt-5.4-mini";
+const PLANNER_PROJECT_ID = "00000000-0000-4000-8000-000000000000";
 
 function createBridge({
   account_id,
@@ -235,40 +231,102 @@ function parsePlannerOutput({
   return { summary, actions };
 }
 
-async function getPlannerModel(explicit?: string): Promise<string | undefined> {
-  if (explicit) {
-    return explicit;
+function getPlannerCodexModel(explicit?: string): string {
+  if (typeof explicit === "string" && isCodexModelName(explicit.trim())) {
+    return explicit.trim();
   }
-  const settings = await getServerSettings();
-  const preferred =
-    typeof settings?.default_llm === "string" && settings.default_llm.trim()
-      ? settings.default_llm.trim()
-      : DEFAULT_MODEL;
-  const hasKeyForModel = (model: string): boolean => {
-    if (isOpenAIModel(model)) {
-      return !!settings?.openai_api_key;
-    }
-    if (isGoogleModel(model)) {
-      return !!settings?.google_vertexai_key;
-    }
-    if (isAnthropicModel(model)) {
-      return !!settings?.anthropic_api_key;
-    }
-    if (isMistralModel(model)) {
-      return !!settings?.mistral_api_key;
-    }
-    if (isCustomOpenAI(model) || isOllamaLLM(model)) {
-      return true;
-    }
-    return true;
-  };
-  if (hasKeyForModel(preferred)) {
-    return preferred;
+  return DEFAULT_PLANNER_MODEL;
+}
+
+let plannerCodexAgent: Promise<AcpAgent> | undefined;
+
+async function getPlannerCodexAgent(): Promise<AcpAgent> {
+  plannerCodexAgent ??= CodexAppServerAgent.create({
+    binaryPath: process.env.COCALC_CODEX_BIN,
+    cwd: process.cwd(),
+  });
+  return await plannerCodexAgent;
+}
+
+function getPlannerProjectId(defaults?: AgentPlanRequest["defaults"]): string {
+  return defaults?.projectId?.trim() || PLANNER_PROJECT_ID;
+}
+
+async function runCodexPrompt({
+  agent,
+  account_id,
+  prompt,
+  model,
+  project_id,
+}: {
+  agent: AcpAgent;
+  account_id: string;
+  prompt: string;
+  model?: string;
+  project_id: string;
+}): Promise<string> {
+  let finalResponse = "";
+  let lastError = "";
+  await agent.evaluate({
+    account_id,
+    project_id,
+    prompt,
+    stream: async (payload?: AcpStreamPayload | null) => {
+      if (payload == null) {
+        return;
+      }
+      if (payload.type === "summary") {
+        finalResponse = payload.finalResponse ?? "";
+        return;
+      }
+      if (payload.type === "error") {
+        lastError = payload.error;
+      }
+    },
+    config: {
+      model: getPlannerCodexModel(model),
+      sessionMode: "read-only",
+    },
+  });
+  const raw = finalResponse.trim();
+  if (raw.length > 0) {
+    return raw;
   }
-  if (settings?.openai_api_key) {
-    return "gpt-4o-mini-8k";
-  }
-  return preferred;
+  throw Error(lastError || "Codex planner returned no output");
+}
+
+async function runPlannerWithCodex({
+  account_id,
+  prompt,
+  defaults,
+  manifest,
+  maxActions,
+  model,
+}: {
+  account_id: string;
+  prompt: string;
+  defaults?: AgentPlanRequest["defaults"];
+  manifest: AgentManifestEntry[];
+  maxActions: number;
+  model?: string;
+}): Promise<string> {
+  const agent = await getPlannerCodexAgent();
+  const codexPrompt = [
+    buildPlannerSystemPrompt(maxActions),
+    "",
+    buildPlannerInput({
+      prompt,
+      defaults,
+      manifest,
+    }),
+  ].join("\n");
+  return await runCodexPrompt({
+    agent,
+    account_id,
+    prompt: codexPrompt,
+    model,
+    project_id: getPlannerProjectId(defaults),
+  });
 }
 
 export async function manifest({
@@ -328,19 +386,27 @@ export async function plan(opts: AgentPlanRequest): Promise<AgentPlanResponse> {
       ? opts.manifest
       : fallbackManifest;
   const manifest = manifest0.filter((entry) => !!entry?.actionType);
-
-  const raw = await evaluateLlm({
-    account_id,
-    model: await getPlannerModel(opts.model),
-    system: buildPlannerSystemPrompt(maxActions),
-    input: buildPlannerInput({
+  let raw = "";
+  const settings = await getServerSettings();
+  const configuredPlannerModel = [opts.model, settings?.default_llm]
+    .map((value) => `${value ?? ""}`.trim())
+    .find((value) => isCodexModelName(value));
+  try {
+    raw = await runPlannerWithCodex({
+      account_id,
       prompt,
       defaults: opts.defaults,
       manifest,
-    }),
-    maxTokens: 1200,
-    tag: "agent-planner",
-  });
+      maxActions,
+      model: configuredPlannerModel,
+    });
+  } catch (err) {
+    return {
+      status: "failed",
+      requestId,
+      error: `Codex planner failed: ${err}`,
+    };
+  }
 
   try {
     const plan = parsePlannerOutput({ raw, maxActions });
