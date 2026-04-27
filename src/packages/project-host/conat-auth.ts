@@ -27,6 +27,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
 import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
 import { resolveProjectHostBrowserSessionFromCookieHeader } from "./browser-session";
+import { getProjectHostManagedEgressBlockedMessage } from "./managed-egress-runtime";
 
 const authDecisionCache = new TTL<string, boolean>({
   max: 20_000,
@@ -128,6 +129,16 @@ function clearAuthCaches() {
   collaboratorCache.clear();
 }
 
+function throwManagedEgressBlocked(account_id: string): never {
+  const message =
+    getProjectHostManagedEgressBlockedMessage(account_id) ??
+    "interactive session traffic is temporarily blocked for this account";
+  throw Object.assign(new Error(message), {
+    code: 429,
+    authFailure: false,
+  });
+}
+
 function getAccountIssuedAtSeconds(user: any): number {
   const iat = Number(user?.auth_iat_s);
   if (Number.isFinite(iat) && iat > 0) {
@@ -185,7 +196,13 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     }
     const token = readBearerToken(socket);
     if (token) {
-      return userFromBearerToken({ token, host_id });
+      const user = userFromBearerToken({ token, host_id });
+      if (user.account_id) {
+        if (getProjectHostManagedEgressBlockedMessage(user.account_id)) {
+          throwManagedEgressBlocked(user.account_id);
+        }
+      }
+      return user;
     }
     const handshakeProjectAuth = readProjectScopedAuth(socket);
     if (handshakeProjectAuth) {
@@ -216,6 +233,11 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
       socket?.handshake?.headers?.cookie,
     );
     if (browserSession) {
+      if (
+        getProjectHostManagedEgressBlockedMessage(browserSession.account_id)
+      ) {
+        throwManagedEgressBlocked(browserSession.account_id);
+      }
       if (
         isAccountSessionRevoked({
           account_id: browserSession.account_id,

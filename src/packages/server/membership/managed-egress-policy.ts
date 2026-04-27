@@ -25,12 +25,13 @@ export interface ManagedProjectEgressPolicy {
 
 export async function getManagedProjectEgressPolicy(opts: {
   account_id?: string;
-  project_id: string;
+  project_id?: string;
   category: ManagedProjectEgressCategory;
 }): Promise<ManagedProjectEgressPolicy> {
+  const project_id = `${opts.project_id ?? ""}`.trim() || undefined;
   const account_id =
     `${opts.account_id ?? ""}`.trim() ||
-    (await getProjectOwnerAccountId(opts.project_id));
+    (project_id ? await getProjectOwnerAccountId(project_id) : undefined);
   if (!account_id) {
     return {
       category: opts.category,

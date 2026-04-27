@@ -5,17 +5,50 @@
 
 import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
+import { connect } from "@cocalc/conat/core/client";
+import { inboxPrefix } from "@cocalc/conat/names";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { resolveProjectHostId } from "./host-id";
 import { startStandaloneProjectHostConatRouter } from "./conat-router";
 import { startConatRouterTrafficMetricsLoop } from "./conat-router-metrics";
 import { startEventLoopStallMonitor } from "./event-loop-stalls";
+import { getProjectHostMasterConatToken } from "./master-conat-token";
+import { setMasterConatClient } from "./master-status";
+import { wireSystemApi } from "./hub/system";
+import { startConatRouterManagedEgressLoop } from "./conat-router-egress";
 
 const logger = getLogger("project-host:conat-router-daemon");
 
 export interface ProjectHostConatRouterDaemonContext {
   host: string;
   port: number;
+}
+
+function connectMasterClient({ hostId }: { hostId: string }) {
+  const address =
+    `${process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER ?? ""}`.trim();
+  if (!address) {
+    logger.warn(
+      "starting conat router daemon without master client; managed egress metering will be unavailable",
+    );
+    return;
+  }
+  const client = connect({
+    address,
+    inboxPrefix: inboxPrefix({ host_id: hostId }),
+    noCache: true,
+    auth: (cb) => {
+      const token = getProjectHostMasterConatToken();
+      if (`${token ?? ""}`.trim()) {
+        cb({ bearer: token });
+      } else {
+        cb({});
+      }
+    },
+  });
+  setMasterConatClient(client);
+  wireSystemApi();
+  return client;
 }
 
 export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
@@ -26,12 +59,16 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
   const hostId = resolveProjectHostId();
   const systemAccountPassword = getOrCreateProjectHostConatPassword();
   setConatPassword(systemAccountPassword);
+  const masterClient = connectMasterClient({ hostId });
   const { host, port, httpServer, conatServer, ingressHttpServer } =
     await startStandaloneProjectHostConatRouter({
       hostId,
       systemAccountPassword,
     });
   const stopTrafficMetricsLoop = startConatRouterTrafficMetricsLoop({
+    conatServer,
+  });
+  const stopManagedEgressLoop = startConatRouterManagedEgressLoop({
     conatServer,
   });
   logger.info("project-host conat router daemon ready", {
@@ -49,7 +86,14 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
       await conatServer.close();
     } finally {
       stopTrafficMetricsLoop();
+      stopManagedEgressLoop();
       stopEventLoopStallMonitor();
+      setMasterConatClient(undefined);
+      try {
+        masterClient?.close();
+      } catch {
+        // ignore close errors
+      }
       if (ingressHttpServer) {
         await new Promise<void>((resolve) => {
           ingressHttpServer.close(() => resolve());

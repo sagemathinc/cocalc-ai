@@ -446,6 +446,13 @@ export class ConatServer extends EventEmitter {
     return snapshot;
   };
 
+  public disconnectSockets(ids: string | string[]): void {
+    const values = typeof ids === "string" ? [ids] : ids;
+    for (const id of values) {
+      this.io.in(id).disconnectSockets();
+    }
+  }
+
   // this is for the Kubernetes health check -- I haven't
   // thought at all about what to do here, really.
   // Hopefully experience can teach us.
@@ -1048,7 +1055,9 @@ export class ConatServer extends EventEmitter {
         // Only authentication failures count against the per-address
         // abuse window. Resource-limit denials below are legitimate
         // backpressure and must not poison auth state.
-        this.recordAuthFailure(address);
+        if (err?.code !== 429 && err?.authFailure !== false) {
+          this.recordAuthFailure(address);
+        }
         throw err;
       }
       this.clearAuthFailures(address);
@@ -1919,12 +1928,7 @@ export class ConatServer extends EventEmitter {
     // user has to explicitly refresh their browser after
     // being disconnected this way:
     const disconnect = async (ids: string | string[]) => {
-      if (typeof ids == "string") {
-        ids = [ids];
-      }
-      for (const id of ids) {
-        this.io.in(id).disconnectSockets();
-      }
+      this.disconnectSockets(ids);
     };
 
     const subject = sysApiSubject({ clusterName: this.clusterName });

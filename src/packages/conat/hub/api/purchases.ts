@@ -82,8 +82,8 @@ export interface MembershipUsageStatus {
 
 export interface ManagedEgressEventSummary {
   account_id?: string;
-  project_id: string;
-  project_title?: string;
+  project_id?: string | null;
+  project_title?: string | null;
   category: string;
   bytes: number;
   occurred_at: string;

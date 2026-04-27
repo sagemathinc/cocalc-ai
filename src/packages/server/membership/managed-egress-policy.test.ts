@@ -128,4 +128,40 @@ describe("getManagedProjectEgressPolicy", () => {
       limit7d: 2000,
     });
   });
+
+  it("allows account-attributed interactive egress without a project id", async () => {
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "pro",
+      source: "subscription",
+      entitlements: {
+        usage_limits: {
+          egress_5h_bytes: 1000,
+          egress_7d_bytes: 2000,
+        },
+      },
+    });
+    getManagedEgressUsageForAccountMock.mockResolvedValue({
+      managed_egress_5h_bytes: 200,
+      managed_egress_7d_bytes: 300,
+      over_managed_egress_5h: false,
+      over_managed_egress_7d: false,
+      managed_egress_categories_5h_bytes: { "interactive-conat": 200 },
+      managed_egress_categories_7d_bytes: { "interactive-conat": 300 },
+    });
+    const { getManagedProjectEgressPolicy } =
+      await import("./managed-egress-policy");
+    await expect(
+      getManagedProjectEgressPolicy({
+        account_id: "account-2",
+        category: "interactive-conat",
+      }),
+    ).resolves.toMatchObject({
+      account_id: "account-2",
+      category: "interactive-conat",
+      allowed: true,
+      managed_egress_5h_bytes: 200,
+      managed_egress_7d_bytes: 300,
+    });
+    expect(getProjectOwnerAccountIdMock).not.toHaveBeenCalled();
+  });
 });
