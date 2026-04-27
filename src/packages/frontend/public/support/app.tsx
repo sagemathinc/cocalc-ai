@@ -14,6 +14,7 @@ import {
   PublicPageRoot,
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
+import { getPolicyPagesMode } from "@cocalc/frontend/public/ui/policy-pages";
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { COLORS, HELP_EMAIL, SITE_NAME } from "@cocalc/util/theme";
 
@@ -29,6 +30,7 @@ interface SupportConfig {
   help_email?: string;
   is_authenticated?: boolean;
   on_cocalc_com?: boolean;
+  policy_pages?: string;
   show_policies?: boolean;
   site_name?: string;
   support?: string;
@@ -232,7 +234,7 @@ export default function PublicSupportApp({
       <PublicTopNav
         active="support"
         isAuthenticated={!!config?.is_authenticated}
-        showPolicies={!!config?.show_policies}
+        showPolicies={getPolicyPagesMode(config) !== "none"}
         siteName={config?.site_name}
       />
       <PublicHero

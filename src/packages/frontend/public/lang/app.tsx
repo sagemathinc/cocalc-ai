@@ -15,6 +15,7 @@ import {
   PublicPageRoot,
   PublicSectionCard,
 } from "@cocalc/frontend/public/ui/shell";
+import { getPolicyPagesMode } from "@cocalc/frontend/public/ui/policy-pages";
 import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
 import { LOCALE, LOCALIZATIONS, type Locale } from "@cocalc/util/i18n";
 import { SITE_NAME } from "@cocalc/util/theme";
@@ -26,6 +27,7 @@ const { Paragraph, Text, Title } = Typography;
 
 interface LangConfig {
   is_authenticated?: boolean;
+  policy_pages?: string;
   show_policies?: boolean;
   site_name?: string;
 }
@@ -328,7 +330,7 @@ export default function PublicLangApp({
       <PublicTopNav
         active="home"
         isAuthenticated={!!config?.is_authenticated}
-        showPolicies={!!config?.show_policies}
+        showPolicies={getPolicyPagesMode(config) !== "none"}
         siteName={siteName}
       />
       {content}

@@ -19,6 +19,7 @@ interface CustomizePayload {
     imprint?: string;
     is_authenticated?: boolean;
     on_cocalc_com?: boolean;
+    policy_pages?: string;
     policies?: string;
     site_name?: string;
     show_policies?: boolean;
