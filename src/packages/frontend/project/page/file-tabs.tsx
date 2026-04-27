@@ -375,6 +375,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
       <Tooltip title={title}>
         <Button
           size="small"
+          style={mode === "tabs" ? { marginTop: "-16px" } : undefined}
           onClick={() => setTabsMode(mode === "tabs" ? "dropdown" : "tabs")}
         >
           {mode === "tabs" ? "Tabs" : "List"}
