@@ -462,10 +462,24 @@ export function createProjectHostHttpProxyAuth({
   const cleanQueryTokenOrRedirect = (
     req: IncomingMessage,
     res: ServerResponse,
+    project_id: string,
   ): boolean => {
     const cleaned = urlWithoutQueryToken(req);
     if (!cleaned) {
       return false;
+    }
+    try {
+      const url = new URL(req.url ?? "/", "http://project-host.local");
+      const isProjectFileRequest = url.pathname.includes(
+        `/${project_id}/files/`,
+      );
+      const isExplicitDownload = url.searchParams.has("download");
+      if (isProjectFileRequest && !isExplicitDownload) {
+        stripQueryToken(req);
+        return false;
+      }
+    } catch {
+      // fall through to redirect behavior below
     }
     if (/^(GET|HEAD)$/i.test(req.method ?? "GET")) {
       res.statusCode = 302;
@@ -522,7 +536,7 @@ export function createProjectHostHttpProxyAuth({
         issued_at_s: accountFromBrowserSession.iat_s,
         actor: "account",
       });
-      if (cleanQueryTokenOrRedirect(req, res)) {
+      if (cleanQueryTokenOrRedirect(req, res, project_id)) {
         return;
       }
       return;
@@ -547,7 +561,7 @@ export function createProjectHostHttpProxyAuth({
         issued_at_s: accountFromSession.iat_s,
         actor: "account",
       });
-      if (cleanQueryTokenOrRedirect(req, res)) {
+      if (cleanQueryTokenOrRedirect(req, res, project_id)) {
         return;
       }
       return;
@@ -583,7 +597,7 @@ export function createProjectHostHttpProxyAuth({
       delete req.headers.authorization;
     }
     setSessionCookie(req, res, account_id, project_id);
-    if (cleanQueryTokenOrRedirect(req, res)) {
+    if (cleanQueryTokenOrRedirect(req, res, project_id)) {
       return;
     }
   };

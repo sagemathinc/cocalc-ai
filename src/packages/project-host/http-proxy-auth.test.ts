@@ -183,6 +183,38 @@ describe("project-host HTTP session cookie", () => {
     expect(res.end).toHaveBeenCalled();
   });
 
+  it("serves non-download file previews without redirecting when a bearer query token is present", async () => {
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const browserSession = createProjectHostBrowserSessionToken({
+      account_id,
+      now_ms: Date.now(),
+    });
+    const req = {
+      headers: {
+        cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "x-forwarded-proto": "https",
+      },
+      method: "GET",
+      socket: {},
+      url: `/${project_id}/files/home/user/a.pdf?${PROJECT_HOST_HTTP_AUTH_QUERY_PARAM}=secret&x=1`,
+    } as any;
+    const res = createResponse();
+    res.end = jest.fn();
+    res.statusCode = 200;
+
+    await auth.authorizeHttpRequest(req, res, project_id);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.setHeader).not.toHaveBeenCalledWith(
+      "Location",
+      expect.anything(),
+    );
+    expect(res.end).not.toHaveBeenCalled();
+    expect(req.url).toBe(`/${project_id}/files/home/user/a.pdf?x=1`);
+  });
+
   it("authorizes websocket upgrades from the shared browser session cookie", async () => {
     const auth = createProjectHostHttpProxyAuth({
       host_id: "00000000-1000-4000-8000-000000000099",

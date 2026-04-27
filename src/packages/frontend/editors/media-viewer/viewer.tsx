@@ -9,7 +9,9 @@ Image viewer component -- for viewing standard image types.
 
 import { filename_extension } from "@cocalc/util/misc";
 
-import { useState } from "../../app-framework";
+import { React, useState } from "../../app-framework";
+import { Loading } from "@cocalc/frontend/components";
+import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
 import { webapp_client } from "../../webapp-client";
 import { MediaViewerButtonBar } from "./button-bar";
 import { VIDEO_EXTS, IMAGE_EXTS, AUDIO_EXTS } from "../../file-associations";
@@ -31,6 +33,10 @@ export const MediaViewer: React.FC<Props> = ({ project_id, path }) => {
   if (param) {
     url += `?param=${param}`; // this forces reload whenever refresh button clicked
   }
+  const authedUrl = useProjectHostAuthedUrl({
+    project_id,
+    url,
+  });
 
   return (
     <div style={{ marginTop: "1px" }} className={"smc-vfill"}>
@@ -46,7 +52,11 @@ export const MediaViewer: React.FC<Props> = ({ project_id, path }) => {
           background: "black",
         }}
       >
-        <RenderMedia url={url} path={path} />
+        {authedUrl ? (
+          <RenderMedia url={authedUrl} path={path} />
+        ) : (
+          <Loading theme="medium" />
+        )}
       </div>
     </div>
   );

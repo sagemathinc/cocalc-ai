@@ -33,6 +33,7 @@ import usePinchToZoom, {
   Data,
 } from "@cocalc/frontend/frame-editors/frame-tree/pinch-to-zoom";
 import { EditorState } from "@cocalc/frontend/frame-editors/frame-tree/types";
+import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
 import { list_alternatives, seconds_ago } from "@cocalc/util/misc";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
@@ -110,6 +111,10 @@ export function PDFJS({
   const [missing, setMissing] = useState<boolean>(false);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [cursor, setCursor] = useState<"grabbing" | "grab">("grab");
+  const pdfUrl = useProjectHostAuthedUrl({
+    project_id,
+    url: url_to_pdf(project_id, path, reload ?? 0),
+  });
 
   const divRef = useRef<HTMLDivElement>(null);
 
@@ -136,8 +141,9 @@ export function PDFJS({
   usePinchToZoom(pinchToZoomConfig);
 
   useEffect(() => {
-    loadDoc(reload ?? 0);
-  }, [reload]);
+    if (!pdfUrl) return;
+    void loadDoc(pdfUrl);
+  }, [pdfUrl]);
 
   // Cleanup timeouts on unmount
   useEffect(() => {
@@ -294,11 +300,9 @@ export function PDFJS({
     return <Loading theme="medium" />;
   }
 
-  async function loadDoc(reload: number): Promise<void> {
+  async function loadDoc(url: string): Promise<void> {
     try {
-      const doc: PDFDocumentProxy = await getDocument(
-        url_to_pdf(project_id, path, reload),
-      );
+      const doc: PDFDocumentProxy = await getDocument(url);
       if (!isMounted.current) return;
       setMissing(false);
       const v: Promise<PDFPageProxy>[] = [];
