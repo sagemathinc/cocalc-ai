@@ -10,12 +10,9 @@ import { Button, Flex, Typography } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
-  PublicHero,
-  PublicPageRoot,
+  PublicSiteShell,
   PublicSectionCard,
-  PublicTitle,
-} from "@cocalc/frontend/public/ui/shell";
-import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
+} from "@cocalc/frontend/public/layout/shell";
 import { COLORS, HELP_EMAIL, SITE_NAME } from "@cocalc/util/theme";
 
 const { Paragraph } = Typography;
@@ -24,7 +21,7 @@ const CommunityView = lazy(() => import("./community-view"));
 const SupportNew = lazy(() => import("./new-view"));
 const SupportTickets = lazy(() => import("./tickets-view"));
 
-type SupportView = "index" | "new" | "tickets" | "community";
+export type SupportView = "index" | "new" | "tickets" | "community";
 
 interface SupportConfig {
   help_email?: string;
@@ -229,49 +226,40 @@ export default function PublicSupportApp({
   }
 
   return (
-    <PublicPageRoot>
-      <PublicTopNav
-        active="support"
-        isAuthenticated={!!config?.is_authenticated}
-        showPolicies={!!config?.show_policies}
-        siteName={config?.site_name}
-      />
-      {view === "index" ? (
-        <PublicTitle>{title}</PublicTitle>
-      ) : (
-        <PublicHero
-          eyebrow="SUPPORT"
-          title={title}
-          subtitle="Direct support, Zendesk-backed tickets, and public help resources."
-          actions={
-            <Flex wrap gap={8}>
-              <Button onClick={() => navigate("index")}>Support</Button>
-              {config.zendesk ? (
-                <Button
-                  type={view === "new" ? "primary" : "default"}
-                  onClick={() => navigate("new")}
-                >
-                  New ticket
-                </Button>
-              ) : null}
-              {config.zendesk ? (
-                <Button
-                  type={view === "tickets" ? "primary" : "default"}
-                  onClick={() => navigate("tickets")}
-                >
-                  My tickets
-                </Button>
-              ) : null}
-              <Button
-                type={view === "community" ? "primary" : "default"}
-                onClick={() => navigate("community")}
-              >
-                Community
-              </Button>
-            </Flex>
-          }
-        />
-      )}
+    <PublicSiteShell
+      active="support"
+      isAuthenticated={!!config?.is_authenticated}
+      showPolicies={!!config?.show_policies}
+      siteName={config?.site_name}
+      title={title}
+    >
+      {view !== "index" ? (
+        <Flex wrap gap={8}>
+          <Button onClick={() => navigate("index")}>Support</Button>
+          {config.zendesk ? (
+            <Button
+              type={view === "new" ? "primary" : "default"}
+              onClick={() => navigate("new")}
+            >
+              New ticket
+            </Button>
+          ) : null}
+          {config.zendesk ? (
+            <Button
+              type={view === "tickets" ? "primary" : "default"}
+              onClick={() => navigate("tickets")}
+            >
+              My tickets
+            </Button>
+          ) : null}
+          <Button
+            type={view === "community" ? "primary" : "default"}
+            onClick={() => navigate("community")}
+          >
+            Community
+          </Button>
+        </Flex>
+      ) : null}
       <div style={{ marginTop: 24 }}>
         {view === "index" ? (
           <SupportIndex config={config} onNavigate={navigate} />
@@ -302,6 +290,6 @@ export default function PublicSupportApp({
           </Suspense>
         ) : null}
       </div>
-    </PublicPageRoot>
+    </PublicSiteShell>
   );
 }

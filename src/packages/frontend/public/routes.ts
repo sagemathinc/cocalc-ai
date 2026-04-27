@@ -4,8 +4,16 @@
  */
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import type { PublicAuthRoute } from "./auth/routes";
+import { getPublicAuthRouteFromPath } from "./auth/routes";
+import type { PublicFeaturesRoute } from "./features/routes";
+import { getFeaturesRouteFromPath } from "./features/routes";
+import type { PublicLangRoute } from "./lang/routes";
+import { getLangRouteFromPath, parsePublicLangTarget } from "./lang/routes";
+import type { SupportView } from "./support/app";
+import { getSupportViewFromPath } from "./support/app";
 
-export type PublicContentView =
+export type PublicInfoView =
   | "about"
   | "about-events"
   | "about-status"
@@ -23,12 +31,31 @@ export type PublicContentView =
   | "software-cocalc-launchpad"
   | "software-cocalc-plus";
 
-export interface PublicContentRoute {
+export interface PublicInfoRoute {
   newsId?: number;
   policySlug?: string;
   teamSlug?: string;
   timestamp?: number;
-  view: PublicContentView;
+  view: PublicInfoView;
+}
+
+export type PublicRoute =
+  | { section: "home" }
+  | { route: PublicFeaturesRoute; section: "features" }
+  | { route: PublicAuthRoute; section: "auth" }
+  | { route: PublicLangRoute; section: "lang" }
+  | { section: "support"; view: SupportView }
+  | { route: PublicInfoRoute; section: "info" };
+
+function getBaseOffset(): number {
+  return appBasePath === "/"
+    ? 0
+    : appBasePath.split("/").filter(Boolean).length;
+}
+
+function getRouteParts(pathname: string): string[] {
+  const parts = pathname.split("?")[0].split("/").filter(Boolean);
+  return parts.slice(getBaseOffset());
 }
 
 function parseTrailingInteger(segment?: string): number | undefined {
@@ -38,11 +65,8 @@ function parseTrailingInteger(segment?: string): number | undefined {
   return value;
 }
 
-export function getContentRouteFromPath(pathname: string): PublicContentRoute {
-  const parts = pathname.split("?")[0].split("/").filter(Boolean);
-  const baseOffset =
-    appBasePath === "/" ? 0 : appBasePath.split("/").filter(Boolean).length;
-  const routeParts = parts.slice(baseOffset);
+export function getInfoRouteFromPath(pathname: string): PublicInfoRoute {
+  const routeParts = getRouteParts(pathname);
 
   if (routeParts[0] === "about") {
     if (routeParts[1] === "events") return { view: "about-events" };
@@ -95,8 +119,44 @@ export function getContentRouteFromPath(pathname: string): PublicContentRoute {
   return { view: "about" };
 }
 
-export function topLevelView(
-  route: PublicContentRoute,
+export function getPublicRouteFromPath(
+  pathname: string,
+  search?: string,
+): PublicRoute {
+  const routeParts = getRouteParts(pathname);
+
+  if (routeParts.length === 0) {
+    return { section: "home" };
+  }
+
+  if (routeParts[0] === "features") {
+    return { route: getFeaturesRouteFromPath(pathname), section: "features" };
+  }
+
+  if (routeParts[0] === "support") {
+    return { section: "support", view: getSupportViewFromPath(pathname) };
+  }
+
+  if (
+    routeParts[0] === "auth" ||
+    routeParts[0] === "sso" ||
+    routeParts[0] === "redeem"
+  ) {
+    return {
+      route: getPublicAuthRouteFromPath(pathname, search),
+      section: "auth",
+    };
+  }
+
+  if (routeParts[0] === "lang" || parsePublicLangTarget(pathname) != null) {
+    return { route: getLangRouteFromPath(pathname), section: "lang" };
+  }
+
+  return { route: getInfoRouteFromPath(pathname), section: "info" };
+}
+
+export function topLevelInfoView(
+  route: PublicInfoRoute,
 ): "about" | "pricing" | "policies" | "news" | "software" {
   switch (route.view) {
     case "pricing":
@@ -119,14 +179,14 @@ export function topLevelView(
   }
 }
 
-export function isPublicContentTarget(
-  target?: string | null,
-): target is string {
+export function isPublicTarget(target?: string | null): target is string {
   if (!target) return false;
-  return /\/(about|pricing|policies|news|software)(\/|$)/.test(target);
+  return /\/(auth|sso|redeem|features|support|about|pricing|policies|news|software|lang|[a-z]{2}(-[A-Z]{2})?)(\/|$)/.test(
+    target,
+  );
 }
 
-export function contentPath(view: string): string {
+export function publicPath(view: string): string {
   const base = appBasePath === "/" ? "" : appBasePath;
   return `${base}/${view}`;
 }

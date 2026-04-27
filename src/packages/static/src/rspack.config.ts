@@ -265,39 +265,9 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
         ]),
         dependOn: "load",
       },
-      "public-auth": {
+      public: {
         import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-auth.js"),
-        ]),
-        dependOn: "load",
-      },
-      "public-home": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-home.js"),
-        ]),
-        dependOn: "load",
-      },
-      "public-support": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-support.js"),
-        ]),
-        dependOn: "load",
-      },
-      "public-content": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-content.js"),
-        ]),
-        dependOn: "load",
-      },
-      "public-lang": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-lang.js"),
-        ]),
-        dependOn: "load",
-      },
-      "public-features": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-features.js"),
+          resolve("dist-ts/src/webapp-public.js"),
         ]),
         dependOn: "load",
       },

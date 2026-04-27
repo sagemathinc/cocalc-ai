@@ -2,7 +2,7 @@
 
 import { render, screen } from "@testing-library/react";
 import PublicAuthApp, { getPublicAuthRouteFromPath } from "../app";
-import { getPublicAuthRedirectTargetFromSearch } from "../bootstrap";
+import { getPublicAuthRedirectTargetFromSearch } from "../routes";
 
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {

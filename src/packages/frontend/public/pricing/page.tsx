@@ -8,7 +8,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { Alert, Button, Card, Flex, Space, Tag, Typography } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicSectionCard } from "@cocalc/frontend/public/layout/shell";
 import { currency, plural, round2 } from "@cocalc/util/misc";
 import { upgrades } from "@cocalc/util/upgrade-spec";
 import { joinUrlPath } from "@cocalc/util/url-path";

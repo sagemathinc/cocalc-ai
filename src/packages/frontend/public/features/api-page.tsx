@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicSectionCard } from "@cocalc/frontend/public/layout/shell";
 import {
   BulletList,
   FeatureImage,

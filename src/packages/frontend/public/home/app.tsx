@@ -14,11 +14,9 @@ import {
   LinkButton,
 } from "@cocalc/frontend/public/features/page-components";
 import {
-  PublicPageRoot,
+  PublicSiteShell,
   PublicSectionCard,
-  PublicTitle,
-} from "@cocalc/frontend/public/ui/shell";
-import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
+} from "@cocalc/frontend/public/layout/shell";
 import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import { slugURL } from "@cocalc/util/news";
 import type { NewsItem } from "@cocalc/util/types/news";
@@ -581,15 +579,14 @@ export default function PublicHomeApp({
   }, [siteName]);
 
   return (
-    <PublicPageRoot>
-      <PublicTopNav
-        active="home"
-        isAuthenticated={!!config?.is_authenticated}
-        showPolicies={!!config?.show_policies}
-        siteName={siteName}
-      />
-      <NewsBanner items={initialNews ?? []} />
-      <PublicTitle>{siteName}</PublicTitle>
+    <PublicSiteShell
+      active="home"
+      beforeTitle={<NewsBanner items={initialNews ?? []} />}
+      isAuthenticated={!!config?.is_authenticated}
+      showPolicies={!!config?.show_policies}
+      siteName={siteName}
+      title={siteName}
+    >
       <HeroDetails config={config} siteName={siteName} />
       <AgentSection />
       <HighlightSection siteName={siteName} />
@@ -597,6 +594,6 @@ export default function PublicHomeApp({
       <ResourceSection />
       <NewsSection initialNews={initialNews} />
       <BottomCallout config={config} siteName={siteName} />
-    </PublicPageRoot>
+    </PublicSiteShell>
   );
 }

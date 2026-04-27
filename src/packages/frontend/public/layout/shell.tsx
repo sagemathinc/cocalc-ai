@@ -7,6 +7,7 @@ import type { CSSProperties, ReactNode } from "react";
 
 import { App as AntdApp, Card, ConfigProvider, Layout, Typography } from "antd";
 import { COLORS } from "@cocalc/util/theme";
+import PublicTopNav, { type PublicTopNavActiveKey } from "./top-nav";
 
 const { Content } = Layout;
 const { Paragraph, Text, Title } = Typography;
@@ -64,20 +65,6 @@ interface PublicHeroProps {
   title: ReactNode;
 }
 
-export function PublicTitle({ children }: { children: ReactNode }) {
-  return (
-    <Title
-      level={1}
-      style={{
-        margin: 0,
-        textAlign: "center",
-      }}
-    >
-      {children}
-    </Title>
-  );
-}
-
 export function PublicHero({
   actions,
   eyebrow,
@@ -127,5 +114,46 @@ export function PublicSectionCard({ children }: PublicSectionCardProps) {
     >
       {children}
     </Card>
+  );
+}
+
+interface PublicSiteShellProps {
+  active?: PublicTopNavActiveKey;
+  beforeTitle?: ReactNode;
+  children: ReactNode;
+  isAuthenticated?: boolean;
+  showPolicies?: boolean;
+  siteName?: string;
+  title: ReactNode;
+}
+
+export function PublicSiteShell({
+  active,
+  beforeTitle,
+  children,
+  isAuthenticated,
+  showPolicies,
+  siteName,
+  title,
+}: PublicSiteShellProps) {
+  return (
+    <PublicPageRoot>
+      <PublicTopNav
+        active={active}
+        isAuthenticated={isAuthenticated}
+        showPolicies={showPolicies}
+        siteName={siteName}
+      />
+      {beforeTitle}
+      <Title
+        level={1}
+        style={{
+          textAlign: "center",
+        }}
+      >
+        {title}
+      </Title>
+      {children}
+    </PublicPageRoot>
   );
 }

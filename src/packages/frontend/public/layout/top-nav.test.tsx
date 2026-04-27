@@ -41,7 +41,15 @@ describe("PublicTopNav", () => {
       within(publicPages)
         .getAllByRole("menuitem")
         .map((item) => item.textContent),
-    ).toEqual(["Home", "Features", "Pricing", "News", "About", "Policies"]);
+    ).toEqual([
+      "Home",
+      "Features",
+      "Pricing",
+      "News",
+      "About",
+      "Software",
+      "Policies",
+    ]);
     expect(screen.getByRole("link", { name: "Support" })).not.toBeNull();
   });
 

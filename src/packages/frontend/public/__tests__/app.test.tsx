@@ -3,11 +3,12 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 
 import type { NewsItem } from "@cocalc/util/types/news";
-import PublicContentApp from "../app";
+import PublicApp from "../app";
 import {
-  contentPath,
-  getContentRouteFromPath,
-  isPublicContentTarget,
+  type PublicInfoRoute,
+  getInfoRouteFromPath,
+  isPublicTarget,
+  publicPath,
 } from "../routes";
 
 const originalFetch = global.fetch;
@@ -26,80 +27,82 @@ afterEach(async () => {
   global.fetch = originalFetch;
 });
 
-describe("getContentRouteFromPath", () => {
+function infoRoute(route: PublicInfoRoute) {
+  return { route, section: "info" as const };
+}
+
+describe("getInfoRouteFromPath", () => {
   it("supports deeper content routes under a base path", () => {
-    expect(getContentRouteFromPath("/about")).toEqual({ view: "about" });
-    expect(getContentRouteFromPath(contentPath("about/events"))).toEqual({
+    expect(getInfoRouteFromPath("/about")).toEqual({ view: "about" });
+    expect(getInfoRouteFromPath(publicPath("about/events"))).toEqual({
       view: "about-events",
     });
-    expect(getContentRouteFromPath(contentPath("about/status"))).toEqual({
+    expect(getInfoRouteFromPath(publicPath("about/status"))).toEqual({
       view: "about-status",
     });
-    expect(getContentRouteFromPath(contentPath("about/team"))).toEqual({
+    expect(getInfoRouteFromPath(publicPath("about/team"))).toEqual({
       view: "about-team",
     });
     expect(
-      getContentRouteFromPath(contentPath("about/team/william-stein")),
+      getInfoRouteFromPath(publicPath("about/team/william-stein")),
     ).toEqual({
       teamSlug: "william-stein",
       view: "about-team-member",
     });
-    expect(getContentRouteFromPath(contentPath("pricing"))).toEqual({
+    expect(getInfoRouteFromPath(publicPath("pricing"))).toEqual({
       view: "pricing",
     });
-    expect(getContentRouteFromPath(contentPath("pricing/courses"))).toEqual({
+    expect(getInfoRouteFromPath(publicPath("pricing/courses"))).toEqual({
       view: "pricing",
     });
-    expect(getContentRouteFromPath(contentPath("policies/imprint"))).toEqual({
+    expect(getInfoRouteFromPath(publicPath("policies/imprint"))).toEqual({
       view: "policies-imprint",
     });
-    expect(getContentRouteFromPath(contentPath("policies/policies"))).toEqual({
+    expect(getInfoRouteFromPath(publicPath("policies/policies"))).toEqual({
       view: "policies-custom",
     });
-    expect(getContentRouteFromPath(contentPath("policies/privacy"))).toEqual({
+    expect(getInfoRouteFromPath(publicPath("policies/privacy"))).toEqual({
       policySlug: "privacy",
       view: "policies-detail",
     });
     expect(
-      getContentRouteFromPath(contentPath("news/launchpad-update-17")),
+      getInfoRouteFromPath(publicPath("news/launchpad-update-17")),
     ).toEqual({
       newsId: 17,
       view: "news-detail",
     });
     expect(
-      getContentRouteFromPath(
-        contentPath("news/launchpad-update-17/1712345678"),
-      ),
+      getInfoRouteFromPath(publicPath("news/launchpad-update-17/1712345678")),
     ).toEqual({
       newsId: 17,
       timestamp: 1712345678,
       view: "news-history",
     });
-    expect(getContentRouteFromPath(contentPath("software"))).toEqual({
+    expect(getInfoRouteFromPath(publicPath("software"))).toEqual({
       view: "software",
     });
     expect(
-      getContentRouteFromPath(contentPath("software/cocalc-launchpad")),
+      getInfoRouteFromPath(publicPath("software/cocalc-launchpad")),
     ).toEqual({ view: "software-cocalc-launchpad" });
-    expect(
-      getContentRouteFromPath(contentPath("software/cocalc-plus")),
-    ).toEqual({ view: "software-cocalc-plus" });
+    expect(getInfoRouteFromPath(publicPath("software/cocalc-plus"))).toEqual({
+      view: "software-cocalc-plus",
+    });
   });
 
   it("recognizes software routes when booting from a static content entry", () => {
-    expect(isPublicContentTarget("/software/cocalc-plus")).toBe(true);
-    expect(isPublicContentTarget("/base/software/cocalc-plus")).toBe(true);
-    expect(isPublicContentTarget("/pricing")).toBe(true);
-    expect(isPublicContentTarget("/features/jupyter-notebook")).toBe(false);
+    expect(isPublicTarget("/software/cocalc-plus")).toBe(true);
+    expect(isPublicTarget("/base/software/cocalc-plus")).toBe(true);
+    expect(isPublicTarget("/pricing")).toBe(true);
+    expect(isPublicTarget("/features/jupyter-notebook")).toBe(true);
   });
 });
 
-describe("PublicContentApp", () => {
+describe("PublicApp", () => {
   it("renders the about index", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
-        initialRoute={{ view: "about" }}
+        initialRoute={infoRoute({ view: "about" })}
       />,
     );
 
@@ -113,9 +116,9 @@ describe("PublicContentApp", () => {
 
   it("shows Projects but not Settings in the shared nav when authenticated", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ is_authenticated: true, site_name: "Launchpad" }}
-        initialRoute={{ view: "about" }}
+        initialRoute={infoRoute({ view: "about" })}
       />,
     );
 
@@ -125,7 +128,7 @@ describe("PublicContentApp", () => {
 
   it("renders the pricing page from live membership tier data", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ is_authenticated: true, site_name: "Launchpad" }}
         initialMembershipTiers={[
           {
@@ -143,7 +146,7 @@ describe("PublicContentApp", () => {
             store_visible: true,
           },
         ]}
-        initialRoute={{ view: "pricing" }}
+        initialRoute={infoRoute({ view: "pricing" })}
       />,
     );
 
@@ -160,9 +163,9 @@ describe("PublicContentApp", () => {
 
   it("hides the shared Policies nav item when public policies are disabled", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ show_policies: false, site_name: "Launchpad" }}
-        initialRoute={{ view: "about" }}
+        initialRoute={infoRoute({ view: "about" })}
       />,
     );
 
@@ -171,14 +174,14 @@ describe("PublicContentApp", () => {
 
   it("renders configured policy cards", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{
           imprint: "enabled",
           policies: "enabled",
           show_policies: true,
           site_name: "Hub",
         }}
-        initialRoute={{ view: "policies" }}
+        initialRoute={infoRoute({ view: "policies" })}
       />,
     );
 
@@ -193,9 +196,9 @@ describe("PublicContentApp", () => {
 
   it("shows built-in policy pages even without custom policy settings", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ show_policies: true, site_name: "Launchpad" }}
-        initialRoute={{ view: "policies" }}
+        initialRoute={infoRoute({ view: "policies" })}
       />,
     );
 
@@ -206,24 +209,24 @@ describe("PublicContentApp", () => {
 
   it("renders the team page", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ site_name: "Launchpad" }}
-        initialRoute={{ view: "about-team" }}
+        initialRoute={infoRoute({ view: "about-team" })}
       />,
     );
 
-    expect(
-      screen.getByRole("heading", { name: "Launchpad Team" }),
-    ).not.toBeNull();
     expect(screen.getByText("William Stein")).not.toBeNull();
     expect(screen.getByText("Harald Schilly")).not.toBeNull();
   });
 
   it("renders an individual team profile", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ site_name: "Launchpad" }}
-        initialRoute={{ teamSlug: "william-stein", view: "about-team-member" }}
+        initialRoute={infoRoute({
+          teamSlug: "william-stein",
+          view: "about-team-member",
+        })}
       />,
     );
 
@@ -239,9 +242,12 @@ describe("PublicContentApp", () => {
 
   it("renders the exact privacy policy page", async () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ show_policies: true, site_name: "Launchpad" }}
-        initialRoute={{ policySlug: "privacy", view: "policies-detail" }}
+        initialRoute={infoRoute({
+          policySlug: "privacy",
+          view: "policies-detail",
+        })}
       />,
     );
 
@@ -261,9 +267,12 @@ describe("PublicContentApp", () => {
 
   it("renders the exact third-party policy page", async () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ show_policies: true, site_name: "Launchpad" }}
-        initialRoute={{ policySlug: "thirdparties", view: "policies-detail" }}
+        initialRoute={infoRoute({
+          policySlug: "thirdparties",
+          view: "policies-detail",
+        })}
       />,
     );
 
@@ -291,9 +300,12 @@ describe("PublicContentApp", () => {
 
   it("renders the exact terms page", async () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ show_policies: true, site_name: "Launchpad" }}
-        initialRoute={{ policySlug: "terms", view: "policies-detail" }}
+        initialRoute={infoRoute({
+          policySlug: "terms",
+          view: "policies-detail",
+        })}
       />,
     );
 
@@ -305,13 +317,13 @@ describe("PublicContentApp", () => {
 
   it("renders custom policy markdown without extra policy chrome", async () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{
           policies: "# Local Policies\n\nDeployment specific terms.",
           show_policies: true,
           site_name: "Launchpad",
         }}
-        initialRoute={{ view: "policies-custom" }}
+        initialRoute={infoRoute({ view: "policies-custom" })}
       />,
     );
 
@@ -324,9 +336,12 @@ describe("PublicContentApp", () => {
 
   it("shows a generic title for unknown policy routes", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ show_policies: true, site_name: "Launchpad" }}
-        initialRoute={{ policySlug: "unknown-policy", view: "policies-detail" }}
+        initialRoute={infoRoute({
+          policySlug: "unknown-policy",
+          view: "policies-detail",
+        })}
       />,
     );
 
@@ -336,9 +351,9 @@ describe("PublicContentApp", () => {
 
   it("hides policy pages when public policies are disabled", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ show_policies: false, site_name: "Launchpad" }}
-        initialRoute={{ view: "policies" }}
+        initialRoute={infoRoute({ view: "policies" })}
       />,
     );
 
@@ -348,13 +363,13 @@ describe("PublicContentApp", () => {
 
   it("shows an external policy link instead of built-in policy pages", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{
           show_policies: true,
           site_name: "Launchpad",
           terms_of_service_url: "https://example.com/policies",
         }}
-        initialRoute={{ view: "policies" }}
+        initialRoute={infoRoute({ view: "policies" })}
       />,
     );
 
@@ -367,13 +382,16 @@ describe("PublicContentApp", () => {
 
   it("uses the external policy link for direct policy routes as well", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{
           show_policies: true,
           site_name: "Launchpad",
           terms_of_service_url: "https://example.com/policies",
         }}
-        initialRoute={{ policySlug: "privacy", view: "policies-detail" }}
+        initialRoute={infoRoute({
+          policySlug: "privacy",
+          view: "policies-detail",
+        })}
       />,
     );
 
@@ -393,10 +411,10 @@ describe("PublicContentApp", () => {
       },
     ];
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ site_name: "Launchpad" }}
         initialNews={initialNews}
-        initialRoute={{ view: "news" }}
+        initialRoute={infoRoute({ view: "news" })}
       />,
     );
 
@@ -429,10 +447,10 @@ describe("PublicContentApp", () => {
     }) as typeof fetch;
 
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ site_name: "Launchpad" }}
         initialNews={initialNews}
-        initialRoute={{ view: "news" }}
+        initialRoute={infoRoute({ view: "news" })}
       />,
     );
 
@@ -454,10 +472,10 @@ describe("PublicContentApp", () => {
       },
     ];
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ is_admin: true, site_name: "Launchpad" }}
         initialNews={initialNews}
-        initialRoute={{ view: "news" }}
+        initialRoute={infoRoute({ view: "news" })}
       />,
     );
 
@@ -486,7 +504,7 @@ describe("PublicContentApp", () => {
 
     try {
       render(
-        <PublicContentApp
+        <PublicApp
           config={{ site_name: "Launchpad" }}
           initialNews={[
             {
@@ -497,7 +515,7 @@ describe("PublicContentApp", () => {
               title: "Stale update",
             },
           ]}
-          initialRoute={{ view: "news" }}
+          initialRoute={infoRoute({ view: "news" })}
         />,
       );
 
@@ -512,47 +530,36 @@ describe("PublicContentApp", () => {
 
   it("renders the cocalc plus page", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ site_name: "Launchpad" }}
-        initialRoute={{ view: "software-cocalc-plus" }}
+        initialRoute={infoRoute({ view: "software-cocalc-plus" })}
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "CoCalc Plus" })).not.toBeNull();
     expect(screen.getByText("Install CoCalc Plus")).not.toBeNull();
-    expect(
-      screen.getByText(
-        "The local single-user CoCalc experience for your own machine.",
-      ),
-    ).not.toBeNull();
+    expect(screen.getByText("What CoCalc Plus is")).not.toBeNull();
   });
 
   it("renders the software overview page", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ site_name: "Launchpad" }}
-        initialRoute={{ view: "software" }}
+        initialRoute={infoRoute({ view: "software" })}
       />,
     );
 
-    expect(
-      screen.getByRole("heading", { name: "Launchpad Software" }),
-    ).not.toBeNull();
     expect(screen.getByText("CoCalc Launchpad")).not.toBeNull();
     expect(screen.getByText("Hosted CoCalc")).not.toBeNull();
   });
 
   it("renders the cocalc launchpad page", () => {
     render(
-      <PublicContentApp
+      <PublicApp
         config={{ site_name: "Launchpad" }}
-        initialRoute={{ view: "software-cocalc-launchpad" }}
+        initialRoute={infoRoute({ view: "software-cocalc-launchpad" })}
       />,
     );
 
-    expect(
-      screen.getByRole("heading", { name: "CoCalc Launchpad" }),
-    ).not.toBeNull();
     expect(screen.getByText("Install CoCalc Launchpad")).not.toBeNull();
     expect(screen.getByText("What the installer does")).not.toBeNull();
   });

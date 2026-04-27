@@ -72,7 +72,7 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Coding Agents and AI Assistance",
+        name: "Coding Agents and AI Assistance – Launchpad",
         level: 1,
       }),
     ).not.toBeNull();

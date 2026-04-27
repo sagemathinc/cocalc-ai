@@ -8,12 +8,9 @@ import { useEffect } from "react";
 import { Button, Col, Empty, Flex, Row, Tag, Typography } from "antd";
 
 import {
-  PublicHero,
-  PublicPageRoot,
+  PublicSiteShell,
   PublicSectionCard,
-  PublicTitle,
-} from "@cocalc/frontend/public/ui/shell";
-import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
+} from "@cocalc/frontend/public/layout/shell";
 import { SITE_NAME } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
@@ -309,37 +306,25 @@ export default function PublicFeaturesApp({
     document.title = title;
   }, [title]);
 
+  const feature = initialRoute.slug
+    ? getFeaturePage(initialRoute.slug)
+    : undefined;
+
   return (
-    <PublicPageRoot>
-      <PublicTopNav
-        active="features"
-        isAuthenticated={!!config?.is_authenticated}
-        showPolicies={!!config?.show_policies}
-        siteName={siteName}
-      />
-      {initialRoute.view === "index" ? (
-        <PublicTitle>{`${siteName} Features`}</PublicTitle>
-      ) : (
-        <PublicHero
-          eyebrow="FEATURES"
-          title={
-            initialRoute.slug
-              ? (getFeaturePage(initialRoute.slug)?.title ?? "Features")
-              : "Features"
-          }
-          subtitle={
-            initialRoute.slug
-              ? getFeaturePage(initialRoute.slug)?.tagline
-              : undefined
-          }
-          actions={
-            <Flex wrap gap={8}>
-              <Tag color="blue">AntD public UI</Tag>
-              <Tag>Next-free routing</Tag>
-            </Flex>
-          }
-        />
-      )}
+    <PublicSiteShell
+      active="features"
+      isAuthenticated={!!config?.is_authenticated}
+      showPolicies={!!config?.show_policies}
+      siteName={siteName}
+      title={initialRoute.view === "index" ? `${siteName} Features` : title}
+    >
+      {initialRoute.view === "detail" && feature ? (
+        <Flex wrap gap={8}>
+          <Tag color="blue">AntD public UI</Tag>
+          <Tag>Next-free routing</Tag>
+          {feature.tagline ? <Tag>{feature.tagline}</Tag> : null}
+        </Flex>
+      ) : null}
       <div style={{ marginTop: 24 }}>
         {initialRoute.view === "detail" && initialRoute.slug ? (
           <FeatureDetail
@@ -350,6 +335,6 @@ export default function PublicFeaturesApp({
           <FeaturesIndex siteName={siteName} />
         )}
       </div>
-    </PublicPageRoot>
+    </PublicSiteShell>
   );
 }

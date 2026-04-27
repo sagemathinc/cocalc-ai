@@ -16,9 +16,10 @@ type PublicInfoPageKey =
   | "pricing"
   | "news"
   | "about"
+  | "software"
   | "policies";
 
-type PublicTopNavActiveKey = PublicInfoPageKey | "support" | "auth";
+export type PublicTopNavActiveKey = PublicInfoPageKey | "support" | "auth";
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
@@ -42,6 +43,7 @@ export default function PublicTopNav({
       { href: appPath("pricing"), key: "pricing", label: "Pricing" },
       { href: appPath("news"), key: "news", label: "News" },
       { href: appPath("about"), key: "about", label: "About" },
+      { href: appPath("software"), key: "software", label: "Software" },
     ];
   if (showPolicies) {
     items.push({
@@ -63,7 +65,6 @@ export default function PublicTopNav({
         background: token.colorBgLayout,
         height: "auto",
         lineHeight: "normal",
-        marginBottom: token.marginMD,
         padding: `${token.paddingXS}px 0`,
         position: "sticky",
         top: 0,
