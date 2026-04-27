@@ -867,7 +867,7 @@ export default function Message({
   const showCodexActivity = useMemo(() => {
     // Only show for ACP-driven turns (Codex activity). The log identifiers are
     // derived deterministically, but this marker distinguishes ACP turns from
-    // other kinds of LLM messages.
+    // other kinds of AI messages.
     return Boolean(field<string>(message, "acp_account_id"));
   }, [message]);
   const suppressInlineCodexActivity =

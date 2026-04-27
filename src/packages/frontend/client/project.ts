@@ -205,7 +205,7 @@ export class ProjectClient {
   /*
     Execute code in a given project with streaming output.
     This streams stdout and stderr back to the client in real-time, similar to how
-    LLM chat streaming works.
+    AI chat streaming works.
 
     Example usage:
 
@@ -268,7 +268,7 @@ export class ProjectClient {
 
     execStream.once("start", async () => {
       try {
-        // Use conat streaming similar to LLM streaming
+        // Use conat streaming similar to AI streaming
         await this.streamExecViaConat({ opts, execStream, debug });
       } catch (err) {
         execStream.emit("error", err);

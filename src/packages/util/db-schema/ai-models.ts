@@ -26,14 +26,14 @@ export function isUserDefinedModelType(
   return SERVICES.includes(model as any);
 }
 
-// "User LLMs" are defined in the user's account settings.
-// They query an external LLM service of given type, endpoint, and API key.
+// User-defined AI models are configured in the user's account settings.
+// They query an external AI service of given type, endpoint, and API key.
 export interface UserDefinedAIModel {
   id: number; // a unique number
   service: UserDefinedAIService;
   model: string; // non-empty string
   display: string; // short user-visible string
-  endpoint: string; // URL to the LLM service
+  endpoint: string; // URL to the AI service
   apiKey: string;
   icon?: string; // https://.../...png
 }
@@ -1280,7 +1280,7 @@ export const LLM_COST: { [name in LanguageModelCore]: Cost } = {
   },
 } as const;
 
-// TODO: remove this test – it's only used server side, and that server side check should work for all known LLM models
+// TODO: remove this test – it's only used server side, and that server side check should work for all known AI models
 export function isValidModel(model?: string): boolean {
   if (model == null) return false;
   if (isUserDefinedModel(model)) return true;

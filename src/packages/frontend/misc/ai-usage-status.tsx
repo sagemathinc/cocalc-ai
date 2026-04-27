@@ -80,7 +80,7 @@ function Wrapper({
 export function calculateUsageEstimateRange(
   tokens: number,
   _model,
-  _llm_markup,
+  _ai_markup,
   maxTokens: number = 1000,
 ): { min: number; max: number } {
   const min = round2down(tokens * 0);

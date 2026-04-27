@@ -305,7 +305,7 @@ function AgentSection() {
                 CoCalc AI is becoming agent-first
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                The older model was “send an LLM some context.” The new
+                The older model was “send an AI model some context.” The new
                 direction is much more agent-native, especially around Codex:
                 let the model participate in the same collaborative workspace
                 where the files, notebooks, shell commands, and conversations

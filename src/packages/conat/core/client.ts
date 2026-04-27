@@ -82,7 +82,7 @@ The methods you call on the client to build everything are:
  - requestMany - send a message to a subject, and receive many
    messages in reply.   Typically you end the response stream by sending
    a null message, but what you do is up to you.  This is very useful
-   for streaming arbitrarily large data, long running changefeeds, LLM
+   for streaming arbitrarily large data, long running changefeeds, AI
    responses, etc.
 
 

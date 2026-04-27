@@ -2333,7 +2333,7 @@ export class ChatActions extends Actions<ChatState> {
       if (!mostRecent) continue;
       const content = stripMentions(mostRecent.content);
       // We take the message's sender ID, not the most recent version from the history
-      // Why? e.g. a user could have edited an LLM message, which should still count as an LLM message
+      // Why? e.g. a user could have edited an AI message, which should still count as an AI message
       // otherwise the forth-and-back between AI and human would be broken.
       const sender_id = senderId(message);
       const role = isLanguageModelService(sender_id) ? "assistant" : "user";

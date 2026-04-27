@@ -66,7 +66,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     slug: "ai",
     aliases: ["openai-chatgpt"],
     title: "Coding Agents and AI Assistance",
-    tagline: "Use coding agents and LLM help directly in the workspace.",
+    tagline: "Use coding agents and AI help directly in the workspace.",
     summary:
       "Work with coding agents inside chat and project workflows to explain code, fix errors, generate files, and help move technical work forward.",
     image: "/public/features/chatgpt-fix-code.png",
