@@ -12,14 +12,14 @@ const { Content } = Layout;
 const { Paragraph, Text, Title } = Typography;
 
 const PAGE_STYLE: CSSProperties = {
-  minHeight: "100%",
   background: COLORS.GRAY_LLL,
+  minHeight: "100vh",
 } as const;
 
 const CONTENT_STYLE: CSSProperties = {
-  width: "min(1120px, 100%)",
   margin: "0 auto",
-  padding: "32px 16px 56px",
+  padding: "0 16px 56px",
+  width: "min(1120px, 100%)",
 } as const;
 
 interface PublicPageRootProps {
