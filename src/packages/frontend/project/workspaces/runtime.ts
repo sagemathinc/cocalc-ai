@@ -5,7 +5,6 @@
 
 import {
   defaultWorkspaceChatPath as defaultStoredWorkspaceChatPath,
-  openWorkspaceStore,
   readWorkspaceRecordsFromStore,
   resolveWorkspaceForPath,
   updateStoredWorkspaceRecord,
@@ -20,6 +19,7 @@ import { path_split } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "../home-directory";
 import { resolveRuntimeWorkspaceForPath } from "./records-runtime";
+import { openProjectWorkspaceStore } from "./store";
 
 function isMacLikeClient(): boolean {
   if (typeof navigator === "undefined") return false;
@@ -47,10 +47,10 @@ export async function readStoredWorkspaceRecords(opts: {
   project_id: string;
   account_id: string;
 }): Promise<WorkspaceRecord[]> {
-  const store = await openWorkspaceStore({
-    client: webapp_client.conat_client,
+  const store = await openProjectWorkspaceStore({
     account_id: opts.account_id,
     project_id: opts.project_id,
+    caller: "readStoredWorkspaceRecords",
   });
   try {
     return readWorkspaceRecordsFromStore(store);
@@ -83,10 +83,10 @@ export async function ensureWorkspaceChatPath(opts: {
   chat_path: string;
   assigned: boolean;
 }> {
-  const store = await openWorkspaceStore({
-    client: webapp_client.conat_client,
+  const store = await openProjectWorkspaceStore({
     account_id: opts.account_id,
     project_id: opts.project_id,
+    caller: "ensureWorkspaceChatPath",
   });
   try {
     const records = readWorkspaceRecordsFromStore(store);
@@ -164,10 +164,10 @@ async function updateWorkspaceNoticeForPath(opts: {
 }): Promise<WorkspaceRecord | null> {
   const workspace = await resolveStoredWorkspaceForPath(opts);
   if (!workspace) return null;
-  const store = await openWorkspaceStore({
-    client: webapp_client.conat_client,
+  const store = await openProjectWorkspaceStore({
     account_id: opts.account_id,
     project_id: opts.project_id,
+    caller: "updateWorkspaceNoticeForPath",
   });
   try {
     const updated = updateStoredWorkspaceRecord(store, workspace.workspace_id, {

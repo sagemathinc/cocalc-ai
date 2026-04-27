@@ -11,7 +11,6 @@ import {
   deleteStoredWorkspaceRecord,
   hasWorkspaceStoreState,
   normalizeWorkspaceSelection,
-  openWorkspaceStore,
   pathMatchesWorkspace,
   pathMatchesWorkspaceRoot,
   readWorkspaceOrderFromStore,
@@ -28,7 +27,6 @@ import {
   type WorkspaceStore,
   writeWorkspaceRecordsToStore,
 } from "@cocalc/conat/workspaces";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   ProjectWorkspaceState,
   WorkspaceCreateInput,
@@ -47,6 +45,11 @@ import {
   clearRuntimeWorkspaceRecords,
   setRuntimeWorkspaceRecords,
 } from "./records-runtime";
+import {
+  isWorkspaceStoreRoutingPendingError,
+  openProjectWorkspaceStore,
+  WORKSPACE_STORE_ROUTING_RETRY_DELAY_MS,
+} from "./store";
 
 export function normalizeProjectWorkspaceSelection(
   selection: WorkspaceSelection | undefined | null,
@@ -177,9 +180,7 @@ export function useProjectWorkspaces(
     );
   const cachedWorkspaceRecordRef = useRef(cachedWorkspaceRecord);
   cachedWorkspaceRecordRef.current = cachedWorkspaceRecord;
-  const storeRef = useRef<Awaited<
-    ReturnType<typeof openWorkspaceStore>
-  > | null>(null);
+  const storeRef = useRef<WorkspaceStore | null>(null);
   const recordsRef = useRef(records);
   recordsRef.current = records;
 
@@ -295,65 +296,85 @@ export function useProjectWorkspaces(
     let onChange:
       | ((event: { key: string; value?: WorkspaceRecord[] | number }) => void)
       | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const waitForRetry = async () => {
+      await new Promise<void>((resolve) => {
+        retryTimer = setTimeout(
+          resolve,
+          WORKSPACE_STORE_ROUTING_RETRY_DELAY_MS,
+        );
+      });
+      retryTimer = undefined;
+    };
 
     const initialize = async () => {
-      try {
-        store = await openWorkspaceStore({
-          client: webapp_client.conat_client,
-          account_id: account_id!,
-          project_id,
-        });
-        if (closed || store == null) {
-          store?.close?.();
-          return;
-        }
-        storeRef.current = store;
-
-        const storeRecords = readWorkspaceRecordsFromStore(store);
-        const storeOrder = readWorkspaceOrderFromStore(store, storeRecords);
-        const storeSelection = readSelectionForProject(
-          project_id,
-          storeRecords,
-          cachedWorkspaceRecordRef.current,
-        );
-        const hasStoreState = hasWorkspaceStoreState(store);
-
-        const hasSeedState = recordsRef.current.length > 0;
-
-        if (!hasStoreState && hasSeedState) {
-          writeWorkspaceRecordsToStore(store, recordsRef.current, order);
-        } else {
-          setRecords(storeRecords);
-          setOrderState(storeOrder);
-          setSelectionState(storeSelection);
-        }
-
-        onChange = (event) => {
-          if (
-            event.key !== WORKSPACES_STORE_RECORDS_KEY &&
-            event.key !== WORKSPACES_STORE_ORDER_KEY &&
-            event.key !== WORKSPACES_STORE_VERSION_KEY
-          ) {
+      for (;;) {
+        try {
+          store = await openProjectWorkspaceStore({
+            account_id: account_id!,
+            project_id,
+            caller: "useProjectWorkspaces",
+          });
+          if (closed || store == null) {
+            store?.close?.();
             return;
           }
-          const nextRecords = readWorkspaceRecordsFromStore(store!);
-          const nextOrder = readWorkspaceOrderFromStore(store!, nextRecords);
-          const nextSelection = readSelectionForProject(
+          storeRef.current = store;
+
+          const storeRecords = readWorkspaceRecordsFromStore(store);
+          const storeOrder = readWorkspaceOrderFromStore(store, storeRecords);
+          const storeSelection = readSelectionForProject(
             project_id,
-            nextRecords,
+            storeRecords,
             cachedWorkspaceRecordRef.current,
           );
-          setRecords(nextRecords);
-          setOrderState(nextOrder);
-          setSelectionState(nextSelection);
-        };
+          const hasStoreState = hasWorkspaceStoreState(store);
 
-        store.on("change", onChange);
-      } catch (err) {
-        console.warn(`workspace store initialization warning -- ${err}`);
-      } finally {
-        if (!closed) {
+          const hasSeedState = recordsRef.current.length > 0;
+
+          if (!hasStoreState && hasSeedState) {
+            writeWorkspaceRecordsToStore(store, recordsRef.current, order);
+          } else {
+            setRecords(storeRecords);
+            setOrderState(storeOrder);
+            setSelectionState(storeSelection);
+          }
+
+          onChange = (event) => {
+            if (
+              event.key !== WORKSPACES_STORE_RECORDS_KEY &&
+              event.key !== WORKSPACES_STORE_ORDER_KEY &&
+              event.key !== WORKSPACES_STORE_VERSION_KEY
+            ) {
+              return;
+            }
+            const nextRecords = readWorkspaceRecordsFromStore(store!);
+            const nextOrder = readWorkspaceOrderFromStore(store!, nextRecords);
+            const nextSelection = readSelectionForProject(
+              project_id,
+              nextRecords,
+              cachedWorkspaceRecordRef.current,
+            );
+            setRecords(nextRecords);
+            setOrderState(nextOrder);
+            setSelectionState(nextSelection);
+          };
+
+          store.on("change", onChange);
           setLoading(false);
+          return;
+        } catch (err) {
+          if (closed) {
+            return;
+          }
+          if (isWorkspaceStoreRoutingPendingError(err)) {
+            await waitForRetry();
+            continue;
+          }
+          console.warn(`workspace store initialization warning -- ${err}`);
+          setLoading(false);
+          return;
         }
       }
     };
@@ -364,6 +385,10 @@ export function useProjectWorkspaces(
       closed = true;
       if (storeRef.current === store) {
         storeRef.current = null;
+      }
+      if (retryTimer != null) {
+        clearTimeout(retryTimer);
+        retryTimer = undefined;
       }
       if (store != null && onChange != null) {
         store.off("change", onChange);

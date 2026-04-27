@@ -2140,12 +2140,12 @@ export class ConatClient extends EventEmitter {
     if (routing) {
       return this.getOrCreateRoutedHubClient({ ...routing, project_id });
     }
-    this.noteProjectRuntimeHubFallback({ project_id, caller });
     if (requireRouting) {
       throw Error(
         `unable to route '${caller}' to project-host for project ${project_id}; host routing info unavailable`,
       );
     }
+    this.noteProjectRuntimeHubFallback({ project_id, caller });
     return this.conat();
   };
 
@@ -2170,12 +2170,12 @@ export class ConatClient extends EventEmitter {
     }
     const host_id = this.getProjectHostId(project_id);
     if (host_id) {
-      this.noteProjectRuntimeHubFallback({ project_id, caller });
       if (requireRouting) {
         throw Error(
           `unable to route '${caller}' to project-host for project ${project_id}; host routing info unavailable`,
         );
       }
+      this.noteProjectRuntimeHubFallback({ project_id, caller });
     }
     if (requireRouting) {
       throw Error(

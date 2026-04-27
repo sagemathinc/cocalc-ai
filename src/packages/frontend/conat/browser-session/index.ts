@@ -95,7 +95,6 @@ import {
 } from "@cocalc/conat/project/terminal";
 import {
   coerceWorkspaceSelection,
-  openWorkspaceStore,
   readStoredWorkspaceRecords,
   updateStoredWorkspaceRecord,
   type WorkspaceRecord,
@@ -115,6 +114,7 @@ import {
   loadSessionSelection,
   persistSessionSelection,
 } from "@cocalc/frontend/project/workspaces/selection-runtime";
+import { openProjectWorkspaceStore } from "@cocalc/frontend/project/workspaces/store";
 import { getBrowserTimeTravelProviders } from "./timetravel-providers";
 
 const SESSION_SYNC_DEBOUNCE_MS = 250;
@@ -351,10 +351,10 @@ export function createBrowserSessionAutomation({
       if (!cleanWorkspaceId) {
         throw Error("workspace_id must be non-empty");
       }
-      const store = await openWorkspaceStore({
-        client: client.conat_client,
+      const store = await openProjectWorkspaceStore({
         project_id,
         account_id: accountId(),
+        caller: "browserSession.resolveWorkspaceRecord",
       });
       try {
         const record = readStoredWorkspaceRecords(store).find(
@@ -506,10 +506,10 @@ export function createBrowserSessionAutomation({
       workspace_id: string,
       notice_thread_id: string,
     ): Promise<WorkspaceRecord | null> => {
-      const store = await openWorkspaceStore({
-        client: client.conat_client,
+      const store = await openProjectWorkspaceStore({
         project_id,
         account_id: accountId(),
+        caller: "browserSession.persistWorkspaceNoticeThreadId",
       });
       try {
         const updated = updateStoredWorkspaceRecord(store, workspace_id, {
