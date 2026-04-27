@@ -526,7 +526,7 @@ export const CellInput: React.FC<CellInputProps> = React.memo(
       next.input_is_readonly !== cur.input_is_readonly ||
       next.is_scrolling !== cur.is_scrolling ||
       next.cell_toolbar !== cur.cell_toolbar ||
-      (next.llmTools?.model ?? "") !== (cur.llmTools?.model ?? "") ||
+      (next.llmTools != null) !== (cur.llmTools != null) ||
       next.index !== cur.index ||
       next.dragHandle !== cur.dragHandle ||
       next.isPending !== cur.isPending ||

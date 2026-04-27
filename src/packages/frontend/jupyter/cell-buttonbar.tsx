@@ -57,7 +57,7 @@ function areEqual(prev: Props, next: Props): boolean {
     next.index !== prev.index ||
     next.cell !== prev.cell ||
     next.is_current !== prev.is_current ||
-    (next.llmTools?.model ?? "") !== (prev.llmTools?.model ?? "") ||
+    (next.llmTools != null) !== (prev.llmTools != null) ||
     next.is_current !== prev.is_current ||
     next.is_readonly !== prev.is_readonly ||
     next.haveLLMCellTools !== prev.haveLLMCellTools ||
