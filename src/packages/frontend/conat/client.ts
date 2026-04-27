@@ -1655,6 +1655,38 @@ export class ConatClient extends EventEmitter {
     }
   };
 
+  public routeProjectHostHttpUrl = async ({
+    project_id,
+    url,
+  }: {
+    project_id: string;
+    url: string;
+  }): Promise<string> => {
+    if (!url) return url;
+    const routing = await this.ensureProjectRoutingInfo(project_id);
+    if (!routing) return url;
+    return routeProjectHostHttpUrl({
+      url,
+      routingAddress: routing.address,
+      windowOrigin:
+        typeof window !== "undefined" ? window.location.origin : undefined,
+    });
+  };
+
+  public ensureProjectHostBrowserSessionForProject = async ({
+    project_id,
+  }: {
+    project_id: string;
+  }): Promise<void> => {
+    const routing = await this.ensureProjectRoutingInfo(project_id);
+    if (!routing) return;
+    await this.ensureProjectHostBrowserSession({
+      host_id: routing.host_id,
+      address: routing.address,
+      project_id,
+    });
+  };
+
   public touchProjectHost = async ({
     project_id,
     timeout = DEFAULT_TIMEOUT,

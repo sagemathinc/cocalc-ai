@@ -99,9 +99,10 @@ function readCookieValues(header: string | undefined, name: string): string[] {
   return values;
 }
 
-type AuthorizedAccountContext = {
+export type AuthorizedAccountContext = {
   account_id: string;
   issued_at_s: number;
+  actor: "account" | "hub";
 };
 
 function setAuthContext(
@@ -111,7 +112,7 @@ function setAuthContext(
   (req as any)[PROJECT_HOST_HTTP_AUTH_CONTEXT] = context;
 }
 
-function getAuthContext(
+export function getProjectHostHttpAuthContext(
   req: IncomingMessage,
 ): AuthorizedAccountContext | undefined {
   return (req as any)[PROJECT_HOST_HTTP_AUTH_CONTEXT];
@@ -519,6 +520,7 @@ export function createProjectHostHttpProxyAuth({
       setAuthContext(req, {
         account_id: accountFromBrowserSession.account_id,
         issued_at_s: accountFromBrowserSession.iat_s,
+        actor: "account",
       });
       if (cleanQueryTokenOrRedirect(req, res)) {
         return;
@@ -543,6 +545,7 @@ export function createProjectHostHttpProxyAuth({
       setAuthContext(req, {
         account_id: accountFromSession.account_id,
         issued_at_s: accountFromSession.iat_s,
+        actor: "account",
       });
       if (cleanQueryTokenOrRedirect(req, res)) {
         return;
@@ -559,6 +562,7 @@ export function createProjectHostHttpProxyAuth({
         setAuthContext(req, {
           account_id: project_id,
           issued_at_s: Math.floor(Date.now() / 1000),
+          actor: "hub",
         });
         return;
       }
@@ -573,6 +577,7 @@ export function createProjectHostHttpProxyAuth({
     setAuthContext(req, {
       account_id,
       issued_at_s: claims.iat,
+      actor: (claims.act ?? "account") === "account" ? "account" : "hub",
     });
     if (source === "header") {
       delete req.headers.authorization;
@@ -600,6 +605,7 @@ export function createProjectHostHttpProxyAuth({
       const context = {
         account_id: accountFromBrowserSession.account_id,
         issued_at_s: accountFromBrowserSession.iat_s,
+        actor: "account" as const,
       };
       setAuthContext(req, context);
       stripQueryToken(req);
@@ -618,6 +624,7 @@ export function createProjectHostHttpProxyAuth({
       const context = {
         account_id: accountFromSession.account_id,
         issued_at_s: accountFromSession.iat_s,
+        actor: "account" as const,
       };
       setAuthContext(req, context);
       stripQueryToken(req);
@@ -633,6 +640,7 @@ export function createProjectHostHttpProxyAuth({
         const context = {
           account_id: project_id,
           issued_at_s: Math.floor(Date.now() / 1000),
+          actor: "hub" as const,
         };
         setAuthContext(req, context);
         return context;
@@ -645,9 +653,10 @@ export function createProjectHostHttpProxyAuth({
     if ((claims.act ?? "account") === "account") {
       authorizeAccountForProject({ account_id, project_id });
     }
-    const context = {
+    const context: AuthorizedAccountContext = {
       account_id,
       issued_at_s: claims.iat,
+      actor: (claims.act ?? "account") === "account" ? "account" : "hub",
     };
     setAuthContext(req, context);
     if (source === "header") {
@@ -661,7 +670,7 @@ export function createProjectHostHttpProxyAuth({
     req: IncomingMessage,
     socket: Socket | Duplex,
   ) => {
-    const context = getAuthContext(req);
+    const context = getProjectHostHttpAuthContext(req);
     if (!context) {
       return;
     }

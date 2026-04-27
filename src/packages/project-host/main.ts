@@ -6,7 +6,7 @@
  * Security: intentionally insecure for now. No auth, no TLS.
  */
 import { createServer as createHttpServer } from "http";
-import type { IncomingMessage } from "http";
+import type { IncomingMessage, ServerResponse } from "http";
 import { createServer as createHttpsServer } from "https";
 import { once } from "node:events";
 import { URL } from "node:url";
@@ -40,7 +40,10 @@ import {
   getProjectPorts,
   listProjects,
 } from "./sqlite/projects";
-import { PROJECT_PROXY_AUTH_HEADER } from "@cocalc/backend/auth/project-proxy-auth";
+import {
+  PROJECT_PROXY_ACCOUNT_ID_HEADER,
+  PROJECT_PROXY_AUTH_HEADER,
+} from "@cocalc/backend/auth/project-proxy-auth";
 import { APP_PROXY_EXPOSURE_HEADER } from "@cocalc/backend/auth/app-proxy";
 import { attachProjectProxy } from "@cocalc/project-proxy/proxy";
 import { init as initChangefeeds } from "@cocalc/lite/hub/changefeeds";
@@ -81,7 +84,10 @@ import {
   assertLocalBindOrInsecure,
   assertSecureUrlOrLocal,
 } from "@cocalc/backend/network/policy";
-import { createProjectHostHttpProxyAuth } from "./http-proxy-auth";
+import {
+  createProjectHostHttpProxyAuth,
+  getProjectHostHttpAuthContext,
+} from "./http-proxy-auth";
 import { isValidUUID } from "@cocalc/util/misc";
 import { main as runAcpWorkerMain } from "./acp-worker";
 import { main as runConatRouterDaemonMain } from "./conat-router-daemon";
@@ -113,6 +119,7 @@ import {
   isProjectHostExternalConatPersistEnabled,
   waitForProjectHostConatPersistReady,
 } from "./conat-persist";
+import { DOWNLOAD_ERROR_HEADER } from "@cocalc/conat/files/file-download";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -395,6 +402,28 @@ export async function main(
   const httpProxyAuth = createProjectHostHttpProxyAuth({ host_id: hostId });
   const stopHttpProxyRevocationKickLoop =
     httpProxyAuth.startUpgradeRevocationKickLoop();
+  const isExplicitDownloadHeadRequest = (req: IncomingMessage): boolean => {
+    if ((req.method ?? "GET").toUpperCase() !== "HEAD") {
+      return false;
+    }
+    try {
+      const parsed = new URL(req.url ?? "/", "http://project-host.local");
+      return parsed.searchParams.has("download");
+    } catch {
+      return false;
+    }
+  };
+  const setDownloadPreflightCorsHeaders = (
+    req: IncomingMessage,
+    res: ServerResponse,
+  ) => {
+    const origin = `${req.headers.origin ?? ""}`.trim();
+    if (!origin) return;
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Expose-Headers", DOWNLOAD_ERROR_HEADER);
+    res.setHeader("Vary", "Origin");
+  };
   const setBrowserSessionCorsHeaders = (
     req: IncomingMessage,
     res: express.Response,
@@ -499,12 +528,24 @@ export async function main(
       const project_id = req.url?.split("/")[1];
       if (!project_id) return { handled: false };
       if (res) {
+        if (isExplicitDownloadHeadRequest(req)) {
+          setDownloadPreflightCorsHeaders(req, res);
+        }
         await httpProxyAuth.authorizeHttpRequest(req, res, project_id);
         if (res.writableEnded) {
           return { handled: true };
         }
       } else {
         await httpProxyAuth.authorizeUpgradeRequest(req, project_id);
+      }
+      const authContext = getProjectHostHttpAuthContext(req);
+      const isProjectFileRoute = `${req.url ?? ""}`.includes(
+        `/${project_id}/files/`,
+      );
+      if (isProjectFileRoute && authContext?.actor === "account") {
+        req.headers[PROJECT_PROXY_ACCOUNT_ID_HEADER] = authContext.account_id;
+      } else {
+        delete req.headers[PROJECT_PROXY_ACCOUNT_ID_HEADER];
       }
       const publicAppHost =
         `${req.headers[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();

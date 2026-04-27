@@ -34,7 +34,7 @@ describe("download_file", () => {
     );
     expect(global.fetch).toHaveBeenCalledWith("/download/me", {
       method: "HEAD",
-      credentials: "same-origin",
+      credentials: "include",
       cache: "no-store",
     });
     expect(document.querySelector("iframe")).toBeNull();
@@ -53,5 +53,39 @@ describe("download_file", () => {
     await expect(download_file("/download/me")).rejects.toThrow(
       "Unable to start download (HTTP 500)",
     );
+  });
+
+  it("retries once after an auth failure callback refreshes the session", async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        headers: { get: () => null },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => null },
+      }) as typeof fetch;
+
+    const onAuthFailure = jest.fn(async () => "/download/direct");
+    await expect(
+      download_file("/download/direct", { onAuthFailure }),
+    ).resolves.toBeUndefined();
+    expect(onAuthFailure).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenNthCalledWith(1, "/download/direct", {
+      method: "HEAD",
+      credentials: "include",
+      cache: "no-store",
+    });
+    expect(global.fetch).toHaveBeenNthCalledWith(2, "/download/direct", {
+      method: "HEAD",
+      credentials: "include",
+      cache: "no-store",
+    });
+    expect(document.querySelector("iframe")).not.toBeNull();
   });
 });
