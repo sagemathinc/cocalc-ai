@@ -27,7 +27,10 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { DivTempHeight } from "@cocalc/frontend/jupyter/div-temp-height";
 import { cmp } from "@cocalc/util/misc";
 import type { ChatActions } from "./actions";
-import type { AttachedSteerMessage } from "./agent-message-status";
+import {
+  InlineSteerStatusRow,
+  type AttachedSteerMessage,
+} from "./agent-message-status";
 import Composing from "./composing";
 import Message from "./message";
 import type {
@@ -99,7 +102,84 @@ function resolveSteerAnchorMessageId({
   return undefined;
 }
 
-function collectAttachedSteers({
+function resolveSteerAssistantMessageId({
+  message,
+  byMessageId,
+}: {
+  message: ChatMessageTyped;
+  byMessageId: Map<string, ChatMessageTyped>;
+}): string | undefined {
+  let current: ChatMessageTyped | undefined = message;
+  let guard = 0;
+  while (current != null && guard < 1000) {
+    const directParentId = `${parentMessageId(current) ?? ""}`.trim();
+    if (!directParentId) return undefined;
+    const directParent = byMessageId.get(directParentId);
+    if (directParent == null) return undefined;
+    if (isImmediateAcpSteerMessage(directParent)) {
+      current = directParent;
+      guard += 1;
+      continue;
+    }
+    if (!field<string>(directParent, "acp_account_id")) {
+      return undefined;
+    }
+    const assistantMessageId =
+      `${field<string>(directParent, "message_id") ?? ""}`.trim();
+    return assistantMessageId || undefined;
+  }
+  return undefined;
+}
+
+function isActiveAcpAssistantTurn({
+  message,
+  acpState,
+}: {
+  message?: ChatMessageTyped;
+  acpState?: { get?: (key: string) => unknown };
+}): boolean {
+  if (message == null) return false;
+  if (field<boolean>(message, "generating") === true) return true;
+  const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
+  const threadId = `${field<string>(message, "thread_id") ?? ""}`.trim();
+  const states = [
+    field<string>(message, "acp_state"),
+    messageId ? acpState?.get?.(`message:${messageId}`) : undefined,
+    threadId ? acpState?.get?.(`thread:${threadId}`) : undefined,
+  ];
+  return states.some(
+    (state) => state === "running" || state === "queue" || state === "queued",
+  );
+}
+
+function shouldRenderImmediateSteerInline({
+  message,
+  byMessageId,
+  acpState,
+}: {
+  message: ChatMessageTyped;
+  byMessageId: Map<string, ChatMessageTyped>;
+  acpState?: { get?: (key: string) => unknown };
+}): boolean {
+  const assistantMessageId = resolveSteerAssistantMessageId({
+    message,
+    byMessageId,
+  });
+  if (!assistantMessageId) return false;
+  return isActiveAcpAssistantTurn({
+    message: byMessageId.get(assistantMessageId),
+    acpState,
+  });
+}
+
+type SteerCollections = {
+  attachedByParentMessageId: Map<string, AttachedSteerMessage[]>;
+  byAssistantMessageId: Map<string, AttachedSteerMessage[]>;
+  byMessageId: Map<string, AttachedSteerMessage>;
+  inlineMessageIds: Set<string>;
+};
+
+function collectSteers({
   messages,
   visibleKeys,
   acpState,
@@ -107,8 +187,11 @@ function collectAttachedSteers({
   messages: ChatMessages;
   visibleKeys?: Set<string>;
   acpState?: { get?: (key: string) => unknown };
-}): Map<string, AttachedSteerMessage[]> {
-  const attached = new Map<string, AttachedSteerMessage[]>();
+}): SteerCollections {
+  const attachedByParentMessageId = new Map<string, AttachedSteerMessage[]>();
+  const byAssistantMessageId = new Map<string, AttachedSteerMessage[]>();
+  const bySteerMessageId = new Map<string, AttachedSteerMessage>();
+  const inlineMessageIds = new Set<string>();
   const byMessageId = new Map<string, ChatMessageTyped>();
   for (const [, message] of messages) {
     if (message == null) continue;
@@ -130,23 +213,46 @@ function collectAttachedSteers({
       message,
       byMessageId,
     });
+    const assistantMessageId = resolveSteerAssistantMessageId({
+      message,
+      byMessageId,
+    });
     const state =
       toAttachedSteerState(acpState?.get?.(`message:${messageId}`)) ??
       toAttachedSteerState(field<string>(message, "acp_state"));
     if (!state || !anchoredParentId) continue;
-    const next = attached.get(anchoredParentId) ?? [];
-    next.push({
+    const steer = {
       messageId,
       date: messageDate.valueOf(),
       text,
       state,
-    });
-    attached.set(anchoredParentId, next);
+    };
+    bySteerMessageId.set(messageId, steer);
+    if (assistantMessageId) {
+      const next = byAssistantMessageId.get(assistantMessageId) ?? [];
+      next.push(steer);
+      byAssistantMessageId.set(assistantMessageId, next);
+    }
+    if (shouldRenderImmediateSteerInline({ message, byMessageId, acpState })) {
+      inlineMessageIds.add(messageId);
+      continue;
+    }
+    const next = attachedByParentMessageId.get(anchoredParentId) ?? [];
+    next.push(steer);
+    attachedByParentMessageId.set(anchoredParentId, next);
   }
-  for (const list of attached.values()) {
+  for (const list of attachedByParentMessageId.values()) {
     list.sort((a, b) => cmp(a.date, b.date));
   }
-  return attached;
+  for (const list of byAssistantMessageId.values()) {
+    list.sort((a, b) => cmp(a.date, b.date));
+  }
+  return {
+    attachedByParentMessageId,
+    byAssistantMessageId,
+    byMessageId: bySteerMessageId,
+    inlineMessageIds,
+  };
 }
 
 const CHAT_LOG_CONTAINER_STYLE: CSSProperties = {
@@ -270,8 +376,8 @@ export function ChatLog({
   }, [selectedThread, threadIndex]);
   const user_map = useTypedRedux("users", "user_map");
   const account_id = useTypedRedux("account", "account_id");
-  const attachedSteersByParentMessageId = useMemo(
-    () => collectAttachedSteers({ messages, visibleKeys, acpState }),
+  const steerCollections = useMemo(
+    () => collectSteers({ messages, visibleKeys, acpState }),
     [messages, visibleKeys, acpState],
   );
   const anyOverlayOpen = useAnyChatOverlayOpen();
@@ -292,6 +398,7 @@ export function ChatLog({
       messages,
       account_id!,
       visibleKeys,
+      steerCollections.inlineMessageIds,
     );
     // TODO: This is an ugly hack because I'm tired and need to finish this.
     // The right solution would be to move this filtering to the store.
@@ -304,7 +411,13 @@ export function ChatLog({
       );
     }, 1);
     return { dates, numChildren };
-  }, [messages, account_id, singleThreadView, visibleKeys]);
+  }, [
+    messages,
+    account_id,
+    singleThreadView,
+    visibleKeys,
+    steerCollections.inlineMessageIds,
+  ]);
 
   useEffect(() => {
     if (!canAutoScroll) {
@@ -440,7 +553,11 @@ export function ChatLog({
           scrollToBottomRef,
           keepBottomAnchoredRef,
           acpState,
-          attachedSteersByParentMessageId,
+          attachedSteersByParentMessageId:
+            steerCollections.attachedByParentMessageId,
+          activitySteersByAssistantMessageId:
+            steerCollections.byAssistantMessageId,
+          inlineSteersByMessageId: steerCollections.byMessageId,
           searchQuery,
           onAtTopStateChange,
           activityJumpDate,
@@ -525,6 +642,7 @@ export function getSortedDates(
   messages: ChatMessages,
   _account_id: string,
   visibleKeys?: Set<string>,
+  inlineSteerMessageIds?: Set<string>,
 ): {
   dates: string[];
   numChildren: NumChildren;
@@ -546,9 +664,14 @@ export function getSortedDates(
     if (!messageDate) continue;
     const messageKey = `${messageDate.valueOf()}`;
     if (visibleKeys && !visibleKeys.has(messageKey)) continue;
-    if (isImmediateAcpSteerMessage(message)) continue;
-    visibleMessages.push(message);
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
+    if (
+      isImmediateAcpSteerMessage(message) &&
+      !inlineSteerMessageIds?.has(messageId)
+    ) {
+      continue;
+    }
+    visibleMessages.push(message);
     if (messageId) visibleById.set(messageId, message);
   }
 
@@ -627,6 +750,8 @@ export function MessageList({
   keepBottomAnchoredRef,
   acpState,
   attachedSteersByParentMessageId,
+  activitySteersByAssistantMessageId,
+  inlineSteersByMessageId,
   searchQuery,
   onAtTopStateChange,
   activityJumpDate,
@@ -659,6 +784,8 @@ export function MessageList({
   keepBottomAnchoredRef?: MutableRefObject<boolean>;
   acpState?;
   attachedSteersByParentMessageId?: Map<string, AttachedSteerMessage[]>;
+  activitySteersByAssistantMessageId?: Map<string, AttachedSteerMessage[]>;
+  inlineSteersByMessageId?: Map<string, AttachedSteerMessage>;
   searchQuery?: string;
   onAtTopStateChange?: (atTop: boolean) => void;
   activityJumpDate?: string;
@@ -813,6 +940,28 @@ export function MessageList({
     const attachedSteers = messageId
       ? attachedSteersByParentMessageId?.get(messageId)
       : undefined;
+    const activitySteers = messageId
+      ? activitySteersByAssistantMessageId?.get(messageId)
+      : undefined;
+    const inlineSteer = messageId
+      ? inlineSteersByMessageId?.get(messageId)
+      : undefined;
+
+    if (inlineSteer) {
+      return (
+        <div
+          style={{
+            paddingTop: index == 0 ? "20px" : undefined,
+            paddingLeft: 16,
+            paddingRight: 16,
+          }}
+        >
+          <div style={{ maxWidth: 780 }}>
+            <InlineSteerStatusRow steer={inlineSteer} />
+          </div>
+        </div>
+      );
+    }
 
     const is_thread = numChildren != null && isThread(message, numChildren);
     const h = virtuosoHeightsRef.current?.[index];
@@ -868,6 +1017,7 @@ export function MessageList({
             onForceScrollToBottom={forceScrollToBottom}
             acpState={messageAcpState}
             attachedSteers={attachedSteers}
+            activitySteers={activitySteers}
             dim={shouldDim}
             searchHighlight={searchQuery}
             openActivityToken={

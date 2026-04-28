@@ -386,6 +386,7 @@ interface Props {
     commitHash: string;
   }) => void;
   attachedSteers?: AttachedSteerMessage[];
+  activitySteers?: AttachedSteerMessage[];
   suppressInlineCodexStatus?: boolean;
 }
 
@@ -555,6 +556,7 @@ export default function Message({
   onNotifyOnTurnFinishChange,
   onOpenGitBrowser,
   attachedSteers,
+  activitySteers,
   suppressInlineCodexStatus = false,
 }: Props) {
   const intl = useIntl();
@@ -1878,6 +1880,7 @@ export default function Message({
           notifyOnTurnFinish={notifyOnTurnFinish}
           onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
           attachedSteers={attachedSteers}
+          activitySteers={activitySteers}
           onOpenGitBrowser={
             isCodexThread && !is_viewers_message
               ? openGitBrowserFromMessage

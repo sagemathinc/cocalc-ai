@@ -7,7 +7,7 @@
  *   - Durable write: tmp -> fsync(file) -> rename -> fsync(dir)
  *   - Preserve shell view of CWD via $PWD
  *   - Emit canonical absolute paths for frontend open handlers
- *   - Create parents + touch missing files
+ *   - Fail if a requested path does not exist
  *   - Ignore non-expanded globs when path does not exist
  *   - Message schema: { event: "open", paths: [{ file|directory: string }] }
  */
@@ -33,29 +33,6 @@ async function pathExists(p: string): Promise<boolean> {
     const e = err as NodeJS.ErrnoException;
     if (e && e.code === "ENOENT") return false;
     throw err;
-  }
-}
-
-async function ensureParentsAndMaybeTouch(p: string): Promise<void> {
-  const dir = path.dirname(p);
-  try {
-    await fsp.mkdir(dir, { recursive: true, mode: 0o755 });
-  } catch (e: unknown) {
-    const err = e as NodeJS.ErrnoException;
-    if (!err || err.code !== "EEXIST") throw err;
-  }
-  if (!p.endsWith("/")) {
-    try {
-      const fh = await fsp.open(
-        p,
-        fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
-        0o644,
-      );
-      await fh.close();
-    } catch (e: unknown) {
-      const err = e as NodeJS.ErrnoException;
-      if (!err || err.code !== "EEXIST") throw err;
-    }
   }
 }
 
@@ -175,7 +152,8 @@ async function main(): Promise<void> {
       continue;
     }
     if (!exists) {
-      await ensureParentsAndMaybeTouch(abs);
+      console.error(`open: '${p}' does not exist`);
+      process.exit(1);
     }
 
     const kind = await classifyPath(abs);
@@ -201,8 +179,12 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e: unknown) => {
-  const err = e as Error;
-  console.error(err?.stack ?? err?.message ?? String(e));
-  process.exit(1);
-});
+export { main };
+
+if (process.env.JEST_WORKER_ID == null && process.env.NODE_ENV !== "test") {
+  main().catch((e: unknown) => {
+    const err = e as Error;
+    console.error(err?.stack ?? err?.message ?? String(e));
+    process.exit(1);
+  });
+}

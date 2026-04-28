@@ -1,3 +1,4 @@
+import { LoadingOutlined } from "@ant-design/icons";
 import { Button, Popconfirm, Space, Tag, Typography } from "antd";
 import { mergeProgressiveMessageText, type InlineCodeLink } from "@cocalc/chat";
 import type {
@@ -22,6 +23,7 @@ import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { containingPath, plural } from "@cocalc/util/misc";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { COLORS } from "@cocalc/util/theme";
+import type { AttachedSteerMessage } from "./agent-message-status";
 import {
   buildPrismLineMetasFromPlain,
   highlightPrismLines,
@@ -111,6 +113,14 @@ type ActivityEntry =
         filename: string;
         url: string;
       };
+    }
+  | {
+      kind: "steer";
+      id: string;
+      seq: number;
+      time?: number;
+      text: string;
+      state: AttachedSteerMessage["state"];
     };
 
 export interface CodexActivityProps {
@@ -130,6 +140,44 @@ export interface CodexActivityProps {
   jumpToken?: number;
   expanded?: boolean;
   onOpenFileLink?: () => void;
+  activitySteers?: AttachedSteerMessage[];
+}
+
+function renderSteerStatus(state: AttachedSteerMessage["state"]) {
+  switch (state) {
+    case "sending":
+      return {
+        label: "Sending guidance",
+        borderColor: COLORS.BLUE_LLL,
+        background: COLORS.BLUE_LLLL,
+        pillBackground: COLORS.BLUE_LLL,
+        pillColor: COLORS.BLUE_DDD,
+      };
+    case "queued":
+      return {
+        label: "Guidance queued",
+        borderColor: COLORS.YELL_LL,
+        background: COLORS.YELL_LLL,
+        pillBackground: COLORS.YELL_LL,
+        pillColor: COLORS.BRWN,
+      };
+    case "not-sent":
+      return {
+        label: "Guidance not sent",
+        borderColor: COLORS.ANTD_BG_RED_M,
+        background: COLORS.ANTD_BG_RED_L,
+        pillBackground: COLORS.ANTD_BG_RED_M,
+        pillColor: "white",
+      };
+    default:
+      return {
+        label: "Guidance sent",
+        borderColor: COLORS.BLUE_LLL,
+        background: COLORS.BLUE_LLLL,
+        pillBackground: COLORS.BLUE_LLL,
+        pillColor: COLORS.BLUE_DDD,
+      };
+  }
 }
 
 // Persist log visibility per chat message so Virtuoso remounts don’t reset it.
@@ -152,8 +200,12 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   jumpToken,
   expanded: initExpanded,
   onOpenFileLink,
+  activitySteers,
 }): React.ReactElement | null => {
-  const entries = useMemo(() => normalizeEvents(events ?? []), [events]);
+  const entries = useMemo(
+    () => normalizeEvents(events ?? [], activitySteers),
+    [events, activitySteers],
+  );
   const resolvedBasePath = useMemo(
     () => detectBasePath(basePath, entries, chatPath),
     [basePath, entries, chatPath],
@@ -203,8 +255,13 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   }, [entries, jumpText, jumpToken]);
 
   const activityMarkdown = useMemo(
-    () => codexActivityToMarkdown(events ?? [], { generating, durationLabel }),
-    [durationLabel, events, generating],
+    () =>
+      codexActivityToMarkdown(events ?? [], {
+        generating,
+        durationLabel,
+        activitySteers,
+      }),
+    [activitySteers, durationLabel, events, generating],
   );
 
   if (!entries.length) return null;
@@ -452,6 +509,72 @@ function ActivityRow({
           )}
         </div>
       );
+    case "steer":
+      const status = renderSteerStatus(entry.state);
+      return (
+        <div data-codex-activity-entry-index={rowIndex}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+              flexWrap: "wrap",
+              padding: "6px 10px",
+              borderRadius: 8,
+              background: status.background,
+              border: `1px solid ${status.borderColor}`,
+            }}
+          >
+            <Space
+              size={6}
+              align="center"
+              wrap
+              style={{ width: "100%", justifyContent: "space-between" }}
+            >
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  background: status.pillBackground,
+                  color: status.pillColor,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  lineHeight: 1.2,
+                }}
+              >
+                {entry.state === "sending" ? (
+                  <LoadingOutlined spin style={{ fontSize: 12 }} />
+                ) : null}
+                {status.label}
+              </span>
+              <ActivityTimestamp time={entry.time} />
+            </Space>
+            <div
+              style={{
+                fontSize: 12,
+                color: COLORS.GRAY_D,
+                flex: "1 1 220px",
+                minWidth: 0,
+              }}
+            >
+              <StaticMarkdown
+                value={entry.text}
+                style={{
+                  fontSize: 12,
+                  color: COLORS.GRAY_D,
+                  overflowWrap: "anywhere",
+                }}
+                editorTheme={editorTheme}
+                inlineCodeLinks={inlineCodeLinks}
+                inlineCodeProjectRoot={basePath}
+              />
+            </div>
+          </div>
+        </div>
+      );
     case "diff":
       return (
         <div data-codex-activity-entry-index={rowIndex}>
@@ -528,7 +651,10 @@ function ActivityRow({
   }
 }
 
-function normalizeEvents(events: AcpLogStreamMessage[]): ActivityEntry[] {
+function normalizeEvents(
+  events: AcpLogStreamMessage[],
+  activitySteers?: AttachedSteerMessage[],
+): ActivityEntry[] {
   const rows: ActivityEntry[] = [];
   let fallbackId = 0;
   const terminals = new Map<string, ActivityEntry & { kind: "terminal" }>();
@@ -599,8 +725,23 @@ function normalizeEvents(events: AcpLogStreamMessage[]): ActivityEntry[] {
       row.completed = true;
     }
   }
-  const sorted = rows.sort((a, b) => a.seq - b.seq);
-  return coalesceTextEntries(coalesceFileReads(sorted));
+  const steerRows = (activitySteers ?? []).map((steer, index) => ({
+    kind: "steer" as const,
+    id: `steer-${steer.messageId}`,
+    seq: Number.MAX_SAFE_INTEGER - (activitySteers?.length ?? 0) + index,
+    time: steer.date,
+    text: steer.text,
+    state: steer.state,
+  }));
+  const sorted = [...rows, ...steerRows].sort((a, b) => {
+    const aTime = typeof a.time === "number" ? a.time : undefined;
+    const bTime = typeof b.time === "number" ? b.time : undefined;
+    if (aTime != null && bTime != null && aTime !== bTime) {
+      return aTime - bTime;
+    }
+    return a.seq - b.seq;
+  });
+  return coalesceStatusEntries(coalesceTextEntries(coalesceFileReads(sorted)));
 }
 
 function coalesceFileReads(entries: ActivityEntry[]): ActivityEntry[] {
@@ -666,6 +807,35 @@ function coalesceTextEntries(entries: ActivityEntry[]): ActivityEntry[] {
               ? `${lastText}\n\n${nextText}`
               : lastText || nextText),
           delta: last.delta === true || entry.delta === true,
+        };
+        continue;
+      }
+    }
+    merged.push(entry);
+  }
+  return merged;
+}
+
+function coalesceStatusEntries(entries: ActivityEntry[]): ActivityEntry[] {
+  const merged: ActivityEntry[] = [];
+  for (const entry of entries) {
+    if (entry.kind === "status" && merged.length > 0) {
+      const last = merged[merged.length - 1];
+      if (
+        last.kind === "status" &&
+        last.label === entry.label &&
+        last.detail === entry.detail &&
+        last.level === entry.level
+      ) {
+        merged[merged.length - 1] = {
+          ...last,
+          seq: entry.seq,
+          time:
+            typeof entry.time === "number"
+              ? entry.time
+              : typeof last.time === "number"
+                ? last.time
+                : undefined,
         };
         continue;
       }
@@ -843,7 +1013,10 @@ export function findActivityEntryIndexForJumpEvents(
   events: AcpLogStreamMessage[],
   jumpText?: string,
 ): number {
-  return findActivityEntryIndexForJumpText(normalizeEvents(events), jumpText);
+  return findActivityEntryIndexForJumpText(
+    normalizeEvents(events, undefined),
+    jumpText,
+  );
 }
 
 function formatUsage(usage?: {
@@ -1685,8 +1858,11 @@ function shouldShowByteSize(
 }
 
 // Convert Codex activity events into markdown for exports.
-export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
-  const entries = normalizeEvents(events ?? []);
+export function codexEventsToMarkdown(
+  events: AcpLogStreamMessage[],
+  activitySteers?: AttachedSteerMessage[],
+): string {
+  const entries = normalizeEvents(events ?? [], activitySteers);
   if (!entries.length) return "";
   const lines: string[] = [];
   for (const entry of entries) {
@@ -1698,6 +1874,9 @@ export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
         break;
       case "agent":
         lines.push(entry.text ? `- Agent: ${entry.text}` : "- Agent message");
+        break;
+      case "steer":
+        lines.push(`- Guidance: ${entry.text}`);
         break;
       case "status": {
         const detail =
@@ -1791,9 +1970,13 @@ export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
 
 export function codexActivityToMarkdown(
   events: AcpLogStreamMessage[],
-  options?: { generating?: boolean; durationLabel?: string },
+  options?: {
+    generating?: boolean;
+    durationLabel?: string;
+    activitySteers?: AttachedSteerMessage[];
+  },
 ): string {
-  const body = codexEventsToMarkdown(events);
+  const body = codexEventsToMarkdown(events, options?.activitySteers);
   const sections = ["## Codex Activity"];
   const durationLabel = options?.durationLabel?.trim();
   if (options?.generating === true) {

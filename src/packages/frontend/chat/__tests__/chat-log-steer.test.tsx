@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { ChatLog } from "../chat-log";
 
 let renderedMessages: any[] = [];
@@ -54,6 +54,17 @@ jest.mock("../drawer-overlay-state", () => ({
   useAnyChatOverlayOpen: () => false,
 }));
 
+jest.mock("../agent-message-status", () => ({
+  InlineSteerStatusRow: ({ steer }: any) => (
+    <div>
+      <div>
+        {steer?.state === "sending" ? "Sending guidance" : "Guidance sent"}
+      </div>
+      <div>{steer?.text}</div>
+    </div>
+  ),
+}));
+
 jest.mock("../message", () => ({
   __esModule: true,
   default: (props: any) => {
@@ -72,7 +83,7 @@ describe("ChatLog immediate steer rendering", () => {
     renderedMessages = [];
   });
 
-  it("hides immediate steer rows and attaches their state to the original user prompt", () => {
+  it("renders immediate steer rows inline while the anchored Codex turn is still running", () => {
     render(
       <ChatLog
         project_id="project-1"
@@ -124,24 +135,16 @@ describe("ChatLog immediate steer rendering", () => {
     );
 
     expect(renderedMessages).toHaveLength(2);
-    expect(
-      renderedMessages.find((props) => props.message?.message_id === "steer-1"),
-    ).toBeUndefined();
+    expect(screen.getByText("Sending guidance")).toBeTruthy();
+    expect(screen.getByText("actually say hello")).toBeTruthy();
 
     const userProps = renderedMessages.find(
       (props) => props.message?.message_id === "user-1",
     );
-    expect(userProps?.attachedSteers).toEqual([
-      {
-        messageId: "steer-1",
-        date: 3000,
-        text: "actually say hello",
-        state: "sending",
-      },
-    ]);
+    expect(userProps?.attachedSteers).toBeUndefined();
   });
 
-  it("attaches later steer messages to the original prompt even when they reply to an earlier steer", () => {
+  it("attaches steer messages back to the original prompt once the Codex turn is done", () => {
     render(
       <ChatLog
         project_id="project-1"
@@ -176,7 +179,7 @@ describe("ChatLog immediate steer rendering", () => {
                 parent_message_id: "user-1",
                 sender_id: "acct-codex",
                 acp_account_id: "acct-codex",
-                generating: true,
+                generating: false,
                 history: [{ content: "hello" }],
               },
             ],
@@ -211,6 +214,7 @@ describe("ChatLog immediate steer rendering", () => {
       />,
     );
 
+    expect(screen.queryByText("Guidance sent")).toBeNull();
     const userProps = renderedMessages.find(
       (props) => props.message?.message_id === "user-1",
     );
