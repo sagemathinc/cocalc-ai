@@ -120,6 +120,7 @@ import { RestoreOpsManager } from "@cocalc/frontend/project/restore-ops";
 import { RootfsPublishOpsManager } from "@cocalc/frontend/project/rootfs-publish-ops";
 import { MoveOpsManager } from "@cocalc/frontend/project/move-ops";
 import { StartOpsManager } from "@cocalc/frontend/project/start-ops";
+import { isCollaboratorRealtimeAccessError } from "@cocalc/frontend/project/collaborator-realtime";
 import { canUseCollaboratorProjectRealtime } from "@cocalc/frontend/project/realtime-access";
 import { getFileTemplate } from "./project/templates";
 import { isBackupsPath } from "@cocalc/util/consts/backups";
@@ -420,6 +421,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   private startOpsManager: StartOpsManager;
   private moveOpsManager: MoveOpsManager;
   private collaboratorRealtimeInitialized = false;
+  private collaboratorRealtimeDenied = false;
 
   constructor(name, b) {
     super(name, b);
@@ -435,7 +437,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       listLro: listProjectLro,
       getLroStream: (opts) => webapp_client.conat_client.lroStream(opts),
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
-      log: (message, err) => console.warn(message, err),
+      log: this.logCollaboratorRealtimeError,
     });
     this.backupOpsManager = new BackupOpsManager({
       project_id: this.project_id,
@@ -444,7 +446,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       listLro: listProjectLro,
       getLroStream: (opts) => webapp_client.conat_client.lroStream(opts),
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
-      log: (message, err) => console.warn(message, err),
+      log: this.logCollaboratorRealtimeError,
     });
     this.restoreOpsManager = new RestoreOpsManager({
       project_id: this.project_id,
@@ -453,7 +455,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       listLro: listProjectLro,
       getLroStream: (opts) => webapp_client.conat_client.lroStream(opts),
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
-      log: (message, err) => console.warn(message, err),
+      log: this.logCollaboratorRealtimeError,
     });
     this.rootfsPublishOpsManager = new RootfsPublishOpsManager({
       project_id: this.project_id,
@@ -462,7 +464,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       listLro: listProjectLro,
       getLroStream: (opts) => webapp_client.conat_client.lroStream(opts),
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
-      log: (message, err) => console.warn(message, err),
+      log: this.logCollaboratorRealtimeError,
     });
     this.startOpsManager = new StartOpsManager({
       project_id: this.project_id,
@@ -471,7 +473,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       listLro: listProjectLro,
       getLroStream: (opts) => webapp_client.conat_client.lroStream(opts),
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
-      log: (message, err) => console.warn(message, err),
+      log: this.logCollaboratorRealtimeError,
     });
     this.moveOpsManager = new MoveOpsManager({
       project_id: this.project_id,
@@ -480,7 +482,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       listLro: listProjectLro,
       getLroStream: (opts) => webapp_client.conat_client.lroStream(opts),
       dismissLro: (opts) => webapp_client.conat_client.hub.lro.dismiss(opts),
-      log: (message, err) => console.warn(message, err),
+      log: this.logCollaboratorRealtimeError,
     });
     // console.log("create project actions", this.project_id);
     // console.trace("create project actions", this.project_id)
@@ -566,6 +568,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   private canUseCollaboratorRealtime = (): boolean => {
+    if (this.collaboratorRealtimeDenied) {
+      return false;
+    }
     return canUseCollaboratorProjectRealtime({
       account_id: webapp_client.account_id,
       is_admin: redux.getStore("account")?.get("is_admin") as
@@ -597,11 +602,40 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.moveOpsManager.init();
   };
 
+  private logCollaboratorRealtimeError = (
+    message: string,
+    err?: unknown,
+  ): void => {
+    if (isCollaboratorRealtimeAccessError(err)) {
+      this.handleCollaboratorRealtimeAccessDenied();
+      return;
+    }
+    console.warn(message, err);
+  };
+
+  private handleCollaboratorRealtimeAccessDenied = (): void => {
+    if (this.collaboratorRealtimeDenied) {
+      return;
+    }
+    this.collaboratorRealtimeDenied = true;
+    this.collaboratorRealtimeInitialized = false;
+    this.projectStatusSub?.close();
+    delete this.projectStatusSub;
+    this.copyOpsManager.close();
+    this.backupOpsManager.close();
+    this.restoreOpsManager.close();
+    this.rootfsPublishOpsManager.close();
+    this.startOpsManager.close();
+    this.moveOpsManager.close();
+    (redux.getActions("page") as any)?.close_project_tab?.(this.project_id);
+  };
+
   private closeExpensive = () => {
     if (!this.initialized) return;
     // console.log("closeExpensive", this.project_id);
     this.initialized = false;
     this.collaboratorRealtimeInitialized = false;
+    this.collaboratorRealtimeDenied = false;
     redux.removeProjectReferences(this.project_id);
     this.copyOpsManager.close();
     this.backupOpsManager.close();
@@ -3643,6 +3677,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         project_id: this.project_id,
       });
     } catch (err) {
+      if (isCollaboratorRealtimeAccessError(err)) {
+        this.handleCollaboratorRealtimeAccessDenied();
+        return;
+      }
       if (!this.canUseCollaboratorRealtime()) {
         return;
       }
