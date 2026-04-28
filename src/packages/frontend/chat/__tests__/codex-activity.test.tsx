@@ -2,15 +2,11 @@ import React from "react";
 import { render, screen } from "@testing-library/react";
 import CodexActivity, { TerminalRow } from "../codex-activity";
 
-jest.mock("@cocalc/frontend/components", () => {
-  const actual = jest.requireActual("@cocalc/frontend/components");
-  return {
-    ...actual,
-    TimeAgo: ({ date }: any) => (
-      <span>{date instanceof Date ? date.toISOString() : String(date)}</span>
-    ),
-  };
-});
+jest.mock("@cocalc/frontend/components/time-ago", () => ({
+  TimeAgo: ({ date }: any) => (
+    <span>{date instanceof Date ? date.toISOString() : String(date)}</span>
+  ),
+}));
 
 describe("CodexActivity terminal rows", () => {
   it('renders "No output." after the terminal block', () => {
