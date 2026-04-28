@@ -85,6 +85,8 @@ const DIFF_FILE_HEADER_TEXT = COLORS.GRAY_D;
 const DIFF_FILE_HEADER_SECONDARY = COLORS.GRAY_M;
 const DELETE_ALL_REVIEWS_CONFIRM_TEXT = "delete all";
 const EMPTY_GIT_REVIEW_COMMENTS: GitReviewCommentV2[] = [];
+const INITIAL_RENDERED_DIFF_LINES = 300;
+const RENDERED_DIFF_LINES_INCREMENT = 200;
 
 export function getCommitReviewIndicatorState(
   reviewedByCommit: Record<string, boolean>,
@@ -273,6 +275,25 @@ type GitShowParsed = {
   originalLineCount: number;
   shownLineCount: number;
 };
+
+export function getRenderedDiffLineLimit(requested?: number): number {
+  const value = Number(requested);
+  if (!Number.isFinite(value) || value <= 0) {
+    return INITIAL_RENDERED_DIFF_LINES;
+  }
+  return Math.max(INITIAL_RENDERED_DIFF_LINES, Math.floor(value));
+}
+
+export function getNextRenderedDiffLineLimit(current?: number): number {
+  return getRenderedDiffLineLimit(current) + RENDERED_DIFF_LINES_INCREMENT;
+}
+
+export function buildGitReviewFileSectionId(
+  path: string,
+  index: number,
+): string {
+  return `git-review-file-${index}-${hashString(path).slice(0, 12)}`;
+}
 
 type GitLogEntry = {
   hash: string;
@@ -1502,9 +1523,13 @@ export function GitCommitDrawer({
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
   const reviewImportInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fileSectionRefs = useRef(new Map<string, HTMLDivElement | null>());
   const restoringScrollRef = useRef(false);
   const pendingScrollRestoreRef = useRef<number | null>(null);
   const pendingContextAnchorRef = useRef<GitDiffScrollAnchor | null>(null);
+  const [visibleDiffLinesByFile, setVisibleDiffLinesByFile] = useState<
+    Record<string, number>
+  >({});
 
   const cwd = useMemo(() => {
     const override = `${cwdOverride ?? ""}`.trim();
@@ -1527,6 +1552,11 @@ export function GitCommitDrawer({
     pendingScrollRestoreRef.current =
       readDrawerScrollPosition(scrollStorageId) ?? null;
   }, [open, scrollStorageId]);
+
+  useEffect(() => {
+    if (!open) return;
+    setVisibleDiffLinesByFile({});
+  }, [open, commit, contextLines, reloadCounter]);
 
   useEffect(() => {
     if (!open) return;
@@ -2323,6 +2353,19 @@ export function GitCommitDrawer({
     }
     return byFile;
   }, [inlineComments]);
+
+  const scrollToDiffFile = useCallback((sectionId: string) => {
+    const container = scrollRef.current;
+    const target = fileSectionRefs.current.get(sectionId);
+    if (!container || !target) return;
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const nextTop = Math.max(
+      0,
+      container.scrollTop + (targetRect.top - containerRect.top) - 12,
+    );
+    container.scrollTo({ top: nextTop, behavior: "smooth" });
+  }, []);
 
   const sendInlineReviewToAgent = async () => {
     if (!onRequestAgentTurn || !commit || isHeadSelected) return;
@@ -3630,80 +3673,181 @@ export function GitCommitDrawer({
             {data.files.length === 0 ? (
               <Empty description="No file changes in this commit." />
             ) : (
-              data.files.map((file, idx) => {
-                const languageHint = languageHintFromPath(file.path);
-                const fileComments =
-                  inlineCommentsByFile.get(file.path) ??
-                  EMPTY_GIT_REVIEW_COMMENTS;
-                return (
-                  <div key={`${file.path}-${idx}`} style={{ marginBottom: 18 }}>
-                    <div
-                      style={{
-                        position: "sticky",
-                        top: -16,
-                        zIndex: 3,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 8,
-                        flexWrap: "wrap",
-                        marginBottom: 8,
-                        padding: "8px 10px",
-                        border: `1px solid ${DIFF_FILE_HEADER_BORDER}`,
-                        borderRadius: 8,
-                        background: DIFF_FILE_HEADER_BACKGROUND,
-                        boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-                      }}
-                    >
-                      <Button
-                        type="link"
-                        size="small"
-                        style={{
-                          padding: 0,
-                          height: "auto",
-                          fontFamily: "monospace",
-                          fontWeight: 700,
-                          fontSize: Math.max(13, fontSize),
-                          color: DIFF_FILE_HEADER_TEXT,
-                        }}
-                        onClick={() => void openFile(file.path)}
-                      >
-                        {file.path}
-                      </Button>
-                      <Typography.Text
-                        style={{
-                          fontSize: 11,
-                          color: DIFF_FILE_HEADER_SECONDARY,
-                        }}
-                      >
-                        {filenameMode(file.path, "text")}
-                        {fileComments.length > 0
-                          ? ` · ${fileComments.length} comments`
-                          : ""}
-                      </Typography.Text>
-                    </div>
-                    <DiffBlock
-                      filePath={file.path}
-                      lines={file.lines}
-                      languageHint={languageHint}
-                      fontSize={fontSize}
-                      editorTheme={editorTheme}
-                      comments={fileComments}
-                      showResolvedComments={showResolvedComments}
-                      commentEnabled={!isHeadSelected}
-                      commentDisabledMessage={
-                        isHeadSelected
-                          ? "Please commit first, then comment."
-                          : undefined
-                      }
-                      onCreateComment={createInlineComment}
-                      onUpdateComment={updateInlineComment}
-                      onResolveComment={resolveInlineComment}
-                      onReopenComment={reopenInlineComment}
-                    />
+              <>
+                <div
+                  style={{
+                    marginBottom: 18,
+                    padding: "10px 12px",
+                    border: `1px solid ${CARD_BORDER_COLOR}`,
+                    borderRadius: 10,
+                    background: "white",
+                    boxShadow: CARD_SHADOW,
+                  }}
+                >
+                  <Typography.Text
+                    strong
+                    style={{ display: "block", marginBottom: 10 }}
+                  >
+                    Changed files
+                  </Typography.Text>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 8,
+                    }}
+                  >
+                    {data.files.map((file, idx) => {
+                      const sectionId = buildGitReviewFileSectionId(
+                        file.path,
+                        idx,
+                      );
+                      const fileComments =
+                        inlineCommentsByFile.get(file.path) ??
+                        EMPTY_GIT_REVIEW_COMMENTS;
+                      return (
+                        <Button
+                          key={`file-index-${sectionId}`}
+                          size="small"
+                          style={{
+                            fontFamily: "monospace",
+                            maxWidth: "100%",
+                          }}
+                          onClick={() => scrollToDiffFile(sectionId)}
+                        >
+                          {file.path}
+                          {fileComments.length > 0
+                            ? ` (${fileComments.length})`
+                            : ""}
+                        </Button>
+                      );
+                    })}
                   </div>
-                );
-              })
+                </div>
+                {data.files.map((file, idx) => {
+                  const languageHint = languageHintFromPath(file.path);
+                  const fileComments =
+                    inlineCommentsByFile.get(file.path) ??
+                    EMPTY_GIT_REVIEW_COMMENTS;
+                  const sectionId = buildGitReviewFileSectionId(file.path, idx);
+                  const visibleLineLimit = getRenderedDiffLineLimit(
+                    visibleDiffLinesByFile[sectionId],
+                  );
+                  const visibleLines = file.lines.slice(0, visibleLineLimit);
+                  const remainingLineCount = Math.max(
+                    0,
+                    file.lines.length - visibleLines.length,
+                  );
+                  return (
+                    <div
+                      key={`${file.path}-${idx}`}
+                      id={sectionId}
+                      ref={(node) => {
+                        fileSectionRefs.current.set(sectionId, node);
+                      }}
+                      style={{ marginBottom: 18 }}
+                    >
+                      <div
+                        style={{
+                          position: "sticky",
+                          top: -16,
+                          zIndex: 3,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 8,
+                          flexWrap: "wrap",
+                          marginBottom: 8,
+                          padding: "8px 10px",
+                          border: `1px solid ${DIFF_FILE_HEADER_BORDER}`,
+                          borderRadius: 8,
+                          background: DIFF_FILE_HEADER_BACKGROUND,
+                          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                        }}
+                      >
+                        <Button
+                          type="link"
+                          size="small"
+                          style={{
+                            padding: 0,
+                            height: "auto",
+                            fontFamily: "monospace",
+                            fontWeight: 700,
+                            fontSize: Math.max(13, fontSize),
+                            color: DIFF_FILE_HEADER_TEXT,
+                          }}
+                          onClick={() => void openFile(file.path)}
+                        >
+                          {file.path}
+                        </Button>
+                        <Typography.Text
+                          style={{
+                            fontSize: 11,
+                            color: DIFF_FILE_HEADER_SECONDARY,
+                          }}
+                        >
+                          {filenameMode(file.path, "text")}
+                          {fileComments.length > 0
+                            ? ` · ${fileComments.length} comments`
+                            : ""}
+                          {remainingLineCount > 0
+                            ? ` · showing ${visibleLines.length.toLocaleString()} / ${file.lines.length.toLocaleString()} diff lines`
+                            : ""}
+                        </Typography.Text>
+                      </div>
+                      <DiffBlock
+                        filePath={file.path}
+                        lines={visibleLines}
+                        languageHint={languageHint}
+                        fontSize={fontSize}
+                        editorTheme={editorTheme}
+                        comments={fileComments}
+                        showResolvedComments={showResolvedComments}
+                        commentEnabled={!isHeadSelected}
+                        commentDisabledMessage={
+                          isHeadSelected
+                            ? "Please commit first, then comment."
+                            : undefined
+                        }
+                        onCreateComment={createInlineComment}
+                        onUpdateComment={updateInlineComment}
+                        onResolveComment={resolveInlineComment}
+                        onReopenComment={reopenInlineComment}
+                      />
+                      {remainingLineCount > 0 ? (
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "center",
+                            marginTop: 10,
+                          }}
+                        >
+                          <Button
+                            onClick={() => {
+                              setVisibleDiffLinesByFile((prev) => ({
+                                ...prev,
+                                [sectionId]: getNextRenderedDiffLineLimit(
+                                  prev[sectionId],
+                                ),
+                              }));
+                            }}
+                          >
+                            Show{" "}
+                            {Math.min(
+                              RENDERED_DIFF_LINES_INCREMENT,
+                              remainingLineCount,
+                            ).toLocaleString()}{" "}
+                            more lines
+                            {remainingLineCount > RENDERED_DIFF_LINES_INCREMENT
+                              ? ` (${remainingLineCount.toLocaleString()} remaining)`
+                              : ""}
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </>
             )}
             {data.linesTruncated ? (
               <Alert
