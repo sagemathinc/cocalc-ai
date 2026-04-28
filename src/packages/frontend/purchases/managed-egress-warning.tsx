@@ -72,7 +72,9 @@ function getManagedEgressLimit(
   details: MembershipDetails | null | undefined,
   window: EgressWindow,
 ): number | undefined {
-  const usageLimits = details?.selected?.entitlements?.usage_limits;
+  const usageLimits =
+    details?.selected?.effective_limits ??
+    details?.selected?.entitlements?.usage_limits;
   const key = window === "5h" ? "egress_5h_bytes" : "egress_7d_bytes";
   const value = usageLimits?.[key];
   return typeof value === "number" && Number.isFinite(value) && value > 0

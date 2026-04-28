@@ -15,6 +15,7 @@ import {
 } from "@cocalc/conat/project/archive-info";
 import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
 import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
+import { getEffectiveMembershipUsageLimits } from "./effective-limits";
 import { resolveMembershipForAccount } from "./resolve";
 import { getMembershipUsageStatusForAccount } from "./usage-status";
 
@@ -171,10 +172,7 @@ export async function estimateProvisionedRestoreBytesForProject({
 function extractMaxProjects(
   resolution: MembershipResolution,
 ): number | undefined {
-  const value = resolution.entitlements?.usage_limits?.max_projects;
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
+  return getEffectiveMembershipUsageLimits(resolution).max_projects;
 }
 
 export async function assertCanOwnAdditionalProject({
@@ -201,10 +199,7 @@ export async function assertCanOwnAdditionalProject({
 function extractTotalStorageHardBytes(
   resolution: MembershipResolution,
 ): number | undefined {
-  const value = resolution.entitlements?.usage_limits?.total_storage_hard_bytes;
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
+  return getEffectiveMembershipUsageLimits(resolution).total_storage_hard_bytes;
 }
 
 function formatBytes(bytes: number): string {

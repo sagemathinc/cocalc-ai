@@ -75,7 +75,8 @@ describe("project membership limits", () => {
   it("allows creation below the configured max_projects limit", async () => {
     queryMock.mockResolvedValue({ rows: [{ count: "2" }] });
     resolveMembershipForAccountMock.mockResolvedValue({
-      entitlements: { usage_limits: { max_projects: 3 } },
+      entitlements: {},
+      effective_limits: { max_projects: 3 },
     });
     const { assertCanOwnAdditionalProject } = await import("./project-limits");
     await expect(
@@ -121,7 +122,8 @@ describe("project membership limits", () => {
         resolution: {
           class: "pro",
           source: "subscription",
-          entitlements: { usage_limits: { total_storage_hard_bytes: 100 } },
+          entitlements: {},
+          effective_limits: { total_storage_hard_bytes: 100 },
         },
       }),
     ).resolves.toBeUndefined();

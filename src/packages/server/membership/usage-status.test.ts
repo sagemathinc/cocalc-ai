@@ -232,4 +232,45 @@ describe("getMembershipUsageStatusForAccount", () => {
       limit7d: 2000,
     });
   });
+
+  it("uses canonical effective limits when provided on the resolution", async () => {
+    queryMock.mockResolvedValue({
+      rows: [],
+    });
+
+    const { getMembershipUsageStatusForAccount } =
+      await import("./usage-status");
+    const result = await getMembershipUsageStatusForAccount({
+      account_id: "account-1",
+      resolution: {
+        class: "member",
+        source: "subscription",
+        entitlements: {
+          usage_limits: {
+            total_storage_soft_bytes: -1,
+            total_storage_hard_bytes: -1,
+            max_projects: -1,
+            egress_5h_bytes: -1,
+            egress_7d_bytes: -1,
+          },
+        },
+        effective_limits: {
+          total_storage_soft_bytes: 300,
+          total_storage_hard_bytes: 500,
+          max_projects: 7,
+          egress_5h_bytes: 1000,
+          egress_7d_bytes: 2000,
+        },
+      },
+    });
+
+    expect(result.total_storage_soft_bytes).toBe(300);
+    expect(result.total_storage_hard_bytes).toBe(500);
+    expect(result.max_projects).toBe(7);
+    expect(getManagedEgressUsageForAccountMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      limit5h: 1000,
+      limit7d: 2000,
+    });
+  });
 });

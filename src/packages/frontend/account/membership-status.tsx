@@ -244,6 +244,22 @@ function getUsageLimitsItems(
       value: `${maxProjects}`,
     });
   }
+  const maxSnapshots = usageLimits.max_snapshots_per_project;
+  if (typeof maxSnapshots === "number" && Number.isFinite(maxSnapshots)) {
+    items.push({
+      key: "max_snapshots_per_project",
+      label: "Max snapshots per project",
+      value: `${maxSnapshots}`,
+    });
+  }
+  const maxBackups = usageLimits.max_backups_per_project;
+  if (typeof maxBackups === "number" && Number.isFinite(maxBackups)) {
+    items.push({
+      key: "max_backups_per_project",
+      label: "Max backups per project",
+      value: `${maxBackups}`,
+    });
+  }
   const egress5h = usageLimits.egress_5h_bytes;
   if (typeof egress5h === "number" && Number.isFinite(egress5h)) {
     items.push({
@@ -696,7 +712,9 @@ export function MembershipStatusPanel({
   const projectDefaults = normalizeRecord(entitlements.project_defaults);
   const aiLimits = normalizeRecord(entitlements.ai_limits);
   const features = normalizeRecord(entitlements.features);
-  const usageLimits = normalizeRecord(entitlements.usage_limits);
+  const usageLimits = normalizeRecord(
+    membership?.effective_limits ?? entitlements.usage_limits,
+  );
   const limit5h = extractLimit(aiLimits, ["units_5h", "limit_5h"]);
   const limit7d = extractLimit(aiLimits, ["units_7d", "limit_7d"]);
   const featureTags = Object.entries(features)

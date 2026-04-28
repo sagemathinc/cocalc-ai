@@ -88,11 +88,10 @@ describe("getManagedProjectEgressPolicy", () => {
     resolveMembershipForAccountMock.mockResolvedValue({
       class: "pro",
       source: "subscription",
-      entitlements: {
-        usage_limits: {
-          egress_5h_bytes: 1000,
-          egress_7d_bytes: 2000,
-        },
+      entitlements: {},
+      effective_limits: {
+        egress_5h_bytes: 1000,
+        egress_7d_bytes: 2000,
       },
     });
     getManagedEgressUsageForAccountMock.mockResolvedValue({
