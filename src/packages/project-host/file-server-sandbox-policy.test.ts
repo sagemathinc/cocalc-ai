@@ -73,4 +73,58 @@ describe("file-server sandbox policy", () => {
       "rootfs-root",
     );
   });
+
+  it("routes snapshot rm to deleteSnapshot for runtime-home paths", async () => {
+    const base = await mkdtemp(join(tmpdir(), "cocalc-fs-policy-"));
+    const home = join(base, "home");
+    const rootfs = join(base, "rootfs");
+    const scratch = join(base, "scratch");
+    await mkdir(home, { recursive: true });
+    await mkdir(rootfs, { recursive: true });
+    await mkdir(scratch, { recursive: true });
+    const deleteSnapshot = jest.fn(async () => {});
+
+    const fs = createProjectSandboxFilesystem({
+      project_id,
+      home,
+      rootfs,
+      scratch,
+      deleteSnapshot,
+    });
+
+    await fs.rm("/home/user/.snapshots/2026-04-28T19:27:16.282Z", {
+      recursive: true,
+      force: true,
+      sudo: true,
+    });
+
+    expect(deleteSnapshot).toHaveBeenCalledWith("2026-04-28T19:27:16.282Z");
+  });
+
+  it("rejects deleting nested files inside snapshots", async () => {
+    const base = await mkdtemp(join(tmpdir(), "cocalc-fs-policy-"));
+    const home = join(base, "home");
+    const rootfs = join(base, "rootfs");
+    const scratch = join(base, "scratch");
+    await mkdir(home, { recursive: true });
+    await mkdir(rootfs, { recursive: true });
+    await mkdir(scratch, { recursive: true });
+    const deleteSnapshot = jest.fn(async () => {});
+
+    const fs = createProjectSandboxFilesystem({
+      project_id,
+      home,
+      rootfs,
+      scratch,
+      deleteSnapshot,
+    });
+
+    await expect(
+      fs.rm("/home/user/.snapshots/2026-04-28T19:27:16.282Z/file.txt", {
+        force: true,
+      }),
+    ).rejects.toThrow(
+      "Snapshots are read-only. Delete the snapshot '2026-04-28T19:27:16.282Z' instead of files inside it",
+    );
+  });
 });
