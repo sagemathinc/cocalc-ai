@@ -12,7 +12,8 @@ import {
   useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
-import { TimeAgo, Tooltip } from "@cocalc/frontend/components";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import type { InlineCodeLink } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
