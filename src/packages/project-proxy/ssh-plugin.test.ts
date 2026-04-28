@@ -54,4 +54,22 @@ describe("managed ssh plugin state", () => {
       account_id: "22222222-2222-4222-8222-222222222222",
     });
   });
+
+  it("allows initial next-auth negotiation before sshpiperd knows the username", async () => {
+    const authorizePublicKey = jest.fn();
+    const state = new ManagedSshPluginState({
+      proxy_private_key: "PRIVATE KEY",
+      authorizePublicKey,
+    });
+
+    await expect(
+      state.nextAuthMethods({
+        fromAddr: "203.0.113.11:54322",
+        userName: "",
+      }),
+    ).resolves.toEqual(["PUBLICKEY"]);
+
+    expect(state.getSession("203.0.113.11:54322")).toBeUndefined();
+    expect(authorizePublicKey).not.toHaveBeenCalled();
+  });
 });

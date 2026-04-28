@@ -15,7 +15,7 @@ import { SSHPIPER_PLUGIN_PROTO } from "./sshpiper-plugin-proto";
 
 const logger = getLogger("project-proxy:ssh:plugin");
 const CALLBACKS = ["NextAuthMethods", "PublicKeyAuth"] as const;
-const SSH_AUTH_METHOD_PUBLICKEY = 2;
+const SSH_AUTH_METHOD_PUBLICKEY = "PUBLICKEY" as const;
 const PROTO_PATH = join(tmpdir(), "cocalc-sshpiper-plugin.proto");
 
 type LibPluginService = grpc.ServiceDefinition<any>;
@@ -104,20 +104,37 @@ export class ManagedSshPluginState {
     return [...CALLBACKS];
   }
 
-  normalizeMeta(meta: any): { from_addr: string; user_name: string } {
+  normalizeMeta(meta: any): { from_addr: string; user_name?: string } {
     const from_addr = `${meta?.fromAddr ?? meta?.from_addr ?? ""}`.trim();
     const user_name = `${meta?.userName ?? meta?.user_name ?? ""}`.trim();
-    if (!from_addr || !user_name) {
+    if (!from_addr) {
       throw new Error("missing ssh connection metadata");
     }
-    return { from_addr, user_name };
+    return user_name ? { from_addr, user_name } : { from_addr };
+  }
+
+  async nextAuthMethods(
+    meta: any,
+  ): Promise<readonly [typeof SSH_AUTH_METHOD_PUBLICKEY]> {
+    const normalized = this.normalizeMeta(meta);
+    if (normalized.user_name) {
+      await this.noteProjectTarget(normalized);
+    }
+    return [SSH_AUTH_METHOD_PUBLICKEY];
   }
 
   async noteProjectTarget(meta: {
     from_addr: string;
-    user_name: string;
+    user_name?: string;
   }): Promise<ManagedSshSessionIdentity> {
     const remote_addr = canonicalizeSshRemoteAddr(meta.from_addr);
+    if (!meta.user_name) {
+      const existing = this.sessions.get(remote_addr);
+      if (existing) {
+        return existing;
+      }
+      throw new Error("missing ssh username");
+    }
     const target = parseSshTargetUser(meta.user_name);
     const current = this.sessions.get(remote_addr);
     const next: ManagedSshSessionIdentity = {
@@ -197,8 +214,9 @@ export async function startManagedSshPluginServer(
       callback(null, {});
     }),
     NextAuthMethods: unary<any, any>(async (call, callback) => {
-      await state.noteProjectTarget(state.normalizeMeta(call.request?.meta));
-      callback(null, { methods: [SSH_AUTH_METHOD_PUBLICKEY] });
+      callback(null, {
+        methods: await state.nextAuthMethods(call.request?.meta),
+      });
     }),
     PublicKeyAuth: unary<any, any>(async (call, callback) => {
       const authorized = await state.authorizePublicKey({
