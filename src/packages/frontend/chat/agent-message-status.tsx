@@ -175,6 +175,15 @@ export function AttachedSteerStatusList({
   );
 }
 
+export function InlineSteerStatusRow({
+  steer,
+}: {
+  steer?: AttachedSteerMessage;
+}) {
+  if (!steer) return null;
+  return <AttachedSteerStatusList attachedSteers={[steer]} />;
+}
+
 export const STALE_ACTIVITY_MS = 2 * 60 * 1000;
 
 function formatTimestampTitle(ms: number): string {
@@ -243,6 +252,7 @@ interface AgentMessageStatusProps {
   logEvents?: AcpStreamMessage[] | null;
   deleteLog?: () => Promise<void>;
   attachedSteers?: AttachedSteerMessage[];
+  activitySteers?: AttachedSteerMessage[];
   interruptRequested?: boolean;
   onInterrupt?: () => void;
   activityLiveStatus?: CodexLiveLogStatus;
@@ -424,6 +434,7 @@ export function AgentMessageStatus({
   logEvents,
   deleteLog,
   attachedSteers,
+  activitySteers,
   notifyOnTurnFinish = false,
   onNotifyOnTurnFinishChange,
   interruptRequested = false,
@@ -647,6 +658,7 @@ export function AgentMessageStatus({
           onScroll={handleScroll}
           style={{ height: "100%", overflowY: "auto" }}
         >
+          <AttachedSteerStatusList attachedSteers={activitySteers} />
           <CodexLogPanel
             generating={generating === true}
             fontSize={fontSize}

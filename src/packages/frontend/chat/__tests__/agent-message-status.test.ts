@@ -185,6 +185,32 @@ describe("AgentMessageStatus", () => {
 
     expect(onInterrupt).toHaveBeenCalledTimes(1);
   });
+
+  it("includes steer guidance in the Codex activity drawer", () => {
+    render(
+      React.createElement(AgentMessageStatus, {
+        show: true,
+        generating: false,
+        durationLabel: "0:10",
+        date: 1000,
+        logRefs: {},
+        activityContext: {} as any,
+        activitySteers: [
+          {
+            messageId: "steer-1",
+            date: 1000,
+            state: "sent",
+            text: "use the smaller API",
+          },
+        ],
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByText("Codex activity")).toBeTruthy();
+    expect(screen.getByText("use the smaller API")).toBeTruthy();
+  });
 });
 
 describe("AttachedSteerStatusList", () => {
