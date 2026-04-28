@@ -1,8 +1,12 @@
 import React, { useState } from "react";
 import {
+  filterGitReviewLogEntries,
+  buildGitReviewFileSectionId,
   captureGitDiffScrollAnchor,
   DiffBlock,
   diffLineNumberColumnWidth,
+  getNextRenderedDiffLineLimit,
+  getRenderedDiffLineLimit,
   getCommitReviewIndicatorState,
   MarkdownHistoryInput,
   buildGitLogArgs,
@@ -247,6 +251,47 @@ describe("git commit drawer merge commit formatting", () => {
     expect(diffLineNumberColumnWidth(99)).toBe("calc(3ch + 12px)");
     expect(diffLineNumberColumnWidth(1000)).toBe("calc(4ch + 12px)");
     expect(diffLineNumberColumnWidth(12345)).toBe("calc(5ch + 12px)");
+  });
+
+  it("caps rendered diff blocks per file and grows them in fixed increments", () => {
+    expect(getRenderedDiffLineLimit(undefined)).toBe(300);
+    expect(getRenderedDiffLineLimit(1)).toBe(300);
+    expect(getRenderedDiffLineLimit(420)).toBe(420);
+    expect(getNextRenderedDiffLineLimit(undefined)).toBe(500);
+    expect(getNextRenderedDiffLineLimit(300)).toBe(500);
+    expect(getNextRenderedDiffLineLimit(420)).toBe(620);
+  });
+
+  it("builds stable file section ids for changed-file navigation", () => {
+    expect(buildGitReviewFileSectionId("src/example.ts", 0)).toMatch(
+      /^git-review-file-0-/,
+    );
+    expect(buildGitReviewFileSectionId("src/example.ts", 0)).toBe(
+      buildGitReviewFileSectionId("src/example.ts", 0),
+    );
+    expect(buildGitReviewFileSectionId("src/example.ts", 0)).not.toBe(
+      buildGitReviewFileSectionId("src/example.ts", 1),
+    );
+  });
+
+  it("filters the commit list down to unreviewed commits when requested", () => {
+    expect(
+      filterGitReviewLogEntries({
+        entries: [
+          { hash: "aaa1111", subject: "Reviewed commit" },
+          { hash: "bbb2222", subject: "Unreviewed commit" },
+          { hash: "ccc3333", subject: "Unknown review state" },
+        ],
+        reviewedByCommit: {
+          aaa1111: true,
+          bbb2222: false,
+        },
+        onlyUnreviewed: true,
+      }),
+    ).toEqual([
+      { hash: "bbb2222", subject: "Unreviewed commit" },
+      { hash: "ccc3333", subject: "Unknown review state" },
+    ]);
   });
 
   it("matches git review scroll keys without modifiers", () => {

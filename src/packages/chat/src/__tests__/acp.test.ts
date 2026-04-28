@@ -5,6 +5,7 @@ import {
   getAgentMessageTexts,
   getBestResponseText,
   getInterruptedResponseMarkdown,
+  getLiveResponseBlocks,
   getLiveResponseMarkdown,
   getMountedIntermediateResponseMarkdown,
   getLatestEventLineText,
@@ -261,6 +262,37 @@ describe("response text helpers", () => {
       textEvent("message", "second", 4),
     ];
     expect(getAgentMessageTexts(events)).toEqual(["first", "second"]);
+  });
+
+  test("interleaves live guidance between timed agent message blocks", () => {
+    const events: AcpStreamMessage[] = [
+      {
+        type: "event",
+        event: { type: "message", text: "first" },
+        seq: 1,
+        time: 1000,
+      } as any,
+      {
+        type: "event",
+        event: { type: "message", text: "second" },
+        seq: 2,
+        time: 3000,
+      } as any,
+    ];
+    expect(
+      getLiveResponseBlocks(events, [
+        { date: 2000, text: "please check X", state: "sent" },
+      ]),
+    ).toEqual([
+      { kind: "agent", text: "first", time: 1000, state: undefined },
+      {
+        kind: "guidance",
+        text: "please check X",
+        time: 2000,
+        state: "sent",
+      },
+      { kind: "agent", text: "second", time: 3000, state: undefined },
+    ]);
   });
 
   test("replaces progressive partial agent messages instead of duplicating them", () => {

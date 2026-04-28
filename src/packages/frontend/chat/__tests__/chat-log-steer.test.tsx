@@ -54,17 +54,6 @@ jest.mock("../drawer-overlay-state", () => ({
   useAnyChatOverlayOpen: () => false,
 }));
 
-jest.mock("../agent-message-status", () => ({
-  InlineSteerStatusRow: ({ steer }: any) => (
-    <div>
-      <div>
-        {steer?.state === "sending" ? "Sending guidance" : "Guidance sent"}
-      </div>
-      <div>{steer?.text}</div>
-    </div>
-  ),
-}));
-
 jest.mock("../message", () => ({
   __esModule: true,
   default: (props: any) => {
@@ -135,18 +124,21 @@ describe("ChatLog immediate steer rendering", () => {
     );
 
     expect(renderedMessages).toHaveLength(2);
-    expect(screen.getByText("Sending guidance")).toBeTruthy();
-    expect(screen.getByText("actually say hello")).toBeTruthy();
-    expect(
-      screen
-        .getByText("Sending guidance")
-        .closest('div[style*="justify-content: flex-end"]'),
-    ).toBeTruthy();
-
     const userProps = renderedMessages.find(
       (props) => props.message?.message_id === "user-1",
     );
     expect(userProps?.attachedSteers).toBeUndefined();
+    const assistantProps = renderedMessages.find(
+      (props) => props.message?.message_id === "assistant-1",
+    );
+    expect(assistantProps?.activitySteers).toEqual([
+      {
+        messageId: "steer-1",
+        date: 3000,
+        text: "actually say hello",
+        state: "sending",
+      },
+    ]);
   });
 
   it("attaches steer messages back to the original prompt once the Codex turn is done", () => {
