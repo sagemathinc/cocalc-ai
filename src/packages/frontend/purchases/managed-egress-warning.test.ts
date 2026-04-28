@@ -5,6 +5,7 @@
 
 import type { MembershipDetails } from "@cocalc/conat/hub/api/purchases";
 import {
+  MANAGED_EGRESS_SEVERE_THRESHOLD,
   MANAGED_EGRESS_WARNING_THRESHOLD,
   getManagedEgressWindowWarnings,
 } from "./managed-egress-warning";
@@ -56,20 +57,22 @@ describe("getManagedEgressWindowWarnings", () => {
   it("returns warnings at or above the threshold", () => {
     const details = makeDetails({
       limit5h: 1000,
-      used5h: 900,
+      used5h: Math.ceil(1000 * MANAGED_EGRESS_WARNING_THRESHOLD),
       limit7d: 5000,
-      used7d: 5200,
+      used7d: Math.ceil(5000 * MANAGED_EGRESS_SEVERE_THRESHOLD),
     });
     expect(getManagedEgressWindowWarnings(details)).toEqual([
       expect.objectContaining({
         window: "7d",
-        over: true,
-        percent: 104,
+        over: false,
+        percent: 90,
+        severity: "severe",
       }),
       expect.objectContaining({
         window: "5h",
         over: false,
-        percent: 90,
+        percent: 75,
+        severity: "warning",
       }),
     ]);
   });
@@ -86,12 +89,14 @@ describe("getManagedEgressWindowWarnings", () => {
       expect.objectContaining({
         window: "7d",
         over: true,
+        severity: "blocked",
       }),
     );
     expect(warnings[1]).toEqual(
       expect.objectContaining({
         window: "5h",
         over: false,
+        severity: "severe",
       }),
     );
   });

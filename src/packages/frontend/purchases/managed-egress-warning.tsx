@@ -27,10 +27,12 @@ import { COLORS } from "@cocalc/util/theme";
 
 const { Text } = Typography;
 
-export const MANAGED_EGRESS_WARNING_THRESHOLD = 0.9;
+export const MANAGED_EGRESS_WARNING_THRESHOLD = 0.75;
+export const MANAGED_EGRESS_SEVERE_THRESHOLD = 0.9;
 const MANAGED_EGRESS_WARNING_POLL_MS = 60_000;
 
 type EgressWindow = "5h" | "7d";
+type ManagedEgressWarningSeverity = "warning" | "severe" | "blocked";
 
 export interface ManagedEgressWindowWarning {
   window: EgressWindow;
@@ -39,6 +41,7 @@ export interface ManagedEgressWindowWarning {
   ratio: number;
   percent: number;
   over: boolean;
+  severity: ManagedEgressWarningSeverity;
 }
 
 function formatDecimalBytes(bytes: number): string {
@@ -96,10 +99,24 @@ export function getManagedEgressWindowWarnings(
       ratio,
       percent: Math.round(ratio * 100),
       over: ratio >= 1,
+      severity:
+        ratio >= 1
+          ? "blocked"
+          : ratio >= MANAGED_EGRESS_SEVERE_THRESHOLD
+            ? "severe"
+            : "warning",
     });
   }
   warnings.sort((a, b) => {
     if (a.over !== b.over) return a.over ? -1 : 1;
+    if (a.severity !== b.severity) {
+      const order: Record<ManagedEgressWarningSeverity, number> = {
+        blocked: 0,
+        severe: 1,
+        warning: 2,
+      };
+      return order[a.severity] - order[b.severity];
+    }
     return b.ratio - a.ratio;
   });
   return warnings;
@@ -225,8 +242,14 @@ export const ManagedEgressWarning: React.FC<{
     gap: "6px",
     borderRadius: "999px",
     padding: pageStyle.isNarrow ? "4px 8px" : "5px 10px",
-    background: primary.over ? COLORS.ANTD_RED : COLORS.ANTD_ORANGE,
-    color: primary.over ? "white" : COLORS.GRAY_DD,
+    background:
+      primary.severity === "blocked" || primary.severity === "severe"
+        ? COLORS.ANTD_RED
+        : COLORS.ANTD_ORANGE,
+    color:
+      primary.severity === "blocked" || primary.severity === "severe"
+        ? "white"
+        : COLORS.GRAY_DD,
     fontSize: pageStyle.isNarrow ? "11px" : "12px",
     fontWeight: 600,
     lineHeight: 1,
@@ -235,7 +258,9 @@ export const ManagedEgressWarning: React.FC<{
 
   const modalTitle = primary.over
     ? "Network usage limit reached"
-    : "Network usage warning";
+    : primary.severity === "severe"
+      ? "Network usage warning"
+      : "Network usage nearing limit";
 
   return (
     <>
@@ -302,7 +327,12 @@ export const ManagedEgressWarning: React.FC<{
               <div style={{ marginTop: "6px" }}>
                 <Progress
                   percent={Math.min(100, warning.percent)}
-                  status={warning.over ? "exception" : "active"}
+                  status={
+                    warning.severity === "blocked" ||
+                    warning.severity === "severe"
+                      ? "exception"
+                      : "active"
+                  }
                 />
               </div>
             </div>
