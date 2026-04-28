@@ -1819,7 +1819,10 @@ function formatTerminalStatus(entry: {
 }
 
 function formatByteCount(bytes: number): string {
-  return humanSize(bytes, { binary: true });
+  const formatted = humanSize(bytes, { keepTrailingZero: true });
+  return /^\d+ [KMGTPE]B$/.test(formatted)
+    ? formatted.replace(/^(\d+) /, "$1.0 ")
+    : formatted;
 }
 
 function formatReadScope(entry: {

@@ -15,7 +15,13 @@ export type AccountCommandDeps = {
 function formatByteCount(bytes: unknown): string | null {
   const value = Number(bytes);
   if (!Number.isFinite(value) || value < 0) return null;
-  return humanSize(value, { binary: true });
+  if (value < 1000) {
+    return `${Math.round(value)} B`;
+  }
+  const formatted = humanSize(value, { keepTrailingZero: true });
+  return /^\d+ [KMGTPE]B$/.test(formatted)
+    ? formatted.replace(/^(\d+) /, "$1.0 ")
+    : formatted;
 }
 
 function serializeManagedEgressEvent(

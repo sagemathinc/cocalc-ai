@@ -670,6 +670,7 @@ export type HumanSizeOptions = {
   binary?: boolean;
   compact?: boolean;
   short?: boolean;
+  keepTrailingZero?: boolean;
   undefinedLabel?: string;
 };
 
@@ -680,7 +681,12 @@ export function humanSize(
   if (bytes == null || !Number.isFinite(bytes)) {
     return opts.undefinedLabel ?? "?";
   }
-  const { binary = false, compact = false, short = false } = opts;
+  const {
+    binary = false,
+    compact = false,
+    short = false,
+    keepTrailingZero = false,
+  } = opts;
   const base = binary ? 1024 : 1000;
   const units = binary
     ? ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]
@@ -697,6 +703,14 @@ export function humanSize(
     : Number.isInteger(value) || value >= 10 || unit === 0
       ? Math.round(value)
       : Math.round(value * 10) / 10;
+  const amountText =
+    keepTrailingZero &&
+    !compact &&
+    unit > 0 &&
+    Number.isInteger(amount) &&
+    amount < 10
+      ? amount.toFixed(1)
+      : `${amount}`;
   const label =
     unit === 0 && !binary && !short
       ? amount === 1
@@ -705,7 +719,7 @@ export function humanSize(
       : unit === 0 && short
         ? "b"
         : units[unit];
-  return `${sign}${amount} ${label}`;
+  return `${sign}${amountText} ${label}`;
 }
 
 export function human_readable_size(
