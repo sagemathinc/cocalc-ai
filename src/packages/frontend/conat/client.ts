@@ -809,7 +809,7 @@ export class ConatClient extends EventEmitter {
       return;
     }
     this.projectRuntimeFallbackWarnings.add(key);
-    console.warn(
+    console.debug(
       "project runtime using default hub client before project-host route is available",
       { project_id, host_id, caller },
     );

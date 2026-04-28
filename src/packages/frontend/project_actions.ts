@@ -120,6 +120,7 @@ import { RestoreOpsManager } from "@cocalc/frontend/project/restore-ops";
 import { RootfsPublishOpsManager } from "@cocalc/frontend/project/rootfs-publish-ops";
 import { MoveOpsManager } from "@cocalc/frontend/project/move-ops";
 import { StartOpsManager } from "@cocalc/frontend/project/start-ops";
+import { canUseCollaboratorProjectRealtime } from "@cocalc/frontend/project/realtime-access";
 import { getFileTemplate } from "./project/templates";
 import { isBackupsPath } from "@cocalc/util/consts/backups";
 import { SNAPSHOTS, isSnapshotsPath } from "@cocalc/util/consts/snapshots";
@@ -418,6 +419,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   private rootfsPublishOpsManager: RootfsPublishOpsManager;
   private startOpsManager: StartOpsManager;
   private moveOpsManager: MoveOpsManager;
+  private collaboratorRealtimeInitialized = false;
 
   constructor(name, b) {
     super(name, b);
@@ -554,9 +556,38 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
   private initialized = false;
   private initExpensive = () => {
-    if (this.initialized) return;
+    if (this.initialized) {
+      this.ensureCollaboratorRealtime();
+      return;
+    }
     // console.log("initExpensive", this.project_id);
     this.initialized = true;
+    this.ensureCollaboratorRealtime();
+  };
+
+  private canUseCollaboratorRealtime = (): boolean => {
+    return canUseCollaboratorProjectRealtime({
+      account_id: webapp_client.account_id,
+      is_admin: redux.getStore("account")?.get("is_admin") as
+        | boolean
+        | undefined,
+      project_id: this.project_id,
+      projectsStore: redux.getStore("projects") as
+        | {
+            getIn?: (path: string[]) => unknown;
+          }
+        | undefined,
+    });
+  };
+
+  private ensureCollaboratorRealtime = () => {
+    if (
+      this.collaboratorRealtimeInitialized ||
+      !this.canUseCollaboratorRealtime()
+    ) {
+      return;
+    }
+    this.collaboratorRealtimeInitialized = true;
     this.initProjectStatus();
     this.copyOpsManager.init();
     this.backupOpsManager.init();
@@ -570,6 +601,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (!this.initialized) return;
     // console.log("closeExpensive", this.project_id);
     this.initialized = false;
+    this.collaboratorRealtimeInitialized = false;
     redux.removeProjectReferences(this.project_id);
     this.copyOpsManager.close();
     this.backupOpsManager.close();
@@ -3611,7 +3643,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         project_id: this.project_id,
       });
     } catch (err) {
-      // happens if you open a project you are not a collab on
+      if (!this.canUseCollaboratorRealtime()) {
+        return;
+      }
       console.warn(`unable to subscribe to project status updates: `, err);
       return;
     }
