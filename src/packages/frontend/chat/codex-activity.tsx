@@ -1,3 +1,4 @@
+import { LoadingOutlined } from "@ant-design/icons";
 import { Button, Popconfirm, Space, Tag, Typography } from "antd";
 import { mergeProgressiveMessageText, type InlineCodeLink } from "@cocalc/chat";
 import type {
@@ -140,6 +141,43 @@ export interface CodexActivityProps {
   expanded?: boolean;
   onOpenFileLink?: () => void;
   activitySteers?: AttachedSteerMessage[];
+}
+
+function renderSteerStatus(state: AttachedSteerMessage["state"]) {
+  switch (state) {
+    case "sending":
+      return {
+        label: "Sending guidance",
+        borderColor: COLORS.BLUE_LLL,
+        background: COLORS.BLUE_LLLL,
+        pillBackground: COLORS.BLUE_LLL,
+        pillColor: COLORS.BLUE_DDD,
+      };
+    case "queued":
+      return {
+        label: "Guidance queued",
+        borderColor: COLORS.YELL_LL,
+        background: COLORS.YELL_LLL,
+        pillBackground: COLORS.YELL_LL,
+        pillColor: COLORS.BRWN,
+      };
+    case "not-sent":
+      return {
+        label: "Guidance not sent",
+        borderColor: COLORS.ANTD_BG_RED_M,
+        background: COLORS.ANTD_BG_RED_L,
+        pillBackground: COLORS.ANTD_BG_RED_M,
+        pillColor: "white",
+      };
+    default:
+      return {
+        label: "Guidance sent",
+        borderColor: COLORS.BLUE_LLL,
+        background: COLORS.BLUE_LLLL,
+        pillBackground: COLORS.BLUE_LLL,
+        pillColor: COLORS.BLUE_DDD,
+      };
+  }
 }
 
 // Persist log visibility per chat message so Virtuoso remounts don’t reset it.
@@ -472,23 +510,69 @@ function ActivityRow({
         </div>
       );
     case "steer":
+      const status = renderSteerStatus(entry.state);
       return (
         <div data-codex-activity-entry-index={rowIndex}>
-          <Space size={6} align="center" wrap style={{ marginBottom: 4 }}>
-            <TimestampTooltip timestamp={timestamp}>
-              <Tag color="blue" style={{ margin: 0 }}>
-                Guidance
-              </Tag>
-            </TimestampTooltip>
-            <ActivityTimestamp time={entry.time} />
-          </Space>
-          <StaticMarkdown
-            value={entry.text}
-            style={{ fontSize, marginTop: 4 }}
-            editorTheme={editorTheme}
-            inlineCodeLinks={inlineCodeLinks}
-            inlineCodeProjectRoot={basePath}
-          />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+              flexWrap: "wrap",
+              padding: "6px 10px",
+              borderRadius: 8,
+              background: status.background,
+              border: `1px solid ${status.borderColor}`,
+            }}
+          >
+            <Space
+              size={6}
+              align="center"
+              wrap
+              style={{ width: "100%", justifyContent: "space-between" }}
+            >
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  background: status.pillBackground,
+                  color: status.pillColor,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  lineHeight: 1.2,
+                }}
+              >
+                {entry.state === "sending" ? (
+                  <LoadingOutlined spin style={{ fontSize: 12 }} />
+                ) : null}
+                {status.label}
+              </span>
+              <ActivityTimestamp time={entry.time} />
+            </Space>
+            <div
+              style={{
+                fontSize: 12,
+                color: COLORS.GRAY_D,
+                flex: "1 1 220px",
+                minWidth: 0,
+              }}
+            >
+              <StaticMarkdown
+                value={entry.text}
+                style={{
+                  fontSize: 12,
+                  color: COLORS.GRAY_D,
+                  overflowWrap: "anywhere",
+                }}
+                editorTheme={editorTheme}
+                inlineCodeLinks={inlineCodeLinks}
+                inlineCodeProjectRoot={basePath}
+              />
+            </div>
+          </div>
         </div>
       );
     case "diff":

@@ -242,6 +242,7 @@ describe("CodexActivity terminal rows", () => {
     expect(
       steer.compareDocumentPosition(final) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    expect(screen.getByText("Guidance sent")).not.toBeNull();
   });
 
   it("deduplicates repeated Codex started status rows", () => {
