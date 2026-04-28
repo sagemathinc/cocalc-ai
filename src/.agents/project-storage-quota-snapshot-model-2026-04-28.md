@@ -178,11 +178,43 @@ But it should not be labeled as exact `Snapshot usage`, because the value is:
 - affected by sharing semantics,
 - and not attributable cheaply to individual snapshots.
 
-### Scratch
+### Temporary Storage: Replace `/scratch` With `/tmp`
 
-Scratch should remain visible as a separate bucket, but it should not be used
-to explain the project quota value unless and until scratch gets its own
-counted quota model.
+We should remove `/scratch` as a product concept.
+
+Rationale:
+
+- it has not been useful during serious dogfooding,
+- it is easy to misunderstand as durable storage even though it is not,
+- it disappears on host loss, migration, archive, and similar lifecycle
+  events,
+- it has no backups and no snapshots,
+- `/tmp` already exists and is the standard place users expect temporary data,
+- and it complicates the storage/quota model for no product benefit.
+
+The right model is:
+
+- keep durable project storage in the project home,
+- keep temporary disposable storage in `/tmp`,
+- and do not expose a second user-facing temporary filesystem.
+
+Implementation direction:
+
+- stop mounting a default tmpfs `/tmp`,
+- mount what is currently the ephemeral scratch volume at `/tmp`,
+- remove `/scratch` from user-facing UI, docs, and quota explanations,
+- and remove `/scratch` compatibility paths aggressively since we are still
+  pre-production and want less legacy surface.
+
+Capacity policy:
+
+- `/tmp` should have its own cap, not mirror full project disk quota,
+- a good first rule is:
+  - `tmp_cap_bytes = min(10 GB, project_disk_quota_bytes)`
+
+This keeps temporary storage useful for builds and package work while bounding
+abuse and avoiding the current “half the memory limit goes to tmpfs” default.
+
 
 ## Current Hidden Limits
 
@@ -293,6 +325,8 @@ Plan:
 
 But the project storage UI should no longer depend on it.
 
+USER: Let's just remove dust if at all possible, because it increases the "attack surface" of the sandbox.   It's one less thing to worry about.
+
 ### Data model changes
 
 1. Add an explicit retained-data field.
@@ -341,11 +375,34 @@ Plan:
   - `Project quota`
   - `Live files`
   - `Retained snapshot/history data (estimate)`
-  - visible buckets for `Home`, `Environment`, and `Scratch`
+  - visible buckets for `Home` and `Environment`
 - add clear explanatory copy:
   - snapshots can retain deleted data,
-  - rolling snapshot cleanup can reduce quota later,
-  - scratch is shown separately.
+  - rolling snapshot cleanup can reduce quota later.
+
+### Temporary storage runtime changes
+
+Files likely involved:
+
+- [load-balancer.ts](/home/user/cocalc-ai/src/packages/server/conat/project/load-balancer.ts)
+- [types.ts](/home/user/cocalc-ai/src/packages/conat/project/runner/types.ts)
+- [filesystem.ts](/home/user/cocalc-ai/src/packages/project-runner/run/filesystem.ts)
+- [podman.ts](/home/user/cocalc-ai/src/packages/project-runner/run/podman.ts)
+- [storage-info.ts](/home/user/cocalc-ai/src/packages/conat/project/storage-info.ts)
+- [storage-info-service.ts](/home/user/cocalc-ai/src/packages/project-host/storage-info-service.ts)
+- sandbox and ACP code that still resolves `/scratch`
+
+Plan:
+
+1. Stop setting a default tmpfs `/tmp` in the runner configuration.
+2. Mount the current ephemeral scratch volume at `/tmp`.
+3. Cap `/tmp` independently:
+   - `min(10 GB, project disk quota)`
+4. Remove `/scratch` from user-facing storage APIs and UI buckets.
+5. Remove `/scratch` path handling from runtime and compatibility layers as
+   quickly as practical, instead of carrying a long deprecation period.
+6. Keep `/tmp` explicitly documented as disposable and not included in the
+   durable project quota explanation.
 
 ### Snapshot deletion bug fix
 
@@ -399,7 +456,8 @@ Plan:
 - add parser tests for `du` output,
 - update overview/history tests,
 - add a regression test that retained estimate is derived from `quota - live`,
-- add a test that scratch does not affect retained-estimate math.
+- add tests that `/tmp` is ephemeral, disk-backed, and independently capped,
+- add tests that `/tmp` does not affect retained-estimate math.
 
 ## Phase 2: Fix messaging and UX around snapshots
 
@@ -561,19 +619,23 @@ This is not research. It is policy plumbing across several existing surfaces.
    usage if copy is sloppy.
    - solve with precise labeling
 
-3. Scratch semantics are separate from the project quota semantics.
-   - we must not silently mix them in the retained-estimate math
+3. Temporary `/tmp` semantics are separate from the durable project quota
+   explanation.
+   - we must not silently mix ephemeral temp bytes into the retained-estimate
+     story
 
 4. Snapshot/backup limits need one canonical owner-based source of truth.
    - otherwise the hub, UI, and project-host will drift
 
 ## Recommended Order
 
-1. Land the `du`-based storage metric and retained-estimate UI.
-2. Update CLI/history/messaging in the same conceptual model.
-3. Surface effective snapshot and backup limits in the product.
-4. Replace the current hidden hardcoded caps with membership-tier-derived caps.
-5. Keep exact snapshot forensics as an explicit advanced diagnostic only.
+1. Remove `/scratch` from the product model and move ephemeral temp storage to
+   disk-backed `/tmp` with an explicit cap.
+2. Land the `du`-based storage metric and retained-estimate UI.
+3. Update CLI/history/messaging in the same conceptual model.
+4. Surface effective snapshot and backup limits in the product.
+5. Replace the current hidden hardcoded caps with membership-tier-derived caps.
+6. Keep exact snapshot forensics as an explicit advanced diagnostic only.
 
 ## Bottom Line
 
@@ -582,5 +644,7 @@ The correct product posture is:
 - quota is real and includes snapshots,
 - live usage should be computed with `du`, not `dust`,
 - retained snapshot/history data should be shown as a fast derived estimate,
+- temporary disposable storage should live in `/tmp`, not a separate
+  user-facing `/scratch`,
 - and snapshot/backup count limits should be explicit plan features rather than
   hidden hardcoded guardrails.
