@@ -120,6 +120,18 @@ function formatDecimalBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${units[unit]}`;
 }
 
+function formatResetAt(resetAt?: Date | string): string | undefined {
+  if (!resetAt) return;
+  const date = new Date(resetAt);
+  if (!Number.isFinite(date.getTime())) return;
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function getProgressPercent(current: number, limit: number): number {
   if (!(limit > 0) || !Number.isFinite(limit)) return 0;
   return Math.max(0, Math.min(100, (current / limit) * 100));
@@ -526,6 +538,44 @@ function renderManagedEgressBreakdown(
   );
 }
 
+function renderManagedEgressResetTimes(
+  usageStatus?: MembershipUsageStatus | null,
+): ReactElement | null {
+  if (!usageStatus) return null;
+  const items: Array<{
+    key: string;
+    label: string;
+    resetAt?: Date | string;
+    resetIn?: string;
+  }> = [
+    {
+      key: "5h",
+      label: "Managed egress 5-hour next reset",
+      resetAt: usageStatus.managed_egress_5h_reset_at,
+      resetIn: usageStatus.managed_egress_5h_reset_in,
+    },
+    {
+      key: "7d",
+      label: "Managed egress 7-day next reset",
+      resetAt: usageStatus.managed_egress_7d_reset_at,
+      resetIn: usageStatus.managed_egress_7d_reset_in,
+    },
+  ].filter((item) => item.resetAt || item.resetIn);
+  if (items.length === 0) return null;
+  return (
+    <Descriptions size="small" column={1} style={{ marginTop: "6px" }}>
+      {items.map((item) => (
+        <Descriptions.Item key={item.key} label={item.label}>
+          {item.resetAt ? formatResetAt(item.resetAt) : "Unknown"}
+          {item.resetIn ? (
+            <Text type="secondary">{` · in ${item.resetIn}`}</Text>
+          ) : null}
+        </Descriptions.Item>
+      ))}
+    </Descriptions>
+  );
+}
+
 export function MembershipStatusPanel({
   showHeader = true,
 }: {
@@ -842,6 +892,7 @@ export function MembershipStatusPanel({
               "Managed egress by category (7 days)",
               details?.usage_status?.managed_egress_categories_7d_bytes,
             )}
+            {renderManagedEgressResetTimes(details?.usage_status)}
             {details?.usage_status?.managed_egress_recent_events?.length ? (
               <Descriptions
                 size="small"

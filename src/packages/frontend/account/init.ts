@@ -19,6 +19,9 @@ import { hasRememberMe } from "@cocalc/frontend/misc/remember-me";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { once } from "@cocalc/util/async-utils";
 import { initAccountTable } from "./table-bootstrap";
+import Cookies from "js-cookie";
+import { ACCOUNT_ID_COOKIE } from "@cocalc/frontend/client/client";
+import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
 
 export function init(redux) {
   // Register account store
@@ -51,6 +54,8 @@ export function init(redux) {
 
   // Login status
   webapp_client.on("signed_in", async (mesg) => {
+    const actions = redux.getActions("account");
+    actions.setState({ managed_egress_blocked_error: undefined });
     if (mesg?.api_key) {
       // wait for sign in to finish and cookie to get set, then redirect
       setTimeout(() => {
@@ -64,7 +69,6 @@ export function init(redux) {
       // pre-sign-in state.
       await once(table, "connected");
     }
-    const actions = redux.getActions("account");
     actions.set_user_type("signed_in");
   });
 
@@ -73,15 +77,32 @@ export function init(redux) {
     actions.setState({
       home_bay_id: undefined,
       home_bay_source: undefined,
+      managed_egress_blocked_error: undefined,
     });
     actions.set_user_type("public");
   });
 
-  webapp_client.on("remember_me_failed", () => {
+  webapp_client.on("remember_me_failed", ({ error } = {}) => {
     const actions = redux.getActions("account");
+    const blocked = parseManagedEgressBlockedError(error);
+    if (blocked != null) {
+      actions.setState({
+        account_id:
+          webapp_client.account_id ?? Cookies.get(ACCOUNT_ID_COOKIE) ?? "",
+        home_bay_id: undefined,
+        home_bay_source: undefined,
+        managed_egress_blocked_error: blocked.raw,
+        remember_me: false,
+        sign_in_error: blocked.raw,
+        user_type: "signed_in",
+        is_logged_in: true,
+      });
+      return;
+    }
     actions.setState({
       home_bay_id: undefined,
       home_bay_source: undefined,
+      managed_egress_blocked_error: undefined,
     });
     actions.set_user_type("public");
   });

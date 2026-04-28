@@ -92,6 +92,7 @@ import {
   type RegisteredReconnectResource,
 } from "./reconnect-coordinator";
 import { disconnect_from_all_projects } from "@cocalc/frontend/project/websocket/connect";
+import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
 
 export interface ConatConnectionStatus {
   state: "connected" | "connecting" | "disconnected";
@@ -207,7 +208,6 @@ export class ConatClient extends EventEmitter {
   private projectHostBrowserSessions: {
     [host_id: string]: ProjectHostBrowserSessionState;
   } = {};
-  private projectRuntimeFallbackWarnings = new Set<string>();
   private routedHostRecoveryTimer?: ReturnType<typeof setTimeout>;
   private browserSessionAutomation: BrowserSessionAutomation;
   private reconnectCoordinator: ReconnectCoordinator;
@@ -797,19 +797,8 @@ export class ConatClient extends EventEmitter {
     project_id: string;
     caller: string;
   }) => {
-    const host_id = this.getProjectHostId(project_id);
-    if (!host_id) {
-      return;
-    }
-    const key = `${project_id}:${caller}`;
-    if (this.projectRuntimeFallbackWarnings.has(key)) {
-      return;
-    }
-    this.projectRuntimeFallbackWarnings.add(key);
-    console.warn(
-      "project runtime using default hub client before project-host route is available",
-      { project_id, host_id, caller },
-    );
+    void project_id;
+    void caller;
   };
 
   private ensureProjectRoutingInfo = async (
@@ -1925,7 +1914,15 @@ export class ConatClient extends EventEmitter {
         reconnectDebugLog("lite: created project client");
       } else {
         console.log("Sign in failed -- ", client.info);
-        this.signInFailed(client.info?.user?.error ?? "Failed to sign in.");
+        const error = client.info?.user?.error ?? "Failed to sign in.";
+        const managedEgressBlocked = parseManagedEgressBlockedError(error);
+        if (managedEgressBlocked != null) {
+          this.managedEgressBlocked(error);
+          void this.browserSessionAutomation.stop();
+          this.standby();
+          return;
+        }
+        this.signInFailed(error);
         void this.browserSessionAutomation.stop();
         if (!this.isAuthPage()) {
           this.client.alert_message({
@@ -1952,6 +1949,13 @@ export class ConatClient extends EventEmitter {
     clearStoredControlPlaneOrigin();
     deleteRememberMe(appBasePath);
     this.client.emit("remember_me_failed", { error });
+  };
+
+  private managedEgressBlocked = (error) => {
+    this.client.emit("remember_me_failed", {
+      error,
+      managed_egress_blocked: true,
+    });
   };
 
   private isAuthPage = (): boolean => {

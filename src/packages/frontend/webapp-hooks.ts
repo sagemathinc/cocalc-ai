@@ -20,6 +20,7 @@ import {
   setRememberMe,
 } from "@cocalc/frontend/misc/remember-me";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
 
 let first_login = true;
 
@@ -67,8 +68,11 @@ export function init() {
       45000,
     );
   }
-  webapp_client.on("remember_me_failed", function () {
+  webapp_client.on("remember_me_failed", function ({ error } = {}) {
     redux.getActions("account").setState({ remember_me: false });
+    if (parseManagedEgressBlockedError(error) != null) {
+      return;
+    }
     const account_store = redux.getStore("account");
     if (account_store && account_store.get("is_logged_in")) {
       // if we thought user was logged in, but the cookie was invalid, force them to sign in again

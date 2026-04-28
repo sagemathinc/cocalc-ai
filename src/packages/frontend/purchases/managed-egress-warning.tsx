@@ -56,6 +56,18 @@ function formatDecimalBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${units[unit]}`;
 }
 
+function formatResetAt(resetAt?: Date | string): string | undefined {
+  if (!resetAt) return;
+  const date = new Date(resetAt);
+  if (!Number.isFinite(date.getTime())) return;
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function getManagedEgressLimit(
   details: MembershipDetails | null | undefined,
   window: EgressWindow,
@@ -173,6 +185,23 @@ function getSummaryTooltip(warnings: ManagedEgressWindowWarning[]): string {
   return `Managed network usage is close to its limit. ${windows}`;
 }
 
+function getManagedEgressResetInfo(
+  details: MembershipDetails | null,
+  window: EgressWindow,
+): { resetAt?: Date | string; resetIn?: string } {
+  const usage = details?.usage_status;
+  if (window === "5h") {
+    return {
+      resetAt: usage?.managed_egress_5h_reset_at,
+      resetIn: usage?.managed_egress_5h_reset_in,
+    };
+  }
+  return {
+    resetAt: usage?.managed_egress_7d_reset_at,
+    resetIn: usage?.managed_egress_7d_reset_in,
+  };
+}
+
 export const ManagedEgressWarning: React.FC<{
   pageStyle: PageStyle;
 }> = React.memo(({ pageStyle }: { pageStyle: PageStyle }) => {
@@ -182,6 +211,9 @@ export const ManagedEgressWarning: React.FC<{
   const [details, setDetails] = useState<MembershipDetails | null>(null);
   const [open, setOpen] = useState(false);
   const [purchaseOpen, setPurchaseOpen] = useState(false);
+  const [dismissedWarningKey, setDismissedWarningKey] = useState<
+    string | undefined
+  >();
 
   useEffect(() => {
     if (!account_id || !is_logged_in) {
@@ -223,7 +255,13 @@ export const ManagedEgressWarning: React.FC<{
     [details],
   );
   const primary = warnings[0];
-  if (!account_id || !is_logged_in || primary == null) {
+  const primaryWarningKey =
+    primary?.severity === "warning"
+      ? `${primary.window}:${primary.severity}`
+      : undefined;
+  const dismissed =
+    primaryWarningKey != null && dismissedWarningKey === primaryWarningKey;
+  if (!account_id || !is_logged_in || primary == null || dismissed) {
     return null;
   }
 
@@ -287,6 +325,19 @@ export const ManagedEgressWarning: React.FC<{
         open={open}
         onCancel={() => setOpen(false)}
         footer={[
+          ...(primary.severity === "warning"
+            ? [
+                <Button
+                  key="dismiss"
+                  onClick={() => {
+                    setDismissedWarningKey(primaryWarningKey);
+                    setOpen(false);
+                  }}
+                >
+                  Dismiss for now
+                </Button>,
+              ]
+            : []),
           <Button
             key="details"
             onClick={() => {
@@ -324,6 +375,21 @@ export const ManagedEgressWarning: React.FC<{
                   {formatDecimalBytes(warning.limit)} ({warning.percent}%)
                 </Text>
               </Space>
+              {(() => {
+                const { resetAt, resetIn } = getManagedEgressResetInfo(
+                  details,
+                  warning.window,
+                );
+                if (!resetAt && !resetIn) return null;
+                return (
+                  <div style={{ marginTop: "4px" }}>
+                    <Text type="secondary">
+                      {resetAt ? `Next reset ${formatResetAt(resetAt)}` : ""}
+                      {resetIn ? ` · in ${resetIn}` : ""}
+                    </Text>
+                  </div>
+                );
+              })()}
               <div style={{ marginTop: "6px" }}>
                 <Progress
                   percent={Math.min(100, warning.percent)}

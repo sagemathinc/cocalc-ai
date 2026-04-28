@@ -73,6 +73,10 @@ export interface MembershipUsageStatus {
   managed_egress_7d_bytes?: number;
   managed_egress_5h_remaining_bytes?: number;
   managed_egress_7d_remaining_bytes?: number;
+  managed_egress_5h_reset_at?: Date;
+  managed_egress_7d_reset_at?: Date;
+  managed_egress_5h_reset_in?: string;
+  managed_egress_7d_reset_in?: string;
   over_managed_egress_5h?: boolean;
   over_managed_egress_7d?: boolean;
   managed_egress_categories_5h_bytes?: Record<string, number>;
