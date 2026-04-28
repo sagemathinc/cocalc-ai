@@ -65,4 +65,38 @@ describe("SimpleInputMerge", () => {
     expect(local).toContain("123");
     expect(local).toContain("REMOTE");
   });
+
+  it("ignores an older echoed save after a newer local save is already pending", () => {
+    const merge = new SimpleInputMerge("hello");
+    let local = "hello world";
+    merge.noteSaved(local);
+
+    local = "hello world again";
+    merge.noteSaved(local);
+
+    let applied = 0;
+    merge.handleRemote({
+      remote: "hello world",
+      getLocal: () => local,
+      applyMerged: (v) => {
+        applied += 1;
+        local = v;
+      },
+    });
+
+    expect(local).toBe("hello world again");
+    expect(applied).toBe(0);
+
+    merge.handleRemote({
+      remote: "hello world again",
+      getLocal: () => local,
+      applyMerged: (v) => {
+        applied += 1;
+        local = v;
+      },
+    });
+
+    expect(local).toBe("hello world again");
+    expect(applied).toBe(0);
+  });
 });

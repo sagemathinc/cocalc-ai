@@ -22,6 +22,7 @@ import { inboxPrefix } from "@cocalc/conat/names";
 import { projectApiClient } from "@cocalc/conat/project/api";
 import { jupyterClient } from "@cocalc/conat/project/jupyter/run-code";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
+import { humanSize } from "@cocalc/util/misc";
 import { project_id as defaultProjectId } from "@cocalc/project/data";
 import { connectionInfoPath } from "./connection-info";
 
@@ -647,9 +648,7 @@ function formatMs(value: number): string {
 }
 
 function formatBytes(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)} MB`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)} KB`;
-  return `${value.toFixed(0)} B`;
+  return humanSize(value);
 }
 
 export function benchmarkTable(result: JupyterBenchmarkResult): string {

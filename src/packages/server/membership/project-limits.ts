@@ -15,6 +15,7 @@ import {
 } from "@cocalc/conat/project/archive-info";
 import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
 import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
+import { humanSize } from "@cocalc/util/misc";
 import { resolveMembershipForAccount } from "./resolve";
 import { getMembershipUsageStatusForAccount } from "./usage-status";
 
@@ -207,17 +208,6 @@ function extractTotalStorageHardBytes(
     : undefined;
 }
 
-function formatBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
-}
-
 export async function assertCanIncreaseAccountStorage({
   account_id,
   resolution,
@@ -238,7 +228,7 @@ export async function assertCanIncreaseAccountStorage({
   });
   if (usage.total_storage_bytes >= total_storage_hard_bytes) {
     throw new Error(
-      `total account storage hard cap reached (${formatBytes(usage.total_storage_bytes)} of ${formatBytes(total_storage_hard_bytes)}); delete data or upgrade membership`,
+      `total account storage hard cap reached (${humanSize(usage.total_storage_bytes)} of ${humanSize(total_storage_hard_bytes)}); delete data or upgrade membership`,
     );
   }
 }
@@ -300,7 +290,7 @@ export async function assertCanRestoreProvisionedProjectStorage({
   const projected_total = usage.total_storage_bytes + estimated_restore_bytes;
   if (projected_total > total_storage_hard_bytes) {
     throw new Error(
-      `restoring this archived project would exceed the total account storage hard cap (${formatBytes(usage.total_storage_bytes)} current + ${formatBytes(estimated_restore_bytes)} estimated restore > ${formatBytes(total_storage_hard_bytes)} cap); archive/delete data or upgrade membership`,
+      `restoring this archived project would exceed the total account storage hard cap (${humanSize(usage.total_storage_bytes)} current + ${humanSize(estimated_restore_bytes)} estimated restore > ${humanSize(total_storage_hard_bytes)} cap); archive/delete data or upgrade membership`,
     );
   }
 }

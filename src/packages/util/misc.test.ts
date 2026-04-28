@@ -169,6 +169,26 @@ test("EDITOR_PREFIX", () => {
   expect(misc.EDITOR_PREFIX).toBe("editor-");
 });
 
+describe("humanSize", () => {
+  it("uses decimal units by default", () => {
+    expect(misc.humanSize(1536)).toBe("1.5 KB");
+    expect(misc.human_readable_size(1536)).toBe("1.5 KB");
+  });
+
+  it("supports binary units explicitly", () => {
+    expect(misc.humanSize(1536, { binary: true })).toBe("1.5 KiB");
+    expect(misc.humanSize(1024 ** 3, { binary: true })).toBe("1 GiB");
+  });
+
+  it("supports compact binary formatting", () => {
+    expect(misc.humanSize(1536, { binary: true, compact: true })).toBe("2 KiB");
+  });
+
+  it("supports short byte labels for rates and compact displays", () => {
+    expect(misc.humanSize(12, { short: true })).toBe("12 b");
+  });
+});
+
 describe("test code for displaying numbers as currency with 2 or sometimes 3 decimals of precision", () => {
   const { currency } = misc;
   it("displays 1.23", () => {

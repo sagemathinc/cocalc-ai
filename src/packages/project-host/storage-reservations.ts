@@ -9,7 +9,7 @@ import {
   inspectFilePath,
 } from "@cocalc/project-runner/run/rootfs-base";
 import type { RootfsReleaseArtifactAccess } from "@cocalc/util/rootfs-images";
-import { uuid } from "@cocalc/util/misc";
+import { humanSize, uuid } from "@cocalc/util/misc";
 import { readDiskMetrics, resolveStorageMount } from "./storage-metrics";
 
 const logger = getLogger("project-host:storage-reservations");
@@ -142,13 +142,7 @@ function roundBytes(value: number): number {
 
 function formatBinaryBytes(value?: number): string {
   if (value == null || !Number.isFinite(value)) return "unknown";
-  const abs = Math.abs(value);
-  if (abs >= GiB) return `${(value / GiB).toFixed(1)} GiB`;
-  const MiB = 1024 ** 2;
-  if (abs >= MiB) return `${(value / MiB).toFixed(1)} MiB`;
-  const KiB = 1024;
-  if (abs >= KiB) return `${(value / KiB).toFixed(1)} KiB`;
-  return `${Math.round(value)} B`;
+  return humanSize(value, { binary: true });
 }
 
 function kindLabel(kind: StorageReservationKind): string {

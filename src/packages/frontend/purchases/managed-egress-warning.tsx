@@ -23,6 +23,7 @@ import {
 } from "@cocalc/frontend/purchases/managed-egress-recent-events";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { MembershipDetails } from "@cocalc/conat/hub/api/purchases";
+import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Text } = Typography;
@@ -42,18 +43,6 @@ export interface ManagedEgressWindowWarning {
   percent: number;
   over: boolean;
   severity: ManagedEgressWarningSeverity;
-}
-
-function formatDecimalBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1000;
-    unit += 1;
-  }
-  const digits = Number.isInteger(value) || value >= 10 || unit === 0 ? 0 : 1;
-  return `${value.toFixed(digits)} ${units[unit]}`;
 }
 
 function formatResetAt(resetAt?: Date | string): string | undefined {
@@ -151,8 +140,7 @@ export function renderManagedEgressBreakdown(
         <Space wrap>
           {entries.map(([category, bytes]) => (
             <Tag key={category}>
-              {formatManagedEgressCategory(category)}:{" "}
-              {formatDecimalBytes(bytes)}
+              {formatManagedEgressCategory(category)}: {humanSize(bytes)}
             </Tag>
           ))}
         </Space>
@@ -179,7 +167,7 @@ function getSummaryTooltip(warnings: ManagedEgressWindowWarning[]): string {
   const windows = warnings
     .map(
       ({ window, used, limit, percent }) =>
-        `${window}: ${formatDecimalBytes(used)} of ${formatDecimalBytes(limit)} (${percent}%)`,
+        `${window}: ${humanSize(used)} of ${humanSize(limit)} (${percent}%)`,
     )
     .join(" • ");
   return `Managed network usage is close to its limit. ${windows}`;
@@ -371,8 +359,8 @@ export const ManagedEgressWarning: React.FC<{
               >
                 <Text strong>{warning.window} window</Text>
                 <Text type={warning.over ? "danger" : undefined}>
-                  {formatDecimalBytes(warning.used)} of{" "}
-                  {formatDecimalBytes(warning.limit)} ({warning.percent}%)
+                  {humanSize(warning.used)} of {humanSize(warning.limit)} (
+                  {warning.percent}%)
                 </Text>
               </Space>
               {(() => {

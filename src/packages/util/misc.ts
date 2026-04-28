@@ -666,26 +666,53 @@ export function bind_methods<T extends object>(
   return obj;
 }
 
+export type HumanSizeOptions = {
+  binary?: boolean;
+  compact?: boolean;
+  short?: boolean;
+  undefinedLabel?: string;
+};
+
+export function humanSize(
+  bytes: number | null | undefined,
+  opts: HumanSizeOptions = {},
+): string {
+  if (bytes == null || !Number.isFinite(bytes)) {
+    return opts.undefinedLabel ?? "?";
+  }
+  const { binary = false, compact = false, short = false } = opts;
+  const base = binary ? 1024 : 1000;
+  const units = binary
+    ? ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]
+    : ["B", "KB", "MB", "GB", "TB", "PB"];
+  const sign = bytes < 0 ? "-" : "";
+  let value = Math.abs(bytes);
+  let unit = 0;
+  while (value >= base && unit < units.length - 1) {
+    value /= base;
+    unit += 1;
+  }
+  const amount = compact
+    ? Math.ceil(value)
+    : Number.isInteger(value) || value >= 10 || unit === 0
+      ? Math.round(value)
+      : Math.round(value * 10) / 10;
+  const label =
+    unit === 0 && !binary && !short
+      ? amount === 1
+        ? "byte"
+        : "bytes"
+      : unit === 0 && short
+        ? "b"
+        : units[unit];
+  return `${sign}${amount} ${label}`;
+}
+
 export function human_readable_size(
   bytes: number | null | undefined,
   short = false,
 ): string {
-  if (bytes == null) {
-    return "?";
-  }
-  if (bytes < 1000) {
-    return `${bytes} ${short ? "b" : "bytes"}`;
-  }
-  if (bytes < 1000000) {
-    const b = Math.floor(bytes / 100);
-    return `${b / 10} KB`;
-  }
-  if (bytes < 1000000000) {
-    const b = Math.floor(bytes / 100000);
-    return `${b / 10} MB`;
-  }
-  const b = Math.floor(bytes / 100000000);
-  return `${b / 10} GB`;
+  return humanSize(bytes, { short });
 }
 
 // Regexp used to test for URLs in a string.

@@ -15,8 +15,8 @@
  *
  * Algorithm:
  * - Track `last` as the reconciled baseline.
- * - Track `pending` as the most recent locally-saved value that has not yet been
- *   observed coming back from the remote source.
+ * - Track `pending` as the locally-saved values that have not yet been observed
+ *   coming back from the remote source.
  * - If the live buffer equals `last` (and there's no pending), adopt remote.
  * - If there are local edits, compute a patch from `last → local`, apply it to
  *   `remote`, set `last` to the merged value, and only overwrite the buffer when
@@ -29,7 +29,7 @@ type Setter = (value: string) => void;
 
 export class SimpleInputMerge {
   private last: string;
-  private pending: string | null = null;
+  private pending: string[] = [];
 
   constructor(initialValue: string) {
     this.last = initialValue ?? "";
@@ -39,7 +39,7 @@ export class SimpleInputMerge {
   public reset(value: string): void {
     // console.log("reset", { value });
     this.last = value ?? "";
-    this.pending = null;
+    this.pending = [];
   }
 
   // Mark that the current value has been saved/committed locally.
@@ -47,16 +47,22 @@ export class SimpleInputMerge {
   public noteSaved(value: string): void {
     const next = value ?? "";
     if (next === this.last) {
-      this.pending = null;
+      this.pending = [];
       return;
     }
-    this.pending = next;
+    if (this.pending[this.pending.length - 1] === next) {
+      return;
+    }
+    this.pending.push(next);
   }
 
   // Mark that local and remote are known to be in sync.
   public noteApplied(value: string): void {
     this.last = value ?? "";
-    this.pending = null;
+    const index = this.pending.indexOf(this.last);
+    if (index !== -1) {
+      this.pending = this.pending.slice(index + 1);
+    }
   }
 
   // Merge an incoming remote value with the current local buffer.
@@ -72,13 +78,13 @@ export class SimpleInputMerge {
     // Pending value has been echoed.  IMPORTANT: local may already have
     // advanced beyond pending.  In that case, we must advance baseline first
     // and stop; attempting to rebase from stale `last` can duplicate text.
-    if (this.pending != null && remote === this.pending) {
+    if (this.pending.includes(remote)) {
       this.noteApplied(remote);
       return;
     }
 
     // No local edits since last baseline and no pending: adopt remote directly.
-    if (local === this.last && this.pending == null) {
+    if (local === this.last && this.pending.length === 0) {
       this.noteApplied(remote);
       if (remote !== local) {
         opts.applyMerged(remote);
@@ -102,15 +108,11 @@ export class SimpleInputMerge {
     const remote = opts.remote ?? "";
     const local = opts.local ?? "";
 
-    if (
-      this.pending != null &&
-      remote === this.pending &&
-      local === this.pending
-    ) {
-      return { merged: remote, changed: false };
+    if (this.pending.includes(remote)) {
+      return { merged: local, changed: false };
     }
 
-    if (local === this.last && this.pending == null) {
+    if (local === this.last && this.pending.length === 0) {
       const merged = remote;
       return { merged, changed: merged !== local };
     }

@@ -1,4 +1,5 @@
 import type { Host } from "@cocalc/conat/hub/api/hosts";
+import { humanSize } from "@cocalc/util/misc";
 
 const KIB = 1024;
 const MIB = 1024 * KIB;
@@ -46,20 +47,7 @@ export function formatBinaryBytes(
   opts?: { compact?: boolean },
 ): string | undefined {
   if (value == null || !Number.isFinite(value) || value < 0) return undefined;
-  const compact = !!opts?.compact;
-  if (value < KIB) {
-    return compact ? `${Math.ceil(value)} B` : `${Math.round(value)} B`;
-  }
-  if (value < MIB) {
-    const amount = value / KIB;
-    return compact ? `${Math.ceil(amount)} KiB` : `${amount.toFixed(1)} KiB`;
-  }
-  if (value < GIB) {
-    const amount = value / MIB;
-    return compact ? `${Math.ceil(amount)} MiB` : `${amount.toFixed(1)} MiB`;
-  }
-  const amount = value / GIB;
-  return compact ? `${Math.ceil(amount)} GiB` : `${amount.toFixed(1)} GiB`;
+  return humanSize(value, { binary: true, compact: !!opts?.compact });
 }
 
 export function getHostCpuCount(host: Host): number | undefined {

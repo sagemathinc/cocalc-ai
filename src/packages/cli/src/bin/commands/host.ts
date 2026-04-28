@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { Command } from "commander";
+import { humanSize } from "@cocalc/util/misc";
 
 import { isValidUUID } from "@cocalc/util/misc";
 
@@ -405,14 +406,7 @@ function formatList(values: unknown): string {
 function formatBytesValue(value: unknown): string {
   const bytes = Number(value ?? 0);
   if (!Number.isFinite(bytes) || bytes <= 0) return "";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let unit = 0;
-  let scaled = bytes;
-  while (scaled >= 1024 && unit < units.length - 1) {
-    scaled /= 1024;
-    unit += 1;
-  }
-  return `${scaled >= 10 || unit === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[unit]}`;
+  return humanSize(bytes, { binary: true });
 }
 
 function formatArtifactReferences(value: unknown): string {

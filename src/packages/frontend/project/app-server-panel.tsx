@@ -37,6 +37,7 @@ import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
+import { humanSize } from "@cocalc/util/misc";
 import {
   dispatchNavigatorPromptIntent,
   submitNavigatorPromptToCurrentThread,
@@ -646,15 +647,7 @@ function buildInstallWithCodexPrompt(opts: {
 function formatBytes(value?: number): string {
   const n = Number(value ?? 0);
   if (!Number.isFinite(n) || n <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let size = n;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-  const digits = size >= 10 || unit === 0 ? 0 : 1;
-  return `${size.toFixed(digits)} ${units[unit]}`;
+  return humanSize(n);
 }
 
 function formatCount(value?: number): string {

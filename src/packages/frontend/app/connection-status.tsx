@@ -9,7 +9,7 @@ import {
   DatabaseOutlined,
 } from "@ant-design/icons";
 import type { ConatConnectionStatus } from "@cocalc/frontend/conat/client";
-import { capitalize } from "@cocalc/util/misc";
+import { capitalize, humanSize } from "@cocalc/util/misc";
 import { MAX_SUBSCRIPTIONS_PER_CLIENT } from "@cocalc/conat/core/constants";
 
 type ConnectionRateSnapshot = {
@@ -26,9 +26,7 @@ let MAX_RECV_MESSAGES = 2000,
   MAX_RECV_BYTES = 10_000_000;
 
 function bytesToStr(bytes: number): string {
-  if (bytes < 1024) return bytes + " B";
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-  return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+  return humanSize(bytes);
 }
 
 function formatCountRate(value?: number): string {

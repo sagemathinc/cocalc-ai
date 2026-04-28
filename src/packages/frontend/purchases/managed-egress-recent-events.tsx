@@ -8,22 +8,10 @@ import type { ReactElement } from "react";
 import { useState } from "react";
 
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
-import { capitalize } from "@cocalc/util/misc";
+import { capitalize, humanSize } from "@cocalc/util/misc";
 import type { ManagedEgressEventSummary } from "@cocalc/conat/hub/api/purchases";
 
 const { Text } = Typography;
-
-function formatBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1000;
-    unit += 1;
-  }
-  const digits = Number.isInteger(value) || value >= 10 || unit === 0 ? 0 : 1;
-  return `${value.toFixed(digits)} ${units[unit]}`;
-}
 
 export function formatManagedEgressCategory(category: string): string {
   if (category === "file-download") return "File downloads";
@@ -82,7 +70,7 @@ export function ManagedEgressRecentEventsButton({
               >
                 <Space wrap>
                   <Tag>{formatManagedEgressCategory(event.category)}</Tag>
-                  <Tag>{formatBytes(event.bytes)}</Tag>
+                  <Tag>{humanSize(event.bytes)}</Tag>
                   <Text>{getManagedEgressEventProjectLabel(event)}</Text>
                   <Text type="secondary">
                     <TimeAgo date={event.occurred_at} />

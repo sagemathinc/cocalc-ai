@@ -20,7 +20,7 @@ import {
   getStorageHistory,
   getStorageOverview,
 } from "@cocalc/conat/project/storage-info";
-import { human_readable_size } from "@cocalc/util/misc";
+import { humanSize } from "@cocalc/util/misc";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -124,7 +124,7 @@ function quoteCliArg(value: string): string {
 
 function formatBytes(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "?";
-  return human_readable_size(value);
+  return humanSize(value);
 }
 
 function formatPercent(value: number | null | undefined): string {
@@ -134,7 +134,7 @@ function formatPercent(value: number | null | undefined): string {
 
 function formatRatePerHour(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "?";
-  const abs = human_readable_size(Math.abs(value));
+  const abs = humanSize(Math.abs(value));
   if (value === 0) return "0 bytes/h";
   return `${value > 0 ? "+" : "-"}${abs}/h`;
 }
