@@ -30,7 +30,7 @@ import Next from "@cocalc/frontend/components/next";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectsNav } from "@cocalc/frontend/projects/projects-nav";
 import BalanceButton from "@cocalc/frontend/purchases/balance-button";
-import { LLMUsageWarning } from "@cocalc/frontend/purchases/llm-usage-warning";
+import { AIUsageWarning } from "@cocalc/frontend/purchases/ai-usage-warning";
 import { ManagedEgressWarning } from "@cocalc/frontend/purchases/managed-egress-warning";
 import PayAsYouGoModal from "@cocalc/frontend/purchases/pay-as-you-go/modal";
 import openSupportTab from "@cocalc/frontend/support/open";
@@ -279,7 +279,7 @@ export const Page: React.FC = () => {
         {is_logged_in ? render_account_tab() : undefined}
         {render_support()}
         {render_balance()}
-        <LLMUsageWarning pageStyle={pageStyle} />
+        <AIUsageWarning pageStyle={pageStyle} />
         <ManagedEgressWarning pageStyle={pageStyle} />
         {render_notification()}
         <ConnectionIndicator height={pageStyle.height} pageStyle={pageStyle} />

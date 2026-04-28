@@ -3,12 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { LLMUsageStatus } from "@cocalc/conat/hub/api/purchases";
+import type { AIUsageStatus } from "@cocalc/conat/hub/api/purchases";
 import {
   MANAGED_EGRESS_SEVERE_THRESHOLD,
   MANAGED_EGRESS_WARNING_THRESHOLD,
 } from "./managed-egress-warning";
-import { getLLMWindowWarnings } from "./llm-usage-warning";
+import { getAIWindowWarnings } from "./ai-usage-warning";
 
 function makeStatus({
   used5h = 0,
@@ -20,7 +20,7 @@ function makeStatus({
   limit5h?: number;
   used7d?: number;
   limit7d?: number;
-}): LLMUsageStatus {
+}): AIUsageStatus {
   return {
     units_per_dollar: 1000,
     windows: [
@@ -38,13 +38,13 @@ function makeStatus({
   };
 }
 
-describe("getLLMWindowWarnings", () => {
+describe("getAIWindowWarnings", () => {
   it("returns no warnings below the threshold", () => {
     const status = makeStatus({
       used5h: Math.floor(1000 * (MANAGED_EGRESS_WARNING_THRESHOLD - 0.01)),
       limit5h: 1000,
     });
-    expect(getLLMWindowWarnings(status)).toEqual([]);
+    expect(getAIWindowWarnings(status)).toEqual([]);
   });
 
   it("returns warning and severe states", () => {
@@ -54,7 +54,7 @@ describe("getLLMWindowWarnings", () => {
       used7d: Math.ceil(5000 * MANAGED_EGRESS_SEVERE_THRESHOLD),
       limit7d: 5000,
     });
-    expect(getLLMWindowWarnings(status)).toEqual([
+    expect(getAIWindowWarnings(status)).toEqual([
       expect.objectContaining({
         window: "7d",
         severity: "severe",
@@ -75,7 +75,7 @@ describe("getLLMWindowWarnings", () => {
       used7d: 5100,
       limit7d: 5000,
     });
-    const warnings = getLLMWindowWarnings(status);
+    const warnings = getAIWindowWarnings(status);
     expect(warnings[0]).toEqual(
       expect.objectContaining({
         window: "7d",

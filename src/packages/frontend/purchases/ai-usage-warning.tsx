@@ -17,7 +17,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import type { PageStyle } from "@cocalc/frontend/app/top-nav-consts";
 import { TOP_BAR_ELEMENT_CLASS } from "@cocalc/frontend/app/top-nav-consts";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { LLMUsageStatus as LLMUsageStatusResponse } from "@cocalc/conat/hub/api/purchases";
+import type { AIUsageStatus as AIUsageStatusResponse } from "@cocalc/conat/hub/api/purchases";
 import { COLORS } from "@cocalc/util/theme";
 import {
   MANAGED_EGRESS_SEVERE_THRESHOLD,
@@ -26,11 +26,11 @@ import {
 
 const { Text } = Typography;
 
-const LLM_USAGE_WARNING_POLL_MS = 60_000;
+const AI_USAGE_WARNING_POLL_MS = 60_000;
 
 type WarningSeverity = "warning" | "severe" | "blocked";
 
-export interface LLMWindowWarning {
+export interface AIWindowWarning {
   window: "5h" | "7d";
   used: number;
   limit: number;
@@ -54,11 +54,11 @@ function formatResetAt(resetAt?: Date | string): string | undefined {
   });
 }
 
-export function getLLMWindowWarnings(
-  status: LLMUsageStatusResponse | null | undefined,
+export function getAIWindowWarnings(
+  status: AIUsageStatusResponse | null | undefined,
   threshold = MANAGED_EGRESS_WARNING_THRESHOLD,
-): LLMWindowWarning[] {
-  const warnings: LLMWindowWarning[] = [];
+): AIWindowWarning[] {
+  const warnings: AIWindowWarning[] = [];
   for (const window of status?.windows ?? []) {
     if (
       typeof window.limit !== "number" ||
@@ -94,7 +94,7 @@ export function getLLMWindowWarnings(
   return warnings;
 }
 
-function getSummaryLabel(warning: LLMWindowWarning, isNarrow: boolean): string {
+function getSummaryLabel(warning: AIWindowWarning, isNarrow: boolean): string {
   if (warning.severity === "blocked") {
     return isNarrow ? "AI blocked" : "AI blocked";
   }
@@ -104,7 +104,7 @@ function getSummaryLabel(warning: LLMWindowWarning, isNarrow: boolean): string {
   return `AI ${warning.window} ${warning.percent}%`;
 }
 
-function getSummaryTooltip(warnings: LLMWindowWarning[]): string {
+function getSummaryTooltip(warnings: AIWindowWarning[]): string {
   if (warnings.length === 0) return "";
   return warnings
     .map(
@@ -114,13 +114,13 @@ function getSummaryTooltip(warnings: LLMWindowWarning[]): string {
     .join(" • ");
 }
 
-export const LLMUsageWarning: React.FC<{
+export const AIUsageWarning: React.FC<{
   pageStyle: PageStyle;
 }> = React.memo(({ pageStyle }: { pageStyle: PageStyle }) => {
   const account_id = useTypedRedux("account", "account_id");
   const is_logged_in = useTypedRedux("account", "is_logged_in");
   const page_actions = useActions("page");
-  const [status, setStatus] = useState<LLMUsageStatusResponse | null>(null);
+  const [status, setStatus] = useState<AIUsageStatusResponse | null>(null);
   const [open, setOpen] = useState(false);
   const [purchaseOpen, setPurchaseOpen] = useState(false);
   const [dismissedWarningKey, setDismissedWarningKey] = useState<
@@ -135,11 +135,11 @@ export const LLMUsageWarning: React.FC<{
     let mounted = true;
     const load = async () => {
       try {
-        const next = await webapp_client.conat_client.hub.purchases.getLLMUsage(
+        const next = await webapp_client.conat_client.hub.purchases.getAIUsage(
           {},
         );
         if (mounted) {
-          setStatus((next as LLMUsageStatusResponse) ?? null);
+          setStatus((next as AIUsageStatusResponse) ?? null);
         }
       } catch {
         if (mounted) {
@@ -148,7 +148,7 @@ export const LLMUsageWarning: React.FC<{
       }
     };
     void load();
-    const interval = setInterval(() => void load(), LLM_USAGE_WARNING_POLL_MS);
+    const interval = setInterval(() => void load(), AI_USAGE_WARNING_POLL_MS);
     const refresh = () => void load();
     window.addEventListener("cocalc:membership-changed", refresh);
     return () => {
@@ -158,7 +158,7 @@ export const LLMUsageWarning: React.FC<{
     };
   }, [account_id, is_logged_in]);
 
-  const warnings = useMemo(() => getLLMWindowWarnings(status), [status]);
+  const warnings = useMemo(() => getAIWindowWarnings(status), [status]);
   const primary = warnings[0];
   const primaryWarningKey =
     primary?.severity === "warning"
@@ -218,7 +218,7 @@ export const LLMUsageWarning: React.FC<{
           style={outerStyle}
           onClick={() => setOpen(true)}
           className={TOP_BAR_ELEMENT_CLASS}
-          data-cocalc-llm-usage-warning
+          data-cocalc-ai-usage-warning
         >
           <div style={pillStyle}>
             <Icon name="robot" />
