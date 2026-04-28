@@ -216,6 +216,7 @@ function formatManagedEgressCategory(category: string): string {
   if (category === "ws-proxy") return "App server WebSocket traffic";
   if (category === "ssh") return "SSH traffic";
   if (category === "interactive-conat") return "Interactive session traffic";
+  if (category === "raw-network") return "Project outbound network traffic";
   return capitalize(category.replace(/[-_]/g, " "));
 }
 

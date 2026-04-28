@@ -2423,7 +2423,8 @@ export async function recordManagedProjectEgress({
     | "http-proxy"
     | "ws-proxy"
     | "ssh"
-    | "interactive-conat";
+    | "interactive-conat"
+    | "raw-network";
   bytes: number;
   metadata?: Record<string, unknown>;
 }) {
@@ -2460,7 +2461,8 @@ export async function getManagedProjectEgressPolicy({
     | "http-proxy"
     | "ws-proxy"
     | "ssh"
-    | "interactive-conat";
+    | "interactive-conat"
+    | "raw-network";
 }) {
   const resolvedProjectId = `${project_id ?? ""}`.trim()
     ? await resolveProjectContext({

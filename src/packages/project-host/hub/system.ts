@@ -45,7 +45,8 @@ export function wireSystemApi(): void {
       | "http-proxy"
       | "ws-proxy"
       | "ssh"
-      | "interactive-conat";
+      | "interactive-conat"
+      | "raw-network";
   }) => {
     return await forwardSystem("system.getManagedProjectEgressPolicy", [opts]);
   };
@@ -58,7 +59,8 @@ export function wireSystemApi(): void {
       | "http-proxy"
       | "ws-proxy"
       | "ssh"
-      | "interactive-conat";
+      | "interactive-conat"
+      | "raw-network";
     bytes: number;
     metadata?: Record<string, unknown>;
   }) => {

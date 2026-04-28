@@ -13,7 +13,8 @@ export type ManagedProjectEgressCategory =
   | "http-proxy"
   | "ws-proxy"
   | "ssh"
-  | "interactive-conat";
+  | "interactive-conat"
+  | "raw-network";
 
 type ManagedEgressUsage = {
   managed_egress_5h_bytes: number;
