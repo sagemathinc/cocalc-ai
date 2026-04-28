@@ -156,10 +156,37 @@ const SSH_WAKE_POLL_MS = Math.max(
   100,
   envToInt("COCALC_PROJECT_HOST_SSH_WAKE_POLL_MS", 500),
 );
+const QUOTA_CACHE_TTL_MS = Math.max(
+  0,
+  envToInt("COCALC_PROJECT_HOST_QUOTA_CACHE_TTL_MS", 60_000),
+);
 let backupInFlight = 0;
 const backupWaiters: Array<() => void> = [];
 const backupProjectTails = new Map<string, Promise<void>>();
 const sshWakeInFlight = new Map<string, Promise<number | null>>();
+const quotaCache = new Map<
+  string,
+  {
+    expires: number;
+    value: {
+      size: number;
+      used: number;
+      qgroupid?: string;
+      scope?: "subvolume";
+      warning?: string;
+    };
+  }
+>();
+const quotaInFlight = new Map<
+  string,
+  Promise<{
+    size: number;
+    used: number;
+    qgroupid?: string;
+    scope?: "subvolume";
+    warning?: string;
+  }>
+>();
 
 function volName(project_id: string) {
   return `project-${project_id}`;
@@ -168,6 +195,14 @@ function volName(project_id: string) {
 function normalizePositivePort(value: unknown): number | null {
   const port = Number(value);
   return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+
+function quotaCacheKey(project_id: string, scratch?: boolean): string {
+  return `${project_id}:${scratch ? "scratch" : "project"}`;
+}
+
+function invalidateQuotaCache(project_id: string, scratch?: boolean): void {
+  quotaCache.delete(quotaCacheKey(project_id, scratch));
 }
 
 async function waitForProjectSshPort(
@@ -1369,12 +1404,43 @@ async function getQuota({
   warning?: string;
 }> {
   logger.debug("getQuota", { project_id, scratch });
-  const volName = volumeName(project_id, scratch);
-  if (fs == null) {
-    throw Error("file server not initialized");
+  const cacheKey = quotaCacheKey(project_id, scratch);
+  if (QUOTA_CACHE_TTL_MS > 0) {
+    const cached = quotaCache.get(cacheKey);
+    if (cached != null && cached.expires > Date.now()) {
+      return cached.value;
+    }
+    const inflight = quotaInFlight.get(cacheKey);
+    if (inflight != null) {
+      return await inflight;
+    }
   }
-  const vol = await fs.subvolumes.get(volName);
-  return await vol.quota.get();
+  const volName = volumeName(project_id, scratch);
+  const load = (async () => {
+    if (fs == null) {
+      throw Error("file server not initialized");
+    }
+    const vol = await fs.subvolumes.get(volName);
+    const value = await vol.quota.get();
+    if (QUOTA_CACHE_TTL_MS > 0) {
+      quotaCache.set(cacheKey, {
+        expires: Date.now() + QUOTA_CACHE_TTL_MS,
+        value,
+      });
+    }
+    return value;
+  })();
+  if (QUOTA_CACHE_TTL_MS <= 0) {
+    return await load;
+  }
+  quotaInFlight.set(cacheKey, load);
+  try {
+    return await load;
+  } finally {
+    if (quotaInFlight.get(cacheKey) === load) {
+      quotaInFlight.delete(cacheKey);
+    }
+  }
 }
 
 async function setQuota({
@@ -1392,6 +1458,7 @@ async function setQuota({
   }
   const vol = await fs.subvolumes.get(volumeName(project_id, scratch));
   await vol.quota.set(size);
+  invalidateQuotaCache(project_id, scratch);
 }
 
 async function cp({

@@ -12,7 +12,6 @@ import { fsClient, fsSubject, type ExecOutput } from "@cocalc/conat/files/fs";
 import type {
   ProjectDiskQuota,
   ProjectStorageBreakdown,
-  ProjectStorageCountedSummary,
   ProjectStorageHistory,
   ProjectStorageHistoryGrowth,
   ProjectStorageHistoryPoint,
@@ -21,7 +20,6 @@ import type {
 } from "@cocalc/conat/project/storage-info";
 import { dstream, type DStream } from "@cocalc/conat/sync/dstream";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
-import { human_readable_size } from "@cocalc/util/misc";
 import { fileServerClient } from "./file-server";
 
 const logger = getLogger("project-host:storage-info");
@@ -432,7 +430,7 @@ async function getStorageOverviewImpl({
   const load = (async () => {
     const environmentPath = posix.join(homePath, PROJECT_IMAGE_PATH);
     const fileServer = fileServerClient(client);
-    const [quota, homeUsage, scratchUsage, environmentUsage, snapshotUsage] =
+    const [quota, homeUsage, scratchUsage, environmentUsage] =
       await Promise.all([
         fileServer.getQuota({ project_id }),
         getStorageBreakdownImpl({ client, project_id, path: homePath }),
@@ -460,7 +458,6 @@ async function getStorageOverviewImpl({
           }
           throw err;
         }),
-        fileServer.allSnapshotUsage({ project_id }),
       ]);
 
     const visible: ProjectStorageVisibleSummary[] = [
@@ -497,29 +494,6 @@ async function getStorageOverviewImpl({
       });
     }
 
-    const snapshotExclusiveBytes = snapshotUsage.reduce(
-      (sum, snapshot) => sum + Math.max(0, snapshot.exclusive ?? 0),
-      0,
-    );
-    const counted: ProjectStorageCountedSummary[] = [];
-    if (snapshotExclusiveBytes >= 1 << 20) {
-      const snapshotCount = snapshotUsage.length;
-      const largestExclusiveBytes = snapshotUsage.reduce(
-        (max, snapshot) => Math.max(max, Math.max(0, snapshot.exclusive ?? 0)),
-        0,
-      );
-      counted.push({
-        key: "snapshots",
-        label: "Snapshots",
-        bytes: snapshotExclusiveBytes,
-        compactLabel: "Snapshots",
-        detail:
-          snapshotCount <= 1
-            ? "This snapshot currently holds counted storage that would be freed if it is deleted."
-            : `Across ${snapshotCount} snapshots, this is storage referenced only by snapshots. The largest single snapshot currently has about ${human_readable_size(largestExclusiveBytes)} of exclusive data, and exact savings from deleting one snapshot depend on overlap.`,
-      });
-    }
-
     const overview: ProjectStorageOverview = {
       collected_at: new Date().toISOString(),
       quotas: [
@@ -534,7 +508,7 @@ async function getStorageOverviewImpl({
         },
       ],
       visible,
-      counted,
+      counted: [],
     };
     try {
       await recordProjectStorageHistorySample({
