@@ -26,6 +26,7 @@ export default function CreateSnapshot({
   const [name, setName] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [showHelp, setShowHelp] = useState<boolean>(false);
+  const [limit, setLimit] = useState<number | null>(null);
   const openCreate = useTypedRedux({ project_id }, "open_create_snapshot");
   const inputRef = useRef<InputRef>(null);
 
@@ -44,6 +45,37 @@ export default function CreateSnapshot({
     setOpen(true);
     actions?.setState({ open_create_snapshot: false });
   }, [actions, openCreate]);
+
+  useEffect(() => {
+    if (!open) {
+      setLimit(null);
+      return;
+    }
+    let canceled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const { limit } =
+          await webapp_client.conat_client.hub.projects.getSnapshotQuota({
+            project_id,
+          });
+        if (!canceled) {
+          setLimit(limit);
+        }
+      } catch (err) {
+        if (!canceled) {
+          setError(`${err}`);
+        }
+      } finally {
+        if (!canceled) {
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [open, project_id]);
 
   if (!project_id) {
     return null;
@@ -127,13 +159,18 @@ export default function CreateSnapshot({
             </Button>,
           ]}
         >
+          <p>
+            This project can keep up to <b>{limit ?? "..."}</b> snapshots in
+            total. Automatic and manually named snapshots share the same cap.
+          </p>
           {showHelp && (
             <p>
-              Create instant lightwight snapshots of the exact state of all
+              Create instant lightweight snapshots of the exact state of all
               files in your project. Named snapshots remain until you delete
               them, whereas the default timestamp snapshots are created and
-              deleted automatically according to a schedule. Only unique data in
-              snapshots count against your quota.
+              deleted automatically according to a schedule. Snapshot-retained
+              data counts against your project quota, so deleting old snapshots
+              can reduce quota usage.
             </p>
           )}
           <Input

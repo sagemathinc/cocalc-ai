@@ -95,6 +95,39 @@ describe("project membership limits", () => {
     ).rejects.toThrow("owned project limit reached (3/3)");
   });
 
+  it("returns the fallback snapshot and backup caps when a project has no owner", async () => {
+    queryMock.mockResolvedValue({ rows: [] });
+    const { getProjectSnapshotLimit, getProjectBackupLimit } =
+      await import("./project-limits");
+    await expect(
+      getProjectSnapshotLimit({ project_id: "project-1" }),
+    ).resolves.toBe(250);
+    await expect(
+      getProjectBackupLimit({ project_id: "project-1" }),
+    ).resolves.toBe(30);
+  });
+
+  it("returns tier-configured snapshot and backup caps for the project owner", async () => {
+    queryMock.mockResolvedValue({ rows: [{ account_id: "owner-1" }] });
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "pro",
+      source: "subscription",
+      entitlements: {},
+      effective_limits: {
+        max_snapshots_per_project: 8,
+        max_backups_per_project: 5,
+      },
+    });
+    const { getProjectSnapshotLimit, getProjectBackupLimit } =
+      await import("./project-limits");
+    await expect(
+      getProjectSnapshotLimit({ project_id: "project-1" }),
+    ).resolves.toBe(8);
+    await expect(
+      getProjectBackupLimit({ project_id: "project-1" }),
+    ).resolves.toBe(5);
+  });
+
   it("does nothing when no max_projects limit is configured", async () => {
     const { assertCanOwnAdditionalProject } = await import("./project-limits");
     await expect(

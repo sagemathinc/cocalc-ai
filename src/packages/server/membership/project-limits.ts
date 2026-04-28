@@ -21,6 +21,9 @@ import { getMembershipUsageStatusForAccount } from "./usage-status";
 
 const log = getLogger("server:membership:project-limits");
 
+export const DEFAULT_MAX_SNAPSHOTS_PER_PROJECT = 250;
+export const DEFAULT_MAX_BACKUPS_PER_PROJECT = 30;
+
 export async function getOwnedProjectCountForAccount(
   account_id: string,
 ): Promise<number> {
@@ -173,6 +176,69 @@ function extractMaxProjects(
   resolution: MembershipResolution,
 ): number | undefined {
   return getEffectiveMembershipUsageLimits(resolution).max_projects;
+}
+
+function extractMaxSnapshotsPerProject(
+  resolution: MembershipResolution,
+): number | undefined {
+  return getEffectiveMembershipUsageLimits(resolution)
+    .max_snapshots_per_project;
+}
+
+function extractMaxBackupsPerProject(
+  resolution: MembershipResolution,
+): number | undefined {
+  return getEffectiveMembershipUsageLimits(resolution).max_backups_per_project;
+}
+
+async function getProjectOwnerLimit({
+  project_id,
+  resolution,
+  fallback,
+  extract,
+}: {
+  project_id: string;
+  resolution?: MembershipResolution;
+  fallback: number;
+  extract: (resolution: MembershipResolution) => number | undefined;
+}): Promise<number> {
+  const account_id = await getProjectOwnerAccountId(project_id);
+  if (!account_id) {
+    return fallback;
+  }
+  const effectiveResolution =
+    resolution ?? (await resolveMembershipForAccount(account_id));
+  return extract(effectiveResolution) ?? fallback;
+}
+
+export async function getProjectSnapshotLimit({
+  project_id,
+  resolution,
+}: {
+  project_id: string;
+  resolution?: MembershipResolution;
+}): Promise<number> {
+  return await getProjectOwnerLimit({
+    project_id,
+    resolution,
+    fallback: DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
+    extract: extractMaxSnapshotsPerProject,
+  });
+}
+
+export async function getProjectBackupLimit({
+  project_id,
+  resolution,
+}: {
+  project_id: string;
+  resolution?: MembershipResolution;
+}): Promise<number> {
+  return await getProjectOwnerLimit({
+    project_id,
+    resolution,
+    fallback: DEFAULT_MAX_BACKUPS_PER_PROJECT,
+    extract: extractMaxBackupsPerProject,
+  });
 }
 
 export async function assertCanOwnAdditionalProject({

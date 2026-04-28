@@ -94,7 +94,7 @@ const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
 const MB = 1_000_000;
 const DEFAULT_PID_LIMIT = 4096;
-const MAX_BACKUPS_PER_PROJECT = 50;
+const DEFAULT_MAX_BACKUPS_PER_PROJECT = 30;
 const LRO_PUBLISH_RETRY_ATTEMPTS = 20;
 const LRO_PUBLISH_RETRY_DELAY_MS = 500;
 const LRO_PUBLISH_ATTEMPT_TIMEOUT_MS = 3000;
@@ -1688,6 +1688,7 @@ export async function createBackup({
 
   void (async () => {
     const started = Date.now();
+    const limit = DEFAULT_MAX_BACKUPS_PER_PROJECT;
     void publishLroSummaryWithRetry({
       scope_type: "project",
       scope_id: project_id,
@@ -1697,7 +1698,7 @@ export async function createBackup({
     try {
       const backup = await fileServer(project_id).createBackup({
         project_id,
-        limit: MAX_BACKUPS_PER_PROJECT,
+        limit,
         lro: { op_id, scope_type: "project", scope_id: project_id },
       });
       const duration_ms = Date.now() - started;
@@ -1984,8 +1985,11 @@ export async function getBackupFiles({
   return await fileServer(project_id).getBackupFiles({ project_id, id, path });
 }
 
-export async function getBackupQuota() {
-  return { limit: MAX_BACKUPS_PER_PROJECT };
+export async function getBackupQuota({ project_id }: { project_id: string }) {
+  if (!isValidUUID(project_id)) {
+    throw Error("invalid project_id");
+  }
+  return { limit: DEFAULT_MAX_BACKUPS_PER_PROJECT };
 }
 
 function defaultSafetySnapshotName(snapshot: string): string {

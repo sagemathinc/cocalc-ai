@@ -6,6 +6,7 @@ let publishLroSummaryMock: jest.Mock;
 let publishLroEventMock: jest.Mock;
 let getProjectFileServerClientMock: jest.Mock;
 let assertProjectOwnerCanIncreaseAccountStorageMock: jest.Mock;
+let getProjectSnapshotLimitMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -59,7 +60,46 @@ jest.mock("@cocalc/server/membership/project-limits", () => ({
   __esModule: true,
   assertProjectOwnerCanIncreaseAccountStorage: (...args: any[]) =>
     assertProjectOwnerCanIncreaseAccountStorageMock(...args),
+  getProjectSnapshotLimit: (...args: any[]) =>
+    getProjectSnapshotLimitMock(...args),
 }));
+
+describe("project-snapshots.createSnapshot", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    assertCollabMock = jest.fn(async () => undefined);
+    getProjectSnapshotLimitMock = jest.fn(async () => 8);
+    getProjectFileServerClientMock = jest.fn(async () => ({
+      createSnapshot: jest.fn(),
+      deleteSnapshot: jest.fn(),
+      updateSnapshots: jest.fn(),
+      allSnapshotUsage: jest.fn(async () => []),
+      getSnapshotFileText: jest.fn(),
+    }));
+  });
+
+  it("uses the project owner snapshot cap when creating a snapshot", async () => {
+    const { createSnapshot, getSnapshotQuota } =
+      await import("./project-snapshots");
+    await createSnapshot({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      name: "manual-1",
+    });
+    const client = await getProjectFileServerClientMock.mock.results[0].value;
+    expect(getProjectSnapshotLimitMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+    });
+    expect(client.createSnapshot).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      name: "manual-1",
+      limit: 8,
+    });
+    await expect(
+      getSnapshotQuota({ account_id: "acct-1", project_id: "proj-1" }),
+    ).resolves.toEqual({ limit: 8 });
+  });
+});
 
 describe("project-snapshots.restoreSnapshot", () => {
   beforeEach(() => {
@@ -77,6 +117,7 @@ describe("project-snapshots.restoreSnapshot", () => {
     assertProjectOwnerCanIncreaseAccountStorageMock = jest.fn(
       async () => undefined,
     );
+    getProjectSnapshotLimitMock = jest.fn(async () => 8);
     getProjectFileServerClientMock = jest.fn(async () => ({
       createSnapshot: jest.fn(),
       deleteSnapshot: jest.fn(),

@@ -11,8 +11,6 @@ import {
 } from "@cocalc/util/consts/snapshots";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
-const MAX = 50;
-
 export default function EditBackupSchedule() {
   const { actions, project_id } = useProjectContext();
   const [open, setOpen] = useState<boolean>(false);
@@ -21,6 +19,7 @@ export default function EditBackupSchedule() {
   const [error, setError] = useState<string>("");
   const openSchedule = useTypedRedux({ project_id }, "open_backup_schedule");
   const [schedule0, setSchedule] = useState<SnapshotSchedule | null>(null);
+  const [limit, setLimit] = useState<number | null>(null);
 
   async function loadSchedule(): Promise<SnapshotSchedule> {
     const counts =
@@ -38,7 +37,14 @@ export default function EditBackupSchedule() {
     try {
       setLoading(true);
       setError("");
-      setSchedule(await loadSchedule());
+      const [schedule, quota] = await Promise.all([
+        loadSchedule(),
+        webapp_client.conat_client.hub.projects.getBackupQuota({
+          project_id,
+        }),
+      ]);
+      setSchedule(schedule);
+      setLimit(quota.limit);
       setOpen(true);
     } catch (err) {
       setError(`${err}`);
@@ -60,12 +66,24 @@ export default function EditBackupSchedule() {
     );
   }, [actions, openSchedule, project_id]);
 
-  const schedule = schedule0!;
+  const schedule: SnapshotSchedule = schedule0 ?? {
+    ...DEFAULT_BACKUP_COUNTS,
+    frequent: 0,
+  };
+  const total = schedule.disabled
+    ? 0
+    : (schedule.daily ?? 0) + (schedule.weekly ?? 0) + (schedule.monthly ?? 0);
+  const overLimit = limit != null && total > limit;
 
   async function saveSchedule() {
     try {
       setLoading(true);
       setError("");
+      if (overLimit) {
+        throw new Error(
+          `automatic backups total ${total} exceeds project limit ${limit}`,
+        );
+      }
       await webapp_client.query_client.query({
         query: {
           projects: { project_id, backups: { ...schedule, frequent: 0 } },
@@ -136,8 +154,15 @@ export default function EditBackupSchedule() {
             <p>
               Backups run automatically while you actively use the project.
               These settings control how many daily, weekly, and monthly backups
-              are retained. Backups are deduplicated and stored outside the
-              project host, so they remain available even if the host changes.
+              are retained. Manual backups share the same cap. Backups are
+              deduplicated and stored outside the project host, so they remain
+              available even if the host changes.
+            </p>
+          )}
+          {limit != null && (
+            <p>
+              This project can keep at most <b>{limit}</b> backups total.
+              Current automatic schedule total: <b>{total}</b>.
             </p>
           )}
 
@@ -150,8 +175,8 @@ export default function EditBackupSchedule() {
                   style={{ flex: 0.5 }}
                   step={1}
                   min={0}
-                  max={MAX}
-                  defaultValue={schedule.daily ?? DEFAULT_BACKUP_COUNTS.daily}
+                  max={limit ?? undefined}
+                  value={schedule.daily ?? DEFAULT_BACKUP_COUNTS.daily}
                   onChange={(daily) => {
                     if (daily != null) {
                       setSchedule({
@@ -169,8 +194,8 @@ export default function EditBackupSchedule() {
                   style={{ flex: 0.5 }}
                   step={1}
                   min={0}
-                  max={MAX}
-                  defaultValue={schedule.weekly ?? DEFAULT_BACKUP_COUNTS.weekly}
+                  max={limit ?? undefined}
+                  value={schedule.weekly ?? DEFAULT_BACKUP_COUNTS.weekly}
                   onChange={(weekly) => {
                     if (weekly != null) {
                       setSchedule({
@@ -188,10 +213,8 @@ export default function EditBackupSchedule() {
                   style={{ flex: 0.5 }}
                   step={1}
                   min={0}
-                  max={MAX}
-                  defaultValue={
-                    schedule.monthly ?? DEFAULT_BACKUP_COUNTS.monthly
-                  }
+                  max={limit ?? undefined}
+                  value={schedule.monthly ?? DEFAULT_BACKUP_COUNTS.monthly}
                   onChange={(monthly) => {
                     if (monthly != null) {
                       setSchedule({
@@ -207,7 +230,11 @@ export default function EditBackupSchedule() {
 
           <ShowError
             style={{ marginTop: "10px" }}
-            error={error}
+            error={
+              !error && overLimit
+                ? `automatic backups total ${total} exceeds project limit ${limit}`
+                : error
+            }
             setError={setError}
           />
         </Modal>
