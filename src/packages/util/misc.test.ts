@@ -184,6 +184,13 @@ describe("humanSize", () => {
     expect(misc.humanSize(1536, { binary: true, compact: true })).toBe("2 KiB");
   });
 
+  it("can keep a trailing zero for small non-byte units", () => {
+    expect(misc.humanSize(1024, { keepTrailingZero: true })).toBe("1.0 KB");
+    expect(
+      misc.humanSize(1024 ** 2, { binary: true, keepTrailingZero: true }),
+    ).toBe("1.0 MiB");
+  });
+
   it("supports short byte labels for rates and compact displays", () => {
     expect(misc.humanSize(12, { short: true })).toBe("12 b");
   });
