@@ -26,19 +26,24 @@ function bucket(
 }
 
 describe("disk usage find-space helpers", () => {
-  it("prefers the current scratch folder when browsing inside scratch", () => {
+  it("prefers the environment bucket when browsing inside environment", () => {
     const visible: StorageVisibleSummary[] = [
       bucket({ key: "home", path: "/home/user" }),
       bucket({
-        key: "scratch",
-        label: "/scratch",
-        path: "/scratch",
-        summaryLabel: "Scratch",
+        key: "environment",
+        label: "Environment changes",
+        path: "/home/user/.local/share/cocalc/rootfs",
+        summaryLabel: "Environment",
       }),
     ];
-    expect(suggestFindSpaceSelection(visible, "/scratch/build/cache")).toEqual({
-      bucketKey: "scratch",
-      path: "/scratch/build/cache",
+    expect(
+      suggestFindSpaceSelection(
+        visible,
+        "/home/user/.local/share/cocalc/rootfs/docker.io/cache",
+      ),
+    ).toEqual({
+      bucketKey: "environment",
+      path: "/home/user/.local/share/cocalc/rootfs/docker.io/cache",
     });
   });
 

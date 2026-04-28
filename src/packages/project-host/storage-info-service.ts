@@ -16,6 +16,7 @@ import type {
   ProjectStorageHistoryGrowth,
   ProjectStorageHistoryPoint,
   ProjectStorageOverview,
+  ProjectStorageRetainedSummary,
   ProjectStorageVisibleSummary,
 } from "@cocalc/conat/project/storage-info";
 import { dstream, type DStream } from "@cocalc/conat/sync/dstream";
@@ -110,7 +111,7 @@ function storageBreakdownCacheKey({
   return `${project_id}:${path}`;
 }
 
-function parseDustOutput(
+function parseDuOutput(
   output: ExecOutput,
   path: string,
 ): ProjectStorageBreakdown {
@@ -127,32 +128,65 @@ function parseDustOutput(
   const text = Buffer.from(stdout).toString();
   if (!text.trim()) {
     throw new Error(
-      errText ||
-        `Disk usage scan for '${path}' returned incomplete data. Try again or browse into a smaller folder.`,
+      errText || `Disk usage scan for '${path}' returned incomplete data.`,
     );
   }
-  let parsed: {
-    size: string;
-    name: string;
-    children?: { size: string; name: string }[];
-  };
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error(
-      `Disk usage scan for '${path}' returned invalid data. Try again or browse into a smaller folder.`,
+  const rows = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = /^(\d+)\s+(.+)$/.exec(line);
+      if (!match) {
+        throw new Error(
+          `Disk usage scan for '${path}' returned invalid data. Try again or browse into a smaller folder.`,
+        );
+      }
+      return {
+        bytes: Number(match[1]),
+        path: posix.normalize(match[2]),
+      };
+    })
+    .filter(
+      ({ bytes, path: rowPath }) => Number.isFinite(bytes) && !!rowPath.trim(),
     );
-  }
   const requestedPath = posix.normalize(path);
-  const scannedRoot = posix.normalize(parsed.name);
+  const root = rows.find(({ path: rowPath }) => rowPath === requestedPath);
+  if (!root) {
+    throw new Error(
+      `Disk usage scan for '${path}' returned incomplete data. Try again or browse into a smaller folder.`,
+    );
+  }
   return {
     path: requestedPath,
-    bytes: parseInt(parsed.size.slice(0, -1)),
-    children: (parsed.children ?? []).map(({ size, name }) => ({
-      bytes: parseInt(size.slice(0, -1)),
-      path: posix.relative(scannedRoot, posix.normalize(name)),
-    })),
+    bytes: root.bytes,
+    children: rows
+      .filter(({ path: rowPath }) => rowPath !== requestedPath)
+      .map(({ bytes, path: rowPath }) => ({
+        bytes,
+        path: posix.relative(requestedPath, rowPath),
+      })),
     collected_at: new Date().toISOString(),
+  };
+}
+
+function buildRetainedSummary({
+  quotaUsed,
+  liveBytes,
+}: {
+  quotaUsed?: number;
+  liveBytes: number;
+}): ProjectStorageRetainedSummary {
+  const bytes =
+    quotaUsed == null || !Number.isFinite(quotaUsed)
+      ? 0
+      : Math.max(0, quotaUsed - liveBytes);
+  return {
+    key: "retained",
+    label: "Retained snapshot/history data",
+    bytes,
+    detail:
+      "Estimate computed as project quota used minus current live files. This usually comes from snapshots retaining deleted or modified data, and can decrease automatically as older snapshots expire.",
   };
 }
 
@@ -239,18 +273,14 @@ function overviewToHistoryPoint(
     quota_used_bytes: quota?.used,
     quota_size_bytes: quota?.size,
     quota_used_percent: computePercent(quota?.used, quota?.size),
+    live_bytes: overview.live.bytes,
+    retained_bytes: overview.retained.bytes,
     home_visible_bytes:
       overview.visible.find((bucket) => bucket.key === "home")?.summaryBytes ??
       undefined,
-    scratch_visible_bytes:
-      overview.visible.find((bucket) => bucket.key === "scratch")
-        ?.summaryBytes ?? undefined,
     environment_visible_bytes:
       overview.visible.find((bucket) => bucket.key === "environment")
         ?.summaryBytes ?? undefined,
-    snapshot_counted_bytes:
-      overview.counted.find((entry) => entry.key === "snapshots")?.bytes ??
-      undefined,
   };
 }
 
@@ -387,9 +417,9 @@ async function getStorageBreakdownImpl({
   const inflight = projectStorageBreakdownInflight.get(cacheKey);
   if (inflight) return await inflight;
   const scan = (async () => {
-    const breakdown = parseDustOutput(
-      await localFs({ client, project_id }).dust(normalizedPath, {
-        options: ["-j", "-x", "-T", "2", "-d", "1", "-s", "-o", "b", "-P"],
+    const breakdown = parseDuOutput(
+      await localFs({ client, project_id }).du(normalizedPath, {
+        options: ["--bytes", "-x", "-d", "1"],
         timeout: PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS,
       }),
       normalizedPath,
@@ -430,35 +460,24 @@ async function getStorageOverviewImpl({
   const load = (async () => {
     const environmentPath = posix.join(homePath, PROJECT_IMAGE_PATH);
     const fileServer = fileServerClient(client);
-    const [quota, homeUsage, scratchUsage, environmentUsage] =
-      await Promise.all([
-        fileServer.getQuota({ project_id }),
-        getStorageBreakdownImpl({ client, project_id, path: homePath }),
-        getStorageBreakdownImpl({ client, project_id, path: "/scratch" }).catch(
-          (err) => {
-            const text = `${err ?? ""}`.toLowerCase();
-            if (
-              text.includes("scratch is not mounted") ||
-              text.includes("no such file") ||
-              text.includes("not found")
-            ) {
-              return null;
-            }
-            throw err;
-          },
-        ),
-        getStorageBreakdownImpl({
-          client,
-          project_id,
-          path: environmentPath,
-        }).catch((err) => {
-          const text = `${err ?? ""}`.toLowerCase();
-          if (text.includes("no such file") || text.includes("not found")) {
-            return null;
-          }
-          throw err;
-        }),
-      ]);
+    const [quota, homeUsage, environmentUsage] = await Promise.all([
+      fileServer.getQuota({ project_id }),
+      getStorageBreakdownImpl({ client, project_id, path: homePath }),
+      getStorageBreakdownImpl({
+        client,
+        project_id,
+        path: environmentPath,
+      }).catch((err) => {
+        const text = `${err ?? ""}`.toLowerCase();
+        if (text.includes("no such file") || text.includes("not found")) {
+          return null;
+        }
+        throw err;
+      }),
+    ]);
+
+    const environmentBytes = Math.max(0, environmentUsage?.bytes ?? 0);
+    const liveBytes = Math.max(0, homeUsage.bytes);
 
     const visible: ProjectStorageVisibleSummary[] = [
       {
@@ -466,23 +485,10 @@ async function getStorageOverviewImpl({
         label: homePath,
         summaryLabel: "Home",
         path: homePath,
-        summaryBytes: Math.max(
-          0,
-          homeUsage.bytes - Math.max(0, environmentUsage?.bytes ?? 0),
-        ),
+        summaryBytes: Math.max(0, liveBytes - environmentBytes),
         usage: homeUsage,
       },
     ];
-    if (scratchUsage != null) {
-      visible.push({
-        key: "scratch",
-        label: "/scratch",
-        summaryLabel: "Scratch",
-        path: "/scratch",
-        summaryBytes: scratchUsage.bytes,
-        usage: scratchUsage,
-      });
-    }
     if (environmentUsage != null) {
       visible.push({
         key: "environment",
@@ -507,8 +513,17 @@ async function getStorageOverviewImpl({
           warning: quota.warning,
         },
       ],
+      live: {
+        key: "live",
+        label: "Live files",
+        path: homePath,
+        bytes: liveBytes,
+      },
+      retained: buildRetainedSummary({
+        quotaUsed: quota.used,
+        liveBytes,
+      }),
       visible,
-      counted: [],
     };
     try {
       await recordProjectStorageHistorySample({

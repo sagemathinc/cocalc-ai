@@ -8,11 +8,12 @@ import { Command } from "commander";
 
 import type {
   ProjectStorageBreakdown,
-  ProjectStorageCountedSummary,
   ProjectStorageHistory,
   ProjectStorageHistoryPoint,
+  ProjectStorageLiveSummary,
   ProjectStorageOverview,
   ProjectStorageQuotaSummary,
+  ProjectStorageRetainedSummary,
   ProjectStorageVisibleSummary,
 } from "@cocalc/conat/project/storage-info";
 import {
@@ -27,13 +28,8 @@ import type { ProjectCommandDeps } from "../project";
 const DEFAULT_HISTORY_WINDOW = "24h";
 const DEFAULT_HISTORY_POINTS = 96;
 
-type StorageBucketKey = "home" | "scratch" | "environment";
-type StorageMetricKey =
-  | "quota"
-  | "home"
-  | "scratch"
-  | "environment"
-  | "snapshots";
+type StorageBucketKey = "home" | "environment";
+type StorageMetricKey = "quota" | "live" | "retained" | "home" | "environment";
 type StorageFindingSeverity = "info" | "warning" | "error";
 
 interface StorageBucketBreakdownResult {
@@ -87,6 +83,16 @@ export interface StorageAnalysisResult {
       scope?: "subvolume";
       warning?: string;
     } | null;
+    live: {
+      label: string;
+      path: string;
+      bytes: number;
+    } | null;
+    retained: {
+      label: string;
+      bytes: number;
+      detail?: string;
+    } | null;
     visible: Record<
       StorageBucketKey,
       {
@@ -95,13 +101,6 @@ export interface StorageAnalysisResult {
         bytes: number;
       } | null
     >;
-    counted: {
-      snapshots: {
-        label: string;
-        bytes: number;
-        detail?: string;
-      } | null;
-    };
   };
   history: {
     window_minutes: number;
@@ -167,11 +166,16 @@ function visibleSummary(
   return overview.visible.find((entry) => entry.key === key) ?? null;
 }
 
-function countedSummary(
+function liveSummary(
   overview: ProjectStorageOverview,
-  key: "snapshots",
-): ProjectStorageCountedSummary | null {
-  return overview.counted.find((entry) => entry.key === key) ?? null;
+): ProjectStorageLiveSummary | null {
+  return overview.live ?? null;
+}
+
+function retainedSummary(
+  overview: ProjectStorageOverview,
+): ProjectStorageRetainedSummary | null {
+  return overview.retained ?? null;
 }
 
 function metricValue(
@@ -181,14 +185,37 @@ function metricValue(
   switch (metric) {
     case "quota":
       return point.quota_used_bytes;
+    case "live":
+      if (point.live_bytes != null) {
+        return point.live_bytes;
+      }
+      if (
+        point.home_visible_bytes != null ||
+        point.environment_visible_bytes != null
+      ) {
+        return (
+          (point.home_visible_bytes ?? 0) +
+          (point.environment_visible_bytes ?? 0)
+        );
+      }
+      return undefined;
+    case "retained":
+      if (point.retained_bytes != null) {
+        return point.retained_bytes;
+      }
+      if (
+        point.quota_used_bytes != null &&
+        point.live_bytes != null &&
+        Number.isFinite(point.quota_used_bytes) &&
+        Number.isFinite(point.live_bytes)
+      ) {
+        return Math.max(0, point.quota_used_bytes - point.live_bytes);
+      }
+      return undefined;
     case "home":
       return point.home_visible_bytes;
-    case "scratch":
-      return point.scratch_visible_bytes;
     case "environment":
       return point.environment_visible_bytes;
-    case "snapshots":
-      return point.snapshot_counted_bytes;
     default:
       return undefined;
   }
@@ -300,10 +327,10 @@ function buildStorageAnalysis({
   breakdowns: StorageBucketBreakdownResult[];
 }): StorageAnalysisResult {
   const quota = quotaSummary(overview);
+  const live = liveSummary(overview);
+  const retained = retainedSummary(overview);
   const home = visibleSummary(overview, "home");
-  const scratch = visibleSummary(overview, "scratch");
   const environment = visibleSummary(overview, "environment");
-  const snapshots = countedSummary(overview, "snapshots");
   const findings: StorageFinding[] = [];
   const recommendations: StorageRecommendation[] = [];
   const quotaPercent =
@@ -340,20 +367,20 @@ function buildStorageAnalysis({
       message: `Project quota is ${formatPercent(quotaPercent)} used.`,
     });
   }
-  if ((snapshots?.bytes ?? 0) > 0) {
+  if ((retained?.bytes ?? 0) > 0) {
     findings.push({
-      id: "snapshots_present",
+      id: "retained_present",
       severity:
-        quota && snapshots && snapshots.bytes > quota.size * 0.25
+        quota && retained && retained.bytes > quota.size * 0.25
           ? "warning"
           : "info",
-      message: `Snapshots are using ${formatBytes(snapshots?.bytes)} of counted storage.`,
+      message: `Retained snapshot/history data is estimated at ${formatBytes(retained?.bytes)}.`,
     });
     recommendations.push({
-      id: "delete_snapshots",
+      id: "review_snapshots",
       priority: 100,
       message:
-        "Delete unneeded snapshot folders under ~/.snapshots to free counted snapshot storage.",
+        "Review or delete old snapshots when retained historical data is large.",
       actions: [
         {
           type: "open_path",
@@ -397,13 +424,6 @@ function buildStorageAnalysis({
           reason: "See which environment subtrees are largest.",
         },
       ],
-    });
-  }
-  if ((scratch?.summaryBytes ?? 0) >= 5 * 1024 * 1024 * 1024) {
-    findings.push({
-      id: "scratch_large",
-      severity: "info",
-      message: `Scratch is using ${formatBytes(scratch?.summaryBytes)}.`,
     });
   }
 
@@ -459,7 +479,7 @@ function buildStorageAnalysis({
       id: "no_obvious_cleanup",
       priority: 0,
       message:
-        "No obvious cleanup target stands out from the current storage summary. Inspect Home and Scratch breakdowns if you still need space.",
+        "No obvious cleanup target stands out from the current storage summary. Inspect Home and Environment breakdowns if you still need space.",
       actions: [
         {
           type: "run_command",
@@ -489,6 +509,20 @@ function buildStorageAnalysis({
             warning: quota.warning,
           }
         : null,
+      live: live
+        ? {
+            label: live.label,
+            path: live.path,
+            bytes: live.bytes,
+          }
+        : null,
+      retained: retained
+        ? {
+            label: retained.label,
+            bytes: retained.bytes,
+            detail: retained.detail,
+          }
+        : null,
       visible: {
         home: home
           ? {
@@ -497,27 +531,11 @@ function buildStorageAnalysis({
               bytes: home.summaryBytes,
             }
           : null,
-        scratch: scratch
-          ? {
-              label: scratch.summaryLabel,
-              path: scratch.path,
-              bytes: scratch.summaryBytes,
-            }
-          : null,
         environment: environment
           ? {
               label: environment.summaryLabel,
               path: environment.path,
               bytes: environment.summaryBytes,
-            }
-          : null,
-      },
-      counted: {
-        snapshots: snapshots
-          ? {
-              label: snapshots.label,
-              bytes: snapshots.bytes,
-              detail: snapshots.detail,
             }
           : null,
       },
@@ -537,8 +555,9 @@ function buildStorageAnalysis({
 function renderStorageAnalysisHuman(analysis: StorageAnalysisResult): string {
   const lines: string[] = [];
   const quota = analysis.summary.quota;
+  const live = analysis.summary.live;
+  const retained = analysis.summary.retained;
   const visible = analysis.summary.visible;
-  const snapshots = analysis.summary.counted.snapshots;
   lines.push(`Storage analysis for ${analysis.title}`);
   lines.push(`Project: ${analysis.project_id}`);
   lines.push(`Collected: ${analysis.collected_at}`);
@@ -555,14 +574,16 @@ function renderStorageAnalysisHuman(analysis: StorageAnalysisResult): string {
   if (visible.home) {
     lines.push(`- Home: ${formatBytes(visible.home.bytes)}`);
   }
-  if (visible.scratch) {
-    lines.push(`- Scratch: ${formatBytes(visible.scratch.bytes)}`);
+  if (live) {
+    lines.push(`- Live files: ${formatBytes(live.bytes)}`);
   }
   if (visible.environment) {
     lines.push(`- Environment: ${formatBytes(visible.environment.bytes)}`);
   }
-  if (snapshots) {
-    lines.push(`- Snapshots: ${formatBytes(snapshots.bytes)}`);
+  if (retained) {
+    lines.push(
+      `- Retained snapshot/history data: ${formatBytes(retained.bytes)}`,
+    );
   }
   if (analysis.history.growth?.quota_used_bytes_per_hour != null) {
     lines.push(
@@ -616,10 +637,10 @@ function flattenStorageOverview({
   overview: ProjectStorageOverview;
 }): Record<string, unknown> {
   const quota = quotaSummary(overview);
+  const live = liveSummary(overview);
+  const retained = retainedSummary(overview);
   const home = visibleSummary(overview, "home");
-  const scratch = visibleSummary(overview, "scratch");
   const environment = visibleSummary(overview, "environment");
-  const snapshots = countedSummary(overview, "snapshots");
   return {
     project_id,
     title,
@@ -631,10 +652,10 @@ function flattenStorageOverview({
         ? formatPercent((100 * quota.used) / quota.size)
         : "?",
     quota_warning: quota?.warning ?? "",
+    live: formatBytes(live?.bytes),
+    retained: formatBytes(retained?.bytes),
     home: formatBytes(home?.summaryBytes),
-    scratch: formatBytes(scratch?.summaryBytes),
     environment: formatBytes(environment?.summaryBytes),
-    snapshots: formatBytes(snapshots?.bytes ?? 0),
   };
 }
 
@@ -645,10 +666,10 @@ function flattenStorageHistory(
     collected_at: point.collected_at,
     quota: formatBytes(point.quota_used_bytes),
     quota_percent: formatPercent(point.quota_used_percent),
+    live: formatBytes(metricValue(point, "live")),
+    retained: formatBytes(metricValue(point, "retained")),
     home: formatBytes(point.home_visible_bytes),
-    scratch: formatBytes(point.scratch_visible_bytes),
     environment: formatBytes(point.environment_visible_bytes),
-    snapshots: formatBytes(point.snapshot_counted_bytes),
   }));
 }
 
