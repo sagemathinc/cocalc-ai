@@ -106,6 +106,7 @@ export const system = {
   releaseProjectAppPublicSubdomain: authFirst,
   recordManagedProjectEgress: authFirst,
   getManagedProjectEgressPolicy: authFirst,
+  resolveManagedProjectSshKeyAccount: authFirst,
 
   adminSalesloftSync: authFirst,
   userSalesloftSync: authFirst,
@@ -221,6 +222,7 @@ export type ManagedProjectEgressCategory =
   | "file-download"
   | "http-proxy"
   | "ws-proxy"
+  | "ssh"
   | "interactive-conat";
 
 export interface ParallelOpsWorkerOwnerStatus {
@@ -1432,4 +1434,9 @@ export interface System {
     managed_egress_categories_5h_bytes?: Record<string, number>;
     managed_egress_categories_7d_bytes?: Record<string, number>;
   }>;
+
+  resolveManagedProjectSshKeyAccount: (opts: {
+    project_id: string;
+    fingerprint: string;
+  }) => Promise<{ account_id?: string }>;
 }

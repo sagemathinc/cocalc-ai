@@ -25,7 +25,7 @@ to support a UDP socket and use that instead, since we're running
 the REST server on localhost.
 */
 
-import { init as initAuth, type SshTarget } from "./auth";
+import { ensureProxyKey } from "./auth";
 import { startProxyServer, createProxyHandlers } from "./proxy";
 import { install, sshpiper } from "@cocalc/backend/sandbox/install";
 import { secrets, sshServer } from "@cocalc/backend/data";
@@ -33,6 +33,12 @@ import { dirname, join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import getLogger from "@cocalc/backend/logger";
+import getPort from "@cocalc/backend/get-port";
+import { startManagedSshPluginServer } from "./ssh-plugin";
+import { startManagedSshEdgeProxy } from "./ssh-edge-proxy";
+import type { SshTarget } from "./ssh-target";
+import type { Server as NetServer } from "node:net";
+import type { Server as HttpServer } from "node:http";
 
 const logger = getLogger("project-proxy:ssh:ssh-server");
 
@@ -141,46 +147,79 @@ async function waitForStartup(
 }
 
 export async function init({
-  getSshdPort,
-  getAuthorizedKeys,
-  getSshUser,
+  authorizePublicKey,
+  checkManagedSshAllowed,
+  recordManagedSshEgress,
   port = sshServer.port,
   proxyHandlers,
   exitOnFail = true,
   hostKeyPath,
 }: {
-  getSshdPort: (target: SshTarget) => Promise<number | null> | number | null;
-  getAuthorizedKeys: (target: SshTarget) => Promise<string>;
-  getSshUser?: (target: SshTarget) => Promise<string> | string;
+  authorizePublicKey: (opts: {
+    target: SshTarget;
+    public_key: Uint8Array;
+    remote_addr: string;
+  }) => Promise<{
+    project_id: string;
+    account_id?: string;
+    ssh_user: string;
+    port: number;
+  }>;
+  checkManagedSshAllowed: (opts: {
+    project_id: string;
+    account_id?: string;
+  }) => Promise<{ allowed: true } | { allowed: false; message: string }>;
+  recordManagedSshEgress: (opts: {
+    project_id: string;
+    account_id?: string;
+    remote_addr: string;
+    bytes: number;
+    partial: boolean;
+  }) => Promise<void> | void;
   port?: number;
   proxyHandlers?: boolean;
   exitOnFail?: boolean;
   hostKeyPath?: string;
-}): Promise<{ child; projectProxyHandlers; publicKey: string }> {
+}): Promise<{
+  child;
+  close: () => Promise<void>;
+  projectProxyHandlers: HttpServer | ReturnType<typeof createProxyHandlers>;
+  publicKey: string;
+}> {
   logger.debug("init", { port, proxyHandlers });
   // ensure sshpiper is installed
   await install("sshpiper");
   const projectProxyHandlers = proxyHandlers
     ? createProxyHandlers()
     : await startProxyServer();
-  const { url, publicKey } = await initAuth({
-    getSshdPort,
-    getAuthorizedKeys,
-    getSshUser,
+  const sshKey = await ensureProxyKey();
+  const publicKey = sshKey.publicKey;
+  const plugin = await startManagedSshPluginServer({
+    proxy_private_key: sshKey.privateKey,
+    authorizePublicKey: async ({ remote_addr, target, public_key }) => {
+      return await authorizePublicKey({
+        remote_addr,
+        target,
+        public_key,
+      });
+    },
   });
+  const internalPort = await getPort();
   const hostKey = hostKeyPath ?? join(secretsPath(), "host_key");
   await mkdir(dirname(hostKey), { recursive: true });
-  const restBinary = `${sshpiper}-rest`;
   const args = [
     "-i",
     hostKey,
-    `--port=${port}`,
+    "--address=127.0.0.1",
+    `--port=${internalPort}`,
     "--log-level=warn",
     "--server-key-generate-mode",
     "notexist",
-    restBinary,
-    "--url",
-    url,
+    "--allowed-proxy-addresses=127.0.0.1/32",
+    "--allowed-proxy-addresses=::1/128",
+    "grpc",
+    `--endpoint=${plugin.endpoint}`,
+    "--insecure",
   ];
 
   // sshpiperd-rest lives in a shared pnpm store; concurrent startups can hit
@@ -244,7 +283,51 @@ export async function init({
     throw lastErr ?? new Error(message);
   }
 
-  return { child, projectProxyHandlers, publicKey };
+  let edgeProxy: NetServer | undefined;
+  try {
+    edgeProxy = await startManagedSshEdgeProxy({
+      port,
+      upstreamPort: internalPort,
+      getIdentity: (remote_addr) => plugin.state.getSession(remote_addr),
+      clearIdentity: (remote_addr) => plugin.state.clearSession(remote_addr),
+      checkAllowed: async ({ project_id, account_id }) => {
+        return await checkManagedSshAllowed({ project_id, account_id });
+      },
+      record: async ({
+        project_id,
+        account_id,
+        remote_addr,
+        bytes,
+        partial,
+      }) => {
+        await recordManagedSshEgress({
+          project_id,
+          account_id,
+          remote_addr,
+          bytes,
+          partial,
+        });
+      },
+    });
+  } catch (err) {
+    removeChild(child);
+    if (child.exitCode == null && child.signalCode == null) {
+      child.kill("SIGKILL");
+    }
+    await plugin.close();
+    throw err;
+  }
+
+  const close = async () => {
+    edgeProxy?.close();
+    await plugin.close();
+    removeChild(child);
+    if (child.exitCode == null) {
+      child.kill("SIGKILL");
+    }
+  };
+
+  return { child, close, projectProxyHandlers, publicKey };
 }
 
 export function close() {

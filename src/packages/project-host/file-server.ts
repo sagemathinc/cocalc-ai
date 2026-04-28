@@ -67,6 +67,10 @@ import {
 } from "@cocalc/util/rootfs-images";
 import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
 import {
+  authorizedKeysContainFingerprint,
+  computeSshFingerprintFromRawKey,
+} from "@cocalc/project-proxy/ssh-keys";
+import {
   DEFAULT_PROJECT_RUNTIME_HOME,
   DEFAULT_PROJECT_RUNTIME_USER,
   projectRuntimeHomeRelativePath,
@@ -3307,52 +3311,152 @@ export async function initFileServer({
       return await ensureProjectSshWake(target.project_id);
     };
 
-    const getAuthorizedKeys = async (target: SshTarget): Promise<string> => {
-      const project_id = target.project_id;
-      const keys: string[] = [];
-
-      // Keys provided by the master (account + project keys), persisted locally.
-      const row = getProject(project_id);
-      if (row?.authorized_keys) {
-        const trimmed = row.authorized_keys.trim();
-        if (trimmed) {
-          keys.push(trimmed);
-        }
-      }
-
-      // Keys present inside the project filesystem.
-      try {
-        const { path } = await mount({ project_id });
-        const managed = join(path, INTERNAL_SSH_CONFIG, "authorized_keys");
-        const user = join(path, ".ssh", "authorized_keys");
-        for (const candidate of [managed, user]) {
-          try {
-            const content = (await readFile(candidate, "utf8")).trim();
-            if (content) {
-              keys.push(content);
-            }
-          } catch {}
-        }
-      } catch (err) {
-        logger.debug("failed to read filesystem keys", {
-          project_id,
-          err: `${err}`,
-        });
-      }
-
-      return keys.join("\n");
-    };
     const getSshUser = async (): Promise<string> =>
       `${process.env.COCALC_LAUNCHPAD_SSHD_USER ?? process.env.COCALC_RUNTIME_USER ?? DEFAULT_PROJECT_RUNTIME_USER}`.trim() ||
       DEFAULT_PROJECT_RUNTIME_USER;
+    const checkManagedSshAllowed = async ({
+      project_id,
+      account_id,
+    }: {
+      project_id: string;
+      account_id?: string;
+    }) => {
+      const policy = await hubApi.system.getManagedProjectEgressPolicy({
+        account_id,
+        project_id,
+        category: "ssh",
+      });
+      if (policy.allowed) {
+        return { allowed: true as const };
+      }
+      return {
+        allowed: false as const,
+        message:
+          "SSH traffic is temporarily blocked for this project due to managed egress limits",
+      };
+    };
+    const recordManagedSshEgress = async ({
+      project_id,
+      account_id,
+      remote_addr,
+      bytes,
+      partial,
+    }: {
+      project_id: string;
+      account_id?: string;
+      remote_addr: string;
+      bytes: number;
+      partial: boolean;
+    }) => {
+      if (!(bytes > 0)) return;
+      await hubApi.system.recordManagedProjectEgress({
+        account_id,
+        project_id,
+        category: "ssh",
+        bytes,
+        metadata: {
+          remote_addr,
+          partial,
+        },
+      });
+    };
+    const authorizePublicKey = async ({
+      target,
+      public_key,
+      remote_addr,
+    }: {
+      target: SshTarget;
+      public_key: Uint8Array;
+      remote_addr: string;
+    }) => {
+      const project_id = target.project_id;
+      const row = getProject(project_id);
+      if (!row) {
+        throw new Error(`project ${project_id} is not available`);
+      }
+      const port = await getSshdPort(target);
+      if (!port) {
+        throw new Error(
+          `project ${project_id} is not accepting ssh connections`,
+        );
+      }
+      const ssh_user = await getSshUser();
+      const fingerprint = computeSshFingerprintFromRawKey(public_key);
+      const managedKeys = `${row.authorized_keys ?? ""}`.trim();
+      if (
+        managedKeys &&
+        authorizedKeysContainFingerprint(managedKeys, fingerprint)
+      ) {
+        let account_id: string | undefined;
+        try {
+          account_id = (
+            await hubApi.system.resolveManagedProjectSshKeyAccount({
+              project_id,
+              fingerprint,
+            })
+          ).account_id;
+        } catch (err) {
+          logger.warn("failed to resolve managed ssh key account", {
+            project_id,
+            remote_addr,
+            fingerprint,
+            err: `${err}`,
+          });
+        }
+        const allowed = await checkManagedSshAllowed({
+          project_id,
+          account_id,
+        });
+        if (!allowed.allowed) {
+          throw new Error(allowed.message);
+        }
+        return {
+          project_id,
+          ...(account_id ? { account_id } : {}),
+          ssh_user,
+          port,
+        };
+      }
+
+      let userAuthorizedKeys = "";
+      try {
+        const { path } = await mount({ project_id });
+        userAuthorizedKeys = await readFile(
+          join(path, ".ssh", "authorized_keys"),
+          "utf8",
+        );
+      } catch (err) {
+        logger.debug("failed to read user ssh authorized_keys", {
+          project_id,
+          remote_addr,
+          err: `${err}`,
+        });
+      }
+      if (
+        userAuthorizedKeys &&
+        authorizedKeysContainFingerprint(userAuthorizedKeys, fingerprint)
+      ) {
+        const allowed = await checkManagedSshAllowed({ project_id });
+        if (!allowed.allowed) {
+          throw new Error(allowed.message);
+        }
+        return {
+          project_id,
+          ssh_user,
+          port,
+        };
+      }
+
+      throw new Error("ssh public key is not authorized for this project");
+    };
 
     logger.debug("initFileServer: start ssh server");
 
     ssh = await initSshServer({
       proxyHandlers: true,
-      getSshdPort,
-      getAuthorizedKeys,
-      getSshUser,
+      authorizePublicKey,
+      checkManagedSshAllowed,
+      recordManagedSshEgress,
       hostKeyPath,
     });
   }
@@ -3401,7 +3505,7 @@ export function closeFileServer() {
   const { file, ssh } = servers;
   servers = null;
   file.close();
-  ssh.kill?.("SIGKILL");
+  void ssh.close?.();
 }
 
 let cachedClient: null | Fileserver = null;

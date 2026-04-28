@@ -174,6 +174,7 @@ function formatManagedEgressCategory(category: string): string {
   if (category === MANAGED_WS_EGRESS_CATEGORY) {
     return "App server WebSocket traffic";
   }
+  if (category === "ssh") return "SSH traffic";
   if (category === "interactive-conat") return "Interactive session traffic";
   return category.replace(/[-_]/g, " ");
 }
