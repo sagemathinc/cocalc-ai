@@ -51,6 +51,7 @@ We should do all of the following:
 - keep the current quota definition, including snapshots,
 - explain snapshot-retained usage honestly as an estimate derived from the
   difference between quota and visible live usage,
+- fix snapshot deletion so it reliably works from user-facing UI flows,
 - make snapshot cleanup easier and more visible,
 - surface and tier snapshot and backup limits in the product instead of relying
   on hidden hardcoded caps.
@@ -214,6 +215,29 @@ The product should say, in plain language:
 This is a better model than pretending snapshots do not count while relying on
 hidden backend safety behavior.
 
+## Current Regression To Fix
+
+Snapshot deletion is currently broken or fragile in at least one user-facing
+path.
+
+Observed behavior:
+
+- deleting snapshot paths from the UI can fail with:
+  - `EIO: Read-only file system (os error 30)`
+  - errors from `privileged-rm-helper`
+
+The likely issue is that deleting a path under `~/.snapshots/...` is going
+through the generic file-removal path against a readonly snapshot subvolume
+instead of the dedicated snapshot delete path:
+
+- [subvolume-snapshots.ts](/home/user/cocalc-ai/src/packages/file-server/btrfs/subvolume-snapshots.ts)
+
+This matters to the product decision because if snapshots count against quota,
+then deleting snapshots must be a reliable and obvious way to reduce retained
+quota usage.
+
+So “fix snapshot deletion” is part of the storage rollout, not optional polish.
+
 ## Detailed Implementation Plan
 
 ## Phase 1: Replace `dust` with `du` for quota-facing live storage
@@ -322,6 +346,29 @@ Plan:
   - snapshots can retain deleted data,
   - rolling snapshot cleanup can reduce quota later,
   - scratch is shown separately.
+
+### Snapshot deletion bug fix
+
+Files likely involved:
+
+- [project_actions.ts](/home/user/cocalc-ai/src/packages/frontend/project_actions.ts)
+- snapshot UI under `src/packages/frontend/project/snapshots/`
+- generic file delete path in frontend/backend
+- [subvolume-snapshots.ts](/home/user/cocalc-ai/src/packages/file-server/btrfs/subvolume-snapshots.ts)
+
+Plan:
+
+1. Reproduce the failing UI deletion flow precisely.
+2. Identify where deleting a path under `~/.snapshots/...` is routed into
+   generic file deletion instead of snapshot deletion.
+3. Route snapshot deletion through the snapshot API / btrfs subvolume delete
+   path, not `privileged-rm-helper`.
+4. Ensure both of these work:
+   - deleting from the snapshots UI
+   - deleting snapshot paths from file-manager style UI flows, if we continue
+     to allow that
+5. Add regression tests so readonly snapshots never again go through generic
+   recursive rm behavior.
 
 ### CLI changes
 
@@ -435,6 +482,8 @@ Plan:
 - replace `MAX_SNAPSHOTS_PER_PROJECT = 250` with an effective policy value,
 - replace scheduled-maintenance `limit = 250` with the same effective value,
 - do the same for backup retention limits.
+- ensure the same effective policy layer is used by snapshot deletion and
+  snapshot-management UX, not just creation/retention.
 
 3. UI surfaces the effective limits.
 
