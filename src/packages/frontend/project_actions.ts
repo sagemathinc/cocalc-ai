@@ -121,7 +121,10 @@ import { isCollaboratorRealtimeAccessError } from "@cocalc/frontend/project/coll
 import { canUseCollaboratorProjectRealtime } from "@cocalc/frontend/project/realtime-access";
 import { getFileTemplate } from "./project/templates";
 import { isBackupsPath } from "@cocalc/util/consts/backups";
-import { SNAPSHOTS, isSnapshotsPath } from "@cocalc/util/consts/snapshots";
+import {
+  getSnapshotPathTarget,
+  isSnapshotsPath,
+} from "@cocalc/util/consts/snapshots";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
 import dust from "@cocalc/frontend/project/disk-usage/dust";
 import { withProjectHostBase } from "@cocalc/frontend/project/host-url";
@@ -2940,11 +2943,22 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       const snapshots: string[] = [];
       const nonSnapshotPaths: string[] = [];
       for (const path of paths) {
-        if (dirname(path) == SNAPSHOTS) {
-          snapshots.push(basename(path));
-        } else {
-          nonSnapshotPaths.push(path);
+        const target = getSnapshotPathTarget(path);
+        if (target?.kind === "snapshot") {
+          snapshots.push(target.name);
+          continue;
         }
+        if (target?.kind === "snapshots-root") {
+          throw new Error(
+            "Delete snapshots individually, not the .snapshots directory.",
+          );
+        }
+        if (target?.kind === "snapshot-entry") {
+          throw new Error(
+            `Snapshots are read-only. Delete the snapshot '${target.name}' instead of files inside it.`,
+          );
+        }
+        nonSnapshotPaths.push(path);
       }
       if (snapshots.length > 0) {
         for (const name of snapshots) {

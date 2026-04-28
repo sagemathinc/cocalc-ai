@@ -23,14 +23,17 @@ function deferred<T>() {
 }
 
 function TestComponent({ project_id }: { project_id: string }) {
-  const { visible, quotas, counted, error } = useDiskUsage({ project_id });
+  const { visible, quotas, live, retained, error } = useDiskUsage({
+    project_id,
+  });
   return (
     <div>
       <span data-testid="summary-usage">{visible[0]?.summaryBytes ?? ""}</span>
       <span data-testid="summary-label">{visible[0]?.summaryLabel ?? ""}</span>
       <span data-testid="quota">{quotas[0]?.used ?? ""}</span>
       <span data-testid="quota-warning">{quotas[0]?.warning ?? ""}</span>
-      <span data-testid="counted">{counted[0]?.bytes ?? ""}</span>
+      <span data-testid="live">{live?.bytes ?? ""}</span>
+      <span data-testid="retained">{retained?.bytes ?? ""}</span>
       <span data-testid="error">{error ? `${error}` : ""}</span>
     </div>
   );
@@ -52,12 +55,23 @@ function overview({
       usage: { path: "/root", bytes: 111, children: [], collected_at: "" },
     },
   ],
-  counted = [],
+  live = {
+    key: "live",
+    label: "Live files",
+    path: "/root",
+    bytes: 111,
+  },
+  retained = {
+    key: "retained",
+    label: "Retained snapshot/history data",
+    bytes: 0,
+  },
 }: {
   used?: number;
   warning?: string;
   visible?: any[];
-  counted?: any[];
+  live?: any;
+  retained?: any;
 } = {}) {
   return {
     collected_at: "2026-03-31T12:00:00.000Z",
@@ -70,8 +84,9 @@ function overview({
         warning,
       },
     ],
+    live,
+    retained,
     visible,
-    counted,
   };
 }
 
@@ -126,13 +141,11 @@ describe("useDiskUsage", () => {
             },
           },
         ],
-        counted: [
-          {
-            key: "snapshots",
-            label: "Snapshots",
-            bytes: 4_000_000,
-          },
-        ],
+        retained: {
+          key: "retained",
+          label: "Retained snapshot/history data",
+          bytes: 4_000_000,
+        },
       }),
     );
 
@@ -142,7 +155,8 @@ describe("useDiskUsage", () => {
       expect(screen.getByTestId("summary-usage").textContent).toBe("78");
       expect(screen.getByTestId("summary-label").textContent).toBe("Home");
       expect(screen.getByTestId("quota").textContent).toBe("17");
-      expect(screen.getByTestId("counted").textContent).toBe("4000000");
+      expect(screen.getByTestId("live").textContent).toBe("111");
+      expect(screen.getByTestId("retained").textContent).toBe("4000000");
     });
   });
 

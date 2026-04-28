@@ -3232,6 +3232,8 @@ export async function initFsServer({
         home: path,
         rootfs: getRootfsMountpoint(project_id),
         scratch: getScratchMountpoint(project_id),
+        deleteSnapshot: async (name: string) =>
+          await deleteSnapshot({ project_id, name }),
       });
     },
     onMutation: ({ subject, op }) => {

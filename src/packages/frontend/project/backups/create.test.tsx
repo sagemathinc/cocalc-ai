@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import CreateBackup from "./create";
 
 const createBackup = jest.fn(async (_opts?: any) => ({ op_id: "backup-op-1" }));
+const getBackupQuota = jest.fn(async () => ({ limit: 5 }));
 const setState = jest.fn();
 const trackBackupOp = jest.fn();
 const originalGetComputedStyle = window.getComputedStyle;
@@ -28,6 +29,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
       hub: {
         projects: {
           createBackup: (opts: any) => createBackup(opts),
+          getBackupQuota: (opts: any) => getBackupQuota(opts),
         },
       },
     },
@@ -53,6 +55,7 @@ describe("CreateBackup", () => {
 
   beforeEach(() => {
     createBackup.mockClear();
+    getBackupQuota.mockClear();
     setState.mockClear();
     trackBackupOp.mockClear();
   });
@@ -63,6 +66,16 @@ describe("CreateBackup", () => {
 
     fireEvent.click(
       screen.getAllByRole("button", { name: /Create Backup/i })[0],
+    );
+    await waitFor(() =>
+      expect(getBackupQuota).toHaveBeenCalledWith({
+        project_id: "project-1",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText(/can keep up to/i, { selector: "p" }),
+      ).toHaveTextContent("5"),
     );
     fireEvent.click(
       await screen

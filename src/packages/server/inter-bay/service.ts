@@ -112,6 +112,7 @@ import {
 } from "@cocalc/server/inter-bay/project-control";
 import {
   getBackupConfigLocal,
+  getProjectOwnerEffectiveLimitsLocal,
   getProjectStartMetadataLocal,
   listHostProjects,
   issueProjectHostAuthTokenLocal,
@@ -598,6 +599,11 @@ async function startHostConnectionService(): Promise<void> {
         project_id,
         project_region,
         backup_repo_id,
+      }),
+    getProjectOwnerEffectiveLimits: async ({ host_id, project_id }) =>
+      await getProjectOwnerEffectiveLimitsLocal({
+        host_id,
+        project_id,
       }),
     recordProjectBackup: async ({ host_id, project_id, time }) =>
       await recordProjectBackupLocal({ host_id, project_id, time }),

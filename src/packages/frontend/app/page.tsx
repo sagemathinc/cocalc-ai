@@ -32,6 +32,7 @@ import { ProjectsNav } from "@cocalc/frontend/projects/projects-nav";
 import BalanceButton from "@cocalc/frontend/purchases/balance-button";
 import { AIUsageWarning } from "@cocalc/frontend/purchases/ai-usage-warning";
 import { ManagedEgressWarning } from "@cocalc/frontend/purchases/managed-egress-warning";
+import { AccountStorageWarning } from "@cocalc/frontend/purchases/account-storage-warning";
 import PayAsYouGoModal from "@cocalc/frontend/purchases/pay-as-you-go/modal";
 import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -280,6 +281,7 @@ export const Page: React.FC = () => {
         {render_support()}
         {render_balance()}
         <AIUsageWarning pageStyle={pageStyle} />
+        <AccountStorageWarning pageStyle={pageStyle} />
         <ManagedEgressWarning pageStyle={pageStyle} />
         {render_notification()}
         <ConnectionIndicator height={pageStyle.height} pageStyle={pageStyle} />

@@ -16,10 +16,14 @@ import {
 import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
 import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
 import { humanSize } from "@cocalc/util/misc";
+import { getEffectiveMembershipUsageLimits } from "./effective-limits";
 import { resolveMembershipForAccount } from "./resolve";
 import { getMembershipUsageStatusForAccount } from "./usage-status";
 
 const log = getLogger("server:membership:project-limits");
+
+export const DEFAULT_MAX_SNAPSHOTS_PER_PROJECT = 250;
+export const DEFAULT_MAX_BACKUPS_PER_PROJECT = 30;
 
 export async function getOwnedProjectCountForAccount(
   account_id: string,
@@ -172,10 +176,70 @@ export async function estimateProvisionedRestoreBytesForProject({
 function extractMaxProjects(
   resolution: MembershipResolution,
 ): number | undefined {
-  const value = resolution.entitlements?.usage_limits?.max_projects;
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
+  return getEffectiveMembershipUsageLimits(resolution).max_projects;
+}
+
+function extractMaxSnapshotsPerProject(
+  resolution: MembershipResolution,
+): number | undefined {
+  return getEffectiveMembershipUsageLimits(resolution)
+    .max_snapshots_per_project;
+}
+
+function extractMaxBackupsPerProject(
+  resolution: MembershipResolution,
+): number | undefined {
+  return getEffectiveMembershipUsageLimits(resolution).max_backups_per_project;
+}
+
+async function getProjectOwnerLimit({
+  project_id,
+  resolution,
+  fallback,
+  extract,
+}: {
+  project_id: string;
+  resolution?: MembershipResolution;
+  fallback: number;
+  extract: (resolution: MembershipResolution) => number | undefined;
+}): Promise<number> {
+  const account_id = await getProjectOwnerAccountId(project_id);
+  if (!account_id) {
+    return fallback;
+  }
+  const effectiveResolution =
+    resolution ?? (await resolveMembershipForAccount(account_id));
+  return extract(effectiveResolution) ?? fallback;
+}
+
+export async function getProjectSnapshotLimit({
+  project_id,
+  resolution,
+}: {
+  project_id: string;
+  resolution?: MembershipResolution;
+}): Promise<number> {
+  return await getProjectOwnerLimit({
+    project_id,
+    resolution,
+    fallback: DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
+    extract: extractMaxSnapshotsPerProject,
+  });
+}
+
+export async function getProjectBackupLimit({
+  project_id,
+  resolution,
+}: {
+  project_id: string;
+  resolution?: MembershipResolution;
+}): Promise<number> {
+  return await getProjectOwnerLimit({
+    project_id,
+    resolution,
+    fallback: DEFAULT_MAX_BACKUPS_PER_PROJECT,
+    extract: extractMaxBackupsPerProject,
+  });
 }
 
 export async function assertCanOwnAdditionalProject({
@@ -202,10 +266,57 @@ export async function assertCanOwnAdditionalProject({
 function extractTotalStorageHardBytes(
   resolution: MembershipResolution,
 ): number | undefined {
-  const value = resolution.entitlements?.usage_limits?.total_storage_hard_bytes;
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
+  return getEffectiveMembershipUsageLimits(resolution).total_storage_hard_bytes;
+}
+
+function extractTotalStorageSoftBytes(
+  resolution: MembershipResolution,
+): number | undefined {
+  return getEffectiveMembershipUsageLimits(resolution).total_storage_soft_bytes;
+}
+
+type AccountStorageBlockState = "ok" | "soft" | "hard";
+
+function getAccountStorageBlockState({
+  total_storage_bytes,
+  resolution,
+}: {
+  total_storage_bytes: number;
+  resolution: MembershipResolution;
+}): {
+  state: AccountStorageBlockState;
+  soft_cap_bytes?: number;
+  hard_cap_bytes?: number;
+} {
+  const soft_cap_bytes = extractTotalStorageSoftBytes(resolution);
+  const hard_cap_bytes = extractTotalStorageHardBytes(resolution);
+  if (
+    hard_cap_bytes != null &&
+    Number.isFinite(hard_cap_bytes) &&
+    total_storage_bytes >= hard_cap_bytes
+  ) {
+    return {
+      state: "hard",
+      soft_cap_bytes,
+      hard_cap_bytes,
+    };
+  }
+  if (
+    soft_cap_bytes != null &&
+    Number.isFinite(soft_cap_bytes) &&
+    total_storage_bytes >= soft_cap_bytes
+  ) {
+    return {
+      state: "soft",
+      soft_cap_bytes,
+      hard_cap_bytes,
+    };
+  }
+  return {
+    state: "ok",
+    soft_cap_bytes,
+    hard_cap_bytes,
+  };
 }
 
 export async function assertCanIncreaseAccountStorage({
@@ -217,18 +328,29 @@ export async function assertCanIncreaseAccountStorage({
 }): Promise<void> {
   const effectiveResolution =
     resolution ?? (await resolveMembershipForAccount(account_id));
+  const total_storage_soft_bytes =
+    extractTotalStorageSoftBytes(effectiveResolution);
   const total_storage_hard_bytes =
     extractTotalStorageHardBytes(effectiveResolution);
-  if (total_storage_hard_bytes == null) {
+  if (total_storage_soft_bytes == null && total_storage_hard_bytes == null) {
     return;
   }
   const usage = await getMembershipUsageStatusForAccount({
     account_id,
     resolution: effectiveResolution,
   });
-  if (usage.total_storage_bytes >= total_storage_hard_bytes) {
+  const state = getAccountStorageBlockState({
+    total_storage_bytes: usage.total_storage_bytes,
+    resolution: effectiveResolution,
+  });
+  if (state.state === "hard") {
     throw new Error(
-      `total account storage hard cap reached (${humanSize(usage.total_storage_bytes)} of ${humanSize(total_storage_hard_bytes)}); delete data or upgrade membership`,
+      `total account storage hard cap reached (${humanSize(usage.total_storage_bytes)} of ${humanSize(state.hard_cap_bytes ?? total_storage_hard_bytes ?? 0)}); storage-increasing operations are blocked until you delete data or upgrade membership`,
+    );
+  }
+  if (state.state === "soft") {
+    throw new Error(
+      `total account storage soft cap reached (${humanSize(usage.total_storage_bytes)} of ${humanSize(state.soft_cap_bytes ?? total_storage_soft_bytes ?? 0)}); storage-increasing operations are blocked until you delete data or upgrade membership`,
     );
   }
 }
@@ -266,9 +388,11 @@ export async function assertCanRestoreProvisionedProjectStorage({
   }
   const effectiveResolution =
     resolution ?? (await resolveMembershipForAccount(owner_account_id));
+  const total_storage_soft_bytes =
+    extractTotalStorageSoftBytes(effectiveResolution);
   const total_storage_hard_bytes =
     extractTotalStorageHardBytes(effectiveResolution);
-  if (total_storage_hard_bytes == null) {
+  if (total_storage_soft_bytes == null && total_storage_hard_bytes == null) {
     return;
   }
   const estimated_restore_bytes =
@@ -288,9 +412,18 @@ export async function assertCanRestoreProvisionedProjectStorage({
     resolution: effectiveResolution,
   });
   const projected_total = usage.total_storage_bytes + estimated_restore_bytes;
-  if (projected_total > total_storage_hard_bytes) {
+  const state = getAccountStorageBlockState({
+    total_storage_bytes: projected_total,
+    resolution: effectiveResolution,
+  });
+  if (state.state === "hard") {
     throw new Error(
       `restoring this archived project would exceed the total account storage hard cap (${humanSize(usage.total_storage_bytes)} current + ${humanSize(estimated_restore_bytes)} estimated restore > ${humanSize(total_storage_hard_bytes)} cap); archive/delete data or upgrade membership`,
+    );
+  }
+  if (state.state === "soft") {
+    throw new Error(
+      `restoring this archived project would exceed the total account storage soft cap (${humanSize(usage.total_storage_bytes)} current + ${humanSize(estimated_restore_bytes)} estimated restore > ${humanSize(state.soft_cap_bytes ?? total_storage_soft_bytes ?? 0)} cap); archive/delete data or upgrade membership`,
     );
   }
 }

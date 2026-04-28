@@ -54,27 +54,10 @@ describe("project storage info service", () => {
 
   it("builds overview data and records a local history sample", async () => {
     const stream = makeStream();
-    const dustMock = jest
+    const duMock = jest
       .fn()
       .mockResolvedValueOnce({
-        stdout: Buffer.from(
-          JSON.stringify({
-            size: "120b",
-            name: "/root",
-            children: [{ size: "20b", name: "/root/cache" }],
-          }),
-        ),
-        stderr: Buffer.alloc(0),
-        code: 0,
-      })
-      .mockResolvedValueOnce({
-        stdout: Buffer.from(
-          JSON.stringify({
-            size: "5b",
-            name: "/scratch",
-            children: [],
-          }),
-        ),
+        stdout: Buffer.from("120 /root/cache\n120 /root\n"),
         stderr: Buffer.alloc(0),
         code: 0,
       })
@@ -89,7 +72,7 @@ describe("project storage info service", () => {
       })),
     });
     fsClientMock.mockReturnValue({
-      dust: dustMock,
+      du: duMock,
     });
 
     const { handleProjectStorageOverviewRequest } =
@@ -103,17 +86,15 @@ describe("project storage info service", () => {
     );
 
     expect(overview.quotas[0].used).toBe(50);
-    expect(overview.visible.map((bucket) => bucket.key)).toEqual([
-      "home",
-      "scratch",
-    ]);
-    expect(overview.counted).toEqual([]);
+    expect(overview.live.bytes).toBe(120);
+    expect(overview.retained.bytes).toBe(0);
+    expect(overview.visible.map((bucket) => bucket.key)).toEqual(["home"]);
     expect(stream.publish).toHaveBeenCalledTimes(1);
     expect(fsClientMock).toHaveBeenCalledWith(
       expect.objectContaining({ waitForInterest: false }),
     );
-    expect(dustMock).toHaveBeenCalledWith("/root", {
-      options: ["-j", "-x", "-T", "2", "-d", "1", "-s", "-o", "b", "-P"],
+    expect(duMock).toHaveBeenCalledWith("/root", {
+      options: ["--bytes", "-x", "-d", "1"],
       timeout: 10_000,
     });
   });
@@ -123,8 +104,8 @@ describe("project storage info service", () => {
     const scan = new Promise((resolve) => {
       resolveScan = resolve;
     });
-    const dustMock = jest.fn(() => scan);
-    fsClientMock.mockReturnValue({ dust: dustMock });
+    const duMock = jest.fn(() => scan);
+    fsClientMock.mockReturnValue({ du: duMock });
 
     const { handleProjectStorageBreakdownRequest } =
       await import("./storage-info-service");
@@ -140,15 +121,9 @@ describe("project storage info service", () => {
       { path: "/root" },
       {} as any,
     );
-    expect(dustMock).toHaveBeenCalledTimes(1);
+    expect(duMock).toHaveBeenCalledTimes(1);
     resolveScan({
-      stdout: Buffer.from(
-        JSON.stringify({
-          size: "120b",
-          name: "/root",
-          children: [{ size: "20b", name: "/root/cache" }],
-        }),
-      ),
+      stdout: Buffer.from("20 /root/cache\n120 /root\n"),
       stderr: Buffer.alloc(0),
       code: 0,
     });

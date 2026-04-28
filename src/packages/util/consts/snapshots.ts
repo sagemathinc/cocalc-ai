@@ -1,3 +1,6 @@
+import path from "path";
+import { projectRuntimeHomeRelativePath } from "../project-runtime";
+
 // subdirectory of HOME where snapshots are stored:
 
 export const SNAPSHOTS = ".snapshots";
@@ -16,6 +19,66 @@ export function isSnapshotsPath(path?: string): boolean {
     normalized.includes(`/${SNAPSHOTS}/`) ||
     normalized.endsWith(`/${SNAPSHOTS}`)
   );
+}
+
+export type SnapshotPathTarget =
+  | { kind: "snapshots-root" }
+  | { kind: "snapshot"; name: string }
+  | { kind: "snapshot-entry"; name: string; relativePath: string };
+
+export function getSnapshotPathTarget(
+  rawPath?: string,
+  options?: { homePath?: string },
+): SnapshotPathTarget | undefined {
+  if (rawPath == null) return undefined;
+  const normalized = path.posix
+    .normalize(`${rawPath}`.replace(/\\/g, "/"))
+    .replace(/\/+$/, "");
+  if (!normalized || normalized === "." || normalized === "/") {
+    return undefined;
+  }
+  const candidates = new Set<string>();
+  const stripped = stripLeadingSlash(normalized);
+  if (stripped) {
+    candidates.add(stripped);
+  }
+  const runtimeRelative = projectRuntimeHomeRelativePath(normalized);
+  if (runtimeRelative != null) {
+    candidates.add(stripLeadingSlash(runtimeRelative.replace(/\/+$/, "")));
+  }
+  if (options?.homePath) {
+    const normalizedHome = path.posix
+      .normalize(`${options.homePath}`.replace(/\\/g, "/"))
+      .replace(/\/+$/, "");
+    if (normalized === normalizedHome) {
+      candidates.add("");
+    } else if (normalized.startsWith(`${normalizedHome}/`)) {
+      candidates.add(path.posix.relative(normalizedHome, normalized));
+    }
+  }
+  for (const candidate of candidates) {
+    const relative = stripLeadingSlash(candidate.replace(/\/+$/, ""));
+    if (relative === SNAPSHOTS) {
+      return { kind: "snapshots-root" };
+    }
+    if (!relative.startsWith(`${SNAPSHOTS}/`)) {
+      continue;
+    }
+    const parts = relative.split("/");
+    const name = parts[1];
+    if (!name) {
+      continue;
+    }
+    if (parts.length === 2) {
+      return { kind: "snapshot", name };
+    }
+    return {
+      kind: "snapshot-entry",
+      name,
+      relativePath: parts.slice(2).join("/"),
+    };
+  }
+  return undefined;
 }
 
 // Lengths of time in minutes to keep snapshots

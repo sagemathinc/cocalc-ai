@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import CreateSnapshot from "./create";
 
 const createSnapshot = jest.fn(async (_opts?: any) => undefined);
+const getSnapshotQuota = jest.fn(async () => ({ limit: 8 }));
 const setState = jest.fn();
 const originalGetComputedStyle = window.getComputedStyle;
 
@@ -26,6 +27,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
       hub: {
         projects: {
           createSnapshot: (opts: any) => createSnapshot(opts),
+          getSnapshotQuota: (opts: any) => getSnapshotQuota(opts),
         },
       },
     },
@@ -51,6 +53,7 @@ describe("CreateSnapshot", () => {
 
   beforeEach(() => {
     createSnapshot.mockClear();
+    getSnapshotQuota.mockClear();
     setState.mockClear();
   });
 
@@ -65,6 +68,14 @@ describe("CreateSnapshot", () => {
     const input = await screen.findByPlaceholderText(
       "Name of snapshot to create...",
     );
+    await waitFor(() =>
+      expect(getSnapshotQuota).toHaveBeenCalledWith({
+        project_id: "project-1",
+      }),
+    );
+    expect(
+      screen.getByText(/can keep up to/i, { selector: "p" }),
+    ).toHaveTextContent("8");
     fireEvent.change(input, { target: { value: "snapshot-1" } });
     fireEvent.click(
       screen.getAllByRole("button", { name: /Create Snapshot/i }).slice(-1)[0],

@@ -17,11 +17,15 @@ export interface MembershipUsageLimits {
   total_storage_soft_bytes?: number;
   total_storage_hard_bytes?: number;
   max_projects?: number;
+  max_snapshots_per_project?: number;
+  max_backups_per_project?: number;
   egress_5h_bytes?: number;
   egress_7d_bytes?: number;
   egress_policy?: MembershipEgressPolicy;
   dedicated_host_egress_policy?: DedicatedHostEgressPolicy;
 }
+
+export interface MembershipEffectiveLimits extends MembershipUsageLimits {}
 
 export interface MembershipEntitlements {
   project_defaults?: Record<string, unknown>;
@@ -34,6 +38,7 @@ export interface MembershipResolution {
   class: MembershipClass;
   source: "subscription" | "admin" | "free";
   entitlements: MembershipEntitlements;
+  effective_limits?: MembershipEffectiveLimits;
   subscription_id?: number;
   expires?: Date;
 }
@@ -43,6 +48,7 @@ export interface MembershipCandidate {
   source: "subscription" | "admin";
   priority: number;
   entitlements: MembershipEntitlements;
+  effective_limits?: MembershipEffectiveLimits;
   subscription_id?: number;
   expires?: Date;
 }

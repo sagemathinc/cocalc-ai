@@ -72,6 +72,7 @@ import find, { type FindOptions } from "./find";
 import ripgrep, { type RipgrepOptions } from "./ripgrep";
 import fd, { type FdOptions } from "./fd";
 import dust, { type DustOptions } from "./dust";
+import du, { type DuOptions } from "./du";
 import rustic from "./rustic";
 import { type ExecOutput } from "./exec";
 import { rusticRepo, data } from "@cocalc/backend/data";
@@ -1688,6 +1689,13 @@ export class SandboxedFilesystem {
       // dust reasonably takes longer than the other commands and is used less,
       // so for now we give it more breathing room.
       capTimeout(options, 4 * MAX_TIMEOUT),
+    );
+  };
+
+  du = async (path: string, options?: DuOptions): Promise<ExecOutput> => {
+    return await du(
+      await this.resolveSandboxPath(path),
+      capTimeout(options, MAX_TIMEOUT),
     );
   };
 

@@ -21,6 +21,7 @@ let hostConnectionGetMock: jest.Mock;
 let hostConnectionListMock: jest.Mock;
 let hostConnectionGetProjectStartMetadataMock: jest.Mock;
 let hostConnectionGetBackupConfigMock: jest.Mock;
+let hostConnectionGetProjectOwnerEffectiveLimitsMock: jest.Mock;
 let hostConnectionRecordProjectBackupMock: jest.Mock;
 let hostConnectionListHostProjectsMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
@@ -242,6 +243,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         hostConnectionGetProjectStartMetadataMock(...args),
       getBackupConfig: (...args: any[]) =>
         hostConnectionGetBackupConfigMock(...args),
+      getProjectOwnerEffectiveLimits: (...args: any[]) =>
+        hostConnectionGetProjectOwnerEffectiveLimitsMock(...args),
       recordProjectBackup: (...args: any[]) =>
         hostConnectionRecordProjectBackupMock(...args),
       listHostProjects: (...args: any[]) =>
@@ -321,6 +324,7 @@ beforeEach(() => {
   hostConnectionListMock = jest.fn(async () => []);
   hostConnectionGetProjectStartMetadataMock = jest.fn();
   hostConnectionGetBackupConfigMock = jest.fn();
+  hostConnectionGetProjectOwnerEffectiveLimitsMock = jest.fn();
   hostConnectionRecordProjectBackupMock = jest.fn(async () => undefined);
   hostConnectionListHostProjectsMock = jest.fn(async () => ({
     rows: [],
@@ -2365,6 +2369,60 @@ describe("hosts.resolveHostConnection", () => {
       host_machine: { cloud: "gcp", region: "us-west1" },
     });
     expect(getBackupConfigLocalInternalMock).not.toHaveBeenCalled();
+  });
+
+  it("returns project owner effective limits locally for host callers", async () => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("FROM projects")) {
+        expect(params).toEqual([REMOTE_PROJECT_ID]);
+        return { rows: [{ account_id: "owner-1" }] };
+      }
+      return { rows: [] };
+    });
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      effective_limits: {
+        max_backups_per_project: 5,
+        max_snapshots_per_project: 8,
+      },
+    }));
+    const { getProjectOwnerEffectiveLimits } = await import("./hosts");
+    await expect(
+      getProjectOwnerEffectiveLimits({
+        host_id: REMOTE_HOST_ID,
+        project_id: REMOTE_PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      max_backups_per_project: 5,
+      max_snapshots_per_project: 8,
+    });
+  });
+
+  it("routes project owner effective limits lookup to the owning bay when the project is remote", async () => {
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+    hostConnectionGetProjectOwnerEffectiveLimitsMock = jest.fn(async () => ({
+      max_backups_per_project: 5,
+      max_snapshots_per_project: 8,
+    }));
+    const { getProjectOwnerEffectiveLimits } = await import("./hosts");
+    await expect(
+      getProjectOwnerEffectiveLimits({
+        host_id: REMOTE_HOST_ID,
+        project_id: REMOTE_PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      max_backups_per_project: 5,
+      max_snapshots_per_project: 8,
+    });
+    expect(resolveProjectBayMock).toHaveBeenCalledWith(REMOTE_PROJECT_ID);
+    expect(
+      hostConnectionGetProjectOwnerEffectiveLimitsMock,
+    ).toHaveBeenCalledWith({
+      host_id: REMOTE_HOST_ID,
+      project_id: REMOTE_PROJECT_ID,
+    });
   });
 
   it("routes project backup recording to the owning bay when the project is remote", async () => {

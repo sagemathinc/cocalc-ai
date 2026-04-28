@@ -26,6 +26,7 @@ import {
   BACKUP_TIMEOUT_MS,
   isBackupOpTimedOut,
 } from "./backup-lro";
+import { DEFAULT_MAX_BACKUPS_PER_PROJECT } from "@cocalc/server/membership/project-limits";
 import {
   assertBackupTargetHostAvailable,
   watchBackupTargetHostAvailability,
@@ -46,7 +47,6 @@ const DEFAULT_MAX_PARALLEL = Math.max(
   1,
   Math.min(250, envToInt("COCALC_BACKUP_LRO_MAX_PARALLEL", 250)),
 );
-const MAX_BACKUPS_PER_PROJECT = 30;
 const HOST_LOCAL_BACKUP_WORKER_KIND = "project-host-backup-execution";
 const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 
@@ -129,6 +129,9 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
   const input = op.input ?? {};
   const project_id = input.project_id;
   const tags = Array.isArray(input.tags) ? input.tags : undefined;
+  const limit = Number.isFinite(Number(input.limit))
+    ? Math.max(0, Math.floor(Number(input.limit)))
+    : DEFAULT_MAX_BACKUPS_PER_PROJECT;
 
   if (!project_id) {
     const updated = await updateLro({
@@ -255,7 +258,7 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
           });
           return await client.createBackup({
             project_id,
-            limit: MAX_BACKUPS_PER_PROJECT,
+            limit,
             tags,
             lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
           });

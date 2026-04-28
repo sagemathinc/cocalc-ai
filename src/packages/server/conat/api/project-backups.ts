@@ -19,11 +19,10 @@ import { assertPortableProjectRootfs } from "@cocalc/server/projects/rootfs-stat
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
-import { assertProjectOwnerCanIncreaseAccountStorage } from "@cocalc/server/membership/project-limits";
-
-// just *some* limit to avoid bugs/abuse
-
-const MAX_BACKUPS_PER_PROJECT = 30;
+import {
+  assertProjectOwnerCanIncreaseAccountStorage,
+  getProjectBackupLimit,
+} from "@cocalc/server/membership/project-limits";
 const log = getLogger("server:conat:api:project-backups");
 const BACKUP_CONTROL_TIMEOUT_MS = BACKUP_TIMEOUT_MS + 60_000;
 
@@ -126,10 +125,12 @@ async function createBackupLro({
   account_id,
   project_id,
   tags,
+  limit,
 }: {
   account_id?: string;
   project_id: string;
   tags?: string[];
+  limit?: number;
 }): Promise<LroSummary> {
   return await createLro({
     kind: "project-backup",
@@ -137,7 +138,7 @@ async function createBackupLro({
     scope_id: project_id,
     created_by: account_id,
     routing: "hub",
-    input: { project_id, tags },
+    input: { project_id, tags, limit },
     status: "queued",
     dedupe_key: backupLroDedupeKey(project_id),
   });
@@ -243,13 +244,14 @@ export async function createBackup(
   if (!opts?.skip_collab_check) {
     await assertCollab({ account_id, project_id });
   }
+  const limit = await getProjectBackupLimit({ project_id });
   if (!opts?.skip_owner_route) {
     const ownership = await resolveProjectBay(project_id);
     if (ownership == null) {
       throw new Error(`project ${project_id} not found`);
     }
     if (ownership.bay_id !== getConfiguredBayId()) {
-      const op = await createBackupLro({ account_id, project_id, tags });
+      const op = await createBackupLro({ account_id, project_id, tags, limit });
       await publishQueuedLroSafe({
         op,
         project_id,
@@ -281,7 +283,7 @@ export async function createBackup(
       operation: "backup",
     });
   }
-  const op = await createBackupLro({ account_id, project_id, tags });
+  const op = await createBackupLro({ account_id, project_id, tags, limit });
   await publishQueuedLroSafe({
     op,
     project_id,
@@ -537,5 +539,5 @@ export async function getBackupQuota({
   project_id: string;
 }) {
   await assertCollab({ account_id, project_id });
-  return { limit: MAX_BACKUPS_PER_PROJECT };
+  return { limit: await getProjectBackupLimit({ project_id }) };
 }

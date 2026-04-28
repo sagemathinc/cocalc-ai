@@ -11,8 +11,6 @@ import {
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
-const MAX = 50;
-
 export default function EditSchedule() {
   const { actions, project_id } = useProjectContext();
   const [loading, setLoading] = useState<boolean>(false);
@@ -21,6 +19,7 @@ export default function EditSchedule() {
   const [error, setError] = useState<string>("");
   const openSchedule = useTypedRedux({ project_id }, "open_snapshot_schedule");
   const [schedule0, setSchedule] = useState<SnapshotSchedule | null>(null);
+  const [limit, setLimit] = useState<number | null>(null);
 
   async function loadSchedule(): Promise<SnapshotSchedule> {
     const counts =
@@ -37,7 +36,14 @@ export default function EditSchedule() {
     try {
       setLoading(true);
       setError("");
-      setSchedule(await loadSchedule());
+      const [schedule, quota] = await Promise.all([
+        loadSchedule(),
+        webapp_client.conat_client.hub.projects.getSnapshotQuota({
+          project_id,
+        }),
+      ]);
+      setSchedule(schedule);
+      setLimit(quota.limit);
       setOpen(true);
     } catch (err) {
       setError(`${err}`);
@@ -63,11 +69,25 @@ export default function EditSchedule() {
     );
   }, [actions, openSchedule, project_id]);
 
-  const schedule = schedule0!;
+  const schedule: SnapshotSchedule = schedule0 ?? {
+    ...DEFAULT_SNAPSHOT_COUNTS,
+  };
+  const total = schedule.disabled
+    ? 0
+    : (schedule.frequent ?? 0) +
+      (schedule.daily ?? 0) +
+      (schedule.weekly ?? 0) +
+      (schedule.monthly ?? 0);
+  const overLimit = limit != null && total > limit;
   async function saveSchedule() {
     try {
       setLoading(true);
       setError("");
+      if (overLimit) {
+        throw new Error(
+          `automatic snapshots total ${total} exceeds project limit ${limit}`,
+        );
+      }
       await webapp_client.query_client.query({
         query: {
           projects: { project_id, snapshots: schedule },
@@ -147,7 +167,14 @@ export default function EditSchedule() {
               actively using your project. The parameters listed below determine
               how many of each timestamped snapshot is retained. Explicitly
               named snapshots that you manually create are not automatically
-              deleted.
+              deleted, but they do count against the same per-project snapshot
+              cap.
+            </p>
+          )}
+          {limit != null && (
+            <p>
+              This project can keep at most <b>{limit}</b> snapshots total.
+              Current automatic schedule total: <b>{total}</b>.
             </p>
           )}
 
@@ -160,11 +187,9 @@ export default function EditSchedule() {
                   precision={0}
                   style={{ flex: 0.5 }}
                   step={1}
-                  min={1}
-                  max={MAX}
-                  defaultValue={
-                    schedule.frequent ?? DEFAULT_SNAPSHOT_COUNTS.frequent
-                  }
+                  min={0}
+                  max={limit ?? undefined}
+                  value={schedule.frequent ?? DEFAULT_SNAPSHOT_COUNTS.frequent}
                   onChange={(frequent) => {
                     if (frequent != null) {
                       setSchedule({
@@ -181,9 +206,9 @@ export default function EditSchedule() {
                   suffix="snapshots"
                   style={{ flex: 0.5 }}
                   step={1}
-                  min={1}
-                  max={MAX}
-                  defaultValue={schedule.daily ?? DEFAULT_SNAPSHOT_COUNTS.daily}
+                  min={0}
+                  max={limit ?? undefined}
+                  value={schedule.daily ?? DEFAULT_SNAPSHOT_COUNTS.daily}
                   onChange={(daily) => {
                     if (daily != null) {
                       setSchedule({
@@ -200,11 +225,9 @@ export default function EditSchedule() {
                   suffix="snapshots"
                   style={{ flex: 0.5 }}
                   step={1}
-                  min={1}
-                  max={MAX}
-                  defaultValue={
-                    schedule.weekly ?? DEFAULT_SNAPSHOT_COUNTS.weekly
-                  }
+                  min={0}
+                  max={limit ?? undefined}
+                  value={schedule.weekly ?? DEFAULT_SNAPSHOT_COUNTS.weekly}
                   onChange={(weekly) => {
                     if (weekly != null) {
                       setSchedule({
@@ -221,11 +244,9 @@ export default function EditSchedule() {
                   suffix="snapshots"
                   style={{ flex: 0.5 }}
                   step={1}
-                  min={1}
-                  max={MAX}
-                  defaultValue={
-                    schedule.monthly ?? DEFAULT_SNAPSHOT_COUNTS.monthly
-                  }
+                  min={0}
+                  max={limit ?? undefined}
+                  value={schedule.monthly ?? DEFAULT_SNAPSHOT_COUNTS.monthly}
                   onChange={(monthly) => {
                     if (monthly != null) {
                       setSchedule({
@@ -240,7 +261,11 @@ export default function EditSchedule() {
           )}
           <ShowError
             style={{ marginTop: "10px" }}
-            error={error}
+            error={
+              !error && overLimit
+                ? `automatic snapshots total ${total} exceeds project limit ${limit}`
+                : error
+            }
             setError={setError}
           />
         </Modal>
