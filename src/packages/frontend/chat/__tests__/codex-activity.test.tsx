@@ -203,4 +203,59 @@ describe("CodexActivity terminal rows", () => {
       screen.queryByText("/tmp/project/.codex/generated_images/img-1.png"),
     ).toBeNull();
   });
+
+  it("places steer guidance in chronological order within activity", () => {
+    const { container } = render(
+      React.createElement(CodexActivity, {
+        expanded: true,
+        events: [
+          {
+            type: "event",
+            seq: 1,
+            time: 1000,
+            event: { type: "message", text: "I'm going to sleep now." },
+          } as any,
+          {
+            type: "event",
+            seq: 2,
+            time: 3000,
+            event: { type: "message", text: "9" },
+          } as any,
+        ],
+        activitySteers: [
+          {
+            messageId: "steer-1",
+            date: 2000,
+            state: "sent",
+            text: "what is 2+7",
+          },
+        ],
+      }),
+    );
+
+    const first = screen.getByText("I'm going to sleep now.");
+    const steer = screen.getByText("what is 2+7");
+    const final = screen.getByText(/^9$/);
+    expect(
+      first.compareDocumentPosition(steer) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      steer.compareDocumentPosition(final) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("deduplicates repeated Codex started status rows", () => {
+    render(
+      React.createElement(CodexActivity, {
+        expanded: true,
+        events: [
+          { type: "status", state: "running", seq: 1, time: 1000 } as any,
+          { type: "status", state: "running", seq: 2, time: 1100 } as any,
+          { type: "status", state: "running", seq: 3, time: 1200 } as any,
+        ],
+      }),
+    );
+
+    expect(screen.getAllByText("Codex started")).toHaveLength(1);
+  });
 });

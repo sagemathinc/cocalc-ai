@@ -658,7 +658,6 @@ export function AgentMessageStatus({
           onScroll={handleScroll}
           style={{ height: "100%", overflowY: "auto" }}
         >
-          <AttachedSteerStatusList attachedSteers={activitySteers} />
           <CodexLogPanel
             generating={generating === true}
             fontSize={fontSize}
@@ -682,6 +681,7 @@ export function AgentMessageStatus({
             inlineCodeLinks={inlineCodeLinks}
             onOpenFileLink={handleDrawerClose}
             deleteLog={deleteLog}
+            activitySteers={activitySteers}
           />
         </div>
       </Drawer>

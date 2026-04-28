@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import type { InlineCodeLink } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import CodexActivity from "./codex-activity";
+import type { AttachedSteerMessage } from "./agent-message-status";
 import {
   deleteActivityLog,
   deleteAllActivityLogs,
@@ -34,6 +35,7 @@ interface Props {
   inlineCodeLinks?: InlineCodeLink[];
   onOpenFileLink?: () => void;
   deleteLog?: () => Promise<void>;
+  activitySteers?: AttachedSteerMessage[];
 }
 
 export function CodexLogPanel({
@@ -61,6 +63,7 @@ export function CodexLogPanel({
   inlineCodeLinks,
   onOpenFileLink,
   deleteLog,
+  activitySteers,
 }: Props) {
   const codexLog = useCodexLog({
     projectId: logProjectId,
@@ -132,6 +135,7 @@ export function CodexLogPanel({
       onDeleteAllEvents={handleDeleteAllEvents}
       inlineCodeLinks={inlineCodeLinks}
       onOpenFileLink={onOpenFileLink}
+      activitySteers={activitySteers}
     />
   );
 }
