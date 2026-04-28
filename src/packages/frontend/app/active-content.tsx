@@ -21,10 +21,12 @@ import { Connecting } from "@cocalc/frontend/landing-page/connecting";
 import { NotificationPage } from "@cocalc/frontend/notifications";
 import { ProjectPage } from "@cocalc/frontend/project/page/page";
 import { ProjectsPage } from "@cocalc/frontend/projects/projects-page";
+import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
 import { SshPage } from "@cocalc/frontend/ssh";
 import { KioskModeBanner } from "./kiosk-mode-banner";
 import { HostsPage } from "@cocalc/frontend/hosts/hosts-page";
 import { AuthPage } from "@cocalc/frontend/auth";
+import { ManagedEgressBlockedScreen } from "./managed-egress-blocked-screen";
 
 const STYLE_SIGNIN_WARNING: CSS = {
   textAlign: "center",
@@ -75,6 +77,14 @@ export const ActiveContent: React.FC = React.memo(() => {
   // initially, we assume a user is signed in – most likely case
   const [notSignedIn, setNotSignedIn] = React.useState<boolean>(false);
   const is_logged_in = useTypedRedux("account", "is_logged_in");
+  const managed_egress_blocked_error = useTypedRedux(
+    "account",
+    "managed_egress_blocked_error",
+  );
+  const managedEgressBlocked = React.useMemo(
+    () => parseManagedEgressBlockedError(managed_egress_blocked_error),
+    [managed_egress_blocked_error],
+  );
 
   React.useEffect(() => {
     const timer = setTimeout(() => {
@@ -158,8 +168,14 @@ export const ActiveContent: React.FC = React.memo(() => {
   const layers: React.JSX.Element[] = [...project_layers];
   let overlay: React.JSX.Element | null = null;
 
-  // in kiosk mode: if no file is opened show a banner
-  if (fullscreen == "kiosk" && project_layers.length === 0) {
+  if (managedEgressBlocked != null) {
+    overlay = renderLayer(
+      "managed-egress-blocked",
+      true,
+      <ManagedEgressBlockedScreen blocked={managedEgressBlocked} />,
+    );
+  } else if (fullscreen == "kiosk" && project_layers.length === 0) {
+    // in kiosk mode: if no file is opened show a banner
     overlay = renderLayer("kiosk", true, <KioskModeBanner />);
   } else {
     switch (active_top_tab) {

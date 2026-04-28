@@ -97,6 +97,7 @@ export interface AccountState {
   sign_up_error?: TypedMap<{ generic: string }>;
   signing_in: boolean;
   sign_in_error?: string;
+  managed_egress_blocked_error?: string;
   sign_in_email_address?: string;
   account_deletion_error?: string;
   forgot_password_error?: string;

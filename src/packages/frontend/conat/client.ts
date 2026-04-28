@@ -94,6 +94,7 @@ import {
   type RegisteredReconnectResource,
 } from "./reconnect-coordinator";
 import { disconnect_from_all_projects } from "@cocalc/frontend/project/websocket/connect";
+import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
 
 export interface ConatConnectionStatus {
   state: "connected" | "connecting" | "disconnected";
@@ -1927,7 +1928,15 @@ export class ConatClient extends EventEmitter {
         reconnectDebugLog("lite: created project client");
       } else {
         console.log("Sign in failed -- ", client.info);
-        this.signInFailed(client.info?.user?.error ?? "Failed to sign in.");
+        const error = client.info?.user?.error ?? "Failed to sign in.";
+        const managedEgressBlocked = parseManagedEgressBlockedError(error);
+        if (managedEgressBlocked != null) {
+          this.managedEgressBlocked(error);
+          void this.browserSessionAutomation.stop();
+          this.standby();
+          return;
+        }
+        this.signInFailed(error);
         void this.browserSessionAutomation.stop();
         if (!this.isAuthPage()) {
           this.client.alert_message({
@@ -1954,6 +1963,13 @@ export class ConatClient extends EventEmitter {
     clearStoredControlPlaneOrigin();
     deleteRememberMe(appBasePath);
     this.client.emit("remember_me_failed", { error });
+  };
+
+  private managedEgressBlocked = (error) => {
+    this.client.emit("remember_me_failed", {
+      error,
+      managed_egress_blocked: true,
+    });
   };
 
   private isAuthPage = (): boolean => {
