@@ -15,6 +15,7 @@ export default function CreateBackup({
   const [open, setOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const [limit, setLimit] = useState<number | null>(null);
   const openCreate = useTypedRedux({ project_id }, "open_create_backup");
 
   useEffect(() => {
@@ -28,6 +29,37 @@ export default function CreateBackup({
     setOpen(true);
     actions?.setState({ open_create_backup: false });
   }, [actions, openCreate]);
+
+  useEffect(() => {
+    if (!open) {
+      setLimit(null);
+      return;
+    }
+    let canceled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const { limit } =
+          await webapp_client.conat_client.hub.projects.getBackupQuota({
+            project_id,
+          });
+        if (!canceled) {
+          setLimit(limit);
+        }
+      } catch (err) {
+        if (!canceled) {
+          setError(`${err}`);
+        }
+      } finally {
+        if (!canceled) {
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [open, project_id]);
 
   if (!project_id) return null;
 
@@ -79,6 +111,10 @@ export default function CreateBackup({
             </Button>,
           ]}
         >
+          <p>
+            This project can keep up to <b>{limit ?? "..."}</b> backups in
+            total. Automatic and manually created backups share the same cap.
+          </p>
           <p>
             Backups are archives that include your project files, any software
             you have installed, and TimeTravel edit history, but not the

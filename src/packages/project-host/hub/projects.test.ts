@@ -16,6 +16,7 @@ const readFile = jest.fn(async () => "");
 const callHub = jest.fn();
 const getLocalHostId = jest.fn(() => "host-1");
 const getMasterConatClient = jest.fn();
+const fileServerCreateBackup = jest.fn();
 const getVolume = jest.fn(async () => ({ path: "/mnt/cocalc/project-test" }));
 const resolveProjectContainerPath = jest.fn(async (_project_id, p) => p);
 const getChatStoreStats = jest.fn();
@@ -106,6 +107,22 @@ jest.mock("@cocalc/conat/hub/call-hub", () => ({
 jest.mock("../sqlite/hosts", () => ({
   getLocalHostId: (...args: any[]) => getLocalHostId(...args),
 }));
+jest.mock("@cocalc/conat/files/file-server", () => ({
+  __esModule: true,
+  client: jest.fn(() => ({
+    createBackup: (...args: any[]) => fileServerCreateBackup(...args),
+    deleteBackup: jest.fn(),
+    restoreBackup: jest.fn(),
+    beginRestoreStaging: jest.fn(),
+    ensureRestoreStaging: jest.fn(),
+    finalizeRestoreStaging: jest.fn(),
+    releaseRestoreStaging: jest.fn(),
+    cleanupRestoreStaging: jest.fn(),
+    getBackups: jest.fn(),
+    getBackupFiles: jest.fn(),
+    getSnapshotFileText: jest.fn(),
+  })),
+}));
 
 describe("project host start ACP rehydrate ordering", () => {
   const project_id = "3f5d0b28-cf69-4c78-9b0a-ea747bc7acb3";
@@ -125,6 +142,7 @@ describe("project host start ACP rehydrate ordering", () => {
     pullRootfsCacheEntry.mockResolvedValue(undefined);
     readFile.mockResolvedValue("");
     callHub.mockReset();
+    fileServerCreateBackup.mockReset();
     getMasterConatClient.mockReturnValue(undefined);
     resolveProjectContainerPath.mockImplementation(
       async (_project_id: string, p: string) => `/projects/host${p}`,
@@ -538,5 +556,62 @@ describe("project host start ACP rehydrate ordering", () => {
       rows: [{ row_id: 1, segment_id: "seg-1", row: {} }],
       offset: 0,
     });
+  });
+
+  it("looks up project owner effective limits over the host hub bridge for backup quota", async () => {
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(),
+    } as any;
+    getMasterConatClient.mockReturnValue({ nats: true });
+    callHub.mockResolvedValue({
+      max_backups_per_project: 5,
+      max_snapshots_per_project: 8,
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(
+      hubApi.projects.getBackupQuota({ project_id }),
+    ).resolves.toEqual({ limit: 5 });
+    expect(callHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host_id: "host-1",
+        name: "hosts.getProjectOwnerEffectiveLimits",
+        args: [{ project_id }],
+      }),
+    );
+  });
+
+  it("passes the owner backup limit from the hub bridge into host-local backup creation", async () => {
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(),
+    } as any;
+    getMasterConatClient.mockReturnValue({ nats: true });
+    callHub.mockResolvedValue({
+      max_backups_per_project: 5,
+      max_snapshots_per_project: 8,
+    });
+    fileServerCreateBackup.mockResolvedValue({
+      id: "backup-1",
+      time: new Date("2026-04-28T20:00:00Z"),
+      size: 1,
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.createBackup({ project_id });
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(fileServerCreateBackup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id,
+        limit: 5,
+      }),
+    );
   });
 });

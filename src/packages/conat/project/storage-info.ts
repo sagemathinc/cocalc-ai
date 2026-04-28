@@ -25,7 +25,7 @@ export interface ProjectStorageQuotaSummary {
 }
 
 export interface ProjectStorageVisibleSummary {
-  key: "home" | "scratch" | "environment";
+  key: "home" | "environment";
   label: string;
   summaryLabel: string;
   path: string;
@@ -33,19 +33,26 @@ export interface ProjectStorageVisibleSummary {
   usage: ProjectStorageBreakdown;
 }
 
-export interface ProjectStorageCountedSummary {
-  key: "snapshots";
+export interface ProjectStorageLiveSummary {
+  key: "live";
+  label: string;
+  bytes: number;
+  path: string;
+}
+
+export interface ProjectStorageRetainedSummary {
+  key: "retained";
   label: string;
   bytes: number;
   detail?: string;
-  compactLabel?: string;
 }
 
 export interface ProjectStorageOverview {
   collected_at: string;
   quotas: ProjectStorageQuotaSummary[];
+  live: ProjectStorageLiveSummary;
+  retained: ProjectStorageRetainedSummary;
   visible: ProjectStorageVisibleSummary[];
-  counted: ProjectStorageCountedSummary[];
 }
 
 export interface ProjectStorageHistoryPoint {
@@ -53,10 +60,10 @@ export interface ProjectStorageHistoryPoint {
   quota_used_bytes?: number;
   quota_size_bytes?: number;
   quota_used_percent?: number;
+  live_bytes?: number;
+  retained_bytes?: number;
   home_visible_bytes?: number;
-  scratch_visible_bytes?: number;
   environment_visible_bytes?: number;
-  snapshot_counted_bytes?: number;
 }
 
 export interface ProjectStorageHistoryGrowth {

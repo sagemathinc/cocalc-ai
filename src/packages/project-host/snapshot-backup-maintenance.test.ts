@@ -48,12 +48,16 @@ describe("snapshot-backup-maintenance", () => {
         last_edited: "2026-04-10T22:00:00.000Z",
         snapshots: { daily: 5 },
         backups: { disabled: true, weekly: 1 },
+        max_snapshots_per_project: 8,
+        max_backups_per_project: 5,
       },
       {
         project_id: "proj-2",
         last_edited: "2026-04-10T21:00:00.000Z",
         snapshots: { disabled: true },
         backups: { frequent: 12 },
+        max_snapshots_per_project: 8,
+        max_backups_per_project: 5,
       },
     ]);
     runScheduledSnapshotMaintenanceMock.mockResolvedValue(undefined);
@@ -87,6 +91,7 @@ describe("snapshot-backup-maintenance", () => {
         weekly: 4,
         monthly: 2,
       },
+      limit: 8,
     });
     expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
     expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledWith({
@@ -97,6 +102,7 @@ describe("snapshot-backup-maintenance", () => {
         weekly: 3,
         monthly: 4,
       },
+      limit: 5,
     });
   });
 

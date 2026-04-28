@@ -41,10 +41,10 @@ type StorageAnnotation = {
 };
 type StorageHistoryMetricKey =
   | "quota"
+  | "live"
+  | "retained"
   | "home"
-  | "scratch"
-  | "environment"
-  | "snapshots";
+  | "environment";
 type HistorySeriesPoint = { collected_at: string; value: number };
 
 const HISTORY_MAX_POINTS = 96;
@@ -78,7 +78,7 @@ export function suggestFindSpaceSelection(
   currentPath?: string,
 ): DrillSelection | undefined {
   if (!currentPath) return;
-  for (const key of ["scratch", "environment", "home"] as VisibleBucketKey[]) {
+  for (const key of ["environment", "home"] as VisibleBucketKey[]) {
     const bucket = visible.find((candidate) => candidate.key === key);
     if (!bucket) continue;
     if (isWithinPath(bucket.path, currentPath)) {
@@ -137,14 +137,6 @@ export function getStorageAnnotation(
       tone: "info",
     };
   }
-  if (bucket.key === "scratch") {
-    return {
-      label: "Scratch storage",
-      detail:
-        "Scratch is temporary project storage. Cleaning it is often safe if no running process still needs the data.",
-      tone: "info",
-    };
-  }
 }
 
 function pathSegments(rootPath: string, currentPath: string): string[] {
@@ -176,14 +168,14 @@ function historyMetricLabel(metric: StorageHistoryMetricKey): string {
   switch (metric) {
     case "quota":
       return "Quota";
+    case "live":
+      return "Live files";
+    case "retained":
+      return "Retained data";
     case "home":
       return "Home";
-    case "scratch":
-      return "Scratch";
     case "environment":
       return "Environment";
-    case "snapshots":
-      return "Snapshots";
   }
 }
 
@@ -194,14 +186,37 @@ function historyMetricValue(
   switch (metric) {
     case "quota":
       return point.quota_used_bytes;
+    case "live":
+      if (point.live_bytes != null) {
+        return point.live_bytes;
+      }
+      if (
+        point.home_visible_bytes != null ||
+        point.environment_visible_bytes != null
+      ) {
+        return (
+          (point.home_visible_bytes ?? 0) +
+          (point.environment_visible_bytes ?? 0)
+        );
+      }
+      return undefined;
+    case "retained":
+      if (point.retained_bytes != null) {
+        return point.retained_bytes;
+      }
+      if (
+        point.quota_used_bytes != null &&
+        point.live_bytes != null &&
+        Number.isFinite(point.quota_used_bytes) &&
+        Number.isFinite(point.live_bytes)
+      ) {
+        return Math.max(0, point.quota_used_bytes - point.live_bytes);
+      }
+      return undefined;
     case "home":
       return point.home_visible_bytes;
-    case "scratch":
-      return point.scratch_visible_bytes;
     case "environment":
       return point.environment_visible_bytes;
-    case "snapshots":
-      return point.snapshot_counted_bytes;
   }
 }
 
@@ -334,14 +349,14 @@ function historyMetricColor(metric: StorageHistoryMetricKey): string {
   switch (metric) {
     case "quota":
       return COLORS.BLUE_D;
-    case "home":
+    case "live":
       return COLORS.BS_GREEN_D;
-    case "scratch":
+    case "retained":
+      return COLORS.ANTD_RED;
+    case "home":
       return COLORS.BLUE;
     case "environment":
       return COLORS.ORANGE_WARN;
-    case "snapshots":
-      return COLORS.ANTD_RED;
   }
 }
 
@@ -527,7 +542,7 @@ export default function DiskUsage({
   const [activePanel, setActivePanel] = useState<"overview" | "history">(
     "overview",
   );
-  const { visible, counted, loading, error, setError, refresh, quotas } =
+  const { visible, live, retained, loading, error, setError, refresh, quotas } =
     useDiskUsage({
       project_id,
     });
@@ -597,11 +612,7 @@ export default function DiskUsage({
       ? 0
       : Math.round((100 * quota.used) / quota.size);
   const quotaStatus = percent > 80 ? "exception" : undefined;
-  const summaryVisible = visible.filter(
-    (bucket) => bucket.key !== "environment",
-  );
-  const hasSummaryData =
-    quota != null || summaryVisible.length > 0 || counted.length > 0;
+  const hasSummaryData = quota != null || live != null || retained != null;
   const visibleTotal = Math.max(
     visible.reduce((sum, bucket) => sum + bucket.summaryBytes, 0),
     1,
@@ -611,10 +622,10 @@ export default function DiskUsage({
       (
         [
           "quota",
+          "live",
+          "retained",
           "home",
-          "scratch",
           "environment",
-          "snapshots",
         ] as StorageHistoryMetricKey[]
       )
         .filter((metric) => historyMetricAvailable(history, metric))
@@ -861,7 +872,7 @@ export default function DiskUsage({
               <Text type="secondary">Refreshing…</Text>
             ) : null}
           </Space>
-          {(visible.length > 0 || counted.length > 0) && (
+          {(live != null || retained != null) && (
             <div
               style={{
                 color: COLORS.GRAY_D,
@@ -875,11 +886,15 @@ export default function DiskUsage({
               }}
             >
               {[
-                ...summaryVisible.map(
-                  (bucket) =>
-                    `${relativeLabel(bucket)} ${human_readable_size(bucket.summaryBytes)}`,
-                ),
-              ].join(" • ")}
+                live != null
+                  ? `Live ${human_readable_size(live.bytes)}`
+                  : undefined,
+                retained != null
+                  ? `Retained ${human_readable_size(retained.bytes)}`
+                  : undefined,
+              ]
+                .filter(Boolean)
+                .join(" • ")}
             </div>
           )}
         </div>
@@ -900,11 +915,12 @@ export default function DiskUsage({
               </Text>
             </>
           ) : null}
-          {summaryVisible.map((bucket) => (
-            <Tag key={bucket.key}>
-              {relativeLabel(bucket)} {human_readable_size(bucket.summaryBytes)}
-            </Tag>
-          ))}
+          {live != null ? (
+            <Tag>Live {human_readable_size(live.bytes)}</Tag>
+          ) : null}
+          {retained != null ? (
+            <Tag>Retained {human_readable_size(retained.bytes)}</Tag>
+          ) : null}
           {loading && hasSummaryData ? (
             <Text type="secondary">Refreshing…</Text>
           ) : null}
@@ -1112,11 +1128,18 @@ export default function DiskUsage({
                       />
                     ) : null}
                     <div style={{ color: COLORS.GRAY_M, marginTop: "8px" }}>
-                      Counted quota usage may differ from visible file sizes
-                      because compression, deduplication, snapshots, and storage
-                      accounting do not have the same semantics as browsing
-                      `/root` or `/scratch`.
+                      Project quota includes current live files plus retained
+                      historical data, which usually comes from snapshots
+                      keeping deleted or modified data alive.
                     </div>
+                    {live != null && (
+                      <div style={{ color: COLORS.GRAY_M, marginTop: "8px" }}>
+                        Live files are measured from the current project tree
+                        with a deduped <code>du</code>-style scan, so this view
+                        is closer to what users actually see than raw quota
+                        accounting.
+                      </div>
+                    )}
                     {visible.some((bucket) => bucket.key === "environment") && (
                       <div style={{ color: COLORS.GRAY_M, marginTop: "8px" }}>
                         This project uses a root filesystem image. Environment
@@ -1135,31 +1158,43 @@ export default function DiskUsage({
                   </div>
                 </>
               )}
-              {counted.length > 0 && (
+              {(live != null || retained != null) && (
                 <>
                   <hr />
                   <div style={{ marginBottom: "10px" }}>
-                    <b>Counted storage</b>
+                    <b>Storage model</b>
                   </div>
-                  {counted.map((bucket) => (
+                  {live != null && (
+                    <div style={{ marginBottom: "10px", color: COLORS.GRAY_D }}>
+                      <div>
+                        <Text strong>{live.label}</Text>:{" "}
+                        {human_readable_size(live.bytes)}
+                      </div>
+                      <div style={{ color: COLORS.GRAY_M, marginTop: "4px" }}>
+                        Current files reachable from <code>{live.path}</code>.
+                        This excludes retained snapshot/history data.
+                      </div>
+                    </div>
+                  )}
+                  {retained != null && (
                     <div
-                      key={bucket.key}
+                      key={retained.key}
                       style={{ marginBottom: "10px", color: COLORS.GRAY_D }}
                     >
                       <div>
-                        <Text strong>{bucket.label}</Text>:{" "}
-                        {human_readable_size(bucket.bytes)}
+                        <Text strong>{retained.label}</Text>:{" "}
+                        {human_readable_size(retained.bytes)}
                       </div>
-                      {bucket.detail ? (
-                        <div style={{ color: COLORS.GRAY_M, marginTop: "4px" }}>
-                          {bucket.detail}
+                      {retained.detail ? (
+                        <div style={{ color: COLORS.GRAY_M, marginTop: "6px" }}>
+                          {retained.detail}
                         </div>
                       ) : null}
-                      {bucket.key === "snapshots" ? (
+                      {retained.bytes > 0 ? (
                         <div style={{ color: COLORS.GRAY_M, marginTop: "6px" }}>
-                          Delete snapshot folders under{" "}
-                          <code>~/.snapshots</code> in the usual way to free
-                          this space.{" "}
+                          Review or delete old snapshots to reduce this number.
+                          It can also go down automatically when older snapshots
+                          age out.{" "}
                           <Button
                             onClick={() => void handleOpenSnapshots()}
                             size="small"
@@ -1171,7 +1206,7 @@ export default function DiskUsage({
                         </div>
                       ) : null}
                     </div>
-                  ))}
+                  )}
                 </>
               )}
               {percent >= 100 && (
@@ -1192,7 +1227,9 @@ export default function DiskUsage({
                   {visible.some((bucket) => bucket.key === "environment") && (
                     <div style={{ color: COLORS.GRAY_M, marginBottom: "10px" }}>
                       Home excludes writable rootfs overlay data, which is shown
-                      separately as Environment.
+                      separately as Environment. These buckets help explain live
+                      files, but the quota model above is the authoritative
+                      limit.
                     </div>
                   )}
                   {visible.map((bucket) => (

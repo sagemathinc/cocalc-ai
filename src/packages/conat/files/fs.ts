@@ -70,6 +70,14 @@ export interface DustOptions {
   maxSize?: number;
 }
 
+export interface DuOptions {
+  options?: string[];
+  darwin?: string[];
+  linux?: string[];
+  timeout?: number;
+  maxSize?: number;
+}
+
 export interface OuchOptions {
   cwd?: string;
   options?: string[];
@@ -263,6 +271,9 @@ export interface Filesystem {
 
   // dust is an amazing disk space tool
   dust: (path: string, options?: DustOptions) => Promise<ExecOutput>;
+
+  // du is the canonical backend primitive for quota-facing usage scans.
+  du: (path: string, options?: DuOptions) => Promise<ExecOutput>;
 
   // We add ripgrep, as a 1-call way to very efficiently search in files
   // directly on whatever is serving files.
@@ -484,6 +495,9 @@ export async function fsServer({
       },
       async dust(path: string, options?: DustOptions) {
         return await (await fs(this.subject)).dust(path, options);
+      },
+      async du(path: string, options?: DuOptions) {
+        return await (await fs(this.subject)).du(path, options);
       },
       async exists(path: string): Promise<boolean> {
         return await (await fs(this.subject)).exists(path);

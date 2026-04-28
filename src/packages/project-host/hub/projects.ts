@@ -1,4 +1,5 @@
 import { hubApi } from "@cocalc/lite/hub/api";
+import TTL from "@isaacs/ttlcache";
 import { account_id } from "@cocalc/backend/data";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import {
@@ -28,6 +29,7 @@ import type {
   ChatStoreStats,
   ProjectEnv,
 } from "@cocalc/conat/hub/api/projects";
+import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import type { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import {
   DEFAULT_PROJECT_IMAGE,
@@ -94,10 +96,18 @@ const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
 const MB = 1_000_000;
 const DEFAULT_PID_LIMIT = 4096;
-const MAX_BACKUPS_PER_PROJECT = 50;
+const DEFAULT_MAX_BACKUPS_PER_PROJECT = 30;
+const PROJECT_OWNER_LIMITS_CACHE_TTL_MS = 5 * 60_000;
 const LRO_PUBLISH_RETRY_ATTEMPTS = 20;
 const LRO_PUBLISH_RETRY_DELAY_MS = 500;
 const LRO_PUBLISH_ATTEMPT_TIMEOUT_MS = 3000;
+const projectOwnerLimitsCache = new TTL<string, MembershipEffectiveLimits>({
+  ttl: PROJECT_OWNER_LIMITS_CACHE_TTL_MS,
+});
+const projectOwnerLimitsInflight = new Map<
+  string,
+  Promise<MembershipEffectiveLimits>
+>();
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -220,6 +230,58 @@ function runnerConfigFromQuota(run_quota?: any): Partial<Configuration> {
   }
 
   return limits;
+}
+
+async function getProjectOwnerEffectiveLimits(
+  project_id: string,
+): Promise<MembershipEffectiveLimits> {
+  const cached = projectOwnerLimitsCache.get(project_id);
+  if (cached != null) {
+    return cached;
+  }
+  const existing = projectOwnerLimitsInflight.get(project_id);
+  if (existing != null) {
+    return await existing;
+  }
+  const inflight = (async () => {
+    const client = getMasterConatClient();
+    const host_id = getLocalHostId();
+    if (!client || !host_id) {
+      return {};
+    }
+    try {
+      const limits = await callHub({
+        client,
+        host_id,
+        name: "hosts.getProjectOwnerEffectiveLimits",
+        args: [{ project_id }],
+      });
+      const normalized =
+        limits != null && typeof limits === "object"
+          ? (limits as MembershipEffectiveLimits)
+          : {};
+      projectOwnerLimitsCache.set(project_id, normalized);
+      return normalized;
+    } catch (err) {
+      logger.warn("unable to load project owner effective limits", {
+        project_id,
+        err: `${err}`,
+      });
+      return {};
+    } finally {
+      projectOwnerLimitsInflight.delete(project_id);
+    }
+  })();
+  projectOwnerLimitsInflight.set(project_id, inflight);
+  return await inflight;
+}
+
+async function getProjectBackupLimit(project_id: string): Promise<number> {
+  const limits = await getProjectOwnerEffectiveLimits(project_id);
+  const limit = Number(limits.max_backups_per_project);
+  return Number.isFinite(limit) && limit > 0
+    ? Math.floor(limit)
+    : DEFAULT_MAX_BACKUPS_PER_PROJECT;
 }
 
 let cachedProxyKey: string | undefined;
@@ -1688,6 +1750,7 @@ export async function createBackup({
 
   void (async () => {
     const started = Date.now();
+    const limit = await getProjectBackupLimit(project_id);
     void publishLroSummaryWithRetry({
       scope_type: "project",
       scope_id: project_id,
@@ -1697,7 +1760,7 @@ export async function createBackup({
     try {
       const backup = await fileServer(project_id).createBackup({
         project_id,
-        limit: MAX_BACKUPS_PER_PROJECT,
+        limit,
         lro: { op_id, scope_type: "project", scope_id: project_id },
       });
       const duration_ms = Date.now() - started;
@@ -1984,8 +2047,11 @@ export async function getBackupFiles({
   return await fileServer(project_id).getBackupFiles({ project_id, id, path });
 }
 
-export async function getBackupQuota() {
-  return { limit: MAX_BACKUPS_PER_PROJECT };
+export async function getBackupQuota({ project_id }: { project_id: string }) {
+  if (!isValidUUID(project_id)) {
+    throw Error("invalid project_id");
+  }
+  return { limit: await getProjectBackupLimit(project_id) };
 }
 
 function defaultSafetySnapshotName(snapshot: string): string {

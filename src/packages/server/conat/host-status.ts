@@ -16,6 +16,12 @@ import { listAccountRevocationsSince } from "@cocalc/server/accounts/revocation"
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import {
+  DEFAULT_MAX_BACKUPS_PER_PROJECT,
+  DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
+} from "@cocalc/server/membership/project-limits";
+import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import {
   classifyHostProvisionedInventory,
   shouldDeleteHostProjectUpdate,
 } from "./host-project-ownership";
@@ -56,8 +62,19 @@ export async function listHostProjectMaintenanceSchedules({
     last_edited: Date | string | null;
     snapshots: HostProjectMaintenanceSchedule["snapshots"];
     backups: HostProjectMaintenanceSchedule["backups"];
+    owner_account_id: string | null;
   }>(
-    `SELECT project_id, last_edited, snapshots, backups
+    `SELECT
+       project_id,
+       last_edited,
+       snapshots,
+       backups,
+       (
+         SELECT account_id_text::text
+         FROM jsonb_each(COALESCE(users, '{}'::jsonb)) AS u(account_id_text, user_data)
+         WHERE COALESCE(u.user_data ->> 'group', '') = 'owner'
+         LIMIT 1
+       ) AS owner_account_id
      FROM projects
      WHERE host_id=$1
        AND provisioned IS TRUE
@@ -65,17 +82,53 @@ export async function listHostProjectMaintenanceSchedules({
      ORDER BY last_edited DESC NULLS LAST, project_id ASC`,
     params,
   );
-  return rows.map((row) => ({
-    project_id: row.project_id,
-    last_edited:
-      row.last_edited == null
-        ? null
-        : row.last_edited instanceof Date
-          ? row.last_edited.toISOString()
-          : `${row.last_edited}`,
-    snapshots: row.snapshots ?? null,
-    backups: row.backups ?? null,
-  }));
+  const limitsByOwner = new Map<
+    string,
+    {
+      max_snapshots_per_project: number;
+      max_backups_per_project: number;
+    }
+  >();
+  const ownerIds = Array.from(
+    new Set(
+      rows
+        .map((row) => `${row.owner_account_id ?? ""}`.trim())
+        .filter((owner_account_id) => owner_account_id.length > 0),
+    ),
+  );
+  await Promise.all(
+    ownerIds.map(async (owner_account_id) => {
+      const resolution = await resolveMembershipForAccount(owner_account_id);
+      const limits = getEffectiveMembershipUsageLimits(resolution);
+      limitsByOwner.set(owner_account_id, {
+        max_snapshots_per_project:
+          limits.max_snapshots_per_project ?? DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
+        max_backups_per_project:
+          limits.max_backups_per_project ?? DEFAULT_MAX_BACKUPS_PER_PROJECT,
+      });
+    }),
+  );
+  return rows.map((row) => {
+    const owner_account_id = `${row.owner_account_id ?? ""}`.trim();
+    const limits = owner_account_id
+      ? limitsByOwner.get(owner_account_id)
+      : undefined;
+    return {
+      project_id: row.project_id,
+      last_edited:
+        row.last_edited == null
+          ? null
+          : row.last_edited instanceof Date
+            ? row.last_edited.toISOString()
+            : `${row.last_edited}`,
+      snapshots: row.snapshots ?? null,
+      backups: row.backups ?? null,
+      max_snapshots_per_project:
+        limits?.max_snapshots_per_project ?? DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
+      max_backups_per_project:
+        limits?.max_backups_per_project ?? DEFAULT_MAX_BACKUPS_PER_PROJECT,
+    };
+  });
 }
 
 export async function initHostStatusService() {

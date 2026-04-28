@@ -351,6 +351,24 @@ describe("projects.createProject clone routing", () => {
     ).rejects.toThrow("total account storage hard cap reached");
   });
 
+  it("blocks project creation when the owner already reached the soft total storage cap", async () => {
+    getMembershipUsageStatusForAccountMock = jest.fn(async () => ({
+      total_storage_bytes: 100,
+    }));
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: { usage_limits: { total_storage_soft_bytes: 100 } },
+    }));
+    const createProject = (await import("./create")).default;
+    await expect(
+      createProject({
+        title: "Blocked project",
+        description: "",
+        account_id: ACCOUNT_ID,
+        start: false,
+      }),
+    ).rejects.toThrow("total account storage soft cap reached");
+  });
+
   it("rejects clone creation when the source project belongs to another bay", async () => {
     assertLocalProjectCollaboratorMock = jest.fn(async () => {
       throw new Error("project belongs to another bay");

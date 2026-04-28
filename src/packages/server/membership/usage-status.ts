@@ -18,6 +18,7 @@ import {
   getManagedEgressUsageForAccount,
   getRecentManagedEgressEventsForAccount,
 } from "./managed-egress";
+import { getEffectiveMembershipUsageLimits } from "./effective-limits";
 
 const log = getLogger("server:membership:usage-status");
 
@@ -95,7 +96,7 @@ export async function getMembershipUsageStatusForAccount({
   account_id: string;
   resolution: MembershipResolution;
 }): Promise<MembershipUsageStatus> {
-  const usageLimits = resolution.entitlements?.usage_limits ?? {};
+  const effectiveLimits = getEffectiveMembershipUsageLimits(resolution);
   const ownedProjects = await listOwnedProjects(account_id);
   const provisionedRows = ownedProjects.filter(
     (row) => !!row.host_id && row.provisioned !== false,
@@ -149,31 +150,11 @@ export async function getMembershipUsageStatusForAccount({
     provisionedRows.length - sampled_project_count,
     0,
   );
-  const total_storage_soft_bytes =
-    typeof usageLimits.total_storage_soft_bytes === "number" &&
-    Number.isFinite(usageLimits.total_storage_soft_bytes)
-      ? usageLimits.total_storage_soft_bytes
-      : undefined;
-  const total_storage_hard_bytes =
-    typeof usageLimits.total_storage_hard_bytes === "number" &&
-    Number.isFinite(usageLimits.total_storage_hard_bytes)
-      ? usageLimits.total_storage_hard_bytes
-      : undefined;
-  const max_projects =
-    typeof usageLimits.max_projects === "number" &&
-    Number.isFinite(usageLimits.max_projects)
-      ? usageLimits.max_projects
-      : undefined;
-  const egress5hLimit =
-    typeof usageLimits.egress_5h_bytes === "number" &&
-    Number.isFinite(usageLimits.egress_5h_bytes)
-      ? usageLimits.egress_5h_bytes
-      : undefined;
-  const egress7dLimit =
-    typeof usageLimits.egress_7d_bytes === "number" &&
-    Number.isFinite(usageLimits.egress_7d_bytes)
-      ? usageLimits.egress_7d_bytes
-      : undefined;
+  const total_storage_soft_bytes = effectiveLimits.total_storage_soft_bytes;
+  const total_storage_hard_bytes = effectiveLimits.total_storage_hard_bytes;
+  const max_projects = effectiveLimits.max_projects;
+  const egress5hLimit = effectiveLimits.egress_5h_bytes;
+  const egress7dLimit = effectiveLimits.egress_7d_bytes;
   const managedEgress = await getManagedEgressUsageForAccount({
     account_id,
     limit5h: egress5hLimit,

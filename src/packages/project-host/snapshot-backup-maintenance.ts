@@ -121,6 +121,7 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
         await runScheduledSnapshotMaintenance({
           project_id,
           counts: scheduleToCounts(snapshotSchedule),
+          limit: row.max_snapshots_per_project ?? undefined,
         });
       }
       const backupSchedule = mergeSchedule(DEFAULT_BACKUP_COUNTS, row.backups);
@@ -128,6 +129,7 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
         await runScheduledBackupMaintenance({
           project_id,
           counts: scheduleToCounts(backupSchedule, { allowFrequent: false }),
+          limit: row.max_backups_per_project ?? undefined,
         });
       }
     } catch (err) {

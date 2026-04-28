@@ -6,16 +6,15 @@ import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { type SnapshotRestoreMode } from "@cocalc/conat/files/file-server";
 import { assertCollab } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
-import { assertProjectOwnerCanIncreaseAccountStorage } from "@cocalc/server/membership/project-limits";
+import {
+  assertProjectOwnerCanIncreaseAccountStorage,
+  getProjectSnapshotLimit,
+} from "@cocalc/server/membership/project-limits";
 
 // NOTES about snapshots:
 
 // TODO: in some cases we *might* only allow the project owner to delete snapshots
 // create a new snapshot of a project
-
-// just *some* limit to avoid bugs/abuse
-
-const MAX_SNAPSHOTS_PER_PROJECT = 250;
 
 async function projectClient(project_id: string, account_id?: string) {
   return await getProjectFileServerClient({ project_id, account_id });
@@ -55,12 +54,13 @@ export async function createSnapshot({
   name?: string;
 }) {
   await assertCollab({ account_id, project_id });
+  const limit = await getProjectSnapshotLimit({ project_id });
   await (
     await projectClient(project_id, account_id)
   ).createSnapshot({
     project_id,
     name,
-    limit: MAX_SNAPSHOTS_PER_PROJECT,
+    limit,
   });
 }
 
@@ -90,7 +90,7 @@ export async function getSnapshotQuota({
   project_id: string;
 }) {
   await assertCollab({ account_id, project_id });
-  return { limit: MAX_SNAPSHOTS_PER_PROJECT };
+  return { limit: await getProjectSnapshotLimit({ project_id }) };
 }
 
 export async function allSnapshotUsage({

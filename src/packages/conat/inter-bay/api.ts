@@ -609,6 +609,7 @@ export type HostConnectionMethod =
   | "list"
   | "get-project-start-metadata"
   | "get-backup-config"
+  | "get-project-owner-effective-limits"
   | "get-seed-backup-config"
   | "record-project-backup"
   | "list-host-projects"
@@ -735,6 +736,9 @@ export interface InterBayHostConnectionApi {
   getBackupConfig: (
     opts: Parameters<Hosts["getBackupConfig"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getBackupConfig"]>>>;
+  getProjectOwnerEffectiveLimits: (
+    opts: Parameters<Hosts["getProjectOwnerEffectiveLimits"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getProjectOwnerEffectiveLimits"]>>>;
   getSeedBackupConfig: (opts: {
     project_id: string;
     project_region?: string | null;
@@ -783,6 +787,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "getBackupConfig",
     method: "get-backup-config",
+  },
+  {
+    name: "getProjectOwnerEffectiveLimits",
+    method: "get-project-owner-effective-limits",
   },
   {
     name: "getSeedBackupConfig",

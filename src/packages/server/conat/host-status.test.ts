@@ -1,6 +1,8 @@
 export {};
 
 let queryMock: jest.Mock;
+let resolveMembershipForAccountMock: jest.Mock;
+let getEffectiveMembershipUsageLimitsMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -61,6 +63,18 @@ jest.mock("@cocalc/server/account/project-feed", () => ({
   publishProjectAccountFeedEventsBestEffort: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/membership/resolve", () => ({
+  __esModule: true,
+  resolveMembershipForAccount: (...args: any[]) =>
+    resolveMembershipForAccountMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/effective-limits", () => ({
+  __esModule: true,
+  getEffectiveMembershipUsageLimits: (...args: any[]) =>
+    getEffectiveMembershipUsageLimitsMock(...args),
+}));
+
 jest.mock("./host-project-ownership", () => ({
   __esModule: true,
   classifyHostProvisionedInventory: jest.fn(),
@@ -76,6 +90,13 @@ describe("listHostProjectMaintenanceSchedules", () => {
   beforeEach(() => {
     jest.resetModules();
     queryMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      effective_limits: {},
+    }));
+    getEffectiveMembershipUsageLimitsMock = jest.fn(() => ({
+      max_snapshots_per_project: 8,
+      max_backups_per_project: 5,
+    }));
   });
 
   it("lists only provisioned active projects for the host and maps timestamps", async () => {
@@ -88,6 +109,7 @@ describe("listHostProjectMaintenanceSchedules", () => {
             last_edited: new Date("2026-04-10T22:00:00.000Z"),
             snapshots: { daily: 5 },
             backups: { weekly: 2, disabled: true },
+            owner_account_id: "owner-1",
           },
         ],
       });
@@ -106,6 +128,8 @@ describe("listHostProjectMaintenanceSchedules", () => {
         last_edited: "2026-04-10T22:00:00.000Z",
         snapshots: { daily: 5 },
         backups: { weekly: 2, disabled: true },
+        max_snapshots_per_project: 8,
+        max_backups_per_project: 5,
       },
     ]);
 

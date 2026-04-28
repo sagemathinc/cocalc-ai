@@ -12,6 +12,7 @@ import {
   MembershipTierRecord,
 } from "./tiers";
 import getLogger from "@cocalc/backend/logger";
+import { normalizeMembershipEffectiveLimits } from "./effective-limits";
 import { getMembershipUsageStatusForAccount } from "./usage-status";
 
 const log = getLogger("server:membership:resolve");
@@ -68,6 +69,7 @@ async function buildMembershipCandidates(
       source: "subscription",
       priority: tier?.priority ?? 0,
       entitlements: tierToEntitlements(tier),
+      effective_limits: normalizeMembershipEffectiveLimits(tier?.usage_limits),
       subscription_id: sub.id,
       expires: sub.current_period_end,
     });
@@ -84,6 +86,7 @@ async function buildMembershipCandidates(
       source: "admin",
       priority: tier?.priority ?? 0,
       entitlements: tierToEntitlements(tier),
+      effective_limits: normalizeMembershipEffectiveLimits(tier?.usage_limits),
       expires: admin.expires_at ?? undefined,
     });
   }
@@ -112,6 +115,7 @@ function pickBestMembership(
       class: best.class,
       source: best.source,
       entitlements: best.entitlements,
+      effective_limits: best.effective_limits,
       subscription_id: best.subscription_id,
       expires: best.expires,
     };
@@ -121,6 +125,9 @@ function pickBestMembership(
     class: "free",
     source: "free",
     entitlements: tierToEntitlements(tiers["free"]),
+    effective_limits: normalizeMembershipEffectiveLimits(
+      tiers["free"]?.usage_limits,
+    ),
   };
 }
 

@@ -89,6 +89,8 @@ describe("resolveMembershipForAccount", () => {
       usage_limits: {
         shared_compute_priority: 7,
         max_projects: 42,
+        max_snapshots_per_project: 8,
+        max_backups_per_project: 5,
       },
     });
     await createTestMembershipSubscription(account_id, { class: usageTier });
@@ -97,6 +99,20 @@ describe("resolveMembershipForAccount", () => {
     expect(result.entitlements.usage_limits).toEqual({
       shared_compute_priority: 7,
       max_projects: 42,
+      max_snapshots_per_project: 8,
+      max_backups_per_project: 5,
+    });
+    expect(result.effective_limits).toEqual({
+      shared_compute_priority: 7,
+      total_storage_soft_bytes: undefined,
+      total_storage_hard_bytes: undefined,
+      max_projects: 42,
+      max_snapshots_per_project: 8,
+      max_backups_per_project: 5,
+      egress_5h_bytes: undefined,
+      egress_7d_bytes: undefined,
+      egress_policy: undefined,
+      dedicated_host_egress_policy: undefined,
     });
   });
 });

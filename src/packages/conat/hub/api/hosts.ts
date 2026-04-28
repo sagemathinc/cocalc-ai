@@ -1,4 +1,5 @@
 import { authFirstRequireAccount, authFirstRequireHost } from "./util";
+import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
@@ -858,6 +859,7 @@ export const hosts = {
   upgradeHostConnector: authFirstRequireAccount,
   setHostStar: authFirstRequireAccount,
   getBackupConfig: authFirstRequireHost,
+  getProjectOwnerEffectiveLimits: authFirstRequireHost,
   recordProjectBackup: authFirstRequireHost,
   touchProject: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
@@ -1030,6 +1032,10 @@ export interface Hosts {
     host_region?: string | null;
     host_machine?: HostMachine | null;
   }) => Promise<{ toml: string; ttl_seconds: number }>;
+  getProjectOwnerEffectiveLimits: (opts: {
+    host_id?: string;
+    project_id?: string;
+  }) => Promise<MembershipEffectiveLimits>;
   recordProjectBackup: (opts: {
     host_id?: string;
     project_id: string;

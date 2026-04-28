@@ -145,6 +145,7 @@ export default async function createProject(opts: CreateProjectOptions) {
   } = opts;
   if (account_id) {
     await assertCanOwnAdditionalProject({ account_id });
+    await assertCanIncreaseAccountStorage({ account_id });
   }
   let project_id;
   if (opts.project_id) {
@@ -299,7 +300,6 @@ export default async function createProject(opts: CreateProjectOptions) {
     if (!account_id) {
       throw Error("user must be a collaborator on src_project_id");
     }
-    await assertCanIncreaseAccountStorage({ account_id });
     await assertLocalProjectCollaborator({
       account_id,
       project_id: src_project_id,

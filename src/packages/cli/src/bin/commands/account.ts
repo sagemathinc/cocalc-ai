@@ -15,7 +15,13 @@ export type AccountCommandDeps = {
 function formatByteCount(bytes: unknown): string | null {
   const value = Number(bytes);
   if (!Number.isFinite(value) || value < 0) return null;
-  return humanSize(value, { binary: true });
+  if (value < 1000) {
+    return `${Math.round(value)} B`;
+  }
+  const formatted = humanSize(value, { keepTrailingZero: true });
+  return /^\d+ [KMGTPE]B$/.test(formatted)
+    ? formatted.replace(/^(\d+) /, "$1.0 ")
+    : formatted;
 }
 
 function serializeManagedEgressEvent(
@@ -38,7 +44,10 @@ function serializeMembershipDetails(
   account_id: string,
   toIso: AccountCommandDeps["toIso"],
 ) {
-  const usageLimits = details.selected.entitlements.usage_limits ?? {};
+  const usageLimits =
+    details.selected.effective_limits ??
+    details.selected.entitlements.usage_limits ??
+    {};
   const usage = details.usage_status;
   return {
     account_id,
@@ -51,6 +60,8 @@ function serializeMembershipDetails(
     total_storage_hard_bytes: usageLimits.total_storage_hard_bytes ?? null,
     total_storage_hard: formatByteCount(usageLimits.total_storage_hard_bytes),
     max_owned_projects: usageLimits.max_projects ?? null,
+    max_snapshots_per_project: usageLimits.max_snapshots_per_project ?? null,
+    max_backups_per_project: usageLimits.max_backups_per_project ?? null,
     managed_egress_5h_limit_bytes: usageLimits.egress_5h_bytes ?? null,
     managed_egress_5h_limit: formatByteCount(usageLimits.egress_5h_bytes),
     managed_egress_7d_limit_bytes: usageLimits.egress_7d_bytes ?? null,
@@ -108,6 +119,7 @@ function serializeMembershipDetails(
       priority: candidate.priority,
       subscription_id: candidate.subscription_id ?? null,
       expires: toIso(candidate.expires),
+      effective_limits: candidate.effective_limits ?? {},
       usage_limits: candidate.entitlements.usage_limits ?? {},
     })),
   };

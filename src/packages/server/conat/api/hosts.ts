@@ -35,6 +35,7 @@ import type {
   HostRehomeResponse,
   HostCloudRefreshResult,
 } from "@cocalc/conat/hub/api/hosts";
+import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
@@ -912,6 +913,60 @@ export async function getBackupConfigLocal({
     host_region,
     host_machine,
   });
+}
+
+export async function getProjectOwnerEffectiveLimits({
+  host_id,
+  project_id,
+}: {
+  host_id?: string;
+  project_id?: string;
+}): Promise<MembershipEffectiveLimits> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .getProjectOwnerEffectiveLimits({
+        host_id,
+        project_id,
+      });
+  }
+  return await getProjectOwnerEffectiveLimitsLocal({ project_id });
+}
+
+export async function getProjectOwnerEffectiveLimitsLocal({
+  project_id,
+}: {
+  host_id?: string;
+  project_id?: string;
+}): Promise<MembershipEffectiveLimits> {
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const { rows } = await pool().query<{ account_id: string }>(
+    `
+      SELECT account_id_text::text AS account_id
+      FROM projects
+      CROSS JOIN LATERAL jsonb_each(COALESCE(users, '{}'::jsonb)) AS u(account_id_text, user_data)
+      WHERE project_id = $1
+        AND deleted IS NULL
+        AND COALESCE(u.user_data ->> 'group', '') = 'owner'
+      LIMIT 1
+    `,
+    [project_id],
+  );
+  const account_id = `${rows[0]?.account_id ?? ""}`.trim();
+  if (!account_id) {
+    return {};
+  }
+  const resolution = await resolveMembershipForAccount(account_id);
+  return resolution.effective_limits ?? {};
 }
 
 export async function recordProjectBackup({

@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { testOnly } from "./storage";
 
-test("buildStorageAnalysis recommends deleting snapshots and reviewing environment changes", () => {
+test("buildStorageAnalysis highlights retained data and environment-heavy projects", () => {
   const analysis = testOnly.buildStorageAnalysis({
     project_id: "project-id",
     title: "Project",
@@ -18,6 +18,18 @@ test("buildStorageAnalysis recommends deleting snapshots and reviewing environme
           size: 20 * 1024 ** 3,
         },
       ],
+      live: {
+        key: "live",
+        label: "Live files",
+        path: "/root",
+        bytes: 15 * 1024 ** 3,
+      },
+      retained: {
+        key: "retained",
+        label: "Retained snapshot/history data",
+        bytes: 3 * 1024 ** 3,
+        detail: "estimate",
+      },
       visible: [
         {
           key: "home",
@@ -44,14 +56,6 @@ test("buildStorageAnalysis recommends deleting snapshots and reviewing environme
             children: [],
             collected_at: "2026-04-01T10:00:00.000Z",
           },
-        },
-      ],
-      counted: [
-        {
-          key: "snapshots",
-          label: "Snapshots",
-          bytes: 3 * 1024 ** 3,
-          detail: "snapshot detail",
         },
       ],
     },
@@ -97,16 +101,16 @@ test("buildStorageAnalysis recommends deleting snapshots and reviewing environme
     ],
   });
 
-  assert.equal(analysis.summary.counted.snapshots?.bytes, 3 * 1024 ** 3);
+  assert.equal(analysis.summary.retained?.bytes, 3 * 1024 ** 3);
   assert.ok(
-    analysis.findings.some((finding) => finding.id === "snapshots_present"),
+    analysis.findings.some((finding) => finding.id === "retained_present"),
   );
   assert.ok(
     analysis.findings.some(
       (finding) => finding.id === "environment_dominates_home",
     ),
   );
-  assert.equal(analysis.recommendations[0]?.id, "delete_snapshots");
+  assert.equal(analysis.recommendations[0]?.id, "review_snapshots");
   assert.ok(
     analysis.recommendations.some((recommendation) =>
       recommendation.actions.some(

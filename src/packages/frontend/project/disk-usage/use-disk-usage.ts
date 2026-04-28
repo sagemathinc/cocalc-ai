@@ -7,8 +7,9 @@ import { useRef, useState } from "react";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import type {
   ProjectStorageBreakdown,
-  ProjectStorageCountedSummary,
+  ProjectStorageLiveSummary,
   ProjectStorageQuotaSummary,
+  ProjectStorageRetainedSummary,
   ProjectStorageVisibleSummary,
 } from "@cocalc/conat/project/storage-info";
 
@@ -18,7 +19,9 @@ export type StorageQuotaSummary = ProjectStorageQuotaSummary;
 
 export type StorageVisibleSummary = ProjectStorageVisibleSummary;
 
-export type StorageCountedSummary = ProjectStorageCountedSummary;
+export type StorageLiveSummary = ProjectStorageLiveSummary;
+
+export type StorageRetainedSummary = ProjectStorageRetainedSummary;
 
 export default function useDiskUsage({ project_id }: { project_id: string }) {
   const [counter, setCounter] = useState<number>(0);
@@ -31,8 +34,11 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
   const [visible, setVisible] = useState<StorageVisibleSummary[]>(
     () => cachedOverview?.visible ?? [],
   );
-  const [counted, setCounted] = useState<StorageCountedSummary[]>(
-    () => cachedOverview?.counted ?? [],
+  const [live, setLive] = useState<StorageLiveSummary | null>(
+    () => cachedOverview?.live ?? null,
+  );
+  const [retained, setRetained] = useState<StorageRetainedSummary | null>(
+    () => cachedOverview?.retained ?? null,
   );
   const [error, setError] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -49,7 +55,8 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
       if (activeRequestKey === currentRef.current) {
         setError(null);
         setVisible(cachedOverview?.visible ?? []);
-        setCounted(cachedOverview?.counted ?? []);
+        setLive(cachedOverview?.live ?? null);
+        setRetained(cachedOverview?.retained ?? null);
         setQuotas(cachedOverview?.quotas ?? []);
         setLoading(true);
       }
@@ -63,7 +70,8 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
         return;
       }
       setVisible(overview.visible);
-      setCounted(overview.counted);
+      setLive(overview.live);
+      setRetained(overview.retained);
       setQuotas(overview.quotas);
     } catch (err) {
       if (activeRequestKey === currentRef.current) {
@@ -80,7 +88,8 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
   return {
     quotas,
     visible,
-    counted,
+    live,
+    retained,
     loading,
     error,
     setError,

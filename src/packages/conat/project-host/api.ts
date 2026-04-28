@@ -379,6 +379,8 @@ export interface HostProjectMaintenanceSchedule {
   last_edited: string | null;
   snapshots: SnapshotSchedule | null;
   backups: SnapshotSchedule | null;
+  max_snapshots_per_project?: number | null;
+  max_backups_per_project?: number | null;
 }
 
 export type SoftwareArtifact =

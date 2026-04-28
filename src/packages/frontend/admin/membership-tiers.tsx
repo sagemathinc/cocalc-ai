@@ -193,6 +193,12 @@ function useMembershipTiers() {
         usage_limit_max_projects: normalizedOptionalNumber(
           editing.usage_limits?.max_projects,
         ),
+        usage_limit_max_snapshots_per_project: normalizedOptionalNumber(
+          editing.usage_limits?.max_snapshots_per_project,
+        ),
+        usage_limit_max_backups_per_project: normalizedOptionalNumber(
+          editing.usage_limits?.max_backups_per_project,
+        ),
         usage_limit_egress_5h_gb: bytesToGigabytes(
           editing.usage_limits?.egress_5h_bytes,
         ),
@@ -242,6 +248,16 @@ function useMembershipTiers() {
         usage_limits,
         "max_projects",
         values.usage_limit_max_projects,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "max_snapshots_per_project",
+        values.usage_limit_max_snapshots_per_project,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "max_backups_per_project",
+        values.usage_limit_max_backups_per_project,
       );
       setOrDeleteUsageLimit(
         usage_limits,
@@ -521,6 +537,18 @@ export function MembershipTiers() {
             <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item name="usage_limit_max_projects" label="Max owned projects">
+            <InputNumber min={0} step={1} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_max_snapshots_per_project"
+            label="Max snapshots / project"
+          >
+            <InputNumber min={0} step={1} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_max_backups_per_project"
+            label="Max backups / project"
+          >
             <InputNumber min={0} step={1} />
           </Form.Item>
           <Form.Item

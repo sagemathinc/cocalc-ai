@@ -75,7 +75,8 @@ describe("project membership limits", () => {
   it("allows creation below the configured max_projects limit", async () => {
     queryMock.mockResolvedValue({ rows: [{ count: "2" }] });
     resolveMembershipForAccountMock.mockResolvedValue({
-      entitlements: { usage_limits: { max_projects: 3 } },
+      entitlements: {},
+      effective_limits: { max_projects: 3 },
     });
     const { assertCanOwnAdditionalProject } = await import("./project-limits");
     await expect(
@@ -94,6 +95,39 @@ describe("project membership limits", () => {
     ).rejects.toThrow("owned project limit reached (3/3)");
   });
 
+  it("returns the fallback snapshot and backup caps when a project has no owner", async () => {
+    queryMock.mockResolvedValue({ rows: [] });
+    const { getProjectSnapshotLimit, getProjectBackupLimit } =
+      await import("./project-limits");
+    await expect(
+      getProjectSnapshotLimit({ project_id: "project-1" }),
+    ).resolves.toBe(250);
+    await expect(
+      getProjectBackupLimit({ project_id: "project-1" }),
+    ).resolves.toBe(30);
+  });
+
+  it("returns tier-configured snapshot and backup caps for the project owner", async () => {
+    queryMock.mockResolvedValue({ rows: [{ account_id: "owner-1" }] });
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "pro",
+      source: "subscription",
+      entitlements: {},
+      effective_limits: {
+        max_snapshots_per_project: 8,
+        max_backups_per_project: 5,
+      },
+    });
+    const { getProjectSnapshotLimit, getProjectBackupLimit } =
+      await import("./project-limits");
+    await expect(
+      getProjectSnapshotLimit({ project_id: "project-1" }),
+    ).resolves.toBe(8);
+    await expect(
+      getProjectBackupLimit({ project_id: "project-1" }),
+    ).resolves.toBe(5);
+  });
+
   it("does nothing when no max_projects limit is configured", async () => {
     const { assertCanOwnAdditionalProject } = await import("./project-limits");
     await expect(
@@ -109,7 +143,7 @@ describe("project membership limits", () => {
     expect(queryMock).not.toHaveBeenCalled();
   });
 
-  it("allows storage-increasing operations below the hard total storage cap", async () => {
+  it("allows storage-increasing operations below the configured total storage caps", async () => {
     getMembershipUsageStatusForAccountMock.mockResolvedValue({
       total_storage_bytes: 50,
     });
@@ -121,10 +155,32 @@ describe("project membership limits", () => {
         resolution: {
           class: "pro",
           source: "subscription",
-          entitlements: { usage_limits: { total_storage_hard_bytes: 100 } },
+          entitlements: {},
+          effective_limits: {
+            total_storage_soft_bytes: 75,
+            total_storage_hard_bytes: 100,
+          },
         },
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it("blocks storage-increasing operations at the soft total storage cap", async () => {
+    getMembershipUsageStatusForAccountMock.mockResolvedValue({
+      total_storage_bytes: 100,
+    });
+    const { assertCanIncreaseAccountStorage } =
+      await import("./project-limits");
+    await expect(
+      assertCanIncreaseAccountStorage({
+        account_id: "account-1",
+        resolution: {
+          class: "pro",
+          source: "subscription",
+          entitlements: { usage_limits: { total_storage_soft_bytes: 100 } },
+        },
+      }),
+    ).rejects.toThrow("total account storage soft cap reached");
   });
 
   it("blocks storage-increasing operations at the hard total storage cap", async () => {
@@ -176,6 +232,30 @@ describe("project membership limits", () => {
         account_id: "account-1",
       }),
     ).resolves.toBe(1234);
+  });
+
+  it("blocks archived-project restore when the estimated restored size exceeds the soft cap headroom", async () => {
+    queryMock.mockResolvedValue({ rows: [{ account_id: "owner-1" }] });
+    getStorageHistoryMock.mockResolvedValue({
+      points: [{ quota_used_bytes: 60 }],
+    });
+    getMembershipUsageStatusForAccountMock.mockResolvedValue({
+      total_storage_bytes: 50,
+    });
+    const { assertCanRestoreProvisionedProjectStorage } =
+      await import("./project-limits");
+    await expect(
+      assertCanRestoreProvisionedProjectStorage({
+        project_id: "project-1",
+        resolution: {
+          class: "pro",
+          source: "subscription",
+          entitlements: { usage_limits: { total_storage_soft_bytes: 100 } },
+        },
+      }),
+    ).rejects.toThrow(
+      "restoring this archived project would exceed the total account storage soft cap",
+    );
   });
 
   it("blocks archived-project restore when the estimated restored size exceeds the hard cap headroom", async () => {

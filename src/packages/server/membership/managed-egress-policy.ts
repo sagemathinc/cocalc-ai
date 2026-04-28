@@ -8,6 +8,7 @@ import {
   getManagedEgressUsageForAccount,
   getProjectOwnerAccountId,
 } from "@cocalc/server/membership/managed-egress";
+import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 
 export interface ManagedProjectEgressPolicy {
@@ -39,17 +40,9 @@ export async function getManagedProjectEgressPolicy(opts: {
     };
   }
   const resolution = await resolveMembershipForAccount(account_id);
-  const usageLimits = resolution.entitlements?.usage_limits ?? {};
-  const egress_5h_bytes =
-    typeof usageLimits.egress_5h_bytes === "number" &&
-    Number.isFinite(usageLimits.egress_5h_bytes)
-      ? usageLimits.egress_5h_bytes
-      : undefined;
-  const egress_7d_bytes =
-    typeof usageLimits.egress_7d_bytes === "number" &&
-    Number.isFinite(usageLimits.egress_7d_bytes)
-      ? usageLimits.egress_7d_bytes
-      : undefined;
+  const effectiveLimits = getEffectiveMembershipUsageLimits(resolution);
+  const egress_5h_bytes = effectiveLimits.egress_5h_bytes;
+  const egress_7d_bytes = effectiveLimits.egress_7d_bytes;
   const usage = await getManagedEgressUsageForAccount({
     account_id,
     limit5h: egress_5h_bytes,

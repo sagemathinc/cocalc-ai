@@ -12,6 +12,7 @@ let resolveProjectBayMock: jest.Mock;
 let getConfiguredBayIdMock: jest.Mock;
 let projectControlBackupMock: jest.Mock;
 let assertProjectOwnerCanIncreaseAccountStorageMock: jest.Mock;
+let getProjectBackupLimitMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -97,6 +98,7 @@ jest.mock("@cocalc/server/membership/project-limits", () => ({
   __esModule: true,
   assertProjectOwnerCanIncreaseAccountStorage: (...args: any[]) =>
     assertProjectOwnerCanIncreaseAccountStorageMock(...args),
+  getProjectBackupLimit: (...args: any[]) => getProjectBackupLimitMock(...args),
 }));
 
 describe("project-backups.createBackup", () => {
@@ -135,6 +137,7 @@ describe("project-backups.createBackup", () => {
     assertProjectOwnerCanIncreaseAccountStorageMock = jest.fn(
       async () => undefined,
     );
+    getProjectBackupLimitMock = jest.fn(async () => 5);
     projectControlBackupMock = jest.fn(async () => ({
       op_id: "remote-op-1",
       kind: "project-backup",
@@ -191,6 +194,7 @@ describe("project-backups.createBackup", () => {
         kind: "project-backup",
         scope_type: "project",
         scope_id: "proj-1",
+        input: { project_id: "proj-1", tags: undefined, limit: 5 },
       }),
     );
     expect(result).toEqual({
@@ -237,6 +241,13 @@ describe("project-backups.createBackup", () => {
       service: "persist-service",
       stream_name: "stream:op-backup-1",
     });
+  });
+
+  it("returns the owner backup cap from getBackupQuota", async () => {
+    const { getBackupQuota } = await import("./project-backups");
+    await expect(
+      getBackupQuota({ account_id: "acct-1", project_id: "proj-1" }),
+    ).resolves.toEqual({ limit: 5 });
   });
 });
 
