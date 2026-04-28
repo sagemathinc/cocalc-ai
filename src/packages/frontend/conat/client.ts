@@ -210,7 +210,6 @@ export class ConatClient extends EventEmitter {
   private projectHostBrowserSessions: {
     [host_id: string]: ProjectHostBrowserSessionState;
   } = {};
-  private projectRuntimeFallbackWarnings = new Set<string>();
   private routedHostRecoveryTimer?: ReturnType<typeof setTimeout>;
   private browserSessionAutomation: BrowserSessionAutomation;
   private reconnectCoordinator: ReconnectCoordinator;
@@ -800,19 +799,8 @@ export class ConatClient extends EventEmitter {
     project_id: string;
     caller: string;
   }) => {
-    const host_id = this.getProjectHostId(project_id);
-    if (!host_id) {
-      return;
-    }
-    const key = `${project_id}:${caller}`;
-    if (this.projectRuntimeFallbackWarnings.has(key)) {
-      return;
-    }
-    this.projectRuntimeFallbackWarnings.add(key);
-    console.debug(
-      "project runtime using default hub client before project-host route is available",
-      { project_id, host_id, caller },
-    );
+    void project_id;
+    void caller;
   };
 
   private ensureProjectRoutingInfo = async (
