@@ -201,6 +201,18 @@ export function LLMUsageStatus({
   return content;
 }
 
+function formatResetAt(resetAt?: Date | string): string | undefined {
+  if (!resetAt) return;
+  const date = new Date(resetAt);
+  if (!Number.isFinite(date.getTime())) return;
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function UsageBar({
   label,
   window,
@@ -227,7 +239,10 @@ function UsageBar({
     <div style={{ marginBottom: "6px" }}>
       <Text type="secondary">
         {label}: {window.used} / {limit} units{" "}
-        {window.reset_in ? `· resets in ${window.reset_in}` : ""}
+        {window.reset_at
+          ? `· next reset ${formatResetAt(window.reset_at)}`
+          : ""}
+        {window.reset_in ? ` · in ${window.reset_in}` : ""}
       </Text>
       <Progress
         percent={percent}

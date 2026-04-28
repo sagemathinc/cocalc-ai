@@ -21,6 +21,10 @@ type ManagedEgressUsage = {
   managed_egress_7d_bytes: number;
   managed_egress_5h_remaining_bytes?: number;
   managed_egress_7d_remaining_bytes?: number;
+  managed_egress_5h_reset_at?: Date;
+  managed_egress_7d_reset_at?: Date;
+  managed_egress_5h_reset_in?: string;
+  managed_egress_7d_reset_in?: string;
   over_managed_egress_5h?: boolean;
   over_managed_egress_7d?: boolean;
   managed_egress_categories_5h_bytes: Record<string, number>;
@@ -174,6 +178,18 @@ export async function getManagedEgressUsageForAccount(opts: {
     managed_egress_7d_bytes += bytes7d;
   }
 
+  const [managed_egress_5h_reset_at, managed_egress_7d_reset_at] =
+    await Promise.all([
+      getManagedEgressWindowResetAt({
+        account_id: opts.account_id,
+        period: "5 hours",
+      }),
+      getManagedEgressWindowResetAt({
+        account_id: opts.account_id,
+        period: "7 days",
+      }),
+    ]);
+
   return {
     managed_egress_5h_bytes,
     managed_egress_7d_bytes,
@@ -184,6 +200,20 @@ export async function getManagedEgressUsageForAccount(opts: {
     managed_egress_7d_remaining_bytes:
       typeof opts.limit7d === "number" && Number.isFinite(opts.limit7d)
         ? opts.limit7d - managed_egress_7d_bytes
+        : undefined,
+    managed_egress_5h_reset_at,
+    managed_egress_7d_reset_at,
+    managed_egress_5h_reset_in:
+      managed_egress_5h_reset_at != null
+        ? formatDuration(
+            Math.max(0, managed_egress_5h_reset_at.getTime() - Date.now()),
+          ) || undefined
+        : undefined,
+    managed_egress_7d_reset_in:
+      managed_egress_7d_reset_at != null
+        ? formatDuration(
+            Math.max(0, managed_egress_7d_reset_at.getTime() - Date.now()),
+          ) || undefined
         : undefined,
     over_managed_egress_5h:
       typeof opts.limit5h === "number" && Number.isFinite(opts.limit5h)
@@ -196,6 +226,50 @@ export async function getManagedEgressUsageForAccount(opts: {
     managed_egress_categories_5h_bytes,
     managed_egress_categories_7d_bytes,
   };
+}
+
+async function getManagedEgressWindowResetAt({
+  account_id,
+  period,
+}: {
+  account_id: string;
+  period: "5 hours" | "7 days";
+}): Promise<Date | undefined> {
+  const { rows } = await getPool("short").query<{
+    occurred_at?: string | Date;
+  }>(
+    `
+      SELECT occurred_at
+      FROM ${TABLE}
+      WHERE account_id = $1
+        AND occurred_at >= now() - interval '${period}'
+      ORDER BY occurred_at ASC
+      LIMIT 1
+    `,
+    [account_id],
+  );
+  const oldest = rows[0]?.occurred_at;
+  if (!oldest) return;
+  const oldestMs = new Date(oldest).getTime();
+  if (!Number.isFinite(oldestMs)) return;
+  const windowMs =
+    period === "5 hours" ? 5 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  return new Date(oldestMs + windowMs);
+}
+
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "";
+  const totalMinutes = Math.ceil(ms / 60000);
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} day${days == 1 ? "" : "s"}`);
+  if (hours > 0) parts.push(`${hours} hour${hours == 1 ? "" : "s"}`);
+  if (days == 0 && hours == 0 && minutes > 0) {
+    parts.push(`${minutes} minute${minutes == 1 ? "" : "s"}`);
+  }
+  return parts.join(" ");
 }
 
 export async function getRecentManagedEgressEventsForAccount(opts: {

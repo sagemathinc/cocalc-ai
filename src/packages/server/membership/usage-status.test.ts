@@ -178,6 +178,10 @@ describe("getMembershipUsageStatusForAccount", () => {
       managed_egress_7d_bytes: 456,
       managed_egress_5h_remaining_bytes: 877,
       managed_egress_7d_remaining_bytes: 1544,
+      managed_egress_5h_reset_at: new Date("2026-04-25T17:00:00.000Z"),
+      managed_egress_7d_reset_at: new Date("2026-05-02T17:00:00.000Z"),
+      managed_egress_5h_reset_in: "2 hours",
+      managed_egress_7d_reset_in: "6 days",
       over_managed_egress_5h: false,
       over_managed_egress_7d: false,
       managed_egress_categories_5h_bytes: { "file-download": 123 },
@@ -212,6 +216,8 @@ describe("getMembershipUsageStatusForAccount", () => {
 
     expect(result.managed_egress_5h_bytes).toBe(123);
     expect(result.managed_egress_7d_bytes).toBe(456);
+    expect(result.managed_egress_5h_reset_in).toBe("2 hours");
+    expect(result.managed_egress_7d_reset_in).toBe("6 days");
     expect(result.managed_egress_categories_5h_bytes).toEqual({
       "file-download": 123,
     });
