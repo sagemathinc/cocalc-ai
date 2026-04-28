@@ -21,7 +21,7 @@ import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
-import { containingPath, plural } from "@cocalc/util/misc";
+import { containingPath, humanSize, plural } from "@cocalc/util/misc";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { COLORS } from "@cocalc/util/theme";
 import type { AttachedSteerMessage } from "./agent-message-status";
@@ -1819,15 +1819,7 @@ function formatTerminalStatus(entry: {
 }
 
 function formatByteCount(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} ${plural(bytes, "byte")}`;
-  }
-  if (bytes < 1024 * 1024) {
-    const kb = bytes / 1024;
-    return `${kb.toFixed(kb >= 10 ? 0 : 1)} KB`;
-  }
-  const mb = bytes / (1024 * 1024);
-  return `${mb.toFixed(mb >= 10 ? 1 : 2)} MB`;
+  return humanSize(bytes, { binary: true });
 }
 
 function formatReadScope(entry: {

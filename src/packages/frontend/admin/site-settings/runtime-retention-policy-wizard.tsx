@@ -15,6 +15,7 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
+import { humanSize } from "@cocalc/util/misc";
 
 interface WizardProps {
   open: boolean;
@@ -91,18 +92,6 @@ function normalizePolicy(raw: string | undefined): PolicyState {
     };
   }
   return state;
-}
-
-function formatBytes(bytes?: number): string {
-  if (bytes == null || bytes <= 0) return "none";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
 function serializePolicy(policy: PolicyState): string {
@@ -261,7 +250,12 @@ export default function RuntimeRetentionPolicyWizard({
                   />
                 </div>
                 <div style={{ marginTop: "6px", color: "#666" }}>
-                  Current: {formatBytes(policy[artifact.key].max_bytes)}
+                  Current:{" "}
+                  {policy[artifact.key].max_bytes == null
+                    ? "none"
+                    : humanSize(policy[artifact.key].max_bytes, {
+                        binary: true,
+                      })}
                 </div>
               </Col>
             </Row>

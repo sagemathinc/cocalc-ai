@@ -24,6 +24,7 @@ import {
   type Client as ConatClient,
 } from "@cocalc/conat/core/client";
 import { setConatClient } from "@cocalc/conat/client";
+import { humanSize } from "@cocalc/util/misc";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { init as initRunner } from "@cocalc/project-runner/run";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
@@ -190,15 +191,7 @@ function formatByteCount(bytes?: number): string {
   if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
     return "unknown";
   }
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const digits = value >= 10 || unit === 0 ? 0 : 1;
-  return `${value.toFixed(digits)} ${units[unit]}`;
+  return humanSize(bytes);
 }
 
 export interface ProjectHostConfig {

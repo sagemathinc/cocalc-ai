@@ -24,6 +24,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
+import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
   DEFAULT_CODEX_MODEL_NAME,
@@ -2298,15 +2299,7 @@ function parseArchivedTotalCount(
 function formatBytes(value: unknown): string {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return "?";
-  if (n < 1024) return `${Math.floor(n)} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let x = n / 1024;
-  let i = 0;
-  while (x >= 1024 && i < units.length - 1) {
-    x /= 1024;
-    i += 1;
-  }
-  return `${x.toFixed(x >= 10 ? 0 : 1)} ${units[i]}`;
+  return humanSize(n, { binary: true });
 }
 
 function getReasoningForModel({

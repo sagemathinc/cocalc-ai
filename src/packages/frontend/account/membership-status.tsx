@@ -30,7 +30,7 @@ import {
   formatManagedEgressCategory,
 } from "@cocalc/frontend/purchases/managed-egress-recent-events";
 import { upgrades } from "@cocalc/util/upgrade-spec";
-import { capitalize, round2 } from "@cocalc/util/misc";
+import { capitalize, humanSize, round2 } from "@cocalc/util/misc";
 import type {
   MembershipDetails,
   MembershipResolution,
@@ -106,18 +106,6 @@ function formatQuotaValue(key: string, value: unknown): string {
     : round2(displayValue);
   const unit = spec?.display_unit ?? spec?.unit ?? "";
   return unit ? `${rounded} ${unit}` : `${rounded}`;
-}
-
-function formatDecimalBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1000;
-    unit += 1;
-  }
-  const digits = Number.isInteger(value) || value >= 10 || unit === 0 ? 0 : 1;
-  return `${value.toFixed(digits)} ${units[unit]}`;
 }
 
 function formatResetAt(resetAt?: Date | string): string | undefined {
@@ -225,7 +213,7 @@ function getUsageLimitsItems(
     items.push({
       key: "total_storage_soft_bytes",
       label: "Total account storage soft cap",
-      value: formatDecimalBytes(totalSoft),
+      value: humanSize(totalSoft),
     });
   }
   const totalHard = usageLimits.total_storage_hard_bytes;
@@ -233,7 +221,7 @@ function getUsageLimitsItems(
     items.push({
       key: "total_storage_hard_bytes",
       label: "Total account storage hard cap",
-      value: formatDecimalBytes(totalHard),
+      value: humanSize(totalHard),
     });
   }
   const maxProjects = usageLimits.max_projects;
@@ -249,7 +237,7 @@ function getUsageLimitsItems(
     items.push({
       key: "egress_5h_bytes",
       label: "Data transfer 5-hour window",
-      value: formatDecimalBytes(egress5h),
+      value: humanSize(egress5h),
     });
   }
   const egress7d = usageLimits.egress_7d_bytes;
@@ -257,7 +245,7 @@ function getUsageLimitsItems(
     items.push({
       key: "egress_7d_bytes",
       label: "Data transfer 7-day window",
-      value: formatDecimalBytes(egress7d),
+      value: humanSize(egress7d),
     });
   }
   const egressPolicy = usageLimits.egress_policy;
@@ -332,7 +320,7 @@ function getUsageStatusItems(
     {
       key: "total_storage_bytes",
       label: "Current total account storage",
-      value: formatDecimalBytes(usageStatus.total_storage_bytes),
+      value: humanSize(usageStatus.total_storage_bytes),
       danger:
         usageStatus.over_total_storage_hard === true ||
         usageStatus.over_total_storage_soft === true,
@@ -341,7 +329,7 @@ function getUsageStatusItems(
           ? {
               current: usageStatus.total_storage_bytes,
               limit: totalStorageProgressLimit,
-              caption: `${formatDecimalBytes(usageStatus.total_storage_bytes)} of ${formatDecimalBytes(totalStorageProgressLimit)}`,
+              caption: `${humanSize(usageStatus.total_storage_bytes)} of ${humanSize(totalStorageProgressLimit)}`,
             }
           : undefined,
     },
@@ -364,7 +352,7 @@ function getUsageStatusItems(
     items.push({
       key: "total_storage_soft_remaining_bytes",
       label: "Storage remaining before soft cap",
-      value: formatDecimalBytes(
+      value: humanSize(
         Math.abs(usageStatus.total_storage_soft_remaining_bytes),
       ),
       danger: usageStatus.total_storage_soft_remaining_bytes < 0,
@@ -377,7 +365,7 @@ function getUsageStatusItems(
     items.push({
       key: "total_storage_hard_remaining_bytes",
       label: "Storage remaining before hard cap",
-      value: formatDecimalBytes(
+      value: humanSize(
         Math.abs(usageStatus.total_storage_hard_remaining_bytes),
       ),
       danger: usageStatus.total_storage_hard_remaining_bytes < 0,
@@ -410,14 +398,14 @@ function getUsageStatusItems(
     items.push({
       key: "managed_egress_5h_bytes",
       label: "Managed egress used in 5 hours",
-      value: formatDecimalBytes(usageStatus.managed_egress_5h_bytes),
+      value: humanSize(usageStatus.managed_egress_5h_bytes),
       danger: usageStatus.over_managed_egress_5h === true,
       progress:
         egress5hLimit != null
           ? {
               current: usageStatus.managed_egress_5h_bytes,
               limit: egress5hLimit,
-              caption: `${formatDecimalBytes(usageStatus.managed_egress_5h_bytes)} of ${formatDecimalBytes(egress5hLimit)}`,
+              caption: `${humanSize(usageStatus.managed_egress_5h_bytes)} of ${humanSize(egress5hLimit)}`,
             }
           : undefined,
     });
@@ -429,14 +417,14 @@ function getUsageStatusItems(
     items.push({
       key: "managed_egress_7d_bytes",
       label: "Managed egress used in 7 days",
-      value: formatDecimalBytes(usageStatus.managed_egress_7d_bytes),
+      value: humanSize(usageStatus.managed_egress_7d_bytes),
       danger: usageStatus.over_managed_egress_7d === true,
       progress:
         egress7dLimit != null
           ? {
               current: usageStatus.managed_egress_7d_bytes,
               limit: egress7dLimit,
-              caption: `${formatDecimalBytes(usageStatus.managed_egress_7d_bytes)} of ${formatDecimalBytes(egress7dLimit)}`,
+              caption: `${humanSize(usageStatus.managed_egress_7d_bytes)} of ${humanSize(egress7dLimit)}`,
             }
           : undefined,
     });
@@ -528,8 +516,7 @@ function renderManagedEgressBreakdown(
         <Space wrap>
           {entries.map(([category, bytes]) => (
             <Tag key={category}>
-              {formatManagedEgressCategory(category)}:{" "}
-              {formatDecimalBytes(bytes)}
+              {formatManagedEgressCategory(category)}: {humanSize(bytes)}
             </Tag>
           ))}
         </Space>

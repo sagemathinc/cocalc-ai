@@ -10,7 +10,7 @@ import type { ConnectionStats } from "@cocalc/conat/core/types";
 import type { ConatServer } from "@cocalc/conat/core/server";
 import { hubApi } from "@cocalc/lite/hub/api";
 import type { ManagedProjectEgressCategory } from "@cocalc/conat/hub/api/system";
-import { capitalize } from "@cocalc/util/misc";
+import { capitalize, humanSize } from "@cocalc/util/misc";
 import {
   clearProjectHostManagedEgressBlockedAccount,
   clearProjectHostManagedEgressBlockedAccounts,
@@ -199,15 +199,7 @@ function summarizeActiveSocketsByAccount(
 }
 
 function formatByteCount(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  let value = Math.max(0, bytes);
-  let unit = 0;
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1000;
-    unit += 1;
-  }
-  const digits = Number.isInteger(value) || value >= 10 || unit === 0 ? 0 : 1;
-  return `${value.toFixed(digits)} ${units[unit]}`;
+  return humanSize(Math.max(0, bytes));
 }
 
 function formatManagedEgressCategory(category: string): string {

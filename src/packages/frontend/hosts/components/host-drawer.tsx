@@ -38,6 +38,7 @@ import type {
   ManagedComponentRuntimeState,
   ManagedComponentUpgradePolicy,
 } from "@cocalc/conat/project-host/api";
+import { humanSize } from "@cocalc/util/misc";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLogEntry } from "../hooks/use-host-log";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
@@ -862,14 +863,7 @@ function formatBytes(value?: number): string | undefined {
   if (!Number.isFinite(value) || !value || value <= 0) {
     return undefined;
   }
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let unit = 0;
-  let scaled = value;
-  while (scaled >= 1024 && unit < units.length - 1) {
-    scaled /= 1024;
-    unit += 1;
-  }
-  return `${scaled >= 10 || unit === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[unit]}`;
+  return humanSize(value, { binary: true });
 }
 
 function componentDeploymentRecord(

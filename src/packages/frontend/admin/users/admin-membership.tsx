@@ -32,6 +32,7 @@ import type {
   MembershipDetails,
   MembershipUsageStatus,
 } from "@cocalc/conat/hub/api/purchases";
+import { humanSize } from "@cocalc/util/misc";
 import { actions } from "./actions";
 
 const { Text } = Typography;
@@ -57,24 +58,11 @@ interface AdminAssignment {
   notes?: string | null;
 }
 
-function formatBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
-}
-
 function formatRemaining(bytes?: number): string | undefined {
   if (typeof bytes !== "number" || !Number.isFinite(bytes)) {
     return undefined;
   }
-  return bytes < 0
-    ? `Over by ${formatBytes(Math.abs(bytes))}`
-    : formatBytes(bytes);
+  return bytes < 0 ? `Over by ${humanSize(Math.abs(bytes))}` : humanSize(bytes);
 }
 
 function getUsageAlerts(
@@ -148,7 +136,7 @@ function renderManagedEgressBreakdown(
       <Space wrap>
         {entries.map(([category, bytes]) => (
           <Tag key={category}>
-            {formatManagedEgressCategory(category)}: {formatBytes(bytes)}
+            {formatManagedEgressCategory(category)}: {humanSize(bytes)}
           </Tag>
         ))}
       </Space>
@@ -439,11 +427,11 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                     {usageStatus.owned_project_count}
                   </Descriptions.Item>
                   <Descriptions.Item label="Current total storage">
-                    {formatBytes(usageStatus.total_storage_bytes)}
+                    {humanSize(usageStatus.total_storage_bytes)}
                   </Descriptions.Item>
                   {typeof usageStatus.total_storage_soft_bytes === "number" && (
                     <Descriptions.Item label="Soft storage cap">
-                      {formatBytes(usageStatus.total_storage_soft_bytes)}
+                      {humanSize(usageStatus.total_storage_soft_bytes)}
                     </Descriptions.Item>
                   )}
                   {typeof usageStatus.total_storage_soft_remaining_bytes ===
@@ -456,7 +444,7 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                   )}
                   {typeof usageStatus.total_storage_hard_bytes === "number" && (
                     <Descriptions.Item label="Hard storage cap">
-                      {formatBytes(usageStatus.total_storage_hard_bytes)}
+                      {humanSize(usageStatus.total_storage_hard_bytes)}
                     </Descriptions.Item>
                   )}
                   {typeof usageStatus.total_storage_hard_remaining_bytes ===
@@ -481,7 +469,7 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                   )}
                   {typeof usageStatus.managed_egress_5h_bytes === "number" && (
                     <Descriptions.Item label="Managed egress used in 5 hours">
-                      {formatBytes(usageStatus.managed_egress_5h_bytes)}
+                      {humanSize(usageStatus.managed_egress_5h_bytes)}
                     </Descriptions.Item>
                   )}
                   {typeof usageStatus.managed_egress_5h_remaining_bytes ===
@@ -494,7 +482,7 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                   )}
                   {typeof usageStatus.managed_egress_7d_bytes === "number" && (
                     <Descriptions.Item label="Managed egress used in 7 days">
-                      {formatBytes(usageStatus.managed_egress_7d_bytes)}
+                      {humanSize(usageStatus.managed_egress_7d_bytes)}
                     </Descriptions.Item>
                   )}
                   {typeof usageStatus.managed_egress_7d_remaining_bytes ===

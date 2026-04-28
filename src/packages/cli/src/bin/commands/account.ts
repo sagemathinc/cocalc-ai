@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { humanSize } from "@cocalc/util/misc";
 
 import type {
   ManagedEgressEventSummary,
@@ -14,16 +15,7 @@ export type AccountCommandDeps = {
 function formatByteCount(bytes: unknown): string | null {
   const value = Number(bytes);
   if (!Number.isFinite(value) || value < 0) return null;
-  if (value === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  let n = value;
-  let unit = 0;
-  while (n >= 1024 && unit < units.length - 1) {
-    n /= 1024;
-    unit += 1;
-  }
-  const digits = n >= 10 || unit === 0 ? 0 : 1;
-  return `${n.toFixed(digits)} ${units[unit]}`;
+  return humanSize(value, { binary: true });
 }
 
 function serializeManagedEgressEvent(
