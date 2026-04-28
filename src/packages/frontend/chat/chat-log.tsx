@@ -954,6 +954,8 @@ export function MessageList({
             paddingTop: index == 0 ? "20px" : undefined,
             paddingLeft: 16,
             paddingRight: 16,
+            display: "flex",
+            justifyContent: "flex-end",
           }}
         >
           <div style={{ maxWidth: 780 }}>
