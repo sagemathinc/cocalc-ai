@@ -478,14 +478,14 @@ function getUsageStatusAlerts(
       key: "over-hard-storage",
       type: "error",
       title:
-        "Your account is over the hard total storage cap. Cloning and other storage-increasing operations may be blocked until you delete data or upgrade membership.",
+        "Your account is over the hard total storage cap. Storage-increasing operations are blocked until you delete data or upgrade membership.",
     });
   } else if (usageStatus.over_total_storage_soft) {
     alerts.push({
       key: "over-soft-storage",
       type: "warning",
       title:
-        "Your account is over the soft total storage cap. Storage-increasing operations may be degraded or blocked until you delete data or upgrade membership.",
+        "Your account is over the soft total storage cap. Storage-increasing operations are blocked until you delete data or upgrade membership.",
     });
   }
   if (usageStatus.over_max_projects) {

@@ -90,13 +90,15 @@ function getUsageAlerts(
     alerts.push({
       key: "hard-storage",
       type: "error",
-      title: "This user is over the hard total storage cap.",
+      title:
+        "This user is over the hard total storage cap. Storage-increasing operations are blocked.",
     });
   } else if (usageStatus.over_total_storage_soft) {
     alerts.push({
       key: "soft-storage",
       type: "warning",
-      title: "This user is over the soft total storage cap.",
+      title:
+        "This user is over the soft total storage cap. Storage-increasing operations are blocked.",
     });
   }
   if (usageStatus.over_max_projects) {

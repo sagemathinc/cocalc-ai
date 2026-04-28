@@ -268,6 +268,12 @@ function extractTotalStorageHardBytes(
   return getEffectiveMembershipUsageLimits(resolution).total_storage_hard_bytes;
 }
 
+function extractTotalStorageSoftBytes(
+  resolution: MembershipResolution,
+): number | undefined {
+  return getEffectiveMembershipUsageLimits(resolution).total_storage_soft_bytes;
+}
+
 function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB", "PB"];
   let value = bytes;
@@ -279,6 +285,50 @@ function formatBytes(bytes: number): string {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
+type AccountStorageBlockState = "ok" | "soft" | "hard";
+
+function getAccountStorageBlockState({
+  total_storage_bytes,
+  resolution,
+}: {
+  total_storage_bytes: number;
+  resolution: MembershipResolution;
+}): {
+  state: AccountStorageBlockState;
+  soft_cap_bytes?: number;
+  hard_cap_bytes?: number;
+} {
+  const soft_cap_bytes = extractTotalStorageSoftBytes(resolution);
+  const hard_cap_bytes = extractTotalStorageHardBytes(resolution);
+  if (
+    hard_cap_bytes != null &&
+    Number.isFinite(hard_cap_bytes) &&
+    total_storage_bytes >= hard_cap_bytes
+  ) {
+    return {
+      state: "hard",
+      soft_cap_bytes,
+      hard_cap_bytes,
+    };
+  }
+  if (
+    soft_cap_bytes != null &&
+    Number.isFinite(soft_cap_bytes) &&
+    total_storage_bytes >= soft_cap_bytes
+  ) {
+    return {
+      state: "soft",
+      soft_cap_bytes,
+      hard_cap_bytes,
+    };
+  }
+  return {
+    state: "ok",
+    soft_cap_bytes,
+    hard_cap_bytes,
+  };
+}
+
 export async function assertCanIncreaseAccountStorage({
   account_id,
   resolution,
@@ -288,18 +338,29 @@ export async function assertCanIncreaseAccountStorage({
 }): Promise<void> {
   const effectiveResolution =
     resolution ?? (await resolveMembershipForAccount(account_id));
+  const total_storage_soft_bytes =
+    extractTotalStorageSoftBytes(effectiveResolution);
   const total_storage_hard_bytes =
     extractTotalStorageHardBytes(effectiveResolution);
-  if (total_storage_hard_bytes == null) {
+  if (total_storage_soft_bytes == null && total_storage_hard_bytes == null) {
     return;
   }
   const usage = await getMembershipUsageStatusForAccount({
     account_id,
     resolution: effectiveResolution,
   });
-  if (usage.total_storage_bytes >= total_storage_hard_bytes) {
+  const state = getAccountStorageBlockState({
+    total_storage_bytes: usage.total_storage_bytes,
+    resolution: effectiveResolution,
+  });
+  if (state.state === "hard") {
     throw new Error(
-      `total account storage hard cap reached (${formatBytes(usage.total_storage_bytes)} of ${formatBytes(total_storage_hard_bytes)}); delete data or upgrade membership`,
+      `total account storage hard cap reached (${formatBytes(usage.total_storage_bytes)} of ${formatBytes(state.hard_cap_bytes ?? total_storage_hard_bytes ?? 0)}); storage-increasing operations are blocked until you delete data or upgrade membership`,
+    );
+  }
+  if (state.state === "soft") {
+    throw new Error(
+      `total account storage soft cap reached (${formatBytes(usage.total_storage_bytes)} of ${formatBytes(state.soft_cap_bytes ?? total_storage_soft_bytes ?? 0)}); storage-increasing operations are blocked until you delete data or upgrade membership`,
     );
   }
 }
@@ -337,9 +398,11 @@ export async function assertCanRestoreProvisionedProjectStorage({
   }
   const effectiveResolution =
     resolution ?? (await resolveMembershipForAccount(owner_account_id));
+  const total_storage_soft_bytes =
+    extractTotalStorageSoftBytes(effectiveResolution);
   const total_storage_hard_bytes =
     extractTotalStorageHardBytes(effectiveResolution);
-  if (total_storage_hard_bytes == null) {
+  if (total_storage_soft_bytes == null && total_storage_hard_bytes == null) {
     return;
   }
   const estimated_restore_bytes =
@@ -359,9 +422,18 @@ export async function assertCanRestoreProvisionedProjectStorage({
     resolution: effectiveResolution,
   });
   const projected_total = usage.total_storage_bytes + estimated_restore_bytes;
-  if (projected_total > total_storage_hard_bytes) {
+  const state = getAccountStorageBlockState({
+    total_storage_bytes: projected_total,
+    resolution: effectiveResolution,
+  });
+  if (state.state === "hard") {
     throw new Error(
-      `restoring this archived project would exceed the total account storage hard cap (${formatBytes(usage.total_storage_bytes)} current + ${formatBytes(estimated_restore_bytes)} estimated restore > ${formatBytes(total_storage_hard_bytes)} cap); archive/delete data or upgrade membership`,
+      `restoring this archived project would exceed the total account storage hard cap (${formatBytes(usage.total_storage_bytes)} current + ${formatBytes(estimated_restore_bytes)} estimated restore > ${formatBytes(state.hard_cap_bytes ?? total_storage_hard_bytes ?? 0)} cap); archive/delete data or upgrade membership`,
+    );
+  }
+  if (state.state === "soft") {
+    throw new Error(
+      `restoring this archived project would exceed the total account storage soft cap (${formatBytes(usage.total_storage_bytes)} current + ${formatBytes(estimated_restore_bytes)} estimated restore > ${formatBytes(state.soft_cap_bytes ?? total_storage_soft_bytes ?? 0)} cap); archive/delete data or upgrade membership`,
     );
   }
 }
