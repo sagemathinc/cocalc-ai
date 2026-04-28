@@ -131,6 +131,7 @@ import { getAccountCollaboratorIndexProjectionMaintenanceStatus } from "@cocalc/
 import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-notification-index-maintenance";
 import { getManagedProjectEgressPolicy as getManagedProjectEgressPolicyRaw } from "@cocalc/server/membership/managed-egress-policy";
 import { recordManagedProjectEgress as recordManagedProjectEgressRaw } from "@cocalc/server/membership/managed-egress";
+import sshKeys from "@cocalc/server/projects/get-ssh-keys";
 import { getAppFeedData as listAppNews0 } from "@cocalc/database/postgres/news";
 import type { NewsItemWebapp } from "@cocalc/util/types/news";
 import type {
@@ -2417,7 +2418,13 @@ export async function recordManagedProjectEgress({
   account_id?: string;
   host_id?: string;
   project_id?: string;
-  category: "file-download" | "http-proxy" | "ws-proxy" | "interactive-conat";
+  category:
+    | "file-download"
+    | "http-proxy"
+    | "ws-proxy"
+    | "ssh"
+    | "interactive-conat"
+    | "raw-network";
   bytes: number;
   metadata?: Record<string, unknown>;
 }) {
@@ -2449,7 +2456,13 @@ export async function getManagedProjectEgressPolicy({
   account_id?: string;
   host_id?: string;
   project_id?: string;
-  category: "file-download" | "http-proxy" | "ws-proxy" | "interactive-conat";
+  category:
+    | "file-download"
+    | "http-proxy"
+    | "ws-proxy"
+    | "ssh"
+    | "interactive-conat"
+    | "raw-network";
 }) {
   const resolvedProjectId = `${project_id ?? ""}`.trim()
     ? await resolveProjectContext({
@@ -2466,6 +2479,18 @@ export async function getManagedProjectEgressPolicy({
     project_id: resolvedProjectId,
     category,
   });
+}
+
+export async function resolveManagedProjectSshKeyAccount({
+  project_id,
+  fingerprint,
+}: {
+  project_id: string;
+  fingerprint: string;
+}): Promise<{ account_id?: string }> {
+  const keys = await sshKeys(project_id);
+  const account_id = keys[fingerprint]?.account_id;
+  return account_id ? { account_id } : {};
 }
 
 export async function getPublicSiteUrl({

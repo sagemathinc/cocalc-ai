@@ -88,6 +88,7 @@ import {
 } from "../rootfs-cache";
 import { withOciPullReservationIfNeeded } from "../storage-reservations";
 import { getLocalHostId } from "../sqlite/hosts";
+import { assertManagedRawNetworkStartAllowedBestEffort } from "../raw-network-egress";
 
 const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
@@ -710,6 +711,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   }> {
     const op_id = lro_op_id ?? uuid();
     const timings = createPhaseTimingRecorder();
+    await assertManagedRawNetworkStartAllowedBestEffort({ project_id });
     const resolved = await resolveStartMetadata({
       project_id,
       authorized_keys,

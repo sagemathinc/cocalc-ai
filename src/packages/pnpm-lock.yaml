@@ -1474,6 +1474,12 @@ importers:
       '@cocalc/util':
         specifier: workspace:*
         version: link:../util
+      '@grpc/grpc-js':
+        specifier: ^1.14.0
+        version: 1.14.0
+      '@grpc/proto-loader':
+        specifier: ^0.8.0
+        version: 0.8.0
       '@isaacs/ttlcache':
         specifier: ^1.4.1
         version: 1.4.1

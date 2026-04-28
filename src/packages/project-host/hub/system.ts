@@ -44,7 +44,9 @@ export function wireSystemApi(): void {
       | "file-download"
       | "http-proxy"
       | "ws-proxy"
-      | "interactive-conat";
+      | "ssh"
+      | "interactive-conat"
+      | "raw-network";
   }) => {
     return await forwardSystem("system.getManagedProjectEgressPolicy", [opts]);
   };
@@ -52,11 +54,26 @@ export function wireSystemApi(): void {
   hubApi.system.recordManagedProjectEgress = async (opts: {
     account_id?: string;
     project_id?: string;
-    category: "file-download" | "http-proxy" | "ws-proxy" | "interactive-conat";
+    category:
+      | "file-download"
+      | "http-proxy"
+      | "ws-proxy"
+      | "ssh"
+      | "interactive-conat"
+      | "raw-network";
     bytes: number;
     metadata?: Record<string, unknown>;
   }) => {
     return await forwardSystem("system.recordManagedProjectEgress", [opts]);
+  };
+
+  hubApi.system.resolveManagedProjectSshKeyAccount = async (opts: {
+    project_id: string;
+    fingerprint: string;
+  }) => {
+    return await forwardSystem("system.resolveManagedProjectSshKeyAccount", [
+      opts,
+    ]);
   };
 
   hubApi.system.getCustomize = async (fields?: string[]) => {

@@ -140,6 +140,10 @@ import {
   MANAGED_WS_EGRESS_CATEGORY,
   setManagedWsEgressContext,
 } from "./ws-egress";
+import {
+  MANAGED_RAW_NETWORK_EGRESS_CATEGORY,
+  startManagedRawNetworkEgressLoop,
+} from "./raw-network-egress";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -174,7 +178,11 @@ function formatManagedEgressCategory(category: string): string {
   if (category === MANAGED_WS_EGRESS_CATEGORY) {
     return "App server WebSocket traffic";
   }
+  if (category === "ssh") return "SSH traffic";
   if (category === "interactive-conat") return "Interactive session traffic";
+  if (category === MANAGED_RAW_NETWORK_EGRESS_CATEGORY) {
+    return "Project outbound network traffic";
+  }
   return category.replace(/[-_]/g, " ");
 }
 
@@ -1180,6 +1188,9 @@ export async function main(
     timeout: PROJECT_RUNNER_RPC_TIMEOUT_MS,
   });
   wireProjectsApi(runnerApi);
+  const stopRawNetworkEgressLoop = startManagedRawNetworkEgressLoop({
+    runnerApi,
+  });
 
   logger.info("Minimal HTTP API");
   app.get("/healthz", (_req, res) => res.json({ ok: true }));
@@ -1244,6 +1255,7 @@ export async function main(
     stopRuntimeConformanceMonitor?.();
     stopRuntimePostureMonitor?.();
     stopSnapshotBackupMaintenance?.();
+    stopRawNetworkEgressLoop?.();
     stopEventLoopStallMonitor?.();
     stopConatRevocationKickLoop?.();
     stopCodexSubscriptionCacheGc?.();
