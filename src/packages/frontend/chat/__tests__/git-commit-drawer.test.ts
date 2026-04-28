@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import {
+  filterGitReviewLogEntries,
   buildGitReviewFileSectionId,
   captureGitDiffScrollAnchor,
   DiffBlock,
@@ -271,6 +272,26 @@ describe("git commit drawer merge commit formatting", () => {
     expect(buildGitReviewFileSectionId("src/example.ts", 0)).not.toBe(
       buildGitReviewFileSectionId("src/example.ts", 1),
     );
+  });
+
+  it("filters the commit list down to unreviewed commits when requested", () => {
+    expect(
+      filterGitReviewLogEntries({
+        entries: [
+          { hash: "aaa1111", subject: "Reviewed commit" },
+          { hash: "bbb2222", subject: "Unreviewed commit" },
+          { hash: "ccc3333", subject: "Unknown review state" },
+        ],
+        reviewedByCommit: {
+          aaa1111: true,
+          bbb2222: false,
+        },
+        onlyUnreviewed: true,
+      }),
+    ).toEqual([
+      { hash: "bbb2222", subject: "Unreviewed commit" },
+      { hash: "ccc3333", subject: "Unknown review state" },
+    ]);
   });
 
   it("matches git review scroll keys without modifiers", () => {

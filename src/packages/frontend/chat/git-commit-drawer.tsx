@@ -300,6 +300,19 @@ type GitLogEntry = {
   subject: string;
 };
 
+export function filterGitReviewLogEntries({
+  entries,
+  reviewedByCommit,
+  onlyUnreviewed,
+}: {
+  entries: GitLogEntry[];
+  reviewedByCommit: Record<string, boolean>;
+  onlyUnreviewed: boolean;
+}): GitLogEntry[] {
+  if (!onlyUnreviewed) return entries;
+  return entries.filter((entry) => reviewedByCommit[entry.hash] !== true);
+}
+
 interface GitCommitDrawerProps {
   projectId?: string;
   sourcePath?: string;
@@ -1491,6 +1504,8 @@ export function GitCommitDrawer({
   const [selectedCommit, setSelectedCommit] = useState<string | undefined>(
     incomingCommit,
   );
+  const [showOnlyUnreviewedCommits, setShowOnlyUnreviewedCommits] =
+    useState(false);
   const commit = selectedCommit;
   const isHeadSelected = isHeadCommit(commit);
 
@@ -1705,27 +1720,51 @@ export function GitCommitDrawer({
     setSelectedCommit(gitLog[0].hash);
   }, [open, commit, gitLog]);
 
+  const navigableGitLog = useMemo(
+    () =>
+      filterGitReviewLogEntries({
+        entries: gitLog,
+        reviewedByCommit,
+        onlyUnreviewed: showOnlyUnreviewedCommits,
+      }),
+    [gitLog, reviewedByCommit, showOnlyUnreviewedCommits],
+  );
+
   const commitIndex = useMemo(() => {
     if (!commit) return -1;
-    return gitLog.findIndex((entry) => entry.hash === commit);
-  }, [gitLog, commit]);
+    return navigableGitLog.findIndex((entry) => entry.hash === commit);
+  }, [navigableGitLog, commit]);
 
   useEffect(() => {
     if (
       !open ||
       !commit ||
       isHeadSelected ||
-      gitLog.length === 0 ||
+      navigableGitLog.length === 0 ||
       commitIndex >= 0
     )
       return;
-    const prefixMatches = gitLog.filter((entry) =>
+    const prefixMatches = navigableGitLog.filter((entry) =>
       entry.hash.startsWith(commit),
     );
     if (prefixMatches.length === 1) {
       setSelectedCommit(prefixMatches[0].hash);
     }
-  }, [open, commit, isHeadSelected, gitLog, commitIndex]);
+  }, [open, commit, isHeadSelected, navigableGitLog, commitIndex]);
+
+  useEffect(() => {
+    if (!open || !showOnlyUnreviewedCommits) return;
+    if (isHeadSelected) return;
+    if (commitIndex >= 0) return;
+    if (navigableGitLog.length === 0) return;
+    setSelectedCommit(navigableGitLog[0].hash);
+  }, [
+    open,
+    showOnlyUnreviewedCommits,
+    isHeadSelected,
+    commitIndex,
+    navigableGitLog,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -1737,16 +1776,16 @@ export function GitCommitDrawer({
   }, [open, nonRepoError]);
 
   const visibleLogEntries = useMemo(() => {
-    if (gitLog.length === 0) return [] as GitLogEntry[];
+    if (navigableGitLog.length === 0) return [] as GitLogEntry[];
     if (commitIndex < 0) {
-      return gitLog.slice(0, GIT_LOG_WINDOW_SIZE);
+      return navigableGitLog.slice(0, GIT_LOG_WINDOW_SIZE);
     }
     const half = Math.floor(GIT_LOG_WINDOW_SIZE / 2);
     let start = Math.max(0, commitIndex - half);
-    let end = Math.min(gitLog.length, start + GIT_LOG_WINDOW_SIZE);
+    let end = Math.min(navigableGitLog.length, start + GIT_LOG_WINDOW_SIZE);
     start = Math.max(0, end - GIT_LOG_WINDOW_SIZE);
-    return gitLog.slice(start, end);
-  }, [gitLog, commitIndex]);
+    return navigableGitLog.slice(start, end);
+  }, [navigableGitLog, commitIndex]);
 
   const logOptions = useMemo(() => {
     const makeOptionLabel = (entry: GitLogEntry, fallback = false) => {
@@ -2694,19 +2733,19 @@ export function GitCommitDrawer({
 
   const canGoNewer = !isHeadSelected && commitIndex > 0;
   const canGoOlder = isHeadSelected
-    ? gitLog.length > 0
-    : commitIndex >= 0 && commitIndex < gitLog.length - 1;
+    ? navigableGitLog.length > 0
+    : commitIndex >= 0 && commitIndex < navigableGitLog.length - 1;
   const goNewer = () => {
     if (!canGoNewer) return;
-    setSelectedCommit(gitLog[commitIndex - 1]?.hash);
+    setSelectedCommit(navigableGitLog[commitIndex - 1]?.hash);
   };
   const goOlder = () => {
     if (!canGoOlder) return;
     if (isHeadSelected) {
-      setSelectedCommit(gitLog[0]?.hash);
+      setSelectedCommit(navigableGitLog[0]?.hash);
       return;
     }
-    setSelectedCommit(gitLog[commitIndex + 1]?.hash);
+    setSelectedCommit(navigableGitLog[commitIndex + 1]?.hash);
   };
 
   const requestAgentCommit = async ({
@@ -2845,9 +2884,9 @@ export function GitCommitDrawer({
         evt.preventDefault();
         if (canGoOlder) {
           if (isHeadSelected) {
-            setSelectedCommit(gitLog[0]?.hash);
+            setSelectedCommit(navigableGitLog[0]?.hash);
           } else {
-            setSelectedCommit(gitLog[commitIndex + 1]?.hash);
+            setSelectedCommit(navigableGitLog[commitIndex + 1]?.hash);
           }
         }
         return;
@@ -2855,7 +2894,7 @@ export function GitCommitDrawer({
       if (evt.key === "k") {
         evt.preventDefault();
         if (canGoNewer) {
-          setSelectedCommit(gitLog[commitIndex - 1]?.hash);
+          setSelectedCommit(navigableGitLog[commitIndex - 1]?.hash);
         }
         return;
       }
@@ -2876,7 +2915,7 @@ export function GitCommitDrawer({
     canGoOlder,
     canGoNewer,
     commitIndex,
-    gitLog,
+    navigableGitLog,
     contextLines,
     isHeadSelected,
     scrollStorageId,
@@ -2906,6 +2945,15 @@ export function GitCommitDrawer({
                 style={{ minWidth: 280, flex: "1 1 360px", maxWidth: 620 }}
                 optionFilterProp="search"
               />
+              <Checkbox
+                checked={showOnlyUnreviewedCommits}
+                onChange={(evt) =>
+                  setShowOnlyUnreviewedCommits(evt.target.checked)
+                }
+                style={{ whiteSpace: "nowrap" }}
+              >
+                Only unreviewed
+              </Checkbox>
               <Space.Compact size="small">
                 <Tooltip title="Newer commit (shortcut: k)">
                   <span style={{ display: "inline-flex" }}>
