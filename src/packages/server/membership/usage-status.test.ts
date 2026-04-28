@@ -4,7 +4,7 @@
  */
 
 const queryMock = jest.fn();
-const getStorageOverviewMock = jest.fn();
+const getDiskQuotaMock = jest.fn();
 const clientCloseMock = jest.fn();
 const getManagedEgressUsageForAccountMock = jest.fn();
 const getRecentManagedEgressEventsForAccountMock = jest.fn();
@@ -20,7 +20,7 @@ jest.mock("@cocalc/database/pool", () => ({
 }));
 
 jest.mock("@cocalc/conat/project/storage-info", () => ({
-  getStorageOverview: (...args: any[]) => getStorageOverviewMock(...args),
+  getDiskQuota: (...args: any[]) => getDiskQuotaMock(...args),
 }));
 
 jest.mock("@cocalc/server/conat/route-client", () => ({
@@ -55,13 +55,9 @@ describe("getMembershipUsageStatusForAccount", () => {
         { project_id: "project-3", host_id: null, provisioned: false },
       ],
     });
-    getStorageOverviewMock
-      .mockResolvedValueOnce({
-        quotas: [{ key: "project", used: 100, size: 1000 }],
-      })
-      .mockResolvedValueOnce({
-        quotas: [{ key: "project", used: 250, size: 1000 }],
-      });
+    getDiskQuotaMock
+      .mockResolvedValueOnce({ used: 100, size: 1000 })
+      .mockResolvedValueOnce({ used: 250, size: 1000 });
 
     const { getMembershipUsageStatusForAccount } =
       await import("./usage-status");
@@ -114,10 +110,8 @@ describe("getMembershipUsageStatusForAccount", () => {
         { project_id: "project-2", host_id: "host-2", provisioned: true },
       ],
     });
-    getStorageOverviewMock
-      .mockResolvedValueOnce({
-        quotas: [{ key: "project", used: 64, size: 1000 }],
-      })
+    getDiskQuotaMock
+      .mockResolvedValueOnce({ used: 64, size: 1000 })
       .mockRejectedValueOnce(new Error("route failed"));
 
     const { getMembershipUsageStatusForAccount } =
@@ -147,9 +141,7 @@ describe("getMembershipUsageStatusForAccount", () => {
         { project_id: "project-3", host_id: null, provisioned: false },
       ],
     });
-    getStorageOverviewMock.mockResolvedValueOnce({
-      quotas: [{ key: "project", used: 64, size: 1000 }],
-    });
+    getDiskQuotaMock.mockResolvedValueOnce({ used: 64, size: 1000 });
 
     const { getMembershipUsageStatusForAccount } =
       await import("./usage-status");
@@ -166,7 +158,7 @@ describe("getMembershipUsageStatusForAccount", () => {
     expect(result.sampled_project_count).toBe(1);
     expect(result.unsampled_project_count).toBe(0);
     expect(result.total_storage_bytes).toBe(64);
-    expect(getStorageOverviewMock).toHaveBeenCalledTimes(1);
+    expect(getDiskQuotaMock).toHaveBeenCalledTimes(1);
   });
 
   it("includes managed egress usage and category breakdowns", async () => {

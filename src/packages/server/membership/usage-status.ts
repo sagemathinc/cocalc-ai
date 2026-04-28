@@ -6,8 +6,8 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import {
-  getStorageOverview,
-  type ProjectStorageOverview,
+  getDiskQuota,
+  type ProjectDiskQuota,
 } from "@cocalc/conat/project/storage-info";
 import type {
   MembershipResolution,
@@ -49,8 +49,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   });
 }
 
-function extractQuotaUsedBytes(overview: ProjectStorageOverview): number {
-  const quota = overview.quotas.find((entry) => entry.key === "project");
+function extractQuotaUsedBytes(quota: ProjectDiskQuota): number {
   return typeof quota?.used === "number" && Number.isFinite(quota.used)
     ? quota.used
     : 0;
@@ -79,14 +78,14 @@ async function sampleProjectStorageBytes({
   project_id: string;
   client: ReturnType<typeof conatWithProjectRoutingForAccount>;
 }): Promise<number> {
-  const overview = await withTimeout(
-    getStorageOverview({
+  const quota = await withTimeout(
+    getDiskQuota({
       client,
       project_id,
     }),
     STORAGE_SAMPLE_TIMEOUT_MS,
   );
-  return extractQuotaUsedBytes(overview);
+  return extractQuotaUsedBytes(quota);
 }
 
 export async function getMembershipUsageStatusForAccount({
