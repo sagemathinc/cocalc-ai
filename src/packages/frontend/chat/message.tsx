@@ -53,6 +53,7 @@ import { isCodexModelName } from "@cocalc/util/ai/codex";
 import {
   deriveAcpLogRefs,
   getBestResponseText,
+  getLiveResponseBlocks,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
   getMountedIntermediateResponseMarkdown,
@@ -95,6 +96,7 @@ import {
   AgentActivityChip,
   AgentMessageStatus,
   AttachedSteerStatusList,
+  InlineSteerStatusRow,
   type AttachedSteerMessage,
 } from "./agent-message-status";
 import { useCodexLog } from "./use-codex-log";
@@ -950,6 +952,33 @@ export default function Message({
     acpInterruptedText,
     codexPreviewLog.events,
     effectiveGenerating,
+  ]);
+  const liveInterleavedCodexBlocks = useMemo(() => {
+    if (
+      !showCodexActivity ||
+      !effectiveGenerating ||
+      !Array.isArray(codexPreviewLog.events) ||
+      codexPreviewLog.events.length === 0
+    ) {
+      return undefined;
+    }
+    const steerItems = Array.isArray(activitySteers)
+      ? activitySteers.filter(
+          (steer) =>
+            typeof steer?.text === "string" && steer.text.trim().length > 0,
+        )
+      : [];
+    if (steerItems.length === 0) return undefined;
+    const blocks = getLiveResponseBlocks(
+      codexPreviewLog.events as any,
+      steerItems.map(({ date, text, state }) => ({ date, text, state })),
+    );
+    return blocks.length > 0 ? blocks : undefined;
+  }, [
+    activitySteers,
+    codexPreviewLog.events,
+    effectiveGenerating,
+    showCodexActivity,
   ]);
   const lastCodexActivityAtMs = useMemo(
     () => getLatestCodexActivityAtMs(codexPreviewLog.events),
@@ -1808,6 +1837,84 @@ export default function Message({
     );
   }
 
+  function renderInterleavedLiveCodexBody({
+    blocks,
+    message_class,
+    inlineCodeLinks,
+    openCommitFromMessage,
+  }: {
+    blocks: Array<{
+      kind: "agent" | "guidance";
+      text: string;
+      time?: number;
+      state?: "sending" | "sent" | "queued" | "not-sent";
+    }>;
+    message_class?: string;
+    inlineCodeLinks?: InlineCodeLink[];
+    openCommitFromMessage: (e: any) => void;
+  }) {
+    const combinedAgentText = blocks
+      .filter((block) => block.kind === "agent")
+      .map((block) => block.text)
+      .join("\n\n");
+    return (
+      <div onClickCapture={openCommitFromMessage}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          {blocks.map((block, index) =>
+            block.kind === "guidance" ? (
+              <div
+                key={`guidance-${index}-${block.time ?? index}`}
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                }}
+              >
+                <div style={{ maxWidth: "80%" }}>
+                  <InlineSteerStatusRow
+                    steer={{
+                      messageId: `live-guidance-${index}`,
+                      date: block.time ?? 0,
+                      text: block.text,
+                      state: block.state ?? "sent",
+                    }}
+                  />
+                </div>
+              </div>
+            ) : messageBodyMode === "select" ? (
+              <div key={`agent-${index}-${block.time ?? index}`}>
+                {renderSelectableMarkdownBody({
+                  value: linkifyCommitHashes(block.text),
+                  message_class,
+                  style: MARKDOWN_STYLE,
+                })}
+              </div>
+            ) : (
+              <StaticMarkdown
+                key={`agent-${index}-${block.time ?? index}`}
+                style={MARKDOWN_STYLE}
+                value={linkifyCommitHashes(block.text)}
+                className={message_class}
+                editorTheme={editorTheme}
+                highlightQuery={searchHighlight}
+                inlineCodeLinks={
+                  Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+                }
+                inlineCodeProjectRoot={activityBasePath}
+              />
+            ),
+          )}
+        </div>
+        <CodexQuotaHelp message={combinedAgentText} projectId={project_id} />
+      </div>
+    );
+  }
+
   function renderMessageBody({ message_class }) {
     const value = renderedMessageMarkdown;
     const suppressPlaceholderBody = shouldSuppressAcpPlaceholderBody({
@@ -1818,6 +1925,11 @@ export default function Message({
       message,
       "inline_code_links",
     );
+    const shouldRenderInterleavedLiveCodexBody =
+      effectiveGenerating &&
+      showCodexActivity &&
+      Array.isArray(liveInterleavedCodexBlocks) &&
+      liveInterleavedCodexBlocks.length > 0;
     const openCommitFromMessage = (e: any) => {
       const target = e.target as HTMLElement | null;
       const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
@@ -1911,7 +2023,16 @@ export default function Message({
             </span>
           </div>
         ) : null}
-        {!suppressPlaceholderBody && value.trim().length > 0 ? (
+        {shouldRenderInterleavedLiveCodexBody ? (
+          renderInterleavedLiveCodexBody({
+            blocks: liveInterleavedCodexBlocks,
+            message_class,
+            inlineCodeLinks: Array.isArray(inlineCodeLinks)
+              ? inlineCodeLinks
+              : undefined,
+            openCommitFromMessage,
+          })
+        ) : !suppressPlaceholderBody && value.trim().length > 0 ? (
           <div onClickCapture={openCommitFromMessage}>
             {messageBodyMode === "select" ? (
               renderSelectableMarkdownBody({

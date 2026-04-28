@@ -259,14 +259,21 @@ export function getLatestEventLineText(
 }
 
 export function getAgentMessageTexts(events: AcpStreamMessage[]): string[] {
-  const messages: Array<{ text: string; hasDelta: boolean }> = [];
+  return getAgentMessageBlocks(events).map(({ text }) => text);
+}
+
+export function getAgentMessageBlocks(
+  events: AcpStreamMessage[],
+): Array<{ text: string; time?: number }> {
+  const blocks: Array<{ text: string; time?: number; hasDelta: boolean }> = [];
   for (const evt of events ?? []) {
     if (evt?.type !== "event" || evt.event?.type !== "message") continue;
     const text = evt.event.text;
     if (typeof text !== "string" || text.trim().length === 0) continue;
-    const last = messages[messages.length - 1];
+    const last = blocks[blocks.length - 1];
     if (last?.text === text) {
       last.hasDelta = last.hasDelta || evt.event.delta === true;
+      last.time = evt.time ?? last.time;
       continue;
     }
     const progressive = mergeProgressiveMessageText(last?.text, text, {
@@ -274,15 +281,69 @@ export function getAgentMessageTexts(events: AcpStreamMessage[]): string[] {
       nextIsDelta: evt.event.delta === true,
     });
     if (typeof progressive === "string") {
-      messages[messages.length - 1] = {
+      blocks[blocks.length - 1] = {
         text: progressive,
         hasDelta: (last?.hasDelta ?? false) || evt.event.delta === true,
+        time: evt.time ?? last?.time,
       };
       continue;
     }
-    messages.push({ text, hasDelta: evt.event.delta === true });
+    blocks.push({
+      text,
+      hasDelta: evt.event.delta === true,
+      time: evt.time,
+    });
   }
-  return messages.map(({ text }) => text);
+  return blocks.map(({ text, time }) => ({ text, time }));
+}
+
+export function getLiveResponseBlocks(
+  events: AcpStreamMessage[],
+  guidance?: Array<{
+    date: number;
+    text: string;
+    state?: "sending" | "sent" | "queued" | "not-sent";
+  }>,
+): Array<{
+  kind: "agent" | "guidance";
+  text: string;
+  time?: number;
+  state?: "sending" | "sent" | "queued" | "not-sent";
+}> {
+  const blocks = getAgentMessageBlocks(events).map((block, index) => ({
+    kind: "agent" as const,
+    text: block.text,
+    time: block.time,
+    state: undefined,
+    seq: index,
+  }));
+  const guidanceBlocks = (guidance ?? [])
+    .filter(
+      (item) => typeof item?.text === "string" && item.text.trim().length > 0,
+    )
+    .map((item, index) => ({
+      kind: "guidance" as const,
+      text: item.text,
+      time: item.date,
+      state: item.state,
+      seq: Number.MAX_SAFE_INTEGER - (guidance?.length ?? 0) + index,
+    }));
+  const merged = [...blocks, ...guidanceBlocks].sort((a, b) => {
+    const aTime = typeof a.time === "number" ? a.time : undefined;
+    const bTime = typeof b.time === "number" ? b.time : undefined;
+    if (aTime != null && bTime != null && aTime !== bTime) {
+      return aTime - bTime;
+    }
+    if (aTime == null && bTime != null) return 1;
+    if (aTime != null && bTime == null) return -1;
+    return a.seq - b.seq;
+  });
+  return merged.map(({ kind, text, time, state }) => ({
+    kind,
+    text,
+    time,
+    state,
+  }));
 }
 
 export function mergeProgressiveMessageText(
