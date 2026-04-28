@@ -478,7 +478,12 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const codeBlockCacheRef = useRef<
       WeakMap<
         SlateElement,
-        { text: string; info: string; decorations: DecoratedRange[][] }
+        {
+          children: SlateElement["children"];
+          info: string;
+          pathKey: string;
+          decorations: DecoratedRange[][];
+        }
       >
     >(new WeakMap());
 
@@ -504,27 +509,38 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         const [block, blockPath] = blockEntry as [SlateElement, number[]];
         const lineIndex = lineEntry[1][lineEntry[1].length - 1];
         const cache = codeBlockCacheRef.current;
-        const text = block.children.map((line) => Node.string(line)).join("\n");
         const info =
           block.type === "code_block"
             ? ((block as CodeBlock).info ?? "")
             : block.type === "html_block"
               ? "html"
               : "yaml";
+        const pathKey = blockPath.join(",");
         const cached = cache.get(block);
-        let decorations = cached?.decorations;
-        if (!cached || cached.text !== text || cached.info !== info) {
-          const blockForDecorations =
-            block.type === "code_block"
-              ? (block as CodeBlock)
-              : ({ ...(block as any), type: "code_block", info } as CodeBlock);
-          decorations = buildCodeBlockDecorations(
-            blockForDecorations,
-            blockPath,
-            info,
-          );
-          cache.set(block, { text, info, decorations });
+        if (
+          cached &&
+          cached.children === block.children &&
+          cached.info === info &&
+          cached.pathKey === pathKey
+        ) {
+          const lineDecorations = cached.decorations?.[lineIndex] ?? [];
+          return [...searchRanges, ...lineDecorations];
         }
+        const blockForDecorations =
+          block.type === "code_block"
+            ? (block as CodeBlock)
+            : ({ ...(block as any), type: "code_block", info } as CodeBlock);
+        const decorations = buildCodeBlockDecorations(
+          blockForDecorations,
+          blockPath,
+          info,
+        );
+        cache.set(block, {
+          children: block.children,
+          info,
+          pathKey,
+          decorations,
+        });
         const lineDecorations = decorations?.[lineIndex] ?? [];
         return [...searchRanges, ...lineDecorations];
       },

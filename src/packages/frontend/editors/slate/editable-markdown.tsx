@@ -111,10 +111,7 @@ import type { SlateEditor } from "./types";
 import { Actions } from "./types";
 import useUpload from "./upload";
 import { ChangeContext } from "./use-change";
-import {
-  buildCodeBlockDecorations,
-  getPrismGrammar,
-} from "./elements/code-block/prism";
+import { buildCodeBlockDecorations } from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
 import type { JupyterGapCursor } from "./jupyter-cell-context";
 
@@ -1045,7 +1042,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const codeBlockCacheRef = useRef<
     WeakMap<
       SlateElement,
-      { text: string; info: string; decorations: DecoratedRange[][] }
+      {
+        children: SlateElement["children"];
+        info: string;
+        pathKey: string;
+        decorations: DecoratedRange[][];
+      }
     >
   >(new WeakMap());
 
@@ -1070,30 +1072,34 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       const [block, blockPath] = blockEntry as [SlateElement, number[]];
       const lineIndex = lineEntry[1][lineEntry[1].length - 1];
       const cache = codeBlockCacheRef.current;
-      const text = block.children.map((line) => Node.string(line)).join("\n");
       const info =
         block.type === "code_block" || block.type === "jupyter_code_cell"
           ? ((block as CodeBlock).info ?? "")
           : block.type === "html_block"
             ? "html"
             : "yaml";
+      const pathKey = blockPath.join(",");
       const cached = cache.get(block);
-      if (!cached || cached.text !== text || cached.info !== info) {
-        if (getPrismGrammar(info, text)) {
-          cache.set(block, {
-            text,
-            info,
-            decorations: buildCodeBlockDecorations(
-              block as CodeBlock,
-              blockPath,
-              info,
-            ),
-          });
-        } else {
-          cache.set(block, { text, info, decorations: [] });
-        }
+      if (
+        cached &&
+        cached.children === block.children &&
+        cached.info === info &&
+        cached.pathKey === pathKey
+      ) {
+        return cached.decorations?.[lineIndex] ?? [];
       }
-      return cache.get(block)?.decorations?.[lineIndex] ?? [];
+      const decorations = buildCodeBlockDecorations(
+        block as CodeBlock,
+        blockPath,
+        info,
+      );
+      cache.set(block, {
+        children: block.children,
+        info,
+        pathKey,
+        decorations,
+      });
+      return decorations?.[lineIndex] ?? [];
     },
     [editor],
   );
