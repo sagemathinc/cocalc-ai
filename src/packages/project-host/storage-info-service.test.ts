@@ -87,7 +87,6 @@ describe("project storage info service", () => {
         qgroupid: "0/2",
         scope: "subvolume",
       })),
-      allSnapshotUsage: jest.fn(async () => [{ exclusive: 8_000_000 }]),
     });
     fsClientMock.mockReturnValue({
       dust: dustMock,
@@ -108,7 +107,7 @@ describe("project storage info service", () => {
       "home",
       "scratch",
     ]);
-    expect(overview.counted[0]?.key).toBe("snapshots");
+    expect(overview.counted).toEqual([]);
     expect(stream.publish).toHaveBeenCalledTimes(1);
     expect(fsClientMock).toHaveBeenCalledWith(
       expect.objectContaining({ waitForInterest: false }),
