@@ -18,6 +18,7 @@ import {
   getOrCreateProjectLocalSecretToken,
   upsertProject,
 } from "../sqlite/projects";
+import { upsertProjectStopState } from "../sqlite/stop-policy";
 import { type CreateProjectOptions } from "@cocalc/util/db-schema/projects";
 import type {
   ChatStoreArchivedRow,
@@ -716,6 +717,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     await ensureVolume(project_id);
 
     if (opts.start) {
+      upsertProjectStopState({
+        project_id,
+        last_started_ms: Date.now(),
+      });
       // Immediately mark as starting so the master reflects that state while we pull/podman up.
       ensureProjectRow({
         project_id,
@@ -779,6 +784,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       authorized_keys,
       run_quota,
       image,
+    });
+    upsertProjectStopState({
+      project_id,
+      last_started_ms: Date.now(),
     });
     // Mark as starting immediately so hub/clients see progress even if image pulls are slow.
     ensureProjectRow({

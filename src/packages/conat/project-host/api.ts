@@ -317,6 +317,7 @@ function subjectForHost(host_id: string): string {
 }
 
 const STATUS_SUBJECT = "project-hosts.status";
+const REGISTRY_SUBJECT = "project-hosts.api";
 export const ONPREM_REST_TUNNEL_LOCAL_PORT = 9345;
 
 export function createHostControlClient({
@@ -383,6 +384,32 @@ export interface HostProjectMaintenanceSchedule {
   max_backups_per_project?: number | null;
 }
 
+export interface HostRegistryRegistration {
+  id: string;
+  name?: string;
+  region?: string;
+  public_url?: string;
+  internal_url?: string;
+  ssh_server?: string;
+  sshpiperd_public_key?: string;
+  project_host_auth_public_key?: string;
+  status?: string;
+  version?: string;
+  capacity?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export type HostProjectStopOverride = "default" | "protect" | "deprioritize";
+
+export interface HostProjectStopPolicyRow {
+  project_id: string;
+  owner_account_id: string | null;
+  shared_compute_priority: number;
+  authoritative_last_edited_ms: number | null;
+  policy_updated_ms: number;
+  stop_override: HostProjectStopOverride;
+}
+
 export type SoftwareArtifact =
   | "project-host"
   | "project"
@@ -445,6 +472,96 @@ export interface HostStatusApi {
   registerOnPremTunnel: (
     opts: HostRegisterOnPremTunnelRequest,
   ) => Promise<HostRegisterOnPremTunnelResponse>;
+}
+
+export interface HostRegistryApi {
+  register: (info: HostRegistryRegistration) => Promise<void>;
+  heartbeat: (info: HostRegistryRegistration) => Promise<void>;
+  shutdownNotice: (opts: {
+    host_id: string;
+    host_session_id?: string;
+    signal?: string;
+    reason?: string;
+  }) => Promise<void>;
+  getProjectHostAuthPublicKey: () => Promise<{
+    project_host_auth_public_key: string;
+  }>;
+  listProjectUserDeltas: (opts: {
+    host_id: string;
+    since_ms?: number;
+    limit?: number;
+  }) => Promise<{
+    rows: Array<{ project_id: string; users: any; updated_ms: number }>;
+    next_since_ms: number;
+    has_more: boolean;
+  }>;
+  listProjectUserReconcile: (opts: {
+    host_id: string;
+    limit?: number;
+    recent_days?: number;
+  }) => Promise<{
+    rows: Array<{ project_id: string; users: any; updated_ms: number }>;
+    as_of_ms: number;
+    has_more: boolean;
+  }>;
+  listProjectStopPolicyDeltas: (opts: {
+    host_id: string;
+    since_ms?: number;
+    limit?: number;
+  }) => Promise<{
+    rows: HostProjectStopPolicyRow[];
+    next_since_ms: number;
+    has_more: boolean;
+  }>;
+  listProjectStopPolicyReconcile: (opts: {
+    host_id: string;
+    limit?: number;
+    recent_days?: number;
+  }) => Promise<{
+    rows: HostProjectStopPolicyRow[];
+    as_of_ms: number;
+    has_more: boolean;
+  }>;
+  getMasterConatTokenStatus: (opts: {
+    host_id: string;
+    current_token: string;
+  }) => Promise<{ expires_at: string }>;
+  rotateMasterConatToken: (opts: {
+    host_id: string;
+    current_token?: string;
+    bootstrap_token?: string;
+  }) => Promise<{ master_conat_token: string }>;
+}
+
+export function createHostRegistryClient({
+  client,
+  timeout,
+}: {
+  client: Client;
+  timeout?;
+}): HostRegistryApi {
+  return createServiceClient<HostRegistryApi>({
+    service: "project-host",
+    subject: REGISTRY_SUBJECT,
+    client,
+    timeout,
+  });
+}
+
+export function createHostRegistryService({
+  client,
+  impl,
+}: {
+  client: Client;
+  impl: HostRegistryApi;
+}): ConatService {
+  return createServiceHandler<HostRegistryApi>({
+    service: "project-host",
+    subject: REGISTRY_SUBJECT,
+    description: "Project-host registry and metadata sync",
+    client,
+    impl,
+  });
 }
 
 export function createHostStatusClient({

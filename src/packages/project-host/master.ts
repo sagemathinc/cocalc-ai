@@ -1,4 +1,3 @@
-import { createServiceClient } from "@cocalc/conat/service/typed";
 import getLogger from "@cocalc/backend/logger";
 import { randomUUID } from "crypto";
 import { readFileSync } from "node:fs";
@@ -7,7 +6,9 @@ import { availableParallelism, homedir, totalmem, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { getRow, upsertRow } from "@cocalc/lite/hub/sqlite/database";
 import {
+  createHostRegistryClient,
   createHostControlService,
+  type HostProjectStopPolicyRow,
   type HostRuntimeLogSource,
 } from "@cocalc/conat/project-host/api";
 import { hubApi } from "@cocalc/lite/hub/api";
@@ -53,6 +54,7 @@ import { applyPendingCopies } from "./pending-copies";
 import { getManagedComponentStatus } from "./managed-components";
 import { rolloutManagedComponents } from "./managed-component-rollout";
 import { readHostAgentState } from "./host-agent-state";
+import { upsertProjectStopPolicy } from "./sqlite/stop-policy";
 
 const logger = getLogger("project-host:master");
 
@@ -82,15 +84,34 @@ const USER_DELTA_SYNC_MS = Math.max(
   2_000,
   Number(process.env.COCALC_PROJECT_HOST_USER_DELTA_SYNC_MS ?? 10_000),
 );
+const STOP_POLICY_DELTA_SYNC_MS = Math.max(
+  2_000,
+  Number(process.env.COCALC_PROJECT_HOST_STOP_POLICY_DELTA_SYNC_MS ?? 10_000),
+);
 const USER_RECONCILE_MS = Math.max(
   60_000,
   Number(process.env.COCALC_PROJECT_HOST_USER_RECONCILE_MS ?? 5 * 60_000),
+);
+const STOP_POLICY_RECONCILE_MS = Math.max(
+  60_000,
+  Number(
+    process.env.COCALC_PROJECT_HOST_STOP_POLICY_RECONCILE_MS ?? 5 * 60_000,
+  ),
 );
 const USER_DELTA_BATCH_LIMIT = Math.max(
   50,
   Math.min(
     2_000,
     Number(process.env.COCALC_PROJECT_HOST_USER_DELTA_BATCH_LIMIT ?? 500),
+  ),
+);
+const STOP_POLICY_DELTA_BATCH_LIMIT = Math.max(
+  50,
+  Math.min(
+    2_000,
+    Number(
+      process.env.COCALC_PROJECT_HOST_STOP_POLICY_DELTA_BATCH_LIMIT ?? 500,
+    ),
   ),
 );
 
@@ -112,6 +133,15 @@ const USER_RECONCILE_LIMIT = Math.max(
     Number(process.env.COCALC_PROJECT_HOST_USER_RECONCILE_LIMIT ?? 2_000),
   ),
 );
+const STOP_POLICY_RECONCILE_LIMIT = Math.max(
+  100,
+  Math.min(
+    5_000,
+    Number(
+      process.env.COCALC_PROJECT_HOST_STOP_POLICY_RECONCILE_LIMIT ?? 2_000,
+    ),
+  ),
+);
 const USER_RECONCILE_RECENT_DAYS = Math.max(
   1,
   Math.min(
@@ -119,11 +149,21 @@ const USER_RECONCILE_RECENT_DAYS = Math.max(
     Number(process.env.COCALC_PROJECT_HOST_USER_RECONCILE_RECENT_DAYS ?? 7),
   ),
 );
+const STOP_POLICY_RECONCILE_RECENT_DAYS = Math.max(
+  1,
+  Math.min(
+    90,
+    Number(
+      process.env.COCALC_PROJECT_HOST_STOP_POLICY_RECONCILE_RECENT_DAYS ?? 7,
+    ),
+  ),
+);
 const ROOTFS_CACHE_GC_MS = Math.max(
   60_000,
   Number(process.env.COCALC_PROJECT_HOST_ROOTFS_CACHE_GC_MS ?? 15 * 60_000),
 );
 const USER_DELTA_CURSOR_KEY = "users-delta-cursor";
+const STOP_POLICY_DELTA_CURSOR_KEY = "stop-policy-delta-cursor";
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 const DEFAULT_RUNTIME_LOG_PATH =
   process.env.COCALC_PROJECT_HOST_LOG?.trim() ||
@@ -688,54 +728,7 @@ export async function startMasterRegistration({
   const sshpiperdKey = ensureSshpiperdKey(id);
   setSshpiperdPublicKey(id, sshpiperdKey.publicKey);
 
-  const registry = createServiceClient<{
-    register: (info: HostRegistration) => Promise<void>;
-    heartbeat: (info: HostRegistration) => Promise<void>;
-    shutdownNotice: (opts: {
-      host_id: string;
-      host_session_id?: string;
-      signal?: string;
-      reason?: string;
-    }) => Promise<void>;
-    getProjectHostAuthPublicKey: () => Promise<{
-      project_host_auth_public_key: string;
-    }>;
-    listProjectUserDeltas: (opts: {
-      host_id: string;
-      since_ms?: number;
-      limit?: number;
-    }) => Promise<{
-      rows: Array<{ project_id: string; users: any; updated_ms: number }>;
-      next_since_ms: number;
-      has_more: boolean;
-    }>;
-    listProjectUserReconcile: (opts: {
-      host_id: string;
-      limit?: number;
-      recent_days?: number;
-    }) => Promise<{
-      rows: Array<{ project_id: string; users: any; updated_ms: number }>;
-      as_of_ms: number;
-      has_more: boolean;
-    }>;
-    getMasterConatTokenStatus: (opts: {
-      host_id: string;
-      current_token: string;
-    }) => Promise<{
-      expires_at: string;
-    }>;
-    rotateMasterConatToken: (opts: {
-      host_id: string;
-      current_token?: string;
-      bootstrap_token?: string;
-    }) => Promise<{
-      master_conat_token: string;
-    }>;
-  }>({
-    service: SUBJECT,
-    subject: `${SUBJECT}.api`,
-    client,
-  });
+  const registry = createHostRegistryClient({ client });
 
   // Control plane for this host (master can ask us to create/start/stop projects).
   const controlService = createHostControlService({
@@ -1004,6 +997,19 @@ export async function startMasterRegistration({
     });
   };
 
+  const getStopPolicyDeltaCursor = (): number => {
+    const row = getRow("project-host", STOP_POLICY_DELTA_CURSOR_KEY);
+    const value = Number((row as any)?.cursor_ms ?? 0);
+    return Number.isFinite(value) && value >= 0 ? value : 0;
+  };
+
+  const setStopPolicyDeltaCursor = (cursor_ms: number) => {
+    upsertRow("project-host", STOP_POLICY_DELTA_CURSOR_KEY, {
+      cursor_ms: Math.max(0, Math.floor(cursor_ms)),
+      updated_at: Date.now(),
+    });
+  };
+
   const applyUserRows = async (
     rows: Array<{ project_id: string; users: any; updated_ms: number }>,
   ): Promise<number> => {
@@ -1019,6 +1025,36 @@ export async function startMasterRegistration({
         applied += 1;
       } catch (err) {
         logger.debug("failed applying project users delta", {
+          project_id,
+          err,
+        });
+      }
+    }
+    return applied;
+  };
+
+  const applyStopPolicyRows = async (
+    rows: HostProjectStopPolicyRow[],
+  ): Promise<number> => {
+    let applied = 0;
+    for (const row of rows) {
+      const project_id = `${row?.project_id ?? ""}`.trim();
+      if (!project_id) continue;
+      try {
+        upsertProjectStopPolicy({
+          project_id,
+          owner_account_id: `${row?.owner_account_id ?? ""}`.trim() || null,
+          shared_compute_priority: Number(row?.shared_compute_priority ?? 0),
+          authoritative_last_edited_ms:
+            row?.authoritative_last_edited_ms != null
+              ? Number(row.authoritative_last_edited_ms)
+              : null,
+          policy_updated_ms: Number(row?.policy_updated_ms ?? 0),
+          stop_override: row?.stop_override ?? "default",
+        });
+        applied += 1;
+      } catch (err) {
+        logger.debug("failed applying stop policy delta", {
           project_id,
           err,
         });
@@ -1071,6 +1107,59 @@ export async function startMasterRegistration({
       setUserDeltaCursor(Math.max(getUserDeltaCursor(), cursorCandidate));
     }
     logger.debug("project user reconcile completed", {
+      reason,
+      returned: rows.length,
+      applied,
+      truncated: !!resp?.has_more,
+    });
+  };
+
+  const syncStopPolicyDeltas = async (reason: string): Promise<void> => {
+    let cursor = getStopPolicyDeltaCursor();
+    let totalApplied = 0;
+    let batches = 0;
+    while (batches < 5) {
+      const resp = await registry.listProjectStopPolicyDeltas({
+        host_id: id,
+        since_ms: cursor,
+        limit: STOP_POLICY_DELTA_BATCH_LIMIT,
+      });
+      batches += 1;
+      const rows = resp?.rows ?? [];
+      totalApplied += await applyStopPolicyRows(rows);
+      cursor = Math.max(cursor, Number(resp?.next_since_ms ?? cursor));
+      if (!resp?.has_more || rows.length === 0) {
+        break;
+      }
+    }
+    setStopPolicyDeltaCursor(cursor);
+    if (totalApplied > 0) {
+      logger.debug("applied stop policy deltas", {
+        reason,
+        applied: totalApplied,
+        cursor_ms: cursor,
+      });
+    }
+  };
+
+  const reconcileStopPolicy = async (reason: string): Promise<void> => {
+    const resp = await registry.listProjectStopPolicyReconcile({
+      host_id: id,
+      limit: STOP_POLICY_RECONCILE_LIMIT,
+      recent_days: STOP_POLICY_RECONCILE_RECENT_DAYS,
+    });
+    const rows = resp?.rows ?? [];
+    const applied = await applyStopPolicyRows(rows);
+    const cursorCandidate = rows.reduce(
+      (m, row) => Math.max(m, Number(row?.policy_updated_ms ?? 0)),
+      0,
+    );
+    if (cursorCandidate > 0) {
+      setStopPolicyDeltaCursor(
+        Math.max(getStopPolicyDeltaCursor(), cursorCandidate),
+      );
+    }
+    logger.debug("project stop policy reconcile completed", {
       reason,
       returned: rows.length,
       applied,
@@ -1240,8 +1329,10 @@ export async function startMasterRegistration({
   try {
     await syncUserDeltas("startup");
     await reconcileUsers("startup");
+    await syncStopPolicyDeltas("startup");
+    await reconcileStopPolicy("startup");
   } catch (err) {
-    logger.warn("initial project user sync failed", { err });
+    logger.warn("initial project metadata sync failed", { err });
   }
   try {
     const rootfsGc = await gcDeletedManagedRootfsCacheEntries();
@@ -1258,12 +1349,24 @@ export async function startMasterRegistration({
     );
   }, USER_DELTA_SYNC_MS);
   deltaTimer.unref?.();
+  const stopPolicyDeltaTimer = setInterval(() => {
+    void syncStopPolicyDeltas("interval").catch((err) =>
+      logger.debug("project stop policy delta sync failed", { err }),
+    );
+  }, STOP_POLICY_DELTA_SYNC_MS);
+  stopPolicyDeltaTimer.unref?.();
   const reconcileTimer = setInterval(() => {
     void reconcileUsers("interval").catch((err) =>
       logger.debug("project user reconcile failed", { err }),
     );
   }, USER_RECONCILE_MS);
   reconcileTimer.unref?.();
+  const stopPolicyReconcileTimer = setInterval(() => {
+    void reconcileStopPolicy("interval").catch((err) =>
+      logger.debug("project stop policy reconcile failed", { err }),
+    );
+  }, STOP_POLICY_RECONCILE_MS);
+  stopPolicyReconcileTimer.unref?.();
   const rootfsGcTimer = setInterval(() => {
     void gcDeletedManagedRootfsCacheEntries()
       .then((result) => {
@@ -1315,7 +1418,9 @@ export async function startMasterRegistration({
   const stop = () => {
     clearInterval(timer);
     clearInterval(deltaTimer);
+    clearInterval(stopPolicyDeltaTimer);
     clearInterval(reconcileTimer);
+    clearInterval(stopPolicyReconcileTimer);
     clearInterval(rootfsGcTimer);
     clearInterval(missingTokenProbe);
     if (tokenRotationTimer) {

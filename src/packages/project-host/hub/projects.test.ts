@@ -27,6 +27,7 @@ const readChatStoreArchivedHit = jest.fn();
 const searchChatStoreArchived = jest.fn();
 const deleteChatStoreData = jest.fn();
 const vacuumChatStore = jest.fn();
+const upsertProjectStopState = jest.fn();
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
 jest.mock("@cocalc/backend/data", () => ({
@@ -60,6 +61,9 @@ jest.mock("../sqlite/projects", () => ({
   getOrCreateProjectLocalSecretToken: (...args: any[]) =>
     getOrCreateProjectLocalSecretToken(...args),
   upsertProject: (...args: any[]) => upsertProject(...args),
+}));
+jest.mock("../sqlite/stop-policy", () => ({
+  upsertProjectStopState: (...args: any[]) => upsertProjectStopState(...args),
 }));
 jest.mock("../master-status", () => ({
   getMasterConatClient: (...args: any[]) => getMasterConatClient(...args),
@@ -155,6 +159,7 @@ describe("project host start ACP rehydrate ordering", () => {
     searchChatStoreArchived.mockReset();
     deleteChatStoreData.mockReset();
     vacuumChatStore.mockReset();
+    upsertProjectStopState.mockReset();
   });
 
   it("does not rehydrate ACP automations before runner start on start()", async () => {
@@ -181,6 +186,12 @@ describe("project host start ACP rehydrate ordering", () => {
 
     expect(order).toEqual(["applyPendingCopies", "runner:start", "rehydrate"]);
     expect(rehydrateAcpAutomationsForProject).toHaveBeenCalledTimes(1);
+    expect(upsertProjectStopState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id,
+        last_started_ms: expect.any(Number),
+      }),
+    );
   });
 
   it("does not rehydrate ACP automations for createProject when start is false", async () => {
@@ -219,6 +230,12 @@ describe("project host start ACP rehydrate ordering", () => {
 
     expect(order).toEqual(["runner:start", "rehydrate"]);
     expect(rehydrateAcpAutomationsForProject).toHaveBeenCalledTimes(1);
+    expect(upsertProjectStopState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id,
+        last_started_ms: expect.any(Number),
+      }),
+    );
   });
 
   it("does not wait for ACP rehydrate before returning from start()", async () => {

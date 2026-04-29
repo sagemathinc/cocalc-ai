@@ -11,6 +11,7 @@ let ensureAutomaticHostArtifactDeploymentsReconcileMock: jest.Mock;
 let publishMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
+let resolveMembershipForAccountMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -40,6 +41,11 @@ jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
 jest.mock("@cocalc/server/account/project-feed", () => ({
   publishProjectAccountFeedEventsBestEffort: (...args: any[]) =>
     publishProjectAccountFeedEventsBestEffortMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/resolve", () => ({
+  resolveMembershipForAccount: (...args: any[]) =>
+    resolveMembershipForAccountMock(...args),
 }));
 
 jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
@@ -80,6 +86,10 @@ jest.mock("@cocalc/backend/logger", () => ({
   }),
 }));
 
+jest.mock("@cocalc/conat/project-host/api", () => ({
+  createHostRegistryService: jest.fn(async ({ impl }) => impl),
+}));
+
 jest.mock("@cocalc/conat/service/typed", () => ({
   createServiceHandler: jest.fn(async ({ impl }) => impl),
 }));
@@ -95,6 +105,9 @@ describe("host-registry automatic convergence retry", () => {
     publishProjectAccountFeedEventsBestEffortMock = jest.fn(
       async () => undefined,
     );
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      effective_limits: { shared_compute_priority: 0 },
+    }));
     upsertProjectHostMock = jest.fn(async ({ metadata, host_session_id }) => {
       currentMetadata = {
         ...currentMetadata,
@@ -450,6 +463,87 @@ describe("host-registry automatic convergence retry", () => {
     expect(publishProjectAccountFeedEventsBestEffortMock).toHaveBeenCalledWith({
       project_id: "proj-2",
       default_bay_id: "bay-0",
+    });
+  });
+
+  it("lists stop policy deltas with mirrored activity and resolved priority", async () => {
+    currentMetadata = {};
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ status: "running" }] };
+      }
+      if (
+        sql.includes(
+          "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        ) ||
+        sql.includes(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ metadata: currentMetadata }] };
+      }
+      if (sql.includes("FROM projects") && sql.includes("policy_updated_ms")) {
+        return {
+          rows: [
+            {
+              project_id: "proj-1",
+              owner_account_id: "owner-1",
+              authoritative_last_edited_ms: 1234,
+              policy_updated_ms: 1234,
+            },
+            {
+              project_id: "proj-2",
+              owner_account_id: null,
+              authoritative_last_edited_ms: null,
+              policy_updated_ms: 1400,
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    resolveMembershipForAccountMock = jest.fn(async (account_id: string) => ({
+      effective_limits: {
+        shared_compute_priority: account_id === "owner-1" ? 5 : 0,
+      },
+    }));
+
+    const { initHostRegistryService } = await import("./host-registry");
+    const service = await initHostRegistryService();
+
+    const result = await service.listProjectStopPolicyDeltas({
+      host_id: "host-1",
+      since_ms: 1000,
+      limit: 50,
+    });
+
+    expect(resolveMembershipForAccountMock).toHaveBeenCalledTimes(1);
+    expect(resolveMembershipForAccountMock).toHaveBeenCalledWith("owner-1");
+    expect(result).toEqual({
+      rows: [
+        {
+          project_id: "proj-1",
+          owner_account_id: "owner-1",
+          shared_compute_priority: 5,
+          authoritative_last_edited_ms: 1234,
+          policy_updated_ms: 1234,
+          stop_override: "default",
+        },
+        {
+          project_id: "proj-2",
+          owner_account_id: null,
+          shared_compute_priority: 0,
+          authoritative_last_edited_ms: null,
+          policy_updated_ms: 1400,
+          stop_override: "default",
+        },
+      ],
+      next_since_ms: 1400,
+      has_more: false,
     });
   });
 });

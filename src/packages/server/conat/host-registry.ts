@@ -1,5 +1,9 @@
 import getLogger from "@cocalc/backend/logger";
-import { createServiceHandler } from "@cocalc/conat/service/typed";
+import {
+  createHostRegistryService,
+  type HostProjectStopOverride,
+  type HostProjectStopPolicyRow,
+} from "@cocalc/conat/project-host/api";
 import {
   upsertProjectHost,
   type ProjectHostRecord,
@@ -12,6 +16,7 @@ import {
   verifyProjectHostToken,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { enqueueCloudVmWorkOnce } from "@cocalc/server/cloud/db";
 import { shouldAutoRestoreInterruptedSpotHost } from "@cocalc/server/cloud/spot-restore";
 import {
@@ -24,6 +29,13 @@ import { notifyProjectHostUpdate } from "./route-project";
 
 const logger = getLogger("server:conat:host-registry");
 const pool = () => getPool();
+const STOP_POLICY_PRIORITY_CACHE_TTL_MS = 5 * 60_000;
+
+const stopPolicyPriorityCache = new Map<
+  string,
+  { priority: number; expires_at: number }
+>();
+const stopPolicyPriorityInflight = new Map<string, Promise<number>>();
 
 export interface HostRegistration extends ProjectHostRecord {
   sshpiperd_public_key?: string;
@@ -156,48 +168,95 @@ function getPendingAutomaticConvergenceRetry(metadata: any): {
   };
 }
 
-export interface HostRegistryApi {
-  register: (info: HostRegistration) => Promise<void>;
-  heartbeat: (info: HostRegistration) => Promise<void>;
-  shutdownNotice: (opts: {
-    host_id: string;
-    host_session_id?: string;
-    signal?: string;
-    reason?: string;
-  }) => Promise<void>;
-  getProjectHostAuthPublicKey: () => Promise<{
-    project_host_auth_public_key: string;
-  }>;
-  listProjectUserDeltas: (opts: {
-    host_id: string;
-    since_ms?: number;
-    limit?: number;
-  }) => Promise<{
-    rows: Array<{ project_id: string; users: any; updated_ms: number }>;
-    next_since_ms: number;
-    has_more: boolean;
-  }>;
-  listProjectUserReconcile: (opts: {
-    host_id: string;
-    limit?: number;
-    recent_days?: number;
-  }) => Promise<{
-    rows: Array<{ project_id: string; users: any; updated_ms: number }>;
-    as_of_ms: number;
-    has_more: boolean;
-  }>;
-  getMasterConatTokenStatus: (opts: {
-    host_id: string;
-    current_token: string;
-  }) => Promise<{ expires_at: string }>;
-  rotateMasterConatToken: (opts: {
-    host_id: string;
-    current_token?: string;
-    bootstrap_token?: string;
-  }) => Promise<{ master_conat_token: string }>;
+const SUBJECT = "project-hosts";
+
+function normalizeSharedComputePriority(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.floor(parsed);
 }
 
-const SUBJECT = "project-hosts";
+async function getSharedComputePriorityForOwner(
+  owner_account_id: string,
+): Promise<number> {
+  const now = Date.now();
+  const cached = stopPolicyPriorityCache.get(owner_account_id);
+  if (cached && cached.expires_at > now) {
+    return cached.priority;
+  }
+  const inflight = stopPolicyPriorityInflight.get(owner_account_id);
+  if (inflight) {
+    return await inflight;
+  }
+  const promise = (async () => {
+    try {
+      const resolution = await resolveMembershipForAccount(owner_account_id);
+      const priority = normalizeSharedComputePriority(
+        resolution.effective_limits?.shared_compute_priority,
+      );
+      stopPolicyPriorityCache.set(owner_account_id, {
+        priority,
+        expires_at: now + STOP_POLICY_PRIORITY_CACHE_TTL_MS,
+      });
+      return priority;
+    } catch (err) {
+      logger.warn("failed to resolve shared compute priority", {
+        owner_account_id,
+        err: `${err}`,
+      });
+      return 0;
+    } finally {
+      stopPolicyPriorityInflight.delete(owner_account_id);
+    }
+  })();
+  stopPolicyPriorityInflight.set(owner_account_id, promise);
+  return await promise;
+}
+
+type StopPolicyBaseRow = {
+  project_id: string;
+  owner_account_id: string | null;
+  authoritative_last_edited_ms: number | null;
+  policy_updated_ms: number;
+};
+
+async function hydrateStopPolicyRows(
+  rows: StopPolicyBaseRow[],
+): Promise<HostProjectStopPolicyRow[]> {
+  const priorities = new Map<string, number>();
+  const ownerIds = Array.from(
+    new Set(
+      rows
+        .map((row) => `${row.owner_account_id ?? ""}`.trim())
+        .filter((owner_account_id) => owner_account_id.length > 0),
+    ),
+  );
+  await Promise.all(
+    ownerIds.map(async (owner_account_id) => {
+      priorities.set(
+        owner_account_id,
+        await getSharedComputePriorityForOwner(owner_account_id),
+      );
+    }),
+  );
+  const defaultOverride: HostProjectStopOverride = "default";
+  return rows.map((row) => {
+    const owner_account_id = `${row.owner_account_id ?? ""}`.trim() || null;
+    return {
+      project_id: row.project_id,
+      owner_account_id,
+      shared_compute_priority: owner_account_id
+        ? (priorities.get(owner_account_id) ?? 0)
+        : 0,
+      authoritative_last_edited_ms:
+        row.authoritative_last_edited_ms != null
+          ? Number(row.authoritative_last_edited_ms)
+          : null,
+      policy_updated_ms: Math.max(0, Number(row.policy_updated_ms ?? 0) || 0),
+      stop_override: defaultOverride,
+    };
+  });
+}
 
 export async function initHostRegistryService() {
   logger.info("starting host registry service");
@@ -343,11 +402,8 @@ export async function initHostRegistryService() {
       artifacts: nextArtifactsPending,
     });
   };
-  return await createServiceHandler<HostRegistryApi>({
+  return await createHostRegistryService({
     client,
-    service: SUBJECT,
-    subject: `${SUBJECT}.api`,
-    description: "Registry/heartbeat for project-host nodes",
     impl: {
       async register(info: HostRegistration) {
         if (!info?.id) {
@@ -635,6 +691,93 @@ export async function initHostRegistryService() {
         );
         return {
           rows,
+          as_of_ms: Date.now(),
+          has_more: rows.length >= limit,
+        };
+      },
+      async listProjectStopPolicyDeltas(opts) {
+        const host_id = `${opts?.host_id ?? ""}`.trim();
+        if (!host_id) {
+          throw Error("listProjectStopPolicyDeltas: host_id is required");
+        }
+        const since_ms = Math.max(0, Number(opts?.since_ms ?? 0));
+        const limit = Math.max(
+          1,
+          Math.min(2000, Number(opts?.limit ?? 500) || 500),
+        );
+        const { rows } = await pool().query<StopPolicyBaseRow>(
+          `
+            SELECT
+              project_id,
+              (
+                SELECT account_id_text::text
+                FROM jsonb_each(COALESCE(users, '{}'::jsonb)) AS u(account_id_text, user_data)
+                WHERE COALESCE(u.user_data ->> 'group', '') = 'owner'
+                LIMIT 1
+              ) AS owner_account_id,
+              FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint AS authoritative_last_edited_ms,
+              FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint AS policy_updated_ms
+            FROM projects
+            WHERE host_id=$1
+              AND deleted IS NOT TRUE
+              AND FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint > $2
+            ORDER BY COALESCE(last_edited, created, to_timestamp(0)) ASC
+            LIMIT $3
+          `,
+          [host_id, since_ms, limit],
+        );
+        let next_since_ms = since_ms;
+        for (const row of rows) {
+          next_since_ms = Math.max(
+            next_since_ms,
+            Number(row.policy_updated_ms ?? 0) || 0,
+          );
+        }
+        return {
+          rows: await hydrateStopPolicyRows(rows),
+          next_since_ms,
+          has_more: rows.length >= limit,
+        };
+      },
+      async listProjectStopPolicyReconcile(opts) {
+        const host_id = `${opts?.host_id ?? ""}`.trim();
+        if (!host_id) {
+          throw Error("listProjectStopPolicyReconcile: host_id is required");
+        }
+        const limit = Math.max(
+          1,
+          Math.min(5000, Number(opts?.limit ?? 2000) || 2000),
+        );
+        const recent_days = Math.max(
+          1,
+          Math.min(90, Number(opts?.recent_days ?? 7) || 7),
+        );
+        const { rows } = await pool().query<StopPolicyBaseRow>(
+          `
+            SELECT
+              project_id,
+              (
+                SELECT account_id_text::text
+                FROM jsonb_each(COALESCE(users, '{}'::jsonb)) AS u(account_id_text, user_data)
+                WHERE COALESCE(u.user_data ->> 'group', '') = 'owner'
+                LIMIT 1
+              ) AS owner_account_id,
+              FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint AS authoritative_last_edited_ms,
+              FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint AS policy_updated_ms
+            FROM projects
+            WHERE host_id=$1
+              AND deleted IS NOT TRUE
+              AND (
+                COALESCE(state ->> 'state', '') IN ('running', 'starting')
+                OR COALESCE(last_edited, to_timestamp(0)) > NOW() - ($2 || ' days')::interval
+              )
+            ORDER BY COALESCE(last_edited, created, to_timestamp(0)) DESC
+            LIMIT $3
+          `,
+          [host_id, `${recent_days}`, limit],
+        );
+        return {
+          rows: await hydrateStopPolicyRows(rows),
           as_of_ms: Date.now(),
           has_more: rows.length >= limit,
         };
