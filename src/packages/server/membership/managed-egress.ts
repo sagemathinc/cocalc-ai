@@ -5,6 +5,9 @@
 
 import getPool from "@cocalc/database/pool";
 import type {
+  ManagedEgressAccountSummary,
+  ManagedEgressAdminOverview,
+  ManagedEgressAdminProjectSummary,
   ManagedEgressEventSummary,
   ManagedEgressHistory,
   ManagedEgressHistoryBucketSize,
@@ -314,15 +317,7 @@ export async function getRecentManagedEgressEventsForAccount(opts: {
     where.push(`events.occurred_at < $${params.length}`);
   }
   params.push(limit);
-  const { rows } = await getPool("medium").query<{
-    account_id: string;
-    project_id?: string | null;
-    project_title?: string | null;
-    category: string;
-    bytes: string | number;
-    occurred_at: Date | string;
-    metadata: Record<string, unknown> | null;
-  }>(
+  const { rows } = await getPool("medium").query<RawManagedEgressEventRow>(
     `
       SELECT
         events.account_id,
@@ -340,15 +335,158 @@ export async function getRecentManagedEgressEventsForAccount(opts: {
     `,
     params,
   );
-  return rows.map((row) => ({
-    account_id: row.account_id,
-    project_id: row.project_id ?? null,
-    project_title: row.project_title ?? null,
-    category: row.category,
-    bytes: Math.max(0, Number(row.bytes) || 0),
-    occurred_at: new Date(row.occurred_at).toISOString(),
-    metadata: row.metadata ?? null,
-  }));
+  return mapManagedEgressEventRows(rows);
+}
+
+export async function getManagedEgressAdminOverview(opts: {
+  start?: string | Date;
+  end?: string | Date;
+  recent_event_limit?: number;
+  top_account_limit?: number;
+  top_project_limit?: number;
+}): Promise<ManagedEgressAdminOverview> {
+  await ensureSchema();
+  const query = normalizeOverviewQuery(opts);
+  const whereSql = "events.occurred_at >= $1 AND events.occurred_at < $2";
+  const params: Array<Date> = [query.startDate, query.endDate];
+
+  const [
+    categoryRowsResult,
+    accountRowsResult,
+    projectRowsResult,
+    recentEventsResult,
+  ] = await Promise.all([
+    getPool("medium").query<{
+      category: string;
+      bytes: string | number;
+    }>(
+      `
+        SELECT events.category, COALESCE(SUM(events.bytes), 0) AS bytes
+        FROM ${TABLE} AS events
+        WHERE ${whereSql}
+        GROUP BY events.category
+        ORDER BY events.category
+      `,
+      params,
+    ),
+    getPool("medium").query<{
+      account_id: string;
+      email_address: string | null;
+      first_name: string | null;
+      last_name: string | null;
+      bytes: string | number;
+    }>(
+      `
+        SELECT
+          events.account_id,
+          accounts.email_address,
+          accounts.first_name,
+          accounts.last_name,
+          COALESCE(SUM(events.bytes), 0) AS bytes
+        FROM ${TABLE} AS events
+        LEFT JOIN accounts ON accounts.account_id = events.account_id
+        WHERE ${whereSql}
+        GROUP BY
+          events.account_id,
+          accounts.email_address,
+          accounts.first_name,
+          accounts.last_name
+        ORDER BY bytes DESC, events.account_id ASC
+        LIMIT ${Math.max(1, Math.min(query.top_account_limit, 50))}
+      `,
+      params,
+    ),
+    getPool("medium").query<{
+      account_id: string;
+      email_address: string | null;
+      first_name: string | null;
+      last_name: string | null;
+      project_id: string | null;
+      project_title: string | null;
+      bytes: string | number;
+    }>(
+      `
+        SELECT
+          events.account_id,
+          accounts.email_address,
+          accounts.first_name,
+          accounts.last_name,
+          events.project_id,
+          projects.title AS project_title,
+          COALESCE(SUM(events.bytes), 0) AS bytes
+        FROM ${TABLE} AS events
+        LEFT JOIN accounts ON accounts.account_id = events.account_id
+        LEFT JOIN projects ON projects.project_id = events.project_id
+        WHERE ${whereSql}
+        GROUP BY
+          events.account_id,
+          accounts.email_address,
+          accounts.first_name,
+          accounts.last_name,
+          events.project_id,
+          projects.title
+        ORDER BY bytes DESC, projects.title ASC NULLS LAST, events.project_id ASC NULLS LAST
+        LIMIT ${Math.max(1, Math.min(query.top_project_limit, 50))}
+      `,
+      params,
+    ),
+    getPool("medium").query<RawManagedEgressEventRow>(
+      `
+        SELECT
+          events.account_id,
+          events.project_id,
+          projects.title AS project_title,
+          events.category,
+          events.bytes,
+          events.occurred_at,
+          events.metadata
+        FROM ${TABLE} AS events
+        LEFT JOIN projects ON projects.project_id = events.project_id
+        WHERE ${whereSql}
+        ORDER BY events.occurred_at DESC, events.id DESC
+        LIMIT ${Math.max(1, Math.min(query.recent_event_limit, 100))}
+      `,
+      params,
+    ),
+  ]);
+
+  const categories_bytes: Record<string, number> = {};
+  let total_bytes = 0;
+  for (const row of categoryRowsResult.rows) {
+    const bytes = Math.max(0, Number(row.bytes) || 0);
+    categories_bytes[row.category] = bytes;
+    total_bytes += bytes;
+  }
+
+  const top_accounts: ManagedEgressAccountSummary[] =
+    accountRowsResult.rows.map((row) => ({
+      account_id: row.account_id,
+      email_address: row.email_address ?? null,
+      first_name: row.first_name ?? null,
+      last_name: row.last_name ?? null,
+      bytes: Math.max(0, Number(row.bytes) || 0),
+    }));
+
+  const top_projects: ManagedEgressAdminProjectSummary[] =
+    projectRowsResult.rows.map((row) => ({
+      account_id: row.account_id,
+      email_address: row.email_address ?? null,
+      first_name: row.first_name ?? null,
+      last_name: row.last_name ?? null,
+      project_id: row.project_id ?? null,
+      project_title: row.project_title ?? null,
+      bytes: Math.max(0, Number(row.bytes) || 0),
+    }));
+
+  return {
+    start: query.startDate.toISOString(),
+    end: query.endDate.toISOString(),
+    total_bytes,
+    categories_bytes,
+    top_accounts,
+    top_projects,
+    recent_events: mapManagedEgressEventRows(recentEventsResult.rows),
+  };
 }
 
 export async function getManagedEgressHistoryForAccount(opts: {
@@ -499,6 +637,50 @@ function parseOptionalTimestamp(value?: string | Date): Date | undefined {
   return new Date(ms);
 }
 
+type RawManagedEgressEventRow = {
+  account_id: string;
+  project_id?: string | null;
+  project_title?: string | null;
+  category: string;
+  bytes: string | number;
+  occurred_at: Date | string;
+  metadata: Record<string, unknown> | null;
+};
+
+function mapManagedEgressEventRows(
+  rows: RawManagedEgressEventRow[],
+): ManagedEgressEventSummary[] {
+  return rows.map((row) => ({
+    account_id: row.account_id,
+    project_id: row.project_id ?? null,
+    project_title: row.project_title ?? null,
+    category: row.category,
+    bytes: Math.max(0, Number(row.bytes) || 0),
+    occurred_at: new Date(row.occurred_at).toISOString(),
+    metadata: row.metadata ?? null,
+  }));
+}
+
+function normalizeWindowBounds(opts: {
+  start?: string | Date;
+  end?: string | Date;
+}): {
+  startDate: Date;
+  endDate: Date;
+} {
+  const endDate = parseOptionalTimestamp(opts.end) ?? new Date();
+  const startDate =
+    parseOptionalTimestamp(opts.start) ??
+    new Date(endDate.getTime() - DEFAULT_HISTORY_WINDOW_MS);
+  if (!(endDate.getTime() > startDate.getTime())) {
+    throw new Error("end must be after start");
+  }
+  if (endDate.getTime() - startDate.getTime() > MAX_HISTORY_WINDOW_MS) {
+    throw new Error("history window must be at most 31 days");
+  }
+  return { startDate, endDate };
+}
+
 function normalizeHistoryQuery(opts: {
   project_id?: string;
   start?: string | Date;
@@ -514,16 +696,7 @@ function normalizeHistoryQuery(opts: {
   recent_event_limit: number;
   top_project_limit: number;
 } {
-  const endDate = parseOptionalTimestamp(opts.end) ?? new Date();
-  const startDate =
-    parseOptionalTimestamp(opts.start) ??
-    new Date(endDate.getTime() - DEFAULT_HISTORY_WINDOW_MS);
-  if (!(endDate.getTime() > startDate.getTime())) {
-    throw new Error("end must be after start");
-  }
-  if (endDate.getTime() - startDate.getTime() > MAX_HISTORY_WINDOW_MS) {
-    throw new Error("history window must be at most 31 days");
-  }
+  const { startDate, endDate } = normalizeWindowBounds(opts);
   const bucket = opts.bucket ?? "1h";
   const bucketMs = getBucketMs(bucket);
   if (
@@ -544,6 +717,41 @@ function normalizeHistoryQuery(opts: {
       Number.isFinite(opts.recent_event_limit)
         ? Math.max(1, Math.min(100, Math.floor(opts.recent_event_limit)))
         : 20,
+    top_project_limit:
+      typeof opts.top_project_limit === "number" &&
+      Number.isFinite(opts.top_project_limit)
+        ? Math.max(1, Math.min(50, Math.floor(opts.top_project_limit)))
+        : 10,
+  };
+}
+
+function normalizeOverviewQuery(opts: {
+  start?: string | Date;
+  end?: string | Date;
+  recent_event_limit?: number;
+  top_account_limit?: number;
+  top_project_limit?: number;
+}): {
+  startDate: Date;
+  endDate: Date;
+  recent_event_limit: number;
+  top_account_limit: number;
+  top_project_limit: number;
+} {
+  const { startDate, endDate } = normalizeWindowBounds(opts);
+  return {
+    startDate,
+    endDate,
+    recent_event_limit:
+      typeof opts.recent_event_limit === "number" &&
+      Number.isFinite(opts.recent_event_limit)
+        ? Math.max(1, Math.min(100, Math.floor(opts.recent_event_limit)))
+        : 10,
+    top_account_limit:
+      typeof opts.top_account_limit === "number" &&
+      Number.isFinite(opts.top_account_limit)
+        ? Math.max(1, Math.min(50, Math.floor(opts.top_account_limit)))
+        : 10,
     top_project_limit:
       typeof opts.top_project_limit === "number" &&
       Number.isFinite(opts.top_project_limit)

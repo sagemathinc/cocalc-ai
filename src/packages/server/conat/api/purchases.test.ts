@@ -4,6 +4,7 @@
  */
 
 const getManagedEgressHistoryForAccountMock = jest.fn();
+const getManagedEgressAdminOverviewMock = jest.fn();
 const getProjectOwnerAccountIdMock = jest.fn();
 const isAdminMock = jest.fn();
 
@@ -20,6 +21,8 @@ jest.mock("@cocalc/server/purchases/get-min-balance", () => ({
 jest.mock("@cocalc/server/membership/managed-egress", () => ({
   getManagedEgressHistoryForAccount: (...args: any[]) =>
     getManagedEgressHistoryForAccountMock(...args),
+  getManagedEgressAdminOverview: (...args: any[]) =>
+    getManagedEgressAdminOverviewMock(...args),
   getProjectOwnerAccountId: (...args: any[]) =>
     getProjectOwnerAccountIdMock(...args),
 }));
@@ -134,5 +137,52 @@ describe("purchases.getManagedEgressHistory", () => {
       recent_event_limit: 5,
       top_project_limit: 3,
     });
+  });
+});
+
+describe("purchases.getManagedEgressAdminOverview", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("requires admin permission", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { getManagedEgressAdminOverview } = await import("./purchases");
+    await expect(
+      getManagedEgressAdminOverview({
+        account_id: "viewer-1",
+      }),
+    ).rejects.toThrow("must be an admin");
+  });
+
+  it("loads the admin overview for admins", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getManagedEgressAdminOverviewMock.mockResolvedValue({
+      start: "2026-04-28T00:00:00.000Z",
+      end: "2026-04-29T00:00:00.000Z",
+      total_bytes: 1234,
+      categories_bytes: { "raw-network": 1234 },
+      top_accounts: [],
+      top_projects: [],
+      recent_events: [],
+    });
+
+    const { getManagedEgressAdminOverview } = await import("./purchases");
+    const result = await getManagedEgressAdminOverview({
+      account_id: "admin-1",
+      top_account_limit: 5,
+      top_project_limit: 7,
+      recent_event_limit: 9,
+    });
+
+    expect(getManagedEgressAdminOverviewMock).toHaveBeenCalledWith({
+      start: undefined,
+      end: undefined,
+      top_account_limit: 5,
+      top_project_limit: 7,
+      recent_event_limit: 9,
+    });
+    expect(result.total_bytes).toBe(1234);
   });
 });
