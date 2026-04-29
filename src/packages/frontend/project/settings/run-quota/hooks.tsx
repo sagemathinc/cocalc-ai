@@ -278,6 +278,9 @@ export function useDisplayedFields(): string[] {
     }
 
     return fields.filter((key: keyof Upgrades) => {
+      if (key === "mintime" || key === "always_running") {
+        return false;
+      }
       if (FAIR_CPU_MODE && (key.startsWith("cpu") || key == "cores")) {
         return false;
       }
@@ -291,8 +294,7 @@ export function useDisplayedFields(): string[] {
           // there is no member hosting and no disk quota
           return "member_host" !== key && "disk_quota" !== key;
         case KUCALC_DISABLED:
-          // there is not much to show
-          return "mintime" === key || "always_running" === key;
+          return false;
       }
     });
   }, [kucalc]);

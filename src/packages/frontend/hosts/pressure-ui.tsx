@@ -4,7 +4,7 @@
  */
 
 import { React } from "@cocalc/frontend/app-framework";
-import { Space, Tag, Typography } from "antd";
+import { Button, Popover, Space, Tag, Typography } from "antd";
 import type {
   Host,
   HostPressureState,
@@ -162,10 +162,12 @@ export function HostPlacementSummary({
   host,
   showNormal = false,
   compact = false,
+  detailMode = "inline",
 }: {
   host: Pick<Host, "pressure" | "can_place" | "reason_unavailable">;
   showNormal?: boolean;
   compact?: boolean;
+  detailMode?: "inline" | "popover";
 }) {
   const summary = placementSummary(host);
   if (
@@ -174,6 +176,30 @@ export function HostPlacementSummary({
     (!host.pressure?.zone || host.pressure.zone === "normal")
   ) {
     return null;
+  }
+  if (detailMode === "popover") {
+    return (
+      <Space size="small" wrap>
+        <Tag color={summary.color}>{summary.label}</Tag>
+        <Popover
+          content={
+            <Typography.Text style={{ maxWidth: 320, display: "block" }}>
+              {summary.detail}
+            </Typography.Text>
+          }
+          title="Placement"
+          trigger="click"
+        >
+          <Button
+            size="small"
+            type="link"
+            style={{ padding: 0, height: "auto" }}
+          >
+            Why?
+          </Button>
+        </Popover>
+      </Space>
+    );
   }
   const content = (
     <Space

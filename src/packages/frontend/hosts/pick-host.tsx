@@ -23,7 +23,11 @@ import {
 } from "@cocalc/util/consts";
 
 import { getHostStatusTooltip } from "./constants";
-import { HostPressureTag, hostPressureRank } from "./pressure-ui";
+import {
+  HostPlacementSummary,
+  HostPressureTag,
+  hostPressureRank,
+} from "./pressure-ui";
 import { SpotHostTag } from "./spot-ui";
 
 const STATUS_COLOR = {
@@ -268,9 +272,15 @@ export function HostPickerModal({
       )}
       <Typography.Paragraph type="secondary">
         {isCreate ? (
-          <>Pick a project host for this new project.</>
+          <>
+            Pick a project host for this new project. Placement tags show when a
+            host is normal, stressed, or blocked for automatic placement.
+          </>
         ) : (
-          <>Pick a project host to move this project to.</>
+          <>
+            Pick a project host to move this project to. Placement tags show
+            when a host is normal, stressed, or blocked for automatic placement.
+          </>
         )}
       </Typography.Paragraph>
       {!isCreate ? (
@@ -411,6 +421,12 @@ export function HostPickerModal({
                   <Typography.Text type="secondary">
                     {projectsLabel}: {host.projects ?? 0}
                   </Typography.Text>
+                  <HostPlacementSummary
+                    host={host}
+                    compact
+                    detailMode="popover"
+                    showNormal
+                  />
                   {!isCreate && host.id === currentHostId && (
                     <Typography.Text type="secondary">
                       This {projectLabel.toLowerCase()} is already on this host.

@@ -4,15 +4,7 @@ It doesn't manage actually coordinating purchases, showing prices, or anything
 like that.
 */
 
-import {
-  Alert,
-  DatePicker,
-  InputNumber,
-  Select,
-  Switch,
-  Table,
-  Tag,
-} from "antd";
+import { Alert, DatePicker, InputNumber, Switch, Table, Tag } from "antd";
 import dayjs from "dayjs";
 import { useMemo, useState } from "react";
 import { useIntl } from "react-intl";
@@ -30,7 +22,6 @@ interface Changes {
   custom_disk?: number;
   custom_cpu?: number;
   custom_member?: boolean;
-  custom_uptime?: "short" | "medium" | "day" | "always_running";
 }
 
 type Field =
@@ -40,8 +31,7 @@ type Field =
   | "custom_cpu"
   | "custom_ram"
   | "custom_disk"
-  | "custom_member"
-  | "custom_uptime";
+  | "custom_member";
 
 interface Props {
   info: PurchaseInfo;
@@ -114,7 +104,11 @@ export default function LicenseEditor({
       }
       value = value?.toDate();
     }
-    onChange({ ...info, [field]: value });
+    const next = { ...info, [field]: value };
+    if (next.type === "quota") {
+      delete (next as any).custom_uptime;
+    }
+    onChange(next);
   };
 
   const isSubscription =
@@ -274,25 +268,6 @@ export default function LicenseEditor({
                 checked={info.custom_member}
                 onChange={handleFieldChange("custom_member")}
               />
-            ),
-          },
-          {
-            key: "custom_uptime",
-            field: "Idle Timeout",
-            value: (
-              <Select
-                disabled={disabledFields?.has("custom_uptime")}
-                style={{ width: "100%" }}
-                value={info.custom_uptime}
-                onChange={handleFieldChange("custom_uptime")}
-              >
-                <Select.Option value="short">Short (30 minutes)</Select.Option>
-                <Select.Option value="medium">Medium (2 hours)</Select.Option>
-                <Select.Option value="day">Day (24 hours)</Select.Option>
-                <Select.Option value="always_running">
-                  Always Running
-                </Select.Option>
-              </Select>
             ),
           },
         ]

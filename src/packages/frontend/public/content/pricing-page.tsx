@@ -34,13 +34,7 @@ const GRID_STYLE: CSSProperties = {
   gap: "16px",
 } as const;
 
-const PROJECT_DEFAULT_KEYS = [
-  "memory",
-  "disk_quota",
-  "mintime",
-  "network",
-  "always_running",
-] as const;
+const PROJECT_DEFAULT_KEYS = ["memory", "disk_quota", "network"] as const;
 
 const TIER_DESCRIPTIONS: Record<string, string> = {
   free: "A light entry point for evaluation and occasional use.",
@@ -110,21 +104,12 @@ function membershipHighlights(tier: PublicMembershipTier): string[] {
   const highlights = PROJECT_DEFAULT_KEYS.flatMap((key) => {
     if (!(key in projectDefaults)) return [];
     const value = projectDefaults[key];
-    if (key === "always_running" && !value) return [];
     if (key === "network") {
       return [
         value ? "Internet-enabled projects" : "No outbound internet access",
       ];
     }
-    if (key === "mintime") {
-      return [`Projects stay running for ${formatQuotaValue(key, value)}`];
-    }
-    const label =
-      key === "memory"
-        ? "Project memory"
-        : key === "disk_quota"
-          ? "Project disk"
-          : "Always running";
+    const label = key === "memory" ? "Project memory" : "Project disk";
     return [`${label}: ${formatQuotaValue(key, value)}`];
   });
 

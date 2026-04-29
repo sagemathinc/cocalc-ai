@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { React } from "@cocalc/frontend/app-framework";
 import { HostPlacementSummary, HostPressureTag } from "./pressure-ui";
 
@@ -34,6 +34,31 @@ describe("host pressure ui", () => {
     expect(screen.getByText("Placement blocked")).toBeTruthy();
     expect(
       screen.getByText("Host heartbeat is stale; host appears offline."),
+    ).toBeTruthy();
+  });
+
+  it("shows placement details in a popover for compact list usage", async () => {
+    render(
+      <HostPlacementSummary
+        host={{ can_place: true, pressure: { zone: "normal" } }}
+        detailMode="popover"
+        showNormal
+      />,
+    );
+
+    expect(screen.getByText("Placement normal")).toBeTruthy();
+    expect(
+      screen.queryByText(
+        "Auto placement currently considers this host a normal candidate.",
+      ),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Why?" }));
+
+    expect(
+      await screen.findByText(
+        "Auto placement currently considers this host a normal candidate.",
+      ),
     ).toBeTruthy();
   });
 
