@@ -42,6 +42,7 @@ jest.mock("./managed-egress-recent-events", () => ({
 
 import {
   getValidHistoryBuckets,
+  nearestHistoryPointIndex,
   summarizeManagedEgressHistory,
   summarizeManagedEgressRecentUsage,
 } from "./managed-egress-history";
@@ -130,5 +131,29 @@ describe("managed egress history helpers", () => {
       last5MinutesBytes: 700,
       lastHourBytes: 780,
     });
+  });
+
+  it("finds the nearest hover bucket index", () => {
+    expect(
+      nearestHistoryPointIndex(5, [
+        { x: 0, y: 80 },
+        { x: 140, y: 70 },
+        { x: 280, y: 60 },
+      ]),
+    ).toBe(0);
+    expect(
+      nearestHistoryPointIndex(150, [
+        { x: 0, y: 80 },
+        { x: 140, y: 70 },
+        { x: 280, y: 60 },
+      ]),
+    ).toBe(1);
+    expect(
+      nearestHistoryPointIndex(279, [
+        { x: 0, y: 80 },
+        { x: 140, y: 70 },
+        { x: 280, y: 60 },
+      ]),
+    ).toBe(2);
   });
 });

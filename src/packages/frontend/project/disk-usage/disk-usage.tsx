@@ -25,7 +25,7 @@ import type {
 import { human_readable_size } from "@cocalc/util/misc";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { Icon, Tooltip } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components";
 import { redux, useAsyncEffect } from "@cocalc/frontend/app-framework";
 import { dirname, posix } from "path";
 import { COLORS } from "@cocalc/util/theme";
@@ -328,6 +328,28 @@ export function nearestCoordinateIndex(
   return bestIndex;
 }
 
+function historyHoverPlacement(xFraction: number): {
+  left: string;
+  transform: string;
+} {
+  if (xFraction <= 0.18) {
+    return {
+      left: `${xFraction * 100}%`,
+      transform: "translate(0, calc(-100% - 14px))",
+    };
+  }
+  if (xFraction >= 0.82) {
+    return {
+      left: `${xFraction * 100}%`,
+      transform: "translate(-100%, calc(-100% - 14px))",
+    };
+  }
+  return {
+    left: `${xFraction * 100}%`,
+    transform: "translate(-50%, calc(-100% - 14px))",
+  };
+}
+
 function formatSignedSize(bytes: number): string {
   const sign = bytes > 0 ? "+" : bytes < 0 ? "-" : "";
   return `${sign}${human_readable_size(Math.abs(bytes))}`;
@@ -424,6 +446,11 @@ function HistorySparkline({
   const coordinates = historyLineCoordinates(points, chartWidth, chartHeight);
   const hoveredPoint =
     hoveredIndex != null ? coordinates[hoveredIndex] : undefined;
+  const hoveredSeriesPoint =
+    hoveredIndex != null ? points[hoveredIndex] : undefined;
+  const hoverPlacement = hoveredPoint
+    ? historyHoverPlacement(hoveredPoint.x / chartWidth)
+    : undefined;
   return (
     <div
       style={{
@@ -431,61 +458,88 @@ function HistorySparkline({
         borderRadius: "8px",
         marginBottom: "12px",
         padding: "14px",
-        position: "relative",
         width: "100%",
-        cursor: "crosshair",
-      }}
-      onMouseLeave={() => setHoveredIndex(null)}
-      onMouseMove={(event) => {
-        const rect = event.currentTarget.getBoundingClientRect();
-        if (rect.width <= 0) return;
-        const relativeX = Math.max(
-          0,
-          Math.min(1, (event.clientX - rect.left) / rect.width),
-        );
-        setHoveredIndex(
-          nearestCoordinateIndex(relativeX * chartWidth, coordinates),
-        );
       }}
     >
-      <svg
-        aria-label={`${historyMetricLabel(metric)} history`}
-        height="160"
-        style={{ display: "block", width: "100%" }}
-        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-        preserveAspectRatio="none"
+      <div
+        onMouseLeave={() => setHoveredIndex(null)}
+        onMouseMove={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          if (rect.width <= 0) return;
+          const relativeX = Math.max(
+            0,
+            Math.min(1, (event.clientX - rect.left) / rect.width),
+          );
+          setHoveredIndex(
+            nearestCoordinateIndex(relativeX * chartWidth, coordinates),
+          );
+        }}
+        style={{ cursor: "crosshair", position: "relative" }}
       >
-        <polyline
-          fill="none"
-          points={historyLinePoints(coordinates)}
-          stroke={historyMetricColor(metric)}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth="3"
-        />
-        {hoveredPoint && (
-          <>
-            <line
-              x1={hoveredPoint.x}
-              x2={hoveredPoint.x}
-              y1={0}
-              y2={chartHeight}
-              stroke={historyMetricColor(metric)}
-              strokeOpacity="0.25"
-              strokeWidth="1"
-              strokeDasharray="3 3"
-            />
-            <circle
-              cx={hoveredPoint.x}
-              cy={hoveredPoint.y}
-              r="4"
-              fill={historyMetricColor(metric)}
-              stroke="white"
-              strokeWidth="1.5"
-            />
-          </>
-        )}
-      </svg>
+        <svg
+          aria-label={`${historyMetricLabel(metric)} history`}
+          height="160"
+          style={{ display: "block", width: "100%" }}
+          viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+          preserveAspectRatio="none"
+        >
+          <polyline
+            fill="none"
+            points={historyLinePoints(coordinates)}
+            stroke={historyMetricColor(metric)}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="3"
+          />
+          {hoveredPoint && (
+            <>
+              <line
+                x1={hoveredPoint.x}
+                x2={hoveredPoint.x}
+                y1={0}
+                y2={chartHeight}
+                stroke={historyMetricColor(metric)}
+                strokeOpacity="0.25"
+                strokeWidth="1"
+                strokeDasharray="3 3"
+              />
+              <circle
+                cx={hoveredPoint.x}
+                cy={hoveredPoint.y}
+                r="4"
+                fill={historyMetricColor(metric)}
+                stroke="white"
+                strokeWidth="1.5"
+              />
+            </>
+          )}
+        </svg>
+        {hoveredPoint && hoveredSeriesPoint && hoverPlacement ? (
+          <div
+            style={{
+              background: "white",
+              border: `1px solid ${COLORS.GRAY_LL}`,
+              borderRadius: "8px",
+              boxShadow: "0 6px 18px rgba(15, 23, 42, 0.16)",
+              color: COLORS.GRAY_D,
+              left: hoverPlacement.left,
+              maxWidth: "220px",
+              padding: "8px 10px",
+              pointerEvents: "none",
+              position: "absolute",
+              top: `${(hoveredPoint.y / chartHeight) * 100}%`,
+              transform: hoverPlacement.transform,
+              zIndex: 1,
+            }}
+          >
+            {historyTooltip({
+              metric,
+              point: hoveredSeriesPoint,
+              quotaSizeBytes,
+            })}
+          </div>
+        ) : null}
+      </div>
       <div
         style={{
           color: COLORS.GRAY_M,
@@ -500,29 +554,6 @@ function HistorySparkline({
           {new Date(points.at(-1)?.collected_at ?? "").toLocaleString()}
         </span>
       </div>
-      {hoveredPoint && hoveredIndex != null && (
-        <div
-          style={{
-            position: "absolute",
-            left: `${(hoveredPoint.x / chartWidth) * 100}%`,
-            top: `${(hoveredPoint.y / chartHeight) * 100}%`,
-            transform: "translate(-50%, -50%)",
-            pointerEvents: "none",
-          }}
-        >
-          <Tooltip
-            open
-            title={historyTooltip({
-              metric,
-              point: points[hoveredIndex],
-              quotaSizeBytes,
-            })}
-            placement="top"
-          >
-            <div style={{ width: 1, height: 1 }} />
-          </Tooltip>
-        </div>
-      )}
     </div>
   );
 }
