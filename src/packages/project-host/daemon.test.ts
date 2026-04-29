@@ -435,6 +435,81 @@ describe("project-host daemon stop", () => {
     expect(__test__.matchingProjectHostPids(dataDir, 9003)).toEqual([]);
   });
 
+  it("detects titled managed processes via /proc cmdline", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+
+    const realReaddirSync = fs.readdirSync;
+    const realReadFileSync = fs.readFileSync;
+    jest.spyOn(fs, "readdirSync").mockImplementation(((
+      file: any,
+      opts?: any,
+    ) => {
+      if (file === "/proc") {
+        return [
+          { name: "111", isDirectory: () => true },
+          { name: "222", isDirectory: () => true },
+        ] as any;
+      }
+      return (realReaddirSync as any)(file, opts);
+    }) as typeof fs.readdirSync);
+    jest.spyOn(fs, "readFileSync").mockImplementation(((
+      file: any,
+      options?: any,
+    ) => {
+      if (file === "/proc/111/cmdline") {
+        return Buffer.from("project-host:app\u0000") as any;
+      }
+      if (file === "/proc/111/environ") {
+        return Buffer.from(
+          `COCALC_DATA=${dataDir}\u0000PORT=9003\u0000`,
+        ) as any;
+      }
+      if (file === "/proc/222/cmdline") {
+        return Buffer.from("project-host:host-agent:0\u0000") as any;
+      }
+      if (file === "/proc/222/environ") {
+        return Buffer.from(
+          `COCALC_DATA=${dataDir}\u0000COCALC_PROJECT_HOST_AGENT=1\u0000COCALC_PROJECT_HOST_AGENT_INDEX=0\u0000`,
+        ) as any;
+      }
+      return (realReadFileSync as any)(file, options);
+    }) as typeof fs.readFileSync);
+
+    expect(__test__.matchingProjectHostPids(dataDir, 9003)).toEqual([111]);
+    expect(__test__.matchingHostAgentPids(dataDir)).toEqual([222]);
+  });
+
+  it("infers the running bundle version from the process cwd when cmdline is titled", () => {
+    const realReadFileSync = fs.readFileSync;
+    const realRealpathSync = fs.realpathSync;
+    jest.spyOn(fs, "readFileSync").mockImplementation(((
+      file: any,
+      options?: any,
+    ) => {
+      if (file === "/proc/111/cmdline") {
+        return Buffer.from("project-host:app\u0000") as any;
+      }
+      if (file === "/proc/111/environ") {
+        return Buffer.from("COCALC_DATA=/mnt/cocalc/data\u0000") as any;
+      }
+      return (realReadFileSync as any)(file, options);
+    }) as typeof fs.readFileSync);
+    jest.spyOn(fs, "realpathSync").mockImplementation(((file: any) => {
+      if (file === "/proc/111/cwd") {
+        return "/opt/cocalc/project-host/bundles/1777472008817";
+      }
+      return (realRealpathSync as any)(file);
+    }) as typeof fs.realpathSync);
+
+    expect(__test__.inferProjectHostBundleVersionFromPid(111)).toBe(
+      "1777472008817",
+    );
+  });
+
   it("treats zombie processes as not running", () => {
     const realReadFileSync = fs.readFileSync;
     const killSpy = jest.spyOn(process, "kill").mockImplementation(((

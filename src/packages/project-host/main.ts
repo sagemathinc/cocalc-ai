@@ -368,9 +368,13 @@ export async function main(
   initSqlite();
   const stopEventLoopStallMonitor = startProjectHostEventLoopStallMonitor();
   const hostId = resolveProjectHostId(_config.hostId);
+  const healthState = { ready: false };
 
   // 1) HTTP + conat server
   const { app, httpServer } = await startHttpServer(port, host, tls);
+  app.get("/healthz", (_req, res) =>
+    res.json({ ok: true, ready: healthState.ready }),
+  );
   const conatRouterUrl = resolveProjectHostConatRouterUrl();
   attachProjectHostConatRouterProxy({
     app,
@@ -1187,8 +1191,6 @@ export async function main(
   });
 
   logger.info("Minimal HTTP API");
-  app.get("/healthz", (_req, res) => res.json({ ok: true }));
-
   addCatchAll(app);
 
   logger.info("start Master Registration");
@@ -1230,6 +1232,7 @@ export async function main(
     restartReason: "backend lost live Codex turn",
   });
 
+  healthState.ready = true;
   logger.info("project-host ready");
 
   let closed = false;

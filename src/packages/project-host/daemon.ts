@@ -674,6 +674,14 @@ function readProcCmdline(pid: number): string[] {
     .filter(Boolean);
 }
 
+function readProcCwd(pid: number): string | undefined {
+  try {
+    return fs.realpathSync(`/proc/${pid}/cwd`);
+  } catch {
+    return undefined;
+  }
+}
+
 function readProcEnv(pid: number): Record<string, string> {
   const data = readProcFile(`/proc/${pid}/environ`);
   const env: Record<string, string> = {};
@@ -699,16 +707,33 @@ function listProcPids(): number[] {
   }
 }
 
+function isManagedProjectHostTitle(cmdline: string[]): boolean {
+  const title = cmdline[0];
+  if (!title) return false;
+  return /^(project-host:(app|host-agent(?::\d+)?|conat-router|conat-persist))$/.test(
+    title,
+  );
+}
+
+function isHostAgentTitle(cmdline: string[]): boolean {
+  const title = cmdline[0];
+  if (!title) return false;
+  return /^project-host:host-agent(?::\d+)?$/.test(title);
+}
+
 function matchesProjectHostCmdline(cmdline: string[]): boolean {
-  return cmdline.some(
-    (arg) =>
-      arg.includes("/project-host/bundles/") &&
-      (arg.endsWith("/main/index.js") || arg.endsWith("/dist/main.js")),
+  return (
+    cmdline.some(
+      (arg) =>
+        arg.includes("/project-host/bundles/") &&
+        (arg.endsWith("/main/index.js") || arg.endsWith("/dist/main.js")),
+    ) || isManagedProjectHostTitle(cmdline)
   );
 }
 
 function matchesHostAgentCmdline(cmdline: string[]): boolean {
   return (
+    isHostAgentTitle(cmdline) ||
     matchesProjectHostCmdline(cmdline) ||
     cmdline.some((arg) => arg.endsWith("/dist/host-agent.js"))
   );
@@ -724,6 +749,10 @@ function isPersistDaemonEnv(env: Record<string, string>): boolean {
 
 function isHostAgentEnv(env: Record<string, string>): boolean {
   return env.COCALC_PROJECT_HOST_AGENT === "1";
+}
+
+function isAcpWorkerEnv(env: Record<string, string>): boolean {
+  return env.COCALC_PROJECT_HOST_ACP_WORKER === "1";
 }
 
 function matchesSshpiperdCmdline(cmdline: string[], port: number): boolean {
@@ -743,7 +772,8 @@ function matchingProjectHostPids(dataDir: string, httpPort?: number): number[] {
     if (
       isRouterDaemonEnv(env) ||
       isPersistDaemonEnv(env) ||
-      isHostAgentEnv(env)
+      isHostAgentEnv(env) ||
+      isAcpWorkerEnv(env)
     ) {
       continue;
     }
@@ -971,14 +1001,40 @@ function projectHostRuntimeRoot(env: Record<string, string>): string {
 function inferProjectHostBundleVersionFromCmdline(
   cmdline: string[],
 ): string | undefined {
-  for (const entry of cmdline) {
+  return inferProjectHostBundleVersionFromPathEntries(cmdline);
+}
+
+function inferProjectHostBundleVersionFromPathEntries(
+  entries: string[],
+): string | undefined {
+  for (const entry of entries) {
     const match = entry.match(
-      /\/project-host\/(?:bundles|versions)\/([^/]+)\//,
+      /\/project-host\/(?:bundles|versions)\/([^/]+)(?:\/|$)/,
     );
     if (match?.[1]) {
       return match[1];
     }
   }
+  return;
+}
+
+function inferProjectHostBundleVersionFromPid(pid: number): string | undefined {
+  const cmdline = readProcCmdline(pid);
+  const fromCmdline = inferProjectHostBundleVersionFromPathEntries(cmdline);
+  if (fromCmdline) return fromCmdline;
+
+  const cwd = readProcCwd(pid);
+  if (cwd) {
+    const fromCwd = inferProjectHostBundleVersionFromPathEntries([cwd]);
+    if (fromCwd) return fromCwd;
+  }
+
+  const env = readProcEnv(pid);
+  const fromEnv = inferProjectHostBundleVersionFromPathEntries([
+    `${env.COCALC_PROJECT_HOST_BUNDLE_PATH ?? ""}`.trim(),
+    `${env.COCALC_PROJECT_HOST_CURRENT ?? ""}`.trim(),
+  ]);
+  if (fromEnv) return fromEnv;
   return;
 }
 
@@ -2041,7 +2097,7 @@ export function inspectProjectHostRuntime(
     currentVersion: selectedVersion,
     runningPid: alivePid,
     runningVersion: alivePid
-      ? inferProjectHostBundleVersionFromCmdline(readProcCmdline(alivePid))
+      ? inferProjectHostBundleVersionFromPid(alivePid)
       : undefined,
     healthy: alivePid ? checkHealthSync(env, projectHostPort) : false,
   };
@@ -2695,6 +2751,7 @@ export const __test__ = {
   healthCheckUrl,
   healthFailureThreshold,
   inferProjectHostBundleVersionFromCmdline,
+  inferProjectHostBundleVersionFromPid,
   isPodmanStalePauseState,
   isRunning,
   matchingHostAgentPids,
