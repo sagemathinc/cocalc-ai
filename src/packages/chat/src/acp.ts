@@ -310,25 +310,39 @@ export function getLiveResponseBlocks(
   time?: number;
   state?: "sending" | "sent" | "queued" | "not-sent";
 }> {
-  const blocks = getAgentMessageBlocks(events).map((block, index) => ({
-    kind: "agent" as const,
-    text: block.text,
-    time: block.time,
-    state: undefined,
-    seq: index,
-  }));
-  const guidanceBlocks = (guidance ?? [])
-    .filter(
-      (item) => typeof item?.text === "string" && item.text.trim().length > 0,
-    )
-    .map((item, index) => ({
-      kind: "guidance" as const,
-      text: item.text,
-      time: item.date,
-      state: item.state,
-      seq: Number.MAX_SAFE_INTEGER - (guidance?.length ?? 0) + index,
-    }));
-  const merged = [...blocks, ...guidanceBlocks].sort((a, b) => {
+  const timeline = [
+    ...(events ?? [])
+      .filter(
+        (
+          evt,
+        ): evt is AcpStreamMessage & {
+          type: "event";
+          event: Extract<AcpStreamEvent, { type: "message"; text: string }>;
+        } =>
+          evt?.type === "event" &&
+          evt.event?.type === "message" &&
+          typeof evt.event.text === "string" &&
+          evt.event.text.trim().length > 0,
+      )
+      .map((evt) => ({
+        kind: "agent-event" as const,
+        text: evt.event.text,
+        time: evt.time,
+        delta: evt.event.delta === true,
+        seq: evt.seq ?? 0,
+      })),
+    ...(guidance ?? [])
+      .filter(
+        (item) => typeof item?.text === "string" && item.text.trim().length > 0,
+      )
+      .map((item, index) => ({
+        kind: "guidance" as const,
+        text: item.text,
+        time: item.date,
+        state: item.state,
+        seq: Number.MAX_SAFE_INTEGER - (guidance?.length ?? 0) + index,
+      })),
+  ].sort((a, b) => {
     const aTime = typeof a.time === "number" ? a.time : undefined;
     const bTime = typeof b.time === "number" ? b.time : undefined;
     if (aTime != null && bTime != null && aTime !== bTime) {
@@ -338,12 +352,86 @@ export function getLiveResponseBlocks(
     if (aTime != null && bTime == null) return -1;
     return a.seq - b.seq;
   });
-  return merged.map(({ kind, text, time, state }) => ({
-    kind,
-    text,
-    time,
-    state,
-  }));
+
+  const blocks: Array<{
+    kind: "agent" | "guidance";
+    text: string;
+    time?: number;
+    state?: "sending" | "sent" | "queued" | "not-sent";
+  }> = [];
+  let latestFullText: string | undefined;
+  let latestFullHasDelta = false;
+  let activeSegmentBaseText: string | undefined;
+  let pendingGuidanceSplitBaseText: string | undefined;
+
+  for (const item of timeline) {
+    if (item.kind === "guidance") {
+      blocks.push({
+        kind: "guidance",
+        text: item.text,
+        time: item.time,
+        state: item.state,
+      });
+      pendingGuidanceSplitBaseText = latestFullText;
+      activeSegmentBaseText = undefined;
+      continue;
+    }
+
+    const progressive = mergeProgressiveMessageText(latestFullText, item.text, {
+      previousHasDelta: latestFullHasDelta,
+      nextIsDelta: item.delta,
+    });
+    if (typeof progressive === "string") {
+      latestFullText = progressive;
+      latestFullHasDelta = latestFullHasDelta || item.delta;
+      const baseText = pendingGuidanceSplitBaseText ?? activeSegmentBaseText;
+      const segmentText = getInterleavedAgentSegmentText(baseText, progressive);
+      if (segmentText.trim().length === 0) {
+        continue;
+      }
+      const last = blocks[blocks.length - 1];
+      if (last?.kind === "agent" && pendingGuidanceSplitBaseText == null) {
+        last.text = segmentText;
+        last.time = item.time ?? last.time;
+      } else {
+        blocks.push({
+          kind: "agent",
+          text: segmentText,
+          time: item.time,
+        });
+      }
+      activeSegmentBaseText = baseText ?? "";
+      pendingGuidanceSplitBaseText = undefined;
+      continue;
+    }
+
+    latestFullText = item.text;
+    latestFullHasDelta = item.delta;
+    blocks.push({
+      kind: "agent",
+      text: item.text,
+      time: item.time,
+    });
+    activeSegmentBaseText = "";
+    pendingGuidanceSplitBaseText = undefined;
+  }
+
+  return blocks;
+}
+
+function getInterleavedAgentSegmentText(
+  baseText: string | undefined,
+  fullText: string,
+): string {
+  if (!baseText) return fullText;
+  if (fullText === baseText) return "";
+  if (!fullText.startsWith(baseText)) return fullText;
+  const suffix = fullText.slice(baseText.length);
+  if (!suffix) return "";
+  if (/^\s+/.test(suffix) && /\S$/.test(baseText)) {
+    return suffix.replace(/^\s+/, "");
+  }
+  return suffix;
 }
 
 export function mergeProgressiveMessageText(

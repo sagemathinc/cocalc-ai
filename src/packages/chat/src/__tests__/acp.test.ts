@@ -295,6 +295,50 @@ describe("response text helpers", () => {
     ]);
   });
 
+  test("splits progressive agent text around live guidance chronologically", () => {
+    const events: AcpStreamMessage[] = [
+      {
+        type: "event",
+        event: { type: "message", text: "I'm going to inspect the host." },
+        seq: 1,
+        time: 1000,
+      } as any,
+      {
+        type: "event",
+        event: {
+          type: "message",
+          text: "I'm going to inspect the host. The remote probe is still running.",
+        },
+        seq: 2,
+        time: 3000,
+      } as any,
+    ];
+    expect(
+      getLiveResponseBlocks(events, [
+        { date: 2000, text: "please check the proxy too", state: "sent" },
+      ]),
+    ).toEqual([
+      {
+        kind: "agent",
+        text: "I'm going to inspect the host.",
+        time: 1000,
+        state: undefined,
+      },
+      {
+        kind: "guidance",
+        text: "please check the proxy too",
+        time: 2000,
+        state: "sent",
+      },
+      {
+        kind: "agent",
+        text: "The remote probe is still running.",
+        time: 3000,
+        state: undefined,
+      },
+    ]);
+  });
+
   test("replaces progressive partial agent messages instead of duplicating them", () => {
     const events: AcpStreamMessage[] = [
       textEvent("message", "I", 1),
