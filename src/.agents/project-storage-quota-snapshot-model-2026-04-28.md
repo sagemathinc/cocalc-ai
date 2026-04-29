@@ -2,7 +2,7 @@
 
 Last updated: April 28, 2026
 
-Status: decision doc and implementation plan
+Status: implemented design note with remaining cleanup
 
 ## Executive Summary
 
@@ -37,11 +37,8 @@ The user-facing storage model should become:
    - `max(0, quota_used - live_visible_quota_scoped_bytes)`
    - not exact per-snapshot accounting
 
-4. `Scratch`
-   - visible storage bucket
-   - shown separately
-   - not subtracted from the project quota because it is not part of the
-     current project qgroup metric
+Temporary disposable storage should live in a separately capped, disk-backed
+`/tmp`. It is not part of the durable project quota explanation.
 
 ## Decision
 
@@ -139,7 +136,7 @@ flowchart LR
     R["Retained snapshot/history data estimate<br/>`max(0, quota_used - live_home_visible)`"] --> UI
     Q --> R
     L --> R
-    X["Scratch bucket<br/>visible only, separate from current project quota"] --> UI
+    T["Temporary storage<br/>disk-backed `/tmp`<br/>separate cap, disposable"] --> UI
 ```
 
 ## Important Semantics
@@ -198,13 +195,13 @@ The right model is:
 - keep temporary disposable storage in `/tmp`,
 - and do not expose a second user-facing temporary filesystem.
 
-Implementation direction:
+Current implementation direction:
 
 - stop mounting a default tmpfs `/tmp`,
-- mount what is currently the ephemeral scratch volume at `/tmp`,
+- mount the current ephemeral temp volume at `/tmp`,
 - remove `/scratch` from user-facing UI, docs, and quota explanations,
-- and remove `/scratch` compatibility paths aggressively since we are still
-  pre-production and want less legacy surface.
+- and do not keep a hidden `/scratch` compatibility alias around longer than
+  necessary while we are still pre-production.
 
 Capacity policy:
 
@@ -214,7 +211,6 @@ Capacity policy:
 
 This keeps temporary storage useful for builds and package work while bounding
 abuse and avoiding the current “half the memory limit goes to tmpfs” default.
-
 
 ## Current Hidden Limits
 
@@ -270,343 +266,69 @@ quota usage.
 
 So “fix snapshot deletion” is part of the storage rollout, not optional polish.
 
-## Detailed Implementation Plan
+## Implementation Status
 
-## Phase 1: Replace `dust` with `du` for quota-facing live storage
+### Completed
 
-Goal:
+The main storage and temp-model rollout described above is now implemented:
 
-- make the top-line metric fast, cheap, and correct enough,
-- keep directory breakdown UX,
-- stop using `dust` for authoritative storage numbers.
+1. Quota-facing live usage uses `du`, not `dust`.
+   - project storage overview and history now use a `du`-based live-files
+     metric
+   - retained snapshot/history data is derived as `max(0, quota_used - live)`
 
-### Backend changes
+2. The storage UI, CLI, and history model now use the same semantics.
+   - `Quota used`
+   - `Live files`
+   - `Retained snapshot/history data`
 
-1. Add a first-class sandboxed `du` wrapper.
+3. Snapshot deletion was fixed.
+   - snapshot-root deletes now route through snapshot deletion APIs instead of
+     generic recursive rm behavior on readonly subvolumes
 
-Files:
+4. Snapshot and backup count limits are explicit policy now.
+   - owner effective limits are resolved centrally
+   - host-side backup enforcement fetches those limits from the hub
 
-- [fs.ts](/home/user/cocalc-ai/src/packages/conat/files/fs.ts)
-- [index.ts](/home/user/cocalc-ai/src/packages/backend/sandbox/index.ts)
-- new file:
-  - `src/packages/backend/sandbox/du.ts`
+5. Total account storage now follows the frozen per-project quota model.
 
-Plan:
+6. The product temp model has moved from `/scratch` to `/tmp`.
+   - `/tmp` is now backed by the ephemeral disk volume, not default tmpfs
+   - `/tmp` has its own cap:
+     - `min(10 GB, project disk quota)`
+   - the durable quota explanation no longer depends on a visible `Scratch`
+     bucket
+   - the old `/scratch` alias has been removed from runtime mounts and sandbox
+     path resolution
 
-- add `DuOptions` to the fs API,
-- add `fs.du(path, options)` alongside `fs.dust(...)`,
-- whitelist only the specific flags we need:
-  - `-x` / `--one-file-system`
-  - `-s` / `--summarize`
-  - `--bytes`
-  - `-d` / `--max-depth`
-- keep this small and boring.
+### Remaining Cleanup
 
-2. Replace project storage overview scans with `du`.
+The work that remains is narrower and mostly about cleanup:
 
-File:
+1. Audit stale copy and UI text.
 
-- [storage-info-service.ts](/home/user/cocalc-ai/src/packages/project-host/storage-info-service.ts)
+Known example:
 
-Plan:
+- [components.tsx](/home/user/cocalc-ai/src/packages/frontend/project/info/components.tsx)
+  still described `/tmp` as in-memory before this note was updated
 
-- replace `getStorageBreakdownImpl(...)` so it calls `du`, not `dust`,
-- parse `du` output into the existing `ProjectStorageBreakdown` shape,
-- use:
-  - `du -x --bytes --max-depth=1 <path>` for bucket breakdowns,
-  - `du -sx --bytes <path>` for top-line totals where appropriate.
+We should keep removing any remaining text that implies:
 
-3. Keep `dust` only if still needed elsewhere.
+- `/tmp` is tmpfs-backed by default
+- `/scratch` is a supported user-facing place to work
 
-`dust` may remain for:
+2. Keep `/tmp` out of the durable quota story.
 
-- terminal-facing pretty tree output,
-- other exploratory features if they exist.
+The temp volume is intentionally separate. Future changes must not:
 
-But the project storage UI should no longer depend on it.
+- fold `/tmp` bytes into retained snapshot/history data
+- reintroduce a visible `Scratch` bucket
+- imply that `/tmp` is durable or snapshotted
 
-USER: Let's just remove dust if at all possible, because it increases the "attack surface" of the sandbox.   It's one less thing to worry about.
+3. Keep exact snapshot diagnostics off the hot path.
 
-### Data model changes
-
-1. Add an explicit retained-data field.
-
-File:
-
-- [storage-info.ts](/home/user/cocalc-ai/src/packages/conat/project/storage-info.ts)
-
-Plan:
-
-- add either:
-  - a new `counted` entry key such as `"retained"`, or
-  - a dedicated top-level field such as `retained_estimate_bytes`
-
-Recommendation:
-
-- prefer a dedicated field over overloading `counted`.
-- `counted.snapshots` was tied to the now-rejected per-snapshot qgroup model.
-
-2. Update history points.
-
-Files:
-
-- [storage-info.ts](/home/user/cocalc-ai/src/packages/conat/project/storage-info.ts)
-- [storage-info-service.ts](/home/user/cocalc-ai/src/packages/project-host/storage-info-service.ts)
-
-Plan:
-
-- replace `snapshot_counted_bytes` in history with `retained_estimate_bytes`,
-- continue sampling every 5 minutes,
-- preserve backwards compatibility by tolerating missing legacy fields during
-  rollout.
-
-### Frontend changes
-
-Files:
-
-- [use-disk-usage.ts](/home/user/cocalc-ai/src/packages/frontend/project/disk-usage/use-disk-usage.ts)
-- [storage-overview.ts](/home/user/cocalc-ai/src/packages/frontend/project/disk-usage/storage-overview.ts)
-- [disk-usage.tsx](/home/user/cocalc-ai/src/packages/frontend/project/disk-usage/disk-usage.tsx)
-
-Plan:
-
-- rename the current “Snapshots” concept in the overview/history UI,
-- show:
-  - `Project quota`
-  - `Live files`
-  - `Retained snapshot/history data (estimate)`
-  - visible buckets for `Home` and `Environment`
-- add clear explanatory copy:
-  - snapshots can retain deleted data,
-  - rolling snapshot cleanup can reduce quota later.
-
-### Temporary storage runtime changes
-
-Files likely involved:
-
-- [load-balancer.ts](/home/user/cocalc-ai/src/packages/server/conat/project/load-balancer.ts)
-- [types.ts](/home/user/cocalc-ai/src/packages/conat/project/runner/types.ts)
-- [filesystem.ts](/home/user/cocalc-ai/src/packages/project-runner/run/filesystem.ts)
-- [podman.ts](/home/user/cocalc-ai/src/packages/project-runner/run/podman.ts)
-- [storage-info.ts](/home/user/cocalc-ai/src/packages/conat/project/storage-info.ts)
-- [storage-info-service.ts](/home/user/cocalc-ai/src/packages/project-host/storage-info-service.ts)
-- sandbox and ACP code that still resolves `/scratch`
-
-Plan:
-
-1. Stop setting a default tmpfs `/tmp` in the runner configuration.
-2. Mount the current ephemeral scratch volume at `/tmp`.
-3. Cap `/tmp` independently:
-   - `min(10 GB, project disk quota)`
-4. Remove `/scratch` from user-facing storage APIs and UI buckets.
-5. Remove `/scratch` path handling from runtime and compatibility layers as
-   quickly as practical, instead of carrying a long deprecation period.
-6. Keep `/tmp` explicitly documented as disposable and not included in the
-   durable project quota explanation.
-
-### Snapshot deletion bug fix
-
-Files likely involved:
-
-- [project_actions.ts](/home/user/cocalc-ai/src/packages/frontend/project_actions.ts)
-- snapshot UI under `src/packages/frontend/project/snapshots/`
-- generic file delete path in frontend/backend
-- [subvolume-snapshots.ts](/home/user/cocalc-ai/src/packages/file-server/btrfs/subvolume-snapshots.ts)
-
-Plan:
-
-1. Reproduce the failing UI deletion flow precisely.
-2. Identify where deleting a path under `~/.snapshots/...` is routed into
-   generic file deletion instead of snapshot deletion.
-3. Route snapshot deletion through the snapshot API / btrfs subvolume delete
-   path, not `privileged-rm-helper`.
-4. Ensure both of these work:
-   - deleting from the snapshots UI
-   - deleting snapshot paths from file-manager style UI flows, if we continue
-     to allow that
-5. Add regression tests so readonly snapshots never again go through generic
-   recursive rm behavior.
-
-### CLI changes
-
-File:
-
-- [storage.ts](/home/user/cocalc-ai/src/packages/cli/src/bin/commands/project/storage.ts)
-
-Plan:
-
-- stop referring to `counted.snapshots` as an authoritative metric,
-- adopt the same language as the UI,
-- keep any slow exact snapshot diagnostics behind an explicit action, not the
-  default summary.
-
-### Tests
-
-Files:
-
-- [storage-info-service.test.ts](/home/user/cocalc-ai/src/packages/project-host/storage-info-service.test.ts)
-- relevant frontend tests under
-  `src/packages/frontend/project/disk-usage/`
-- CLI tests under
-  `src/packages/cli/build/test/cli/src/bin/commands/project/storage.js`
-  and corresponding source tests if added
-
-Plan:
-
-- add parser tests for `du` output,
-- update overview/history tests,
-- add a regression test that retained estimate is derived from `quota - live`,
-- add tests that `/tmp` is ephemeral, disk-backed, and independently capped,
-- add tests that `/tmp` does not affect retained-estimate math.
-
-## Phase 2: Fix messaging and UX around snapshots
-
-Goal:
-
-- make the storage screen honest and understandable,
-- make snapshot cleanup an obvious action.
-
-Plan:
-
-1. Storage screen copy:
-
-- explain that quota includes snapshot-retained data,
-- explain that deleting live files may not reduce quota immediately,
-- explain that automatic snapshot retention may reduce quota later.
-
-2. Snapshot UI:
-
-Files:
-
-- [index.tsx](/home/user/cocalc-ai/src/packages/frontend/project/snapshots/index.tsx)
-- [create.tsx](/home/user/cocalc-ai/src/packages/frontend/project/snapshots/create.tsx)
-- [restore.tsx](/home/user/cocalc-ai/src/packages/frontend/project/snapshots/restore.tsx)
-- [edit-schedule.tsx](/home/user/cocalc-ai/src/packages/frontend/project/snapshots/edit-schedule.tsx)
-
-Plan:
-
-- make “delete snapshots to free retained data” an explicit cleanup path,
-- surface current snapshot count and effective limit,
-- show automatic retention schedule more clearly.
-
-3. Disk-usage history plot:
-
-- stop implying exact per-snapshot accounting,
-- show retained-estimate history instead.
-
-## Phase 3: Surface and tier snapshot and backup limits
-
-Goal:
-
-- replace mystery hardcoded caps with plan-based visible limits.
-
-### Policy shape
-
-We should add explicit membership-tier entitlements such as:
-
-- `max_snapshots_per_project`
-- `max_backups_per_project`
-
-Optionally later:
-
-- `max_snapshot_schedule_frequent`
-- `max_snapshot_schedule_daily`
-- `max_snapshot_schedule_weekly`
-- `max_snapshot_schedule_monthly`
-
-But the first version can just cap total retained count.
-
-### Enforcement path
-
-1. Hub computes effective limits from the project owner’s membership.
-
-Likely areas:
-
-- membership entitlement resolution
-- project details payload
-- project snapshot/backup APIs
-
-2. Hub passes effective limits into create/update operations.
-
-Files:
-
-- [project-snapshots.ts](/home/user/cocalc-ai/src/packages/server/conat/api/project-snapshots.ts)
-- [file-server.ts](/home/user/cocalc-ai/src/packages/project-host/file-server.ts)
-- [subvolume-snapshots.ts](/home/user/cocalc-ai/src/packages/file-server/btrfs/subvolume-snapshots.ts)
-- [subvolume-rustic.ts](/home/user/cocalc-ai/src/packages/file-server/btrfs/subvolume-rustic.ts)
-
-Plan:
-
-- replace `MAX_SNAPSHOTS_PER_PROJECT = 250` with an effective policy value,
-- replace scheduled-maintenance `limit = 250` with the same effective value,
-- do the same for backup retention limits.
-- ensure the same effective policy layer is used by snapshot deletion and
-  snapshot-management UX, not just creation/retention.
-
-3. UI surfaces the effective limits.
-
-Files:
-
-- [edit-schedule.tsx](/home/user/cocalc-ai/src/packages/frontend/project/snapshots/edit-schedule.tsx)
-- project details surfaces that already expose `snapshots` / `backups`
-
-Plan:
-
-- show the current total snapshot count,
-- show the effective limit,
-- clamp schedule editor values to the effective policy,
-- explain which plan controls the limit.
-
-### Why this matters even if quota already bounds bytes
-
-Count limits still matter because they bound:
-
-- restore/listing complexity,
-- accidental retention churn,
-- operational cost,
-- user expectations,
-- support burden from hidden mystery limits.
-
-## Phase 4: Optional exact diagnostics, kept off the hot path
-
-Goal:
-
-- preserve a path to deeper support tooling without corrupting the main model.
-
-Plan:
-
-- keep exact snapshot inspection as an explicit support/advanced action,
-- run `btrfs filesystem du` only on demand,
-- cache results,
-- label them as expensive diagnostics.
-
-This is useful for:
-
-- support,
-- debugging,
-- unusual user cases,
-- internal storage forensics.
-
-It should not be part of the default storage screen.
-
-## Estimated Effort
-
-### Phase 1 and 2 together
-
-Expected effort:
-
-- roughly `1` solid engineering day for a pragmatic first pass,
-- up to `2` days if we also fully update CLI/history/tests in the same
-  changeset.
-
-### Phase 3
-
-Expected effort:
-
-- roughly `2-5` days depending on how much membership/admin/policy surface we
-  want in the first version.
-
-This is not research. It is policy plumbing across several existing surfaces.
+If we need deep support tooling later, keep it as an explicit diagnostic action
+using `btrfs filesystem du`, not the default storage UI.
 
 ## Risks
 
@@ -629,22 +351,18 @@ This is not research. It is policy plumbing across several existing surfaces.
 
 ## Recommended Order
 
-1. Remove `/scratch` from the product model and move ephemeral temp storage to
-   disk-backed `/tmp` with an explicit cap.
-2. Land the `du`-based storage metric and retained-estimate UI.
-3. Update CLI/history/messaging in the same conceptual model.
-4. Surface effective snapshot and backup limits in the product.
-5. Replace the current hidden hardcoded caps with membership-tier-derived caps.
-6. Keep exact snapshot forensics as an explicit advanced diagnostic only.
+1. Audit and fix the remaining `/tmp` and snapshot-retention copy in the UI and
+   CLI.
+2. Leave exact snapshot forensics as an explicit advanced diagnostic only.
 
 ## Bottom Line
 
-The correct product posture is:
+The correct product posture is now:
 
 - quota is real and includes snapshots,
-- live usage should be computed with `du`, not `dust`,
-- retained snapshot/history data should be shown as a fast derived estimate,
-- temporary disposable storage should live in `/tmp`, not a separate
+- live usage is computed with `du`, not `dust`,
+- retained snapshot/history data is shown as a fast derived estimate,
+- temporary disposable storage lives in disk-backed `/tmp`, not a separate
   user-facing `/scratch`,
-- and snapshot/backup count limits should be explicit plan features rather than
+- and snapshot/backup count limits are explicit plan features rather than
   hidden hardcoded guardrails.

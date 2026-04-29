@@ -162,7 +162,7 @@ export function useSpecialPathPreview({
   }, [project_id, resolveBackupId, restoreTarget]);
 
   const performRestore = useCallback(
-    async (mode: "original" | "scratch") => {
+    async (mode: "original" | "tmp") => {
       if (!restoreTarget || !actions) return;
       try {
         setRestoreLoading(true);
@@ -174,8 +174,8 @@ export function useSpecialPathPreview({
             restoreTarget.path,
           );
           const dest =
-            mode === "scratch"
-              ? posix.join("/scratch", restoreTarget.path)
+            mode === "tmp"
+              ? posix.join("/tmp", restoreTarget.path)
               : restoreTarget.path;
           const parent = posix.dirname(dest);
           const fs = actions.fs();
@@ -193,9 +193,7 @@ export function useSpecialPathPreview({
         }
         const backupId = await resolveBackupId(restoreTarget.name, false);
         const dest =
-          mode === "scratch"
-            ? posix.join("/scratch", restoreTarget.path)
-            : undefined;
+          mode === "tmp" ? posix.join("/tmp", restoreTarget.path) : undefined;
         const op = await webapp_client.conat_client.hub.projects.restoreBackup({
           project_id,
           id: backupId,
@@ -243,7 +241,7 @@ export function useSpecialPathPreview({
       error={restoreError}
       preview={preview ?? undefined}
       onRestoreOriginal={() => void performRestore("original")}
-      onRestoreScratch={() => void performRestore("scratch")}
+      onRestoreTmp={() => void performRestore("tmp")}
       onOpenDirectory={openSpecialDirectory}
       onCancel={() => setRestoreTarget(null)}
     />

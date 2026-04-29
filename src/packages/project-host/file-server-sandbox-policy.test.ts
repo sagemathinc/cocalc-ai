@@ -7,7 +7,7 @@ import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 describe("file-server sandbox policy", () => {
   const project_id = "00000000-1000-4000-8000-000000000000";
 
-  it("keeps home writable while denying rootfs/scratch when mounts are missing", async () => {
+  it("keeps home writable while denying rootfs/temp volume when mounts are missing", async () => {
     const base = await mkdtemp(join(tmpdir(), "cocalc-fs-policy-"));
     const home = join(base, "home");
     const rootfs = join(base, "rootfs-missing");
@@ -29,15 +29,15 @@ describe("file-server sandbox policy", () => {
       "rootfs is not mounted; cannot access absolute path '/root/home.txt'. Start the workspace and try again.",
     );
 
-    await expect(fs.writeFile("/tmp/rootfs.txt", "blocked")).rejects.toThrow(
-      "rootfs is not mounted; cannot access absolute path '/tmp/rootfs.txt'. Start the workspace and try again.",
+    await expect(fs.writeFile("/tmp/data.txt", "blocked")).rejects.toThrow(
+      "temporary storage is not mounted; cannot access absolute path '/tmp/data.txt'. Start the workspace and try again.",
     );
     await expect(fs.writeFile("/scratch/data.txt", "blocked")).rejects.toThrow(
-      "scratch is not mounted; cannot access absolute path '/scratch/data.txt'. Start the workspace and try again.",
+      "'/scratch' is no longer supported. Use '/tmp' instead.",
     );
   });
 
-  it("routes writes to home, rootfs, and scratch when mounts exist", async () => {
+  it("routes writes to home, rootfs, and temp volume when mounts exist", async () => {
     const base = await mkdtemp(join(tmpdir(), "cocalc-fs-policy-"));
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
@@ -53,24 +53,22 @@ describe("file-server sandbox policy", () => {
       scratch,
     });
 
-    await fs.mkdir("/tmp");
     await fs.mkdir("/root");
-    await fs.writeFile("/tmp/rootfs.txt", "rootfs");
-    await fs.writeFile("/scratch/data.txt", "scratch");
+    await fs.writeFile("/tmp/data.txt", "tmp");
     await fs.writeFile("/home/user/home.txt", "home");
     await fs.writeFile("/root/root-home.txt", "rootfs-root");
 
-    expect(await readFile(join(rootfs, "tmp", "rootfs.txt"), "utf8")).toBe(
-      "rootfs",
-    );
+    expect(await readFile(join(scratch, "data.txt"), "utf8")).toBe("tmp");
     expect(await readFile(join(rootfs, "root", "root-home.txt"), "utf8")).toBe(
       "rootfs-root",
     );
-    expect(await readFile(join(scratch, "data.txt"), "utf8")).toBe("scratch");
     expect(await readFile(join(home, "home.txt"), "utf8")).toBe("home");
     await expect(fs.readFile("/root/home.txt", "utf8")).rejects.toThrow();
     expect(await fs.readFile("/root/root-home.txt", "utf8")).toBe(
       "rootfs-root",
+    );
+    await expect(fs.writeFile("/scratch/legacy.txt", "legacy")).rejects.toThrow(
+      "'/scratch' is no longer supported. Use '/tmp' instead.",
     );
   });
 

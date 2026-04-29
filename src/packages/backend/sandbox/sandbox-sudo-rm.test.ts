@@ -44,7 +44,7 @@ describe("sandbox sudo delete", () => {
     });
   });
 
-  it("routes scratch sudo rmdir through the privileged delete helper", async () => {
+  it("routes /tmp sudo rmdir through the privileged delete helper", async () => {
     const base = await mkdtemp(path.join(os.tmpdir(), "sandbox-sudo-rmdir-"));
     const home = path.join(base, "home");
     const rootfs = path.join(base, "rootfs");
@@ -58,7 +58,7 @@ describe("sandbox sudo delete", () => {
       homeAliases: [DEFAULT_PROJECT_RUNTIME_HOME],
     });
 
-    await fs.rmdir("/scratch/tmp", { sudo: true });
+    await fs.rmdir("/tmp/tmp", { sudo: true });
 
     expect(runPrivilegedDelete).toHaveBeenCalledWith({
       command: "sandbox-rmdir",
@@ -85,6 +85,6 @@ describe("sandbox sudo delete", () => {
 
     await expect(
       fs.rm("/etc/passwd", { sudo: true, force: true }),
-    ).rejects.toThrow("only supported in project home and /scratch");
+    ).rejects.toThrow("only supported in project home and /tmp");
   });
 });

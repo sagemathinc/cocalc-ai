@@ -137,8 +137,8 @@ function ActionBarEnabled({
       for (const entry of entries) {
         for (const rel of entry.paths) {
           const dest =
-            restoreMode === "scratch"
-              ? path.posix.join("/scratch", rel || "")
+            restoreMode === "tmp"
+              ? path.posix.join("/tmp", rel || "")
               : undefined;
           const op =
             await webapp_client.conat_client.hub.projects.restoreBackup({
@@ -241,7 +241,7 @@ function ActionBarEnabled({
   ]);
 
   const [restoreOpen, setRestoreOpen] = useState<boolean>(false);
-  const [restoreMode, setRestoreMode] = useState<"same" | "scratch">("same");
+  const [restoreMode, setRestoreMode] = useState<"same" | "tmp">("same");
   const [restoreLoading, setRestoreLoading] = useState<boolean>(false);
   const [restoreError, setRestoreError] = useState<any>(null);
 
@@ -420,7 +420,7 @@ function ActionBarEnabled({
           style={{ display: "flex", flexDirection: "column", gap: 8 }}
         >
           <Radio value="same">Restore to original paths (overwrite)</Radio>
-          <Radio value="scratch">Restore to /scratch/&lt;path&gt;</Radio>
+          <Radio value="tmp">Restore to /tmp/&lt;path&gt;</Radio>
         </Radio.Group>
         {paths && paths.length > 0 && (
           <ul style={{ marginTop: "10px" }}>

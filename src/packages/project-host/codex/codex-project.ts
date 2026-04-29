@@ -994,7 +994,7 @@ async function ensureContainer({
     // best effort: project home mount may already provide this path
   }
   if (scratch) {
-    args.push(mountArg({ source: scratch, target: "/scratch" }));
+    args.push(mountArg({ source: scratch, target: "/tmp" }));
   }
   const mounts = getCoCalcMounts();
   for (const src in mounts) {

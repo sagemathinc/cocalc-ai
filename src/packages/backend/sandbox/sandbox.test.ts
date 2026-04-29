@@ -1149,10 +1149,10 @@ describeIfLinux("rootfs option sandbox", () => {
       scratch: secretScratchPath,
     });
     const err = await expectRejectsWithError(
-      fsMissingScratch.writeFile("/scratch/blocked.txt", "blocked"),
+      fsMissingScratch.writeFile("/tmp/blocked.txt", "blocked"),
     );
     expect(err.message).toContain(
-      "scratch is not mounted; cannot access absolute path '/scratch/blocked.txt'. Start the workspace and try again.",
+      "temporary storage is not mounted; cannot access absolute path '/tmp/blocked.txt'. Start the workspace and try again.",
     );
     expect(err.message).not.toContain(secretScratchPath);
   });
@@ -1298,27 +1298,27 @@ describeIfLinux("rootfs option sandbox", () => {
     );
   });
 
-  it("routes /scratch paths to scratch mount when configured", async () => {
+  it("routes /tmp paths to the temp volume when configured", async () => {
     scratch = join(tempDir, "test-scratch-mounted");
     await mkdir(scratch, { recursive: true });
     const fsScratch = new SandboxedFilesystem(home, { rootfs, scratch });
-    await fsScratch.writeFile("/scratch/from-scratch.txt", "from-scratch");
-    expect(await fsScratch.readFile("/scratch/from-scratch.txt", "utf8")).toBe(
-      "from-scratch",
+    await fsScratch.writeFile("/tmp/from-tmp.txt", "from-tmp");
+    expect(await fsScratch.readFile("/tmp/from-tmp.txt", "utf8")).toBe(
+      "from-tmp",
     );
-    expect(await readFile(join(scratch, "from-scratch.txt"), "utf8")).toBe(
-      "from-scratch",
+    expect(await readFile(join(scratch, "from-tmp.txt"), "utf8")).toBe(
+      "from-tmp",
     );
     await expect(
-      readFile(join(rootfs, "scratch", "from-scratch.txt"), "utf8"),
+      readFile(join(rootfs, "tmp", "from-tmp.txt"), "utf8"),
     ).rejects.toThrow();
   });
 
-  it("openat2 hardening applies to /scratch absolute paths", async () => {
+  it("openat2 hardening applies to /tmp absolute paths", async () => {
     const outsidePath = join(tempDir, "test-scratch-openat2-outside.txt");
     await writeFile(outsidePath, "outside-secret");
     const fsScratch = new SandboxedFilesystem(home, { rootfs, scratch });
-    await fsScratch.writeFile("/scratch/race-target.txt", "inside");
+    await fsScratch.writeFile("/tmp/race-target.txt", "inside");
 
     const openAt2Root = (fsScratch as any).getOpenAt2RootForBase?.(scratch);
     if (openAt2Root == null || typeof openAt2Root.openWrite !== "function") {
@@ -1342,30 +1342,39 @@ describeIfLinux("rootfs option sandbox", () => {
     };
 
     await expect(
-      fsScratch.writeFile("/scratch/race-target.txt", "inside-updated"),
+      fsScratch.writeFile("/tmp/race-target.txt", "inside-updated"),
     ).rejects.toThrow("outside of sandbox");
     expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
   });
 
-  it("errors on /scratch when scratch mount is missing", async () => {
+  it("errors on /tmp when temp volume is missing", async () => {
     const fsMissingScratch = new SandboxedFilesystem(home, {
       rootfs,
       scratch: join(tempDir, "scratch-missing"),
       homeAliases: ["/home/user"],
     });
     await expect(
-      fsMissingScratch.writeFile("/scratch/blocked.txt", "blocked"),
+      fsMissingScratch.writeFile("/tmp/blocked.txt", "blocked"),
     ).rejects.toThrow(
-      "scratch is not mounted; cannot access absolute path '/scratch/blocked.txt'. Start the workspace and try again.",
+      "temporary storage is not mounted; cannot access absolute path '/tmp/blocked.txt'. Start the workspace and try again.",
     );
-    await fsMissingScratch.writeFile("/tmp/rootfs-ok.txt", "rootfs-ok");
-    expect(await fsMissingScratch.readFile("/tmp/rootfs-ok.txt", "utf8")).toBe(
-      "rootfs-ok",
-    );
+    await expect(
+      fsMissingScratch.writeFile("/scratch/legacy.txt", "blocked"),
+    ).rejects.toThrow("'/scratch' is no longer supported. Use '/tmp' instead.");
     await fsMissingScratch.writeFile("/home/user/home-still-ok.txt", "home-ok");
     expect(
       await fsMissingScratch.readFile("/home/user/home-still-ok.txt", "utf8"),
     ).toBe("home-ok");
+  });
+
+  it("rejects the removed /scratch alias even when temp storage exists", async () => {
+    scratch = join(tempDir, "test-scratch-mounted-legacy-alias");
+    await mkdir(scratch, { recursive: true });
+    const fsScratch = new SandboxedFilesystem(home, { rootfs, scratch });
+
+    await expect(
+      fsScratch.writeFile("/scratch/from-scratch.txt", "from-scratch"),
+    ).rejects.toThrow("'/scratch' is no longer supported. Use '/tmp' instead.");
   });
 });
 

@@ -763,11 +763,15 @@ greenfield order.
    - a pragmatic shared-host v1 exists,
    - but it does not yet satisfy the strongest version of this spec’s
      attribution requirements.
-3. Per-project storage UI/accounting:
+3. Historical egress inspection and attribution surfaces:
+   - live rolling-window enforcement exists,
+   - but there is no first-class historical RPC/CLI/UI flow that lets users
+     and operators explain where the bytes came from over time.
+4. Per-project storage UI/accounting:
    - the enforced quota is real,
    - but the current `dust`-based live-usage explanation is wrong and too
      expensive.
-4. Snapshot and backup limits:
+5. Snapshot and backup limits:
    - hardcoded caps already exist,
    - but they are not surfaced, coherent, or membership-tier driven.
 
@@ -822,9 +826,13 @@ settled, and they cover a large fraction of abuse, accidents, and support pain.
 ### Phase 4. Finish The Remaining Egress/Admin Work
 
 1. Managed-egress leased budgets.
-2. Stronger or explicitly blessed direct-outbound shared-host attribution.
-3. Central admin inspection and override surfaces.
-4. Dedicated-host egress policy.
+2. Historical egress observability:
+   - RPC
+   - CLI
+   - project/account drilldown UI
+3. Stronger or explicitly blessed direct-outbound shared-host attribution.
+4. Central admin inspection and override surfaces.
+5. Dedicated-host egress policy.
 
 ### Phase 5. Shared-Host Scheduling And Stopping
 
@@ -956,7 +964,13 @@ This track follows the design in:
    - host/provider
 3. Implement leased budgets for the highest-volume managed paths if they are
    still needed operationally.
-4. Keep remaining allowance and block reasons visible to operators and users.
+4. Add a first-class historical egress RPC that can answer, for a chosen
+   account and optional project:
+   - totals over a time window
+   - bucketed usage history
+   - recent usage rate
+   - top projects/categories
+5. Keep remaining allowance and block reasons visible to operators and users.
 
 ### Track 8. Direct Project-Originated Outbound Egress
 
@@ -968,6 +982,8 @@ This track follows the design in:
    managed egress.
 4. When an account is over cap, apply a conservative protection action on
    shared hosts.
+5. Preserve project attribution in stored historical events so later UI/CLI
+   drilldowns can explain which project generated the traffic.
 
 ### Track 9. Central Rolling Windows, Overrides, And Policy Surfaces
 
@@ -997,7 +1013,23 @@ This track follows the design in:
    - current storage/project-count/egress usage
    - active block reasons
    - override controls
-4. Optional project-host `/hosts` surfaces:
+4. Add account-scoped egress drilldown UI in account preferences:
+   - current rolling-window usage
+   - recent usage rate, such as last `5 minutes` and last `1 hour`
+   - button/modal for historical usage by category and project
+5. Add project-scoped egress drilldown UI in:
+   - project settings
+   - project processes page
+   It should mirror the disk-usage affordance and show:
+   - recent usage rate, such as last `5 minutes` and last `1 hour`
+   - recent history
+   - enough attribution to identify likely traffic sources
+6. Add `cocalc-cli` support for the same historical egress RPC so operators and
+   advanced users can inspect:
+   - account-scoped history
+   - project-scoped history
+   - bucketed usage over time
+7. Optional project-host `/hosts` surfaces:
    - local observations
    - host-local block or pressure state
 
@@ -1025,7 +1057,12 @@ This track follows the design in:
    - Track 3: total account storage
    - Track 4: project count
    - Track 5: snapshot/backup plan limits
-6. In parallel, decide whether the current direct-outbound shared-host model is
+6. Treat historical egress observability as a blocker before blessing egress
+   policy as production-ready:
+   - add the RPC
+   - add CLI access
+   - add account/project drilldown UI
+7. In parallel, decide whether the current direct-outbound shared-host model is
    good enough to bless as v1 or still requires another attribution pass.
 
 The key discipline is:
