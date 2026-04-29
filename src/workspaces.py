@@ -19,6 +19,32 @@ from typing import Any, Optional, Callable, List
 MAX_PACKAGE_LOCK_SIZE_MB = 5
 RETIRED_WORKSPACES = set()
 
+TEST_ENV_SCRUB_KEYS = [
+    # Live project-scoped auth / routing from interactive CoCalc shells can make
+    # package tests accidentally talk to or mutate the current project.
+    "COCALC_API_URL",
+    "COCALC_BEARER_TOKEN",
+    "COCALC_AGENT_TOKEN",
+    "COCALC_PROJECT_ID",
+    "COCALC_SECRET_TOKEN",
+    "COCALC_CONTROL_DIR",
+    "COCALC_TERMINAL_FILENAME",
+    "COCALC_BROWSER_ID",
+]
+
+
+def scrub_live_cocalc_test_env() -> dict[str, str]:
+    removed: dict[str, str] = {}
+    for key in TEST_ENV_SCRUB_KEYS:
+        value = os.environ.pop(key, None)
+        if value is not None:
+            removed[key] = value
+    return removed
+
+
+def restore_scrubbed_env(scrubbed: dict[str, str]) -> None:
+    os.environ.update(scrubbed)
+
 
 def newest_file(path: str) -> str:
     if platform.system() != 'Darwin':
@@ -461,7 +487,11 @@ def test(args) -> None:
                 test_cmd += " --reporters=default --reporters=jest-junit"
             if args.max_workers:
                 test_cmd += f' --maxWorkers={args.max_workers} '
-            cmd(test_cmd, package_path)
+            scrubbed = scrub_live_cocalc_test_env()
+            try:
+                cmd(test_cmd, package_path)
+            finally:
+                restore_scrubbed_env(scrubbed)
             success.append(path)
 
         worked = False
