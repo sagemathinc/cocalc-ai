@@ -196,6 +196,7 @@ function collectSteers({
     if (!state || !anchoredParentId) continue;
     const steer = {
       messageId,
+      assistantMessageId,
       date: messageDate.valueOf(),
       text,
       state,
@@ -935,11 +936,18 @@ export function MessageList({
     const messageAcpState = messageId
       ? acpState?.get?.(`message:${messageId}`)
       : undefined;
-    const attachedSteers = messageId
-      ? attachedSteersByParentMessageId?.get(messageId)
-      : undefined;
     const activitySteers = messageId
       ? activitySteersByAssistantMessageId?.get(messageId)
+      : undefined;
+    const attachedSteers = messageId
+      ? attachedSteersByParentMessageId
+          ?.get(messageId)
+          ?.filter(
+            (steer) =>
+              !steer.assistantMessageId ||
+              expandedCodexActivityByMessageId[steer.assistantMessageId] !==
+                true,
+          )
       : undefined;
     const expandedCodexActivity = messageId
       ? expandedCodexActivityByMessageId[messageId] === true
