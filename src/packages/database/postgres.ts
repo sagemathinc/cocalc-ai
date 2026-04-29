@@ -128,7 +128,6 @@ import {
   update_account_and_passport,
 } from "./postgres/account/passport";
 
-import { projects_that_need_to_be_started } from "./postgres/project/always-running";
 import { calc_stats } from "./postgres/stats/stats";
 
 import { default as registrationTokens } from "./postgres/account/registration-tokens";
@@ -1810,10 +1809,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
 
   async unlink_old_deleted_projects() {
     return await unlink_old_deleted_projects(this);
-  }
-
-  async projects_that_need_to_be_started() {
-    return await projects_that_need_to_be_started(this);
   }
 
   // this *merges* in the run_quota; it doesn't replace it.

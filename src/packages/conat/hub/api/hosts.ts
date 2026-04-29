@@ -402,6 +402,22 @@ export interface HostCurrentMetrics {
   stopping_project_count?: number;
 }
 
+export type HostPressureZone = "normal" | "observe" | "pressure" | "emergency";
+
+export interface HostPressureState {
+  zone: HostPressureZone;
+  reason?: string;
+  since_ms?: number;
+  evaluated_at_ms?: number;
+  candidate_count?: number;
+  settle_until_ms?: number;
+  recent_pressure_stop_count?: number;
+  last_action_at_ms?: number;
+  last_action_project_id?: string;
+  last_action_status?: "stopped" | "stop_failed" | "cooldown" | "no_candidates";
+  last_action_reason?: string;
+}
+
 export interface HostMetricsHistoryPoint extends HostCurrentMetrics {
   disk_used_percent?: number;
   metadata_used_percent?: number;
@@ -483,6 +499,7 @@ export interface Host {
   host_session_id?: string;
   host_session_started_at?: string;
   metrics?: HostMetrics;
+  pressure?: HostPressureState;
   machine?: HostMachine;
   provider_instance_id?: string;
   public_ip?: string;

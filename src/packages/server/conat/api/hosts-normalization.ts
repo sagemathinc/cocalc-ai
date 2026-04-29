@@ -30,10 +30,12 @@ import type {
   HostBootstrapLifecycleItem,
   HostBootstrapStatus,
   HostCurrentMetrics,
+  HostPressureState,
   HostRuntimeExceptionSummary,
   HostInterruptionRestorePolicy,
   HostMetricsHistory,
   HostPricingModel,
+  HostPressureZone,
   HostStatus,
   HostMachine,
 } from "@cocalc/conat/hub/api/hosts";
@@ -279,6 +281,84 @@ export function parseRow(
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed < 0) return undefined;
     return parsed;
+  };
+  const normalizePressureZone = (
+    value: unknown,
+  ): HostPressureZone | undefined => {
+    switch (`${value ?? ""}`.trim()) {
+      case "normal":
+      case "observe":
+      case "pressure":
+      case "emergency":
+        return `${value}`.trim() as HostPressureZone;
+      default:
+        return undefined;
+    }
+  };
+  const normalizeHostPressureState = (
+    value: unknown,
+  ): HostPressureState | undefined => {
+    const zone = normalizePressureZone((value as any)?.zone);
+    if (!zone) return undefined;
+    const normalized: HostPressureState = { zone };
+    const reason = `${(value as any)?.reason ?? ""}`.trim();
+    if (reason) {
+      normalized.reason = reason;
+    }
+    const since_ms = parseNonNegativeNumber((value as any)?.since_ms);
+    if (since_ms != null) {
+      normalized.since_ms = since_ms;
+    }
+    const evaluated_at_ms = parseNonNegativeNumber(
+      (value as any)?.evaluated_at_ms,
+    );
+    if (evaluated_at_ms != null) {
+      normalized.evaluated_at_ms = evaluated_at_ms;
+    }
+    const candidate_count = parseNonNegativeNumber(
+      (value as any)?.candidate_count,
+    );
+    if (candidate_count != null) {
+      normalized.candidate_count = candidate_count;
+    }
+    const settle_until_ms = parseNonNegativeNumber(
+      (value as any)?.settle_until_ms,
+    );
+    if (settle_until_ms != null) {
+      normalized.settle_until_ms = settle_until_ms;
+    }
+    const recent_pressure_stop_count = parseNonNegativeNumber(
+      (value as any)?.recent_pressure_stop_count,
+    );
+    if (recent_pressure_stop_count != null) {
+      normalized.recent_pressure_stop_count = recent_pressure_stop_count;
+    }
+    const last_action_at_ms = parseNonNegativeNumber(
+      (value as any)?.last_action_at_ms,
+    );
+    if (last_action_at_ms != null) {
+      normalized.last_action_at_ms = last_action_at_ms;
+    }
+    const last_action_project_id =
+      `${(value as any)?.last_action_project_id ?? ""}`.trim();
+    if (last_action_project_id) {
+      normalized.last_action_project_id = last_action_project_id;
+    }
+    switch (`${(value as any)?.last_action_status ?? ""}`.trim()) {
+      case "stopped":
+      case "stop_failed":
+      case "cooldown":
+      case "no_candidates":
+        normalized.last_action_status =
+          `${(value as any)?.last_action_status}`.trim() as HostPressureState["last_action_status"];
+        break;
+    }
+    const last_action_reason =
+      `${(value as any)?.last_action_reason ?? ""}`.trim();
+    if (last_action_reason) {
+      normalized.last_action_reason = last_action_reason;
+    }
+    return normalized;
   };
   const lifecycleValueText = (value: unknown): string | undefined => {
     if (typeof value === "string") {
@@ -885,6 +965,7 @@ export function parseRow(
             ...(opts.metrics_history ? { history: opts.metrics_history } : {}),
           }
         : undefined,
+    pressure: normalizeHostPressureState(metadata.pressure),
     machine,
     provider_instance_id: metadata.runtime?.instance_id,
     public_ip: metadata.runtime?.public_ip,

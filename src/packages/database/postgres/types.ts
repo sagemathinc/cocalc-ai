@@ -772,8 +772,6 @@ export interface PostgreSQLMethods extends EventEmitter {
 
   synctable(opts: SyncTableOptions): SyncTable | undefined;
 
-  projects_that_need_to_be_started(): Promise<string[]>;
-
   // Group 5: Connection Management
   connect(opts: { max_time?: number; cb?: CB }): void;
   disconnect(): void;

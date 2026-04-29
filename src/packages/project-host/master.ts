@@ -11,6 +11,10 @@ import {
   type HostProjectStopPolicyRow,
   type HostRuntimeLogSource,
 } from "@cocalc/conat/project-host/api";
+import type {
+  HostPressureState,
+  HostPressureZone,
+} from "@cocalc/conat/hub/api/hosts";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { clearLocalAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 import { account_id } from "@cocalc/backend/data";
@@ -55,6 +59,7 @@ import { getManagedComponentStatus } from "./managed-components";
 import { rolloutManagedComponents } from "./managed-component-rollout";
 import { readHostAgentState } from "./host-agent-state";
 import { upsertProjectStopPolicy } from "./sqlite/stop-policy";
+import { startHostPressureController } from "./host-pressure";
 
 const logger = getLogger("project-host:master");
 
@@ -561,12 +566,19 @@ export async function startMasterRegistration({
   host,
   port,
   masterConatToken,
+  stopProjectForPressure,
 }: {
   hostId?: string;
   runnerId: string;
   host: string;
   port: number;
   masterConatToken?: string;
+  stopProjectForPressure?: (opts: {
+    project_id: string;
+    force?: boolean;
+    pressure_zone: HostPressureZone;
+    reason: string;
+  }) => Promise<void>;
 }): Promise<MasterRegistrationHandle | undefined> {
   const masterAddress =
     process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER;
@@ -906,6 +918,26 @@ export async function startMasterRegistration({
   });
 
   const hostMetrics = startHostMetricsCollector();
+  let stopPolicyMirrorReady = false;
+  let pressureController:
+    | ReturnType<typeof startHostPressureController>
+    | undefined;
+
+  const maybeStartPressureController = () => {
+    if (
+      pressureController ||
+      !stopPolicyMirrorReady ||
+      !stopProjectForPressure
+    ) {
+      return;
+    }
+    pressureController = startHostPressureController({
+      refreshMetrics: hostMetrics.refresh,
+      getCurrentMetrics: hostMetrics.getCurrentSnapshot,
+      stopProject: stopProjectForPressure,
+    });
+    logger.info("started host-local pressure controller");
+  };
 
   const buildPayload = (): HostRegistration => {
     const versions = getSoftwareVersions();
@@ -913,6 +945,8 @@ export async function startMasterRegistration({
     const observedComponents = getManagedComponentStatus();
     const hostAgentState = readHostAgentState();
     const currentMetrics = hostMetrics.getCurrentSnapshot();
+    const pressureState: HostPressureState | undefined =
+      pressureController?.getCurrentState();
     const bootstrapLifecycle = getBootstrapLifecycle();
     return {
       ...basePayload,
@@ -926,6 +960,7 @@ export async function startMasterRegistration({
               },
             }
           : {}),
+        ...(pressureState ? { pressure: pressureState } : {}),
         ...(bootstrapLifecycle
           ? {
               bootstrap_lifecycle: bootstrapLifecycle,
@@ -1165,6 +1200,8 @@ export async function startMasterRegistration({
       applied,
       truncated: !!resp?.has_more,
     });
+    stopPolicyMirrorReady = true;
+    maybeStartPressureController();
   };
 
   const recoverMasterConatTokenViaBootstrap = async (
@@ -1421,6 +1458,7 @@ export async function startMasterRegistration({
     clearInterval(stopPolicyDeltaTimer);
     clearInterval(reconcileTimer);
     clearInterval(stopPolicyReconcileTimer);
+    pressureController?.stop();
     clearInterval(rootfsGcTimer);
     clearInterval(missingTokenProbe);
     if (tokenRotationTimer) {

@@ -22,7 +22,6 @@ import {
 } from "@cocalc/backend/data";
 import { trimLogFileSize } from "@cocalc/backend/logger";
 import port from "@cocalc/backend/port";
-import { init_start_always_running_projects } from "@cocalc/database/postgres/project/always-running";
 import { load_server_settings_from_env } from "@cocalc/database/settings/server-settings";
 import { ensureLocalPostgres } from "@cocalc/database/postgres/dev";
 import { init_passport } from "@cocalc/server/hub/auth";
@@ -32,7 +31,6 @@ import initHandleMentions from "@cocalc/server/mentions/handle";
 import initMessageMaintenance from "@cocalc/server/messages/maintenance";
 import initProjectControl from "@cocalc/server/projects/control";
 import { start as startHubRegister } from "@cocalc/server/metrics/hub_register";
-import initIdleTimeout from "@cocalc/server/projects/control/stop-idle-projects";
 import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
@@ -253,13 +251,6 @@ async function startServer(): Promise<void> {
   // Project control
   logger.info("initializing project control...");
   const projectControl = initProjectControl();
-  if (program.mode != "kucalc" && program.conatServer) {
-    // We handle idle timeout of projects.
-    // This can be disabled via COCALC_NO_IDLE_TIMEOUT.
-    // This only uses the admin-configurable settings field of projects
-    // in the database and isn't aware of licenses or upgrades.
-    initIdleTimeout(projectControl);
-  }
 
   // This loads from the database credentials to use Conat.
   await loadConatConfiguration();
@@ -303,9 +294,6 @@ async function startServer(): Promise<void> {
   if (program.conatServer) {
     if (program.mode != "kucalc") {
       await init_update_stats();
-      // This is async but runs forever, so don't wait for it.
-      logger.info("init starting always running projects");
-      init_start_always_running_projects(getDatabase());
     }
   }
 

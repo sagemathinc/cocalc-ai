@@ -1200,6 +1200,23 @@ export async function main(
     host,
     port,
     masterConatToken,
+    stopProjectForPressure: async ({
+      project_id,
+      force,
+      pressure_zone,
+      reason,
+    }) => {
+      if (!hubApi.projects?.stop) {
+        throw new Error("local project stop API unavailable");
+      }
+      logger.warn("host-local pressure controller stopping project", {
+        project_id,
+        force: !!force,
+        pressure_zone,
+        reason,
+      });
+      await hubApi.projects.stop({ project_id });
+    },
   });
   const stopReconciler = startReconciler();
   const stopDataPermissionHardener = startDataPermissionHardener(dataDir);
