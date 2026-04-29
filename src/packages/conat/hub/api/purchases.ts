@@ -100,6 +100,45 @@ export interface ManagedEgressEventSummary {
   metadata?: Record<string, unknown> | null;
 }
 
+export type ManagedEgressHistoryBucketSize = "5m" | "1h" | "1d";
+
+export interface ManagedEgressHistoryPoint {
+  start: string;
+  end: string;
+  bytes: number;
+  categories_bytes: Record<string, number>;
+}
+
+export interface ManagedEgressProjectSummary {
+  project_id: string | null;
+  project_title?: string | null;
+  bytes: number;
+}
+
+export interface ManagedEgressHistory {
+  account_id: string;
+  project_id?: string | null;
+  start: string;
+  end: string;
+  bucket: ManagedEgressHistoryBucketSize;
+  total_bytes: number;
+  categories_bytes: Record<string, number>;
+  points: ManagedEgressHistoryPoint[];
+  top_projects: ManagedEgressProjectSummary[];
+  recent_events: ManagedEgressEventSummary[];
+}
+
+export interface ManagedEgressHistoryQuery {
+  account_id?: string;
+  user_account_id?: string;
+  project_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  bucket?: ManagedEgressHistoryBucketSize;
+  recent_event_limit?: number;
+  top_project_limit?: number;
+}
+
 export interface AIUsageWindowStatus {
   window: "5h" | "7d";
   used: number;
@@ -125,6 +164,9 @@ export interface Purchases {
     user_account_id?: string;
   }) => Promise<MembershipDetails>;
   getAIUsage: (opts?: { account_id?: string }) => Promise<AIUsageStatus>;
+  getManagedEgressHistory: (
+    opts?: ManagedEgressHistoryQuery,
+  ) => Promise<ManagedEgressHistory>;
 }
 
 export const purchases = {
@@ -133,4 +175,5 @@ export const purchases = {
   getMembership: authFirst,
   getMembershipDetails: authFirst,
   getAIUsage: authFirst,
+  getManagedEgressHistory: authFirst,
 };

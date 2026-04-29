@@ -226,6 +226,97 @@ test("account membership resolves an explicit account identifier", async () => {
   });
 });
 
+test("account egress forwards filters and serializes history", async () => {
+  let capturedArgs: any;
+  let captured: any;
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          purchases: {
+            getManagedEgressHistory: async (opts) => {
+              capturedArgs = opts;
+              return {
+                account_id: "11111111-1111-1111-1111-111111111111",
+                project_id: "33333333-3333-3333-3333-333333333333",
+                start: "2026-04-28T00:00:00.000Z",
+                end: "2026-04-29T00:00:00.000Z",
+                bucket: "1h",
+                total_bytes: 1048576,
+                categories_bytes: { "raw-network": 1048576 },
+                points: [
+                  {
+                    start: "2026-04-28T00:00:00.000Z",
+                    end: "2026-04-28T01:00:00.000Z",
+                    bytes: 262144,
+                    categories_bytes: { "raw-network": 262144 },
+                  },
+                ],
+                top_projects: [
+                  {
+                    project_id: "33333333-3333-3333-3333-333333333333",
+                    project_title: "Lite 4B",
+                    bytes: 1048576,
+                  },
+                ],
+                recent_events: [
+                  {
+                    project_id: "33333333-3333-3333-3333-333333333333",
+                    project_title: "Lite 4B",
+                    category: "raw-network",
+                    bytes: 262144,
+                    occurred_at: "2026-04-28T00:30:00.000Z",
+                    metadata: { interface_name: "ens4" },
+                  },
+                ],
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an explicit account");
+    },
+  } as any);
+  await program.parseAsync([
+    "node",
+    "test",
+    "account",
+    "egress",
+    "--project",
+    "33333333-3333-3333-3333-333333333333",
+    "--bucket",
+    "1h",
+    "--recent-events",
+    "5",
+    "--top-projects",
+    "3",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    user_account_id: "11111111-1111-1111-1111-111111111111",
+    project_id: "33333333-3333-3333-3333-333333333333",
+    start: undefined,
+    end: undefined,
+    bucket: "1h",
+    recent_event_limit: 5,
+    top_project_limit: 3,
+  });
+  assert.equal(captured?.total_bytes, 1048576);
+  assert.equal(captured?.total, "1.0 MB");
+  assert.deepEqual(captured?.categories_bytes, {
+    "raw-network": 1048576,
+  });
+  assert.equal(captured?.points?.[0]?.bytes_human, "262.0 KB");
+  assert.equal(captured?.top_projects?.[0]?.project_title, "Lite 4B");
+  assert.equal(captured?.recent_events?.[0]?.bytes_human, "262.0 KB");
+});
+
 test("account delete refuses to run without --yes", async () => {
   const program = new Command();
   registerAccountCommand(program, {
