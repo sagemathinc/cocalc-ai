@@ -19,6 +19,13 @@ const {
   stopDaemon,
 } = require("./daemon");
 
+type ProcessRuntimeSpawn = typeof __test__.processRuntime.spawn;
+
+function mockSpawn(): jest.MockedFunction<ProcessRuntimeSpawn> {
+  return __test__.processRuntime
+    .spawn as jest.MockedFunction<ProcessRuntimeSpawn>;
+}
+
 describe("project-host daemon stop", () => {
   const originalEnv = { ...process.env };
   let runtimeDir: string;
@@ -33,6 +40,14 @@ describe("project-host daemon stop", () => {
     );
     process.env.COCALC_PODMAN_RUNTIME_DIR = runtimeDir;
     process.env.DEBUG_FILE = path.join(runtimeDir, "debug.log");
+    jest.spyOn(__test__.processRuntime, "spawn").mockImplementation(((
+      command: string,
+      args: readonly string[] = [],
+    ) => {
+      throw new Error(
+        `unexpected processRuntime.spawn in daemon.test.ts: ${command} ${args.join(" ")}`.trim(),
+      );
+    }) as ProcessRuntimeSpawn);
   });
 
   afterAll(() => {
@@ -256,18 +271,20 @@ describe("project-host daemon stop", () => {
     const healthSpy = jest
       .spyOn(__test__.processRuntime, "spawnSync")
       .mockReturnValue({ status: 0 } as any);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockImplementation(((_command: any, _args: any, opts?: any) => {
-        const env = opts?.env ?? {};
-        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
-          return { pid: 9102, unref: () => {} } as any;
-        }
-        if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
-          return { pid: 9202, unref: () => {} } as any;
-        }
-        throw new Error(`unexpected spawn for healthy daemon test`);
-      }) as typeof __test__.processRuntime.spawn);
+    const spawnSpy = mockSpawn().mockImplementation(((
+      _command: any,
+      _args: any,
+      opts?: any,
+    ) => {
+      const env = opts?.env ?? {};
+      if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+        return { pid: 9102, unref: () => {} } as any;
+      }
+      if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
+        return { pid: 9202, unref: () => {} } as any;
+      }
+      throw new Error(`unexpected spawn for healthy daemon test`);
+    }) as typeof __test__.processRuntime.spawn);
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
 
     ensureDaemon(0);
@@ -295,9 +312,10 @@ describe("project-host daemon stop", () => {
     process.env.PORT = "9002";
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
 
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockReturnValue({ pid: 7878, unref: () => {} } as any);
+    const spawnSpy = mockSpawn().mockReturnValue({
+      pid: 7878,
+      unref: () => {},
+    } as any);
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
 
     startHostAgent(0);
@@ -512,9 +530,10 @@ describe("project-host daemon stop", () => {
     const healthSpy = jest
       .spyOn(__test__.processRuntime, "spawnSync")
       .mockReturnValue({ status: 0 } as any);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockReturnValue({ pid: 3333, unref: () => {} } as any);
+    const spawnSpy = mockSpawn().mockReturnValue({
+      pid: 3333,
+      unref: () => {},
+    } as any);
 
     ensureDaemon(0, {
       quietHealthy: true,
@@ -626,9 +645,10 @@ describe("project-host daemon stop", () => {
     jest
       .spyOn(__test__.processRuntime, "spawnSync")
       .mockReturnValue({ status: 0 } as any);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockReturnValue({ pid: 4444, unref: () => {} } as any);
+    const spawnSpy = mockSpawn().mockReturnValue({
+      pid: 4444,
+      unref: () => {},
+    } as any);
 
     expect(handleDaemonCli(["daemon", "restart-project-host", "0"])).toBe(true);
 
@@ -668,9 +688,10 @@ describe("project-host daemon stop", () => {
     const healthSpy = jest
       .spyOn(__test__.processRuntime, "spawnSync")
       .mockReturnValue({ status: 0 } as any);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockReturnValue({ pid: 9494, unref: () => {} } as any);
+    const spawnSpy = mockSpawn().mockReturnValue({
+      pid: 9494,
+      unref: () => {},
+    } as any);
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
 
     startDaemon(0);
@@ -700,15 +721,17 @@ describe("project-host daemon stop", () => {
     jest
       .spyOn(__test__.processRuntime, "spawnSync")
       .mockReturnValue({ status: 0 } as any);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockImplementation(((_command: any, _args: any, opts?: any) => {
-        const env = opts?.env ?? {};
-        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
-          return { pid: 1111, unref: () => {} } as any;
-        }
-        return { pid: 2222, unref: () => {} } as any;
-      }) as typeof __test__.processRuntime.spawn);
+    const spawnSpy = mockSpawn().mockImplementation(((
+      _command: any,
+      _args: any,
+      opts?: any,
+    ) => {
+      const env = opts?.env ?? {};
+      if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+        return { pid: 1111, unref: () => {} } as any;
+      }
+      return { pid: 2222, unref: () => {} } as any;
+    }) as typeof __test__.processRuntime.spawn);
 
     startDaemon(0);
 
@@ -761,18 +784,20 @@ describe("project-host daemon stop", () => {
     jest
       .spyOn(__test__.processRuntime, "spawnSync")
       .mockReturnValue({ status: 0 } as any);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockImplementation(((_command: any, _args: any, opts?: any) => {
-        const env = opts?.env ?? {};
-        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
-          return { pid: 1111, unref: () => {} } as any;
-        }
-        if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
-          return { pid: 2222, unref: () => {} } as any;
-        }
-        return { pid: 3333, unref: () => {} } as any;
-      }) as typeof __test__.processRuntime.spawn);
+    const spawnSpy = mockSpawn().mockImplementation(((
+      _command: any,
+      _args: any,
+      opts?: any,
+    ) => {
+      const env = opts?.env ?? {};
+      if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+        return { pid: 1111, unref: () => {} } as any;
+      }
+      if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
+        return { pid: 2222, unref: () => {} } as any;
+      }
+      return { pid: 3333, unref: () => {} } as any;
+    }) as typeof __test__.processRuntime.spawn);
 
     startDaemon(0);
 
@@ -831,18 +856,20 @@ describe("project-host daemon stop", () => {
     jest
       .spyOn(__test__.processRuntime, "spawnSync")
       .mockReturnValue({ status: 0 } as any);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockImplementation(((_command: any, _args: any, opts?: any) => {
-        const env = opts?.env ?? {};
-        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
-          return { pid: 1111, unref: () => {} } as any;
-        }
-        if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
-          return { pid: 2222, unref: () => {} } as any;
-        }
-        return { pid: 3333, unref: () => {} } as any;
-      }) as typeof __test__.processRuntime.spawn);
+    const spawnSpy = mockSpawn().mockImplementation(((
+      _command: any,
+      _args: any,
+      opts?: any,
+    ) => {
+      const env = opts?.env ?? {};
+      if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+        return { pid: 1111, unref: () => {} } as any;
+      }
+      if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
+        return { pid: 2222, unref: () => {} } as any;
+      }
+      return { pid: 3333, unref: () => {} } as any;
+    }) as typeof __test__.processRuntime.spawn);
 
     startDaemon(0);
 
@@ -883,18 +910,20 @@ describe("project-host daemon stop", () => {
     jest
       .spyOn(__test__.processRuntime, "spawnSync")
       .mockReturnValue({ status: 0 } as any);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockImplementation(((_command: any, _args: any, opts?: any) => {
-        const env = opts?.env ?? {};
-        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
-          return { pid: 4441, unref: () => {} } as any;
-        }
-        if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
-          return { pid: 4442, unref: () => {} } as any;
-        }
-        return { pid: 4443, unref: () => {} } as any;
-      }) as typeof __test__.processRuntime.spawn);
+    const spawnSpy = mockSpawn().mockImplementation(((
+      _command: any,
+      _args: any,
+      opts?: any,
+    ) => {
+      const env = opts?.env ?? {};
+      if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+        return { pid: 4441, unref: () => {} } as any;
+      }
+      if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
+        return { pid: 4442, unref: () => {} } as any;
+      }
+      return { pid: 4443, unref: () => {} } as any;
+    }) as typeof __test__.processRuntime.spawn);
 
     startDaemon(0);
 
@@ -921,18 +950,20 @@ describe("project-host daemon stop", () => {
     jest
       .spyOn(__test__.processRuntime, "spawnSync")
       .mockReturnValue({ status: 0 } as any);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockImplementation(((_command: any, _args: any, opts?: any) => {
-        const env = opts?.env ?? {};
-        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
-          return { pid: 3333, unref: () => {} } as any;
-        }
-        if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
-          return { pid: 4444, unref: () => {} } as any;
-        }
-        return { pid: 5555, unref: () => {} } as any;
-      }) as typeof __test__.processRuntime.spawn);
+    const spawnSpy = mockSpawn().mockImplementation(((
+      _command: any,
+      _args: any,
+      opts?: any,
+    ) => {
+      const env = opts?.env ?? {};
+      if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+        return { pid: 3333, unref: () => {} } as any;
+      }
+      if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
+        return { pid: 4444, unref: () => {} } as any;
+      }
+      return { pid: 5555, unref: () => {} } as any;
+    }) as typeof __test__.processRuntime.spawn);
 
     startDaemon(0);
 
@@ -986,18 +1017,20 @@ describe("project-host daemon stop", () => {
     jest
       .spyOn(__test__.processRuntime, "spawnSync")
       .mockReturnValue({ status: 0 } as any);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockImplementation(((_command: any, _args: any, opts?: any) => {
-        const env = opts?.env ?? {};
-        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
-          return { pid: 3333, unref: () => {} } as any;
-        }
-        if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
-          return { pid: 4444, unref: () => {} } as any;
-        }
-        return { pid: 5555, unref: () => {} } as any;
-      }) as typeof __test__.processRuntime.spawn);
+    const spawnSpy = mockSpawn().mockImplementation(((
+      _command: any,
+      _args: any,
+      opts?: any,
+    ) => {
+      const env = opts?.env ?? {};
+      if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+        return { pid: 3333, unref: () => {} } as any;
+      }
+      if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
+        return { pid: 4444, unref: () => {} } as any;
+      }
+      return { pid: 5555, unref: () => {} } as any;
+    }) as typeof __test__.processRuntime.spawn);
 
     startDaemon(0);
 
@@ -1158,9 +1191,10 @@ describe("project-host daemon stop", () => {
         stderr: "",
       } as any;
     }) as typeof __test__.processRuntime.spawnSync);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockReturnValue({ pid: 9494, unref: () => {} } as any);
+    const spawnSpy = mockSpawn().mockReturnValue({
+      pid: 9494,
+      unref: () => {},
+    } as any);
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
 
@@ -1249,9 +1283,10 @@ describe("project-host daemon stop", () => {
         stderr: "",
       } as any;
     }) as typeof __test__.processRuntime.spawnSync);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockReturnValue({ pid: 9494, unref: () => {} } as any);
+    const spawnSpy = mockSpawn().mockReturnValue({
+      pid: 9494,
+      unref: () => {},
+    } as any);
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
 
     ensureDaemon(0);
@@ -1466,9 +1501,10 @@ describe("project-host daemon stop", () => {
         stderr: "",
       } as any;
     }) as typeof __test__.processRuntime.spawnSync);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockReturnValue({ pid: 9595, unref: () => {} } as any);
+    const spawnSpy = mockSpawn().mockReturnValue({
+      pid: 9595,
+      unref: () => {},
+    } as any);
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
 
     ensureDaemon(0);
@@ -1563,9 +1599,10 @@ describe("project-host daemon stop", () => {
         }
         throw new Error(`unexpected spawnSync args: ${args.join(" ")}`);
       }) as typeof __test__.processRuntime.spawnSync);
-    const spawnSpy = jest
-      .spyOn(__test__.processRuntime, "spawn")
-      .mockReturnValue({ pid: 9797, unref: () => {} } as any);
+    const spawnSpy = mockSpawn().mockReturnValue({
+      pid: 9797,
+      unref: () => {},
+    } as any);
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
 
