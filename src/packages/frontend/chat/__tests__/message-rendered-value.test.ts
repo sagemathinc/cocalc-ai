@@ -261,6 +261,7 @@ describe("shouldShowCodexShowActivityButton", () => {
       shouldShowCodexShowActivityButton({
         showCodexActivity: true,
         expandedCodexActivity: false,
+        hasVisibleCompletedActivity: false,
         canToggle: true,
         effectiveGenerating: true,
         isLastMessageInThread: true,
@@ -273,10 +274,37 @@ describe("shouldShowCodexShowActivityButton", () => {
       shouldShowCodexShowActivityButton({
         showCodexActivity: true,
         expandedCodexActivity: false,
+        hasVisibleCompletedActivity: false,
         canToggle: true,
         effectiveGenerating: true,
         isLastMessageInThread: false,
       }),
     ).toBe(true);
+  });
+
+  it("shows the button when a completed row is marked expanded but has no visible cached activity", () => {
+    expect(
+      shouldShowCodexShowActivityButton({
+        showCodexActivity: true,
+        expandedCodexActivity: true,
+        hasVisibleCompletedActivity: false,
+        canToggle: true,
+        effectiveGenerating: false,
+        isLastMessageInThread: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides the button when completed activity is already visible inline", () => {
+    expect(
+      shouldShowCodexShowActivityButton({
+        showCodexActivity: true,
+        expandedCodexActivity: true,
+        hasVisibleCompletedActivity: true,
+        canToggle: true,
+        effectiveGenerating: false,
+        isLastMessageInThread: true,
+      }),
+    ).toBe(false);
   });
 });
