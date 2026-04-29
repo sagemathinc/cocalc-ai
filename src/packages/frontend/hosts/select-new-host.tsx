@@ -9,7 +9,10 @@ import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { Icon } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import { HostPickerModal } from "@cocalc/frontend/hosts/pick-host";
-import { HostPressureTag } from "@cocalc/frontend/hosts/pressure-ui";
+import {
+  HostPlacementSummary,
+  HostPressureTag,
+} from "@cocalc/frontend/hosts/pressure-ui";
 import { SpotHostTag } from "@cocalc/frontend/hosts/spot-ui";
 
 const { Paragraph } = Typography;
@@ -53,28 +56,46 @@ export function SelectNewHost({
               </div>
               <div style={{ color: COLORS.GRAY_D }}>
                 {selectedHost ? (
-                  <>
-                    <span style={{ marginRight: 8 }}>{selectedHost.name}</span>
-                    {selectedHost.pricing_model === "spot" && <SpotHostTag />}
-                    {selectedHost.region && (
-                      <Tag color="blue" style={{ marginRight: 6 }}>
-                        {selectedHost.region}
-                      </Tag>
-                    )}
-                    {regionLabel && (
-                      <Tag color="geekblue" style={{ marginRight: 6 }}>
-                        {regionLabel}
-                      </Tag>
-                    )}
-                    <HostPressureTag pressure={selectedHost.pressure} />
-                    {selectedHost.tier != null && (
-                      <Tag color="purple" style={{ marginRight: 6 }}>
-                        Tier {selectedHost.tier}
-                      </Tag>
-                    )}
-                  </>
+                  <Space orientation="vertical" size={4}>
+                    <Space size={0} wrap>
+                      <span style={{ marginRight: 8 }}>
+                        {selectedHost.name}
+                      </span>
+                      {selectedHost.pricing_model === "spot" && <SpotHostTag />}
+                      {selectedHost.region && (
+                        <Tag color="blue" style={{ marginRight: 6 }}>
+                          {selectedHost.region}
+                        </Tag>
+                      )}
+                      {regionLabel && (
+                        <Tag color="geekblue" style={{ marginRight: 6 }}>
+                          {regionLabel}
+                        </Tag>
+                      )}
+                      <HostPressureTag pressure={selectedHost.pressure} />
+                      {selectedHost.tier != null && (
+                        <Tag color="purple" style={{ marginRight: 6 }}>
+                          Tier {selectedHost.tier}
+                        </Tag>
+                      )}
+                    </Space>
+                    <HostPlacementSummary
+                      host={selectedHost}
+                      compact
+                      detailMode="popover"
+                      showNormal
+                    />
+                  </Space>
                 ) : (
-                  `Auto (best available host${regionLabel ? ` in ${regionLabel}` : ""})`
+                  <Space orientation="vertical" size={4}>
+                    <span>
+                      {`Auto (best available host${regionLabel ? ` in ${regionLabel}` : ""})`}
+                    </span>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Auto prefers normal hosts and avoids blocked or stressed
+                      placement targets when possible.
+                    </Typography.Text>
+                  </Space>
                 )}
               </div>
             </div>
