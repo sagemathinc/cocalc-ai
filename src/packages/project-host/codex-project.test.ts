@@ -777,6 +777,47 @@ describe("initCodexProjectRunner", () => {
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 
+  it("forces a start when the cached project row says running but the container is missing", async () => {
+    spawnMock.mockReturnValue(new FakeProc());
+    let inspectCalls = 0;
+    execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
+      if (args[0] === "inspect" && args[1] === "-f") {
+        inspectCalls += 1;
+        cb(null, inspectCalls === 1 ? "false\n" : "true\n", "");
+        return;
+      }
+      cb(null, "", "");
+    });
+    projects.getProject.mockReturnValue({
+      state: "running",
+      run_quota: {},
+    });
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const home = path.join(tmp, "home");
+    await fs.mkdir(home, { recursive: true });
+    filesystem.localPath.mockResolvedValue({ home, scratch: undefined });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "account-api-key",
+      contextId: "acct-key-1234",
+      env: { OPENAI_API_KEY: "secret-key" },
+    });
+
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawner = getCodexProjectSpawner();
+
+    await spawner!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      cwd: "/home/user",
+    });
+
+    expect(hubApi.projects.start).toHaveBeenCalledWith({
+      project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+    });
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does not force ephemeral auth storage for shared-home auth", async () => {
     spawnMock.mockReturnValue(new FakeProc());
     execFileMock.mockImplementation((_cmd, args, _opts, cb) => {

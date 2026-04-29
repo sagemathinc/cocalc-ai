@@ -779,16 +779,24 @@ async function ensureProjectContainerRunning(projectId: string): Promise<void> {
   }
 
   const state = `${row.state ?? ""}`.trim().toLowerCase();
-  if (state !== "starting" && state !== "running") {
-    if (!hubApi.projects.start) {
-      throw new Error("project start API is not available");
-    }
+  if (!hubApi.projects.start) {
+    throw new Error("project start API is not available");
+  }
+  if (state === "starting" || state === "running") {
+    logger.warn(
+      "codex project runtime: cached project state is stale; container missing, forcing start",
+      {
+        projectId,
+        state,
+      },
+    );
+  } else {
     logger.info("codex project runtime: starting project container", {
       projectId,
       state,
     });
-    await hubApi.projects.start({ project_id: projectId });
   }
+  await hubApi.projects.start({ project_id: projectId });
 
   const deadline = Date.now() + PROJECT_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
