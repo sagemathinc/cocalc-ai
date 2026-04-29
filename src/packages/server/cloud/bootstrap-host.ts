@@ -123,7 +123,31 @@ function isLoopbackHostname(hostname: string): boolean {
 
 let currentGcpProjectIdPromise: Promise<string | undefined> | undefined;
 
-async function getCurrentGcpProjectId(): Promise<string | undefined> {
+export function normalizeGcpProjectId(value?: string): string | undefined {
+  const projectId = `${value ?? ""}`.trim().toLowerCase();
+  return projectId || undefined;
+}
+
+export function configuredGcpProjectIdFromServiceAccountJson(
+  serviceAccountJson?: string,
+): string | undefined {
+  const raw = `${serviceAccountJson ?? ""}`.trim();
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    return normalizeGcpProjectId(parsed?.project_id);
+  } catch {
+    return undefined;
+  }
+}
+
+async function getCurrentGcpProjectId({
+  configuredProjectId,
+}: {
+  configuredProjectId?: string;
+} = {}): Promise<string | undefined> {
+  const normalizedConfigured = normalizeGcpProjectId(configuredProjectId);
+  if (normalizedConfigured) return normalizedConfigured;
   currentGcpProjectIdPromise ??= (async () => {
     try {
       const response = await fetch(
@@ -134,8 +158,7 @@ async function getCurrentGcpProjectId(): Promise<string | undefined> {
         },
       );
       if (!response.ok) return undefined;
-      const projectId = `${await response.text()}`.trim().toLowerCase();
-      return projectId || undefined;
+      return normalizeGcpProjectId(await response.text());
     } catch {
       return undefined;
     }
@@ -147,24 +170,32 @@ async function getCurrentGcpProjectId(): Promise<string | undefined> {
   return projectId;
 }
 
-async function getCurrentGcpInternalHostname(): Promise<string | undefined> {
+async function getCurrentGcpInternalHostname({
+  configuredProjectId,
+}: {
+  configuredProjectId?: string;
+} = {}): Promise<string | undefined> {
   return gcpInternalHostname({
     instanceName: osHostname(),
-    projectId: await getCurrentGcpProjectId(),
+    projectId: await getCurrentGcpProjectId({ configuredProjectId }),
   });
 }
 
 async function resolveMasterConatServer({
   providerId,
   configuredAddress,
+  gcpProjectId,
 }: {
   providerId?: string;
   configuredAddress?: string;
+  gcpProjectId?: string;
 }): Promise<string | undefined> {
   const address = `${configuredAddress ?? ""}`.trim();
   if (!address) return undefined;
   if (providerId !== "gcp") return address;
-  const internalHostname = await getCurrentGcpInternalHostname();
+  const internalHostname = await getCurrentGcpInternalHostname({
+    configuredProjectId: gcpProjectId,
+  });
   if (!internalHostname) return address;
   const routerPort =
     Number.parseInt(
@@ -659,6 +690,7 @@ export async function buildBootstrapScripts(
     project_hosts_software_base_url,
     project_hosts_bootstrap_channel,
     project_hosts_bootstrap_version,
+    google_cloud_service_account_json,
   } = await getServerSettings();
   const forcedSoftwareBaseUrl =
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE?.trim() || "";
@@ -685,6 +717,13 @@ export async function buildBootstrapScripts(
   const desiredArtifactVersions = await loadBootstrapArtifactDesiredVersions(
     row.id,
   );
+  const gcpProjectId =
+    normalizeGcpProjectId(
+      runtime?.metadata?.gcp_project_id ?? runtime?.metadata?.project_id,
+    ) ??
+    configuredGcpProjectIdFromServiceAccountJson(
+      google_cloud_service_account_json,
+    );
   const resolvedHostBundle = await resolveBootstrapArtifactBundle({
     softwareBaseUrl,
     artifact: "project-host",
@@ -767,6 +806,7 @@ export async function buildBootstrapScripts(
     : (opts.launchpadBaseUrl ?? "");
   const masterAddress = await resolveMasterConatServer({
     providerId,
+    gcpProjectId,
     configuredAddress:
       process.env.MASTER_CONAT_SERVER ??
       process.env.COCALC_MASTER_CONAT_SERVER ??
