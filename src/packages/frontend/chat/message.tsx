@@ -512,6 +512,24 @@ export function shouldLoadCodexPreviewBody({
   return rowMessageValue.trim().length === 0;
 }
 
+export function shouldShowCodexShowActivityButton({
+  showCodexActivity,
+  expandedCodexActivity,
+  canToggle,
+  effectiveGenerating,
+  isLastMessageInThread,
+}: {
+  showCodexActivity: boolean;
+  expandedCodexActivity: boolean;
+  canToggle: boolean;
+  effectiveGenerating: boolean;
+  isLastMessageInThread: boolean;
+}): boolean {
+  if (!showCodexActivity || expandedCodexActivity || !canToggle) return false;
+  if (effectiveGenerating && isLastMessageInThread) return false;
+  return true;
+}
+
 export function shouldSuppressAcpPlaceholderBody({
   value,
   showCodexActivity,
@@ -1758,6 +1776,13 @@ export default function Message({
   }
 
   function renderCodexHeaderActions() {
+    const showShowActivityButton = shouldShowCodexShowActivityButton({
+      showCodexActivity,
+      expandedCodexActivity,
+      canToggle: onExpandedCodexActivityChange != null,
+      effectiveGenerating,
+      isLastMessageInThread,
+    });
     const buttons: ReactNode[] = [
       <span key="select" style={{ marginTop: "-5px" }}>
         <Tip
@@ -1802,12 +1827,7 @@ export default function Message({
       </Tooltip>,
     ];
 
-    if (
-      showCodexActivity &&
-      !effectiveGenerating &&
-      !expandedCodexActivity &&
-      onExpandedCodexActivityChange
-    ) {
+    if (showShowActivityButton && onExpandedCodexActivityChange) {
       buttons.splice(
         1,
         0,
