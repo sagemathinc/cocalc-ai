@@ -137,12 +137,12 @@ describe("ChatLog immediate steer rendering", () => {
     const assistantProps = lastRenderedMessageProps("assistant-1");
     expect(assistantProps?.expandedCodexActivity).toBe(true);
     expect(assistantProps?.activitySteers).toEqual([
-      {
+      expect.objectContaining({
         messageId: "steer-1",
         date: 3000,
         text: "actually say hello",
         state: "sending",
-      },
+      }),
     ]);
   });
 
@@ -219,18 +219,104 @@ describe("ChatLog immediate steer rendering", () => {
     expect(screen.queryByText("Guidance sent")).toBeNull();
     const userProps = lastRenderedMessageProps("user-1");
     expect(userProps?.attachedSteers).toEqual([
-      {
+      expect.objectContaining({
         messageId: "steer-1",
         date: 3000,
         text: "actually say hello",
         state: "sent",
-      },
-      {
+      }),
+      expect.objectContaining({
         messageId: "steer-2",
         date: 4000,
         text: "also add punctuation",
         state: "sent",
-      },
+      }),
+    ]);
+  });
+
+  it("keeps steer attached to the assistant turn after completion when that activity stays expanded", () => {
+    const messages = new Map([
+      [
+        "1000",
+        {
+          date: 1000,
+          message_id: "user-1",
+          thread_id: "thread-1",
+          sender_id: "acct-1",
+          history: [{ content: "say hi" }],
+        },
+      ],
+      [
+        "2000",
+        {
+          date: 2000,
+          message_id: "assistant-1",
+          thread_id: "thread-1",
+          parent_message_id: "user-1",
+          sender_id: "acct-codex",
+          acp_account_id: "acct-codex",
+          generating: true,
+          history: [{ content: "hello" }],
+        },
+      ],
+      [
+        "3000",
+        {
+          date: 3000,
+          message_id: "steer-1",
+          thread_id: "thread-1",
+          sender_id: "acct-1",
+          acp_send_mode: "immediate",
+          parent_message_id: "assistant-1",
+          history: [{ content: "actually say hello" }],
+        },
+      ],
+    ]) as any;
+
+    const { rerender } = render(
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        mode="standalone"
+        actions={{ clearScrollRequest: jest.fn() } as any}
+        selectedThread="thread-1"
+        acpState={new Map([["message:steer-1", "sending"]]) as any}
+        messages={messages}
+      />,
+    );
+
+    messages.set("2000", {
+      ...messages.get("2000"),
+      generating: false,
+    });
+    messages.set("3000", {
+      ...messages.get("3000"),
+      acp_state: "sent",
+    });
+
+    rerender(
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        mode="standalone"
+        actions={{ clearScrollRequest: jest.fn() } as any}
+        selectedThread="thread-1"
+        acpState={new Map([["message:steer-1", "sent"]]) as any}
+        messages={messages}
+      />,
+    );
+
+    const userProps = lastRenderedMessageProps("user-1");
+    expect(userProps?.attachedSteers).toEqual([]);
+    const assistantProps = lastRenderedMessageProps("assistant-1");
+    expect(assistantProps?.expandedCodexActivity).toBe(true);
+    expect(assistantProps?.activitySteers).toEqual([
+      expect.objectContaining({
+        messageId: "steer-1",
+        date: 3000,
+        text: "actually say hello",
+        state: "sent",
+      }),
     ]);
   });
 });

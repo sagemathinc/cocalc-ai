@@ -1017,14 +1017,20 @@ export default function Message({
     ) {
       return undefined;
     }
-    const blocks = getLiveResponseBlocks(codexPreviewLog.events as any).filter(
-      (block) =>
-        block.kind === "agent" &&
-        typeof block.text === "string" &&
-        block.text.trim().length > 0,
+    const steerItems = Array.isArray(activitySteers)
+      ? activitySteers.filter(
+          (steer) =>
+            typeof steer?.text === "string" && steer.text.trim().length > 0,
+        )
+      : [];
+    const blocks = getLiveResponseBlocks(
+      codexPreviewLog.events as any,
+      steerItems.map(({ date, text, state }) => ({ date, text, state })),
+    ).filter(
+      (block) => typeof block.text === "string" && block.text.trim().length > 0,
     );
     return blocks.length > 0 ? blocks : undefined;
-  }, [codexPreviewLog.events, inlineCodexActivityMode]);
+  }, [activitySteers, codexPreviewLog.events, inlineCodexActivityMode]);
   const lastCodexActivityAtMs = useMemo(
     () => getLatestCodexActivityAtMs(codexPreviewLog.events),
     [codexPreviewLog.events],
@@ -1878,8 +1884,7 @@ export default function Message({
     message_class,
     inlineCodeLinks,
     openCommitFromMessage,
-    summaryValue,
-    showSummaryBelow = false,
+    showHeader = false,
     onHideActivity,
   }: {
     blocks: Array<{
@@ -1891,8 +1896,7 @@ export default function Message({
     message_class?: string;
     inlineCodeLinks?: InlineCodeLink[];
     openCommitFromMessage: (e: any) => void;
-    summaryValue?: string;
-    showSummaryBelow?: boolean;
+    showHeader?: boolean;
     onHideActivity?: () => void;
   }) {
     const combinedAgentText = blocks
@@ -1901,7 +1905,7 @@ export default function Message({
       .join("\n\n");
     return (
       <div onClickCapture={openCommitFromMessage}>
-        {showSummaryBelow ? (
+        {showHeader ? (
           <div
             style={{
               marginBottom: 8,
@@ -1983,47 +1987,7 @@ export default function Message({
             ),
           )}
         </div>
-        {showSummaryBelow && summaryValue?.trim().length ? (
-          <div style={{ marginTop: 12 }}>
-            <Divider style={{ margin: "0 0 10px 0" }} />
-            <div
-              style={{
-                marginBottom: 6,
-                color: COLORS.GRAY_M,
-                fontSize: `${Math.max((font_size ?? 14) - 2, 11)}px`,
-              }}
-            >
-              Final summary
-            </div>
-            {messageBodyMode === "select" ? (
-              renderSelectableMarkdownBody({
-                value: summaryValue,
-                message_class,
-                style: MARKDOWN_STYLE,
-              })
-            ) : (
-              <StaticMarkdown
-                style={MARKDOWN_STYLE}
-                value={summaryValue}
-                className={message_class}
-                editorTheme={editorTheme}
-                highlightQuery={searchHighlight}
-                inlineCodeLinks={
-                  Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
-                }
-                inlineCodeProjectRoot={activityBasePath}
-              />
-            )}
-          </div>
-        ) : null}
-        <CodexQuotaHelp
-          message={
-            showSummaryBelow
-              ? summaryValue || combinedAgentText
-              : combinedAgentText
-          }
-          projectId={project_id}
-        />
+        <CodexQuotaHelp message={combinedAgentText} projectId={project_id} />
       </div>
     );
   }
@@ -2148,9 +2112,7 @@ export default function Message({
               ? inlineCodeLinks
               : undefined,
             openCommitFromMessage,
-            summaryValue:
-              inlineCodexActivityMode === "completed" ? value : undefined,
-            showSummaryBelow: inlineCodexActivityMode === "completed",
+            showHeader: inlineCodexActivityMode === "completed",
             onHideActivity:
               inlineCodexActivityMode === "completed" &&
               onExpandedCodexActivityChange

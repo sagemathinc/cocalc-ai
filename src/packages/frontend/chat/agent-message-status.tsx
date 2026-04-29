@@ -58,6 +58,7 @@ export type AttachedSteerState = "sending" | "sent" | "queued" | "not-sent";
 
 export interface AttachedSteerMessage {
   messageId: string;
+  assistantMessageId?: string;
   date: number;
   text: string;
   state: AttachedSteerState;
