@@ -7,6 +7,7 @@ mathjax.
 
 */
 
+import "katex/dist/katex.min.css";
 import { math_escape, math_unescape } from "@cocalc/util/markdown-utils";
 import { remove_math, replace_math } from "@cocalc/util/mathjax-utils";
 import { latexMathToHtml } from "@cocalc/frontend/misc/math-to-html";
