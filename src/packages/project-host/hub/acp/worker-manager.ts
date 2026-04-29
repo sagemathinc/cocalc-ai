@@ -25,6 +25,14 @@ const logger = getLogger("project-host:hub:acp:worker-manager");
 const ACP_WORKER_PID_FILE = path.join(data, "acp-worker.pid");
 const ACP_WORKER_LOG_FILE = path.join(data, "logs", "acp-worker.log");
 const ACP_WORKER_SUPERVISOR_MS = 2000;
+const ACP_WORKER_SPAWN_BACKOFF_INITIAL_MS = Math.max(
+  ACP_WORKER_SUPERVISOR_MS,
+  Number(process.env.COCALC_ACP_WORKER_SPAWN_BACKOFF_INITIAL_MS ?? 5000),
+);
+const ACP_WORKER_SPAWN_BACKOFF_MAX_MS = Math.max(
+  ACP_WORKER_SPAWN_BACKOFF_INITIAL_MS,
+  Number(process.env.COCALC_ACP_WORKER_SPAWN_BACKOFF_MAX_MS ?? 120000),
+);
 const ACP_WORKER_ROLLING_CAPABILITY = "rolling-v1";
 const ACP_WORKER_CONTROL_TIMEOUT_MS = Math.max(
   250,
@@ -34,6 +42,8 @@ const ACP_WORKER_CONTROL_TIMEOUT_MS = Math.max(
 let supervisorStarted = false;
 let workerEntryPoint: string | undefined;
 let ensureWorkerPromise: Promise<boolean> | undefined;
+let workerSpawnAttemptCount = 0;
+let nextWorkerSpawnAllowedAt = 0;
 
 type WorkerLaunch = {
   command: string;
@@ -146,6 +156,35 @@ function clearWorkerPidFile(): void {
   } catch {
     // ignore
   }
+}
+
+function projectHostAcpWorkerSpawnBackoffDelayMs(attempt: number): number {
+  const exponent = Math.max(0, attempt - 1);
+  return Math.min(
+    ACP_WORKER_SPAWN_BACKOFF_MAX_MS,
+    ACP_WORKER_SPAWN_BACKOFF_INITIAL_MS * 2 ** exponent,
+  );
+}
+
+function projectHostAcpWorkerSpawnBackoffRemainingMs(now = Date.now()): number {
+  return Math.max(0, nextWorkerSpawnAllowedAt - now);
+}
+
+function resetProjectHostAcpWorkerSpawnBackoff(): void {
+  workerSpawnAttemptCount = 0;
+  nextWorkerSpawnAllowedAt = 0;
+}
+
+function noteProjectHostAcpWorkerSpawn(now = Date.now()): {
+  attempt: number;
+  backoffMs: number;
+} {
+  workerSpawnAttemptCount += 1;
+  const backoffMs = projectHostAcpWorkerSpawnBackoffDelayMs(
+    workerSpawnAttemptCount,
+  );
+  nextWorkerSpawnAllowedAt = now + backoffMs;
+  return { attempt: workerSpawnAttemptCount, backoffMs };
 }
 
 export function resolveProjectHostAcpWorkerLaunch({
@@ -512,6 +551,16 @@ function spawnProjectHostAcpWorker({
     return false;
   }
   clearWorkerPidFile();
+  const now = Date.now();
+  const backoffRemainingMs = projectHostAcpWorkerSpawnBackoffRemainingMs(now);
+  if (backoffRemainingMs > 0) {
+    logger.warn("skipping ACP worker spawn due to restart backoff", {
+      backoff_remaining_ms: backoffRemainingMs,
+      attempt: workerSpawnAttemptCount,
+      restartReason,
+    });
+    return false;
+  }
   const { command, args } = resolveProjectHostAcpWorkerLaunch();
   const launch = workerLaunchSignature();
   const worker_id = randomUUID();
@@ -551,10 +600,13 @@ function spawnProjectHostAcpWorker({
   });
   closeSync(stdout);
   child.unref();
+  const { attempt, backoffMs } = noteProjectHostAcpWorkerSpawn(now);
   writeFileSync(ACP_WORKER_PID_FILE, `${child.pid}\n`);
   logger.warn("spawned project-host ACP worker", {
     pid: child.pid,
     worker_id,
+    attempt,
+    backoff_ms_until_next_attempt: backoffMs,
     bundle_version,
     bundle_path,
     command,
@@ -572,6 +624,7 @@ async function ensureProjectHostAcpWorkerRunningOnce({
   const existingPid =
     (await reconcileProjectHostAcpWorkers()) ?? readWorkerPid();
   if (isPidAlive(existingPid)) {
+    resetProjectHostAcpWorkerSpawnBackoff();
     return true;
   }
   return spawnProjectHostAcpWorker({ restartReason });
@@ -706,3 +759,10 @@ export function projectHostAcpWorkerLogFile(): string {
 export function projectHostAcpWorkerPidFile(): string {
   return ACP_WORKER_PID_FILE;
 }
+
+export const __test__ = {
+  projectHostAcpWorkerSpawnBackoffDelayMs,
+  projectHostAcpWorkerSpawnBackoffRemainingMs,
+  noteProjectHostAcpWorkerSpawn,
+  resetProjectHostAcpWorkerSpawnBackoff,
+};

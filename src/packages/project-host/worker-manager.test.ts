@@ -1,4 +1,5 @@
 import {
+  __test__,
   partitionExpectedProjectHostAcpWorkers,
   planProjectHostAcpWorkerRollout,
 } from "./hub/acp/worker-manager";
@@ -264,5 +265,41 @@ describe("planProjectHostAcpWorkerRollout", () => {
       expectedWorkers: [workers[0]],
       ignoredWorkers: [workers[1]],
     });
+  });
+});
+
+describe("ACP worker spawn backoff", () => {
+  beforeEach(() => {
+    __test__.resetProjectHostAcpWorkerSpawnBackoff();
+    jest.spyOn(Date, "now").mockReturnValue(1_000);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("uses bounded exponential delays between repeated spawn attempts", () => {
+    expect(__test__.projectHostAcpWorkerSpawnBackoffRemainingMs()).toBe(0);
+
+    expect(__test__.noteProjectHostAcpWorkerSpawn()).toEqual({
+      attempt: 1,
+      backoffMs: 5_000,
+    });
+    expect(__test__.projectHostAcpWorkerSpawnBackoffRemainingMs()).toBe(5_000);
+
+    jest.spyOn(Date, "now").mockReturnValue(6_000);
+    expect(__test__.noteProjectHostAcpWorkerSpawn()).toEqual({
+      attempt: 2,
+      backoffMs: 10_000,
+    });
+    expect(__test__.projectHostAcpWorkerSpawnBackoffRemainingMs()).toBe(10_000);
+  });
+
+  it("resets the backoff once a healthy worker is recognized", () => {
+    __test__.noteProjectHostAcpWorkerSpawn();
+    expect(__test__.projectHostAcpWorkerSpawnBackoffRemainingMs()).toBe(5_000);
+
+    __test__.resetProjectHostAcpWorkerSpawnBackoff();
+    expect(__test__.projectHostAcpWorkerSpawnBackoffRemainingMs()).toBe(0);
   });
 });
