@@ -7,6 +7,7 @@ This supports rendering using KaTeX.
 Right now it is *just* katex, so in fact is synchronous.
 */
 
+import "katex/dist/katex.min.css";
 import { useEffect, useRef } from "react";
 import { math_escape, math_unescape } from "@cocalc/util/markdown-utils";
 import { remove_math, replace_math } from "@cocalc/util/mathjax-utils";
