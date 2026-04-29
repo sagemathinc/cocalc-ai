@@ -848,7 +848,7 @@ export function MessageList({
   }, []);
 
   useEffect(() => {
-    const liveCodexTurnIds: string[] = [];
+    const latestLiveCodexTurnIdsByThread = new Map<string, string>();
     for (const date of sortedDates) {
       const message = getMessageAtDate({
         messages,
@@ -862,10 +862,14 @@ export function MessageList({
         continue;
       }
       const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
-      if (messageId) {
-        liveCodexTurnIds.push(messageId);
-      }
+      if (!messageId) continue;
+      const threadKey =
+        `${field<string>(message, "thread_id") ?? ""}`.trim() || messageId;
+      latestLiveCodexTurnIdsByThread.set(threadKey, messageId);
     }
+    const liveCodexTurnIds = Array.from(
+      latestLiveCodexTurnIdsByThread.values(),
+    );
     if (liveCodexTurnIds.length === 0) return;
     setExpandedCodexActivityByMessageId((prev) => {
       let changed = false;
