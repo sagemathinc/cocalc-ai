@@ -111,9 +111,34 @@ function storageBreakdownCacheKey({
   return `${project_id}:${path}`;
 }
 
+function isPathWithin(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`);
+}
+
+function rewriteDuOutputPath({
+  rowPath,
+  requestedPath,
+  aliases,
+}: {
+  rowPath: string;
+  requestedPath: string;
+  aliases: string[];
+}): string {
+  for (const alias of aliases) {
+    if (!alias || alias === requestedPath) continue;
+    if (!isPathWithin(rowPath, alias)) continue;
+    if (rowPath === alias) {
+      return requestedPath;
+    }
+    return posix.join(requestedPath, posix.relative(alias, rowPath));
+  }
+  return rowPath;
+}
+
 function parseDuOutput(
   output: ExecOutput,
   path: string,
+  aliases: string[] = [],
 ): ProjectStorageBreakdown {
   const { stdout, stderr, code, truncated } = output;
   const errText = Buffer.from(stderr).toString().trim();
@@ -139,9 +164,14 @@ function parseDuOutput(
           `Disk usage scan for '${path}' returned invalid data. Try again or browse into a smaller folder.`,
         );
       }
+      const rawPath = posix.normalize(match[2]);
       return {
         bytes: Number(match[1]),
-        path: posix.normalize(match[2]),
+        path: rewriteDuOutputPath({
+          rowPath: rawPath,
+          requestedPath: posix.normalize(path),
+          aliases: aliases.map((alias) => posix.normalize(alias)),
+        }),
       };
     })
     .filter(
@@ -432,13 +462,25 @@ async function getStorageBreakdownImpl({
   const inflight = projectStorageBreakdownInflight.get(cacheKey);
   if (inflight) return await inflight;
   const scan = (async () => {
-    const breakdown = parseDuOutput(
-      await localFs({ client, project_id }).du(normalizedPath, {
+    const fs = localFs({ client, project_id });
+    const [hostPath, identityPath, output] = await Promise.all([
+      typeof fs.canonicalSyncFsPath === "function"
+        ? fs.canonicalSyncFsPath(normalizedPath).catch(() => normalizedPath)
+        : Promise.resolve(normalizedPath),
+      typeof fs.canonicalSyncIdentityPath === "function"
+        ? fs
+            .canonicalSyncIdentityPath(normalizedPath)
+            .catch(() => normalizedPath)
+        : Promise.resolve(normalizedPath),
+      fs.du(normalizedPath, {
         options: ["--bytes", "-x", "-d", "1"],
         timeout: PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS,
       }),
-      normalizedPath,
-    );
+    ]);
+    const breakdown = parseDuOutput(output, normalizedPath, [
+      identityPath,
+      hostPath,
+    ]);
     projectStorageBreakdownCache.set(cacheKey, breakdown);
     return breakdown;
   })();
