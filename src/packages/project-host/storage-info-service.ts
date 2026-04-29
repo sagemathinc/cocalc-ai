@@ -122,9 +122,6 @@ function parseDuOutput(
       `Disk usage scan for '${path}' took too long on this large folder. Browse into a smaller folder and try again.`,
     );
   }
-  if (code) {
-    throw new Error(errText || `dust failed for ${path}`);
-  }
   const text = Buffer.from(stdout).toString();
   if (!text.trim()) {
     throw new Error(
@@ -157,6 +154,9 @@ function parseDuOutput(
       `Disk usage scan for '${path}' returned incomplete data. Try again or browse into a smaller folder.`,
     );
   }
+  if (code && !isIgnorableDuFailure(errText)) {
+    throw new Error(errText || `du failed for ${path}`);
+  }
   return {
     path: requestedPath,
     bytes: root.bytes,
@@ -168,6 +168,21 @@ function parseDuOutput(
       })),
     collected_at: new Date().toISOString(),
   };
+}
+
+function isIgnorableDuFailure(errText: string): boolean {
+  const lines = errText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return (
+    lines.length > 0 &&
+    lines.every((line) =>
+      /(?:^|\/)du: (?:cannot read directory|cannot access) .+: (?:Permission denied|Operation not permitted)$/.test(
+        line,
+      ),
+    )
+  );
 }
 
 function buildRetainedSummary({

@@ -144,6 +144,37 @@ describe("project storage info service", () => {
     ]);
   });
 
+  it("accepts du totals when stderr is only unreadable-directory warnings", async () => {
+    const duMock = jest.fn().mockResolvedValue({
+      stdout: Buffer.from("20 /root/cache\n120 /root\n"),
+      stderr: Buffer.from(
+        [
+          "/usr/bin/du: cannot read directory '/root/cache/private': Permission denied",
+          "/usr/bin/du: cannot access '/root/cache/work': Operation not permitted",
+        ].join("\n"),
+      ),
+      code: 1,
+    });
+    fsClientMock.mockReturnValue({ du: duMock });
+
+    const { handleProjectStorageBreakdownRequest } =
+      await import("./storage-info-service");
+    const breakdown = await handleProjectStorageBreakdownRequest.call(
+      {
+        subject: "project.11111111-1111-4111-8111-111111111111.storage-info.-",
+      },
+      { path: "/root" },
+      {} as any,
+    );
+
+    expect(breakdown).toEqual({
+      path: "/root",
+      bytes: 120,
+      children: [{ bytes: 20, path: "cache" }],
+      collected_at: expect.any(String),
+    });
+  });
+
   it("returns direct quota and snapshot usage without scanning storage", async () => {
     fileServerClientMock.mockReturnValue({
       getQuota: jest.fn(async () => ({
