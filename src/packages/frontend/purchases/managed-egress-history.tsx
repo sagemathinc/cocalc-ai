@@ -36,6 +36,8 @@ const DAY_MS = 24 * HOUR_MS;
 const MAX_HISTORY_BUCKETS = 2000;
 const RECENT_SUMMARY_WINDOW_MS = 6 * HOUR_MS;
 const RECENT_SUMMARY_REFRESH_MS = 60 * 1000;
+const TOP_PROJECTS_SUMMARY_WINDOW_MS = 24 * HOUR_MS;
+const TOP_PROJECTS_SUMMARY_REFRESH_MS = 5 * 60 * 1000;
 
 export type ManagedEgressHistoryRangeKey = "6h" | "24h" | "7d" | "30d";
 
@@ -258,11 +260,13 @@ function EgressSummaryCard({
 
 export function ManagedEgressHistoryButton({
   project_id,
+  user_account_id,
   buttonText = "View egress history",
   size,
   type,
 }: {
   project_id?: string;
+  user_account_id?: string;
   buttonText?: string;
   size?: "small" | "middle" | "large";
   type?: "default" | "primary" | "dashed" | "link" | "text";
@@ -278,16 +282,29 @@ export function ManagedEgressHistoryButton({
           open={open}
           onClose={() => setOpen(false)}
           project_id={project_id}
+          user_account_id={user_account_id}
         />
       ) : null}
     </>
   );
 }
 
-export function ManagedEgressRateSummary({
+function useManagedEgressHistorySnapshot({
   project_id,
+  user_account_id,
+  durationMs,
+  bucket,
+  recentEventLimit,
+  topProjectLimit,
+  refreshMs,
 }: {
   project_id?: string;
+  user_account_id?: string;
+  durationMs: number;
+  bucket: ManagedEgressHistoryBucketSize;
+  recentEventLimit: number;
+  topProjectLimit: number;
+  refreshMs: number;
 }) {
   const [history, setHistory] = useState<ManagedEgressHistory | null>(null);
   const [loading, setLoading] = useState(true);
@@ -300,8 +317,8 @@ export function ManagedEgressRateSummary({
 
     const load = async () => {
       const end = new Date();
-      const start = new Date(end.getTime() - RECENT_SUMMARY_WINDOW_MS);
-      const requestKey = `${project_id ?? "account"}:${end.getTime()}`;
+      const start = new Date(end.getTime() - durationMs);
+      const requestKey = `${project_id ?? "account"}:${user_account_id ?? "self"}:${bucket}:${end.getTime()}`;
       requestKeyRef.current = requestKey;
       setError(null);
       if (!loadedOnceRef.current) {
@@ -312,11 +329,12 @@ export function ManagedEgressRateSummary({
           (await webapp_client.conat_client.hub.purchases.getManagedEgressHistory(
             {
               project_id,
+              user_account_id,
               start: start.toISOString(),
               end: end.toISOString(),
-              bucket: "5m",
-              recent_event_limit: 1,
-              top_project_limit: 1,
+              bucket,
+              recent_event_limit: recentEventLimit,
+              top_project_limit: topProjectLimit,
             },
           )) as ManagedEgressHistory;
         if (cancelled || requestKeyRef.current !== requestKey) return;
@@ -335,13 +353,41 @@ export function ManagedEgressRateSummary({
     void load();
     const timer = setInterval(() => {
       void load();
-    }, RECENT_SUMMARY_REFRESH_MS);
+    }, refreshMs);
 
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [project_id]);
+  }, [
+    bucket,
+    durationMs,
+    project_id,
+    recentEventLimit,
+    refreshMs,
+    topProjectLimit,
+    user_account_id,
+  ]);
+
+  return { error, history, loading };
+}
+
+export function ManagedEgressRateSummary({
+  project_id,
+  user_account_id,
+}: {
+  project_id?: string;
+  user_account_id?: string;
+}) {
+  const { error, history, loading } = useManagedEgressHistorySnapshot({
+    project_id,
+    user_account_id,
+    durationMs: RECENT_SUMMARY_WINDOW_MS,
+    bucket: "5m",
+    recentEventLimit: 1,
+    topProjectLimit: 1,
+    refreshMs: RECENT_SUMMARY_REFRESH_MS,
+  });
 
   if (loading && history == null) {
     return <Text type="secondary">Loading recent rates…</Text>;
@@ -363,12 +409,60 @@ export function ManagedEgressRateSummary({
   );
 }
 
+export function ManagedEgressTopProjectsSummary({
+  user_account_id,
+  limit = 5,
+}: {
+  user_account_id?: string;
+  limit?: number;
+}) {
+  const { error, history, loading } = useManagedEgressHistorySnapshot({
+    user_account_id,
+    durationMs: TOP_PROJECTS_SUMMARY_WINDOW_MS,
+    bucket: "1h",
+    recentEventLimit: 1,
+    topProjectLimit: limit,
+    refreshMs: TOP_PROJECTS_SUMMARY_REFRESH_MS,
+  });
+
+  if (loading && history == null) {
+    return <Text type="secondary">Loading top projects…</Text>;
+  }
+  if (error && history == null) {
+    return <Text type="secondary">Top project summary unavailable.</Text>;
+  }
+  if (history == null || history.top_projects.length === 0) {
+    return (
+      <Text type="secondary">
+        No project-attributed egress in the last 24 hours.
+      </Text>
+    );
+  }
+
+  return (
+    <Space direction="vertical" size={4} style={{ width: "100%" }}>
+      {history.top_projects.map((project, i) => (
+        <div key={`${project.project_id ?? "none"}-${i}`}>
+          <Text>
+            {project.project_title ??
+              project.project_id ??
+              "Account-wide session traffic"}
+          </Text>
+          <Text type="secondary"> · {humanSize(project.bytes)}</Text>
+        </div>
+      ))}
+    </Space>
+  );
+}
+
 export function ManagedEgressHistoryModal({
   project_id,
+  user_account_id,
   open,
   onClose,
 }: {
   project_id?: string;
+  user_account_id?: string;
   open: boolean;
   onClose: () => void;
 }) {
@@ -399,13 +493,14 @@ export function ManagedEgressHistoryModal({
     const range = getRangeSpec(rangeKey);
     const end = new Date();
     const start = new Date(end.getTime() - range.durationMs);
-    const requestKey = `${project_id ?? "account"}:${rangeKey}:${effectiveBucket}:${reloadToken}`;
+    const requestKey = `${project_id ?? "account"}:${user_account_id ?? "self"}:${rangeKey}:${effectiveBucket}:${reloadToken}`;
     requestKeyRef.current = requestKey;
     setLoading(true);
     setError(null);
     void webapp_client.conat_client.hub.purchases
       .getManagedEgressHistory({
         project_id,
+        user_account_id,
         start: start.toISOString(),
         end: end.toISOString(),
         bucket: effectiveBucket,
@@ -425,7 +520,14 @@ export function ManagedEgressHistoryModal({
           setLoading(false);
         }
       });
-  }, [effectiveBucket, open, project_id, rangeKey, reloadToken]);
+  }, [
+    effectiveBucket,
+    open,
+    project_id,
+    rangeKey,
+    reloadToken,
+    user_account_id,
+  ]);
 
   const summary = history ? summarizeManagedEgressHistory(history) : null;
   const categoryTotals = history

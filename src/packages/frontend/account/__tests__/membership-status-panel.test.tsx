@@ -18,9 +18,10 @@ jest.mock("antd", () => {
       {children}
     </button>
   );
-  const Div = ({ children, title }: any) => (
+  const Div = ({ children, title, label }: any) => (
     <div>
       {title}
+      {label}
       {children}
     </div>
   );
@@ -124,6 +125,7 @@ jest.mock("@cocalc/frontend/purchases/managed-egress-history", () => ({
     <button>{buttonText}</button>
   ),
   ManagedEgressRateSummary: () => <div>recent-egress-summary</div>,
+  ManagedEgressTopProjectsSummary: () => <div>top-projects-summary</div>,
 }));
 
 function deferred<T>() {
@@ -296,15 +298,23 @@ describe("MembershipStatusPanel", () => {
     render(<MembershipStatusPanel showHeader={false} />);
 
     await waitFor(() => {
-      expect(screen.getAllByText("1 GB").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("3 GB").length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/1 GB/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/3 GB/).length).toBeGreaterThan(0);
+      expect(screen.getByText("Recent managed egress")).toBeTruthy();
+      expect(screen.getByText("Top recent egress projects (24h)")).toBeTruthy();
+      expect(screen.getByText("Historical managed egress")).toBeTruthy();
+      expect(screen.getByText("recent-egress-summary")).toBeTruthy();
+      expect(screen.getByText("top-projects-summary")).toBeTruthy();
+      expect(screen.getByText("View egress history")).toBeTruthy();
       expect(screen.getByText("View recent events (1)")).toBeTruthy();
       expect(screen.getAllByText("500 MB").length).toBeGreaterThan(0);
     });
 
     fireEvent.click(screen.getByText("View recent events (1)"));
 
-    expect(screen.getByText("Recent managed egress events")).toBeTruthy();
+    expect(
+      screen.getAllByText("Recent managed egress events").length,
+    ).toBeGreaterThan(0);
     expect(screen.getByText("File downloads")).toBeTruthy();
     expect(screen.getByText("Data Lab")).toBeTruthy();
     expect(screen.getByText("/files/export.csv?download")).toBeTruthy();
