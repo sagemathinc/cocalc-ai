@@ -48,58 +48,218 @@ interface AboutContentProps {
   };
 }
 
-function sparklinePoints(values: number[], width = 240, height = 56): string {
-  if (values.length === 0) return "";
-  if (values.length === 1) {
-    return `0,${height / 2} ${width},${height / 2}`;
-  }
+type SparklineCoordinate = { x: number; y: number };
+
+function sparklineYCoordinates(values: number[], height: number): number[] {
+  if (values.length === 0) return [];
+  if (values.length === 1) return [height / 2];
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const y = (value: number) => {
+  return values.map((value) => {
     if (max === min) return height / 2;
     return height - ((value - min) / (max - min)) * (height - 4) - 2;
-  };
-  const dx = width / (values.length - 1);
-  return values
-    .map((v, i) => `${(i * dx).toFixed(2)},${y(v).toFixed(2)}`)
+  });
+}
+
+function sparklineXCoordinates(timestamps: number[], width: number): number[] {
+  if (timestamps.length === 0) return [];
+  if (timestamps.length === 1) return [width / 2];
+  const valid = timestamps.filter((timestamp) => Number.isFinite(timestamp));
+  if (valid.length !== timestamps.length) {
+    const dx = width / Math.max(1, timestamps.length - 1);
+    return timestamps.map((_, i) => i * dx);
+  }
+  const min = Math.min(...valid);
+  const max = Math.max(...valid);
+  if (max <= min) {
+    const dx = width / Math.max(1, timestamps.length - 1);
+    return timestamps.map((_, i) => i * dx);
+  }
+  return timestamps.map(
+    (timestamp) => ((timestamp - min) / (max - min)) * width,
+  );
+}
+
+function sparklineCoordinates(
+  values: number[],
+  timestamps: number[],
+  width: number,
+  height: number,
+): SparklineCoordinate[] {
+  const xs = sparklineXCoordinates(timestamps, width);
+  const ys = sparklineYCoordinates(values, height);
+  return values.map((_, i) => ({ x: xs[i], y: ys[i] }));
+}
+
+function sparklinePolyline(
+  coordinates: SparklineCoordinate[],
+  width: number,
+  height: number,
+): string {
+  if (coordinates.length === 0) return "";
+  if (coordinates.length === 1) {
+    return `0,${height / 2} ${width},${height / 2}`;
+  }
+  return coordinates
+    .map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`)
     .join(" ");
+}
+
+function nearestSparklineIndex(
+  x: number,
+  coordinates: SparklineCoordinate[],
+): number | null {
+  if (coordinates.length === 0) return null;
+  let bestIndex = 0;
+  let bestDistance = Math.abs(coordinates[0].x - x);
+  for (let i = 1; i < coordinates.length; i += 1) {
+    const distance = Math.abs(coordinates[i].x - x);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
+}
+
+function sparklineHoverPlacement(xFraction: number): {
+  left: string;
+  transform: string;
+} {
+  if (xFraction <= 0.18) {
+    return {
+      left: `${xFraction * 100}%`,
+      transform: "translate(0, calc(-100% - 14px))",
+    };
+  }
+  if (xFraction >= 0.82) {
+    return {
+      left: `${xFraction * 100}%`,
+      transform: "translate(-100%, calc(-100% - 14px))",
+    };
+  }
+  return {
+    left: `${xFraction * 100}%`,
+    transform: "translate(-50%, calc(-100% - 14px))",
+  };
 }
 
 function ProcessTrendChart({
   title,
   values,
+  timestamps,
   unit,
   color,
 }: {
   title: string;
   values: number[];
+  timestamps: number[];
   unit: string;
   color: string;
 }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   if (values.length < 2) return null;
+  const width = 360;
+  const height = 96;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const latest = values[values.length - 1];
-  const points = sparklinePoints(values, 360, 96);
+  const coordinates = sparklineCoordinates(values, timestamps, width, height);
+  const points = sparklinePolyline(coordinates, width, height);
+  const hoveredPoint =
+    hoveredIndex != null ? coordinates[hoveredIndex] : undefined;
+  const hoveredValue = hoveredIndex != null ? values[hoveredIndex] : undefined;
+  const hoveredTimestamp =
+    hoveredIndex != null ? timestamps[hoveredIndex] : undefined;
+  const hoverPlacement = hoveredPoint
+    ? sparklineHoverPlacement(hoveredPoint.x / width)
+    : undefined;
   return (
     <div style={{ marginBottom: "6px" }}>
       <div style={{ fontWeight: 600 }}>
         {title}: {latest.toFixed(1)} {unit}
       </div>
-      <svg
-        width="100%"
-        height="96"
-        viewBox="0 0 360 96"
-        preserveAspectRatio="none"
+      <div
+        onMouseLeave={() => setHoveredIndex(null)}
+        onMouseMove={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          if (rect.width <= 0) return;
+          const relativeX = Math.max(
+            0,
+            Math.min(1, (event.clientX - rect.left) / rect.width),
+          );
+          setHoveredIndex(
+            nearestSparklineIndex(relativeX * width, coordinates),
+          );
+        }}
+        style={{ cursor: "crosshair", position: "relative" }}
       >
-        <polyline
-          fill="none"
-          stroke={color}
-          strokeWidth="2"
-          points={points}
-          strokeLinecap="round"
-        />
-      </svg>
+        <svg
+          width="100%"
+          height={height}
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio="none"
+        >
+          <polyline
+            fill="none"
+            stroke={color}
+            strokeWidth="2"
+            points={points}
+            strokeLinecap="round"
+          />
+          {hoveredPoint ? (
+            <>
+              <line
+                x1={hoveredPoint.x}
+                x2={hoveredPoint.x}
+                y1={0}
+                y2={height}
+                stroke={color}
+                strokeOpacity="0.25"
+                strokeWidth="1"
+                strokeDasharray="3 3"
+              />
+              <circle
+                cx={hoveredPoint.x}
+                cy={hoveredPoint.y}
+                r="4"
+                fill={color}
+                stroke="white"
+                strokeWidth="1.5"
+              />
+            </>
+          ) : null}
+        </svg>
+        {hoveredPoint != null &&
+        hoveredValue != null &&
+        hoveredTimestamp != null &&
+        hoverPlacement ? (
+          <div
+            style={{
+              background: "white",
+              border: `1px solid ${COLORS.GRAY_LL}`,
+              borderRadius: "8px",
+              boxShadow: "0 6px 18px rgba(15, 23, 42, 0.16)",
+              color: COLORS.GRAY_D,
+              left: hoverPlacement.left,
+              maxWidth: "240px",
+              padding: "8px 10px",
+              pointerEvents: "none",
+              position: "absolute",
+              top: `${(hoveredPoint.y / height) * 100}%`,
+              transform: hoverPlacement.transform,
+              zIndex: 2,
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+              {hoveredValue.toFixed(1)} {unit}
+            </div>
+            <div style={{ fontSize: "12px" }}>
+              {new Date(hoveredTimestamp).toLocaleString()}
+            </div>
+          </div>
+        ) : null}
+      </div>
       <div style={{ color: COLORS.GRAY_D, fontSize: "85%" }}>
         range: {min.toFixed(1)} to {max.toFixed(1)} {unit}
       </div>
@@ -202,12 +362,14 @@ export const AboutContent: React.FC<AboutContentProps> = ({
               <ProcessTrendChart
                 title="CPU Trend"
                 values={t.cpu}
+                timestamps={t.timestamps}
                 unit="%"
                 color={COLORS.BLUE_D}
               />
               <ProcessTrendChart
                 title="Memory Trend"
                 values={t.mem}
+                timestamps={t.timestamps}
                 unit="MiB"
                 color={COLORS.ANTD_GREEN_D}
               />
