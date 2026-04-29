@@ -473,7 +473,10 @@ async function getStorageBreakdownImpl({
             .catch(() => normalizedPath)
         : Promise.resolve(normalizedPath),
       fs.du(normalizedPath, {
-        options: ["--bytes", "-x", "-d", "1"],
+        // Use allocated bytes, not apparent/logical size. GNU du's
+        // --bytes/-b implies --apparent-size, which badly overstates sparse
+        // files such as PostgreSQL WAL archives.
+        options: ["-B", "1", "-x", "-d", "1"],
         timeout: PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS,
       }),
     ]);

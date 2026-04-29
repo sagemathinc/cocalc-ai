@@ -94,7 +94,7 @@ describe("project storage info service", () => {
       expect.objectContaining({ waitForInterest: false }),
     );
     expect(duMock).toHaveBeenCalledWith("/root", {
-      options: ["--bytes", "-x", "-d", "1"],
+      options: ["-B", "1", "-x", "-d", "1"],
       timeout: 10_000,
     });
   });
