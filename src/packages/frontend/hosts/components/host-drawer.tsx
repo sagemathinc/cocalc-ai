@@ -68,6 +68,7 @@ import { HostProjectStatus } from "./host-project-status";
 import { HostProjectsBrowser } from "./host-projects-browser";
 import { HostRootfsCachePanel } from "./host-rootfs-cache-panel";
 import { HostCurrentMetrics } from "./host-current-metrics";
+import { HostPlacementSummary, HostPressureTag } from "../pressure-ui";
 import { confirmHostDeprovision } from "./host-confirm";
 import {
   formatBinaryBytes,
@@ -1382,6 +1383,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       </Card>
       <Card size="small" title="Current metrics">
         <HostCurrentMetrics host={host} compact dense />
+      </Card>
+      <Card size="small" title="Placement">
+        <HostPlacementSummary host={host} showNormal />
       </Card>
       <Card
         size="small"
@@ -3077,6 +3081,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           {connectorStatusTag}
           <Tag>{size?.primary ?? host.size}</Tag>
           {host.gpu && <Tag color="purple">GPU</Tag>}
+          <HostPressureTag pressure={host.pressure} />
           {host.reprovision_required && (
             <Tooltip title="Host config changed while stopped; will reprovision on next start.">
               <Tag color="orange">Reprovision on next start</Tag>

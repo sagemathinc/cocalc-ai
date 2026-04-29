@@ -47,6 +47,7 @@ import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
 import { HostDaemonHealthSummary } from "./host-daemon-health-summary";
 import { HostErrorDetails } from "./host-error-details";
 import { HostProjectStatus } from "./host-project-status";
+import { HostPlacementSummary, HostPressureTag } from "../pressure-ui";
 import {
   confirmBulkHostDeprovision,
   confirmHostDeprovision,
@@ -732,6 +733,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             <Space size="small" wrap>
               <span>{baseLabel}</span>
               {host.pricing_model === "spot" && <Tag color="orange">spot</Tag>}
+              <HostPressureTag pressure={host.pressure} />
             </Space>
             {detail && (
               <Typography.Text type="secondary">{detail}</Typography.Text>
@@ -795,6 +797,14 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         ) : (
           <HostCurrentMetrics host={host} compact dense />
         ),
+    },
+    {
+      title: "Placement",
+      key: "placement",
+      width: 260,
+      render: (_: string, host: Host) => (
+        <HostPlacementSummary host={host} compact showNormal />
+      ),
     },
     {
       title: "Status",
@@ -873,6 +883,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                   </Tag>
                 </Tooltip>
               )}
+              <HostPressureTag pressure={host.pressure} />
             </Space>
             <HostOpProgress op={displayOp} compact />
             {projectHostRollback && (
