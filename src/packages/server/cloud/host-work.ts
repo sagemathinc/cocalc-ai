@@ -19,6 +19,7 @@ import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap
 import { bumpReconcile, DEFAULT_INTERVALS } from "./reconcile";
 import { normalizeProviderId } from "@cocalc/cloud";
 import { getProviderContext } from "./provider-context";
+import { resolveGcpManagedHostInternalUrl } from "./internal-network";
 import {
   createProjectHostBootstrapToken,
   revokeProjectHostTokensForHost,
@@ -236,6 +237,17 @@ function shouldUseCloudflareTunnel(row: any): boolean {
   return true;
 }
 
+function resolveInternalUrlForHost(row: any): string | undefined {
+  const providerId = normalizeProviderId(row?.metadata?.machine?.cloud);
+  if (providerId === "gcp") {
+    return resolveGcpManagedHostInternalUrl({
+      runtime: row?.metadata?.runtime,
+      tunnelEnabled: shouldUseCloudflareTunnel(row),
+    });
+  }
+  return undefined;
+}
+
 async function ensureDnsForHost(row: any) {
   if (!shouldUseCloudflareTunnel(row)) {
     return;
@@ -271,7 +283,11 @@ async function ensureDnsForHost(row: any) {
       row.metadata = nextMetadata;
       const nextUrls = {
         public_url: `https://${tunnel.hostname}`,
-        internal_url: `https://${tunnel.hostname}`,
+        internal_url:
+          resolveInternalUrlForHost({
+            ...row,
+            metadata: nextMetadata,
+          }) ?? `https://${tunnel.hostname}`,
       };
       await updateHostRow(row.id, {
         metadata: nextMetadata,
@@ -297,7 +313,11 @@ async function ensureDnsForHost(row: any) {
     row.metadata = { ...row.metadata, dns };
     const nextUrls = {
       public_url: `https://${dns.name}`,
-      internal_url: `https://${dns.name}`,
+      internal_url:
+        resolveInternalUrlForHost({
+          ...row,
+          metadata: row.metadata,
+        }) ?? `https://${dns.name}`,
     };
     await updateHostRow(row.id, {
       metadata: row.metadata,
@@ -309,12 +329,12 @@ async function ensureDnsForHost(row: any) {
   }
 }
 
-async function refreshRuntimePublicIp(row: any) {
+async function refreshRuntimeNetworkInfo(row: any) {
   const machine: HostMachine = row.metadata?.machine ?? {};
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(machine.cloud);
   if (!providerId || !runtime?.instance_id) return undefined;
-  logger.debug("refreshRuntimePublicIp: fetching", {
+  logger.debug("refreshRuntimeNetworkInfo: fetching", {
     host_id: row.id,
     provider: providerId,
     instance_id: runtime.instance_id,
@@ -324,14 +344,18 @@ async function refreshRuntimePublicIp(row: any) {
   });
   if (!entry.provider.getInstance) return undefined;
   const instance = await entry.provider.getInstance(runtime, creds);
-  const ip = instance?.public_ip ?? undefined;
-  logger.debug("refreshRuntimePublicIp: result", {
+  const network = {
+    public_ip: instance?.public_ip ?? undefined,
+    private_ip: instance?.private_ip ?? undefined,
+    internal_hostname: instance?.internal_hostname ?? undefined,
+  };
+  logger.debug("refreshRuntimeNetworkInfo: result", {
     host_id: row.id,
     provider: providerId,
     instance_id: runtime.instance_id,
-    ip,
+    network,
   });
-  return ip;
+  return network;
 }
 
 async function scheduleRuntimeRefresh(row: any, opts?: { force?: boolean }) {
@@ -529,7 +553,8 @@ async function handleProvision(row: any) {
       (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined));
   const internalUrl = isLocalSelfHost
     ? null
-    : (provisioned.internal_url ??
+    : (resolveInternalUrlForHost(provisioned) ??
+      provisioned.internal_url ??
       (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined));
   await updateHostRow(provisioned.id, {
     metadata: nextMetadata,
@@ -1046,8 +1071,11 @@ async function handleRefreshRuntime(row: any) {
     machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
   if (isLocalSelfHost) return;
   const force = !!row.payload?.force;
-  if (runtime.public_ip && !force) return;
   const providerId = normalizeProviderId(host.metadata?.machine?.cloud);
+  const needsGcpNetworkRepair =
+    providerId === "gcp" &&
+    (!`${runtime.private_ip ?? ""}`.trim() || !resolveInternalUrlForHost(host));
+  if (runtime.public_ip && !force && !needsGcpNetworkRepair) return;
   logger.debug("handleRefreshRuntime", {
     host_id: host.id,
     provider: providerId ?? host.metadata?.machine?.cloud,
@@ -1062,8 +1090,12 @@ async function handleRefreshRuntime(row: any) {
     attempt: row.payload?.attempt ?? 0,
     force,
   });
-  const public_ip = await refreshRuntimePublicIp(host);
-  if (!public_ip) {
+  const network = await refreshRuntimeNetworkInfo(host);
+  if (
+    !network?.public_ip &&
+    !network?.private_ip &&
+    !network?.internal_hostname
+  ) {
     const attempt = Number(row.payload?.attempt ?? 0);
     logger.debug("handleRefreshRuntime: still missing", {
       host_id: host.id,
@@ -1091,19 +1123,36 @@ async function handleRefreshRuntime(row: any) {
     host_id: host.id,
     provider: host.metadata?.machine?.cloud,
     instance_id: runtime.instance_id,
-    public_ip,
+    network,
   });
   const nextMetadata = {
     ...(host.metadata ?? {}),
-    runtime: { ...runtime, public_ip },
+    runtime: {
+      ...runtime,
+      ...(network?.public_ip ? { public_ip: network.public_ip } : {}),
+      ...(network?.private_ip ? { private_ip: network.private_ip } : {}),
+      ...(network?.internal_hostname
+        ? { internal_hostname: network.internal_hostname }
+        : {}),
+    },
   };
   const previousIp = `${runtime.public_ip ?? ""}`.trim() || undefined;
   const publicUrl =
-    maybeReplaceIpInUrl(host.public_url, previousIp, public_ip) ??
-    `http://${public_ip}`;
+    (network?.public_ip
+      ? maybeReplaceIpInUrl(host.public_url, previousIp, network.public_ip)
+      : undefined) ??
+    host.public_url ??
+    (network?.public_ip ? `http://${network.public_ip}` : undefined);
   const internalUrl =
-    maybeReplaceIpInUrl(host.internal_url, previousIp, public_ip) ??
-    `http://${public_ip}`;
+    resolveInternalUrlForHost({
+      ...host,
+      metadata: nextMetadata,
+    }) ??
+    (network?.public_ip
+      ? maybeReplaceIpInUrl(host.internal_url, previousIp, network.public_ip)
+      : undefined) ??
+    host.internal_url ??
+    (network?.public_ip ? `http://${network.public_ip}` : undefined);
   const nextStatus = host.status === "starting" ? "running" : host.status;
   await updateHostRow(host.id, {
     metadata: nextMetadata,
@@ -1124,7 +1173,7 @@ async function handleRefreshRuntime(row: any) {
     action: "refresh_runtime",
     status: "success",
     provider: providerId ?? host.metadata?.machine?.cloud,
-    runtime: { ...runtime, public_ip },
+    runtime: { ...runtime, ...network },
   });
 }
 

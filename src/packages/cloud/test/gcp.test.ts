@@ -64,7 +64,14 @@ describe("GcpProvider", () => {
     waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
     getMock.mockResolvedValueOnce([
       {
-        networkInterfaces: [{ accessConfigs: [{ natIP: "203.0.113.10" }] }],
+        name: "ph-test",
+        hostname: "ph-test.c.proj-1.internal",
+        networkInterfaces: [
+          {
+            networkIP: "10.180.0.16",
+            accessConfigs: [{ natIP: "203.0.113.10" }],
+          },
+        ],
       },
     ]);
     diskGetMock.mockRejectedValueOnce({ code: 404 });
@@ -95,6 +102,8 @@ describe("GcpProvider", () => {
     ).toContain("bootstrap.sh");
 
     expect(runtime.public_ip).toBe("203.0.113.10");
+    expect(runtime.private_ip).toBe("10.180.0.16");
+    expect(runtime.internal_hostname).toBe("ph-test.c.proj-1.internal");
     expect(runtime.instance_id).toBe("ph-test");
   });
 
@@ -163,7 +172,13 @@ describe("GcpProvider", () => {
     getMock.mockResolvedValueOnce([
       {
         status: "RUNNING",
-        networkInterfaces: [{ accessConfigs: [{ natIP: "203.0.113.11" }] }],
+        hostname: "ph-test.c.proj-1.internal",
+        networkInterfaces: [
+          {
+            networkIP: "10.180.0.17",
+            accessConfigs: [{ natIP: "203.0.113.11" }],
+          },
+        ],
       },
     ]);
     diskGetMock.mockRejectedValueOnce({ code: 404 });
@@ -179,8 +194,11 @@ describe("GcpProvider", () => {
       provider: "gcp",
       instance_id: "ph-test",
       public_ip: "203.0.113.11",
+      private_ip: "10.180.0.17",
+      internal_hostname: "ph-test.c.proj-1.internal",
       zone: "us-west1-a",
       metadata: {
+        gcp_project_id: "proj-1",
         provider_status: "RUNNING",
       },
     });
@@ -196,7 +214,13 @@ describe("GcpProvider", () => {
     getMock.mockResolvedValueOnce([
       {
         status: "PROVISIONING",
-        networkInterfaces: [{ accessConfigs: [{ natIP: "203.0.113.12" }] }],
+        hostname: "ph-test.c.proj-1.internal",
+        networkInterfaces: [
+          {
+            networkIP: "10.180.0.18",
+            accessConfigs: [{ natIP: "203.0.113.12" }],
+          },
+        ],
       },
     ]);
     diskGetMock.mockRejectedValueOnce({ code: 404 });
@@ -209,6 +233,8 @@ describe("GcpProvider", () => {
     });
 
     expect(runtime.public_ip).toBe("203.0.113.12");
+    expect(runtime.private_ip).toBe("10.180.0.18");
+    expect(runtime.internal_hostname).toBe("ph-test.c.proj-1.internal");
     expect(runtime.metadata?.provider_status).toBe("PROVISIONING");
   });
 

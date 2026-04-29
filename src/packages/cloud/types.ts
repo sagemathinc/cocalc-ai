@@ -39,6 +39,8 @@ export type HostRuntime = {
   provider: ProviderId;
   instance_id: string;
   public_ip?: string;
+  private_ip?: string;
+  internal_hostname?: string;
   ssh_user: string;
   zone?: string;
   dns_name?: string;
@@ -51,6 +53,8 @@ export type RemoteInstance = {
   status?: string;
   zone?: string;
   public_ip?: string;
+  private_ip?: string;
+  internal_hostname?: string;
 };
 
 export interface CloudProvider {

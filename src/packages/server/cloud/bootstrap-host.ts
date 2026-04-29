@@ -41,9 +41,10 @@
 
 import http from "node:http";
 import https from "node:https";
+import { hostname as osHostname } from "node:os";
 import { URL } from "node:url";
 import { buildHostSpec } from "./host-util";
-import { normalizeProviderId } from "@cocalc/cloud";
+import { gcpInternalHostname, normalizeProviderId } from "@cocalc/cloud";
 import type {
   HostMachine,
   HostRuntimeArtifact,
@@ -61,6 +62,11 @@ import {
   type CloudflareTunnel,
 } from "./cloudflare-tunnel";
 import { machineHasGpu } from "./host-gpu";
+import {
+  DEFAULT_GCP_BAY_ROUTER_PORT,
+  resolveGcpInternalConatUrl,
+  resolveGcpManagedHostInternalUrl,
+} from "./internal-network";
 import { getHostSshPublicKeys } from "./ssh-key";
 
 const logger = getLogger("server:cloud:bootstrap-host");
@@ -112,6 +118,65 @@ function isLoopbackHostname(hostname: string): boolean {
     host === "::1" ||
     host === "[::1]" ||
     host.startsWith("127.")
+  );
+}
+
+let currentGcpProjectIdPromise: Promise<string | undefined> | undefined;
+
+async function getCurrentGcpProjectId(): Promise<string | undefined> {
+  currentGcpProjectIdPromise ??= (async () => {
+    try {
+      const response = await fetch(
+        "http://metadata.google.internal/computeMetadata/v1/project/project-id",
+        {
+          headers: { "Metadata-Flavor": "Google" },
+          signal: AbortSignal.timeout(1500),
+        },
+      );
+      if (!response.ok) return undefined;
+      const projectId = `${await response.text()}`.trim().toLowerCase();
+      return projectId || undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const projectId = await currentGcpProjectIdPromise;
+  if (!projectId) {
+    currentGcpProjectIdPromise = undefined;
+  }
+  return projectId;
+}
+
+async function getCurrentGcpInternalHostname(): Promise<string | undefined> {
+  return gcpInternalHostname({
+    instanceName: osHostname(),
+    projectId: await getCurrentGcpProjectId(),
+  });
+}
+
+async function resolveMasterConatServer({
+  providerId,
+  configuredAddress,
+}: {
+  providerId?: string;
+  configuredAddress?: string;
+}): Promise<string | undefined> {
+  const address = `${configuredAddress ?? ""}`.trim();
+  if (!address) return undefined;
+  if (providerId !== "gcp") return address;
+  const internalHostname = await getCurrentGcpInternalHostname();
+  if (!internalHostname) return address;
+  const routerPort =
+    Number.parseInt(
+      `${process.env.COCALC_BAY_ROUTER_PORT ?? process.env.COCALC_GCP_INTERNAL_MASTER_CONAT_PORT ?? ""}`,
+      10,
+    ) || DEFAULT_GCP_BAY_ROUTER_PORT;
+  return (
+    resolveGcpInternalConatUrl({
+      currentAddress: address,
+      bayInternalHostname: internalHostname,
+      routerPort,
+    }) ?? address
   );
 }
 
@@ -700,10 +765,13 @@ export async function buildBootstrapScripts(
   const launchpadConat = useOnPremSettings
     ? localConat
     : (opts.launchpadBaseUrl ?? "");
-  const masterAddress =
-    process.env.MASTER_CONAT_SERVER ??
-    process.env.COCALC_MASTER_CONAT_SERVER ??
-    launchpadConat;
+  const masterAddress = await resolveMasterConatServer({
+    providerId,
+    configuredAddress:
+      process.env.MASTER_CONAT_SERVER ??
+      process.env.COCALC_MASTER_CONAT_SERVER ??
+      launchpadConat,
+  });
   if (!masterAddress) {
     throw new Error("MASTER_CONAT_SERVER is not configured");
   }
@@ -750,11 +818,20 @@ export async function buildBootstrapScripts(
         : `https://${publicIp || onPremUrlHost}`;
   const internalUrl = useOnPremSettings
     ? `http://${onPremUrlHost}:${port}`
-    : tunnel?.hostname
-      ? `https://${tunnel.hostname}`
-      : row.internal_url
-        ? row.internal_url.replace(/^http:\/\//, "https://")
-        : `https://${publicIp || onPremUrlHost}`;
+    : providerId === "gcp"
+      ? (resolveGcpManagedHostInternalUrl({
+          runtime: metadata.runtime,
+          tunnelEnabled,
+        }) ??
+        row.internal_url ??
+        (tunnel?.hostname
+          ? `https://${tunnel.hostname}`
+          : `https://${publicIp || onPremUrlHost}`))
+      : tunnel?.hostname
+        ? `https://${tunnel.hostname}`
+        : row.internal_url
+          ? row.internal_url.replace(/^http:\/\//, "https://")
+          : `https://${publicIp || onPremUrlHost}`;
   const sshServer = row.ssh_server ?? `${publicIp || onPremUrlHost}:${sshPort}`;
   const dataDir = "/mnt/cocalc/data";
   const envFile = "/etc/cocalc/project-host.env";
