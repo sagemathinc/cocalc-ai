@@ -364,14 +364,19 @@ function isExpectedWorkerProcess(
   if (!launch.nodeLike) {
     return true;
   }
-  if (!launch.resolvedEntryPoint) {
-    return false;
-  }
   const entryPoint = worker.cmdline[1];
-  if (!entryPoint) {
+  if (entryPoint != null && entryPoint.length > 0) {
+    if (!launch.resolvedEntryPoint) {
+      return false;
+    }
+    return path.resolve(entryPoint) === launch.resolvedEntryPoint;
+  }
+  if (!titledProcessMatches) {
     return false;
   }
-  return path.resolve(entryPoint) === launch.resolvedEntryPoint;
+  const expectedBundlePath = resolveProjectHostWorkerBundlePath(launch);
+  const workerBundlePath = workerBundlePathOf(worker, launch);
+  return workerBundlePath === expectedBundlePath;
 }
 
 export function partitionExpectedProjectHostAcpWorkers({

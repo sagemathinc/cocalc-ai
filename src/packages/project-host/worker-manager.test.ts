@@ -226,4 +226,43 @@ describe("planProjectHostAcpWorkerRollout", () => {
       ignoredWorkers: [workers[1]],
     });
   });
+
+  it("accepts titled ACP workers whose bundle identity only exists in env", () => {
+    const workers = [
+      {
+        pid: 701,
+        env: {
+          COCALC_PROJECT_HOST_ACP_WORKER: "1",
+          COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY: "rolling-v1",
+          COCALC_ACP_INSTANCE_ID: "worker-current",
+          COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_PATH:
+            "/opt/cocalc/project-host/bundles/current",
+          COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_VERSION: "current",
+        },
+        cmdline: ["project-host:acp-worker"],
+      },
+      {
+        pid: 702,
+        env: {
+          COCALC_PROJECT_HOST_ACP_WORKER: "1",
+          COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY: "rolling-v1",
+          COCALC_ACP_INSTANCE_ID: "worker-old",
+          COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_PATH:
+            "/opt/cocalc/project-host/bundles/old",
+          COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_VERSION: "old",
+        },
+        cmdline: ["project-host:acp-worker"],
+      },
+    ];
+
+    expect(
+      partitionExpectedProjectHostAcpWorkers({
+        workers: workers as any,
+        launch: launch as any,
+      }),
+    ).toEqual({
+      expectedWorkers: [workers[0]],
+      ignoredWorkers: [workers[1]],
+    });
+  });
 });
