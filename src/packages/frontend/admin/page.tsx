@@ -15,6 +15,7 @@ import { SoftwareLicensesAdmin } from "./software-licenses";
 import { RootfsAdmin } from "./rootfs";
 import { NewsAdminPage } from "./news/page";
 import { BayOpsAdmin } from "./bay-ops";
+import { ManagedEgressAdminOverview } from "./managed-egress-overview";
 import {
   getAdminUrlPath,
   normalizeAdminRoute,
@@ -48,6 +49,15 @@ export function AdminPage({
         </div>
       ),
       children: <UserSearch />,
+    },
+    {
+      key: "managed-egress",
+      label: (
+        <div style={headerStyle}>
+          <Icon name="exchange" style={{ marginRight: "8px" }} /> Network Egress
+        </div>
+      ),
+      children: <ManagedEgressAdminOverview />,
     },
     {
       key: "news",

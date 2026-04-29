@@ -181,4 +181,140 @@ describe("managed egress history", () => {
       }),
     ).rejects.toThrow("history query is too granular");
   });
+
+  it("aggregates admin-wide top accounts and projects", async () => {
+    queryMock.mockImplementation(async (sql: string) => {
+      if (
+        sql.includes(
+          "CREATE TABLE IF NOT EXISTS account_managed_egress_events",
+        ) ||
+        sql.includes(
+          "ALTER TABLE account_managed_egress_events ALTER COLUMN project_id DROP NOT NULL",
+        ) ||
+        sql.includes(
+          "CREATE INDEX IF NOT EXISTS account_managed_egress_events_",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "SELECT events.category, COALESCE(SUM(events.bytes), 0) AS bytes",
+        )
+      ) {
+        return {
+          rows: [{ category: "raw-network", bytes: "8192" }],
+        };
+      }
+      if (
+        sql.includes("accounts.email_address") &&
+        sql.includes("GROUP BY") &&
+        sql.includes("events.account_id") &&
+        !sql.includes("projects.title AS project_title")
+      ) {
+        return {
+          rows: [
+            {
+              account_id: "acct-1",
+              email_address: "ada@example.com",
+              first_name: "Ada",
+              last_name: "Lovelace",
+              bytes: "6000",
+            },
+            {
+              account_id: "acct-2",
+              email_address: "alan@example.com",
+              first_name: "Alan",
+              last_name: "Turing",
+              bytes: "2192",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("projects.title AS project_title") &&
+        sql.includes("accounts.email_address")
+      ) {
+        return {
+          rows: [
+            {
+              account_id: "acct-1",
+              email_address: "ada@example.com",
+              first_name: "Ada",
+              last_name: "Lovelace",
+              project_id: "project-1",
+              project_title: "Lite One",
+              bytes: "4096",
+            },
+          ],
+        };
+      }
+      if (sql.includes("ORDER BY events.occurred_at DESC, events.id DESC")) {
+        return {
+          rows: [
+            {
+              account_id: "acct-1",
+              project_id: "project-1",
+              project_title: "Lite One",
+              category: "raw-network",
+              bytes: "4096",
+              occurred_at: "2026-04-28T11:30:00.000Z",
+              metadata: { interface_name: "ens4" },
+            },
+          ],
+        };
+      }
+      throw new Error(`unhandled query: ${sql}`);
+    });
+
+    const { getManagedEgressAdminOverview } = await import("./managed-egress");
+    const result = await getManagedEgressAdminOverview({
+      start: "2026-04-28T10:00:00.000Z",
+      end: "2026-04-29T10:00:00.000Z",
+      top_account_limit: 5,
+      top_project_limit: 5,
+      recent_event_limit: 5,
+    });
+
+    expect(result.total_bytes).toBe(8192);
+    expect(result.categories_bytes).toEqual({ "raw-network": 8192 });
+    expect(result.top_accounts).toEqual([
+      {
+        account_id: "acct-1",
+        email_address: "ada@example.com",
+        first_name: "Ada",
+        last_name: "Lovelace",
+        bytes: 6000,
+      },
+      {
+        account_id: "acct-2",
+        email_address: "alan@example.com",
+        first_name: "Alan",
+        last_name: "Turing",
+        bytes: 2192,
+      },
+    ]);
+    expect(result.top_projects).toEqual([
+      {
+        account_id: "acct-1",
+        email_address: "ada@example.com",
+        first_name: "Ada",
+        last_name: "Lovelace",
+        project_id: "project-1",
+        project_title: "Lite One",
+        bytes: 4096,
+      },
+    ]);
+    expect(result.recent_events).toEqual([
+      {
+        account_id: "acct-1",
+        project_id: "project-1",
+        project_title: "Lite One",
+        category: "raw-network",
+        bytes: 4096,
+        occurred_at: "2026-04-28T11:30:00.000Z",
+        metadata: { interface_name: "ens4" },
+      },
+    ]);
+  });
 });

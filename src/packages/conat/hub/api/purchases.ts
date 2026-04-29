@@ -115,6 +115,24 @@ export interface ManagedEgressProjectSummary {
   bytes: number;
 }
 
+export interface ManagedEgressAccountSummary {
+  account_id: string;
+  email_address?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  bytes: number;
+}
+
+export interface ManagedEgressAdminProjectSummary {
+  account_id: string;
+  email_address?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  project_id: string | null;
+  project_title?: string | null;
+  bytes: number;
+}
+
 export interface ManagedEgressHistory {
   account_id: string;
   project_id?: string | null;
@@ -136,6 +154,25 @@ export interface ManagedEgressHistoryQuery {
   end?: string | Date;
   bucket?: ManagedEgressHistoryBucketSize;
   recent_event_limit?: number;
+  top_project_limit?: number;
+}
+
+export interface ManagedEgressAdminOverview {
+  start: string;
+  end: string;
+  total_bytes: number;
+  categories_bytes: Record<string, number>;
+  top_accounts: ManagedEgressAccountSummary[];
+  top_projects: ManagedEgressAdminProjectSummary[];
+  recent_events: ManagedEgressEventSummary[];
+}
+
+export interface ManagedEgressAdminOverviewQuery {
+  account_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  recent_event_limit?: number;
+  top_account_limit?: number;
   top_project_limit?: number;
 }
 
@@ -167,6 +204,9 @@ export interface Purchases {
   getManagedEgressHistory: (
     opts?: ManagedEgressHistoryQuery,
   ) => Promise<ManagedEgressHistory>;
+  getManagedEgressAdminOverview: (
+    opts?: ManagedEgressAdminOverviewQuery,
+  ) => Promise<ManagedEgressAdminOverview>;
 }
 
 export const purchases = {
@@ -176,4 +216,5 @@ export const purchases = {
   getMembershipDetails: authFirst,
   getAIUsage: authFirst,
   getManagedEgressHistory: authFirst,
+  getManagedEgressAdminOverview: authFirst,
 };
