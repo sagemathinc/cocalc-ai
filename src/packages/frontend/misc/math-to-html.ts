@@ -7,6 +7,9 @@ import { macros } from "@cocalc/frontend/jquery-plugins/math-katex";
 import katex from "katex";
 import KaTeXCompatHacks from "./katex-compat-hacks";
 
+const KATEX_MATHML_INLINE_HIDE_STYLE =
+  "clip:rect(1px,1px,1px,1px);border:0;height:1px;overflow:hidden;padding:0;position:absolute;width:1px";
+
 export default function mathToHtml(
   math: string, // latex expression
   isInline: boolean,
@@ -23,11 +26,13 @@ export default function mathToHtml(
   let err: string | undefined = undefined;
   let html: string | undefined = undefined;
   try {
-    html = katex.renderToString(math, {
-      displayMode: !isInline,
-      macros,
-      globalGroup: true, // See https://github.com/sagemathinc/cocalc/issues/5750
-    });
+    html = hideKatexMathMl(
+      katex.renderToString(math, {
+        displayMode: !isInline,
+        macros,
+        globalGroup: true, // See https://github.com/sagemathinc/cocalc/issues/5750
+      }),
+    );
   } catch (error) {
     // If you are working interactively, e.g., in a notebook or md file, you might change a macro
     // you have already defined.  Unfortunately, katex/latex assumes you're processing the whole document
@@ -57,6 +62,13 @@ export default function mathToHtml(
     }
   }
   return { __html: html ?? "", err };
+}
+
+function hideKatexMathMl(html: string): string {
+  return html.replace(
+    /<span class="katex-mathml">/g,
+    `<span class="katex-mathml" style="${KATEX_MATHML_INLINE_HIDE_STYLE}">`,
+  );
 }
 
 export function latexMathToHtml(s: string): string {
