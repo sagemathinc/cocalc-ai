@@ -38,6 +38,7 @@ jest.mock("./managed-egress-recent-events", () => ({
 import {
   getValidHistoryBuckets,
   summarizeManagedEgressHistory,
+  summarizeManagedEgressRecentUsage,
 } from "./managed-egress-history";
 
 describe("managed egress history helpers", () => {
@@ -85,6 +86,44 @@ describe("managed egress history helpers", () => {
       latestBytes: 200,
       peakBytes: 500,
       avgBytesPerHour: 200,
+    });
+  });
+
+  it("computes recent 5-minute and 1-hour usage from history buckets", () => {
+    expect(
+      summarizeManagedEgressRecentUsage({
+        account_id: "account-1",
+        start: "2026-04-28T00:00:00.000Z",
+        end: "2026-04-28T01:00:00.000Z",
+        bucket: "5m",
+        total_bytes: 780,
+        categories_bytes: {},
+        points: [
+          {
+            start: "2026-04-28T00:00:00.000Z",
+            end: "2026-04-28T00:05:00.000Z",
+            bytes: 10,
+            categories_bytes: {},
+          },
+          {
+            start: "2026-04-28T00:50:00.000Z",
+            end: "2026-04-28T00:55:00.000Z",
+            bytes: 70,
+            categories_bytes: {},
+          },
+          {
+            start: "2026-04-28T00:55:00.000Z",
+            end: "2026-04-28T01:00:00.000Z",
+            bytes: 700,
+            categories_bytes: {},
+          },
+        ],
+        top_projects: [],
+        recent_events: [],
+      }),
+    ).toEqual({
+      last5MinutesBytes: 700,
+      lastHourBytes: 780,
     });
   });
 });

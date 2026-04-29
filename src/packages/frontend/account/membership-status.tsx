@@ -29,7 +29,10 @@ import {
   ManagedEgressRecentEventsButton,
   formatManagedEgressCategory,
 } from "@cocalc/frontend/purchases/managed-egress-recent-events";
-import { ManagedEgressHistoryButton } from "@cocalc/frontend/purchases/managed-egress-history";
+import {
+  ManagedEgressHistoryButton,
+  ManagedEgressRateSummary,
+} from "@cocalc/frontend/purchases/managed-egress-history";
 import { upgrades } from "@cocalc/util/upgrade-spec";
 import { capitalize, humanSize, round2 } from "@cocalc/util/misc";
 import type {
@@ -913,6 +916,9 @@ export function MembershipStatusPanel({
               </Descriptions>
             ) : null}
             <Descriptions size="small" column={1} style={{ marginTop: "6px" }}>
+              <Descriptions.Item label="Recent managed egress">
+                <ManagedEgressRateSummary />
+              </Descriptions.Item>
               <Descriptions.Item label="Historical managed egress">
                 <ManagedEgressHistoryButton buttonText="View egress history" />
               </Descriptions.Item>

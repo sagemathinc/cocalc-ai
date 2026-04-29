@@ -5,7 +5,10 @@
 
 import { Space } from "antd";
 import { Paragraph, SettingBox, Text } from "@cocalc/frontend/components";
-import { ManagedEgressHistoryButton } from "@cocalc/frontend/purchases/managed-egress-history";
+import {
+  ManagedEgressHistoryButton,
+  ManagedEgressRateSummary,
+} from "@cocalc/frontend/purchases/managed-egress-history";
 
 export function ManagedEgress({ project_id }: { project_id: string }) {
   return (
@@ -17,6 +20,7 @@ export function ManagedEgress({ project_id }: { project_id: string }) {
         shared hosts.
       </Paragraph>
       <Space direction="vertical" size="small">
+        <ManagedEgressRateSummary project_id={project_id} />
         <ManagedEgressHistoryButton
           project_id={project_id}
           buttonText="View egress history"

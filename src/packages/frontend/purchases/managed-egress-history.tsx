@@ -34,6 +34,8 @@ const { Text } = Typography;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const MAX_HISTORY_BUCKETS = 2000;
+const RECENT_SUMMARY_WINDOW_MS = 6 * HOUR_MS;
+const RECENT_SUMMARY_REFRESH_MS = 60 * 1000;
 
 export type ManagedEgressHistoryRangeKey = "6h" | "24h" | "7d" | "30d";
 
@@ -147,6 +149,37 @@ export function summarizeManagedEgressHistory(history: ManagedEgressHistory): {
   };
 }
 
+function sumRecentBytes(
+  points: ManagedEgressHistory["points"],
+  endMs: number,
+  windowMs: number,
+): number {
+  return (points ?? []).reduce((sum, point) => {
+    const pointEndMs = Date.parse(point.end);
+    if (!Number.isFinite(pointEndMs) || pointEndMs <= endMs - windowMs) {
+      return sum;
+    }
+    return sum + Math.max(0, point.bytes ?? 0);
+  }, 0);
+}
+
+export function summarizeManagedEgressRecentUsage(
+  history: ManagedEgressHistory,
+): {
+  last5MinutesBytes: number;
+  lastHourBytes: number;
+} {
+  const points = history.points ?? [];
+  const endMs = Date.parse(history.end);
+  if (!Number.isFinite(endMs) || points.length === 0) {
+    return { last5MinutesBytes: 0, lastHourBytes: 0 };
+  }
+  return {
+    last5MinutesBytes: sumRecentBytes(points, endMs, 5 * 60 * 1000),
+    lastHourBytes: sumRecentBytes(points, endMs, HOUR_MS),
+  };
+}
+
 function HistoryLine({
   history,
 }: {
@@ -248,6 +281,85 @@ export function ManagedEgressHistoryButton({
         />
       ) : null}
     </>
+  );
+}
+
+export function ManagedEgressRateSummary({
+  project_id,
+}: {
+  project_id?: string;
+}) {
+  const [history, setHistory] = useState<ManagedEgressHistory | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<any>(null);
+  const requestKeyRef = useRef("");
+  const loadedOnceRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      const end = new Date();
+      const start = new Date(end.getTime() - RECENT_SUMMARY_WINDOW_MS);
+      const requestKey = `${project_id ?? "account"}:${end.getTime()}`;
+      requestKeyRef.current = requestKey;
+      setError(null);
+      if (!loadedOnceRef.current) {
+        setLoading(true);
+      }
+      try {
+        const next =
+          (await webapp_client.conat_client.hub.purchases.getManagedEgressHistory(
+            {
+              project_id,
+              start: start.toISOString(),
+              end: end.toISOString(),
+              bucket: "5m",
+              recent_event_limit: 1,
+              top_project_limit: 1,
+            },
+          )) as ManagedEgressHistory;
+        if (cancelled || requestKeyRef.current !== requestKey) return;
+        loadedOnceRef.current = true;
+        setHistory(next);
+      } catch (err) {
+        if (cancelled || requestKeyRef.current !== requestKey) return;
+        setError(err);
+      } finally {
+        if (!cancelled && requestKeyRef.current === requestKey) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void load();
+    const timer = setInterval(() => {
+      void load();
+    }, RECENT_SUMMARY_REFRESH_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [project_id]);
+
+  if (loading && history == null) {
+    return <Text type="secondary">Loading recent rates…</Text>;
+  }
+  if (error && history == null) {
+    return <Text type="secondary">Recent rates unavailable.</Text>;
+  }
+  if (history == null) {
+    return <Text type="secondary">No recent managed egress.</Text>;
+  }
+
+  const recent = summarizeManagedEgressRecentUsage(history);
+  return (
+    <Text type="secondary">
+      Recent usage: {humanSize(recent.last5MinutesBytes)} in the last 5 minutes
+      {" · "}
+      {humanSize(recent.lastHourBytes)} in the last hour
+    </Text>
   );
 }
 

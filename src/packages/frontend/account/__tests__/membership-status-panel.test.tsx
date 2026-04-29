@@ -123,6 +123,7 @@ jest.mock("@cocalc/frontend/purchases/managed-egress-history", () => ({
   ManagedEgressHistoryButton: ({ buttonText }: any) => (
     <button>{buttonText}</button>
   ),
+  ManagedEgressRateSummary: () => <div>recent-egress-summary</div>,
 }));
 
 function deferred<T>() {
