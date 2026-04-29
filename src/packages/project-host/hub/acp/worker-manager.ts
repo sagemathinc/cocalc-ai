@@ -353,7 +353,12 @@ function isExpectedWorkerProcess(
   launch: WorkerLaunch,
 ): boolean {
   if (worker.cmdline.length === 0) return false;
-  if (path.resolve(worker.cmdline[0]) !== launch.resolvedCommand) {
+  const observedCommand = worker.cmdline[0];
+  const commandMatches =
+    path.resolve(observedCommand) === launch.resolvedCommand;
+  const titledProcessMatches =
+    observedCommand === getProjectHostProcessTitle({ env: worker.env });
+  if (!commandMatches && !titledProcessMatches) {
     return false;
   }
   if (!launch.nodeLike) {
