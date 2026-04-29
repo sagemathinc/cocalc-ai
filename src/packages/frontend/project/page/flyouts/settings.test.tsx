@@ -127,6 +127,9 @@ jest.mock("@cocalc/frontend/project/settings/environment", () => ({
 jest.mock("@cocalc/frontend/project/settings/hide-delete-box", () => ({
   HideDeleteBox: () => <div>HideDeleteBox</div>,
 }));
+jest.mock("@cocalc/frontend/project/settings/managed-egress", () => ({
+  ManagedEgress: () => <div>ManagedEgress</div>,
+}));
 jest.mock("@cocalc/frontend/project/settings/project-capabilites", () => ({
   ProjectCapabilities: () => <div>ProjectCapabilities</div>,
 }));
@@ -194,5 +197,17 @@ describe("SettingsFlyout", () => {
     expect(text.indexOf("SSH")).toBeGreaterThan(-1);
     expect(text.indexOf("Hide or Delete")).toBeGreaterThan(-1);
     expect(text.indexOf("SSH")).toBeLessThan(text.indexOf("Hide or Delete"));
+  });
+
+  it("includes network egress in flyout settings", () => {
+    render(
+      <SettingsFlyout
+        project_id="project-1"
+        wrap={(content) => <>{content}</>}
+      />,
+    );
+
+    expect(screen.getByText("Network Egress")).toBeTruthy();
+    expect(screen.getByText("ManagedEgress")).toBeTruthy();
   });
 });
