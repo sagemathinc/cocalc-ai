@@ -755,6 +755,29 @@ async function containerExists(name: string): Promise<boolean> {
   }
 }
 
+function isPodmanContainerMissingError(err: unknown): boolean {
+  const message = `${err}`.toLowerCase();
+  return (
+    message.includes("no such container") ||
+    message.includes("no such object") ||
+    message.includes("does not exist") ||
+    message.includes("unable to find")
+  );
+}
+
+async function containerListedAsRunning(name: string): Promise<boolean> {
+  const output = await podmanOutput(
+    ["ps", "--filter", `name=^${name}$`, "--format", "{{.Names}}"],
+    {
+      label: "container ps running",
+    },
+  );
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .includes(name);
+}
+
 async function containerIsRunning(name: string): Promise<boolean> {
   try {
     const output = await podmanOutput(
@@ -764,8 +787,37 @@ async function containerIsRunning(name: string): Promise<boolean> {
       },
     );
     return output.trim() === "true";
-  } catch {
-    return false;
+  } catch (inspectErr) {
+    if (isPodmanContainerMissingError(inspectErr)) {
+      return false;
+    }
+    try {
+      if (await containerListedAsRunning(name)) {
+        logger.warn(
+          "codex project runtime: podman inspect failed but podman ps still shows the container running",
+          {
+            name,
+            err: `${inspectErr}`,
+          },
+        );
+        return true;
+      }
+      logger.warn(
+        "codex project runtime: podman inspect failed and podman ps did not show the container running",
+        {
+          name,
+          err: `${inspectErr}`,
+        },
+      );
+      return false;
+    } catch (psErr) {
+      logger.warn("codex project runtime: podman running-state probes failed", {
+        name,
+        inspectErr: `${inspectErr}`,
+        psErr: `${psErr}`,
+      });
+      return false;
+    }
   }
 }
 
