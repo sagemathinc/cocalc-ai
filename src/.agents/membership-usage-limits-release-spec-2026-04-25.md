@@ -1,7 +1,7 @@
 # Membership And Usage Limits Release Spec
 
 Status: updated first-release policy and implementation tracker as of
-2026-04-28.
+2026-04-29.
 
 This document defines the first-release model for user-facing limits and the
 minimum multibay architecture needed to enforce them safely at public scale.
@@ -22,6 +22,7 @@ Related documents:
 - [membership.md](/home/user/cocalc-ai/docs/membership.md)
 - [project-disk-usage.md](/home/user/cocalc-ai/src/.agents/project-disk-usage.md)
 - [app-server.md](/home/user/cocalc-ai/src/.agents/app-server.md)
+- [shared-host-stopping-eviction-spec-2026-04-29.md](/home/user/cocalc-ai/src/.agents/shared-host-stopping-eviction-spec-2026-04-29.md)
 
 ## Strategic Decision
 
@@ -798,11 +799,10 @@ The following now exist and should be treated as part of shared-host v1:
 ### Not Finished
 
 1. Central admin override controls.
-2. Managed-egress leased budgets, if we still decide they are operationally
+2. Dedicated-host egress policy wiring and admin override integration.
+3. Shared-host stopping/eviction policy, tracked in its own focused spec.
+4. Managed-egress leased budgets, if we still decide they are operationally
    necessary.
-3. Dedicated-host egress policy wiring and admin override integration.
-4. Shared-host stopping/eviction policy.
-5. Any internal memory-class or memory-priority policy.
 
 ## Current Release Position
 
@@ -817,12 +817,29 @@ The product/architecture decisions are now:
    We do not need another attribution push before release.
 4. Dedicated-host egress policy for GCP should match the same membership-level
    egress policy unless an explicit admin override says otherwise.
-5. Shared-host stopping/eviction remains a major future project, not a small
-   cleanup item.
+5. Shared-host stopping/eviction is a critical first-release blocker, but it is
+   now tracked in a dedicated focused spec rather than inside this document.
+6. Any internal memory-priority or memory-class work belongs to that
+   stopping/eviction track, not to this limit-model spec.
 
 ## Remaining High-Priority Work
 
-### 1. Central Admin Override Controls
+### 1. Shared-Host Stopping / Eviction Policy
+
+This is a critical release blocker.
+
+It is no longer specified in detail here. The focused design and implementation
+tracker now lives in:
+
+- [shared-host-stopping-eviction-spec-2026-04-29.md](/home/user/cocalc-ai/src/.agents/shared-host-stopping-eviction-spec-2026-04-29.md)
+
+The important boundary is:
+
+- this document defines the shared-host user-facing contract and limit model
+- the stopping/eviction spec defines how a shared host stays stable under
+  contention while respecting that contract
+
+### 2. Central Admin Override Controls
 
 This is now one of the most important remaining items.
 
@@ -838,7 +855,7 @@ We already have significantly better admin inspection, but we still need:
   - default policy
   - admin override
 
-### 2. Dedicated-Host Egress Policy Wiring
+### 3. Dedicated-Host Egress Policy Wiring
 
 The product decision is now simple:
 
@@ -850,7 +867,7 @@ The product decision is now simple:
 What remains is mainly implementation and operator-surface cleanup, not policy
 design.
 
-### 3. Managed-Egress Leased Budgets
+### 4. Managed-Egress Leased Budgets
 
 This remains conditional.
 
@@ -858,14 +875,6 @@ If the current shared-host managed-egress paths are operationally stable
 without budget leases, we may not need to push this further before release.
 This should be treated as an implementation question, not as a guaranteed
 product blocker.
-
-### 4. Shared-Host Stopping / Eviction Policy
-
-This is a major project and deserves to be treated that way.
-
-It remains extremely important, but it is no longer entangled with the earlier
-storage/quota cleanup. The interesting work here is host-local scheduling and
-eviction policy, not simple “finish the limit model” plumbing.
 
 ## Updated Track Status
 
@@ -920,8 +929,13 @@ Remaining:
 
 Status: not finished.
 
-This is now best treated as a separate major project rather than a lingering
-small release chore.
+This is now tracked in a dedicated focused spec and should be treated as a
+critical release blocker rather than as a lingering subtask inside the
+membership/limits document.
+
+See:
+
+- [shared-host-stopping-eviction-spec-2026-04-29.md](/home/user/cocalc-ai/src/.agents/shared-host-stopping-eviction-spec-2026-04-29.md)
 
 ### Track 7. Managed Egress Completion
 
@@ -995,22 +1009,22 @@ The main open questions are now narrower:
    - `max_snapshots_per_project`
    - `max_backups_per_project`
 3. How should admin overrides be presented and audited in `/admin`?
-4. What exact shared-host stopping/eviction model do we want to build?
-5. Do we want any internal memory-priority or memory-class model as part of
-   that stopping/eviction project?
+
+Stopping/eviction-specific open questions now live in the focused eviction
+spec, not here.
 
 ## Recommended Immediate Next Steps
 
-1. Update this spec and the storage/quota note so they reflect current reality
-   exactly.
+1. Finish the focused shared-host stopping/eviction spec and implement the
+   minimum release-blocking host policy from it.
 2. Treat central admin override controls as the main remaining limits/policy
-   blocker.
+   blocker inside this document's scope.
 3. Wire the dedicated-host egress policy to the decided default:
    - same membership-level egress policy on GCP
    - admin overrides for exceptions
 4. Decide whether managed-egress leased budgets are still operationally needed.
-5. Split shared-host stopping/eviction into its own major design and execution
-   track.
+5. Keep this document focused on the limit model and user/operator contract,
+   not host-local eviction mechanics.
 
 The key discipline remains:
 
