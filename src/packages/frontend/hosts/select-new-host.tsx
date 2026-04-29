@@ -9,6 +9,7 @@ import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { Icon } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import { HostPickerModal } from "@cocalc/frontend/hosts/pick-host";
+import { HostPressureTag } from "@cocalc/frontend/hosts/pressure-ui";
 import { SpotHostTag } from "@cocalc/frontend/hosts/spot-ui";
 
 const { Paragraph } = Typography;
@@ -65,6 +66,7 @@ export function SelectNewHost({
                         {regionLabel}
                       </Tag>
                     )}
+                    <HostPressureTag pressure={selectedHost.pressure} />
                     {selectedHost.tier != null && (
                       <Tag color="purple" style={{ marginRight: 6 }}>
                         Tier {selectedHost.tier}

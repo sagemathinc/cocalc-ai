@@ -23,6 +23,7 @@ import {
 } from "@cocalc/util/consts";
 
 import { getHostStatusTooltip } from "./constants";
+import { HostPressureTag, hostPressureRank } from "./pressure-ui";
 import { SpotHostTag } from "./spot-ui";
 
 const STATUS_COLOR = {
@@ -57,6 +58,10 @@ function autoSelectCompare(a: Host, b: Host): number {
   const aStatus = STATUS_ORDER[a.status] ?? 99;
   const bStatus = STATUS_ORDER[b.status] ?? 99;
   if (aStatus !== bStatus) return aStatus - bStatus;
+
+  const aPressure = hostPressureRank(a);
+  const bPressure = hostPressureRank(b);
+  if (aPressure !== bPressure) return aPressure - bPressure;
 
   const aProjects =
     typeof a.projects === "number" ? a.projects : Number.MAX_SAFE_INTEGER;
@@ -183,21 +188,7 @@ export function HostPickerModal({
       items.push({ type: "header", label: g.label });
       items.push(
         ...g.items
-          .sort((a, b) => {
-            // sort by status then name
-            const order = [
-              "running",
-              "starting",
-              "restarting",
-              "off",
-              "stopping",
-              "deprovisioned",
-            ];
-            const ai = order.indexOf(a.status);
-            const bi = order.indexOf(b.status);
-            if (ai !== bi) return ai - bi;
-            return (a.name || "").localeCompare(b.name || "");
-          })
+          .sort(autoSelectCompare)
           .map((h) => ({ type: "host", host: h })),
       );
     }
@@ -402,6 +393,7 @@ export function HostPickerModal({
                           Tier {host.tier}
                         </Tag>
                       )}
+                      <HostPressureTag pressure={host.pressure} />
                       {host.can_place !== false ? (
                         <Tag color="green">Available</Tag>
                       ) : (

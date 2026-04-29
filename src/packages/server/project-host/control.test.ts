@@ -1,4 +1,8 @@
-import { shouldSkipStartForSnapshot } from "./control";
+import {
+  choosePlacementHostRow,
+  hostPlacementPressureRank,
+  shouldSkipStartForSnapshot,
+} from "./control";
 
 describe("shouldSkipStartForSnapshot", () => {
   const nowMs = Date.UTC(2026, 2, 19, 12, 0, 0);
@@ -81,5 +85,61 @@ describe("shouldSkipStartForSnapshot", () => {
     ).toEqual({
       skip: false,
     });
+  });
+});
+
+describe("host placement pressure helpers", () => {
+  it("ranks calmer pressure zones ahead of stressed ones", () => {
+    expect(hostPlacementPressureRank("normal")).toBeLessThan(
+      hostPlacementPressureRank("observe"),
+    );
+    expect(hostPlacementPressureRank("observe")).toBeLessThan(
+      hostPlacementPressureRank("pressure"),
+    );
+    expect(hostPlacementPressureRank("pressure")).toBeLessThan(
+      hostPlacementPressureRank("emergency"),
+    );
+  });
+
+  it("chooses a normal host before pressured hosts", () => {
+    const selected = choosePlacementHostRow(
+      [
+        {
+          id: "host-pressure",
+          metadata: { pressure: { zone: "pressure" } },
+        },
+        {
+          id: "host-normal",
+          metadata: { pressure: { zone: "normal" } },
+        },
+        {
+          id: "host-observe",
+          metadata: { pressure: { zone: "observe" } },
+        },
+      ],
+      () => 0,
+    );
+    expect(selected?.id).toBe("host-normal");
+  });
+
+  it("falls back to the least stressed remaining host class", () => {
+    const selected = choosePlacementHostRow(
+      [
+        {
+          id: "host-emergency",
+          metadata: { pressure: { zone: "emergency" } },
+        },
+        {
+          id: "host-observe",
+          metadata: { pressure: { zone: "observe" } },
+        },
+        {
+          id: "host-pressure",
+          metadata: { pressure: { zone: "pressure" } },
+        },
+      ],
+      () => 0,
+    );
+    expect(selected?.id).toBe("host-observe");
   });
 });

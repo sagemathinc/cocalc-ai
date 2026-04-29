@@ -1,5 +1,6 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import type { HostPressureZone } from "@cocalc/conat/hub/api/hosts";
 import type { HostControlApi } from "@cocalc/conat/project-host/api";
 import sshKeys from "../projects/get-ssh-keys";
 import { notifyProjectHostUpdate } from "../conat/route-project";
@@ -32,6 +33,25 @@ type HostPlacement = {
   host_id: string;
 };
 
+type HostRegistryRow = {
+  id: string;
+  bay_id?: string | null;
+  name?: string | null;
+  region?: string | null;
+  public_url?: string | null;
+  internal_url?: string | null;
+  ssh_server?: string | null;
+  tier?: number | null;
+  metadata?: any;
+};
+
+const HOST_PLACEMENT_PRESSURE_RANK: Record<HostPressureZone, number> = {
+  normal: 0,
+  observe: 1,
+  pressure: 2,
+  emergency: 3,
+};
+
 export type ProjectMeta = {
   title?: string;
   users?: any;
@@ -43,6 +63,82 @@ export type ProjectMeta = {
 };
 
 const pool = () => getPool();
+
+function normalizeHostPressureZone(
+  value: unknown,
+): HostPressureZone | undefined {
+  switch (`${value ?? ""}`.trim()) {
+    case "normal":
+    case "observe":
+    case "pressure":
+    case "emergency":
+      return `${value}`.trim() as HostPressureZone;
+    default:
+      return;
+  }
+}
+
+export function hostPlacementPressureRank(
+  zone: HostPressureZone | undefined,
+): number {
+  if (!zone) return HOST_PLACEMENT_PRESSURE_RANK.normal;
+  return (
+    HOST_PLACEMENT_PRESSURE_RANK[zone] ?? HOST_PLACEMENT_PRESSURE_RANK.normal
+  );
+}
+
+export function choosePlacementHostRow<T extends HostRegistryRow>(
+  rows: T[],
+  random: () => number = Math.random,
+): T | undefined {
+  if (rows.length === 0) return;
+  let bestRank = Number.POSITIVE_INFINITY;
+  const rankedRows: Array<{ row: T; rank: number }> = [];
+  for (const row of rows) {
+    const rank = hostPlacementPressureRank(
+      normalizeHostPressureZone(row.metadata?.pressure?.zone),
+    );
+    rankedRows.push({ row, rank });
+    if (rank < bestRank) {
+      bestRank = rank;
+    }
+  }
+  const bestRows = rankedRows
+    .filter(({ rank }) => rank === bestRank)
+    .map(({ row }) => row);
+  if (bestRows.length === 0) return;
+  const index = Math.min(
+    bestRows.length - 1,
+    Math.max(0, Math.floor(random() * bestRows.length)),
+  );
+  return bestRows[index];
+}
+
+function mapHostRegistryRow(row: HostRegistryRow) {
+  const machine = row?.metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+  const tier = normalizeHostTier(row.tier);
+  const pressure =
+    typeof row?.metadata?.pressure === "object" && row.metadata.pressure != null
+      ? row.metadata.pressure
+      : undefined;
+  return {
+    id: row.id,
+    bay_id: effectiveBayId(row.bay_id),
+    name: row.name,
+    region: row.region,
+    public_url: row.public_url,
+    internal_url: row.internal_url,
+    ssh_server: row.ssh_server,
+    tier,
+    local_proxy: isLocalSelfHost,
+    pressure,
+  };
+}
 
 async function saveProjectStateSnapshot(
   project_id: string,
@@ -242,25 +338,7 @@ export async function loadHostFromRegistry(host_id: string) {
     [host_id],
   );
   if (!rows[0]) return undefined;
-  const row = rows[0];
-  const machine = row?.metadata?.machine ?? {};
-  const selfHostMode = machine?.metadata?.self_host_mode;
-  const effectiveSelfHostMode =
-    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
-  const isLocalSelfHost =
-    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
-  const tier = normalizeHostTier(row.tier);
-  return {
-    id: row.id,
-    bay_id: effectiveBayId(row.bay_id),
-    name: row.name,
-    region: row.region,
-    public_url: row.public_url,
-    internal_url: row.internal_url,
-    ssh_server: row.ssh_server,
-    tier,
-    local_proxy: isLocalSelfHost,
-  };
+  return mapHostRegistryRow(rows[0]);
 }
 
 async function hostExistsAnywhere(host_id: string): Promise<boolean> {
@@ -287,36 +365,17 @@ export async function selectActiveHost({
   const targetBayId = effectiveBayId(bay_id);
   params.push(targetBayId);
   where.push(`COALESCE(bay_id, $${params.length}) = $${params.length}`);
-  const { rows } = await pool().query(
+  const { rows } = await pool().query<HostRegistryRow>(
     `
       SELECT id, bay_id, name, region, public_url, internal_url, ssh_server, tier, metadata
       FROM project_hosts
       WHERE ${where.join("\n        AND ")}
-      ORDER BY random()
-      LIMIT 1
     `,
     params,
   );
-  if (!rows[0]) return undefined;
-  const row = rows[0];
-  const machine = row?.metadata?.machine ?? {};
-  const selfHostMode = machine?.metadata?.self_host_mode;
-  const effectiveSelfHostMode =
-    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
-  const isLocalSelfHost =
-    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
-  const tier = normalizeHostTier(row.tier);
-  return {
-    id: row.id,
-    bay_id: effectiveBayId(row.bay_id),
-    name: row.name,
-    region: row.region,
-    public_url: row.public_url,
-    internal_url: row.internal_url,
-    ssh_server: row.ssh_server,
-    tier,
-    local_proxy: isLocalSelfHost,
-  };
+  const row = choosePlacementHostRow(rows);
+  if (!row) return undefined;
+  return mapHostRegistryRow(row);
 }
 
 export async function savePlacement(
