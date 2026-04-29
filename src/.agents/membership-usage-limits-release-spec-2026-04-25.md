@@ -331,7 +331,8 @@ The user-facing description should be simple:
 - projects stay running while you are actively using them
 - when shared hosts are busy, inactive lower-priority projects are paused first
 - higher memberships keep projects running longer under contention
-- dedicated hosts are not subject to shared-host pausing policy
+- dedicated hosts use the same protection model, but only within that
+  dedicated host's own project set
 
 This is a better product contract than:
 
@@ -375,7 +376,6 @@ Secondary inputs may include:
 - current memory footprint
 - whether kernels/terminals/processes are running
 - whether the project exposes a public app/service
-- whether the project is on a dedicated host
 
 Critical design rule:
 
@@ -414,11 +414,16 @@ product promise depend on a short fixed timeout.
 
 ### Dedicated Hosts
 
-Projects on dedicated hosts should not be governed by the shared-host stopping
-policy.
+Dedicated hosts should use the same host-local protection framework.
 
-Dedicated hosts may still have explicit local admin policies, but they should
-not be treated as part of the shared-host eviction pool.
+The difference is scope, not whether protection exists:
+
+- on shared hosts, candidate projects come from the shared host pool
+- on dedicated hosts, candidate projects come only from that dedicated host's
+  own projects
+
+This keeps the product behavior coherent for real collaborative deployments,
+such as an instructor and students using the same dedicated host.
 
 ### Multibay Architecture For Stopping
 
@@ -427,7 +432,7 @@ The stop decision should be host-local, not global.
 Central state should provide:
 
 - account membership priority
-- dedicated-host-related entitlements or exemptions
+- dedicated-host-related policy state
 - any account-level policy knobs that materially affect eviction
 
 But the actual stop decision should happen on the project host using local
@@ -447,7 +452,7 @@ Recommended internal policy shape:
 
 - `shared_compute_priority`
 - `idle_protection_window`
-- optional dedicated-host exemption
+- optional dedicated-host-specific policy adjustments
 
 Do not expose all of these internal knobs directly to users.
 
@@ -465,7 +470,8 @@ For first release, the stopping rule should be summarized internally as:
 3. evict lower-priority, less-recently-interactive projects first
 4. keep a short post-interaction protection window
 5. keep a long stale-project scavenger
-6. exempt dedicated hosts from this shared-host policy
+6. apply the same host-local protection model on dedicated hosts, but only
+   within that host's own projects
 
 This is the correct release posture for a burstable, priority-based shared
 compute system.
@@ -638,18 +644,17 @@ Policy:
 
 ### Dedicated Hosts
 
-Dedicated hosts should not automatically be treated as uncapped.
+Dedicated hosts should not automatically be treated as uncapped or exempt.
 
 First-release policy:
 
-- if a dedicated-host offering has explicit paid or otherwise approved egress
-  treatment, shared-host egress caps may be bypassed there
-- otherwise, a dedicated host should continue to use conservative caps or
-  temporary protections until dedicated-host egress metering and pricing are
-  implemented clearly
+- if a dedicated host is on GCP, apply the same membership-level egress policy
+  by default
+- use explicit admin overrides for exceptional cases
 
 This avoids creating a silent cost hole just because a workload moved from a
-shared host to a dedicated host.
+shared host to a dedicated host, while still keeping the system operational for
+real multi-user collaborative hosts.
 
 ### Excluded First-Release Traffic
 

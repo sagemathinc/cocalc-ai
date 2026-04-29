@@ -3,14 +3,15 @@
 Status: focused first-release blocker spec as of 2026-04-29.
 
 This document defines the minimum host-local stopping and eviction policy
-required for the first public shared-host release.
+required for the first public release on both shared and dedicated project
+hosts.
 
 It is intentionally separate from:
 
 - [membership-usage-limits-release-spec-2026-04-25.md](/home/user/cocalc-ai/src/.agents/membership-usage-limits-release-spec-2026-04-25.md)
 
 That document defines the user-facing limit model and membership contract. This
-document defines what a shared host does when it is under pressure and must
+document defines what a project host does when it is under pressure and must
 choose which projects to stop.
 
 ## Why This Is Separate
@@ -28,7 +29,7 @@ This deserves a focused spec with a smaller denominator.
 
 ## Release Position
 
-Shared-host stopping/eviction is a critical release blocker.
+Host-local stopping/eviction is a critical release blocker.
 
 We do not need a perfect scheduler before release. We do need a host-local
 policy that:
@@ -40,7 +41,7 @@ policy that:
 
 ## Goals
 
-1. Prevent shared hosts from collapsing under memory or resource pressure.
+1. Prevent project hosts from collapsing under memory or resource pressure.
 2. Preserve the user-facing product contract that higher memberships get better
    behavior under contention.
 3. Prefer stopping idle or lower-priority projects before active or
@@ -59,7 +60,7 @@ policy that:
 
 ## Scope Boundary
 
-This spec is only about shared-host project stopping/eviction.
+This spec is only about host-local project stopping/eviction.
 
 It is not about:
 
@@ -67,20 +68,20 @@ It is not about:
 - total account storage caps
 - project-count enforcement
 - managed egress blocking
-- dedicated project hosts
+  Those are separate controls. This spec answers a narrower question:
 
-Those are separate controls. This spec answers a narrower question:
-
-- when the shared host itself is under pressure, what running projects should it
+- when a project host itself is under pressure, what running projects should it
   stop first?
 
 ## First-Release Product Contract
 
-The user-facing shared-host promise remains:
+The user-facing promise remains:
 
 - shared compute is priority-based
 - bursting is opportunistic
 - contention means lower-priority or less-active work may be stopped sooner
+- dedicated hosts still protect themselves locally so one project does not break
+  the whole host for collaborators
 
 We should not promise:
 
@@ -95,7 +96,7 @@ treated as such.
 
 ### 1. Host-Local, Not Cluster-Global
 
-The first release should make stop decisions locally on each shared host.
+The first release should make stop decisions locally on each project host.
 
 This keeps the implementation tractable and is enough to get robust behavior
 into production. It also aligns with the actual operational problem: the host
@@ -125,11 +126,11 @@ The first-release ordering should be simple and defensible.
 
 At a high level:
 
-1. never consider dedicated-host projects here
-2. prefer stopping lower shared-compute-priority projects before higher ones
-3. among equal priority, prefer stopping less-recently-active projects first
-4. among equally idle candidates, prefer stopping projects that free more
+1. prefer stopping lower shared-compute-priority projects before higher ones
+2. among equal priority, prefer stopping less-recently-active projects first
+3. among equally idle candidates, prefer stopping projects that free more
    pressure sooner
+4. on dedicated hosts, rank only within that dedicated host's own projects
 
 This is enough to align technical behavior with the product contract.
 
@@ -206,7 +207,8 @@ them, in plain language:
 
 1. this project was stopped because the shared host was under pressure
 2. shared-host priority and recent activity affect which projects are stopped
-3. if they need stronger guarantees, they should use a dedicated host
+3. if they need stronger guarantees than a protected multi-project host can
+   offer, they should use a different deployment model
 
 The explanation should not invent precise scheduler claims we do not actually
 make elsewhere.
@@ -226,7 +228,8 @@ into hidden product policy.
 
 This track is done enough for release when:
 
-1. shared hosts can survive realistic pressure without collapsing
+1. shared and dedicated project hosts can survive realistic pressure without
+   collapsing
 2. the stop order clearly reflects membership priority and recent activity
 3. operators can inspect why a stop happened
 4. users can get a coherent explanation after a stop
