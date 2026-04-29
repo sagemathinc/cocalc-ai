@@ -119,6 +119,12 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 
+jest.mock("@cocalc/frontend/purchases/managed-egress-history", () => ({
+  ManagedEgressHistoryButton: ({ buttonText }: any) => (
+    <button>{buttonText}</button>
+  ),
+}));
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((res) => {

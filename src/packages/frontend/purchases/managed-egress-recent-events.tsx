@@ -23,19 +23,53 @@ export function formatManagedEgressCategory(category: string): string {
   return capitalize(category.replace(/[-_]/g, " "));
 }
 
-function getManagedEgressRequestPath(
+export function getManagedEgressRequestPath(
   event: ManagedEgressEventSummary,
 ): string | undefined {
   const value = event.metadata?.request_path;
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
-function getManagedEgressEventProjectLabel(
+export function getManagedEgressEventProjectLabel(
   event: ManagedEgressEventSummary,
 ): string {
   return (
     `${event.project_title ?? event.project_id ?? ""}`.trim() ||
     "Account-wide session traffic"
+  );
+}
+
+export function ManagedEgressRecentEventsList({
+  events,
+}: {
+  events?: ManagedEgressEventSummary[];
+}): ReactElement | null {
+  if (!events || events.length === 0) {
+    return null;
+  }
+  return (
+    <Space direction="vertical" size={12} style={{ width: "100%" }}>
+      {events.map((event, i) => {
+        const requestPath = getManagedEgressRequestPath(event);
+        return (
+          <div key={`${event.occurred_at}-${event.project_id ?? "none"}-${i}`}>
+            <Space wrap>
+              <Tag>{formatManagedEgressCategory(event.category)}</Tag>
+              <Tag>{humanSize(event.bytes)}</Tag>
+              <Text>{getManagedEgressEventProjectLabel(event)}</Text>
+              <Text type="secondary">
+                <TimeAgo date={event.occurred_at} />
+              </Text>
+            </Space>
+            {requestPath ? (
+              <div style={{ marginTop: "4px" }}>
+                <Text code>{requestPath}</Text>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </Space>
   );
 }
 
@@ -61,30 +95,7 @@ export function ManagedEgressRecentEventsButton({
         width={760}
         bodyStyle={{ maxHeight: 420, overflowY: "auto" }}
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
-          {events.map((event, i) => {
-            const requestPath = getManagedEgressRequestPath(event);
-            return (
-              <div
-                key={`${event.occurred_at}-${event.project_id ?? "none"}-${i}`}
-              >
-                <Space wrap>
-                  <Tag>{formatManagedEgressCategory(event.category)}</Tag>
-                  <Tag>{humanSize(event.bytes)}</Tag>
-                  <Text>{getManagedEgressEventProjectLabel(event)}</Text>
-                  <Text type="secondary">
-                    <TimeAgo date={event.occurred_at} />
-                  </Text>
-                </Space>
-                {requestPath ? (
-                  <div style={{ marginTop: "4px" }}>
-                    <Text code>{requestPath}</Text>
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </Space>
+        <ManagedEgressRecentEventsList events={events} />
       </Modal>
     </>
   );
