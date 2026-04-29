@@ -25,6 +25,7 @@ import {
 } from "@cocalc/server/conat/api/hosts";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import { appendProjectLogRowBestEffort } from "@cocalc/server/projects/project-log";
 import { notifyProjectHostUpdate } from "./route-project";
 
 const logger = getLogger("server:conat:host-registry");
@@ -781,6 +782,60 @@ export async function initHostRegistryService() {
           as_of_ms: Date.now(),
           has_more: rows.length >= limit,
         };
+      },
+      async reportProjectPressureAction(opts) {
+        const host_id = `${opts?.host_id ?? ""}`.trim();
+        const project_id = `${opts?.project_id ?? ""}`.trim();
+        const reason = `${opts?.reason ?? ""}`.trim();
+        const action_status =
+          opts?.action_status === "stop_failed" ? "stop_failed" : "stopped";
+        const pressure_zone = `${opts?.pressure_zone ?? ""}`.trim();
+        if (!host_id || !project_id || !reason || !pressure_zone) {
+          throw Error(
+            "reportProjectPressureAction: host_id, project_id, pressure_zone, and reason are required",
+          );
+        }
+        const occurred_at_ms =
+          Math.max(0, Number(opts?.occurred_at_ms ?? 0)) || Date.now();
+        const host_name = `${opts?.host_name ?? ""}`.trim() || undefined;
+        const trigger = `${opts?.trigger ?? ""}`.trim() || undefined;
+        const candidate_count = Number(opts?.candidate_count);
+        const memory_used_percent = Number(opts?.memory_used_percent);
+        const memory_available_bytes = Number(opts?.memory_available_bytes);
+        const event =
+          action_status === "stopped"
+            ? "project_pressure_stopped"
+            : "project_pressure_stop_failed";
+        const row = {
+          id: `project-pressure:${host_id}:${project_id}:${occurred_at_ms}:${event}`,
+          project_id,
+          account_id: null,
+          time: new Date(occurred_at_ms),
+          event: {
+            event,
+            pressure_zone,
+            reason,
+            source_host_id: host_id,
+            ...(host_name ? { source_host_name: host_name } : {}),
+            ...(trigger ? { trigger } : {}),
+            ...(Number.isFinite(candidate_count) && candidate_count >= 0
+              ? { candidate_count: Math.floor(candidate_count) }
+              : {}),
+            ...(Number.isFinite(memory_used_percent)
+              ? { memory_used_percent }
+              : {}),
+            ...(Number.isFinite(memory_available_bytes)
+              ? { memory_available_bytes }
+              : {}),
+          },
+        };
+        const logged = await appendProjectLogRowBestEffort({
+          project_id,
+          row,
+          fresh: true,
+          context: "host_pressure",
+        });
+        return { logged };
       },
       async getMasterConatTokenStatus(opts) {
         const host_id = `${opts?.host_id ?? ""}`.trim();

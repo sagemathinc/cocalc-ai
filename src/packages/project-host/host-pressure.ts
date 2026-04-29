@@ -333,6 +333,7 @@ export function startHostPressureController({
   refreshMetrics,
   getCurrentMetrics,
   stopProject,
+  reportPressureAction,
 }: {
   refreshMetrics: () => Promise<HostCurrentMetrics | undefined>;
   getCurrentMetrics: () => HostCurrentMetrics | undefined;
@@ -341,6 +342,17 @@ export function startHostPressureController({
     force?: boolean;
     pressure_zone: HostPressureZone;
     reason: string;
+  }) => Promise<void>;
+  reportPressureAction?: (opts: {
+    project_id: string;
+    action_status: "stopped" | "stop_failed";
+    pressure_zone: HostPressureZone;
+    reason: string;
+    trigger: string;
+    candidate_count: number;
+    memory_used_percent?: number | null;
+    memory_available_bytes?: number | null;
+    occurred_at_ms: number;
   }) => Promise<void>;
 }): HostPressureControllerHandle {
   let currentState: HostPressureState | undefined;
@@ -510,6 +522,36 @@ export function startHostPressureController({
           memory_used_percent: metrics?.memory_used_percent,
           memory_available_bytes: metrics?.memory_available_bytes,
         });
+        if (reportPressureAction) {
+          try {
+            await reportPressureAction({
+              project_id: candidate.project_id,
+              action_status: "stopped",
+              pressure_zone: classified.zone,
+              reason,
+              trigger,
+              candidate_count: candidates.length,
+              memory_used_percent:
+                metrics?.memory_used_percent != null
+                  ? Number(metrics.memory_used_percent)
+                  : null,
+              memory_available_bytes:
+                metrics?.memory_available_bytes != null
+                  ? Number(metrics.memory_available_bytes)
+                  : null,
+              occurred_at_ms: now,
+            });
+          } catch (err) {
+            logger.warn("host pressure action reporting failed", {
+              project_id: candidate.project_id,
+              zone: classified.zone,
+              trigger,
+              reason,
+              action_status: "stopped",
+              err: `${err}`,
+            });
+          }
+        }
         if (stoppedCount >= maxStops) {
           break;
         }
@@ -531,6 +573,36 @@ export function startHostPressureController({
           reason,
           err: `${err}`,
         });
+        if (reportPressureAction) {
+          try {
+            await reportPressureAction({
+              project_id: candidate.project_id,
+              action_status: "stop_failed",
+              pressure_zone: classified.zone,
+              reason,
+              trigger,
+              candidate_count: candidates.length,
+              memory_used_percent:
+                metrics?.memory_used_percent != null
+                  ? Number(metrics.memory_used_percent)
+                  : null,
+              memory_available_bytes:
+                metrics?.memory_available_bytes != null
+                  ? Number(metrics.memory_available_bytes)
+                  : null,
+              occurred_at_ms: now,
+            });
+          } catch (reportErr) {
+            logger.warn("host pressure action reporting failed", {
+              project_id: candidate.project_id,
+              zone: classified.zone,
+              trigger,
+              reason,
+              action_status: "stop_failed",
+              err: `${reportErr}`,
+            });
+          }
+        }
       }
     }
     settleUntilMs =

@@ -427,6 +427,88 @@ export function ManagedEgressHistoryButton({
   );
 }
 
+export function ManagedEgressCompactButton({
+  project_id,
+  user_account_id,
+  label = "Egress",
+}: {
+  project_id?: string;
+  user_account_id?: string;
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const { error, history, loading } = useManagedEgressHistorySnapshot({
+    project_id,
+    user_account_id,
+    durationMs: RECENT_SUMMARY_WINDOW_MS,
+    bucket: "5m",
+    recentEventLimit: 1,
+    topProjectLimit: 1,
+    refreshMs: RECENT_SUMMARY_REFRESH_MS,
+  });
+
+  let primary = "No recent egress";
+  let secondary: string | undefined;
+  if (loading && history == null) {
+    primary = "Loading recent usage…";
+  } else if (error && history == null) {
+    primary = "Recent usage unavailable";
+  } else if (history != null) {
+    const recent = summarizeManagedEgressRecentUsage(history);
+    primary = `${humanSize(recent.lastHourBytes)} / hour`;
+    secondary = `5 min ${humanSize(recent.last5MinutesBytes)}`;
+  }
+
+  return (
+    <>
+      <Button
+        onClick={() => setOpen(true)}
+        style={{
+          alignItems: "center",
+          display: "flex",
+          gap: "8px",
+          height: "auto",
+          justifyContent: "flex-start",
+          padding: "4px 8px",
+          textAlign: "left",
+        }}
+      >
+        <Icon name="network" />
+        <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+          <Space size={8} wrap>
+            <Text strong>{label}</Text>
+            <Text>{primary}</Text>
+          </Space>
+          {secondary ? (
+            <div
+              style={{
+                color: COLORS.GRAY_D,
+                fontSize: "12px",
+                lineHeight: 1.35,
+                marginTop: "2px",
+                maxWidth: "100%",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {secondary}
+            </div>
+          ) : null}
+        </div>
+      </Button>
+      {open ? (
+        <ManagedEgressHistoryModal
+          open={open}
+          onClose={() => setOpen(false)}
+          project_id={project_id}
+          user_account_id={user_account_id}
+        />
+      ) : null}
+    </>
+  );
+}
+
 export function ManagedEgressAdminHistoryButton({
   buttonText = "Global history",
   initialRangeKey = "24h",

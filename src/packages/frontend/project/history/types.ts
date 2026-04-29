@@ -173,6 +173,8 @@ export type ProjectControlEvent = {
     | "project_move_canceled"
     | "project_restart_requested"
     | "project_stopped"
+    | "project_pressure_stopped"
+    | "project_pressure_stop_failed"
     | "project_moved"
     | "project_rehomed"
     | "project_started";
@@ -185,6 +187,11 @@ export type ProjectControlEvent = {
   dest_host_name?: string;
   error?: string;
   stage?: string;
+  trigger?: string;
+  pressure_zone?: string;
+  candidate_count?: number;
+  memory_used_percent?: number;
+  memory_available_bytes?: number;
   source_bay_id?: string;
   dest_bay_id?: string;
   reason?: string;

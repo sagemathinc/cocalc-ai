@@ -24,7 +24,9 @@ import {
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
+import { ManagedEgressCompactButton } from "@cocalc/frontend/purchases/managed-egress-history";
 import { rowBackground, search_match, search_split } from "@cocalc/util/misc";
 import { LogEntry } from "./log-entry";
 import { LogSearch } from "./search";
@@ -321,14 +323,26 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
       className={"smc-vfill"}
     >
       <>
-        <h1 style={{ marginTop: "0px" }}>
-          <Icon name="history" />{" "}
-          <FormattedMessage
-            id="project.history.log.title"
-            defaultMessage="{projectLabel} Activity Log"
-            values={{ projectLabel }}
-          />
-        </h1>
+        <Flex
+          align="flex-start"
+          justify="space-between"
+          wrap
+          gap={12}
+          style={{ marginBottom: 8 }}
+        >
+          <h1 style={{ marginTop: "0px", marginBottom: 0 }}>
+            <Icon name="history" />{" "}
+            <FormattedMessage
+              id="project.history.log.title"
+              defaultMessage="{projectLabel} Activity Log"
+              values={{ projectLabel }}
+            />
+          </h1>
+          <Space size={8} wrap>
+            <DiskUsage project_id={project_id} compact />
+            <ManagedEgressCompactButton project_id={project_id} />
+          </Space>
+        </Flex>
         {workspaces.current ? (
           <Flex justify="space-between" style={{ marginBottom: 8 }}>
             <Space size={8}>
