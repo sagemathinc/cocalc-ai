@@ -308,8 +308,17 @@ describe("project-host daemon stop", () => {
     const dataDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
     );
+    const bundleRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-bundle-"),
+    );
+    const runtimeRoot = path.join(bundleRoot, "1776319000001");
+    fs.mkdirSync(path.join(runtimeRoot, "main"), { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, "main", "index.js"), "");
+    const currentLink = path.join(bundleRoot, "current");
+    fs.symlinkSync(runtimeRoot, currentLink);
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_CURRENT = currentLink;
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
 
     const spawnSpy = mockSpawn().mockReturnValue({
@@ -322,7 +331,7 @@ describe("project-host daemon stop", () => {
 
     expect(spawnSpy).toHaveBeenCalledWith(
       process.execPath,
-      [path.join(__dirname, "dist/main.js"), "--index", "0"],
+      [path.join(runtimeRoot, "main", "index.js"), "--index", "0"],
       expect.objectContaining({
         argv0: "project-host:host-agent:0",
         env: expect.objectContaining({
@@ -394,6 +403,90 @@ describe("project-host daemon stop", () => {
     expect(killSpy).not.toHaveBeenCalledWith(7373, 0);
     expect(logSpy).toHaveBeenCalledWith(
       "project-host host-agent healthy (pid 7374)",
+    );
+  });
+
+  it("ensureHostAgent restarts a running agent when it is on the wrong bundle version", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const bundleRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-bundle-"),
+    );
+    const runtimeRoot = path.join(bundleRoot, "1776319000002");
+    fs.mkdirSync(path.join(runtimeRoot, "main"), { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, "main", "index.js"), "");
+    const currentLink = path.join(bundleRoot, "current");
+    fs.symlinkSync(runtimeRoot, currentLink);
+    const agentPidPath = path.join(dataDir, "host-agent.pid");
+    fs.writeFileSync(agentPidPath, "7374");
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_CURRENT = currentLink;
+
+    const realReadFileSync = fs.readFileSync;
+    const realRealpathSync = fs.realpathSync;
+    jest.spyOn(fs, "readFileSync").mockImplementation(((
+      file: any,
+      options?: any,
+    ) => {
+      if (file === "/proc/7374/cmdline") {
+        return Buffer.from("project-host:host-agent:0\u0000") as any;
+      }
+      if (file === "/proc/7374/environ") {
+        return Buffer.from(
+          `COCALC_DATA=${dataDir}\u0000COCALC_PROJECT_HOST_AGENT=1\u0000COCALC_PROJECT_HOST_AGENT_INDEX=0\u0000`,
+        ) as any;
+      }
+      return (realReadFileSync as any)(file, options);
+    }) as typeof fs.readFileSync);
+    jest.spyOn(fs, "realpathSync").mockImplementation(((
+      file: any,
+      options?: any,
+    ) => {
+      if (file === `/proc/7374/cwd`) {
+        return "/opt/cocalc/project-host/bundles/1776319000000" as any;
+      }
+      return (realRealpathSync as any)(file, options);
+    }) as typeof fs.realpathSync);
+    let alive = true;
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      if (pid !== 7374) {
+        throw new Error(`unexpected pid ${pid}`);
+      }
+      if (signal === 0 || signal === undefined) {
+        if (alive) return true;
+        const err: NodeJS.ErrnoException = new Error("ESRCH");
+        err.code = "ESRCH";
+        throw err;
+      }
+      if (signal === "SIGTERM" || signal === "SIGKILL") {
+        alive = false;
+        return true;
+      }
+      throw new Error(`unexpected signal ${signal}`);
+    }) as typeof process.kill);
+    const spawnSpy = mockSpawn().mockReturnValue({
+      pid: 7879,
+      unref: () => {},
+    } as any);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(() => ensureHostAgent(0)).not.toThrow();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "project-host host-agent pid 7374 is running version 1776319000000 but current is 1776319000002; restarting.",
+      ),
+    );
+    expect(killSpy).toHaveBeenCalledWith(7374, 0);
+    expect(spawnSpy).toHaveBeenCalledWith(
+      process.execPath,
+      [path.join(runtimeRoot, "main", "index.js"), "--index", "0"],
+      expect.anything(),
     );
   });
 

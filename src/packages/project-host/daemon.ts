@@ -2519,7 +2519,7 @@ export function startHostAgent(index = 0): void {
   } catch {
     // best effort
   }
-  const root = packageRoot();
+  const root = projectHostRuntimeRoot(env);
   const { command, args } = resolveExec(root);
   const agentEnv: Record<string, string> = {
     ...env,
@@ -2550,11 +2550,26 @@ export function startHostAgent(index = 0): void {
 }
 
 export function ensureHostAgent(index = 0): void {
-  const { dataDir, agentPidPath } = resolveEnv(index);
+  const { env, dataDir, agentPidPath } = resolveEnv(index);
   const pid = fs.existsSync(agentPidPath)
     ? Number(fs.readFileSync(agentPidPath, "utf8"))
     : undefined;
   if (pid && isRunning(pid)) {
+    const selectedVersion = selectedVersionFromLink(
+      projectHostCurrentLinkPath(env),
+    );
+    const runningVersion = inferProjectHostBundleVersionFromPid(pid);
+    if (
+      selectedVersion &&
+      (!runningVersion || runningVersion !== selectedVersion)
+    ) {
+      console.warn(
+        `project-host host-agent pid ${pid} is running version ${runningVersion ?? "unknown"} but current is ${selectedVersion}; restarting.`,
+      );
+      stopHostAgentProcess({ dataDir, agentPidPath });
+      startHostAgent(index);
+      return;
+    }
     console.log(`project-host host-agent healthy (pid ${pid})`);
     return;
   }
