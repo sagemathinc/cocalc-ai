@@ -12,6 +12,7 @@ let publishMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
+let appendProjectLogRowBestEffortMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -41,6 +42,11 @@ jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
 jest.mock("@cocalc/server/account/project-feed", () => ({
   publishProjectAccountFeedEventsBestEffort: (...args: any[]) =>
     publishProjectAccountFeedEventsBestEffortMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/project-log", () => ({
+  appendProjectLogRowBestEffort: (...args: any[]) =>
+    appendProjectLogRowBestEffortMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/resolve", () => ({
@@ -105,6 +111,7 @@ describe("host-registry automatic convergence retry", () => {
     publishProjectAccountFeedEventsBestEffortMock = jest.fn(
       async () => undefined,
     );
+    appendProjectLogRowBestEffortMock = jest.fn(async () => true);
     resolveMembershipForAccountMock = jest.fn(async () => ({
       effective_limits: { shared_compute_priority: 0 },
     }));
@@ -544,6 +551,71 @@ describe("host-registry automatic convergence retry", () => {
       ],
       next_since_ms: 1400,
       has_more: false,
+    });
+  });
+
+  it("writes durable project log entries for pressure stops", async () => {
+    currentMetadata = {};
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ status: "running" }] };
+      }
+      if (
+        sql.includes(
+          "SELECT metadata, bay_id FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        ) ||
+        sql.includes(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ metadata: currentMetadata }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { initHostRegistryService } = await import("./host-registry");
+    const service = await initHostRegistryService();
+
+    const result = await service.reportProjectPressureAction({
+      host_id: "host-1",
+      host_name: "Host One",
+      project_id: "proj-1",
+      action_status: "stopped",
+      pressure_zone: "pressure",
+      reason: "low_priority,stale_activity",
+      trigger: "interval",
+      candidate_count: 4,
+      memory_used_percent: 96,
+      memory_available_bytes: 123456789,
+      occurred_at_ms: 1700000000000,
+    });
+
+    expect(result).toEqual({ logged: true });
+    expect(appendProjectLogRowBestEffortMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      fresh: true,
+      context: "host_pressure",
+      row: {
+        id: "project-pressure:host-1:proj-1:1700000000000:project_pressure_stopped",
+        project_id: "proj-1",
+        account_id: null,
+        time: new Date(1700000000000),
+        event: {
+          event: "project_pressure_stopped",
+          pressure_zone: "pressure",
+          reason: "low_priority,stale_activity",
+          source_host_id: "host-1",
+          source_host_name: "Host One",
+          trigger: "interval",
+          candidate_count: 4,
+          memory_used_percent: 96,
+          memory_available_bytes: 123456789,
+        },
+      },
     });
   });
 });

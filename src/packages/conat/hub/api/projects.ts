@@ -237,7 +237,7 @@ export interface ProjectLogCursor {
 export interface ProjectLogRow {
   id: string;
   project_id: string;
-  account_id: string;
+  account_id: string | null;
   time: Date | null;
   event: Record<string, any> | string | null;
 }

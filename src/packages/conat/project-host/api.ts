@@ -9,6 +9,7 @@ import type {
   ProjectState,
 } from "@cocalc/util/db-schema/projects";
 import type { SnapshotSchedule } from "@cocalc/util/consts/snapshots";
+import type { HostPressureZone } from "@cocalc/conat/hub/api/hosts";
 export { DEFAULT_RUNTIME_RETENTION_POLICY } from "./retention-policy";
 
 export interface HostCreateProjectRequest extends CreateProjectOptions {
@@ -410,6 +411,20 @@ export interface HostProjectStopPolicyRow {
   stop_override: HostProjectStopOverride;
 }
 
+export interface HostProjectPressureActionReport {
+  host_id: string;
+  host_name?: string | null;
+  project_id: string;
+  action_status: "stopped" | "stop_failed";
+  pressure_zone: HostPressureZone;
+  reason: string;
+  trigger?: string;
+  candidate_count?: number;
+  memory_used_percent?: number | null;
+  memory_available_bytes?: number | null;
+  occurred_at_ms?: number;
+}
+
 export type SoftwareArtifact =
   | "project-host"
   | "project"
@@ -522,6 +537,9 @@ export interface HostRegistryApi {
     as_of_ms: number;
     has_more: boolean;
   }>;
+  reportProjectPressureAction: (
+    opts: HostProjectPressureActionReport,
+  ) => Promise<{ logged: boolean }>;
   getMasterConatTokenStatus: (opts: {
     host_id: string;
     current_token: string;
