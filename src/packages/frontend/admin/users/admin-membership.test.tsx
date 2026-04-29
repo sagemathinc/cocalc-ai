@@ -11,9 +11,10 @@ jest.mock("antd", () => {
       {children}
     </button>
   );
-  const Div = ({ children, title }: any) => (
+  const Div = ({ children, title, label }: any) => (
     <div>
       {title}
+      {label}
       {children}
     </div>
   );
@@ -87,6 +88,14 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 
+jest.mock("@cocalc/frontend/purchases/managed-egress-history", () => ({
+  ManagedEgressHistoryButton: ({ buttonText }: any) => (
+    <button>{buttonText}</button>
+  ),
+  ManagedEgressRateSummary: () => <div>recent-egress-summary</div>,
+  ManagedEgressTopProjectsSummary: () => <div>top-projects-summary</div>,
+}));
+
 jest.mock("./actions", () => ({
   actions: {
     get_admin_membership: (...args: any[]) => getAdminMembership(...args),
@@ -144,12 +153,18 @@ describe("AdminMembership", () => {
       expect(
         screen.getByText(/only partially sampled from owned projects/i),
       ).toBeTruthy();
+      expect(screen.getByText("Recent managed egress")).toBeTruthy();
+      expect(screen.getByText("Top recent egress projects (24h)")).toBeTruthy();
+      expect(screen.getByText("Historical managed egress")).toBeTruthy();
       expect(screen.getByText("View recent events (1)")).toBeTruthy();
+      expect(screen.getByText("View egress history")).toBeTruthy();
     });
 
     fireEvent.click(screen.getByText("View recent events (1)"));
 
-    expect(screen.getByText("Recent managed egress events")).toBeTruthy();
+    expect(
+      screen.getAllByText("Recent managed egress events").length,
+    ).toBeGreaterThan(0);
     expect(screen.getByText("Data Lab")).toBeTruthy();
     expect(screen.getByText("/files/export.csv?download")).toBeTruthy();
   });

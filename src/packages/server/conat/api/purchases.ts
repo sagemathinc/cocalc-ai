@@ -1,6 +1,10 @@
 import getBalance from "@cocalc/server/purchases/get-balance";
 import getMinBalance0 from "@cocalc/server/purchases/get-min-balance";
 import {
+  getManagedEgressHistoryForAccount,
+  getProjectOwnerAccountId,
+} from "@cocalc/server/membership/managed-egress";
+import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
@@ -43,4 +47,53 @@ export async function getMembershipDetails({
 
 export async function getAIUsage({ account_id }) {
   return await getAIUsageStatus({ account_id });
+}
+
+export async function getManagedEgressHistory({
+  account_id,
+  user_account_id,
+  project_id,
+  start,
+  end,
+  bucket,
+  recent_event_limit,
+  top_project_limit,
+}: {
+  account_id?: string;
+  user_account_id?: string;
+  project_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  bucket?: "5m" | "1h" | "1d";
+  recent_event_limit?: number;
+  top_project_limit?: number;
+}) {
+  const targetId = user_account_id ?? account_id;
+  if (!targetId) {
+    throw Error("account_id required");
+  }
+  if (user_account_id && user_account_id !== account_id) {
+    if (!account_id || !(await isAdmin(account_id))) {
+      throw Error("must be an admin");
+    }
+  }
+  const normalizedProjectId = `${project_id ?? ""}`.trim() || undefined;
+  if (normalizedProjectId) {
+    const owner = await getProjectOwnerAccountId(normalizedProjectId);
+    if (!owner) {
+      throw Error("project not found");
+    }
+    if (owner !== targetId) {
+      throw Error("project is not owned by target account");
+    }
+  }
+  return await getManagedEgressHistoryForAccount({
+    account_id: targetId,
+    project_id: normalizedProjectId,
+    start,
+    end,
+    bucket,
+    recent_event_limit,
+    top_project_limit,
+  });
 }

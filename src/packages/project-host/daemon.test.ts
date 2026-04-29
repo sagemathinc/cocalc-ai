@@ -285,6 +285,7 @@ describe("project-host daemon stop", () => {
       process.execPath,
       [path.join(__dirname, "dist/main.js"), "--index", "0"],
       expect.objectContaining({
+        argv0: "project-host:host-agent:0",
         env: expect.objectContaining({
           COCALC_PROJECT_HOST_AGENT: "1",
           COCALC_PROJECT_HOST_AGENT_INDEX: "0",
@@ -700,11 +701,17 @@ describe("project-host daemon stop", () => {
       HOST: "127.0.0.1",
       PORT: "9102",
     });
+    expect((spawnSpy.mock.calls[0]?.[2] as any)?.argv0).toBe(
+      "project-host:conat-router",
+    );
     expect((spawnSpy.mock.calls[1]?.[2] as any)?.env).toMatchObject({
       HOST: "127.0.0.1",
       PORT: "9003",
       COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT: "9002",
     });
+    expect((spawnSpy.mock.calls[1]?.[2] as any)?.argv0).toBe(
+      "project-host:app",
+    );
     expect((spawnSpy.mock.calls[1]?.[2] as any)?.env).not.toHaveProperty(
       "COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON",
     );
@@ -759,6 +766,9 @@ describe("project-host daemon stop", () => {
       COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON: "1",
       PORT: "9202",
     });
+    expect((spawnSpy.mock.calls[1]?.[2] as any)?.argv0).toBe(
+      "project-host:conat-persist",
+    );
     expect((spawnSpy.mock.calls[2]?.[2] as any)?.env).not.toHaveProperty(
       "COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON",
     );
@@ -767,6 +777,9 @@ describe("project-host daemon stop", () => {
       PORT: "9003",
       COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT: "9002",
     });
+    expect((spawnSpy.mock.calls[2]?.[2] as any)?.argv0).toBe(
+      "project-host:app",
+    );
     expect(
       fs.readFileSync(path.join(dataDir, "conat-router.pid"), "utf8"),
     ).toBe("1111");

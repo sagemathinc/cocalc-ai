@@ -26,6 +26,7 @@ import { ApiKeys } from "./api-keys";
 import { Datastore } from "./datastore";
 import { Environment } from "./environment";
 import { HideDeleteBox } from "./hide-delete-box";
+import { ManagedEgress } from "./managed-egress";
 import { ProjectCapabilities } from "./project-capabilites";
 import { ProjectControl } from "./project-control";
 import { useRunQuota } from "./run-quota/hooks";
@@ -119,6 +120,7 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
         {!lite && (
           <Col sm={6}>
             <ProjectControl key="control" project={project} />
+            <ManagedEgress project_id={project_id} />
             <HideDeleteBox
               key="hide-delete"
               project={project}
