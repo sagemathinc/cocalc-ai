@@ -18,7 +18,12 @@ jest.mock("antd", () => ({
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
-      hub: { purchases: { getManagedEgressHistory: jest.fn() } },
+      hub: {
+        purchases: {
+          getManagedEgressHistory: jest.fn(),
+          getManagedEgressAdminHistory: jest.fn(),
+        },
+      },
     },
   },
 }));
