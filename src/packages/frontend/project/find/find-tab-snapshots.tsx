@@ -457,7 +457,7 @@ export function SnapshotsTab({
   );
 
   const performRestore = useCallback(
-    async (mode: "original" | "scratch") => {
+    async (mode: "original" | "tmp") => {
       if (!restoreTarget) return;
       try {
         if (fs == null) {
@@ -466,8 +466,7 @@ export function SnapshotsTab({
         setRestoreLoading(true);
         setRestoreError(null);
         const { relative, snapshotPath } = buildSnapshotPaths(restoreTarget);
-        const dest =
-          mode === "scratch" ? posix.join("/scratch", relative) : relative;
+        const dest = mode === "tmp" ? posix.join("/tmp", relative) : relative;
         const stats = await fs.stat(snapshotPath);
         const parent = posix.dirname(dest);
         if (parent && parent !== "." && parent !== "/") {
@@ -745,7 +744,7 @@ export function SnapshotsTab({
         error={restoreError}
         preview={preview ?? undefined}
         onRestoreOriginal={() => void performRestore("original")}
-        onRestoreScratch={() => void performRestore("scratch")}
+        onRestoreTmp={() => void performRestore("tmp")}
         onOpenDirectory={openSnapshotDirectory}
         onCancel={() => setRestoreTarget(null)}
       />

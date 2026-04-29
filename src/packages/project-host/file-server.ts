@@ -1477,8 +1477,8 @@ async function cp({
   }
   const srcVolume = await getVolume(src.project_id);
   const destVolume = await getVolume(dest.project_id);
-  // Paths may be project-relative or absolute (/..., /root/..., /scratch/...).
-  // Resolve using the same home/rootfs/scratch policy as the fs server API.
+  // Paths may be project-relative or absolute (/..., /root/..., /tmp/...).
+  // Resolve using the same home/rootfs/temp-volume policy as the fs server API.
   const srcFs = createProjectSandboxFilesystem({
     project_id: src.project_id,
     home: srcVolume.path,
@@ -1514,7 +1514,7 @@ async function cp({
       { ...options, reflink: true },
     );
   } else {
-    // Fallback path for absolute rootfs/scratch locations that are outside
+    // Fallback path for absolute rootfs/temp-volume locations that are outside
     // the subvolume mount root.
     await cpExec(
       typeof src.path == "string" ? srcPaths[0] : srcPaths,
@@ -2771,12 +2771,16 @@ async function restoreBackup({
     if (runtimeRelative != null) {
       root = home;
       relDest = runtimeRelative;
+    } else if (containerDest === "/tmp" || containerDest.startsWith("/tmp/")) {
+      root = scratch;
+      relDest = path.posix.relative("/tmp", containerDest);
     } else if (
       containerDest === "/scratch" ||
       containerDest.startsWith("/scratch/")
     ) {
-      root = scratch;
-      relDest = path.posix.relative("/scratch", containerDest);
+      throw new Error(
+        "restore destination '/scratch' is no longer supported; use '/tmp' instead",
+      );
     } else if (isSubPath(home, destPath)) {
       root = home;
       relDest = path.relative(home, destPath);
@@ -2788,7 +2792,7 @@ async function restoreBackup({
       relDest = path.relative(stagingHome, destPath);
     } else {
       throw new Error(
-        `restore destination must be within project home, /scratch, or restore staging: ${destPath}`,
+        `restore destination must be within project home, /tmp, or restore staging: ${destPath}`,
       );
     }
   } else {
@@ -2805,7 +2809,7 @@ async function restoreBackup({
     root === home
       ? "project home"
       : root === scratch
-        ? "project scratch"
+        ? "project temporary storage"
         : "restore staging",
   );
 

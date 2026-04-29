@@ -497,8 +497,11 @@ export async function copyProjectFiles({
 
   if (remoteDests.length && !skip_queue) {
     if (srcPaths.some((p) => p === "/scratch" || p.startsWith("/scratch/"))) {
+      throw new Error("copying from /scratch is no longer supported; use /tmp");
+    }
+    if (srcPaths.some((p) => p === "/tmp" || p.startsWith("/tmp/"))) {
       throw new Error(
-        "copying from /scratch across hosts is not supported because /scratch is not backed up",
+        "copying from /tmp across hosts is not supported because /tmp is not backed up",
       );
     }
     if (shouldAbort && (await shouldAbort())) {

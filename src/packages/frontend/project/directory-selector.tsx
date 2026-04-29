@@ -36,7 +36,6 @@ import useFiles, {
 } from "@cocalc/frontend/project/listing/use-files";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import { lite } from "@cocalc/frontend/lite";
 
 const NEW_FOLDER = "New Folder";
 
@@ -61,7 +60,7 @@ interface Props {
   allowAbsolutePaths?: boolean;
 }
 
-type RootSource = "home" | "root" | "tmp" | "scratch";
+type RootSource = "home" | "root" | "tmp";
 
 function sourceForPath(
   path: string,
@@ -78,9 +77,6 @@ function sourceForPath(
   }
   if (path === "/tmp" || path.startsWith("/tmp/")) {
     return { source: "tmp", rootPath: "/tmp" };
-  }
-  if (!lite && (path === "/scratch" || path.startsWith("/scratch/"))) {
-    return { source: "scratch", rootPath: "/scratch" };
   }
   return { source: "root", rootPath: "/" };
 }
@@ -189,9 +185,7 @@ export default function DirectorySelector({
       ? "Home"
       : rootSource.source === "root"
         ? "/"
-        : rootSource.source === "tmp"
-          ? "/tmp"
-          : "/scratch";
+        : "/tmp";
   const rootDisplayName =
     rootSource.source === "home" ? "Home Folder" : rootSource.rootPath;
 
@@ -249,18 +243,6 @@ export default function DirectorySelector({
       },
     },
   ];
-  if (!lite) {
-    sourceMenuItems.push({
-      key: "scratch",
-      label: "/scratch",
-      onClick: () => {
-        setRootPath("/scratch");
-        setExpandedPaths(new Set(["/scratch"]));
-        setSelectedPaths(new Set());
-      },
-    });
-  }
-
   return (
     <Card
       title={

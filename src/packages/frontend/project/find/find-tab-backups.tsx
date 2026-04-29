@@ -398,14 +398,14 @@ export function BackupsTab({
   );
 
   const performRestore = useCallback(
-    async (mode: "original" | "scratch") => {
+    async (mode: "original" | "tmp") => {
       if (!restoreTarget || !project_id) return;
       try {
         setRestoreLoading(true);
         setRestoreError(null);
         const dest =
-          mode === "scratch"
-            ? posix.join("/scratch", restoreTarget.path || "")
+          mode === "tmp"
+            ? posix.join("/tmp", restoreTarget.path || "")
             : undefined;
         const op = await webapp_client.conat_client.hub.projects.restoreBackup({
           project_id,
@@ -667,7 +667,7 @@ export function BackupsTab({
         error={restoreError}
         preview={preview ?? undefined}
         onRestoreOriginal={() => void performRestore("original")}
-        onRestoreScratch={() => void performRestore("scratch")}
+        onRestoreTmp={() => void performRestore("tmp")}
         onOpenDirectory={openBackupDirectory}
         onCancel={() => setRestoreTarget(null)}
       />

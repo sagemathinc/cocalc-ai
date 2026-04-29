@@ -2,9 +2,9 @@ export type LocalPathFunction = (opts: {
   project_id: string;
   // disk quota to set on the path (in bytes)
   disk?: number;
-  // optional explicit scratch quota in bytes. Local btrfs runners may still
-  // provide /scratch when omitted by mirroring the main project quota.
-  // set to 0 to disable /scratch.
+  // optional explicit temporary-storage quota in bytes. Local btrfs runners
+  // mount this volume at /tmp and may also expose a legacy /scratch alias.
+  // set to 0 to disable the extra temporary-storage volume.
   scratch?: number;
   // if false, only resolve paths without creating volumes
   ensure?: boolean;
@@ -45,11 +45,11 @@ export interface Configuration {
   pids?: number;
   // disk size in bytes
   disk?: number;
-  // if given, a /scratch is mounted in the container of this size in bytes
+  // if given, a disk-backed temporary volume of this size in bytes is mounted
+  // at /tmp in the container. A legacy /scratch alias may also be mounted.
   scratch?: number;
-  // if given create tmpfs ramdisk using this many bytes; if not given,
-  // but scratch is given, then /tmp is /scratch/tmp; if neither is
-  // given then tmp is part of the rootfs and is backed up (so NOT good).
+  // optional explicit tmpfs size in bytes. Shared-host projects normally leave
+  // this unset so /tmp uses the disk-backed temporary volume above instead of RAM.
   tmp?: number;
   // if true, allow GPU devices to be passed through (via CDI)
   gpu?: boolean;

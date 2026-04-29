@@ -81,9 +81,10 @@ export async function localPath({
   project_id: string;
   // if given, this quota will be set in case of btrfs
   disk?: number;
-  // optional explicit /scratch quota. If omitted on btrfs, we still
-  // create /scratch and mirror the main project quota when available.
-  // set to 0 to disable /scratch for this call.
+  // optional explicit temporary-volume quota. If omitted on btrfs, we still
+  // create the extra temp volume and mirror the main project quota when
+  // available. The runtime mounts this volume at /tmp.
+  // set to 0 to disable the extra temporary volume for this call.
   scratch?: number;
   // if false, resolve paths without creating volumes
   ensure?: boolean;

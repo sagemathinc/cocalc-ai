@@ -72,6 +72,15 @@ describe("ChatLog immediate steer rendering", () => {
     renderedMessages = [];
   });
 
+  function lastRenderedMessageProps(messageId: string) {
+    for (let i = renderedMessages.length - 1; i >= 0; i -= 1) {
+      if (renderedMessages[i].message?.message_id === messageId) {
+        return renderedMessages[i];
+      }
+    }
+    return undefined;
+  }
+
   it("renders immediate steer rows inline while the anchored Codex turn is still running", () => {
     render(
       <ChatLog
@@ -123,14 +132,10 @@ describe("ChatLog immediate steer rendering", () => {
       />,
     );
 
-    expect(renderedMessages).toHaveLength(2);
-    const userProps = renderedMessages.find(
-      (props) => props.message?.message_id === "user-1",
-    );
+    const userProps = lastRenderedMessageProps("user-1");
     expect(userProps?.attachedSteers).toBeUndefined();
-    const assistantProps = renderedMessages.find(
-      (props) => props.message?.message_id === "assistant-1",
-    );
+    const assistantProps = lastRenderedMessageProps("assistant-1");
+    expect(assistantProps?.expandedCodexActivity).toBe(true);
     expect(assistantProps?.activitySteers).toEqual([
       {
         messageId: "steer-1",
@@ -212,9 +217,7 @@ describe("ChatLog immediate steer rendering", () => {
     );
 
     expect(screen.queryByText("Guidance sent")).toBeNull();
-    const userProps = renderedMessages.find(
-      (props) => props.message?.message_id === "user-1",
-    );
+    const userProps = lastRenderedMessageProps("user-1");
     expect(userProps?.attachedSteers).toEqual([
       {
         messageId: "steer-1",

@@ -82,7 +82,7 @@ export function FilesSelectedControls({
   const [backupsTick, setBackupsTick] = useState(0);
   const backupsRequestIdRef = useRef(0);
   const [restoreOpen, setRestoreOpen] = useState<boolean>(false);
-  const [restoreMode, setRestoreMode] = useState<"original" | "scratch">(
+  const [restoreMode, setRestoreMode] = useState<"original" | "tmp">(
     "original",
   );
   const [restoreLoading, setRestoreLoading] = useState<boolean>(false);
@@ -348,8 +348,8 @@ export function FilesSelectedControls({
         for (const entry of entries) {
           for (const rel of entry.paths) {
             const dest =
-              restoreMode === "scratch"
-                ? path.posix.join("/scratch", rel ?? "")
+              restoreMode === "tmp"
+                ? path.posix.join("/tmp", rel ?? "")
                 : undefined;
             const op =
               await webapp_client.conat_client.hub.projects.restoreBackup({
@@ -439,8 +439,8 @@ export function FilesSelectedControls({
               <Radio value="original">
                 Restore to original location (overwrite)
               </Radio>
-              <Radio value="scratch">
-                Restore under /scratch/… to avoid overwriting
+              <Radio value="tmp">
+                Restore under /tmp/… to avoid overwriting
               </Radio>
             </Space>
           </Radio.Group>

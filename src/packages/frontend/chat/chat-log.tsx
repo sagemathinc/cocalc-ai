@@ -774,6 +774,10 @@ export function MessageList({
     sortedDates.length > 0 && (!atBottom || manualScroll);
   const canNotifyForRunningTurn =
     selectedThread != null && onNotifyOnTurnFinishChange != null;
+  const [
+    expandedCodexActivityByMessageId,
+    setExpandedCodexActivityByMessageId,
+  ] = useState<Record<string, boolean>>({});
   const userScrollIntentRef = useRef(false);
   const userScrollIntentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -810,6 +814,38 @@ export function MessageList({
       }
     };
   }, []);
+
+  useEffect(() => {
+    const liveCodexTurnIds: string[] = [];
+    for (const date of sortedDates) {
+      const message = getMessageAtDate({
+        messages,
+        date: parseFloat(date),
+      });
+      if (
+        message == null ||
+        !field<string>(message, "acp_account_id") ||
+        !isActiveAcpAssistantTurn({ message, acpState })
+      ) {
+        continue;
+      }
+      const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
+      if (messageId) {
+        liveCodexTurnIds.push(messageId);
+      }
+    }
+    if (liveCodexTurnIds.length === 0) return;
+    setExpandedCodexActivityByMessageId((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const messageId of liveCodexTurnIds) {
+        if (next[messageId] === true) continue;
+        next[messageId] = true;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [sortedDates, messages, acpState]);
 
   const maybeBlockScrollEvent = (event: {
     preventDefault: () => void;
@@ -905,6 +941,9 @@ export function MessageList({
     const activitySteers = messageId
       ? activitySteersByAssistantMessageId?.get(messageId)
       : undefined;
+    const expandedCodexActivity = messageId
+      ? expandedCodexActivityByMessageId[messageId] === true
+      : false;
 
     const is_thread = numChildren != null && isThread(message, numChildren);
     const h = virtuosoHeightsRef.current?.[index];
@@ -961,6 +1000,24 @@ export function MessageList({
             acpState={messageAcpState}
             attachedSteers={attachedSteers}
             activitySteers={activitySteers}
+            expandedCodexActivity={expandedCodexActivity}
+            onExpandedCodexActivityChange={
+              messageId
+                ? (visible: boolean) => {
+                    setExpandedCodexActivityByMessageId((prev) => {
+                      if ((prev[messageId] === true) === visible) {
+                        return prev;
+                      }
+                      if (!visible) {
+                        const next = { ...prev };
+                        delete next[messageId];
+                        return next;
+                      }
+                      return { ...prev, [messageId]: true };
+                    });
+                  }
+                : undefined
+            }
             dim={shouldDim}
             searchHighlight={searchQuery}
             openActivityToken={

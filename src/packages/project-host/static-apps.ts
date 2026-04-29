@@ -625,8 +625,8 @@ async function resolveStaticRoot(
     normalized !== "" &&
     (!path.posix.isAbsolute(normalized) ||
       isProjectRuntimeHomeAliasPath(normalized) ||
-      normalized === "/scratch" ||
-      normalized.startsWith("/scratch/"));
+      normalized === "/tmp" ||
+      normalized.startsWith("/tmp/"));
   if (!allowRoot) {
     logger.warn("rejected static app root outside project writable areas", {
       project_id,
