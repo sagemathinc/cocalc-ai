@@ -30,6 +30,7 @@ import type { ChatActions } from "./actions";
 import { type AttachedSteerMessage } from "./agent-message-status";
 import Composing from "./composing";
 import Message from "./message";
+import type { InlineCodexActivityBlock } from "./message";
 import type {
   ChatMessageTyped,
   ChatMessages,
@@ -51,6 +52,28 @@ const USE_VIRTUOSO = true;
 
 function isImmediateAcpSteerMessage(message: ChatMessageTyped): boolean {
   return field<string>(message, "acp_send_mode") === "immediate";
+}
+
+function sameInlineCodexActivityBlocks(
+  left?: InlineCodexActivityBlock[],
+  right?: InlineCodexActivityBlock[],
+): boolean {
+  if (left === right) return true;
+  if (left == null || right == null) return left == null && right == null;
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    const a = left[i];
+    const b = right[i];
+    if (
+      a.kind !== b.kind ||
+      a.text !== b.text ||
+      a.time !== b.time ||
+      a.state !== b.state
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function toAttachedSteerState(
@@ -779,6 +802,14 @@ export function MessageList({
     expandedCodexActivityByMessageId,
     setExpandedCodexActivityByMessageId,
   ] = useState<Record<string, boolean>>({});
+  const [
+    explicitCodexActivityByMessageId,
+    setExplicitCodexActivityByMessageId,
+  ] = useState<Record<string, boolean>>({});
+  const [
+    cachedCodexActivityBlocksByMessageId,
+    setCachedCodexActivityBlocksByMessageId,
+  ] = useState<Record<string, InlineCodexActivityBlock[] | undefined>>({});
   const userScrollIntentRef = useRef(false);
   const userScrollIntentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -952,6 +983,12 @@ export function MessageList({
     const expandedCodexActivity = messageId
       ? expandedCodexActivityByMessageId[messageId] === true
       : false;
+    const allowAsyncCompletedCodexActivityLoad = messageId
+      ? explicitCodexActivityByMessageId[messageId] === true
+      : false;
+    const cachedCodexActivityBlocks = messageId
+      ? cachedCodexActivityBlocksByMessageId[messageId]
+      : undefined;
 
     const is_thread = numChildren != null && isThread(message, numChildren);
     const h = virtuosoHeightsRef.current?.[index];
@@ -1009,9 +1046,47 @@ export function MessageList({
             attachedSteers={attachedSteers}
             activitySteers={activitySteers}
             expandedCodexActivity={expandedCodexActivity}
+            allowAsyncCompletedCodexActivityLoad={
+              allowAsyncCompletedCodexActivityLoad
+            }
+            cachedCodexActivityBlocks={cachedCodexActivityBlocks}
+            onCachedCodexActivityBlocksChange={
+              messageId
+                ? (blocks) => {
+                    setCachedCodexActivityBlocksByMessageId((prev) => {
+                      const current = prev[messageId];
+                      if (sameInlineCodexActivityBlocks(current, blocks)) {
+                        return prev;
+                      }
+                      if (
+                        blocks == null ||
+                        !Array.isArray(blocks) ||
+                        blocks.length === 0
+                      ) {
+                        if (!(messageId in prev)) return prev;
+                        const next = { ...prev };
+                        delete next[messageId];
+                        return next;
+                      }
+                      return { ...prev, [messageId]: blocks };
+                    });
+                  }
+                : undefined
+            }
             onExpandedCodexActivityChange={
               messageId
                 ? (visible: boolean) => {
+                    setExplicitCodexActivityByMessageId((prev) => {
+                      if ((prev[messageId] === true) === visible) {
+                        return prev;
+                      }
+                      if (!visible) {
+                        const next = { ...prev };
+                        delete next[messageId];
+                        return next;
+                      }
+                      return { ...prev, [messageId]: true };
+                    });
                     setExpandedCodexActivityByMessageId((prev) => {
                       if ((prev[messageId] === true) === visible) {
                         return prev;
