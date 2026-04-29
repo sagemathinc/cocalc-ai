@@ -515,18 +515,21 @@ export function shouldLoadCodexPreviewBody({
 export function shouldShowCodexShowActivityButton({
   showCodexActivity,
   expandedCodexActivity,
+  hasVisibleCompletedActivity,
   canToggle,
   effectiveGenerating,
   isLastMessageInThread,
 }: {
   showCodexActivity: boolean;
   expandedCodexActivity: boolean;
+  hasVisibleCompletedActivity: boolean;
   canToggle: boolean;
   effectiveGenerating: boolean;
   isLastMessageInThread: boolean;
 }): boolean {
-  if (!showCodexActivity || expandedCodexActivity || !canToggle) return false;
+  if (!showCodexActivity || !canToggle) return false;
   if (effectiveGenerating && isLastMessageInThread) return false;
+  if (expandedCodexActivity && hasVisibleCompletedActivity) return false;
   return true;
 }
 
@@ -1055,7 +1058,6 @@ export default function Message({
             typeof steer?.text === "string" && steer.text.trim().length > 0,
         )
       : [];
-    if (steerItems.length === 0) return undefined;
     const blocks = getLiveResponseBlocks(
       codexPreviewLog.events as any,
       steerItems.map(({ date, text, state }) => ({ date, text, state })),
@@ -1776,9 +1778,14 @@ export default function Message({
   }
 
   function renderCodexHeaderActions() {
+    const hasVisibleCompletedActivity =
+      inlineCodexActivityMode === "completed" &&
+      Array.isArray(completedCodexActivityBlocks) &&
+      completedCodexActivityBlocks.length > 0;
     const showShowActivityButton = shouldShowCodexShowActivityButton({
       showCodexActivity,
       expandedCodexActivity,
+      hasVisibleCompletedActivity,
       canToggle: onExpandedCodexActivityChange != null,
       effectiveGenerating,
       isLastMessageInThread,
