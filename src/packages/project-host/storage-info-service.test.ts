@@ -175,6 +175,41 @@ describe("project storage info service", () => {
     });
   });
 
+  it("rewrites host-path du output back to the requested sandbox path", async () => {
+    const requestedPath = "/home/user/.local/share/cocalc/rootfs";
+    const hostPath =
+      "/mnt/cocalc/project-11111111-1111-4111-8111-111111111111/.local/share/cocalc/rootfs";
+    const duMock = jest.fn().mockResolvedValue({
+      stdout: Buffer.from(
+        [`25 ${hostPath}/layer-a`, `125 ${hostPath}`].join("\n"),
+      ),
+      stderr: Buffer.alloc(0),
+      code: 0,
+    });
+    fsClientMock.mockReturnValue({
+      canonicalSyncFsPath: jest.fn(async () => hostPath),
+      canonicalSyncIdentityPath: jest.fn(async () => requestedPath),
+      du: duMock,
+    });
+
+    const { handleProjectStorageBreakdownRequest } =
+      await import("./storage-info-service");
+    const breakdown = await handleProjectStorageBreakdownRequest.call(
+      {
+        subject: "project.11111111-1111-4111-8111-111111111111.storage-info.-",
+      },
+      { path: requestedPath },
+      {} as any,
+    );
+
+    expect(breakdown).toEqual({
+      path: requestedPath,
+      bytes: 125,
+      children: [{ bytes: 25, path: "layer-a" }],
+      collected_at: expect.any(String),
+    });
+  });
+
   it("returns direct quota and snapshot usage without scanning storage", async () => {
     fileServerClientMock.mockReturnValue({
       getQuota: jest.fn(async () => ({

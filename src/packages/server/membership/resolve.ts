@@ -1,4 +1,5 @@
 import getPool from "@cocalc/database/pool";
+import TTL from "@isaacs/ttlcache";
 import type {
   MembershipClass,
   MembershipCandidate,
@@ -16,6 +17,19 @@ import { normalizeMembershipEffectiveLimits } from "./effective-limits";
 import { getMembershipUsageStatusForAccount } from "./usage-status";
 
 const log = getLogger("server:membership:resolve");
+const MEMBERSHIP_USAGE_STATUS_CACHE_TTL_MS = 60_000;
+
+type UsageStatusCacheValue = {
+  usage_status: MembershipDetails["usage_status"];
+};
+
+const membershipUsageStatusCache = new TTL<string, UsageStatusCacheValue>({
+  ttl: MEMBERSHIP_USAGE_STATUS_CACHE_TTL_MS,
+});
+const membershipUsageStatusInflight = new Map<
+  string,
+  Promise<MembershipDetails["usage_status"]>
+>();
 
 function tierToEntitlements(
   tier?: MembershipTierRecord,
@@ -131,24 +145,74 @@ function pickBestMembership(
   };
 }
 
+function usageStatusCacheKey({
+  account_id,
+  resolution,
+}: {
+  account_id: string;
+  resolution: MembershipResolution;
+}): string {
+  return JSON.stringify({
+    account_id,
+    class: resolution.class,
+    source: resolution.source,
+    expires: resolution.expires ?? null,
+    effective_limits: resolution.effective_limits ?? {},
+  });
+}
+
+async function getCachedMembershipUsageStatus({
+  account_id,
+  resolution,
+}: {
+  account_id: string;
+  resolution: MembershipResolution;
+}): Promise<MembershipDetails["usage_status"]> {
+  const cacheKey = usageStatusCacheKey({ account_id, resolution });
+  const cached = membershipUsageStatusCache.get(cacheKey);
+  if (cached) {
+    return cached.usage_status;
+  }
+  const inflight = membershipUsageStatusInflight.get(cacheKey);
+  if (inflight) {
+    return await inflight;
+  }
+  const load = (async () => {
+    let usage_status: MembershipDetails["usage_status"] = undefined;
+    try {
+      usage_status = await getMembershipUsageStatusForAccount({
+        account_id,
+        resolution,
+      });
+    } catch (err) {
+      log.warn("unable to compute membership usage status", {
+        account_id,
+        err: `${err}`,
+      });
+    }
+    membershipUsageStatusCache.set(cacheKey, { usage_status });
+    return usage_status;
+  })();
+  membershipUsageStatusInflight.set(cacheKey, load);
+  try {
+    return await load;
+  } finally {
+    if (membershipUsageStatusInflight.get(cacheKey) === load) {
+      membershipUsageStatusInflight.delete(cacheKey);
+    }
+  }
+}
+
 export async function resolveMembershipDetailsForAccount(
   account_id: string,
 ): Promise<MembershipDetails> {
   const tiers = await getMembershipTierMap({ includeDisabled: true });
   const candidates = await buildMembershipCandidates(account_id, tiers);
   const selected = pickBestMembership(candidates, tiers);
-  let usage_status: MembershipDetails["usage_status"] = undefined;
-  try {
-    usage_status = await getMembershipUsageStatusForAccount({
-      account_id,
-      resolution: selected,
-    });
-  } catch (err) {
-    log.warn("unable to compute membership usage status", {
-      account_id,
-      err: `${err}`,
-    });
-  }
+  const usage_status = await getCachedMembershipUsageStatus({
+    account_id,
+    resolution: selected,
+  });
   return {
     selected,
     candidates,
