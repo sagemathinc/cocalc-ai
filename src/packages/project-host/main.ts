@@ -75,6 +75,7 @@ import { main as runConatRouterClusterNodeMain } from "./conat-router-cluster-no
 import { startConatRevocationKickLoop } from "./conat-revocation-kick";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
+import { applyProjectHostProcessTitle } from "./process-role";
 import {
   runRuntimeConformanceStartupChecks,
   startRuntimeConformanceMonitor,
@@ -1283,6 +1284,7 @@ export async function main(
 
 // Allow running directly via `node dist/main.js`.
 if (require.main === module) {
+  applyProjectHostProcessTitle();
   process.env.COCALC_CONAT_CLUSTER_NODE_ENTRYPOINT ??= __filename;
   if (`${process.env.COCALC_CONAT_CLUSTER_NODE ?? ""}`.trim() === "1") {
     runConatRouterClusterNodeMain().catch((err) => {

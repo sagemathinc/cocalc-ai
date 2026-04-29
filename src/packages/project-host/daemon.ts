@@ -7,6 +7,7 @@ import {
   type HealthCheckDiagnostic,
   type SupervisionEvent,
 } from "./supervision-events";
+import { getProjectHostProcessTitle } from "./process-role";
 
 type DaemonAction = "start" | "stop" | "ensure" | "restart-project-host";
 
@@ -1390,6 +1391,12 @@ function startManagedConatRouter(opts: {
           }
         : {}),
     },
+    argv0: getProjectHostProcessTitle({
+      env: {
+        ...childEnv,
+        COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON: "1",
+      },
+    }),
     detached: true,
     stdio: ["ignore", stdout, stderr],
   });
@@ -1704,6 +1711,12 @@ function startManagedConatPersist(opts: {
       DEBUG_FILE: persistLogPath,
       COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON: "1",
     },
+    argv0: getProjectHostProcessTitle({
+      env: {
+        ...childEnv,
+        COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON: "1",
+      },
+    }),
     detached: true,
     stdio: ["ignore", stdout, stderr],
   });
@@ -2139,6 +2152,7 @@ export function startDaemon(index = 0): void {
           }
         : {}),
     },
+    argv0: getProjectHostProcessTitle({ env: childEnv }),
     detached: true,
     stdio: ["ignore", stdout, stderr],
   });
@@ -2460,6 +2474,7 @@ export function startHostAgent(index = 0): void {
     {
       cwd: root,
       env: agentEnv,
+      argv0: getProjectHostProcessTitle({ env: agentEnv }),
       detached: true,
       stdio: ["ignore", stdout, stderr],
     },
