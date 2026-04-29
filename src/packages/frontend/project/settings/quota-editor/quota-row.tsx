@@ -23,22 +23,15 @@ export default function QuotaRow({
   disabled,
 }: Props) {
   const kucalc: string = useTypedRedux("customize", "kucalc");
+  if (name === "mintime" || name === "always_running") {
+    return null;
+  }
   if (FAIR_CPU_MODE && (name == "cores" || name.startsWith("cpu"))) {
     return null;
   }
   const params_data = PROJECT_UPGRADES.params[name];
-  if (
-    kucalc == KUCALC_DISABLED &&
-    name != "mintime" &&
-    name != "always_running"
-  ) {
-    // In anything except KuCalc, only the mintime and always_on quota is implemented.
-    // NONE of the other quotas are.
-    return null;
-  }
-
-  // if always_running is true, don't show idle timeout row, since not relevant
-  if (name == "mintime" && quotaState?.always_running) {
+  if (kucalc == KUCALC_DISABLED) {
+    // In anything except KuCalc, the remaining quota editor fields are not implemented.
     return null;
   }
 

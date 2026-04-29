@@ -69,10 +69,8 @@ const PROJECT_DEFAULT_KEYS = [
   "memory",
   "memory_request",
   "disk_quota",
-  "mintime",
   "network",
   "member_host",
-  "always_running",
   "cpu_shares",
 ] as const;
 

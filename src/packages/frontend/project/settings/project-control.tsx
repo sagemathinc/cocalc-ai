@@ -8,13 +8,11 @@ import { FormattedMessage, useIntl } from "react-intl";
 import BootLog from "../bootlog";
 import { React, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
-  A,
   Icon,
   LabeledRow,
   Paragraph,
   ProjectState,
   SettingBox,
-  TimeAgo,
   TimeElapsed,
 } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
@@ -22,7 +20,6 @@ import * as misc from "@cocalc/util/misc";
 import { COMPUTE_STATES } from "@cocalc/util/schema";
 import { COLORS } from "@cocalc/util/theme";
 import { useProjectContext } from "../context";
-import { useProjectRunQuota } from "../use-project-run-quota";
 import { RestartProject } from "./restart-project";
 import { StopProject } from "./stop-project";
 import { ArchiveProject } from "./archive-project";
@@ -53,7 +50,6 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   const projectLabelLower = projectLabel.toLowerCase();
   const projectStatus = useTypedRedux({ project_id }, "status");
   const projectMap = useTypedRedux("projects", "project_map");
-  const { runQuota } = useProjectRunQuota(project_id);
   const hostId = project.get("host_id") as string | undefined;
   const hostInfo = useHostInfo(hostId);
   const hostOperational = React.useMemo(
@@ -87,18 +83,6 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     return rawState.set("state", "opened");
   }, [project, displayStateValue]);
 
-  const idleTimeoutHorizon = React.useMemo(() => {
-    if (runQuota?.always_running) {
-      return;
-    }
-    const lastEdited = project.get("last_edited") as Date | undefined;
-    const idleTimeoutS = runQuota?.idle_timeout;
-    if (!(lastEdited instanceof Date) || typeof idleTimeoutS !== "number") {
-      return;
-    }
-    return new Date(lastEdited.valueOf() + idleTimeoutS * 1000);
-  }, [project, runQuota]);
-
   function render_state() {
     if (lifecycle.isNew) {
       return (
@@ -110,25 +94,6 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     return (
       <span style={{ fontSize: "12pt", color: COLORS.GRAY_M }}>
         <ProjectState show_desc={true} state={displayProjectState} />
-      </span>
-    );
-  }
-
-  function render_idle_timeout() {
-    const date = idleTimeoutHorizon;
-    if (date == null) {
-      // e.g., viewing as admin where the info about idle timeout
-      // horizon simply isn't known.
-      return <span style={{ color: COLORS.GRAY_M }}>(not available)</span>;
-    }
-    return (
-      <span style={{ color: COLORS.GRAY_M }}>
-        <Icon name="hourglass-half" />{" "}
-        <FormattedMessage
-          id="project.settings.control.idle_timeout.info"
-          defaultMessage={`<b>About {ago}</b> {projectLabelLower} will stop unless somebody actively edits.`}
-          values={{ ago: <TimeAgo date={date} />, projectLabelLower }}
-        />
       </span>
     );
   }
@@ -194,46 +159,6 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
           />
         )}
       </Space.Compact>
-    );
-  }
-
-  function render_idle_timeout_row() {
-    if (displayStateValue !== "running") {
-      return;
-    }
-    if (runQuota?.always_running) {
-      return (
-        <LabeledRow
-          key="idle-timeout"
-          label={intl.formatMessage(labels.always_running)}
-          style={rowStyle()}
-          vertical={isFlyout}
-        >
-          <Paragraph>
-            <FormattedMessage
-              id="project.settings.control.idle_timeout.always_running.info"
-              defaultMessage={`{projectLabel} will be <b>automatically started</b> if it stops
-                for any reason (it will run any <A>init scripts</A>).`}
-              values={{
-                projectLabel,
-                A: (c) => (
-                  <A href="https://doc.cocalc.com/project-init.html">{c}</A>
-                ),
-              }}
-            />
-          </Paragraph>
-        </LabeledRow>
-      );
-    }
-    return (
-      <LabeledRow
-        key="idle-timeout"
-        label={intl.formatMessage(labels.idle_timeout)}
-        style={rowStyle()}
-        vertical={isFlyout}
-      >
-        {render_idle_timeout()}
-      </LabeledRow>
     );
   }
 
@@ -345,7 +270,6 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
             this project to an available host, or start the assigned host.
           </Paragraph>
         )}
-        {render_idle_timeout_row()}
         {render_uptime()}
         {render_cpu_usage()}
         <hr />

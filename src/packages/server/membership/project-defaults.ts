@@ -6,14 +6,12 @@ export type ProjectSettings = Record<string, unknown>;
 const SETTINGS_FIELDS = [
   "cores",
   "cpu_shares",
-  "mintime",
   "memory",
   "memory_request",
   "disk_quota",
   "member_host",
   "privileged",
   "network",
-  "always_running",
 ] as const;
 
 type SettingsField = (typeof SETTINGS_FIELDS)[number];

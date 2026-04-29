@@ -46,10 +46,8 @@ function upgradesFromRunQuota(
     cores: numberOrUndefined(runQuota.cpu_limit),
     memory: numberOrUndefined(runQuota.memory_limit),
     memory_request: numberOrUndefined(runQuota.memory_request),
-    mintime: numberOrUndefined(runQuota.idle_timeout),
     network: runQuota.network ? 1 : 0,
     member_host: !!runQuota.member_host,
-    always_running: !!runQuota.always_running,
   };
 }
 
@@ -354,25 +352,6 @@ export class ProjectsStore extends Store<ProjectsState> {
     });
   }
 
-  // in seconds
-  public get_idle_timeout(project_id: string): number {
-    return 1000 * (this.get_total_project_quotas(project_id)?.mintime ?? 0);
-  }
-
-  // The timestap (in server time) when this project will
-  // idle timeout if not edited by anybody.
-  public get_idle_timeout_horizon(project_id: string): Date | undefined {
-    // time when last edited in server time
-    const last_edited = this.getIn(["project_map", project_id, "last_edited"]);
-
-    // It can be undefined, e.g., for admin viewing a project they are not a collab on, since
-    // the project isn't in the project_map.  See https://github.com/sagemathinc/cocalc/issues/4686
-    // Using right now in that case is a good approximation.
-    if (last_edited == null) return;
-    const idle_timeout = this.get_idle_timeout(project_id);
-    return new Date(last_edited.valueOf() + idle_timeout);
-  }
-
   // Get the total quotas for the given project, including free base
   // values and project settings contribution.
   public get_total_project_quotas(project_id: string): undefined | Upgrades {
@@ -393,10 +372,8 @@ export class ProjectsStore extends Store<ProjectsState> {
       cpu_shares: numberOrUndefined(legacySettings.get("cpu_shares")),
       memory: numberOrUndefined(legacySettings.get("memory")),
       memory_request: numberOrUndefined(legacySettings.get("memory_request")),
-      mintime: numberOrUndefined(legacySettings.get("mintime")),
       network: numberOrUndefined(legacySettings.get("network")),
       member_host: !!legacySettings.get("member_host"),
-      always_running: !!legacySettings.get("always_running"),
     };
   }
 
@@ -413,13 +390,8 @@ export class ProjectsStore extends Store<ProjectsState> {
     const upgraded =
       (quotas.memory != null && quotas.memory > DEFAULT_QUOTAS.memory) ||
       (quotas.memory_request != null && quotas.memory_request > 200) ||
-      (quotas.always_running ?? false) ||
       (quotas.cores != null && quotas.cores > DEFAULT_QUOTAS.cores);
     return { kind, upgraded };
-  }
-
-  public is_always_running(project_id: string): boolean {
-    return !!this.get_total_project_quotas(project_id)?.always_running;
   }
 
   // we allow URLs in projects, which have member hosting or internet access

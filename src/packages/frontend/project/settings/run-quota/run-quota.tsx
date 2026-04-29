@@ -34,8 +34,6 @@ import {
 const { Text } = Typography;
 const PARAMS = PROJECT_UPGRADES.params;
 
-const INFINITY_CHAR = "∞";
-
 interface Props {
   project_id: string;
   project_state?: "opened" | "running" | "starting" | "stopping";
@@ -73,19 +71,18 @@ export const RunQuota: React.FC<Props> = React.memo(
     }
 
     const data: QuotaData[] = React.useMemo(() => {
-      const ar = !!runQuota.always_running;
       return displayedFields.map((name: keyof Upgrades): QuotaData => {
         const key = upgrade2quota_key(name);
         return {
           key,
           display: displayedName(name),
           desc: PARAMS[name]?.desc ?? "",
-          quota: key == "idle_timeout" && ar ? INFINITY_CHAR : quotaValue(key),
+          quota: quotaValue(key),
           maximum: maxUpgrades?.[name] ?? "N/A",
           usage: currentUsage?.[key],
         };
       });
-    }, [runQuota, currentUsage, maxUpgrades, projectIsRunning]);
+    }, [runQuota, currentUsage, maxUpgrades, displayedFields]);
 
     function renderExtraMaximum(
       record: QuotaData,
@@ -95,21 +92,8 @@ export const RunQuota: React.FC<Props> = React.memo(
       }
     }
 
-    function renderExtraExplanation(record: QuotaData): React.JSX.Element {
-      const idleTimeoutInfo = (
-        <>
-          To increase the idle timeout, upgrade your membership or enable the
-          "always running" quota.
-        </>
-      );
-
-      switch (record.key) {
-        case "idle_timeout":
-          // special case: if we have always running, don't tell the user to increase idle timeout (stupid)
-          return record.quota != INFINITY_CHAR ? idleTimeoutInfo : <></>;
-        default:
-          return <></>;
-      }
+    function renderExtraExplanation(): React.JSX.Element {
+      return <></>;
     }
 
     function renderQuotaValue(record: QuotaData): string {
@@ -137,7 +121,7 @@ export const RunQuota: React.FC<Props> = React.memo(
       return (
         <>
           {record.desc} {renderQuotaValue(record)} {renderExtraMaximum(record)}{" "}
-          {renderExtraExplanation(record)}
+          {renderExtraExplanation()}
         </>
       );
     }
@@ -159,16 +143,6 @@ export const RunQuota: React.FC<Props> = React.memo(
       const val = record["quota"];
 
       const style = projectIsRunning ? {} : { color: COLORS.GRAY_L };
-
-      if (record.key === "idle_timeout" && val === "&infin;") {
-        return (
-          <QuestionMarkText
-            tip={`If the ${projectLabelLower} stops or the underlying VM goes into maintenance, the ${projectLabelLower} will automatically restart.`}
-          >
-            &infin;
-          </QuestionMarkText>
-        );
-      }
 
       if (typeof val === "boolean") {
         return renderBoolean(val, projectIsRunning);
@@ -206,6 +180,9 @@ export const RunQuota: React.FC<Props> = React.memo(
     }
 
     function renderQuotas() {
+      if (data.length === 0) {
+        return null;
+      }
       return (
         <Table<QuotaData>
           dataSource={data}

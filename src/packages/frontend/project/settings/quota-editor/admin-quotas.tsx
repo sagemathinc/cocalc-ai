@@ -67,10 +67,8 @@ export default function AdminQuotas({ project_id, style }: Props) {
         disk_quota: quotaState.disk_quota,
         memory: quotaState.memory,
         memory_request: quotaState.memory_request,
-        mintime: Math.floor((quotaState.mintime ?? 1800) * 3600),
         network: quotaState.network ? 1 : 0,
         member_host: quotaState.member_host ? 1 : 0,
-        always_running: quotaState.always_running ? 1 : 0,
       });
       publishProjectDetailInvalidation({
         project_id,
