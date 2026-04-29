@@ -16,6 +16,9 @@ import {
 } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  ManagedEgressAccountSummary,
+  ManagedEgressAdminHistory,
+  ManagedEgressAdminProjectSummary,
   ManagedEgressHistory,
   ManagedEgressHistoryBucketSize,
 } from "@cocalc/conat/hub/api/purchases";
@@ -41,14 +44,14 @@ const TOP_PROJECTS_SUMMARY_REFRESH_MS = 5 * 60 * 1000;
 
 export type ManagedEgressHistoryRangeKey = "6h" | "24h" | "7d" | "30d";
 
-type RangeSpec = {
+export type RangeSpec = {
   key: ManagedEgressHistoryRangeKey;
   label: string;
   durationMs: number;
   defaultBucket: ManagedEgressHistoryBucketSize;
 };
 
-const RANGE_SPECS: RangeSpec[] = [
+export const RANGE_SPECS: RangeSpec[] = [
   { key: "6h", label: "6h", durationMs: 6 * HOUR_MS, defaultBucket: "5m" },
   {
     key: "24h",
@@ -66,7 +69,12 @@ const BUCKET_MS: Record<ManagedEgressHistoryBucketSize, number> = {
   "1d": DAY_MS,
 };
 
-function getRangeSpec(key: ManagedEgressHistoryRangeKey): RangeSpec {
+type ChartableManagedEgressHistory = Pick<
+  ManagedEgressHistory,
+  "start" | "end" | "total_bytes" | "points"
+>;
+
+export function getRangeSpec(key: ManagedEgressHistoryRangeKey): RangeSpec {
   return RANGE_SPECS.find((range) => range.key === key) ?? RANGE_SPECS[1];
 }
 
@@ -130,7 +138,9 @@ function yCoordinates(values: number[], height: number): number[] {
   });
 }
 
-export function summarizeManagedEgressHistory(history: ManagedEgressHistory): {
+export function summarizeManagedEgressHistory(
+  history: ChartableManagedEgressHistory,
+): {
   latestBytes: number;
   peakBytes: number;
   avgBytesPerHour: number;
@@ -166,7 +176,7 @@ function sumRecentBytes(
 }
 
 export function summarizeManagedEgressRecentUsage(
-  history: ManagedEgressHistory,
+  history: ChartableManagedEgressHistory,
 ): {
   last5MinutesBytes: number;
   lastHourBytes: number;
@@ -185,7 +195,7 @@ export function summarizeManagedEgressRecentUsage(
 function HistoryLine({
   history,
 }: {
-  history: ManagedEgressHistory;
+  history: ChartableManagedEgressHistory;
 }): React.JSX.Element | null {
   const points = history.points ?? [];
   if (points.length === 0) return null;
@@ -283,6 +293,34 @@ export function ManagedEgressHistoryButton({
           onClose={() => setOpen(false)}
           project_id={project_id}
           user_account_id={user_account_id}
+        />
+      ) : null}
+    </>
+  );
+}
+
+export function ManagedEgressAdminHistoryButton({
+  buttonText = "Global history",
+  initialRangeKey = "24h",
+  size,
+  type,
+}: {
+  buttonText?: string;
+  initialRangeKey?: ManagedEgressHistoryRangeKey;
+  size?: "small" | "middle" | "large";
+  type?: "default" | "primary" | "dashed" | "link" | "text";
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button size={size} type={type} onClick={() => setOpen(true)}>
+        {buttonText}
+      </Button>
+      {open ? (
+        <ManagedEgressAdminHistoryModal
+          open={open}
+          onClose={() => setOpen(false)}
+          initialRangeKey={initialRangeKey}
         />
       ) : null}
     </>
@@ -449,6 +487,59 @@ export function ManagedEgressTopProjectsSummary({
               "Account-wide session traffic"}
           </Text>
           <Text type="secondary"> · {humanSize(project.bytes)}</Text>
+        </div>
+      ))}
+    </Space>
+  );
+}
+
+function AdminTopAccounts({
+  accounts,
+}: {
+  accounts: ManagedEgressAccountSummary[];
+}) {
+  return (
+    <Space direction="vertical" size={6} style={{ width: "100%" }}>
+      {accounts.map((account) => (
+        <div key={account.account_id}>
+          <Text>
+            {`${account.first_name ?? ""} ${account.last_name ?? ""}`.trim() ||
+              account.email_address ||
+              account.account_id}
+          </Text>
+          <Text type="secondary">
+            {" "}
+            · {humanSize(account.bytes)}
+            {account.email_address ? ` · ${account.email_address}` : ""}
+          </Text>
+        </div>
+      ))}
+    </Space>
+  );
+}
+
+function AdminTopProjects({
+  projects,
+}: {
+  projects: ManagedEgressAdminProjectSummary[];
+}) {
+  return (
+    <Space direction="vertical" size={6} style={{ width: "100%" }}>
+      {projects.map((project) => (
+        <div key={`${project.account_id}:${project.project_id ?? "none"}`}>
+          <Text>
+            {project.project_title ??
+              project.project_id ??
+              "Account-wide session traffic"}
+          </Text>
+          <Text type="secondary">
+            {" "}
+            · {humanSize(project.bytes)}
+            {" · "}
+            {`${project.first_name ?? ""} ${project.last_name ?? ""}`.trim() ||
+              project.email_address ||
+              project.account_id}
+          </Text>
         </div>
       ))}
     </Space>
@@ -662,6 +753,232 @@ export function ManagedEgressHistoryModal({
                     </div>
                   ))}
                 </Space>
+              </div>
+            </div>
+          ) : null}
+          <div>
+            <Space align="center" size={8} wrap>
+              <Text strong>Recent events</Text>
+              <Tooltip title="These are the most recent raw egress events in the selected window. Quiet periods may have no events even when earlier buckets show traffic.">
+                <Text type="secondary">({history.recent_events.length})</Text>
+              </Tooltip>
+            </Space>
+            <div
+              style={{
+                marginTop: "6px",
+                maxHeight: "260px",
+                overflowY: "auto",
+              }}
+            >
+              {history.recent_events.length === 0 ? (
+                <Alert
+                  showIcon
+                  type="info"
+                  message="No recent events in this window."
+                />
+              ) : (
+                <ManagedEgressRecentEventsList events={history.recent_events} />
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+export function ManagedEgressAdminHistoryModal({
+  open,
+  onClose,
+  initialRangeKey = "24h",
+}: {
+  open: boolean;
+  onClose: () => void;
+  initialRangeKey?: ManagedEgressHistoryRangeKey;
+}) {
+  const [rangeKey, setRangeKey] =
+    useState<ManagedEgressHistoryRangeKey>(initialRangeKey);
+  const [bucket, setBucket] = useState<ManagedEgressHistoryBucketSize>(
+    getRangeSpec(initialRangeKey).defaultBucket,
+  );
+  const [history, setHistory] = useState<ManagedEgressAdminHistory | null>(
+    null,
+  );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<any>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const requestKeyRef = useRef("");
+
+  const validBuckets = useMemo(
+    () => getValidHistoryBuckets(rangeKey),
+    [rangeKey],
+  );
+  const effectiveBucket = validBuckets.includes(bucket)
+    ? bucket
+    : getRangeSpec(rangeKey).defaultBucket;
+
+  useEffect(() => {
+    if (!validBuckets.includes(bucket)) {
+      setBucket(getRangeSpec(rangeKey).defaultBucket);
+    }
+  }, [bucket, rangeKey, validBuckets]);
+
+  useEffect(() => {
+    if (!open) return;
+    const range = getRangeSpec(rangeKey);
+    const end = new Date();
+    const start = new Date(end.getTime() - range.durationMs);
+    const requestKey = `admin:${rangeKey}:${effectiveBucket}:${reloadToken}`;
+    requestKeyRef.current = requestKey;
+    setLoading(true);
+    setError(null);
+    void webapp_client.conat_client.hub.purchases
+      .getManagedEgressAdminHistory({
+        start: start.toISOString(),
+        end: end.toISOString(),
+        bucket: effectiveBucket,
+        recent_event_limit: 20,
+        top_account_limit: 10,
+        top_project_limit: 10,
+      })
+      .then((next) => {
+        if (requestKeyRef.current !== requestKey) return;
+        setHistory(next as ManagedEgressAdminHistory);
+      })
+      .catch((err) => {
+        if (requestKeyRef.current !== requestKey) return;
+        setError(err);
+      })
+      .finally(() => {
+        if (requestKeyRef.current === requestKey) {
+          setLoading(false);
+        }
+      });
+  }, [effectiveBucket, open, rangeKey, reloadToken]);
+
+  const summary = history ? summarizeManagedEgressHistory(history) : null;
+  const categoryTotals = history
+    ? categoryEntries(history.categories_bytes)
+    : [];
+
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      onOk={onClose}
+      width={860}
+      closable={false}
+      title={
+        <span>
+          <Icon name="network" /> Global network egress
+        </span>
+      }
+    >
+      <ShowError error={error} setError={setError} />
+      <div
+        style={{
+          alignItems: "flex-start",
+          display: "flex",
+          gap: "16px",
+          justifyContent: "space-between",
+          marginBottom: "16px",
+        }}
+      >
+        <div style={{ color: COLORS.GRAY_M, maxWidth: "620px" }}>
+          Managed egress across all accounts, including shared-host downloads,
+          proxy traffic, interactive sessions, SSH, and raw outbound network
+          usage on supported hosts.
+        </div>
+        <Button onClick={() => setReloadToken((value) => value + 1)}>
+          Reload
+        </Button>
+      </div>
+      <Space size={12} wrap style={{ marginBottom: "12px" }}>
+        <Text strong>Range</Text>
+        <Segmented
+          options={RANGE_SPECS.map((range) => ({
+            label: range.label,
+            value: range.key,
+          }))}
+          onChange={(value) =>
+            setRangeKey(value as ManagedEgressHistoryRangeKey)
+          }
+          value={rangeKey}
+        />
+        <Text strong>Bucket</Text>
+        <Segmented
+          options={validBuckets.map((value) => ({
+            label: value,
+            value,
+          }))}
+          onChange={(value) =>
+            setBucket(value as ManagedEgressHistoryBucketSize)
+          }
+          value={effectiveBucket}
+        />
+      </Space>
+      {loading && history == null ? (
+        <div style={{ padding: "24px 0", textAlign: "center" }}>
+          <Spin />
+        </div>
+      ) : history == null ? (
+        <Empty description="No global egress history yet." />
+      ) : (
+        <>
+          <Space
+            size={24}
+            wrap
+            style={{ display: "flex", marginBottom: "16px" }}
+          >
+            <EgressSummaryCard
+              label="Total usage"
+              value={humanSize(history.total_bytes)}
+              detail={`${history.points.length} ${bucketLabel(effectiveBucket)} buckets`}
+            />
+            <EgressSummaryCard
+              label={`Latest ${bucketPeriodLabel(effectiveBucket)}`}
+              value={humanSize(summary?.latestBytes ?? 0)}
+            />
+            <EgressSummaryCard
+              label={`Peak ${bucketPeriodLabel(effectiveBucket)}`}
+              value={humanSize(summary?.peakBytes ?? 0)}
+            />
+            <EgressSummaryCard
+              label="Average rate"
+              value={`${humanSize(summary?.avgBytesPerHour ?? 0)}/h`}
+            />
+          </Space>
+          <HistoryLine history={history} />
+          <div style={{ marginBottom: "16px" }}>
+            <Text strong>Traffic categories</Text>
+            <div style={{ marginTop: "6px" }}>
+              {categoryTotals.length === 0 ? (
+                <Text type="secondary">No category totals recorded.</Text>
+              ) : (
+                <Space wrap>
+                  {categoryTotals.map((entry) => (
+                    <Tag key={entry.category}>
+                      {formatManagedEgressCategory(entry.category)}:{" "}
+                      {humanSize(entry.bytes)}
+                    </Tag>
+                  ))}
+                </Space>
+              )}
+            </div>
+          </div>
+          {history.top_accounts.length > 0 ? (
+            <div style={{ marginBottom: "16px" }}>
+              <Text strong>Top accounts in this window</Text>
+              <div style={{ marginTop: "6px" }}>
+                <AdminTopAccounts accounts={history.top_accounts} />
+              </div>
+            </div>
+          ) : null}
+          {history.top_projects.length > 0 ? (
+            <div style={{ marginBottom: "16px" }}>
+              <Text strong>Top projects in this window</Text>
+              <div style={{ marginTop: "6px" }}>
+                <AdminTopProjects projects={history.top_projects} />
               </div>
             </div>
           ) : null}

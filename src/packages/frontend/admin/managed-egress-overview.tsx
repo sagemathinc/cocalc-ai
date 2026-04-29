@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Empty, Space, Spin, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Empty,
+  Segmented,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+} from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
@@ -12,7 +21,13 @@ import type {
   ManagedEgressAdminProjectSummary,
 } from "@cocalc/conat/hub/api/purchases";
 import ShowError from "@cocalc/frontend/components/error";
-import { ManagedEgressHistoryButton } from "@cocalc/frontend/purchases/managed-egress-history";
+import {
+  getRangeSpec,
+  ManagedEgressAdminHistoryButton,
+  ManagedEgressHistoryButton,
+  type ManagedEgressHistoryRangeKey,
+  RANGE_SPECS,
+} from "@cocalc/frontend/purchases/managed-egress-history";
 import {
   ManagedEgressRecentEventsButton,
   formatManagedEgressCategory,
@@ -23,7 +38,6 @@ import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text } = Typography;
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const REFRESH_MS = 60 * 1000;
 
 function getAccountLabel(account: {
@@ -119,6 +133,7 @@ function TopProjects({
 }
 
 export function ManagedEgressAdminOverview() {
+  const [rangeKey, setRangeKey] = useState<ManagedEgressHistoryRangeKey>("24h");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [overview, setOverview] = useState<ManagedEgressAdminOverview | null>(
@@ -129,8 +144,9 @@ export function ManagedEgressAdminOverview() {
     setLoading(true);
     setError("");
     try {
+      const range = getRangeSpec(rangeKey);
       const end = new Date();
-      const start = new Date(end.getTime() - DAY_MS);
+      const start = new Date(end.getTime() - range.durationMs);
       const result =
         (await webapp_client.conat_client.hub.purchases.getManagedEgressAdminOverview(
           {
@@ -147,7 +163,7 @@ export function ManagedEgressAdminOverview() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [rangeKey]);
 
   useEffect(() => {
     void load();
@@ -165,14 +181,25 @@ export function ManagedEgressAdminOverview() {
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Paragraph style={{ marginBottom: 0 }}>
-        Operator view of the last 24 hours of managed network egress across all
-        accounts. Use this to spot the current biggest cost drivers, then drill
-        into account or project history.
+        Operator view of managed network egress across all accounts. Use this to
+        spot the current biggest cost drivers, then drill into account, project,
+        or global history.
       </Paragraph>
 
       <Space wrap>
+        <Text strong>Range</Text>
+        <Segmented
+          options={RANGE_SPECS.map((range) => ({
+            label: range.label,
+            value: range.key,
+          }))}
+          onChange={(value) =>
+            setRangeKey(value as ManagedEgressHistoryRangeKey)
+          }
+          value={rangeKey}
+        />
         <div style={{ minWidth: 180 }}>
-          <Text strong>Last 24h total</Text>
+          <Text strong>{`${getRangeSpec(rangeKey).label} total`}</Text>
           <div style={{ fontSize: "20px", marginTop: "4px" }}>
             {overview ? humanSize(overview.total_bytes) : loading ? "…" : "0 B"}
           </div>
@@ -181,10 +208,15 @@ export function ManagedEgressAdminOverview() {
           <Text strong>Historical drilldown</Text>
           <div style={{ marginTop: "6px" }}>
             <Text type="secondary">
-              Open a user or project history directly from the lists below.
+              Open global history here or drill into an account or project
+              below.
             </Text>
           </div>
         </div>
+        <ManagedEgressAdminHistoryButton
+          buttonText="Global history"
+          initialRangeKey={rangeKey}
+        />
         <Button onClick={() => void load()}>Refresh</Button>
       </Space>
 
@@ -192,7 +224,7 @@ export function ManagedEgressAdminOverview() {
       {error ? <ShowError error={error} /> : null}
       {!loading && !error && overview && overview.total_bytes <= 0 ? (
         <Alert
-          message="No managed egress recorded in the last 24 hours."
+          message={`No managed egress recorded in the last ${getRangeSpec(rangeKey).label}.`}
           type="info"
           showIcon
         />
@@ -228,7 +260,9 @@ export function ManagedEgressAdminOverview() {
               padding: "12px 14px",
             }}
           >
-            <Text strong>Top recent egress accounts (24h)</Text>
+            <Text
+              strong
+            >{`Top recent egress accounts (${getRangeSpec(rangeKey).label})`}</Text>
             <div style={{ marginTop: "10px" }}>
               <TopAccounts accounts={overview.top_accounts} />
             </div>
@@ -241,7 +275,9 @@ export function ManagedEgressAdminOverview() {
               padding: "12px 14px",
             }}
           >
-            <Text strong>Top recent egress projects (24h)</Text>
+            <Text
+              strong
+            >{`Top recent egress projects (${getRangeSpec(rangeKey).label})`}</Text>
             <div style={{ marginTop: "10px" }}>
               <TopProjects projects={overview.top_projects} />
             </div>

@@ -4,6 +4,7 @@
  */
 
 const getManagedEgressHistoryForAccountMock = jest.fn();
+const getManagedEgressAdminHistoryMock = jest.fn();
 const getManagedEgressAdminOverviewMock = jest.fn();
 const getProjectOwnerAccountIdMock = jest.fn();
 const isAdminMock = jest.fn();
@@ -21,6 +22,8 @@ jest.mock("@cocalc/server/purchases/get-min-balance", () => ({
 jest.mock("@cocalc/server/membership/managed-egress", () => ({
   getManagedEgressHistoryForAccount: (...args: any[]) =>
     getManagedEgressHistoryForAccountMock(...args),
+  getManagedEgressAdminHistory: (...args: any[]) =>
+    getManagedEgressAdminHistoryMock(...args),
   getManagedEgressAdminOverview: (...args: any[]) =>
     getManagedEgressAdminOverviewMock(...args),
   getProjectOwnerAccountId: (...args: any[]) =>
@@ -179,6 +182,57 @@ describe("purchases.getManagedEgressAdminOverview", () => {
     expect(getManagedEgressAdminOverviewMock).toHaveBeenCalledWith({
       start: undefined,
       end: undefined,
+      top_account_limit: 5,
+      top_project_limit: 7,
+      recent_event_limit: 9,
+    });
+    expect(result.total_bytes).toBe(1234);
+  });
+});
+
+describe("purchases.getManagedEgressAdminHistory", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("requires admin permission", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { getManagedEgressAdminHistory } = await import("./purchases");
+    await expect(
+      getManagedEgressAdminHistory({
+        account_id: "viewer-1",
+      }),
+    ).rejects.toThrow("must be an admin");
+  });
+
+  it("loads the admin history for admins", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getManagedEgressAdminHistoryMock.mockResolvedValue({
+      start: "2026-04-28T00:00:00.000Z",
+      end: "2026-04-29T00:00:00.000Z",
+      bucket: "1h",
+      total_bytes: 1234,
+      categories_bytes: { "raw-network": 1234 },
+      points: [],
+      top_accounts: [],
+      top_projects: [],
+      recent_events: [],
+    });
+
+    const { getManagedEgressAdminHistory } = await import("./purchases");
+    const result = await getManagedEgressAdminHistory({
+      account_id: "admin-1",
+      bucket: "1h",
+      top_account_limit: 5,
+      top_project_limit: 7,
+      recent_event_limit: 9,
+    });
+
+    expect(getManagedEgressAdminHistoryMock).toHaveBeenCalledWith({
+      start: undefined,
+      end: undefined,
+      bucket: "1h",
       top_account_limit: 5,
       top_project_limit: 7,
       recent_event_limit: 9,
