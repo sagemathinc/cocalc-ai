@@ -47,7 +47,7 @@ import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
 import { HostDaemonHealthSummary } from "./host-daemon-health-summary";
 import { HostErrorDetails } from "./host-error-details";
 import { HostProjectStatus } from "./host-project-status";
-import { HostPlacementSummary, HostPressureTag } from "../pressure-ui";
+import { HostPlacementSummary } from "../pressure-ui";
 import {
   confirmBulkHostDeprovision,
   confirmHostDeprovision,
@@ -733,7 +733,6 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             <Space size="small" wrap>
               <span>{baseLabel}</span>
               {host.pricing_model === "spot" && <Tag color="orange">spot</Tag>}
-              <HostPressureTag pressure={host.pressure} />
             </Space>
             {detail && (
               <Typography.Text type="secondary">{detail}</Typography.Text>
@@ -799,17 +798,9 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         ),
     },
     {
-      title: "Placement",
-      key: "placement",
-      width: 260,
-      render: (_: string, host: Host) => (
-        <HostPlacementSummary host={host} compact showNormal />
-      ),
-    },
-    {
       title: "Status",
       key: "status",
-      width: 320,
+      width: 280,
       sorter: true,
       sortDirections: ["ascend", "descend"],
       sortOrder:
@@ -883,8 +874,13 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                   </Tag>
                 </Tooltip>
               )}
-              <HostPressureTag pressure={host.pressure} />
             </Space>
+            <HostPlacementSummary
+              host={host}
+              compact
+              detailMode="popover"
+              showNormal
+            />
             <HostOpProgress op={displayOp} compact />
             {projectHostRollback && (
               <Tooltip
@@ -916,6 +912,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Actions",
       key: "actions",
+      width: 220,
       render: (_: string, host: Host) => {
         const isDeleted = !!host.deleted;
         const op = hostOps?.[host.id];
@@ -1108,7 +1105,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         ];
 
         return (
-          <Space size="small">
+          <Space size={[8, 0]} wrap style={{ maxWidth: 220 }}>
             {actions.filter(Boolean) as React.ReactNode[]}
           </Space>
         );
