@@ -965,6 +965,7 @@ fi
     "curl",
     "xz-utils",
     "rsync",
+    "ripgrep",
     "vim",
     "crun",
     "cron",
