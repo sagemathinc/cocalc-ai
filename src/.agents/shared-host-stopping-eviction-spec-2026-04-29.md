@@ -473,6 +473,86 @@ For v1, memory pressure must be part of entering `pressure` or `emergency`.
 CPU pressure should still be logged and surfaced, and it can contribute to
 entering `observe`.
 
+## Pressure Publication And Placement
+
+The stop controller is host-local. That does not mean pressure should stay
+host-local.
+
+The hub needs a normalized view of host pressure for:
+
+1. project placement
+2. project move UX
+3. operator visibility
+4. later host resizing, rebalancing, and fleet-capacity decisions
+
+### 1. Pressure Publication Is Separate From Stop Control
+
+`project-host` owns pressure detection and stop decisions. The hub consumes the
+published result.
+
+This split is important:
+
+1. host survival does not depend on the bay being healthy
+2. placement and user-facing host selection still get pressure-aware inputs
+3. later operational automation can use the same published signal
+
+### 2. Publish A Normalized Pressure Status, Not Just Raw Metrics
+
+Raw host metrics already exist, but placement should not have to infer policy
+from ad hoc RAM or load values forever.
+
+`project-host` should therefore publish a normalized pressure view in its
+heartbeat metadata, at minimum:
+
+1. `pressure_zone`
+2. `pressure_since_ms`
+3. `eviction_armed`
+4. `recent_pressure_stop_count`
+5. `recent_pressure_stop_ms`
+
+The raw metrics should remain available. The normalized pressure state is the
+main placement input.
+
+### 3. Placement Rules For First Release
+
+Project creation and project moves should consume the normalized host pressure
+status.
+
+For first release:
+
+1. do not place new projects on hosts in `emergency`
+2. strongly avoid placing new projects on hosts in `pressure`
+3. prefer hosts in `normal`
+4. treat `observe` as a warning signal, not an absolute block
+5. when users manually move a project, show the host pressure status clearly
+
+That keeps placement coherent with the host-local protection model.
+
+### 4. UX For User-Initiated Moves
+
+Users can move projects between hosts. They need enough information to avoid
+making obviously bad decisions.
+
+The move surface should therefore expose, at minimum:
+
+1. host pressure zone
+2. whether the host has recently stopped projects due to pressure
+3. a plain-language hint when a host is currently under pressure
+
+This is not a scheduling guarantee. It is decision support.
+
+### 5. Later Operational Consumers
+
+Historical host pressure should be retained centrally and used later for:
+
+1. host resize decisions
+2. project rebalancing
+3. adding hosts
+4. removing hosts
+
+This should use the same normalized pressure state and history, not a second
+competing host-health signal.
+
 ## Operator And User Requirements
 
 Before release, operators should be able to answer:
@@ -629,7 +709,25 @@ Validation:
 2. pressure relief is visible after stop decisions
 3. controller does not thrash under sustained pressure
 
-### Phase 5: Cut Over Completely
+### Phase 5: Pressure Publication And Placement Integration
+
+Goal: make host pressure visible and useful outside the host without moving the
+controller out of `project-host`.
+
+Changes:
+
+1. publish normalized pressure status in `project-host` heartbeats
+2. persist that status centrally with the rest of host metrics / metadata
+3. make project placement avoid hosts in `pressure` and `emergency`
+4. expose host pressure status in project move surfaces
+
+Validation:
+
+1. hub can see normalized pressure zones for hosts
+2. new-project placement avoids clearly unsafe hosts
+3. user project-move UI shows current pressure state
+
+### Phase 6: Cut Over Completely
 
 Goal: eliminate the old world so there is only one automatic stopping system.
 
@@ -646,7 +744,7 @@ Validation:
 2. no automatic start path remains because of `always_running`
 3. pressure controller is the only runtime stop mechanism
 
-### Phase 6: Product Cleanup
+### Phase 7: Product Cleanup
 
 Goal: make the user-facing model match the runtime model.
 
@@ -663,7 +761,7 @@ Validation:
 2. no active runtime code branches on these fields
 3. docs explain one stop model only
 
-### Phase 7: Dogfood, Threshold Tuning, And Release Hardening
+### Phase 8: Dogfood, Threshold Tuning, And Release Hardening
 
 Goal: tune behavior without reopening architecture.
 
@@ -687,6 +785,8 @@ Non-goal for this phase:
    worth introducing yet.
 5. Shared and dedicated hosts use the same host-local protection framework;
    they differ only in the candidate pool they rank.
+6. Host pressure must be published back to the hub as a normalized state and
+   used by placement and move UX.
 
 ## Remaining Implementation Questions
 
@@ -708,6 +808,8 @@ This track is done enough for release when:
 3. the stop controller runs entirely on `project-host`
 4. the host can operate on mirrored policy while temporarily disconnected from
    the bay
-5. `always_running` and the old idle-timeout mechanism are gone completely
-6. operators can inspect why a stop happened
-7. users can get a coherent explanation after a stop
+5. normalized host pressure is published to the hub and used by placement
+6. `always_running` and the old idle-timeout mechanism are gone completely
+7. operators can inspect why a stop happened
+8. users can get a coherent explanation after a stop
+
