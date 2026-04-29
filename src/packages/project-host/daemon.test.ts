@@ -562,7 +562,10 @@ describe("project-host daemon stop", () => {
       path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
     );
     process.env.COCALC_DATA = dataDir;
-    process.env.PORT = "9002";
+    process.env.PORT = "9003";
+    process.env.COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_APP_PORT = "9003";
+    process.env.COCALC_PROJECT_HOST_APP_HOST = "127.0.0.1";
     process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
     process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "1";
     delete process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL;
@@ -653,6 +656,11 @@ describe("project-host daemon stop", () => {
     expect(handleDaemonCli(["daemon", "restart-project-host", "0"])).toBe(true);
 
     expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).toMatchObject({
+      HOST: "127.0.0.1",
+      PORT: "9003",
+      COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT: "9002",
+    });
     expect(killSpy).toHaveBeenCalledWith(3333, "SIGTERM");
     expect(killSpy).toHaveBeenCalledWith(1111, 0);
     expect(killSpy).toHaveBeenCalledWith(2222, 0);
@@ -1464,6 +1472,23 @@ describe("project-host daemon stop", () => {
     expect(resolved.dataDir).toBe("/tmp/project-host-data");
     expect(resolved.env.DEBUG_CONSOLE).toBe("yes");
     expect(resolved.env.COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS).toBe("1");
+  });
+
+  it("prefers the explicit public http port over PORT when resolving daemon env", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-env-"),
+    );
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9003";
+    process.env.COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_APP_PORT = "9003";
+    process.env.COCALC_PROJECT_HOST_APP_HOST = "127.0.0.1";
+
+    const resolved = __test__.resolveEnv(0);
+
+    expect(resolved.httpPort).toBe(9002);
+    expect(resolved.projectHostPort).toBe(9003);
+    expect(resolved.projectHostHost).toBe("127.0.0.1");
   });
 
   it("does not restart an unhealthy daemon during the startup grace window", () => {

@@ -620,7 +620,9 @@ function resolveEnv(index: number): {
     ),
     routerLogPath,
     routerPidPath,
-    httpPort: parsePort(env.PORT),
+    httpPort:
+      parsePort(env.COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT) ??
+      parsePort(env.PORT),
     projectHostHost:
       env.COCALC_PROJECT_HOST_APP_HOST ?? env.HOST ?? "127.0.0.1",
     projectHostPort:
