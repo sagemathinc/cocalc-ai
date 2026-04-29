@@ -99,6 +99,7 @@ import {
   type AttachedSteerMessage,
 } from "./agent-message-status";
 import { useCodexLog } from "./use-codex-log";
+import type { CodexLiveLogStatus } from "./use-codex-log";
 import { GitCommitDrawer } from "./git-commit-drawer";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import { setChatOverlayOpen } from "./drawer-overlay-state";
@@ -531,6 +532,14 @@ export function shouldShowCodexShowActivityButton({
   if (effectiveGenerating && isLastMessageInThread) return false;
   if (expandedCodexActivity && hasVisibleCompletedActivity) return false;
   return true;
+}
+
+export function canUseCompletedCachedCodexActivity({
+  liveStatus,
+}: {
+  liveStatus: CodexLiveLogStatus;
+}): boolean {
+  return liveStatus !== "reconnecting" && liveStatus !== "error";
 }
 
 export function shouldSuppressAcpPlaceholderBody({
@@ -1073,39 +1082,44 @@ export default function Message({
     if (inlineCodexActivityMode !== "completed") {
       return undefined;
     }
-    if (
-      Array.isArray(cachedCodexActivityBlocks) &&
-      cachedCodexActivityBlocks.length > 0
-    ) {
-      return cachedCodexActivityBlocks;
-    }
-    if (
-      !allowAsyncCompletedCodexActivityLoad ||
-      !Array.isArray(codexPreviewLog.events) ||
-      codexPreviewLog.events.length === 0
-    ) {
-      return undefined;
-    }
     const steerItems = Array.isArray(activitySteers)
       ? activitySteers.filter(
           (steer) =>
             typeof steer?.text === "string" && steer.text.trim().length > 0,
         )
       : [];
-    const blocks = (
-      getLiveResponseBlocks(
-        codexPreviewLog.events as any,
-        steerItems.map(({ date, text, state }) => ({ date, text, state })),
-      ) as InlineCodexActivityBlock[]
-    ).filter(
-      (block) => typeof block.text === "string" && block.text.trim().length > 0,
-    );
-    return blocks.length > 0 ? blocks : undefined;
+    if (
+      allowAsyncCompletedCodexActivityLoad &&
+      Array.isArray(codexPreviewLog.events) &&
+      codexPreviewLog.events.length > 0
+    ) {
+      const blocks = (
+        getLiveResponseBlocks(
+          codexPreviewLog.events as any,
+          steerItems.map(({ date, text, state }) => ({ date, text, state })),
+        ) as InlineCodexActivityBlock[]
+      ).filter(
+        (block) =>
+          typeof block.text === "string" && block.text.trim().length > 0,
+      );
+      return blocks.length > 0 ? blocks : undefined;
+    }
+    if (
+      canUseCompletedCachedCodexActivity({
+        liveStatus: codexPreviewLog.liveStatus,
+      }) &&
+      Array.isArray(cachedCodexActivityBlocks) &&
+      cachedCodexActivityBlocks.length > 0
+    ) {
+      return cachedCodexActivityBlocks;
+    }
+    return undefined;
   }, [
     activitySteers,
     allowAsyncCompletedCodexActivityLoad,
     cachedCodexActivityBlocks,
     codexPreviewLog.events,
+    codexPreviewLog.liveStatus,
     inlineCodexActivityMode,
   ]);
   useEffect(() => {
