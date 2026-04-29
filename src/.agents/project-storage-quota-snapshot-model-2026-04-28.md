@@ -2,7 +2,7 @@
 
 Last updated: April 28, 2026
 
-Status: implemented design note with remaining cleanup
+Status: implemented design note; only minor cleanup remains
 
 ## Executive Summary
 
@@ -243,28 +243,25 @@ The product should say, in plain language:
 This is a better model than pretending snapshots do not count while relying on
 hidden backend safety behavior.
 
-## Current Regression To Fix
+## Historical Regression (Fixed)
 
-Snapshot deletion is currently broken or fragile in at least one user-facing
-path.
+During rollout, snapshot deletion was broken in at least one user-facing path.
 
-Observed behavior:
+Observed failure at the time:
 
-- deleting snapshot paths from the UI can fail with:
+- deleting snapshot paths from the UI could fail with:
   - `EIO: Read-only file system (os error 30)`
   - errors from `privileged-rm-helper`
 
-The likely issue is that deleting a path under `~/.snapshots/...` is going
-through the generic file-removal path against a readonly snapshot subvolume
-instead of the dedicated snapshot delete path:
+The root cause was that deleting `~/.snapshots/...` could go through the
+generic file-removal path against a readonly snapshot subvolume instead of the
+dedicated snapshot delete path:
 
 - [subvolume-snapshots.ts](/home/user/cocalc-ai/src/packages/file-server/btrfs/subvolume-snapshots.ts)
 
-This matters to the product decision because if snapshots count against quota,
-then deleting snapshots must be a reliable and obvious way to reduce retained
-quota usage.
-
-So “fix snapshot deletion” is part of the storage rollout, not optional polish.
+That regression is now fixed and is recorded here because it was a key product
+dependency: if snapshots count against quota, then deleting snapshots must be a
+reliable and obvious way to reduce retained quota usage.
 
 ## Implementation Status
 
@@ -303,32 +300,22 @@ The main storage and temp-model rollout described above is now implemented:
 
 ### Remaining Cleanup
 
-The work that remains is narrower and mostly about cleanup:
+The remaining work is narrow:
 
 1. Audit stale copy and UI text.
-
-Known example:
-
-- [components.tsx](/home/user/cocalc-ai/src/packages/frontend/project/info/components.tsx)
-  still described `/tmp` as in-memory before this note was updated
-
-We should keep removing any remaining text that implies:
-
-- `/tmp` is tmpfs-backed by default
-- `/scratch` is a supported user-facing place to work
+   Remove any remaining text that implies:
+   - `/tmp` is tmpfs-backed by default
+   - `/scratch` is a supported user-facing place to work
 
 2. Keep `/tmp` out of the durable quota story.
-
-The temp volume is intentionally separate. Future changes must not:
-
-- fold `/tmp` bytes into retained snapshot/history data
-- reintroduce a visible `Scratch` bucket
-- imply that `/tmp` is durable or snapshotted
+   Future changes must not:
+   - fold `/tmp` bytes into retained snapshot/history data
+   - reintroduce a visible `Scratch` bucket
+   - imply that `/tmp` is durable or snapshotted
 
 3. Keep exact snapshot diagnostics off the hot path.
-
-If we need deep support tooling later, keep it as an explicit diagnostic action
-using `btrfs filesystem du`, not the default storage UI.
+   If we need deep support tooling later, keep it as an explicit diagnostic
+   action using `btrfs filesystem du`, not the default storage UI.
 
 ## Risks
 
@@ -349,7 +336,7 @@ using `btrfs filesystem du`, not the default storage UI.
 4. Snapshot/backup limits need one canonical owner-based source of truth.
    - otherwise the hub, UI, and project-host will drift
 
-## Recommended Order
+## Recommended Final Closeout
 
 1. Audit and fix the remaining `/tmp` and snapshot-retention copy in the UI and
    CLI.

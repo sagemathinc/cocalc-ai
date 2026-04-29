@@ -1,6 +1,7 @@
 # Membership And Usage Limits Release Spec
 
-Status: proposed first-release policy and architecture spec as of 2026-04-25.
+Status: updated first-release policy and implementation tracker as of
+2026-04-28.
 
 This document defines the first-release model for user-facing limits and the
 minimum multibay architecture needed to enforce them safely at public scale.
@@ -742,330 +743,276 @@ User Search on the `/admin` page is one place that must have the above. Some pro
 
 ## Implementation Status Snapshot
 
-The spec below now reflects current reality rather than the original
-greenfield order.
+The spec below is no longer a greenfield plan. It is now an implementation
+tracker describing what has already landed and what remains for the first
+release.
 
-### Implemented Enough To Count As Shared-Host V1
+### Implemented
 
-1. Shared-host rolling egress windows and blocking.
-2. Managed-egress metering across the main shared-host paths.
-3. User-facing egress warnings, modal UX, and blocked-state UX.
-4. Basic per-project storage hard limits using the current simple-quota
-   backend model.
+The following now exist and should be treated as part of shared-host v1:
+
+1. Membership entitlements/resolver cleanup:
+   - canonical `effective_limits`
+   - owner-tier-driven project entitlement semantics
+   - surfaced usage-limit fields in admin membership-tier editing
+2. Per-project storage semantics and UX:
+   - authoritative quota remains the real enforced filesystem metric
+   - live usage uses `du`, not `dust`
+   - retained snapshot/history data is shown as a derived estimate
+   - storage UI, CLI, and history views use the same semantics
+3. Total account storage:
+   - centralized usage status
+   - soft/hard enforcement
+   - warning surfaces
+4. Project-count enforcement:
+   - central owned-project check on create paths
+   - usage status and admin/user surfaces show current count and limits
+5. Snapshot and backup limits as plan features:
+   - membership-tier-driven caps
+   - UI and maintenance flows use those caps
+6. Shared-host managed egress v1:
+   - rolling windows and blocking
+   - managed-egress metering on the main shared-host paths
+   - user-facing warnings and blocked-state UX
+7. Historical egress observability:
+   - first-class RPC
+   - `cocalc-cli` support
+   - account-scoped drilldown UI
+   - project-scoped drilldown UI
+   - admin-wide overview and history UI
+8. Direct project-originated outbound attribution:
+   - the current shared-host model is accepted as sufficiently good for v1
+9. Operator/debug surfaces:
+   - admin user search and admin egress inspection are materially better than
+     the original spec assumed
 
 ### Partially Implemented
 
-1. Membership entitlements/resolver:
-   - enough logic exists to enforce several limits,
-   - but the schema, effective-limits object, and admin exposure still need a
-     cleanup pass.
-2. Direct project-originated outbound egress:
-   - a pragmatic shared-host v1 exists,
-   - but it does not yet satisfy the strongest version of this spec’s
-     attribution requirements.
-3. Historical egress inspection and attribution surfaces:
-   - live rolling-window enforcement exists,
-   - but there is no first-class historical RPC/CLI/UI flow that lets users
-     and operators explain where the bytes came from over time.
-4. Per-project storage UI/accounting:
-   - the enforced quota is real,
-   - but the current `dust`-based live-usage explanation is wrong and too
-     expensive.
-5. Snapshot and backup limits:
-   - hardcoded caps already exist,
-   - but they are not surfaced, coherent, or membership-tier driven.
+1. Central admin inspection and policy surfaces:
+   - inspection is now substantially implemented
+   - override controls are still missing
+2. Dedicated-host egress policy:
+   - product direction is decided
+   - implementation and exposure are not fully closed out
 
 ### Not Finished
 
-1. Total account storage rollup and enforcement.
-2. Project-count enforcement.
-3. Shared-host stopping/eviction policy.
-4. Managed-egress leased budgets.
-5. Central admin override and inspection surfaces.
-6. Dedicated-host egress policy.
-7. Any internal memory-class or memory-priority policy.
+1. Central admin override controls.
+2. Managed-egress leased budgets, if we still decide they are operationally
+   necessary.
+3. Dedicated-host egress policy wiring and admin override integration.
+4. Shared-host stopping/eviction policy.
+5. Any internal memory-class or memory-priority policy.
 
-## Release-Phase Build Order
+## Current Release Position
 
-This should now be implemented in the following order.
+The product/architecture decisions are now:
 
-### Phase 1. Freeze The Product Contract
+1. The storage model is frozen.
+   - per-project quota includes snapshot-retained data
+   - total account storage rolls up those real per-project quota-used bytes
+2. Project-count enforcement is implemented and should be treated as done for
+   v1.
+3. Direct outbound egress attribution is accepted as good enough for v1.
+   We do not need another attribution push before release.
+4. Dedicated-host egress policy for GCP should match the same membership-level
+   egress policy unless an explicit admin override says otherwise.
+5. Shared-host stopping/eviction remains a major future project, not a small
+   cleanup item.
 
-1. Approve that the authoritative per-project quota continues to be the current
-   filesystem-enforced simple-quota value.
-2. Approve that project quota includes snapshot-retained data.
-3. Approve the new storage explanation model:
-   - live files from `du`
-   - retained snapshot/history data as a derived estimate
-4. Approve snapshot and backup count limits as explicit membership-tier
-   features.
-5. Approve the dedicated-host escape hatch and dedicated-host egress language.
-6. Approve the field semantics and units that membership tiers will carry.
+## Remaining High-Priority Work
 
-### Phase 2. Finish The Per-Project Storage Model
+### 1. Central Admin Override Controls
 
-1. Replace the quota-facing `dust` metric with `du`.
-2. Keep the current quota definition unchanged.
-3. Expose retained snapshot/history data as a derived estimate, not exact
-   per-snapshot accounting.
-4. Fix user-facing copy, history graphs, and CLI output so the storage story is
-   accurate.
+This is now one of the most important remaining items.
 
-This phase is the key dependency for total account storage because it freezes
-what “storage used” means and how it is explained.
+We already have significantly better admin inspection, but we still need:
 
-### Phase 3. Finish The Cheap, Clear Membership Limits
+- explicit override controls for:
+  - storage-related protection states
+  - project-count exceptions
+  - egress-related exceptions
+- a clear record of active overrides and why they exist
+- operator-facing explanation of which effective limits are coming from:
+  - membership tier
+  - default policy
+  - admin override
 
-1. Total account storage soft/hard limits.
-2. Project-count hard limits.
-3. Snapshot-count and backup-count limits by membership tier.
+### 2. Dedicated-Host Egress Policy Wiring
 
-These are the easiest limits to explain once the per-project storage model is
-settled, and they cover a large fraction of abuse, accidents, and support pain.
+The product decision is now simple:
 
-### Phase 4. Finish The Remaining Egress/Admin Work
+- if a dedicated host is on GCP, apply the same membership-level egress policy
+  by default
+- use admin overrides for exceptional users instead of inventing a new
+  separate “high usage is fine” product path
 
-1. Managed-egress leased budgets.
-2. Historical egress observability:
-   - RPC
-   - CLI
-   - project/account drilldown UI
-3. Stronger or explicitly blessed direct-outbound shared-host attribution.
-4. Central admin inspection and override surfaces.
-5. Dedicated-host egress policy.
+What remains is mainly implementation and operator-surface cleanup, not policy
+design.
 
-### Phase 5. Shared-Host Scheduling And Stopping
+### 3. Managed-Egress Leased Budgets
 
-1. Host-local stopping/eviction policy.
-2. Stale-project scavenging and protection windows.
-3. Any optional memory-class policy that should exist internally.
+This remains conditional.
 
-This is important, but it no longer has to block the storage/account rollout.
+If the current shared-host managed-egress paths are operationally stable
+without budget leases, we may not need to push this further before release.
+This should be treated as an implementation question, not as a guaranteed
+product blocker.
 
-## Open Questions
+### 4. Shared-Host Stopping / Eviction Policy
 
-These are the main questions still worth resolving during implementation.
+This is a major project and deserves to be treated that way.
 
-1. What exact user-facing language should we use for the derived retained-data
-   storage number so it is clear but not misleading?
-2. What should the first-release membership-tier defaults be for:
-   - max snapshots per project
-   - max backups per project
-3. What is the least confusing dedicated-host egress policy for first release
-   while dedicated-host pay-as-you-go egress is still unfinished?
-4. Is the current shared-host direct-outbound attribution model good enough to
-   bless as v1, or do we require stronger host-local attribution first?
-5. Do we need an internal memory-priority or memory-class concept in addition
-   to shared compute priority, even if it stays out of user-facing copy?
+It remains extremely important, but it is no longer entangled with the earlier
+storage/quota cleanup. The interesting work here is host-local scheduling and
+eviction policy, not simple “finish the limit model” plumbing.
 
-## Detailed Implementation Plan
-
-This plan is ordered to maximize release safety while reflecting what has
-already landed.
+## Updated Track Status
 
 ### Track 1. Membership Entitlements And Resolver Cleanup
 
-1. Extend or clean up the structured usage-limit fields carried by membership
-   tiers:
-   - `shared_compute_priority`
-   - `total_storage_soft_bytes`
-   - `total_storage_hard_bytes`
-   - `max_projects`
-   - `max_snapshots_per_project`
-   - `max_backups_per_project`
-   - `egress_5h_bytes`
-   - `egress_7d_bytes`
-   - `egress_policy`
-   - `dedicated_host_egress_policy`
-2. Update resolver/backend code so each account has one clear effective-limits
-   object.
-3. Make the project owner’s resolved tier the authoritative project entitlement
-   source.
-4. Expose the effective-limits object through an internal admin API and the
-   `/admin` user search surface.
+Status: implemented enough to count as done for v1.
+
+Remaining:
+
+- keep admin exposure coherent
+- ensure future limit fields continue to flow through the canonical
+  `effective_limits` object
 
 ### Track 2. Per-Project Storage Semantics And UX
 
-This track follows the design in:
+Status: implemented enough to count as done for v1.
+
+See:
 
 - [project-storage-quota-snapshot-model-2026-04-28.md](/home/user/cocalc-ai/src/.agents/project-storage-quota-snapshot-model-2026-04-28.md)
 
-1. Replace quota-facing live usage with `du`:
-   - top-line live usage
-   - one-level visible breakdown
-2. Keep the authoritative project quota equal to the current simple-quota
-   `getQuota(project_id)` value.
-3. Expose a derived retained-data metric:
-   - `max(0, quota_used - live_home_visible_bytes)`
-4. Make the UI, history plot, and CLI output say explicitly:
-   - quota includes snapshot-retained data
-   - live file deletions may not reduce quota immediately
-   - older automatic snapshots aging out can reduce quota later
-5. Keep exact snapshot forensics off the default path.
+Remaining:
+
+- minor copy cleanup only
 
 ### Track 3. Total Account Storage
 
-1. Define the central rollup or materialized usage source for per-account total
-   storage.
-2. Aggregate storage across all owned projects using the same authoritative
-   project metric as the per-project quota:
-   - sum of project quota-used bytes
-3. Store both soft-cap and hard-cap comparisons centrally.
-4. Enforce soft-cap degradation:
-   - block new project creation
-   - block import/copy/restore
-   - block quota-increasing actions
-5. Enforce hard-cap protection mode:
-   - allow download and delete
-   - block actions that increase storage
-6. Expose current usage and block state in admin tools.
+Status: implemented enough to count as done for v1.
+
+Remaining:
+
+- keep admin/operator explanation surfaces polished
 
 ### Track 4. Project Count
 
-1. Add a central owned-project count check to create/copy/import/undelete
-   workflows.
-2. Make the count semantics explicit:
-   - ownership counts
-   - collaboration does not
-3. Expose current count and max count in admin tools and user-facing limits UI.
+Status: implemented enough to count as done for v1.
+
+Notes:
+
+- central owned-project enforcement exists
+- user/admin surfaces expose current count and limits
 
 ### Track 5. Snapshot And Backup Limits As Plan Features
 
-1. Replace hidden hardcoded snapshot/backup caps with effective membership-tier
-   limits.
-2. Apply those limits consistently to:
-   - manual snapshot creation
-   - automatic snapshot schedule maintenance
-   - backup retention
-3. Surface current count and effective limit to users.
-4. Clamp snapshot/backup schedule UI to the effective limit.
-5. Make it clear in user-facing copy that snapshots and backups are bounded
-   plan features, not infinite hidden history.
+Status: implemented enough to count as done for v1.
+
+Remaining:
+
+- continue tightening copy and product explanations
 
 ### Track 6. Shared-Host Scheduling And Stopping
 
-1. Implement host-local eviction scoring using:
-   - project owner priority
-   - recent interactive usage
-   - active browser/collaborator signals
-   - optional memory footprint and app-service hints
-2. Add a short post-interaction protection window.
-3. Add a long stale-project scavenger.
-4. Ensure dedicated hosts bypass this shared-host eviction pool.
-5. Keep the stop decision host-local; do not centralize hot-path eviction
-   decisions.
+Status: not finished.
+
+This is now best treated as a separate major project rather than a lingering
+small release chore.
 
 ### Track 7. Managed Egress Completion
 
-1. Confirm and document the exact managed-egress paths that count in v1.
-2. Keep managed egress attributed to:
-   - project
-   - owner account
-   - host/provider
-3. Implement leased budgets for the highest-volume managed paths if they are
-   still needed operationally.
-4. Add a first-class historical egress RPC that can answer, for a chosen
-   account and optional project:
-   - totals over a time window
-   - bucketed usage history
-   - recent usage rate
-   - top projects/categories
-5. Keep remaining allowance and block reasons visible to operators and users.
+Status: mostly implemented for v1.
+
+Done:
+
+- main managed-egress metering and blocking
+- historical RPC/CLI/UI
+- user/admin inspection surfaces
+
+Remaining:
+
+- leased budgets, if still required operationally
 
 ### Track 8. Direct Project-Originated Outbound Egress
 
-1. Either bless the current shared-host v1 attribution model explicitly as v1,
-   or replace it with a stronger host-local attribution mechanism.
-2. Do not rely on raw Podman stats or simple per-container TX totals as the
-   long-term authoritative meter.
-3. Feed direct-outbound deltas into the same central rolling windows used for
-   managed egress.
-4. When an account is over cap, apply a conservative protection action on
-   shared hosts.
-5. Preserve project attribution in stored historical events so later UI/CLI
-   drilldowns can explain which project generated the traffic.
+Status: accepted as done enough for v1.
+
+The current shared-host attribution model is now considered sufficiently good.
+Do not reopen this unless production experience shows a concrete problem.
 
 ### Track 9. Central Rolling Windows, Overrides, And Policy Surfaces
 
-1. Reuse the LLM-limits rolling-window model where possible:
-   - rolling `5-hour` window
-   - rolling `7-day` window
-2. Keep one central source of truth for:
-   - current usage
-   - current block state
-   - active operator overrides
-3. Log every block/unblock decision with enough detail to explain it later.
-4. Ensure the policy distinguishes:
-   - shared hosts on metered providers
-   - shared hosts on cheap/free-egress providers
-   - dedicated hosts with special egress policy
+Status: partially implemented.
+
+Done:
+
+- rolling windows
+- central block state
+- inspection surfaces
+
+Remaining:
+
+- explicit operator override controls
+- clear override lifecycle and explanation
 
 ### Track 10. User And Operator Surfaces
 
-1. Membership/store page:
-   - show limits clearly
-   - avoid infrastructure jargon
-2. Project/start/storage/download errors:
-   - explain which limit blocked the action
-   - point to the dedicated-host escape hatch where relevant
-3. `/admin`:
-   - effective limits
-   - current storage/project-count/egress usage
-   - active block reasons
-   - override controls
-4. Add account-scoped egress drilldown UI in account preferences:
-   - current rolling-window usage
-   - recent usage rate, such as last `5 minutes` and last `1 hour`
-   - button/modal for historical usage by category and project
-5. Add project-scoped egress drilldown UI in:
-   - project settings
-   - project processes page
-   It should mirror the disk-usage affordance and show:
-   - recent usage rate, such as last `5 minutes` and last `1 hour`
-   - recent history
-   - enough attribution to identify likely traffic sources
-6. Add `cocalc-cli` support for the same historical egress RPC so operators and
-   advanced users can inspect:
-   - account-scoped history
-   - project-scoped history
-   - bucketed usage over time
-7. Optional project-host `/hosts` surfaces:
-   - local observations
-   - host-local block or pressure state
+Status: largely implemented.
+
+Done:
+
+- account/project/admin egress drilldown UI
+- CLI support for historical egress
+- admin inspection improvements
+- clearer storage/account-usage surfaces
+
+Remaining:
+
+- override controls in admin
+- continued copy cleanup
 
 ### Track 11. Rollout And Safety
 
-1. Ship the per-project storage model before total account storage
-   enforcement.
-2. Ship total account storage and project-count enforcement before ambitious
-   new egress work.
-3. Compare observed egress counters against known traffic paths before blessing
-   any remaining hard blocking.
-4. Use conservative defaults on metered providers first.
-5. Treat “stops catastrophic spend” as more important than “perfectly fair
-   accounting” for v1.
+Status: mostly resolved by implementation order already completed.
+
+The key remaining discipline is:
+
+- do not reopen the storage metric model
+- do not reopen direct-outbound attribution unless production data forces it
+- keep overrides explicit and inspectable
+
+## Open Questions
+
+The main open questions are now narrower:
+
+1. What exact user-facing label should we standardize on for the derived
+   retained snapshot/history storage number?
+2. What first-release membership-tier defaults do we want for:
+   - `max_snapshots_per_project`
+   - `max_backups_per_project`
+3. How should admin overrides be presented and audited in `/admin`?
+4. What exact shared-host stopping/eviction model do we want to build?
+5. Do we want any internal memory-priority or memory-class model as part of
+   that stopping/eviction project?
 
 ## Recommended Immediate Next Steps
 
-1. Approve this spec as the updated release policy direction.
-2. Freeze the storage/quota semantics and membership-tier field semantics.
-3. Build an implementation tracker from the tracks above.
-4. Start with:
-   - Track 1: entitlement/resolver cleanup
-   - Track 2: per-project storage semantics and UX
-5. Then do:
-   - Track 3: total account storage
-   - Track 4: project count
-   - Track 5: snapshot/backup plan limits
-6. Treat historical egress observability as a blocker before blessing egress
-   policy as production-ready:
-   - add the RPC
-   - add CLI access
-   - add account/project drilldown UI
-7. In parallel, decide whether the current direct-outbound shared-host model is
-   good enough to bless as v1 or still requires another attribution pass.
+1. Update this spec and the storage/quota note so they reflect current reality
+   exactly.
+2. Treat central admin override controls as the main remaining limits/policy
+   blocker.
+3. Wire the dedicated-host egress policy to the decided default:
+   - same membership-level egress policy on GCP
+   - admin overrides for exceptions
+4. Decide whether managed-egress leased budgets are still operationally needed.
+5. Split shared-host stopping/eviction into its own major design and execution
+   track.
 
-The key discipline is:
+The key discipline remains:
 
 - keep the user contract simple
 - keep enforcement aligned with the real backend metric
