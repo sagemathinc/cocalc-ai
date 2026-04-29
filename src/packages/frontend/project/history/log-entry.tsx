@@ -338,6 +338,42 @@ export const LogEntry: React.FC<Props> = React.memo(
       );
     }
 
+    function render_project_pressure_stopped(
+      event: ProjectControlEvent,
+    ): React.JSX.Element {
+      return (
+        <span>
+          stopped this project because host pressure
+          {renderMoveHost(event.source_host_name, event.source_host_id) ? (
+            <>
+              {" "}
+              on {renderMoveHost(event.source_host_name, event.source_host_id)}
+            </>
+          ) : null}
+          {event.pressure_zone ? <> reached {event.pressure_zone}</> : null}
+          {event.reason ? <> ({event.reason})</> : null}
+        </span>
+      );
+    }
+
+    function render_project_pressure_stop_failed(
+      event: ProjectControlEvent,
+    ): React.JSX.Element {
+      return (
+        <span>
+          failed to stop this project during host pressure
+          {renderMoveHost(event.source_host_name, event.source_host_id) ? (
+            <>
+              {" "}
+              on {renderMoveHost(event.source_host_name, event.source_host_id)}
+            </>
+          ) : null}
+          {event.pressure_zone ? <> ({event.pressure_zone})</> : null}
+          {event.reason ? <> because {event.reason}</> : null}
+        </span>
+      );
+    }
+
     function render_project_move_requested(
       event: ProjectControlEvent,
     ): React.JSX.Element {
@@ -858,6 +894,10 @@ export const LogEntry: React.FC<Props> = React.memo(
           return render_project_stop_requested();
         case "project_stopped":
           return render_project_stopped();
+        case "project_pressure_stopped":
+          return render_project_pressure_stopped(event);
+        case "project_pressure_stop_failed":
+          return render_project_pressure_stop_failed(event);
         case "project_move_requested":
           return render_project_move_requested(event);
         case "project_moved":

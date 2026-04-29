@@ -935,6 +935,13 @@ export async function startMasterRegistration({
       refreshMetrics: hostMetrics.refresh,
       getCurrentMetrics: hostMetrics.getCurrentSnapshot,
       stopProject: stopProjectForPressure,
+      reportPressureAction: async (opts) => {
+        await registry.reportProjectPressureAction({
+          host_id: id,
+          host_name: name,
+          ...opts,
+        });
+      },
     });
     logger.info("started host-local pressure controller");
   };
