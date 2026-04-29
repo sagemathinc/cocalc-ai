@@ -167,6 +167,52 @@ const BANNED_FILE_TYPES = new Set(["doc", "docx", "pdf", "sws"]);
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
 
+function isRecoverableFilesystemClientError(err: unknown): boolean {
+  const message = `${err}`.toLowerCase();
+  return (
+    message.includes("closed") ||
+    message.includes("disconnected") ||
+    message.includes("connection closed") ||
+    message.includes("socket has been disconnected") ||
+    message.includes("not connected") ||
+    message.includes("file server not initialized") ||
+    message.includes("unable to route") ||
+    message.includes("project-host") ||
+    message.includes("project host")
+  );
+}
+
+export async function callFilesystemClientWithRecovery({
+  getClient,
+  clearClient,
+  prop,
+  args,
+}: {
+  getClient: (forceRefresh?: boolean) => Promise<FilesystemClient>;
+  clearClient: () => void;
+  prop: PropertyKey;
+  args: any[];
+}) {
+  let forceRefresh = false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fs = await getClient(forceRefresh);
+      const value = (fs as any)[prop];
+      if (typeof value !== "function") {
+        return value;
+      }
+      return await value.apply(fs, args);
+    } catch (err) {
+      if (attempt === 0 && isRecoverableFilesystemClientError(err)) {
+        forceRefresh = true;
+        clearClient();
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 function normalizeProjectLogTime(value: unknown): Date | null {
   if (value == null) return null;
   const date = value instanceof Date ? value : new Date(`${value}`);
@@ -2786,22 +2832,32 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   };
 
+  private getFilesystemClient = async (
+    forceRefresh: boolean = false,
+  ): Promise<FilesystemClient> => {
+    if (forceRefresh) {
+      this.clearFilesystemClient();
+    }
+    this.filesystemPromise ??= webapp_client.conat_client.projectFs({
+      project_id: this.project_id,
+      caller: "ProjectActions.fs",
+    });
+    return await this.filesystemPromise;
+  };
+
   fs = (): FilesystemClient => {
     this.filesystem ??= new Proxy(
       {},
       {
         get: (_target, prop) => {
           return async (...args) => {
-            this.filesystemPromise ??= webapp_client.conat_client.projectFs({
-              project_id: this.project_id,
-              caller: "ProjectActions.fs",
+            return await callFilesystemClientWithRecovery({
+              getClient: (forceRefresh?: boolean) =>
+                this.getFilesystemClient(forceRefresh),
+              clearClient: this.clearFilesystemClient,
+              prop,
+              args,
             });
-            const fs = await this.filesystemPromise;
-            const value = (fs as any)[prop];
-            if (typeof value !== "function") {
-              return value;
-            }
-            return await value.apply(fs, args);
           };
         },
       },
