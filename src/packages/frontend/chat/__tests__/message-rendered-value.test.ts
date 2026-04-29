@@ -6,6 +6,7 @@ import {
   resolveInlineCodexActivityMode,
   resolveMountedCodexRenderedValue,
   resolveRenderedMessageValue,
+  shouldLoadCodexPreviewBody,
   shouldSuppressAcpPlaceholderBody,
 } from "../message";
 
@@ -209,5 +210,46 @@ describe("resolveInlineCodexActivityMode", () => {
         expandedCompletedActivity: true,
       }),
     ).toBe("hidden");
+  });
+});
+
+describe("shouldLoadCodexPreviewBody", () => {
+  it("does not load completed Codex activity during passive rendering", () => {
+    expect(
+      shouldLoadCodexPreviewBody({
+        showCodexActivity: true,
+        projectId: "project-id",
+        generating: false,
+        interrupted: false,
+        allowAsyncCompletedCodexActivityLoad: false,
+        rowMessageValue: "durable summary",
+      }),
+    ).toBe(false);
+  });
+
+  it("allows async completed Codex activity loading only after explicit expansion", () => {
+    expect(
+      shouldLoadCodexPreviewBody({
+        showCodexActivity: true,
+        projectId: "project-id",
+        generating: false,
+        interrupted: false,
+        allowAsyncCompletedCodexActivityLoad: true,
+        rowMessageValue: "durable summary",
+      }),
+    ).toBe(true);
+  });
+
+  it("still loads when the durable row body is blank", () => {
+    expect(
+      shouldLoadCodexPreviewBody({
+        showCodexActivity: true,
+        projectId: "project-id",
+        generating: false,
+        interrupted: false,
+        allowAsyncCompletedCodexActivityLoad: false,
+        rowMessageValue: "   ",
+      }),
+    ).toBe(true);
   });
 });

@@ -391,7 +391,19 @@ interface Props {
   suppressInlineCodexStatus?: boolean;
   expandedCodexActivity?: boolean;
   onExpandedCodexActivityChange?: (visible: boolean) => void;
+  allowAsyncCompletedCodexActivityLoad?: boolean;
+  cachedCodexActivityBlocks?: InlineCodexActivityBlock[];
+  onCachedCodexActivityBlocksChange?: (
+    blocks: InlineCodexActivityBlock[] | undefined,
+  ) => void;
 }
+
+export type InlineCodexActivityBlock = {
+  kind: "agent" | "guidance";
+  text: string;
+  time?: number;
+  state?: "sending" | "sent" | "queued" | "not-sent";
+};
 
 export function resolveEditedMessageForSave(
   mentionSubstituted: string | undefined,
@@ -476,6 +488,28 @@ export function resolveInlineCodexActivityMode({
   if (generating) return "live";
   if (expandedCompletedActivity) return "completed";
   return "hidden";
+}
+
+export function shouldLoadCodexPreviewBody({
+  showCodexActivity,
+  projectId,
+  generating,
+  interrupted,
+  allowAsyncCompletedCodexActivityLoad,
+  rowMessageValue,
+}: {
+  showCodexActivity: boolean;
+  projectId?: string;
+  generating: boolean;
+  interrupted: boolean;
+  allowAsyncCompletedCodexActivityLoad: boolean;
+  rowMessageValue: string;
+}): boolean {
+  if (!showCodexActivity || !projectId) return false;
+  if (generating) return true;
+  if (interrupted) return true;
+  if (allowAsyncCompletedCodexActivityLoad) return true;
+  return rowMessageValue.trim().length === 0;
 }
 
 export function shouldSuppressAcpPlaceholderBody({
@@ -578,6 +612,9 @@ export default function Message({
   suppressInlineCodexStatus = false,
   expandedCodexActivity = false,
   onExpandedCodexActivityChange,
+  allowAsyncCompletedCodexActivityLoad = false,
+  cachedCodexActivityBlocks,
+  onCachedCodexActivityBlocksChange,
 }: Props) {
   const intl = useIntl();
   const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
@@ -937,18 +974,21 @@ export default function Message({
     return fallbackLogRefs.previewStream;
   }, [message, fallbackLogRefs.previewStream]);
   const loadPreviewBody = useMemo(() => {
-    if (!showCodexActivity || !project_id) return false;
-    if (effectiveGenerating) return true;
-    if (acpInterrupted) return true;
-    if (inlineCodexActivityMode === "completed") return true;
-    return rowMessageValue.trim().length === 0;
+    return shouldLoadCodexPreviewBody({
+      showCodexActivity,
+      projectId: project_id,
+      generating: effectiveGenerating,
+      interrupted: acpInterrupted,
+      allowAsyncCompletedCodexActivityLoad,
+      rowMessageValue,
+    });
   }, [
-    showCodexActivity,
-    project_id,
-    effectiveGenerating,
     acpInterrupted,
-    inlineCodexActivityMode,
+    allowAsyncCompletedCodexActivityLoad,
+    effectiveGenerating,
+    project_id,
     rowMessageValue,
+    showCodexActivity,
   ]);
   const codexPreviewLog = useCodexLog({
     projectId: project_id,
@@ -1001,7 +1041,7 @@ export default function Message({
     const blocks = getLiveResponseBlocks(
       codexPreviewLog.events as any,
       steerItems.map(({ date, text, state }) => ({ date, text, state })),
-    );
+    ) as InlineCodexActivityBlock[];
     return blocks.length > 0 ? blocks : undefined;
   }, [
     activitySteers,
@@ -1010,8 +1050,17 @@ export default function Message({
     showCodexActivity,
   ]);
   const completedCodexActivityBlocks = useMemo(() => {
+    if (inlineCodexActivityMode !== "completed") {
+      return undefined;
+    }
     if (
-      inlineCodexActivityMode !== "completed" ||
+      Array.isArray(cachedCodexActivityBlocks) &&
+      cachedCodexActivityBlocks.length > 0
+    ) {
+      return cachedCodexActivityBlocks;
+    }
+    if (
+      !allowAsyncCompletedCodexActivityLoad ||
       !Array.isArray(codexPreviewLog.events) ||
       codexPreviewLog.events.length === 0
     ) {
@@ -1023,14 +1072,40 @@ export default function Message({
             typeof steer?.text === "string" && steer.text.trim().length > 0,
         )
       : [];
-    const blocks = getLiveResponseBlocks(
-      codexPreviewLog.events as any,
-      steerItems.map(({ date, text, state }) => ({ date, text, state })),
+    const blocks = (
+      getLiveResponseBlocks(
+        codexPreviewLog.events as any,
+        steerItems.map(({ date, text, state }) => ({ date, text, state })),
+      ) as InlineCodexActivityBlock[]
     ).filter(
       (block) => typeof block.text === "string" && block.text.trim().length > 0,
     );
     return blocks.length > 0 ? blocks : undefined;
-  }, [activitySteers, codexPreviewLog.events, inlineCodexActivityMode]);
+  }, [
+    activitySteers,
+    allowAsyncCompletedCodexActivityLoad,
+    cachedCodexActivityBlocks,
+    codexPreviewLog.events,
+    inlineCodexActivityMode,
+  ]);
+  useEffect(() => {
+    if (
+      liveInterleavedCodexBlocks == null ||
+      !onCachedCodexActivityBlocksChange
+    ) {
+      return;
+    }
+    onCachedCodexActivityBlocksChange(liveInterleavedCodexBlocks);
+  }, [liveInterleavedCodexBlocks, onCachedCodexActivityBlocksChange]);
+  useEffect(() => {
+    if (
+      completedCodexActivityBlocks == null ||
+      !onCachedCodexActivityBlocksChange
+    ) {
+      return;
+    }
+    onCachedCodexActivityBlocksChange(completedCodexActivityBlocks);
+  }, [completedCodexActivityBlocks, onCachedCodexActivityBlocksChange]);
   const lastCodexActivityAtMs = useMemo(
     () => getLatestCodexActivityAtMs(codexPreviewLog.events),
     [codexPreviewLog.events],
