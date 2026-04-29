@@ -28,6 +28,9 @@ const whitelist = {
   "--bytes": true,
   "-b": true,
 
+  "--block-size": validate.int,
+  "-B": validate.int,
+
   "--summarize": true,
   "-s": true,
 

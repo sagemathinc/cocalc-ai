@@ -32,6 +32,7 @@ import {
   Environment,
 } from "@cocalc/frontend/project/settings/environment";
 import { HideDeleteBox } from "@cocalc/frontend/project/settings/hide-delete-box";
+import { ManagedEgress } from "@cocalc/frontend/project/settings/managed-egress";
 import { ProjectCapabilities } from "@cocalc/frontend/project/settings/project-capabilites";
 import { ProjectControl } from "@cocalc/frontend/project/settings/project-control";
 import { RestartProject } from "@cocalc/frontend/project/settings/restart-project";
@@ -232,6 +233,21 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
         ),
         children: <ProjectControl project={project} mode="flyout" />,
       },
+
+      ...(!lite
+        ? [
+            {
+              key: "network-egress",
+              label: (
+                <>
+                  <Icon name="network" /> Network Egress
+                </>
+              ),
+              className: "cc-project-flyout-settings-panel",
+              children: <ManagedEgress project_id={project_id} />,
+            },
+          ]
+        : []),
 
       {
         key: "recovery",
