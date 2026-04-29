@@ -398,9 +398,13 @@ async function listFreshRunningMoveTopologyRows({
 async function listActiveMoveDestinationHosts(): Promise<
   MoveActiveDestinationHost[]
 > {
-  const { rows } = await pool().query<{ id: string; region: string | null }>(
+  const { rows } = await pool().query<{
+    id: string;
+    region: string | null;
+    metadata: any;
+  }>(
     `
-      SELECT id, region
+      SELECT id, region, metadata
       FROM project_hosts
       WHERE status = 'running'
         AND deleted IS NULL
@@ -408,9 +412,13 @@ async function listActiveMoveDestinationHosts(): Promise<
       ORDER BY id
     `,
   );
-  return rows.map(({ id, region }) => ({
+  return rows.map(({ id, region, metadata }) => ({
     host_id: id,
     project_region: mapCloudRegionToR2Region(region),
+    pressure_zone:
+      typeof metadata?.pressure?.zone === "string"
+        ? metadata.pressure.zone
+        : undefined,
   }));
 }
 

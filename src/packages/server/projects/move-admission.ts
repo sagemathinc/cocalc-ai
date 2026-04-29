@@ -1,3 +1,5 @@
+import type { HostPressureZone } from "@cocalc/conat/hub/api/hosts";
+
 export type MoveClaimCandidateRow = {
   op_id: string;
   source_host_id: string | null;
@@ -8,6 +10,7 @@ export type MoveClaimCandidateRow = {
 export type MoveActiveDestinationHost = {
   host_id: string;
   project_region: string;
+  pressure_zone?: HostPressureZone;
 };
 
 export type MoveClaimSelection = {
@@ -15,6 +18,18 @@ export type MoveClaimSelection = {
   source_host_id: string;
   dest_host_id: string;
 };
+
+const PRESSURE_RANK: Record<HostPressureZone, number> = {
+  normal: 0,
+  observe: 1,
+  pressure: 2,
+  emergency: 3,
+};
+
+function pressureRank(zone: HostPressureZone | undefined): number {
+  if (!zone) return PRESSURE_RANK.normal;
+  return PRESSURE_RANK[zone] ?? PRESSURE_RANK.normal;
+}
 
 export function computeAvailableMoveHostSlots({
   runningCounts,
@@ -50,6 +65,11 @@ function chooseDestinationHost({
         (remainingDestByHost.get(host_id) ?? 0) > 0,
     )
     .sort((a, b) => {
+      const pressureDelta =
+        pressureRank(a.pressure_zone) - pressureRank(b.pressure_zone);
+      if (pressureDelta !== 0) {
+        return pressureDelta;
+      }
       const remainingDelta =
         (remainingDestByHost.get(b.host_id) ?? 0) -
         (remainingDestByHost.get(a.host_id) ?? 0);
