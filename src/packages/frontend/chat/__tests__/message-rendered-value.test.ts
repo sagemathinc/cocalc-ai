@@ -7,6 +7,7 @@ import {
   resolveMountedCodexRenderedValue,
   resolveRenderedMessageValue,
   shouldLoadCodexPreviewBody,
+  shouldShowCodexShowActivityButton,
   shouldSuppressAcpPlaceholderBody,
 } from "../message";
 
@@ -249,6 +250,32 @@ describe("shouldLoadCodexPreviewBody", () => {
         interrupted: false,
         allowAsyncCompletedCodexActivityLoad: false,
         rowMessageValue: "   ",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("shouldShowCodexShowActivityButton", () => {
+  it("hides the button for the currently running turn", () => {
+    expect(
+      shouldShowCodexShowActivityButton({
+        showCodexActivity: true,
+        expandedCodexActivity: false,
+        canToggle: true,
+        effectiveGenerating: true,
+        isLastMessageInThread: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("shows the button for older Codex turns even while another turn is running", () => {
+    expect(
+      shouldShowCodexShowActivityButton({
+        showCodexActivity: true,
+        expandedCodexActivity: false,
+        canToggle: true,
+        effectiveGenerating: true,
+        isLastMessageInThread: false,
       }),
     ).toBe(true);
   });
