@@ -318,6 +318,27 @@ export function AgentActivityChip({
     }
     return parts.join("\n");
   }, [runStartMs, lastActivityAtMs, generating, liveStatus, liveStatusIssue]);
+  const palette = generating
+    ? {
+        background: COLORS.YELL_LLL,
+        border: COLORS.YELL_LL,
+        text: COLORS.BRWN,
+        accent: liveStatusIssue
+          ? liveStatus === "error"
+            ? COLORS.FG_RED
+            : COLORS.ORANGE_WARN
+          : COLORS.BRWN,
+      }
+    : {
+        background: COLORS.GRAY_LLL,
+        border: COLORS.GRAY_LL,
+        text: COLORS.GRAY_D,
+        accent: liveStatusIssue
+          ? liveStatus === "error"
+            ? COLORS.FG_RED
+            : COLORS.ORANGE_WARN
+          : COLORS.GRAY_D,
+      };
 
   return (
     <div
@@ -335,24 +356,34 @@ export function AgentActivityChip({
         display: "inline-flex",
         alignItems: "center",
         gap: 8,
-        padding: "4px 10px",
+        padding: "6px 12px",
         borderRadius: 999,
-        background: COLORS.GRAY_LLL,
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        background: palette.background,
+        border: `1px solid ${palette.border}`,
         lineHeight: 1.2,
         zoom: IS_MOBILE ? undefined : 1.4,
         cursor: "pointer",
+        boxShadow: generating ? `inset 0 0 0 1px ${palette.border}` : undefined,
         ...style,
       }}
     >
+      <span
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: palette.accent,
+          flex: "0 0 auto",
+        }}
+      />
       {generating ? (
-        <LoadingOutlined spin style={{ fontSize: 12, color: COLORS.GRAY_D }} />
+        <LoadingOutlined spin style={{ fontSize: 12, color: palette.accent }} />
       ) : null}
       <span
         style={{
-          color: COLORS.GRAY_D,
+          color: palette.text,
           fontSize: 12,
-          fontWeight: 500,
+          fontWeight: generating ? 600 : 500,
         }}
       >
         {generating
@@ -374,7 +405,13 @@ export function AgentActivityChip({
             )
           }
         >
-          <span style={{ color: lastActivityColor, fontSize: 12 }}>
+          <span
+            style={{
+              color: generating ? palette.text : lastActivityColor,
+              fontSize: 12,
+              fontWeight: generating ? 500 : undefined,
+            }}
+          >
             {lastActivityInfo.label}
           </span>
         </Tooltip>
@@ -403,9 +440,10 @@ export function AgentActivityChip({
       ) : null}
       <span
         style={{
-          color: COLORS.GRAY_D,
+          color: palette.text,
           fontSize: 12,
           textDecoration: "underline",
+          fontWeight: generating ? 500 : undefined,
         }}
       >
         Activity

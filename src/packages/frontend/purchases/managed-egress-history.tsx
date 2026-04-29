@@ -73,6 +73,7 @@ type ChartableManagedEgressHistory = Pick<
   ManagedEgressHistory,
   "start" | "end" | "total_bytes" | "points"
 >;
+type ChartCoordinate = { x: number; y: number };
 
 export function getRangeSpec(key: ManagedEgressHistoryRangeKey): RangeSpec {
   return RANGE_SPECS.find((range) => range.key === key) ?? RANGE_SPECS[1];
@@ -138,6 +139,45 @@ function yCoordinates(values: number[], height: number): number[] {
   });
 }
 
+export function nearestHistoryPointIndex(
+  x: number,
+  coordinates: ChartCoordinate[],
+): number | null {
+  if (coordinates.length === 0) return null;
+  let bestIndex = 0;
+  let bestDistance = Math.abs(coordinates[0].x - x);
+  for (let i = 1; i < coordinates.length; i += 1) {
+    const distance = Math.abs(coordinates[i].x - x);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
+}
+
+function historyHoverPlacement(xFraction: number): {
+  left: string;
+  transform: string;
+} {
+  if (xFraction <= 0.18) {
+    return {
+      left: `${xFraction * 100}%`,
+      transform: "translate(0, calc(-100% - 14px))",
+    };
+  }
+  if (xFraction >= 0.82) {
+    return {
+      left: `${xFraction * 100}%`,
+      transform: "translate(-100%, calc(-100% - 14px))",
+    };
+  }
+  return {
+    left: `${xFraction * 100}%`,
+    transform: "translate(-50%, calc(-100% - 14px))",
+  };
+}
+
 export function summarizeManagedEgressHistory(
   history: ChartableManagedEgressHistory,
 ): {
@@ -197,6 +237,7 @@ function HistoryLine({
 }: {
   history: ChartableManagedEgressHistory;
 }): React.JSX.Element | null {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const points = history.points ?? [];
   if (points.length === 0) return null;
   const width = 560;
@@ -204,9 +245,20 @@ function HistoryLine({
   const values = points.map((point) => Math.max(0, point.bytes ?? 0));
   const xs = xCoordinates(values, width);
   const ys = yCoordinates(values, height);
+  const coordinates = points.map((_, i) => ({ x: xs[i], y: ys[i] }));
   const polyline = xs
     .map((x, i) => `${x.toFixed(2)},${ys[i].toFixed(2)}`)
     .join(" ");
+  const hoveredPoint =
+    hoveredIndex != null ? coordinates[hoveredIndex] : undefined;
+  const hoveredHistoryPoint =
+    hoveredIndex != null ? points[hoveredIndex] : undefined;
+  const hoverPlacement = hoveredPoint
+    ? historyHoverPlacement(hoveredPoint.x / width)
+    : undefined;
+  const hoverCategories = hoveredHistoryPoint
+    ? categoryEntries(hoveredHistoryPoint.categories_bytes).slice(0, 3)
+    : [];
   return (
     <div
       style={{
@@ -216,22 +268,98 @@ function HistoryLine({
         padding: "14px",
       }}
     >
-      <svg
-        aria-label="Managed egress history"
-        height="160"
-        preserveAspectRatio="none"
-        style={{ display: "block", width: "100%" }}
-        viewBox={`0 0 ${width} ${height}`}
+      <div
+        onMouseLeave={() => setHoveredIndex(null)}
+        onMouseMove={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          if (rect.width <= 0) return;
+          const relativeX = Math.max(
+            0,
+            Math.min(1, (event.clientX - rect.left) / rect.width),
+          );
+          setHoveredIndex(
+            nearestHistoryPointIndex(relativeX * width, coordinates),
+          );
+        }}
+        style={{ cursor: "crosshair", position: "relative" }}
       >
-        <polyline
-          fill="none"
-          points={polyline}
-          stroke={COLORS.BLUE_D}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth="3"
-        />
-      </svg>
+        <svg
+          aria-label="Managed egress history"
+          height="160"
+          preserveAspectRatio="none"
+          style={{ display: "block", width: "100%" }}
+          viewBox={`0 0 ${width} ${height}`}
+        >
+          <polyline
+            fill="none"
+            points={polyline}
+            stroke={COLORS.BLUE_D}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="3"
+          />
+          {hoveredPoint ? (
+            <>
+              <line
+                x1={hoveredPoint.x}
+                x2={hoveredPoint.x}
+                y1={0}
+                y2={height}
+                stroke={COLORS.BLUE_D}
+                strokeOpacity="0.25"
+                strokeWidth="1"
+                strokeDasharray="3 3"
+              />
+              <circle
+                cx={hoveredPoint.x}
+                cy={hoveredPoint.y}
+                r="4"
+                fill={COLORS.BLUE_D}
+                stroke="white"
+                strokeWidth="1.5"
+              />
+            </>
+          ) : null}
+        </svg>
+        {hoveredPoint && hoveredHistoryPoint && hoverPlacement ? (
+          <div
+            style={{
+              background: "white",
+              border: `1px solid ${COLORS.GRAY_LL}`,
+              borderRadius: "8px",
+              boxShadow: "0 6px 18px rgba(15, 23, 42, 0.16)",
+              color: COLORS.GRAY_D,
+              left: hoverPlacement.left,
+              maxWidth: "240px",
+              padding: "8px 10px",
+              pointerEvents: "none",
+              position: "absolute",
+              top: `${(hoveredPoint.y / height) * 100}%`,
+              transform: hoverPlacement.transform,
+              zIndex: 1,
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+              {humanSize(Math.max(0, hoveredHistoryPoint.bytes ?? 0))}
+            </div>
+            <div style={{ fontSize: "12px", marginBottom: "4px" }}>
+              {new Date(hoveredHistoryPoint.start).toLocaleString()}
+              {" - "}
+              {new Date(hoveredHistoryPoint.end).toLocaleString()}
+            </div>
+            {hoverCategories.length > 0 ? (
+              <div style={{ color: COLORS.GRAY_M, fontSize: "12px" }}>
+                {hoverCategories.map((entry) => (
+                  <div key={entry.category}>
+                    {formatManagedEgressCategory(entry.category)}:{" "}
+                    {humanSize(entry.bytes)}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
       <div
         style={{
           color: COLORS.GRAY_M,
