@@ -256,11 +256,32 @@ describe("project-host daemon stop", () => {
     const healthSpy = jest
       .spyOn(__test__.processRuntime, "spawnSync")
       .mockReturnValue({ status: 0 } as any);
+    const spawnSpy = jest
+      .spyOn(__test__.processRuntime, "spawn")
+      .mockImplementation(((_command: any, _args: any, opts?: any) => {
+        const env = opts?.env ?? {};
+        if (env.COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON === "1") {
+          return { pid: 9102, unref: () => {} } as any;
+        }
+        if (env.COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON === "1") {
+          return { pid: 9202, unref: () => {} } as any;
+        }
+        throw new Error(`unexpected spawn for healthy daemon test`);
+      }) as typeof __test__.processRuntime.spawn);
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
 
     ensureDaemon(0);
 
     expect(healthSpy).toHaveBeenCalled();
+    expect(spawnSpy).toHaveBeenCalledTimes(2);
+    expect((spawnSpy.mock.calls[0]?.[2] as any)?.env).toMatchObject({
+      COCALC_PROJECT_HOST_CONAT_ROUTER_DAEMON: "1",
+      PORT: "9102",
+    });
+    expect((spawnSpy.mock.calls[1]?.[2] as any)?.env).toMatchObject({
+      COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON: "1",
+      PORT: "9202",
+    });
     expect(killSpy).toHaveBeenCalledWith(7373, 0);
     expect(killSpy).not.toHaveBeenCalledWith(7373, "SIGTERM");
     expect(logSpy).toHaveBeenCalledWith("project-host healthy (pid 7373)");
