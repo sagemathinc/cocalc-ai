@@ -3,6 +3,7 @@
 import {
   ACP_THINKING_PLACEHOLDER,
   resolveEffectiveGenerating,
+  resolveInlineCodexActivityMode,
   resolveMountedCodexRenderedValue,
   resolveRenderedMessageValue,
   shouldSuppressAcpPlaceholderBody,
@@ -168,5 +169,45 @@ describe("resolveMountedCodexRenderedValue", () => {
         interrupted: false,
       }),
     ).toBe("live body");
+  });
+});
+
+describe("resolveInlineCodexActivityMode", () => {
+  it("forces live activity while a Codex turn is still generating", () => {
+    expect(
+      resolveInlineCodexActivityMode({
+        showCodexActivity: true,
+        generating: true,
+        expandedCompletedActivity: false,
+      }),
+    ).toBe("live");
+  });
+
+  it("shows completed activity only when explicitly expanded", () => {
+    expect(
+      resolveInlineCodexActivityMode({
+        showCodexActivity: true,
+        generating: false,
+        expandedCompletedActivity: true,
+      }),
+    ).toBe("completed");
+
+    expect(
+      resolveInlineCodexActivityMode({
+        showCodexActivity: true,
+        generating: false,
+        expandedCompletedActivity: false,
+      }),
+    ).toBe("hidden");
+  });
+
+  it("stays hidden for non-Codex rows", () => {
+    expect(
+      resolveInlineCodexActivityMode({
+        showCodexActivity: false,
+        generating: true,
+        expandedCompletedActivity: true,
+      }),
+    ).toBe("hidden");
   });
 });

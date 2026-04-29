@@ -56,7 +56,6 @@ import {
   getLiveResponseBlocks,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
-  getMountedIntermediateResponseMarkdown,
   type InlineCodeLink,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
@@ -390,6 +389,8 @@ interface Props {
   attachedSteers?: AttachedSteerMessage[];
   activitySteers?: AttachedSteerMessage[];
   suppressInlineCodexStatus?: boolean;
+  expandedCodexActivity?: boolean;
+  onExpandedCodexActivityChange?: (visible: boolean) => void;
 }
 
 export function resolveEditedMessageForSave(
@@ -460,6 +461,21 @@ export function resolveMountedCodexRenderedValue({
     return `${mountedGeneratingPrefixValue.trimEnd()}\n\n${renderedValue.trimStart()}`;
   }
   return renderedValue;
+}
+
+export function resolveInlineCodexActivityMode({
+  showCodexActivity,
+  generating,
+  expandedCompletedActivity,
+}: {
+  showCodexActivity: boolean;
+  generating: boolean;
+  expandedCompletedActivity: boolean;
+}): "hidden" | "live" | "completed" {
+  if (!showCodexActivity) return "hidden";
+  if (generating) return "live";
+  if (expandedCompletedActivity) return "completed";
+  return "hidden";
 }
 
 export function shouldSuppressAcpPlaceholderBody({
@@ -560,6 +576,8 @@ export default function Message({
   attachedSteers,
   activitySteers,
   suppressInlineCodexStatus = false,
+  expandedCodexActivity = false,
+  onExpandedCodexActivityChange,
 }: Props) {
   const intl = useIntl();
   const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
@@ -874,6 +892,15 @@ export default function Message({
     // other kinds of AI messages.
     return Boolean(field<string>(message, "acp_account_id"));
   }, [message]);
+  const inlineCodexActivityMode = useMemo(
+    () =>
+      resolveInlineCodexActivityMode({
+        showCodexActivity,
+        generating: effectiveGenerating,
+        expandedCompletedActivity: expandedCodexActivity,
+      }),
+    [showCodexActivity, effectiveGenerating, expandedCodexActivity],
+  );
   const suppressInlineCodexActivity =
     showCodexActivity && effectiveGenerating && suppressInlineCodexStatus;
 
@@ -913,12 +940,14 @@ export default function Message({
     if (!showCodexActivity || !project_id) return false;
     if (effectiveGenerating) return true;
     if (acpInterrupted) return true;
+    if (inlineCodexActivityMode === "completed") return true;
     return rowMessageValue.trim().length === 0;
   }, [
     showCodexActivity,
     project_id,
     effectiveGenerating,
     acpInterrupted,
+    inlineCodexActivityMode,
     rowMessageValue,
   ]);
   const codexPreviewLog = useCodexLog({
@@ -980,6 +1009,22 @@ export default function Message({
     effectiveGenerating,
     showCodexActivity,
   ]);
+  const completedCodexActivityBlocks = useMemo(() => {
+    if (
+      inlineCodexActivityMode !== "completed" ||
+      !Array.isArray(codexPreviewLog.events) ||
+      codexPreviewLog.events.length === 0
+    ) {
+      return undefined;
+    }
+    const blocks = getLiveResponseBlocks(codexPreviewLog.events as any).filter(
+      (block) =>
+        block.kind === "agent" &&
+        typeof block.text === "string" &&
+        block.text.trim().length > 0,
+    );
+    return blocks.length > 0 ? blocks : undefined;
+  }, [codexPreviewLog.events, inlineCodexActivityMode]);
   const lastCodexActivityAtMs = useMemo(
     () => getLatestCodexActivityAtMs(codexPreviewLog.events),
     [codexPreviewLog.events],
@@ -988,31 +1033,9 @@ export default function Message({
     () => field<string>(message, "message_id"),
     [message],
   );
-  const [mountedGeneratingCodexPrefix, setMountedGeneratingCodexPrefix] =
-    useState<string | undefined>(undefined);
-  useEffect(() => {
-    setMountedGeneratingCodexPrefix(undefined);
-  }, [messageId]);
   useEffect(() => {
     setSelectMode(false);
   }, [messageId]);
-  const codexMountedPrefixValue = useMemo(() => {
-    if (
-      !Array.isArray(codexPreviewLog.events) ||
-      codexPreviewLog.events.length === 0
-    ) {
-      return undefined;
-    }
-    return getMountedIntermediateResponseMarkdown(
-      codexPreviewLog.events as any,
-    );
-  }, [codexPreviewLog.events]);
-  useEffect(() => {
-    if (!showCodexActivity || !effectiveGenerating) return;
-    setMountedGeneratingCodexPrefix((prev) =>
-      prev === codexMountedPrefixValue ? prev : codexMountedPrefixValue,
-    );
-  }, [showCodexActivity, effectiveGenerating, codexMountedPrefixValue]);
   const renderedMessageValue = useMemo(
     () =>
       resolveRenderedMessageValue({
@@ -1023,29 +1046,12 @@ export default function Message({
       }),
     [acpInterrupted, codexBodyValue, effectiveGenerating, rowMessageValue],
   );
-  const stableRenderedMessageValue = useMemo(
-    () =>
-      resolveMountedCodexRenderedValue({
-        renderedValue: renderedMessageValue,
-        mountedGeneratingPrefixValue: mountedGeneratingCodexPrefix,
-        showCodexActivity,
-        generating: effectiveGenerating,
-        interrupted: acpInterrupted,
-      }),
-    [
-      renderedMessageValue,
-      mountedGeneratingCodexPrefix,
-      showCodexActivity,
-      effectiveGenerating,
-      acpInterrupted,
-    ],
-  );
   const renderedMessageMarkdown = useMemo(
     () =>
       is_viewers_message
-        ? stableRenderedMessageValue
-        : linkifyCommitHashes(stableRenderedMessageValue),
-    [is_viewers_message, stableRenderedMessageValue],
+        ? renderedMessageValue
+        : linkifyCommitHashes(renderedMessageValue),
+    [is_viewers_message, renderedMessageValue],
   );
 
   const threadLookup = useMemo(
@@ -1715,6 +1721,36 @@ export default function Message({
       </Tooltip>,
     ];
 
+    if (
+      showCodexActivity &&
+      !effectiveGenerating &&
+      !expandedCodexActivity &&
+      onExpandedCodexActivityChange
+    ) {
+      buttons.splice(
+        1,
+        0,
+        <span key="show-activity" style={{ marginTop: "-5px" }}>
+          <Tip
+            placement="bottom"
+            title="Show the full agent activity for this turn"
+          >
+            <Button
+              size="small"
+              type="text"
+              style={{
+                color: COLORS.GRAY_M,
+                fontSize: "12px",
+              }}
+              onClick={() => onExpandedCodexActivityChange(true)}
+            >
+              Show activity
+            </Button>
+          </Tip>
+        </span>,
+      );
+    }
+
     const overflowItems: MenuItems = [
       {
         key: "copy-whole",
@@ -1837,11 +1873,14 @@ export default function Message({
     );
   }
 
-  function renderInterleavedLiveCodexBody({
+  function renderInterleavedCodexBody({
     blocks,
     message_class,
     inlineCodeLinks,
     openCommitFromMessage,
+    summaryValue,
+    showSummaryBelow = false,
+    onHideActivity,
   }: {
     blocks: Array<{
       kind: "agent" | "guidance";
@@ -1852,6 +1891,9 @@ export default function Message({
     message_class?: string;
     inlineCodeLinks?: InlineCodeLink[];
     openCommitFromMessage: (e: any) => void;
+    summaryValue?: string;
+    showSummaryBelow?: boolean;
+    onHideActivity?: () => void;
   }) {
     const combinedAgentText = blocks
       .filter((block) => block.kind === "agent")
@@ -1859,6 +1901,37 @@ export default function Message({
       .join("\n\n");
     return (
       <div onClickCapture={openCommitFromMessage}>
+        {showSummaryBelow ? (
+          <div
+            style={{
+              marginBottom: 8,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              color: COLORS.GRAY_M,
+              fontSize: `${Math.max((font_size ?? 14) - 2, 11)}px`,
+            }}
+          >
+            <span>
+              <Icon name="list" /> Agent activity
+            </span>
+            {onHideActivity ? (
+              <Button
+                size="small"
+                type="text"
+                style={{ color: COLORS.GRAY_M }}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onHideActivity();
+                }}
+              >
+                Hide activity
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         <div
           style={{
             display: "flex",
@@ -1910,7 +1983,47 @@ export default function Message({
             ),
           )}
         </div>
-        <CodexQuotaHelp message={combinedAgentText} projectId={project_id} />
+        {showSummaryBelow && summaryValue?.trim().length ? (
+          <div style={{ marginTop: 12 }}>
+            <Divider style={{ margin: "0 0 10px 0" }} />
+            <div
+              style={{
+                marginBottom: 6,
+                color: COLORS.GRAY_M,
+                fontSize: `${Math.max((font_size ?? 14) - 2, 11)}px`,
+              }}
+            >
+              Final summary
+            </div>
+            {messageBodyMode === "select" ? (
+              renderSelectableMarkdownBody({
+                value: summaryValue,
+                message_class,
+                style: MARKDOWN_STYLE,
+              })
+            ) : (
+              <StaticMarkdown
+                style={MARKDOWN_STYLE}
+                value={summaryValue}
+                className={message_class}
+                editorTheme={editorTheme}
+                highlightQuery={searchHighlight}
+                inlineCodeLinks={
+                  Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+                }
+                inlineCodeProjectRoot={activityBasePath}
+              />
+            )}
+          </div>
+        ) : null}
+        <CodexQuotaHelp
+          message={
+            showSummaryBelow
+              ? summaryValue || combinedAgentText
+              : combinedAgentText
+          }
+          projectId={project_id}
+        />
       </div>
     );
   }
@@ -1925,11 +2038,15 @@ export default function Message({
       message,
       "inline_code_links",
     );
-    const shouldRenderInterleavedLiveCodexBody =
-      effectiveGenerating &&
-      showCodexActivity &&
-      Array.isArray(liveInterleavedCodexBlocks) &&
-      liveInterleavedCodexBlocks.length > 0;
+    const activityBlocksToRender =
+      inlineCodexActivityMode === "live"
+        ? liveInterleavedCodexBlocks
+        : inlineCodexActivityMode === "completed"
+          ? completedCodexActivityBlocks
+          : undefined;
+    const shouldRenderInterleavedCodexActivityBody =
+      Array.isArray(activityBlocksToRender) &&
+      activityBlocksToRender.length > 0;
     const openCommitFromMessage = (e: any) => {
       const target = e.target as HTMLElement | null;
       const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
@@ -2023,14 +2140,22 @@ export default function Message({
             </span>
           </div>
         ) : null}
-        {shouldRenderInterleavedLiveCodexBody ? (
-          renderInterleavedLiveCodexBody({
-            blocks: liveInterleavedCodexBlocks,
+        {shouldRenderInterleavedCodexActivityBody ? (
+          renderInterleavedCodexBody({
+            blocks: activityBlocksToRender,
             message_class,
             inlineCodeLinks: Array.isArray(inlineCodeLinks)
               ? inlineCodeLinks
               : undefined,
             openCommitFromMessage,
+            summaryValue:
+              inlineCodexActivityMode === "completed" ? value : undefined,
+            showSummaryBelow: inlineCodexActivityMode === "completed",
+            onHideActivity:
+              inlineCodexActivityMode === "completed" &&
+              onExpandedCodexActivityChange
+                ? () => onExpandedCodexActivityChange(false)
+                : undefined,
           })
         ) : !suppressPlaceholderBody && value.trim().length > 0 ? (
           <div onClickCapture={openCommitFromMessage}>
