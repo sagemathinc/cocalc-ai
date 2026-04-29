@@ -413,6 +413,11 @@ function isExpectedWorkerProcess(
   if (!titledProcessMatches) {
     return false;
   }
+  const explicitBundlePath =
+    `${worker.env.COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_PATH ?? ""}`.trim();
+  if (!explicitBundlePath) {
+    return false;
+  }
   const expectedBundlePath = resolveProjectHostWorkerBundlePath(launch);
   const workerBundlePath = workerBundlePathOf(worker, launch);
   return workerBundlePath === expectedBundlePath;
@@ -440,6 +445,66 @@ export function partitionExpectedProjectHostAcpWorkers({
   return { expectedWorkers, ignoredWorkers };
 }
 
+function isRecognizedWorkerEntrypoint(entryPoint?: string): boolean {
+  if (!entryPoint) return false;
+  const normalized = path.resolve(entryPoint);
+  return (
+    path.basename(normalized) === "index.js" &&
+    path.basename(path.dirname(normalized)) === "main" &&
+    path.basename(path.dirname(path.dirname(normalized))) !== "main"
+  );
+}
+
+function isManageableWorkerProcess(
+  worker: WorkerProcessInfo,
+  launch: WorkerLaunch,
+): boolean {
+  if (isExpectedWorkerProcess(worker, launch)) {
+    return true;
+  }
+  if (worker.cmdline.length === 0) return false;
+  const observedCommand = worker.cmdline[0];
+  const commandMatches =
+    path.resolve(observedCommand) === launch.resolvedCommand;
+  const titledProcessMatches =
+    observedCommand === getProjectHostProcessTitle({ env: worker.env });
+  if (!commandMatches && !titledProcessMatches) {
+    return false;
+  }
+  if (!launch.nodeLike) {
+    return true;
+  }
+  const entryPoint = worker.cmdline[1];
+  if (entryPoint != null && entryPoint.length > 0) {
+    return isRecognizedWorkerEntrypoint(entryPoint);
+  }
+  const bundlePath =
+    `${worker.env.COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_PATH ?? ""}`.trim();
+  return titledProcessMatches && bundlePath.length > 0;
+}
+
+export function partitionManageableProjectHostAcpWorkers({
+  workers,
+  launch,
+}: {
+  workers: WorkerProcessInfo[];
+  launch: WorkerLaunch;
+}): {
+  managedWorkers: WorkerProcessInfo[];
+  ignoredWorkers: WorkerProcessInfo[];
+} {
+  const managedWorkers: WorkerProcessInfo[] = [];
+  const ignoredWorkers: WorkerProcessInfo[] = [];
+  for (const worker of workers) {
+    if (isManageableWorkerProcess(worker, launch)) {
+      managedWorkers.push(worker);
+    } else {
+      ignoredWorkers.push(worker);
+    }
+  }
+  return { managedWorkers, ignoredWorkers };
+}
+
 async function terminateWorkerPid(pid: number): Promise<void> {
   if (!isPidAlive(pid)) return;
   try {
@@ -463,8 +528,8 @@ async function terminateWorkerPid(pid: number): Promise<void> {
 
 async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
   const launch = workerLaunchSignature();
-  const { expectedWorkers: observedWorkers } =
-    partitionExpectedProjectHostAcpWorkers({
+  const { managedWorkers: observedWorkers } =
+    partitionManageableProjectHostAcpWorkers({
       workers: listProjectHostAcpWorkers(),
       launch,
     });
@@ -655,7 +720,7 @@ export async function rolloutProjectHostAcpWorker({
   restartReason?: string;
 } = {}): Promise<ProjectHostAcpWorkerRolloutOutcome> {
   const launch = workerLaunchSignature();
-  const { expectedWorkers: workers } = partitionExpectedProjectHostAcpWorkers({
+  const { managedWorkers: workers } = partitionManageableProjectHostAcpWorkers({
     workers: listProjectHostAcpWorkers(),
     launch,
   });
