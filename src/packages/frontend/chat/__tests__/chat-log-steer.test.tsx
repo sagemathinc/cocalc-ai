@@ -319,4 +319,74 @@ describe("ChatLog immediate steer rendering", () => {
       }),
     ]);
   });
+
+  it("auto-expands only the newest live assistant turn in a thread", () => {
+    render(
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        mode="standalone"
+        actions={{ clearScrollRequest: jest.fn() } as any}
+        selectedThread="thread-1"
+        acpState={new Map([["thread:thread-1", "running"]]) as any}
+        messages={
+          new Map([
+            [
+              "1000",
+              {
+                date: 1000,
+                message_id: "user-1",
+                thread_id: "thread-1",
+                sender_id: "acct-1",
+                history: [{ content: "first prompt" }],
+              },
+            ],
+            [
+              "2000",
+              {
+                date: 2000,
+                message_id: "assistant-1",
+                thread_id: "thread-1",
+                parent_message_id: "user-1",
+                sender_id: "acct-codex",
+                acp_account_id: "acct-codex",
+                generating: false,
+                history: [{ content: "first answer" }],
+              },
+            ],
+            [
+              "3000",
+              {
+                date: 3000,
+                message_id: "user-2",
+                thread_id: "thread-1",
+                sender_id: "acct-1",
+                history: [{ content: "second prompt" }],
+              },
+            ],
+            [
+              "4000",
+              {
+                date: 4000,
+                message_id: "assistant-2",
+                thread_id: "thread-1",
+                parent_message_id: "user-2",
+                sender_id: "acct-codex",
+                acp_account_id: "acct-codex",
+                generating: true,
+                history: [{ content: "second answer" }],
+              },
+            ],
+          ]) as any
+        }
+      />,
+    );
+
+    expect(lastRenderedMessageProps("assistant-1")?.expandedCodexActivity).toBe(
+      false,
+    );
+    expect(lastRenderedMessageProps("assistant-2")?.expandedCodexActivity).toBe(
+      true,
+    );
+  });
 });
