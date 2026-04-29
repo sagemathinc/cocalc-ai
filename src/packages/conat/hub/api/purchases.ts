@@ -167,10 +167,32 @@ export interface ManagedEgressAdminOverview {
   recent_events: ManagedEgressEventSummary[];
 }
 
+export interface ManagedEgressAdminHistory {
+  start: string;
+  end: string;
+  bucket: ManagedEgressHistoryBucketSize;
+  total_bytes: number;
+  categories_bytes: Record<string, number>;
+  points: ManagedEgressHistoryPoint[];
+  top_accounts: ManagedEgressAccountSummary[];
+  top_projects: ManagedEgressAdminProjectSummary[];
+  recent_events: ManagedEgressEventSummary[];
+}
+
 export interface ManagedEgressAdminOverviewQuery {
   account_id?: string;
   start?: string | Date;
   end?: string | Date;
+  recent_event_limit?: number;
+  top_account_limit?: number;
+  top_project_limit?: number;
+}
+
+export interface ManagedEgressAdminHistoryQuery {
+  account_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  bucket?: ManagedEgressHistoryBucketSize;
   recent_event_limit?: number;
   top_account_limit?: number;
   top_project_limit?: number;
@@ -207,6 +229,9 @@ export interface Purchases {
   getManagedEgressAdminOverview: (
     opts?: ManagedEgressAdminOverviewQuery,
   ) => Promise<ManagedEgressAdminOverview>;
+  getManagedEgressAdminHistory: (
+    opts?: ManagedEgressAdminHistoryQuery,
+  ) => Promise<ManagedEgressAdminHistory>;
 }
 
 export const purchases = {
@@ -217,4 +242,5 @@ export const purchases = {
   getAIUsage: authFirst,
   getManagedEgressHistory: authFirst,
   getManagedEgressAdminOverview: authFirst,
+  getManagedEgressAdminHistory: authFirst,
 };
