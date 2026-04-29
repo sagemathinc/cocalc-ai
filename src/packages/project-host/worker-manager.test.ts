@@ -1,5 +1,6 @@
 import {
   __test__,
+  partitionManageableProjectHostAcpWorkers,
   partitionExpectedProjectHostAcpWorkers,
   planProjectHostAcpWorkerRollout,
 } from "./hub/acp/worker-manager";
@@ -264,6 +265,102 @@ describe("planProjectHostAcpWorkerRollout", () => {
     ).toEqual({
       expectedWorkers: [workers[0]],
       ignoredWorkers: [workers[1]],
+    });
+  });
+
+  it("treats older-bundle ACP workers as manageable for supervisor cleanup", () => {
+    const workers = [
+      {
+        pid: 801,
+        env: {
+          COCALC_PROJECT_HOST_ACP_WORKER: "1",
+          COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY: "rolling-v1",
+          COCALC_ACP_INSTANCE_ID: "worker-current",
+        },
+        cmdline: [
+          "/usr/bin/node",
+          "/opt/cocalc/project-host/bundles/current/main/index.js",
+        ],
+      },
+      {
+        pid: 802,
+        env: {
+          COCALC_PROJECT_HOST_ACP_WORKER: "1",
+          COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY: "rolling-v1",
+          COCALC_ACP_INSTANCE_ID: "worker-old",
+        },
+        cmdline: [
+          "/usr/bin/node",
+          "/opt/cocalc/project-host/bundles/old/main/index.js",
+        ],
+      },
+      {
+        pid: 803,
+        env: {
+          COCALC_PROJECT_HOST_ACP_WORKER: "1",
+          COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY: "rolling-v1",
+          COCALC_ACP_INSTANCE_ID: "worker-descendant",
+        },
+        cmdline: ["/usr/bin/git", "status"],
+      },
+    ];
+
+    expect(
+      partitionManageableProjectHostAcpWorkers({
+        workers: workers as any,
+        launch: launch as any,
+      }),
+    ).toEqual({
+      managedWorkers: [workers[0], workers[1]],
+      ignoredWorkers: [workers[2]],
+    });
+  });
+
+  it("treats titled older-bundle ACP workers with env-only bundle metadata as manageable", () => {
+    const workers = [
+      {
+        pid: 901,
+        env: {
+          COCALC_PROJECT_HOST_ACP_WORKER: "1",
+          COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY: "rolling-v1",
+          COCALC_ACP_INSTANCE_ID: "worker-current",
+          COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_PATH:
+            "/opt/cocalc/project-host/bundles/current",
+          COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_VERSION: "current",
+        },
+        cmdline: ["project-host:acp-worker"],
+      },
+      {
+        pid: 902,
+        env: {
+          COCALC_PROJECT_HOST_ACP_WORKER: "1",
+          COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY: "rolling-v1",
+          COCALC_ACP_INSTANCE_ID: "worker-old",
+          COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_PATH:
+            "/opt/cocalc/project-host/bundles/old",
+          COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_VERSION: "old",
+        },
+        cmdline: ["project-host:acp-worker"],
+      },
+      {
+        pid: 903,
+        env: {
+          COCALC_PROJECT_HOST_ACP_WORKER: "1",
+          COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY: "rolling-v1",
+          COCALC_ACP_INSTANCE_ID: "worker-descendant",
+        },
+        cmdline: ["project-host:acp-worker"],
+      },
+    ];
+
+    expect(
+      partitionManageableProjectHostAcpWorkers({
+        workers: workers as any,
+        launch: launch as any,
+      }),
+    ).toEqual({
+      managedWorkers: [workers[0], workers[1]],
+      ignoredWorkers: [workers[2]],
     });
   });
 });
