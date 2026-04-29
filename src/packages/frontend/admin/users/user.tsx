@@ -23,10 +23,16 @@ import { CreatePaymentButton } from "./create-payment";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
 import Money from "./money";
 import { AdminMembership } from "./admin-membership";
+import {
+  ManagedEgressHistoryButton,
+  ManagedEgressRateSummary,
+  ManagedEgressTopProjectsSummary,
+} from "@cocalc/frontend/purchases/managed-egress-history";
 
 interface State {
   projects: boolean;
   purchases: boolean;
+  egress: boolean;
   activity: boolean;
   impersonate: boolean;
   password: boolean;
@@ -37,6 +43,7 @@ interface State {
 type More =
   | "projects"
   | "purchases"
+  | "egress"
   | "activity"
   | "impersonate"
   | "password"
@@ -56,6 +63,7 @@ export function UserResult({
   const [state, setState] = useState<State>({
     projects: false,
     purchases: false,
+    egress: false,
     activity: false,
     impersonate: false,
     password: false,
@@ -106,8 +114,24 @@ export function UserResult({
             name={details ? "minus-square" : "plus-square"}
             style={{ marginRight: "15px" }}
           />
-          <div style={{ float: "right", color: "#666" }}>
-            Active {renderLastActive()} (Created {renderCreated()})
+          <div
+            style={{
+              alignItems: "center",
+              color: "#666",
+              display: "flex",
+              float: "right",
+              gap: "8px",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ManagedEgressHistoryButton
+              user_account_id={account_id}
+              buttonText="Egress history"
+              size="small"
+            />
+            <span>
+              Active {renderLastActive()} (Created {renderCreated()})
+            </span>
           </div>
           <Space style={{ color: "#666" }}>
             {first_name} {last_name}{" "}
@@ -150,6 +174,7 @@ export function UserResult({
             {renderMoreLink("ban")}
             {renderMoreLink("projects")}
             {renderMoreLink("purchases")}
+            {renderMoreLink("egress")}
             {renderMoreLink("membership")}
           </Space>
           {state.impersonate && (
@@ -201,6 +226,22 @@ export function UserResult({
                 <div style={{ height: "15px" }} />
                 <CreatePaymentButton account_id={account_id} />
               </div>
+            </Card>
+          )}
+          {state.egress && (
+            <Card title="Network Egress">
+              <Space
+                direction="vertical"
+                size="middle"
+                style={{ width: "100%" }}
+              >
+                <ManagedEgressRateSummary user_account_id={account_id} />
+                <ManagedEgressTopProjectsSummary user_account_id={account_id} />
+                <ManagedEgressHistoryButton
+                  user_account_id={account_id}
+                  buttonText="View egress history"
+                />
+              </Space>
             </Card>
           )}
           {state.membership && (

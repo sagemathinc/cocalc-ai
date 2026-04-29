@@ -22,6 +22,10 @@ import { CSS, ProjectActions } from "@cocalc/frontend/app-framework";
 import { A, Icon, Loading, Tip, Tooltip } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { labels } from "@cocalc/frontend/i18n";
+import {
+  ManagedEgressHistoryButton,
+  ManagedEgressRateSummary,
+} from "@cocalc/frontend/purchases/managed-egress-history";
 import { cmp, field_cmp, seconds2hms } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -264,6 +268,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     loading,
     modal,
     project_actions,
+    project_id,
     project_state,
     project_status,
     pt_stats,
@@ -776,6 +781,12 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               <Form.Item label="Table of Processes" />
               {render_refresh_button()}
               {render_action_buttons()}
+              <ManagedEgressRateSummary project_id={project_id} />
+              <ManagedEgressHistoryButton
+                project_id={project_id}
+                buttonText="Network egress"
+                size="small"
+              />
               {render_disconnected()}
             </Form>
           </Col>

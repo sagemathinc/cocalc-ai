@@ -27,6 +27,11 @@ import {
   ManagedEgressRecentEventsButton,
   formatManagedEgressCategory,
 } from "@cocalc/frontend/purchases/managed-egress-recent-events";
+import {
+  ManagedEgressHistoryButton,
+  ManagedEgressRateSummary,
+  ManagedEgressTopProjectsSummary,
+} from "@cocalc/frontend/purchases/managed-egress-history";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   MembershipDetails,
@@ -520,6 +525,20 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                       />
                     </Descriptions.Item>
                   ) : null}
+                  <Descriptions.Item label="Recent managed egress">
+                    <ManagedEgressRateSummary user_account_id={account_id} />
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Top recent egress projects (24h)">
+                    <ManagedEgressTopProjectsSummary
+                      user_account_id={account_id}
+                    />
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Historical managed egress">
+                    <ManagedEgressHistoryButton
+                      user_account_id={account_id}
+                      buttonText="View egress history"
+                    />
+                  </Descriptions.Item>
                 </Descriptions>
               ) : (
                 <Text type="secondary">No usage summary available.</Text>

@@ -19,6 +19,7 @@ import {
 } from "@cocalc/conat/ai/acp/daemon-control";
 import { getSoftwareVersions } from "../../software";
 import { getProjectHostConatClient } from "../../runtime-client";
+import { getProjectHostProcessTitle } from "../../process-role";
 
 const logger = getLogger("project-host:hub:acp:worker-manager");
 const ACP_WORKER_PID_FILE = path.join(data, "acp-worker.pid");
@@ -536,6 +537,7 @@ function spawnProjectHostAcpWorker({
     detached: true,
     stdio: ["ignore", stdout, stdout],
     env,
+    argv0: getProjectHostProcessTitle({ env }),
   });
   closeSync(stdout);
   child.unref();

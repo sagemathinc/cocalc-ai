@@ -3,6 +3,7 @@ import { humanSize } from "@cocalc/util/misc";
 
 import type {
   ManagedEgressEventSummary,
+  ManagedEgressHistory,
   MembershipDetails,
 } from "@cocalc/conat/hub/api/purchases";
 
@@ -125,6 +126,38 @@ function serializeMembershipDetails(
   };
 }
 
+function serializeManagedEgressHistory(
+  history: ManagedEgressHistory,
+  toIso: AccountCommandDeps["toIso"],
+) {
+  return {
+    account_id: history.account_id,
+    project_id: history.project_id ?? null,
+    start: toIso(history.start),
+    end: toIso(history.end),
+    bucket: history.bucket,
+    total_bytes: history.total_bytes,
+    total: formatByteCount(history.total_bytes),
+    categories_bytes: history.categories_bytes,
+    points: history.points.map((point) => ({
+      start: toIso(point.start),
+      end: toIso(point.end),
+      bytes: point.bytes,
+      bytes_human: formatByteCount(point.bytes),
+      categories_bytes: point.categories_bytes,
+    })),
+    top_projects: history.top_projects.map((project) => ({
+      project_id: project.project_id ?? null,
+      project_title: project.project_title ?? null,
+      bytes: project.bytes,
+      bytes_human: formatByteCount(project.bytes),
+    })),
+    recent_events: history.recent_events.map((event) =>
+      serializeManagedEgressEvent(event, toIso),
+    ),
+  };
+}
+
 export function registerAccountCommand(
   program: Command,
   deps: AccountCommandDeps,
@@ -167,6 +200,62 @@ export function registerAccountCommand(
         return serializeMembershipDetails(details, account_id, toIso);
       });
     });
+
+  account
+    .command("egress [account]")
+    .description(
+      "show historical managed outbound network usage for an account",
+    )
+    .option("--project <project_id>", "limit to one owned project")
+    .option("--start <iso>", "inclusive window start as ISO-8601")
+    .option("--end <iso>", "exclusive window end as ISO-8601")
+    .option("--bucket <bucket>", "bucket size: 5m, 1h, or 1d")
+    .option(
+      "--recent-events <count>",
+      "number of recent events to include (default 20)",
+    )
+    .option(
+      "--top-projects <count>",
+      "number of top projects to include (default 10)",
+    )
+    .action(
+      async (
+        accountIdentifier: string | undefined,
+        opts: {
+          project?: string;
+          start?: string;
+          end?: string;
+          bucket?: "5m" | "1h" | "1d";
+          recentEvents?: string;
+          topProjects?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "account egress", async (ctx) => {
+          const target = accountIdentifier?.trim()
+            ? await resolveAccountByIdentifier(ctx, accountIdentifier.trim())
+            : { account_id: ctx.accountId };
+          const account_id = `${target.account_id ?? ""}`.trim();
+          if (!account_id) {
+            throw new Error("unable to resolve target account");
+          }
+          const history = await ctx.hub.purchases.getManagedEgressHistory({
+            user_account_id: account_id,
+            project_id: `${opts.project ?? ""}`.trim() || undefined,
+            start: `${opts.start ?? ""}`.trim() || undefined,
+            end: `${opts.end ?? ""}`.trim() || undefined,
+            bucket: `${opts.bucket ?? ""}`.trim() ? opts.bucket : undefined,
+            recent_event_limit: `${opts.recentEvents ?? ""}`.trim()
+              ? Number(opts.recentEvents)
+              : undefined,
+            top_project_limit: `${opts.topProjects ?? ""}`.trim()
+              ? Number(opts.topProjects)
+              : undefined,
+          });
+          return serializeManagedEgressHistory(history, toIso);
+        });
+      },
+    );
 
   account
     .command("delete [account]")
