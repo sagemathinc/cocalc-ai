@@ -10,6 +10,9 @@ function trim(value: unknown): string {
 
 export function resolveGcpRuntimeInternalHostname(
   runtime?: HostRuntime | null,
+  opts: {
+    fallbackProjectId?: string | null;
+  } = {},
 ): string | undefined {
   return gcpInternalHostname({
     configuredHostname:
@@ -20,6 +23,7 @@ export function resolveGcpRuntimeInternalHostname(
     projectId:
       trim(runtime?.metadata?.gcp_project_id) ||
       trim(runtime?.metadata?.project_id) ||
+      trim(opts.fallbackProjectId) ||
       undefined,
   });
 }
@@ -27,11 +31,15 @@ export function resolveGcpRuntimeInternalHostname(
 export function resolveGcpManagedHostInternalUrl({
   runtime,
   tunnelEnabled,
+  fallbackProjectId,
 }: {
   runtime?: HostRuntime | null;
   tunnelEnabled: boolean;
+  fallbackProjectId?: string | null;
 }): string | undefined {
-  const hostname = resolveGcpRuntimeInternalHostname(runtime);
+  const hostname = resolveGcpRuntimeInternalHostname(runtime, {
+    fallbackProjectId,
+  });
   if (!hostname) return;
   if (tunnelEnabled) {
     return `http://${hostname}:${DEFAULT_GCP_PROJECT_HOST_TUNNEL_PORT}`;

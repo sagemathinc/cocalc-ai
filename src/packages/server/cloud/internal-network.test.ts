@@ -53,6 +53,21 @@ describe("gcp internal network helpers", () => {
     ).toBe("http://host-a.c.proj-1.internal:9002");
   });
 
+  it("can derive an internal host url from a fallback project id", () => {
+    expect(
+      resolveGcpManagedHostInternalUrl({
+        runtime: {
+          provider: "gcp",
+          instance_id: "host-a",
+          ssh_user: "ubuntu",
+          metadata: {},
+        },
+        tunnelEnabled: true,
+        fallbackProjectId: "proj-1",
+      }),
+    ).toBe("http://host-a.c.proj-1.internal:9002");
+  });
+
   it("rewrites public conat addresses to internal bay router addresses", () => {
     expect(
       resolveGcpInternalConatUrl({

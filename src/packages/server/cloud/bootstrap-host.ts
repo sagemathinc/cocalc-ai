@@ -41,7 +41,6 @@
 
 import http from "node:http";
 import https from "node:https";
-import { hostname as osHostname } from "node:os";
 import { URL } from "node:url";
 import { buildHostSpec } from "./host-util";
 import { gcpInternalHostname, normalizeProviderId } from "@cocalc/cloud";
@@ -121,7 +120,7 @@ function isLoopbackHostname(hostname: string): boolean {
   );
 }
 
-let currentGcpProjectIdPromise: Promise<string | undefined> | undefined;
+let currentGcpInternalHostnamePromise: Promise<string | undefined> | undefined;
 
 export function normalizeGcpProjectId(value?: string): string | undefined {
   const projectId = `${value ?? ""}`.trim().toLowerCase();
@@ -141,61 +140,45 @@ export function configuredGcpProjectIdFromServiceAccountJson(
   }
 }
 
-async function getCurrentGcpProjectId({
-  configuredProjectId,
-}: {
-  configuredProjectId?: string;
-} = {}): Promise<string | undefined> {
-  const normalizedConfigured = normalizeGcpProjectId(configuredProjectId);
-  if (normalizedConfigured) return normalizedConfigured;
-  currentGcpProjectIdPromise ??= (async () => {
+async function getCurrentGcpInternalHostname({}: Record<
+  string,
+  never
+> = {}): Promise<string | undefined> {
+  currentGcpInternalHostnamePromise ??= (async () => {
     try {
       const response = await fetch(
-        "http://metadata.google.internal/computeMetadata/v1/project/project-id",
+        "http://metadata.google.internal/computeMetadata/v1/instance/hostname",
         {
           headers: { "Metadata-Flavor": "Google" },
           signal: AbortSignal.timeout(1500),
         },
       );
       if (!response.ok) return undefined;
-      return normalizeGcpProjectId(await response.text());
+      return gcpInternalHostname({
+        configuredHostname: `${await response.text()}`.trim(),
+      });
     } catch {
       return undefined;
     }
   })();
-  const projectId = await currentGcpProjectIdPromise;
-  if (!projectId) {
-    currentGcpProjectIdPromise = undefined;
+  const hostname = await currentGcpInternalHostnamePromise;
+  if (!hostname) {
+    currentGcpInternalHostnamePromise = undefined;
   }
-  return projectId;
-}
-
-async function getCurrentGcpInternalHostname({
-  configuredProjectId,
-}: {
-  configuredProjectId?: string;
-} = {}): Promise<string | undefined> {
-  return gcpInternalHostname({
-    instanceName: osHostname(),
-    projectId: await getCurrentGcpProjectId({ configuredProjectId }),
-  });
+  return hostname;
 }
 
 async function resolveMasterConatServer({
   providerId,
   configuredAddress,
-  gcpProjectId,
 }: {
   providerId?: string;
   configuredAddress?: string;
-  gcpProjectId?: string;
 }): Promise<string | undefined> {
   const address = `${configuredAddress ?? ""}`.trim();
   if (!address) return undefined;
   if (providerId !== "gcp") return address;
-  const internalHostname = await getCurrentGcpInternalHostname({
-    configuredProjectId: gcpProjectId,
-  });
+  const internalHostname = await getCurrentGcpInternalHostname();
   if (!internalHostname) return address;
   const routerPort =
     Number.parseInt(
@@ -806,7 +789,6 @@ export async function buildBootstrapScripts(
     : (opts.launchpadBaseUrl ?? "");
   const masterAddress = await resolveMasterConatServer({
     providerId,
-    gcpProjectId,
     configuredAddress:
       process.env.MASTER_CONAT_SERVER ??
       process.env.COCALC_MASTER_CONAT_SERVER ??
@@ -862,6 +844,7 @@ export async function buildBootstrapScripts(
       ? (resolveGcpManagedHostInternalUrl({
           runtime: metadata.runtime,
           tunnelEnabled,
+          fallbackProjectId: gcpProjectId,
         }) ??
         row.internal_url ??
         (tunnel?.hostname
