@@ -24,7 +24,6 @@ import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import { trunc_middle } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import { lite } from "@cocalc/frontend/lite";
 import { createPathSegmentLink } from "./path-segment-link";
 
 interface Props {
@@ -245,9 +244,14 @@ export const PathNavigator: React.FC<Props> = React.memo(
       return normalizeAbsolutePath(path, homePath);
     };
 
+    const normalizeLegacyTempPath = (path: string): string =>
+      path === "/scratch" || path.startsWith("/scratch/")
+        ? `/tmp${path.slice("/scratch".length)}`
+        : path;
+
     const sourceForPath = (
       path: string,
-    ): { key: "home" | "root" | "tmp" | "scratch"; rootPath: string } => {
+    ): { key: "home" | "root" | "tmp"; rootPath: string } => {
       if (!path.startsWith("/")) {
         return { key: "home", rootPath: homePath };
       }
@@ -259,9 +263,6 @@ export const PathNavigator: React.FC<Props> = React.memo(
       }
       if (path === "/tmp" || path.startsWith("/tmp/")) {
         return { key: "tmp", rootPath: "/tmp" };
-      }
-      if (!lite && (path === "/scratch" || path.startsWith("/scratch/"))) {
-        return { key: "scratch", rootPath: "/scratch" };
       }
       return { key: "root", rootPath: "/" };
     };
@@ -283,11 +284,11 @@ export const PathNavigator: React.FC<Props> = React.memo(
       return path.split("/").filter(Boolean);
     };
 
-    const currentPath = normalizePathForNav(
-      currentPathOverride ?? currentPathAbs ?? homePath,
+    const currentPath = normalizeLegacyTempPath(
+      normalizePathForNav(currentPathOverride ?? currentPathAbs ?? homePath),
     );
-    const historyPath = normalizePathForNav(
-      historyPathOverride ?? historyPathAbs ?? currentPath,
+    const historyPath = normalizeLegacyTempPath(
+      normalizePathForNav(historyPathOverride ?? historyPathAbs ?? currentPath),
     );
     const currentSource = sourceForPath(currentPath);
     const historySource = sourceForPath(historyPath);
@@ -311,22 +312,12 @@ export const PathNavigator: React.FC<Props> = React.memo(
         onClick: () => navigate("/tmp"),
       },
     ];
-    if (!lite) {
-      sourceMenuItems.push({
-        key: "scratch",
-        label: "/scratch",
-        onClick: () => navigate("/scratch"),
-      });
-    }
-
     const sourceTitle =
       currentSource.key === "home"
         ? "Home"
         : currentSource.key === "root"
           ? "/"
-          : currentSource.key === "tmp"
-            ? "/tmp"
-            : "/scratch";
+          : "/tmp";
 
     function make_path() {
       const v: any[] = [];

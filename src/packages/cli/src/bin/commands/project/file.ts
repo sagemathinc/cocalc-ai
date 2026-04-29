@@ -337,10 +337,7 @@ export function registerProjectFileCommands(
     .option("-w, --project <project>", "project id or name")
     .option("-r, --recursive", "remove directories recursively")
     .option("-f, --force", "do not fail if path is missing")
-    .option(
-      "--sudo",
-      "remove using elevated permissions within home or /scratch",
-    )
+    .option("--sudo", "remove using elevated permissions within home or /tmp")
     .action(
       async (
         path: string,

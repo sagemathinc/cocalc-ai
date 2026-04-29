@@ -970,6 +970,13 @@ function mapContainerPathToHost(
       ? path.join(containerPathMap.rootHostPath, runtimeRelative)
       : containerPathMap.rootHostPath;
   }
+  if (targetPath === "/tmp" || targetPath.startsWith("/tmp/")) {
+    const suffix = targetPath.slice("/tmp".length).replace(/^\/+/, "");
+    if (!containerPathMap.scratchHostPath) return targetPath;
+    return suffix
+      ? path.join(containerPathMap.scratchHostPath, suffix)
+      : containerPathMap.scratchHostPath;
+  }
   if (targetPath === "/scratch" || targetPath.startsWith("/scratch/")) {
     const suffix = targetPath.slice("/scratch".length).replace(/^\/+/, "");
     if (!containerPathMap.scratchHostPath) return targetPath;

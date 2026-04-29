@@ -164,18 +164,18 @@ describe("projects.copyProjectFiles", () => {
     expect(createBackupMock).not.toHaveBeenCalled();
   });
 
-  it("rejects cross-host copies from /scratch with clear error", async () => {
+  it("rejects cross-host copies from /tmp with clear error", async () => {
     queryMock = makeProjectQuery({ src: "h1", dest: "h2" });
     const { copyProjectFiles } = await import("./copy");
     await expect(
       copyProjectFiles({
         account_id: "acct",
         timeout_ms: 0,
-        src: { project_id: "src", path: "/scratch/data.bin" },
+        src: { project_id: "src", path: "/tmp/data.bin" },
         dests: [{ project_id: "dest", path: "/root/data.bin" }],
       }),
     ).rejects.toThrow(
-      "copying from /scratch across hosts is not supported because /scratch is not backed up",
+      "copying from /tmp across hosts is not supported because /tmp is not backed up",
     );
 
     expect(cpMock).not.toHaveBeenCalled();
@@ -265,7 +265,7 @@ describe("projects.copyProjectFiles", () => {
     const result = await copyProjectFiles({
       account_id: "acct",
       timeout_ms: 0,
-      src: { project_id: "src", path: ["/root/a.txt", "/tmp/b.txt"] },
+      src: { project_id: "src", path: ["/root/a.txt", "/root/b.txt"] },
       dests: [{ project_id: "dest", path: "/root/target" }],
       snapshot_id: "snap-existing",
     });
@@ -286,7 +286,7 @@ describe("projects.copyProjectFiles", () => {
     expect(upsertMock).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        src_path: "tmp/b.txt",
+        src_path: "b.txt",
         dest_path: "/root/target/b.txt",
       }),
     );

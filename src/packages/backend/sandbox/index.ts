@@ -262,8 +262,9 @@ interface Options {
   // optional path to treat as "/" when mounted/available.
   // if set but unavailable, operations fail.
   rootfs?: string;
-  // optional path to treat as /scratch when mounted/available.
-  // if /scratch is requested but this is unavailable, operations fail.
+  // optional path to treat as disk-backed temporary storage when
+  // mounted/available. This is exposed at /tmp and may also be reached via
+  // the legacy /scratch alias.
   scratch?: string;
   // absolute paths to treat as aliases for the project home mount.
   homeAliases?: string[];
@@ -801,7 +802,7 @@ export class SandboxedFilesystem {
       return { root: sandboxBasePath, rel };
     }
     throw new SandboxError(
-      `EPERM: sudo delete is only supported in project home and /scratch, not '${path}'`,
+      `EPERM: sudo delete is only supported in project home and /tmp, not '${path}'`,
       { errno: -1, code: "EPERM", syscall: "rm", path },
     );
   }
@@ -858,8 +859,11 @@ export class SandboxedFilesystem {
     requestedAbsolutePath: string,
   ): Promise<string> {
     if (!this.scratch) {
+      const label = requestedAbsolutePath.startsWith("/scratch")
+        ? "scratch"
+        : "temporary storage";
       throw new Error(
-        `scratch is not mounted; cannot access absolute path '${requestedAbsolutePath}'`,
+        `${label} is not mounted; cannot access absolute path '${requestedAbsolutePath}'`,
       );
     }
     if (this.scratchEnabled) {
@@ -874,8 +878,11 @@ export class SandboxedFilesystem {
     } catch {
       // handled below
     }
+    const label = requestedAbsolutePath.startsWith("/scratch")
+      ? "scratch"
+      : "temporary storage";
     throw new Error(
-      `scratch is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the workspace and try again.`,
+      `${label} is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the workspace and try again.`,
     );
   }
 
@@ -883,13 +890,16 @@ export class SandboxedFilesystem {
     pathInSandbox: string;
     sandboxBasePath: string;
     absoluteHomeAlias?: string;
-    absoluteScratchAlias: boolean;
+    absoluteTempAlias?: "tmp" | "scratch";
   }> {
     const resolvedInput = resolve("/", path);
     const isAbsoluteInput = path.startsWith("/");
     const absoluteHomeAlias = isAbsoluteInput
       ? this.resolveHomeAlias(resolvedInput)
       : undefined;
+    const isAbsoluteTmpAlias =
+      isAbsoluteInput &&
+      (resolvedInput == "/tmp" || resolvedInput.startsWith("/tmp/"));
     const isAbsoluteScratchAlias =
       isAbsoluteInput &&
       (resolvedInput == "/scratch" || resolvedInput.startsWith("/scratch/"));
@@ -907,7 +917,21 @@ export class SandboxedFilesystem {
         pathInSandbox: join(this.path, rel),
         sandboxBasePath: this.path,
         absoluteHomeAlias,
-        absoluteScratchAlias: false,
+        absoluteTempAlias: undefined,
+      };
+    }
+
+    if (this.scratch && (isAbsoluteTmpAlias || isAbsoluteScratchAlias)) {
+      const scratchBase =
+        await this.requireScratchForAbsolutePath(resolvedInput);
+      const prefix = isAbsoluteTmpAlias ? "/tmp" : "/scratch";
+      const rel =
+        resolvedInput == prefix ? "" : resolvedInput.slice(prefix.length + 1);
+      return {
+        pathInSandbox: join(scratchBase, rel),
+        sandboxBasePath: scratchBase,
+        absoluteHomeAlias: undefined,
+        absoluteTempAlias: isAbsoluteTmpAlias ? "tmp" : "scratch",
       };
     }
 
@@ -922,7 +946,7 @@ export class SandboxedFilesystem {
         pathInSandbox: join(scratchBase, rel),
         sandboxBasePath: scratchBase,
         absoluteHomeAlias: undefined,
-        absoluteScratchAlias: true,
+        absoluteTempAlias: "scratch",
       };
     }
 
@@ -933,7 +957,7 @@ export class SandboxedFilesystem {
       pathInSandbox: join(rootBase, resolvedInput),
       sandboxBasePath: rootBase,
       absoluteHomeAlias: undefined,
-      absoluteScratchAlias: false,
+      absoluteTempAlias: undefined,
     };
   }
 
@@ -997,13 +1021,13 @@ export class SandboxedFilesystem {
     pathInSandbox,
     sandboxBasePath,
     absoluteHomeAlias,
-    absoluteScratchAlias,
+    absoluteTempAlias,
     compareBasePath,
   }: {
     pathInSandbox: string;
     sandboxBasePath: string;
     absoluteHomeAlias?: string;
-    absoluteScratchAlias: boolean;
+    absoluteTempAlias?: "tmp" | "scratch";
     compareBasePath?: string;
   }): string => {
     const rel = this.toSandboxRelativePath(
@@ -1019,13 +1043,14 @@ export class SandboxedFilesystem {
         ? `${absoluteHomeAlias}${rel}`
         : `${absoluteHomeAlias}/${rel}`;
     }
-    if (absoluteScratchAlias) {
+    if (absoluteTempAlias) {
+      const prefix = absoluteTempAlias === "tmp" ? "/tmp" : "/scratch";
       if (rel === "" || rel === "/") {
-        return "/scratch";
+        return prefix;
       }
       return rel.startsWith("/")
-        ? `/scratch/${rel.slice(1)}`
-        : `/scratch/${rel}`;
+        ? `${prefix}/${rel.slice(1)}`
+        : `${prefix}/${rel}`;
     }
     return rel;
   };
@@ -1074,7 +1099,7 @@ export class SandboxedFilesystem {
       pathInSandbox,
       sandboxBasePath,
       absoluteHomeAlias,
-      absoluteScratchAlias,
+      absoluteTempAlias,
     } = await this.resolvePathInSandbox(path);
     const compareBase = this.unsafeMode
       ? undefined
@@ -1098,7 +1123,7 @@ export class SandboxedFilesystem {
           pathInSandbox: canonicalInSandbox,
           sandboxBasePath,
           absoluteHomeAlias,
-          absoluteScratchAlias,
+          absoluteTempAlias,
           compareBasePath: compareBase ?? sandboxBasePath,
         });
       } catch (err: any) {
@@ -1112,7 +1137,7 @@ export class SandboxedFilesystem {
           pathInSandbox,
           sandboxBasePath,
           absoluteHomeAlias,
-          absoluteScratchAlias,
+          absoluteTempAlias,
           compareBasePath: compareBase ?? sandboxBasePath,
         });
       }
@@ -2020,7 +2045,7 @@ export class SandboxedFilesystem {
       pathInSandbox,
       sandboxBasePath,
       absoluteHomeAlias,
-      absoluteScratchAlias,
+      absoluteTempAlias,
     } = await this.resolvePathInSandbox(path);
     const x = await realpath(pathInSandbox);
     const rel = this.toSandboxRelativePath(x, sandboxBasePath);
@@ -2030,11 +2055,12 @@ export class SandboxedFilesystem {
       }
       return `${absoluteHomeAlias}/${rel}`;
     }
-    if (absoluteScratchAlias) {
+    if (absoluteTempAlias) {
+      const prefix = absoluteTempAlias === "tmp" ? "/tmp" : "/scratch";
       if (rel === "" || rel === "/") {
-        return "/scratch";
+        return prefix;
       }
-      return `/scratch/${rel}`;
+      return `${prefix}/${rel}`;
     }
     return rel;
   };

@@ -625,6 +625,8 @@ async function resolveStaticRoot(
     normalized !== "" &&
     (!path.posix.isAbsolute(normalized) ||
       isProjectRuntimeHomeAliasPath(normalized) ||
+      normalized === "/tmp" ||
+      normalized.startsWith("/tmp/") ||
       normalized === "/scratch" ||
       normalized.startsWith("/scratch/"));
   if (!allowRoot) {

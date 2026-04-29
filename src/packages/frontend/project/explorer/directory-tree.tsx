@@ -93,7 +93,7 @@ function getRootPath(
     return "/tmp";
   }
   if (current_path === "/scratch" || current_path.startsWith("/scratch/")) {
-    return "/scratch";
+    return "/tmp";
   }
   return "/";
 }

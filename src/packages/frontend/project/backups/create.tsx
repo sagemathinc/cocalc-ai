@@ -118,9 +118,9 @@ export default function CreateBackup({
           <p>
             Backups are archives that include your project files, any software
             you have installed, and TimeTravel edit history, but not the
-            contents of /tmp or /scratch. Backups are state stored separately
-            from project hosts. Creating a backup runs in the background and
-            does not interrupt your work.
+            contents of /tmp. Backups are state stored separately from project
+            hosts. Creating a backup runs in the background and does not
+            interrupt your work.
           </p>
           <ShowError
             style={{ marginTop: "10px" }}

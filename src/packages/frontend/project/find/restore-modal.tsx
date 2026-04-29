@@ -11,7 +11,7 @@ export default function FindRestoreModal({
   loading,
   error,
   onRestoreOriginal,
-  onRestoreScratch,
+  onRestoreTmp,
   onOpenDirectory,
   onCancel,
   preview,
@@ -29,7 +29,7 @@ export default function FindRestoreModal({
     truncated?: boolean;
   };
   onRestoreOriginal: () => void;
-  onRestoreScratch: () => void;
+  onRestoreTmp: () => void;
   onOpenDirectory: () => void;
   onCancel: () => void;
 }) {
@@ -61,8 +61,8 @@ export default function FindRestoreModal({
           >
             Restore to original path (overwrite)
           </Button>
-          <Button block loading={loading} onClick={onRestoreScratch}>
-            Restore to /scratch/&lt;path&gt;
+          <Button block loading={loading} onClick={onRestoreTmp}>
+            Restore to /tmp/&lt;path&gt;
           </Button>
           <Button block onClick={onOpenDirectory} disabled={loading}>
             {openLabel}

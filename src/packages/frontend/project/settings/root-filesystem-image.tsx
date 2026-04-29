@@ -862,8 +862,8 @@ export default function RootFilesystemImage() {
               description={
                 <>
                   Upgrading changes the project to a newer managed RootFS image.
-                  Your files in <code>/root</code> and <code>/scratch</code>{" "}
-                  stay available. Packages and files you added directly under{" "}
+                  Your files in <code>/root</code> and <code>/tmp</code> stay
+                  available. Packages and files you added directly under{" "}
                   <code>/</code> belong to the previous RootFS state and only
                   come back if you roll back.
                 </>
@@ -980,7 +980,7 @@ export default function RootFilesystemImage() {
                 upgrading to a newer release, rolling back, or deliberately
                 moving to a different software environment. Switching back later
                 restores the previous per-image <code>/</code> customizations;
-                <code> /root</code> and <code>/scratch</code> remain available.
+                <code> /root</code> and <code>/tmp</code> remain available.
               </>
             }
             style={{ marginBottom: "12px" }}
@@ -1192,8 +1192,8 @@ export default function RootFilesystemImage() {
                     environment as a managed image that can be reused in your
                     other projects, by collaborators, in courses, or publicly.
                     This does not publish <code>/root</code> or{" "}
-                    <code>/scratch</code>, and it does not automatically switch
-                    this project to the new image.
+                    <code>/tmp</code>, and it does not automatically switch this
+                    project to the new image.
                   </>
                 }
               />
@@ -1995,7 +1995,7 @@ function buildRootfsPublishAgentPrompt(opts: {
     "```",
     "",
     publishMode === "copy" && publishCopyMode === "project"
-      ? "Important: this publishes the current visible / software environment. It does not publish /root or /scratch, and it does not automatically switch the project to the new image."
+      ? "Important: this publishes the current visible / software environment. It does not publish /root or /tmp, and it does not automatically switch the project to the new image."
       : publishMode === "manage"
         ? `Important: update the existing catalog entry${publishSourceEntry?.label ? ` (${publishSourceEntry.label})` : ""} instead of creating another copy.`
         : "Important: this only saves catalog metadata for the current base image. It does not create a new managed RootFS artifact from the live project state.",

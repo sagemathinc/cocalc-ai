@@ -1035,16 +1035,15 @@ export async function start({
     }
     args.push(mountArg({ source: home, target: env.HOME }));
     if (scratch) {
+      args.push(mountArg({ source: scratch, target: "/tmp" }));
+      // Keep the legacy /scratch alias for compatibility while the rest of the
+      // product surface is migrated to /tmp.
       args.push(mountArg({ source: scratch, target: "/scratch" }));
-    }
-    if (config.tmp) {
+    } else if (config.tmp) {
       args.push(
         "--mount",
         `type=tmpfs,tmpfs-size=${config.tmp},tmpfs-mode=1777,destination=/tmp`,
       );
-    } else if (scratch) {
-      await mkdir(join(scratch, "tmp"), { recursive: true });
-      args.push(mountArg({ source: join(scratch, "tmp"), target: "/tmp" }));
     }
 
     for (const key in env) {

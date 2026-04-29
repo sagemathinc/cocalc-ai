@@ -151,8 +151,8 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
                 takes effect immediately. Important student data belongs in
                 <Typography.Text code> /root </Typography.Text>
                 or
-                <Typography.Text code> /scratch </Typography.Text>, not in the
-                base RootFS image itself.
+                <Typography.Text code> /tmp </Typography.Text>, not in the base
+                RootFS image itself.
               </>
             }
           />
@@ -364,7 +364,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
             Tell students to treat
             <Typography.Text code> /root </Typography.Text>
             as the place for long-term project data and configuration, and
-            <Typography.Text code> /scratch </Typography.Text>
+            <Typography.Text code> /tmp </Typography.Text>
             as ephemeral workspace storage.
           </Typography.Paragraph>
         </Space>

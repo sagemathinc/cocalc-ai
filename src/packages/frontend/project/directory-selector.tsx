@@ -36,7 +36,6 @@ import useFiles, {
 } from "@cocalc/frontend/project/listing/use-files";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import { lite } from "@cocalc/frontend/lite";
 
 const NEW_FOLDER = "New Folder";
 
@@ -61,7 +60,13 @@ interface Props {
   allowAbsolutePaths?: boolean;
 }
 
-type RootSource = "home" | "root" | "tmp" | "scratch";
+type RootSource = "home" | "root" | "tmp";
+
+function normalizeLegacyTempPath(path: string): string {
+  return path === "/scratch" || path.startsWith("/scratch/")
+    ? `/tmp${path.slice("/scratch".length)}`
+    : path;
+}
 
 function sourceForPath(
   path: string,
@@ -79,8 +84,8 @@ function sourceForPath(
   if (path === "/tmp" || path.startsWith("/tmp/")) {
     return { source: "tmp", rootPath: "/tmp" };
   }
-  if (!lite && (path === "/scratch" || path.startsWith("/scratch/"))) {
-    return { source: "scratch", rootPath: "/scratch" };
+  if (path === "/scratch" || path.startsWith("/scratch/")) {
+    return { source: "tmp", rootPath: "/tmp" };
   }
   return { source: "root", rootPath: "/" };
 }
@@ -157,9 +162,8 @@ export default function DirectorySelector({
       ? normalizeAbsolutePath(resolvedHome)
       : getProjectHomeDirectory(project_id);
   const initialPath = startingPath ?? frameContext.path ?? "";
-  const normalizedInitialAbs = normalizeAbsolutePath(
-    initialPath || homePath,
-    homePath,
+  const normalizedInitialAbs = normalizeLegacyTempPath(
+    normalizeAbsolutePath(initialPath || homePath, homePath),
   );
   const initialRootPath = allowAbsolutePaths
     ? sourceForPath(normalizedInitialAbs, homePath).rootPath
@@ -189,9 +193,7 @@ export default function DirectorySelector({
       ? "Home"
       : rootSource.source === "root"
         ? "/"
-        : rootSource.source === "tmp"
-          ? "/tmp"
-          : "/scratch";
+        : "/tmp";
   const rootDisplayName =
     rootSource.source === "home" ? "Home Folder" : rootSource.rootPath;
 
@@ -249,18 +251,6 @@ export default function DirectorySelector({
       },
     },
   ];
-  if (!lite) {
-    sourceMenuItems.push({
-      key: "scratch",
-      label: "/scratch",
-      onClick: () => {
-        setRootPath("/scratch");
-        setExpandedPaths(new Set(["/scratch"]));
-        setSelectedPaths(new Set());
-      },
-    });
-  }
-
   return (
     <Card
       title={
