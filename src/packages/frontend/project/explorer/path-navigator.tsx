@@ -244,11 +244,6 @@ export const PathNavigator: React.FC<Props> = React.memo(
       return normalizeAbsolutePath(path, homePath);
     };
 
-    const normalizeLegacyTempPath = (path: string): string =>
-      path === "/scratch" || path.startsWith("/scratch/")
-        ? `/tmp${path.slice("/scratch".length)}`
-        : path;
-
     const sourceForPath = (
       path: string,
     ): { key: "home" | "root" | "tmp"; rootPath: string } => {
@@ -284,11 +279,11 @@ export const PathNavigator: React.FC<Props> = React.memo(
       return path.split("/").filter(Boolean);
     };
 
-    const currentPath = normalizeLegacyTempPath(
-      normalizePathForNav(currentPathOverride ?? currentPathAbs ?? homePath),
+    const currentPath = normalizePathForNav(
+      currentPathOverride ?? currentPathAbs ?? homePath,
     );
-    const historyPath = normalizeLegacyTempPath(
-      normalizePathForNav(historyPathOverride ?? historyPathAbs ?? currentPath),
+    const historyPath = normalizePathForNav(
+      historyPathOverride ?? historyPathAbs ?? currentPath,
     );
     const currentSource = sourceForPath(currentPath);
     const historySource = sourceForPath(historyPath);

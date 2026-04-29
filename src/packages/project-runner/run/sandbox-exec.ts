@@ -164,7 +164,6 @@ export async function sandboxExec({
       args.push(mountArg({ source: home, target: HOME }));
       if (scratch) {
         args.push(mountArg({ source: scratch, target: "/tmp" }));
-        args.push(mountArg({ source: scratch, target: "/scratch" }));
       }
       const mounts = getCoCalcMounts();
       for (const path in mounts) {

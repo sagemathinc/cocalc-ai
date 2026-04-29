@@ -62,12 +62,6 @@ interface Props {
 
 type RootSource = "home" | "root" | "tmp";
 
-function normalizeLegacyTempPath(path: string): string {
-  return path === "/scratch" || path.startsWith("/scratch/")
-    ? `/tmp${path.slice("/scratch".length)}`
-    : path;
-}
-
 function sourceForPath(
   path: string,
   homePath: string,
@@ -82,9 +76,6 @@ function sourceForPath(
     return { source: "home", rootPath: homePath };
   }
   if (path === "/tmp" || path.startsWith("/tmp/")) {
-    return { source: "tmp", rootPath: "/tmp" };
-  }
-  if (path === "/scratch" || path.startsWith("/scratch/")) {
     return { source: "tmp", rootPath: "/tmp" };
   }
   return { source: "root", rootPath: "/" };
@@ -162,8 +153,9 @@ export default function DirectorySelector({
       ? normalizeAbsolutePath(resolvedHome)
       : getProjectHomeDirectory(project_id);
   const initialPath = startingPath ?? frameContext.path ?? "";
-  const normalizedInitialAbs = normalizeLegacyTempPath(
-    normalizeAbsolutePath(initialPath || homePath, homePath),
+  const normalizedInitialAbs = normalizeAbsolutePath(
+    initialPath || homePath,
+    homePath,
   );
   const initialRootPath = allowAbsolutePaths
     ? sourceForPath(normalizedInitialAbs, homePath).rootPath

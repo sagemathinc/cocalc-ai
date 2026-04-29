@@ -83,8 +83,7 @@ export async function localPath({
   disk?: number;
   // optional explicit temporary-volume quota. If omitted on btrfs, we still
   // create the extra temp volume and mirror the main project quota when
-  // available. The runtime mounts this volume at /tmp and may also expose a
-  // legacy /scratch alias.
+  // available. The runtime mounts this volume at /tmp.
   // set to 0 to disable the extra temporary volume for this call.
   scratch?: number;
   // if false, resolve paths without creating volumes

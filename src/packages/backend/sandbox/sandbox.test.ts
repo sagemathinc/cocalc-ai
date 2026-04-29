@@ -1303,18 +1303,11 @@ describeIfLinux("rootfs option sandbox", () => {
     await mkdir(scratch, { recursive: true });
     const fsScratch = new SandboxedFilesystem(home, { rootfs, scratch });
     await fsScratch.writeFile("/tmp/from-tmp.txt", "from-tmp");
-    await fsScratch.writeFile("/scratch/from-scratch.txt", "from-scratch");
     expect(await fsScratch.readFile("/tmp/from-tmp.txt", "utf8")).toBe(
       "from-tmp",
     );
-    expect(await fsScratch.readFile("/scratch/from-scratch.txt", "utf8")).toBe(
-      "from-scratch",
-    );
     expect(await readFile(join(scratch, "from-tmp.txt"), "utf8")).toBe(
       "from-tmp",
-    );
-    expect(await readFile(join(scratch, "from-scratch.txt"), "utf8")).toBe(
-      "from-scratch",
     );
     await expect(
       readFile(join(rootfs, "tmp", "from-tmp.txt"), "utf8"),
@@ -1367,13 +1360,21 @@ describeIfLinux("rootfs option sandbox", () => {
     );
     await expect(
       fsMissingScratch.writeFile("/scratch/legacy.txt", "blocked"),
-    ).rejects.toThrow(
-      "scratch is not mounted; cannot access absolute path '/scratch/legacy.txt'. Start the workspace and try again.",
-    );
+    ).rejects.toThrow("'/scratch' is no longer supported. Use '/tmp' instead.");
     await fsMissingScratch.writeFile("/home/user/home-still-ok.txt", "home-ok");
     expect(
       await fsMissingScratch.readFile("/home/user/home-still-ok.txt", "utf8"),
     ).toBe("home-ok");
+  });
+
+  it("rejects the removed /scratch alias even when temp storage exists", async () => {
+    scratch = join(tempDir, "test-scratch-mounted-legacy-alias");
+    await mkdir(scratch, { recursive: true });
+    const fsScratch = new SandboxedFilesystem(home, { rootfs, scratch });
+
+    await expect(
+      fsScratch.writeFile("/scratch/from-scratch.txt", "from-scratch"),
+    ).rejects.toThrow("'/scratch' is no longer supported. Use '/tmp' instead.");
   });
 });
 

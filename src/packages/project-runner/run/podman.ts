@@ -1036,9 +1036,6 @@ export async function start({
     args.push(mountArg({ source: home, target: env.HOME }));
     if (scratch) {
       args.push(mountArg({ source: scratch, target: "/tmp" }));
-      // Keep the legacy /scratch alias for compatibility while the rest of the
-      // product surface is migrated to /tmp.
-      args.push(mountArg({ source: scratch, target: "/scratch" }));
     } else if (config.tmp) {
       args.push(
         "--mount",

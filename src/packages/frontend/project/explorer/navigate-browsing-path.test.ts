@@ -46,10 +46,10 @@ describe("navigateBrowsingPath", () => {
       set_all_files_unchecked,
     });
 
-    navigateBrowsingPath("project-1", "/scratch/demo", { updateUrl: true });
+    navigateBrowsingPath("project-1", "/tmp/demo", { updateUrl: true });
 
-    expect(set_current_path).toHaveBeenCalledWith("/scratch/demo");
-    expect(set_url_to_path).toHaveBeenCalledWith("/scratch/demo", "");
+    expect(set_current_path).toHaveBeenCalledWith("/tmp/demo");
+    expect(set_url_to_path).toHaveBeenCalledWith("/tmp/demo", "");
     expect(set_all_files_unchecked).toHaveBeenCalled();
   });
 });

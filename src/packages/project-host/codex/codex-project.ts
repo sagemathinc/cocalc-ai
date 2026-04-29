@@ -995,7 +995,6 @@ async function ensureContainer({
   }
   if (scratch) {
     args.push(mountArg({ source: scratch, target: "/tmp" }));
-    args.push(mountArg({ source: scratch, target: "/scratch" }));
   }
   const mounts = getCoCalcMounts();
   for (const src in mounts) {

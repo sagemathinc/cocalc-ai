@@ -977,13 +977,6 @@ function mapContainerPathToHost(
       ? path.join(containerPathMap.scratchHostPath, suffix)
       : containerPathMap.scratchHostPath;
   }
-  if (targetPath === "/scratch" || targetPath.startsWith("/scratch/")) {
-    const suffix = targetPath.slice("/scratch".length).replace(/^\/+/, "");
-    if (!containerPathMap.scratchHostPath) return targetPath;
-    return suffix
-      ? path.join(containerPathMap.scratchHostPath, suffix)
-      : containerPathMap.scratchHostPath;
-  }
   return targetPath;
 }
 

@@ -33,7 +33,7 @@ describe("file-server sandbox policy", () => {
       "temporary storage is not mounted; cannot access absolute path '/tmp/data.txt'. Start the workspace and try again.",
     );
     await expect(fs.writeFile("/scratch/data.txt", "blocked")).rejects.toThrow(
-      "scratch is not mounted; cannot access absolute path '/scratch/data.txt'. Start the workspace and try again.",
+      "'/scratch' is no longer supported. Use '/tmp' instead.",
     );
   });
 
@@ -55,12 +55,10 @@ describe("file-server sandbox policy", () => {
 
     await fs.mkdir("/root");
     await fs.writeFile("/tmp/data.txt", "tmp");
-    await fs.writeFile("/scratch/legacy.txt", "legacy");
     await fs.writeFile("/home/user/home.txt", "home");
     await fs.writeFile("/root/root-home.txt", "rootfs-root");
 
     expect(await readFile(join(scratch, "data.txt"), "utf8")).toBe("tmp");
-    expect(await readFile(join(scratch, "legacy.txt"), "utf8")).toBe("legacy");
     expect(await readFile(join(rootfs, "root", "root-home.txt"), "utf8")).toBe(
       "rootfs-root",
     );
@@ -68,6 +66,9 @@ describe("file-server sandbox policy", () => {
     await expect(fs.readFile("/root/home.txt", "utf8")).rejects.toThrow();
     expect(await fs.readFile("/root/root-home.txt", "utf8")).toBe(
       "rootfs-root",
+    );
+    await expect(fs.writeFile("/scratch/legacy.txt", "legacy")).rejects.toThrow(
+      "'/scratch' is no longer supported. Use '/tmp' instead.",
     );
   });
 

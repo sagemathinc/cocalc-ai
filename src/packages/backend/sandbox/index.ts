@@ -263,8 +263,7 @@ interface Options {
   // if set but unavailable, operations fail.
   rootfs?: string;
   // optional path to treat as disk-backed temporary storage when
-  // mounted/available. This is exposed at /tmp and may also be reached via
-  // the legacy /scratch alias.
+  // mounted/available. This is exposed at /tmp.
   scratch?: string;
   // absolute paths to treat as aliases for the project home mount.
   homeAliases?: string[];
@@ -859,11 +858,8 @@ export class SandboxedFilesystem {
     requestedAbsolutePath: string,
   ): Promise<string> {
     if (!this.scratch) {
-      const label = requestedAbsolutePath.startsWith("/scratch")
-        ? "scratch"
-        : "temporary storage";
       throw new Error(
-        `${label} is not mounted; cannot access absolute path '${requestedAbsolutePath}'`,
+        `temporary storage is not mounted; cannot access absolute path '${requestedAbsolutePath}'`,
       );
     }
     if (this.scratchEnabled) {
@@ -878,11 +874,8 @@ export class SandboxedFilesystem {
     } catch {
       // handled below
     }
-    const label = requestedAbsolutePath.startsWith("/scratch")
-      ? "scratch"
-      : "temporary storage";
     throw new Error(
-      `${label} is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the workspace and try again.`,
+      `temporary storage is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the workspace and try again.`,
     );
   }
 
@@ -890,7 +883,7 @@ export class SandboxedFilesystem {
     pathInSandbox: string;
     sandboxBasePath: string;
     absoluteHomeAlias?: string;
-    absoluteTempAlias?: "tmp" | "scratch";
+    absoluteTempAlias?: "tmp";
   }> {
     const resolvedInput = resolve("/", path);
     const isAbsoluteInput = path.startsWith("/");
@@ -903,7 +896,6 @@ export class SandboxedFilesystem {
     const isAbsoluteScratchAlias =
       isAbsoluteInput &&
       (resolvedInput == "/scratch" || resolvedInput.startsWith("/scratch/"));
-
     // Relative paths (and absolute home alias paths) are always interpreted
     // relative to the project home mount `path`, even when rootfs mode is
     // enabled.
@@ -921,33 +913,22 @@ export class SandboxedFilesystem {
       };
     }
 
-    if (this.scratch && (isAbsoluteTmpAlias || isAbsoluteScratchAlias)) {
+    if (this.scratch && isAbsoluteTmpAlias) {
       const scratchBase =
         await this.requireScratchForAbsolutePath(resolvedInput);
-      const prefix = isAbsoluteTmpAlias ? "/tmp" : "/scratch";
+      const prefix = "/tmp";
       const rel =
         resolvedInput == prefix ? "" : resolvedInput.slice(prefix.length + 1);
       return {
         pathInSandbox: join(scratchBase, rel),
         sandboxBasePath: scratchBase,
         absoluteHomeAlias: undefined,
-        absoluteTempAlias: isAbsoluteTmpAlias ? "tmp" : "scratch",
+        absoluteTempAlias: "tmp",
       };
     }
 
     if (isAbsoluteScratchAlias) {
-      const scratchBase =
-        await this.requireScratchForAbsolutePath(resolvedInput);
-      const rel =
-        resolvedInput == "/scratch"
-          ? ""
-          : resolvedInput.slice("/scratch".length + 1);
-      return {
-        pathInSandbox: join(scratchBase, rel),
-        sandboxBasePath: scratchBase,
-        absoluteHomeAlias: undefined,
-        absoluteTempAlias: "scratch",
-      };
+      throw new Error(`'/scratch' is no longer supported. Use '/tmp' instead.`);
     }
 
     const rootBase = await this.requireRootfsForAbsolutePath(resolvedInput);
@@ -1027,7 +1008,7 @@ export class SandboxedFilesystem {
     pathInSandbox: string;
     sandboxBasePath: string;
     absoluteHomeAlias?: string;
-    absoluteTempAlias?: "tmp" | "scratch";
+    absoluteTempAlias?: "tmp";
     compareBasePath?: string;
   }): string => {
     const rel = this.toSandboxRelativePath(
@@ -1044,7 +1025,7 @@ export class SandboxedFilesystem {
         : `${absoluteHomeAlias}/${rel}`;
     }
     if (absoluteTempAlias) {
-      const prefix = absoluteTempAlias === "tmp" ? "/tmp" : "/scratch";
+      const prefix = "/tmp";
       if (rel === "" || rel === "/") {
         return prefix;
       }
@@ -2056,7 +2037,7 @@ export class SandboxedFilesystem {
       return `${absoluteHomeAlias}/${rel}`;
     }
     if (absoluteTempAlias) {
-      const prefix = absoluteTempAlias === "tmp" ? "/tmp" : "/scratch";
+      const prefix = "/tmp";
       if (rel === "" || rel === "/") {
         return prefix;
       }

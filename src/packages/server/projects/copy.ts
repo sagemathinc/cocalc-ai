@@ -496,15 +496,10 @@ export async function copyProjectFiles({
   let localCount = 0;
 
   if (remoteDests.length && !skip_queue) {
-    if (
-      srcPaths.some(
-        (p) =>
-          p === "/tmp" ||
-          p.startsWith("/tmp/") ||
-          p === "/scratch" ||
-          p.startsWith("/scratch/"),
-      )
-    ) {
+    if (srcPaths.some((p) => p === "/scratch" || p.startsWith("/scratch/"))) {
+      throw new Error("copying from /scratch is no longer supported; use /tmp");
+    }
+    if (srcPaths.some((p) => p === "/tmp" || p.startsWith("/tmp/"))) {
       throw new Error(
         "copying from /tmp across hosts is not supported because /tmp is not backed up",
       );

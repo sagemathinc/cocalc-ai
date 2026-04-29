@@ -2778,8 +2778,9 @@ async function restoreBackup({
       containerDest === "/scratch" ||
       containerDest.startsWith("/scratch/")
     ) {
-      root = scratch;
-      relDest = path.posix.relative("/scratch", containerDest);
+      throw new Error(
+        "restore destination '/scratch' is no longer supported; use '/tmp' instead",
+      );
     } else if (isSubPath(home, destPath)) {
       root = home;
       relDest = path.relative(home, destPath);
