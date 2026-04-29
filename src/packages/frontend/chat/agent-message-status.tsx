@@ -21,7 +21,6 @@ import { COLORS } from "@cocalc/util/theme";
 import CodexLogPanel from "./codex-log-panel";
 import type { ActivityLogContext } from "./actions/activity-logs";
 import type { CodexLiveLogStatus } from "./use-codex-log";
-import { IS_MOBILE } from "@cocalc/frontend/feature";
 
 const activityScrollPositions = new Map<string, number>();
 const SCROLL_BOTTOM_SENTINEL = Number.POSITIVE_INFINITY;
@@ -361,7 +360,6 @@ export function AgentActivityChip({
         background: palette.background,
         border: `1px solid ${palette.border}`,
         lineHeight: 1.2,
-        zoom: IS_MOBILE ? undefined : 1.4,
         cursor: "pointer",
         boxShadow: generating ? `inset 0 0 0 1px ${palette.border}` : undefined,
         ...style,
