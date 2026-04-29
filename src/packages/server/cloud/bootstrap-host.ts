@@ -65,6 +65,7 @@ import {
   DEFAULT_GCP_BAY_ROUTER_PORT,
   resolveGcpInternalConatUrl,
   resolveGcpManagedHostInternalUrl,
+  shouldUseGcpInternalConatUrl,
 } from "./internal-network";
 import { getHostSshPublicKeys } from "./ssh-key";
 
@@ -180,6 +181,15 @@ async function resolveMasterConatServer({
   if (providerId !== "gcp") return address;
   const internalHostname = await getCurrentGcpInternalHostname();
   if (!internalHostname) return address;
+  if (
+    !shouldUseGcpInternalConatUrl({
+      currentAddress: address,
+      bayInternalHostname: internalHostname,
+      mode: process.env.COCALC_GCP_INTERNAL_MASTER_CONAT_MODE,
+    })
+  ) {
+    return address;
+  }
   const routerPort =
     Number.parseInt(
       `${process.env.COCALC_BAY_ROUTER_PORT ?? process.env.COCALC_GCP_INTERNAL_MASTER_CONAT_PORT ?? ""}`,

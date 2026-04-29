@@ -69,3 +69,50 @@ export function resolveGcpInternalConatUrl({
   }
   return `http://${host}:${routerPort}${pathname}${search}`;
 }
+
+function hostnameLabel(value?: string | null): string | undefined {
+  const host = trim(value).toLowerCase().replace(/\.$/, "");
+  if (!host) return undefined;
+  return host.split(".")[0] || undefined;
+}
+
+export function shouldUseGcpInternalConatUrl({
+  currentAddress,
+  bayInternalHostname,
+  mode,
+}: {
+  currentAddress?: string | null;
+  bayInternalHostname?: string | null;
+  mode?: string | null;
+}): boolean {
+  const normalizedMode = trim(mode).toLowerCase();
+  if (
+    ["0", "false", "off", "never", "disable", "disabled"].includes(
+      normalizedMode,
+    )
+  ) {
+    return false;
+  }
+  const internalLabel = hostnameLabel(bayInternalHostname);
+  if (!internalLabel) return false;
+  if (
+    ["1", "true", "on", "always", "force", "enabled"].includes(normalizedMode)
+  ) {
+    return true;
+  }
+  const address = trim(currentAddress);
+  if (!address) return false;
+  try {
+    const parsed = new URL(address);
+    const currentHost = `${parsed.hostname ?? ""}`.trim().toLowerCase();
+    if (!currentHost) return false;
+    if (
+      currentHost === trim(bayInternalHostname).toLowerCase().replace(/\.$/, "")
+    ) {
+      return true;
+    }
+    return hostnameLabel(currentHost) === internalLabel;
+  } catch {
+    return false;
+  }
+}

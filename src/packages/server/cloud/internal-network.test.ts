@@ -3,6 +3,7 @@ import {
   resolveGcpInternalConatUrl,
   resolveGcpManagedHostInternalUrl,
   resolveGcpRuntimeInternalHostname,
+  shouldUseGcpInternalConatUrl,
 } from "./internal-network";
 
 describe("gcp internal network helpers", () => {
@@ -75,5 +76,39 @@ describe("gcp internal network helpers", () => {
         bayInternalHostname: "alpha.c.projecthosts.internal",
       }),
     ).toBe("http://alpha.c.projecthosts.internal:9102");
+  });
+
+  it("only auto-enables internal conat routing when the bay hostname matches", () => {
+    expect(
+      shouldUseGcpInternalConatUrl({
+        currentAddress: "https://alpha.cocalc.ai",
+        bayInternalHostname: "alpha.c.projecthosts.internal",
+      }),
+    ).toBe(true);
+    expect(
+      shouldUseGcpInternalConatUrl({
+        currentAddress: "https://lite4b.cocalc.ai",
+        bayInternalHostname:
+          "alpha-557fb6cc-c840-45c7-b578-79ccad2960d1.c.projecthosts.internal",
+      }),
+    ).toBe(false);
+  });
+
+  it("supports explicit override modes for internal conat routing", () => {
+    expect(
+      shouldUseGcpInternalConatUrl({
+        currentAddress: "https://lite4b.cocalc.ai",
+        bayInternalHostname:
+          "alpha-557fb6cc-c840-45c7-b578-79ccad2960d1.c.projecthosts.internal",
+        mode: "always",
+      }),
+    ).toBe(true);
+    expect(
+      shouldUseGcpInternalConatUrl({
+        currentAddress: "https://alpha.cocalc.ai",
+        bayInternalHostname: "alpha.c.projecthosts.internal",
+        mode: "never",
+      }),
+    ).toBe(false);
   });
 });
