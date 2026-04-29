@@ -40,6 +40,7 @@ import {
 import { COLORS } from "@cocalc/util/theme";
 import { getHostSizeDisplay } from "../utils/format";
 import { HostCurrentMetrics } from "./host-current-metrics";
+import { HostPlacementSummary, HostPressureTag } from "../pressure-ui";
 import {
   currentProjectHostAutomaticRollback,
   projectHostRollbackReasonLabel,
@@ -372,6 +373,7 @@ export const HostCard: React.FC<HostCardProps> = ({
               </Tag>
             </Tooltip>
           )}
+          <HostPressureTag pressure={host.pressure} />
         </Space>
       }
     >
@@ -419,6 +421,7 @@ export const HostCard: React.FC<HostCardProps> = ({
           {size.secondary ? ` · ${size.secondary}` : ""}
         </Typography.Text>
         <HostCurrentMetrics host={host} compact />
+        <HostPlacementSummary host={host} showNormal />
         <Typography.Text>GPU: {host.gpu ? "Yes" : "No"}</Typography.Text>
         {host.last_action && (
           <Typography.Text type="secondary">
