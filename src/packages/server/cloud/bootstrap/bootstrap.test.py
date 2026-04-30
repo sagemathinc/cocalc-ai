@@ -712,7 +712,10 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("metacopy=on,redirect_dir=on,index=off", script)
             self.assertIn("project-rustic-backup)", script)
             self.assertIn("project-rustic-restore)", script)
-            self.assertIn("--glob .snapshots --glob .snapshots/**", script)
+            self.assertIn(
+                '--glob ".snapshots" --glob ".snapshots/**"',
+                script,
+            )
             self.assertIn("normalize-rootfs)", script)
             self.assertIn("BEES_ALREADY_RUNNING", script)
             self.assertIn("flock -n 9", script)

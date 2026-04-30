@@ -2093,7 +2093,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       fi
     fi
     cd "$src"
-    exec "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" --glob .snapshots --glob .snapshots/** .
+    exec "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" --glob ".snapshots" --glob ".snapshots/**" .
     ;;
   project-rustic-restore)
     if [ "$#" -ne 3 ]; then

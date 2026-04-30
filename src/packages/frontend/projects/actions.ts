@@ -1463,6 +1463,51 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (!scope_id && op.scope_type !== "hub") {
       return;
     }
+    const applySuccessfulMove = () => {
+      actions.setState({ control_error: "" });
+      const previous_host_id =
+        logInfo.source_host_id ||
+        (store.getIn(["project_map", logInfo.project_id, "host_id"]) as
+          | string
+          | undefined);
+      if (logInfo.dest_host_id) {
+        const project_map = store.get("project_map");
+        const project = project_map?.get(logInfo.project_id);
+        if (project_map && project) {
+          let nextProject = project;
+          if (project.get("host_id") !== logInfo.dest_host_id) {
+            nextProject = nextProject.set("host_id", logInfo.dest_host_id);
+          }
+          if (
+            logInfo.dest_project_region &&
+            nextProject.get("region") !== logInfo.dest_project_region
+          ) {
+            nextProject = nextProject.set(
+              "region",
+              logInfo.dest_project_region,
+            );
+          }
+          if (nextProject !== project) {
+            this.setState({
+              project_map: project_map.set(logInfo.project_id, nextProject),
+            } as ProjectsState);
+          }
+        }
+        if (logInfo.dest_project_region) {
+          publishProjectDetailInvalidation({
+            project_id: logInfo.project_id,
+            fields: ["region"],
+          });
+        }
+        void this.ensure_host_info(logInfo.dest_host_id, true);
+      }
+      void refresh_projects_table();
+      this.handleOpenProjectHostChange({
+        project_id: logInfo.project_id,
+        source_host_id: previous_host_id,
+        dest_host_id: logInfo.dest_host_id,
+      });
+    };
     void webapp_client.conat_client
       .lroWait({
         op_id: op.op_id,
@@ -1476,50 +1521,34 @@ export class ProjectsActions extends Actions<ProjectsState> {
           actions.setState({ control_error: error });
           return;
         }
-        actions.setState({ control_error: "" });
-        const previous_host_id =
-          logInfo.source_host_id ||
-          (store.getIn(["project_map", logInfo.project_id, "host_id"]) as
-            | string
-            | undefined);
-        if (logInfo.dest_host_id) {
-          const project_map = store.get("project_map");
-          const project = project_map?.get(logInfo.project_id);
-          if (project_map && project) {
-            let nextProject = project;
-            if (project.get("host_id") !== logInfo.dest_host_id) {
-              nextProject = nextProject.set("host_id", logInfo.dest_host_id);
-            }
-            if (
-              logInfo.dest_project_region &&
-              nextProject.get("region") !== logInfo.dest_project_region
-            ) {
-              nextProject = nextProject.set(
-                "region",
-                logInfo.dest_project_region,
-              );
-            }
-            if (nextProject !== project) {
-              this.setState({
-                project_map: project_map.set(logInfo.project_id, nextProject),
-              } as ProjectsState);
-            }
-          }
-          if (logInfo.dest_project_region) {
-            publishProjectDetailInvalidation({
-              project_id: logInfo.project_id,
-              fields: ["region"],
-            });
-          }
-          void this.ensure_host_info(logInfo.dest_host_id, true);
-        }
-        this.handleOpenProjectHostChange({
-          project_id: logInfo.project_id,
-          source_host_id: previous_host_id,
-          dest_host_id: logInfo.dest_host_id,
-        });
+        applySuccessfulMove();
       })
-      .catch((err) => {
+      .catch(async (err) => {
+        try {
+          const summary = await webapp_client.conat_client.hub.lro.get({
+            op_id: op.op_id!,
+          });
+          if (summary?.status === "succeeded") {
+            applySuccessfulMove();
+            return;
+          }
+          if (
+            summary &&
+            summary.status !== "queued" &&
+            summary.status !== "running"
+          ) {
+            const reason = summary.error ?? summary.status;
+            actions.setState({
+              control_error: `Error move project -- ${reason}`,
+            });
+            return;
+          }
+        } catch (recoverErr) {
+          console.warn("watchMoveLro summary recovery failed", {
+            op_id: op.op_id,
+            err: `${recoverErr}`,
+          });
+        }
         const error = `Error move project -- ${err}`;
         actions.setState({ control_error: error });
       });

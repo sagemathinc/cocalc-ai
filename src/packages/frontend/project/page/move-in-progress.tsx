@@ -363,12 +363,20 @@ export default function MoveInProgress({
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        justifyContent: "center",
-        alignItems: "center",
-        overflowX: "auto",
+        justifyContent: "flex-start",
+        alignItems: "stretch",
+        overflow: "auto",
+        padding: "24px 0",
       }}
     >
-      <div style={{ maxWidth: "980px", width: "100%", padding: "0 24px" }}>
+      <div
+        style={{
+          maxWidth: "980px",
+          width: "100%",
+          padding: "0 24px",
+          alignSelf: "center",
+        }}
+      >
         <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           {renderStatusAlert()}
           {childProgress ? (
