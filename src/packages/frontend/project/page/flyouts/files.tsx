@@ -700,6 +700,7 @@ export function FilesFlyout({
       return (
         <TimeAgo
           date={mtime}
+          live={false}
           // don't popup the toggle if you just clicked to open the file
           click_to_toggle={isOpen(item)}
         />
