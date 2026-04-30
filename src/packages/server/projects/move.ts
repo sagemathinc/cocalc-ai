@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
-import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
 import {
   PROJECT_LOG_STREAM_NAME,
   type ProjectLogRow,
@@ -24,7 +24,10 @@ import { start as startProjectLro } from "../conat/api/projects";
 import { createBackup as createBackupLro } from "../conat/api/project-backups";
 import { resolveHostConnection } from "../conat/api/hosts";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
-import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
+import {
+  get as getLroStream,
+  waitForCompletion as waitForLroCompletion,
+} from "@cocalc/conat/lro/client";
 import {
   ensureProjectBackupRepoForRegion,
   getProjectBackupAssignmentState,
@@ -40,6 +43,7 @@ import {
   purgeProjectBackupsForRepo,
   type ProjectBackupPurgeResult,
 } from "./backup-purge";
+import { getLro } from "@cocalc/server/lro/lro-db";
 
 const log = getLogger("server:projects:move");
 const BACKUP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
@@ -56,6 +60,16 @@ const MOVE_SENTINEL_VERIFY_RETRY_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_SENTINEL_VERIFY_RETRY_MS) || 1000,
 );
+const CHILD_LRO_POLL_INTERVAL_MS = Math.max(
+  250,
+  Number(process.env.COCALC_MOVE_CHILD_LRO_POLL_INTERVAL_MS) || 1000,
+);
+const TERMINAL_LRO_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "canceled",
+  "expired",
+]);
 
 export const MOVE_CANCELED_CODE = "move-canceled";
 
@@ -607,6 +621,149 @@ function mergeMoveProgressDetail({
   return Object.keys(detail).length ? detail : undefined;
 }
 
+async function waitForChildLroCompletion({
+  op_id,
+  scope_type,
+  scope_id,
+  timeout_ms,
+  onProgress,
+  onSummary,
+}: {
+  op_id: string;
+  scope_type: "project" | "account" | "host" | "hub";
+  scope_id?: string;
+  timeout_ms?: number;
+  onProgress?: (event: Extract<LroEvent, { type: "progress" }>) => void;
+  onSummary?: (summary: LroSummary) => void;
+}): Promise<LroSummary> {
+  let stream: Awaited<ReturnType<typeof getLroStream>> | undefined;
+  try {
+    stream = await getLroStream({
+      op_id,
+      scope_type,
+      scope_id,
+      client: conat(),
+    });
+  } catch (err) {
+    log.warn("move child lro stream init failed; using db polling", {
+      op_id,
+      scope_type,
+      scope_id,
+      err,
+    });
+  }
+
+  let done = false;
+  let lastIndex = 0;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let pollId: ReturnType<typeof setInterval> | undefined;
+
+  return await new Promise<LroSummary>((resolve, reject) => {
+    const cleanup = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      if (pollId) {
+        clearInterval(pollId);
+      }
+      if (stream) {
+        stream.removeListener("change", handleChange);
+        stream.removeListener("closed", handleClosed);
+        stream.close();
+      }
+    };
+
+    const finish = (summary: LroSummary) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve(summary);
+    };
+
+    const fail = (err: Error) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      reject(err);
+    };
+
+    const handleEvents = (events: LroEvent[]) => {
+      if (events.length < lastIndex) {
+        lastIndex = 0;
+      }
+      for (let i = lastIndex; i < events.length; i += 1) {
+        const event = events[i];
+        if (event.type === "progress") {
+          onProgress?.(event);
+        }
+        if (event.type === "summary") {
+          onSummary?.(event.summary);
+          if (TERMINAL_LRO_STATUSES.has(event.summary.status)) {
+            finish(event.summary);
+            return;
+          }
+        }
+      }
+      lastIndex = events.length;
+    };
+
+    const handleChange = () => {
+      if (done || !stream) return;
+      try {
+        handleEvents(stream.getAll());
+      } catch (err) {
+        log.warn(
+          "move child lro stream read failed; continuing with db polling",
+          {
+            op_id,
+            err,
+          },
+        );
+      }
+    };
+
+    const pollSummary = async () => {
+      if (done) return;
+      try {
+        const summary = await getLro(op_id);
+        if (!summary) return;
+        onSummary?.(summary);
+        if (TERMINAL_LRO_STATUSES.has(summary.status)) {
+          finish(summary);
+        }
+      } catch (err) {
+        log.warn("move child lro poll failed", {
+          op_id,
+          err,
+        });
+      }
+    };
+
+    const handleClosed = () => {
+      void pollSummary();
+    };
+
+    if (stream) {
+      stream.on("change", handleChange);
+      stream.on("closed", handleClosed);
+      handleChange();
+    }
+
+    pollId = setInterval(() => {
+      void pollSummary();
+    }, CHILD_LRO_POLL_INTERVAL_MS);
+    pollId.unref?.();
+    void pollSummary();
+
+    if (timeout_ms && timeout_ms > 0) {
+      timeoutId = setTimeout(() => {
+        fail(new Error("timeout waiting for lro completion"));
+      }, timeout_ms);
+      timeoutId.unref?.();
+    }
+  });
+}
+
 async function performBackupRegionCutover({
   context,
   progress,
@@ -836,11 +993,10 @@ async function createFinalBackup({
       },
     }),
   });
-  const summary = await waitForLroCompletion({
+  const summary = await waitForChildLroCompletion({
     op_id: backupOp.op_id,
     scope_type: backupOp.scope_type,
     scope_id: backupOp.scope_id,
-    client: conat(),
     timeout_ms: BACKUP_TIMEOUT_MS,
     onProgress: (event) => {
       progress({

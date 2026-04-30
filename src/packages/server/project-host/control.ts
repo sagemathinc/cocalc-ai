@@ -17,6 +17,7 @@ import {
 import { getCurrentProjectRootfsBinding } from "@cocalc/server/projects/rootfs-state";
 import { assertCanRestoreProvisionedProjectStorage } from "@cocalc/server/membership/project-limits";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
+import { mapCloudRegionToR2Region, parseR2Region } from "@cocalc/util/consts";
 import { getRoutedHostControlClient } from "./client";
 import { resolveHostBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
 
@@ -57,6 +58,7 @@ export type ProjectMeta = {
   users?: any;
   image?: string;
   host_id?: string;
+  region?: string | null;
   owning_bay_id?: string;
   authorized_keys?: string;
   run_quota?: any;
@@ -90,11 +92,19 @@ export function hostPlacementPressureRank(
 export function choosePlacementHostRow<T extends HostRegistryRow>(
   rows: T[],
   random: () => number = Math.random,
+  project_region?: string,
 ): T | undefined {
-  if (rows.length === 0) return;
+  const eligibleRows =
+    project_region == null
+      ? rows
+      : rows.filter(
+          (row) =>
+            mapCloudRegionToR2Region(row.region ?? "") === project_region,
+        );
+  if (eligibleRows.length === 0) return;
   let bestRank = Number.POSITIVE_INFINITY;
   const rankedRows: Array<{ row: T; rank: number }> = [];
-  for (const row of rows) {
+  for (const row of eligibleRows) {
     const rank = hostPlacementPressureRank(
       normalizeHostPressureZone(row.metadata?.pressure?.zone),
     );
@@ -289,7 +299,7 @@ export function shouldSkipStartForSnapshot({
 
 export async function loadProject(project_id: string): Promise<ProjectMeta> {
   const { rows } = await pool().query(
-    "SELECT title, users, rootfs_image as image, host_id, owning_bay_id, run_quota FROM projects WHERE project_id=$1",
+    "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1",
     [project_id],
   );
   if (!rows[0]) throw Error(`project ${project_id} not found`);
@@ -348,9 +358,11 @@ async function hostExistsAnywhere(host_id: string): Promise<boolean> {
 export async function selectActiveHost({
   exclude_host_id,
   bay_id,
+  project_region,
 }: {
   exclude_host_id?: string;
   bay_id?: string;
+  project_region?: string;
 } = {}) {
   const params: any[] = [];
   const where: string[] = [
@@ -373,7 +385,7 @@ export async function selectActiveHost({
     `,
     params,
   );
-  const row = choosePlacementHostRow(rows);
+  const row = choosePlacementHostRow(rows, Math.random, project_region);
   if (!row) return undefined;
   return mapHostRegistryRow(row);
 }
@@ -433,6 +445,7 @@ export async function savePlacement(
 async function ensurePlacement(project_id: string): Promise<HostPlacement> {
   const meta = await loadProject(project_id);
   const projectBayId = effectiveBayId(meta.owning_bay_id);
+  const projectRegion = parseR2Region(meta.region) ?? undefined;
   if (meta.host_id) {
     const hostInfo = await loadHostFromRegistry(meta.host_id);
     if (!hostInfo) {
@@ -448,8 +461,16 @@ async function ensurePlacement(project_id: string): Promise<HostPlacement> {
     return { host_id: meta.host_id };
   }
 
-  const chosen = await selectActiveHost({ bay_id: projectBayId });
+  const chosen = await selectActiveHost({
+    bay_id: projectBayId,
+    project_region: projectRegion,
+  });
   if (!chosen) {
+    if (projectRegion) {
+      throw Error(
+        `no running project-host available in bay ${projectBayId} for region ${projectRegion}`,
+      );
+    }
     throw Error(`no running project-host available in bay ${projectBayId}`);
   }
 

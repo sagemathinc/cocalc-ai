@@ -142,4 +142,24 @@ describe("host placement pressure helpers", () => {
     );
     expect(selected?.id).toBe("host-observe");
   });
+
+  it("filters placement candidates to the project's region before ranking by pressure", () => {
+    const selected = choosePlacementHostRow(
+      [
+        {
+          id: "host-wrong-region",
+          region: "europe-west12",
+          metadata: { pressure: { zone: "normal" } },
+        },
+        {
+          id: "host-right-region",
+          region: "us-west3",
+          metadata: { pressure: { zone: "observe" } },
+        },
+      ],
+      () => 0,
+      "wnam",
+    );
+    expect(selected?.id).toBe("host-right-region");
+  });
 });

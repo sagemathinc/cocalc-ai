@@ -1,5 +1,7 @@
 export {};
 
+import { EventEmitter } from "node:events";
+
 let queryMock: jest.Mock;
 let getExplicitProjectRoutedClientMock: jest.Mock;
 let loadHostFromRegistryMock: jest.Mock;
@@ -9,7 +11,9 @@ let savePlacementMock: jest.Mock;
 let stopProjectOnHostMock: jest.Mock;
 let startProjectLroMock: jest.Mock;
 let createBackupLroMock: jest.Mock;
+let getLroStreamMock: jest.Mock;
 let waitForLroCompletionMock: jest.Mock;
+let getLroMock: jest.Mock;
 let assertPortableProjectRootfsMock: jest.Mock;
 let resolveHostConnectionMock: jest.Mock;
 let getProjectBackupAssignmentStateMock: jest.Mock;
@@ -74,7 +78,12 @@ jest.mock("@cocalc/server/conat/route-client", () => ({
 }));
 
 jest.mock("@cocalc/conat/lro/client", () => ({
+  get: (...args: any[]) => getLroStreamMock(...args),
   waitForCompletion: (...args: any[]) => waitForLroCompletionMock(...args),
+}));
+
+jest.mock("@cocalc/server/lro/lro-db", () => ({
+  getLro: (...args: any[]) => getLroMock(...args),
 }));
 
 jest.mock("./offline-move-confirmation", () => ({
@@ -117,6 +126,7 @@ describe("moveProjectToHost", () => {
   };
   let currentRoutedHostId: string;
   let routedFsByHost: Map<string, Map<string, string>>;
+  let lroSummaryByOpId: Map<string, any>;
 
   beforeEach(() => {
     jest.resetModules();
@@ -126,6 +136,21 @@ describe("moveProjectToHost", () => {
     routedFsByHost = new Map([
       [SOURCE_HOST_ID, sharedFiles],
       [DEST_HOST_ID, sharedFiles],
+    ]);
+    lroSummaryByOpId = new Map([
+      [
+        "55555555-5555-4555-8555-555555555555",
+        {
+          op_id: "55555555-5555-4555-8555-555555555555",
+          scope_type: "project",
+          scope_id: PROJECT_ID,
+          status: "succeeded",
+          result: {
+            id: "backup-1",
+            time: new Date("2026-04-26T16:00:00.000Z"),
+          },
+        },
+      ],
     ]);
     postTimeoutState = {
       host_id: DEST_HOST_ID,
@@ -195,6 +220,9 @@ describe("moveProjectToHost", () => {
       scope_type: "project",
       scope_id: PROJECT_ID,
     }));
+    getLroStreamMock = jest.fn(async () => {
+      throw new Error("test lro stream unavailable");
+    });
     waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
       if (op_id === "55555555-5555-4555-8555-555555555555") {
         return {
@@ -207,6 +235,7 @@ describe("moveProjectToHost", () => {
       }
       throw new Error("timeout waiting for lro completion");
     });
+    getLroMock = jest.fn(async (op_id: string) => lroSummaryByOpId.get(op_id));
     assertPortableProjectRootfsMock = jest.fn(async () => undefined);
     resolveHostConnectionMock = jest.fn(async ({ host_id }: any) => ({
       host_id,
@@ -442,6 +471,26 @@ describe("moveProjectToHost", () => {
         scope_type: "project",
         scope_id: PROJECT_ID,
       });
+    lroSummaryByOpId.set("backup-op-final", {
+      op_id: "backup-op-final",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "succeeded",
+      result: {
+        id: "backup-for-backup-op-final",
+        time: new Date("2026-04-26T16:00:00.000Z"),
+      },
+    });
+    lroSummaryByOpId.set("backup-op-cutover", {
+      op_id: "backup-op-cutover",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "succeeded",
+      result: {
+        id: "backup-for-backup-op-cutover",
+        time: new Date("2026-04-26T16:00:00.000Z"),
+      },
+    });
     startProjectLroMock = jest.fn(async () => ({
       op_id: "start-op-cross-region",
       scope_type: "project",
@@ -588,6 +637,23 @@ describe("moveProjectToHost", () => {
         scope_type: "project",
         scope_id: PROJECT_ID,
       });
+    lroSummaryByOpId.set("backup-op-final", {
+      op_id: "backup-op-final",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "succeeded",
+      result: {
+        id: "backup-final",
+        time: new Date("2026-04-26T16:00:00.000Z"),
+      },
+    });
+    lroSummaryByOpId.set("backup-op-cutover", {
+      op_id: "backup-op-cutover",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "failed",
+      error: "destination backup failed",
+    });
     startProjectLroMock = jest.fn(async () => ({
       op_id: "start-op-cross-region",
       scope_type: "project",
@@ -714,6 +780,16 @@ describe("moveProjectToHost", () => {
       op_id: "backup-op-final",
       scope_type: "project",
       scope_id: PROJECT_ID,
+    });
+    lroSummaryByOpId.set("backup-op-final", {
+      op_id: "backup-op-final",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "succeeded",
+      result: {
+        id: "backup-final",
+        time: new Date("2026-04-26T16:00:00.000Z"),
+      },
     });
     startProjectLroMock = jest.fn(async () => ({
       op_id: "start-op-cross-region",
@@ -960,6 +1036,23 @@ describe("moveProjectToHost", () => {
         scope_type: "project",
         scope_id: PROJECT_ID,
       });
+    lroSummaryByOpId.set("backup-op-1", {
+      op_id: "backup-op-1",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "failed",
+      error: "Unexpected end of JSON input",
+    });
+    lroSummaryByOpId.set("backup-op-2", {
+      op_id: "backup-op-2",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "succeeded",
+      result: {
+        id: "backup-2",
+        time: new Date("2026-04-26T16:00:00.000Z"),
+      },
+    });
     waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
       if (op_id === "backup-op-1") {
         throw new Error("Unexpected end of JSON input");
@@ -1126,6 +1219,42 @@ describe("moveProjectToHost", () => {
       scope_type: "project",
       scope_id: PROJECT_ID,
     }));
+    lroSummaryByOpId.set("backup-op-progress", {
+      op_id: "backup-op-progress",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "succeeded",
+      result: {
+        id: "backup-3",
+        time: new Date("2026-04-26T16:00:00.000Z"),
+      },
+    });
+    getLroStreamMock = jest.fn(async ({ op_id }: any) => {
+      const stream = new EventEmitter() as EventEmitter & {
+        getAll: () => any[];
+        close: () => void;
+      };
+      const events =
+        op_id === "backup-op-progress"
+          ? [
+              {
+                type: "progress",
+                ts: Date.now(),
+                phase: "backup",
+                message: "copying backup chunks",
+                progress: 37,
+                detail: { bytes_done: 37, bytes_total: 100, speed: 12 },
+              },
+              {
+                type: "summary",
+                summary: lroSummaryByOpId.get("backup-op-progress"),
+              },
+            ]
+          : [];
+      stream.getAll = () => events;
+      stream.close = () => {};
+      return stream;
+    });
     startProjectLroMock = jest.fn(async () => ({
       op_id: "start-op-progress",
       scope_type: "project",
