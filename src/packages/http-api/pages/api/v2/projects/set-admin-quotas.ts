@@ -41,10 +41,8 @@ async function get(req) {
     cpu_request,
     cpu_limit,
     disk_quota,
-    idle_timeout,
     internet,
     member_host,
-    always_running,
   } = getParams(req);
 
   await setQuotas({
@@ -56,11 +54,8 @@ async function get(req) {
       cpu_request != null ? Math.round(cpu_request * 1024) : undefined,
     cores: cpu_limit,
     disk_quota,
-    mintime: idle_timeout,
     network: internet != null ? (internet ? 1 : 0) : undefined,
     member_host: member_host != null ? (member_host ? 1 : 0) : undefined,
-    always_running:
-      always_running != null ? (always_running ? 1 : 0) : undefined,
   });
 
   return SuccessStatus;

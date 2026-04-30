@@ -13,14 +13,12 @@ import {
   React,
   Rendered,
   useActions,
-  useMemo,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import ShowError from "@cocalc/frontend/components/error";
 import { labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
-import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 import { unreachable } from "@cocalc/util/misc";
 import {
   Process,
@@ -95,12 +93,6 @@ export const ProjectInfo: React.FC<Props> = React.memo(
     const loading = info == null;
     const status = disconnected ? "Connecting..." : "Connected";
     const project_actions = useActions({ project_id });
-    const { runQuota } = useProjectRunQuota(project_id);
-
-    const idle_timeout = useMemo(() => {
-      return 1000 * (runQuota?.idle_timeout ?? 0);
-    }, [runQuota]);
-
     const show_explanation =
       useTypedRedux({ project_id }, "show_project_info_explanation") ?? false;
     const project_info_focus = useTypedRedux(
@@ -254,7 +246,7 @@ export const ProjectInfo: React.FC<Props> = React.memo(
           const avail_cores = Math.min(1, info?.cgroup?.cpu_cores_limit ?? 1);
           return 100 * avail_cores;
         case "cpu_tot":
-          return idle_timeout;
+          return Number.MAX_SAFE_INTEGER;
         case "mem":
           const hml = info?.cgroup?.mem_stat.hierarchical_memory_limit;
           if (hml != null) {
