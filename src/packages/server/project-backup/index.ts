@@ -604,6 +604,36 @@ async function getProjectBackupAssignment(project_id: string): Promise<{
   };
 }
 
+export async function getProjectBackupAssignmentState(
+  project_id: string,
+): Promise<{
+  backup_repo_id: string | null;
+  host_id: string | null;
+  region: string;
+}> {
+  if (!project_id || !isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  const { rows } = await pool().query<{
+    backup_repo_id: string | null;
+    host_id: string | null;
+    region: string | null;
+  }>(
+    "SELECT backup_repo_id, host_id, region FROM projects WHERE project_id=$1",
+    [project_id],
+  );
+  if (!rows[0]) {
+    throw new Error("project not found");
+  }
+  return {
+    backup_repo_id: rows[0].backup_repo_id ?? null,
+    host_id: rows[0].host_id ?? null,
+    region:
+      parseR2Region(rows[0].region) ??
+      mapCloudRegionToR2Region(rows[0].region ?? DEFAULT_R2_REGION),
+  };
+}
+
 async function assignProjectBackupRepo({
   project_id,
   repo,
@@ -616,6 +646,59 @@ async function assignProjectBackupRepo({
     "UPDATE projects SET backup_repo_id=$2 WHERE project_id=$1",
     [project_id, repo.id],
   );
+}
+
+export async function setProjectBackupRepoId({
+  project_id,
+  backup_repo_id,
+}: {
+  project_id: string;
+  backup_repo_id: string | null;
+}): Promise<void> {
+  if (!project_id || !isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  if (backup_repo_id && !isValidUUID(backup_repo_id)) {
+    throw new Error("invalid backup_repo_id");
+  }
+  await ensureProjectBackupRepoSchema();
+  await pool().query(
+    "UPDATE projects SET backup_repo_id=$2 WHERE project_id=$1",
+    [project_id, backup_repo_id],
+  );
+}
+
+export async function ensureProjectBackupRepoForRegion({
+  region,
+}: {
+  region: string;
+}): Promise<{ backup_repo_id: string | null }> {
+  const normalized =
+    parseR2Region(region) ??
+    mapCloudRegionToR2Region(region ?? DEFAULT_R2_REGION);
+  const assigned = await getOrCreateProjectBackupRepoForRegion(normalized);
+  return {
+    backup_repo_id: assigned?.repo?.id ?? null,
+  };
+}
+
+export async function setProjectBackupRegion({
+  project_id,
+  region,
+}: {
+  project_id: string;
+  region: string;
+}): Promise<void> {
+  if (!project_id || !isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  const normalized =
+    parseR2Region(region) ??
+    mapCloudRegionToR2Region(region ?? DEFAULT_R2_REGION);
+  await pool().query("UPDATE projects SET region=$2 WHERE project_id=$1", [
+    project_id,
+    normalized,
+  ]);
 }
 
 async function resolveProjectRegion(
@@ -648,6 +731,33 @@ async function getProjectBackupRepoSecret(
     throw new Error(`project backup repo ${repo.id} has no secret`);
   }
   return decryptBackupSecret(repo.secret, await getBackupMasterKey());
+}
+
+export async function getProjectBackupConfigForRepo({
+  backup_repo_id,
+  region,
+}: {
+  backup_repo_id?: string | null;
+  region?: string | null;
+}): Promise<{ toml: string }> {
+  if (backup_repo_id && !isValidUUID(backup_repo_id)) {
+    throw new Error("invalid backup_repo_id");
+  }
+  if (!backup_repo_id) {
+    return { toml: "" };
+  }
+  const repo = await loadProjectBackupRepoById(backup_repo_id);
+  if (!repo) {
+    return { toml: "" };
+  }
+  const config = await buildBackupConfigFromRepo({
+    repo,
+    fallbackRegion:
+      parseR2Region(region) ??
+      parseR2Region(repo.region) ??
+      mapCloudRegionToR2Region(region ?? repo.region ?? DEFAULT_R2_REGION),
+  });
+  return { toml: config.toml };
 }
 
 const backupMasterKeyPath = join(secrets, "backup-master-key");

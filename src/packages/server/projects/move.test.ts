@@ -12,6 +12,12 @@ let createBackupLroMock: jest.Mock;
 let waitForLroCompletionMock: jest.Mock;
 let assertPortableProjectRootfsMock: jest.Mock;
 let resolveHostConnectionMock: jest.Mock;
+let getProjectBackupAssignmentStateMock: jest.Mock;
+let ensureProjectBackupRepoForRegionMock: jest.Mock;
+let setProjectBackupRepoIdMock: jest.Mock;
+let setProjectBackupRegionMock: jest.Mock;
+let purgeProjectBackupsForRepoMock: jest.Mock;
+let conatPublishMock: jest.Mock;
 let projectLogRows: any[];
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -30,7 +36,9 @@ jest.mock("@cocalc/backend/logger", () => ({
 }));
 
 jest.mock("@cocalc/backend/conat", () => ({
-  conat: jest.fn(() => ({})),
+  conat: jest.fn(() => ({
+    publish: (...args: any[]) => conatPublishMock(...args),
+  })),
 }));
 
 jest.mock("@cocalc/util/consts", () => ({
@@ -77,6 +85,22 @@ jest.mock("./offline-move-confirmation", () => ({
 jest.mock("./rootfs-state", () => ({
   assertPortableProjectRootfs: (...args: any[]) =>
     assertPortableProjectRootfsMock(...args),
+}));
+
+jest.mock("../project-backup", () => ({
+  getProjectBackupAssignmentState: (...args: any[]) =>
+    getProjectBackupAssignmentStateMock(...args),
+  ensureProjectBackupRepoForRegion: (...args: any[]) =>
+    ensureProjectBackupRepoForRegionMock(...args),
+  setProjectBackupRepoId: (...args: any[]) =>
+    setProjectBackupRepoIdMock(...args),
+  setProjectBackupRegion: (...args: any[]) =>
+    setProjectBackupRegionMock(...args),
+}));
+
+jest.mock("./backup-purge", () => ({
+  purgeProjectBackupsForRepo: (...args: any[]) =>
+    purgeProjectBackupsForRepoMock(...args),
 }));
 
 describe("moveProjectToHost", () => {
@@ -191,6 +215,22 @@ describe("moveProjectToHost", () => {
         })),
       },
     }));
+    getProjectBackupAssignmentStateMock = jest.fn(async () => ({
+      backup_repo_id: "66666666-6666-4666-8666-666666666666",
+      host_id: SOURCE_HOST_ID,
+      region: "wnam",
+    }));
+    ensureProjectBackupRepoForRegionMock = jest.fn(async () => ({
+      backup_repo_id: "77777777-7777-4777-8777-777777777777",
+    }));
+    setProjectBackupRepoIdMock = jest.fn(async () => undefined);
+    setProjectBackupRegionMock = jest.fn(async () => undefined);
+    purgeProjectBackupsForRepoMock = jest.fn(async () => ({
+      skipped: false,
+      deleted_snapshots: 2,
+      deleted_index_snapshots: 1,
+    }));
+    conatPublishMock = jest.fn(async () => ({ bytes: 0, count: 1 }));
   });
 
   it("accepts a timed-out destination start wait if the project is already running on the destination host", async () => {
@@ -264,6 +304,312 @@ describe("moveProjectToHost", () => {
       host_id: DEST_HOST_ID,
     });
     expect(savePlacementMock).toHaveBeenCalledWith(PROJECT_ID, {
+      host_id: DEST_HOST_ID,
+    });
+  });
+
+  it("rejects a cross-region move unless backup-region cutover is requested", async () => {
+    const consts = await import("@cocalc/util/consts");
+    (consts.parseR2Region as jest.Mock).mockImplementation((value: string) => {
+      if (value === "wnam" || value === "weur") return value;
+      return null;
+    });
+    (consts.mapCloudRegionToR2Region as jest.Mock).mockImplementation(
+      (value: string) => {
+        if (value === "europe-west1") return "weur";
+        return "wnam";
+      },
+    );
+    resolveHostConnectionMock = jest.fn(async ({ host_id }: any) => ({
+      host_id,
+      bay_id: "bay-0",
+      name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
+      region: host_id === DEST_HOST_ID ? "europe-west1" : "us-west1",
+    }));
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+        allow_offline: true,
+      }),
+    ).rejects.toThrow(/project region wnam does not match host region weur/);
+  });
+
+  it("cuts over the backup region after a successful cross-region restore", async () => {
+    const consts = await import("@cocalc/util/consts");
+    (consts.parseR2Region as jest.Mock).mockImplementation((value: string) => {
+      if (value === "wnam" || value === "weur") return value;
+      return null;
+    });
+    (consts.mapCloudRegionToR2Region as jest.Mock).mockImplementation(
+      (value: string) => {
+        if (value === "europe-west1") return "weur";
+        return "wnam";
+      },
+    );
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    resolveHostConnectionMock = jest.fn(async ({ host_id }: any) => ({
+      host_id,
+      bay_id: "bay-0",
+      name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
+      region: host_id === DEST_HOST_ID ? "europe-west1" : "us-west1",
+    }));
+    createBackupLroMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        op_id: "backup-op-final",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      })
+      .mockResolvedValueOnce({
+        op_id: "backup-op-cutover",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      });
+    startProjectLroMock = jest.fn(async () => ({
+      op_id: "start-op-cross-region",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+    }));
+    waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
+      if (op_id === "backup-op-final" || op_id === "backup-op-cutover") {
+        return {
+          status: "succeeded",
+          result: {
+            id: `backup-for-${op_id}`,
+            time: new Date("2026-04-26T16:00:00.000Z"),
+          },
+        };
+      }
+      if (op_id === "start-op-cross-region") {
+        return { status: "succeeded" };
+      }
+      throw new Error(`unexpected op_id ${op_id}`);
+    });
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost(
+        {
+          project_id: PROJECT_ID,
+          dest_host_id: DEST_HOST_ID,
+          account_id: "account-id",
+          backup_region_cutover: true,
+        },
+        { op_id: "move-op-cross-region" },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(ensureProjectBackupRepoForRegionMock).toHaveBeenCalledWith({
+      region: "weur",
+    });
+    expect(setProjectBackupRepoIdMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      backup_repo_id: "77777777-7777-4777-8777-777777777777",
+    });
+    expect(setProjectBackupRegionMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      region: "weur",
+    });
+    expect(conatPublishMock).toHaveBeenCalledWith(
+      `project-host.${DEST_HOST_ID}.backup.invalidate`,
+      null,
+      expect.objectContaining({
+        waitForInterest: true,
+      }),
+    );
+    expect(purgeProjectBackupsForRepoMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      backup_repo_id: "66666666-6666-4666-8666-666666666666",
+      region: "wnam",
+    });
+    expect(projectLogRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "project-move:move-op-cross-region:project_moved",
+          event: expect.objectContaining({
+            event: "project_moved",
+            backup_region_cutover: true,
+            source_region: "wnam",
+            dest_region: "weur",
+            previous_backup_repo_id: "66666666-6666-4666-8666-666666666666",
+            next_backup_repo_id: "77777777-7777-4777-8777-777777777777",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("reverts backup-repo assignment and placement if destination-region backup cutover fails", async () => {
+    const consts = await import("@cocalc/util/consts");
+    (consts.parseR2Region as jest.Mock).mockImplementation((value: string) => {
+      if (value === "wnam" || value === "weur") return value;
+      return null;
+    });
+    (consts.mapCloudRegionToR2Region as jest.Mock).mockImplementation(
+      (value: string) => {
+        if (value === "europe-west1") return "weur";
+        return "wnam";
+      },
+    );
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [{ host_id: DEST_HOST_ID, project_state: "running" }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    resolveHostConnectionMock = jest.fn(async ({ host_id }: any) => ({
+      host_id,
+      bay_id: "bay-0",
+      name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
+      region: host_id === DEST_HOST_ID ? "europe-west1" : "us-west1",
+    }));
+    createBackupLroMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        op_id: "backup-op-final",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      })
+      .mockResolvedValueOnce({
+        op_id: "backup-op-cutover",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      });
+    startProjectLroMock = jest.fn(async () => ({
+      op_id: "start-op-cross-region",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+    }));
+    waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
+      if (op_id === "backup-op-final") {
+        return {
+          status: "succeeded",
+          result: {
+            id: "backup-final",
+            time: new Date("2026-04-26T16:00:00.000Z"),
+          },
+        };
+      }
+      if (op_id === "backup-op-cutover") {
+        return {
+          status: "failed",
+          error: "destination backup failed",
+        };
+      }
+      if (op_id === "start-op-cross-region") {
+        return { status: "succeeded" };
+      }
+      throw new Error(`unexpected op_id ${op_id}`);
+    });
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+        backup_region_cutover: true,
+      }),
+    ).rejects.toThrow(/destination backup failed/);
+
+    expect(setProjectBackupRepoIdMock).toHaveBeenNthCalledWith(1, {
+      project_id: PROJECT_ID,
+      backup_repo_id: "77777777-7777-4777-8777-777777777777",
+    });
+    expect(setProjectBackupRepoIdMock).toHaveBeenNthCalledWith(2, {
+      project_id: PROJECT_ID,
+      backup_repo_id: "66666666-6666-4666-8666-666666666666",
+    });
+    expect(setProjectBackupRegionMock).not.toHaveBeenCalled();
+    expect(savePlacementMock).toHaveBeenNthCalledWith(1, PROJECT_ID, {
+      host_id: DEST_HOST_ID,
+    });
+    expect(savePlacementMock).toHaveBeenNthCalledWith(2, PROJECT_ID, {
+      host_id: SOURCE_HOST_ID,
+    });
+    expect(deleteProjectDataOnHostMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
       host_id: DEST_HOST_ID,
     });
   });

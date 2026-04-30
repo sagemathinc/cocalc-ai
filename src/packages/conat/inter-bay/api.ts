@@ -141,6 +141,7 @@ export interface ProjectControlMoveRequest {
   account_id: string;
   dest_host_id?: string;
   allow_offline?: boolean;
+  backup_region_cutover?: boolean;
   epoch?: number;
 }
 

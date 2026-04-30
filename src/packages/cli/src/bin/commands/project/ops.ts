@@ -669,13 +669,24 @@ export function registerProjectOpsCommands(
 
   project
     .command("move")
-    .description("move a project to another host (defaults to context)")
+    .description(
+      "move a project to another host (use --cutover-backup-region for cross-region moves)",
+    )
     .option("-w, --project <project>", "project id or name")
     .requiredOption("--host <host>", "destination host id or name")
+    .option(
+      "--cutover-backup-region",
+      "allow a cross-region move and cut over the project's backup region after the first successful destination backup",
+    )
     .option("--wait", "wait for completion")
     .action(
       async (
-        opts: { project?: string; host: string; wait?: boolean },
+        opts: {
+          project?: string;
+          host: string;
+          wait?: boolean;
+          cutoverBackupRegion?: boolean;
+        },
         command: Command,
       ) => {
         await withContext(command, "project move", async (ctx) => {
@@ -684,12 +695,14 @@ export function registerProjectOpsCommands(
           const op = await ctx.hub.projects.moveProject({
             project_id: ws.project_id,
             dest_host_id: host.id,
+            backup_region_cutover: !!opts.cutoverBackupRegion,
           });
 
           if (!opts.wait) {
             return {
               project_id: ws.project_id,
               dest_host_id: host.id,
+              backup_region_cutover: !!opts.cutoverBackupRegion,
               op_id: op.op_id,
               status: "queued",
             };
@@ -736,6 +749,7 @@ export function registerProjectOpsCommands(
           return {
             project_id: ws.project_id,
             dest_host_id: host.id,
+            backup_region_cutover: !!opts.cutoverBackupRegion,
             op_id: op.op_id,
             status: summary.status,
             warning:

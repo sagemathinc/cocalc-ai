@@ -1725,11 +1725,13 @@ export async function moveProject({
   project_id,
   dest_host_id,
   allow_offline,
+  backup_region_cutover,
 }: {
   account_id: string;
   project_id: string;
   dest_host_id?: string;
   allow_offline?: boolean;
+  backup_region_cutover?: boolean;
 }): Promise<{
   op_id: string;
   scope_type: "project";
@@ -1748,6 +1750,7 @@ export async function moveProject({
       account_id,
       dest_host_id,
       allow_offline,
+      backup_region_cutover,
       epoch: ownership.epoch,
     });
   }
@@ -1760,6 +1763,7 @@ export async function moveProject({
   const lroInput = {
     project_id,
     allow_offline,
+    backup_region_cutover,
     source_host_id: movePrecheck.source_host_id,
     ...(dest_host_id ? { dest_host_id } : {}),
   };

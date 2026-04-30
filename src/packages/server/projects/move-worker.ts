@@ -48,12 +48,14 @@ const WORKER_ID = randomUUID();
 const progressSteps: Record<string, number> = {
   validate: 5,
   "stop-source": 15,
-  backup: 55,
-  placement: 70,
-  "start-dest": 85,
-  "revert-placement": 88,
-  "cleanup-dest": 90,
-  cleanup: 95,
+  backup: 45,
+  placement: 55,
+  "start-dest": 70,
+  "cutover-backup": 88,
+  "purge-old-backups": 92,
+  "revert-placement": 94,
+  "cleanup-dest": 96,
+  cleanup: 98,
   done: 100,
 };
 
@@ -64,7 +66,11 @@ const progressRanges: Record<string, { start: number; end: number }> = {
   },
   "start-dest": {
     start: progressSteps["start-dest"],
-    end: progressSteps.cleanup,
+    end: progressSteps["cutover-backup"],
+  },
+  "cutover-backup": {
+    start: progressSteps["start-dest"],
+    end: progressSteps["cutover-backup"],
   },
 };
 
@@ -259,7 +265,10 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
     await progress({
       step: "validate",
       message: "starting move",
-      detail: { dest_host_id },
+      detail: {
+        dest_host_id,
+        backup_region_cutover: !!input.backup_region_cutover,
+      },
     });
     await moveProjectToHost(
       {
@@ -267,6 +276,7 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
         dest_host_id,
         account_id,
         allow_offline: input.allow_offline,
+        backup_region_cutover: !!input.backup_region_cutover,
       },
       { progress, shouldCancel: shouldAbort, op_id },
     );
@@ -275,7 +285,11 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
       op_id,
       status: "succeeded",
       progress_summary: { phase: "done" },
-      result: { project_id, dest_host_id },
+      result: {
+        project_id,
+        dest_host_id,
+        backup_region_cutover: !!input.backup_region_cutover,
+      },
       error: null,
     });
     await publishSummarySafe(updated, {

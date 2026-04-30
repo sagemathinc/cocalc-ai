@@ -1003,6 +1003,7 @@ export interface Projects {
     project_id: string;
     dest_host_id?: string;
     allow_offline?: boolean;
+    backup_region_cutover?: boolean;
   }) => Promise<{
     op_id: string;
     scope_type: "project";

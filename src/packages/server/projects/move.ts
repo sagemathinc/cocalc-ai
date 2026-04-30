@@ -26,10 +26,20 @@ import { resolveHostConnection } from "../conat/api/hosts";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
 import {
+  ensureProjectBackupRepoForRegion,
+  getProjectBackupAssignmentState,
+  setProjectBackupRegion,
+  setProjectBackupRepoId,
+} from "../project-backup";
+import {
   makeOfflineMoveConfirmationPayload,
   offlineMoveConfirmationError,
 } from "./offline-move-confirmation";
 import { assertPortableProjectRootfs } from "./rootfs-state";
+import {
+  purgeProjectBackupsForRepo,
+  type ProjectBackupPurgeResult,
+} from "./backup-purge";
 
 const log = getLogger("server:projects:move");
 const BACKUP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
@@ -57,6 +67,7 @@ export type MoveProjectToHostInput = {
   allow_offline?: boolean;
   start_dest?: boolean;
   stop_dest_after_start?: boolean;
+  backup_region_cutover?: boolean;
 };
 
 type MoveProjectContext = {
@@ -76,6 +87,7 @@ type MoveProjectContext = {
   source_host_last_seen?: Date | null;
   last_backup?: Date | null;
   last_edited?: Date | null;
+  backup_region_cutover?: boolean;
 };
 
 export type MoveProjectProgressUpdate = {
@@ -101,6 +113,14 @@ type MoveProjectLogEvent =
   | "project_moved"
   | "project_move_failed"
   | "project_move_canceled";
+
+type MoveBackupRegionCutoverResult = {
+  performed: boolean;
+  previous_backup_repo_id: string | null;
+  next_backup_repo_id: string | null;
+  purge: ProjectBackupPurgeResult;
+  purge_error?: string;
+};
 
 async function openProjectLogStream(
   project_id: string,
@@ -132,6 +152,7 @@ async function appendProjectMoveLogEntry({
   error,
   op_id,
   stage,
+  extra_event,
   fresh,
 }: {
   project_id: string;
@@ -146,6 +167,7 @@ async function appendProjectMoveLogEntry({
   error?: string;
   op_id?: string;
   stage?: string;
+  extra_event?: Record<string, any>;
   fresh?: boolean;
 }): Promise<boolean> {
   const row: ProjectLogRow = {
@@ -163,6 +185,7 @@ async function appendProjectMoveLogEntry({
       ...(duration_ms != null ? { duration_ms } : {}),
       ...(error ? { error } : {}),
       ...(stage ? { stage } : {}),
+      ...(extra_event ?? {}),
     },
   };
   try {
@@ -345,7 +368,7 @@ async function buildMoveProjectContext(
     destHost?.name ?? destHostRegistryRow?.name ?? dest_host_id;
   const project_region = parseR2Region(projectRow.region) ?? DEFAULT_R2_REGION;
   const dest_region = mapCloudRegionToR2Region(destHost.region);
-  if (project_region !== dest_region) {
+  if (!input.backup_region_cutover && project_region !== dest_region) {
     throw new Error(
       `project region ${project_region} does not match host region ${dest_region}`,
     );
@@ -367,6 +390,7 @@ async function buildMoveProjectContext(
     source_host_last_seen,
     last_backup: projectRow.last_backup,
     last_edited: projectRow.last_edited,
+    backup_region_cutover: !!input.backup_region_cutover,
   };
 }
 
@@ -414,11 +438,13 @@ async function delay(ms: number): Promise<void> {
 
 async function retryOnceOnTransientMoveError<T>({
   operation,
+  progress_step,
   detail,
   progress,
   run,
 }: {
   operation: "stop-source" | "backup";
+  progress_step?: MoveProjectProgressUpdate["step"];
   detail?: Record<string, any>;
   progress: (update: MoveProjectProgressUpdate) => void;
   run: () => Promise<T>;
@@ -435,7 +461,7 @@ async function retryOnceOnTransientMoveError<T>({
       detail,
     });
     progress({
-      step: operation,
+      step: progress_step ?? operation,
       message: "transient error; retrying once",
       detail: {
         ...(detail ?? {}),
@@ -445,6 +471,17 @@ async function retryOnceOnTransientMoveError<T>({
     await delay(TRANSIENT_MOVE_RPC_RETRY_DELAY_MS);
     return await run();
   }
+}
+
+async function invalidateProjectBackupConfigOnHost(
+  host_id: string | null | undefined,
+): Promise<void> {
+  const target = `${host_id ?? ""}`.trim();
+  if (!target) return;
+  await conat().publish(`project-host.${target}.backup.invalidate`, null, {
+    waitForInterest: true,
+    timeout: 10_000,
+  });
 }
 
 function mergeMoveProgressDetail({
@@ -466,6 +503,206 @@ function mergeMoveProgressDetail({
     };
   }
   return Object.keys(detail).length ? detail : undefined;
+}
+
+async function performBackupRegionCutover({
+  context,
+  progress,
+}: {
+  context: MoveProjectContext;
+  progress: (update: MoveProjectProgressUpdate) => void;
+}): Promise<MoveBackupRegionCutoverResult> {
+  if (
+    !context.backup_region_cutover ||
+    context.project_region === context.dest_region
+  ) {
+    return {
+      performed: false,
+      previous_backup_repo_id: null,
+      next_backup_repo_id: null,
+      purge: {
+        skipped: true,
+        deleted_snapshots: 0,
+        deleted_index_snapshots: 0,
+        reason: "backup-region cutover not requested",
+      },
+    };
+  }
+
+  const state = await getProjectBackupAssignmentState(context.project_id);
+  const previous_backup_repo_id = state.backup_repo_id ?? null;
+  const target = await ensureProjectBackupRepoForRegion({
+    region: context.dest_region,
+  });
+  const next_backup_repo_id = target.backup_repo_id ?? null;
+  if (!next_backup_repo_id) {
+    throw new Error(
+      `unable to provision destination backup repo for region ${context.dest_region}`,
+    );
+  }
+
+  await setProjectBackupRepoId({
+    project_id: context.project_id,
+    backup_repo_id: next_backup_repo_id,
+  });
+
+  if (previous_backup_repo_id) {
+    try {
+      await invalidateProjectBackupConfigOnHost(context.dest_host_id);
+    } catch (err) {
+      log.warn("backup-region cutover invalidation publish failed", {
+        project_id: context.project_id,
+        dest_host_id: context.dest_host_id,
+        err,
+      });
+      await setProjectBackupRepoId({
+        project_id: context.project_id,
+        backup_repo_id: previous_backup_repo_id,
+      });
+      throw err;
+    }
+  }
+
+  try {
+    progress({
+      step: "cutover-backup",
+      message: "creating first backup in destination region",
+      detail: {
+        source_region: context.project_region,
+        dest_region: context.dest_region,
+        previous_backup_repo_id,
+        next_backup_repo_id,
+      },
+    });
+    const result = await retryOnceOnTransientMoveError({
+      operation: "backup",
+      progress_step: "cutover-backup",
+      detail: {
+        project_id: context.project_id,
+        source_region: context.project_region,
+        dest_region: context.dest_region,
+        previous_backup_repo_id,
+        next_backup_repo_id,
+      },
+      progress,
+      run: async () =>
+        await createFinalBackup({
+          account_id: context.account_id,
+          project_id: context.project_id,
+          progress: (update) =>
+            progress({
+              ...update,
+              step: "cutover-backup",
+            }),
+        }),
+    });
+    progress({
+      step: "cutover-backup",
+      message: "destination-region backup created",
+      detail: {
+        source_region: context.project_region,
+        dest_region: context.dest_region,
+        previous_backup_repo_id,
+        next_backup_repo_id,
+        backup_id: result.id,
+        backup_time: result.time,
+      },
+    });
+    await setProjectBackupRegion({
+      project_id: context.project_id,
+      region: context.dest_region,
+    });
+  } catch (err) {
+    await setProjectBackupRepoId({
+      project_id: context.project_id,
+      backup_repo_id: previous_backup_repo_id,
+    });
+    if (previous_backup_repo_id) {
+      try {
+        await invalidateProjectBackupConfigOnHost(context.dest_host_id);
+      } catch (invalidateErr) {
+        log.warn("backup-region cutover rollback invalidation publish failed", {
+          project_id: context.project_id,
+          dest_host_id: context.dest_host_id,
+          err: invalidateErr,
+        });
+      }
+    }
+    throw err;
+  }
+
+  let purge: ProjectBackupPurgeResult = {
+    skipped: true,
+    deleted_snapshots: 0,
+    deleted_index_snapshots: 0,
+    reason: "no old backup repo purge needed",
+  };
+  let purge_error: string | undefined;
+  if (
+    previous_backup_repo_id &&
+    previous_backup_repo_id !== next_backup_repo_id
+  ) {
+    progress({
+      step: "purge-old-backups",
+      message: "purging old-region backup snapshots",
+      detail: {
+        source_region: context.project_region,
+        dest_region: context.dest_region,
+        previous_backup_repo_id,
+        next_backup_repo_id,
+      },
+    });
+    try {
+      purge = await purgeProjectBackupsForRepo({
+        project_id: context.project_id,
+        backup_repo_id: previous_backup_repo_id,
+        region: context.project_region,
+      });
+      progress({
+        step: "purge-old-backups",
+        message: purge.skipped
+          ? "old-region backup purge skipped"
+          : "old-region backup snapshots purged",
+        detail: {
+          source_region: context.project_region,
+          dest_region: context.dest_region,
+          previous_backup_repo_id,
+          next_backup_repo_id,
+          deleted_snapshots: purge.deleted_snapshots,
+          deleted_index_snapshots: purge.deleted_index_snapshots,
+          skipped: purge.skipped,
+          reason: purge.reason,
+        },
+      });
+    } catch (err) {
+      purge_error = `${err}`;
+      log.warn("backup-region cutover old-repo purge failed", {
+        project_id: context.project_id,
+        previous_backup_repo_id,
+        next_backup_repo_id,
+        err,
+      });
+      progress({
+        step: "purge-old-backups",
+        message: "old-region backup purge failed",
+        detail: {
+          source_region: context.project_region,
+          dest_region: context.dest_region,
+          previous_backup_repo_id,
+          next_backup_repo_id,
+          error: purge_error,
+        },
+      });
+    }
+  }
+
+  return {
+    performed: true,
+    previous_backup_repo_id,
+    next_backup_repo_id,
+    purge,
+    ...(purge_error ? { purge_error } : {}),
+  };
 }
 
 async function createFinalBackup({
@@ -561,6 +798,11 @@ export async function moveProjectToHost(
   const stopDestAfterStart = !!input.stop_dest_after_start;
   const started_at_ms = Date.now();
   const context = await buildMoveProjectContext(input);
+  if (context.backup_region_cutover && !startDest) {
+    throw new Error(
+      "backup-region cutover requires starting the destination project",
+    );
+  }
   await assertPortableProjectRootfs({
     project_id: context.project_id,
     operation: "move",
@@ -577,9 +819,38 @@ export async function moveProjectToHost(
     source_host_last_seen: context.source_host_last_seen,
     last_backup: context.last_backup,
     last_edited: context.last_edited,
+    backup_region_cutover: context.backup_region_cutover,
   });
 
   let placementUpdated = false;
+  let backupRegionCutoverResult: MoveBackupRegionCutoverResult | undefined;
+  const moveLogExtraEvent = () => ({
+    source_region: context.project_region,
+    dest_region: context.dest_region,
+    backup_region_cutover:
+      !!context.backup_region_cutover &&
+      context.project_region !== context.dest_region,
+    ...(backupRegionCutoverResult?.performed
+      ? {
+          previous_backup_repo_id:
+            backupRegionCutoverResult.previous_backup_repo_id,
+          next_backup_repo_id: backupRegionCutoverResult.next_backup_repo_id,
+          old_backup_purge: {
+            skipped: backupRegionCutoverResult.purge.skipped,
+            deleted_snapshots:
+              backupRegionCutoverResult.purge.deleted_snapshots,
+            deleted_index_snapshots:
+              backupRegionCutoverResult.purge.deleted_index_snapshots,
+            ...(backupRegionCutoverResult.purge.reason
+              ? { reason: backupRegionCutoverResult.purge.reason }
+              : {}),
+            ...(backupRegionCutoverResult.purge_error
+              ? { error: backupRegionCutoverResult.purge_error }
+              : {}),
+          },
+        }
+      : {}),
+  });
   const checkCanceled = async (stage: string) => {
     if (!shouldCancel) {
       return;
@@ -643,6 +914,7 @@ export async function moveProjectToHost(
       dest_host_id: context.dest_host_id,
       dest_host_name: context.dest_host_name,
       op_id: opts?.op_id,
+      extra_event: moveLogExtraEvent(),
       fresh: true,
     });
     await appendProjectMoveLogEntry({
@@ -657,6 +929,7 @@ export async function moveProjectToHost(
       duration_ms: Date.now() - started_at_ms,
       op_id: opts?.op_id,
       stage,
+      extra_event: moveLogExtraEvent(),
       fresh: true,
     });
   };
@@ -683,6 +956,7 @@ export async function moveProjectToHost(
         dest_host_id: context.dest_host_id,
         dest_host_name: context.dest_host_name,
         op_id: opts?.op_id,
+        extra_event: moveLogExtraEvent(),
       });
     }
     if (!sourceAvailable) {
@@ -966,6 +1240,11 @@ export async function moveProjectToHost(
           dest_host_id: context.dest_host_id,
         });
 
+        backupRegionCutoverResult = await performBackupRegionCutover({
+          context,
+          progress,
+        });
+
         if (stopDestAfterStart) {
           progress({
             step: "start-dest",
@@ -1118,6 +1397,7 @@ export async function moveProjectToHost(
       dest_host_id: context.dest_host_id,
       dest_host_name: context.dest_host_name,
       op_id: opts?.op_id,
+      extra_event: moveLogExtraEvent(),
       fresh: true,
     });
     await appendProjectMoveLogEntry({
@@ -1131,6 +1411,7 @@ export async function moveProjectToHost(
       dest_host_name: context.dest_host_name,
       duration_ms: Date.now() - started_at_ms,
       op_id: opts?.op_id,
+      extra_event: moveLogExtraEvent(),
       fresh: true,
     });
   } catch (err) {
@@ -1148,6 +1429,7 @@ export async function moveProjectToHost(
       dest_host_id: context.dest_host_id,
       dest_host_name: context.dest_host_name,
       op_id: opts?.op_id,
+      extra_event: moveLogExtraEvent(),
       fresh: true,
     });
     await appendProjectMoveLogEntry({
@@ -1162,6 +1444,7 @@ export async function moveProjectToHost(
       duration_ms: Date.now() - started_at_ms,
       error: err instanceof Error ? err.message : `${err}`,
       op_id: opts?.op_id,
+      extra_event: moveLogExtraEvent(),
       fresh: true,
     });
     throw err;
