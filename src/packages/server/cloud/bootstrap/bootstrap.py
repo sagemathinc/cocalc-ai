@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import pwd
+import re
 import shutil
 import ssl
 import subprocess
@@ -52,6 +53,25 @@ PROJECT_HOST_RUNTIME_SUBID_RANGES = (
     (231072, ROOTLESS_SUBID_ALIGNMENT),
     (327680, ROOTLESS_SUBID_MIN_TOTAL - ROOTLESS_SUBID_ALIGNMENT),
 )
+HOST_OWNED_DATA_DIRS = (
+    "secrets",
+    "cache",
+    "sync",
+    "rustic",
+    "backup-index",
+    "forensics",
+    "logs",
+)
+HOST_OWNED_DATA_FILES = (
+    "log",
+    "daemon.pid",
+    "host-agent.log",
+    "host-agent.pid",
+    "supervision-events.jsonl",
+    "host-agent-state.json",
+    "conat-router.log",
+)
+HOST_OWNED_SQLITE_RE = re.compile(r"^(sqlite\.db|sync-fs\.sqlite)(?:-(?:wal|shm))?$")
 
 
 @dataclass(frozen=True)
@@ -1014,6 +1034,11 @@ def tree_has_unexpected_ownership(path: Path, uid: int, gid: int) -> bool:
     if not path.exists():
         return False
     try:
+        stat = path.lstat()
+        if stat.st_uid != uid or stat.st_gid != gid:
+            return True
+        if not path.is_dir():
+            return False
         for root, dirs, files in os.walk(path):
             root_path = Path(root)
             try:
@@ -1033,6 +1058,46 @@ def tree_has_unexpected_ownership(path: Path, uid: int, gid: int) -> bool:
     except FileNotFoundError:
         return False
     return False
+
+
+def repair_host_data_ownership(cfg: BootstrapConfig) -> None:
+    if cfg.ssh_user == "root":
+        return
+    desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
+    data_root = Path("/mnt/cocalc/data")
+    recursive_targets: list[str] = []
+    file_targets: list[str] = []
+
+    for dirname in HOST_OWNED_DATA_DIRS:
+        path = data_root / dirname
+        if tree_has_unexpected_ownership(path, desired_uid, desired_gid):
+            recursive_targets.append(str(path))
+
+    try:
+        for child in data_root.iterdir():
+            if not child.is_file():
+                continue
+            if child.name not in HOST_OWNED_DATA_FILES and not HOST_OWNED_SQLITE_RE.match(
+                child.name
+            ):
+                continue
+            if tree_has_unexpected_ownership(child, desired_uid, desired_gid):
+                file_targets.append(str(child))
+    except FileNotFoundError:
+        return
+
+    if recursive_targets:
+        run_best_effort(
+            cfg,
+            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *recursive_targets],
+            "repair host data dir ownership",
+        )
+    if file_targets:
+        run_best_effort(
+            cfg,
+            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *file_targets],
+            "repair host data file ownership",
+        )
 
 
 def ensure_legacy_btrfs_link(cfg: BootstrapConfig) -> None:
@@ -2374,6 +2439,7 @@ def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
             ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", path],
             f"chown {path}",
         )
+    repair_host_data_ownership(cfg)
 
 
 def configure_podman(cfg: BootstrapConfig) -> None:

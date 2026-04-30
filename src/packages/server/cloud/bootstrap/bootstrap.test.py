@@ -557,6 +557,84 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                 recorded,
             )
 
+    def test_ensure_btrfs_data_repairs_host_owned_entries_with_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            recorded = []
+
+            original_run_best_effort = bootstrap.run_best_effort
+            original_run_cmd = bootstrap.run_cmd
+            original_exists = Path.exists
+            original_mkdir = Path.mkdir
+            original_chmod = bootstrap.os.chmod
+            original_iterdir = Path.iterdir
+            original_is_file = Path.is_file
+            original_has_unexpected = bootstrap.tree_has_unexpected_ownership
+            try:
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.run_cmd = lambda *args, **kwargs: None
+                Path.exists = lambda self: True  # type: ignore[method-assign]
+                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                bootstrap.os.chmod = lambda *_args, **_kwargs: None
+                Path.iterdir = lambda self: iter(
+                    [
+                        Path("/mnt/cocalc/data/sync-fs.sqlite"),
+                        Path("/mnt/cocalc/data/daemon.pid"),
+                    ]
+                )  # type: ignore[method-assign]
+                Path.is_file = lambda self: str(self) in {  # type: ignore[method-assign]
+                    "/mnt/cocalc/data/sync-fs.sqlite",
+                    "/mnt/cocalc/data/daemon.pid",
+                }
+
+                def fake_has_unexpected(path: Path, _uid: int, _gid: int) -> bool:
+                    return str(path) in {
+                        "/mnt/cocalc/data/cache",
+                        "/mnt/cocalc/data/logs",
+                        "/mnt/cocalc/data/sync-fs.sqlite",
+                        "/mnt/cocalc/data/daemon.pid",
+                    }
+
+                bootstrap.tree_has_unexpected_ownership = fake_has_unexpected
+                bootstrap.ensure_btrfs_data(cfg)
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.run_cmd = original_run_cmd
+                Path.exists = original_exists  # type: ignore[method-assign]
+                Path.mkdir = original_mkdir  # type: ignore[method-assign]
+                bootstrap.os.chmod = original_chmod
+                Path.iterdir = original_iterdir  # type: ignore[method-assign]
+                Path.is_file = original_is_file  # type: ignore[method-assign]
+                bootstrap.tree_has_unexpected_ownership = original_has_unexpected
+
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "-R",
+                        "missing-runtime-user:missing-runtime-user",
+                        "/mnt/cocalc/data/cache",
+                        "/mnt/cocalc/data/logs",
+                    ],
+                    "repair host data dir ownership",
+                ),
+                recorded,
+            )
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "missing-runtime-user:missing-runtime-user",
+                        "/mnt/cocalc/data/sync-fs.sqlite",
+                        "/mnt/cocalc/data/daemon.pid",
+                    ],
+                    "repair host data file ownership",
+                ),
+                recorded,
+            )
+
     def test_configure_podman_chowns_rootless_storage_children(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
