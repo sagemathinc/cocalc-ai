@@ -69,6 +69,7 @@ import { getOrCreateSelfSigned } from "@cocalc/lite/tls";
 import { handleDaemonCli } from "./daemon";
 import { startCopyWorker } from "./pending-copies";
 import { startOnPremTunnel } from "./onprem-tunnel";
+import { isProjectHostDevGcpReverseTunnelEnabled } from "./master-conat-server";
 import { startDataPermissionHardener } from "./data-permissions";
 import { resolveProjectHostId } from "./host-id";
 import { main as runConatRouterClusterNodeMain } from "./conat-router-cluster-node";
@@ -1193,6 +1194,16 @@ export async function main(
   logger.info("Minimal HTTP API");
   addCatchAll(app);
 
+  let stopOnPremTunnel: (() => void) | undefined;
+  const publicHttpPort =
+    Number(process.env.COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT) || port;
+  if (isProjectHostDevGcpReverseTunnelEnabled()) {
+    logger.info("starting reverse tunnel before master registration");
+    stopOnPremTunnel = await startOnPremTunnel({
+      localHttpPort: publicHttpPort,
+    });
+  }
+
   logger.info("start Master Registration");
   const masterRegistration = await startMasterRegistration({
     hostId,
@@ -1224,16 +1235,15 @@ export async function main(
   // file server must be started AFTER master registration, since it connects
   // to master to get rustic backup config.
   logger.info("File-server (local btrfs + optional ssh proxy if enabled)");
-  let stopOnPremTunnel: (() => void) | undefined;
   let stopRuntimePostureMonitor: () => void = () => {};
   let stopSnapshotBackupMaintenance: () => void = () => {};
   try {
     await initFileServer({ client: conatClient });
-    const publicHttpPort =
-      Number(process.env.COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT) || port;
-    stopOnPremTunnel = await startOnPremTunnel({
-      localHttpPort: publicHttpPort,
-    });
+    if (!stopOnPremTunnel) {
+      stopOnPremTunnel = await startOnPremTunnel({
+        localHttpPort: publicHttpPort,
+      });
+    }
     stopRuntimePostureMonitor = startRuntimePostureMonitor();
     stopSnapshotBackupMaintenance = startProjectSnapshotBackupMaintenance({
       hostId,

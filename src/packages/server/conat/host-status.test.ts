@@ -1,8 +1,15 @@
 export {};
 
+let createHostStatusServiceMock: jest.Mock;
+let conatMock: jest.Mock;
 let queryMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
 let getEffectiveMembershipUsageLimitsMock: jest.Mock;
+let getLaunchpadLocalConfigMock: jest.Mock;
+let maybeStartLaunchpadOnPremServicesMock: jest.Mock;
+let getLaunchpadRestPortMock: jest.Mock;
+let registerSelfHostTunnelKeyMock: jest.Mock;
+let resolveOnPremHostMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -16,12 +23,13 @@ jest.mock("@cocalc/backend/logger", () => ({
 
 jest.mock("@cocalc/backend/conat", () => ({
   __esModule: true,
-  conat: jest.fn(),
+  conat: (...args: any[]) => conatMock(...args),
 }));
 
 jest.mock("@cocalc/conat/project-host/api", () => ({
   __esModule: true,
-  createHostStatusService: jest.fn(),
+  createHostStatusService: (...args: any[]) =>
+    createHostStatusServiceMock(...args),
 }));
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -33,19 +41,22 @@ jest.mock("@cocalc/database/pool", () => ({
 
 jest.mock("@cocalc/server/launchpad/mode", () => ({
   __esModule: true,
-  getLaunchpadLocalConfig: jest.fn(),
+  getLaunchpadLocalConfig: (...args: any[]) =>
+    getLaunchpadLocalConfigMock(...args),
 }));
 
 jest.mock("@cocalc/server/onprem", () => ({
   __esModule: true,
-  resolveOnPremHost: jest.fn(),
+  resolveOnPremHost: (...args: any[]) => resolveOnPremHostMock(...args),
 }));
 
 jest.mock("@cocalc/server/launchpad/onprem-sshd", () => ({
   __esModule: true,
-  maybeStartLaunchpadOnPremServices: jest.fn(),
-  getLaunchpadRestPort: jest.fn(),
-  registerSelfHostTunnelKey: jest.fn(),
+  maybeStartLaunchpadOnPremServices: (...args: any[]) =>
+    maybeStartLaunchpadOnPremServicesMock(...args),
+  getLaunchpadRestPort: (...args: any[]) => getLaunchpadRestPortMock(...args),
+  registerSelfHostTunnelKey: (...args: any[]) =>
+    registerSelfHostTunnelKeyMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/revocation", () => ({
@@ -89,6 +100,8 @@ jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
 describe("listHostProjectMaintenanceSchedules", () => {
   beforeEach(() => {
     jest.resetModules();
+    createHostStatusServiceMock = jest.fn();
+    conatMock = jest.fn(async () => ({ ok: true }));
     queryMock = jest.fn();
     resolveMembershipForAccountMock = jest.fn(async () => ({
       effective_limits: {},
@@ -97,6 +110,21 @@ describe("listHostProjectMaintenanceSchedules", () => {
       max_snapshots_per_project: 8,
       max_backups_per_project: 5,
     }));
+    getLaunchpadLocalConfigMock = jest.fn(() => ({
+      sshd_port: 2201,
+      ssh_user: "user",
+      rest_port: 9345,
+    }));
+    maybeStartLaunchpadOnPremServicesMock = jest.fn(async () => undefined);
+    getLaunchpadRestPortMock = jest.fn(() => 9345);
+    registerSelfHostTunnelKeyMock = jest.fn(async () => ({
+      http_tunnel_port: 31001,
+      ssh_tunnel_port: 31002,
+      tunnel_public_key: "ssh-ed25519 AAAA",
+      conat_router_port: 9102,
+    }));
+    resolveOnPremHostMock = jest.fn(() => "lite4b.cocalc.ai");
+    delete process.env.COCALC_DEV_GCP_REVERSE_TUNNEL;
   });
 
   it("lists only provisioned active projects for the host and maps timestamps", async () => {
@@ -143,5 +171,72 @@ describe("listHostProjectMaintenanceSchedules", () => {
       expect.stringContaining("provisioned IS TRUE"),
       ["host-1", 2],
     );
+  });
+});
+
+describe("initHostStatusService registerOnPremTunnel", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    createHostStatusServiceMock = jest.fn(({ impl }) => impl);
+    conatMock = jest.fn(async () => ({ ok: true }));
+    queryMock = jest.fn();
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      effective_limits: {},
+    }));
+    getEffectiveMembershipUsageLimitsMock = jest.fn(() => ({
+      max_snapshots_per_project: 8,
+      max_backups_per_project: 5,
+    }));
+    getLaunchpadLocalConfigMock = jest.fn(() => ({
+      sshd_port: 2201,
+      ssh_user: "user",
+      rest_port: 9345,
+    }));
+    maybeStartLaunchpadOnPremServicesMock = jest.fn(async () => undefined);
+    getLaunchpadRestPortMock = jest.fn(() => 9345);
+    registerSelfHostTunnelKeyMock = jest.fn(async () => ({
+      http_tunnel_port: 31001,
+      ssh_tunnel_port: 31002,
+      tunnel_public_key: "ssh-ed25519 AAAA",
+      conat_router_port: 9102,
+    }));
+    resolveOnPremHostMock = jest.fn(() => "lite4b.cocalc.ai");
+    delete process.env.COCALC_DEV_GCP_REVERSE_TUNNEL;
+  });
+
+  it("allows dev-only GCP hosts to register a reverse tunnel", async () => {
+    process.env.COCALC_DEV_GCP_REVERSE_TUNNEL = "1";
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "host-gcp",
+            metadata: { machine: { cloud: "gcp", metadata: {} } },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const { initHostStatusService } = await import("./host-status");
+    const service: any = await initHostStatusService();
+    const result = await service.registerOnPremTunnel({
+      host_id: "host-gcp",
+      public_key: "ssh-ed25519 AAAA host",
+    });
+
+    expect(maybeStartLaunchpadOnPremServicesMock).toHaveBeenCalled();
+    expect(registerSelfHostTunnelKeyMock).toHaveBeenCalledWith({
+      host_id: "host-gcp",
+      public_key: "ssh-ed25519 AAAA host",
+    });
+    expect(result).toMatchObject({
+      sshd_host: "lite4b.cocalc.ai",
+      sshd_port: 2201,
+      ssh_user: "user",
+      http_tunnel_port: 31001,
+      ssh_tunnel_port: 31002,
+      rest_port: 9345,
+      conat_router_port: 9102,
+    });
   });
 });

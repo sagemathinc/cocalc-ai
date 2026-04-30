@@ -29,6 +29,7 @@ import {
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getDerivedBayPublicHostname } from "@cocalc/server/bay-public-origin";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
+import { isDevGcpReverseTunnelEnabled } from "@cocalc/server/cloud/internal-network";
 import { ensurePublicViewerDns } from "@cocalc/server/cloud/dns";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
@@ -134,16 +135,26 @@ function cloudflareSelfMode(settings: any): boolean {
   return tunnelEnabled;
 }
 
-async function hasLocalSelfHostHosts(): Promise<boolean> {
+async function hasLaunchpadReverseTunnelHosts(): Promise<boolean> {
+  const allowDevGcp = isDevGcpReverseTunnelEnabled();
   const { rows } = await pool().query(
     `
       SELECT 1
       FROM project_hosts
       WHERE deleted IS NULL
-        AND (metadata->'machine'->>'cloud') = 'self-host'
-        AND COALESCE(metadata->'machine'->'metadata'->>'self_host_mode','local') = 'local'
+        AND (
+          (
+            (metadata->'machine'->>'cloud') = 'self-host'
+            AND COALESCE(metadata->'machine'->'metadata'->>'self_host_mode','local') = 'local'
+          )
+          OR (
+            $1::boolean IS TRUE
+            AND (metadata->'machine'->>'cloud') = 'gcp'
+          )
+        )
       LIMIT 1
     `,
+    [allowDevGcp],
   );
   return rows.length > 0;
 }
@@ -266,7 +277,7 @@ async function ensureAuthorizedKeysPath(path: string): Promise<void> {
 }
 
 async function startSshd(): Promise<SshdState | null> {
-  if (!(await hasLocalSelfHostHosts())) {
+  if (!(await hasLaunchpadReverseTunnelHosts())) {
     return null;
   }
   if (!isLaunchpadProduct()) {
@@ -556,6 +567,7 @@ export async function registerSelfHostTunnelKey(opts: {
   http_tunnel_port: number;
   ssh_tunnel_port: number;
   tunnel_public_key: string;
+  conat_router_port: number;
 }> {
   const hostId = opts.host_id;
   if (!opts.public_key) {
@@ -597,15 +609,17 @@ export async function registerSelfHostTunnelKey(opts: {
     );
   }
   await refreshLaunchpadOnPremAuthorizedKeys();
+  const config = getLaunchpadLocalConfig("local");
   return {
     http_tunnel_port: Number(selfHost.http_tunnel_port),
     ssh_tunnel_port: Number(selfHost.ssh_tunnel_port),
     tunnel_public_key: selfHost.tunnel_public_key,
+    conat_router_port: config.http_port ?? 9001,
   };
 }
 
 async function startRestServer(): Promise<RestServerState | null> {
-  if (!(await hasLocalSelfHostHosts())) {
+  if (!(await hasLaunchpadReverseTunnelHosts())) {
     return null;
   }
   if (restServerState) {

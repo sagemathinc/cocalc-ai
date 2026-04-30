@@ -20,8 +20,16 @@ import {
   createHostStatusClient,
   ONPREM_REST_TUNNEL_LOCAL_PORT,
 } from "@cocalc/conat/project-host/api";
+import { connect } from "@cocalc/conat/core/client";
+import { inboxPrefix } from "@cocalc/conat/names";
 import { randomBytes } from "micro-key-producer/utils.js";
 import ssh from "micro-key-producer/ssh.js";
+import { getProjectHostMasterConatToken } from "./master-conat-token";
+import {
+  isProjectHostDevGcpReverseTunnelEnabled,
+  resolveProjectHostBootstrapMasterConatServer,
+  resolveProjectHostTunneledMasterConatLocalPort,
+} from "./master-conat-server";
 import { getMasterConatClient } from "./master-status";
 
 const SSH_BINARY = process.env.COCALC_SSH_BINARY ?? "ssh";
@@ -33,6 +41,7 @@ type TunnelConfig = {
   sshdPort: number;
   httpTunnelPort: number;
   sshTunnelPort: number;
+  conatRouterPort?: number;
   sshUser: string;
   keyPath: string;
   restPort: number;
@@ -43,6 +52,7 @@ type StoredTunnelConfig = {
   sshd_port: number;
   http_tunnel_port: number;
   ssh_tunnel_port: number;
+  conat_router_port?: number;
   ssh_user: string;
   public_key: string;
   rest_port: number;
@@ -71,8 +81,11 @@ function resolveDataDir(): string {
   return process.env.COCALC_DATA ?? process.env.DATA ?? "/mnt/cocalc/data";
 }
 
-function isLocalSelfHost(): boolean {
-  return (process.env.COCALC_SELF_HOST_MODE ?? "").toLowerCase() === "local";
+function isReverseTunnelEnabled(): boolean {
+  return (
+    (process.env.COCALC_SELF_HOST_MODE ?? "").toLowerCase() === "local" ||
+    isProjectHostDevGcpReverseTunnelEnabled()
+  );
 }
 
 function parsePort(raw?: string): number | undefined {
@@ -115,9 +128,18 @@ function buildTunnelArgs(opts: {
   localSshPort: number;
   localRestPort?: number;
   remoteRestPort?: number;
+  localConatPort?: number;
+  remoteConatPort?: number;
 }): string[] {
-  const { config, localHttpPort, localSshPort, localRestPort, remoteRestPort } =
-    opts;
+  const {
+    config,
+    localHttpPort,
+    localSshPort,
+    localRestPort,
+    remoteRestPort,
+    localConatPort,
+    remoteConatPort,
+  } = opts;
   const args = [
     "-i",
     config.keyPath,
@@ -143,6 +165,9 @@ function buildTunnelArgs(opts: {
   ];
   if (localRestPort && remoteRestPort) {
     args.push("-L", `127.0.0.1:${localRestPort}:127.0.0.1:${remoteRestPort}`);
+  }
+  if (localConatPort && remoteConatPort) {
+    args.push("-L", `127.0.0.1:${localConatPort}:127.0.0.1:${remoteConatPort}`);
   }
   return args;
 }
@@ -195,6 +220,7 @@ function resolveTunnelConfigFromEnv(): TunnelConfig | undefined {
     sshdPort,
     httpTunnelPort: tunnelPort,
     sshTunnelPort,
+    conatRouterPort: parsePort(process.env.COCALC_LAUNCHPAD_CONAT_ROUTER_PORT),
     sshUser,
     keyPath,
     restPort: parsePort(process.env.COCALC_LAUNCHPAD_REST_PORT) ?? 9345,
@@ -202,8 +228,7 @@ function resolveTunnelConfigFromEnv(): TunnelConfig | undefined {
 }
 
 function resolveHubHost(): string | undefined {
-  const raw =
-    process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER;
+  const raw = resolveProjectHostBootstrapMasterConatServer();
   if (!raw) return undefined;
   try {
     return new URL(raw).hostname;
@@ -229,9 +254,33 @@ function normalizeStoredConfig(
     sshdPort: stored.sshd_port,
     httpTunnelPort: stored.http_tunnel_port,
     sshTunnelPort: stored.ssh_tunnel_port,
+    conatRouterPort: stored.conat_router_port,
     sshUser: stored.ssh_user || "user",
     keyPath,
     restPort: stored.rest_port,
+  };
+}
+
+function createBootstrapStatusClient() {
+  const address = resolveProjectHostBootstrapMasterConatServer();
+  const hostId = process.env.PROJECT_HOST_ID ?? "";
+  if (!address || !hostId) return;
+  const client = connect({
+    address,
+    inboxPrefix: inboxPrefix({ host_id: hostId }),
+    noCache: true,
+    auth: (cb) => {
+      const token = getProjectHostMasterConatToken();
+      if (`${token ?? ""}`.trim()) {
+        cb({ bearer: token });
+      } else {
+        cb({});
+      }
+    },
+  });
+  return {
+    client,
+    statusClient: createHostStatusClient({ client }),
   };
 }
 
@@ -240,14 +289,23 @@ async function registerTunnelConfig(opts: {
   configPath: string;
   fallback?: StoredTunnelConfig;
 }): Promise<TunnelConfig | undefined> {
-  const client = getMasterConatClient();
-  if (!client) {
-    logger.debug("onprem tunnel registration skipped (no master client)");
-    return undefined;
-  }
   const hostId = process.env.PROJECT_HOST_ID ?? "";
   if (!hostId) {
     logger.warn("onprem tunnel registration skipped (missing host id)");
+    return undefined;
+  }
+  const liveClient = getMasterConatClient();
+  const bootstrapClient = liveClient
+    ? undefined
+    : createBootstrapStatusClient();
+  const client = liveClient ?? bootstrapClient?.client;
+  const statusClient = liveClient
+    ? createHostStatusClient({ client: liveClient })
+    : bootstrapClient?.statusClient;
+  if (!client || !statusClient) {
+    logger.debug(
+      "onprem tunnel registration skipped (no usable master client)",
+    );
     return undefined;
   }
   let publicKey = opts.fallback?.public_key ?? "";
@@ -264,7 +322,6 @@ async function registerTunnelConfig(opts: {
     logger.warn("onprem tunnel registration skipped (missing public key)");
     return undefined;
   }
-  const statusClient = createHostStatusClient({ client });
   try {
     const res = await statusClient.registerOnPremTunnel({
       host_id: hostId,
@@ -284,6 +341,7 @@ async function registerTunnelConfig(opts: {
       ssh_user: res.ssh_user,
       http_tunnel_port: res.http_tunnel_port,
       ssh_tunnel_port: res.ssh_tunnel_port,
+      conat_router_port: res.conat_router_port,
       public_key: publicKey,
       rest_port: res.rest_port,
     };
@@ -293,20 +351,29 @@ async function registerTunnelConfig(opts: {
       sshd_port: stored.sshd_port,
       http_tunnel_port: stored.http_tunnel_port,
       ssh_tunnel_port: stored.ssh_tunnel_port,
+      conat_router_port: stored.conat_router_port,
       rest_port: stored.rest_port,
     });
     return normalizeStoredConfig(stored, opts.keyPath);
   } catch (err) {
     logger.warn("onprem tunnel registration failed", { err });
     return undefined;
+  } finally {
+    if (bootstrapClient) {
+      try {
+        bootstrapClient.client.close();
+      } catch {
+        // ignore close errors
+      }
+    }
   }
 }
 
 export async function startOnPremTunnel(opts: {
   localHttpPort: number;
 }): Promise<() => void> {
-  if (!isLocalSelfHost()) {
-    logger.debug("onprem tunnel disabled (self_host_mode != local)");
+  if (!isReverseTunnelEnabled()) {
+    logger.debug("onprem tunnel disabled");
     return () => {};
   }
   const keyPath = resolveKeyPath();
@@ -328,6 +395,7 @@ export async function startOnPremTunnel(opts: {
   const localRestPort =
     parsePort(process.env.COCALC_ONPREM_REST_TUNNEL_LOCAL_PORT) ??
     ONPREM_REST_TUNNEL_LOCAL_PORT;
+  const localConatPort = resolveProjectHostTunneledMasterConatLocalPort();
   const state: TunnelState = { stopped: false };
   let currentConfig: TunnelConfig | undefined = fallbackConfig;
 
@@ -368,12 +436,15 @@ export async function startOnPremTunnel(opts: {
       localSshPort,
       localRestPort,
       remoteRestPort,
+      localConatPort,
+      remoteConatPort: config.conatRouterPort,
     });
     logger.debug("starting onprem tunnel", {
       sshdHost: config.sshdHost,
       sshdPort: config.sshdPort,
       httpTunnelPort: config.httpTunnelPort,
       sshTunnelPort: config.sshTunnelPort,
+      conatRouterPort: config.conatRouterPort,
     });
     const child = spawn(SSH_BINARY, args);
     state.child = child;
@@ -399,13 +470,15 @@ export async function startOnPremTunnel(opts: {
         if (
           next.sshdHost !== config.sshdHost ||
           next.sshdPort !== config.sshdPort ||
-          next.restPort !== config.restPort
+          next.restPort !== config.restPort ||
+          next.conatRouterPort !== config.conatRouterPort
         ) {
           logger.info("onprem tunnel refreshed config after disconnect", {
             reason,
             sshd_host: next.sshdHost,
             sshd_port: next.sshdPort,
             rest_port: next.restPort,
+            conat_router_port: next.conatRouterPort,
           });
         }
         start(next);

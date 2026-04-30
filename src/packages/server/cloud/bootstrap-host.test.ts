@@ -94,6 +94,27 @@ describe("resolveSoftwareBaseUrl", () => {
   });
 });
 
+describe("GCP bootstrap helpers", () => {
+  it("normalizes GCP project ids", () => {
+    expect(bootstrapHost.normalizeGcpProjectId(" Proj-ABC ")).toBe("proj-abc");
+    expect(bootstrapHost.normalizeGcpProjectId("")).toBeUndefined();
+  });
+
+  it("extracts configured GCP project id from the service account json", () => {
+    expect(
+      bootstrapHost.configuredGcpProjectIdFromServiceAccountJson(
+        JSON.stringify({ project_id: "Proj-ABC" }),
+      ),
+    ).toBe("proj-abc");
+  });
+
+  it("ignores invalid configured GCP service account json", () => {
+    expect(
+      bootstrapHost.configuredGcpProjectIdFromServiceAccountJson("{"),
+    ).toBeUndefined();
+  });
+});
+
 describe("bootstrap-host shell templates", () => {
   it("keeps carriage-return stripping as a literal backslash-r sequence", () => {
     const source = fs.readFileSync(

@@ -8,12 +8,7 @@ import { PROJECT_UPGRADES } from "@cocalc/util/schema";
 import { upgrades } from "@cocalc/util/upgrade-spec";
 import { Quota } from "@cocalc/util/upgrades/quota";
 
-export const QUOTAS_BOOLEAN = [
-  "member_host",
-  "network",
-  "always_running",
-  "ext_rw",
-] as const;
+export const QUOTAS_BOOLEAN = ["member_host", "network", "ext_rw"] as const;
 
 export const SHOW_MAX: readonly string[] = [
   "disk_quota",

@@ -5,6 +5,7 @@ import {
   ZoneOperationsClient,
 } from "@google-cloud/compute";
 import logger from "./logger";
+import { gcpInternalHostname } from "./gcp-internal";
 import type {
   CloudProvider,
   HostRuntime,
@@ -137,6 +138,10 @@ function isRetryableOperationWaitError(err: unknown): boolean {
 
 function publicIpFromInstance(instance: any): string {
   return instance?.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP ?? "";
+}
+
+function privateIpFromInstance(instance: any): string {
+  return instance?.networkInterfaces?.[0]?.networkIP ?? "";
 }
 
 function dataDiskUriFromInstance(instance: any): string | undefined {
@@ -516,13 +521,22 @@ export class GcpProvider implements CloudProvider {
 
     const runtimeFromInstance = (instance: any): HostRuntime => {
       const publicIp = publicIpFromInstance(instance);
+      const privateIp = privateIpFromInstance(instance);
+      const internalHostname = gcpInternalHostname({
+        configuredHostname: instance?.hostname,
+        instanceName: instance?.name ?? spec.name,
+        projectId: credentials.projectId,
+      });
       return {
         provider: "gcp",
         instance_id: spec.name,
         public_ip: publicIp,
+        private_ip: privateIp,
+        internal_hostname: internalHostname,
         ssh_user: "ubuntu",
         zone,
         metadata: {
+          gcp_project_id: credentials.projectId,
           machine_type: machineType,
           disk_type: diskType,
           boot_disk_gb: bootDiskGb,
@@ -871,12 +885,19 @@ export class GcpProvider implements CloudProvider {
         if (opts?.namePrefix && !name.startsWith(opts.namePrefix)) continue;
         const public_ip =
           inst?.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP ?? undefined;
+        const private_ip = inst?.networkInterfaces?.[0]?.networkIP ?? undefined;
         instances.push({
           instance_id: name,
           name,
           status: inst.status ?? undefined,
           zone,
           public_ip,
+          private_ip,
+          internal_hostname: gcpInternalHostname({
+            configuredHostname: inst.hostname,
+            instanceName: name,
+            projectId: credentials.projectId,
+          }),
         });
       }
     }
@@ -898,12 +919,19 @@ export class GcpProvider implements CloudProvider {
     if (!instance) return undefined;
     const public_ip =
       instance?.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP ?? undefined;
+    const private_ip = instance?.networkInterfaces?.[0]?.networkIP ?? undefined;
     return {
       instance_id: runtime.instance_id,
       name: instance.name ?? runtime.instance_id,
       status: instance.status ?? undefined,
       zone: runtime.zone,
       public_ip,
+      private_ip,
+      internal_hostname: gcpInternalHostname({
+        configuredHostname: instance.hostname,
+        instanceName: instance.name ?? runtime.instance_id,
+        projectId: credentials.projectId,
+      }),
     };
   }
 }

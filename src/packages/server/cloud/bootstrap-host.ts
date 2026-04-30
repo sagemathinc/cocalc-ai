@@ -43,7 +43,8 @@ import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
 import { buildHostSpec } from "./host-util";
-import { normalizeProviderId } from "@cocalc/cloud";
+import { gcpInternalHostname, normalizeProviderId } from "@cocalc/cloud";
+import { ONPREM_MASTER_CONAT_TUNNEL_LOCAL_PORT } from "@cocalc/conat/project-host/api";
 import type {
   HostMachine,
   HostRuntimeArtifact,
@@ -61,6 +62,13 @@ import {
   type CloudflareTunnel,
 } from "./cloudflare-tunnel";
 import { machineHasGpu } from "./host-gpu";
+import {
+  DEFAULT_GCP_BAY_ROUTER_PORT,
+  isDevGcpReverseTunnelEnabled,
+  resolveGcpInternalConatUrl,
+  resolveGcpManagedHostInternalUrl,
+  shouldUseGcpInternalConatUrl,
+} from "./internal-network";
 import { getHostSshPublicKeys } from "./ssh-key";
 
 const logger = getLogger("server:cloud:bootstrap-host");
@@ -112,6 +120,89 @@ function isLoopbackHostname(hostname: string): boolean {
     host === "::1" ||
     host === "[::1]" ||
     host.startsWith("127.")
+  );
+}
+
+let currentGcpInternalHostnamePromise: Promise<string | undefined> | undefined;
+
+export function normalizeGcpProjectId(value?: string): string | undefined {
+  const projectId = `${value ?? ""}`.trim().toLowerCase();
+  return projectId || undefined;
+}
+
+export function configuredGcpProjectIdFromServiceAccountJson(
+  serviceAccountJson?: string,
+): string | undefined {
+  const raw = `${serviceAccountJson ?? ""}`.trim();
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    return normalizeGcpProjectId(parsed?.project_id);
+  } catch {
+    return undefined;
+  }
+}
+
+async function getCurrentGcpInternalHostname({}: Record<
+  string,
+  never
+> = {}): Promise<string | undefined> {
+  currentGcpInternalHostnamePromise ??= (async () => {
+    try {
+      const response = await fetch(
+        "http://metadata.google.internal/computeMetadata/v1/instance/hostname",
+        {
+          headers: { "Metadata-Flavor": "Google" },
+          signal: AbortSignal.timeout(1500),
+        },
+      );
+      if (!response.ok) return undefined;
+      return gcpInternalHostname({
+        configuredHostname: `${await response.text()}`.trim(),
+      });
+    } catch {
+      return undefined;
+    }
+  })();
+  const hostname = await currentGcpInternalHostnamePromise;
+  if (!hostname) {
+    currentGcpInternalHostnamePromise = undefined;
+  }
+  return hostname;
+}
+
+async function resolveMasterConatServer({
+  providerId,
+  configuredAddress,
+}: {
+  providerId?: string;
+  configuredAddress?: string;
+}): Promise<string | undefined> {
+  const address = `${configuredAddress ?? ""}`.trim();
+  if (!address) return undefined;
+  if (providerId !== "gcp") return address;
+  const internalHostname = await getCurrentGcpInternalHostname();
+  if (!internalHostname) return address;
+  if (
+    !shouldUseGcpInternalConatUrl({
+      currentAddress: address,
+      bayInternalHostname: internalHostname,
+      mode: process.env.COCALC_GCP_INTERNAL_MASTER_CONAT_MODE,
+    })
+  ) {
+    return address;
+  }
+  const routerPort =
+    Number.parseInt(
+      `${process.env.COCALC_BAY_ROUTER_PORT ?? process.env.COCALC_GCP_INTERNAL_MASTER_CONAT_PORT ?? ""}`,
+      10,
+    ) || DEFAULT_GCP_BAY_ROUTER_PORT;
+  return (
+    resolveGcpInternalConatUrl({
+      currentAddress: address,
+      bayInternalHostname: internalHostname,
+      routerPort,
+    }) ?? address
   );
 }
 
@@ -594,6 +685,7 @@ export async function buildBootstrapScripts(
     project_hosts_software_base_url,
     project_hosts_bootstrap_channel,
     project_hosts_bootstrap_version,
+    google_cloud_service_account_json,
   } = await getServerSettings();
   const forcedSoftwareBaseUrl =
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE?.trim() || "";
@@ -620,6 +712,13 @@ export async function buildBootstrapScripts(
   const desiredArtifactVersions = await loadBootstrapArtifactDesiredVersions(
     row.id,
   );
+  const gcpProjectId =
+    normalizeGcpProjectId(
+      runtime?.metadata?.gcp_project_id ?? runtime?.metadata?.project_id,
+    ) ??
+    configuredGcpProjectIdFromServiceAccountJson(
+      google_cloud_service_account_json,
+    );
   const resolvedHostBundle = await resolveBootstrapArtifactBundle({
     softwareBaseUrl,
     artifact: "project-host",
@@ -700,10 +799,13 @@ export async function buildBootstrapScripts(
   const launchpadConat = useOnPremSettings
     ? localConat
     : (opts.launchpadBaseUrl ?? "");
-  const masterAddress =
-    process.env.MASTER_CONAT_SERVER ??
-    process.env.COCALC_MASTER_CONAT_SERVER ??
-    launchpadConat;
+  const masterAddress = await resolveMasterConatServer({
+    providerId,
+    configuredAddress:
+      process.env.MASTER_CONAT_SERVER ??
+      process.env.COCALC_MASTER_CONAT_SERVER ??
+      launchpadConat,
+  });
   if (!masterAddress) {
     throw new Error("MASTER_CONAT_SERVER is not configured");
   }
@@ -750,11 +852,21 @@ export async function buildBootstrapScripts(
         : `https://${publicIp || onPremUrlHost}`;
   const internalUrl = useOnPremSettings
     ? `http://${onPremUrlHost}:${port}`
-    : tunnel?.hostname
-      ? `https://${tunnel.hostname}`
-      : row.internal_url
-        ? row.internal_url.replace(/^http:\/\//, "https://")
-        : `https://${publicIp || onPremUrlHost}`;
+    : providerId === "gcp"
+      ? (resolveGcpManagedHostInternalUrl({
+          runtime: metadata.runtime,
+          tunnelEnabled,
+          fallbackProjectId: gcpProjectId,
+        }) ??
+        row.internal_url ??
+        (tunnel?.hostname
+          ? `https://${tunnel.hostname}`
+          : `https://${publicIp || onPremUrlHost}`))
+      : tunnel?.hostname
+        ? `https://${tunnel.hostname}`
+        : row.internal_url
+          ? row.internal_url.replace(/^http:\/\//, "https://")
+          : `https://${publicIp || onPremUrlHost}`;
   const sshServer = row.ssh_server ?? `${publicIp || onPremUrlHost}:${sshPort}`;
   const dataDir = "/mnt/cocalc/data";
   const envFile = "/etc/cocalc/project-host.env";
@@ -787,6 +899,11 @@ export async function buildBootstrapScripts(
     Number.isFinite(backupParallelParsed) && backupParallelParsed > 0
       ? Math.max(1, Math.min(100, Math.floor(backupParallelParsed)))
       : undefined;
+  const devGcpReverseTunnel =
+    providerId === "gcp" && isDevGcpReverseTunnelEnabled();
+  const tunneledMasterConatServer = devGcpReverseTunnel
+    ? `http://127.0.0.1:${process.env.COCALC_ONPREM_MASTER_CONAT_TUNNEL_LOCAL_PORT ?? ONPREM_MASTER_CONAT_TUNNEL_LOCAL_PORT}`
+    : undefined;
 
   const envLines = [
     `MASTER_CONAT_SERVER=${masterAddress}`,
@@ -831,6 +948,13 @@ export async function buildBootstrapScripts(
   }
   if (isSelfHost) {
     envLines.push(`COCALC_SELF_HOST_MODE=${effectiveSelfHostMode ?? "local"}`);
+  }
+  if (devGcpReverseTunnel && tunneledMasterConatServer) {
+    envLines.push(`COCALC_DEV_GCP_REVERSE_TUNNEL=1`);
+    envLines.push(`COCALC_BOOTSTRAP_MASTER_CONAT_SERVER=${masterAddress}`);
+    envLines.push(
+      `COCALC_TUNNELED_MASTER_CONAT_SERVER=${tunneledMasterConatServer}`,
+    );
   }
   if (backupParallel != null) {
     envLines.push(`COCALC_PROJECT_HOST_BACKUP_MAX_PARALLEL=${backupParallel}`);

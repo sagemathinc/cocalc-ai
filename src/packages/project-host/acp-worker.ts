@@ -19,6 +19,7 @@ import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { configureProjectHostAcpContainerFileIO } from "./file-server";
 import { wireHostsApi } from "./hub/hosts";
 import { PROJECT_RUNNER_RPC_TIMEOUT_MS, wireProjectsApi } from "./hub/projects";
+import { resolveProjectHostPreferredMasterConatServer } from "./master-conat-server";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
 import { setMasterConatClient } from "./master-status";
 import { initSqlite } from "./sqlite/init";
@@ -87,7 +88,7 @@ function configureProjectHostAcpRuntime(): void {
 
 function connectMasterClient() {
   const address =
-    `${process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER ?? ""}`.trim();
+    `${resolveProjectHostPreferredMasterConatServer() ?? ""}`.trim();
   if (!address) {
     return;
   }

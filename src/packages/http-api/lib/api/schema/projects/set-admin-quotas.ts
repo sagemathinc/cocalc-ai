@@ -37,14 +37,8 @@ export const SetAdminQuotasInputSchema = z
       .nonnegative()
       .optional()
       .describe("Disk quota in MB"),
-    idle_timeout: z
-      .number()
-      .nonnegative()
-      .optional()
-      .describe("Idle timeout in seconds"),
     internet: z.boolean().optional().describe("Internet access"),
     member_host: z.boolean().optional().describe("Member hosting"),
-    always_running: z.boolean().optional().describe("Always running"),
   })
   .describe(
     "**Administrators only**. Used to set project quotas as an admin. Important: you have to stop and start the project after any change.",

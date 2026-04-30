@@ -18,14 +18,14 @@ import {
   KUCALC_DISABLED,
   KUCALC_ON_PREMISES,
 } from "@cocalc/util/db-schema/site-defaults";
-import { round1, seconds2hms, server_time } from "@cocalc/util/misc";
+import { round1, seconds2hms } from "@cocalc/util/misc";
 import { PROJECT_UPGRADES, FAIR_CPU_MODE } from "@cocalc/util/schema";
 import {
   Upgrades,
   quota2upgrade_key,
   upgrade2quota_key,
 } from "@cocalc/util/upgrades/quota";
-import { IdleTimeoutPct, PercentBar, renderBoolean } from "./components";
+import { PercentBar, renderBoolean } from "./components";
 import {
   CurrentUsage,
   DisplayQuota,
@@ -62,8 +62,6 @@ export function useRunQuota(
             }
           } else if (typeof val !== "number") {
             return [key, val];
-          } else if (key == "idle_timeout") {
-            return [key, seconds2hms(val, false, false)];
           } else {
             const up_key = quota2upgrade_key(key);
             // no display factor!
@@ -88,14 +86,10 @@ export function useMaxUpgrades(): DisplayQuota {
     const next: any = {};
     for (const [key, val] of Object.entries(maxUpgradesData)) {
       if (typeof val !== "number") continue;
-      if (key == "idle_timeout") {
-        next[key] = seconds2hms(val, false, false);
-      } else {
-        const up_key = quota2upgrade_key(key);
-        const dval = PARAMS[up_key].display_factor * val;
-        const unit = PARAMS[up_key].display_unit;
-        next[key] = renderValueUnit(dval, unit);
-      }
+      const up_key = quota2upgrade_key(key);
+      const dval = PARAMS[up_key].display_factor * val;
+      const unit = PARAMS[up_key].display_unit;
+      next[key] = renderValueUnit(dval, unit);
     }
     if (!isEqual(next, maxUpgrades)) setMaxUpgrades(next);
   }, [customMaxUpgrades]);
@@ -123,11 +117,6 @@ export function useCurrentUsage({
 }): CurrentUsage {
   const project_status = useTypedRedux({ project_id }, "status");
   const { runQuota } = useProjectRunQuota(project_id);
-
-  const project_map = useTypedRedux("projects", "project_map");
-  const last_edited: Date | undefined = project_map
-    ?.get(project_id)
-    ?.get("last_edited");
 
   const [currentUsage, setCurrentUsage] = useState<CurrentUsage>({});
 
@@ -176,29 +165,6 @@ export function useCurrentUsage({
     return;
   }
 
-  function whenWillProjectStop() {
-    if (last_edited == null) return;
-    const always_running = runQuota?.always_running ?? false;
-    if (always_running) return; // not applicable
-    const idle_timeout = runQuota?.idle_timeout; // seconds
-    const diff = Math.max(
-      0,
-      (server_time().valueOf() - last_edited.valueOf()) / 1000,
-    );
-    if (typeof idle_timeout === "number") {
-      return {
-        display: seconds2hms(diff, false, false),
-        element: (
-          <IdleTimeoutPct
-            idle_timeout={idle_timeout}
-            last_edited={last_edited}
-          />
-        ),
-      };
-    }
-    return;
-  }
-
   function getBoolean(key) {
     if (runQuota == null) return;
     const val = runQuota[key];
@@ -217,8 +183,6 @@ export function useCurrentUsage({
         (name: keyof Upgrades): [string, Usage] => {
           const key = upgrade2quota_key(name);
           switch (name) {
-            case "mintime":
-              return [key, whenWillProjectStop()];
             case "disk_quota":
               return [key, disk(usage)];
             case "memory_request":
@@ -230,10 +194,12 @@ export function useCurrentUsage({
             case "cpu_shares": // dedicated cpu, nothing to show
               return [key, undefined];
             case "member_host":
-            case "always_running":
             case "network":
             case "ext_rw":
               return [key, getBoolean(key)];
+            case "mintime":
+            case "always_running":
+              return [key, undefined];
             case "patch":
               const p = runQuota?.[key];
               const x = Array.isArray(p) ? p.length : "N/A";
@@ -257,7 +223,6 @@ export function useCurrentUsage({
     if (!isEqual(next, currentUsage)) setCurrentUsage(next);
   }, [
     runQuota,
-    last_edited,
     project_status?.get("usage"), // don't use "usage" directly, because it is a plain JS object
   ]);
 
