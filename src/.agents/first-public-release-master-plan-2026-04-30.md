@@ -13,6 +13,8 @@ This plan explicitly includes:
 
 - multibay scalability and operational hardening
 - rented dedicated cloud hosts
+- project move between regions for data accessibility
+- critical purchase and entitlement paths for first release
 - shared-host and dedicated-host resource protection
 - fixing all known release-relevant bugs we have already uncovered
 
@@ -39,9 +41,11 @@ The first public release means:
    conservative public use
 2. a narrow but real rented dedicated-host offering on managed GCP and Nebius
    infrastructure
-3. a pricing / limits / enforcement model that protects cost and keeps the
-   system stable
-4. clear operator workflows for deployment, rollback, host lifecycle, and
+3. a project move between regions path that keeps project data accessible even
+   when a region has no active hosts
+4. a pricing / limits / entitlement model that protects cost and supports the
+   first real purchase paths
+5. clear operator workflows for deployment, rollback, host lifecycle, and
    incident response
 
 It does **not** mean:
@@ -60,6 +64,7 @@ The following scope is in for the first public release:
 - stable browser URL and home-bay model
 - project-host direct runtime routing where already designed
 - seed-owned purchases/billing authority for first release
+- project move between regions with explicit backup-region cutover semantics
 
 ### 2. Rented Dedicated Hosts
 
@@ -78,7 +83,18 @@ The following scope is in for the first public release:
 - managed egress limits
 - host-local stopping/eviction on both shared and dedicated hosts
 
-### 4. Operational Hardening
+### 4. Purchase Paths And Entitlements
+
+- student pay for course access:
+  - one-time payment
+  - four-month duration
+  - course/student-targeted special membership
+- minimal site/domain license:
+  - verified-domain based entitlement
+  - baseline membership level applied automatically
+  - simple site-admin configuration path
+
+### 5. Operational Hardening
 
 - packaging
 - deployment
@@ -87,7 +103,7 @@ The following scope is in for the first public release:
 - operator auth and CLI usability
 - real dogfood soak
 
-### 5. Known Release Bugs
+### 6. Known Release Bugs
 
 - all user-visible or operator-visible bugs discovered during current dogfood
   and canary work
@@ -98,7 +114,8 @@ The following scope is **not** in:
 - large rehome feature completion
 - deep new routing protocols unless forced by a measured blocker
 - generalized private-network optimization across every topology
-- advanced billing model expansion
+- advanced billing model expansion beyond the named first-release purchase
+  paths
 - broad BYO-host or self-connected-machine product scope
 - large provider/backend expansion beyond the first supported dedicated-host
   path
@@ -128,9 +145,11 @@ The following scope is **not** in:
 ### What still looks risky
 
 - correctness under churn
+- region-move correctness and backup cutover semantics
 - deployment / upgrade / rollback reproducibility
 - operator workflows that remain too environment-sensitive
 - dedicated-host pricing, billing, and access-control polish
+- student pay and site/domain-license entitlement correctness
 - release bugs discovered during real canaries
 - soak confidence and test confidence
 
@@ -181,12 +200,28 @@ Goal: make the current multibay architecture trustworthy under churn.
       identical.
 - [ ] Confirm cross-bay project lookup, start, stop, and browser reconnect
       paths are stable after recent routing work.
+- [ ] Implement and validate project move between regions as a first-class
+      supported path:
+  - restore from the old-region backup repo
+  - take exactly one fresh backup in the destination region
+  - flip the official backup region to the destination
+  - purge the old-region snapshots after cutover
+- [ ] Verify the accessibility case where a project's current backup region has
+      no active hosts, and moving it to a region with hosts restores normal
+      access.
+- [ ] Document the user/operator-visible semantics for region moves:
+  - expected downtime
+  - what metadata changes
+  - what snapshots are retained
+  - who is allowed to initiate the move
 
 ### Exit Criteria
 
 - stale/deleted host rows converge without manual DB surgery
 - operator UI and CLI agree on host state
 - multibay correctness bugs are no longer appearing in ordinary dogfooding
+- one project can move between regions end to end with correct backup cutover
+- the no-host-in-region accessibility story is real, not aspirational
 
 ## C. Shared And Dedicated Host Resource Protection
 
@@ -246,6 +281,8 @@ This workstream is in scope, but it must stay narrow.
 
 - [ ] Choose and document the exact first supported dedicated-host SKUs on GCP
       and Nebius.
+  - must include spot instances on both GCP and Nebius
+  - pricing semantics must account for dynamic spot pricing on GCP
 - [ ] Make the dedicated-host configuration dialog clearly show monthly
       pricing before the user commits.
 - [ ] Implement monthly billing / renewal / charge logic for rented dedicated
@@ -275,7 +312,71 @@ This workstream is in scope, but it must stay narrow.
 - support boundaries are documented and narrow
 - operators are not relying on ad hoc tribal knowledge to assist users
 
-## E. Deployment, Packaging, Upgrade, And Rollback
+## E. Purchase Paths And Entitlements
+
+Goal: ship the minimum purchase and entitlement paths needed for real course
+and campus adoption in the first release.
+
+This workstream is in scope because it directly affects near-term revenue and
+real migrations from `cocalc.com`.
+
+### Included
+
+- student pay:
+  - one-time payment
+  - four-month duration
+  - special membership for students in courses
+- minimal site/domain license:
+  - verified email domain grants a baseline membership level
+  - simple site-admin configuration path
+- explicit entitlement computation and precedence with existing memberships and
+  upgrades
+
+### Excluded
+
+- broad institutional billing/workflow expansion
+- custom contract logic beyond the minimal domain-license path
+- generalized coupon/promotions system
+- complex multi-tier licensing hierarchies
+
+### Todo
+
+- [ ] Define the exact first-release student pay product:
+  - eligibility rules
+  - one-time price
+  - four-month duration semantics
+  - renewal/re-purchase behavior
+  - how course association is determined
+- [ ] Implement the student pay purchase flow and post-purchase entitlement
+      grant.
+- [ ] Ensure student pay entitlement expiry/revocation is automatic and
+      inspectable.
+- [ ] Define and implement the minimal site/domain-license data model:
+  - verified domain
+  - granted membership level
+  - configuration actor / site admin
+  - effective dates if needed
+- [ ] Implement site-admin configuration UI/API for the minimal domain-license
+      path.
+- [ ] Wire verified-domain entitlement into user entitlement computation.
+- [ ] Define and document entitlement precedence among:
+  - direct memberships/upgrades
+  - student pay
+  - domain/site license
+  - any other first-release entitlement sources
+- [ ] Add auditability/explainability so operators can answer why a user has a
+      given entitlement.
+
+### Exit Criteria
+
+- a student can pay once and receive the intended four-month course membership
+- a verified-domain account automatically receives the configured baseline
+  membership
+- entitlement precedence is explicit and tested
+- operators and site admins can understand and inspect why entitlements were
+  granted
+
+## F. Deployment, Packaging, Upgrade, And Rollback
 
 Goal: make deployment boring enough to run.
 
@@ -300,7 +401,7 @@ Goal: make deployment boring enough to run.
 - rollback is explicit and tested
 - host software lifecycle is not a manual-SSH adventure
 
-## F. Operator Auth, CLI, And Observability
+## G. Operator Auth, CLI, And Observability
 
 Goal: make operator workflows safe and not context-fragile.
 
@@ -329,7 +430,7 @@ Goal: make operator workflows safe and not context-fragile.
 - auth confusion is not a recurring bug source
 - release operation has a minimum viable observability story
 
-## G. Real Soak And Capacity Evidence
+## H. Real Soak And Capacity Evidence
 
 Goal: replace hope with measured confidence.
 
@@ -345,7 +446,10 @@ Goal: replace hope with measured confidence.
   - terminal
   - app-server flows
   - admin operations
+  - project move between regions
   - dedicated-host workflows
+  - student pay
+  - domain-license entitlement behavior
 - [ ] Fix every correctness bug found during soak before release.
 - [ ] Rerun synthetic/loadgen benchmarks with the now-current architecture.
 - [ ] Sample real user traffic and compare it to synthetic benchmark capacity.
@@ -358,7 +462,7 @@ Goal: replace hope with measured confidence.
 - no scary unresolved correctness bugs remain
 - conservative capacity estimate is written down
 
-## H. Known Bug Scrub
+## I. Known Bug Scrub
 
 Goal: treat all known release-relevant bugs as first-class release work.
 
@@ -377,8 +481,12 @@ This list should stay aggressively pruned and explicit.
       confusing.
 - [ ] Any remaining stale host / stale bundle reconcile bugs discovered during
       canaries or soak.
+- [ ] Any project region-move / backup-cutover bugs discovered during real
+      trials.
 - [ ] Any dedicated-host pricing, billing, access-control, or provisioning
       bugs discovered during real trials.
+- [ ] Any student pay or domain-license entitlement bugs discovered during real
+      trials.
 
 ### Bug Policy
 
@@ -410,6 +518,7 @@ This is the recommended order of work.
 - [ ] close remaining admin override / dedicated-host egress work
 - [ ] finish deployment/packaging path
 - [ ] finish multibay stale-state convergence work
+- [ ] finish project move between regions implementation
 
 ### Phase 2. Dedicated Host Narrow MVP
 
@@ -419,26 +528,34 @@ This is the recommended order of work.
 - [ ] validate create/start/stop/delete/status
 - [ ] document support boundary
 
-### Phase 3. Known Bug Burn-Down
+### Phase 3. Purchase And Entitlement Paths
+
+- [ ] implement student pay
+- [ ] implement minimal site/domain license
+- [ ] validate entitlement precedence and auditability
+
+### Phase 4. Known Bug Burn-Down
 
 - [ ] fix the currently known live bugs
 - [ ] keep bug list current from dogfood and canary work
 
-### Phase 4. Test And Soak
+### Phase 5. Test And Soak
 
 - [ ] green authoritative test surface
 - [ ] run 3-bay soak
 - [ ] run dedicated-host soak
+- [ ] run project region-move soak
+- [ ] run student pay / domain-license entitlement soak
 - [ ] fix what breaks
 
-### Phase 5. Capacity And Launch Readiness
+### Phase 6. Capacity And Launch Readiness
 
 - [ ] rerun benchmarks
 - [ ] capture real traffic samples
 - [ ] write conservative sizing story
 - [ ] finalize operator playbooks
 
-### Phase 6. Release Decision
+### Phase 7. Release Decision
 
 - [ ] check exit criteria below
 - [ ] decide:
@@ -453,7 +570,12 @@ true:
 
 - [ ] important multibay correctness tests are green
 - [ ] dogfood multibay cluster has survived a meaningful soak
+- [ ] project move between regions works end to end with the intended backup
+      cutover semantics
 - [ ] dedicated-host MVP path works end to end on supported providers
+- [ ] student pay works end to end with the intended four-month duration
+- [ ] minimal domain-license entitlement works end to end for verified-domain
+      users
 - [ ] deployment and rollback are reproducible
 - [ ] host/cloud reconciliation is trustworthy enough for operators
 - [ ] purchases/billing authority is explicitly bounded where intended
@@ -481,6 +603,9 @@ If we want the shortest path to release from today, do these next:
 - [ ] fix the current known live bugs from the `lite4b` canary
 - [ ] finish central admin override controls
 - [ ] finish dedicated-host egress policy wiring
+- [ ] finish project move between regions
+- [ ] implement student pay
+- [ ] implement minimal site/domain license
 - [ ] finish packaging/deploy/rollback path
 - [ ] validate one supported rented dedicated-host path end to end
 - [ ] run a real 3-bay soak and fix what it finds
