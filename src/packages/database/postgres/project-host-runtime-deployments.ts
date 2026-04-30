@@ -314,6 +314,24 @@ export async function setProjectHostRuntimeDeployments({
   return await listProjectHostRuntimeDeployments({ scope_type, host_id });
 }
 
+export async function clearProjectHostRuntimeDeployments({
+  scope_type,
+  host_id,
+}: {
+  scope_type: HostRuntimeDeploymentScopeType;
+  host_id?: string;
+}): Promise<void> {
+  await ensureProjectHostRuntimeDeploymentsSchema();
+  const scope_id = scopeIdOf({ scope_type, host_id });
+  await pool().query(
+    `
+      DELETE FROM project_host_runtime_deployments
+      WHERE scope_type=$1 AND scope_id=$2
+    `,
+    [scope_type, scope_id],
+  );
+}
+
 export async function loadEffectiveProjectHostRuntimeDeployments({
   host_id,
 }: {

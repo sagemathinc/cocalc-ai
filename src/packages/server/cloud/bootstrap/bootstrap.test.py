@@ -214,7 +214,12 @@ class BootstrapStateFilesTest(unittest.TestCase):
                     root="/opt/cocalc/tools",
                 ),
             )
-            bootstrap.write_bootstrap_state_files(cfg)
+            original_resolve = bootstrap.resolve_runtime_user_identity
+            try:
+                bootstrap.resolve_runtime_user_identity = lambda _cfg: (2000, 2000)
+                bootstrap.write_bootstrap_state_files(cfg)
+            finally:
+                bootstrap.resolve_runtime_user_identity = original_resolve
 
             facts = json.loads(
                 (Path(cfg.bootstrap_dir) / "bootstrap-host-facts.json").read_text(
@@ -248,18 +253,18 @@ class BootstrapStateFilesTest(unittest.TestCase):
             )
             self.assertEqual(
                 desired["runtime_user_contract"]["identity"],
-                "missing-runtime-user:1002:1003",
+                "missing-runtime-user:2000:2000",
             )
             self.assertEqual(
                 desired["runtime_user_contract"]["fingerprint"],
                 bootstrap.runtime_userns_map_fingerprint(
                     [
-                        "0 1002 1",
+                        "0 2000 1",
                         "1 231072 65536",
                         "65537 327680 4128768",
                     ],
                     [
-                        "0 1003 1",
+                        "0 2000 1",
                         "1 231072 65536",
                         "65537 327680 4128768",
                     ],
@@ -296,6 +301,59 @@ class BootstrapRuntimeUserContractTest(unittest.TestCase):
         finally:
             bootstrap.expected_runtime_user_contract = original_expected
             bootstrap.read_current_runtime_user_contract = original_read
+
+
+class BootstrapRuntimeUserIdentityResolutionTest(unittest.TestCase):
+    def test_prefers_first_shared_free_uid_gid_starting_at_2000(self) -> None:
+        cfg = make_cfg(tempfile.mkdtemp())
+        original_getpwnam = bootstrap.pwd.getpwnam
+        original_getgrnam = bootstrap.grp.getgrnam
+        original_getpwall = bootstrap.pwd.getpwall
+        original_getgrall = bootstrap.grp.getgrall
+        try:
+            bootstrap.pwd.getpwnam = lambda _user: (_ for _ in ()).throw(KeyError())
+            bootstrap.grp.getgrnam = lambda _user: (_ for _ in ()).throw(KeyError())
+            bootstrap.pwd.getpwall = lambda: [
+                type("Pwd", (), {"pw_uid": 2000})(),
+                type("Pwd", (), {"pw_uid": 2001})(),
+            ]
+            bootstrap.grp.getgrall = lambda: [
+                type("Grp", (), {"gr_gid": 2000})(),
+                type("Grp", (), {"gr_gid": 2001})(),
+            ]
+            self.assertEqual(
+                bootstrap.resolve_runtime_user_identity(cfg),
+                (2002, 2002),
+            )
+        finally:
+            bootstrap.pwd.getpwnam = original_getpwnam
+            bootstrap.grp.getgrnam = original_getgrnam
+            bootstrap.pwd.getpwall = original_getpwall
+            bootstrap.grp.getgrall = original_getgrall
+
+    def test_reuses_existing_runtime_group_gid_and_picks_free_uid(self) -> None:
+        cfg = make_cfg(tempfile.mkdtemp())
+        original_getpwnam = bootstrap.pwd.getpwnam
+        original_getgrnam = bootstrap.grp.getgrnam
+        original_getpwall = bootstrap.pwd.getpwall
+        original_getgrall = bootstrap.grp.getgrall
+        try:
+            bootstrap.pwd.getpwnam = lambda _user: (_ for _ in ()).throw(KeyError())
+            bootstrap.grp.getgrnam = lambda _user: type("Grp", (), {"gr_gid": 1500})()
+            bootstrap.pwd.getpwall = lambda: [
+                type("Pwd", (), {"pw_uid": 1500})(),
+                type("Pwd", (), {"pw_uid": 2000})(),
+            ]
+            bootstrap.grp.getgrall = lambda: [type("Grp", (), {"gr_gid": 1500})()]
+            self.assertEqual(
+                bootstrap.resolve_runtime_user_identity(cfg),
+                (2001, 1500),
+            )
+        finally:
+            bootstrap.pwd.getpwnam = original_getpwnam
+            bootstrap.grp.getgrnam = original_getgrnam
+            bootstrap.pwd.getpwall = original_getpwall
+            bootstrap.grp.getgrall = original_getgrall
 
 
 class BootstrapLogRotationTest(unittest.TestCase):
