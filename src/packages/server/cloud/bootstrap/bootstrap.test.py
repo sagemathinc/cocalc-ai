@@ -331,6 +331,59 @@ class BootstrapRuntimeUserContractTest(unittest.TestCase):
             bootstrap.read_current_runtime_user_contract = original_read
 
 
+class BootstrapRootlessPodmanResetTest(unittest.TestCase):
+    def test_configure_podman_clears_stale_rootless_state_on_owner_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            recorded = []
+            removed = []
+
+            original_run_best_effort = bootstrap.run_best_effort
+            original_runtime_home = bootstrap.runtime_home
+            original_mkdir = Path.mkdir
+            original_write_text = Path.write_text
+            original_has_unexpected = bootstrap.tree_has_unexpected_ownership
+            original_rmtree = bootstrap.shutil.rmtree
+            try:
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc: recorded.append((args, desc))
+                )
+                bootstrap.runtime_home = lambda _cfg: str(Path(tmpdir) / "home")
+                Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
+                Path.write_text = lambda self, _text, encoding="utf-8": 0  # type: ignore[method-assign]
+                bootstrap.tree_has_unexpected_ownership = lambda *_args, **_kwargs: True
+                bootstrap.shutil.rmtree = lambda path, ignore_errors=False: removed.append(
+                    (str(path), ignore_errors)
+                )
+                bootstrap.configure_podman(cfg)
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.runtime_home = original_runtime_home
+                Path.mkdir = original_mkdir  # type: ignore[method-assign]
+                Path.write_text = original_write_text  # type: ignore[method-assign]
+                bootstrap.tree_has_unexpected_ownership = original_has_unexpected
+                bootstrap.shutil.rmtree = original_rmtree
+
+            self.assertIn(
+                ("/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage", True),
+                removed,
+            )
+            self.assertIn(
+                ("/mnt/cocalc/data/containers/rootless/missing-runtime-user/run", True),
+                removed,
+            )
+            self.assertIn(
+                (
+                    ["chown", "-R", "missing-runtime-user:missing-runtime-user",
+                     "/mnt/cocalc/data/containers/rootless/missing-runtime-user",
+                     "/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage",
+                     "/mnt/cocalc/data/containers/rootless/missing-runtime-user/run"],
+                    "chown rootless podman paths",
+                ),
+                recorded,
+            )
+
+
 class BootstrapRuntimeUserIdentityResolutionTest(unittest.TestCase):
     def test_prefers_first_shared_free_uid_gid_starting_at_2000(self) -> None:
         cfg = make_cfg(tempfile.mkdtemp())
@@ -533,6 +586,17 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                         "chown",
                         "missing-runtime-user:missing-runtime-user",
                         str(Path(tmpdir) / "home" / ".config" / "containers"),
+                    ],
+                    "chown rootless podman config",
+                ),
+                recorded,
+            )
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "-R",
+                        "missing-runtime-user:missing-runtime-user",
                         "/mnt/cocalc/data/containers/rootless/missing-runtime-user",
                         "/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage",
                         "/mnt/cocalc/data/containers/rootless/missing-runtime-user/run",

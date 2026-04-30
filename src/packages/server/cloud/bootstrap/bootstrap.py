@@ -1010,6 +1010,31 @@ def prepare_dirs(cfg: BootstrapConfig) -> None:
     run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", "/opt/cocalc", "/var/lib/cocalc"], "chown cocalc dirs")
 
 
+def tree_has_unexpected_ownership(path: Path, uid: int, gid: int) -> bool:
+    if not path.exists():
+        return False
+    try:
+        for root, dirs, files in os.walk(path):
+            root_path = Path(root)
+            try:
+                stat = root_path.lstat()
+                if stat.st_uid != uid or stat.st_gid != gid:
+                    return True
+            except FileNotFoundError:
+                continue
+            for name in dirs + files:
+                child = root_path / name
+                try:
+                    stat = child.lstat()
+                except FileNotFoundError:
+                    continue
+                if stat.st_uid != uid or stat.st_gid != gid:
+                    return True
+    except FileNotFoundError:
+        return False
+    return False
+
+
 def ensure_legacy_btrfs_link(cfg: BootstrapConfig) -> None:
     legacy = Path("/btrfs")
     target = "/mnt/cocalc"
@@ -2364,11 +2389,19 @@ def configure_podman(cfg: BootstrapConfig) -> None:
         encoding="utf-8",
     )
     if cfg.ssh_user != "root":
+        desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
         user_config_root = Path(runtime_home(cfg)) / ".config"
         user_config = user_config_root / "containers"
         rootless_root = Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}")
         rootless_storage = rootless_root / "storage"
         rootless_run = rootless_root / "run"
+        if tree_has_unexpected_ownership(rootless_root, desired_uid, desired_gid):
+            log_line(
+                cfg,
+                "bootstrap: clearing stale rootless podman state with mismatched ownership",
+            )
+            shutil.rmtree(rootless_storage, ignore_errors=True)
+            shutil.rmtree(rootless_run, ignore_errors=True)
         user_config_root.mkdir(parents=True, exist_ok=True)
         run_best_effort(
             cfg,
@@ -2384,6 +2417,15 @@ def configure_podman(cfg: BootstrapConfig) -> None:
                 "chown",
                 f"{cfg.ssh_user}:{cfg.ssh_user}",
                 str(user_config),
+            ],
+            "chown rootless podman config",
+        )
+        run_best_effort(
+            cfg,
+            [
+                "chown",
+                "-R",
+                f"{cfg.ssh_user}:{cfg.ssh_user}",
                 str(rootless_root),
                 str(rootless_storage),
                 str(rootless_run),
