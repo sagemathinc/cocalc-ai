@@ -836,6 +836,95 @@ describe("moveProjectToHost", () => {
     expect(createBackupLroMock).toHaveBeenCalledTimes(2);
   });
 
+  it("retries destination start once after a transient parse failure", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    startProjectLroMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        op_id: "start-op-1",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      })
+      .mockResolvedValueOnce({
+        op_id: "start-op-2",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      });
+    waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
+      if (op_id === "55555555-5555-4555-8555-555555555555") {
+        return {
+          status: "succeeded",
+          result: {
+            id: "backup-1",
+            time: new Date("2026-04-26T16:00:00.000Z"),
+          },
+        };
+      }
+      if (op_id === "start-op-1") {
+        return {
+          status: "failed",
+          error: "Unexpected end of JSON input",
+        };
+      }
+      if (op_id === "start-op-2") {
+        return { status: "succeeded" };
+      }
+      throw new Error(`unexpected op_id ${op_id}`);
+    });
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(startProjectLroMock).toHaveBeenCalledTimes(2);
+  });
+
   it("bubbles child backup and destination-start progress into the parent move progress", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (

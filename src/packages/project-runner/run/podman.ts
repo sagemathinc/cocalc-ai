@@ -157,9 +157,11 @@ async function maybeRestoreFromBackup({
   if (!handle) return;
 
   let cleanupStaging = false;
+  let stage = "begin";
   const report = (event: ProgressEvent) =>
     reportProgress({ project_id, op_id: lro_op_id, event });
   try {
+    stage = "list-backups";
     report({
       type: "start-project",
       progress: 8,
@@ -191,7 +193,9 @@ async function maybeRestoreFromBackup({
       desc: "restoring from backup...",
     });
 
+    stage = "ensure-staging";
     await fs.ensureRestoreStaging({ handle });
+    stage = "restore-backup";
     await fs.restoreBackup({
       project_id,
       id: latest.id,
@@ -200,6 +204,7 @@ async function maybeRestoreFromBackup({
         ? { op_id: lro_op_id, scope_type: "project", scope_id: project_id }
         : undefined,
     });
+    stage = "finalize-staging";
     await fs.finalizeRestoreStaging({ handle });
 
     report({
@@ -212,6 +217,11 @@ async function maybeRestoreFromBackup({
       type: "start-project",
       progress: 18,
       desc: "restore failed",
+    });
+    logger.warn("start: restore from backup failed", {
+      project_id,
+      stage,
+      err: `${err}`,
     });
     throw err;
   } finally {

@@ -443,7 +443,7 @@ async function retryOnceOnTransientMoveError<T>({
   progress,
   run,
 }: {
-  operation: "stop-source" | "backup";
+  operation: "stop-source" | "backup" | "start-dest";
   progress_step?: MoveProjectProgressUpdate["step"];
   detail?: Record<string, any>;
   progress: (update: MoveProjectProgressUpdate) => void;
@@ -1137,92 +1137,111 @@ export async function moveProjectToHost(
         detail: { dest_host_id: context.dest_host_id },
       });
       try {
-        const startOp = await startProjectLro({
-          account_id: context.account_id,
-          project_id: context.project_id,
-          wait: false,
-        });
-        progress({
-          step: "start-dest",
-          message: "starting workspace on destination host",
-          detail: mergeMoveProgressDetail({
-            baseDetail: {
-              dest_host_id: context.dest_host_id,
-              start_op_id: startOp.op_id,
-            },
-            child: {
-              kind: "project-start",
-              op_id: startOp.op_id,
-            },
-          }),
-        });
-        let summary: LroSummary | undefined;
-        try {
-          summary = await waitForLroCompletion({
-            op_id: startOp.op_id,
-            scope_type: startOp.scope_type,
-            scope_id: startOp.scope_id,
-            client: conat(),
-            timeout_ms: MOVE_START_DEST_TIMEOUT_MS,
-            onProgress: (event) => {
+        const { startOp } = await retryOnceOnTransientMoveError({
+          operation: "start-dest",
+          progress_step: "start-dest",
+          detail: { dest_host_id: context.dest_host_id },
+          progress,
+          run: async () => {
+            const startOp = await startProjectLro({
+              account_id: context.account_id,
+              project_id: context.project_id,
+              wait: false,
+            });
+            progress({
+              step: "start-dest",
+              message: "starting workspace on destination host",
+              detail: mergeMoveProgressDetail({
+                baseDetail: {
+                  dest_host_id: context.dest_host_id,
+                  start_op_id: startOp.op_id,
+                },
+                child: {
+                  kind: "project-start",
+                  op_id: startOp.op_id,
+                },
+              }),
+            });
+            let summary: LroSummary | undefined;
+            try {
+              summary = await waitForLroCompletion({
+                op_id: startOp.op_id,
+                scope_type: startOp.scope_type,
+                scope_id: startOp.scope_id,
+                client: conat(),
+                timeout_ms: MOVE_START_DEST_TIMEOUT_MS,
+                onProgress: (event) => {
+                  progress({
+                    step: "start-dest",
+                    message:
+                      event.message ?? event.phase ?? "starting destination",
+                    detail: mergeMoveProgressDetail({
+                      baseDetail: {
+                        dest_host_id: context.dest_host_id,
+                        start_op_id: startOp.op_id,
+                      },
+                      child: {
+                        kind: "project-start",
+                        op_id: startOp.op_id,
+                        phase: event.phase,
+                        message: event.message,
+                        progress: event.progress,
+                        detail: event.detail,
+                      },
+                    }),
+                    progress: event.progress,
+                  });
+                },
+              });
+            } catch (err) {
+              const snapshot = await loadProjectPlacementState(
+                context.project_id,
+              );
+              const runningOnDestination =
+                snapshot.host_id === context.dest_host_id &&
+                snapshot.project_state === "running";
+              if (!runningOnDestination) {
+                throw new Error(
+                  `destination start wait failed: ${err} (host_id=${snapshot.host_id ?? "unknown"}, state=${snapshot.project_state ?? "unknown"})`,
+                );
+              }
               progress({
                 step: "start-dest",
-                message: event.message ?? event.phase ?? "starting destination",
-                detail: mergeMoveProgressDetail({
-                  baseDetail: {
-                    dest_host_id: context.dest_host_id,
-                    start_op_id: startOp.op_id,
-                  },
-                  child: {
-                    kind: "project-start",
-                    op_id: startOp.op_id,
-                    phase: event.phase,
-                    message: event.message,
-                    progress: event.progress,
-                    detail: event.detail,
-                  },
-                }),
-                progress: event.progress,
+                message:
+                  "destination workspace reported running after start wait failure",
+                detail: {
+                  dest_host_id: context.dest_host_id,
+                  timeout_ms: MOVE_START_DEST_TIMEOUT_MS,
+                  host_id: snapshot.host_id,
+                  state: snapshot.project_state,
+                  error: `${err}`,
+                },
               });
-            },
-          });
-        } catch (err) {
-          const snapshot = await loadProjectPlacementState(context.project_id);
-          const runningOnDestination =
-            snapshot.host_id === context.dest_host_id &&
-            snapshot.project_state === "running";
-          if (!runningOnDestination) {
-            throw new Error(
-              `destination start wait failed: ${err} (host_id=${snapshot.host_id ?? "unknown"}, state=${snapshot.project_state ?? "unknown"})`,
-            );
-          }
-          progress({
-            step: "start-dest",
-            message:
-              "destination workspace reported running after start wait failure",
-            detail: {
-              dest_host_id: context.dest_host_id,
-              timeout_ms: MOVE_START_DEST_TIMEOUT_MS,
-              host_id: snapshot.host_id,
-              state: snapshot.project_state,
-              error: `${err}`,
-            },
-          });
-          log.warn(
-            "moveProjectToHost destination start wait failed after project reached running",
-            {
-              project_id: context.project_id,
-              dest_host_id: context.dest_host_id,
-              timeout_ms: MOVE_START_DEST_TIMEOUT_MS,
-              snapshot,
-              err,
-            },
-          );
-        }
-        if (summary && summary.status !== "succeeded") {
-          const reason = summary.error ?? summary.status;
-          throw new Error(`destination start failed: ${reason}`);
-        }
+              log.warn(
+                "moveProjectToHost destination start wait failed after project reached running",
+                {
+                  project_id: context.project_id,
+                  dest_host_id: context.dest_host_id,
+                  timeout_ms: MOVE_START_DEST_TIMEOUT_MS,
+                  snapshot,
+                  err,
+                },
+              );
+              summary = {
+                status: "succeeded",
+                op_id: startOp.op_id,
+                scope_type: startOp.scope_type,
+                scope_id: startOp.scope_id,
+                result: { recovered_from_wait_error: `${err}` },
+              } as LroSummary;
+            }
+            if (summary && summary.status !== "succeeded") {
+              const reason = summary.error ?? summary.status;
+              throw new Error(`destination start failed: ${reason}`);
+            }
+            return { startOp, summary };
+          },
+        });
         progress({
           step: "start-dest",
           message: "destination workspace started",

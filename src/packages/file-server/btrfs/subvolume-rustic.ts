@@ -45,6 +45,10 @@ import {
 export const RUSTIC = "rustic";
 
 const logger = getLogger("file-server:btrfs:subvolume-rustic");
+const DEFAULT_SNAPSHOTS_TIMEOUT_MS = Math.max(
+  10_000,
+  Number(process.env.COCALC_RUSTIC_SNAPSHOTS_TIMEOUT_MS ?? 60_000),
+);
 
 function makeTempRusticSnapshotName(): string {
   const rand = Math.random().toString(36).slice(2, 10);
@@ -57,6 +61,61 @@ interface Snapshot {
   summary: { [key: string]: string | number };
   index_snapshot_id?: string;
   index_path?: string;
+}
+
+function flattenSnapshotGroups(groups: any): any[] {
+  if (!Array.isArray(groups)) {
+    return [];
+  }
+  const snapshots: any[] = [];
+  for (const group of groups) {
+    if (Array.isArray(group?.snapshots)) {
+      snapshots.push(...group.snapshots);
+      continue;
+    }
+    if (Array.isArray(group) && Array.isArray(group[1])) {
+      snapshots.push(...group[1]);
+    }
+  }
+  return snapshots;
+}
+
+export function parseRusticSnapshotsOutput({
+  stdout,
+  truncated,
+  host,
+}: {
+  stdout: string;
+  truncated?: boolean;
+  host?: string;
+}): Snapshot[] {
+  const trimmed = `${stdout ?? ""}`.trim();
+  if (truncated) {
+    throw new Error(
+      `rustic snapshots output truncated while listing backups${host ? ` for ${host}` : ""}`,
+    );
+  }
+  if (!trimmed) {
+    throw new Error(
+      `rustic snapshots returned empty output${host ? ` for ${host}` : ""}`,
+    );
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (err) {
+    throw new Error(
+      `failed to parse rustic snapshots JSON${host ? ` for ${host}` : ""}: ${err}`,
+    );
+  }
+  const result = flattenSnapshotGroups(parsed)
+    .map(({ time, id, summary }) => {
+      if (!time || !id) return null;
+      return { time: new Date(time), id, summary: summary ?? {} };
+    })
+    .filter((snapshot): snapshot is Snapshot => snapshot != null);
+  result.sort(field_cmp("time"));
+  return result;
 }
 
 export type RusticBackupRunner = (opts: {
@@ -241,10 +300,11 @@ export class SubvolumeRustic {
       // potentially very expensive to get list -- we clear this on delete or create
       return this.snapshotsCache;
     }
-    const { stdout } = parseOutput(
-      await this.rusticHost(["snapshots", "--json"]),
+    const { stdout, truncated } = parseOutput(
+      await this.rusticHost(["snapshots", "--json"], {
+        timeout: DEFAULT_SNAPSHOTS_TIMEOUT_MS,
+      }),
     );
-    const snapshots = JSON.parse(stdout)?.[0]?.snapshots;
     /* stdout = [
   {
     "group_key": {
@@ -299,12 +359,11 @@ export class SubvolumeRustic {
   }
 ]
 */
-    const v = !snapshots
-      ? []
-      : snapshots.map(({ time, id, summary }) => {
-          return { time: new Date(time), id, summary };
-        });
-    v.sort(field_cmp("time"));
+    const v = parseRusticSnapshotsOutput({
+      stdout,
+      truncated,
+      host: this.subvolume.name,
+    });
     this.snapshotsCache = v;
     return v;
   });
