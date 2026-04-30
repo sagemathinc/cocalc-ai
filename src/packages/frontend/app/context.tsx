@@ -10,7 +10,6 @@ import { useIntl } from "react-intl";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { IntlMessage, isIntlMessage } from "@cocalc/frontend/i18n";
-import { ACTIVITY_BAR_LABELS } from "@cocalc/frontend/project/page/activity-bar-consts";
 import { useActivityBarPreferences } from "@cocalc/frontend/project/page/activity-bar-storage";
 import { COLORS } from "@cocalc/util/theme";
 import { getBaseAntdTheme } from "./antd-base-theme";
@@ -21,12 +20,7 @@ export { AppContext, useAppContext };
 
 export function useAppContextProvider(): AppState {
   const intl = useIntl();
-  const other_settings = useTypedRedux("account", "other_settings");
-  const { labels: showActBarLabels } = useActivityBarPreferences({
-    legacy: {
-      labels: other_settings?.get?.(ACTIVITY_BAR_LABELS),
-    },
-  });
+  const { labels: showActBarLabels } = useActivityBarPreferences();
 
   const [pageWidthPx, setPageWidthPx] = useState<number>(window.innerWidth);
 

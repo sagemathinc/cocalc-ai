@@ -59,10 +59,7 @@ import {
 } from "@cocalc/frontend/project/page/flyouts/utils";
 import { migrateStarsOnMove } from "@cocalc/frontend/project/page/flyouts/store";
 import { getValidActivityBarOption } from "@cocalc/frontend/project/page/activity-bar";
-import {
-  ACTIVITY_BAR_COLLAPSED,
-  ACTIVITY_BAR_KEY,
-} from "@cocalc/frontend/project/page/activity-bar-consts";
+import { ACTIVITY_BAR_KEY } from "@cocalc/frontend/project/page/activity-bar-consts";
 import {
   getActivityBarCollapsed,
   setActivityBarCollapsed,
@@ -3764,15 +3761,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   public toggleActionButtons() {
-    const accountStore = this.redux.getStore("account") as any;
-    const next = !getActivityBarCollapsed({
-      legacy:
-        accountStore?.getIn(["other_settings", ACTIVITY_BAR_COLLAPSED]) ??
-        this.get_store()?.get("hideActionButtons") ??
-        false,
-    });
+    const next = !getActivityBarCollapsed();
     setActivityBarCollapsed(next);
-    this.setState({ hideActionButtons: next });
   }
 
   public clear_just_closed_files() {

@@ -46,33 +46,27 @@ describe("activity-bar storage", () => {
     });
   });
 
-  it("falls back to legacy account settings when local storage is empty", () => {
+  it("uses local defaults when local storage is empty", () => {
     expect(
       readActivityBarPreferences({
         liteMode: true,
-        legacy: {
-          collapsed: true,
-          labels: false,
-          order: ["search", "files"],
-          hidden: ["servers", "info"],
-        },
       }),
     ).toMatchObject({
-      collapsed: true,
-      labels: false,
+      collapsed: false,
+      labels: true,
       order: [
-        "search",
-        "files",
         "workspaces",
         "agents",
+        "files",
         "new",
+        "search",
         "settings",
         "active",
         "log",
         "servers",
         "info",
       ],
-      hidden: ["servers", "info"],
+      hidden: ["active", "log", "servers", "info"],
     });
   });
 });
