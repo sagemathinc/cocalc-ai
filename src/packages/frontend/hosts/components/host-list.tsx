@@ -40,7 +40,11 @@ import type { ColumnsType } from "antd/es/table";
 import { COLORS } from "@cocalc/util/theme";
 import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import type { HostLroState } from "../hooks/use-host-ops";
-import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
+import {
+  describeBlockedHostActions,
+  getHostOpPhase,
+  HostOpProgress,
+} from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
@@ -975,6 +979,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const opPhase = getHostOpPhase(op);
         const canCancelBackups =
           !!op?.op_id && hostOpActive && opPhase === "backups";
+        const blockedActionsReason = describeBlockedHostActions(op);
 
         const actions = [
           <Button
@@ -1105,8 +1110,18 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         ];
 
         return (
-          <Space size={[8, 0]} wrap style={{ maxWidth: 220 }}>
-            {actions.filter(Boolean) as React.ReactNode[]}
+          <Space direction="vertical" size={2} style={{ maxWidth: 220 }}>
+            <Space size={[8, 0]} wrap style={{ maxWidth: 220 }}>
+              {actions.filter(Boolean) as React.ReactNode[]}
+            </Space>
+            {blockedActionsReason ? (
+              <Typography.Text
+                type="secondary"
+                style={{ fontSize: 12, lineHeight: 1.3 }}
+              >
+                {blockedActionsReason}
+              </Typography.Text>
+            ) : null}
           </Space>
         );
       },

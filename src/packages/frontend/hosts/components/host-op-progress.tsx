@@ -256,7 +256,7 @@ function formatPhase(value: any): string | undefined {
   return undefined;
 }
 
-function opLabel(op: HostLroState): string {
+export function getHostOpLabel(op: HostLroState): string {
   const summary = op.summary;
   const kind = summary?.kind ?? op.kind;
   if (kind === "host-restart" && summary?.input?.mode === "hard") {
@@ -286,6 +286,19 @@ export function getHostOpPhase(op?: HostLroState): string | undefined {
       op.last_progress?.phase ??
       op.last_progress?.message,
   );
+}
+
+export function describeBlockedHostActions(
+  op?: HostLroState,
+): string | undefined {
+  if (!op || !ACTIVE_STATUSES.has(op.summary?.status as LroStatus))
+    return undefined;
+  const label = getHostOpLabel(op);
+  const phase = getHostOpPhase(op);
+  if (phase) {
+    return `Actions blocked while ${label.toLowerCase()} is ${phase.toLowerCase()}.`;
+  }
+  return `Actions blocked while ${label.toLowerCase()} is in progress.`;
 }
 
 function kindInputTags(op: HostLroState) {
@@ -331,7 +344,7 @@ function HostOpTimeline({ op }: { op: HostLroState }) {
   const summary = op.summary;
   const status = summary?.status;
   const [copied, setCopied] = useState(false);
-  const actionLabel = opLabel(op);
+  const actionLabel = getHostOpLabel(op);
   const currentPhase = getHostOpPhase(op);
   const detail = formatDetail(op.last_progress?.detail);
   const kind = summary?.kind ?? op.kind;
@@ -472,7 +485,7 @@ export function HostOpProgress({
       ? Math.min(created_ts, started_ts)
       : (created_ts ?? started_ts);
   const percent = progressPercent(op);
-  const actionLabel = opLabel(op);
+  const actionLabel = getHostOpLabel(op);
 
   if (summary?.status === "failed") {
     const errorText = compact ? "Error" : `${actionLabel} failed`;

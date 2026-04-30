@@ -26,7 +26,11 @@ import {
 } from "../constants";
 import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
-import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
+import {
+  describeBlockedHostActions,
+  getHostOpPhase,
+  HostOpProgress,
+} from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
@@ -174,6 +178,7 @@ export const HostCard: React.FC<HostCardProps> = ({
     hostOpActive &&
     opPhase === "backups" &&
     !!onCancelOp;
+  const blockedActionsReason = describeBlockedHostActions(displayHostOp);
   const actions = [
     <Button
       key="start"
@@ -456,6 +461,11 @@ export const HostCard: React.FC<HostCardProps> = ({
         >
           {visibleActions}
         </Space>
+        {blockedActionsReason ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {blockedActionsReason}
+          </Typography.Text>
+        ) : null}
       </Space>
     </Card>
   );
