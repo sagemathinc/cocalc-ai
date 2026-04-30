@@ -128,7 +128,74 @@ ens4\t0100B40A\t00000000\t0005
     ).resolves.toBeUndefined();
   });
 
-  it("records deltas and stops over-limit projects", async () => {
+  it("treats the first sample as a baseline instead of billable egress", () => {
+    expect(
+      __test__.summarizeManagedRawNetworkEgressDeltas({
+        previous: new Map(),
+        current: new Map([
+          [
+            "11111111-1111-4111-8111-111111111111",
+            {
+              project_id: "11111111-1111-4111-8111-111111111111",
+              pid: 1234,
+              interface_name: "ens4",
+              tx_bytes: 1500,
+            },
+          ],
+        ]),
+      }),
+    ).toEqual([]);
+  });
+
+  it("ignores counter resets and interface changes", () => {
+    const previous = new Map([
+      [
+        "11111111-1111-4111-8111-111111111111",
+        {
+          project_id: "11111111-1111-4111-8111-111111111111",
+          pid: 1234,
+          interface_name: "ens4",
+          tx_bytes: 1500,
+        },
+      ],
+    ]);
+
+    expect(
+      __test__.summarizeManagedRawNetworkEgressDeltas({
+        previous,
+        current: new Map([
+          [
+            "11111111-1111-4111-8111-111111111111",
+            {
+              project_id: "11111111-1111-4111-8111-111111111111",
+              pid: 1234,
+              interface_name: "ens4",
+              tx_bytes: 100,
+            },
+          ],
+        ]),
+      }),
+    ).toEqual([]);
+
+    expect(
+      __test__.summarizeManagedRawNetworkEgressDeltas({
+        previous,
+        current: new Map([
+          [
+            "11111111-1111-4111-8111-111111111111",
+            {
+              project_id: "11111111-1111-4111-8111-111111111111",
+              pid: 1234,
+              interface_name: "eth0",
+              tx_bytes: 2000,
+            },
+          ],
+        ]),
+      }),
+    ).toEqual([]);
+  });
+
+  it("records deltas after the baseline and stops over-limit projects", async () => {
     const stopMock = jest.fn().mockResolvedValue({ state: "opened" });
     recordManagedProjectEgressMock.mockResolvedValue({ recorded: true });
     getManagedProjectEgressPolicyMock.mockResolvedValue({
@@ -145,12 +212,20 @@ ens4\t0100B40A\t00000000\t0005
           tx_bytes: 1500,
         },
       ])
+      .mockResolvedValueOnce([
+        {
+          project_id: "11111111-1111-4111-8111-111111111111",
+          pid: 1234,
+          interface_name: "ens4",
+          tx_bytes: 2000,
+        },
+      ])
       .mockResolvedValue([
         {
           project_id: "11111111-1111-4111-8111-111111111111",
           pid: 1234,
           interface_name: "ens4",
-          tx_bytes: 1500,
+          tx_bytes: 2000,
         },
       ]);
 
@@ -166,7 +241,7 @@ ens4\t0100B40A\t00000000\t0005
       expect.objectContaining({
         project_id: "11111111-1111-4111-8111-111111111111",
         category: "raw-network",
-        bytes: 1500,
+        bytes: 500,
       }),
     );
     expect(stopMock).toHaveBeenCalledWith({

@@ -273,12 +273,10 @@ export function summarizeManagedRawNetworkEgressDeltas({
   const out: ProjectNetworkDelta[] = [];
   for (const [project_id, sample] of current) {
     const prev = previous.get(project_id);
-    const bytes = diffCounter(
-      sample.tx_bytes,
-      prev?.interface_name === sample.interface_name
-        ? prev.tx_bytes
-        : undefined,
-    );
+    if (!prev) continue;
+    if (prev.interface_name !== sample.interface_name) continue;
+    if (sample.tx_bytes < prev.tx_bytes) continue;
+    const bytes = diffCounter(sample.tx_bytes, prev.tx_bytes);
     if (!(bytes > 0)) continue;
     out.push({
       ...sample,
