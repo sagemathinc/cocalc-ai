@@ -1,6 +1,7 @@
 import TTL from "@isaacs/ttlcache";
 import getLogger from "@cocalc/backend/logger";
 import callHub from "@cocalc/conat/hub/call-hub";
+import { recordProjectHostRpcTraffic } from "./rpc-traffic-audit";
 import { getMasterConatClient } from "./master-status";
 import { getLocalHostId } from "./sqlite/hosts";
 
@@ -37,16 +38,31 @@ export async function reportPendingProjectTouches(): Promise<void> {
     return;
   }
   for (const project_id of Array.from(pendingProjectTouches)) {
+    const request = { project_id };
+    const started = Date.now();
     try {
       await callHub({
         client,
         host_id,
         name: "hosts.touchProject",
-        args: [{ project_id }],
+        args: [request],
         timeout: 5000,
+      });
+      recordProjectHostRpcTraffic({
+        channel: "hub-api",
+        method: "hosts.touchProject",
+        args: [request],
+        duration_ms: Date.now() - started,
       });
       pendingProjectTouches.delete(project_id);
     } catch (err) {
+      recordProjectHostRpcTraffic({
+        channel: "hub-api",
+        method: "hosts.touchProject",
+        args: [request],
+        error: true,
+        duration_ms: Date.now() - started,
+      });
       logger.debug("touchProjectLastEdited flush failed", {
         project_id,
         err: `${err}`,

@@ -29,6 +29,7 @@ import {
 } from "./sqlite/account-revocations";
 import { deleteProjectLocal } from "./sqlite/projects";
 import { deleteVolume } from "./file-server";
+import { recordProjectHostRpcTraffic } from "./rpc-traffic-audit";
 
 let statusClient: HostStatusApi | undefined;
 let hostInfo: Pick<HostProjectStatus, "host_id" | "host"> | undefined;
@@ -97,12 +98,21 @@ export async function reportProjectStateToMaster(
   state: HostProjectStatus["state"],
 ) {
   if (!statusClient || !hostInfo) return;
+  const request = {
+    ...hostInfo,
+    project_id,
+    state,
+  };
+  const started = Date.now();
   try {
     logger.debug("reportProjectStateToMaster", { project_id, state });
-    const res = await statusClient.reportProjectState({
-      ...hostInfo,
-      project_id,
-      state,
+    const res = await statusClient.reportProjectState(request);
+    recordProjectHostRpcTraffic({
+      channel: "status",
+      method: "reportProjectState",
+      args: [request],
+      result: res,
+      duration_ms: Date.now() - started,
     });
     if ((res as any)?.action === "delete") {
       logger.debug("master requested local project deletion", { project_id });
@@ -111,6 +121,13 @@ export async function reportProjectStateToMaster(
     }
     markProjectStateReported(project_id);
   } catch (err) {
+    recordProjectHostRpcTraffic({
+      channel: "status",
+      method: "reportProjectState",
+      args: [request],
+      error: true,
+      duration_ms: Date.now() - started,
+    });
     logger.debug("reportProjectStateToMaster failed", { project_id, err });
   }
 }
@@ -126,14 +143,27 @@ export function queueProvisionedInventory(project_ids: string[]) {
 async function reportProvisionedInventory() {
   if (!statusClient || !hostInfo || !pendingInventory) return;
   const payload = pendingInventory;
+  const request = {
+    ...hostInfo,
+    project_ids: payload.project_ids,
+    checked_at: payload.checked_at,
+  };
+  const started = Date.now();
   try {
     logger.debug("reportHostProvisionedInventory", {
       count: payload.project_ids.length,
     });
-    const res = await statusClient.reportHostProvisionedInventory({
-      ...hostInfo,
-      project_ids: payload.project_ids,
-      checked_at: payload.checked_at,
+    const res = await statusClient.reportHostProvisionedInventory(request);
+    recordProjectHostRpcTraffic({
+      channel: "status",
+      method: "reportHostProvisionedInventory",
+      args: [request],
+      result: res,
+      duration_ms: Date.now() - started,
+      stats: {
+        project_ids: payload.project_ids.length,
+        delete_project_ids: (res as any)?.delete_project_ids?.length ?? 0,
+      },
     });
     const deleteIds = (res as any)?.delete_project_ids ?? [];
     if (Array.isArray(deleteIds) && deleteIds.length) {
@@ -144,6 +174,14 @@ async function reportProvisionedInventory() {
     }
     pendingInventory = null;
   } catch (err) {
+    recordProjectHostRpcTraffic({
+      channel: "status",
+      method: "reportHostProvisionedInventory",
+      args: [request],
+      error: true,
+      duration_ms: Date.now() - started,
+      stats: { project_ids: payload.project_ids.length },
+    });
     logger.debug("reportHostProvisionedInventory failed", { err });
   }
 }
@@ -168,15 +206,24 @@ async function reportProjectProvisionedToMaster(
   provisioned: boolean,
 ) {
   if (!statusClient || !hostInfo) return;
+  const request = {
+    ...hostInfo,
+    project_id,
+    provisioned,
+  };
+  const started = Date.now();
   try {
     logger.debug("reportProjectProvisionedToMaster", {
       project_id,
       provisioned,
     });
-    const res = await statusClient.reportProjectProvisioned({
-      ...hostInfo,
-      project_id,
-      provisioned,
+    const res = await statusClient.reportProjectProvisioned(request);
+    recordProjectHostRpcTraffic({
+      channel: "status",
+      method: "reportProjectProvisioned",
+      args: [request],
+      result: res,
+      duration_ms: Date.now() - started,
     });
     if ((res as any)?.action === "delete") {
       logger.debug("master requested local project deletion", { project_id });
@@ -185,6 +232,13 @@ async function reportProjectProvisionedToMaster(
     }
     markProjectProvisionedReported(project_id);
   } catch (err) {
+    recordProjectHostRpcTraffic({
+      channel: "status",
+      method: "reportProjectProvisioned",
+      args: [request],
+      error: true,
+      duration_ms: Date.now() - started,
+    });
     logger.debug("reportProjectProvisionedToMaster failed", {
       project_id,
       provisioned,
@@ -198,26 +252,7 @@ async function reportPendingStates() {
   const pending = listUnreportedProjects();
   for (const row of pending) {
     if (!row.state) continue;
-    try {
-      const res = await statusClient.reportProjectState({
-        ...hostInfo,
-        project_id: row.project_id,
-        state: row.state,
-      });
-      if ((res as any)?.action === "delete") {
-        logger.debug("master requested local project deletion", {
-          project_id: row.project_id,
-        });
-        await deleteProjectDataLocal(row.project_id);
-        continue;
-      }
-      markProjectStateReported(row.project_id);
-    } catch (err) {
-      logger.debug("reportPendingStates failed", {
-        project_id: row.project_id,
-        err,
-      });
-    }
+    await reportProjectStateToMaster(row.project_id, row.state);
   }
   await reportPendingProvisioning();
   await reportPendingProjectTouches();
@@ -228,26 +263,7 @@ async function reportPendingProvisioning() {
   if (!statusClient || !hostInfo) return;
   const pending = listUnreportedProvisioning();
   for (const row of pending) {
-    try {
-      const res = await statusClient.reportProjectProvisioned({
-        ...hostInfo,
-        project_id: row.project_id,
-        provisioned: row.provisioned,
-      });
-      if ((res as any)?.action === "delete") {
-        logger.debug("master requested local project deletion", {
-          project_id: row.project_id,
-        });
-        await deleteProjectDataLocal(row.project_id);
-        continue;
-      }
-      markProjectProvisionedReported(row.project_id);
-    } catch (err) {
-      logger.debug("reportPendingProvisioning failed", {
-        project_id: row.project_id,
-        err,
-      });
-    }
+    await reportProjectProvisionedToMaster(row.project_id, row.provisioned);
   }
   await reportProvisionedInventory();
 }
@@ -268,14 +284,33 @@ async function syncAccountRevocationsFromMaster() {
           next_cursor_account_id?: string;
         }
       | undefined;
+    const request = {
+      host_id: hostInfo.host_id,
+      cursor_updated_ms: cursor.updated_ms,
+      cursor_account_id: cursor.account_id,
+      limit: 500,
+    };
+    const started = Date.now();
     try {
-      response = await statusClient.syncAccountRevocations({
-        host_id: hostInfo.host_id,
-        cursor_updated_ms: cursor.updated_ms,
-        cursor_account_id: cursor.account_id,
-        limit: 500,
+      response = await statusClient.syncAccountRevocations(request);
+      recordProjectHostRpcTraffic({
+        channel: "status",
+        method: "syncAccountRevocations",
+        args: [request],
+        result: response,
+        duration_ms: Date.now() - started,
+        stats: {
+          rows: response?.rows?.length ?? 0,
+        },
       });
     } catch (err) {
+      recordProjectHostRpcTraffic({
+        channel: "status",
+        method: "syncAccountRevocations",
+        args: [request],
+        error: true,
+        duration_ms: Date.now() - started,
+      });
       logger.debug("syncAccountRevocationsFromMaster failed", { err });
       return;
     }

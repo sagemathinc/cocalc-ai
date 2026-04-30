@@ -59,6 +59,7 @@ import { applyPendingCopies } from "./pending-copies";
 import { getManagedComponentStatus } from "./managed-components";
 import { rolloutManagedComponents } from "./managed-component-rollout";
 import { readHostAgentState } from "./host-agent-state";
+import { recordProjectHostRpcTraffic } from "./rpc-traffic-audit";
 import { upsertProjectStopPolicy } from "./sqlite/stop-policy";
 import { startHostPressureController } from "./host-pressure";
 
@@ -982,9 +983,24 @@ export async function startMasterRegistration({
   };
 
   const send = async (fn: "register" | "heartbeat") => {
+    const payload = buildPayload();
+    const started = Date.now();
     try {
-      await registry[fn](buildPayload());
+      await registry[fn](payload);
+      recordProjectHostRpcTraffic({
+        channel: "registry",
+        method: fn,
+        args: [payload],
+        duration_ms: Date.now() - started,
+      });
     } catch (err) {
+      recordProjectHostRpcTraffic({
+        channel: "registry",
+        method: fn,
+        args: [payload],
+        error: true,
+        duration_ms: Date.now() - started,
+      });
       logger.warn(`failed to ${fn} host`, { err });
     }
   };
@@ -1110,11 +1126,36 @@ export async function startMasterRegistration({
     let totalApplied = 0;
     let batches = 0;
     while (batches < 5) {
-      const resp = await registry.listProjectUserDeltas({
+      const request = {
         host_id: id,
         since_ms: cursor,
         limit: USER_DELTA_BATCH_LIMIT,
-      });
+      };
+      const started = Date.now();
+      let resp;
+      try {
+        resp = await registry.listProjectUserDeltas(request);
+        recordProjectHostRpcTraffic({
+          channel: "registry",
+          method: "listProjectUserDeltas",
+          args: [request],
+          result: resp,
+          duration_ms: Date.now() - started,
+          stats: {
+            rows: resp?.rows?.length ?? 0,
+            has_more: resp?.has_more ? 1 : 0,
+          },
+        });
+      } catch (err) {
+        recordProjectHostRpcTraffic({
+          channel: "registry",
+          method: "listProjectUserDeltas",
+          args: [request],
+          error: true,
+          duration_ms: Date.now() - started,
+        });
+        throw err;
+      }
       batches += 1;
       const rows = resp?.rows ?? [];
       totalApplied += await applyUserRows(rows);
@@ -1134,11 +1175,36 @@ export async function startMasterRegistration({
   };
 
   const reconcileUsers = async (reason: string): Promise<void> => {
-    const resp = await registry.listProjectUserReconcile({
+    const request = {
       host_id: id,
       limit: USER_RECONCILE_LIMIT,
       recent_days: USER_RECONCILE_RECENT_DAYS,
-    });
+    };
+    const started = Date.now();
+    let resp;
+    try {
+      resp = await registry.listProjectUserReconcile(request);
+      recordProjectHostRpcTraffic({
+        channel: "registry",
+        method: "listProjectUserReconcile",
+        args: [request],
+        result: resp,
+        duration_ms: Date.now() - started,
+        stats: {
+          rows: resp?.rows?.length ?? 0,
+          has_more: resp?.has_more ? 1 : 0,
+        },
+      });
+    } catch (err) {
+      recordProjectHostRpcTraffic({
+        channel: "registry",
+        method: "listProjectUserReconcile",
+        args: [request],
+        error: true,
+        duration_ms: Date.now() - started,
+      });
+      throw err;
+    }
     const rows = resp?.rows ?? [];
     const applied = await applyUserRows(rows);
     const cursorCandidate = rows.reduce(
@@ -1161,11 +1227,36 @@ export async function startMasterRegistration({
     let totalApplied = 0;
     let batches = 0;
     while (batches < 5) {
-      const resp = await registry.listProjectStopPolicyDeltas({
+      const request = {
         host_id: id,
         since_ms: cursor,
         limit: STOP_POLICY_DELTA_BATCH_LIMIT,
-      });
+      };
+      const started = Date.now();
+      let resp;
+      try {
+        resp = await registry.listProjectStopPolicyDeltas(request);
+        recordProjectHostRpcTraffic({
+          channel: "registry",
+          method: "listProjectStopPolicyDeltas",
+          args: [request],
+          result: resp,
+          duration_ms: Date.now() - started,
+          stats: {
+            rows: resp?.rows?.length ?? 0,
+            has_more: resp?.has_more ? 1 : 0,
+          },
+        });
+      } catch (err) {
+        recordProjectHostRpcTraffic({
+          channel: "registry",
+          method: "listProjectStopPolicyDeltas",
+          args: [request],
+          error: true,
+          duration_ms: Date.now() - started,
+        });
+        throw err;
+      }
       batches += 1;
       const rows = resp?.rows ?? [];
       totalApplied += await applyStopPolicyRows(rows);
@@ -1185,11 +1276,36 @@ export async function startMasterRegistration({
   };
 
   const reconcileStopPolicy = async (reason: string): Promise<void> => {
-    const resp = await registry.listProjectStopPolicyReconcile({
+    const request = {
       host_id: id,
       limit: STOP_POLICY_RECONCILE_LIMIT,
       recent_days: STOP_POLICY_RECONCILE_RECENT_DAYS,
-    });
+    };
+    const started = Date.now();
+    let resp;
+    try {
+      resp = await registry.listProjectStopPolicyReconcile(request);
+      recordProjectHostRpcTraffic({
+        channel: "registry",
+        method: "listProjectStopPolicyReconcile",
+        args: [request],
+        result: resp,
+        duration_ms: Date.now() - started,
+        stats: {
+          rows: resp?.rows?.length ?? 0,
+          has_more: resp?.has_more ? 1 : 0,
+        },
+      });
+    } catch (err) {
+      recordProjectHostRpcTraffic({
+        channel: "registry",
+        method: "listProjectStopPolicyReconcile",
+        args: [request],
+        error: true,
+        duration_ms: Date.now() - started,
+      });
+      throw err;
+    }
     const rows = resp?.rows ?? [];
     const applied = await applyStopPolicyRows(rows);
     const cursorCandidate = rows.reduce(
@@ -1262,9 +1378,18 @@ export async function startMasterRegistration({
 
     let shouldRotate = missingOnDisk;
     try {
-      const status = await registry.getMasterConatTokenStatus({
+      const request = {
         host_id: id,
         current_token: currentMasterConatToken,
+      };
+      const started = Date.now();
+      const status = await registry.getMasterConatTokenStatus(request);
+      recordProjectHostRpcTraffic({
+        channel: "registry",
+        method: "getMasterConatTokenStatus",
+        args: [request],
+        result: status,
+        duration_ms: Date.now() - started,
       });
       const expiresAt = new Date(status.expires_at).getTime();
       const msRemaining = expiresAt - Date.now();
@@ -1289,9 +1414,18 @@ export async function startMasterRegistration({
       return true;
     }
     try {
-      const rotated = await registry.rotateMasterConatToken({
+      const request = {
         host_id: id,
         current_token: currentMasterConatToken,
+      };
+      const started = Date.now();
+      const rotated = await registry.rotateMasterConatToken(request);
+      recordProjectHostRpcTraffic({
+        channel: "registry",
+        method: "rotateMasterConatToken",
+        args: [request],
+        result: rotated,
+        duration_ms: Date.now() - started,
       });
       const next = `${rotated?.master_conat_token ?? ""}`.trim();
       if (!next) {
@@ -1316,8 +1450,16 @@ export async function startMasterRegistration({
   };
 
   const refreshProjectHostAuthPublicKey = async (reason: string) => {
+    const started = Date.now();
     try {
       const resp = await registry.getProjectHostAuthPublicKey();
+      recordProjectHostRpcTraffic({
+        channel: "registry",
+        method: "getProjectHostAuthPublicKey",
+        args: [],
+        result: resp,
+        duration_ms: Date.now() - started,
+      });
       if (resp?.project_host_auth_public_key) {
         setProjectHostAuthPublicKey(resp.project_host_auth_public_key);
         logger.debug("updated project-host auth public key", {
@@ -1325,6 +1467,13 @@ export async function startMasterRegistration({
         });
       }
     } catch (err) {
+      recordProjectHostRpcTraffic({
+        channel: "registry",
+        method: "getProjectHostAuthPublicKey",
+        args: [],
+        error: true,
+        duration_ms: Date.now() - started,
+      });
       logger.warn("failed to refresh project-host auth public key", {
         reason,
         err,
