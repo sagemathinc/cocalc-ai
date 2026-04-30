@@ -813,6 +813,23 @@ def configure_journald_limits(cfg: BootstrapConfig) -> None:
         )
 
 
+ALGIF_AEAD_DISABLE_CONF = (
+    'install algif_aead /bin/false\n'
+)
+
+
+def configure_kernel_module_hardening(
+    cfg: BootstrapConfig,
+    *,
+    modprobe_dir: Path = Path("/etc/modprobe.d"),
+) -> None:
+    log_line(cfg, "bootstrap: disabling algif_aead kernel module")
+    modprobe_dir.mkdir(parents=True, exist_ok=True)
+    conf = modprobe_dir / "disable-algif-aead.conf"
+    conf.write_text(ALGIF_AEAD_DISABLE_CONF, encoding="utf-8")
+    run_best_effort(cfg, ["rmmod", "algif_aead"], "unload algif_aead")
+
+
 def detect_public_ip(cfg: BootstrapConfig) -> str | None:
     for url in ("https://api.ipify.org", "https://ifconfig.me"):
         try:
@@ -3817,6 +3834,7 @@ def run_provision(cfg: BootstrapConfig) -> int:
         disable_unattended(cfg)
         report_bootstrap_status(cfg, "running", "Installing Ubuntu packages")
         apt_update_install(cfg)
+        configure_kernel_module_hardening(cfg)
         report_bootstrap_status(cfg, "running", "Configuring storage and containers")
         install_gpu_support(cfg)
         configure_chrony(cfg)
@@ -3841,6 +3859,7 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
     try:
         ensure_runtime_user(cfg)
         ensure_bootstrap_paths(cfg)
+        configure_kernel_module_hardening(cfg)
         configure_journald_limits(cfg)
         image_size_gb = compute_image_size(cfg)
         install_btrfs_helper(cfg)

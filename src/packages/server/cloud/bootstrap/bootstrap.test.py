@@ -138,6 +138,34 @@ class BootstrapSizingTest(unittest.TestCase):
             finally:
                 bootstrap.shutil.disk_usage = original_disk_usage
 
+
+class BootstrapKernelModuleHardeningTest(unittest.TestCase):
+    def test_disables_algif_aead_and_unloads_module_best_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            calls: list[tuple[list[str], str]] = []
+
+            original = bootstrap.run_best_effort
+            bootstrap.run_best_effort = (
+                lambda _cfg, args, desc: calls.append((args, desc))
+            )
+            try:
+                bootstrap.configure_kernel_module_hardening(
+                    cfg, modprobe_dir=Path(tmpdir) / "modprobe.d"
+                )
+            finally:
+                bootstrap.run_best_effort = original
+
+            conf = Path(tmpdir) / "modprobe.d" / "disable-algif-aead.conf"
+            self.assertEqual(
+                conf.read_text(encoding="utf-8"),
+                'install algif_aead /bin/false\n',
+            )
+            self.assertEqual(
+                calls,
+                [(["rmmod", "algif_aead"], "unload algif_aead")],
+            )
+
 class BootstrapSubidAllocationTest(unittest.TestCase):
     def test_rewrites_user_subid_ranges_to_the_exact_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
