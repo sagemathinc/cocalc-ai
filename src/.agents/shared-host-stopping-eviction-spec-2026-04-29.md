@@ -776,6 +776,209 @@ Non-goal for this phase:
 1. do not redesign the architecture again
 2. do not add speculative heuristics unless dogfood proves a real need
 
+## Current Implementation Status
+
+This spec is no longer mostly theoretical.
+
+As of now:
+
+1. Phases 1 through 6 are implemented.
+2. Host-local pressure stopping is the real automatic stop mechanism.
+3. Pressure state is published back to the hub and used by placement and move
+   UI.
+4. Pressure-stop outcomes are surfaced in the project log.
+
+The two remaining buckets are:
+
+1. finish the last practical Phase 7 cleanup work
+2. execute Phase 8 on a live cluster and tune thresholds from real behavior
+
+## Remaining Work To Finish This Properly
+
+### 1. Residual Phase 7 Cleanup
+
+The major product/runtime cleanup is done, but a few legacy surfaces still need
+to be removed or reduced to inert compatibility only.
+
+The remaining work is:
+
+1. remove residual user-visible `always_running` / `idle_timeout` references
+   from any remaining settings/info surfaces
+2. stop emitting these fields in any remaining normal admin or API write path
+3. reduce legacy types/helpers to compatibility-only where removal would create
+   unnecessary release risk
+4. make sure release-facing docs describe exactly one automatic stop model
+
+For first release, it is acceptable if some internal compatibility types,
+legacy translation strings, or old purchase-format parsing still exist, as long
+as:
+
+1. they are not user-facing
+2. they do not affect runtime behavior
+3. new writes do not depend on them
+
+### 2. Phase 8 Live Testing And Tuning
+
+This is the main remaining work.
+
+The architecture is implemented. The release question is now whether the real
+behavior on live hosts is stable, explainable, and tuned well enough.
+
+## Phase 8 Execution Plan On `lite4b`
+
+Use `lite4b.cocalc.ai` as the main shared-host testbed. It is good enough for
+this because it already has:
+
+1. a live 3-bay control plane
+2. two GCP project hosts
+3. realistic cross-host latency
+4. enough isolation to run pressure experiments without risking alpha
+
+### Preconditions
+
+Before pressure testing:
+
+1. keep `COCALC_DEV_GCP_REVERSE_TUNNEL` disabled on `lite4b`
+2. keep both GCP hosts on the normal Cloudflare/public master path
+3. verify both hosts are online, placeable, and reporting normalized pressure
+4. verify project logs are recording pressure-stop events
+5. avoid unrelated rollout churn during the test window
+
+### Test Goals
+
+The live test is not just "does something stop?".
+
+We need to prove:
+
+1. the host survives pressure without collapsing
+2. the chosen victim order matches the policy
+3. startup protection actually protects fresh work
+4. settle/cooldown behavior avoids churn
+5. pressure publication back to the hub reflects what actually happened
+6. the resulting stop can be explained afterward from logs and UI
+
+### Suggested Live Test Matrix
+
+#### A. Baseline And Observability
+
+1. confirm both hosts show `normal` pressure at rest
+2. confirm placement sees both as normal candidates
+3. confirm a pressure-stop event would be visible in:
+   - host pressure state in `/hosts`
+   - project log for the stopped project
+   - host-local logs on the chosen project host
+
+#### B. Observe-Zone Canary
+
+1. push one host into `observe` but not `pressure`
+2. verify:
+   - pressure zone flips to `observe`
+   - no projects are stopped
+   - logs show stable candidate evaluation only
+
+This validates that the controller is not hair-trigger.
+
+#### C. Pressure-Zone Single Stop
+
+1. place several running projects on one host
+2. make them same-priority first
+3. create clear ordering by recent activity and start time
+4. push the host into `pressure`
+5. verify:
+   - exactly one project is stopped in a non-emergency cycle
+   - the least-recently-active eligible project is chosen
+   - a newly started project remains protected
+
+#### D. Startup Protection Check
+
+1. start a fresh project shortly before inducing pressure
+2. keep at least one older eligible candidate on the same host
+3. verify the fresh project is skipped outside `emergency`
+
+#### E. Cooldown And Settle Check
+
+1. after the first stop, keep pressure near the threshold
+2. verify:
+   - the host waits through the settle window
+   - it does not immediately re-stop the same project
+   - it does not thrash if the first stop relieved enough pressure
+
+#### F. Emergency Escalation
+
+1. push the host well beyond `pressure` into `emergency`
+2. verify:
+   - emergency classification is visible
+   - multiple stops per cycle are possible but capped
+   - startup/cooldown protections relax only as designed
+
+#### G. Placement Feedback
+
+1. while one host is in `pressure` or `emergency`, create or move work
+2. verify:
+   - automatic placement prefers the calmer host
+   - user-facing move UI shows the stressed host as a worse candidate
+
+### How To Induce Pressure
+
+For first release validation, we do not need a fancy workload generator.
+
+The simplest useful method is:
+
+1. choose one canary host
+2. start several ordinary projects on it
+3. run explicit memory-hog processes in those projects until the host crosses
+   `observe`, `pressure`, and then `emergency`
+
+This should be done in a controlled way:
+
+1. increase pressure gradually
+2. keep notes of which project started when
+3. deliberately touch/edit some projects to make their recent-activity order
+   unambiguous
+
+If needed, add a tiny helper script later, but only if the manual method proves
+too awkward.
+
+### Default Thresholds To Start With
+
+Begin testing with the current defaults in `src/packages/project-host/host-pressure.ts`:
+
+1. `observe` at `85%` memory used or `<= 2 GiB` available
+2. `pressure` at `90%` memory used or `<= 1 GiB` available
+3. `emergency` at `95%` memory used or `<= 512 MiB` available
+4. startup protection `10 min`
+5. settle window `45 s`
+6. emergency settle window `15 s`
+7. per-project cooldown `15 min`
+
+Do not tune these before the first live run unless there is an obvious
+environment-specific reason.
+
+### Pass Criteria For `lite4b`
+
+`lite4b` testing is good enough to call this spec finished for release when:
+
+1. we can repeatedly induce `observe`, `pressure`, and `emergency`
+2. the host survives and remains manageable
+3. non-emergency cycles stop one project at a time
+4. victim order matches priority, activity, and startup protection
+5. project logs clearly explain actual stop events
+6. placement avoids the stressed host while pressure is active
+7. we can name the final threshold/cooldown values with confidence
+
+### After `lite4b`
+
+After `lite4b` validation:
+
+1. apply any threshold/cooldown tuning
+2. keep the design frozen
+3. only then consider whether one small dedicated-host smoke test is worth
+   doing before release
+
+The dedicated-host question should not reopen architecture. Shared and
+dedicated hosts already use the same controller. At that point the question is
+only whether we want one extra empirical canary.
+
 ## Resolved Design Decisions
 
 1. "Recently active" for v1 must at least use the central `last_edited` field.
@@ -812,4 +1015,3 @@ This track is done enough for release when:
 6. `always_running` and the old idle-timeout mechanism are gone completely
 7. operators can inspect why a stop happened
 8. users can get a coherent explanation after a stop
-
