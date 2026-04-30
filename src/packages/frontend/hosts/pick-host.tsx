@@ -321,7 +321,7 @@ export function HostPickerModal({
           showIcon
           style={{ marginBottom: 12 }}
           title="This move will change the project's backup region."
-          description={`CoCalc will restore from the current ${sourceProjectRegionLabel} backups, create a new backup in ${selectedHostRegionLabel}, then switch the project's backup region after that backup succeeds.`}
+          description={`CoCalc will restore from the current ${sourceProjectRegionLabel} backups, create a new backup in ${selectedHostRegionLabel}, then switch the project's backup region after that backup succeeds. All previous snapshots and backups will be discarded after the move.`}
         />
       ) : null}
       <Space style={{ marginBottom: 8 }}>
