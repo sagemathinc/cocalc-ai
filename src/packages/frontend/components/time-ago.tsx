@@ -5,12 +5,11 @@
 
 /*
  * Customized TimeAgo support
- * TODO: internationalize this formatter -- see https://www.npmjs.com/package/react-timeago
+ * TODO: internationalize this formatter.
  */
 
 import { Popover, Radio } from "antd";
-import React, { CSSProperties as CSS } from "react";
-import { default as UpstreamTimeAgo } from "react-timeago";
+import React, { CSSProperties as CSS, useEffect, useState } from "react";
 import { is_date, is_different as misc_is_different } from "@cocalc/util/misc";
 import useAppContext from "@cocalc/frontend/app/use-context";
 
@@ -68,7 +67,7 @@ export const TimeAgoElement: React.FC<TimeAgoElementProps> = ({
   style,
   click_to_toggle,
 }) => {
-  if (live == null) live = true;
+  const isLive = live ?? true;
 
   if (placement == null) {
     placement = "top";
@@ -78,16 +77,9 @@ export const TimeAgoElement: React.FC<TimeAgoElementProps> = ({
   }
 
   function render_timeago_element(d) {
-    // See this bug -- https://github.com/nmn/react-timeago/issues/181
     return (
       <span style={{ cursor: "pointer", ...style }}>
-        <UpstreamTimeAgo
-          key={d}
-          title=""
-          date={d}
-          formatter={timeago_formatter}
-          live={live}
-        />
+        <RelativeTimeText date={d} live={isLive} />
       </span>
     );
   }
@@ -183,6 +175,116 @@ export const TimeAgoElement: React.FC<TimeAgoElementProps> = ({
     return render_timeago(d);
   }
 };
+
+function relativeTimeParts(
+  epochMs: number,
+  nowMs: number,
+): {
+  refreshMs?: number;
+  text: string;
+} {
+  const elapsedSeconds = Math.abs(nowMs - epochMs) / 1000;
+  const seconds = Math.round(elapsedSeconds);
+  const suffix = epochMs < nowMs ? "ago" : "from now";
+  let unit = "year";
+  let value = Math.round(seconds / (365 * 24 * 60 * 60));
+  let refreshMs: number | undefined = msUntilDisplayChange(
+    elapsedSeconds,
+    (value + 0.5) * YEAR,
+  );
+  if (seconds < 60) {
+    unit = "second";
+    value = Math.round(seconds);
+    refreshMs =
+      value === 0
+        ? 1000
+        : (msUntilDisplayChange(elapsedSeconds, MINUTE) ?? 1000);
+  } else if (seconds < 60 * 60) {
+    unit = "minute";
+    value = Math.round(seconds / 60);
+    refreshMs = msUntilDisplayChange(
+      elapsedSeconds,
+      Math.min(HOUR, (value + 0.5) * MINUTE),
+    );
+  } else if (seconds < 24 * 60 * 60) {
+    unit = "hour";
+    value = Math.round(seconds / (60 * 60));
+    refreshMs = msUntilDisplayChange(
+      elapsedSeconds,
+      Math.min(DAY, (value + 0.5) * HOUR),
+    );
+  } else if (seconds < 7 * 24 * 60 * 60) {
+    unit = "day";
+    value = Math.round(seconds / (24 * 60 * 60));
+    refreshMs = msUntilDisplayChange(
+      elapsedSeconds,
+      Math.min(WEEK, (value + 0.5) * DAY),
+    );
+  } else if (seconds < 30 * 24 * 60 * 60) {
+    unit = "week";
+    value = Math.round(seconds / (7 * 24 * 60 * 60));
+    refreshMs = msUntilDisplayChange(
+      elapsedSeconds,
+      Math.min(MONTH, (value + 0.5) * WEEK),
+    );
+  } else if (seconds < 365 * 24 * 60 * 60) {
+    unit = "month";
+    value = Math.round(seconds / (30 * 24 * 60 * 60));
+    refreshMs = msUntilDisplayChange(
+      elapsedSeconds,
+      Math.min(YEAR, (value + 0.5) * MONTH),
+    );
+  }
+  return {
+    refreshMs,
+    text: timeago_formatter(value, unit, suffix, epochMs),
+  };
+}
+
+const MINUTE = 60;
+const HOUR = MINUTE * 60;
+const DAY = HOUR * 24;
+const WEEK = DAY * 7;
+const MONTH = DAY * 30;
+const YEAR = DAY * 365;
+
+function msUntilDisplayChange(
+  elapsedSeconds: number,
+  nextChangeSeconds: number,
+): number | undefined {
+  if (nextChangeSeconds <= elapsedSeconds) {
+    return 1000;
+  }
+  return Math.max(1000, Math.ceil((nextChangeSeconds - elapsedSeconds) * 1000));
+}
+
+function RelativeTimeText({
+  date,
+  live,
+}: {
+  date: Date;
+  live: boolean;
+}): React.JSX.Element {
+  const [, setTick] = useState(0);
+  const epochMs = date.valueOf();
+  const { refreshMs, text } = relativeTimeParts(epochMs, Date.now());
+
+  useEffect(() => {
+    if (!live || refreshMs == null) {
+      return;
+    }
+    const timeoutId = setTimeout(() => {
+      setTick((current) => current + 1);
+    }, refreshMs);
+    return () => clearTimeout(timeoutId);
+  }, [epochMs, live, refreshMs]);
+
+  return (
+    <time dateTime={date.toISOString()} title="">
+      {text}
+    </time>
+  );
+}
 
 interface TimeAgoProps {
   placement?;

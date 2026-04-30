@@ -22,13 +22,13 @@ import {
 import { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useEffect, useState } from "react";
-import TimeAgo from "react-timeago"; // so can use from nextjs
 const { Text, Paragraph } = Typography; // so can use from nextjs
 import { CancelText } from "@cocalc/frontend/i18n/components";
 import type { ApiKey } from "@cocalc/util/db-schema/api-keys";
 import { A } from "./A";
 import CopyToClipBoard from "./copy-to-clipboard";
 import { Icon } from "./icon";
+import { TimeAgo } from "./time-ago";
 
 const { useForm } = Form;
 
