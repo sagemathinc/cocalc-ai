@@ -38,13 +38,12 @@ Related documents:
 The first public release means:
 
 1. a real multibay hosted CoCalc deployment that is trustworthy enough for
-   conservative public use
+   public use
 2. a narrow but real rented dedicated-host offering on managed GCP and Nebius
    infrastructure
 3. a project move between regions path that keeps project data accessible even
    when a region has no active hosts
-4. a pricing / limits / entitlement model that protects cost and supports the
-   first real purchase paths
+4. a pricing / limits / entitlement model that protects cost and supports real purchase paths
 5. clear operator workflows for deployment, rollback, host lifecycle, and
    incident response
 
@@ -200,7 +199,7 @@ Goal: make the current multibay architecture trustworthy under churn.
       identical.
 - [ ] Confirm cross-bay project lookup, start, stop, and browser reconnect
       paths are stable after recent routing work.
-- [ ] Implement and validate project move between regions as a first-class
+- [ ] Implement and validate move between regions as a first-class
       supported path:
   - restore from the old-region backup repo
   - take exactly one fresh backup in the destination region
@@ -386,6 +385,17 @@ Goal: make deployment boring enough to run.
 - [ ] Define one standard deploy artifact.
 - [ ] Define one standard deploy command path.
 - [ ] Verify packaged bay runtime on a clean VM without local-dev assumptions.
+- [ ] Harden project-host bootstrap for `copy.fail` / `CVE-2026-31431`
+      before first public release.
+  - reference: <https://copy.fail/>
+  - add to host bootstrap:
+    ```sh
+    echo "install algif_aead /bin/false" > /etc/modprobe.d/disable-algif-aead.conf
+    rmmod algif_aead 2>/dev/null || true
+    ```
+  - verify the mitigation is present on newly provisioned hosts
+  - evaluate a container seccomp deny for `socket(AF_ALG, ...)` as defense in
+    depth, but only after confirming it does not break supported workloads
 - [ ] Finish the project-host daemon upgrade / rollback path enough for public
       release.
 - [ ] Ensure host reconcile behavior is predictable and inspectable.
