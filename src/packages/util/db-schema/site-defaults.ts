@@ -347,7 +347,7 @@ export const site_settings_conf: SiteSettings = {
     group: "Networking",
     subgroup: "Domain",
     order: 10,
-    required_when: [{ key: "cloudflare_mode", equals: ["self", "managed"] }],
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
   },
   public_viewer_dns: {
     name: "Public Viewer Domain",
@@ -361,13 +361,12 @@ export const site_settings_conf: SiteSettings = {
   },
   cloudflare_mode: {
     name: "Cloudflare Integration Mode",
-    desc: "Choose how Cloudflare is used for this hub. Use **none** for fully self-hosted setups, **self** to use your own Cloudflare account, or **managed** to use CoCalc-managed Cloudflare.",
+    desc: "Choose how Cloudflare is used for this hub. Use **none** for fully self-hosted setups, or **self** to use your own Cloudflare account.",
     default: "none",
-    valid: ["none", "self", "managed"],
+    valid: ["none", "self"],
     valid_labels: {
       none: "Do not use Cloudflare at all",
       self: "Use your own Cloudflare account (pay for DNS and bucket storage)",
-      managed: "CoCalc managed (included with your membership)",
     },
     to_val: to_trimmed_str,
     wizard: { name: "cloudflare-config", label: "Wizard..." },
