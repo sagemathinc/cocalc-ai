@@ -33,13 +33,7 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import track from "@cocalc/frontend/user-tracking";
 import { tab_to_path } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import {
-  ACTIVITY_BAR_COLLAPSED,
-  ACTIVITY_BAR_HIDDEN_TABS,
-  ACTIVITY_BAR_LABELS,
-  ACTIVITY_BAR_TAB_ORDER,
-  ACTIVITY_BAR_TOGGLE_LABELS,
-} from "./activity-bar-consts";
+import { ACTIVITY_BAR_TOGGLE_LABELS } from "./activity-bar-consts";
 import { FileTab, FIXED_PROJECT_TABS, FixedTab } from "./file-tab";
 import FileTabs from "./file-tabs";
 import { lite } from "@cocalc/frontend/lite";
@@ -141,7 +135,6 @@ export function VerticalFixedTabs({
   const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
   const active_flyout = useTypedRedux({ project_id }, "flyout");
-  const other_settings = useTypedRedux("account", "other_settings");
   const parent = useRef<HTMLDivElement>(null);
   const gap = useRef<HTMLDivElement>(null);
   const breakPoint = useRef<number>(0);
@@ -152,12 +145,6 @@ export function VerticalFixedTabs({
   const workspaceChrome = workspaceStrongThemeChrome(workspaces.current);
   const { order: tabOrder, hidden: hiddenTabs } = useActivityBarPreferences({
     liteMode: lite,
-    legacy: {
-      labels: other_settings?.get?.(ACTIVITY_BAR_LABELS),
-      order: other_settings?.get?.(ACTIVITY_BAR_TAB_ORDER),
-      hidden: other_settings?.get?.(ACTIVITY_BAR_HIDDEN_TABS),
-      collapsed: other_settings?.get?.(ACTIVITY_BAR_COLLAPSED),
-    },
   });
   const { visible: pinnedTabs, overflow: overflowTabs } = useMemo(
     () => splitRailTabs(tabOrder, hiddenTabs),
@@ -446,17 +433,10 @@ export function HiddenActivityBarLauncher() {
   const { actions, project_id } = useProjectContext();
   const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
-  const other_settings = useTypedRedux("account", "other_settings");
   const [menuOpen, setMenuOpen] = useState(false);
   const [showCustomize, setShowCustomize] = useState(false);
   const { order: tabOrder, hidden: hiddenTabs } = useActivityBarPreferences({
     liteMode: lite,
-    legacy: {
-      labels: other_settings?.get?.(ACTIVITY_BAR_LABELS),
-      order: other_settings?.get?.(ACTIVITY_BAR_TAB_ORDER),
-      hidden: other_settings?.get?.(ACTIVITY_BAR_HIDDEN_TABS),
-      collapsed: other_settings?.get?.(ACTIVITY_BAR_COLLAPSED),
-    },
   });
   if (!accountStoreReady) return null;
 

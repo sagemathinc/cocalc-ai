@@ -30,13 +30,6 @@ const STORAGE_KEYS = {
 
 type ActivityBarStorageKey = keyof typeof STORAGE_KEYS;
 
-export interface ActivityBarLegacySettings {
-  collapsed?: any;
-  labels?: any;
-  order?: any;
-  hidden?: any;
-}
-
 export interface ActivityBarPreferences {
   collapsed: boolean;
   labels: boolean;
@@ -66,10 +59,6 @@ function getStoredValue<T>(key: ActivityBarStorageKey): T | undefined {
   return LS.get<T>(STORAGE_KEYS[key]);
 }
 
-function hasStoredValue(key: ActivityBarStorageKey): boolean {
-  return LS.exists(STORAGE_KEYS[key]);
-}
-
 function normalizeBoolean(value: any, fallback: boolean): boolean {
   if (typeof value === "boolean") return value;
   if (value === "true") return true;
@@ -79,22 +68,12 @@ function normalizeBoolean(value: any, fallback: boolean): boolean {
 
 export function readActivityBarPreferences(opts?: {
   liteMode?: boolean;
-  legacy?: ActivityBarLegacySettings;
 }): ActivityBarPreferences {
   const liteMode = opts?.liteMode === true;
-  const legacy = opts?.legacy;
-  const orderSource = hasStoredValue("order")
-    ? getStoredValue<any>("order")
-    : legacy?.order;
-  const hiddenSource = hasStoredValue("hidden")
-    ? getStoredValue<any>("hidden")
-    : legacy?.hidden;
-  const collapsedSource = hasStoredValue("collapsed")
-    ? getStoredValue<any>("collapsed")
-    : legacy?.collapsed;
-  const labelsSource = hasStoredValue("labels")
-    ? getStoredValue<any>("labels")
-    : legacy?.labels;
+  const orderSource = getStoredValue<any>("order");
+  const hiddenSource = getStoredValue<any>("hidden");
+  const collapsedSource = getStoredValue<any>("collapsed");
+  const labelsSource = getStoredValue<any>("labels");
 
   return {
     collapsed: normalizeBoolean(collapsedSource, false),
@@ -107,50 +86,8 @@ export function readActivityBarPreferences(opts?: {
   };
 }
 
-function migrateLegacyPreferences(opts?: {
-  liteMode?: boolean;
-  legacy?: ActivityBarLegacySettings;
-}): boolean {
-  const liteMode = opts?.liteMode === true;
-  const legacy = opts?.legacy;
-  if (legacy == null) return false;
-  let changed = false;
-
-  if (!hasStoredValue("collapsed") && legacy.collapsed != null) {
-    LS.set(STORAGE_KEYS.collapsed, normalizeBoolean(legacy.collapsed, false));
-    changed = true;
-  }
-  if (!hasStoredValue("labels") && legacy.labels != null) {
-    LS.set(
-      STORAGE_KEYS.labels,
-      normalizeBoolean(legacy.labels, ACTIVITY_BAR_LABELS_DEFAULT),
-    );
-    changed = true;
-  }
-  if (!hasStoredValue("order") && legacy.order != null) {
-    LS.set(
-      STORAGE_KEYS.order,
-      normalizeFixedTabOrder(legacy.order, { liteMode }),
-    );
-    changed = true;
-  }
-  if (!hasStoredValue("hidden") && legacy.hidden != null) {
-    LS.set(
-      STORAGE_KEYS.hidden,
-      normalizeHiddenFixedTabs(legacy.hidden, { liteMode }),
-    );
-    changed = true;
-  }
-  if (changed) {
-    emitActivityBarStorageChanged();
-  }
-  return changed;
-}
-
-export function getActivityBarCollapsed(opts?: { legacy?: any }): boolean {
-  return readActivityBarPreferences({
-    legacy: { collapsed: opts?.legacy },
-  }).collapsed;
+export function getActivityBarCollapsed(): boolean {
+  return readActivityBarPreferences().collapsed;
 }
 
 export function setActivityBarCollapsed(value: boolean): void {
@@ -187,51 +124,14 @@ export function setActivityBarHiddenTabs(
 
 export function useActivityBarPreferences(opts?: {
   liteMode?: boolean;
-  legacy?: ActivityBarLegacySettings;
 }): ActivityBarPreferences {
   const [version, setVersion] = useState(0);
   const liteMode = opts?.liteMode === true;
-  const legacyCollapsed = opts?.legacy?.collapsed;
-  const legacyLabels = opts?.legacy?.labels;
-  const legacyOrder = opts?.legacy?.order;
-  const legacyHidden = opts?.legacy?.hidden;
 
   useEffect(() => subscribe(() => setVersion((current) => current + 1)), []);
 
-  useEffect(() => {
-    if (
-      migrateLegacyPreferences({
-        liteMode,
-        legacy: {
-          collapsed: legacyCollapsed,
-          labels: legacyLabels,
-          order: legacyOrder,
-          hidden: legacyHidden,
-        },
-      })
-    ) {
-      setVersion((current) => current + 1);
-    }
-  }, [legacyCollapsed, legacyHidden, legacyLabels, legacyOrder, liteMode]);
-
   return useMemo(
-    () =>
-      readActivityBarPreferences({
-        liteMode,
-        legacy: {
-          collapsed: legacyCollapsed,
-          labels: legacyLabels,
-          order: legacyOrder,
-          hidden: legacyHidden,
-        },
-      }),
-    [
-      legacyCollapsed,
-      legacyHidden,
-      legacyLabels,
-      legacyOrder,
-      liteMode,
-      version,
-    ],
+    () => readActivityBarPreferences({ liteMode }),
+    [liteMode, version],
   );
 }
