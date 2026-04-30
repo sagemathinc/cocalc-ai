@@ -21,6 +21,10 @@ type TypedServiceOptions = Omit<TypedServiceCall, "mesg">;
 
 const FAST_RPC_PING = "__conat_ping";
 const TYPED_SERVICE_ENCODING = DataEncoding.MsgPack;
+// Fast RPC rides on a single socket.io ack packet, so it must stay well under
+// the conat payload ceiling. Typed services treat this as a bounded hot path
+// and fall back to legacy request transport whenever either side would exceed
+// this budget.
 const MAX_FAST_RPC_TYPED_SERVICE_BYTES = 4 * 1024 * 1024;
 
 function serviceTransport(options: { transport?: ServiceTransport }) {
