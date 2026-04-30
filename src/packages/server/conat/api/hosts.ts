@@ -112,6 +112,7 @@ import {
   loadProjectHostMetricsHistory,
 } from "@cocalc/database/postgres/project-host-metrics";
 import {
+  clearProjectHostRuntimeDeployments,
   ensureProjectHostRuntimeDeploymentsSchema,
   listProjectHostRuntimeDeployments,
   setProjectHostRuntimeDeployments,
@@ -811,6 +812,12 @@ async function markHostDeprovisioned(row: any, action: string) {
       );
     },
     clearProjectHostMetrics,
+    clearHostRuntimeDeployments: async ({ host_id }) => {
+      await clearProjectHostRuntimeDeployments({
+        scope_type: "host",
+        host_id,
+      });
+    },
     logCloudVmEvent,
     normalizeProviderId,
   });
@@ -4831,11 +4838,17 @@ export async function deleteHostInternal({
       await pool().query(
         `UPDATE project_hosts
            SET status=$2,
-               metadata=jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', to_jsonb($3::text)),
+               metadata=(jsonb_set(COALESCE(metadata, '{}'::jsonb), '{desired_state}', to_jsonb($3::text)) - 'runtime_deployments'),
                updated=NOW()
          WHERE id=$1 AND deleted IS NULL`,
         [id, "deprovisioned", "stopped"],
       );
+    },
+    clearHostRuntimeDeployments: async ({ host_id }) => {
+      await clearProjectHostRuntimeDeployments({
+        scope_type: "host",
+        host_id,
+      });
     },
   });
 }

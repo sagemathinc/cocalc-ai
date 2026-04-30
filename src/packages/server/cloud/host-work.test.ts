@@ -1,4 +1,9 @@
 import { upsertProjectHost } from "@cocalc/database/postgres/project-hosts";
+import {
+  ensureProjectHostRuntimeDeploymentsSchema,
+  listProjectHostRuntimeDeployments,
+  setProjectHostRuntimeDeployments,
+} from "@cocalc/database/postgres/project-host-runtime-deployments";
 import { after, before, getPool } from "@cocalc/server/test";
 
 const provisionIfNeededMock = jest.fn();
@@ -50,6 +55,8 @@ beforeEach(async () => {
   jest.clearAllMocks();
   await getPool().query("DELETE FROM cloud_vm_log");
   await getPool().query("DELETE FROM cloud_vm_work");
+  await ensureProjectHostRuntimeDeploymentsSchema();
+  await getPool().query("DELETE FROM project_host_runtime_deployments");
   await getPool().query("DELETE FROM project_hosts");
   buildCloudInitStartupScriptMock.mockResolvedValue("#!/bin/bash\necho ok\n");
   resolveLaunchpadBootstrapUrlMock.mockResolvedValue({
@@ -152,5 +159,71 @@ describe("cloud host start failures", () => {
     });
     expect(rows[0].metadata.metrics?.current).toBeUndefined();
     expect(rows[0].metadata.last_error).toContain("QUOTA_EXCEEDED");
+  });
+
+  it("clears host-scoped runtime deployment overrides when a host is deprovisioned", async () => {
+    const hostId = "8fca1cf0-a399-4d31-9231-6c681cc202d1";
+    await upsertProjectHost({
+      id: hostId,
+      name: "Delete host",
+      region: "us-west1",
+      status: "deprovisioning",
+      public_url: "https://host.example.test",
+      internal_url: "http://10.0.0.2:9002",
+      metadata: {
+        owner: "acct-owner",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west1-a",
+          machine_type: "n2-standard-4",
+          disk_gb: 100,
+          disk_type: "ssd",
+          storage_mode: "persistent",
+        },
+        runtime: {
+          provider: "gcp",
+          zone: "us-west1-a",
+          instance_id: `cocalc-host-${hostId}`,
+          public_ip: "136.109.220.184",
+        },
+        runtime_deployments: {
+          last_known_good_versions: { "project-host": "bundle-v1" },
+        },
+      },
+    });
+    await setProjectHostRuntimeDeployments({
+      scope_type: "host",
+      host_id: hostId,
+      requested_by: "test",
+      deployments: [
+        {
+          target_type: "artifact",
+          target: "project-bundle",
+          desired_version: "bundle-v1",
+        },
+      ],
+      replace: true,
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.delete({
+      id: "work-delete-1",
+      vm_id: hostId,
+      action: "delete",
+      payload: { provider: "gcp" },
+    } as any);
+
+    const deployments = await listProjectHostRuntimeDeployments({
+      scope_type: "host",
+      host_id: hostId,
+    });
+    expect(deployments).toEqual([]);
+
+    const { rows } = await getPool().query(
+      "SELECT status, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(rows[0].status).toBe("deprovisioned");
+    expect(rows[0].metadata.runtime_deployments).toBeUndefined();
   });
 });

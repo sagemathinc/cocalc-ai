@@ -1,5 +1,6 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import { clearProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import { deleteHostDns, ensureHostDns, hasDns } from "./dns";
 import {
   deleteCloudflareTunnel,
@@ -1050,6 +1051,11 @@ async function handleDelete(row: any) {
   delete nextMetadata.runtime;
   delete nextMetadata.dns;
   delete nextMetadata.cloudflare_tunnel;
+  delete nextMetadata.runtime_deployments;
+  await clearProjectHostRuntimeDeployments({
+    scope_type: "host",
+    host_id: row.id,
+  });
   await updateHostRow(row.id, {
     metadata: nextMetadata,
     status: "deprovisioned",

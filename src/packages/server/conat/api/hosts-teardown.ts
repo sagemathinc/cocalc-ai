@@ -54,6 +54,7 @@ export async function markHostDeprovisionedInternal({
   logWarn,
   updateHostDeprovisionedRecord,
   clearProjectHostMetrics,
+  clearHostRuntimeDeployments,
   logCloudVmEvent,
   normalizeProviderId,
 }: {
@@ -77,6 +78,7 @@ export async function markHostDeprovisionedInternal({
     nextMetadata: any;
   }) => Promise<void>;
   clearProjectHostMetrics: (opts: { host_id: string }) => Promise<void>;
+  clearHostRuntimeDeployments: (opts: { host_id: string }) => Promise<void>;
   logCloudVmEvent: (opts: {
     vm_id: string;
     action: string;
@@ -95,6 +97,7 @@ export async function markHostDeprovisionedInternal({
   delete nextMetadata.dns;
   delete nextMetadata.cloudflare_tunnel;
   delete nextMetadata.metrics;
+  delete nextMetadata.runtime_deployments;
 
   logStatusUpdate(row.id, "deprovisioned", "api");
   await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
@@ -120,6 +123,7 @@ export async function markHostDeprovisionedInternal({
     nextMetadata,
   });
   await clearProjectHostMetrics({ host_id: row.id });
+  await clearHostRuntimeDeployments({ host_id: row.id });
   await logCloudVmEvent({
     vm_id: row.id,
     action,
@@ -210,6 +214,7 @@ export async function deleteHostInternalHelper({
   markHostDeleted,
   markHostDeprovisioning,
   markHostStoppedDeprovisioned,
+  clearHostRuntimeDeployments,
 }: {
   account_id?: string;
   id: string;
@@ -228,6 +233,7 @@ export async function deleteHostInternalHelper({
   markHostDeleted: (id: string) => Promise<void>;
   markHostDeprovisioning: (id: string) => Promise<void>;
   markHostStoppedDeprovisioned: (id: string) => Promise<void>;
+  clearHostRuntimeDeployments: (opts: { host_id: string }) => Promise<void>;
 }): Promise<void> {
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
@@ -249,4 +255,5 @@ export async function deleteHostInternalHelper({
   }
   logStatusUpdate(id, "deprovisioned", "api");
   await markHostStoppedDeprovisioned(id);
+  await clearHostRuntimeDeployments({ host_id: id });
 }

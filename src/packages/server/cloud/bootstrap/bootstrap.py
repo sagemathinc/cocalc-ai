@@ -42,8 +42,8 @@ BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
 ROOTLESS_SUBID_MIN_TOTAL = 4 * 1024 * 1024
 ROOTLESS_SUBID_ALIGNMENT = 65536
-PROJECT_HOST_RUNTIME_UID = 1002
-PROJECT_HOST_RUNTIME_GID = 1003
+PROJECT_HOST_RUNTIME_UID = 2000
+PROJECT_HOST_RUNTIME_GID = 2000
 HOST_CRITICAL_OOM_SCORE_ADJ = -900
 DEFAULT_PROJECT_POOL_CGROUP = "/sys/fs/cgroup/cocalc-project-pool"
 DEFAULT_PROJECT_POOL_MEMORY_RESERVE_MB = 3072
@@ -356,9 +356,43 @@ def runtime_userns_map_fingerprint(uid_map: list[str], gid_map: list[str]) -> st
     return hashlib.sha256(payload).hexdigest()
 
 
+def first_free_numeric_id(used: set[int], start: int) -> int:
+    candidate = max(1000, int(start))
+    while candidate in used:
+        candidate += 1
+    return candidate
+
+
+def resolve_runtime_user_identity(cfg: BootstrapConfig) -> tuple[int, int]:
+    user = cfg.ssh_user
+    try:
+        pw = pwd.getpwnam(user)
+        return pw.pw_uid, pw.pw_gid
+    except KeyError:
+        pass
+
+    used_uids = {entry.pw_uid for entry in pwd.getpwall()}
+    used_gids = {entry.gr_gid for entry in grp.getgrall()}
+
+    try:
+        group = grp.getgrnam(user)
+        desired_gid = group.gr_gid
+    except KeyError:
+        shared_candidate = first_free_numeric_id(
+            used_uids | used_gids,
+            max(PROJECT_HOST_RUNTIME_UID, PROJECT_HOST_RUNTIME_GID),
+        )
+        return shared_candidate, shared_candidate
+
+    if desired_gid not in used_uids:
+        return desired_gid, desired_gid
+    return first_free_numeric_id(used_uids, PROJECT_HOST_RUNTIME_UID), desired_gid
+
+
 def expected_runtime_userns_map(cfg: BootstrapConfig) -> tuple[list[str], list[str]]:
-    uid_map = [f"0 {PROJECT_HOST_RUNTIME_UID} 1"]
-    gid_map = [f"0 {PROJECT_HOST_RUNTIME_GID} 1"]
+    desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
+    uid_map = [f"0 {desired_uid} 1"]
+    gid_map = [f"0 {desired_gid} 1"]
     inside = 1
     for start, length in PROJECT_HOST_RUNTIME_SUBID_RANGES:
         uid_map.append(f"{inside} {start} {length}")
@@ -368,13 +402,14 @@ def expected_runtime_userns_map(cfg: BootstrapConfig) -> tuple[list[str], list[s
 
 
 def expected_runtime_user_contract(cfg: BootstrapConfig) -> dict[str, Any]:
+    desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
     uid_map, gid_map = expected_runtime_userns_map(cfg)
     subid_ranges = [f"{start}:{length}" for start, length in PROJECT_HOST_RUNTIME_SUBID_RANGES]
     return {
         "user": cfg.ssh_user,
-        "identity": f"{cfg.ssh_user}:{PROJECT_HOST_RUNTIME_UID}:{PROJECT_HOST_RUNTIME_GID}",
-        "host_uid": PROJECT_HOST_RUNTIME_UID,
-        "host_gid": PROJECT_HOST_RUNTIME_GID,
+        "identity": f"{cfg.ssh_user}:{desired_uid}:{desired_gid}",
+        "host_uid": desired_uid,
+        "host_gid": desired_gid,
         "subuid_ranges": subid_ranges,
         "subgid_ranges": subid_ranges,
         "uid_map": uid_map,
@@ -445,6 +480,7 @@ def runtime_wrapper_version_installed() -> str | None:
 
 
 def build_host_facts(cfg: BootstrapConfig) -> dict[str, Any]:
+    desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
     return {
         "schema_version": STATE_SCHEMA_VERSION,
         "recorded_at": now_iso(),
@@ -461,8 +497,8 @@ def build_host_facts(cfg: BootstrapConfig) -> dict[str, Any]:
         "env_file": cfg.env_file,
         "data_disk_devices": cfg.data_disk_devices,
         "data_disk_candidates": cfg.data_disk_candidates,
-        "runtime_user_host_uid": PROJECT_HOST_RUNTIME_UID,
-        "runtime_user_host_gid": PROJECT_HOST_RUNTIME_GID,
+        "runtime_user_host_uid": desired_uid,
+        "runtime_user_host_gid": desired_gid,
         "project_host_bundle_root": cfg.project_host_bundle.root,
         "project_bundle_root": cfg.project_bundle.root,
         "tools_root": cfg.tools_bundle.root,
@@ -809,8 +845,7 @@ def ensure_runtime_user(cfg: BootstrapConfig) -> None:
     user = cfg.ssh_user
     if not user or user == "root":
         return
-    desired_uid = PROJECT_HOST_RUNTIME_UID
-    desired_gid = PROJECT_HOST_RUNTIME_GID
+    desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
     try:
         group = grp.getgrnam(user)
         if group.gr_gid != desired_gid:
