@@ -32,6 +32,7 @@ import { networkArgument } from "@cocalc/project-runner/run/podman";
 import { mountArg } from "@cocalc/backend/podman";
 import { getEnvironment } from "@cocalc/project-runner/run/env";
 import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
+import { resolveProjectHostPreferredMasterConatServer } from "../master-conat-server";
 import { getProject } from "../sqlite/projects";
 import { touchProjectLastEdited } from "../last-edited";
 import {
@@ -254,7 +255,7 @@ function shouldProtectResolvedRuntimeEnv({
 
 function resolveProjectRuntimeApiUrl(explicit?: string): string {
   const masterConat =
-    `${process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER ?? ""}`.trim();
+    `${resolveProjectHostPreferredMasterConatServer() ?? ""}`.trim();
   const hostConfigured =
     `${process.env.COCALC_API_URL ?? process.env.BASE_URL ?? ""}`.trim();
   return (

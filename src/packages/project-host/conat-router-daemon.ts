@@ -13,6 +13,7 @@ import { startStandaloneProjectHostConatRouter } from "./conat-router";
 import { startConatRouterTrafficMetricsLoop } from "./conat-router-metrics";
 import { startEventLoopStallMonitor } from "./event-loop-stalls";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
+import { resolveProjectHostPreferredMasterConatServer } from "./master-conat-server";
 import { setMasterConatClient } from "./master-status";
 import { wireSystemApi } from "./hub/system";
 import { startConatRouterManagedEgressLoop } from "./conat-router-egress";
@@ -27,7 +28,7 @@ export interface ProjectHostConatRouterDaemonContext {
 
 function connectMasterClient({ hostId }: { hostId: string }) {
   const address =
-    `${process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER ?? ""}`.trim();
+    `${resolveProjectHostPreferredMasterConatServer() ?? ""}`.trim();
   if (!address) {
     logger.warn(
       "starting conat router daemon without master client; managed egress metering will be unavailable",
@@ -61,7 +62,7 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
   logger.info("project-host conat router managed egress config", {
     mode: getProjectHostManagedEgressMode(),
     has_master_conat_server: Boolean(
-      `${process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER ?? ""}`.trim(),
+      `${resolveProjectHostPreferredMasterConatServer() ?? ""}`.trim(),
     ),
     provider:
       `${process.env.COCALC_PROJECT_HOST_CLOUD_PROVIDER ?? process.env.PROJECT_HOST_CLOUD_PROVIDER ?? ""}`.trim() ||

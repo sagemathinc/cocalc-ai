@@ -18,6 +18,7 @@ import type {
 import { hubApi } from "@cocalc/lite/hub/api";
 import { clearLocalAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 import { account_id } from "@cocalc/backend/data";
+import { resolveProjectHostPreferredMasterConatServer } from "./master-conat-server";
 import { setMasterStatusClient } from "./master-status";
 import { setSshpiperdPublicKey } from "./ssh/host-keys";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
@@ -580,8 +581,7 @@ export async function startMasterRegistration({
     reason: string;
   }) => Promise<void>;
 }): Promise<MasterRegistrationHandle | undefined> {
-  const masterAddress =
-    process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER;
+  const masterAddress = resolveProjectHostPreferredMasterConatServer();
   if (!masterAddress) {
     logger.debug("no master conat server configured; skipping registration");
     return;

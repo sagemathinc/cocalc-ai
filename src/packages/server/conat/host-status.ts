@@ -12,6 +12,7 @@ import {
   getLaunchpadRestPort,
   registerSelfHostTunnelKey,
 } from "@cocalc/server/launchpad/onprem-sshd";
+import { isDevGcpReverseTunnelEnabled } from "@cocalc/server/cloud/internal-network";
 import { listAccountRevocationsSince } from "@cocalc/server/accounts/revocation";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
@@ -169,6 +170,8 @@ export async function initHostStatusService() {
           [host_id],
         );
         const hasConnector = connectorRows.length > 0;
+        const allowDevGcpTunnel = isDevGcpReverseTunnelEnabled();
+        const isDevGcpHost = allowDevGcpTunnel && machine?.cloud === "gcp";
         const isSelfHost =
           machine?.cloud === "self-host" ||
           selfHostMode === "local" ||
@@ -178,19 +181,20 @@ export async function initHostStatusService() {
           machine?.cloud === "self-host" && !selfHostMode
             ? "local"
             : (selfHostMode ?? (hasConnector ? "local" : undefined));
-        if (!isSelfHost) {
+        if (!isSelfHost && !isDevGcpHost) {
           logger.warn(
-            "local tunnel registration rejected (host not self-hosted)",
+            "local tunnel registration rejected (host not tunnel-eligible)",
             {
               host_id,
               machine_cloud: machine?.cloud,
               self_host_mode: selfHostMode,
               has_connector: hasConnector,
+              dev_gcp_tunnel_enabled: allowDevGcpTunnel,
             },
           );
-          throw Error("host is not self-hosted");
+          throw Error("host is not tunnel-eligible");
         }
-        if (effectiveSelfHostMode !== "local") {
+        if (!isDevGcpHost && effectiveSelfHostMode !== "local") {
           throw Error("self-host mode is not local");
         }
         const info = await registerSelfHostTunnelKey({
@@ -217,6 +221,7 @@ export async function initHostStatusService() {
           http_tunnel_port: info.http_tunnel_port,
           ssh_tunnel_port: info.ssh_tunnel_port,
           rest_port: restPort,
+          conat_router_port: info.conat_router_port,
         });
         return {
           sshd_host: resolvedSshdHost,
@@ -225,6 +230,7 @@ export async function initHostStatusService() {
           http_tunnel_port: info.http_tunnel_port,
           ssh_tunnel_port: info.ssh_tunnel_port,
           rest_port: restPort,
+          conat_router_port: info.conat_router_port,
         };
       },
       async reportProjectState({ project_id, state, host_id }) {

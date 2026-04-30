@@ -320,6 +320,7 @@ function subjectForHost(host_id: string): string {
 const STATUS_SUBJECT = "project-hosts.status";
 const REGISTRY_SUBJECT = "project-hosts.api";
 export const ONPREM_REST_TUNNEL_LOCAL_PORT = 9345;
+export const ONPREM_MASTER_CONAT_TUNNEL_LOCAL_PORT = 9346;
 
 export function createHostControlClient({
   host_id,
@@ -374,6 +375,7 @@ export interface HostRegisterOnPremTunnelResponse {
   http_tunnel_port: number;
   ssh_tunnel_port: number;
   rest_port: number;
+  conat_router_port?: number;
 }
 
 export interface HostProjectMaintenanceSchedule {

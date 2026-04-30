@@ -8,6 +8,14 @@ function trim(value: unknown): string {
   return `${value ?? ""}`.trim();
 }
 
+export function isDevGcpReverseTunnelEnabled(value?: unknown): boolean {
+  const normalized = trim(
+    value ?? process.env.COCALC_DEV_GCP_REVERSE_TUNNEL,
+  ).toLowerCase();
+  if (!normalized) return false;
+  return !["0", "false", "no", "off", "disabled"].includes(normalized);
+}
+
 export function resolveGcpRuntimeInternalHostname(
   runtime?: HostRuntime | null,
   opts: {

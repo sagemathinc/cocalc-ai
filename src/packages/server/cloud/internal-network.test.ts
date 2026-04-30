@@ -1,5 +1,6 @@
 import { gcpInternalHostname } from "@cocalc/cloud";
 import {
+  isDevGcpReverseTunnelEnabled,
   resolveGcpInternalConatUrl,
   resolveGcpManagedHostInternalUrl,
   resolveGcpRuntimeInternalHostname,
@@ -110,5 +111,11 @@ describe("gcp internal network helpers", () => {
         mode: "never",
       }),
     ).toBe(false);
+  });
+
+  it("parses the dev GCP reverse tunnel flag", () => {
+    expect(isDevGcpReverseTunnelEnabled("1")).toBe(true);
+    expect(isDevGcpReverseTunnelEnabled("true")).toBe(true);
+    expect(isDevGcpReverseTunnelEnabled("off")).toBe(false);
   });
 });

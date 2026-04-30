@@ -44,6 +44,7 @@ import https from "node:https";
 import { URL } from "node:url";
 import { buildHostSpec } from "./host-util";
 import { gcpInternalHostname, normalizeProviderId } from "@cocalc/cloud";
+import { ONPREM_MASTER_CONAT_TUNNEL_LOCAL_PORT } from "@cocalc/conat/project-host/api";
 import type {
   HostMachine,
   HostRuntimeArtifact,
@@ -63,6 +64,7 @@ import {
 import { machineHasGpu } from "./host-gpu";
 import {
   DEFAULT_GCP_BAY_ROUTER_PORT,
+  isDevGcpReverseTunnelEnabled,
   resolveGcpInternalConatUrl,
   resolveGcpManagedHostInternalUrl,
   shouldUseGcpInternalConatUrl,
@@ -897,6 +899,11 @@ export async function buildBootstrapScripts(
     Number.isFinite(backupParallelParsed) && backupParallelParsed > 0
       ? Math.max(1, Math.min(100, Math.floor(backupParallelParsed)))
       : undefined;
+  const devGcpReverseTunnel =
+    providerId === "gcp" && isDevGcpReverseTunnelEnabled();
+  const tunneledMasterConatServer = devGcpReverseTunnel
+    ? `http://127.0.0.1:${process.env.COCALC_ONPREM_MASTER_CONAT_TUNNEL_LOCAL_PORT ?? ONPREM_MASTER_CONAT_TUNNEL_LOCAL_PORT}`
+    : undefined;
 
   const envLines = [
     `MASTER_CONAT_SERVER=${masterAddress}`,
@@ -941,6 +948,13 @@ export async function buildBootstrapScripts(
   }
   if (isSelfHost) {
     envLines.push(`COCALC_SELF_HOST_MODE=${effectiveSelfHostMode ?? "local"}`);
+  }
+  if (devGcpReverseTunnel && tunneledMasterConatServer) {
+    envLines.push(`COCALC_DEV_GCP_REVERSE_TUNNEL=1`);
+    envLines.push(`COCALC_BOOTSTRAP_MASTER_CONAT_SERVER=${masterAddress}`);
+    envLines.push(
+      `COCALC_TUNNELED_MASTER_CONAT_SERVER=${tunneledMasterConatServer}`,
+    );
   }
   if (backupParallel != null) {
     envLines.push(`COCALC_PROJECT_HOST_BACKUP_MAX_PARALLEL=${backupParallel}`);
