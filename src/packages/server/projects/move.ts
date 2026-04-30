@@ -46,6 +46,16 @@ const BACKUP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const MOVE_STOP_PROJECT_TIMEOUT_MS = 3 * 60 * 1000;
 const MOVE_START_DEST_TIMEOUT_MS = 5 * 60 * 1000;
 const TRANSIENT_MOVE_RPC_RETRY_DELAY_MS = 1000;
+const MOVE_SENTINEL_DIR = ".local/share/cocalc";
+const MOVE_SENTINEL_PATH = `${MOVE_SENTINEL_DIR}/move-sentinel.json`;
+const MOVE_SENTINEL_VERIFY_TIMEOUT_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_SENTINEL_VERIFY_TIMEOUT_MS) || 30 * 1000,
+);
+const MOVE_SENTINEL_VERIFY_RETRY_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_SENTINEL_VERIFY_RETRY_MS) || 1000,
+);
 
 export const MOVE_CANCELED_CODE = "move-canceled";
 
@@ -122,6 +132,11 @@ type MoveBackupRegionCutoverResult = {
   purge_error?: string;
 };
 
+type MoveSentinel = {
+  path: string;
+  content: string;
+};
+
 async function openProjectLogStream(
   project_id: string,
   opts?: { fresh?: boolean },
@@ -137,6 +152,93 @@ async function openProjectLogStream(
     noCache: true,
     noInventory: true,
   });
+}
+
+async function openProjectFs(project_id: string, opts?: { fresh?: boolean }) {
+  const client = await getExplicitProjectRoutedClient({
+    project_id,
+    fresh: opts?.fresh,
+  });
+  return client.fs({ project_id });
+}
+
+async function createMoveSentinel({
+  context,
+  move_log_id,
+  op_id,
+}: {
+  context: MoveProjectContext;
+  move_log_id: string;
+  op_id?: string;
+}): Promise<MoveSentinel> {
+  const fs = await openProjectFs(context.project_id, { fresh: true });
+  await fs.mkdir(MOVE_SENTINEL_DIR, { recursive: true });
+  const content = `${JSON.stringify(
+    {
+      version: 1,
+      move_log_id,
+      op_id: op_id ?? null,
+      project_id: context.project_id,
+      source_host_id: context.project_host_id ?? null,
+      dest_host_id: context.dest_host_id,
+      source_region: context.project_region,
+      dest_region: context.dest_region,
+      token: randomUUID(),
+      written_at: new Date().toISOString(),
+    },
+    null,
+    2,
+  )}\n`;
+  await fs.writeFile(MOVE_SENTINEL_PATH, content);
+  return { path: MOVE_SENTINEL_PATH, content };
+}
+
+async function verifyMoveSentinel({
+  project_id,
+  sentinel,
+}: {
+  project_id: string;
+  sentinel: MoveSentinel;
+}): Promise<void> {
+  const deadline = Date.now() + MOVE_SENTINEL_VERIFY_TIMEOUT_MS;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const fs = await openProjectFs(project_id, { fresh: true });
+      const actual = `${await fs.readFile(sentinel.path, "utf8")}`;
+      if (actual === sentinel.content) {
+        return;
+      }
+      lastError = new Error(
+        `sentinel content mismatch at ${sentinel.path} on destination`,
+      );
+    } catch (err) {
+      lastError = err;
+    }
+    await delay(MOVE_SENTINEL_VERIFY_RETRY_MS);
+  }
+  throw new Error(
+    `destination verification failed: ${lastError ?? `missing move sentinel at ${sentinel.path}`}`,
+  );
+}
+
+async function deleteMoveSentinelBestEffort({
+  project_id,
+  stage,
+}: {
+  project_id: string;
+  stage: string;
+}): Promise<void> {
+  try {
+    const fs = await openProjectFs(project_id, { fresh: true });
+    await fs.rm(MOVE_SENTINEL_PATH, { force: true });
+  } catch (err) {
+    log.warn("moveProjectToHost sentinel cleanup failed", {
+      project_id,
+      stage,
+      err,
+    });
+  }
 }
 
 async function appendProjectMoveLogEntry({
@@ -824,6 +926,7 @@ export async function moveProjectToHost(
 
   let placementUpdated = false;
   let backupRegionCutoverResult: MoveBackupRegionCutoverResult | undefined;
+  let moveSentinel: MoveSentinel | undefined;
   const moveLogExtraEvent = () => ({
     source_region: context.project_region,
     dest_region: context.dest_region,
@@ -1038,6 +1141,27 @@ export async function moveProjectToHost(
           },
         );
       } else {
+        try {
+          await invalidateProjectBackupConfigOnHost(context.project_host_id);
+        } catch (err) {
+          log.warn(
+            "moveProjectToHost source backup config invalidation failed",
+            {
+              project_id: context.project_id,
+              source_host_id: context.project_host_id,
+              err,
+            },
+          );
+        }
+        progress({
+          step: "backup",
+          message: "writing move verification sentinel",
+        });
+        moveSentinel = await createMoveSentinel({
+          context,
+          move_log_id,
+          op_id: opts?.op_id,
+        });
         progress({
           step: "backup",
           message: "creating final backup (always)",
@@ -1131,6 +1255,18 @@ export async function moveProjectToHost(
     }
     await checkCanceled("placement");
     if (startDest) {
+      try {
+        await invalidateProjectBackupConfigOnHost(context.dest_host_id);
+      } catch (err) {
+        log.warn(
+          "moveProjectToHost destination backup config invalidation failed",
+          {
+            project_id: context.project_id,
+            dest_host_id: context.dest_host_id,
+            err,
+          },
+        );
+      }
       progress({
         step: "start-dest",
         message: "starting workspace on destination host",
@@ -1258,6 +1394,28 @@ export async function moveProjectToHost(
           project_id: context.project_id,
           dest_host_id: context.dest_host_id,
         });
+        if (moveSentinel) {
+          progress({
+            step: "verify-dest",
+            message: "verifying restored project content on destination host",
+            detail: { dest_host_id: context.dest_host_id },
+          });
+          await verifyMoveSentinel({
+            project_id: context.project_id,
+            sentinel: moveSentinel,
+          });
+          await deleteMoveSentinelBestEffort({
+            project_id: context.project_id,
+            stage: "post-verify-dest",
+          });
+          moveSentinel = undefined;
+          progress({
+            step: "verify-dest",
+            message: "destination restore verified",
+            detail: { dest_host_id: context.dest_host_id },
+            progress: 100,
+          });
+        }
 
         backupRegionCutoverResult = await performBackupRegionCutover({
           context,
@@ -1333,6 +1491,13 @@ export async function moveProjectToHost(
               error: `${cleanupErr}`,
             },
           });
+        }
+        if (moveSentinel) {
+          await deleteMoveSentinelBestEffort({
+            project_id: context.project_id,
+            stage: "failed-move-source-cleanup",
+          });
+          moveSentinel = undefined;
         }
         throw err;
       }
@@ -1434,6 +1599,13 @@ export async function moveProjectToHost(
       fresh: true,
     });
   } catch (err) {
+    if (moveSentinel) {
+      await deleteMoveSentinelBestEffort({
+        project_id: context.project_id,
+        stage: "move-error-cleanup",
+      });
+      moveSentinel = undefined;
+    }
     if ((err as any)?.code === MOVE_CANCELED_CODE) {
       await handleCancel((err as any).stage ?? "unknown");
       throw err;

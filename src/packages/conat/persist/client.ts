@@ -202,6 +202,18 @@ class PersistStreamClient extends EventEmitter {
   private recoveryPaused = false;
   private recoveryRegistration?: RegisteredRecoverableResource;
 
+  private emitRecoverableError = (err: Error) => {
+    if (this.listenerCount("error") > 0) {
+      this.emit("error", err);
+      return;
+    }
+    logger.warn("persist stream error without listeners", {
+      storage: this.storage.path,
+      service: this.service,
+      err: `${err}`,
+    });
+  };
+
   constructor(
     private client: Client,
     private storage: StorageOptions,
@@ -368,8 +380,7 @@ class PersistStreamClient extends EventEmitter {
     this.socket.on("data", (updates, headers) => {
       if (updates == null && headers != null) {
         // has to be an error
-        this.emit(
-          "error",
+        this.emitRecoverableError(
           new ConatError(headers?.error, { code: headers?.code }),
         );
         this.close();
