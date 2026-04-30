@@ -49,6 +49,7 @@ const DEFAULT_SNAPSHOTS_TIMEOUT_MS = Math.max(
   10_000,
   Number(process.env.COCALC_RUSTIC_SNAPSHOTS_TIMEOUT_MS ?? 60_000),
 );
+const BACKUP_EXCLUDE_GLOBS = [".snapshots", ".snapshots/**"] as const;
 
 function makeTempRusticSnapshotName(): string {
   const rand = Math.random().toString(36).slice(2, 10);
@@ -178,6 +179,10 @@ export class SubvolumeRustic {
       .map((tag) => tag.trim())
       .filter((tag) => tag.length > 0)
       .flatMap((tag) => ["--tag", tag]);
+    const excludeArgs = BACKUP_EXCLUDE_GLOBS.flatMap((glob) => [
+      "--glob",
+      glob,
+    ]);
     const tempSnapshot = makeTempRusticSnapshotName();
     const target = this.subvolume.snapshots.path(tempSnapshot);
     const snapshotPath = join(this.subvolume.path, target);
@@ -200,7 +205,7 @@ export class SubvolumeRustic {
         : JSON.parse(
             parseOutput(
               await this.subvolume.fs.rustic(
-                ["backup", "-x", "--json", ...tagArgs, "."],
+                ["backup", "-x", "--json", ...tagArgs, ...excludeArgs, "."],
                 {
                   timeout,
                   cwd: target,
