@@ -1309,5 +1309,73 @@ class GpuBootstrapTest(unittest.TestCase):
             )
 
 
+class AptBootstrapTest(unittest.TestCase):
+    def test_apt_update_install_uses_more_tolerant_network_timeouts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), apt_packages=["curl", "git"])
+            recorded = []
+
+            original_apt_run = bootstrap.apt_run
+            try:
+                bootstrap.apt_run = (
+                    lambda _cfg, args, desc, retries, timeout: recorded.append(
+                        (args, desc, retries, timeout)
+                    )
+                )
+                bootstrap.apt_update_install(cfg)
+            finally:
+                bootstrap.apt_run = original_apt_run
+
+            self.assertEqual(
+                recorded[0],
+                (
+                    [
+                        "apt-get",
+                        "-y",
+                        "-o",
+                        "Acquire::ForceIPv4=true",
+                        "-o",
+                        f"Acquire::Retries={bootstrap.APT_RETRIES}",
+                        "-o",
+                        f"Acquire::http::Timeout={bootstrap.APT_ACQUIRE_TIMEOUT_S}",
+                        "-o",
+                        f"Acquire::https::Timeout={bootstrap.APT_ACQUIRE_TIMEOUT_S}",
+                        "-o",
+                        f"Acquire::ftp::Timeout={bootstrap.APT_ACQUIRE_TIMEOUT_S}",
+                        "update",
+                    ],
+                    "apt-get update",
+                    bootstrap.APT_RETRIES,
+                    bootstrap.APT_UPDATE_TIMEOUT_S,
+                ),
+            )
+            self.assertEqual(
+                recorded[1],
+                (
+                    [
+                        "apt-get",
+                        "-y",
+                        "-o",
+                        "Acquire::ForceIPv4=true",
+                        "-o",
+                        f"Acquire::Retries={bootstrap.APT_RETRIES}",
+                        "-o",
+                        f"Acquire::http::Timeout={bootstrap.APT_ACQUIRE_TIMEOUT_S}",
+                        "-o",
+                        f"Acquire::https::Timeout={bootstrap.APT_ACQUIRE_TIMEOUT_S}",
+                        "-o",
+                        f"Acquire::ftp::Timeout={bootstrap.APT_ACQUIRE_TIMEOUT_S}",
+                        "--no-install-recommends",
+                        "install",
+                        "curl",
+                        "git",
+                    ],
+                    "apt-get install",
+                    bootstrap.APT_RETRIES,
+                    bootstrap.APT_INSTALL_TIMEOUT_S,
+                ),
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

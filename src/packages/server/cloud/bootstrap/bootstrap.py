@@ -53,6 +53,10 @@ PROJECT_HOST_RUNTIME_SUBID_RANGES = (
     (231072, ROOTLESS_SUBID_ALIGNMENT),
     (327680, ROOTLESS_SUBID_MIN_TOTAL - ROOTLESS_SUBID_ALIGNMENT),
 )
+APT_RETRIES = 5
+APT_ACQUIRE_TIMEOUT_S = 60
+APT_UPDATE_TIMEOUT_S = 180
+APT_INSTALL_TIMEOUT_S = 600
 HOST_OWNED_DATA_DIRS = (
     "secrets",
     "cache",
@@ -787,18 +791,30 @@ def apt_update_install(cfg: BootstrapConfig) -> None:
         "-o",
         "Acquire::ForceIPv4=true",
         "-o",
-        "Acquire::Retries=3",
+        f"Acquire::Retries={APT_RETRIES}",
         "-o",
-        "Acquire::http::Timeout=20",
+        f"Acquire::http::Timeout={APT_ACQUIRE_TIMEOUT_S}",
         "-o",
-        "Acquire::https::Timeout=20",
+        f"Acquire::https::Timeout={APT_ACQUIRE_TIMEOUT_S}",
         "-o",
-        "Acquire::ftp::Timeout=20",
+        f"Acquire::ftp::Timeout={APT_ACQUIRE_TIMEOUT_S}",
     ]
-    apt_run(cfg, ["apt-get", *apt_opts, "update"], "apt-get update", retries=3, timeout=30)
+    apt_run(
+        cfg,
+        ["apt-get", *apt_opts, "update"],
+        "apt-get update",
+        retries=APT_RETRIES,
+        timeout=APT_UPDATE_TIMEOUT_S,
+    )
     log_line(cfg, "bootstrap: installing base packages")
     apt_install_opts = apt_opts + ["--no-install-recommends", "install"] + cfg.apt_packages
-    apt_run(cfg, ["apt-get", *apt_install_opts], "apt-get install", retries=3, timeout=120)
+    apt_run(
+        cfg,
+        ["apt-get", *apt_install_opts],
+        "apt-get install",
+        retries=APT_RETRIES,
+        timeout=APT_INSTALL_TIMEOUT_S,
+    )
 
 
 def configure_chrony(cfg: BootstrapConfig) -> None:
