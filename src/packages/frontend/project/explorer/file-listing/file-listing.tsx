@@ -208,7 +208,6 @@ function renderTimestamp({
     return (
       <TimeAgo
         date={new Date(mtime).toISOString()}
-        live={false}
         style={{ color: COLORS.GRAY_M, whiteSpace: "nowrap" }}
       />
     );

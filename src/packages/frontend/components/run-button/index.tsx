@@ -12,9 +12,9 @@ import {
   useRef,
   useState,
 } from "react";
-import TimeAgo from "react-timeago";
 import { Icon } from "@cocalc/frontend/components/icon";
 import StaticCodeBlock from "@cocalc/frontend/components/static-code-block";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { webapp_client } from "@cocalc/frontend/client/client";
 import infoToMode from "@cocalc/frontend/editors/slate/elements/code-block/info-to-mode";
 import Logo from "@cocalc/frontend/jupyter/logo";

@@ -5,7 +5,7 @@
 
 /*
  * Customized TimeAgo support
- * TODO: internationalize this formatter -- see https://www.npmjs.com/package/react-timeago
+ * TODO: internationalize this formatter.
  */
 
 import { Popover, Radio } from "antd";
@@ -183,38 +183,79 @@ function relativeTimeParts(
   refreshMs?: number;
   text: string;
 } {
-  const seconds = Math.round(Math.abs(nowMs - epochMs) / 1000);
+  const elapsedSeconds = Math.abs(nowMs - epochMs) / 1000;
+  const seconds = Math.round(elapsedSeconds);
   const suffix = epochMs < nowMs ? "ago" : "from now";
   let unit = "year";
   let value = Math.round(seconds / (365 * 24 * 60 * 60));
-  let refreshMs = 7 * 24 * 60 * 60 * 1000;
+  let refreshMs: number | undefined = msUntilDisplayChange(
+    elapsedSeconds,
+    (value + 0.5) * YEAR,
+  );
   if (seconds < 60) {
     unit = "second";
     value = Math.round(seconds);
-    refreshMs = 1000;
+    refreshMs =
+      value === 0
+        ? 1000
+        : (msUntilDisplayChange(elapsedSeconds, MINUTE) ?? 1000);
   } else if (seconds < 60 * 60) {
     unit = "minute";
     value = Math.round(seconds / 60);
-    refreshMs = 60 * 1000;
+    refreshMs = msUntilDisplayChange(
+      elapsedSeconds,
+      Math.min(HOUR, (value + 0.5) * MINUTE),
+    );
   } else if (seconds < 24 * 60 * 60) {
     unit = "hour";
     value = Math.round(seconds / (60 * 60));
-    refreshMs = 60 * 60 * 1000;
+    refreshMs = msUntilDisplayChange(
+      elapsedSeconds,
+      Math.min(DAY, (value + 0.5) * HOUR),
+    );
   } else if (seconds < 7 * 24 * 60 * 60) {
     unit = "day";
     value = Math.round(seconds / (24 * 60 * 60));
-    refreshMs = 24 * 60 * 60 * 1000;
+    refreshMs = msUntilDisplayChange(
+      elapsedSeconds,
+      Math.min(WEEK, (value + 0.5) * DAY),
+    );
   } else if (seconds < 30 * 24 * 60 * 60) {
     unit = "week";
     value = Math.round(seconds / (7 * 24 * 60 * 60));
+    refreshMs = msUntilDisplayChange(
+      elapsedSeconds,
+      Math.min(MONTH, (value + 0.5) * WEEK),
+    );
   } else if (seconds < 365 * 24 * 60 * 60) {
     unit = "month";
     value = Math.round(seconds / (30 * 24 * 60 * 60));
+    refreshMs = msUntilDisplayChange(
+      elapsedSeconds,
+      Math.min(YEAR, (value + 0.5) * MONTH),
+    );
   }
   return {
     refreshMs,
     text: timeago_formatter(value, unit, suffix, epochMs),
   };
+}
+
+const MINUTE = 60;
+const HOUR = MINUTE * 60;
+const DAY = HOUR * 24;
+const WEEK = DAY * 7;
+const MONTH = DAY * 30;
+const YEAR = DAY * 365;
+
+function msUntilDisplayChange(
+  elapsedSeconds: number,
+  nextChangeSeconds: number,
+): number | undefined {
+  if (nextChangeSeconds <= elapsedSeconds) {
+    return 1000;
+  }
+  return Math.max(1000, Math.ceil((nextChangeSeconds - elapsedSeconds) * 1000));
 }
 
 function RelativeTimeText({

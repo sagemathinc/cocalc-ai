@@ -30,6 +30,29 @@ describe("TimeAgo", () => {
     expect(screen.getByText("2 minutes ago")).toBeInTheDocument();
   });
 
+  it("keeps second-level text stable until the visible text changes", () => {
+    render(
+      <TimeAgo
+        date={new Date("2026-04-30T18:19:10.000Z")}
+        click_to_toggle={false}
+      />,
+    );
+
+    expect(screen.getByText("less than a minute ago")).toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(9 * 1000);
+    });
+
+    expect(screen.getByText("less than a minute ago")).toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(1 * 1000);
+    });
+
+    expect(screen.getByText("1 minute ago")).toBeInTheDocument();
+  });
+
   it("does not recurse when many live timestamps mount together", () => {
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
 
