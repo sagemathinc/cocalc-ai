@@ -126,6 +126,7 @@ describe("moveProjectToHost", () => {
   };
   let currentRoutedHostId: string;
   let routedFsByHost: Map<string, Map<string, string>>;
+  let hangMoveSentinelReadOnDest: boolean;
   let lroSummaryByOpId: Map<string, any>;
 
   beforeEach(() => {
@@ -137,6 +138,7 @@ describe("moveProjectToHost", () => {
       [SOURCE_HOST_ID, sharedFiles],
       [DEST_HOST_ID, sharedFiles],
     ]);
+    hangMoveSentinelReadOnDest = false;
     lroSummaryByOpId = new Map([
       [
         "55555555-5555-4555-8555-555555555555",
@@ -263,6 +265,13 @@ describe("moveProjectToHost", () => {
           files.set(path, typeof data === "string" ? data : `${data}`);
         }),
         readFile: jest.fn(async (path: string) => {
+          if (
+            hangMoveSentinelReadOnDest &&
+            currentRoutedHostId === DEST_HOST_ID &&
+            path === MOVE_SENTINEL_PATH
+          ) {
+            return await new Promise<string>(() => {});
+          }
           const files = routedFsByHost.get(currentRoutedHostId);
           if (!files?.has(path)) {
             throw new Error(
@@ -841,6 +850,122 @@ describe("moveProjectToHost", () => {
     expect(routedFsByHost.get(SOURCE_HOST_ID)?.has(MOVE_SENTINEL_PATH)).toBe(
       false,
     );
+  });
+
+  it("fails sentinel verification cleanly if the destination read hangs", async () => {
+    process.env.COCALC_MOVE_SENTINEL_VERIFY_TIMEOUT_MS = "40";
+    process.env.COCALC_MOVE_SENTINEL_VERIFY_RETRY_MS = "5";
+    process.env.COCALC_MOVE_SENTINEL_IO_TIMEOUT_MS = "5";
+    hangMoveSentinelReadOnDest = true;
+    const consts = await import("@cocalc/util/consts");
+    (consts.parseR2Region as jest.Mock).mockImplementation((value: string) => {
+      if (value === "wnam" || value === "weur") return value;
+      return null;
+    });
+    (consts.mapCloudRegionToR2Region as jest.Mock).mockImplementation(
+      (value: string) => {
+        if (value === "europe-west1") return "weur";
+        return "wnam";
+      },
+    );
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [{ host_id: DEST_HOST_ID, project_state: "running" }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    resolveHostConnectionMock = jest.fn(async ({ host_id }: any) => ({
+      host_id,
+      bay_id: "bay-0",
+      name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
+      region: host_id === DEST_HOST_ID ? "europe-west1" : "us-west1",
+    }));
+    createBackupLroMock = jest.fn().mockResolvedValueOnce({
+      op_id: "backup-op-final-hang",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+    });
+    lroSummaryByOpId.set("backup-op-final-hang", {
+      op_id: "backup-op-final-hang",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "succeeded",
+      result: {
+        id: "backup-final-hang",
+        time: new Date("2026-04-26T16:00:00.000Z"),
+      },
+    });
+    startProjectLroMock = jest.fn(async () => ({
+      op_id: "start-op-cross-region",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+    }));
+    waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
+      if (op_id === "start-op-cross-region") {
+        return { status: "succeeded" };
+      }
+      throw new Error(`unexpected op_id ${op_id}`);
+    });
+
+    try {
+      const { moveProjectToHost } = await import("./move");
+      await expect(
+        moveProjectToHost({
+          project_id: PROJECT_ID,
+          dest_host_id: DEST_HOST_ID,
+          account_id: "account-id",
+          backup_region_cutover: true,
+        }),
+      ).rejects.toThrow(/destination verification failed/);
+    } finally {
+      delete process.env.COCALC_MOVE_SENTINEL_VERIFY_TIMEOUT_MS;
+      delete process.env.COCALC_MOVE_SENTINEL_VERIFY_RETRY_MS;
+      delete process.env.COCALC_MOVE_SENTINEL_IO_TIMEOUT_MS;
+      hangMoveSentinelReadOnDest = false;
+    }
+
+    expect(savePlacementMock).toHaveBeenNthCalledWith(1, PROJECT_ID, {
+      host_id: DEST_HOST_ID,
+    });
+    expect(savePlacementMock).toHaveBeenNthCalledWith(2, PROJECT_ID, {
+      host_id: SOURCE_HOST_ID,
+    });
   });
 
   it("keeps a remote current host as the source placement", async () => {

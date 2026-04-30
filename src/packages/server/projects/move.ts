@@ -60,6 +60,10 @@ const MOVE_SENTINEL_VERIFY_RETRY_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_SENTINEL_VERIFY_RETRY_MS) || 1000,
 );
+const MOVE_SENTINEL_IO_TIMEOUT_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_SENTINEL_IO_TIMEOUT_MS) || 5000,
+);
 const CHILD_LRO_POLL_INTERVAL_MS = Math.max(
   250,
   Number(process.env.COCALC_MOVE_CHILD_LRO_POLL_INTERVAL_MS) || 1000,
@@ -207,6 +211,29 @@ async function createMoveSentinel({
   return { path: MOVE_SENTINEL_PATH, content };
 }
 
+async function withTimeout<T>({
+  promise,
+  timeout_ms,
+  label,
+}: {
+  promise: Promise<T>;
+  timeout_ms: number;
+  label: string;
+}): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  return await new Promise<T>((resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeout_ms}ms`));
+    }, timeout_ms);
+    timeoutId.unref?.();
+    promise.then(resolve, reject).finally(() => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    });
+  });
+}
+
 async function verifyMoveSentinel({
   project_id,
   sentinel,
@@ -218,8 +245,16 @@ async function verifyMoveSentinel({
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
-      const fs = await openProjectFs(project_id, { fresh: true });
-      const actual = `${await fs.readFile(sentinel.path, "utf8")}`;
+      const fs = await withTimeout({
+        promise: openProjectFs(project_id, { fresh: true }),
+        timeout_ms: MOVE_SENTINEL_IO_TIMEOUT_MS,
+        label: "opening destination project fs for move sentinel verification",
+      });
+      const actual = `${await withTimeout({
+        promise: fs.readFile(sentinel.path, "utf8"),
+        timeout_ms: MOVE_SENTINEL_IO_TIMEOUT_MS,
+        label: `reading move sentinel at ${sentinel.path}`,
+      })}`;
       if (actual === sentinel.content) {
         return;
       }
