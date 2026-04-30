@@ -36,7 +36,10 @@ import {
   useServersMenuItems,
 } from "./util";
 import { HostPickerModal } from "@cocalc/frontend/hosts/pick-host";
-import { DEFAULT_R2_REGION } from "@cocalc/util/consts";
+import {
+  DEFAULT_R2_REGION,
+  mapCloudRegionToR2Region,
+} from "@cocalc/util/consts";
 import { useProjectRegion } from "@cocalc/frontend/project/use-project-region";
 
 const FILES_SUBMENU_LIST_STYLE: CSS = {
@@ -149,7 +152,7 @@ export function ProjectActionsMenu({ record }: Props) {
         openProjectTab("users");
         break;
       case "move":
-        refreshProjectRegion();
+        await refreshProjectRegion();
         setMoveOpen(true);
         break;
       case "settings":
@@ -329,15 +332,24 @@ export function ProjectActionsMenu({ record }: Props) {
           open={moveOpen}
           currentHostId={currentHostId}
           regionFilter={projectRegion}
-          lockRegion
+          sourceProjectRegion={projectRegion}
           showOfflineMoveWarning
           onCancel={() => setMoveOpen(false)}
-          onSelect={async (dest_host_id) => {
+          onSelect={async (dest_host_id, host) => {
             setMoveOpen(false);
             try {
+              const destProjectRegion = host
+                ? mapCloudRegionToR2Region(host.region)
+                : undefined;
               await actions.move_project_to_host(
                 record.project_id,
                 dest_host_id,
+                {
+                  backup_region_cutover:
+                    destProjectRegion != null &&
+                    destProjectRegion !== projectRegion,
+                  dest_project_region: destProjectRegion,
+                },
               );
             } catch (err) {
               console.error("move project failed", err);

@@ -1451,6 +1451,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       project_id: string;
       source_host_id?: string;
       dest_host_id?: string;
+      dest_project_region?: string;
     },
   ) => {
     if (!actions || !op?.op_id || !op.scope_type) {
@@ -1484,17 +1485,31 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (logInfo.dest_host_id) {
           const project_map = store.get("project_map");
           const project = project_map?.get(logInfo.project_id);
-          if (
-            project_map &&
-            project &&
-            project.get("host_id") !== logInfo.dest_host_id
-          ) {
-            this.setState({
-              project_map: project_map.set(
-                logInfo.project_id,
-                project.set("host_id", logInfo.dest_host_id),
-              ),
-            } as ProjectsState);
+          if (project_map && project) {
+            let nextProject = project;
+            if (project.get("host_id") !== logInfo.dest_host_id) {
+              nextProject = nextProject.set("host_id", logInfo.dest_host_id);
+            }
+            if (
+              logInfo.dest_project_region &&
+              nextProject.get("region") !== logInfo.dest_project_region
+            ) {
+              nextProject = nextProject.set(
+                "region",
+                logInfo.dest_project_region,
+              );
+            }
+            if (nextProject !== project) {
+              this.setState({
+                project_map: project_map.set(logInfo.project_id, nextProject),
+              } as ProjectsState);
+            }
+          }
+          if (logInfo.dest_project_region) {
+            publishProjectDetailInvalidation({
+              project_id: logInfo.project_id,
+              fields: ["region"],
+            });
           }
           void this.ensure_host_info(logInfo.dest_host_id, true);
         }
@@ -1532,10 +1547,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
     project_id,
     dest_host_id,
     allow_offline,
+    backup_region_cutover,
   }: {
     project_id: string;
     dest_host_id?: string;
     allow_offline?: boolean;
+    backup_region_cutover?: boolean;
   }): Promise<{
     op_id?: string;
     scope_type?: LroSummary["scope_type"];
@@ -1546,6 +1563,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         project_id,
         dest_host_id,
         allow_offline,
+        backup_region_cutover,
       });
     } catch (err) {
       if (!allow_offline) {
@@ -1559,6 +1577,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
             project_id,
             dest_host_id,
             allow_offline: true,
+            backup_region_cutover,
           });
         }
       }
@@ -1861,7 +1880,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
   });
 
   move_project_to_host = reuseInFlight(
-    async (project_id: string, dest_host_id: string): Promise<boolean> => {
+    async (
+      project_id: string,
+      dest_host_id: string,
+      opts?: {
+        backup_region_cutover?: boolean;
+        dest_project_region?: string;
+      },
+    ): Promise<boolean> => {
       const current_host = store.getIn(["project_map", project_id, "host_id"]);
       if (dest_host_id === current_host) return true;
       const actions = redux.getProjectActions(project_id);
@@ -1869,6 +1895,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         const resp = await this.requestMoveProject({
           project_id,
           dest_host_id,
+          backup_region_cutover: opts?.backup_region_cutover,
         });
         if (!resp) {
           return false;
@@ -1879,6 +1906,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           source_host_id:
             typeof current_host === "string" ? current_host : undefined,
           dest_host_id,
+          dest_project_region: opts?.dest_project_region,
         });
       } catch (err) {
         const error = `Error move project -- ${err}`;

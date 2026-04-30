@@ -87,6 +87,7 @@ export function HostPickerModal({
   currentHostId,
   selectedHostId,
   regionFilter,
+  sourceProjectRegion,
   lockRegion,
   showOfflineMoveWarning,
   mode = "move",
@@ -97,6 +98,7 @@ export function HostPickerModal({
   onCancel: () => void;
   onSelect: (host_id: string, host?: Host) => void;
   regionFilter?: string;
+  sourceProjectRegion?: string;
   lockRegion?: boolean;
   showOfflineMoveWarning?: boolean;
   mode?: "move" | "create";
@@ -125,6 +127,24 @@ export function HostPickerModal({
       currentHost.status,
     );
   }, [currentHost, currentHostId]);
+  const selectedHost = useMemo(
+    () => hosts.find((host) => host.id === selected),
+    [hosts, selected],
+  );
+  const selectedHostRegion = selectedHost
+    ? mapCloudRegionToR2Region(selectedHost.region)
+    : undefined;
+  const crossRegionCutoverSelected =
+    !isCreate &&
+    !!sourceProjectRegion &&
+    !!selectedHostRegion &&
+    selectedHostRegion !== sourceProjectRegion;
+  const sourceProjectRegionLabel = sourceProjectRegion
+    ? (R2_REGION_LABELS[sourceProjectRegion] ?? sourceProjectRegion)
+    : undefined;
+  const selectedHostRegionLabel = selectedHostRegion
+    ? (R2_REGION_LABELS[selectedHostRegion] ?? selectedHostRegion)
+    : undefined;
 
   const filteredHosts = useMemo(() => {
     return hosts.filter((h) => {
@@ -293,6 +313,15 @@ export function HostPickerModal({
               : "Files in /tmp (if any) will be discarded. Snapshots are not moved; only backups are preserved. SSH access must be reconfigured after the move."
           }
           style={{ marginBottom: 12 }}
+        />
+      ) : null}
+      {crossRegionCutoverSelected ? (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          title="This move will change the project's backup region."
+          description={`CoCalc will restore from the current ${sourceProjectRegionLabel} backups, create a new backup in ${selectedHostRegionLabel}, then switch the project's backup region after that backup succeeds.`}
         />
       ) : null}
       <Space style={{ marginBottom: 8 }}>

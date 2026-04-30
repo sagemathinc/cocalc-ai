@@ -6,7 +6,10 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import ShowError from "@cocalc/frontend/components/error";
 import { HostPickerModal } from "@cocalc/frontend/hosts/pick-host";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { DEFAULT_R2_REGION } from "@cocalc/util/consts";
+import {
+  DEFAULT_R2_REGION,
+  mapCloudRegionToR2Region,
+} from "@cocalc/util/consts";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { useProjectRegion } from "../use-project-region";
 import { SpotHostAlert, SpotHostTag } from "@cocalc/frontend/hosts/spot-ui";
@@ -95,7 +98,7 @@ export default function MoveProject({
   const openPicker = async () => {
     try {
       setMoving(true);
-      refreshProjectRegion();
+      await refreshProjectRegion();
       setPickerOpen(true);
     } catch (err) {
       setError(`${err}`);
@@ -203,14 +206,22 @@ export default function MoveProject({
         open={pickerOpen}
         currentHostId={currentHostId}
         regionFilter={projectRegion}
-        lockRegion
+        sourceProjectRegion={projectRegion}
         showOfflineMoveWarning
         onCancel={() => setPickerOpen(false)}
-        onSelect={async (dest_host_id) => {
+        onSelect={async (dest_host_id, host) => {
           setPickerOpen(false);
           try {
             setMoving(true);
-            await actions.move_project_to_host(project_id, dest_host_id);
+            const destProjectRegion = host
+              ? mapCloudRegionToR2Region(host.region)
+              : undefined;
+            await actions.move_project_to_host(project_id, dest_host_id, {
+              backup_region_cutover:
+                destProjectRegion != null &&
+                destProjectRegion !== projectRegion,
+              dest_project_region: destProjectRegion,
+            });
           } catch (err) {
             setError(`${err}`);
           } finally {
