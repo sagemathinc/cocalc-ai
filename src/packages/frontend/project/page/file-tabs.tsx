@@ -67,6 +67,14 @@ function Label({ path, project_id, label, onClose }) {
   );
 }
 
+// This mapping back and forth is needed because of, I guess, a bug
+// in antd, where the key can't include a double quote.  This was
+// the closest thing in the antd bug tracker:
+//   https://github.com/ant-design/ant-design/issues/33928
+// I hope there are no other special characters to exclude.
+// This doesn't impact projects since they use the project_id.
+// Note the "unused unicode character"; we use
+// this same trick in various places throughout cocalc.
 function pathToKey(s: string): string {
   if (s.includes("\uFE35")) {
     throw Error(`invalid path: ${JSON.stringify(s)}`);
@@ -220,6 +228,9 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
       return;
     }
     setTimeout(() => {
+      // This is a scary hack to fix https://github.com/sagemathinc/cocalc/issues/7029
+      // which is I think working around some weirdness/optimization in CodeMirror 5.
+      // I hate doing this, but it's better than the alternatives I can figure out right now.
       actions.show();
     }, 250);
 
@@ -297,6 +308,8 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
       const key = event?.active?.id;
       if (key) {
         actions.set_active_tab(path_to_tab(keyToPath(key)), {
+          // noFocus -- critical to not focus when dragging or codemirror focus breaks on end of drag.
+          // See  https://github.com/sagemathinc/cocalc/issues/7029
           noFocus: true,
         });
       }
