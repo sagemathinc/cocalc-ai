@@ -16,6 +16,7 @@ import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { FIXED_TABS_BG_COLOR } from "../activity-bar-tabs";
 import { ACTIVITY_BAR_COLLAPSED } from "../activity-bar-consts";
+import { useActivityBarPreferences } from "../activity-bar-storage";
 import { FIX_BORDER } from "../common";
 import { FIXED_PROJECT_TABS, FixedTab } from "../file-tab";
 import { FLYOUT_PADDING } from "./consts";
@@ -33,10 +34,13 @@ export function FlyoutBody({ flyout, flyoutWidth }: FlyoutBodyProps) {
     "hideActionButtons",
   );
   const otherSettings = useTypedRedux("account", "other_settings");
+  const { collapsed: storedHideActionButtons } = useActivityBarPreferences({
+    legacy: {
+      collapsed: otherSettings?.get?.(ACTIVITY_BAR_COLLAPSED),
+    },
+  });
   const hideActionButtons =
-    otherSettings?.get?.(ACTIVITY_BAR_COLLAPSED) ??
-    hideActionButtonsState ??
-    false;
+    storedHideActionButtons ?? hideActionButtonsState ?? false;
 
   // No "Ref", because otherwise we don't trigger the useEffect below
   const [bodyDiv, setBodyDiv] = useState<HTMLDivElement | null>(null);

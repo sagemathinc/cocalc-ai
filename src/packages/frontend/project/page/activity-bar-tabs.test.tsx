@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { ACTIVITY_BAR_COLLAPSED } from "./activity-bar-consts";
+import { getActivityBarCollapsed } from "./activity-bar-storage";
 
 const mockSetActiveTab = jest.fn();
 const mockToggleFlyout = jest.fn();
@@ -182,6 +182,7 @@ describe("VerticalFixedTabs overflow actions", () => {
     mockSetOtherSettings.mockReset();
     mockAccountStoreReady = true;
     mockLite = true;
+    window.localStorage.clear();
     (global as any).ResizeObserver = class {
       observe() {}
       disconnect() {}
@@ -269,10 +270,7 @@ describe("HiddenActivityBarLauncher", () => {
 
     fireEvent.click(screen.getByTestId("menu-launcher:toggle-activity-bar"));
 
-    expect(mockSetOtherSettings).toHaveBeenCalledWith(
-      ACTIVITY_BAR_COLLAPSED,
-      false,
-    );
+    expect(getActivityBarCollapsed()).toBe(false);
   });
 
   it("hides the activity bar from the overflow menu", () => {
@@ -280,9 +278,6 @@ describe("HiddenActivityBarLauncher", () => {
 
     fireEvent.click(screen.getByTestId("menu-overflow:toggle-activity-bar"));
 
-    expect(mockSetOtherSettings).toHaveBeenCalledWith(
-      ACTIVITY_BAR_COLLAPSED,
-      true,
-    );
+    expect(getActivityBarCollapsed()).toBe(true);
   });
 });

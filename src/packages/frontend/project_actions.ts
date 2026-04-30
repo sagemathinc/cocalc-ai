@@ -63,6 +63,10 @@ import {
   ACTIVITY_BAR_COLLAPSED,
   ACTIVITY_BAR_KEY,
 } from "@cocalc/frontend/project/page/activity-bar-consts";
+import {
+  getActivityBarCollapsed,
+  setActivityBarCollapsed,
+} from "@cocalc/frontend/project/page/activity-bar-storage";
 import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { transform_get_url } from "@cocalc/frontend/project/transform-get-url";
 import {
@@ -3761,14 +3765,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
   public toggleActionButtons() {
     const accountStore = this.redux.getStore("account") as any;
-    const next = !(
-      accountStore?.getIn(["other_settings", ACTIVITY_BAR_COLLAPSED]) ??
-      this.get_store()?.get("hideActionButtons") ??
-      false
-    );
-    this.redux
-      .getActions("account")
-      ?.set_other_settings(ACTIVITY_BAR_COLLAPSED, next);
+    const next = !getActivityBarCollapsed({
+      legacy:
+        accountStore?.getIn(["other_settings", ACTIVITY_BAR_COLLAPSED]) ??
+        this.get_store()?.get("hideActionButtons") ??
+        false,
+    });
+    setActivityBarCollapsed(next);
     this.setState({ hideActionButtons: next });
   }
 
