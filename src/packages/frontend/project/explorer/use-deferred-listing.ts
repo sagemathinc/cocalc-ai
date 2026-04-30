@@ -25,6 +25,7 @@ interface UseDeferredListingResult<T, E> {
   hasPending: boolean;
   flush: () => void;
   allowNextUpdate: () => void;
+  allowUpdatesFor: (ms?: number) => void;
 }
 
 export function useDeferredListing<T, E = undefined>({
@@ -63,6 +64,10 @@ export function useDeferredListing<T, E = undefined>({
 
   const latchRef = useRef(false);
   const latchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const passThroughUntilRef = useRef(0);
+  const passThroughTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const flush = useCallback(() => {
     setCommitted({
@@ -98,6 +103,24 @@ export function useDeferredListing<T, E = undefined>({
     latchTimerRef.current = setTimeout(closeLatch, LATCH_TIMEOUT_MS);
   }, [closeLatch, flush]);
 
+  const allowUpdatesFor = useCallback(
+    (ms: number = LATCH_TIMEOUT_MS) => {
+      passThroughUntilRef.current = Date.now() + Math.max(0, ms);
+      flush();
+      if (passThroughTimerRef.current != null) {
+        clearTimeout(passThroughTimerRef.current);
+      }
+      passThroughTimerRef.current = setTimeout(
+        () => {
+          passThroughUntilRef.current = 0;
+          passThroughTimerRef.current = null;
+        },
+        Math.max(0, ms),
+      );
+    },
+    [flush],
+  );
+
   useEffect(() => {
     openGraceWindow();
   }, [openGraceWindow]);
@@ -107,6 +130,9 @@ export function useDeferredListing<T, E = undefined>({
       if (latchTimerRef.current != null) clearTimeout(latchTimerRef.current);
       if (graceTimerRef.current != null) clearTimeout(graceTimerRef.current);
       if (batchTimerRef.current != null) clearTimeout(batchTimerRef.current);
+      if (passThroughTimerRef.current != null) {
+        clearTimeout(passThroughTimerRef.current);
+      }
     };
   }, []);
 
@@ -126,6 +152,8 @@ export function useDeferredListing<T, E = undefined>({
   useEffect(() => {
     if (!contentChanged) return;
     if (alwaysPassThrough) {
+      batchedFlush();
+    } else if (Date.now() < passThroughUntilRef.current) {
       batchedFlush();
     } else if (latchRef.current) {
       if (batchTimerRef.current != null) clearTimeout(batchTimerRef.current);
@@ -154,6 +182,7 @@ export function useDeferredListing<T, E = undefined>({
     hasPending: contentChanged,
     flush,
     allowNextUpdate,
+    allowUpdatesFor,
   };
 }
 
@@ -184,12 +213,12 @@ export function fileListingFingerprint(
 }
 
 export function refreshListingAfterUserAction({
-  allowNextUpdate,
+  allowUpdatesFor,
   refresh,
 }: {
-  allowNextUpdate: () => void;
+  allowUpdatesFor: (ms?: number) => void;
   refresh?: () => void;
 }) {
-  allowNextUpdate();
+  allowUpdatesFor();
   refresh?.();
 }

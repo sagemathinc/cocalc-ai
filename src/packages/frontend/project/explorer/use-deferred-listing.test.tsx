@@ -21,13 +21,18 @@ function TestComponent({
   currentPath?: string;
   alwaysPassThrough?: boolean;
 }) {
-  const { displayListing, hasPending, flush, allowNextUpdate } =
-    useDeferredListing({
-      liveListing,
-      currentPath,
-      alwaysPassThrough,
-      fingerprint: fileListingFingerprint,
-    });
+  const {
+    displayListing,
+    hasPending,
+    flush,
+    allowNextUpdate,
+    allowUpdatesFor,
+  } = useDeferredListing({
+    liveListing,
+    currentPath,
+    alwaysPassThrough,
+    fingerprint: fileListingFingerprint,
+  });
 
   return (
     <>
@@ -37,6 +42,7 @@ function TestComponent({
       <span data-testid="pending">{hasPending ? "yes" : "no"}</span>
       <button onClick={flush}>flush</button>
       <button onClick={allowNextUpdate}>allow</button>
+      <button onClick={() => allowUpdatesFor(5000)}>allow-temporary</button>
     </>
   );
 }
@@ -94,6 +100,36 @@ describe("useDeferredListing", () => {
     expect(screen.getByTestId("pending").textContent).toBe("no");
   });
 
+  it("keeps passing through watcher updates during a temporary allow window", () => {
+    const { rerender } = render(<TestComponent liveListing={listing(["a"])} />);
+
+    act(() => {
+      jest.advanceTimersByTime(5000);
+      screen.getByText("allow-temporary").click();
+    });
+
+    rerender(<TestComponent liveListing={listing(["b"])} />);
+    act(() => {
+      jest.advanceTimersByTime(10);
+    });
+    expect(screen.getByTestId("display").textContent).toBe("b");
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+
+    rerender(<TestComponent liveListing={listing(["c"])} />);
+    act(() => {
+      jest.advanceTimersByTime(10);
+    });
+    expect(screen.getByTestId("display").textContent).toBe("c");
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+
+    act(() => {
+      jest.advanceTimersByTime(5000);
+    });
+    rerender(<TestComponent liveListing={listing(["d"])} />);
+    expect(screen.getByTestId("display").textContent).toBe("c");
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+  });
+
   it("flushes pending changes when navigating to another path", () => {
     const { rerender } = render(
       <TestComponent liveListing={listing(["a"])} currentPath="/alpha" />,
@@ -121,7 +157,7 @@ describe("useDeferredListing", () => {
   it("lets user-triggered refreshes open the latch before refreshing", () => {
     const calls: string[] = [];
     refreshListingAfterUserAction({
-      allowNextUpdate: () => calls.push("allow"),
+      allowUpdatesFor: () => calls.push("allow"),
       refresh: () => calls.push("refresh"),
     });
     expect(calls).toEqual(["allow", "refresh"]);

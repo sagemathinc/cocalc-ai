@@ -174,11 +174,13 @@ export default function CloudflareConfigWizard({
     );
     const rawMode = trimOrEmpty(data.cloudflare_mode).toLowerCase();
     const inferredMode =
-      rawMode === "self" || rawMode === "managed" || rawMode === "none"
+      rawMode === "self" || rawMode === "none"
         ? rawMode
-        : trimOrEmpty(data.project_hosts_cloudflare_tunnel_enabled) !== "no"
+        : rawMode === "managed"
           ? "self"
-          : "none";
+          : trimOrEmpty(data.project_hosts_cloudflare_tunnel_enabled) !== "no"
+            ? "self"
+            : "none";
     setMode(inferredMode);
     setR2ApiToken(trimOrEmpty(data.r2_api_token));
     setR2AccessKey(trimOrEmpty(data.r2_access_key_id));
@@ -366,9 +368,6 @@ export default function CloudflareConfigWizard({
             <Space orientation="vertical">
               <Radio value="none">No Cloudflare (self-hosted only)</Radio>
               <Radio value="self">Use my own Cloudflare account</Radio>
-              <Radio value="managed">
-                Use CoCalc-managed Cloudflare (included with membership)
-              </Radio>
             </Space>
           </Radio.Group>
         </div>

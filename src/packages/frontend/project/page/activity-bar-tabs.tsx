@@ -19,7 +19,7 @@ import {
   useState,
 } from "react";
 import { useIntl } from "react-intl";
-import { CSS, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { CSS, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useAccountStoreReady } from "@cocalc/frontend/app/account-store-ready";
 import useAppContext from "@cocalc/frontend/app/use-context";
 import { ChatIndicator } from "@cocalc/frontend/chat/chat-indicator";
@@ -51,10 +51,15 @@ import {
   getDefaultFixedTabOrder,
   getDefaultHiddenFixedTabs,
   moveFixedTab,
-  normalizeFixedTabOrder,
-  normalizeHiddenFixedTabs,
   splitRailTabs,
 } from "./activity-bar-preferences";
+import {
+  setActivityBarCollapsed,
+  setActivityBarHiddenTabs,
+  setActivityBarLabels,
+  setActivityBarTabOrder,
+  useActivityBarPreferences,
+} from "./activity-bar-storage";
 import { hasModifierKey } from "./utils";
 
 const INDICATOR_STYLE: React.CSSProperties = {
@@ -133,7 +138,6 @@ export function VerticalFixedTabs({
     active_project_tab: activeTab,
     workspaces,
   } = useProjectContext();
-  const account_settings = useActions("account");
   const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
   const active_flyout = useTypedRedux({ project_id }, "flyout");
@@ -146,23 +150,15 @@ export function VerticalFixedTabs({
   const [moreOpen, setMoreOpen] = useState(false);
   const [showCustomize, setShowCustomize] = useState(false);
   const workspaceChrome = workspaceStrongThemeChrome(workspaces.current);
-  const tabOrder = useMemo(
-    () =>
-      normalizeFixedTabOrder(other_settings?.get?.(ACTIVITY_BAR_TAB_ORDER), {
-        liteMode: lite,
-      }),
-    [other_settings],
-  );
-  const hiddenTabs = useMemo(
-    () =>
-      normalizeHiddenFixedTabs(
-        other_settings?.get?.(ACTIVITY_BAR_HIDDEN_TABS),
-        {
-          liteMode: lite,
-        },
-      ),
-    [other_settings],
-  );
+  const { order: tabOrder, hidden: hiddenTabs } = useActivityBarPreferences({
+    liteMode: lite,
+    legacy: {
+      labels: other_settings?.get?.(ACTIVITY_BAR_LABELS),
+      order: other_settings?.get?.(ACTIVITY_BAR_TAB_ORDER),
+      hidden: other_settings?.get?.(ACTIVITY_BAR_HIDDEN_TABS),
+      collapsed: other_settings?.get?.(ACTIVITY_BAR_COLLAPSED),
+    },
+  });
   const { visible: pinnedTabs, overflow: overflowTabs } = useMemo(
     () => splitRailTabs(tabOrder, hiddenTabs),
     [hiddenTabs, tabOrder],
@@ -319,13 +315,10 @@ export function VerticalFixedTabs({
       onCustomize: () => setShowCustomize(true),
       onToggleActivityBar: () => {
         track("action-bar", { action: "hide" });
-        account_settings.set_other_settings(ACTIVITY_BAR_COLLAPSED, true);
+        setActivityBarCollapsed(true);
       },
       onToggleLabels: () => {
-        account_settings.set_other_settings(
-          ACTIVITY_BAR_LABELS,
-          !showActBarLabels,
-        );
+        setActivityBarLabels(!showActBarLabels);
       },
       onTabClick: openOverflowTab,
       railToggleLabel: "Hide activity bar",
@@ -438,14 +431,8 @@ export function VerticalFixedTabs({
         open={showCustomize}
         onClose={() => setShowCustomize(false)}
         onSave={(nextOrder, nextHidden) => {
-          account_settings.set_other_settings(
-            ACTIVITY_BAR_TAB_ORDER,
-            nextOrder,
-          );
-          account_settings.set_other_settings(
-            ACTIVITY_BAR_HIDDEN_TABS,
-            nextHidden,
-          );
+          setActivityBarTabOrder(nextOrder, { liteMode: lite });
+          setActivityBarHiddenTabs(nextHidden, { liteMode: lite });
           setShowCustomize(false);
         }}
         order={tabOrder}
@@ -457,29 +444,20 @@ export function VerticalFixedTabs({
 export function HiddenActivityBarLauncher() {
   const intl = useIntl();
   const { actions, project_id } = useProjectContext();
-  const account_settings = useActions("account");
   const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
   const other_settings = useTypedRedux("account", "other_settings");
   const [menuOpen, setMenuOpen] = useState(false);
   const [showCustomize, setShowCustomize] = useState(false);
-  const tabOrder = useMemo(
-    () =>
-      normalizeFixedTabOrder(other_settings?.get?.(ACTIVITY_BAR_TAB_ORDER), {
-        liteMode: lite,
-      }),
-    [other_settings],
-  );
-  const hiddenTabs = useMemo(
-    () =>
-      normalizeHiddenFixedTabs(
-        other_settings?.get?.(ACTIVITY_BAR_HIDDEN_TABS),
-        {
-          liteMode: lite,
-        },
-      ),
-    [other_settings],
-  );
+  const { order: tabOrder, hidden: hiddenTabs } = useActivityBarPreferences({
+    liteMode: lite,
+    legacy: {
+      labels: other_settings?.get?.(ACTIVITY_BAR_LABELS),
+      order: other_settings?.get?.(ACTIVITY_BAR_TAB_ORDER),
+      hidden: other_settings?.get?.(ACTIVITY_BAR_HIDDEN_TABS),
+      collapsed: other_settings?.get?.(ACTIVITY_BAR_COLLAPSED),
+    },
+  });
   if (!accountStoreReady) return null;
 
   const items = createRailMenuItems({
@@ -488,13 +466,10 @@ export function HiddenActivityBarLauncher() {
     onCustomize: () => setShowCustomize(true),
     onToggleActivityBar: () => {
       track("action-bar", { action: "show" });
-      account_settings.set_other_settings(ACTIVITY_BAR_COLLAPSED, false);
+      setActivityBarCollapsed(false);
     },
     onToggleLabels: () => {
-      account_settings.set_other_settings(
-        ACTIVITY_BAR_LABELS,
-        !showActBarLabels,
-      );
+      setActivityBarLabels(!showActBarLabels);
     },
     onTabClick: (name, domEvent) => {
       openRailMenuTab({
@@ -542,14 +517,8 @@ export function HiddenActivityBarLauncher() {
         open={showCustomize}
         onClose={() => setShowCustomize(false)}
         onSave={(nextOrder, nextHidden) => {
-          account_settings.set_other_settings(
-            ACTIVITY_BAR_TAB_ORDER,
-            nextOrder,
-          );
-          account_settings.set_other_settings(
-            ACTIVITY_BAR_HIDDEN_TABS,
-            nextHidden,
-          );
+          setActivityBarTabOrder(nextOrder, { liteMode: lite });
+          setActivityBarHiddenTabs(nextHidden, { liteMode: lite });
           setShowCustomize(false);
         }}
         order={tabOrder}
@@ -741,7 +710,7 @@ function CustomizeRailButtonsModal({
     >
       <p style={{ color: COLORS.GRAY }}>
         Drag to reorder buttons. Uncheck a button to move it into the More menu.
-        These preferences are stored per user.
+        These preferences are stored in this browser only.
       </p>
       <SortableList
         items={draftOrder}

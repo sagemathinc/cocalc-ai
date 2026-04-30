@@ -399,8 +399,8 @@ export function FilesFlyout({
   const {
     displayListing: deferredDirectoryFiles,
     hasPending: hasPendingListingUpdate,
-    flush: flushListingUpdate,
     allowNextUpdate: allowNextListingUpdate,
+    allowUpdatesFor: allowListingUpdatesFor,
   } = useDeferredListing({
     liveListing: liveDirectoryFiles,
     currentPath: effective_current_path,
@@ -410,24 +410,24 @@ export function FilesFlyout({
   useEffect(() => {
     return registerUserFilesystemChangeHandler(() =>
       refreshListingAfterUserAction({
-        allowNextUpdate: allowNextListingUpdate,
+        allowUpdatesFor: allowListingUpdatesFor,
         refresh: effectiveRefresh,
       }),
     );
   }, [
-    allowNextListingUpdate,
+    allowListingUpdatesFor,
     effectiveRefresh,
     registerUserFilesystemChangeHandler,
   ]);
   const refreshSnapshotsAfterUserAction = () => {
     refreshListingAfterUserAction({
-      allowNextUpdate: allowNextListingUpdate,
+      allowUpdatesFor: allowListingUpdatesFor,
       refresh,
     });
   };
   const refreshBackupsAfterUserAction = () => {
     refreshListingAfterUserAction({
-      allowNextUpdate: allowNextListingUpdate,
+      allowUpdatesFor: allowListingUpdatesFor,
       refresh: refreshBackups,
     });
   };
@@ -1029,8 +1029,13 @@ export function FilesFlyout({
         setTypeFilter={setTypeFilter}
         typeFilterOptions={typeFilterOptions}
         hasPendingUpdate={hasPendingListingUpdate}
-        onRefreshListing={flushListingUpdate}
-        onTerminalCommand={allowNextListingUpdate}
+        onRefreshListing={() =>
+          refreshListingAfterUserAction({
+            allowUpdatesFor: allowListingUpdatesFor,
+            refresh: effectiveRefresh,
+          })
+        }
+        onTerminalCommand={() => allowListingUpdatesFor()}
       />
       {!lite && (
         <DiskUsage

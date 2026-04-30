@@ -6,6 +6,7 @@ import {
   resolveInlineCodexActivityMode,
   resolveMountedCodexRenderedValue,
   resolveRenderedMessageValue,
+  canUseCompletedCachedCodexActivity,
   shouldLoadCodexPreviewBody,
   shouldShowCodexShowActivityButton,
   shouldSuppressAcpPlaceholderBody,
@@ -306,5 +307,36 @@ describe("shouldShowCodexShowActivityButton", () => {
         isLastMessageInThread: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("canUseCompletedCachedCodexActivity", () => {
+  it("rejects cached completed activity after a reconnecting stream state", () => {
+    expect(
+      canUseCompletedCachedCodexActivity({
+        liveStatus: "reconnecting",
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects cached completed activity after a stream error", () => {
+    expect(
+      canUseCompletedCachedCodexActivity({
+        liveStatus: "error",
+      }),
+    ).toBe(false);
+  });
+
+  it("allows cached completed activity for stable live states", () => {
+    expect(
+      canUseCompletedCachedCodexActivity({
+        liveStatus: "connected",
+      }),
+    ).toBe(true);
+    expect(
+      canUseCompletedCachedCodexActivity({
+        liveStatus: "idle",
+      }),
+    ).toBe(true);
   });
 });

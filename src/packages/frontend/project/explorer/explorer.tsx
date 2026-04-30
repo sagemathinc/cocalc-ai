@@ -322,6 +322,7 @@ export function Explorer() {
     hasPending: hasPendingListingUpdate,
     flush: flushListingUpdates,
     allowNextUpdate: allowNextListingUpdate,
+    allowUpdatesFor: allowListingUpdatesFor,
   } = useDeferredListing({
     liveListing: listing ?? undefined,
     currentPath: effective_current_path,
@@ -332,24 +333,24 @@ export function Explorer() {
   useEffect(() => {
     return registerUserFilesystemChangeHandler(() =>
       refreshListingAfterUserAction({
-        allowNextUpdate: allowNextListingUpdate,
+        allowUpdatesFor: allowListingUpdatesFor,
         refresh,
       }),
     );
-  }, [allowNextListingUpdate, refresh, registerUserFilesystemChangeHandler]);
+  }, [allowListingUpdatesFor, refresh, registerUserFilesystemChangeHandler]);
 
   const refreshSnapshotsAfterUserAction = useCallback(() => {
     refreshListingAfterUserAction({
-      allowNextUpdate: allowNextListingUpdate,
+      allowUpdatesFor: allowListingUpdatesFor,
       refresh,
     });
-  }, [allowNextListingUpdate, refresh]);
+  }, [allowListingUpdatesFor, refresh]);
   const refreshBackupsAfterUserAction = useCallback(() => {
     refreshListingAfterUserAction({
-      allowNextUpdate: allowNextListingUpdate,
+      allowUpdatesFor: allowListingUpdatesFor,
       refresh: refreshBackups,
     });
-  }, [allowNextListingUpdate, refreshBackups]);
+  }, [allowListingUpdatesFor, refreshBackups]);
   const showDirectoryTreeAvailable =
     !IS_MOBILE &&
     !inBackupsPath &&
@@ -676,7 +677,7 @@ You can either wait for this host to become available again, or move this ${proj
   return (
     <FileDndProvider
       project_id={project_id}
-      onUserFilesystemChange={allowNextListingUpdate}
+      onUserFilesystemChange={() => allowListingUpdatesFor()}
     >
       <div
         className={"smc-vfill"}
@@ -777,7 +778,7 @@ You can either wait for this host to become available again, or move this ${proj
                   file_creation_error={file_creation_error}
                   create_file={create_file}
                   create_folder={create_folder}
-                  onTerminalCommand={allowNextListingUpdate}
+                  onTerminalCommand={() => allowListingUpdatesFor()}
                 />
               </div>
             )}
@@ -1097,7 +1098,16 @@ You can either wait for this host to become available again, or move this ${proj
                   dest_path={effective_current_path}
                   config={{ clickable: ".upload-button" }}
                   event_handlers={{
-                    complete: () => allowNextListingUpdate(),
+                    sending: () =>
+                      refreshListingAfterUserAction({
+                        allowUpdatesFor: allowListingUpdatesFor,
+                        refresh,
+                      }),
+                    complete: () =>
+                      refreshListingAfterUserAction({
+                        allowUpdatesFor: allowListingUpdatesFor,
+                        refresh,
+                      }),
                   }}
                   style={{
                     flex: "1 1 auto",

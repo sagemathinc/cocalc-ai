@@ -31,6 +31,10 @@ import {
   ACTIVITY_BAR_TOGGLE_LABELS,
   ACTIVITY_BAR_TOGGLE_LABELS_DESCRIPTION,
 } from "@cocalc/frontend/project/page/activity-bar-consts";
+import {
+  setActivityBarLabels,
+  useActivityBarPreferences,
+} from "@cocalc/frontend/project/page/activity-bar-storage";
 import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import { QUICK_CREATE_MAP } from "@cocalc/frontend/project/new/launcher-catalog";
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
@@ -80,6 +84,11 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
     "customize",
     LAUNCHER_SITE_REMOVE_QUICK_KEY,
   );
+  const { labels: showActBarLabels } = useActivityBarPreferences({
+    legacy: {
+      labels: props.other_settings?.get?.(ACTIVITY_BAR_LABELS),
+    },
+  });
   const [showLauncherCustomize, setShowLauncherCustomize] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -254,12 +263,9 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
       <LabeledRow label={intl.formatMessage(ACTIVITY_BAR_TITLE)}>
         <div>
           <Switch
-            checked={
-              props.other_settings.get(ACTIVITY_BAR_LABELS) ??
-              ACTIVITY_BAR_LABELS_DEFAULT
-            }
+            checked={showActBarLabels ?? ACTIVITY_BAR_LABELS_DEFAULT}
             onChange={(e) => {
-              on_change(ACTIVITY_BAR_LABELS, e.target.checked);
+              setActivityBarLabels(e.target.checked);
             }}
           >
             <Paragraph
@@ -272,7 +278,8 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
                   show: false,
                 })}
               </Text>
-              : {intl.formatMessage(ACTIVITY_BAR_TOGGLE_LABELS_DESCRIPTION)}
+              : {intl.formatMessage(ACTIVITY_BAR_TOGGLE_LABELS_DESCRIPTION)}.
+              Stored in this browser only.
             </Paragraph>
           </Switch>
         </div>

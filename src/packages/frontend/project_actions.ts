@@ -63,6 +63,10 @@ import {
   ACTIVITY_BAR_COLLAPSED,
   ACTIVITY_BAR_KEY,
 } from "@cocalc/frontend/project/page/activity-bar-consts";
+import {
+  getActivityBarCollapsed,
+  setActivityBarCollapsed,
+} from "@cocalc/frontend/project/page/activity-bar-storage";
 import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { transform_get_url } from "@cocalc/frontend/project/transform-get-url";
 import {
@@ -166,6 +170,102 @@ const BANNED_FILE_TYPES = new Set(["doc", "docx", "pdf", "sws"]);
 
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
+
+function isRecoverableFilesystemClientError(err: unknown): boolean {
+  const message = `${err}`.toLowerCase();
+  return (
+    message.includes("closed") ||
+    message.includes("disconnected") ||
+    message.includes("connection closed") ||
+    message.includes("socket has been disconnected") ||
+    message.includes("not connected") ||
+    message.includes("file server not initialized") ||
+    message.includes("unable to route") ||
+    message.includes("project-host") ||
+    message.includes("project host")
+  );
+}
+
+type ResetOpenFileRuntimeAfterHostResetOpts = {
+  openFiles?: Map<string, any>;
+  activeProjectTab?: string;
+  getSyncPath: (path: string) => string;
+  getComponent: (path: string) => any;
+  setComponent: (path: string, component: any) => void;
+  removeRuntime: (syncPath: string) => Promise<void> | void;
+  rebootstrapPath?: (path: string) => Promise<void> | void;
+};
+
+export async function resetOpenFileRuntimeAfterHostReset({
+  openFiles,
+  activeProjectTab,
+  getSyncPath,
+  getComponent,
+  setComponent,
+  removeRuntime,
+  rebootstrapPath,
+}: ResetOpenFileRuntimeAfterHostResetOpts): Promise<void> {
+  if (openFiles == null || openFiles.size === 0) {
+    return;
+  }
+  const syncPaths: string[] = [];
+  const seenSyncPaths = new Set<string>();
+  openFiles.forEach((_value, path) => {
+    const current = getComponent(path) ?? {};
+    setComponent(path, {
+      ...current,
+      redux_name: undefined,
+      Editor: undefined,
+    });
+    const syncPath = getSyncPath(path);
+    if (!seenSyncPaths.has(syncPath)) {
+      seenSyncPaths.add(syncPath);
+      syncPaths.push(syncPath);
+    }
+  });
+  for (const syncPath of syncPaths) {
+    await removeRuntime(syncPath);
+  }
+  const activePath =
+    typeof activeProjectTab === "string" &&
+    activeProjectTab.startsWith("editor-")
+      ? misc.tab_to_path(activeProjectTab)
+      : undefined;
+  if (activePath != null && openFiles.has(activePath)) {
+    await rebootstrapPath?.(activePath);
+  }
+}
+
+export async function callFilesystemClientWithRecovery({
+  getClient,
+  clearClient,
+  prop,
+  args,
+}: {
+  getClient: (forceRefresh?: boolean) => Promise<FilesystemClient>;
+  clearClient: () => void;
+  prop: PropertyKey;
+  args: any[];
+}) {
+  let forceRefresh = false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fs = await getClient(forceRefresh);
+      const value = (fs as any)[prop];
+      if (typeof value !== "function") {
+        return value;
+      }
+      return await value.apply(fs, args);
+    } catch (err) {
+      if (attempt === 0 && isRecoverableFilesystemClientError(err)) {
+        forceRefresh = true;
+        clearClient();
+        continue;
+      }
+      throw err;
+    }
+  }
+}
 
 function normalizeProjectLogTime(value: unknown): Date | null {
   if (value == null) return null;
@@ -1245,82 +1345,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           // shouldn't happen...
           return;
         }
-
-        // Finally, ensure that the react/redux stuff is initialized, so
-        // the component will be rendered.  This happens if you open a file
-        // in the background but don't actually switch to that tab, then switch
-        // there later.  It's an optimization and it's very common due to
-        // session restore (where all tabs are restored).
-        if (info.redux_name == null || info.Editor == null) {
-          if (this.open_files == null) return;
-          // We configure the Editor component and redux.  This is async,
-          // due to the Editor component being async loaded only when needed,
-          // e.g., we don't want to load all of Slate for users that aren't
-          // using Slate.  However, we wrap this in a function that we call,
-          // since there is no need to wait for this to be done before showing
-          // the tab (with a Loading spinner).  In fact, waiting would make
-          // the UI appear to weirdly block the first time you open a given type
-          // of file.
-          (async () => {
-            try {
-              const syncPath = this.get_sync_path(path);
-              const { name, Editor } = await this.init_file_react_redux(
-                syncPath,
-                this.open_files?.get(path, "ext"),
-              );
-              const current_info = this.get_store()
-                ?.get("open_files")
-                .getIn([path, "component"]) as any;
-              if (this.open_files == null || current_info == null) return;
-              current_info.redux_name = name;
-              current_info.Editor = Editor;
-              // IMPORTANT: we make a *copy* of info below to trigger an update
-              // of the component that displays this editor.  Otherwise, the user
-              // would just see a spinner until they tab away and tab back.
-              this.open_files.set(path, "component", { ...current_info });
-              // just like in the case where it is already loaded, we have to "show" it.
-              // this is important, because e.g. the store has a "visible" field, which stays undefined
-              // which in turn causes e.g. https://github.com/sagemathinc/cocalc/issues/5398
-              if (!opts.noFocus) {
-                this.show_file(path);
-              }
-              // If a fragment identifier is set, we also jump there.
-              const fragmentId = store
-                .get("open_files")
-                .getIn([path, "fragmentId"]) as any;
-              if (fragmentId) {
-                this.gotoFragment(path, fragmentId);
-              }
-              if (this.open_files.get(path, "chatState") == "pending") {
-                this.open_chat({ path });
-              }
-            } catch (err) {
-              // Error already reported to user by alert_message in file-editors.ts
-              // Show error component in the editor area
-              const current_info = this.get_store()
-                ?.get("open_files")
-                .getIn([path, "component"]) as any;
-              if (this.open_files == null || current_info == null) return;
-              const error = err as Error;
-              current_info.Editor = () =>
-                require("react").createElement(EditorLoadError, {
-                  path,
-                  error,
-                });
-              this.open_files.set(path, "component", { ...current_info });
-              if (!opts.noFocus) {
-                this.show_file(path);
-              }
-              console.debug(
-                `Editor initialization failed for ${path}, error already shown to user`,
-              );
-            }
-          })();
-        } else {
-          if (!opts.noFocus) {
-            this.show_file(path);
-          }
-        }
+        this.ensureOpenFileComponent(path, { noFocus: opts.noFocus });
     }
     this.setState(change);
   };
@@ -1662,6 +1687,71 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     );
 
     return { name, Editor };
+  };
+
+  private ensureOpenFileComponent = (
+    path: string,
+    opts: { noFocus?: boolean } = {},
+  ): void => {
+    const info = this.get_store()
+      ?.get("open_files")
+      .getIn([path, "component"]) as any | undefined;
+    if (info == null) {
+      return;
+    }
+    if (info.redux_name != null && info.Editor != null) {
+      if (!opts.noFocus) {
+        this.show_file(path);
+      }
+      return;
+    }
+    if (this.open_files == null) return;
+    void (async () => {
+      try {
+        const syncPath = this.get_sync_path(path);
+        const { name, Editor } = await this.init_file_react_redux(
+          syncPath,
+          this.open_files?.get(path, "ext"),
+        );
+        const current_info = this.get_store()
+          ?.get("open_files")
+          .getIn([path, "component"]) as any;
+        if (this.open_files == null || current_info == null) return;
+        current_info.redux_name = name;
+        current_info.Editor = Editor;
+        this.open_files.set(path, "component", { ...current_info });
+        if (!opts.noFocus) {
+          this.show_file(path);
+        }
+        const fragmentId = this.get_store()
+          ?.get("open_files")
+          .getIn([path, "fragmentId"]) as any;
+        if (fragmentId) {
+          this.gotoFragment(path, fragmentId);
+        }
+        if (this.open_files.get(path, "chatState") == "pending") {
+          this.open_chat({ path });
+        }
+      } catch (err) {
+        const current_info = this.get_store()
+          ?.get("open_files")
+          .getIn([path, "component"]) as any;
+        if (this.open_files == null || current_info == null) return;
+        const error = err as Error;
+        current_info.Editor = () =>
+          require("react").createElement(EditorLoadError, {
+            path,
+            error,
+          });
+        this.open_files.set(path, "component", { ...current_info });
+        if (!opts.noFocus) {
+          this.show_file(path);
+        }
+        console.debug(
+          `Editor initialization failed for ${path}, error already shown to user`,
+        );
+      }
+    })();
   };
 
   private get_sync_path(path: string): string {
@@ -2774,7 +2864,22 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     disconnect_from_project(this.project_id);
     this.projectStatusSub?.close();
     delete this.projectStatusSub;
-    const hasProjectLogLoaded = this.get_store()?.get("project_log") != null;
+    const store = this.get_store();
+    const hasProjectLogLoaded = store?.get("project_log") != null;
+    void resetOpenFileRuntimeAfterHostReset({
+      openFiles: store?.get("open_files"),
+      activeProjectTab: store?.get("active_project_tab"),
+      getSyncPath: (path) => this.get_sync_path(path),
+      getComponent: (path) => this.open_files?.get(path, "component"),
+      setComponent: (path, component) =>
+        this.open_files?.set(path, "component", component),
+      removeRuntime: async (syncPath) => {
+        await project_file.remove(syncPath, this.redux, this.project_id);
+      },
+      rebootstrapPath: async (path) => {
+        this.ensureOpenFileComponent(path);
+      },
+    });
     void (async () => {
       await this.resetProjectLogStream();
       if (hasProjectLogLoaded) {
@@ -2786,22 +2891,32 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   };
 
+  private getFilesystemClient = async (
+    forceRefresh: boolean = false,
+  ): Promise<FilesystemClient> => {
+    if (forceRefresh) {
+      this.clearFilesystemClient();
+    }
+    this.filesystemPromise ??= webapp_client.conat_client.projectFs({
+      project_id: this.project_id,
+      caller: "ProjectActions.fs",
+    });
+    return await this.filesystemPromise;
+  };
+
   fs = (): FilesystemClient => {
     this.filesystem ??= new Proxy(
       {},
       {
         get: (_target, prop) => {
           return async (...args) => {
-            this.filesystemPromise ??= webapp_client.conat_client.projectFs({
-              project_id: this.project_id,
-              caller: "ProjectActions.fs",
+            return await callFilesystemClientWithRecovery({
+              getClient: (forceRefresh?: boolean) =>
+                this.getFilesystemClient(forceRefresh),
+              clearClient: this.clearFilesystemClient,
+              prop,
+              args,
             });
-            const fs = await this.filesystemPromise;
-            const value = (fs as any)[prop];
-            if (typeof value !== "function") {
-              return value;
-            }
-            return await value.apply(fs, args);
           };
         },
       },
@@ -3650,14 +3765,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
   public toggleActionButtons() {
     const accountStore = this.redux.getStore("account") as any;
-    const next = !(
-      accountStore?.getIn(["other_settings", ACTIVITY_BAR_COLLAPSED]) ??
-      this.get_store()?.get("hideActionButtons") ??
-      false
-    );
-    this.redux
-      .getActions("account")
-      ?.set_other_settings(ACTIVITY_BAR_COLLAPSED, next);
+    const next = !getActivityBarCollapsed({
+      legacy:
+        accountStore?.getIn(["other_settings", ACTIVITY_BAR_COLLAPSED]) ??
+        this.get_store()?.get("hideActionButtons") ??
+        false,
+    });
+    setActivityBarCollapsed(next);
     this.setState({ hideActionButtons: next });
   }
 

@@ -429,6 +429,10 @@ export function FilesHeader({
         project_id={project_id}
         dest_path={effective_current_path}
         config={{ clickable: `.${uploadClassName}` }}
+        event_handlers={{
+          sending: () => onRefreshListing?.(),
+          complete: () => onRefreshListing?.(),
+        }}
         className="smc-vfill"
       >
         {children}
