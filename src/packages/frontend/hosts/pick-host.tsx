@@ -310,7 +310,7 @@ export function HostPickerModal({
           title={
             currentHost?.status === "deprovisioned"
               ? "Source host is deprovisioned. The host disk no longer exists; this move restores from backups."
-              : "Files in /tmp (if any) will be discarded. Snapshots are not moved; only backups are preserved. SSH access must be reconfigured after the move."
+              : "Files in /tmp (if any) will be discarded. All previous snapshots will be discarded after the move. SSH access must be reconfigured after the move."
           }
           style={{ marginBottom: 12 }}
         />
@@ -320,8 +320,8 @@ export function HostPickerModal({
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          title="This move will change the project's backup region."
-          description={`CoCalc will restore from the current ${sourceProjectRegionLabel} backups, create a new backup in ${selectedHostRegionLabel}, then switch the project's backup region after that backup succeeds. All previous snapshots and backups will be discarded after the move.`}
+          title="This move will also change the project's backup region."
+          description={`CoCalc will restore from the current ${sourceProjectRegionLabel} backups, create a new backup in ${selectedHostRegionLabel}, then switch the project's backup region after that backup succeeds. After the cutover, all previous backups from ${sourceProjectRegionLabel} will be discarded.`}
         />
       ) : null}
       <Space style={{ marginBottom: 8 }}>
