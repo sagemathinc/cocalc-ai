@@ -12,7 +12,7 @@ without expanding scope.
 This plan explicitly includes:
 
 - multibay scalability and operational hardening
-- self-serve hosts
+- rented dedicated cloud hosts
 - shared-host and dedicated-host resource protection
 - fixing all known release-relevant bugs we have already uncovered
 
@@ -28,7 +28,6 @@ Related documents:
 - [control-plane-launch-readiness-plan.md](/home/user/cocalc-ai/src/.agents/control-plane-launch-readiness-plan.md)
 - [membership-usage-limits-release-spec-2026-04-25.md](/home/user/cocalc-ai/src/.agents/membership-usage-limits-release-spec-2026-04-25.md)
 - [shared-host-stopping-eviction-spec-2026-04-29.md](/home/user/cocalc-ai/src/.agents/shared-host-stopping-eviction-spec-2026-04-29.md)
-- [self-hosted-cloud.md](/home/user/cocalc-ai/src/.agents/self-hosted-cloud.md)
 - [project-host-daemon-upgrade-rollback-plan.md](/home/user/cocalc-ai/src/.agents/project-host-daemon-upgrade-rollback-plan.md)
 - [project-host-auth.md](/home/user/cocalc-ai/src/.agents/project-host-auth.md)
 
@@ -38,7 +37,8 @@ The first public release means:
 
 1. a real multibay hosted CoCalc deployment that is trustworthy enough for
    conservative public use
-2. a narrow but real self-serve host offering
+2. a narrow but real rented dedicated-host offering on managed GCP and Nebius
+   infrastructure
 3. a pricing / limits / enforcement model that protects cost and keeps the
    system stable
 4. clear operator workflows for deployment, rollback, host lifecycle, and
@@ -61,12 +61,13 @@ The following scope is in for the first public release:
 - project-host direct runtime routing where already designed
 - seed-owned purchases/billing authority for first release
 
-### 2. Self-Serve Hosts
+### 2. Rented Dedicated Hosts
 
-- self-hosted cloud connector path
-- narrow provider story and explicit install path
-- safe pairing/auth model
-- clear supported environments
+- managed GCP and Nebius dedicated-host path only
+- clear host configuration dialog with explicit pricing
+- monthly billing/renewal path
+- host-owner access control model for who may use a dedicated host
+- clear supported environments and support boundaries
 
 ### 3. Resource Protection And Limits
 
@@ -98,7 +99,9 @@ The following scope is **not** in:
 - deep new routing protocols unless forced by a measured blocker
 - generalized private-network optimization across every topology
 - advanced billing model expansion
-- large new self-serve provider surface beyond the first supported path
+- broad BYO-host or self-connected-machine product scope
+- large provider/backend expansion beyond the first supported dedicated-host
+  path
 
 ## Hard Rules For Release Work
 
@@ -127,7 +130,7 @@ The following scope is **not** in:
 - correctness under churn
 - deployment / upgrade / rollback reproducibility
 - operator workflows that remain too environment-sensitive
-- self-serve host polish and support boundaries
+- dedicated-host pricing, billing, and access-control polish
 - release bugs discovered during real canaries
 - soak confidence and test confidence
 
@@ -218,50 +221,57 @@ coherent release story.
 - shared and dedicated hosts protect themselves predictably
 - operator can explain why a project was stopped or spared
 
-## D. Self-Serve Hosts
+## D. Rented Dedicated Hosts
 
-Goal: ship a narrow, explicit, supportable self-serve host story.
+Goal: ship a narrow, explicit, supportable rented dedicated-host product.
 
 This workstream is in scope, but it must stay narrow.
 
 ### Included
 
-- self-hosted cloud connector path
-- pairing/auth/revocation
-- minimal supported provider/backend path
-- clear local install/service story
-- clear release documentation on what is supported
+- managed dedicated hosts provisioned by CoCalc on GCP and Nebius
+- host configuration flow that clearly surfaces current monthly pricing
+- monthly billing / renewal logic for dedicated hosts
+- host-owner UI to control which users may use the host
+- explicit release documentation on what is supported
 
 ### Excluded
 
+- user-owned or user-connected machines joining the official cluster
 - broad backend/provider matrix expansion
-- advanced local networking modes beyond what is required
-- new GPU/self-host feature expansion unless already required by scope
+- advanced local/custom networking modes beyond what is required
+- new GPU/host feature expansion unless already required by scope
 
 ### Todo
 
-- [ ] Choose and document the exact first supported self-serve host modes.
-- [ ] Finish connector pairing and token lifecycle hardening.
-- [ ] Finish connector install/distribution flow.
-- [ ] Make connector lifecycle idempotent and auditable.
-- [ ] Verify self-serve host create/start/stop/delete/status flows on clean
-      machines.
-- [ ] Verify project-host auth and subject authorization are production-safe
-      enough for self-serve use.
-- [ ] Decide the exact release story for Cloudflare vs local/self-host tunnel
-      modes.
+- [ ] Choose and document the exact first supported dedicated-host SKUs on GCP
+      and Nebius.
+- [ ] Make the dedicated-host configuration dialog clearly show monthly
+      pricing before the user commits.
+- [ ] Implement monthly billing / renewal / charge logic for rented dedicated
+      hosts.
+- [ ] Define the exact failure semantics for unpaid, expired, or failed-charge
+      dedicated hosts.
+- [ ] Implement host-owner UI to control which users may use a dedicated host.
+- [ ] Verify dedicated-host create/start/stop/delete/status flows end to end.
+- [ ] Verify dedicated-host auth and subject authorization are
+      production-safe.
 - [ ] Document explicit support boundaries:
-  - supported OS
-  - supported virtualization/runtime backend
-  - supported networking assumptions
+  - supported providers
+  - supported machine sizes / SKUs
+  - supported regions if restricted
+  - who can administer a rented host
+  - who can be granted access to use a rented host
   - what is not supported yet
 - [ ] Ensure release docs explain that this is a narrow first release, not a
-      general arbitrary local cloud platform.
+      BYO-host or arbitrary user-managed cloud platform.
 
 ### Exit Criteria
 
-- one self-serve host path works end to end on clean machines
-- auth/token lifecycle is trustworthy
+- one supported dedicated-host path works end to end on supported providers
+- pricing is visible and understandable before host creation
+- monthly billing / renewal is trustworthy
+- host-owner access control works
 - support boundaries are documented and narrow
 - operators are not relying on ad hoc tribal knowledge to assist users
 
@@ -335,7 +345,7 @@ Goal: replace hope with measured confidence.
   - terminal
   - app-server flows
   - admin operations
-  - self-serve host workflows
+  - dedicated-host workflows
 - [ ] Fix every correctness bug found during soak before release.
 - [ ] Rerun synthetic/loadgen benchmarks with the now-current architecture.
 - [ ] Sample real user traffic and compare it to synthetic benchmark capacity.
@@ -367,8 +377,8 @@ This list should stay aggressively pruned and explicit.
       confusing.
 - [ ] Any remaining stale host / stale bundle reconcile bugs discovered during
       canaries or soak.
-- [ ] Any self-serve host pairing/auth/install bugs discovered during real
-      trials.
+- [ ] Any dedicated-host pricing, billing, access-control, or provisioning
+      bugs discovered during real trials.
 
 ### Bug Policy
 
@@ -401,9 +411,11 @@ This is the recommended order of work.
 - [ ] finish deployment/packaging path
 - [ ] finish multibay stale-state convergence work
 
-### Phase 2. Self-Serve Host Narrow MVP
+### Phase 2. Dedicated Host Narrow MVP
 
-- [ ] finish pairing/auth/install path
+- [ ] finish pricing/configuration dialog
+- [ ] finish monthly billing / renewal path
+- [ ] finish host-owner access-control UI
 - [ ] validate create/start/stop/delete/status
 - [ ] document support boundary
 
@@ -416,7 +428,7 @@ This is the recommended order of work.
 
 - [ ] green authoritative test surface
 - [ ] run 3-bay soak
-- [ ] run self-serve host soak
+- [ ] run dedicated-host soak
 - [ ] fix what breaks
 
 ### Phase 5. Capacity And Launch Readiness
@@ -441,7 +453,7 @@ true:
 
 - [ ] important multibay correctness tests are green
 - [ ] dogfood multibay cluster has survived a meaningful soak
-- [ ] self-serve host MVP path works end to end on supported environments
+- [ ] dedicated-host MVP path works end to end on supported providers
 - [ ] deployment and rollback are reproducible
 - [ ] host/cloud reconciliation is trustworthy enough for operators
 - [ ] purchases/billing authority is explicitly bounded where intended
@@ -455,7 +467,8 @@ true:
 
 - finished account rehome
 - finished project rehome
-- broader provider/backend expansion for self-serve hosts
+- broader provider/backend expansion for dedicated rented hosts
+- user-owned / BYO-host integration with the official cluster
 - generalized LAN/private-network optimization across every dev topology
 - deep new router protocol work beyond measured necessity
 - million-user proof campaigns
@@ -469,7 +482,7 @@ If we want the shortest path to release from today, do these next:
 - [ ] finish central admin override controls
 - [ ] finish dedicated-host egress policy wiring
 - [ ] finish packaging/deploy/rollback path
-- [ ] validate one supported self-serve host path end to end
+- [ ] validate one supported rented dedicated-host path end to end
 - [ ] run a real 3-bay soak and fix what it finds
 - [ ] rerun capacity benchmarks and write the conservative sizing note
 
