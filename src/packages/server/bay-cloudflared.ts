@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { spawn } from "node:child_process";
+import { execFile as execFileCb, spawn } from "node:child_process";
 import { unlinkSync } from "node:fs";
 import {
   chmod,
@@ -14,6 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { conatServer, secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
 import { which } from "@cocalc/backend/which";
@@ -30,6 +31,7 @@ import { ensureLocalCloudflaredBinary } from "@cocalc/server/launchpad/cloudflar
 
 const logger = getLogger("server:bay-cloudflared");
 const RECONCILE_INTERVAL_MS = 60_000;
+const execFile = promisify(execFileCb);
 
 type CloudflaredState = {
   tunnel: BayRegistryManagedTunnel;
@@ -116,6 +118,50 @@ function clearPidFileSync(path: string): void {
     unlinkSync(path);
   } catch {
     // ignore
+  }
+}
+
+async function listCloudflaredPidsForConfig(
+  configPath: string,
+): Promise<number[]> {
+  try {
+    const { stdout } = await execFile("ps", ["-eo", "pid=,args="], {
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    return stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(
+        (line) =>
+          line.includes("cloudflared") &&
+          line.includes(configPath) &&
+          line.includes(" tunnel "),
+      )
+      .map((line) => Number(line.split(/\s+/, 1)[0]))
+      .filter((pid) => Number.isInteger(pid) && pid > 0);
+  } catch {
+    return [];
+  }
+}
+
+async function stopCloudflaredPids(pids: Iterable<number>): Promise<void> {
+  const unique = [...new Set([...pids].filter((pid) => isPidRunning(pid)))];
+  if (unique.length === 0) return;
+  for (const pid of unique) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // ignore
+    }
+  }
+  await new Promise((resolve) => setTimeout(resolve, 750));
+  for (const pid of unique) {
+    if (!isPidRunning(pid)) continue;
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -265,31 +311,39 @@ async function reconcileOnce(): Promise<void> {
   });
 
   const persistedPid = await readPidFile(pidPath);
+  const matchingPids = await listCloudflaredPidsForConfig(configPath);
   const shouldRestart = tunnelChanged || credentialsChanged || configChanged;
-  if (isPidRunning(persistedPid)) {
+  const existingPids = [...new Set([persistedPid, ...matchingPids])].filter(
+    (pid): pid is number => isPidRunning(pid),
+  );
+  if (existingPids.length > 0) {
     if (!shouldRestart) {
+      const keeperPid =
+        persistedPid && existingPids.includes(persistedPid)
+          ? persistedPid
+          : existingPids[0];
+      const extraPids = existingPids.filter((pid) => pid !== keeperPid);
+      if (extraPids.length > 0) {
+        logger.warn("stopping duplicate bay cloudflared processes", {
+          bay_id: getConfiguredBayId(),
+          hostname: tunnel.hostname,
+          config_path: configPath,
+          keeper_pid: keeperPid,
+          duplicate_pids: extraPids,
+        });
+        await stopCloudflaredPids(extraPids);
+      }
+      await writePidFile(pidPath, keeperPid);
       cloudflaredState = {
         tunnel,
         configPath,
         credentialsPath,
-        pid: persistedPid!,
+        pid: keeperPid,
         pidFile: pidPath,
       };
       return;
     }
-    try {
-      process.kill(persistedPid!, "SIGTERM");
-    } catch {
-      // ignore
-    }
-    await new Promise((resolve) => setTimeout(resolve, 750));
-    if (isPidRunning(persistedPid)) {
-      try {
-        process.kill(persistedPid!, "SIGKILL");
-      } catch {
-        // ignore
-      }
-    }
+    await stopCloudflaredPids(existingPids);
     await clearPidFile(pidPath);
   }
 
@@ -336,9 +390,10 @@ export function startManagedBayCloudflared(): void {
 }
 
 export function stopManagedBayCloudflared(): void {
-  if (cloudflaredState?.pid && isPidRunning(cloudflaredState.pid)) {
+  const pid = cloudflaredState?.pid;
+  if (pid && isPidRunning(pid)) {
     try {
-      process.kill(cloudflaredState.pid, "SIGTERM");
+      process.kill(pid, "SIGTERM");
     } catch {
       // ignore
     }

@@ -176,8 +176,10 @@ export async function server({
       const project_id = getProjectId(this);
       logger.debug("stop", project_id);
       const runClient = await getClient(project_id);
+      logger.debug("stop: resolved project runner client", { project_id });
       try {
         await runClient.stop({ project_id, force });
+        logger.debug("stop: runner stop returned", { project_id, force });
         await setState1?.({ project_id, state: "opened" });
       } catch (err) {
         if (err.code == 503) {

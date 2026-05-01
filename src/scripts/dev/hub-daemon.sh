@@ -711,29 +711,50 @@ stop_cluster_bay() {
 
 stop_cloudflared() {
   local pid_file="${1:-${HUB_CLOUDFLARED_PID_FILE:-$STATE_DIR/cloudflared.pid}}"
-  if [ ! -f "$pid_file" ]; then
-    return 0
-  fi
+  local state_dir config_path
+  state_dir="$(dirname "$pid_file")"
+  config_path="$state_dir/config.yml"
   local pid
-  pid="$(tr -dc '0-9' < "$pid_file" | head -c 16 || true)"
-  if [ -z "$pid" ]; then
+  pid="$(tr -dc '0-9' < "$pid_file" 2>/dev/null | head -c 16 || true)"
+  local matching_pids
+  matching_pids="$(
+    ps -eo pid=,args= 2>/dev/null \
+      | awk -v cfg="$config_path" '/cloudflared/ && index($0, cfg) { print $1 }' \
+      | awk 'NF' \
+      | sort -u
+  )"
+  local pids
+  pids="$(printf "%s\n%s\n" "$pid" "$matching_pids" | awk 'NF' | sort -u)"
+  if [ -z "$pids" ]; then
     rm -f "$pid_file"
     return 0
   fi
-  if kill -0 "$pid" >/dev/null 2>&1; then
-    kill "$pid" >/dev/null 2>&1 || true
-    local i
-    for i in $(seq 1 20); do
-      if ! kill -0 "$pid" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 0.1
-    done
-    if kill -0 "$pid" >/dev/null 2>&1; then
-      kill -9 "$pid" >/dev/null 2>&1 || true
+  echo "$pids" | xargs -r kill >/dev/null 2>&1 || true
+  local i still_running
+  for i in $(seq 1 20); do
+    still_running="$(
+      echo "$pids" | awk 'NF' | while read -r candidate; do
+        if kill -0 "$candidate" >/dev/null 2>&1; then
+          echo "$candidate"
+        fi
+      done
+    )"
+    if [ -z "$still_running" ]; then
+      break
     fi
-    echo "cloudflared stopped (pid $pid)"
+    sleep 0.1
+  done
+  still_running="$(
+    echo "$pids" | awk 'NF' | while read -r candidate; do
+      if kill -0 "$candidate" >/dev/null 2>&1; then
+        echo "$candidate"
+      fi
+    done
+  )"
+  if [ -n "$still_running" ]; then
+    echo "$still_running" | xargs -r kill -9 >/dev/null 2>&1 || true
   fi
+  echo "cloudflared stopped ($(echo "$pids" | paste -sd ',' -))"
   rm -f "$pid_file"
 }
 
