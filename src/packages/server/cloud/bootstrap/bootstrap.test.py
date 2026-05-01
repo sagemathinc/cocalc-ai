@@ -870,6 +870,79 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 "COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS=1", local_env_text
             )
 
+    def test_write_env_creates_prev_backup_before_replacing_managed_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                ssh_user="",
+                env_lines=["MASTER_CONAT_SERVER=http://alpha.example.invalid:9102"],
+            )
+            env_path = Path(cfg.env_file)
+            env_path.parent.mkdir(parents=True, exist_ok=True)
+            env_path.write_text(
+                "MASTER_CONAT_SERVER=http://old.example.invalid:9102\n",
+                encoding="utf-8",
+            )
+
+            bootstrap.write_env(cfg, 10)
+
+            self.assertEqual(
+                env_path.with_suffix(".env.prev").read_text(encoding="utf-8"),
+                "MASTER_CONAT_SERVER=http://old.example.invalid:9102\n",
+            )
+            self.assertIn(
+                "MASTER_CONAT_SERVER=http://alpha.example.invalid:9102",
+                env_path.read_text(encoding="utf-8"),
+            )
+
+    def test_write_env_ignores_malformed_existing_lines_and_preserves_valid_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                ssh_user="",
+                env_lines=["MASTER_CONAT_SERVER=http://alpha.example.invalid:9102"],
+            )
+            env_path = Path(cfg.env_file)
+            env_path.parent.mkdir(parents=True, exist_ok=True)
+            env_path.write_text(
+                "c.projecthosts.internal:9102\n"
+                "COCALC_PROJECT_POOL_MEMORY_RESERVE_MB=8192\n",
+                encoding="utf-8",
+            )
+
+            bootstrap.write_env(cfg, 10)
+
+            text = env_path.read_text(encoding="utf-8")
+            self.assertIn(
+                "MASTER_CONAT_SERVER=http://alpha.example.invalid:9102",
+                text,
+            )
+            self.assertIn("COCALC_PROJECT_POOL_MEMORY_RESERVE_MB=8192", text)
+            self.assertNotIn("c.projecthosts.internal:9102", text)
+
+    def test_write_env_rejects_invalid_assignments_without_clobbering_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                ssh_user="",
+                env_lines=["c.projecthosts.internal:9102"],
+            )
+            env_path = Path(cfg.env_file)
+            env_path.parent.mkdir(parents=True, exist_ok=True)
+            env_path.write_text(
+                "MASTER_CONAT_SERVER=http://old.example.invalid:9102\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "invalid env assignment line"):
+                bootstrap.write_env(cfg, 10)
+
+            self.assertEqual(
+                env_path.read_text(encoding="utf-8"),
+                "MASTER_CONAT_SERVER=http://old.example.invalid:9102\n",
+            )
+            self.assertFalse(env_path.with_suffix(".env.prev").exists())
+
     def test_write_wrapper_uses_runtime_home_for_node_lookup(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
@@ -1145,6 +1218,41 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
 
 
 class BootstrapModesTest(unittest.TestCase):
+    def test_reconcile_mode_runs_under_lifecycle_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            events: list[str] = []
+            originals = {}
+
+            class FakeLock:
+                def __enter__(self_inner):
+                    events.append("lock-enter")
+
+                def __exit__(self_inner, exc_type, exc, tb):
+                    events.append("lock-exit")
+
+            def patch(name: str, replacement) -> None:
+                originals[name] = getattr(bootstrap, name)
+                setattr(bootstrap, name, replacement)
+
+            patch("load_config", lambda _bootstrap_dir: cfg)
+            patch("bootstrap_operation_lock", lambda _cfg: FakeLock())
+            patch(
+                "run_reconcile",
+                lambda _cfg: events.append("run-reconcile") or 0,
+            )
+            patch("log_line", lambda *_args, **_kwargs: None)
+            try:
+                result = bootstrap.main(
+                    ["reconcile", "--bootstrap-dir", cfg.bootstrap_dir]
+                )
+            finally:
+                for name, original in originals.items():
+                    setattr(bootstrap, name, original)
+
+            self.assertEqual(result, 0)
+            self.assertEqual(events, ["lock-enter", "run-reconcile", "lock-exit"])
+
     def test_reconcile_mode_records_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)

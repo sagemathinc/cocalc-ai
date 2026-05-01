@@ -19,6 +19,7 @@ High-level responsibilities:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import grp
 import hashlib
 import json
@@ -29,9 +30,11 @@ import shutil
 import ssl
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -76,6 +79,7 @@ HOST_OWNED_DATA_FILES = (
     "conat-router.log",
 )
 HOST_OWNED_SQLITE_RE = re.compile(r"^(sqlite\.db|sync-fs\.sqlite)(?:-(?:wal|shm))?$")
+ENV_ASSIGNMENT_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -333,10 +337,102 @@ def current_bootstrap_sha256() -> str | None:
 
 
 def json_write_atomic(path: Path, payload: dict[str, Any]) -> None:
+    text_write_atomic(
+        path,
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+    )
+
+
+def text_write_atomic(path: Path, content: str, *, default_mode: int = 0o644) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent),
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    tmp = Path(tmp_name)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    try:
+        mode = path.stat().st_mode & 0o777
+    except FileNotFoundError:
+        mode = default_mode
+    os.chmod(tmp, mode)
     os.replace(tmp, path)
+
+
+def bootstrap_lock_path(cfg: BootstrapConfig) -> Path:
+    return Path(cfg.bootstrap_dir) / "bootstrap.lock"
+
+
+@contextmanager
+def bootstrap_operation_lock(cfg: BootstrapConfig):
+    lock_path = bootstrap_lock_path(cfg)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        log_line(cfg, f"bootstrap: acquiring lifecycle lock {lock_path}")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            log_line(cfg, f"bootstrap: acquired lifecycle lock {lock_path}")
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def parse_env_assignment_line(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    eq = stripped.find("=")
+    if eq <= 0:
+        raise RuntimeError(f"invalid env assignment line: {line!r}")
+    key = stripped[:eq].strip()
+    if not ENV_ASSIGNMENT_KEY_RE.match(key):
+        raise RuntimeError(f"invalid env assignment key {key!r} in line: {line!r}")
+    value = stripped[eq + 1 :]
+    if "\n" in value or "\r" in value:
+        raise RuntimeError(f"invalid env assignment value in line: {line!r}")
+    return key, value
+
+
+def read_env_assignments(path: str | Path) -> dict[str, str]:
+    env: dict[str, str] = {}
+    p = Path(path)
+    if not p.exists():
+        return env
+    for raw_line in p.read_text(encoding="utf-8").splitlines():
+        try:
+            parsed = parse_env_assignment_line(raw_line)
+        except RuntimeError:
+            continue
+        if parsed is None:
+            continue
+        key, value = parsed
+        env[key] = value
+    return env
+
+
+def render_env_text(lines: list[str]) -> str:
+    normalized: list[str] = []
+    for line in lines:
+        parsed = parse_env_assignment_line(line)
+        if parsed is None:
+            continue
+        key, value = parsed
+        normalized.append(f"{key}={value}")
+    return "\n".join(normalized) + "\n"
+
+
+def write_env_file_atomic(path: Path, text: str) -> None:
+    previous_text = None
+    if path.exists():
+        previous_text = path.read_text(encoding="utf-8")
+        if previous_text == text:
+            return
+    if previous_text is not None:
+        text_write_atomic(path.with_suffix(path.suffix + ".prev"), previous_text)
+    text_write_atomic(path, text)
 
 
 def json_load(path: Path) -> dict[str, Any]:
@@ -2529,14 +2625,22 @@ def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
     substitute_public_ip(cfg)
     env_path = Path(cfg.env_file)
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text("\n".join(cfg.env_lines) + "\n", encoding="utf-8")
+    existing_env = read_env_assignments(env_path)
+    env_assignments: dict[str, str] = {}
+    for line in cfg.env_lines:
+        parsed = parse_env_assignment_line(line)
+        if parsed is None:
+            continue
+        key, value = parsed
+        env_assignments[key] = value
     local_env_path = env_path.with_name(
         env_path.name[:-4] + ".local.env"
         if env_path.name.endswith(".env")
         else "project-host.local.env"
     )
     if not local_env_path.exists():
-        local_env_path.write_text(
+        text_write_atomic(
+            local_env_path,
             (
                 "# Local project-host overrides.\n"
                 "#\n"
@@ -2545,30 +2649,38 @@ def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
                 "# COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS=1\n"
                 "# COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS_SEC=10\n"
             ),
-            encoding="utf-8",
         )
     uid = pwd.getpwnam(cfg.ssh_user).pw_uid if cfg.ssh_user else None
     if uid is not None:
         runtime_dir = f"/mnt/cocalc/data/tmp/cocalc-podman-runtime-{uid}"
         Path(runtime_dir).mkdir(parents=True, exist_ok=True)
         run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", runtime_dir], "chown runtime dir")
-        upsert_env(cfg.env_file, "COCALC_PODMAN_RUNTIME_DIR", runtime_dir)
-    upsert_env(cfg.env_file, "COCALC_BTRFS_ROOT_RESERVE_GB", str(compute_root_reserve_gb(cfg)))
-    ensure_env_default(
-        cfg.env_file,
+        env_assignments["COCALC_PODMAN_RUNTIME_DIR"] = runtime_dir
+    env_assignments["COCALC_BTRFS_ROOT_RESERVE_GB"] = str(compute_root_reserve_gb(cfg))
+    env_assignments.setdefault(
         "COCALC_PROJECT_POOL_CGROUP",
-        DEFAULT_PROJECT_POOL_CGROUP,
+        existing_env.get(
+            "COCALC_PROJECT_POOL_CGROUP",
+            DEFAULT_PROJECT_POOL_CGROUP,
+        ),
     )
-    ensure_env_default(
-        cfg.env_file,
+    env_assignments.setdefault(
         "COCALC_PROJECT_POOL_MEMORY_RESERVE_MB",
-        str(DEFAULT_PROJECT_POOL_MEMORY_RESERVE_MB),
+        existing_env.get(
+            "COCALC_PROJECT_POOL_MEMORY_RESERVE_MB",
+            str(DEFAULT_PROJECT_POOL_MEMORY_RESERVE_MB),
+        ),
     )
     if cfg.image_size_gb_raw == "auto":
-        upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_AUTO", "1")
-        upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_GB", str(image_size_gb))
+        env_assignments["COCALC_BTRFS_IMAGE_AUTO"] = "1"
+        env_assignments["COCALC_BTRFS_IMAGE_GB"] = str(image_size_gb)
     else:
-        upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_AUTO", "0")
+        env_assignments["COCALC_BTRFS_IMAGE_AUTO"] = "0"
+        env_assignments.pop("COCALC_BTRFS_IMAGE_GB", None)
+    write_env_file_atomic(
+        env_path,
+        render_env_text([f"{key}={value}" for key, value in env_assignments.items()]),
+    )
 
 
 PODMAN_BASHRC_BLOCK_START = "# >>> CoCalc project-host podman env >>>"
@@ -2647,28 +2759,23 @@ def configure_runtime_shell_env(cfg: BootstrapConfig) -> None:
 
 
 def upsert_env(path: str, key: str, value: str) -> None:
-    lines = []
-    found = False
-    if Path(path).exists():
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
-    new_lines = []
-    for line in lines:
-        if line.startswith(f"{key}="):
-            new_lines.append(f"{key}={value}")
-            found = True
-        else:
-            new_lines.append(line)
-    if not found:
-        new_lines.append(f"{key}={value}")
-    Path(path).write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    env = read_env_assignments(path)
+    env[key] = value
+    write_env_file_atomic(
+        Path(path),
+        render_env_text([f"{name}={val}" for name, val in env.items()]),
+    )
 
 
 def ensure_env_default(path: str, key: str, value: str) -> None:
-    if Path(path).exists():
-        for line in Path(path).read_text(encoding="utf-8").splitlines():
-            if line.startswith(f"{key}="):
-                return
-    upsert_env(path, key, value)
+    env = read_env_assignments(path)
+    if key in env:
+        return
+    env[key] = value
+    write_env_file_atomic(
+        Path(path),
+        render_env_text([f"{name}={val}" for name, val in env.items()]),
+    )
 
 
 def report_bootstrap_status(
@@ -4059,22 +4166,23 @@ def main(argv: list[str]) -> int:
     log_line(cfg, f"bootstrap: user={cfg.bootstrap_user} home={cfg.bootstrap_home} root={cfg.bootstrap_root}")
     try:
         if only:
-            ensure_runtime_user(cfg)
-            ensure_bootstrap_paths(cfg)
-            write_bootstrap_state_files(cfg)
-            log_line(cfg, f"bootstrap: running subset {sorted(only)}")
-            if "project_host_bundle" in only:
-                extract_bundle(cfg, cfg.project_host_bundle)
-                write_wrapper(cfg)
-                write_helpers(cfg)
-            if "project_bundle" in only:
-                extract_bundle(cfg, cfg.project_bundle)
-            if "tools_bundle" in only:
-                extract_bundle(cfg, cfg.tools_bundle)
-            if "cloudflared" in only:
-                configure_cloudflared_with_options(cfg, install_package=False)
-            write_bootstrap_state_files(cfg)
-            return 0
+            with bootstrap_operation_lock(cfg):
+                ensure_runtime_user(cfg)
+                ensure_bootstrap_paths(cfg)
+                write_bootstrap_state_files(cfg)
+                log_line(cfg, f"bootstrap: running subset {sorted(only)}")
+                if "project_host_bundle" in only:
+                    extract_bundle(cfg, cfg.project_host_bundle)
+                    write_wrapper(cfg)
+                    write_helpers(cfg)
+                if "project_bundle" in only:
+                    extract_bundle(cfg, cfg.project_bundle)
+                if "tools_bundle" in only:
+                    extract_bundle(cfg, cfg.tools_bundle)
+                if "cloudflared" in only:
+                    configure_cloudflared_with_options(cfg, install_package=False)
+                write_bootstrap_state_files(cfg)
+                return 0
         if args.mode == "status":
             write_bootstrap_state_files(cfg)
             sys.stdout.write(
@@ -4083,10 +4191,13 @@ def main(argv: list[str]) -> int:
             )
             return 0
         if args.mode == "provision":
-            return run_provision(cfg)
+            with bootstrap_operation_lock(cfg):
+                return run_provision(cfg)
         if args.mode == "reconcile":
-            return run_reconcile(cfg)
-        return run_bootstrap(cfg)
+            with bootstrap_operation_lock(cfg):
+                return run_reconcile(cfg)
+        with bootstrap_operation_lock(cfg):
+            return run_bootstrap(cfg)
     except Exception as exc:
         log_line(cfg, f"bootstrap: failed: {exc}")
         return 1
