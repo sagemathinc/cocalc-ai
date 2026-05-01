@@ -21,6 +21,10 @@ describe("upgradeHostSoftwareInternalHelper", () => {
     getServerSettingsMock = jest.fn(async () => ({}));
   });
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it("realigns the full runtime stack on noop project-host upgrades when requested", async () => {
     const row = {
       id: "host-1",
@@ -175,6 +179,72 @@ describe("upgradeHostSoftwareInternalHelper", () => {
         },
       }),
     );
+  });
+
+  it("treats bootstrap-environment as a reconcile-only upgrade target", async () => {
+    const upgradeSoftware = jest.fn(async () => ({ results: [] }));
+    const reconcileCloudHostBootstrapOverSsh = jest.fn(async () => undefined);
+    const setProjectHostRuntimeDeployments = jest.fn(async () => []);
+    jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      text: async () => "bootstrap-sha-20260430  bootstrap.py\n",
+    } as Response);
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "bootstrap-environment", channel: "latest" }],
+        loadHostForStartStop: async () => ({
+          id: "host-1",
+          status: "running",
+          metadata: { owner: "account-1" },
+        }),
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () =>
+          "https://software.example.invalid/software",
+        resolveReachableUpgradeBaseUrl: async () =>
+          "https://software.example.invalid/software",
+        logWarn: () => undefined,
+        reconcileCloudHostBootstrapOverSsh,
+        hostControlClient: async () => ({
+          upgradeSoftware,
+        }),
+        updateProjectHostSoftwareRecord: async () => undefined,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments,
+      }),
+    ).resolves.toEqual({
+      results: [
+        {
+          artifact: "bootstrap-environment",
+          version: "bootstrap-sha-20260430",
+          status: "updated",
+        },
+      ],
+    });
+
+    expect(upgradeSoftware).not.toHaveBeenCalled();
+    expect(setProjectHostRuntimeDeployments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope_type: "host",
+        host_id: "host-1",
+        replace: false,
+        deployments: expect.arrayContaining([
+          {
+            target_type: "artifact",
+            target: "bootstrap-environment",
+            desired_version: "bootstrap-sha-20260430",
+          },
+        ]),
+      }),
+    );
+    expect(reconcileCloudHostBootstrapOverSsh).toHaveBeenCalledWith({
+      host_id: "host-1",
+      row: expect.objectContaining({ id: "host-1" }),
+    });
   });
 });
 

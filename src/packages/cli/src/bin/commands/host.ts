@@ -1581,7 +1581,7 @@ export function registerHostCommand(
     )
     .option(
       "--artifact <artifact...>",
-      "artifact(s): project-host, project, tools (default: all)",
+      "artifact(s): project-host, project, tools, bootstrap-environment (default: all software artifacts)",
     )
     .option(
       "--channel <channel...>",
@@ -1650,7 +1650,7 @@ export function registerHostCommand(
     .description("upgrade host software")
     .option(
       "--artifact <artifact...>",
-      "artifact(s): project-host, project, tools (default: all)",
+      "artifact(s): project-host, project, tools, bootstrap-environment (default: all software artifacts)",
     )
     .option("--channel <channel>", "channel: latest or staging", "latest")
     .option(

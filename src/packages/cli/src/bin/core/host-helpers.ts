@@ -79,8 +79,15 @@ export function normalizeHostSoftwareArtifactValue(
   if (normalized === "tools" || normalized === "tool") {
     return "tools";
   }
+  if (
+    normalized === "bootstrap-environment" ||
+    normalized === "bootstrap" ||
+    normalized === "bootstrap-env"
+  ) {
+    return "bootstrap-environment";
+  }
   throw new Error(
-    `invalid artifact '${value}'; expected one of: project-host, project, tools`,
+    `invalid artifact '${value}'; expected one of: project-host, project, tools, bootstrap-environment`,
   );
 }
 

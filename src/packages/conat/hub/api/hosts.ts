@@ -600,7 +600,8 @@ export type HostSoftwareArtifact =
   | "project-host"
   | "project"
   | "project-bundle"
-  | "tools";
+  | "tools"
+  | "bootstrap-environment";
 
 export type HostSoftwareChannel = "latest" | "staging";
 

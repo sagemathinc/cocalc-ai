@@ -26,6 +26,7 @@ contains the execution logic itself.
 
 import type {
   HostSoftwareChannel,
+  HostSoftwareArtifact,
   HostSoftwareUpgradeResponse,
   HostSoftwareUpgradeTarget,
 } from "@cocalc/conat/hub/api/hosts";
@@ -79,6 +80,61 @@ function normalizeObservedVersion(value: unknown): string | undefined {
   }
   return undefined;
 }
+
+async function fetchTextWithTimeout(
+  url: string,
+  timeoutMs: number,
+): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return await response.text();
+}
+
+async function resolveBootstrapUpgradeVersion({
+  target,
+  resolvedBaseUrl,
+}: {
+  target: HostSoftwareUpgradeTarget;
+  resolvedBaseUrl?: string;
+}): Promise<string> {
+  const explicit = `${target.version ?? ""}`.trim();
+  if (explicit) return explicit;
+  const channel = (
+    target.channel === "staging" ? "staging" : "latest"
+  ) as HostSoftwareChannel;
+  if (!resolvedBaseUrl) {
+    return channel;
+  }
+  const shaUrl = `${resolvedBaseUrl.replace(/\/+$/, "")}/bootstrap/${channel}/bootstrap.py.sha256`;
+  try {
+    const text = await fetchTextWithTimeout(shaUrl, 8_000);
+    const sha = text.trim().split(/\s+/)[0];
+    return sha || channel;
+  } catch {
+    return channel;
+  }
+}
+
+type DirectHostSoftwareArtifact = Exclude<
+  HostSoftwareArtifact,
+  "bootstrap-environment"
+>;
+
+type DirectHostSoftwareUpgradeTarget = Omit<
+  HostSoftwareUpgradeTarget,
+  "artifact"
+> & {
+  artifact: DirectHostSoftwareArtifact;
+};
 
 function observedInstalledProjectHostVersionFromRow(
   row: any,
@@ -244,7 +300,7 @@ export async function upgradeHostSoftwareInternalHelper({
     timeout_ms: number,
   ) => Promise<{
     upgradeSoftware: (opts: {
-      targets: HostSoftwareUpgradeTarget[];
+      targets: DirectHostSoftwareUpgradeTarget[];
       base_url?: string;
       restart_project_host: boolean;
       retention_policy?: HostRuntimeRetentionPolicy;
@@ -273,13 +329,20 @@ export async function upgradeHostSoftwareInternalHelper({
   const HOST_UPGRADE_RPC_TIMEOUT_MS = 10 * 60 * 1000;
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
+  const bootstrapTargets = targets.filter(
+    (target) => target.artifact === "bootstrap-environment",
+  );
+  const directTargets = targets.filter(
+    (target): target is DirectHostSoftwareUpgradeTarget =>
+      target.artifact !== "bootstrap-environment",
+  );
   const availability = computeHostOperationalAvailability(row);
-  const requestedProjectHostUpgrade = targets.some(
+  const requestedProjectHostUpgrade = directTargets.some(
     (target) => target.artifact === "project-host",
   );
   const supportsBootstrapFallback =
     requestedProjectHostUpgrade &&
-    targets.every(
+    directTargets.every(
       (target) =>
         !target.version &&
         ((target.channel ?? "latest") as HostSoftwareChannel) === "latest",
@@ -289,6 +352,16 @@ export async function upgradeHostSoftwareInternalHelper({
     row,
     baseUrl: resolvedBaseUrl,
   });
+  const bootstrapRuntimeDeployments = await Promise.all(
+    bootstrapTargets.map(async (target) => ({
+      target_type: "artifact" as const,
+      target: "bootstrap-environment" as const,
+      desired_version: await resolveBootstrapUpgradeVersion({
+        target,
+        resolvedBaseUrl,
+      }),
+    })),
+  );
   if (!availability.online && supportsBootstrapFallback) {
     logWarn(
       "host upgrade: host heartbeat is stale; using bootstrap reconcile fallback",
@@ -304,12 +377,15 @@ export async function upgradeHostSoftwareInternalHelper({
   const client = await hostControlClient(id, HOST_UPGRADE_RPC_TIMEOUT_MS);
   let response: HostSoftwareUpgradeResponse;
   try {
-    response = await client.upgradeSoftware({
-      targets,
-      base_url: effectiveBaseUrl,
-      restart_project_host: false,
-      retention_policy: await defaultHostRuntimeRetentionPolicy(),
-    });
+    response =
+      directTargets.length > 0
+        ? await client.upgradeSoftware({
+            targets: directTargets,
+            base_url: effectiveBaseUrl,
+            restart_project_host: false,
+            retention_policy: await defaultHostRuntimeRetentionPolicy(),
+          })
+        : { results: [] };
   } catch (err) {
     if (!supportsBootstrapFallback) {
       throw err;
@@ -322,7 +398,14 @@ export async function upgradeHostSoftwareInternalHelper({
     await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
     return { results: [] };
   }
-  const results = response.results ?? [];
+  const results = [
+    ...(response.results ?? []),
+    ...bootstrapRuntimeDeployments.map((deployment) => ({
+      artifact: deployment.target,
+      version: deployment.desired_version,
+      status: "updated" as const,
+    })),
+  ];
   if (results.length) {
     await updateProjectHostSoftwareRecord({ row, results });
   }
@@ -367,7 +450,10 @@ export async function upgradeHostSoftwareInternalHelper({
       replace: false,
     });
   }
-  return response;
+  if (bootstrapRuntimeDeployments.length > 0) {
+    await reconcileCloudHostBootstrapOverSsh({ host_id: id, row });
+  }
+  return { results };
 }
 
 export async function rolloutHostManagedComponentsInternalHelper({

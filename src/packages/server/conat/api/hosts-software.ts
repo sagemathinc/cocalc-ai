@@ -29,7 +29,7 @@ const PROJECT_HOST_RUNTIME_STACK_COMPONENTS: ManagedComponentKind[] = [
 
 function canonicalizeSoftwareArtifact(
   artifact: HostSoftwareArtifact,
-): "project-host" | "project" | "tools" {
+): "project-host" | "project" | "tools" | "bootstrap-environment" {
   if (artifact === "project-bundle") return "project";
   return artifact;
 }
@@ -80,7 +80,8 @@ function normalizeSoftwareArtifacts(
       artifact === "project-host" ||
       artifact === "project" ||
       artifact === "project-bundle" ||
-      artifact === "tools"
+      artifact === "tools" ||
+      artifact === "bootstrap-environment"
     ) {
       out.push(artifact);
     }
@@ -191,12 +192,12 @@ function mapPublishedVersionRow({
   channel: HostSoftwareChannel;
   os: "linux" | "darwin";
   arch: "amd64" | "arm64";
-  canonical: "project-host" | "project" | "tools";
+  canonical: "project-host" | "project" | "tools" | "bootstrap-environment";
   row: any;
 }): HostSoftwareAvailableVersion | undefined {
   const url = typeof row?.url === "string" ? row.url : undefined;
   let version = typeof row?.version === "string" ? row.version : undefined;
-  if (!version && url) {
+  if (!version && url && canonical !== "bootstrap-environment") {
     version = extractVersionFromSoftwareUrl(canonical, url);
   }
   const available = !!url;
@@ -259,6 +260,21 @@ async function fetchSoftwareManifest(url: string): Promise<any> {
   return await response.json();
 }
 
+async function fetchSoftwareText(url: string): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SOFTWARE_FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return await response.text();
+}
+
 async function fetchSoftwareManifestMaybe(
   url: string,
 ): Promise<any | undefined> {
@@ -305,11 +321,14 @@ async function resolvePublishedSoftwareRows({
   limit: number;
   latest: HostSoftwareAvailableVersion;
 }): Promise<HostSoftwareAvailableVersion[]> {
+  if (artifact === "bootstrap-environment") {
+    return [latest];
+  }
   if (limit <= 1) return [latest];
   const canonical = canonicalizeSoftwareArtifact(artifact);
   const indexUrl = softwareVersionsIndexUrl({
     baseUrl,
-    artifact: canonical,
+    artifact: canonical as "project-host" | "project" | "tools",
     channel,
     os,
     arch,
@@ -353,6 +372,34 @@ async function resolveLatestSoftwareRow({
   targetArch: "amd64" | "arm64";
 }): Promise<HostSoftwareAvailableVersion> {
   const canonical = canonicalizeSoftwareArtifact(artifact);
+  if (canonical === "bootstrap-environment") {
+    const url = `${softwareBaseUrl}/bootstrap/${channel}/bootstrap.py`;
+    const shaUrl = `${url}.sha256`;
+    try {
+      const shaText = await fetchSoftwareText(shaUrl);
+      const sha256 = shaText.trim().split(/\s+/)[0] || undefined;
+      return {
+        artifact,
+        channel,
+        os: targetOs,
+        arch: targetArch,
+        version: sha256 ?? channel,
+        url,
+        sha256,
+        available: true,
+      };
+    } catch (err) {
+      return {
+        artifact,
+        channel,
+        os: targetOs,
+        arch: targetArch,
+        url,
+        available: false,
+        error: `${err instanceof Error ? err.message : err}`,
+      };
+    }
+  }
   const manifestUrl =
     canonical === "tools"
       ? `${softwareBaseUrl}/${canonical}/${channel}-${targetOs}-${targetArch}.json`
