@@ -56,6 +56,7 @@ import {
   getLiveResponseBlocks,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
+  getMountedIntermediateResponseBlocks,
   type InlineCodeLink,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
@@ -408,6 +409,22 @@ export type InlineCodexActivityBlock = {
   time?: number;
   state?: "sending" | "sent" | "queued" | "not-sent";
 };
+
+export function dropFinalAgentActivityBlock(
+  blocks?: InlineCodexActivityBlock[],
+): InlineCodexActivityBlock[] | undefined {
+  if (!Array.isArray(blocks) || blocks.length === 0) return undefined;
+  let lastAgentIndex = -1;
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    if (blocks[i].kind === "agent") {
+      lastAgentIndex = i;
+      break;
+    }
+  }
+  if (lastAgentIndex === -1) return blocks;
+  const next = blocks.filter((_, index) => index !== lastAgentIndex);
+  return next.length > 0 ? next : undefined;
+}
 
 export function resolveEditedMessageForSave(
   mentionSubstituted: string | undefined,
@@ -1165,7 +1182,7 @@ export default function Message({
       codexPreviewLog.events.length > 0
     ) {
       const blocks = (
-        getLiveResponseBlocks(
+        getMountedIntermediateResponseBlocks(
           codexPreviewLog.events as any,
           steerItems.map(({ date, text, state }) => ({ date, text, state })),
         ) as InlineCodexActivityBlock[]
@@ -1182,7 +1199,7 @@ export default function Message({
       Array.isArray(cachedCodexActivityBlocks) &&
       cachedCodexActivityBlocks.length > 0
     ) {
-      return cachedCodexActivityBlocks;
+      return dropFinalAgentActivityBlock(cachedCodexActivityBlocks);
     }
     return undefined;
   }, [

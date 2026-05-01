@@ -2,6 +2,7 @@
 
 import {
   ACP_THINKING_PLACEHOLDER,
+  dropFinalAgentActivityBlock,
   resolveEffectiveGenerating,
   resolveInlineCodexActivityMode,
   resolveMountedCodexRenderedValue,
@@ -213,6 +214,27 @@ describe("resolveInlineCodexActivityMode", () => {
         expandedCompletedActivity: true,
       }),
     ).toBe("hidden");
+  });
+});
+
+describe("dropFinalAgentActivityBlock", () => {
+  it("removes the final agent block but keeps earlier guidance", () => {
+    expect(
+      dropFinalAgentActivityBlock([
+        { kind: "agent", text: "first" },
+        { kind: "guidance", text: "please check X", state: "sent" },
+        { kind: "agent", text: "final response" },
+      ]),
+    ).toEqual([
+      { kind: "agent", text: "first" },
+      { kind: "guidance", text: "please check X", state: "sent" },
+    ]);
+  });
+
+  it("returns nothing when the only block is the final agent response", () => {
+    expect(
+      dropFinalAgentActivityBlock([{ kind: "agent", text: "final response" }]),
+    ).toBeUndefined();
   });
 });
 

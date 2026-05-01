@@ -444,6 +444,33 @@ export function getLiveResponseBlocks(
   return blocks;
 }
 
+export function getMountedIntermediateResponseBlocks(
+  events: AcpStreamMessage[],
+  guidance?: Array<{
+    date: number;
+    text: string;
+    state?: "sending" | "sent" | "queued" | "not-sent";
+  }>,
+): Array<{
+  kind: "agent" | "guidance";
+  text: string;
+  time?: number;
+  state?: "sending" | "sent" | "queued" | "not-sent";
+}> {
+  const blocks = getLiveResponseBlocks(events, guidance);
+  let lastAgentIndex = -1;
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    if (blocks[i].kind === "agent") {
+      lastAgentIndex = i;
+      break;
+    }
+  }
+  if (lastAgentIndex === -1) {
+    return blocks;
+  }
+  return blocks.filter((_, index) => index !== lastAgentIndex);
+}
+
 function getInterleavedAgentSegmentText(
   baseText: string | undefined,
   fullText: string,
