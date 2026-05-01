@@ -437,7 +437,7 @@ export class SubvolumeRustic {
       index?: { project_id: string; enabled?: boolean };
     } = {},
   ) => {
-    await this.backup({ limit, timeout, tags, progress, index });
+    return await this.backup({ limit, timeout, tags, progress, index });
   };
 
   readdir = async (): Promise<string[]> => {

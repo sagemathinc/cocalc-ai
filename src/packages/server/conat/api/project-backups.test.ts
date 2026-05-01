@@ -13,6 +13,7 @@ let getConfiguredBayIdMock: jest.Mock;
 let projectControlBackupMock: jest.Mock;
 let assertProjectOwnerCanIncreaseAccountStorageMock: jest.Mock;
 let getProjectBackupLimitMock: jest.Mock;
+let getManagedProjectEgressPolicyMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -101,6 +102,12 @@ jest.mock("@cocalc/server/membership/project-limits", () => ({
   getProjectBackupLimit: (...args: any[]) => getProjectBackupLimitMock(...args),
 }));
 
+jest.mock("@cocalc/server/membership/managed-egress-policy", () => ({
+  __esModule: true,
+  getManagedProjectEgressPolicy: (...args: any[]) =>
+    getManagedProjectEgressPolicyMock(...args),
+}));
+
 describe("project-backups.createBackup", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -138,6 +145,10 @@ describe("project-backups.createBackup", () => {
       async () => undefined,
     );
     getProjectBackupLimitMock = jest.fn(async () => 5);
+    getManagedProjectEgressPolicyMock = jest.fn(async () => ({
+      allowed: true,
+      category: "backup-upload",
+    }));
     projectControlBackupMock = jest.fn(async () => ({
       op_id: "remote-op-1",
       kind: "project-backup",
@@ -172,6 +183,34 @@ describe("project-backups.createBackup", () => {
     expect(assertPortableProjectRootfsMock).toHaveBeenCalledWith({
       project_id: "proj-1",
       operation: "backup",
+    });
+    expect(createLroMock).not.toHaveBeenCalled();
+    expect(triggerBackupLroWorkerMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks backup creation immediately when managed backup egress is already over limit", async () => {
+    getManagedProjectEgressPolicyMock.mockResolvedValue({
+      allowed: false,
+      category: "backup-upload",
+      managed_egress_5h_bytes: 9_000_000,
+      egress_5h_bytes: 8_000_000,
+      managed_egress_categories_5h_bytes: {
+        "backup-upload": 7_000_000,
+        "raw-network": 2_000_000,
+      },
+    });
+    const { createBackup } = await import("./project-backups");
+
+    await expect(
+      createBackup({
+        account_id: "acct-1",
+        project_id: "proj-1",
+      }),
+    ).rejects.toThrow("Managed backup upload limit reached for this account.");
+
+    expect(getManagedProjectEgressPolicyMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      category: "backup-upload",
     });
     expect(createLroMock).not.toHaveBeenCalled();
     expect(triggerBackupLroWorkerMock).not.toHaveBeenCalled();

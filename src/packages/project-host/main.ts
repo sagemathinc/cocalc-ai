@@ -183,6 +183,7 @@ function formatManagedEgressCategory(category: string): string {
   }
   if (category === "ssh") return "SSH traffic";
   if (category === "interactive-conat") return "Interactive session traffic";
+  if (category === "backup-upload") return "Project backup uploads";
   if (category === MANAGED_RAW_NETWORK_EGRESS_CATEGORY) {
     return "Project outbound network traffic";
   }

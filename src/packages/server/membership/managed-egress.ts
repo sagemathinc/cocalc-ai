@@ -24,7 +24,8 @@ export type ManagedProjectEgressCategory =
   | "ws-proxy"
   | "ssh"
   | "interactive-conat"
-  | "raw-network";
+  | "raw-network"
+  | "backup-upload";
 
 type ManagedEgressUsage = {
   managed_egress_5h_bytes: number;
