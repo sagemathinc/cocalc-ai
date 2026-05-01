@@ -9,7 +9,7 @@ Usage:
   node scripts/dev/dev-env.js hub  [--json] [--no-start] [--with-browser] [--shell] [--bay <bay-id>]
 
 Default output is shell exports suitable for:
-  eval "$(pnpm dev:env:lite)"
+  eval "$(pnpm dev:lite:env)"
 */
 
 const fs = require("node:fs");
@@ -699,11 +699,15 @@ function shellEscape(val) {
 function emitShell(exportsMap, meta) {
   console.log(`# CoCalc dev env (${meta.mode})`);
   if (meta.startedDaemon) {
-    console.log(`# started ${meta.mode} daemon`);
+    console.log(
+      `# started ${meta.mode === "hub" ? "hub dev stack" : "Lite dev server"}`,
+    );
   }
   if (!meta.running) {
-    console.log(`# warning: ${meta.mode} daemon is currently stopped`);
-    console.log(`# start it with: pnpm ${meta.mode}:daemon:start`);
+    console.log(
+      `# warning: ${meta.mode === "hub" ? "hub dev stack" : "Lite dev server"} is currently stopped`,
+    );
+    console.log(`# start it with: pnpm dev:${meta.mode}:start`);
   }
   if (meta.prependPath && `${meta.prependPath}`.trim()) {
     console.log(
@@ -713,7 +717,7 @@ function emitShell(exportsMap, meta) {
   for (const [k, v] of Object.entries(exportsMap)) {
     console.log(`export ${k}=${shellEscape(v)}`);
   }
-  console.log(`# apply: eval \"$(pnpm -s dev:env:${meta.mode})\"`);
+  console.log(`# apply: eval \"$(pnpm -s dev:${meta.mode}:env)\"`);
 }
 
 function main() {

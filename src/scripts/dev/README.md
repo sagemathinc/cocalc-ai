@@ -21,13 +21,42 @@ Notes:
 - Smoke rebuilds hub by default (`SMOKE_BUILD_HUB=1`) so software-manifest changes are picked up before each run.
 - Smoke now ensures full `tools-linux-*` artifacts are built (not `tools-minimal`) because project-start in smoke requires `dropbear`.
 
+## Shell env
+
+Use these to print the fully resolved CLI/browser environment for the current
+local stack and apply it to your shell:
+
+```bash
+eval "$(pnpm -s --dir src dev:lite:env)"
+eval "$(pnpm -s --dir src dev:hub:env)"
+```
+
+If you want the raw configured daemon variables instead of shell exports:
+
+```bash
+pnpm --dir src dev:lite:config
+pnpm --dir src dev:hub:config
+```
+
 ## Hub dev commands
 
 ```bash
 pnpm --dir src dev:hub:start
+pnpm --dir src dev:hub:build
 pnpm --dir src dev:hub:status
 pnpm --dir src dev:hub:logs
 pnpm --dir src dev:hub:stop
+```
+
+`dev:hub:build` now only builds the local hub/runtime artifacts. It does not
+restart the hub or touch hosts.
+
+For host rollout and the old all-in-one behavior:
+
+```bash
+pnpm --dir src dev:hosts:upgrade
+pnpm --dir src dev:hosts:reconcile
+pnpm --dir src dev:stack:refresh
 ```
 
 ## Lite dev commands
@@ -149,7 +178,7 @@ This runs a focused smoke against the real routed `project codex exec` path:
 
 Notes:
 
-- The script refreshes `dev:env:hub` automatically before each `cocalc` call.
+- The script refreshes `dev:hub:env` automatically before each `cocalc` call.
 - It expects a local hub dev stack with Postgres available via
   `scripts/dev/hub-daemon.sh status`.
 - By default it verifies site-key metering automatically when the resolved

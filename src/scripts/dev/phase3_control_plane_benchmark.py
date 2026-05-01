@@ -81,7 +81,7 @@ def require_env(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
         raise RuntimeError(
-            f"{name} is not set; run: cd src && eval \"$(pnpm -s dev:env:hub)\""
+            f"{name} is not set; run: cd src && eval \"$(pnpm -s dev:hub:env)\""
         )
     return value
 

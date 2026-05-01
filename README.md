@@ -1,6 +1,6 @@
 # CoCalc-AI
 
-CoCalc-AI is a complete rewrite of CoCalc.  This repository is the codebase for the next generation of CoCalc products:
+CoCalc-AI is a complete rewrite of CoCalc. This repository is the codebase for the next generation of CoCalc products:
 
 - [CoCalc Plus](https://software.cocalc.ai/software/cocalc-plus/index.html): a local, single-user CoCalc runtime
 - [CoCalc Launchpad](https://software.cocalc.ai/software/cocalc-launchpad/index.html): a multi-user CoCalc with project hosts
@@ -70,6 +70,21 @@ The CLI is increasingly important. It is not just an admin tool; it also provide
 ### CoCalc Rocket
 
 Rocket is the scalable form of Launchpad: many bays, many project hosts, and the same basic architecture extended to much larger deployments.
+
+## Naming Map
+
+The repo has both product names and package/runtime names. The important
+mapping is:
+
+- `lite` <-> CoCalc Plus
+- `hub` <-> CoCalc Launchpad control plane
+- `hub` + multibay/project-host deployment <-> CoCalc Rocket
+
+In concrete terms:
+
+- `src/packages/lite` is the local single-user runtime used by Plus-style development.
+- `src/packages/hub` is the multi-user control-plane server used by Launchpad-style development.
+- `src/packages/project-host` and related runtime packages are part of the Launchpad/Rocket host architecture, not the Lite runtime.
 
 ## Current Architecture In One Page
 
@@ -165,7 +180,7 @@ To load the matching environment in your current shell:
 
 ```bash
 cd src
-eval "$(pnpm -s dev:env:lite)"
+eval "$(pnpm -s dev:lite:env)"
 ```
 
 That prints and exports the current Lite API URL, browser target, auth context, and helper paths. It is the recommended starting point for browser automation and local bug reproduction.
@@ -185,7 +200,7 @@ And load the corresponding shell environment:
 
 ```bash
 cd src
-eval "$(pnpm -s dev:env:hub)"
+eval "$(pnpm -s dev:hub:env)"
 ```
 
 That environment matters for CLI commands, browser automation, host operations, and any live Launchpad control-plane testing.

@@ -279,7 +279,7 @@ print_bootstrap_signup_url() {
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") <init|start|stop|restart|build|status|logs|env>
+Usage: $(basename "$0") <init|start|stop|restart|build|upgrade-hosts|reconcile-hosts|refresh|status|logs|env>
 
 Config file: $CONFIG_FILE
 State dir:   $STATE_DIR
@@ -974,13 +974,41 @@ build_daemon() {
     pnpm build
     pnpm --dir "$SRC_DIR/packages/project-host" build:bundle
     pnpm --dir "$SRC_DIR/packages/project" build:bundle
+    pnpm --dir "$SRC_DIR/packages/project" build:tools
+  )
+}
+
+refresh_hub_env() {
+  eval "$(pnpm -s dev:hub:env)"
+}
+
+upgrade_hosts() {
+  load_config
+  (
+    cd "$SRC_DIR"
+    refresh_hub_env
+    cocalc host upgrade --hub-source --wait --all-online --artifact project-host project tools bootstrap-environment
+  )
+}
+
+reconcile_hosts() {
+  load_config
+  (
+    cd "$SRC_DIR"
+    refresh_hub_env
+    cocalc host reconcile --wait --all-online
+  )
+}
+
+refresh_stack() {
+  load_config
+  (
+    cd "$SRC_DIR"
+    build_daemon
     stop_daemon 1
     start_daemon
-    eval "$(pnpm -s dev:env:hub)"
-    # In local dev, /software serves the freshly built tarballs, while runtime
-    # alignment is now an explicit reconcile phase.
-    cocalc host upgrade --hub-source --wait --all-online --artifact project-host project tools bootstrap-environment
-    cocalc host reconcile --wait --all-online
+    upgrade_hosts
+    reconcile_hosts
   )
 }
 
@@ -1180,6 +1208,15 @@ case "$cmd" in
     ;;
   build)
     build_daemon
+    ;;
+  upgrade-hosts)
+    upgrade_hosts
+    ;;
+  reconcile-hosts)
+    reconcile_hosts
+    ;;
+  refresh)
+    refresh_stack
     ;;
   status)
     show_status

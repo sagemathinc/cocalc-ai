@@ -23,11 +23,11 @@ log() {
 
 require_running_hub_env() {
   cd "$SRC_DIR"
-  eval "$(pnpm -s dev:env:hub)"
+  eval "$(pnpm -s dev:hub:env)"
   if [[ -n "$PROJECT_ID" ]]; then
     COCALC_PROJECT_ID="$PROJECT_ID"
   fi
-  : "${COCALC_PROJECT_ID:?COCALC_PROJECT_ID missing from dev:env:hub}"
+  : "${COCALC_PROJECT_ID:?COCALC_PROJECT_ID missing from dev:hub:env}"
   export COCALC_PROJECT_ID
 }
 

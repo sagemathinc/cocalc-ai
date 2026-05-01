@@ -2,7 +2,7 @@
 set -euo pipefail
 
 cd /home/wstein/build/cocalc-lite3/src
-eval "$(pnpm -s dev:env:lite)"
+eval "$(pnpm -s dev:lite:env)"
 
 REPORT_ROOT="${REPORT_ROOT:-/tmp/assistant-agent-golden-$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "$REPORT_ROOT"

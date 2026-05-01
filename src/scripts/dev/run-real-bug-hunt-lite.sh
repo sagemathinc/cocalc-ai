@@ -5,7 +5,7 @@ set -o pipefail
 
 cd /home/wstein/build/cocalc-lite3/src || exit 1
 # shellcheck disable=SC1091
-eval "$(pnpm -s dev:env:lite)"
+eval "$(pnpm -s dev:lite:env)"
 
 CLI="./packages/cli/dist/bin/cocalc.js"
 PLAN="${PLAN:-./.agents/real-bug-hunt-lite.plan.json}"

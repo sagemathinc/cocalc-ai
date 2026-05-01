@@ -1172,9 +1172,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           <code>/opt/cocalc/tools</code>.
         </Typography.Text>
         <Typography.Text type="secondary">
-          Local development hubs can publish fresh runtime artifacts with{" "}
-          <code>pnpm dev:hub:build</code>. Production sites normally publish to
-          the configured software base URL instead.
+          Local development hubs can build fresh runtime artifacts with{" "}
+          <code>pnpm dev:hub:build</code>, roll them to online hosts with{" "}
+          <code>pnpm dev:hosts:upgrade</code>, or do the full local cycle with{" "}
+          <code>pnpm dev:stack:refresh</code>. Production sites normally publish
+          to the configured software base URL instead.
         </Typography.Text>
       </Space>
       <UpgradeConfirmContent />
