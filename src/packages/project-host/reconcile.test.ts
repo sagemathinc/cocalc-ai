@@ -66,6 +66,42 @@ function mockPodmanPs(stdoutText = "", stderrText = "", exitCode = 0) {
   });
 }
 
+function mockPodmanPsAndConmon(
+  podmanStdoutText = "",
+  conmonStdoutText = "",
+  podmanExitCode = 0,
+  conmonExitCode = 0,
+) {
+  mockSpawn.mockImplementation((command: string) => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: PassThrough;
+      stderr: PassThrough;
+    };
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    process.nextTick(() => {
+      if (command === "podman") {
+        if (podmanStdoutText) child.stdout.write(podmanStdoutText);
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("exit", podmanExitCode);
+        return;
+      }
+      if (command === "ps") {
+        if (conmonStdoutText) child.stdout.write(conmonStdoutText);
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("exit", conmonExitCode);
+        return;
+      }
+      child.stdout.end();
+      child.stderr.end();
+      child.emit("exit", 0);
+    });
+    return child;
+  });
+}
+
 function mockPodmanPsError(message = "spawn podman ENOENT") {
   mockSpawn.mockImplementation(() => {
     const child = new EventEmitter() as EventEmitter & {
@@ -224,6 +260,32 @@ describe("reconcileOnce", () => {
       state: "running",
       http_port: 33167,
       ssh_port: 32803,
+    });
+  });
+
+  it("keeps a project running when podman misses it but a live conmon process still exists", async () => {
+    upsertProject({
+      project_id,
+      state: "running",
+      http_port: 12345,
+      ssh_port: 23456,
+    });
+    mockPodmanPsAndConmon(
+      "",
+      [
+        `100 1 /usr/bin/conmon --api-version 1 -n project-${project_id} --full-attach`,
+        "101 100 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init project_init.sh",
+      ].join("\n"),
+    );
+
+    await reconcileOnce();
+    await reconcileOnce();
+
+    expect(getProject(project_id)).toMatchObject({
+      project_id,
+      state: "running",
+      http_port: 12345,
+      ssh_port: 23456,
     });
   });
 });
