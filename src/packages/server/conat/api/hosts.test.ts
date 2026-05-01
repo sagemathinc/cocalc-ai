@@ -1363,6 +1363,8 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
         },
       ],
     });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
     expect(createLroMock).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "host-reconcile-runtime-deployments",
@@ -1392,6 +1394,8 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
         },
       ],
     });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
     expect(createLroMock).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "host-reconcile-runtime-deployments",
@@ -1531,6 +1535,8 @@ describe("hosts.setHostRuntimeDeployments automatic artifact reconcile", () => {
         },
       ],
     });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
     expect(createLroMock).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "host-upgrade-software",

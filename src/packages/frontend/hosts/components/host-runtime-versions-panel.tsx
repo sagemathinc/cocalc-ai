@@ -540,10 +540,10 @@ export const HostRuntimeVersionsPanel: React.FC<
                 rolling back from a newer build to an older tested one.
               </Typography.Text>
               <Typography.Text>
-                Use <strong>Align fleet stack</strong> only when you
-                intentionally want all running hosts to restart project-host,
-                conat-router, conat-persist, and acp-worker onto that exact
-                project-host build.
+                Use the rightmost <strong>Align fleet stack</strong> action in
+                the table below only when you intentionally want all running
+                hosts to restart project-host, conat-router, conat-persist, and
+                acp-worker onto that exact project-host build.
               </Typography.Text>
             </Space>
           }

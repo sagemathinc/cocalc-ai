@@ -4158,17 +4158,7 @@ export async function setHostRuntimeDeployments({
       requested_by,
       replace,
     });
-    const runningHostIds =
-      await listRunningHostIdsForAutomaticRuntimeDeploymentReconcile({
-        running_statuses: HOST_RUNNING_STATUSES,
-      });
-    await bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
-      host_ids: runningHostIds,
-    });
-    await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
-      host_ids: runningHostIds,
-      reason: AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
-    });
+    triggerAutomaticGlobalRuntimeDeploymentConvergence();
     return result;
   }
   const row = await loadHostForRootfsManagement(id ?? "", account_id);
@@ -4179,10 +4169,7 @@ export async function setHostRuntimeDeployments({
     requested_by: requestedByForRuntimeDeployments({ account_id, row }),
     replace,
   });
-  await bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
-    host_ids: [row.id],
-  });
-  await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
+  triggerAutomaticRuntimeDeploymentConvergenceForHosts({
     host_ids: [row.id],
     reason: AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
   });
@@ -4324,6 +4311,55 @@ async function bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
     host_ids,
     ensureAutomaticHostArtifactDeploymentsReconcile,
     logWarn: (message, payload) => logger.warn(message, payload),
+  });
+}
+
+function triggerAutomaticRuntimeDeploymentConvergenceForHosts({
+  host_ids,
+  reason,
+}: {
+  host_ids: string[];
+  reason?: string;
+}): void {
+  setImmediate(() => {
+    void (async () => {
+      await bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
+        host_ids,
+      });
+      await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
+        host_ids,
+        reason,
+      });
+    })().catch((err) => {
+      logger.warn("background runtime deployment convergence fanout failed", {
+        host_ids,
+        reason,
+        err: `${err}`,
+      });
+    });
+  });
+}
+
+function triggerAutomaticGlobalRuntimeDeploymentConvergence(): void {
+  setImmediate(() => {
+    void (async () => {
+      const runningHostIds =
+        await listRunningHostIdsForAutomaticRuntimeDeploymentReconcile({
+          running_statuses: HOST_RUNNING_STATUSES,
+        });
+      await bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
+        host_ids: runningHostIds,
+      });
+      await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
+        host_ids: runningHostIds,
+        reason: AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
+      });
+    })().catch((err) => {
+      logger.warn(
+        "background global runtime deployment convergence fanout failed",
+        { err: `${err}` },
+      );
+    });
   });
 }
 
