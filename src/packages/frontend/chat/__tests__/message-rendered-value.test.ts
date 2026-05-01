@@ -7,6 +7,7 @@ import {
   resolveMountedCodexRenderedValue,
   resolveRenderedMessageValue,
   canUseCompletedCachedCodexActivity,
+  resolveCodexShowActivityButtonState,
   shouldLoadCodexPreviewBody,
   shouldShowCodexShowActivityButton,
   shouldSuppressAcpPlaceholderBody,
@@ -307,6 +308,53 @@ describe("shouldShowCodexShowActivityButton", () => {
         isLastMessageInThread: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolveCodexShowActivityButtonState", () => {
+  it("shows a loading state after explicit expansion while activity is being fetched", () => {
+    expect(
+      resolveCodexShowActivityButtonState({
+        allowAsyncCompletedCodexActivityLoad: true,
+        hasVisibleCompletedActivity: false,
+        hasLogRef: true,
+        loadState: "loading",
+      }),
+    ).toEqual({
+      label: "Loading activity...",
+      loading: true,
+      disabled: true,
+    });
+  });
+
+  it("marks missing completed activity as unavailable after a completed fetch", () => {
+    expect(
+      resolveCodexShowActivityButtonState({
+        allowAsyncCompletedCodexActivityLoad: true,
+        hasVisibleCompletedActivity: false,
+        hasLogRef: true,
+        loadState: "loaded",
+      }),
+    ).toEqual({
+      label: "Activity not available",
+      loading: false,
+      disabled: true,
+    });
+  });
+
+  it("keeps the normal label before an explicit load starts", () => {
+    expect(
+      resolveCodexShowActivityButtonState({
+        allowAsyncCompletedCodexActivityLoad: false,
+        hasVisibleCompletedActivity: false,
+        hasLogRef: true,
+        loadState: "idle",
+      }),
+    ).toEqual({
+      label: "Show activity",
+      loading: false,
+      disabled: false,
+    });
   });
 });
 
