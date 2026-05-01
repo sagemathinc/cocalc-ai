@@ -18,6 +18,27 @@ Related documents:
 - [first-public-release-master-plan-2026-04-30.md](/home/user/cocalc-ai/src/.agents/first-public-release-master-plan-2026-04-30.md)
 - [project-host-daemon-upgrade-rollback-plan.md](/home/user/cocalc-ai/src/.agents/project-host-daemon-upgrade-rollback-plan.md)
 - [bootstrap-tool-lifecycle.md](/home/user/cocalc-ai/src/.agents/bootstrap-tool-lifecycle.md)
+- [host-software-lifecycle-model-2026-05-01.md](/home/user/cocalc-ai/src/.agents/host-software-lifecycle-model-2026-05-01.md)
+
+## Current Status Snapshot
+
+As of 2026-05-01, these problem areas are materially improved:
+
+- stale desired deployment state after deprovision/reprovision
+- bootstrap-environment / wrapper convergence on existing hosts
+- command naming and dev workflow split for hub/lite restart vs host rollout
+- bootstrap env file atomicity and lifecycle locking
+- attached-bay local postgres restart behavior
+- project status reporting on hosts where libpod loses track of live conmon
+  trees
+
+The main remaining gaps are:
+
+- one concise desired / installed / running / executor operator view
+- more explicit reconcile ownership reporting
+- adversarial canaries for reconnect/offline/rollback behavior
+- root-causing the underlying libpod orphaning that the new reconcile fallback
+  now masks safely
 
 ## Goal
 
@@ -192,7 +213,7 @@ Goal: reduce ambiguity before changing more code.
 
 ### Todo
 
-- [ ] Write a one-page canonical model note for host software lifecycle:
+- [x] Write a one-page canonical model note for host software lifecycle:
   - artifact
   - component
   - bootstrap-environment
@@ -225,8 +246,8 @@ opaque side effects.
 
 ### Todo
 
-- [ ] Audit and document exactly what `pnpm hub:daemon:build` does today.
-- [ ] Split or rename the workflow into explicit steps:
+- [x] Audit and document exactly what `pnpm hub:daemon:build` does today.
+- [x] Split or rename the workflow into explicit steps:
   - build artifacts
   - publish local software manifests
   - restart hub
@@ -259,13 +280,14 @@ Goal: remove stale desired-state surprises.
 
 ### Todo
 
-- [ ] Audit all places that mutate host runtime deployments:
+- [ ] Audit all places that mutate host runtime deployments
+      (partially complete):
   - global desired state
   - host override
   - rollback pin
   - resume cluster default
   - deprovision / reprovision
-- [ ] Tighten deprovision semantics:
+- [x] Tighten deprovision semantics:
   - what is preserved intentionally
   - what must always be cleared
 - [ ] Add tests for:
@@ -296,18 +318,18 @@ patching.
 
 ### Todo
 
-- [ ] Treat runtime wrappers/helper scripts as owned artifacts under
+- [x] Treat runtime wrappers/helper scripts as owned artifacts under
       `bootstrap-environment`, not incidental files.
-- [ ] Verify bootstrap observation reports:
+- [x] Verify bootstrap observation reports:
   - desired bootstrap version
   - installed bootstrap version
   - current bootstrap version
   - wrapper schema/version
-- [ ] Make bootstrap reconcile rewrite wrappers/helpers whenever the desired
+- [x] Make bootstrap reconcile rewrite wrappers/helpers whenever the desired
       bootstrap-environment version changes.
-- [ ] Ensure every later boot runs real reconcile before trusting old wrapper
+- [x] Ensure every later boot runs real reconcile before trusting old wrapper
       state.
-- [ ] Add adversarial tests for:
+- [ ] Add adversarial tests (partially complete) for:
   - wrapper schema bump on existing host
   - reconcile after published bootstrap change
   - rollback to prior bootstrap-environment version
@@ -395,8 +417,9 @@ Goal: stop rediscovering the same lifecycle bugs through manual dogfooding.
 
 - [ ] Unit tests for deployment planning and effective desired-state
       computation
-- [ ] Unit tests for deprovision/reprovision stale-state cleanup
+- [x] Unit tests for deprovision/reprovision stale-state cleanup
 - [ ] Unit tests for bootstrap-environment version changes
+      (partially complete)
 - [ ] Integration tests for:
   - upgrade project-host only
   - align runtime stack
@@ -406,10 +429,10 @@ Goal: stop rediscovering the same lifecycle bugs through manual dogfooding.
 ### Live Canary Matrix
 
 - [ ] `host1` clean reprovision -> bootstrap -> ready
-- [ ] `host2` local bundle upgrade -> reconcile -> ready
-- [ ] `italy` bootstrap-environment version bump -> reconcile -> wrapper change
+- [x] `host2` local bundle upgrade -> reconcile -> ready
+- [x] `italy` bootstrap-environment version bump -> reconcile -> wrapper change
 - [ ] offline host comes back and converges automatically
-- [ ] deprovisioned host does not request stale software on reprovision
+- [x] deprovisioned host does not request stale software on reprovision
 - [ ] rollback path restores last known good `project-host`
 
 ### Exit Criteria
@@ -502,10 +525,10 @@ The plan is done only when all of these are boring.
 If we want the fastest path to unblocking the rest of release work, do these
 next:
 
-- [ ] write the canonical lifecycle model note
+- [x] write the canonical lifecycle model note
 - [ ] add explicit desired/install/running/bootstrap version inspection output
-- [ ] make bootstrap-environment observation and reconcile fully coherent
-- [ ] split or rename `pnpm hub:daemon:build` into explicit stages
+- [x] make bootstrap-environment observation and reconcile fully coherent
+- [x] split or rename `pnpm hub:daemon:build` into explicit stages
 - [ ] run a host reprovision + bootstrap-version-bump live canary and keep
       iterating until no manual surgery is required
 
