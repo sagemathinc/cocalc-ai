@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
+import { getConmonContainerProcesses } from "@cocalc/backend/podman/conmon";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
 import { DEFAULT_PROJECT_PROXY_PORT } from "@cocalc/project-runner/run/env";
@@ -29,48 +30,6 @@ interface ContainerState {
 interface ContainerProbeResult {
   ok: boolean;
   states: Map<string, ContainerState>;
-}
-
-function parseConmonProjectStates(stdout: string): Map<string, ContainerState> {
-  const conmonByPid = new Map<number, string>();
-  const childParentPids = new Set<number>();
-  for (const line of stdout.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
-    if (!match) continue;
-    const pid = Number(match[1]);
-    const ppid = Number(match[2]);
-    const args = match[3];
-    if (Number.isFinite(ppid) && ppid > 0) {
-      childParentPids.add(ppid);
-    }
-    const conmonMatch = args.match(
-      /(?:^|\s|\/)conmon(?:\s|$).*?\s-n\s+project-([0-9a-fA-F-]{36})(?:\s|$)/,
-    );
-    if (!conmonMatch || !Number.isFinite(pid) || pid <= 0) continue;
-    conmonByPid.set(pid, conmonMatch[1]);
-  }
-  const states = new Map<string, ContainerState>();
-  for (const [pid, project_id] of conmonByPid) {
-    if (!childParentPids.has(pid)) continue;
-    states.set(project_id, { project_id, state: "running" });
-  }
-  return states;
-}
-
-async function getConmonProjectStates(): Promise<Map<string, ContainerState>> {
-  return await new Promise<Map<string, ContainerState>>((resolve) => {
-    const child = spawn("ps", ["-eo", "pid=,ppid=,args="]);
-    let stdout = "";
-    child.stdout?.on("data", (d) => {
-      stdout += d.toString();
-    });
-    child.on("error", () => resolve(new Map()));
-    child.on("exit", (code) => {
-      if (code !== 0) return resolve(new Map());
-      resolve(parseConmonProjectStates(stdout));
-    });
-  });
 }
 
 function parsePorts(ports?: string): {
@@ -156,15 +115,17 @@ export async function getContainerStates(): Promise<ContainerProbeResult> {
         const { http_port, ssh_port } = parsePorts(portsRaw);
         states.set(project_id, { project_id, state, http_port, ssh_port });
       }
-      getConmonProjectStates()
+      getConmonContainerProcesses()
         .then((conmonStates) => {
-          for (const [project_id, info] of conmonStates) {
+          for (const info of conmonStates.values()) {
+            const project_id = info.project_id;
+            if (!project_id) continue;
             if (states.has(project_id)) continue;
             logger.warn(
               "podman did not report a live project container; falling back to conmon process state",
               { project_id },
             );
-            states.set(project_id, info);
+            states.set(project_id, { project_id, state: "running" });
           }
           resolve({ ok: true, states });
         })

@@ -44,6 +44,7 @@ import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { podmanLimits } from "./limits";
 import { executeCode } from "@cocalc/backend/execute-code";
+import { getConmonContainerProcesses } from "@cocalc/backend/podman/conmon";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import {
   type LocalPathFunction,
@@ -268,8 +269,16 @@ async function containerExists(name: string): Promise<boolean> {
     await podman(["container", "exists", name]);
     return true;
   } catch {
-    return false;
+    return (await getConmonContainer(name)) != null;
   }
+}
+
+async function getConmonContainer(name: string) {
+  return (await getConmonContainerProcesses()).get(name);
+}
+
+async function hasLiveConmonContainer(name: string): Promise<boolean> {
+  return (await getConmonContainer(name)) != null;
 }
 
 function isLikelyTimeoutError(err: unknown): boolean {
@@ -278,6 +287,16 @@ function isLikelyTimeoutError(err: unknown): boolean {
     text.includes("timed out") ||
     text.includes("timeout") ||
     text.includes("killed command")
+  );
+}
+
+function isLikelyMissingContainerError(err: unknown): boolean {
+  const text = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    text.includes("no such container") ||
+    text.includes("no such object") ||
+    text.includes("does not exist") ||
+    text.includes("unable to find")
   );
 }
 
@@ -295,7 +314,12 @@ async function inspectContainerPids(name: string): Promise<number[]> {
     .split(/\s+/g)
     .map((s) => Number(s))
     .filter((n) => Number.isFinite(n) && n > 1 && n !== process.pid);
-  return [...new Set(pids)];
+  if (pids.length) {
+    return [...new Set(pids)];
+  }
+  const conmon = await getConmonContainer(name);
+  if (!conmon) return [];
+  return [...new Set([conmon.conmon_pid, ...conmon.child_pids])];
 }
 
 function tryKillPid(pid: number, signal: NodeJS.Signals): void {
@@ -324,6 +348,31 @@ async function forceKillContainerProcesses(
   await new Promise((resolve) =>
     setTimeout(resolve, STOP_FORCE_KILL_SETTLE_MS),
   );
+}
+
+async function cleanupOrphanedLiveContainer({
+  project_id,
+  name,
+  reason,
+}: {
+  project_id: string;
+  name: string;
+  reason: string;
+}): Promise<void> {
+  logger.warn(`stop: ${reason}; forcing process kill via conmon fallback`, {
+    project_id,
+    name,
+  });
+  await forceKillContainerProcesses(project_id, name);
+  try {
+    await podman(["rm", "-f", "-t", `${STOP_RM_PODMAN_TERM_S}`, name], {
+      timeout: STOP_RM_TIMEOUT_S,
+    });
+  } catch (err) {
+    if (!isLikelyMissingContainerError(err)) {
+      throw err;
+    }
+  }
 }
 
 interface ScriptResolution {
@@ -1133,22 +1182,46 @@ export async function stop({
           await podman(["rm", "-f", "-t", `${STOP_RM_PODMAN_TERM_S}`, name], {
             timeout: STOP_RM_TIMEOUT_S,
           });
-        } catch (err) {
-          if (!isLikelyTimeoutError(err)) {
-            throw err;
+          if (await hasLiveConmonContainer(name)) {
+            await cleanupOrphanedLiveContainer({
+              project_id,
+              name,
+              reason:
+                "podman rm returned success but the live project container is still running",
+            });
           }
-          // Workaround: we sometimes see podman rm -f hang unexpectedly in production.
-          // Docker did not show this behavior for us; root cause is still unclear.
-          // If rm hangs, force-kill container processes by pid and retry rm once.
-          logger.warn("stop: podman rm timed out; forcing process kill", {
-            project_id,
-            name,
-            err: `${err}`,
-          });
-          await forceKillContainerProcesses(project_id, name);
-          await podman(["rm", "-f", "-t", `${STOP_RM_PODMAN_TERM_S}`, name], {
-            timeout: STOP_RM_TIMEOUT_S,
-          });
+        } catch (err) {
+          const hasConmonFallback = (await getConmonContainer(name)) != null;
+          if (hasConmonFallback && isLikelyMissingContainerError(err)) {
+            logger.warn(
+              "stop: podman metadata is missing for a live project container",
+              {
+                project_id,
+                name,
+                err: `${err}`,
+              },
+            );
+            await cleanupOrphanedLiveContainer({
+              project_id,
+              name,
+              reason: "podman metadata is missing for a live project container",
+            });
+          } else if (!isLikelyTimeoutError(err)) {
+            throw err;
+          } else {
+            // Workaround: we sometimes see podman rm -f hang unexpectedly in production.
+            // Docker did not show this behavior for us; root cause is still unclear.
+            // If rm hangs, force-kill container processes by pid and retry rm once.
+            logger.warn("stop: podman rm timed out; forcing process kill", {
+              project_id,
+              name,
+              err: `${err}`,
+            });
+            await forceKillContainerProcesses(project_id, name);
+            await podman(["rm", "-f", "-t", `${STOP_RM_PODMAN_TERM_S}`, name], {
+              timeout: STOP_RM_TIMEOUT_S,
+            });
+          }
         }
       } else {
         logger.debug("stop: container not found; skipping rm", {
@@ -1199,6 +1272,13 @@ export async function state(
   if (output[projectContainerName(project_id)] == "running") {
     return "running";
   }
+  if ((await getConmonContainer(projectContainerName(project_id))) != null) {
+    logger.debug(
+      "state: podman did not report a live project container; treating it as running via conmon fallback",
+      { project_id },
+    );
+    return "running";
+  }
   if (Object.keys(output).length > 0 && STOP_ON_STATUS_ERROR) {
     // broken half-way state -- stop it asap
     await stop({ project_id, force: true });
@@ -1243,7 +1323,13 @@ export async function getAll(): Promise<string[]> {
   return stdout
     .split("\n")
     .map((x) => x.trim())
-    .filter((x) => x.length == 36);
+    .filter((x) => x.length == 36)
+    .concat(
+      [...(await getConmonContainerProcesses()).values()]
+        .map((x) => x.project_id)
+        .filter((x): x is string => x != null && x.length === 36),
+    )
+    .filter((project_id, i, arr) => arr.indexOf(project_id) === i);
 }
 
 async function stopAll(force) {

@@ -16,6 +16,7 @@
     "./auth/*": "./dist/auth/*.js",
     "./auth/tokens/*": "./dist/auth/tokens/*.js",
     "./podman": "./dist/podman/index.js",
+    "./podman/*": "./dist/podman/*.js",
     "./which": "./dist/which.js"
   },
   "keywords": [
