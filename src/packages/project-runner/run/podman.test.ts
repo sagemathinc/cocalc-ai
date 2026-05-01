@@ -1,6 +1,7 @@
 const mockPodman = jest.fn();
 const mockExecuteCode = jest.fn();
 const mockGetConmonContainerProcesses = jest.fn();
+const mockGetConmonContainerProcessLists = jest.fn();
 const mockUnmountAll = jest.fn();
 
 jest.mock("@cocalc/backend/logger", () => {
@@ -31,6 +32,8 @@ jest.mock(
   () => ({
     getConmonContainerProcesses: (...args: any[]) =>
       mockGetConmonContainerProcesses(...args),
+    getConmonContainerProcessLists: (...args: any[]) =>
+      mockGetConmonContainerProcessLists(...args),
   }),
   { virtual: true },
 );
@@ -97,6 +100,7 @@ describe("project-runner podman orphan fallback", () => {
     jest.clearAllMocks();
     mockUnmountAll.mockResolvedValue(undefined);
     mockExecuteCode.mockResolvedValue({ stdout: "" });
+    mockGetConmonContainerProcessLists.mockResolvedValue(new Map());
   });
 
   it("treats a project as running when podman misses it but conmon sees it", async () => {
@@ -154,6 +158,21 @@ describe("project-runner podman orphan fallback", () => {
         ],
       ]),
     );
+    mockGetConmonContainerProcessLists.mockResolvedValue(
+      new Map([
+        [
+          `project-${project1}`,
+          [
+            {
+              name: `project-${project1}`,
+              project_id: project1,
+              conmon_pid: 300,
+              child_pids: [301],
+            },
+          ],
+        ],
+      ]),
+    );
 
     await stop({ project_id: project1 });
 
@@ -202,6 +221,21 @@ describe("project-runner podman orphan fallback", () => {
           ],
         ]),
       );
+    mockGetConmonContainerProcessLists.mockResolvedValue(
+      new Map([
+        [
+          `project-${project1}`,
+          [
+            {
+              name: `project-${project1}`,
+              project_id: project1,
+              conmon_pid: 400,
+              child_pids: [401],
+            },
+          ],
+        ],
+      ]),
+    );
 
     await stop({ project_id: project1 });
 
@@ -220,6 +254,61 @@ describe("project-runner podman orphan fallback", () => {
       ["rm", "-f", "-t", "5", `project-${project1}`],
       { timeout: 10 },
     );
+    expect(mockExecuteCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "podman",
+        args: [
+          "inspect",
+          "--format",
+          "{{.State.Pid}} {{.State.ConmonPid}}",
+          `project-${project1}`,
+        ],
+      }),
+    );
+    expect(mockUnmountAll).toHaveBeenCalledWith(project1);
+  });
+
+  it("force-kills every duplicate main conmon tree for one project", async () => {
+    mockPodman
+      .mockRejectedValueOnce(new Error("no such container"))
+      .mockRejectedValueOnce(new Error("no such container"));
+    mockGetConmonContainerProcesses.mockResolvedValue(
+      new Map([
+        [
+          `project-${project1}`,
+          {
+            name: `project-${project1}`,
+            project_id: project1,
+            conmon_pid: 701,
+            child_pids: [702],
+          },
+        ],
+      ]),
+    );
+    mockGetConmonContainerProcessLists.mockResolvedValue(
+      new Map([
+        [
+          `project-${project1}`,
+          [
+            {
+              name: `project-${project1}`,
+              project_id: project1,
+              conmon_pid: 601,
+              child_pids: [602],
+            },
+            {
+              name: `project-${project1}`,
+              project_id: project1,
+              conmon_pid: 701,
+              child_pids: [702],
+            },
+          ],
+        ],
+      ]),
+    );
+
+    await stop({ project_id: project1 });
+
     expect(mockExecuteCode).toHaveBeenCalledWith(
       expect.objectContaining({
         command: "podman",
