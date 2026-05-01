@@ -2,6 +2,7 @@ import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 
 import {
   appendStreamMessage,
+  appendStreamMessages,
   getAgentMessageTexts,
   getBestResponseText,
   getInterruptedResponseMarkdown,
@@ -212,6 +213,25 @@ describe("appendStreamMessage", () => {
     expect((merged[0] as any).event.text).toBe(
       "If this barrier is the right fix, the ACP test should pass without widening the blast radius.\n\n** Iteration 1** Area",
     );
+  });
+});
+
+describe("appendStreamMessages", () => {
+  test("matches repeated single-message appends", () => {
+    const start = [textEvent("message", "Hel", 1)];
+    const batch = [
+      textEvent("message", "lo", 2),
+      textEvent("message", ".", 3),
+      textEvent("thinking", "Next", 4),
+    ];
+
+    const repeated = batch.reduce(
+      (events, message) => appendStreamMessage(events, message),
+      start,
+    );
+    const merged = appendStreamMessages(start, batch);
+
+    expect(merged).toEqual(repeated);
   });
 });
 

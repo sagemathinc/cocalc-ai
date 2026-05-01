@@ -1,7 +1,7 @@
 import { delay } from "awaiting";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LRUCache from "lru-cache";
-import { appendStreamMessage } from "@cocalc/chat";
+import { appendStreamMessages } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import {
@@ -117,6 +117,41 @@ function isDStreamLiveConnected(stream: DStream<any>): boolean {
   );
 }
 
+function getSeqKey(evt: any): number | string | undefined {
+  return typeof evt?.seq === "number" || typeof evt?.seq === "string"
+    ? evt.seq
+    : undefined;
+}
+
+function isSeqStrictlyIncreasing(
+  previous: number | string,
+  next: number | string,
+): boolean {
+  if (typeof previous === "number" && typeof next === "number") {
+    return next > previous;
+  }
+  if (typeof previous === "string" && typeof next === "string") {
+    return next.localeCompare(previous) > 0;
+  }
+  return false;
+}
+
+function canAppendWithoutDedup(existing: any[] | null, batch: any[]): boolean {
+  if (!batch.length) return true;
+  let previous = existing?.length
+    ? getSeqKey(existing[existing.length - 1])
+    : undefined;
+  for (const evt of batch) {
+    const seq = getSeqKey(evt);
+    if (seq == null) return false;
+    if (previous != null && !isSeqStrictlyIncreasing(previous, seq)) {
+      return false;
+    }
+    previous = seq;
+  }
+  return true;
+}
+
 /**
  * Fetch Codex/ACP logs from AKV and live stream from conat during generation.
  * Resets state when the log key changes so logs don't bleed across turns.
@@ -188,15 +223,15 @@ export function useCodexLog({
 
   const mergeLogs = useMemo(() => {
     return (a: any[] | null, b: any[]): any[] => {
+      if (!a?.length && !b.length) return [];
+      if (canAppendWithoutDedup(a, b)) {
+        return appendStreamMessages((a ?? []) as any, b as any);
+      }
       const combined = [...(a ?? []), ...b];
-      if (combined.length === 0) return combined;
       const seen = new Map<number | string, any>();
       const withoutSeq: any[] = [];
       for (const evt of combined) {
-        const key =
-          typeof evt?.seq === "number" || typeof evt?.seq === "string"
-            ? evt.seq
-            : undefined;
+        const key = getSeqKey(evt);
         if (key === undefined) {
           withoutSeq.push(evt);
           continue;
@@ -219,11 +254,7 @@ export function useCodexLog({
           return sx.localeCompare(sy);
         return 0;
       });
-      let normalized = withoutSeq.slice();
-      for (const evt of ordered) {
-        normalized = appendStreamMessage(normalized, evt);
-      }
-      return normalized;
+      return appendStreamMessages(withoutSeq as any, ordered as any);
     };
   }, []);
 
