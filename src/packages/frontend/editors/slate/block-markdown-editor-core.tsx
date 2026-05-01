@@ -29,7 +29,7 @@ import { useBlockRowRenderer } from "./use-block-row-renderer";
 import { useBlockState } from "./use-block-state";
 import { useBlockSync } from "./use-block-sync";
 import { useBlockUiState } from "./use-block-ui-state";
-import { joinBlocks } from "./block-markdown-utils";
+import { joinBlocksForDocument } from "./block-markdown-utils";
 
 const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
@@ -164,7 +164,10 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   } | null>(null);
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
 
-  const getFullMarkdown = useCallback(() => joinBlocks(blocksRef.current), []);
+  const getFullMarkdown = useCallback(
+    () => joinBlocksForDocument(blocksRef.current, valueRef.current),
+    [],
+  );
   const ignoreRemoteWhileFocused = !!ignoreRemoteMergesWhileFocused;
 
   const {
@@ -246,6 +249,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     id,
     blockControlRef,
     allowNextValueUpdateWhileFocused,
+    getFullMarkdown,
     focusBlock,
     blocksRef,
     editorMapRef,

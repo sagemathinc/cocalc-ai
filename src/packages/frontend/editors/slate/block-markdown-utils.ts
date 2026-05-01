@@ -16,6 +16,20 @@ export function joinBlocks(blocks: string[]): string {
   return cleaned.join("\n\n");
 }
 
+export function trailingNewlineSuffix(markdown: string): string {
+  const match = markdown.match(/\n+$/);
+  return match?.[0] ?? "";
+}
+
+export function joinBlocksForDocument(
+  blocks: string[],
+  referenceMarkdown: string,
+): string {
+  const joined = joinBlocks(blocks);
+  const trailing = trailingNewlineSuffix(referenceMarkdown);
+  return trailing ? `${joined}${trailing}` : joined;
+}
+
 export function globalIndexForBlockOffset(
   blocks: string[],
   blockIndex: number,
