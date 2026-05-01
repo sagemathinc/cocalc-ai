@@ -418,13 +418,23 @@ export const HostRuntimeVersionsPanel: React.FC<
         key: "fleet_rollout",
         width: 250,
         render: (_value, row) => {
-          if (
-            row.artifact !== "project-host" ||
-            !row.version ||
-            !onAlignProjectHostFleetVersion
-          ) {
+          if (row.artifact !== "project-host") {
             return (
-              <Typography.Text type="secondary">Artifact only</Typography.Text>
+              <Typography.Text type="secondary">
+                Project-host only
+              </Typography.Text>
+            );
+          }
+          if (!row.version) {
+            return (
+              <Typography.Text type="secondary">No version</Typography.Text>
+            );
+          }
+          if (!onAlignProjectHostFleetVersion) {
+            return (
+              <Typography.Text type="secondary">
+                Unavailable here
+              </Typography.Text>
             );
           }
           const actionKey = `project-host:${row.version}`;
@@ -540,12 +550,12 @@ export const HostRuntimeVersionsPanel: React.FC<
                 rolling back from a newer build to an older tested one.
               </Typography.Text>
               <Typography.Text>
-                On <strong>project-host</strong> rows, the{" "}
-                <strong>Fleet Rollout</strong> column includes an{" "}
-                <strong>Align fleet stack</strong> button. Use that only when
-                you intentionally want all running hosts to restart
-                project-host, conat-router, conat-persist, and acp-worker onto
-                that exact project-host build.
+                Only <strong>project-host</strong> rows can show an{" "}
+                <strong>Align fleet stack</strong> button in the{" "}
+                <strong>Fleet Rollout</strong> column. Use that only when you
+                intentionally want all running hosts to restart project-host,
+                conat-router, conat-persist, and acp-worker onto that exact
+                project-host build.
               </Typography.Text>
             </Space>
           }
