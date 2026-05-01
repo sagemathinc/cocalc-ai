@@ -250,7 +250,7 @@ const SOFTWARE_ARTIFACTS: Array<{
   {
     artifact: "project-host",
     sourceArtifact: "project-host",
-    label: "Project host",
+    label: "Project host bundle",
     desiredLabel: "Host runtime",
   },
   {

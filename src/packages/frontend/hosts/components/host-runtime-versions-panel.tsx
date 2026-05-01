@@ -57,7 +57,7 @@ type ClusterDefaultCandidate = VersionRow;
 function artifactLabel(artifact: HostSoftwareArtifact): string {
   switch (artifact) {
     case "project-host":
-      return "Project host";
+      return "Project host bundle";
     case "project":
       return "Project bundle";
     case "tools":
@@ -533,9 +533,9 @@ export const HostRuntimeVersionsPanel: React.FC<
           hub software feed, annotated with how many running hosts are currently
           on each version. Cluster defaults are explicit version selections for
           the fleet and for future hosts. You can move a cluster default forward
-          or backward to any available version shown here. For project-host,
-          that promotes the artifact version only; it does not automatically
-          restart conat-router, conat-persist, or acp-worker.
+          or backward to any available version shown here. For the project-host
+          bundle, that promotes the artifact version only; it does not
+          automatically restart conat-router, conat-persist, or acp-worker.
           {hubSourceLabel ? ` Hub source: ${hubSourceLabel}.` : ""}
         </Typography.Paragraph>
         <Alert
@@ -550,7 +550,7 @@ export const HostRuntimeVersionsPanel: React.FC<
                 rolling back from a newer build to an older tested one.
               </Typography.Text>
               <Typography.Text>
-                Only <strong>project-host</strong> rows can show an{" "}
+                Only <strong>project-host bundle</strong> rows can show an{" "}
                 <strong>Align fleet stack</strong> button in the{" "}
                 <strong>Fleet Rollout</strong> column. Use that only when you
                 intentionally want all running hosts to restart project-host,
