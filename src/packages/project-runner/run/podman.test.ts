@@ -3,6 +3,7 @@ const mockExecuteCode = jest.fn();
 const mockGetConmonContainerProcesses = jest.fn();
 const mockGetConmonContainerProcessLists = jest.fn();
 const mockUnmountAll = jest.fn();
+let processKillSpy: jest.SpyInstance;
 
 jest.mock("@cocalc/backend/logger", () => {
   const factory = () => ({
@@ -101,6 +102,11 @@ describe("project-runner podman orphan fallback", () => {
     mockUnmountAll.mockResolvedValue(undefined);
     mockExecuteCode.mockResolvedValue({ stdout: "" });
     mockGetConmonContainerProcessLists.mockResolvedValue(new Map());
+    processKillSpy = jest.spyOn(process, "kill").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    processKillSpy.mockRestore();
   });
 
   it("treats a project as running when podman misses it but conmon sees it", async () => {
@@ -309,6 +315,14 @@ describe("project-runner podman orphan fallback", () => {
 
     await stop({ project_id: project1 });
 
+    expect(processKillSpy).toHaveBeenCalledWith(601, "SIGKILL");
+    expect(processKillSpy).toHaveBeenCalledWith(-601, "SIGKILL");
+    expect(processKillSpy).toHaveBeenCalledWith(602, "SIGKILL");
+    expect(processKillSpy).toHaveBeenCalledWith(-602, "SIGKILL");
+    expect(processKillSpy).toHaveBeenCalledWith(701, "SIGKILL");
+    expect(processKillSpy).toHaveBeenCalledWith(-701, "SIGKILL");
+    expect(processKillSpy).toHaveBeenCalledWith(702, "SIGKILL");
+    expect(processKillSpy).toHaveBeenCalledWith(-702, "SIGKILL");
     expect(mockExecuteCode).toHaveBeenCalledWith(
       expect.objectContaining({
         command: "podman",
