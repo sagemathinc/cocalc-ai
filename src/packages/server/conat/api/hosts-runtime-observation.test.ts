@@ -89,6 +89,46 @@ describe("summarizeObservedRuntimeDeployments", () => {
       })[0]?.observed_version_state,
     ).toBe("aligned");
   });
+
+  it("normalizes build-id running versions to the artifact version", () => {
+    expect(
+      summarizeObservedRuntimeDeployments({
+        effective: [
+          {
+            scope_type: "host",
+            scope_id: "host-1",
+            host_id: "host-1",
+            target_type: "component",
+            target: "conat-router",
+            desired_version: "ph-v3",
+            rollout_policy: "restart_now",
+            requested_by: "account-1",
+            requested_at: "2026-04-19T01:00:00.000Z",
+            updated_at: "2026-04-19T01:00:00.000Z",
+          },
+        ],
+        observed_artifacts: [
+          {
+            artifact: "project-host",
+            current_version: "ph-v2",
+            current_build_id: "build-ph-v2",
+            installed_versions: ["ph-v2", "ph-v1"],
+          },
+        ],
+        observed_components: [
+          {
+            component: "conat-router",
+            artifact: "project-host",
+            enabled: true,
+            managed: true,
+            runtime_state: "running",
+            running_versions: ["build-ph-v2", "ph-v2"],
+            running_pids: [111],
+          } as any,
+        ],
+      })[0]?.running_versions,
+    ).toEqual(["ph-v2"]);
+  });
 });
 
 describe("summarizeRollbackTargets", () => {
