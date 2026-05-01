@@ -15,6 +15,8 @@ describe("backup index", () => {
     await vol.fs.mkdir("dir");
     await vol.fs.writeFile("dir/b.txt", "world");
     await vol.fs.writeFile("line\nbreak.txt", "nl");
+    await vol.fs.mkdir(".snapshots");
+    await vol.fs.writeFile(".snapshots/should-not-index.txt", "skip");
 
     await vol.snapshots.create("snap");
     const snapshotPath = join(vol.path, vol.snapshots.path("snap"));
@@ -43,6 +45,7 @@ describe("backup index", () => {
       expect(paths).toEqual(
         expect.arrayContaining(["a.txt", "dir/b.txt", "line\nbreak.txt"]),
       );
+      expect(paths.some((path) => path.startsWith(".snapshots"))).toBe(false);
       expect(
         files.find((row) => row.parent === "" && row.name === "a.txt")?.type,
       ).toBe("f");

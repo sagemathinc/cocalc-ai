@@ -171,6 +171,10 @@ interface BackupIndexEntry {
   mode: number;
 }
 
+function shouldSkipBackupIndexPath(path: string): boolean {
+  return path === ".snapshots" || path.startsWith(".snapshots/");
+}
+
 async function scanSnapshot(
   snapshotPath: string,
   onEntry: (entry: BackupIndexEntry) => void,
@@ -203,6 +207,7 @@ async function scanSnapshot(
         path = "";
       }
       if (!path) return;
+      if (shouldSkipBackupIndexPath(path)) return;
       const parent = path.includes("/")
         ? posix.dirname(path).replace(/^\.$/, "")
         : "";
