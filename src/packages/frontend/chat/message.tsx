@@ -1998,14 +1998,12 @@ export default function Message({
   function renderCodexSectionChrome({
     label,
     accentColor,
-    background,
     borderColor,
     action,
     children,
   }: {
     label: string;
     accentColor: string;
-    background: string;
     borderColor: string;
     action?: ReactNode;
     children: ReactNode;
@@ -2016,7 +2014,6 @@ export default function Message({
           marginTop: 10,
           padding: "10px 12px 12px 12px",
           borderRadius: 12,
-          background,
           border: `1px solid ${borderColor}`,
         }}
       >
@@ -2140,7 +2137,6 @@ export default function Message({
     return renderCodexSectionChrome({
       label: "Agent activity",
       accentColor: COLORS.GRAY_D,
-      background: COLORS.GRAY_LLL,
       borderColor: COLORS.GRAY_LL,
       action: onHideActivity ? (
         <Button
@@ -2298,7 +2294,6 @@ export default function Message({
           renderCodexSectionChrome({
             label: "Final response",
             accentColor: COLORS.BLUE_DD,
-            background: COLORS.BLUE_LLLL,
             borderColor: COLORS.BLUE_LLL,
             children: (
               <div onClickCapture={openCommitFromMessage}>
