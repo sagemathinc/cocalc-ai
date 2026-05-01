@@ -1,4 +1,7 @@
-import { parseConmonContainerProcesses } from "./conmon";
+import {
+  parseConmonContainerProcessLists,
+  parseConmonContainerProcesses,
+} from "./conmon";
 
 describe("parseConmonContainerProcesses", () => {
   it("returns live project containers with conmon and child pids", () => {
@@ -29,5 +32,35 @@ describe("parseConmonContainerProcesses", () => {
     expect(containers.has("project-22222222-2222-4222-8222-222222222222")).toBe(
       false,
     );
+  });
+
+  it("ignores podman exec conmons and keeps duplicate main containers", () => {
+    const output = [
+      "100 1 /usr/bin/conmon --api-version 1 -n project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa --full-attach",
+      "101 100 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init project_init.sh",
+      "200 1 /usr/bin/conmon --api-version 1 -n project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa --exec-attach --exec-process-spec /tmp/spec.json",
+      "201 200 /opt/cocalc/bin/node /opt/cocalc/bin2/codex app-server --listen stdio://",
+      "300 1 /usr/bin/conmon --api-version 1 -n project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa --full-attach",
+      "301 300 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init project_init.sh",
+    ].join("\n");
+
+    const lists = parseConmonContainerProcessLists(output);
+    expect(
+      lists.get("project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    ).toHaveLength(2);
+    expect(
+      lists.get("project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")?.map(
+        (entry) => entry.conmon_pid,
+      ),
+    ).toEqual([100, 300]);
+
+    expect(
+      parseConmonContainerProcesses(output).get(
+        "project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      ),
+    ).toMatchObject({
+      conmon_pid: 300,
+      child_pids: [301],
+    });
   });
 });
