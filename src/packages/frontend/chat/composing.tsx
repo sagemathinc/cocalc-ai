@@ -60,10 +60,12 @@ export default function Composing({ actions, accountId, userMap }: Props) {
 
   const cursorElements = useMemo(() => {
     if (lite) return [] as React.JSX.Element[];
+    if (!accountId || userMap == null) return [] as React.JSX.Element[];
     const syncdb = actions?.syncdb;
     if (!syncdb || !syncdb.isReady()) return [] as React.JSX.Element[];
     const threadLabels = new Map<string, string>();
     for (const entry of actions?.getThreadIndex?.()?.values?.() ?? []) {
+      if (!entry.rootMessage) continue;
       const key = `${entry.key}`;
       if (!key) continue;
       threadLabels.set(key, deriveThreadLabel(entry.rootMessage, key));
@@ -83,6 +85,8 @@ export default function Composing({ actions, accountId, userMap }: Props) {
       const senderId = `${key}`;
       if (!senderId || senderId === accountId) continue;
       if (!isCursorComposing(value)) continue;
+      const senderName = getUserName(userMap, senderId).trim();
+      if (!senderName || senderName === "Unknown") continue;
       const threadKey = getCursorThreadKey(value);
       const threadLabel =
         threadKey == null || threadKey === "null"
@@ -95,7 +99,7 @@ export default function Composing({ actions, accountId, userMap }: Props) {
         >
           <Avatar size={20} account_id={senderId} />
           <span style={{ marginLeft: "15px" }}>
-            {getUserName(userMap, senderId)} is writing a message
+            {senderName} is writing a message
             {threadLabel ? ` in "${threadLabel}"` : ""}
             ...
           </span>

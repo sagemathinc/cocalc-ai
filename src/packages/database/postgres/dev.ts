@@ -21,7 +21,8 @@ type LocalPostgresInfo = {
   user: string;
   database: string;
   pidFile: string;
-  child: ChildProcess;
+  child?: ChildProcess;
+  pgCtl?: string;
 };
 
 type PgBinaries = {
@@ -36,6 +37,8 @@ type PgBinaries = {
 
 let running: LocalPostgresInfo | null = null;
 let stopping = false;
+
+type PgReadyState = "accepting" | "rejecting" | "missing";
 
 function which(cmd: string): string | null {
   const paths = (process.env.PATH ?? "").split(":");
@@ -291,22 +294,9 @@ function waitForReady(
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     try {
-      if (pgIsReady) {
-        const res = spawnSync(pgIsReady, ["-h", socketDir, "-U", user], {
-          encoding: "utf8",
-        });
-        if (res.status === 0) return;
-      } else {
-        runQuiet(psqlBin ?? "psql", [
-          "-h",
-          socketDir,
-          "-U",
-          user,
-          "-d",
-          "postgres",
-          "-tAc",
-          "SELECT 1",
-        ]);
+      if (
+        getPgReadyState(socketDir, user, pgIsReady, psqlBin) === "accepting"
+      ) {
         return;
       }
     } catch {
@@ -316,16 +306,65 @@ function waitForReady(
   throw new Error("postgres did not become ready in time");
 }
 
+function getPgReadyState(
+  socketDir: string,
+  user: string,
+  pgIsReady?: string,
+  psqlBin?: string,
+): PgReadyState {
+  if (pgIsReady) {
+    const res = spawnSync(pgIsReady, ["-h", socketDir, "-U", user], {
+      encoding: "utf8",
+    });
+    if (res.status === 0) return "accepting";
+    if (res.status === 1) return "rejecting";
+    return "missing";
+  }
+  try {
+    runQuiet(psqlBin ?? "psql", [
+      "-h",
+      socketDir,
+      "-U",
+      user,
+      "-d",
+      "postgres",
+      "-tAc",
+      "SELECT 1",
+    ]);
+    return "accepting";
+  } catch {
+    return "missing";
+  }
+}
+
 function isSocketActive(
   socketDir: string,
   user: string,
   pgIsReady?: string,
+  psqlBin?: string,
 ): boolean {
-  if (!pgIsReady) return false;
-  const res = spawnSync(pgIsReady, ["-h", socketDir, "-U", user], {
-    encoding: "utf8",
+  return getPgReadyState(socketDir, user, pgIsReady, psqlBin) !== "missing";
+}
+
+function isDataDirRunning(dataDir: string, pgCtl?: string): boolean {
+  if (!pgCtl) return false;
+  const res = spawnSync(pgCtl, ["-D", dataDir, "status"], {
+    stdio: "ignore",
   });
-  return res.status === 0 || res.status === 1;
+  return res.status === 0;
+}
+
+function stopDataDir(dataDir: string, pgCtl?: string, mode = "fast"): void {
+  if (!pgCtl) return;
+  spawnSync(pgCtl, ["-D", dataDir, "-m", mode, "stop"], {
+    stdio: "ignore",
+  });
+}
+
+function clearStalePostmasterFiles(dataDir: string): void {
+  for (const name of ["postmaster.pid", "postmaster.opts"]) {
+    rmSync(join(dataDir, name), { force: true });
+  }
 }
 
 function ensureRoleAndDb(
@@ -374,10 +413,12 @@ function stopLocalPostgres(): void {
   if (!running || stopping) return;
   stopping = true;
   try {
-    const pgCtl = which("pg_ctl");
+    const pgCtl = running.pgCtl ?? which("pg_ctl");
     if (pgCtl) {
-      spawnSync(pgCtl, ["-D", running.dataDir, "-m", "fast", "stop"]);
-    } else {
+      spawnSync(pgCtl, ["-D", running.dataDir, "-m", "fast", "stop"], {
+        stdio: "ignore",
+      });
+    } else if (running.child) {
       running.child.kill("SIGTERM");
     }
   } catch (err) {
@@ -405,7 +446,7 @@ export async function ensureLocalPostgres(opts?: {
   const adminUser = process.env.USER ?? "postgres";
   const pgVersionFile = join(dataDir, "PG_VERSION");
   if (!existsSync(pgVersionFile)) {
-    if (isSocketActive(socketDir, adminUser, bins.pgIsReady)) {
+    if (isSocketActive(socketDir, adminUser, bins.pgIsReady, bins.psql)) {
       const altSocketDir = `${socketDir}-${process.pid}`;
       logger.warn("socket already active; using a fresh socket dir", {
         socketDir,
@@ -432,6 +473,57 @@ export async function ensureLocalPostgres(opts?: {
   } else {
     ensureDir(socketDir, 0o700);
     ensureConfig(dataDir, socketDir);
+  }
+
+  const readyState = getPgReadyState(
+    socketDir,
+    adminUser,
+    bins.pgIsReady,
+    bins.psql,
+  );
+  const runningFromDataDir = isDataDirRunning(dataDir, bins.pgCtl);
+  if (readyState === "accepting") {
+    logger.info("reusing existing local postgres", { dataDir, socketDir });
+    process.env.PGHOST = socketDir;
+    process.env.PGUSER = "smc";
+    process.env.PGDATABASE ??= "smc";
+    const envFile = writeEnvFile({
+      socketDir,
+      user: process.env.PGUSER,
+      database: process.env.PGDATABASE,
+    });
+    if (opts?.logExports) {
+      console.log(`export PGHOST=${socketDir}`);
+      console.log("export PGUSER=smc");
+      console.log(`export PGDATABASE=${process.env.PGDATABASE}`);
+      if (envFile) {
+        console.log(`# local postgres env file: ${envFile}`);
+        console.log(`# usage: source ${envFile}`);
+      }
+    }
+    const info: LocalPostgresInfo = {
+      dataDir,
+      socketDir,
+      user: "smc",
+      database: "smc",
+      pidFile: join(dataDir, "postmaster.pid"),
+      pgCtl: bins.pgCtl,
+    };
+    running = info;
+    return info;
+  }
+
+  if (readyState === "rejecting" && runningFromDataDir) {
+    logger.warn(
+      "existing local postgres is rejecting connections; stopping it before restart",
+      {
+        dataDir,
+        socketDir,
+      },
+    );
+    stopDataDir(dataDir, bins.pgCtl, "immediate");
+  } else if (readyState === "missing" && !runningFromDataDir) {
+    clearStalePostmasterFiles(dataDir);
   }
 
   logger.info("starting local postgres", { dataDir, socketDir });
@@ -468,6 +560,7 @@ export async function ensureLocalPostgres(opts?: {
     database: "smc",
     pidFile: join(dataDir, "postmaster.pid"),
     child,
+    pgCtl: bins.pgCtl,
   };
   running = info;
 

@@ -31,6 +31,7 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { SearchHistoryDropdown } from "@cocalc/frontend/project/explorer/search-history-dropdown";
 import { useExplorerSearchHistory } from "@cocalc/frontend/project/explorer/use-search-history";
+import { RefreshButton } from "@cocalc/frontend/project/explorer/refresh-button";
 import {
   DirectoryListing,
   DirectoryListingEntry,
@@ -625,19 +626,40 @@ export function FilesHeader({
         style={{
           display: "flex",
           justifyContent: "space-between",
+          alignItems: "center",
+          gap: FLYOUT_PADDING,
           width: "100%",
         }}
       >
-        <FilesSelectedControls
-          project_id={project_id}
-          checked_files={checked_files}
-          directoryFiles={directoryFiles}
-          open={open}
-          getFile={getFile}
-          mode="top"
-          activeFile={activeFile}
-          refreshBackups={refreshBackups}
-        />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            minWidth: 0,
+          }}
+        >
+          <FilesSelectedControls
+            project_id={project_id}
+            checked_files={checked_files}
+            directoryFiles={directoryFiles}
+            open={open}
+            getFile={getFile}
+            mode="top"
+            activeFile={activeFile}
+            refreshBackups={refreshBackups}
+          />
+          <div
+            aria-hidden={!hasPendingUpdate}
+            style={{
+              display: "inline-flex",
+              visibility: hasPendingUpdate ? "visible" : "hidden",
+              pointerEvents: hasPendingUpdate ? undefined : "none",
+            }}
+          >
+            <RefreshButton onClick={onRefreshListing} />
+          </div>
+        </div>
         <FilesSelectButtons
           setMode={setMode}
           checked_files={checked_files}
@@ -893,20 +915,6 @@ export function FilesHeader({
           borderBottom: FIX_BORDER,
         }}
       >
-        {hasPendingUpdate && (
-          <Alert
-            type="warning"
-            banner
-            showIcon={false}
-            style={{ padding: FLYOUT_PADDING, margin: 0, cursor: "pointer" }}
-            onClick={onRefreshListing}
-            title={
-              <>
-                <Icon name="sync-alt" /> {intl.formatMessage(labels.refresh)}
-              </>
-            }
-          />
-        )}
         {isTerminalMode(file_search) && (
           <TerminalModeDisplay style={{ padding: FLYOUT_PADDING, margin: 0 }} />
         )}

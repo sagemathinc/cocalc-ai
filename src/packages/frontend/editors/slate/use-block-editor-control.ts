@@ -13,13 +13,13 @@ import { ReactEditor } from "./slate-react";
 import { blockSelectionPoint } from "./block-selection-utils";
 import type { SlateEditor } from "./types";
 import { Actions } from "./types";
-import { joinBlocks } from "./block-markdown-utils";
 
 export function useBlockEditorControl({
   actions,
   id,
   blockControlRef,
   allowNextValueUpdateWhileFocused,
+  getFullMarkdown,
   focusBlock,
   blocksRef,
   editorMapRef,
@@ -36,6 +36,7 @@ export function useBlockEditorControl({
   id?: string;
   blockControlRef: React.MutableRefObject<any>;
   allowNextValueUpdateWhileFocused: () => void;
+  getFullMarkdown: () => string;
   focusBlock: (index: number, position?: "start" | "end") => void;
   blocksRef: React.MutableRefObject<string[]>;
   editorMapRef: React.MutableRefObject<Map<number, SlateEditor>>;
@@ -126,7 +127,7 @@ export function useBlockEditorControl({
         };
       },
       getBlocks: () => [...blocksRef.current],
-      getMarkdown: () => joinBlocks(blocksRef.current),
+      getMarkdown: getFullMarkdown,
       setMarkdown: (markdown: string) => {
         setBlocksFromValue(markdown);
       },
@@ -149,6 +150,7 @@ export function useBlockEditorControl({
     editorMapRef,
     focusBlock,
     focusedIndex,
+    getFullMarkdown,
     lastFocusedIndex,
     getMarkdownPositionForSelection,
     id,

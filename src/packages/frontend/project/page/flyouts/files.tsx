@@ -407,6 +407,18 @@ export function FilesFlyout({
     alwaysPassThrough: autoUpdateListing,
     fingerprint: fileListingFingerprint,
   });
+  const [visiblePendingListingUpdate, setVisiblePendingListingUpdate] =
+    useState(false);
+  useEffect(() => {
+    if (!hasPendingListingUpdate) {
+      setVisiblePendingListingUpdate(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setVisiblePendingListingUpdate(true);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [hasPendingListingUpdate]);
   useEffect(() => {
     return registerUserFilesystemChangeHandler(() =>
       refreshListingAfterUserAction({
@@ -1028,7 +1040,7 @@ export function FilesFlyout({
         typeFilter={typeFilter}
         setTypeFilter={setTypeFilter}
         typeFilterOptions={typeFilterOptions}
-        hasPendingUpdate={hasPendingListingUpdate}
+        hasPendingUpdate={visiblePendingListingUpdate}
         onRefreshListing={() =>
           refreshListingAfterUserAction({
             allowUpdatesFor: allowListingUpdatesFor,

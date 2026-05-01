@@ -4,6 +4,7 @@ import {
   splitMarkdownToBlocksIncremental,
 } from "../block-chunking";
 import { act, render, screen } from "@testing-library/react";
+import type { MutableRefObject } from "react";
 import BlockMarkdownEditor from "../block-markdown-editor-core";
 
 jest.mock("../upload", () => ({
@@ -101,4 +102,26 @@ test("block editor preserves heading rendering when syncstring updates from empt
   expect(screen.getByRole("heading", { level: 1, name: "foo" })).toBeTruthy();
   expect(screen.queryByText("Page 2")).toBeNull();
   expect(container.querySelectorAll("[data-slate-block-index]").length).toBe(1);
+});
+
+test("block editor getValueRef preserves the source final newline", () => {
+  const getValueRef = {
+    current: () => "",
+  } as MutableRefObject<() => string>;
+
+  render(
+    <BlockMarkdownEditor
+      value={"alpha\n"}
+      read_only={true}
+      hidePath={true}
+      minimal={true}
+      height="300px"
+      noVfill={true}
+      actions={{}}
+      disableVirtualization={true}
+      getValueRef={getValueRef}
+    />,
+  );
+
+  expect(getValueRef.current()).toBe("alpha\n");
 });

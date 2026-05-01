@@ -38,6 +38,8 @@ export interface CodexLogResult {
   hasLogRef: boolean;
   deleteLog: () => Promise<void>;
   liveStatus: CodexLiveLogStatus;
+  loadState: CodexPersistedLogLoadState;
+  loadError?: string;
 }
 
 export type CodexLiveLogStatus =
@@ -45,6 +47,12 @@ export type CodexLiveLogStatus =
   | "connecting"
   | "connected"
   | "reconnecting"
+  | "error";
+
+export type CodexPersistedLogLoadState =
+  | "idle"
+  | "loading"
+  | "loaded"
   | "error";
 
 function recentLogCacheKey({
@@ -184,6 +192,10 @@ export function useCodexLog({
     return recentLogCache.get(cacheKey) ?? null;
   });
   const [akvLoaded, setAkvLoaded] = useState<boolean>(false);
+  const [loadState, setLoadState] = useState<CodexPersistedLogLoadState>(() =>
+    cacheKey && recentLogCache.get(cacheKey)?.length ? "loaded" : "idle",
+  );
+  const [loadError, setLoadError] = useState<string | undefined>();
   const [liveLog, setLiveLog] = useState<any[]>(() => {
     if (!cacheKey) return [];
     return recentLogCache.get(cacheKey) ?? [];
@@ -264,6 +276,8 @@ export function useCodexLog({
       const cached = recentLogCache.get(cacheKey);
       setFetchedLog(cached ?? null);
       setLiveLog(cached ?? []);
+      setLoadState(cached?.length ? "loaded" : "idle");
+      setLoadError(undefined);
       liveBufferRef.current = [];
       if (liveFlushTimerRef.current != null) {
         clearTimeout(liveFlushTimerRef.current);
@@ -275,6 +289,8 @@ export function useCodexLog({
     } else {
       setFetchedLog(null);
       setLiveLog([]);
+      setLoadState("idle");
+      setLoadError(undefined);
       liveBufferRef.current = [];
       if (liveFlushTimerRef.current != null) {
         clearTimeout(liveFlushTimerRef.current);
@@ -325,6 +341,10 @@ export function useCodexLog({
       if (!enabled || !hasLogRef || !projectId || akvLoaded) {
         return;
       }
+      if (!cancelled) {
+        setLoadState("loading");
+        setLoadError(undefined);
+      }
       try {
         const data = await fetchPersistedLog();
         if (!cancelled) {
@@ -334,13 +354,19 @@ export function useCodexLog({
             if (!generating) {
               setAkvLoaded(true);
             }
+            setLoadState("loaded");
             return;
           }
           setFetchedLog(data);
           setAkvLoaded(true);
+          setLoadState("loaded");
         }
         // console.log(data);
       } catch (err) {
+        if (!cancelled) {
+          setLoadState("error");
+          setLoadError(`${(err as any)?.message ?? err ?? "Unknown error"}`);
+        }
         console.warn("failed to fetch acp log", err);
       }
     }
@@ -700,5 +726,5 @@ export function useCodexLog({
     setLiveLog([]);
   };
 
-  return { events, hasLogRef, deleteLog, liveStatus };
+  return { events, hasLogRef, deleteLog, liveStatus, loadState, loadError };
 }
