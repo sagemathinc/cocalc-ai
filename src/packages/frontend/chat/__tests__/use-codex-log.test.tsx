@@ -316,7 +316,7 @@ describe("useCodexLog", () => {
     expect(screen.getByTestId("latest-event").textContent).toBe("");
 
     await act(async () => {
-      await jest.advanceTimersByTimeAsync(150);
+      await jest.advanceTimersByTimeAsync(550);
     });
 
     await waitFor(() => {
@@ -357,7 +357,7 @@ describe("useCodexLog", () => {
 
     await act(async () => {
       await Promise.resolve();
-      await jest.advanceTimersByTimeAsync(150);
+      await jest.advanceTimersByTimeAsync(550);
     });
 
     await waitFor(() => {
@@ -422,7 +422,7 @@ describe("useCodexLog", () => {
 
     await act(async () => {
       await Promise.resolve();
-      await jest.advanceTimersByTimeAsync(150);
+      await jest.advanceTimersByTimeAsync(550);
     });
 
     await waitFor(() => {
@@ -485,7 +485,7 @@ describe("useCodexLog", () => {
 
     await act(async () => {
       await Promise.resolve();
-      await jest.advanceTimersByTimeAsync(150);
+      await jest.advanceTimersByTimeAsync(550);
     });
 
     await waitFor(() => {
@@ -534,7 +534,7 @@ describe("useCodexLog", () => {
 
     await act(async () => {
       await Promise.resolve();
-      await jest.advanceTimersByTimeAsync(150);
+      await jest.advanceTimersByTimeAsync(550);
     });
 
     await waitFor(() => {
@@ -578,7 +578,7 @@ describe("useCodexLog", () => {
 
     await act(async () => {
       await Promise.resolve();
-      await jest.advanceTimersByTimeAsync(150);
+      await jest.advanceTimersByTimeAsync(550);
     });
 
     await waitFor(() => {
