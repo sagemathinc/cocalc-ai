@@ -218,4 +218,98 @@ describe("bootstrap-host promoted artifact defaults", () => {
     );
     expect(scripts.bootstrapSelector).toBe("latest");
   });
+
+  it("prefers a newer observed installed artifact version over stale desired runtime deployments", async () => {
+    loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([
+      {
+        scope_type: "global",
+        scope_id: "global",
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "1777528468004",
+      },
+      {
+        scope_type: "global",
+        scope_id: "global",
+        target_type: "artifact",
+        target: "project-bundle",
+        desired_version: "1777528468004",
+      },
+      {
+        scope_type: "global",
+        scope_id: "global",
+        target_type: "artifact",
+        target: "tools",
+        desired_version: "1777528468004",
+      },
+    ]);
+
+    const { buildBootstrapScripts } = await loadBootstrapHost();
+    const scripts = await buildBootstrapScripts({
+      ...baseRow(),
+      metadata: {
+        ...baseRow().metadata,
+        software_inventory: [
+          {
+            artifact: "project-host",
+            current_version: "1777603320059",
+          },
+          {
+            artifact: "project-bundle",
+            current_version: "1777603320060",
+          },
+          {
+            artifact: "tools",
+            current_version: "1777603320061",
+          },
+        ],
+      },
+    } as any);
+
+    expect(scripts.projectHostBundleUrl).toBe(
+      `${softwareBaseUrl}/project-host/1777603320059/bundle-linux.tar.xz`,
+    );
+    expect(scripts.projectHostVersion).toBe("1777603320059");
+    expect(scripts.projectBundleUrl).toBe(
+      `${softwareBaseUrl}/project/1777603320060/bundle-linux.tar.xz`,
+    );
+    expect(scripts.projectBundleVersion).toBe("1777603320060");
+    expect(scripts.toolsUrl).toBe(
+      `${softwareBaseUrl}/tools/1777603320061/tools-linux-amd64.tar.xz`,
+    );
+    expect(scripts.toolsVersion).toBe("1777603320061");
+    expect(scripts.toolsManifestUrl).toBe("");
+  });
+
+  it("prefers the observed numeric artifact version when the desired project-host deployment is a build id", async () => {
+    loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([
+      {
+        scope_type: "host",
+        scope_id: "host-123",
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "20260501T024149Z-d8da8fa36b1e-dirty-789d9dbc",
+      },
+    ]);
+
+    const { buildBootstrapScripts } = await loadBootstrapHost();
+    const scripts = await buildBootstrapScripts({
+      ...baseRow(),
+      metadata: {
+        ...baseRow().metadata,
+        software_inventory: [
+          {
+            artifact: "project-host",
+            current_version: "1777603320059",
+            current_build_id: "20260501T024149Z-d8da8fa36b1e-dirty-789d9dbc",
+          },
+        ],
+      },
+    } as any);
+
+    expect(scripts.projectHostBundleUrl).toBe(
+      `${softwareBaseUrl}/project-host/1777603320059/bundle-linux.tar.xz`,
+    );
+    expect(scripts.projectHostVersion).toBe("1777603320059");
+  });
 });

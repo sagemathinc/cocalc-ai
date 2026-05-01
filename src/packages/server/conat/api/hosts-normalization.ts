@@ -272,6 +272,8 @@ export function parseRow(
     };
   } = {},
 ): Host {
+  const metadata = row.metadata ?? {};
+  const software = metadata.software ?? {};
   const parsePositiveInt = (value: unknown): number | undefined => {
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
@@ -380,19 +382,58 @@ export function parseRow(
     if (rightMs == null) return left;
     return leftMs >= rightMs ? left : right;
   };
+  const compareNumericVersionLike = (
+    left?: string,
+    right?: string,
+  ): number | undefined => {
+    const a = `${left ?? ""}`.trim();
+    const b = `${right ?? ""}`.trim();
+    if (!/^\d+$/.test(a) || !/^\d+$/.test(b)) return undefined;
+    const leftValue = BigInt(a);
+    const rightValue = BigInt(b);
+    if (leftValue === rightValue) return 0;
+    return leftValue > rightValue ? 1 : -1;
+  };
+  const isBuildIdLike = (value?: string): boolean =>
+    /^\d{8}T\d{6}Z-[a-z0-9]+(?:-dirty)?-[a-z0-9]+$/i.test(
+      `${value ?? ""}`.trim(),
+    );
+  const chooseDesiredRuntimeArtifactVersion = (
+    desiredVersion: string | undefined,
+    installedVersion: string | undefined,
+  ): string | undefined => {
+    const desired = `${desiredVersion ?? ""}`.trim() || undefined;
+    const installed = `${installedVersion ?? ""}`.trim() || undefined;
+    if (!desired) return installed;
+    if (!installed) return desired;
+    if (isBuildIdLike(desired) && /^\d+$/.test(installed)) {
+      return installed;
+    }
+    const comparison = compareNumericVersionLike(desired, installed);
+    if (comparison != null && comparison < 0) {
+      return installed;
+    }
+    return desired;
+  };
   const normalizeLifecycleAgainstDesiredArtifacts = (
     lifecycle: HostBootstrapLifecycle | undefined,
   ): HostBootstrapLifecycle | undefined => {
     if (!lifecycle || !opts.runtime_desired_artifacts) return lifecycle;
     const overrides = new Map<string, string>();
-    const desiredProjectHost =
+    const desiredProjectHost = chooseDesiredRuntimeArtifactVersion(
       `${opts.runtime_desired_artifacts.project_host ?? ""}`.trim() ||
-      undefined;
-    const desiredProjectBundle =
+        undefined,
+      `${software.project_host ?? ""}`.trim() || undefined,
+    );
+    const desiredProjectBundle = chooseDesiredRuntimeArtifactVersion(
       `${opts.runtime_desired_artifacts.project_bundle ?? ""}`.trim() ||
-      undefined;
-    const desiredTools =
-      `${opts.runtime_desired_artifacts.tools ?? ""}`.trim() || undefined;
+        undefined,
+      `${software.project_bundle ?? ""}`.trim() || undefined,
+    );
+    const desiredTools = chooseDesiredRuntimeArtifactVersion(
+      `${opts.runtime_desired_artifacts.tools ?? ""}`.trim() || undefined,
+      `${software.tools ?? ""}`.trim() || undefined,
+    );
     if (desiredProjectHost) {
       overrides.set("project_host_bundle", desiredProjectHost);
     }
@@ -517,8 +558,6 @@ export function parseRow(
     }
     return bootstrap;
   };
-  const metadata = row.metadata ?? {};
-  const software = metadata.software ?? {};
   const machine: HostMachine | undefined = metadata.machine;
   const rawCurrentMetrics = metadata.metrics?.current;
   const currentMetrics: HostCurrentMetrics | undefined =

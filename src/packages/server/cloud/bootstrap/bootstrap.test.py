@@ -970,8 +970,13 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             script = captured[str(Path(tmpdir) / "runtime-root" / "bin" / "project-host")]
             self.assertIn(f'RUNTIME_HOME="{cfg.bootstrap_home}"', script)
             self.assertIn('export NVM_DIR="$RUNTIME_HOME/.nvm"', script)
+            self.assertIn('nvm use --silent default >/dev/null 2>&1 || true', script)
             self.assertIn(
-                f'elif [ -x "{cfg.bootstrap_home}/.nvm/versions/node/v20/bin/node" ]; then',
+                'NODE_CANDIDATES=( $NVM_DIR/versions/node/v20*/bin/node )',
+                script,
+            )
+            self.assertIn(
+                'node not found for project-host wrapper (looked in PATH and $NVM_DIR/versions/node/v20*/bin/node)',
                 script,
             )
             self.assertIn('exec "$NODE_BIN"', script)

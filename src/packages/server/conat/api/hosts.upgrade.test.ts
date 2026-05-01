@@ -364,6 +364,13 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
       ]),
       expect.any(Object),
     );
+    expect(buildCloudInitStartupScriptMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: HOST_ID }),
+      "bootstrap-token",
+      expect.any(String),
+      undefined,
+      { inlineBootstrapPayload: true },
+    );
     expect(ensureSshAccessMock).toHaveBeenCalledWith(
       expect.objectContaining({
         instance_id: expect.any(String),

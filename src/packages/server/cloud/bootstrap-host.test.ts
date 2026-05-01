@@ -140,6 +140,19 @@ describe("bootstrap-host shell templates", () => {
     expect(source).not.toContain(`-o "$BOOTSTRAP_DIR/bootstrap.sh"`);
   });
 
+  it("supports inlining the rendered bootstrap payload for ssh reconcile", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(`inlineBootstrapPayload?: boolean;`);
+    expect(source).toContain(`await buildBootstrapScriptWithStatus(`);
+    expect(source).toContain(
+      `cat <<'EOF_COCALC_INLINE_BOOTSTRAP_PAYLOAD' > "$BOOTSTRAP_PAYLOAD"`,
+    );
+  });
+
   it("uses a btrfs-backed bootstrap state root for reconcile when available", () => {
     const source = fs.readFileSync(
       path.join(__dirname, "bootstrap-host.ts"),

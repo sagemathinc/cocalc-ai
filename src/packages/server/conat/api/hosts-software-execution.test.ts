@@ -98,6 +98,103 @@ describe("upgradeHostSoftwareInternalHelper", () => {
     );
   });
 
+  it("uses the installed project-host artifact version when upgrade results report a build id", async () => {
+    const loadHostForStartStop = jest
+      .fn()
+      .mockResolvedValueOnce({
+        id: "host-1",
+        status: "running",
+        version: "1777603320059",
+        metadata: {
+          owner: "account-1",
+          software: {
+            project_host: "1777603320059",
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        id: "host-1",
+        status: "running",
+        version: "1777603320059",
+        metadata: {
+          owner: "account-1",
+          software: {
+            project_host: "1777603320059",
+            project_host_build_id:
+              "20260501T024149Z-d8da8fa36b1e-dirty-789d9dbc",
+          },
+          software_inventory: [
+            {
+              artifact: "project-host",
+              current_version: "1777603320059",
+              current_build_id: "20260501T024149Z-d8da8fa36b1e-dirty-789d9dbc",
+            },
+          ],
+        },
+      });
+    const setProjectHostRuntimeDeployments = jest.fn(async () => []);
+
+    await expect(
+      upgradeHostSoftwareInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        targets: [{ artifact: "project-host", channel: "latest" }],
+        align_runtime_stack: true,
+        loadHostForStartStop,
+        assertHostRunningForUpgrade: () => undefined,
+        computeHostOperationalAvailability: () => ({ online: true }),
+        resolveHostSoftwareBaseUrl: async () => undefined,
+        resolveReachableUpgradeBaseUrl: async () => undefined,
+        logWarn: () => undefined,
+        reconcileCloudHostBootstrapOverSsh: async () => undefined,
+        hostControlClient: async () => ({
+          upgradeSoftware: async () => ({
+            results: [
+              {
+                artifact: "project-host",
+                version: "20260501T024149Z-d8da8fa36b1e-dirty-789d9dbc",
+                status: "updated",
+              },
+            ],
+          }),
+        }),
+        updateProjectHostSoftwareRecord: async () => undefined,
+        runtimeDeploymentsForUpgradeResults,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments,
+      }),
+    ).resolves.toEqual({
+      results: [
+        {
+          artifact: "project-host",
+          version: "20260501T024149Z-d8da8fa36b1e-dirty-789d9dbc",
+          status: "updated",
+        },
+      ],
+    });
+
+    expect(loadHostForStartStop).toHaveBeenCalledTimes(2);
+    expect(setProjectHostRuntimeDeployments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope_type: "host",
+        host_id: "host-1",
+        replace: false,
+        deployments: expect.arrayContaining([
+          {
+            target_type: "artifact",
+            target: "project-host",
+            desired_version: "1777603320059",
+          },
+          expect.objectContaining({
+            target_type: "component",
+            target: "project-host",
+            desired_version: "1777603320059",
+          }),
+        ]),
+      }),
+    );
+  });
+
   it("sends control-plane retention policy to the host upgrader", async () => {
     const upgradeSoftware = jest.fn(async () => ({ results: [] }));
 

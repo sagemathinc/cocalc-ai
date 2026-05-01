@@ -70,6 +70,7 @@ import {
   shouldUseGcpInternalConatUrl,
 } from "./internal-network";
 import { getHostSshPublicKeys } from "./ssh-key";
+import { observedRuntimeArtifactsFromMetadata } from "../conat/api/hosts-runtime-observation";
 
 const logger = getLogger("server:cloud:bootstrap-host");
 const pool = () => getPool("medium");
@@ -544,6 +545,90 @@ async function loadBootstrapArtifactDesiredVersions(
   return versions;
 }
 
+function compareNumericVersionLike(
+  left?: string,
+  right?: string,
+): number | undefined {
+  const a = `${left ?? ""}`.trim();
+  const b = `${right ?? ""}`.trim();
+  if (!/^\d+$/.test(a) || !/^\d+$/.test(b)) return undefined;
+  const leftValue = BigInt(a);
+  const rightValue = BigInt(b);
+  if (leftValue === rightValue) return 0;
+  return leftValue > rightValue ? 1 : -1;
+}
+
+function isBuildIdLike(value?: string): boolean {
+  return /^\d{8}T\d{6}Z-[a-z0-9]+(?:-dirty)?-[a-z0-9]+$/i.test(
+    `${value ?? ""}`.trim(),
+  );
+}
+
+function observedBootstrapArtifactVersions(
+  row: ProjectHostRow,
+): Partial<
+  Record<Exclude<BootstrapManagedArtifact, "bootstrap-environment">, string>
+> {
+  const versions: Partial<
+    Record<Exclude<BootstrapManagedArtifact, "bootstrap-environment">, string>
+  > = {};
+  for (const artifact of observedRuntimeArtifactsFromMetadata(row as any)) {
+    const currentVersion = `${artifact.current_version ?? ""}`.trim();
+    if (!currentVersion) continue;
+    if (
+      artifact.artifact === "project-host" ||
+      artifact.artifact === "project-bundle" ||
+      artifact.artifact === "tools"
+    ) {
+      versions[artifact.artifact] = currentVersion;
+    }
+  }
+  return versions;
+}
+
+function chooseBootstrapArtifactVersion({
+  host_id,
+  artifact,
+  desiredVersion,
+  observedVersion,
+}: {
+  host_id: string;
+  artifact: Exclude<BootstrapManagedArtifact, "bootstrap-environment">;
+  desiredVersion?: string;
+  observedVersion?: string;
+}): string | undefined {
+  const desired = `${desiredVersion ?? ""}`.trim() || undefined;
+  const observed = `${observedVersion ?? ""}`.trim() || undefined;
+  if (!desired) return observed;
+  if (!observed) return desired;
+  if (isBuildIdLike(desired) && /^\d+$/.test(observed)) {
+    logger.warn(
+      "bootstrap host: desired artifact version is a build id; preferring observed numeric artifact version",
+      {
+        host_id,
+        artifact,
+        desired,
+        observed,
+      },
+    );
+    return observed;
+  }
+  const comparison = compareNumericVersionLike(desired, observed);
+  if (comparison != null && comparison < 0) {
+    logger.warn(
+      "bootstrap host: observed installed artifact is newer than desired runtime deployment; preferring observed version",
+      {
+        host_id,
+        artifact,
+        desired,
+        observed,
+      },
+    );
+    return observed;
+  }
+  return desired;
+}
+
 function versionedSoftwareArtifactUrl({
   baseUrl,
   artifact,
@@ -712,6 +797,7 @@ export async function buildBootstrapScripts(
   const desiredArtifactVersions = await loadBootstrapArtifactDesiredVersions(
     row.id,
   );
+  const observedArtifactVersions = observedBootstrapArtifactVersions(row);
   const gcpProjectId =
     normalizeGcpProjectId(
       runtime?.metadata?.gcp_project_id ?? runtime?.metadata?.project_id,
@@ -722,7 +808,12 @@ export async function buildBootstrapScripts(
   const resolvedHostBundle = await resolveBootstrapArtifactBundle({
     softwareBaseUrl,
     artifact: "project-host",
-    desiredVersion: desiredArtifactVersions["project-host"],
+    desiredVersion: chooseBootstrapArtifactVersion({
+      host_id: row.id,
+      artifact: "project-host",
+      desiredVersion: desiredArtifactVersions["project-host"],
+      observedVersion: observedArtifactVersions["project-host"],
+    }),
     targetOs: targetPlatform.os,
     targetArch: targetPlatform.arch,
   });
@@ -734,7 +825,12 @@ export async function buildBootstrapScripts(
   const resolvedProjectBundle = await resolveBootstrapArtifactBundle({
     softwareBaseUrl,
     artifact: "project-bundle",
-    desiredVersion: desiredArtifactVersions["project-bundle"],
+    desiredVersion: chooseBootstrapArtifactVersion({
+      host_id: row.id,
+      artifact: "project-bundle",
+      desiredVersion: desiredArtifactVersions["project-bundle"],
+      observedVersion: observedArtifactVersions["project-bundle"],
+    }),
     targetOs: targetPlatform.os,
     targetArch: targetPlatform.arch,
   });
@@ -746,7 +842,12 @@ export async function buildBootstrapScripts(
   const resolvedTools = await resolveBootstrapArtifactBundle({
     softwareBaseUrl,
     artifact: "tools",
-    desiredVersion: desiredArtifactVersions.tools,
+    desiredVersion: chooseBootstrapArtifactVersion({
+      host_id: row.id,
+      artifact: "tools",
+      desiredVersion: desiredArtifactVersions.tools,
+      observedVersion: observedArtifactVersions.tools,
+    }),
     targetOs: targetPlatform.os,
     targetArch: targetPlatform.arch,
   });
@@ -1601,6 +1702,9 @@ export async function buildCloudInitStartupScript(
   token: string,
   baseUrl: string,
   caCert?: string,
+  opts?: {
+    inlineBootstrapPayload?: boolean;
+  },
 ): Promise<string> {
   let bootstrapBase = baseUrl;
   let tunnelScript = "";
@@ -1618,6 +1722,10 @@ export async function buildCloudInitStartupScript(
   }
   const bootstrapUrl = `${bootstrapBase}/project-host/bootstrap`;
   const statusUrl = `${bootstrapBase}/project-host/bootstrap/status`;
+  const inlineBootstrapPayload = !!opts?.inlineBootstrapPayload;
+  const bootstrapPayloadScript = inlineBootstrapPayload
+    ? await buildBootstrapScriptWithStatus(row, token, bootstrapBase, caCert)
+    : undefined;
   const sshKeys = await getHostSshPublicKeys();
   const sshKeysBlock = sshKeys.length
     ? `SSH_KEYS="$(cat <<'EOF_COCALC_SSH_KEYS'
@@ -1681,13 +1789,17 @@ fi
 BOOTSTRAP_DIR="$BOOTSTRAP_STATE_ROOT/bootstrap"
 BOOTSTRAP_LOG="$BOOTSTRAP_DIR/bootstrap.log"
 BOOTSTRAP_PAYLOAD="$BOOTSTRAP_DIR/bootstrap.payload.sh"
-BOOTSTRAP_HOST="$(echo "$BOOTSTRAP_URL" | awk -F/ '{print $3}')"
+${
+  inlineBootstrapPayload
+    ? ""
+    : `BOOTSTRAP_HOST="$(echo "$BOOTSTRAP_URL" | awk -F/ '{print $3}')"
 if [[ "$BOOTSTRAP_HOST" == \\[*\\]* ]]; then
   BOOTSTRAP_HOST="\${BOOTSTRAP_HOST#\\[}"
   BOOTSTRAP_HOST="\${BOOTSTRAP_HOST%%\\]*}"
 else
   BOOTSTRAP_HOST="\${BOOTSTRAP_HOST%%:*}"
-fi
+fi`
+}
 ${caCertBlock}
 
 if ! command -v curl >/dev/null 2>&1; then
@@ -1728,7 +1840,16 @@ bootstrap_log_tail() {
   fi
 }
 
-download_bootstrap() {
+${
+  inlineBootstrapPayload
+    ? `cat <<'EOF_COCALC_INLINE_BOOTSTRAP_PAYLOAD' > "$BOOTSTRAP_PAYLOAD"
+${bootstrapPayloadScript}
+EOF_COCALC_INLINE_BOOTSTRAP_PAYLOAD
+chmod 700 "$BOOTSTRAP_PAYLOAD"
+if [ -n "$BOOTSTRAP_USER" ]; then
+  chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_PAYLOAD" || true
+fi`
+    : `download_bootstrap() {
   local attempts=8
   local delay=5
   local i=1
@@ -1777,7 +1898,8 @@ wait_for_dns || echo "bootstrap: DNS not ready; continuing"
 if ! download_bootstrap; then
   report_status "error" "bootstrap download failed"
   exit 1
-fi
+fi`
+}
 if ! bash "$BOOTSTRAP_PAYLOAD"; then
   tail_msg="$(bootstrap_log_tail)"
   if [ -n "$tail_msg" ]; then

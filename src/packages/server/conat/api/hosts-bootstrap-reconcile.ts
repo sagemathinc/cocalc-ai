@@ -175,6 +175,16 @@ async function loadHostBootstrapReconcileState(
   };
 }
 
+async function loadHostRowForBootstrapReconcile(
+  host_id: string,
+): Promise<any | undefined> {
+  const { rows } = await pool().query(
+    `SELECT * FROM project_hosts WHERE id=$1 LIMIT 1`,
+    [host_id],
+  );
+  return rows[0];
+}
+
 function hostBootstrapActivityChanged(
   baseline: HostBootstrapReconcileState,
   current: HostBootstrapReconcileState,
@@ -443,7 +453,9 @@ export async function reconcileCloudHostBootstrapOverSsh(opts: {
   host_id: string;
   row: any;
 }): Promise<void> {
-  const target = cloudHostSshTarget(opts.row);
+  const row =
+    (await loadHostRowForBootstrapReconcile(opts.host_id)) ?? opts.row;
+  const target = cloudHostSshTarget(row);
   if (!target) {
     logger.debug(
       "host upgrade: skip bootstrap reconcile (missing ssh target)",
@@ -461,12 +473,14 @@ export async function reconcileCloudHostBootstrapOverSsh(opts: {
   const sshIdentity = await getHostOwnerBaySshIdentity();
   await trustHostOwnerBaySshKeyForHostRow({
     host_id: opts.host_id,
-    row: opts.row,
+    row,
   });
   const bootstrapScript = await buildCloudInitStartupScript(
-    opts.row,
+    row,
     bootstrapToken.token,
     bootstrapBaseUrl,
+    undefined,
+    { inlineBootstrapPayload: true },
   );
   const baseline = await loadHostBootstrapReconcileState(opts.host_id);
   if (!baseline) {

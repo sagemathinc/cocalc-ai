@@ -348,8 +348,10 @@ export function runtimeDeploymentsForUpgradeResults(
   results: HostSoftwareUpgradeResponse["results"],
   {
     alignRuntimeStack = false,
+    alignedProjectHostVersion,
   }: {
     alignRuntimeStack?: boolean;
+    alignedProjectHostVersion?: string;
   } = {},
 ): HostRuntimeDeploymentUpsert[] {
   const deployments: HostRuntimeDeploymentUpsert[] = [];
@@ -357,9 +359,13 @@ export function runtimeDeploymentsForUpgradeResults(
     const target = normalizeRuntimeArtifactTarget(result.artifact);
     if (!target || !`${result.version ?? ""}`.trim()) continue;
     if (alignRuntimeStack && target === "project-host") {
+      const desiredVersion =
+        `${alignedProjectHostVersion ?? ""}`.trim() ||
+        `${result.version ?? ""}`.trim();
+      if (!desiredVersion) continue;
       deployments.push(
         ...runtimeDeploymentsForAlignedProjectHostVersion({
-          version: result.version,
+          version: desiredVersion,
         }),
       );
       continue;

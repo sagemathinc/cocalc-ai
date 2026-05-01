@@ -312,7 +312,10 @@ export async function upgradeHostSoftwareInternalHelper({
   }) => Promise<void>;
   runtimeDeploymentsForUpgradeResults: (
     results: HostSoftwareUpgradeResponse["results"],
-    opts?: { alignRuntimeStack?: boolean },
+    opts?: {
+      alignRuntimeStack?: boolean;
+      alignedProjectHostVersion?: string;
+    },
   ) => any[];
   requestedByForRuntimeDeployments: (opts: {
     account_id?: string;
@@ -409,8 +412,23 @@ export async function upgradeHostSoftwareInternalHelper({
   if (results.length) {
     await updateProjectHostSoftwareRecord({ row, results });
   }
+  const explicitProjectHostTarget = targets.find(
+    (target) =>
+      target.artifact === "project-host" &&
+      `${target.version ?? ""}`.trim().length > 0,
+  );
+  const refreshedRowForProjectHostVersion =
+    align_runtime_stack && requestedProjectHostUpgrade
+      ? explicitProjectHostTarget == null || results.length > 0
+        ? await loadHostForStartStop(id, account_id)
+        : row
+      : undefined;
+  const alignedProjectHostVersion =
+    `${explicitProjectHostTarget?.version ?? ""}`.trim() ||
+    installedProjectHostArtifactVersion(refreshedRowForProjectHostVersion);
   const runtimeDeployments = runtimeDeploymentsForUpgradeResults(results, {
     alignRuntimeStack: align_runtime_stack,
+    alignedProjectHostVersion,
   });
   const hasAlignedProjectHostRuntimeTargets = runtimeDeployments.some(
     (deployment) =>
@@ -422,18 +440,11 @@ export async function upgradeHostSoftwareInternalHelper({
     requestedProjectHostUpgrade &&
     !hasAlignedProjectHostRuntimeTargets
   ) {
-    const explicitProjectHostTarget = targets.find(
-      (target) =>
-        target.artifact === "project-host" &&
-        `${target.version ?? ""}`.trim().length > 0,
-    );
-    const refreshedRow =
-      explicitProjectHostTarget == null || !results.length
-        ? await loadHostForStartStop(id, account_id)
-        : undefined;
     const desiredProjectHostVersion =
-      `${explicitProjectHostTarget?.version ?? ""}`.trim() ||
-      installedProjectHostArtifactVersion(refreshedRow ?? row);
+      alignedProjectHostVersion ||
+      installedProjectHostArtifactVersion(
+        refreshedRowForProjectHostVersion ?? row,
+      );
     runtimeDeployments.push(
       ...runtimeDeploymentsForAlignedProjectHostVersion({
         version: desiredProjectHostVersion,

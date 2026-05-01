@@ -187,4 +187,87 @@ describe("parseRow bootstrap lifecycle normalization", () => {
       installed: "1776577465070",
     });
   });
+
+  it("treats stale build-id and older numeric desired artifacts as aligned with installed runtime versions", () => {
+    const host = parseRow(
+      {
+        id: "host-1",
+        name: "host-1",
+        status: "running",
+        version: "1777603320059",
+        region: "us-west3",
+        metadata: {
+          software: {
+            project_host: "1777603320059",
+            project_bundle: "1777650485714",
+            tools: "1777042500614",
+          },
+          bootstrap: {
+            status: "done",
+            updated_at: "2026-05-01T16:32:31.560Z",
+            message: "Host software reconciled",
+          },
+          bootstrap_lifecycle: {
+            desired_recorded_at: "2026-05-01T16:32:19.000Z",
+            installed_recorded_at: "2026-05-01T16:32:31.000Z",
+            summary_status: "drifted",
+            summary_message: "2 drift items detected",
+            drift_count: 2,
+            items: [
+              {
+                key: "project_host_bundle",
+                label: "Project host bundle",
+                status: "drift",
+                desired: "20260501T024149Z-d8da8fa36b1e-dirty-789d9dbc",
+                installed: "1777603320059",
+              },
+              {
+                key: "project_bundle",
+                label: "Project bundle",
+                status: "drift",
+                desired: "1777603336287",
+                installed: "1777650485714",
+              },
+              {
+                key: "tools_bundle",
+                label: "Tools bundle",
+                status: "match",
+                desired: "1777042500614",
+                installed: "1777042500614",
+              },
+            ],
+          },
+        },
+      },
+      {
+        runtime_desired_artifacts: {
+          project_host: "20260501T024149Z-d8da8fa36b1e-dirty-789d9dbc",
+          project_bundle: "1777603336287",
+          tools: "1777042500614",
+          updated_at: "2026-05-01T16:32:19.000Z",
+        },
+      },
+    );
+
+    expect(host.bootstrap_lifecycle?.summary_status).toBe("in_sync");
+    expect(host.bootstrap_lifecycle?.drift_count).toBe(0);
+    expect(
+      host.bootstrap_lifecycle?.items.find(
+        (item) => item.key === "project_host_bundle",
+      ),
+    ).toMatchObject({
+      status: "match",
+      desired: "1777603320059",
+      installed: "1777603320059",
+    });
+    expect(
+      host.bootstrap_lifecycle?.items.find(
+        (item) => item.key === "project_bundle",
+      ),
+    ).toMatchObject({
+      status: "match",
+      desired: "1777650485714",
+      installed: "1777650485714",
+    });
+  });
 });

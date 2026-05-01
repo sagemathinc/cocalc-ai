@@ -119,6 +119,39 @@ describe("runtimeDeploymentsForUpgradeResults", () => {
     );
   });
 
+  it("can override the aligned project-host artifact version separately from the rollout build id", () => {
+    expect(
+      runtimeDeploymentsForUpgradeResults(
+        [
+          {
+            artifact: "project-host",
+            version: "20260501T024149Z-d8da8fa36b1e-dirty-789d9dbc",
+            status: "updated",
+          },
+        ],
+        {
+          alignRuntimeStack: true,
+          alignedProjectHostVersion: "1777603320059",
+        },
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          target_type: "artifact",
+          target: "project-host",
+          desired_version: "1777603320059",
+        },
+        {
+          target_type: "component",
+          target: "project-host",
+          desired_version: "1777603320059",
+          rollout_policy: "restart_now",
+          rollout_reason: "project_host_upgrade",
+        },
+      ]),
+    );
+  });
+
   it("leaves the runtime stack alone when project-host is not part of the upgrade", () => {
     expect(
       runtimeDeploymentsForUpgradeResults([
