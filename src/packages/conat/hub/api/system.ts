@@ -224,7 +224,8 @@ export type ManagedProjectEgressCategory =
   | "ws-proxy"
   | "ssh"
   | "interactive-conat"
-  | "raw-network";
+  | "raw-network"
+  | "backup-upload";
 
 export interface ParallelOpsWorkerOwnerStatus {
   owner_id: string;

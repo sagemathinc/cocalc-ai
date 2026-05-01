@@ -10,6 +10,7 @@ import type {
 } from "@cocalc/util/db-schema/projects";
 import type { SnapshotSchedule } from "@cocalc/util/consts/snapshots";
 import type { HostPressureZone } from "@cocalc/conat/hub/api/hosts";
+import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 export { DEFAULT_RUNTIME_RETENTION_POLICY } from "./retention-policy";
 
 export interface HostCreateProjectRequest extends CreateProjectOptions {
@@ -251,6 +252,7 @@ export interface HostControlApi {
     image?: string;
     restore?: "none" | "auto" | "required";
     lro_op_id?: string;
+    managed_egress_override?: ManagedProjectEgressOverride;
   }) => Promise<HostCreateProjectResponse>;
   stopProject: (opts: {
     project_id: string;

@@ -1,6 +1,7 @@
 import {
   type RestoreMode,
   type RestoreStagingHandle,
+  type ManagedBackupEgressOverride,
 } from "@cocalc/conat/files/file-server";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import getLogger from "@cocalc/backend/logger";
@@ -19,10 +20,12 @@ import { assertPortableProjectRootfs } from "@cocalc/server/projects/rootfs-stat
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { getManagedProjectEgressPolicy } from "@cocalc/server/membership/managed-egress-policy";
 import {
   assertProjectOwnerCanIncreaseAccountStorage,
   getProjectBackupLimit,
 } from "@cocalc/server/membership/project-limits";
+import { capitalize, humanSize } from "@cocalc/util/misc";
 const log = getLogger("server:conat:api:project-backups");
 const BACKUP_CONTROL_TIMEOUT_MS = BACKUP_TIMEOUT_MS + 60_000;
 
@@ -99,6 +102,74 @@ async function publishLroSummarySafe({
   }
 }
 
+function formatManagedEgressCategory(category: string): string {
+  if (category === "file-download") return "File downloads";
+  if (category === "http-proxy") return "App server HTTP traffic";
+  if (category === "ws-proxy") return "App server WebSocket traffic";
+  if (category === "ssh") return "SSH traffic";
+  if (category === "interactive-conat") return "Interactive session traffic";
+  if (category === "raw-network") return "Project outbound network traffic";
+  if (category === "backup-upload") return "Project backup uploads";
+  return capitalize(category.replace(/[-_]/g, " "));
+}
+
+function formatByteCount(bytes?: number): string {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
+    return "unknown";
+  }
+  return humanSize(bytes);
+}
+
+async function assertManagedBackupAllowed({
+  project_id,
+  managed_egress_override,
+}: {
+  project_id: string;
+  managed_egress_override?: ManagedBackupEgressOverride;
+}): Promise<void> {
+  if (managed_egress_override === "admin-host-drain") {
+    return;
+  }
+  const policy = await getManagedProjectEgressPolicy({
+    project_id,
+    category: "backup-upload",
+  });
+  if (policy.allowed) {
+    return;
+  }
+  const breakdown = Object.entries(
+    policy.managed_egress_categories_5h_bytes ?? {},
+  )
+    .filter(
+      ([, bytes]) =>
+        typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0,
+    )
+    .map(
+      ([category, bytes]) =>
+        `${formatManagedEgressCategory(category)}: ${formatByteCount(bytes)}`,
+    );
+  const lines = [
+    "Managed backup upload limit reached for this account.",
+    "New backups, including scheduled backups and moves that require a backup, are temporarily blocked until the egress usage window resets.",
+  ];
+  if (policy.egress_5h_bytes != null) {
+    lines.push(
+      `5-hour usage: ${formatByteCount(policy.managed_egress_5h_bytes)} / ${formatByteCount(policy.egress_5h_bytes)}.`,
+    );
+  }
+  if (policy.egress_7d_bytes != null) {
+    lines.push(
+      `7-day usage: ${formatByteCount(policy.managed_egress_7d_bytes)} / ${formatByteCount(policy.egress_7d_bytes)}.`,
+    );
+  }
+  if (breakdown.length > 0) {
+    lines.push(
+      `Current managed egress categories (5 hours): ${breakdown.join(", ")}.`,
+    );
+  }
+  throw new Error(lines.join("\n"));
+}
+
 function lroResponse({
   op,
   project_id,
@@ -126,11 +197,13 @@ async function createBackupLro({
   project_id,
   tags,
   limit,
+  managed_egress_override,
 }: {
   account_id?: string;
   project_id: string;
   tags?: string[];
   limit?: number;
+  managed_egress_override?: ManagedBackupEgressOverride;
 }): Promise<LroSummary> {
   return await createLro({
     kind: "project-backup",
@@ -138,7 +211,7 @@ async function createBackupLro({
     scope_id: project_id,
     created_by: account_id,
     routing: "hub",
-    input: { project_id, tags, limit },
+    input: { project_id, tags, limit, managed_egress_override },
     status: "queued",
     dedupe_key: backupLroDedupeKey(project_id),
   });
@@ -151,6 +224,7 @@ async function runRemoteBackup({
   op,
   dest_bay,
   epoch,
+  managed_egress_override,
 }: {
   account_id?: string;
   project_id: string;
@@ -158,6 +232,7 @@ async function runRemoteBackup({
   op: LroSummary;
   dest_bay: string;
   epoch?: number;
+  managed_egress_override?: ManagedBackupEgressOverride;
 }) {
   const running = await updateLro({
     op_id: op.op_id,
@@ -186,6 +261,7 @@ async function runRemoteBackup({
         account_id,
         tags,
         epoch,
+        managed_egress_override,
       });
     const updated = await updateLro({
       op_id: op.op_id,
@@ -233,6 +309,7 @@ export async function createBackup(
     skip_collab_check?: boolean;
     skip_rootfs_portability_check?: boolean;
     skip_owner_route?: boolean;
+    managed_egress_override?: ManagedBackupEgressOverride;
   },
 ): Promise<{
   op_id: string;
@@ -244,6 +321,10 @@ export async function createBackup(
   if (!opts?.skip_collab_check) {
     await assertCollab({ account_id, project_id });
   }
+  await assertManagedBackupAllowed({
+    project_id,
+    managed_egress_override: opts?.managed_egress_override,
+  });
   const limit = await getProjectBackupLimit({ project_id });
   if (!opts?.skip_owner_route) {
     const ownership = await resolveProjectBay(project_id);
@@ -251,7 +332,13 @@ export async function createBackup(
       throw new Error(`project ${project_id} not found`);
     }
     if (ownership.bay_id !== getConfiguredBayId()) {
-      const op = await createBackupLro({ account_id, project_id, tags, limit });
+      const op = await createBackupLro({
+        account_id,
+        project_id,
+        tags,
+        limit,
+        managed_egress_override: opts?.managed_egress_override,
+      });
       await publishQueuedLroSafe({
         op,
         project_id,
@@ -265,6 +352,7 @@ export async function createBackup(
           op,
           dest_bay: ownership.bay_id,
           epoch: ownership.epoch,
+          managed_egress_override: opts?.managed_egress_override,
         }).catch((err) =>
           log.warn("remote backup failed", {
             op_id: op.op_id,
@@ -283,7 +371,13 @@ export async function createBackup(
       operation: "backup",
     });
   }
-  const op = await createBackupLro({ account_id, project_id, tags, limit });
+  const op = await createBackupLro({
+    account_id,
+    project_id,
+    tags,
+    limit,
+    managed_egress_override: opts?.managed_egress_override,
+  });
   await publishQueuedLroSafe({
     op,
     project_id,

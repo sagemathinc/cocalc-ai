@@ -56,6 +56,7 @@ import {
   mergeProjectSettingsWithMembership,
 } from "@cocalc/server/membership/project-defaults";
 import { assertLocalProjectOwnership } from "@cocalc/server/conat/project-local-access";
+import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 export type { ProjectState, ProjectStatus };
 
 const logger = getLogger("project-control");
@@ -162,6 +163,7 @@ export class BaseProject extends EventEmitter {
   private startOnHost = async (opts?: {
     lro_op_id?: string;
     account_id?: string;
+    managed_egress_override?: ManagedProjectEgressOverride;
   }): Promise<void> => {
     await this.computeQuota(opts?.account_id);
     await startProjectOnHost(this.project_id, opts);
@@ -249,6 +251,7 @@ export class BaseProject extends EventEmitter {
   start = async (opts?: {
     lro_op_id?: string;
     account_id?: string;
+    managed_egress_override?: ManagedProjectEgressOverride;
   }): Promise<void> => {
     await this.ensureLocalOwnership();
     await this.startOnHost(opts);

@@ -72,6 +72,9 @@ export interface LroRef {
   scope_id: string;
 }
 
+export type ManagedProjectEgressOverride = "admin-host-drain";
+export type ManagedBackupEgressOverride = ManagedProjectEgressOverride;
+
 export interface FileTextPreview {
   content: string;
   truncated: boolean;
@@ -159,6 +162,7 @@ export interface Fileserver {
     limit?: number;
     tags?: string[];
     lro?: LroRef;
+    managed_egress_override?: ManagedBackupEgressOverride;
   }) => Promise<{ time: Date; id: string }>;
   // restore the given path in the backup to the given dest.  The default
   // path is '' (the whole project) and the default destination is the

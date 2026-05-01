@@ -131,6 +131,7 @@ export async function handleProjectControlStart(
     await project.start({
       account_id: req.account_id,
       lro_op_id: req.lro_op_id,
+      managed_egress_override: req.managed_egress_override,
     });
   } finally {
     await stopForward();
@@ -221,6 +222,7 @@ export async function handleProjectControlBackup(
     {
       skip_collab_check: true,
       skip_owner_route: true,
+      managed_egress_override: req.managed_egress_override,
     },
   );
   const deadline = Date.now() + BACKUP_TIMEOUT_MS + 60_000;

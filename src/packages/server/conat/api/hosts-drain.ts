@@ -167,6 +167,7 @@ export async function drainHostInternalHelper({
   }) => Promise<void> | void;
 }): Promise<HostDrainResult> {
   const row = await loadHostForDrainInternal({ id, owner });
+  const ownerIsAdmin = await isAdmin(owner);
   const drainParallel = await resolveDrainParallelInternal({
     owner,
     parallel,
@@ -283,6 +284,9 @@ export async function drainHostInternalHelper({
             allow_offline: !!allow_offline,
             start_dest: true,
             stop_dest_after_start: true,
+            managed_egress_override: ownerIsAdmin
+              ? "admin-host-drain"
+              : undefined,
           },
           { shouldCancel },
         );

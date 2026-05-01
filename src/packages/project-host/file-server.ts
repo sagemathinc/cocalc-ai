@@ -22,6 +22,7 @@ import {
   type Fileserver,
   type CopyOptions,
   type LroRef,
+  type ManagedBackupEgressOverride,
   type RestoreMode,
   type RestoreStagingHandle,
   type SnapshotRestoreMode,
@@ -134,6 +135,10 @@ import {
   projectRusticBackup,
   projectRusticRestore,
 } from "./project-rustic";
+import {
+  checkManagedBackupAllowedBestEffort,
+  recordManagedBackupEgressBestEffort,
+} from "./backup-egress";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import { subvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { ensureRootfsRusticRepoProfile } from "./rootfs-rustic";
@@ -2658,13 +2663,22 @@ async function createBackup({
   limit,
   tags,
   lro,
+  managed_egress_override,
 }: {
   project_id: string;
   limit?: number;
   tags?: string[];
   lro?: LroRef;
+  managed_egress_override?: ManagedBackupEgressOverride;
 }): Promise<{ time: Date; id: string }> {
   const progress = createLroRusticReporter(lro, "backup");
+  const managedBackupPolicy = await checkManagedBackupAllowedBestEffort({
+    project_id,
+    managed_egress_override,
+  });
+  if (!managedBackupPolicy.allowed) {
+    throw new Error(managedBackupPolicy.message);
+  }
   const result = await withBackupParallelLimit({
     project_id,
     op: "createBackup",
@@ -2723,6 +2737,12 @@ async function createBackup({
       logger.warn("backup index manifest update failed", { project_id, err });
     }
   }
+  await recordManagedBackupEgressBestEffort({
+    project_id,
+    backup_id: result.id,
+    tags,
+    summary: result.summary,
+  });
   try {
     await reportBackupSuccess(project_id, result.time);
   } catch (err) {
@@ -2961,7 +2981,36 @@ async function updateBackups({
     op: "updateBackups",
     run: async () => {
       const refreshed = await getVolumeForBackup(project_id);
-      await refreshed.rustic.update(counts, { limit, index: { project_id } });
+      await refreshed.rustic.update(counts, {
+        limit,
+        index: { project_id },
+        beforeCreate: async () => {
+          const managedBackupPolicy = await checkManagedBackupAllowedBestEffort(
+            { project_id },
+          );
+          if (!managedBackupPolicy.allowed) {
+            throw new Error(managedBackupPolicy.message);
+          }
+        },
+        afterCreate: async (created) => {
+          const backup =
+            created &&
+            typeof created === "object" &&
+            "id" in created &&
+            "summary" in created
+              ? (created as {
+                  id: string;
+                  summary: Record<string, string | number>;
+                })
+              : undefined;
+          if (!backup?.id) return;
+          await recordManagedBackupEgressBestEffort({
+            project_id,
+            backup_id: backup.id,
+            summary: backup.summary,
+          });
+        },
+      });
       return refreshed;
     },
   });

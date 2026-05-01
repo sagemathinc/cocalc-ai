@@ -3164,6 +3164,12 @@ describe("hosts.drainHostInternal", () => {
       parallel: 3,
     });
     expect(moveProjectToHostMock).toHaveBeenCalledTimes(5);
+    expect(moveProjectToHostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        managed_egress_override: "admin-host-drain",
+      }),
+      expect.anything(),
+    );
   }, 15000);
 
   it("preserves published software metadata fields in version listings", async () => {

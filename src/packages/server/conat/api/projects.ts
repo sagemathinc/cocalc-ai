@@ -70,6 +70,7 @@ import type {
   ProjectRehomeOperationSummary,
   ProjectRehomeResponse,
 } from "@cocalc/conat/hub/api/projects";
+import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import { assertCollab, assertCollabAllowRemoteProjectAccess } from "./util";
 import {
   getLocalProjectCollaboratorAccessStatus,
@@ -1058,6 +1059,7 @@ export async function start({
   account_id,
   project_id,
   restore: _restore,
+  managed_egress_override,
   wait = true,
 }: {
   account_id: string;
@@ -1066,6 +1068,7 @@ export async function start({
   run_quota?: any;
   // not used; passed through for typing compatibility with project-host
   restore?: "none" | "auto" | "required";
+  managed_egress_override?: ManagedProjectEgressOverride;
   wait?: boolean;
 }): Promise<{
   op_id: string;
@@ -1078,6 +1081,7 @@ export async function start({
     kind: "start",
     account_id,
     project_id,
+    managed_egress_override,
     wait,
   });
 }
@@ -1109,11 +1113,13 @@ async function runProjectStartLikeAction({
   kind,
   account_id,
   project_id,
+  managed_egress_override,
   wait = true,
 }: {
   kind: "start" | "restart";
   account_id: string;
   project_id: string;
+  managed_egress_override?: ManagedProjectEgressOverride;
   wait?: boolean;
 }): Promise<{
   op_id: string;
@@ -1203,6 +1209,7 @@ async function runProjectStartLikeAction({
           account_id,
           lro_op_id: op.op_id,
           source_bay_id: getConfiguredBayId(),
+          ...(managed_egress_override ? { managed_egress_override } : {}),
           epoch: ownership.epoch,
         });
       } else {

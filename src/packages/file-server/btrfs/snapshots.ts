@@ -24,7 +24,11 @@ export async function updateRollingSnapshots({
   snapshots: SubvolumeSnapshots | SubvolumeRustic;
   counts?: Partial<SnapshotCounts>;
   // options to create
-  opts?;
+  opts?: {
+    beforeCreate?: () => Promise<void>;
+    afterCreate?: (created: unknown) => Promise<void>;
+    [key: string]: unknown;
+  };
 }) {
   if (btrfsRollingSnapshotsDisabled()) {
     if (!loggedRollingSnapshotsDisabled) {
@@ -75,7 +79,10 @@ export async function updateRollingSnapshots({
       snapshots.subvolume.name,
     );
     try {
-      await snapshots.create(name, opts);
+      const { beforeCreate, afterCreate, ...createOpts } = opts ?? {};
+      await beforeCreate?.();
+      const created = await snapshots.create(name, createOpts);
+      await afterCreate?.(created);
       snapshotNames.push(name);
     } catch (err) {
       createError = err;

@@ -28,6 +28,7 @@ const searchChatStoreArchived = jest.fn();
 const deleteChatStoreData = jest.fn();
 const vacuumChatStore = jest.fn();
 const upsertProjectStopState = jest.fn();
+const assertManagedRawNetworkStartAllowedBestEffortMock = jest.fn();
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
 jest.mock("@cocalc/backend/data", () => ({
@@ -111,6 +112,10 @@ jest.mock("@cocalc/conat/hub/call-hub", () => ({
 jest.mock("../sqlite/hosts", () => ({
   getLocalHostId: (...args: any[]) => getLocalHostId(...args),
 }));
+jest.mock("../raw-network-egress", () => ({
+  assertManagedRawNetworkStartAllowedBestEffort: (...args: any[]) =>
+    assertManagedRawNetworkStartAllowedBestEffortMock(...args),
+}));
 jest.mock("@cocalc/conat/files/file-server", () => ({
   __esModule: true,
   client: jest.fn(() => ({
@@ -160,6 +165,10 @@ describe("project host start ACP rehydrate ordering", () => {
     deleteChatStoreData.mockReset();
     vacuumChatStore.mockReset();
     upsertProjectStopState.mockReset();
+    assertManagedRawNetworkStartAllowedBestEffortMock.mockReset();
+    assertManagedRawNetworkStartAllowedBestEffortMock.mockResolvedValue(
+      undefined,
+    );
   });
 
   it("does not rehydrate ACP automations before runner start on start()", async () => {
@@ -192,6 +201,32 @@ describe("project host start ACP rehydrate ordering", () => {
         last_started_ms: expect.any(Number),
       }),
     );
+  });
+
+  it("forwards managed egress overrides to the raw-network start gate", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({
+      project_id,
+      managed_egress_override: "admin-host-drain",
+    });
+
+    expect(
+      assertManagedRawNetworkStartAllowedBestEffortMock,
+    ).toHaveBeenCalledWith({
+      project_id,
+      managed_egress_override: "admin-host-drain",
+    });
   });
 
   it("does not rehydrate ACP automations for createProject when start is false", async () => {

@@ -1,6 +1,7 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import type { HostPressureZone } from "@cocalc/conat/hub/api/hosts";
+import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import type { HostControlApi } from "@cocalc/conat/project-host/api";
 import sshKeys from "../projects/get-ssh-keys";
 import { notifyProjectHostUpdate } from "../conat/route-project";
@@ -509,7 +510,10 @@ async function ensurePlacement(project_id: string): Promise<HostPlacement> {
 
 export async function startProjectOnHost(
   project_id: string,
-  opts?: { lro_op_id?: string },
+  opts?: {
+    lro_op_id?: string;
+    managed_egress_override?: ManagedProjectEgressOverride;
+  },
 ): Promise<void> {
   const existing = startProjectInFlight.get(project_id);
   if (existing) {
@@ -580,6 +584,9 @@ export async function startProjectOnHost(
         image: meta.image,
         restore,
         lro_op_id: opts?.lro_op_id,
+        ...(opts?.managed_egress_override
+          ? { managed_egress_override: opts.managed_egress_override }
+          : {}),
       });
       await saveProjectStateSnapshot(project_id, response.state ?? "running");
       if (opts?.lro_op_id && response.phase_timings_ms) {
@@ -603,6 +610,9 @@ export async function startProjectOnHost(
           image: meta.image,
           restore,
           lro_op_id: opts?.lro_op_id,
+          ...(opts?.managed_egress_override
+            ? { managed_egress_override: opts.managed_egress_override }
+            : {}),
         });
         await saveProjectStateSnapshot(project_id, retry.state ?? "running");
         if (opts?.lro_op_id && retry.phase_timings_ms) {

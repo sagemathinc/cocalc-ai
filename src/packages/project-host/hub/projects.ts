@@ -57,6 +57,7 @@ import type { Configuration } from "@cocalc/conat/project/runner/types";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import {
   client as fileServerClient,
+  type ManagedProjectEgressOverride,
   type RestoreMode,
   type RestoreStagingHandle,
   type SnapshotRestoreMode,
@@ -761,6 +762,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     image,
     restore,
     lro_op_id,
+    managed_egress_override,
   }: {
     project_id: string;
     authorized_keys?: string;
@@ -768,6 +770,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     image?: string;
     restore?: "none" | "auto" | "required";
     lro_op_id?: string;
+    managed_egress_override?: ManagedProjectEgressOverride;
   }): Promise<{
     op_id: string;
     scope_type: "project";
@@ -778,7 +781,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   }> {
     const op_id = lro_op_id ?? uuid();
     const timings = createPhaseTimingRecorder();
-    await assertManagedRawNetworkStartAllowedBestEffort({ project_id });
+    await assertManagedRawNetworkStartAllowedBestEffort({
+      project_id,
+      managed_egress_override,
+    });
     const resolved = await resolveStartMetadata({
       project_id,
       authorized_keys,
