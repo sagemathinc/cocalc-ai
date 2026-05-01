@@ -39,6 +39,10 @@ let running: LocalPostgresInfo | null = null;
 let stopping = false;
 
 type PgReadyState = "accepting" | "rejecting" | "missing";
+type PostmasterState = {
+  pid?: number;
+  status?: string;
+};
 
 function which(cmd: string): string | null {
   const paths = (process.env.PATH ?? "").split(":");
@@ -354,6 +358,40 @@ function isDataDirRunning(dataDir: string, pgCtl?: string): boolean {
   return res.status === 0;
 }
 
+function readPostmasterState(dataDir: string): PostmasterState | null {
+  const path = join(dataDir, "postmaster.pid");
+  if (!existsSync(path)) return null;
+  try {
+    const lines = readFileSync(path, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const rawPid = Number(lines[0]);
+    const status =
+      (lines.length >= 8 ? lines[7] : lines[lines.length - 1]) || undefined;
+    return {
+      pid: Number.isFinite(rawPid) && rawPid > 0 ? rawPid : undefined,
+      status,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isPidRunning(pid?: number): boolean {
+  if (!pid || !Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sleepMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function stopDataDir(dataDir: string, pgCtl?: string, mode = "fast"): void {
   if (!pgCtl) return;
   spawnSync(pgCtl, ["-D", dataDir, "-m", mode, "stop"], {
@@ -365,6 +403,103 @@ function clearStalePostmasterFiles(dataDir: string): void {
   for (const name of ["postmaster.pid", "postmaster.opts"]) {
     rmSync(join(dataDir, name), { force: true });
   }
+}
+
+function waitForDataDirStopped(
+  dataDir: string,
+  socketDir: string,
+  user: string,
+  bins: Pick<PgBinaries, "pgCtl" | "pgIsReady" | "psql">,
+  timeoutMs = 15000,
+): boolean {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const readyState = getPgReadyState(
+      socketDir,
+      user,
+      bins.pgIsReady,
+      bins.psql,
+    );
+    const runningFromDataDir = isDataDirRunning(dataDir, bins.pgCtl);
+    const postmaster = readPostmasterState(dataDir);
+    if (
+      readyState === "missing" &&
+      !runningFromDataDir &&
+      !isPidRunning(postmaster?.pid)
+    ) {
+      return true;
+    }
+    sleepMs(100);
+  }
+  return false;
+}
+
+function stopNonAcceptingDataDirBeforeRestart(
+  dataDir: string,
+  socketDir: string,
+  user: string,
+  bins: Pick<PgBinaries, "pgCtl" | "pgIsReady" | "psql">,
+  readyState: Exclude<PgReadyState, "accepting">,
+): void {
+  const initial = readPostmasterState(dataDir);
+  logger.warn(
+    "existing local postgres is not ready; stopping it before restart",
+    {
+      dataDir,
+      socketDir,
+      readyState,
+      postmaster_pid: initial?.pid,
+      postmaster_status: initial?.status,
+    },
+  );
+
+  stopDataDir(dataDir, bins.pgCtl, "immediate");
+  if (waitForDataDirStopped(dataDir, socketDir, user, bins, 5000)) {
+    clearStalePostmasterFiles(dataDir);
+    return;
+  }
+
+  const stale = readPostmasterState(dataDir) ?? initial;
+  if (isPidRunning(stale?.pid)) {
+    logger.warn(
+      "local postgres still running after pg_ctl stop; terminating postmaster",
+      {
+        dataDir,
+        socketDir,
+        pid: stale?.pid,
+        postmaster_status: stale?.status,
+      },
+    );
+    try {
+      process.kill(stale!.pid!, "SIGTERM");
+    } catch {
+      // best effort
+    }
+    if (!waitForDataDirStopped(dataDir, socketDir, user, bins, 5000)) {
+      logger.warn(
+        "local postgres still running after SIGTERM; killing postmaster",
+        {
+          dataDir,
+          socketDir,
+          pid: stale?.pid,
+        },
+      );
+      try {
+        process.kill(stale!.pid!, "SIGKILL");
+      } catch {
+        // best effort
+      }
+      if (!waitForDataDirStopped(dataDir, socketDir, user, bins, 5000)) {
+        throw new Error("existing local postgres did not stop before restart");
+      }
+    }
+  } else {
+    if (!waitForDataDirStopped(dataDir, socketDir, user, bins, 5000)) {
+      throw new Error("existing local postgres did not stop before restart");
+    }
+  }
+
+  clearStalePostmasterFiles(dataDir);
 }
 
 function ensureRoleAndDb(
@@ -482,6 +617,8 @@ export async function ensureLocalPostgres(opts?: {
     bins.psql,
   );
   const runningFromDataDir = isDataDirRunning(dataDir, bins.pgCtl);
+  const postmaster = readPostmasterState(dataDir);
+  const livePostmasterPid = isPidRunning(postmaster?.pid);
   if (readyState === "accepting") {
     logger.info("reusing existing local postgres", { dataDir, socketDir });
     process.env.PGHOST = socketDir;
@@ -513,15 +650,14 @@ export async function ensureLocalPostgres(opts?: {
     return info;
   }
 
-  if (readyState === "rejecting" && runningFromDataDir) {
-    logger.warn(
-      "existing local postgres is rejecting connections; stopping it before restart",
-      {
-        dataDir,
-        socketDir,
-      },
+  if (runningFromDataDir || livePostmasterPid) {
+    stopNonAcceptingDataDirBeforeRestart(
+      dataDir,
+      socketDir,
+      adminUser,
+      bins,
+      readyState,
     );
-    stopDataDir(dataDir, bins.pgCtl, "immediate");
   } else if (readyState === "missing" && !runningFromDataDir) {
     clearStalePostmasterFiles(dataDir);
   }
