@@ -8,6 +8,7 @@ import {
   getInterruptedResponseMarkdown,
   getLiveResponseBlocks,
   getLiveResponseMarkdown,
+  getMountedIntermediateResponseBlocks,
   getMountedIntermediateResponseMarkdown,
   getLatestEventLineText,
   getLatestMessageText,
@@ -513,6 +514,36 @@ describe("response text helpers", () => {
     expect(getMountedIntermediateResponseMarkdown(events)).toBe(
       "first\n\nsecond",
     );
+  });
+
+  test("drops only the final agent block from mounted intermediate response blocks", () => {
+    const events: AcpStreamMessage[] = [
+      {
+        type: "event",
+        event: { type: "message", text: "first" },
+        seq: 1,
+        time: 1000,
+      } as any,
+      {
+        type: "event",
+        event: { type: "message", text: "second" },
+        seq: 2,
+        time: 3000,
+      } as any,
+    ];
+    expect(
+      getMountedIntermediateResponseBlocks(events, [
+        { date: 2000, text: "please check X", state: "sent" },
+      ]),
+    ).toEqual([
+      { kind: "agent", text: "first", time: 1000, state: undefined },
+      {
+        kind: "guidance",
+        text: "please check X",
+        time: 2000,
+        state: "sent",
+      },
+    ]);
   });
 
   test("returns nothing for mounted intermediate markdown when there is only one agent block", () => {
