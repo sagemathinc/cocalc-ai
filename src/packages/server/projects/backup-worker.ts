@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import type { ManagedBackupEgressOverride } from "@cocalc/conat/files/file-server";
 import getPool from "@cocalc/database/pool";
 import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-registry";
@@ -129,6 +130,10 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
   const input = op.input ?? {};
   const project_id = input.project_id;
   const tags = Array.isArray(input.tags) ? input.tags : undefined;
+  const managed_egress_override =
+    input.managed_egress_override === "admin-host-drain"
+      ? ("admin-host-drain" as ManagedBackupEgressOverride)
+      : undefined;
   const limit = Number.isFinite(Number(input.limit))
     ? Math.max(0, Math.floor(Number(input.limit)))
     : DEFAULT_MAX_BACKUPS_PER_PROJECT;
@@ -261,6 +266,7 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
             limit,
             tags,
             lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
+            managed_egress_override,
           });
         })(),
         BACKUP_TIMEOUT_MS,

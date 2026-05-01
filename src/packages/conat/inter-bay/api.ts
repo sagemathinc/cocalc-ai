@@ -122,6 +122,7 @@ export interface ProjectControlBackupRequest {
   project_id: string;
   account_id?: string;
   tags?: string[];
+  managed_egress_override?: "admin-host-drain";
   epoch?: number;
 }
 

@@ -22,6 +22,7 @@ import {
 import { getConfiguredBayId } from "../bay-config";
 import { start as startProjectLro } from "../conat/api/projects";
 import { createBackup as createBackupLro } from "../conat/api/project-backups";
+import type { ManagedBackupEgressOverride } from "@cocalc/conat/files/file-server";
 import { resolveHostConnection } from "../conat/api/hosts";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import {
@@ -96,6 +97,7 @@ export type MoveProjectToHostInput = {
   start_dest?: boolean;
   stop_dest_after_start?: boolean;
   backup_region_cutover?: boolean;
+  managed_egress_override?: ManagedBackupEgressOverride;
 };
 
 type MoveProjectContext = {
@@ -802,9 +804,11 @@ async function waitForChildLroCompletion({
 async function performBackupRegionCutover({
   context,
   progress,
+  managed_egress_override,
 }: {
   context: MoveProjectContext;
   progress: (update: MoveProjectProgressUpdate) => void;
+  managed_egress_override?: ManagedBackupEgressOverride;
 }): Promise<MoveBackupRegionCutoverResult> {
   if (
     !context.backup_region_cutover ||
@@ -888,6 +892,7 @@ async function performBackupRegionCutover({
               ...update,
               step: "cutover-backup",
             }),
+          managed_egress_override,
         }),
     });
     progress({
@@ -1003,10 +1008,12 @@ async function createFinalBackup({
   project_id,
   account_id,
   progress,
+  managed_egress_override,
 }: {
   project_id: string;
   account_id: string;
   progress: (update: MoveProjectProgressUpdate) => void;
+  managed_egress_override?: ManagedBackupEgressOverride;
 }): Promise<{ id: string; time: string; op_id: string }> {
   const backupOp = await createBackupLro(
     {
@@ -1016,6 +1023,7 @@ async function createFinalBackup({
     {
       skip_collab_check: true,
       skip_rootfs_portability_check: true,
+      managed_egress_override,
     },
   );
   progress({
@@ -1371,6 +1379,7 @@ export async function moveProjectToHost(
                 account_id: context.account_id,
                 project_id: context.project_id,
                 progress,
+                managed_egress_override: input.managed_egress_override,
               }),
           });
           const backup_id = result.id;
@@ -1611,6 +1620,7 @@ export async function moveProjectToHost(
         backupRegionCutoverResult = await performBackupRegionCutover({
           context,
           progress,
+          managed_egress_override: input.managed_egress_override,
         });
 
         if (stopDestAfterStart) {

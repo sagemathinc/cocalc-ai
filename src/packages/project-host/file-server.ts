@@ -22,6 +22,7 @@ import {
   type Fileserver,
   type CopyOptions,
   type LroRef,
+  type ManagedBackupEgressOverride,
   type RestoreMode,
   type RestoreStagingHandle,
   type SnapshotRestoreMode,
@@ -2662,15 +2663,18 @@ async function createBackup({
   limit,
   tags,
   lro,
+  managed_egress_override,
 }: {
   project_id: string;
   limit?: number;
   tags?: string[];
   lro?: LroRef;
+  managed_egress_override?: ManagedBackupEgressOverride;
 }): Promise<{ time: Date; id: string }> {
   const progress = createLroRusticReporter(lro, "backup");
   const managedBackupPolicy = await checkManagedBackupAllowedBestEffort({
     project_id,
+    managed_egress_override,
   });
   if (!managedBackupPolicy.allowed) {
     throw new Error(managedBackupPolicy.message);

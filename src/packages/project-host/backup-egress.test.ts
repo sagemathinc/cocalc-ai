@@ -85,6 +85,16 @@ describe("project-host backup managed egress", () => {
     expect(getManagedProjectEgressPolicyMock).not.toHaveBeenCalled();
   });
 
+  it("allows admin host drain backups without consulting policy", async () => {
+    await expect(
+      checkManagedBackupAllowedBestEffort({
+        project_id: "proj-1",
+        managed_egress_override: "admin-host-drain",
+      }),
+    ).resolves.toEqual({ allowed: true });
+    expect(getManagedProjectEgressPolicyMock).not.toHaveBeenCalled();
+  });
+
   it("blocks new backups when the owner is already over the managed egress limit", async () => {
     getManagedProjectEgressPolicyMock.mockResolvedValue({
       allowed: false,

@@ -216,6 +216,38 @@ describe("project-backups.createBackup", () => {
     expect(triggerBackupLroWorkerMock).not.toHaveBeenCalled();
   });
 
+  it("allows the internal admin host drain override to bypass the managed egress preflight", async () => {
+    getManagedProjectEgressPolicyMock.mockResolvedValue({
+      allowed: false,
+      category: "backup-upload",
+    });
+    const { createBackup } = await import("./project-backups");
+
+    const result = await createBackup(
+      {
+        account_id: "acct-1",
+        project_id: "proj-1",
+      },
+      { managed_egress_override: "admin-host-drain" },
+    );
+
+    expect(getManagedProjectEgressPolicyMock).not.toHaveBeenCalled();
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          managed_egress_override: "admin-host-drain",
+        }),
+      }),
+    );
+    expect(result).toEqual({
+      op_id: "op-backup-1",
+      scope_type: "project",
+      scope_id: "proj-1",
+      service: "persist-service",
+      stream_name: "stream:op-backup-1",
+    });
+  });
+
   it("allows trusted internal callers to bypass the portability guard", async () => {
     const { createBackup } = await import("./project-backups");
 

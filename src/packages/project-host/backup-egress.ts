@@ -4,6 +4,7 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
+import type { ManagedBackupEgressOverride } from "@cocalc/conat/files/file-server";
 import type { ManagedProjectEgressCategory } from "@cocalc/conat/hub/api/system";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { capitalize, humanSize } from "@cocalc/util/misc";
@@ -59,8 +60,10 @@ export function getManagedBackupEgressBytes(
 
 export async function checkManagedBackupAllowedBestEffort({
   project_id,
+  managed_egress_override,
 }: {
   project_id: string;
+  managed_egress_override?: ManagedBackupEgressOverride;
 }): Promise<
   | {
       allowed: true;
@@ -70,6 +73,9 @@ export async function checkManagedBackupAllowedBestEffort({
       message: string;
     }
 > {
+  if (managed_egress_override === "admin-host-drain") {
+    return { allowed: true };
+  }
   if (!isProjectHostManagedEgressEnforced()) {
     return { allowed: true };
   }
